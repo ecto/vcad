@@ -10,6 +10,7 @@ repository.workspace = true
 vcad-kernel-math = { path = "../vcad-kernel-math" }
 vcad-kernel-topo = { path = "../vcad-kernel-topo" }
 vcad-kernel-geom = { path = "../vcad-kernel-geom" }
+vcad-kernel-nurbs = { path = "../vcad-kernel-nurbs" }
 vcad-kernel-primitives = { path = "../vcad-kernel-primitives" }
 
 [dev-dependencies]

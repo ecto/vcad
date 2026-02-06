@@ -2665,6 +2665,7 @@ version = "0.8.0"
 dependencies = [
  "vcad-kernel-geom",
  "vcad-kernel-math",
+ "vcad-kernel-nurbs",
  "vcad-kernel-primitives",
  "vcad-kernel-tessellate",
  "vcad-kernel-topo",
