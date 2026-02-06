@@ -5,17 +5,22 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::entities::{
-    cylinder_to_placement, plane_to_placement, sphere_to_placement, torus_to_placement,
-    write_advanced_face, write_axis2_placement_3d, write_cartesian_point, write_closed_shell,
-    write_conical_surface, write_cylindrical_surface, write_direction, write_edge_curve,
-    write_edge_loop, write_face_bound, write_manifold_solid_brep, write_oriented_edge,
-    write_plane, write_spherical_surface, write_toroidal_surface, write_vertex_point,
-    AxisPlacement,
+    bilinear_planar_to_placement, compress_knots, cylinder_to_placement, plane_to_placement,
+    sphere_to_placement, torus_to_placement, write_advanced_face, write_axis2_placement_3d,
+    write_bspline_control_points, write_bspline_surface_with_knots, write_cartesian_point,
+    write_closed_shell, write_conical_surface, write_cylindrical_surface, write_direction,
+    write_edge_curve, write_edge_loop, write_face_bound, write_manifold_solid_brep,
+    write_oriented_edge, write_plane, write_spherical_surface, write_toroidal_surface,
+    write_vertex_point, AxisPlacement,
 };
 use crate::error::StepError;
 
-use vcad_kernel_geom::{ConeSurface, CylinderSurface, Plane, SphereSurface, SurfaceKind, TorusSurface};
+use vcad_kernel_geom::{
+    BilinearSurface, ConeSurface, CylinderSurface, Plane, SphereSurface, SurfaceKind,
+    TorusSurface,
+};
 use vcad_kernel_math::{Dir3, Vec3};
+use vcad_kernel_nurbs::BSplineSurface;
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_topo::{EdgeId, FaceId, HalfEdgeId, LoopId, Orientation, VertexId};
 
@@ -230,15 +235,39 @@ impl<'a> StepWriter<'a> {
                         write_toroidal_surface(torus.major_radius, torus.minor_radius, "", placement_id),
                     )
                 }
-                _ => {
-                    // Unsupported surface type - write as plane placeholder
-                    let placement = AxisPlacement {
-                        location: vcad_kernel_math::Point3::origin(),
-                        axis: None,
-                        ref_direction: None,
-                    };
-                    let placement_id = self.write_axis_placement(&placement)?;
-                    (placement_id, write_plane("", placement_id))
+                SurfaceKind::BSpline => {
+                    let bspline = surface
+                        .as_any()
+                        .downcast_ref::<BSplineSurface>()
+                        .ok_or_else(|| {
+                            StepError::InvalidGeometry(
+                                "failed to downcast BSpline surface".into(),
+                            )
+                        })?;
+                    let entity = self.write_bspline_surface_entity(bspline);
+                    self.emit(surf_id, &entity);
+                    self.surface_map.insert(idx, surf_id);
+                    continue;
+                }
+                SurfaceKind::Bilinear => {
+                    let bilinear = surface
+                        .as_any()
+                        .downcast_ref::<BilinearSurface>()
+                        .ok_or_else(|| {
+                            StepError::InvalidGeometry(
+                                "failed to downcast Bilinear surface".into(),
+                            )
+                        })?;
+                    if bilinear.is_planar() {
+                        let placement_id =
+                            self.write_axis_placement(&bilinear_planar_to_placement(bilinear))?;
+                        (placement_id, write_plane("", placement_id))
+                    } else {
+                        let entity = self.write_bilinear_as_bspline(bilinear);
+                        self.emit(surf_id, &entity);
+                        self.surface_map.insert(idx, surf_id);
+                        continue;
+                    }
                 }
             };
 
@@ -279,6 +308,56 @@ impl<'a> StepWriter<'a> {
         self.emit(placement_id, &entity);
 
         Ok(placement_id)
+    }
+
+    /// Write a BSplineSurface as a B_SPLINE_SURFACE_WITH_KNOTS entity.
+    fn write_bspline_surface_entity(&mut self, bspline: &BSplineSurface) -> String {
+        // Write control points and collect their IDs
+        let cp_ids = write_bspline_control_points(
+            &bspline.control_points,
+            bspline.n_u,
+            bspline.n_v,
+            &mut |entity_str| {
+                let id = self.alloc_id();
+                self.emit(id, entity_str);
+                id
+            },
+        );
+
+        // Compress knot vectors
+        let (u_knots, u_mults) = compress_knots(&bspline.knots_u);
+        let (v_knots, v_mults) = compress_knots(&bspline.knots_v);
+
+        write_bspline_surface_with_knots(
+            "",
+            bspline.degree_u,
+            bspline.degree_v,
+            &cp_ids,
+            &u_knots,
+            &u_mults,
+            &v_knots,
+            &v_mults,
+        )
+    }
+
+    /// Write a non-planar BilinearSurface as a degree-1 B_SPLINE_SURFACE_WITH_KNOTS.
+    fn write_bilinear_as_bspline(&mut self, bilinear: &BilinearSurface) -> String {
+        // A bilinear surface is a degree-1 B-spline with 2x2 control points.
+        // Control points in row-major (v-major) order:
+        // row 0 (v=0): p00, p10
+        // row 1 (v=1): p01, p11
+        let points = [bilinear.p00, bilinear.p10, bilinear.p01, bilinear.p11];
+        let cp_ids = write_bspline_control_points(&points, 2, 2, &mut |entity_str| {
+            let id = self.alloc_id();
+            self.emit(id, entity_str);
+            id
+        });
+
+        // Degree-1 with 2 control points: knots = [0, 0, 1, 1] → compressed = ([0, 1], [2, 2])
+        let knots = vec![0.0, 1.0];
+        let mults = vec![2, 2];
+
+        write_bspline_surface_with_knots("", 1, 1, &cp_ids, &knots, &mults, &knots, &mults)
     }
 
     fn write_edges(&mut self) -> Result<(), StepError> {
@@ -443,7 +522,11 @@ fn chrono_lite_date() -> String {
 mod tests {
     use super::*;
     use crate::reader::read_step_from_buffer;
+    use vcad_kernel_geom::{BilinearSurface, GeometryStore, Surface};
+    use vcad_kernel_math::Point3;
+    use vcad_kernel_nurbs::BSplineSurface;
     use vcad_kernel_primitives::make_cube;
+    use vcad_kernel_topo::{Orientation, ShellType, Topology};
 
     #[test]
     fn test_write_cube() {
@@ -487,5 +570,248 @@ mod tests {
             original.geometry.surfaces.len(),
             imported.geometry.surfaces.len()
         );
+    }
+
+    /// Helper: build a minimal BRepSolid with a single face using the given surface.
+    fn make_single_face_solid(
+        surface: Box<dyn Surface>,
+        corners: [Point3; 4],
+    ) -> BRepSolid {
+        let mut topo = Topology::new();
+        let mut geom = GeometryStore::new();
+
+        let surf_idx = geom.add_surface(surface);
+
+        let v0 = topo.add_vertex(corners[0]);
+        let v1 = topo.add_vertex(corners[1]);
+        let v2 = topo.add_vertex(corners[2]);
+        let v3 = topo.add_vertex(corners[3]);
+
+        let he0 = topo.add_half_edge(v0);
+        let he1 = topo.add_half_edge(v1);
+        let he2 = topo.add_half_edge(v2);
+        let he3 = topo.add_half_edge(v3);
+
+        let loop_id = topo.add_loop(&[he0, he1, he2, he3]);
+        let face_id = topo.add_face(loop_id, surf_idx, Orientation::Forward);
+
+        // Create twin half-edges for edge pairing
+        let he0t = topo.add_half_edge(v1);
+        let he1t = topo.add_half_edge(v2);
+        let he2t = topo.add_half_edge(v3);
+        let he3t = topo.add_half_edge(v0);
+
+        topo.add_edge(he0, he0t);
+        topo.add_edge(he1, he1t);
+        topo.add_edge(he2, he2t);
+        topo.add_edge(he3, he3t);
+
+        let shell_id = topo.add_shell(vec![face_id], ShellType::Outer);
+        let solid_id = topo.add_solid(shell_id);
+
+        BRepSolid {
+            topology: topo,
+            geometry: geom,
+            solid_id,
+        }
+    }
+
+    #[test]
+    fn test_write_bspline_surface() {
+        // Create a simple bicubic B-spline surface (4x4 control points)
+        let mut control_points = Vec::new();
+        for v in 0..4 {
+            for u in 0..4 {
+                control_points.push(Point3::new(
+                    u as f64 * 10.0,
+                    v as f64 * 10.0,
+                    if u == 1 && v == 1 { 5.0 } else { 0.0 },
+                ));
+            }
+        }
+        let knots = vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
+        let bspline = BSplineSurface::new(
+            control_points,
+            4, 4,
+            knots.clone(), knots,
+            3, 3,
+        );
+
+        let corners = [
+            bspline.eval(0.0, 0.0),
+            bspline.eval(1.0, 0.0),
+            bspline.eval(1.0, 1.0),
+            bspline.eval(0.0, 1.0),
+        ];
+
+        let solid = make_single_face_solid(Box::new(bspline), corners);
+        let buffer = write_step_to_buffer(&solid).unwrap();
+        let content = String::from_utf8_lossy(&buffer);
+
+        // Must contain B_SPLINE_SURFACE_WITH_KNOTS, not PLANE
+        assert!(
+            content.contains("B_SPLINE_SURFACE_WITH_KNOTS"),
+            "B-spline surface should be written as B_SPLINE_SURFACE_WITH_KNOTS, got:\n{}",
+            content
+        );
+        assert!(
+            !content.contains("PLANE"),
+            "B-spline surface should NOT be written as PLANE"
+        );
+    }
+
+    #[test]
+    fn test_write_bilinear_planar() {
+        // A planar bilinear surface should export as PLANE
+        let bilinear = BilinearSurface::new(
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(10.0, 0.0, 0.0),
+            Point3::new(0.0, 10.0, 0.0),
+            Point3::new(10.0, 10.0, 0.0),
+        );
+        assert!(bilinear.is_planar());
+
+        let corners = [
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(10.0, 0.0, 0.0),
+            Point3::new(10.0, 10.0, 0.0),
+            Point3::new(0.0, 10.0, 0.0),
+        ];
+
+        let solid = make_single_face_solid(Box::new(bilinear), corners);
+        let buffer = write_step_to_buffer(&solid).unwrap();
+        let content = String::from_utf8_lossy(&buffer);
+
+        assert!(
+            content.contains("PLANE"),
+            "Planar bilinear should be written as PLANE"
+        );
+        assert!(
+            !content.contains("B_SPLINE_SURFACE_WITH_KNOTS"),
+            "Planar bilinear should NOT be written as B_SPLINE_SURFACE_WITH_KNOTS"
+        );
+    }
+
+    #[test]
+    fn test_write_bilinear_nonplanar() {
+        // A non-planar bilinear surface should export as B_SPLINE degree 1
+        let bilinear = BilinearSurface::new(
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(10.0, 0.0, 0.0),
+            Point3::new(0.0, 10.0, 0.0),
+            Point3::new(10.0, 10.0, 5.0), // Not coplanar
+        );
+        assert!(!bilinear.is_planar());
+
+        let corners = [
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(10.0, 0.0, 0.0),
+            Point3::new(10.0, 10.0, 5.0),
+            Point3::new(0.0, 10.0, 0.0),
+        ];
+
+        let solid = make_single_face_solid(Box::new(bilinear), corners);
+        let buffer = write_step_to_buffer(&solid).unwrap();
+        let content = String::from_utf8_lossy(&buffer);
+
+        assert!(
+            content.contains("B_SPLINE_SURFACE_WITH_KNOTS"),
+            "Non-planar bilinear should be written as B_SPLINE_SURFACE_WITH_KNOTS"
+        );
+        assert!(
+            !content.contains("PLANE"),
+            "Non-planar bilinear should NOT be written as PLANE"
+        );
+    }
+
+    #[test]
+    fn test_roundtrip_bspline_surface() {
+        // Create a B-spline surface, write to STEP, read back, verify geometry preserved
+        let mut control_points = Vec::new();
+        for v in 0..4 {
+            for u in 0..4 {
+                control_points.push(Point3::new(
+                    u as f64 * 10.0,
+                    v as f64 * 10.0,
+                    if (u == 1 || u == 2) && (v == 1 || v == 2) { 5.0 } else { 0.0 },
+                ));
+            }
+        }
+        let knots = vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
+        let bspline = BSplineSurface::new(
+            control_points.clone(),
+            4, 4,
+            knots.clone(), knots.clone(),
+            3, 3,
+        );
+
+        let corners = [
+            bspline.eval(0.0, 0.0),
+            bspline.eval(1.0, 0.0),
+            bspline.eval(1.0, 1.0),
+            bspline.eval(0.0, 1.0),
+        ];
+
+        let solid = make_single_face_solid(Box::new(bspline), corners);
+        let buffer = write_step_to_buffer(&solid).unwrap();
+
+        // Read back
+        let solids = read_step_from_buffer(&buffer).unwrap();
+        assert_eq!(solids.len(), 1);
+
+        let imported = &solids[0];
+
+        // Find the B-spline surface in imported geometry
+        let imported_bspline = imported
+            .geometry
+            .surfaces
+            .iter()
+            .find(|s| s.surface_type() == SurfaceKind::BSpline)
+            .expect("Should have a BSpline surface after roundtrip");
+
+        let imported_bspline = imported_bspline
+            .as_any()
+            .downcast_ref::<BSplineSurface>()
+            .unwrap();
+
+        // Verify control points match
+        assert_eq!(imported_bspline.n_u, 4);
+        assert_eq!(imported_bspline.n_v, 4);
+        assert_eq!(imported_bspline.degree_u, 3);
+        assert_eq!(imported_bspline.degree_v, 3);
+        assert_eq!(imported_bspline.control_points.len(), 16);
+
+        for (orig, imported) in control_points.iter().zip(imported_bspline.control_points.iter()) {
+            assert!(
+                (orig.x - imported.x).abs() < 1e-6
+                    && (orig.y - imported.y).abs() < 1e-6
+                    && (orig.z - imported.z).abs() < 1e-6,
+                "Control point mismatch: {:?} vs {:?}",
+                orig,
+                imported
+            );
+        }
+
+        // Verify surface evaluates to same points
+        for &(u, v) in &[(0.0, 0.0), (0.5, 0.5), (1.0, 1.0), (0.25, 0.75)] {
+            let orig_pt = {
+                let knots = vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
+                let orig = BSplineSurface::new(
+                    control_points.clone(),
+                    4, 4,
+                    knots.clone(), knots,
+                    3, 3,
+                );
+                orig.eval(u, v)
+            };
+            let imported_pt = imported_bspline.eval(u, v);
+            assert!(
+                (orig_pt.x - imported_pt.x).abs() < 1e-6
+                    && (orig_pt.y - imported_pt.y).abs() < 1e-6
+                    && (orig_pt.z - imported_pt.z).abs() < 1e-6,
+                "Surface eval mismatch at ({}, {}): {:?} vs {:?}",
+                u, v, orig_pt, imported_pt
+            );
+        }
     }
 }

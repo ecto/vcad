@@ -1,9 +1,10 @@
 //! Surface entities: planes, cylinders, cones, spheres, B-splines.
 
-use super::{parse_any_axis_placement, parse_cartesian_point, AxisPlacement, EntityArgs};
+use super::{parse_any_axis_placement, parse_cartesian_point, write_cartesian_point, AxisPlacement, EntityArgs};
 use crate::error::StepError;
 use stepperoni::{StepFile, StepValue};
-use vcad_kernel_geom::{ConeSurface, CylinderSurface, Plane, SphereSurface, Surface, TorusSurface};
+use vcad_kernel_geom::{BilinearSurface, ConeSurface, CylinderSurface, Plane, SphereSurface, Surface, TorusSurface};
+use vcad_kernel_math::Point3;
 use vcad_kernel_nurbs::BSplineSurface;
 
 /// A surface parsed from STEP.
@@ -321,6 +322,111 @@ fn expand_knots(knots: &[StepValue], mults: &[StepValue]) -> Result<Vec<f64>, St
     Ok(result)
 }
 
+/// Compress an expanded knot vector into (unique_knots, multiplicities).
+///
+/// This is the inverse of [`expand_knots`]. For example:
+/// `[0, 0, 0.5, 1, 1]` → `([0, 0.5, 1], [2, 1, 2])`
+pub fn compress_knots(expanded: &[f64]) -> (Vec<f64>, Vec<usize>) {
+    let mut knots = Vec::new();
+    let mut mults = Vec::new();
+    if expanded.is_empty() {
+        return (knots, mults);
+    }
+    let mut current = expanded[0];
+    let mut count = 1usize;
+    for &k in &expanded[1..] {
+        if (k - current).abs() < 1e-15 {
+            count += 1;
+        } else {
+            knots.push(current);
+            mults.push(count);
+            current = k;
+            count = 1;
+        }
+    }
+    knots.push(current);
+    mults.push(count);
+    (knots, mults)
+}
+
+/// Write a B_SPLINE_SURFACE_WITH_KNOTS entity string.
+///
+/// `control_point_ids` is a 2D array (v-major) of STEP entity IDs for the control points.
+/// The surface form, closedness, and knot spec use `.UNSPECIFIED.`.
+#[allow(clippy::too_many_arguments)]
+pub fn write_bspline_surface_with_knots(
+    name: &str,
+    degree_u: usize,
+    degree_v: usize,
+    control_point_ids: &[Vec<u64>],
+    u_knots: &[f64],
+    u_mults: &[usize],
+    v_knots: &[f64],
+    v_mults: &[usize],
+) -> String {
+    // Format control points as 2D list: ((#1, #2), (#3, #4))
+    let rows: Vec<String> = control_point_ids
+        .iter()
+        .map(|row| {
+            let refs: Vec<String> = row.iter().map(|id| format!("#{}", id)).collect();
+            format!("({})", refs.join(", "))
+        })
+        .collect();
+    let cp_str = format!("({})", rows.join(", "));
+
+    // Format knot multiplicities
+    let u_mults_str: Vec<String> = u_mults.iter().map(|m| m.to_string()).collect();
+    let v_mults_str: Vec<String> = v_mults.iter().map(|m| m.to_string()).collect();
+    let u_knots_str: Vec<String> = u_knots.iter().map(|k| format!("{:.15E}", k)).collect();
+    let v_knots_str: Vec<String> = v_knots.iter().map(|k| format!("{:.15E}", k)).collect();
+
+    format!(
+        "B_SPLINE_SURFACE_WITH_KNOTS('{}', {}, {}, {}, .UNSPECIFIED., .U., .U., .U., ({}), ({}), ({}), ({}), .UNSPECIFIED.)",
+        name,
+        degree_u,
+        degree_v,
+        cp_str,
+        u_mults_str.join(", "),
+        v_mults_str.join(", "),
+        u_knots_str.join(", "),
+        v_knots_str.join(", "),
+    )
+}
+
+/// Write control points for a B-spline surface, returning 2D array of STEP entity IDs.
+///
+/// Points are stored row-major in the BSplineSurface: `points[v_idx * n_u + u_idx]`.
+pub fn write_bspline_control_points(
+    points: &[Point3],
+    n_u: usize,
+    n_v: usize,
+    emit: &mut impl FnMut(&str) -> u64,
+) -> Vec<Vec<u64>> {
+    let mut rows = Vec::with_capacity(n_v);
+    for v_idx in 0..n_v {
+        let mut row_ids = Vec::with_capacity(n_u);
+        for u_idx in 0..n_u {
+            let pt = &points[v_idx * n_u + u_idx];
+            let entity = write_cartesian_point(pt, "");
+            let id = emit(&entity);
+            row_ids.push(id);
+        }
+        rows.push(row_ids);
+    }
+    rows
+}
+
+/// Convert a planar bilinear surface to a STEP PLANE placement.
+pub fn bilinear_planar_to_placement(bilinear: &BilinearSurface) -> AxisPlacement {
+    use vcad_kernel_geom::Plane;
+    let plane = Plane::new(
+        bilinear.p00,
+        *vcad_kernel_math::Dir3::new_normalize(bilinear.p10 - bilinear.p00).as_ref(),
+        *vcad_kernel_math::Dir3::new_normalize(bilinear.p01 - bilinear.p00).as_ref(),
+    );
+    plane_to_placement(&plane)
+}
+
 /// Parse any supported surface entity.
 pub fn parse_surface(file: &StepFile, id: u64) -> Result<StepSurface, StepError> {
     let entity = file.get(id).ok_or(StepError::MissingEntity(id))?;
@@ -438,9 +544,71 @@ pub fn write_toroidal_surface(
 mod tests {
     use super::*;
     use stepperoni::Parser;
+    use vcad_kernel_math::Point3;
 
     fn parse_step(input: &str) -> StepFile {
         Parser::parse(input.as_bytes()).unwrap()
+    }
+
+    #[test]
+    fn test_compress_knots() {
+        let expanded = vec![0.0, 0.0, 0.5, 1.0, 1.0];
+        let (knots, mults) = compress_knots(&expanded);
+        assert_eq!(knots, vec![0.0, 0.5, 1.0]);
+        assert_eq!(mults, vec![2, 1, 2]);
+    }
+
+    #[test]
+    fn test_compress_knots_uniform() {
+        let expanded = vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+        let (knots, mults) = compress_knots(&expanded);
+        assert_eq!(knots, vec![0.0, 1.0]);
+        assert_eq!(mults, vec![3, 3]);
+    }
+
+    #[test]
+    fn test_compress_knots_roundtrip() {
+        // Compress then expand should be identity
+        let original = vec![0.0, 0.0, 0.0, 0.25, 0.5, 0.75, 1.0, 1.0, 1.0];
+        let (knots, mults) = compress_knots(&original);
+        let mut re_expanded = Vec::new();
+        for (k, m) in knots.iter().zip(mults.iter()) {
+            for _ in 0..*m {
+                re_expanded.push(*k);
+            }
+        }
+        assert_eq!(original.len(), re_expanded.len());
+        for (a, b) in original.iter().zip(re_expanded.iter()) {
+            assert!((a - b).abs() < 1e-15);
+        }
+    }
+
+    #[test]
+    fn test_write_bspline_surface() {
+        let cp_ids = vec![vec![1, 2, 3], vec![4, 5, 6]];
+        let u_knots = vec![0.0, 1.0];
+        let u_mults = vec![3, 3];
+        let v_knots = vec![0.0, 1.0];
+        let v_mults = vec![2, 2];
+        let entity =
+            write_bspline_surface_with_knots("", 2, 1, &cp_ids, &u_knots, &u_mults, &v_knots, &v_mults);
+        assert!(entity.contains("B_SPLINE_SURFACE_WITH_KNOTS"));
+        assert!(entity.contains("(#1, #2, #3)"));
+        assert!(entity.contains("(#4, #5, #6)"));
+        assert!(entity.contains(".UNSPECIFIED."));
+    }
+
+    #[test]
+    fn test_write_bilinear_planar_placement() {
+        let bilinear = BilinearSurface::new(
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(0.0, 1.0, 0.0),
+            Point3::new(1.0, 1.0, 0.0),
+        );
+        assert!(bilinear.is_planar());
+        let placement = bilinear_planar_to_placement(&bilinear);
+        assert!((placement.location.z).abs() < 1e-10);
     }
 
     #[test]
