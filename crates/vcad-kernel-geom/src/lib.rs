@@ -61,6 +61,15 @@ pub trait Surface: Send + Sync + std::fmt::Debug {
 
     /// Apply an affine transform to this surface, returning a new surface.
     fn transform(&self, t: &Transform) -> Box<dyn Surface>;
+
+    /// Create an offset surface at the given signed distance.
+    ///
+    /// Positive distance offsets in the direction of the surface normal.
+    /// Returns `None` if the offset is not supported or would degenerate
+    /// (e.g., cylinder offset with radius <= 0).
+    fn offset(&self, _distance: f64) -> Option<Box<dyn Surface>> {
+        None
+    }
 }
 
 impl Clone for Box<dyn Surface> {
@@ -188,6 +197,18 @@ impl Surface for Plane {
         let new_y = t.apply_vec(self.y_dir.as_ref());
         Box::new(Plane::new(new_origin, new_x, new_y))
     }
+
+    fn offset(&self, distance: f64) -> Option<Box<dyn Surface>> {
+        // Offset a plane by shifting origin along its normal.
+        // Planes never degenerate, so this always succeeds.
+        let new_origin = self.origin + distance * self.normal_dir.as_ref();
+        Some(Box::new(Plane {
+            origin: new_origin,
+            x_dir: self.x_dir,
+            y_dir: self.y_dir,
+            normal_dir: self.normal_dir,
+        }))
+    }
 }
 
 // =============================================================================
@@ -239,7 +260,8 @@ impl CylinderSurface {
         }
     }
 
-    fn y_dir(&self) -> Vec3 {
+    /// Compute the y direction (perpendicular to axis and ref_dir).
+    pub fn y_dir(&self) -> Vec3 {
         self.axis.as_ref().cross(self.ref_dir.as_ref())
     }
 }
@@ -294,6 +316,21 @@ impl Surface for CylinderSurface {
             ref_dir: Dir3::new_normalize(new_ref),
             radius: self.radius * scale,
         })
+    }
+
+    fn offset(&self, distance: f64) -> Option<Box<dyn Surface>> {
+        // Offset a cylinder by changing the radius.
+        // Positive distance = offset in normal direction (outward) = increase radius.
+        let new_radius = self.radius + distance;
+        if new_radius <= 0.0 {
+            return None; // Degenerate: collapsed to a line or inverted
+        }
+        Some(Box::new(CylinderSurface {
+            center: self.center,
+            axis: self.axis,
+            ref_dir: self.ref_dir,
+            radius: new_radius,
+        }))
     }
 }
 
@@ -429,6 +466,23 @@ impl Surface for ConeSurface {
             half_angle: self.half_angle,
         })
     }
+
+    fn offset(&self, distance: f64) -> Option<Box<dyn Surface>> {
+        // Offsetting a cone shifts the apex along the axis.
+        // The offset distance along the axis is d / sin(half_angle).
+        let sin_a = self.half_angle.sin();
+        if sin_a.abs() < 1e-15 {
+            return None; // Degenerate cone (zero half-angle = line)
+        }
+        let apex_shift = distance / sin_a;
+        let new_apex = self.apex - apex_shift * self.axis.as_ref();
+        Some(Box::new(ConeSurface {
+            apex: new_apex,
+            axis: self.axis,
+            ref_dir: self.ref_dir,
+            half_angle: self.half_angle,
+        }))
+    }
 }
 
 // =============================================================================
@@ -473,7 +527,8 @@ impl SphereSurface {
         }
     }
 
-    fn y_dir(&self) -> Vec3 {
+    /// Compute the y direction (perpendicular to axis and ref_dir).
+    pub fn y_dir(&self) -> Vec3 {
         self.axis.as_ref().cross(self.ref_dir.as_ref())
     }
 }
@@ -539,6 +594,20 @@ impl Surface for SphereSurface {
             ref_dir: Dir3::new_normalize(new_ref),
             axis: Dir3::new_normalize(new_axis),
         })
+    }
+
+    fn offset(&self, distance: f64) -> Option<Box<dyn Surface>> {
+        // Offset a sphere by changing the radius.
+        let new_radius = self.radius + distance;
+        if new_radius <= 0.0 {
+            return None; // Degenerate: collapsed to a point or inverted
+        }
+        Some(Box::new(SphereSurface {
+            center: self.center,
+            radius: new_radius,
+            ref_dir: self.ref_dir,
+            axis: self.axis,
+        }))
     }
 }
 
@@ -680,6 +749,21 @@ impl Surface for TorusSurface {
             major_radius: self.major_radius * scale,
             minor_radius: self.minor_radius * scale,
         })
+    }
+
+    fn offset(&self, distance: f64) -> Option<Box<dyn Surface>> {
+        // Offset a torus by changing the minor radius.
+        let new_minor = self.minor_radius + distance;
+        if new_minor <= 0.0 {
+            return None; // Degenerate: tube collapsed
+        }
+        Some(Box::new(TorusSurface {
+            center: self.center,
+            axis: self.axis,
+            ref_dir: self.ref_dir,
+            major_radius: self.major_radius,
+            minor_radius: new_minor,
+        }))
     }
 }
 
