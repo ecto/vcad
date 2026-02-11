@@ -1,12 +1,20 @@
 //! WASM bindings for the vcad B-rep kernel.
 //!
 //! Exposes the [`Solid`] type for use in JavaScript/TypeScript via wasm-bindgen.
+//!
+//! ## TypeScript Type Generation
+//!
+//! When compiled with the `ts-rs` feature, this crate exports TypeScript type definitions
+//! for all serializable types. Run `cargo test --features ts-rs` to generate types.
 
 use serde::{Deserialize, Serialize};
 use vcad_kernel::vcad_kernel_math::{Point2, Point3, Vec3};
 use vcad_kernel::vcad_kernel_sketch::{SketchProfile, SketchSegment};
 use wasm_bindgen::prelude::*;
 use wasmosis::module;
+
+#[cfg(feature = "ts-rs")]
+use ts_rs::TS;
 
 /// Version string for verifying correct WASM build is loaded in browser.
 const KERNEL_VERSION: &str = "2025-02-03-geom-debug";
@@ -30,6 +38,8 @@ pub fn init() {
 
 /// Triangle mesh output for rendering.
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "generated/"))]
 pub struct WasmMesh {
     /// Flat array of vertex positions: [x0, y0, z0, x1, y1, z1, ...]
     pub positions: Vec<f32>,
@@ -40,6 +50,8 @@ pub struct WasmMesh {
 /// A 2D sketch segment (line or arc) for WASM input.
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type")]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "generated/"))]
 pub enum WasmSketchSegment {
     Line {
         start: [f64; 2],
@@ -55,6 +67,8 @@ pub enum WasmSketchSegment {
 
 /// Input for creating a sketch profile from JS.
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "generated/"))]
 pub struct WasmSketchProfile {
     /// Origin point of the sketch plane [x, y, z].
     pub origin: [f64; 3],
@@ -1084,6 +1098,8 @@ pub fn op_shell(solid: &Solid, thickness: f64) -> Solid {
 
 /// Text bounds result containing width and height.
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "generated/"))]
 pub struct TextBoundsResult {
     /// Width of the rendered text in mm.
     pub width: f64,
@@ -1799,6 +1815,8 @@ pub fn import_step_buffer(data: &[u8]) -> Result<JsValue, JsError> {
 
 /// GPU geometry processing result.
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "generated/"))]
 pub struct GpuGeometryResult {
     /// Vertex positions (flat array: x, y, z, ...).
     pub positions: Vec<f32>,
@@ -1812,8 +1830,8 @@ pub struct GpuGeometryResult {
 ///
 /// Returns `true` if WebGPU is available and initialized, `false` otherwise.
 /// This should be called once at application startup.
+// Module inferred from #[cfg(feature = "gpu")]
 #[cfg(feature = "gpu")]
-#[module("gpu")]
 #[wasm_bindgen(js_name = initGpu)]
 pub async fn init_gpu() -> Result<bool, JsError> {
     match vcad_kernel_gpu::GpuContext::init().await {
@@ -1864,8 +1882,8 @@ pub fn is_gpu_available() -> bool {
 /// # Returns
 /// A JS array of geometry results. If `generate_lod` is true, returns
 /// [full, 50%, 25%] detail levels. Otherwise returns a single mesh.
+// Module inferred from #[cfg(feature = "gpu")]
 #[cfg(feature = "gpu")]
-#[module("gpu")]
 #[wasm_bindgen(js_name = processGeometryGpu)]
 pub async fn process_geometry_gpu(
     positions: Vec<f32>,
@@ -1933,8 +1951,8 @@ pub async fn process_geometry_gpu(
 ///
 /// # Returns
 /// Flat array of normals (nx, ny, nz, ...), same length as positions.
+// Module inferred from #[cfg(feature = "gpu")]
 #[cfg(feature = "gpu")]
-#[module("gpu")]
 #[wasm_bindgen(js_name = computeCreasedNormalsGpu)]
 pub async fn compute_creased_normals_gpu(
     positions: Vec<f32>,
@@ -1967,8 +1985,8 @@ pub async fn compute_creased_normals_gpu(
 ///
 /// # Returns
 /// A JS object with decimated positions, indices, and normals.
+// Module inferred from #[cfg(feature = "gpu")]
 #[cfg(feature = "gpu")]
-#[module("gpu")]
 #[wasm_bindgen(js_name = decimateMeshGpu)]
 pub async fn decimate_mesh_gpu(
     positions: Vec<f32>,
@@ -3686,3 +3704,27 @@ mod cam_wasm {
 // Re-export CAM types at module level when feature is enabled
 #[cfg(feature = "cam")]
 pub use cam_wasm::*;
+
+// =============================================================================
+// TypeScript type generation (ts-rs)
+// =============================================================================
+
+#[cfg(all(test, feature = "ts-rs"))]
+mod ts_tests {
+    use super::*;
+
+    /// Generate TypeScript type definitions.
+    ///
+    /// Run with: `cargo test --features ts-rs export_bindings -- --ignored`
+    #[test]
+    #[ignore]
+    fn export_bindings() {
+        // Types are auto-exported via #[ts(export)] attribute
+        // This test ensures all types compile correctly with ts-rs
+        WasmMesh::export_all().expect("WasmMesh export failed");
+        WasmSketchSegment::export_all().expect("WasmSketchSegment export failed");
+        WasmSketchProfile::export_all().expect("WasmSketchProfile export failed");
+        GpuGeometryResult::export_all().expect("GpuGeometryResult export failed");
+        TextBoundsResult::export_all().expect("TextBoundsResult export failed");
+    }
+}

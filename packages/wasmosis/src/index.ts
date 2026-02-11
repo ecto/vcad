@@ -37,3 +37,31 @@ export {
   createStandaloneImports,
   mergeImports,
 } from './environment.js';
+
+// Source parsing (for codegen)
+export {
+  parseRustSource,
+  parseRustSourceContent,
+  parseRustSourceWithInference,
+  parseRustSourceContentWithInference,
+  inferModule,
+} from './source-parser.js';
+export type {
+  ParseResult,
+  ParsedFunction,
+  ParsedType,
+  InferredModule,
+  InferenceReason,
+} from './source-parser.js';
+
+// Crate generation
+export { generateCrates, generateTypeScriptLoader } from './crate-generator.js';
+export type { CrateGeneratorOptions, GeneratedCrate } from './crate-generator.js';
+
+// Manifest
+export {
+  parseManifest,
+  validateManifest,
+  generateManifestFromSource,
+} from './manifest.js';
+export type { Manifest, ManifestModule, ManifestFunction } from './manifest.js';

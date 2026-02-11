@@ -2,41 +2,68 @@
 //!
 //! Lazy WASM module splitting for Rust.
 //!
-//! Mark functions with `#[wasmosis::module("name")]` to split them into separate
-//! WASM modules that can be lazy loaded at runtime.
+//! Split large WASM binaries into lazy-loadable modules. Functions are
+//! automatically assigned to modules based on feature gates and dependencies.
 //!
 //! ## Usage
 //!
 //! ```rust,ignore
-//! use wasmosis::module;
+//! use wasm_bindgen::prelude::*;
 //!
-//! // This function will be split into a "step" module
-//! #[module("step")]
+//! // Module inferred from feature gate → "physics"
+//! #[cfg(feature = "physics")]
 //! #[wasm_bindgen]
-//! pub fn import_step(data: &[u8]) -> Solid {
-//!     // ...
+//! pub fn create_physics_env(doc: &str) -> PhysicsSim {
+//!     vcad_kernel_physics::RobotEnv::new(doc)
 //! }
 //!
-//! // Unmarked functions stay in the core module
+//! // Module inferred from dependency → "gpu"
+//! #[wasm_bindgen]
+//! pub fn init_gpu() -> bool {
+//!     vcad_kernel_gpu::GpuContext::init()
+//! }
+//!
+//! // No inference trigger → "core" (always loaded)
 //! #[wasm_bindgen]
 //! pub fn create_cube(x: f64, y: f64, z: f64) -> Solid {
 //!     // ...
 //! }
 //! ```
 //!
-//! ## How It Works
+//! ## Explicit Override
 //!
-//! 1. The `#[module]` macro adds a custom section to the WASM binary
-//! 2. Run `wasmosis split input.wasm -o ./dist` to split the binary
-//! 3. The CLI generates separate .wasm files and a TypeScript registry
-//! 4. Use the registry to lazy load modules at runtime
+//! Use `#[module("name")]` when you need to override automatic inference:
 //!
-//! ## Custom Section Format
+//! ```rust,ignore
+//! use wasmosis::module;
 //!
-//! The macro embeds JSON metadata in a custom section named "wasmosis_module":
+//! #[module("advanced")]
+//! #[wasm_bindgen]
+//! pub fn experimental_fillet(solid: &Solid) -> Solid {
+//!     // ...
+//! }
+//! ```
 //!
-//! ```json
-//! {"module": "step", "function": "import_step"}
+//! ## How Inference Works
+//!
+//! Functions are assigned to modules in this priority:
+//!
+//! 1. **Explicit**: `#[module("name")]` annotation
+//! 2. **Feature gate**: `#[cfg(feature = "physics")]` → `physics` module
+//! 3. **Dependency**: `vcad_kernel_physics::` in body → `physics` module
+//! 4. **Default**: `core` module (always loaded)
+//!
+//! ## CLI
+//!
+//! ```bash
+//! # Analyze with inference reasoning
+//! wasmosis analyze src/lib.rs --show-inference
+//!
+//! # Generate separate crates
+//! wasmosis codegen src/lib.rs -o ./generated -n my-kernel
+//!
+//! # Build with wasm-pack
+//! wasmosis build -c ./generated -o ./dist
 //! ```
 
 // Re-export the proc-macro
