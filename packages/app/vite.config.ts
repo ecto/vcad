@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -190,6 +191,11 @@ export default defineConfig(({ mode }) => {
     },
     optimizeDeps: {
       exclude: ["@vcad/kernel-wasm"],
+    },
+    test: {
+      environment: "happy-dom",
+      setupFiles: ["./src/test/setup.ts"],
+      include: ["src/**/*.test.{ts,tsx}"],
     },
   };
 });
