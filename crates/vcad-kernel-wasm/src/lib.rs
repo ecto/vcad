@@ -45,6 +45,10 @@ pub struct WasmMesh {
     pub positions: Vec<f32>,
     /// Flat array of triangle indices: [i0, i1, i2, ...]
     pub indices: Vec<u32>,
+    /// Flat array of vertex normals: [nx0, ny0, nz0, ...] (same length as positions).
+    /// When present, these are analytical surface normals for moiré-free rendering.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub normals: Option<Vec<f32>>,
 }
 
 /// A 2D sketch segment (line or arc) for WASM input.
@@ -751,9 +755,15 @@ impl Solid {
             );
         }
 
+        let normals = if mesh.normals.len() == mesh.vertices.len() {
+            Some(mesh.normals)
+        } else {
+            None
+        };
         let wasm_mesh = WasmMesh {
             positions: mesh.vertices,
             indices: mesh.indices,
+            normals,
         };
         serde_wasm_bindgen::to_value(&wasm_mesh).unwrap_or(JsValue::NULL)
     }
@@ -1799,9 +1809,15 @@ pub fn import_step_buffer(data: &[u8]) -> Result<JsValue, JsError> {
         .iter()
         .map(|s| {
             let mesh = s.to_mesh(16); // Lower resolution for faster rendering
+            let normals = if mesh.normals.len() == mesh.vertices.len() {
+                Some(mesh.normals)
+            } else {
+                None
+            };
             WasmMesh {
                 positions: mesh.vertices,
                 indices: mesh.indices,
+                normals,
             }
         })
         .collect();

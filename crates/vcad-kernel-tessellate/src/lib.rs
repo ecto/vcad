@@ -62,6 +62,15 @@ impl TriangleMesh {
             );
         }
 
+        // Validate normals match vertices in source mesh
+        #[cfg(debug_assertions)]
+        debug_assert!(
+            other.normals.is_empty() || other.normals.len() == other.vertices.len(),
+            "Normals/vertices mismatch: {} normals vs {} vertices",
+            other.normals.len(),
+            other.vertices.len()
+        );
+
         self.vertices.extend_from_slice(&other.vertices);
         self.normals.extend_from_slice(&other.normals);
         self.indices
@@ -236,11 +245,28 @@ fn tessellate_planar_face_with_geom(
     let effective_reversed = if winding_matches { reversed } else { !reversed };
 
     // Check if face has inner loops (holes)
-    if !face.inner_loops.is_empty() {
-        return tessellate_planar_face_with_holes(topo, face_id, effective_reversed);
+    let mut mesh = if !face.inner_loops.is_empty() {
+        tessellate_planar_face_with_holes(topo, face_id, effective_reversed)
+    } else {
+        tessellate_planar_face_core(&outer_verts, effective_reversed)
+    };
+
+    // Add constant analytical normal for all vertices (planar face has uniform normal)
+    let face_normal = if effective_reversed {
+        -surface_normal
+    } else {
+        surface_normal
+    };
+    let (nx, ny, nz) = (
+        face_normal.x as f32,
+        face_normal.y as f32,
+        face_normal.z as f32,
+    );
+    for _ in 0..mesh.num_vertices() {
+        mesh.normals.extend_from_slice(&[nx, ny, nz]);
     }
 
-    tessellate_planar_face_core(&outer_verts, effective_reversed)
+    mesh
 }
 
 /// Core tessellation logic for a planar polygon without holes.
@@ -1319,10 +1345,18 @@ fn tessellate_cylindrical_face(
             let u = u_min + u_range * (i as f64 / effective_n_circ as f64);
             // Normalize u to [0, 2π) for surface evaluation
             let u_eval = u % (2.0 * PI);
-            let pt = surface.evaluate(Point2::new(u_eval, v));
+            let uv = Point2::new(u_eval, v);
+            let pt = surface.evaluate(uv);
+            let normal = *surface.normal(uv);
             mesh.vertices.push(pt.x as f32);
             mesh.vertices.push(pt.y as f32);
             mesh.vertices.push(pt.z as f32);
+            let (nx, ny, nz) = if reversed {
+                (-normal.x as f32, -normal.y as f32, -normal.z as f32)
+            } else {
+                (normal.x as f32, normal.y as f32, normal.z as f32)
+            };
+            mesh.normals.extend_from_slice(&[nx, ny, nz]);
         }
     }
 
@@ -1377,29 +1411,45 @@ fn tessellate_spherical_face(
 
     let mut mesh = TriangleMesh::new();
 
+    // Helper to push a normal
+    let push_normal = |mesh: &mut TriangleMesh, normal: Vec3, reversed: bool| {
+        let (nx, ny, nz) = if reversed {
+            (-normal.x as f32, -normal.y as f32, -normal.z as f32)
+        } else {
+            (normal.x as f32, normal.y as f32, normal.z as f32)
+        };
+        mesh.normals.extend_from_slice(&[nx, ny, nz]);
+    };
+
     // South pole - single vertex (index 0)
-    let south = surface.evaluate(Point2::new(0.0, -PI / 2.0));
+    let south_uv = Point2::new(0.0, -PI / 2.0);
+    let south = surface.evaluate(south_uv);
     mesh.vertices.push(south.x as f32);
     mesh.vertices.push(south.y as f32);
     mesh.vertices.push(south.z as f32);
+    push_normal(&mut mesh, *surface.normal(south_uv), reversed);
 
     // Middle latitude bands (j = 1 to n_lat - 1)
     for j in 1..n_lat {
         let v = -PI / 2.0 + PI * (j as f64 / n_lat as f64);
         for i in 0..=n_lon {
             let u = 2.0 * PI * (i as f64 / n_lon as f64);
-            let pt = surface.evaluate(Point2::new(u, v));
+            let uv = Point2::new(u, v);
+            let pt = surface.evaluate(uv);
             mesh.vertices.push(pt.x as f32);
             mesh.vertices.push(pt.y as f32);
             mesh.vertices.push(pt.z as f32);
+            push_normal(&mut mesh, *surface.normal(uv), reversed);
         }
     }
 
     // North pole - single vertex (last index)
-    let north = surface.evaluate(Point2::new(0.0, PI / 2.0));
+    let north_uv = Point2::new(0.0, PI / 2.0);
+    let north = surface.evaluate(north_uv);
     mesh.vertices.push(north.x as f32);
     mesh.vertices.push(north.y as f32);
     mesh.vertices.push(north.z as f32);
+    push_normal(&mut mesh, *surface.normal(north_uv), reversed);
 
     let south_idx = 0u32;
     let north_idx = mesh.num_vertices() as u32 - 1;
@@ -1530,17 +1580,27 @@ fn tessellate_small_spherical_cap(
 ) -> TriangleMesh {
     let mut mesh = TriangleMesh::new();
 
+    // Helper to compute sphere normal at a point
+    let sphere_normal = |pt: Point3| -> Vec3 {
+        let n = (pt - center).normalize();
+        if reversed { -n } else { n }
+    };
+
     // Cap pole (point on sphere in cap direction)
     let pole = center + radius * cap_dir;
     mesh.vertices.push(pole.x as f32);
     mesh.vertices.push(pole.y as f32);
     mesh.vertices.push(pole.z as f32);
+    let n = sphere_normal(pole);
+    mesh.normals.extend_from_slice(&[n.x as f32, n.y as f32, n.z as f32]);
 
     // Add boundary vertices
     for p in loop_verts {
         mesh.vertices.push(p.x as f32);
         mesh.vertices.push(p.y as f32);
         mesh.vertices.push(p.z as f32);
+        let n = sphere_normal(*p);
+        mesh.normals.extend_from_slice(&[n.x as f32, n.y as f32, n.z as f32]);
     }
 
     // Fan triangulation from pole to boundary
@@ -1570,11 +1630,19 @@ fn tessellate_large_spherical_cap(
 ) -> TriangleMesh {
     let mut mesh = TriangleMesh::new();
 
+    // Helper to compute sphere normal at a point
+    let sphere_normal = |pt: Point3| -> vcad_kernel_math::Vec3 {
+        let n = (pt - center).normalize();
+        if reversed { -n } else { n }
+    };
+
     // Antipodal pole (opposite to cap center)
     let anti_pole = center - radius * cap_dir;
     mesh.vertices.push(anti_pole.x as f32);
     mesh.vertices.push(anti_pole.y as f32);
     mesh.vertices.push(anti_pole.z as f32);
+    let n = sphere_normal(anti_pole);
+    mesh.normals.extend_from_slice(&[n.x as f32, n.y as f32, n.z as f32]);
 
     // Create local coordinate system for longitude
     let up = cap_dir;
@@ -1612,6 +1680,8 @@ fn tessellate_large_spherical_cap(
             mesh.vertices.push(pt.x as f32);
             mesh.vertices.push(pt.y as f32);
             mesh.vertices.push(pt.z as f32);
+            let n = sphere_normal(pt);
+            mesh.normals.extend_from_slice(&[n.x as f32, n.y as f32, n.z as f32]);
         }
     }
 
@@ -1621,6 +1691,8 @@ fn tessellate_large_spherical_cap(
         mesh.vertices.push(p.x as f32);
         mesh.vertices.push(p.y as f32);
         mesh.vertices.push(p.z as f32);
+        let n = sphere_normal(*p);
+        mesh.normals.extend_from_slice(&[n.x as f32, n.y as f32, n.z as f32]);
     }
 
     let pole_idx = 0u32;
@@ -1813,6 +1885,20 @@ fn tessellate_conical_face(
     let mut mesh = TriangleMesh::new();
     let mut rows: Vec<Vec<u32>> = Vec::new();
 
+    // Helper to push normal for cone surface
+    let push_cone_normal =
+        |mesh: &mut TriangleMesh, u: f64, ref_dir: Vec3, y_dir: Vec3, axis: Vec3, half_angle: f64, reversed: bool| {
+            // Cone outward normal: radial direction rotated by (π/2 - half_angle) toward axis
+            let radial = u.cos() * ref_dir + u.sin() * y_dir;
+            let normal = half_angle.cos() * radial - half_angle.sin() * axis;
+            let (nx, ny, nz) = if reversed {
+                (-normal.x as f32, -normal.y as f32, -normal.z as f32)
+            } else {
+                (normal.x as f32, normal.y as f32, normal.z as f32)
+            };
+            mesh.normals.extend_from_slice(&[nx, ny, nz]);
+        };
+
     for j in 0..=n_height {
         let t = j as f64 / n_height as f64;
         let v = v_min + (v_max - v_min) * t;
@@ -1821,12 +1907,19 @@ fn tessellate_conical_face(
         let mut row = Vec::new();
 
         if r.abs() < 1e-12 {
-            // Apex point
+            // Apex point - use average normal (axis direction)
             let pt = apex + v * half_angle.cos() * axis;
             let idx = mesh.num_vertices() as u32;
             mesh.vertices.push(pt.x as f32);
             mesh.vertices.push(pt.y as f32);
             mesh.vertices.push(pt.z as f32);
+            // At apex, normal is along the axis (degenerate point)
+            let (nx, ny, nz) = if reversed {
+                (axis.x as f32, axis.y as f32, axis.z as f32)
+            } else {
+                (-axis.x as f32, -axis.y as f32, -axis.z as f32)
+            };
+            mesh.normals.extend_from_slice(&[nx, ny, nz]);
             row.push(idx);
         } else {
             let center = apex + v * half_angle.cos() * axis;
@@ -1837,6 +1930,7 @@ fn tessellate_conical_face(
                 mesh.vertices.push(pt.x as f32);
                 mesh.vertices.push(pt.y as f32);
                 mesh.vertices.push(pt.z as f32);
+                push_cone_normal(&mut mesh, u, ref_dir, y_dir, axis, half_angle, reversed);
                 row.push(idx);
             }
         }
@@ -1997,16 +2091,23 @@ fn tessellate_toroidal_face(
     // Get UV domain
     let ((u_min, u_max), (v_min, v_max)) = surface.domain();
 
-    // Generate grid of vertices
+    // Generate grid of vertices with analytical normals
     for j in 0..=n_v {
         let v = v_min + (v_max - v_min) * (j as f64 / n_v as f64);
         for i in 0..=n_u {
             let u = u_min + (u_max - u_min) * (i as f64 / n_u as f64);
             let uv = Point2::new(u, v);
             let pt = surface.evaluate(uv);
+            let normal = *surface.normal(uv);
             mesh.vertices.push(pt.x as f32);
             mesh.vertices.push(pt.y as f32);
             mesh.vertices.push(pt.z as f32);
+            let (nx, ny, nz) = if reversed {
+                (-normal.x as f32, -normal.y as f32, -normal.z as f32)
+            } else {
+                (normal.x as f32, normal.y as f32, normal.z as f32)
+            };
+            mesh.normals.extend_from_slice(&[nx, ny, nz]);
         }
     }
 
@@ -2059,7 +2160,7 @@ fn tessellate_bspline_face(
             let u = u_min + (u_max - u_min) * (i as f64 / n_u as f64);
             let uv = Point2::new(u, v);
             let pt = surface.evaluate(uv);
-            let normal = surface.normal(uv);
+            let normal = *surface.normal(uv);
 
             mesh.vertices.push(pt.x as f32);
             mesh.vertices.push(pt.y as f32);

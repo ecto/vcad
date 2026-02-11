@@ -450,20 +450,20 @@ export function SceneMesh({
     const positions = new Float32Array(mesh.positions);
     const indices = new Uint32Array(mesh.indices);
 
-    // Create temp geometry
-    const tempGeo = new THREE.BufferGeometry();
-    tempGeo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    tempGeo.setIndex(new THREE.BufferAttribute(indices, 1));
-
-    // Use simple vertex normals (faster than toCreasedNormals)
     geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     geo.setIndex(new THREE.BufferAttribute(indices, 1));
-    geo.computeVertexNormals();
+
+    // Use analytical surface normals from kernel when available (moiré-free),
+    // fall back to computed vertex normals otherwise
+    if (mesh.normals && mesh.normals.length === positions.length) {
+      const normals = new Float32Array(mesh.normals);
+      geo.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
+    } else {
+      geo.computeVertexNormals();
+    }
     geo.computeBoundingSphere();
     geo.computeBoundingBox();
     setGeoReady(true);
-
-    tempGeo.dispose();
 
     return () => {
       geo.dispose();
