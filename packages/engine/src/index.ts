@@ -248,6 +248,15 @@ export class Engine {
     return this.kernel.WasmAnnotationLayer;
   }
 
+  /**
+   * Get the CpuRayTracer class for direct BRep rendering (if available).
+   * Returns undefined if the cpu-raytrace feature is not enabled.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  get CpuRayTracer(): any {
+    return (this.kernel as any).CpuRayTracer;
+  }
+
   /** Project a mesh to a 2D view */
   projectMesh(mesh: TriangleMesh, viewDirection: string): ProjectedView | null {
     return this.kernel.projectMesh(

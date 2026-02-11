@@ -25,10 +25,11 @@ serde-wasm-bindgen = "0.6"
 ts-rs = { version = "10", optional = true }
 
 [features]
-default = ["console_error_panic_hook", "physics", "slicer", "cam", "gpu", "raytrace"]
+default = ["console_error_panic_hook", "physics", "slicer", "cam", "gpu", "raytrace", "cpu-raytrace"]
 console_error_panic_hook = ["dep:console_error_panic_hook"]
 gpu = ["dep:vcad-kernel-gpu"]
 raytrace = ["dep:vcad-kernel-raytrace", "dep:vcad-kernel-topo", "dep:vcad-kernel-geom", "dep:vcad-kernel-math", "dep:wgpu", "gpu", "vcad-kernel-raytrace/gpu"]
+cpu-raytrace = ["dep:vcad-kernel-raytrace", "dep:vcad-kernel-topo", "dep:vcad-kernel-geom", "dep:vcad-kernel-math"]
 physics = ["dep:vcad-kernel-physics"]
 slicer = ["dep:vcad-slicer", "dep:vcad-slicer-gcode"]
 cam = ["dep:vcad-kernel-cam"]
