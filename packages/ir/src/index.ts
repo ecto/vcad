@@ -500,8 +500,13 @@ export interface CustomEnvironment {
   intensity?: number;
 }
 
+/** No environment map — uses only direct lights. */
+export interface NoEnvironment {
+  type: "None";
+}
+
 /** Environment lighting configuration. */
-export type Environment = PresetEnvironment | CustomEnvironment;
+export type Environment = PresetEnvironment | CustomEnvironment | NoEnvironment;
 
 /** Directional light (sun-like, parallel rays). */
 export interface DirectionalLight {
@@ -1225,7 +1230,9 @@ function formatJoint(joint: Joint): string {
 /** Format scene settings. */
 function formatSceneSettings(lines: string[], scene: SceneSettings): void {
   if (scene.environment) {
-    if (scene.environment.type === 'Preset') {
+    if (scene.environment.type === 'None') {
+      lines.push('ENV none');
+    } else if (scene.environment.type === 'Preset') {
       lines.push(`ENV ${scene.environment.preset} ${scene.environment.intensity ?? 1.0}`);
     } else {
       lines.push(`ENV ${formatQuotedString(scene.environment.url)} ${scene.environment.intensity ?? 1.0}`);
@@ -1484,12 +1491,22 @@ function parseJoint(doc: Document, opcode: string, parts: string[], line: number
 }
 
 function parseEnvironment(doc: Document, parts: string[], line: number): void {
-  if (parts.length < 3) {
-    throw new CompactParseError(line, `ENV requires 2 args, got ${parts.length - 1}`);
+  if (parts.length < 2) {
+    throw new CompactParseError(line, `ENV requires at least 1 arg, got ${parts.length - 1}`);
   }
 
   if (!doc.scene) doc.scene = {};
   const presetOrUrl = parseStringArg(parts[1]);
+
+  if (presetOrUrl === 'none') {
+    doc.scene.environment = { type: 'None' };
+    return;
+  }
+
+  if (parts.length < 3) {
+    throw new CompactParseError(line, `ENV requires 2 args, got ${parts.length - 1}`);
+  }
+
   const intensity = parseFloat(parts[2]);
 
   const presets = ['studio', 'warehouse', 'apartment', 'park', 'city', 'dawn', 'night', 'sunset', 'forest', 'neutral'];

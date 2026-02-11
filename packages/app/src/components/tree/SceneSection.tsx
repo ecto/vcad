@@ -45,7 +45,7 @@ export function SceneSection() {
   const updateBackground = useDocumentStore((s) => s.updateBackground);
 
   const env = document.scene?.environment;
-  const preset = env?.type === "Preset" ? env.preset : "studio";
+  const envValue = env?.type === "None" ? "none" : env?.type === "Preset" ? env.preset : "none";
   const bg: Background = document.scene?.background ?? { type: "Environment" };
 
   const bgTypes: { type: Background["type"]; icon: typeof Image; label: string }[] = [
@@ -77,16 +77,22 @@ export function SceneSection() {
       {/* Environment */}
       <LabeledRow label="Environment">
         <select
-          value={preset}
-          onChange={(e) =>
-            updateEnvironment({
-              type: "Preset",
-              preset: e.target.value as EnvironmentPreset,
-              intensity: env?.intensity ?? 0.4,
-            })
-          }
+          value={envValue}
+          onChange={(e) => {
+            const val = e.target.value;
+            if (val === "none") {
+              updateEnvironment({ type: "None" });
+            } else {
+              updateEnvironment({
+                type: "Preset",
+                preset: val as EnvironmentPreset,
+                intensity: env?.type === "Preset" ? env.intensity ?? 0.4 : 0.4,
+              });
+            }
+          }}
           className="flex-1 min-w-0 px-1.5 py-0.5 text-xs bg-surface/50 rounded border-none focus:outline-none cursor-pointer capitalize"
         >
+          <option value="none" className="bg-surface">none</option>
           {PRESETS.map((p) => (
             <option key={p} value={p} className="bg-surface">
               {p}

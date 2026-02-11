@@ -73,7 +73,7 @@ interface EffectiveSceneSettings {
 
 // Default scene settings (smart defaults)
 const DEFAULT_SCENE_SETTINGS: EffectiveSceneSettings = {
-  environment: { type: "Preset", preset: "studio", intensity: 0.4 },
+  environment: { type: "None" },
   lights: [
     {
       id: "key",
@@ -773,9 +773,10 @@ export function ViewportContent() {
     [document.scene, isDark]
   );
 
-  // Get environment preset name for drei
+  // Get environment preset name for drei (null = no environment map)
   const environmentPreset = useMemo(() => {
     const env = sceneSettings.environment;
+    if (env.type === "None") return null;
     if (env.type === "Preset") {
       return ENVIRONMENT_PRESET_MAP[env.preset] ?? "studio";
     }
@@ -784,12 +785,15 @@ export function ViewportContent() {
 
   const environmentIntensity = useMemo(() => {
     const env = sceneSettings.environment;
+    if (env.type === "None") return 0;
     return env.intensity ?? 0.4;
   }, [sceneSettings.environment]);
 
   return (
     <>
       {/* Engine-independent content - renders immediately */}
+      {/* Ambient light when no environment map provides indirect illumination */}
+      {!environmentPreset && <ambientLight intensity={0.4} />}
       {/* Scene lights from document settings */}
       {sceneSettings.lights.map((light) => {
         if (light.enabled === false) return null;
@@ -908,13 +912,15 @@ export function ViewportContent() {
       )}
 
       {/* Environment lighting - wrapped in Suspense to not block initial render */}
-      <Suspense fallback={null}>
-        <Environment
-          preset={environmentPreset as "studio" | "warehouse" | "apartment" | "park" | "city" | "dawn" | "night" | "sunset" | "forest"}
-          environmentIntensity={environmentIntensity}
-          background={sceneSettings.background.type === "Environment"}
-        />
-      </Suspense>
+      {environmentPreset && (
+        <Suspense fallback={null}>
+          <Environment
+            preset={environmentPreset as "studio" | "warehouse" | "apartment" | "park" | "city" | "dawn" | "night" | "sunset" | "forest"}
+            environmentIntensity={environmentIntensity}
+            background={sceneSettings.background.type === "Environment"}
+          />
+        </Suspense>
+      )}
 
       {/* Custom background (if not using environment) */}
       {sceneSettings.background.type === "Solid" && (

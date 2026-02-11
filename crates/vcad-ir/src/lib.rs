@@ -509,6 +509,8 @@ pub enum Environment {
         #[serde(skip_serializing_if = "Option::is_none")]
         intensity: Option<f64>,
     },
+    /// No environment map — uses only direct lights.
+    None,
 }
 
 /// Type of light source.

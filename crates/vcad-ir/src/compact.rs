@@ -468,6 +468,9 @@ fn format_scene_settings(output: &mut String, scene: &SceneSettings) {
                 )
                 .unwrap();
             }
+            Environment::None => {
+                writeln!(output, "ENV none").unwrap();
+            }
         }
     }
 
@@ -1255,6 +1258,21 @@ fn parse_environment(
     parts: &[&str],
     line: usize,
 ) -> Result<(), CompactParseError> {
+    if parts.len() < 2 {
+        return Err(CompactParseError {
+            line,
+            message: format!("ENV requires at least 1 arg, got {}", parts.len() - 1),
+        });
+    }
+
+    let scene = doc.scene.get_or_insert_with(SceneSettings::default);
+    let preset_or_url = parse_string_arg(parts[1]);
+
+    if preset_or_url == "none" {
+        scene.environment = Some(Environment::None);
+        return Ok(());
+    }
+
     if parts.len() < 3 {
         return Err(CompactParseError {
             line,
@@ -1262,8 +1280,6 @@ fn parse_environment(
         });
     }
 
-    let scene = doc.scene.get_or_insert_with(SceneSettings::default);
-    let preset_or_url = parse_string_arg(parts[1]);
     let intensity = Some(parse_f64(parts[2], line)?);
 
     let env = match preset_or_url.as_str() {
