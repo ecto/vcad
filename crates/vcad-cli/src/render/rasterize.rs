@@ -121,6 +121,15 @@ impl Camera {
         self.update_position();
     }
 
+    /// Set camera orbit parameters directly.
+    pub fn set_orbit(&mut self, azimuth: f32, elevation: f32, distance: f32, target: Vec3) {
+        self.azimuth = azimuth;
+        self.elevation = elevation.clamp(-89.0, 89.0);
+        self.distance = distance.max(1.0);
+        self.target = target;
+        self.update_position();
+    }
+
     fn update_position(&mut self) {
         let az_rad = self.azimuth.to_radians();
         let el_rad = self.elevation.to_radians();

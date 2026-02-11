@@ -12,14 +12,16 @@ use crate::app::App;
 
 /// Draw the command input.
 pub fn draw_command(f: &mut Frame, area: Rect, app: &App) {
+    let in_command_mode = app.command_mode();
+
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(if app.command_mode {
+        .border_style(if in_command_mode {
             Style::default().fg(Color::Yellow)
         } else {
             Style::default().fg(Color::DarkGray)
         })
-        .title(if app.command_mode {
+        .title(if in_command_mode {
             " Command "
         } else {
             " : for command mode "
@@ -28,7 +30,7 @@ pub fn draw_command(f: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    if app.command_mode {
+    if in_command_mode {
         let input_line = Line::from(vec![
             Span::styled("> ", Style::default().fg(Color::Yellow)),
             Span::styled(

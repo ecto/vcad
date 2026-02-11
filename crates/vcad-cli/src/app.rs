@@ -16,6 +16,7 @@ use std::{
 use vcad_ir::{CsgOp, Document, Node, NodeId, SceneEntry, Vec3};
 
 use crate::render::{Camera, RenderBuffer, Triangle};
+use crate::tui::{TuiMode, SketchPlane};
 use crate::ui;
 
 /// Mesh data from evaluation.
@@ -34,10 +35,10 @@ pub struct App {
     pub camera: Camera,
     /// Whether the app is running.
     pub running: bool,
+    /// Current TUI mode.
+    pub mode: TuiMode,
     /// Command input buffer.
     pub command_input: String,
-    /// Whether command mode is active.
-    pub command_mode: bool,
     /// Status message.
     pub status: String,
     /// Cached evaluated meshes.
@@ -69,8 +70,8 @@ impl App {
             selected: HashSet::new(),
             camera: Camera::default(),
             running: true,
+            mode: TuiMode::Normal,
             command_input: String::new(),
-            command_mode: false,
             status: "Ready".to_string(),
             meshes: Vec::new(),
             undo_stack: Vec::new(),
@@ -373,6 +374,11 @@ impl App {
         triangles
     }
 
+    /// Check if currently in command input mode.
+    pub fn command_mode(&self) -> bool {
+        matches!(self.mode, TuiMode::Command)
+    }
+
     /// Get the list of parts (scene entries) for the tree view.
     pub fn get_parts(&self) -> Vec<(NodeId, String)> {
         self.document
@@ -665,122 +671,152 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) ->
         // Handle input
         if event::poll(Duration::from_millis(16))? {
             if let Event::Key(key) = event::read()? {
-                if app.command_mode {
-                    // Command input mode
-                    match key.code {
-                        KeyCode::Enter => {
-                            let cmd = app.command_input.clone();
-                            app.command_input.clear();
-                            app.command_mode = false;
-                            if let Err(e) = app.process_command(&cmd) {
-                                app.status = format!("Error: {}", e);
-                            }
-                        }
-                        KeyCode::Esc => {
-                            app.command_input.clear();
-                            app.command_mode = false;
-                        }
-                        KeyCode::Backspace => {
-                            app.command_input.pop();
-                        }
-                        KeyCode::Char(c) => {
-                            app.command_input.push(c);
-                        }
-                        _ => {}
-                    }
-                } else {
-                    // Normal mode
-                    match key.code {
-                        KeyCode::Char('q') => {
-                            app.running = false;
-                        }
-                        KeyCode::Char(':') | KeyCode::Char('/') => {
-                            app.command_mode = true;
-                        }
-                        KeyCode::Char('1') => {
-                            let id = app.add_cube(20.0)?;
-                            app.selected.clear();
-                            app.selected.insert(id);
-                        }
-                        KeyCode::Char('2') => {
-                            let id = app.add_cylinder(10.0, 20.0)?;
-                            app.selected.clear();
-                            app.selected.insert(id);
-                        }
-                        KeyCode::Char('3') => {
-                            let id = app.add_sphere(10.0)?;
-                            app.selected.clear();
-                            app.selected.insert(id);
-                        }
-                        KeyCode::Char('x') | KeyCode::Delete | KeyCode::Backspace => {
-                            app.delete_selected()?;
-                        }
-                        KeyCode::Char('u') => {
-                            app.undo()?;
-                        }
-                        KeyCode::Char('r') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            app.redo()?;
-                        }
-                        KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            app.save()?;
-                        }
-                        // Camera rotation
-                        KeyCode::Left => {
-                            app.camera.rotate_horizontal(-15.0);
-                        }
-                        KeyCode::Right => {
-                            app.camera.rotate_horizontal(15.0);
-                        }
-                        KeyCode::Up => {
-                            app.camera.rotate_vertical(15.0);
-                        }
-                        KeyCode::Down => {
-                            app.camera.rotate_vertical(-15.0);
-                        }
-                        // Zoom
-                        KeyCode::Char('+') | KeyCode::Char('=') => {
-                            app.camera.zoom(0.8);
-                        }
-                        KeyCode::Char('-') => {
-                            app.camera.zoom(1.25);
-                        }
-                        // Part selection
-                        KeyCode::Tab => {
-                            let parts = app.get_parts();
-                            if !parts.is_empty() {
-                                focused_part_index = (focused_part_index + 1) % parts.len();
-                                app.selected.clear();
-                                app.selected.insert(parts[focused_part_index].0);
-                            }
-                        }
-                        KeyCode::Esc => {
-                            app.selected.clear();
-                        }
-                        KeyCode::Enter => {
-                            let parts = app.get_parts();
-                            if focused_part_index < parts.len() {
-                                let id = parts[focused_part_index].0;
-                                if app.selected.contains(&id) {
-                                    app.selected.remove(&id);
-                                } else {
-                                    app.selected.insert(id);
+                match &mut app.mode {
+                    TuiMode::Command => {
+                        // Command input mode
+                        match key.code {
+                            KeyCode::Enter => {
+                                let cmd = app.command_input.clone();
+                                app.command_input.clear();
+                                app.mode = TuiMode::Normal;
+                                if let Err(e) = app.process_command(&cmd) {
+                                    app.status = format!("Error: {}", e);
                                 }
                             }
+                            KeyCode::Esc => {
+                                app.command_input.clear();
+                                app.mode = TuiMode::Normal;
+                            }
+                            KeyCode::Backspace => {
+                                app.command_input.pop();
+                            }
+                            KeyCode::Char(c) => {
+                                app.command_input.push(c);
+                            }
+                            _ => {}
                         }
-                        // WASD for translation
-                        KeyCode::Char('w') => {
-                            app.translate_selected(0.0, 0.0, 5.0)?;
+                    }
+                    TuiMode::Sketch(state) => {
+                        // Sketch mode
+                        match key.code {
+                            KeyCode::Esc => {
+                                app.mode = TuiMode::Normal;
+                                app.status = "Exited sketch mode".to_string();
+                            }
+                            KeyCode::Char(c) => {
+                                if state.handle_key(c) {
+                                    app.status = format!("Sketch tool: {}", state.tool_name());
+                                }
+                            }
+                            _ => {}
                         }
-                        KeyCode::Char('s') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            app.translate_selected(0.0, 0.0, -5.0)?;
+                    }
+                    TuiMode::Normal => {
+                        // Normal mode
+                        match key.code {
+                            KeyCode::Char('q') => {
+                                app.running = false;
+                            }
+                            KeyCode::Char(':') | KeyCode::Char('/') => {
+                                app.mode = TuiMode::Command;
+                            }
+                            // Enter sketch mode
+                            KeyCode::Char('S') if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                                app.mode = TuiMode::Sketch(crate::tui::SketchModeState::new(SketchPlane::XY));
+                                app.status = "Sketch mode (XY plane) - L:line R:rect C:circle".to_string();
+                            }
+                            KeyCode::Char('1') => {
+                                let id = app.add_cube(20.0)?;
+                                app.selected.clear();
+                                app.selected.insert(id);
+                            }
+                            KeyCode::Char('2') => {
+                                let id = app.add_cylinder(10.0, 20.0)?;
+                                app.selected.clear();
+                                app.selected.insert(id);
+                            }
+                            KeyCode::Char('3') => {
+                                let id = app.add_sphere(10.0)?;
+                                app.selected.clear();
+                                app.selected.insert(id);
+                            }
+                            KeyCode::Char('x') | KeyCode::Delete | KeyCode::Backspace => {
+                                app.delete_selected()?;
+                            }
+                            KeyCode::Char('u') => {
+                                app.undo()?;
+                            }
+                            KeyCode::Char('r') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                app.redo()?;
+                            }
+                            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                app.save()?;
+                            }
+                            // Camera rotation
+                            KeyCode::Left => {
+                                app.camera.rotate_horizontal(-15.0);
+                            }
+                            KeyCode::Right => {
+                                app.camera.rotate_horizontal(15.0);
+                            }
+                            KeyCode::Up => {
+                                app.camera.rotate_vertical(15.0);
+                            }
+                            KeyCode::Down => {
+                                app.camera.rotate_vertical(-15.0);
+                            }
+                            // Zoom
+                            KeyCode::Char('+') | KeyCode::Char('=') => {
+                                app.camera.zoom(0.8);
+                            }
+                            KeyCode::Char('-') => {
+                                app.camera.zoom(1.25);
+                            }
+                            // Part selection
+                            KeyCode::Tab => {
+                                let parts = app.get_parts();
+                                if !parts.is_empty() {
+                                    focused_part_index = (focused_part_index + 1) % parts.len();
+                                    app.selected.clear();
+                                    app.selected.insert(parts[focused_part_index].0);
+                                }
+                            }
+                            KeyCode::Esc => {
+                                app.selected.clear();
+                            }
+                            KeyCode::Enter => {
+                                let parts = app.get_parts();
+                                if focused_part_index < parts.len() {
+                                    let id = parts[focused_part_index].0;
+                                    if app.selected.contains(&id) {
+                                        app.selected.remove(&id);
+                                    } else {
+                                        app.selected.insert(id);
+                                    }
+                                }
+                            }
+                            // WASD for translation
+                            KeyCode::Char('w') => {
+                                app.translate_selected(0.0, 0.0, 5.0)?;
+                            }
+                            KeyCode::Char('s') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                app.translate_selected(0.0, 0.0, -5.0)?;
+                            }
+                            KeyCode::Char('a') => {
+                                app.translate_selected(-5.0, 0.0, 0.0)?;
+                            }
+                            KeyCode::Char('d') => {
+                                app.translate_selected(5.0, 0.0, 0.0)?;
+                            }
+                            _ => {}
                         }
-                        KeyCode::Char('a') => {
-                            app.translate_selected(-5.0, 0.0, 0.0)?;
+                    }
+                    // Other modes - just handle Esc to exit for now
+                    _ => {
+                        if key.code == KeyCode::Esc {
+                            app.mode = TuiMode::Normal;
+                            app.status = "Ready".to_string();
                         }
-                        KeyCode::Char('d') => {
-                            app.translate_selected(5.0, 0.0, 0.0)?;
-                        }
-                        _ => {}
                     }
                 }
             }

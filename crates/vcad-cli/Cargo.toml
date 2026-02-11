@@ -4,24 +4,34 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Terminal-based CAD editor with TUI and Sixel graphics"
+description = "Full-featured parametric CAD in the terminal"
 
 [[bin]]
 name = "vcad"
 path = "src/main.rs"
 
 [dependencies]
+# Core kernel crates
 vcad = { path = "../vcad" }
 vcad-ir = { path = "../vcad-ir" }
 vcad-kernel = { path = "../vcad-kernel" }
 vcad-kernel-urdf = { path = "../vcad-kernel-urdf" }
+vcad-kernel-sketch = { path = "../vcad-kernel-sketch" }
+vcad-kernel-constraints = { path = "../vcad-kernel-constraints" }
+vcad-kernel-physics = { path = "../vcad-kernel-physics" }
+vcad-kernel-cam = { path = "../vcad-kernel-cam" }
+vcad-slicer = { path = "../vcad-slicer" }
+vcad-slicer-gcode = { path = "../vcad-slicer-gcode" }
 
-# TUI
+# TUI framework
 ratatui = "0.29"
 crossterm = "0.28"
 
-# CLI
+# CLI parsing
 clap = { version = "4", features = ["derive"] }
+
+# REPL
+rustyline = "14"
 
 # Serialization
 serde.workspace = true
@@ -32,6 +42,8 @@ anyhow.workspace = true
 thiserror.workspace = true
 
 # Image/graphics
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+base64 = "0.22"
 
 [dev-dependencies]
+tempfile = "3"
