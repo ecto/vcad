@@ -60,7 +60,6 @@ import { useNotificationStore } from "@/stores/notification-store";
 import { useOnboardingStore } from "@/stores/onboarding-store";
 import { useSlicerStore } from "@/stores/slicer-store";
 import { useCamStore } from "@/stores/cam-store";
-import { useChangelogStore, CURRENT_VERSION } from "@/stores/changelog-store";
 import { WhatsNewPanel } from "@/components/WhatsNewPanel";
 
 function useThemeSync() {
@@ -500,22 +499,6 @@ export function App() {
     }
   }, [initialized, hasParts, guidedFlowActive, sketchActive]);
 
-  // Auto-open What's New panel on first run or version update
-  useEffect(() => {
-    if (!initialized) return;
-    const { lastSeenVersion, openPanel, getUnreadCount } = useChangelogStore.getState();
-    // Show panel if user hasn't seen current version and there are unread entries
-    if (lastSeenVersion !== CURRENT_VERSION && getUnreadCount() > 0) {
-      // Delay slightly so it doesn't compete with welcome modal
-      const timer = setTimeout(() => {
-        // Only show if welcome modal isn't open
-        if (!aboutOpen) {
-          openPanel();
-        }
-      }, 1500);
-      return () => clearTimeout(timer);
-    }
-  }, [initialized, aboutOpen]);
 
   // Only block on fatal error - let viewport render while engine loads
   if (error && !engineReady) return <ErrorScreen message={error} />;
