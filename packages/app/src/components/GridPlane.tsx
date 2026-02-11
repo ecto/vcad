@@ -1,27 +1,9 @@
-import { useMemo, useRef } from "react";
-import { useFrame, useThree } from "@react-three/fiber";
+import { useMemo } from "react";
 import { Grid, Line } from "@react-three/drei";
 import { useTheme } from "@/hooks/useTheme";
 
 export function GridPlane() {
   const { isDark } = useTheme();
-  const { camera } = useThree();
-  const cellSizeRef = useRef(10);
-  const forceUpdateRef = useRef(0);
-
-  // Update cell size based on camera distance (only when it changes significantly)
-  useFrame(() => {
-    const distance = camera.position.length();
-    // Compute adaptive cell size: powers of 10 based on distance
-    const newCellSize = Math.pow(10, Math.floor(Math.log10(Math.max(1, distance / 5))));
-    const clamped = Math.max(1, Math.min(1000, newCellSize));
-
-    if (clamped !== cellSizeRef.current) {
-      cellSizeRef.current = clamped;
-      // Force re-render only when cell size actually changes
-      forceUpdateRef.current += 1;
-    }
-  });
 
   // Axis lines at origin - RGB convention (X=red, Y=green, Z=blue)
   const xAxisPoints = useMemo(
@@ -51,7 +33,6 @@ export function GridPlane() {
     [],
   );
 
-  // Use fixed grid for now to avoid re-render issues
   return (
     <>
       <Grid

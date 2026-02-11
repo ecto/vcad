@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { useFrame, ThreeEvent } from "@react-three/fiber";
+import { useFrame, useThree, ThreeEvent } from "@react-three/fiber";
 import * as THREE from "three";
 import { useSketchStore } from "@vcad/core";
 import type { AxisAlignedPlane } from "@vcad/core";
@@ -26,6 +26,7 @@ function GizmoPlane({ plane, rotation, position }: PlaneProps) {
   const meshRef = useRef<THREE.Mesh>(null);
   const enterSketchMode = useSketchStore((s) => s.enterSketchMode);
   const sketchActive = useSketchStore((s) => s.active);
+  const { invalidate } = useThree();
 
   const handleClick = (e: ThreeEvent<MouseEvent>) => {
     e.stopPropagation();
@@ -45,12 +46,18 @@ function GizmoPlane({ plane, rotation, position }: PlaneProps) {
     enterSketchMode(plane, undefined, flipped);
   };
 
-  // Animate opacity on hover
+  // Animate opacity on hover — request frames until converged
   useFrame(() => {
     if (!meshRef.current) return;
     const material = meshRef.current.material as THREE.MeshBasicMaterial;
     const targetOpacity = hovered ? GIZMO_HOVER_OPACITY : GIZMO_OPACITY;
-    material.opacity += (targetOpacity - material.opacity) * 0.2;
+    const delta = targetOpacity - material.opacity;
+    if (Math.abs(delta) < 0.01) {
+      material.opacity = targetOpacity;
+      return;
+    }
+    material.opacity += delta * 0.2;
+    invalidate();
   });
 
   return (

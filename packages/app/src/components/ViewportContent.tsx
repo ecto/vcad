@@ -199,7 +199,7 @@ export function ViewportContent() {
   const raytraceAvailable = useUiStore((s) => s.raytraceAvailable);
   const sketchActive = useSketchStore((s) => s.active);
   const orbitRef = useRef<OrbitControlsImpl>(null);
-  const { camera } = useThree();
+  const { camera, invalidate } = useThree();
   const { isDark } = useTheme();
 
   // Camera settings from store
@@ -211,6 +211,10 @@ export function ViewportContent() {
   // Raycaster for zoom-to-cursor
   const raycasterRef = useRef(new Raycaster());
   const mouseRef = useRef(new Vector2());
+
+  // Stable ref for invalidate so wheel effect closure always has current value
+  const invalidateRef = useRef(invalidate);
+  invalidateRef.current = invalidate;
 
   // Reusable objects to avoid GC pressure (wheel fires at 60+ Hz)
   const sphericalRef = useRef(new Spherical());
@@ -394,6 +398,9 @@ export function ViewportContent() {
       cameraPositionGoalRef.current = null;
       // Re-enable expensive effects now that animation is complete
       setIsCameraMoving(false);
+    } else {
+      // Request next frame to continue animation (demand mode)
+      invalidate();
     }
   });
 
@@ -414,6 +421,7 @@ export function ViewportContent() {
       requestAnimationFrame(() => {
         pendingUpdate = false;
         controls.update();
+        invalidateRef.current();
       });
     };
 
@@ -455,6 +463,7 @@ export function ViewportContent() {
       camera.position.copy(target).add(offset);
       camera.lookAt(target);
       controls.update();
+      invalidateRef.current();
 
       requestAnimationFrame(animate);
     };

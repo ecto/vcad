@@ -204,6 +204,7 @@ export function Viewport() {
   return (
     <div ref={containerRef} className="absolute inset-0">
       <Canvas
+        frameloop="demand"
         camera={{ position: [50, 50, 50], fov: 50, near: 0.1, far: 10000 }}
         onPointerMissed={() => clearSelection()}
         onCreated={() => performance.mark("canvas-ready")}

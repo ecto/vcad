@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useRef, useCallback } from "react";
-import { useFrame } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import {
   PhysicsEnv,
   isPhysicsAvailable,
@@ -197,6 +197,8 @@ export function usePhysicsSimulation() {
     [setObservation, setJointStates]
   );
 
+  const { invalidate } = useThree();
+
   // Simulation loop using useFrame
   useFrame((_, delta) => {
     const env = envRef.current;
@@ -244,6 +246,9 @@ export function usePhysicsSimulation() {
 
         accumulatorRef.current -= timestep;
       }
+
+      // Keep requesting frames while simulation is running (demand mode)
+      invalidate();
     }
   });
 
