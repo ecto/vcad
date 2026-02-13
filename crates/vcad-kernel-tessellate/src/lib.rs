@@ -233,14 +233,6 @@ fn tessellate_planar_face_with_geom(
     let dot = geom_normal.dot(&expected_normal);
     let winding_matches = dot > 0.0;
 
-    // Debug: print when winding mismatch is detected
-    if !winding_matches {
-        eprintln!(
-            "[TESSELLATE] Face {:?}: winding mismatch detected (dot={:.4}), flipping reversed={} to {}",
-            face_id, dot, reversed, !reversed
-        );
-    }
-
     // If winding doesn't match, flip the reversed flag
     let effective_reversed = if winding_matches { reversed } else { !reversed };
 
@@ -2358,9 +2350,6 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
     let params = TessellationParams::from_segments(segments);
     let solid = &brep.topology.solids[brep.solid_id];
     let shell = &brep.topology.shells[solid.outer_shell];
-
-    // DEBUG: print which shell we're tessellating
-    eprintln!("TESSELLATE_BREP: shell has {} faces: {:?}", shell.faces.len(), shell.faces);
 
     let mut mesh = TriangleMesh::new();
 

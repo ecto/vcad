@@ -1044,13 +1044,7 @@ fn evaluate_node(doc: &Document, node_id: NodeId) -> Result<Option<vcad_kernel::
             let c = evaluate_node(doc, *child)?;
             c.map(|s| s.chamfer(*distance))
         }
-        CsgOp::StepImport { path } => match Solid::from_step(path) {
-            Ok(solid) => Some(solid),
-            Err(e) => {
-                eprintln!("Failed to import STEP file '{}': {}", path, e);
-                None
-            }
-        },
+        CsgOp::StepImport { path } => Solid::from_step(path).ok(),
         CsgOp::Text2D { .. } => None,
     };
 
