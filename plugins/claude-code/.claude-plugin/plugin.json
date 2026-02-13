@@ -1,0 +1,8 @@
+{
+  "name": "vcad",
+  "description": "Parametric CAD for AI agents. Create 3D parts, assemblies, and physics simulations.",
+  "version": "0.8.0",
+  "author": { "name": "vcad" },
+  "homepage": "https://vcad.io",
+  "repository": "https://github.com/vcad-io/vcad"
+}

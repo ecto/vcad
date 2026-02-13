@@ -166,14 +166,20 @@ The `at` parameter accepts three formats:
 
 ## Setup
 
-Add the vcad MCP server to your Claude Code config:
+**Recommended:** Install the vcad Claude Code plugin for zero-config setup (includes MCP server, skills, and slash commands):
+
+```bash
+claude plugin add vcad
+```
+
+**Manual setup:** Add the vcad MCP server to your Claude Code config:
 
 ```json
 {
   "mcpServers": {
     "vcad": {
       "command": "npx",
-      "args": ["-y", "@anthropic/mcp-server-vcad"]
+      "args": ["-y", "@vcad/mcp"]
     }
   }
 }

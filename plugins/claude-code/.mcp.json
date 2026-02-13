@@ -1,0 +1,6 @@
+{
+  "vcad": {
+    "command": "npx",
+    "args": ["-y", "@vcad/mcp"]
+  }
+}
