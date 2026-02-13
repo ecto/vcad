@@ -54,6 +54,8 @@ pub struct Triangle {
     pub v1: [f32; 3],
     pub v2: [f32; 3],
     pub color: [u8; 3],
+    /// Object pick ID (0 = background, >0 = object).
+    pub pick_id: u32,
 }
 
 /// Camera for 3D viewing.
@@ -68,11 +70,11 @@ pub struct Camera {
     /// Field of view in degrees.
     pub fov: f32,
     /// Distance from target (for orbit controls).
-    distance: f32,
+    pub distance: f32,
     /// Horizontal angle in degrees.
-    azimuth: f32,
+    pub azimuth: f32,
     /// Vertical angle in degrees.
-    elevation: f32,
+    pub elevation: f32,
 }
 
 impl Default for Camera {
@@ -130,7 +132,21 @@ impl Camera {
         self.update_position();
     }
 
-    fn update_position(&mut self) {
+    /// Create a bitwise snapshot for cheap change detection.
+    pub fn snapshot(&self) -> CameraSnapshot {
+        CameraSnapshot {
+            azimuth: self.azimuth.to_bits(),
+            elevation: self.elevation.to_bits(),
+            distance: self.distance.to_bits(),
+            target: [
+                self.target.x.to_bits(),
+                self.target.y.to_bits(),
+                self.target.z.to_bits(),
+            ],
+        }
+    }
+
+    pub fn update_position(&mut self) {
         let az_rad = self.azimuth.to_radians();
         let el_rad = self.elevation.to_radians();
 
@@ -142,12 +158,23 @@ impl Camera {
     }
 }
 
-/// RGBA pixel buffer with depth.
+/// Bitwise camera state for cheap equality comparison.
+#[derive(Clone, PartialEq, Eq)]
+pub struct CameraSnapshot {
+    azimuth: u32,
+    elevation: u32,
+    distance: u32,
+    target: [u32; 3],
+}
+
+/// RGBA pixel buffer with depth and pick IDs.
 pub struct RenderBuffer {
     pub width: u32,
     pub height: u32,
     pub pixels: Vec<u8>,
     pub depth: Vec<f32>,
+    /// Object ID per pixel for click-to-select (0 = background).
+    pub pick_ids: Vec<u32>,
 }
 
 impl RenderBuffer {
@@ -158,6 +185,7 @@ impl RenderBuffer {
             height,
             pixels: vec![0; size * 4],
             depth: vec![f32::INFINITY; size],
+            pick_ids: vec![0; size],
         }
     }
 
@@ -169,21 +197,57 @@ impl RenderBuffer {
             self.pixels[i * 4 + 2] = b;
             self.pixels[i * 4 + 3] = 255;
             self.depth[i] = f32::INFINITY;
+            self.pick_ids[i] = 0;
         }
     }
 
-    fn set_pixel(&mut self, x: u32, y: u32, z: f32, r: u8, g: u8, b: u8) {
+    fn set_pixel_with_id(&mut self, x: u32, y: u32, z: f32, color: [u8; 3], pick_id: u32) {
         if x >= self.width || y >= self.height {
             return;
         }
         let idx = (y * self.width + x) as usize;
         if z < self.depth[idx] {
             self.depth[idx] = z;
-            self.pixels[idx * 4] = r;
-            self.pixels[idx * 4 + 1] = g;
-            self.pixels[idx * 4 + 2] = b;
+            self.pixels[idx * 4] = color[0];
+            self.pixels[idx * 4 + 1] = color[1];
+            self.pixels[idx * 4 + 2] = color[2];
             self.pixels[idx * 4 + 3] = 255;
+            self.pick_ids[idx] = pick_id;
         }
+    }
+
+    /// Look up the pick ID at a terminal cell position (half-block coordinates).
+    pub fn pick_at(&self, col: u16, row: u16) -> u32 {
+        // Half-block: each terminal row = 2 pixel rows
+        let px = col as u32;
+        let py = (row as u32) * 2;
+        if px < self.width && py < self.height {
+            let idx = (py * self.width + px) as usize;
+            if idx < self.pick_ids.len() {
+                return self.pick_ids[idx];
+            }
+        }
+        0
+    }
+
+    /// Look up pick ID mapping terminal coords to pixel coords based on protocol.
+    pub fn pick_at_for_protocol(
+        &self,
+        col: u16,
+        row: u16,
+        cell_width: u32,
+        cell_height: u32,
+    ) -> u32 {
+        // Map terminal cell center to pixel buffer
+        let px = col as u32 * cell_width + cell_width / 2;
+        let py = row as u32 * cell_height + cell_height / 2;
+        if px < self.width && py < self.height {
+            let idx = (py * self.width + px) as usize;
+            if idx < self.pick_ids.len() {
+                return self.pick_ids[idx];
+            }
+        }
+        0
     }
 }
 
@@ -275,16 +339,17 @@ fn edge_function(a: (f32, f32), b: (f32, f32), c: (f32, f32)) -> f32 {
 pub fn render_scene(buffer: &mut RenderBuffer, triangles: &[Triangle], camera: &Camera) {
     buffer.clear(30, 30, 35);
 
-    if triangles.is_empty() {
-        // Draw a grid pattern when empty
-        draw_grid(buffer);
-        return;
-    }
-
     let aspect = buffer.width as f32 / buffer.height as f32;
     let view = Mat4::look_at(camera.position, camera.target, camera.up);
     let proj = Mat4::perspective(camera.fov * PI / 180.0, aspect, 0.1, 1000.0);
     let mvp = proj.multiply(&view);
+
+    // Ground grid first (behind objects)
+    render_ground_grid(buffer, camera, &mvp);
+
+    if triangles.is_empty() {
+        return;
+    }
 
     // Light direction (from top-right-front)
     let light_dir = Vec3::new(0.5, 0.8, 0.3).normalize();
@@ -360,13 +425,305 @@ pub fn render_scene(buffer: &mut RenderBuffer, triangles: &[Triangle], camera: &
                 if inside {
                     // Interpolate depth
                     let z = (w0 * s0.2 + w1 * s1.2 + w2 * s2.2) / screen_area;
-                    buffer.set_pixel(x, y, z, lit_r, lit_g, lit_b);
+                    buffer.set_pixel_with_id(x, y, z, [lit_r, lit_g, lit_b], tri.pick_id);
+                }
+            }
+        }
+    }
+
+    // Axis indicator (bottom-left corner, rendered last so it's on top)
+    render_axis_indicator(buffer, camera, 4, buffer.height.saturating_sub(34), 30);
+}
+
+/// Render a ground plane grid on the XZ plane (Y=0) with adaptive spacing.
+fn render_ground_grid(buffer: &mut RenderBuffer, camera: &Camera, mvp: &Mat4) {
+    let dist = camera.distance;
+    let spacing = if dist < 50.0 {
+        5.0f32
+    } else if dist < 200.0 {
+        10.0
+    } else if dist < 500.0 {
+        50.0
+    } else {
+        100.0
+    };
+
+    let major_every = 5;
+    let half_extent = (dist * 1.5 / spacing).ceil() as i32;
+    let w = buffer.width as f32;
+    let h = buffer.height as f32;
+    let line_half = 0.15 * spacing; // thin line width in world units
+
+    for i in -half_extent..=half_extent {
+        let coord = i as f32 * spacing;
+        let is_major = i % major_every == 0;
+        let color: [u8; 3] = if is_major {
+            [60, 60, 65]
+        } else {
+            [40, 40, 44]
+        };
+
+        // X-aligned line at z=coord: thin quad from (lo, 0, coord-hw) to (hi, 0, coord+hw)
+        let lo = -half_extent as f32 * spacing;
+        let hi = half_extent as f32 * spacing;
+
+        // Z-line (parallel to X axis)
+        rasterize_grid_line(
+            buffer, mvp, w, h,
+            Vec3::new(lo, 0.0, coord - line_half),
+            Vec3::new(hi, 0.0, coord - line_half),
+            Vec3::new(hi, 0.0, coord + line_half),
+            Vec3::new(lo, 0.0, coord + line_half),
+            color,
+        );
+
+        // X-line (parallel to Z axis)
+        rasterize_grid_line(
+            buffer, mvp, w, h,
+            Vec3::new(coord - line_half, 0.0, lo),
+            Vec3::new(coord + line_half, 0.0, lo),
+            Vec3::new(coord + line_half, 0.0, hi),
+            Vec3::new(coord - line_half, 0.0, hi),
+            color,
+        );
+    }
+}
+
+/// Rasterize a thin grid-line quad (two triangles, no lighting, pick_id=0).
+#[allow(clippy::too_many_arguments)]
+fn rasterize_grid_line(
+    buffer: &mut RenderBuffer,
+    mvp: &Mat4,
+    w: f32,
+    h: f32,
+    v0: Vec3,
+    v1: Vec3,
+    v2: Vec3,
+    v3: Vec3,
+    color: [u8; 3],
+) {
+    let verts = [v0, v1, v2, v3];
+    let tris = [(0, 1, 2), (0, 2, 3)];
+
+    for (a, b, c) in tris {
+        let (p0x, p0y, p0z, p0w) = mvp.transform_point(verts[a]);
+        let (p1x, p1y, p1z, p1w) = mvp.transform_point(verts[b]);
+        let (p2x, p2y, p2z, p2w) = mvp.transform_point(verts[c]);
+
+        if p0w < 0.1 || p1w < 0.1 || p2w < 0.1 {
+            continue;
+        }
+
+        let s0 = ((p0x + 1.0) * 0.5 * w, (1.0 - p0y) * 0.5 * h, p0z);
+        let s1 = ((p1x + 1.0) * 0.5 * w, (1.0 - p1y) * 0.5 * h, p1z);
+        let s2 = ((p2x + 1.0) * 0.5 * w, (1.0 - p2y) * 0.5 * h, p2z);
+
+        let screen_area = edge_function((s0.0, s0.1), (s1.0, s1.1), (s2.0, s2.1));
+        if screen_area.abs() < 0.001 {
+            continue;
+        }
+
+        let min_x = s0.0.min(s1.0).min(s2.0).max(0.0) as u32;
+        let max_x = s0.0.max(s1.0).max(s2.0).min(w - 1.0) as u32;
+        let min_y = s0.1.min(s1.1).min(s2.1).max(0.0) as u32;
+        let max_y = s0.1.max(s1.1).max(s2.1).min(h - 1.0) as u32;
+
+        for y in min_y..=max_y {
+            for x in min_x..=max_x {
+                let p = (x as f32 + 0.5, y as f32 + 0.5);
+                let w0 = edge_function((s1.0, s1.1), (s2.0, s2.1), p);
+                let w1 = edge_function((s2.0, s2.1), (s0.0, s0.1), p);
+                let w2 = edge_function((s0.0, s0.1), (s1.0, s1.1), p);
+
+                let inside = (w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0)
+                    || (w0 <= 0.0 && w1 <= 0.0 && w2 <= 0.0);
+
+                if inside {
+                    let z = (w0 * s0.2 + w1 * s1.2 + w2 * s2.2) / screen_area;
+                    buffer.set_pixel_with_id(x, y, z, color, 0);
                 }
             }
         }
     }
 }
 
+/// Render an axis orientation indicator (X=red, Y=green, Z=blue) in a sub-region.
+fn render_axis_indicator(
+    buffer: &mut RenderBuffer,
+    camera: &Camera,
+    corner_x: u32,
+    corner_y: u32,
+    size: u32,
+) {
+    if size < 8 || corner_x + size > buffer.width || corner_y + size > buffer.height {
+        return;
+    }
+
+    // Use the same view rotation as the main camera, but fixed orthographic
+    let view_rot = Mat4::look_at(
+        camera.position.sub(camera.target).normalize(),
+        Vec3::new(0.0, 0.0, 0.0),
+        camera.up,
+    );
+
+    let axes: [([f32; 3], [u8; 3], char); 3] = [
+        ([1.0, 0.0, 0.0], [220, 60, 60], 'X'),   // X = red
+        ([0.0, 1.0, 0.0], [60, 200, 60], 'Y'),    // Y = green
+        ([0.0, 0.0, 1.0], [60, 100, 220], 'Z'),   // Z = blue
+    ];
+
+    let center_x = corner_x + size / 2;
+    let center_y = corner_y + size / 2;
+    let axis_len = (size as f32) * 0.38;
+
+    // Sort axes back-to-front for correct overlap
+    let mut sorted_axes: Vec<(usize, f32)> = (0..3)
+        .map(|i| {
+            let a = axes[i].0;
+            let v = Vec3::new(a[0], a[1], a[2]);
+            let (_, _, z, _) = view_rot.transform_point(v);
+            (i, z)
+        })
+        .collect();
+    sorted_axes.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    for (idx, _) in sorted_axes {
+        let (dir, color, label) = &axes[idx];
+        let v = Vec3::new(dir[0], dir[1], dir[2]);
+        let (sx, sy, _, _) = view_rot.transform_point(v);
+
+        // Screen endpoint
+        let ex = center_x as f32 + sx * axis_len;
+        let ey = center_y as f32 - sy * axis_len; // Y flipped
+
+        // Draw line from center to endpoint (Bresenham)
+        draw_line(
+            buffer,
+            center_x as i32,
+            center_y as i32,
+            ex as i32,
+            ey as i32,
+            *color,
+        );
+
+        // Draw a small circle/dot at the tip
+        let tip_x = ex as i32;
+        let tip_y = ey as i32;
+        for dy in -1..=1i32 {
+            for dx in -1..=1i32 {
+                let px = (tip_x + dx) as u32;
+                let py = (tip_y + dy) as u32;
+                if px < buffer.width && py < buffer.height {
+                    let idx = (py * buffer.width + px) as usize;
+                    buffer.pixels[idx * 4] = color[0];
+                    buffer.pixels[idx * 4 + 1] = color[1];
+                    buffer.pixels[idx * 4 + 2] = color[2];
+                    buffer.pick_ids[idx] = 0;
+                }
+            }
+        }
+
+        // Draw label 4px past tip
+        let label_x = (ex + sx * 5.0) as i32;
+        let label_y = (ey - sy * 5.0) as i32;
+        draw_tiny_char(buffer, label_x - 2, label_y - 3, *label, *color);
+    }
+}
+
+/// Bresenham line drawing.
+fn draw_line(buffer: &mut RenderBuffer, x0: i32, y0: i32, x1: i32, y1: i32, color: [u8; 3]) {
+    let dx = (x1 - x0).abs();
+    let dy = -(y1 - y0).abs();
+    let sx = if x0 < x1 { 1 } else { -1 };
+    let sy = if y0 < y1 { 1 } else { -1 };
+    let mut err = dx + dy;
+    let mut x = x0;
+    let mut y = y0;
+
+    loop {
+        if x >= 0 && y >= 0 {
+            let px = x as u32;
+            let py = y as u32;
+            if px < buffer.width && py < buffer.height {
+                let idx = (py * buffer.width + px) as usize;
+                buffer.pixels[idx * 4] = color[0];
+                buffer.pixels[idx * 4 + 1] = color[1];
+                buffer.pixels[idx * 4 + 2] = color[2];
+                buffer.depth[idx] = -1.0; // Always on top
+                buffer.pick_ids[idx] = 0;
+            }
+        }
+        if x == x1 && y == y1 {
+            break;
+        }
+        let e2 = 2 * err;
+        if e2 >= dy {
+            err += dy;
+            x += sx;
+        }
+        if e2 <= dx {
+            err += dx;
+            y += sy;
+        }
+    }
+}
+
+/// Minimal 5x7 bitmap font for axis labels (X, Y, Z only).
+fn draw_tiny_char(buffer: &mut RenderBuffer, x: i32, y: i32, ch: char, color: [u8; 3]) {
+    // 5-wide bitmaps, 7 rows each
+    let bitmap: &[u8] = match ch {
+        'X' => &[
+            0b10001,
+            0b01010,
+            0b00100,
+            0b00100,
+            0b00100,
+            0b01010,
+            0b10001,
+        ],
+        'Y' => &[
+            0b10001,
+            0b01010,
+            0b00100,
+            0b00100,
+            0b00100,
+            0b00100,
+            0b00100,
+        ],
+        'Z' => &[
+            0b11111,
+            0b00001,
+            0b00010,
+            0b00100,
+            0b01000,
+            0b10000,
+            0b11111,
+        ],
+        _ => return,
+    };
+
+    for (row, &bits) in bitmap.iter().enumerate() {
+        for col in 0..5 {
+            if bits & (1 << (4 - col)) != 0 {
+                let px = x + col;
+                let py = y + row as i32;
+                if px >= 0 && py >= 0 {
+                    let px = px as u32;
+                    let py = py as u32;
+                    if px < buffer.width && py < buffer.height {
+                        let idx = (py * buffer.width + px) as usize;
+                        buffer.pixels[idx * 4] = color[0];
+                        buffer.pixels[idx * 4 + 1] = color[1];
+                        buffer.pixels[idx * 4 + 2] = color[2];
+                        buffer.pick_ids[idx] = 0;
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[allow(dead_code)]
 fn draw_grid(buffer: &mut RenderBuffer) {
     let w = buffer.width;
     let h = buffer.height;
@@ -496,6 +853,7 @@ mod tests {
             v1: [10.0, -10.0, 0.0],
             v2: [0.0, 10.0, 0.0],
             color: [180, 180, 190],
+            pick_id: 1,
         }];
 
         // This should not panic

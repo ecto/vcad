@@ -11,20 +11,21 @@ name = "vcad"
 path = "src/main.rs"
 
 [dependencies]
-# Core kernel crates
+# Core crates
 vcad = { path = "../vcad" }
 vcad-ir = { path = "../vcad-ir" }
 vcad-kernel = { path = "../vcad-kernel" }
+vcad-app = { path = "../vcad-app" }
 vcad-kernel-urdf = { path = "../vcad-kernel-urdf" }
 vcad-kernel-sketch = { path = "../vcad-kernel-sketch" }
 vcad-kernel-constraints = { path = "../vcad-kernel-constraints" }
 vcad-kernel-physics = { path = "../vcad-kernel-physics" }
 vcad-kernel-cam = { path = "../vcad-kernel-cam" }
+vcad-kernel-raytrace = { path = "../vcad-kernel-raytrace" }
 vcad-slicer = { path = "../vcad-slicer" }
 vcad-slicer-gcode = { path = "../vcad-slicer-gcode" }
 
 # TUI framework
-ratatui = "0.29"
 crossterm = "0.28"
 
 # CLI parsing

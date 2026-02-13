@@ -33,6 +33,7 @@ members = [
     "crates/vcad-slicer-wasm",
     "crates/vcad-kernel-cam",
     "crates/vcad-kernel-stocksim",
+    "crates/vcad-app",
     "crates/stepperoni",
 ]
 
@@ -82,4 +83,5 @@ vcad-slicer-wasm = { path = "crates/vcad-slicer-wasm" }
 vcad-kernel-cam = { path = "crates/vcad-kernel-cam" }
 vcad-kernel-stocksim = { path = "crates/vcad-kernel-stocksim" }
 vcad-kernel-text = { path = "crates/vcad-kernel-text" }
+vcad-app = { path = "crates/vcad-app" }
 stepperoni = { path = "crates/stepperoni" }

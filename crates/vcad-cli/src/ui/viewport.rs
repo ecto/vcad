@@ -1,64 +1,104 @@
-//! 3D viewport widget.
+//! 3D viewport rendering — HalfBlock (true-color) and Braille (fallback).
 
-use ratatui::{
-    layout::Rect,
-    style::{Color, Style},
-    widgets::{Block, Borders, Paragraph},
-    Frame,
-};
+use super::buffer::{Color, CellBuffer, Rect};
+use crate::render::RenderBuffer;
 
-use crate::render::{buffer_to_braille, RenderBuffer};
-
-/// Draw the 3D viewport using braille characters.
-pub fn draw_viewport(f: &mut Frame, area: Rect, render_buffer: &RenderBuffer) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .title(" Viewport ");
-
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-
-    // Convert render buffer to braille
-    let (_char_width, _char_height, braille_text) = buffer_to_braille(render_buffer);
-
-    // Create a paragraph with the braille text
-    // Note: The braille text contains ANSI escape codes for colors
-    // We need to use a raw text approach here
-
-    // For now, use a simpler approach without colors
-    let lines: Vec<&str> = braille_text.lines().collect();
-    let display_lines: Vec<ratatui::text::Line> = lines
-        .iter()
-        .take(inner.height as usize)
-        .map(|line| {
-            // Strip ANSI codes for ratatui (it handles styling differently)
-            let stripped = strip_ansi_codes(line);
-            ratatui::text::Line::raw(stripped)
-        })
-        .collect();
-
-    let paragraph = Paragraph::new(display_lines).style(Style::default().fg(Color::White));
-
-    f.render_widget(paragraph, inner);
+/// Sample a pixel from the render buffer, returning Color.
+fn sample(render_buffer: &RenderBuffer, px: u32, py: u32) -> Color {
+    if px >= render_buffer.width || py >= render_buffer.height {
+        return Color::rgb(0x22, 0x22, 0x22);
+    }
+    let idx = (py * render_buffer.width + px) as usize * 4;
+    if idx + 2 < render_buffer.pixels.len() {
+        Color::rgb(
+            render_buffer.pixels[idx],
+            render_buffer.pixels[idx + 1],
+            render_buffer.pixels[idx + 2],
+        )
+    } else {
+        Color::rgb(0x22, 0x22, 0x22)
+    }
 }
 
-/// Strip ANSI escape codes from a string.
-fn strip_ansi_codes(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut in_escape = false;
-
-    for c in s.chars() {
-        if c == '\x1b' {
-            in_escape = true;
-        } else if in_escape {
-            if c == 'm' {
-                in_escape = false;
+/// Render viewport using half-block characters for 2x vertical resolution.
+/// Each terminal cell renders two pixels: top pixel as fg, bottom pixel as bg.
+pub fn render_viewport(buf: &mut CellBuffer, render_buffer: &RenderBuffer, area: Rect) {
+    for row in 0..area.height {
+        for col in 0..area.width {
+            let top = sample(render_buffer, col as u32, (row as u32) * 2);
+            let bot = sample(render_buffer, col as u32, (row as u32) * 2 + 1);
+            if let Some(cell) = buf.cell_mut(area.x + col, area.y + row) {
+                cell.ch = '\u{2580}'; // ▀ upper half block
+                cell.fg = top;
+                cell.bg = bot;
             }
-        } else {
-            result.push(c);
         }
     }
+}
 
-    result
+/// Render viewport using braille characters for non-true-color terminals.
+/// Each braille character represents a 2x4 pixel grid.
+#[allow(dead_code)]
+pub fn render_viewport_braille(buf: &mut CellBuffer, render_buffer: &RenderBuffer, area: Rect) {
+    for row in 0..area.height {
+        for col in 0..area.width {
+            let px = (col as u32) * 2;
+            let py = (row as u32) * 4;
+            let mut dots = 0u8;
+            let mut total_r = 0u32;
+            let mut total_g = 0u32;
+            let mut total_b = 0u32;
+            let mut count = 0u32;
+
+            for dy in 0..4u32 {
+                for dx in 0..2u32 {
+                    let sx = px + dx;
+                    let sy = py + dy;
+                    if sx < render_buffer.width && sy < render_buffer.height {
+                        let idx = (sy * render_buffer.width + sx) as usize * 4;
+                        if idx + 2 < render_buffer.pixels.len() {
+                            let r = render_buffer.pixels[idx] as u32;
+                            let g = render_buffer.pixels[idx + 1] as u32;
+                            let b = render_buffer.pixels[idx + 2] as u32;
+                            total_r += r;
+                            total_g += g;
+                            total_b += b;
+                            count += 1;
+                            if (r + g + b) / 3 > 50 {
+                                let bit = match (dx, dy) {
+                                    (0, 0) => 0,
+                                    (0, 1) => 1,
+                                    (0, 2) => 2,
+                                    (1, 0) => 3,
+                                    (1, 1) => 4,
+                                    (1, 2) => 5,
+                                    (0, 3) => 6,
+                                    (1, 3) => 7,
+                                    _ => 0,
+                                };
+                                dots |= 1 << bit;
+                            }
+                        }
+                    }
+                }
+            }
+
+            let ch = char::from_u32(0x2800 + dots as u32).unwrap_or(' ');
+            let color = if count > 0 {
+                Color::rgb(
+                    (total_r / count) as u8,
+                    (total_g / count) as u8,
+                    (total_b / count) as u8,
+                )
+            } else {
+                Color::rgb(0x22, 0x22, 0x22)
+            };
+
+            if let Some(cell) = buf.cell_mut(area.x + col, area.y + row) {
+                cell.ch = ch;
+                cell.fg = color;
+                cell.bg = Color::rgb(0x22, 0x22, 0x22);
+            }
+        }
+    }
 }

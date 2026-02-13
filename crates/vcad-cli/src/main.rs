@@ -679,6 +679,7 @@ fn render_to_image(
                 v1: [mesh.vertices[i1], mesh.vertices[i1 + 1], mesh.vertices[i1 + 2]],
                 v2: [mesh.vertices[i2], mesh.vertices[i2 + 1], mesh.vertices[i2 + 2]],
                 color,
+                pick_id: 0,
             });
         }
     }

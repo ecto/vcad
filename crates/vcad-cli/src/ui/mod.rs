@@ -1,99 +1,92 @@
-//! TUI widgets and layout.
+//! TUI widgets and layout — full-bleed viewport with floating overlays.
 
-mod command;
-mod status;
-mod tree;
-mod viewport;
+pub mod buffer;
+pub mod command;
+pub mod status;
+pub mod theme;
+pub mod toolbar;
+pub mod top_bar;
+pub mod tree;
+pub mod viewport;
 
-pub use command::*;
-pub use status::*;
-pub use tree::*;
-pub use viewport::*;
-
-use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
-    Frame,
-};
+use buffer::{CellBuffer, Rect};
 
 use crate::app::App;
 use crate::render::RenderBuffer;
 
-/// Draw the full UI.
-pub fn draw(f: &mut Frame, app: &App, render_buffer: &RenderBuffer, focused_part_index: usize) {
-    let size = f.area();
+/// Draw the full UI with full-bleed viewport (half-block) and floating overlays.
+pub fn draw(buf: &mut CellBuffer, app: &App, render_buffer: &RenderBuffer) {
+    let area = Rect::new(0, 0, buf.width, buf.height);
 
-    // Main vertical layout
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3), // Header
-            Constraint::Min(10),   // Main content
-            Constraint::Length(3), // Command input
-            Constraint::Length(1), // Status bar
-        ])
-        .split(size);
+    // Pass 1: full-bleed viewport fills entire terminal
+    viewport::render_viewport(buf, render_buffer, area);
 
-    // Header
-    draw_header(f, chunks[0]);
-
-    // Main content (sidebar + viewport)
-    let main_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Length(24), // Sidebar
-            Constraint::Min(20),    // Viewport
-        ])
-        .split(chunks[1]);
-
-    // Sidebar (parts tree)
-    draw_tree(f, main_chunks[0], app, focused_part_index);
-
-    // 3D Viewport
-    draw_viewport(f, main_chunks[1], render_buffer);
-
-    // Command input
-    draw_command(f, chunks[2], app);
-
-    // Status bar
-    draw_status(f, chunks[3], app);
+    // Pass 2: floating overlays
+    draw_overlays_with_area(buf, app, area);
 }
 
-fn draw_header(f: &mut Frame, area: Rect) {
-    let header = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan))
-        .title(Span::styled(
-            " vcad ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
+/// Draw the full UI with braille viewport and floating overlays.
+pub fn draw_braille(buf: &mut CellBuffer, app: &App, render_buffer: &RenderBuffer) {
+    let area = Rect::new(0, 0, buf.width, buf.height);
 
-    let help_text = Line::from(vec![
-        Span::styled("1", Style::default().fg(Color::Yellow)),
-        Span::raw(":box "),
-        Span::styled("2", Style::default().fg(Color::Yellow)),
-        Span::raw(":cyl "),
-        Span::styled("3", Style::default().fg(Color::Yellow)),
-        Span::raw(":sph "),
-        Span::styled("arrows", Style::default().fg(Color::Yellow)),
-        Span::raw(":rotate "),
-        Span::styled("+/-", Style::default().fg(Color::Yellow)),
-        Span::raw(":zoom "),
-        Span::styled("x", Style::default().fg(Color::Yellow)),
-        Span::raw(":del "),
-        Span::styled("u", Style::default().fg(Color::Yellow)),
-        Span::raw(":undo "),
-        Span::styled(":", Style::default().fg(Color::Yellow)),
-        Span::raw(":cmd "),
-        Span::styled("q", Style::default().fg(Color::Yellow)),
-        Span::raw(":quit"),
-    ]);
+    // Pass 1: braille viewport
+    viewport::render_viewport_braille(buf, render_buffer, area);
 
-    let inner = header.inner(area);
-    f.render_widget(header, area);
-    f.render_widget(Paragraph::new(help_text), inner);
+    // Pass 2: floating overlays
+    draw_overlays_with_area(buf, app, area);
+}
+
+/// Draw only floating overlays (for pixel protocols where viewport is output directly).
+pub fn draw_overlays(buf: &mut CellBuffer, app: &App) {
+    let area = Rect::new(0, 0, buf.width, buf.height);
+    draw_overlays_with_area(buf, app, area);
+}
+
+/// Internal: draw all floating overlay widgets.
+fn draw_overlays_with_area(buf: &mut CellBuffer, app: &App, area: Rect) {
+    if !app.is_orbiting {
+        // Top bar
+        top_bar::draw_top_bar(buf, app.sidebar_visible, app.mode.name(), area);
+
+        // Sidebar (toggleable)
+        if app.sidebar_visible {
+            let parts = app.get_parts();
+            tree::draw_sidebar(
+                buf,
+                &parts,
+                &app.selected,
+                app.focused_part_index,
+                app.sidebar_scroll,
+                Some(app.mouse_pos.1),
+                area,
+            );
+        }
+
+        // Bottom toolbar
+        toolbar::draw_toolbar(
+            buf,
+            app.active_tab,
+            area,
+            Some(app.mouse_pos.0),
+            Some(app.mouse_pos.1),
+            app.selected.len(),
+        );
+    }
+
+    // Status bar — always visible
+    let tri_count: usize = app.meshes.iter().map(|m| m.indices.len() / 3).sum();
+    status::draw_status_bar(
+        buf,
+        &app.status,
+        app.get_parts().len(),
+        tri_count,
+        app.selected.len(),
+        area,
+    );
+
+    // Command palette (when in command mode)
+    if app.command_mode() {
+        let items = command::build_command_items(&app.command_input);
+        command::draw_command_palette(buf, &app.command_input, &items, app.command_selected_index, area);
+    }
 }

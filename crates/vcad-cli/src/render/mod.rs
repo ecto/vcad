@@ -16,3 +16,4 @@ mod terminal;
 pub use output::GraphicsOutput;
 pub use rasterize::*;
 pub use sixel::*;
+pub use terminal::GraphicsProtocol;
