@@ -12,6 +12,98 @@ pub struct SubTool {
     pub needs_selection: bool,
 }
 
+/// Inline parameter input state — replaces the sub-tool row when active.
+pub struct ToolInput {
+    /// Display label (e.g. "Fillet Radius")
+    pub label: &'static str,
+    /// Current numeric value
+    pub value: f64,
+    /// Minimum allowed value
+    pub min: f64,
+    /// Maximum allowed value
+    pub max: f64,
+    /// Scrub step size
+    pub step: f64,
+    /// Unit suffix (e.g. "mm", "\u{00B0}")
+    pub unit: &'static str,
+    /// True when user is typing a number directly
+    pub editing: bool,
+    /// Buffer for direct text entry
+    pub edit_buf: String,
+    /// Command template — `{}` replaced with the value
+    pub command_template: String,
+    /// Text-only mode (for filenames, no numeric scrub)
+    pub text_mode: bool,
+    /// Current axis label for multi-axis tools (e.g. "X", "Y", "Z")
+    pub axis: Option<&'static str>,
+}
+
+impl ToolInput {
+    /// Create a numeric scrub input.
+    pub fn numeric(
+        label: &'static str,
+        value: f64,
+        min: f64,
+        max: f64,
+        step: f64,
+        unit: &'static str,
+        command_template: String,
+    ) -> Self {
+        Self {
+            label,
+            value,
+            min,
+            max,
+            step,
+            unit,
+            editing: false,
+            edit_buf: String::new(),
+            command_template,
+            text_mode: false,
+            axis: None,
+        }
+    }
+
+    /// Create a text input (for filenames).
+    pub fn text(label: &'static str, default: &str, command_template: String) -> Self {
+        Self {
+            label,
+            value: 0.0,
+            min: 0.0,
+            max: 0.0,
+            step: 0.0,
+            unit: "",
+            editing: true,
+            edit_buf: default.to_string(),
+            command_template,
+            text_mode: true,
+            axis: None,
+        }
+    }
+
+    /// Scrub the value by delta steps, clamping to [min, max].
+    pub fn scrub(&mut self, delta: i32, fine: bool) {
+        let multiplier = if fine { 0.1 } else { 1.0 };
+        self.value += delta as f64 * self.step * multiplier;
+        self.value = self.value.clamp(self.min, self.max);
+    }
+
+    /// Format the final command string.
+    pub fn format_command(&self) -> String {
+        if self.text_mode {
+            self.command_template
+                .replace("{}", &self.edit_buf)
+        } else {
+            let val = if self.editing {
+                self.edit_buf.parse::<f64>().unwrap_or(self.value)
+            } else {
+                self.value
+            };
+            self.command_template.replace("{}", &format!("{val}"))
+        }
+    }
+}
+
 /// Get sub-tools for a given tab index.
 pub fn sub_tools(tab: usize) -> &'static [SubTool] {
     match tab {
@@ -19,9 +111,9 @@ pub fn sub_tools(tab: usize) -> &'static [SubTool] {
         0 => &[],
         // Create
         1 => &[
-            SubTool { icon: "\u{25A1}", label: "Box", command: "cube", shortcut: Some("1"), needs_selection: false },
-            SubTool { icon: "\u{25CB}", label: "Cyl", command: "cylinder", shortcut: Some("2"), needs_selection: false },
-            SubTool { icon: "\u{25CF}", label: "Sph", command: "sphere", shortcut: Some("3"), needs_selection: false },
+            SubTool { icon: "\u{25A1}", label: "Box", command: "cube", shortcut: None, needs_selection: false },
+            SubTool { icon: "\u{25CB}", label: "Cyl", command: "cylinder", shortcut: None, needs_selection: false },
+            SubTool { icon: "\u{25CF}", label: "Sph", command: "sphere", shortcut: None, needs_selection: false },
             SubTool { icon: "\u{25B3}", label: "Cone", command: "cone", shortcut: None, needs_selection: false },
             SubTool { icon: "\u{270E}", label: "Sketch", command: "sketch", shortcut: Some("S"), needs_selection: false },
         ],
@@ -45,14 +137,22 @@ pub fn sub_tools(tab: usize) -> &'static [SubTool] {
             SubTool { icon: "\u{2237}", label: "Pattern", command: "pattern", shortcut: None, needs_selection: true },
             SubTool { icon: "\u{2194}", label: "Mirror", command: "mirror", shortcut: None, needs_selection: true },
         ],
-        // Assembly — placeholder
-        5 => &[],
-        // Simulate — placeholder
-        6 => &[],
+        // Assembly — placeholder sub-tools
+        5 => &[
+            SubTool { icon: "\u{2B12}", label: "Part", command: "__assembly_stub", shortcut: None, needs_selection: false },
+            SubTool { icon: "\u{229E}", label: "Instance", command: "__assembly_stub", shortcut: None, needs_selection: false },
+            SubTool { icon: "\u{2699}", label: "Joint", command: "__assembly_stub", shortcut: None, needs_selection: false },
+        ],
+        // Simulate — placeholder sub-tools
+        6 => &[
+            SubTool { icon: "\u{25B6}", label: "Play", command: "__simulate_stub", shortcut: None, needs_selection: false },
+            SubTool { icon: "\u{23F8}", label: "Pause", command: "__simulate_stub", shortcut: None, needs_selection: false },
+            SubTool { icon: "\u{23ED}", label: "Step", command: "__simulate_stub", shortcut: None, needs_selection: false },
+        ],
         // Export
         7 => &[
-            SubTool { icon: "\u{2B07}", label: "STL", command: "export output.stl", shortcut: None, needs_selection: false },
-            SubTool { icon: "\u{2B07}", label: "STEP", command: "export output.step", shortcut: None, needs_selection: false },
+            SubTool { icon: "\u{2B07}", label: "STL", command: "export_stl", shortcut: None, needs_selection: false },
+            SubTool { icon: "\u{2B07}", label: "STEP", command: "export_step", shortcut: None, needs_selection: false },
             SubTool { icon: "\u{1F4BE}", label: "Save", command: "save", shortcut: Some("C-s"), needs_selection: false },
         ],
         _ => &[],
@@ -67,6 +167,7 @@ pub fn draw_toolbar(
     mouse_col: Option<u16>,
     mouse_row: Option<u16>,
     selected_count: usize,
+    tool_input: Option<&ToolInput>,
 ) {
     let tab_widths: Vec<u16> = theme::TABS
         .iter()
@@ -77,8 +178,8 @@ pub fn draw_toolbar(
     let total_width = inner_width + 2;
 
     let tools = sub_tools(active_tab);
-    let has_sub_tools = !tools.is_empty();
-    let total_height = if has_sub_tools { 5u16 } else { 3u16 };
+    let has_sub_row = !tools.is_empty() || tool_input.is_some();
+    let total_height = if has_sub_row { 5u16 } else { 3u16 };
 
     let x = area.x + (area.width.saturating_sub(total_width)) / 2;
     let y = area.y + area.height.saturating_sub(total_height + 1);
@@ -93,6 +194,7 @@ pub fn draw_toolbar(
         &tab_widths,
         tools,
         selected_count,
+        tool_input,
     );
 }
 
@@ -106,12 +208,13 @@ fn render_toolbar(
     tab_widths: &[u16],
     tools: &[SubTool],
     selected_count: usize,
+    tool_input: Option<&ToolInput>,
 ) {
     if area.height < 3 || area.width < 10 {
         return;
     }
 
-    let has_sub_tools = !tools.is_empty();
+    let has_sub_row = !tools.is_empty() || tool_input.is_some();
 
     // Fill background
     for y in area.y..area.y + area.height {
@@ -186,8 +289,8 @@ fn render_toolbar(
         }
     }
 
-    // Sub-tool row
-    if has_sub_tools {
+    // Sub-tool row / tool input
+    if has_sub_row {
         // Separator line between tabs and sub-tools
         let sep_y = area.y + 2;
         set_char(buf, left, sep_y, '\u{251C}', theme::BORDER, theme::SURFACE);
@@ -196,88 +299,179 @@ fn render_toolbar(
             set_char(buf, x, sep_y, '\u{2500}', theme::BORDER, theme::SURFACE);
         }
 
-        // Sub-tools on the row below separator
         let sub_row = area.y + 3;
-        let tab_color = theme::tab_color(active_tab);
-        let disabled_color = Color::rgb(0x55, 0x55, 0x55);
 
-        // Calculate total width of sub-tools for centering
-        let tool_widths: Vec<u16> = tools
-            .iter()
-            .map(|t| {
-                let icon_w = t.icon.chars().count() as u16;
-                icon_w + 1 + t.label.len() as u16
-            })
-            .collect();
-        let tools_total: u16 = tool_widths.iter().sum::<u16>()
-            + (tools.len().saturating_sub(1) as u16) * 3; // 3 chars between tools
-        let tools_start = area.x + (area.width.saturating_sub(tools_total)) / 2;
+        // If tool_input is active, render the parameter input instead of sub-tool buttons
+        if let Some(ti) = tool_input {
+            render_tool_input(buf, ti, area, sub_row, bot, active_tab);
+        } else {
+            render_sub_tools(buf, tools, area, sub_row, bot, active_tab, mouse_col, mouse_row, selected_count);
+        }
+    }
+}
 
-        let mut tx = tools_start;
-        for (i, tool) in tools.iter().enumerate() {
-            if i > 0 {
-                set_char(buf, tx, sub_row, ' ', theme::SURFACE, theme::SURFACE);
-                tx += 1;
-                set_char(buf, tx, sub_row, '\u{00B7}', theme::BORDER, theme::SURFACE);
-                tx += 1;
-                set_char(buf, tx, sub_row, ' ', theme::SURFACE, theme::SURFACE);
-                tx += 1;
-            }
+/// Render the inline parameter input on the sub-tool row.
+fn render_tool_input(
+    buf: &mut CellBuffer,
+    ti: &ToolInput,
+    area: Rect,
+    sub_row: u16,
+    bot: u16,
+    active_tab: usize,
+) {
+    let tab_color = theme::tab_color(active_tab);
+    let left = area.x;
+    let right = area.x + area.width - 1;
+    let inner_w = (right - left - 1) as usize;
 
-            let enabled = !tool.needs_selection || selected_count > 0;
-            let is_hovered = mouse_col.is_some_and(|mc| mc >= tx && mc < tx + tool_widths[i])
-                && mouse_row.is_some_and(|mr| mr == sub_row);
+    // Build display string
+    let display = if ti.text_mode {
+        let cursor = if ti.editing { "\u{2588}" } else { "" };
+        format!("  {}: [{}{}]  ", ti.label, ti.edit_buf, cursor)
+    } else if ti.editing {
+        let cursor = "\u{2588}";
+        let axis_str = ti.axis.map_or(String::new(), |a| format!(" {a}"));
+        format!(
+            "  {}{}: [{}{}] {}  ",
+            ti.label, axis_str, ti.edit_buf, cursor, ti.unit
+        )
+    } else {
+        let axis_str = ti.axis.map_or(String::new(), |a| format!(" {a}"));
+        format!(
+            "  {}{}: [{:.2}] {}  ",
+            ti.label, axis_str, ti.value, ti.unit
+        )
+    };
 
-            let fg = if !enabled {
-                disabled_color
-            } else if is_hovered {
-                theme::TEXT
-            } else {
-                tab_color
-            };
+    // Center the display string
+    let disp_len = display.chars().count();
+    let pad = inner_w.saturating_sub(disp_len) / 2;
+    let start_x = left + 1 + pad as u16;
 
-            // Icon
-            for ch in tool.icon.chars() {
-                if tx < area.x + area.width - 1 {
-                    set_char(buf, tx, sub_row, ch, fg, theme::SURFACE);
-                    tx += 1;
-                }
-            }
-            // Space
+    let mut tx = start_x;
+    let mut in_label = true;
+    for ch in display.chars() {
+        if tx >= right {
+            break;
+        }
+        // Color: label part in tab_color, value part in TEXT
+        let fg = if ch == '[' {
+            in_label = false;
+            theme::TEXT
+        } else if ch == ']' {
+            in_label = true;
+            theme::TEXT
+        } else if in_label {
+            tab_color
+        } else {
+            theme::TEXT
+        };
+        set_char(buf, tx, sub_row, ch, fg, theme::SURFACE);
+        tx += 1;
+    }
+
+    // Hints in bottom border
+    let hints = if ti.text_mode {
+        "Enter:apply  Esc:cancel"
+    } else {
+        "\u{2190}\u{2192}:scrub  Enter:apply  Esc:cancel"
+    };
+    let hint_x = area.x + (area.width.saturating_sub(hints.len() as u16)) / 2;
+    set_string(buf, hint_x, bot, hints, theme::TEXT_MUTED, theme::SURFACE);
+}
+
+/// Render the normal sub-tool buttons.
+#[allow(clippy::too_many_arguments)]
+fn render_sub_tools(
+    buf: &mut CellBuffer,
+    tools: &[SubTool],
+    area: Rect,
+    sub_row: u16,
+    bot: u16,
+    active_tab: usize,
+    mouse_col: Option<u16>,
+    mouse_row: Option<u16>,
+    selected_count: usize,
+) {
+    let tab_color = theme::tab_color(active_tab);
+    let disabled_color = Color::rgb(0x55, 0x55, 0x55);
+
+    // Calculate total width of sub-tools for centering
+    let tool_widths: Vec<u16> = tools
+        .iter()
+        .map(|t| {
+            let icon_w = t.icon.chars().count() as u16;
+            icon_w + 1 + t.label.len() as u16
+        })
+        .collect();
+    let tools_total: u16 = tool_widths.iter().sum::<u16>()
+        + (tools.len().saturating_sub(1) as u16) * 3; // 3 chars between tools
+    let tools_start = area.x + (area.width.saturating_sub(tools_total)) / 2;
+
+    let mut tx = tools_start;
+    for (i, tool) in tools.iter().enumerate() {
+        if i > 0 {
+            set_char(buf, tx, sub_row, ' ', theme::SURFACE, theme::SURFACE);
+            tx += 1;
+            set_char(buf, tx, sub_row, '\u{00B7}', theme::BORDER, theme::SURFACE);
+            tx += 1;
+            set_char(buf, tx, sub_row, ' ', theme::SURFACE, theme::SURFACE);
+            tx += 1;
+        }
+
+        let enabled = !tool.needs_selection || selected_count > 0;
+        let is_hovered = mouse_col.is_some_and(|mc| mc >= tx && mc < tx + tool_widths[i])
+            && mouse_row.is_some_and(|mr| mr == sub_row);
+
+        let fg = if !enabled {
+            disabled_color
+        } else if is_hovered {
+            theme::TEXT
+        } else {
+            tab_color
+        };
+
+        // Icon
+        for ch in tool.icon.chars() {
             if tx < area.x + area.width - 1 {
-                set_char(buf, tx, sub_row, ' ', theme::SURFACE, theme::SURFACE);
+                set_char(buf, tx, sub_row, ch, fg, theme::SURFACE);
                 tx += 1;
             }
-            // Label
-            let label_fg = if !enabled {
-                disabled_color
-            } else if is_hovered {
-                theme::TEXT
-            } else {
-                theme::TEXT_MUTED
-            };
-            for ch in tool.label.chars() {
-                if tx < area.x + area.width - 1 {
-                    set_char(buf, tx, sub_row, ch, label_fg, theme::SURFACE);
-                    tx += 1;
-                }
+        }
+        // Space
+        if tx < area.x + area.width - 1 {
+            set_char(buf, tx, sub_row, ' ', theme::SURFACE, theme::SURFACE);
+            tx += 1;
+        }
+        // Label
+        let label_fg = if !enabled {
+            disabled_color
+        } else if is_hovered {
+            theme::TEXT
+        } else {
+            theme::TEXT_MUTED
+        };
+        for ch in tool.label.chars() {
+            if tx < area.x + area.width - 1 {
+                set_char(buf, tx, sub_row, ch, label_fg, theme::SURFACE);
+                tx += 1;
             }
         }
+    }
 
-        // Shortcut hints in the bottom border
-        let mut hints = String::new();
-        for tool in tools {
-            if let Some(sc) = tool.shortcut {
-                if !hints.is_empty() {
-                    hints.push_str("  ");
-                }
-                hints.push_str(&format!("{}:{}", sc, tool.label));
+    // Shortcut hints in the bottom border
+    let mut hints = String::new();
+    for tool in tools {
+        if let Some(sc) = tool.shortcut {
+            if !hints.is_empty() {
+                hints.push_str("  ");
             }
+            hints.push_str(&format!("{}:{}", sc, tool.label));
         }
-        if !hints.is_empty() {
-            let hint_x = area.x + (area.width.saturating_sub(hints.len() as u16)) / 2;
-            set_string(buf, hint_x, bot, &hints, theme::TEXT_MUTED, theme::SURFACE);
-        }
+    }
+    if !hints.is_empty() {
+        let hint_x = area.x + (area.width.saturating_sub(hints.len() as u16)) / 2;
+        set_string(buf, hint_x, bot, &hints, theme::TEXT_MUTED, theme::SURFACE);
     }
 }
 

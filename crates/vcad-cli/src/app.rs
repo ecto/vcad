@@ -11,7 +11,7 @@ use std::{
     collections::HashSet,
     io::{self, Stdout},
     path::PathBuf,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use vcad_ir::{CsgOp, Document, Node, NodeId, SceneEntry, Vec3};
 
@@ -20,6 +20,8 @@ use crate::render::{Camera, GraphicsOutput, GraphicsProtocol, RenderBuffer, Tria
 use crate::tui::TuiMode;
 use crate::ui;
 use crate::ui::buffer::{CellBuffer, Rect};
+use crate::ui::chat::ChatPanel;
+use crate::ui::toolbar::ToolInput;
 
 /// Mesh data from evaluation.
 pub struct EvaluatedMesh {
@@ -79,6 +81,12 @@ pub struct App {
     pub render_dirty: bool,
     /// Whether to use CPU ray tracing instead of rasterizer.
     pub raytrace_enabled: bool,
+    /// Drop-down chat panel.
+    pub chat: ChatPanel,
+    /// Active inline parameter input (replaces sub-tool row when Some).
+    pub tool_input: Option<ToolInput>,
+    /// Timestamp of last manual tab click (suppresses auto-switch briefly).
+    pub last_manual_tab: Instant,
 }
 
 impl App {
@@ -119,6 +127,9 @@ impl App {
             click_tracker: ClickTracker::default(),
             render_dirty: true,
             raytrace_enabled: false,
+            chat: ChatPanel::new(),
+            tool_input: None,
+            last_manual_tab: Instant::now(),
         };
 
         app.evaluate()?;
@@ -147,7 +158,7 @@ impl App {
             self.redo_stack.push(self.document.clone());
             self.document = prev;
             self.evaluate()?;
-            self.status = "Undo".to_string();
+            self.set_status("Undo");
         }
         Ok(())
     }
@@ -158,7 +169,7 @@ impl App {
             self.undo_stack.push(self.document.clone());
             self.document = next;
             self.evaluate()?;
-            self.status = "Redo".to_string();
+            self.set_status("Redo");
         }
         Ok(())
     }
@@ -183,7 +194,7 @@ impl App {
             visible: None,
         });
         self.evaluate()?;
-        self.status = format!("Added cube {}", id);
+        self.set_status(format!("Added cube {}", id));
         Ok(id)
     }
 
@@ -209,7 +220,7 @@ impl App {
             visible: None,
         });
         self.evaluate()?;
-        self.status = format!("Added cylinder {}", id);
+        self.set_status(format!("Added cylinder {}", id));
         Ok(id)
     }
 
@@ -234,7 +245,7 @@ impl App {
             visible: None,
         });
         self.evaluate()?;
-        self.status = format!("Added sphere {}", id);
+        self.set_status(format!("Added sphere {}", id));
         Ok(id)
     }
 
@@ -256,7 +267,7 @@ impl App {
         let count = self.selected.len();
         self.selected.clear();
         self.evaluate()?;
-        self.status = format!("Deleted {} part(s)", count);
+        self.set_status(format!("Deleted {} part(s)", count));
         Ok(())
     }
 
@@ -283,7 +294,7 @@ impl App {
             visible: None,
         });
         self.evaluate()?;
-        self.status = format!("Added cone {}", id);
+        self.set_status(format!("Added cone {}", id));
         Ok(id)
     }
 
@@ -291,7 +302,7 @@ impl App {
     pub fn boolean_union(&mut self) -> Result<()> {
         let ids: Vec<NodeId> = self.selected.iter().copied().collect();
         if ids.len() < 2 {
-            self.status = "Select 2+ parts for union".to_string();
+            self.set_status("Select 2+ parts for union");
             return Ok(());
         }
         self.push_undo();
@@ -322,7 +333,7 @@ impl App {
         self.selected.clear();
         self.selected.insert(result_id);
         self.evaluate()?;
-        self.status = "Union applied".to_string();
+        self.set_status("Union applied");
         Ok(())
     }
 
@@ -330,7 +341,7 @@ impl App {
     pub fn boolean_difference(&mut self) -> Result<()> {
         let ids: Vec<NodeId> = self.selected.iter().copied().collect();
         if ids.len() < 2 {
-            self.status = "Select 2+ parts for difference".to_string();
+            self.set_status("Select 2+ parts for difference");
             return Ok(());
         }
         self.push_undo();
@@ -359,7 +370,7 @@ impl App {
         self.selected.clear();
         self.selected.insert(result_id);
         self.evaluate()?;
-        self.status = "Difference applied".to_string();
+        self.set_status("Difference applied");
         Ok(())
     }
 
@@ -367,7 +378,7 @@ impl App {
     pub fn boolean_intersection(&mut self) -> Result<()> {
         let ids: Vec<NodeId> = self.selected.iter().copied().collect();
         if ids.len() < 2 {
-            self.status = "Select 2+ parts for intersection".to_string();
+            self.set_status("Select 2+ parts for intersection");
             return Ok(());
         }
         self.push_undo();
@@ -396,14 +407,14 @@ impl App {
         self.selected.clear();
         self.selected.insert(result_id);
         self.evaluate()?;
-        self.status = "Intersection applied".to_string();
+        self.set_status("Intersection applied");
         Ok(())
     }
 
     /// Fillet all edges of selected nodes.
     pub fn fillet_selected(&mut self, radius: f64) -> Result<()> {
         if self.selected.is_empty() {
-            self.status = "Select a part to fillet".to_string();
+            self.set_status("Select a part to fillet");
             return Ok(());
         }
         self.push_undo();
@@ -429,14 +440,14 @@ impl App {
         }
 
         self.evaluate()?;
-        self.status = format!("Fillet r={:.1} applied", radius);
+        self.set_status(format!("Fillet r={:.1} applied", radius));
         Ok(())
     }
 
     /// Chamfer all edges of selected nodes.
     pub fn chamfer_selected(&mut self, distance: f64) -> Result<()> {
         if self.selected.is_empty() {
-            self.status = "Select a part to chamfer".to_string();
+            self.set_status("Select a part to chamfer");
             return Ok(());
         }
         self.push_undo();
@@ -462,14 +473,14 @@ impl App {
         }
 
         self.evaluate()?;
-        self.status = format!("Chamfer d={:.1} applied", distance);
+        self.set_status(format!("Chamfer d={:.1} applied", distance));
         Ok(())
     }
 
     /// Shell selected nodes.
     pub fn shell_selected(&mut self, thickness: f64) -> Result<()> {
         if self.selected.is_empty() {
-            self.status = "Select a part to shell".to_string();
+            self.set_status("Select a part to shell");
             return Ok(());
         }
         self.push_undo();
@@ -495,14 +506,14 @@ impl App {
         }
 
         self.evaluate()?;
-        self.status = format!("Shell t={:.1} applied", thickness);
+        self.set_status(format!("Shell t={:.1} applied", thickness));
         Ok(())
     }
 
     /// Linear pattern of selected nodes.
-    pub fn pattern_selected(&mut self) -> Result<()> {
+    pub fn pattern_selected(&mut self, count: u32) -> Result<()> {
         if self.selected.is_empty() {
-            self.status = "Select a part to pattern".to_string();
+            self.set_status("Select a part to pattern");
             return Ok(());
         }
         self.push_undo();
@@ -518,7 +529,7 @@ impl App {
                         op: CsgOp::LinearPattern {
                             child: selected_id,
                             direction: Vec3::new(25.0, 0.0, 0.0),
-                            count: 3,
+                            count,
                             spacing: 25.0,
                         },
                     },
@@ -530,14 +541,14 @@ impl App {
         }
 
         self.evaluate()?;
-        self.status = "Linear pattern applied".to_string();
+        self.set_status("Linear pattern applied");
         Ok(())
     }
 
     /// Mirror selected nodes along X axis.
     pub fn mirror_selected(&mut self) -> Result<()> {
         if self.selected.is_empty() {
-            self.status = "Select a part to mirror".to_string();
+            self.set_status("Select a part to mirror");
             return Ok(());
         }
         self.push_undo();
@@ -563,7 +574,7 @@ impl App {
         }
 
         self.evaluate()?;
-        self.status = "Mirror applied".to_string();
+        self.set_status("Mirror applied");
         Ok(())
     }
 
@@ -599,7 +610,7 @@ impl App {
         }
 
         self.evaluate()?;
-        self.status = format!("Rotated by ({}, {}, {})", rx, ry, rz);
+        self.set_status(format!("Rotated by ({}, {}, {})", rx, ry, rz));
         Ok(())
     }
 
@@ -635,7 +646,7 @@ impl App {
         }
 
         self.evaluate()?;
-        self.status = format!("Scaled by ({}, {}, {})", sx, sy, sz);
+        self.set_status(format!("Scaled by ({}, {}, {})", sx, sy, sz));
         Ok(())
     }
 
@@ -679,7 +690,7 @@ impl App {
         }
 
         self.evaluate()?;
-        self.status = format!("Translated by ({}, {}, {})", dx, dy, dz);
+        self.set_status(format!("Translated by ({}, {}, {})", dx, dy, dz));
         Ok(())
     }
 
@@ -688,9 +699,9 @@ impl App {
         if let Some(ref path) = self.file_path {
             let json = self.document.to_json()?;
             std::fs::write(path, json)?;
-            self.status = format!("Saved to {}", path.display());
+            self.set_status(format!("Saved to {}", path.display()));
         } else {
-            self.status = "No file path - use 'save <path>' command".to_string();
+            self.set_status("No file path - use 'save <path>' command");
         }
         Ok(())
     }
@@ -700,7 +711,7 @@ impl App {
         let json = self.document.to_json()?;
         std::fs::write(&path, json)?;
         self.file_path = Some(path.clone());
-        self.status = format!("Saved to {}", path.display());
+        self.set_status(format!("Saved to {}", path.display()));
         Ok(())
     }
 
@@ -795,9 +806,37 @@ impl App {
         triangles
     }
 
+    /// Set status and log to chat panel debug output.
+    pub fn set_status(&mut self, msg: impl Into<String>) {
+        let s: String = msg.into();
+        self.status = s.clone();
+        self.chat.debug(s);
+    }
+
     /// Check if currently in command input mode.
     pub fn command_mode(&self) -> bool {
         matches!(self.mode, TuiMode::Command)
+    }
+
+    /// Auto-switch toolbar tab based on selection state (matches web app).
+    pub fn auto_switch_tab(&mut self) {
+        // Don't switch during inline parameter input
+        if self.tool_input.is_some() {
+            return;
+        }
+        // Don't switch if user manually clicked a tab within 2 seconds
+        if self.last_manual_tab.elapsed().as_secs() < 2 {
+            return;
+        }
+        let selected = self.selected.len();
+        let new_tab = if selected >= 2 {
+            3 // Combine
+        } else if selected == 1 {
+            2 // Transform
+        } else {
+            1 // Create
+        };
+        self.active_tab = new_tab;
     }
 
     /// Get the list of parts (scene entries) for the tree view.
@@ -877,7 +916,10 @@ impl App {
                 let t = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(1.0);
                 self.shell_selected(t)?;
             }
-            "pattern" => self.pattern_selected()?,
+            "pattern" => {
+                let count = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(3);
+                self.pattern_selected(count)?;
+            }
             "mirror" => self.mirror_selected()?,
             "save" => {
                 if let Some(path) = parts.get(1) {
@@ -890,9 +932,9 @@ impl App {
                 if let Some(path) = parts.get(1) {
                     let path = PathBuf::from(path);
                     self.export_stl(&path)?;
-                    self.status = format!("Exported to {}", path.display());
+                    self.set_status(format!("Exported to {}", path.display()));
                 } else {
-                    self.status = "Usage: export <path.stl>".to_string();
+                    self.set_status("Usage: export <path.stl>");
                 }
             }
             "undo" => self.undo()?,
@@ -905,7 +947,7 @@ impl App {
                     "Commands: cube, cylinder, sphere, delete, move, save, export, quit".to_string();
             }
             _ => {
-                self.status = format!("Unknown command: {}", parts[0]);
+                self.set_status(format!("Unknown command: {}", parts[0]));
             }
         }
 
@@ -1079,6 +1121,14 @@ fn run_loop(stdout: &mut Stdout, app: &mut App) -> Result<()> {
     let mut last_camera = app.camera.snapshot();
     let mut gfx = GraphicsOutput::new();
     let protocol = gfx.protocol();
+    let proto_name = match protocol {
+        GraphicsProtocol::Kitty => "kitty",
+        GraphicsProtocol::ITerm2 => "iterm2",
+        GraphicsProtocol::Sixel => "sixel",
+        GraphicsProtocol::HalfBlock => "halfblock",
+        GraphicsProtocol::Braille => "braille",
+    };
+    app.set_status(format!("Ready [{proto_name}] +/-:zoom :cmd q:quit"));
 
     while app.running {
         let (term_w, term_h) = terminal::size()?;
@@ -1265,5 +1315,52 @@ fn render_raytrace(app: &App, buffer: &mut RenderBuffer) {
     }
     for d in &mut buffer.depth {
         *d = f32::INFINITY;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_all_primitives_render() {
+        let shapes: Vec<(&str, vcad_kernel::Solid)> = vec![
+            ("cube", vcad_kernel::Solid::cube(20.0, 20.0, 20.0)),
+            ("cylinder", vcad_kernel::Solid::cylinder(10.0, 20.0, 32)),
+            ("sphere", vcad_kernel::Solid::sphere(10.0, 32)),
+            ("cone", vcad_kernel::Solid::cone(10.0, 0.0, 20.0, 32)),
+        ];
+
+        for (name, solid) in &shapes {
+            let mesh = solid.to_mesh(32);
+            assert!(mesh.vertices.len() > 0, "{name} has no vertices");
+            assert!(mesh.indices.len() > 0, "{name} has no indices");
+
+            // Build triangles
+            let mut triangles = Vec::new();
+            for tri in mesh.indices.chunks(3) {
+                if tri.len() < 3 { continue; }
+                let i0 = tri[0] as usize * 3;
+                let i1 = tri[1] as usize * 3;
+                let i2 = tri[2] as usize * 3;
+                if i0+2 >= mesh.vertices.len() || i1+2 >= mesh.vertices.len() || i2+2 >= mesh.vertices.len() {
+                    continue;
+                }
+                triangles.push(Triangle {
+                    v0: [mesh.vertices[i0], mesh.vertices[i0+1], mesh.vertices[i0+2]],
+                    v1: [mesh.vertices[i1], mesh.vertices[i1+1], mesh.vertices[i1+2]],
+                    v2: [mesh.vertices[i2], mesh.vertices[i2+1], mesh.vertices[i2+2]],
+                    color: [180, 180, 190],
+                    pick_id: 1,
+                });
+            }
+
+            // Render and check object pixels appear
+            let mut buffer = RenderBuffer::new(100, 100);
+            let camera = Camera::default();
+            crate::render::render_scene(&mut buffer, &triangles, &camera);
+            let object_pixels = buffer.pick_ids.iter().filter(|&&id| id > 0).count();
+            assert!(object_pixels > 0, "{name} rendered zero object pixels");
+        }
     }
 }

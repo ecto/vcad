@@ -3,6 +3,7 @@
 pub mod buffer;
 pub mod command;
 pub mod status;
+pub mod chat;
 pub mod theme;
 pub mod toolbar;
 pub mod top_bar;
@@ -70,6 +71,7 @@ fn draw_overlays_with_area(buf: &mut CellBuffer, app: &App, area: Rect) {
             Some(app.mouse_pos.0),
             Some(app.mouse_pos.1),
             app.selected.len(),
+            app.tool_input.as_ref(),
         );
     }
 
@@ -88,5 +90,10 @@ fn draw_overlays_with_area(buf: &mut CellBuffer, app: &App, area: Rect) {
     if app.command_mode() {
         let items = command::build_command_items(&app.command_input);
         command::draw_command_palette(buf, &app.command_input, &items, app.command_selected_index, area);
+    }
+
+    // Chat panel (when open)
+    if app.chat.open {
+        chat::draw_chat(buf, &app.chat, area);
     }
 }

@@ -5,6 +5,7 @@ use std::time::Instant;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::ui::buffer::Rect;
+use crate::ui::toolbar::ToolInput;
 
 use crate::app::App;
 use crate::tui::TuiMode;
@@ -58,6 +59,7 @@ pub enum HitRegion {
     Toolbar(usize),     // tab index
     SubTool(usize),     // sub-tool index within active tab
     CommandPalette(usize), // item index
+    Terminal,
     StatusBar,
 }
 
@@ -108,6 +110,14 @@ pub fn hit_test(app: &App, area: Rect, col: u16, row: u16) -> HitRegion {
         }
     }
 
+    // Terminal panel (when open, consumes clicks in its region)
+    if app.chat.open {
+        let tr = crate::ui::chat::chat_rect(area);
+        if row >= tr.y && row < tr.y + tr.height && col >= tr.x && col < tr.x + tr.width {
+            return HitRegion::Terminal;
+        }
+    }
+
     // Sidebar
     if app.sidebar_visible {
         let parts = app.get_parts();
@@ -129,6 +139,117 @@ pub fn hit_test(app: &App, area: Rect, col: u16, row: u16) -> HitRegion {
     HitRegion::Viewport
 }
 
+/// Open the appropriate ToolInput for a sub-tool click, or execute directly.
+/// Returns true if the tool was handled (either opened input or executed).
+fn handle_sub_tool_click(app: &mut App, tool_idx: usize) -> anyhow::Result<bool> {
+    let tools = crate::ui::toolbar::sub_tools(app.active_tab);
+    if tool_idx >= tools.len() {
+        return Ok(false);
+    }
+
+    let tool = &tools[tool_idx];
+
+    // Check selection requirement
+    if tool.needs_selection && app.selected.is_empty() {
+        app.set_status(format!("{} requires a selection", tool.label));
+        return Ok(true);
+    }
+
+    match tool.command {
+        // Sketch mode — special handling
+        "sketch" => {
+            app.mode = TuiMode::Sketch(crate::tui::SketchModeState::new(
+                crate::tui::SketchPlane::XY,
+            ));
+            app.status = "Sketch mode (XY plane) - L:line R:rect C:circle".to_string();
+        }
+
+        // Transform tools — open ToolInput
+        "move" => {
+            let mut ti = ToolInput::numeric(
+                "Move", 5.0, -1000.0, 1000.0, 1.0, "mm",
+                "move {} 0 0".to_string(),
+            );
+            ti.axis = Some("X");
+            app.tool_input = Some(ti);
+        }
+        "rotate" => {
+            let mut ti = ToolInput::numeric(
+                "Rotate", 15.0, -360.0, 360.0, 15.0, "\u{00B0}",
+                "rotate 0 {} 0".to_string(),
+            );
+            ti.axis = Some("Y");
+            app.tool_input = Some(ti);
+        }
+        "scale" => {
+            app.tool_input = Some(ToolInput::numeric(
+                "Scale", 2.0, 0.01, 100.0, 0.1, "\u{00D7}",
+                "scale {}".to_string(),
+            ));
+        }
+
+        // Modify tools — some need ToolInput, some execute directly
+        "fillet" => {
+            app.tool_input = Some(ToolInput::numeric(
+                "Fillet Radius", 2.0, 0.1, 50.0, 0.5, "mm",
+                "fillet {}".to_string(),
+            ));
+        }
+        "chamfer" => {
+            app.tool_input = Some(ToolInput::numeric(
+                "Chamfer Dist", 2.0, 0.1, 50.0, 0.5, "mm",
+                "chamfer {}".to_string(),
+            ));
+        }
+        "shell" => {
+            app.tool_input = Some(ToolInput::numeric(
+                "Shell Thickness", 1.0, 0.1, 20.0, 0.5, "mm",
+                "shell {}".to_string(),
+            ));
+        }
+        "pattern" => {
+            app.tool_input = Some(ToolInput::numeric(
+                "Pattern Count", 3.0, 2.0, 20.0, 1.0, "",
+                "pattern {}".to_string(),
+            ));
+        }
+        "mirror" => {
+            // Execute immediately — no params
+            app.process_command("mirror")?;
+        }
+
+        // Export tools — text input for filename
+        "export_stl" => {
+            app.tool_input = Some(ToolInput::text(
+                "Export STL", "output.stl",
+                "export {}".to_string(),
+            ));
+        }
+        "export_step" => {
+            app.tool_input = Some(ToolInput::text(
+                "Export STEP", "output.step",
+                "export {}".to_string(),
+            ));
+        }
+
+        // Assembly / Simulate stubs
+        "__assembly_stub" => {
+            app.set_status("Assembly: not yet available in TUI");
+        }
+        "__simulate_stub" => {
+            app.set_status("Simulation: not yet available in TUI");
+        }
+
+        // Everything else: execute the command directly
+        _ => {
+            let cmd = tool.command.to_string();
+            app.process_command(&cmd)?;
+        }
+    }
+
+    Ok(true)
+}
+
 /// Handle a mouse event. Returns Ok(true) if the event was consumed.
 ///
 /// `cell_dims` is `Some((cell_width, cell_height))` for pixel protocols,
@@ -145,6 +266,22 @@ pub fn handle_mouse(
 
     match event.kind {
         MouseEventKind::Down(MouseButton::Left) => {
+            // If tool_input is active, clicking outside cancels it
+            if app.tool_input.is_some() {
+                let region = hit_test(app, area, col, row);
+                match region {
+                    HitRegion::SubTool(_) | HitRegion::Toolbar(_) => {
+                        // Let toolbar/sub-tool clicks through — cancel input first
+                        app.tool_input = None;
+                    }
+                    _ => {
+                        // Click anywhere else cancels
+                        app.tool_input = None;
+                        return Ok(true);
+                    }
+                }
+            }
+
             let region = hit_test(app, area, col, row);
             match region {
                 HitRegion::SidebarToggle => {
@@ -165,28 +302,19 @@ pub fn handle_mouse(
                             app.selected.insert(id);
                         }
                         app.focused_part_index = part_idx;
+                        app.auto_switch_tab();
                     }
                 }
                 HitRegion::Toolbar(tab) => {
-                    app.active_tab = tab;
+                    if tab == 0 {
+                        app.chat.open = !app.chat.open;
+                    } else {
+                        app.active_tab = tab;
+                        app.last_manual_tab = Instant::now();
+                    }
                 }
                 HitRegion::SubTool(tool_idx) => {
-                    let tools = crate::ui::toolbar::sub_tools(app.active_tab);
-                    if tool_idx < tools.len() {
-                        let tool = &tools[tool_idx];
-                        if tool.needs_selection && app.selected.is_empty() {
-                            app.status = format!("{} requires a selection", tool.label);
-                        } else if tool.command == "sketch" {
-                            app.mode = TuiMode::Sketch(crate::tui::SketchModeState::new(
-                                crate::tui::SketchPlane::XY,
-                            ));
-                            app.status =
-                                "Sketch mode (XY plane) - L:line R:rect C:circle".to_string();
-                        } else {
-                            let cmd = tool.command.to_string();
-                            app.process_command(&cmd)?;
-                        }
-                    }
+                    handle_sub_tool_click(app, tool_idx)?;
                 }
                 HitRegion::CommandPalette(item_idx) => {
                     app.command_selected_index = item_idx;
@@ -204,7 +332,7 @@ pub fn handle_mouse(
                     if is_double {
                         // Double-click viewport background: reset camera
                         app.camera = crate::render::Camera::default();
-                        app.status = "Camera reset".to_string();
+                        app.set_status("Camera reset");
                     } else {
                         // Click-to-select via pick buffer
                         let pick_id = if let Some((cw, ch)) = cell_dims {
@@ -224,10 +352,11 @@ pub fn handle_mouse(
                                 app.selected.clear();
                                 app.selected.insert(node_id);
                             }
-                            app.status = format!("{} selected", app.selected.len());
+                            app.set_status(format!("{} selected", app.selected.len()));
                         } else {
                             app.selected.clear();
                         }
+                        app.auto_switch_tab();
                     }
                 }
                 _ => {}
@@ -282,7 +411,7 @@ pub fn handle_mouse(
             if let HitRegion::Sidebar(_) = region {
                 app.sidebar_scroll = app.sidebar_scroll.saturating_sub(1);
             } else {
-                app.camera.zoom(0.9);
+                app.camera.zoom(0.8);
             }
         }
         MouseEventKind::ScrollDown => {
@@ -291,7 +420,7 @@ pub fn handle_mouse(
                 let parts_count = app.get_parts().len();
                 app.sidebar_scroll = (app.sidebar_scroll + 1).min(parts_count.saturating_sub(1));
             } else {
-                app.camera.zoom(1.1);
+                app.camera.zoom(1.25);
             }
         }
         MouseEventKind::Up(_) => {
@@ -307,8 +436,150 @@ pub fn handle_mouse(
     Ok(true)
 }
 
+/// Handle key events for the inline tool input. Returns true if consumed.
+fn handle_tool_input_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
+    let ti = match app.tool_input.as_mut() {
+        Some(ti) => ti,
+        None => return Ok(false),
+    };
+
+    match key.code {
+        KeyCode::Esc => {
+            app.tool_input = None;
+            app.set_status("Cancelled");
+        }
+        KeyCode::Enter => {
+            let cmd = ti.format_command();
+            app.tool_input = None;
+            if !cmd.trim().is_empty() {
+                app.process_command(&cmd)?;
+            }
+        }
+        KeyCode::Backspace => {
+            if ti.editing || ti.text_mode {
+                ti.edit_buf.pop();
+            }
+        }
+        KeyCode::Left => {
+            if ti.text_mode {
+                // No cursor movement in simple text mode
+            } else {
+                let fine = key.modifiers.contains(KeyModifiers::SHIFT);
+                ti.editing = false;
+                ti.scrub(-1, fine);
+            }
+        }
+        KeyCode::Right => {
+            if ti.text_mode {
+                // No cursor movement in simple text mode
+            } else {
+                let fine = key.modifiers.contains(KeyModifiers::SHIFT);
+                ti.editing = false;
+                ti.scrub(1, fine);
+            }
+        }
+        // Axis switching for transform tools (X/Y/Z keys)
+        KeyCode::Char('x') | KeyCode::Char('X') if !ti.text_mode && ti.axis.is_some() => {
+            ti.axis = Some("X");
+            update_axis_template(ti);
+        }
+        KeyCode::Char('y') | KeyCode::Char('Y') if !ti.text_mode && ti.axis.is_some() => {
+            ti.axis = Some("Y");
+            update_axis_template(ti);
+        }
+        KeyCode::Char('z') | KeyCode::Char('Z') if !ti.text_mode && ti.axis.is_some() => {
+            ti.axis = Some("Z");
+            update_axis_template(ti);
+        }
+        KeyCode::Char(c) => {
+            if ti.text_mode {
+                ti.edit_buf.push(c);
+            } else if c.is_ascii_digit() || c == '.' || c == '-' {
+                // Switch to direct editing mode
+                if !ti.editing {
+                    ti.editing = true;
+                    ti.edit_buf.clear();
+                }
+                ti.edit_buf.push(c);
+            }
+        }
+        _ => {}
+    }
+
+    Ok(true)
+}
+
+/// Update the command template based on the current axis for Move/Rotate.
+fn update_axis_template(ti: &mut ToolInput) {
+    let axis = ti.axis.unwrap_or("X");
+    if ti.label == "Move" {
+        ti.command_template = match axis {
+            "X" => "move {} 0 0".to_string(),
+            "Y" => "move 0 {} 0".to_string(),
+            "Z" => "move 0 0 {}".to_string(),
+            _ => "move {} 0 0".to_string(),
+        };
+    } else if ti.label == "Rotate" {
+        ti.command_template = match axis {
+            "X" => "rotate {} 0 0".to_string(),
+            "Y" => "rotate 0 {} 0".to_string(),
+            "Z" => "rotate 0 0 {}".to_string(),
+            _ => "rotate 0 {} 0".to_string(),
+        };
+    }
+}
+
 /// Handle a key event. Returns Ok(true) if the app should continue running.
 pub fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
+    // When terminal is open, route keys there first
+    if app.chat.open {
+        match key.code {
+            KeyCode::Char('`') | KeyCode::Esc => {
+                app.chat.open = false;
+            }
+            KeyCode::Enter => {
+                if let Some(_msg) = app.chat.send_message() {
+                    // TODO: send to AI agent backend
+                    app.chat.assistant("AI agent not yet connected.");
+                }
+            }
+            KeyCode::Backspace => {
+                app.chat.input.pop();
+            }
+            KeyCode::Up => {
+                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                    app.chat.scroll = app.chat.scroll.saturating_add(1);
+                } else {
+                    app.chat.history_up();
+                }
+            }
+            KeyCode::Down => {
+                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                    app.chat.scroll = app.chat.scroll.saturating_sub(1);
+                } else {
+                    app.chat.history_down();
+                }
+            }
+            KeyCode::PageUp => {
+                app.chat.scroll = app.chat.scroll.saturating_add(5);
+            }
+            KeyCode::PageDown => {
+                app.chat.scroll = app.chat.scroll.saturating_sub(5);
+            }
+            KeyCode::Char(c) => {
+                app.chat.input.push(c);
+            }
+            _ => {}
+        }
+        return Ok(true);
+    }
+
+    // Tool input mode takes priority over normal key handling
+    if app.tool_input.is_some() {
+        handle_tool_input_key(app, key)?;
+        return Ok(true);
+    }
+
     match &mut app.mode {
         TuiMode::Command => match key.code {
             KeyCode::Enter => {
@@ -358,11 +629,12 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
         TuiMode::Sketch(state) => match key.code {
             KeyCode::Esc => {
                 app.mode = TuiMode::Normal;
-                app.status = "Exited sketch mode".to_string();
+                app.set_status("Exited sketch mode");
             }
             KeyCode::Char(c) => {
                 if state.handle_key(c) {
-                    app.status = format!("Sketch tool: {}", state.tool_name());
+                    let name = state.tool_name().to_string();
+                    app.set_status(format!("Sketch tool: {}", name));
                 }
             }
             _ => {}
@@ -375,38 +647,46 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
                 app.mode = TuiMode::Command;
             }
             KeyCode::Char('`') => {
-                app.sidebar_visible = !app.sidebar_visible;
+                app.chat.open = true;
             }
             KeyCode::Char('S') if key.modifiers.contains(KeyModifiers::SHIFT) => {
                 app.mode = TuiMode::Sketch(crate::tui::SketchModeState::new(
                     crate::tui::SketchPlane::XY,
                 ));
-                app.status = "Sketch mode (XY plane) - L:line R:rect C:circle".to_string();
+                app.set_status("Sketch mode (XY plane) - L:line R:rect C:circle");
             }
-            // Tab switching (1-8 for toolbar tabs — only in Normal mode without primitives)
-            // Keeping 1-3 for primitives for backward compat
+            // Number keys 1-7: switch toolbar tabs (matching web app)
             KeyCode::Char('1') => {
-                let id = app.add_cube(20.0)?;
-                app.selected.clear();
-                app.selected.insert(id);
+                app.active_tab = 1; // Create
+                app.last_manual_tab = Instant::now();
             }
             KeyCode::Char('2') => {
-                let id = app.add_cylinder(10.0, 20.0)?;
-                app.selected.clear();
-                app.selected.insert(id);
+                app.active_tab = 2; // Transform
+                app.last_manual_tab = Instant::now();
             }
             KeyCode::Char('3') => {
-                let id = app.add_sphere(10.0)?;
-                app.selected.clear();
-                app.selected.insert(id);
+                app.active_tab = 3; // Combine
+                app.last_manual_tab = Instant::now();
             }
-            KeyCode::Char('4') => app.active_tab = 3,
-            KeyCode::Char('5') => app.active_tab = 4,
-            KeyCode::Char('6') => app.active_tab = 5,
-            KeyCode::Char('7') => app.active_tab = 6,
-            KeyCode::Char('8') => app.active_tab = 7,
+            KeyCode::Char('4') => {
+                app.active_tab = 4; // Modify
+                app.last_manual_tab = Instant::now();
+            }
+            KeyCode::Char('5') => {
+                app.active_tab = 5; // Assembly
+                app.last_manual_tab = Instant::now();
+            }
+            KeyCode::Char('6') => {
+                app.active_tab = 6; // Simulate
+                app.last_manual_tab = Instant::now();
+            }
+            KeyCode::Char('7') => {
+                app.active_tab = 7; // Export
+                app.last_manual_tab = Instant::now();
+            }
             KeyCode::Char('x') | KeyCode::Delete | KeyCode::Backspace => {
                 app.delete_selected()?;
+                app.auto_switch_tab();
             }
             KeyCode::Char('u') => {
                 app.undo()?;
@@ -419,11 +699,11 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
             KeyCode::Char('R') if key.modifiers.contains(KeyModifiers::SHIFT) => {
                 app.raytrace_enabled = !app.raytrace_enabled;
                 app.render_dirty = true;
-                app.status = if app.raytrace_enabled {
-                    "Ray tracing ON".to_string()
+                app.set_status(if app.raytrace_enabled {
+                    "Ray tracing ON"
                 } else {
-                    "Ray tracing OFF".to_string()
-                };
+                    "Ray tracing OFF"
+                });
             }
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 app.save()?;
@@ -442,10 +722,12 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
                     app.focused_part_index = (app.focused_part_index + 1) % parts.len();
                     app.selected.clear();
                     app.selected.insert(parts[app.focused_part_index].0);
+                    app.auto_switch_tab();
                 }
             }
             KeyCode::Esc => {
                 app.selected.clear();
+                app.auto_switch_tab();
             }
             KeyCode::Enter => {
                 let parts = app.get_parts();
@@ -456,6 +738,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
                     } else {
                         app.selected.insert(id);
                     }
+                    app.auto_switch_tab();
                 }
             }
             // WASD translation
@@ -471,7 +754,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
         _ => {
             if key.code == KeyCode::Esc {
                 app.mode = TuiMode::Normal;
-                app.status = "Ready".to_string();
+                app.set_status("Ready");
             }
         }
     }
