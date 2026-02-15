@@ -71,19 +71,17 @@ pub struct CellBuffer {
 
 impl CellBuffer {
     /// Allocate a new buffer.
+    ///
+    /// Both `cells` and `prev` are initialized to `Cell::default()` so that on the first
+    /// flush only cells actively written by overlays will diff as changed.
+    /// This prevents pixel-protocol images (Kitty/Sixel) from being overwritten with spaces.
     pub fn new(width: u16, height: u16) -> Self {
         let size = width as usize * height as usize;
         Self {
             width,
             height,
             cells: vec![Cell::default(); size],
-            prev: vec![
-                Cell {
-                    ch: '\0',
-                    ..Cell::default()
-                };
-                size
-            ],
+            prev: vec![Cell::default(); size],
         }
     }
 
@@ -170,13 +168,7 @@ impl CellBuffer {
         self.height = height;
         let size = width as usize * height as usize;
         self.cells = vec![Cell::default(); size];
-        self.prev = vec![
-            Cell {
-                ch: '\0',
-                ..Cell::default()
-            };
-            size
-        ];
+        self.prev = vec![Cell::default(); size];
     }
 }
 

@@ -36,6 +36,8 @@ pub struct TerminalCaps {
     pub cell_width: u32,
     /// Approximate pixels per cell height
     pub cell_height: u32,
+    /// Whether running inside tmux (for passthrough wrapping)
+    pub in_tmux: bool,
 }
 
 impl Default for TerminalCaps {
@@ -47,40 +49,79 @@ impl Default for TerminalCaps {
 impl TerminalCaps {
     /// Detect terminal graphics capabilities.
     ///
-    /// Priority order: Kitty > iTerm2 > Sixel > HalfBlock > Braille
+    /// Priority order: VCAD_PROTOCOL override > Kitty > iTerm2 > Sixel > HalfBlock > Braille
     pub fn detect() -> Self {
-        // 1. Check for Kitty
-        if env::var("KITTY_WINDOW_ID").is_ok() {
-            return Self::kitty();
+        let in_tmux = env::var("TMUX").is_ok();
+
+        // 0. Explicit override via VCAD_PROTOCOL env var
+        if let Ok(proto) = env::var("VCAD_PROTOCOL") {
+            let protocol = match proto.to_lowercase().as_str() {
+                "kitty" => GraphicsProtocol::Kitty,
+                "sixel" => GraphicsProtocol::Sixel,
+                "iterm2" => GraphicsProtocol::ITerm2,
+                "halfblock" => GraphicsProtocol::HalfBlock,
+                "braille" => GraphicsProtocol::Braille,
+                _ => GraphicsProtocol::HalfBlock,
+            };
+            let (cell_width, cell_height) = match protocol {
+                GraphicsProtocol::Kitty => (10, 20),
+                GraphicsProtocol::ITerm2 => (9, 18),
+                GraphicsProtocol::Sixel => (8, 16),
+                _ => (8, 16),
+            };
+            return Self {
+                protocol,
+                true_color: true,
+                width_px: None,
+                height_px: None,
+                cell_width,
+                cell_height,
+                in_tmux,
+            };
         }
 
-        // 2. Check for WezTerm (supports Kitty protocol)
-        if env::var("WEZTERM_PANE").is_ok() {
-            return Self::kitty();
+        // Pixel protocols (Kitty/iTerm2/Sixel) only work when NOT inside tmux,
+        // because tmux intercepts escape sequences. Users who have configured
+        // `set -g allow-passthrough on` can use VCAD_PROTOCOL=kitty to override.
+        if !in_tmux {
+            // 1. Check for Kitty
+            if env::var("KITTY_WINDOW_ID").is_ok() {
+                return Self::kitty_with_tmux(false);
+            }
+
+            // 2. Check for WezTerm (supports Kitty protocol)
+            if env::var("WEZTERM_PANE").is_ok() {
+                return Self::kitty_with_tmux(false);
+            }
+
+            // 3. Check for Ghostty (supports Kitty protocol)
+            if env::var("GHOSTTY_BIN_DIR").is_ok() {
+                return Self::kitty_with_tmux(false);
+            }
+
+            // 4. Check for iTerm2
+            if env::var("TERM_PROGRAM")
+                .map(|v| v == "iTerm.app")
+                .unwrap_or(false)
+            {
+                return Self::iterm2_with_tmux(false);
+            }
+
+            // Also check LC_TERMINAL for nested sessions
+            if env::var("LC_TERMINAL")
+                .map(|v| v == "iTerm2")
+                .unwrap_or(false)
+            {
+                return Self::iterm2_with_tmux(false);
+            }
+
+            // 5. Check for terminals with known Sixel support
+            if Self::likely_sixel_support() {
+                return Self::sixel_with_tmux(false);
+            }
         }
 
-        // 3. Check for iTerm2
-        if env::var("TERM_PROGRAM")
-            .map(|v| v == "iTerm.app")
-            .unwrap_or(false)
-        {
-            return Self::iterm2();
-        }
-
-        // Also check LC_TERMINAL for nested sessions
-        if env::var("LC_TERMINAL")
-            .map(|v| v == "iTerm2")
-            .unwrap_or(false)
-        {
-            return Self::iterm2();
-        }
-
-        // 4. Check for terminals with known Sixel support
-        if Self::likely_sixel_support() {
-            return Self::sixel();
-        }
-
-        // 5. Check COLORTERM for true color support
+        // 6. Check COLORTERM for true color support
         let true_color = env::var("COLORTERM")
             .map(|v| v == "truecolor" || v == "24bit")
             .unwrap_or(false);
@@ -97,16 +138,15 @@ impl TerminalCaps {
             height_px: None,
             cell_width: 8,
             cell_height: 16,
+            in_tmux,
         }
     }
 
     /// Check if terminal likely supports Sixel based on TERM variable.
     fn likely_sixel_support() -> bool {
         if let Ok(term) = env::var("TERM") {
-            // These terminals commonly support Sixel
+            // Only terminals with reliable Sixel support
             let sixel_terms = [
-                "xterm-256color",
-                "xterm",
                 "mlterm",
                 "foot",
                 "foot-extra",
@@ -129,7 +169,7 @@ impl TerminalCaps {
         false
     }
 
-    fn kitty() -> Self {
+    fn kitty_with_tmux(in_tmux: bool) -> Self {
         Self {
             protocol: GraphicsProtocol::Kitty,
             true_color: true,
@@ -137,10 +177,11 @@ impl TerminalCaps {
             height_px: None,
             cell_width: 10,
             cell_height: 20,
+            in_tmux,
         }
     }
 
-    fn iterm2() -> Self {
+    fn iterm2_with_tmux(in_tmux: bool) -> Self {
         Self {
             protocol: GraphicsProtocol::ITerm2,
             true_color: true,
@@ -148,10 +189,11 @@ impl TerminalCaps {
             height_px: None,
             cell_width: 9,
             cell_height: 18,
+            in_tmux,
         }
     }
 
-    fn sixel() -> Self {
+    fn sixel_with_tmux(in_tmux: bool) -> Self {
         Self {
             protocol: GraphicsProtocol::Sixel,
             true_color: true,
@@ -159,6 +201,7 @@ impl TerminalCaps {
             height_px: None,
             cell_width: 8,
             cell_height: 16,
+            in_tmux,
         }
     }
 

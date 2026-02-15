@@ -14,6 +14,8 @@ use super::{buffer_to_braille, RenderBuffer};
 pub struct GraphicsOutput {
     caps: TerminalCaps,
     image_id: u32,
+    /// Whether running inside tmux (for passthrough wrapping).
+    in_tmux: bool,
 }
 
 impl Default for GraphicsOutput {
@@ -25,15 +27,23 @@ impl Default for GraphicsOutput {
 impl GraphicsOutput {
     /// Create a new graphics output manager with auto-detected capabilities.
     pub fn new() -> Self {
+        let caps = TerminalCaps::detect();
+        let in_tmux = caps.in_tmux;
         Self {
-            caps: TerminalCaps::detect(),
+            caps,
             image_id: 1,
+            in_tmux,
         }
     }
 
     /// Create a graphics output manager with explicit capabilities.
     pub fn with_caps(caps: TerminalCaps) -> Self {
-        Self { caps, image_id: 1 }
+        let in_tmux = caps.in_tmux;
+        Self {
+            caps,
+            image_id: 1,
+            in_tmux,
+        }
     }
 
     /// Get the detected graphics protocol.
@@ -55,7 +65,7 @@ impl GraphicsOutput {
                 if self.image_id == 0 {
                     self.image_id = 1;
                 }
-                img.display(stdout)
+                img.display(stdout, self.in_tmux)
             }
             GraphicsProtocol::ITerm2 => self.display_iterm2(buffer, stdout),
             GraphicsProtocol::Sixel => {

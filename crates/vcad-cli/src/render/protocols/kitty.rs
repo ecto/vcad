@@ -36,7 +36,9 @@ impl KittyImage {
     /// Encode and display image at cursor position.
     ///
     /// Transmits the image data to the terminal using the Kitty graphics protocol.
-    pub fn display(&self, stdout: &mut impl Write) -> io::Result<()> {
+    /// When `in_tmux` is true, wraps each escape sequence in DCS passthrough
+    /// (requires `set -g allow-passthrough on` in tmux.conf).
+    pub fn display(&self, stdout: &mut impl Write, in_tmux: bool) -> io::Result<()> {
         // Kitty protocol: ESC_G<payload>ESC\
         // a=T (transmit), f=32 (RGBA), s=width, v=height, i=id
 
@@ -51,16 +53,21 @@ impl KittyImage {
                 io::Error::new(io::ErrorKind::InvalidData, e)
             })?;
 
-            if i == 0 {
+            let seq = if i == 0 {
                 // First chunk: include all parameters
-                write!(
-                    stdout,
+                format!(
                     "\x1b_Ga=T,f=32,s={},v={},i={},{};{}\x1b\\",
                     self.width, self.height, self.id, more, chunk_str
-                )?;
+                )
             } else {
                 // Continuation chunks
-                write!(stdout, "\x1b_G{};{}\x1b\\", more, chunk_str)?;
+                format!("\x1b_G{};{}\x1b\\", more, chunk_str)
+            };
+
+            if in_tmux {
+                write!(stdout, "{}", tmux_wrap(&seq))?;
+            } else {
+                write!(stdout, "{}", seq)?;
             }
         }
 
@@ -78,9 +85,10 @@ impl KittyImage {
         _row: u16,
         cols: u16,
         rows: u16,
+        in_tmux: bool,
     ) -> io::Result<()> {
         // First transmit the image data
-        self.display(stdout)?;
+        self.display(stdout, in_tmux)?;
 
         // Then place it using Unicode placeholders
         write!(
@@ -98,6 +106,24 @@ impl KittyImage {
         write!(stdout, "\x1b_Ga=d,d=i,i={}\x1b\\", self.id)?;
         stdout.flush()
     }
+}
+
+/// Wrap an escape sequence in tmux DCS passthrough.
+///
+/// Doubles all ESC bytes inside the payload and wraps with `\x1bPtmux;...\x1b\\`.
+/// Requires `set -g allow-passthrough on` in tmux.conf.
+fn tmux_wrap(seq: &str) -> String {
+    let mut out = String::with_capacity(seq.len() + 16);
+    out.push_str("\x1bPtmux;");
+    for ch in seq.chars() {
+        if ch == '\x1b' {
+            out.push_str("\x1b\x1b");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push_str("\x1b\\");
+    out
 }
 
 /// Create KittyImage from RenderBuffer.
@@ -129,7 +155,7 @@ mod tests {
         let img = KittyImage::new(1, 2, 2, data);
 
         let mut output = Vec::new();
-        img.display(&mut output).unwrap();
+        img.display(&mut output, false).unwrap();
 
         // Check that it starts with the Kitty escape sequence
         assert!(output.starts_with(b"\x1b_G"));
