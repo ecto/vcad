@@ -132,6 +132,22 @@ impl Camera {
         self.update_position();
     }
 
+    /// Adjust distance so a 20-unit object fills ~40% of viewport height.
+    #[allow(dead_code)]
+    ///
+    /// Perspective projection is resolution-independent: the apparent angular size
+    /// depends only on FOV and distance, not pixel count.
+    pub fn zoom_to_fit(&mut self, _viewport_width: u32, _viewport_height: u32) {
+        // object_size / (2 * distance * tan(fov/2)) = fraction_of_screen
+        // distance = object_size / (2 * fraction * tan(fov/2))
+        let object_size = 20.0f32;
+        let fraction = 0.4;
+        let half_fov_rad = (self.fov / 2.0).to_radians();
+        let distance = object_size / (2.0 * fraction * half_fov_rad.tan());
+        self.distance = distance.clamp(10.0, 1000.0);
+        self.update_position();
+    }
+
     /// Create a bitwise snapshot for cheap change detection.
     pub fn snapshot(&self) -> CameraSnapshot {
         CameraSnapshot {
@@ -342,7 +358,7 @@ pub fn render_scene(buffer: &mut RenderBuffer, triangles: &[Triangle], camera: &
     let aspect = buffer.width as f32 / buffer.height as f32;
     let view = Mat4::look_at(camera.position, camera.target, camera.up);
     let proj = Mat4::perspective(camera.fov * PI / 180.0, aspect, 0.1, 1000.0);
-    let mvp = proj.multiply(&view);
+    let mvp = view.multiply(&proj);
 
     // Ground grid first (behind objects)
     render_ground_grid(buffer, camera, &mvp);
@@ -438,7 +454,14 @@ pub fn render_scene(buffer: &mut RenderBuffer, triangles: &[Triangle], camera: &
 /// Render a ground plane grid on the XZ plane (Y=0) with adaptive spacing.
 fn render_ground_grid(buffer: &mut RenderBuffer, camera: &Camera, mvp: &Mat4) {
     let dist = camera.distance;
-    let spacing = if dist < 50.0 {
+    let w = buffer.width as f32;
+    let h = buffer.height as f32;
+
+    // Pixels per world unit at the target distance
+    let pixels_per_unit = h / (2.0 * dist * (camera.fov * PI / 360.0).tan());
+
+    // Base spacing from camera distance
+    let base_spacing = if dist < 50.0 {
         5.0f32
     } else if dist < 200.0 {
         10.0
@@ -448,11 +471,16 @@ fn render_ground_grid(buffer: &mut RenderBuffer, camera: &Camera, mvp: &Mat4) {
         100.0
     };
 
+    // Ensure grid lines are at least 10 pixels apart on screen to avoid visual noise
+    let min_spacing = 10.0 / pixels_per_unit.max(0.001);
+    let spacing = base_spacing.max(min_spacing);
+
     let major_every = 5;
-    let half_extent = (dist * 1.5 / spacing).ceil() as i32;
-    let w = buffer.width as f32;
-    let h = buffer.height as f32;
-    let line_half = 0.15 * spacing; // thin line width in world units
+    // Cap line count to avoid excessive rendering at low resolution
+    let half_extent = ((dist * 1.5 / spacing).ceil() as i32).min(15);
+    // Adaptive line width: ensure lines are at least ~1.5px wide on screen
+    let min_world_width = 1.5 / pixels_per_unit.max(0.001);
+    let line_half = (0.15 * spacing).max(min_world_width * 0.5);
 
     for i in -half_extent..=half_extent {
         let coord = i as f32 * spacing;
