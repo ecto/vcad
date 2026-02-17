@@ -4,6 +4,8 @@
 
 use std::f32::consts::PI;
 
+use crate::buffer::RenderBuffer;
+
 /// 3D vector.
 #[derive(Debug, Clone, Copy)]
 pub struct Vec3 {
@@ -42,6 +44,7 @@ impl Vec3 {
         Self::new(self.x * s, self.y * s, self.z * s)
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn sub(self, other: Self) -> Self {
         Self::new(self.x - other.x, self.y - other.y, self.z - other.z)
     }
@@ -181,90 +184,6 @@ pub struct CameraSnapshot {
     elevation: u32,
     distance: u32,
     target: [u32; 3],
-}
-
-/// RGBA pixel buffer with depth and pick IDs.
-pub struct RenderBuffer {
-    pub width: u32,
-    pub height: u32,
-    pub pixels: Vec<u8>,
-    pub depth: Vec<f32>,
-    /// Object ID per pixel for click-to-select (0 = background).
-    pub pick_ids: Vec<u32>,
-}
-
-impl RenderBuffer {
-    pub fn new(width: u32, height: u32) -> Self {
-        let size = (width * height) as usize;
-        Self {
-            width,
-            height,
-            pixels: vec![0; size * 4],
-            depth: vec![f32::INFINITY; size],
-            pick_ids: vec![0; size],
-        }
-    }
-
-    pub fn clear(&mut self, r: u8, g: u8, b: u8) {
-        let size = (self.width * self.height) as usize;
-        for i in 0..size {
-            self.pixels[i * 4] = r;
-            self.pixels[i * 4 + 1] = g;
-            self.pixels[i * 4 + 2] = b;
-            self.pixels[i * 4 + 3] = 255;
-            self.depth[i] = f32::INFINITY;
-            self.pick_ids[i] = 0;
-        }
-    }
-
-    fn set_pixel_with_id(&mut self, x: u32, y: u32, z: f32, color: [u8; 3], pick_id: u32) {
-        if x >= self.width || y >= self.height {
-            return;
-        }
-        let idx = (y * self.width + x) as usize;
-        if z < self.depth[idx] {
-            self.depth[idx] = z;
-            self.pixels[idx * 4] = color[0];
-            self.pixels[idx * 4 + 1] = color[1];
-            self.pixels[idx * 4 + 2] = color[2];
-            self.pixels[idx * 4 + 3] = 255;
-            self.pick_ids[idx] = pick_id;
-        }
-    }
-
-    /// Look up the pick ID at a terminal cell position (half-block coordinates).
-    pub fn pick_at(&self, col: u16, row: u16) -> u32 {
-        // Half-block: each terminal row = 2 pixel rows
-        let px = col as u32;
-        let py = (row as u32) * 2;
-        if px < self.width && py < self.height {
-            let idx = (py * self.width + px) as usize;
-            if idx < self.pick_ids.len() {
-                return self.pick_ids[idx];
-            }
-        }
-        0
-    }
-
-    /// Look up pick ID mapping terminal coords to pixel coords based on protocol.
-    pub fn pick_at_for_protocol(
-        &self,
-        col: u16,
-        row: u16,
-        cell_width: u32,
-        cell_height: u32,
-    ) -> u32 {
-        // Map terminal cell center to pixel buffer
-        let px = col as u32 * cell_width + cell_width / 2;
-        let py = row as u32 * cell_height + cell_height / 2;
-        if px < self.width && py < self.height {
-            let idx = (py * self.width + px) as usize;
-            if idx < self.pick_ids.len() {
-                return self.pick_ids[idx];
-            }
-        }
-        0
-    }
 }
 
 /// 4x4 matrix for transformations.
@@ -485,11 +404,7 @@ fn render_ground_grid(buffer: &mut RenderBuffer, camera: &Camera, mvp: &Mat4) {
     for i in -half_extent..=half_extent {
         let coord = i as f32 * spacing;
         let is_major = i % major_every == 0;
-        let color: [u8; 3] = if is_major {
-            [60, 60, 65]
-        } else {
-            [40, 40, 44]
-        };
+        let color: [u8; 3] = if is_major { [60, 60, 65] } else { [40, 40, 44] };
 
         // X-aligned line at z=coord: thin quad from (lo, 0, coord-hw) to (hi, 0, coord+hw)
         let lo = -half_extent as f32 * spacing;
@@ -497,7 +412,10 @@ fn render_ground_grid(buffer: &mut RenderBuffer, camera: &Camera, mvp: &Mat4) {
 
         // Z-line (parallel to X axis)
         rasterize_grid_line(
-            buffer, mvp, w, h,
+            buffer,
+            mvp,
+            w,
+            h,
             Vec3::new(lo, 0.0, coord - line_half),
             Vec3::new(hi, 0.0, coord - line_half),
             Vec3::new(hi, 0.0, coord + line_half),
@@ -507,7 +425,10 @@ fn render_ground_grid(buffer: &mut RenderBuffer, camera: &Camera, mvp: &Mat4) {
 
         // X-line (parallel to Z axis)
         rasterize_grid_line(
-            buffer, mvp, w, h,
+            buffer,
+            mvp,
+            w,
+            h,
             Vec3::new(coord - line_half, 0.0, lo),
             Vec3::new(coord + line_half, 0.0, lo),
             Vec3::new(coord + line_half, 0.0, hi),
@@ -563,8 +484,8 @@ fn rasterize_grid_line(
                 let w1 = edge_function((s2.0, s2.1), (s0.0, s0.1), p);
                 let w2 = edge_function((s0.0, s0.1), (s1.0, s1.1), p);
 
-                let inside = (w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0)
-                    || (w0 <= 0.0 && w1 <= 0.0 && w2 <= 0.0);
+                let inside =
+                    (w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0) || (w0 <= 0.0 && w1 <= 0.0 && w2 <= 0.0);
 
                 if inside {
                     let z = (w0 * s0.2 + w1 * s1.2 + w2 * s2.2) / screen_area;
@@ -595,9 +516,9 @@ fn render_axis_indicator(
     );
 
     let axes: [([f32; 3], [u8; 3], char); 3] = [
-        ([1.0, 0.0, 0.0], [220, 60, 60], 'X'),   // X = red
-        ([0.0, 1.0, 0.0], [60, 200, 60], 'Y'),    // Y = green
-        ([0.0, 0.0, 1.0], [60, 100, 220], 'Z'),   // Z = blue
+        ([1.0, 0.0, 0.0], [220, 60, 60], 'X'),  // X = red
+        ([0.0, 1.0, 0.0], [60, 200, 60], 'Y'),  // Y = green
+        ([0.0, 0.0, 1.0], [60, 100, 220], 'Z'), // Z = blue
     ];
 
     let center_x = corner_x + size / 2;
@@ -701,31 +622,13 @@ fn draw_tiny_char(buffer: &mut RenderBuffer, x: i32, y: i32, ch: char, color: [u
     // 5-wide bitmaps, 7 rows each
     let bitmap: &[u8] = match ch {
         'X' => &[
-            0b10001,
-            0b01010,
-            0b00100,
-            0b00100,
-            0b00100,
-            0b01010,
-            0b10001,
+            0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b01010, 0b10001,
         ],
         'Y' => &[
-            0b10001,
-            0b01010,
-            0b00100,
-            0b00100,
-            0b00100,
-            0b00100,
-            0b00100,
+            0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100,
         ],
         'Z' => &[
-            0b11111,
-            0b00001,
-            0b00010,
-            0b00100,
-            0b01000,
-            0b10000,
-            0b11111,
+            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111,
         ],
         _ => return,
     };
@@ -845,15 +748,6 @@ mod tests {
 
         camera.zoom(2.0);
         assert!((camera.distance - initial_dist).abs() < 0.1);
-    }
-
-    #[test]
-    fn test_render_buffer() {
-        let buffer = RenderBuffer::new(100, 50);
-        assert_eq!(buffer.width, 100);
-        assert_eq!(buffer.height, 50);
-        assert_eq!(buffer.pixels.len(), 100 * 50 * 4);
-        assert_eq!(buffer.depth.len(), 100 * 50);
     }
 
     #[test]

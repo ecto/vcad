@@ -2447,6 +2447,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "termview"
+version = "0.8.0"
+dependencies = [
+ "base64 0.22.1",
+ "image",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2720,17 +2728,17 @@ name = "vcad-cli"
 version = "0.8.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
  "clap",
  "crossterm",
- "image",
  "rustyline",
  "serde",
  "serde_json",
  "tempfile",
+ "termview",
  "thiserror 2.0.18",
  "vcad",
  "vcad-app",
+ "vcad-eval",
  "vcad-ir",
  "vcad-kernel",
  "vcad-kernel-cam",
@@ -2741,6 +2749,23 @@ dependencies = [
  "vcad-kernel-urdf",
  "vcad-slicer",
  "vcad-slicer-gcode",
+]
+
+[[package]]
+name = "vcad-eval"
+version = "0.8.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "vcad-ir",
+ "vcad-kernel",
+ "vcad-kernel-geom",
+ "vcad-kernel-math",
+ "vcad-kernel-sketch",
+ "vcad-kernel-sweep",
+ "vcad-kernel-tessellate",
+ "vcad-kernel-text",
 ]
 
 [[package]]
@@ -3016,6 +3041,7 @@ dependencies = [
  "serde-wasm-bindgen",
  "serde_json",
  "ts-rs",
+ "vcad-eval",
  "vcad-ir",
  "vcad-kernel",
  "vcad-kernel-cam",

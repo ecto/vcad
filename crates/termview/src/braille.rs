@@ -1,8 +1,8 @@
-//! Sixel and terminal graphics output.
+//! Braille character rendering.
 //!
-//! Converts pixel buffers to various terminal graphics formats.
+//! Converts pixel buffers to braille character art.
 
-use super::RenderBuffer;
+use crate::buffer::RenderBuffer;
 
 /// Convert a render buffer to braille character art.
 ///

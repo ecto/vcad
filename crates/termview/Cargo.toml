@@ -1,0 +1,11 @@
+[package]
+name = "termview"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Render pixel buffers to any terminal — Kitty, Sixel, iTerm2, halfblock, braille"
+
+[dependencies]
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["png"] }

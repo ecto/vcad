@@ -34,7 +34,9 @@ members = [
     "crates/vcad-kernel-cam",
     "crates/vcad-kernel-stocksim",
     "crates/vcad-app",
+    "crates/vcad-eval",
     "crates/stepperoni",
+    "crates/termview",
 ]
 
 [workspace.package]
@@ -84,4 +86,6 @@ vcad-kernel-cam = { path = "crates/vcad-kernel-cam" }
 vcad-kernel-stocksim = { path = "crates/vcad-kernel-stocksim" }
 vcad-kernel-text = { path = "crates/vcad-kernel-text" }
 vcad-app = { path = "crates/vcad-app" }
+vcad-eval = { path = "crates/vcad-eval" }
 stepperoni = { path = "crates/stepperoni" }
+termview = { path = "crates/termview" }

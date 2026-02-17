@@ -8,7 +8,7 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
 use std::io::{self, Write};
 
-use crate::render::RenderBuffer;
+use crate::RenderBuffer;
 
 /// Kitty graphics image wrapper.
 pub struct KittyImage {
@@ -49,9 +49,8 @@ impl KittyImage {
 
         for (i, chunk) in chunks.iter().enumerate() {
             let more = if i < chunks.len() - 1 { "m=1" } else { "m=0" };
-            let chunk_str = std::str::from_utf8(chunk).map_err(|e| {
-                io::Error::new(io::ErrorKind::InvalidData, e)
-            })?;
+            let chunk_str = std::str::from_utf8(chunk)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
             let seq = if i == 0 {
                 // First chunk: include all parameters

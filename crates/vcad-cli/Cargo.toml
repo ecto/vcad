@@ -16,6 +16,7 @@ vcad = { path = "../vcad" }
 vcad-ir = { path = "../vcad-ir" }
 vcad-kernel = { path = "../vcad-kernel" }
 vcad-app = { path = "../vcad-app" }
+vcad-eval = { path = "../vcad-eval" }
 vcad-kernel-urdf = { path = "../vcad-kernel-urdf" }
 vcad-kernel-sketch = { path = "../vcad-kernel-sketch" }
 vcad-kernel-constraints = { path = "../vcad-kernel-constraints" }
@@ -24,6 +25,7 @@ vcad-kernel-cam = { path = "../vcad-kernel-cam" }
 vcad-kernel-raytrace = { path = "../vcad-kernel-raytrace" }
 vcad-slicer = { path = "../vcad-slicer" }
 vcad-slicer-gcode = { path = "../vcad-slicer-gcode" }
+termview = { path = "../termview" }
 
 # TUI framework
 crossterm = "0.28"
@@ -41,10 +43,6 @@ serde_json.workspace = true
 # Error handling
 anyhow.workspace = true
 thiserror.workspace = true
-
-# Image/graphics
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
-base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"

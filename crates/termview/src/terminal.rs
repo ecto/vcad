@@ -2,7 +2,7 @@
 //!
 //! Detects the best available graphics protocol for the current terminal.
 
-#![allow(dead_code)] // These will be used in TUI mode
+#![allow(dead_code)]
 
 use std::env;
 
@@ -49,12 +49,16 @@ impl Default for TerminalCaps {
 impl TerminalCaps {
     /// Detect terminal graphics capabilities.
     ///
-    /// Priority order: VCAD_PROTOCOL override > Kitty > iTerm2 > Sixel > HalfBlock > Braille
+    /// Priority order: TERMVIEW_PROTOCOL/VCAD_PROTOCOL override > Kitty > iTerm2 > Sixel > HalfBlock > Braille
     pub fn detect() -> Self {
         let in_tmux = env::var("TMUX").is_ok();
 
-        // 0. Explicit override via VCAD_PROTOCOL env var
-        if let Ok(proto) = env::var("VCAD_PROTOCOL") {
+        // 0. Explicit override via TERMVIEW_PROTOCOL env var (fall back to VCAD_PROTOCOL)
+        let proto_override = env::var("TERMVIEW_PROTOCOL")
+            .or_else(|_| env::var("VCAD_PROTOCOL"))
+            .ok();
+
+        if let Some(proto) = proto_override {
             let protocol = match proto.to_lowercase().as_str() {
                 "kitty" => GraphicsProtocol::Kitty,
                 "sixel" => GraphicsProtocol::Sixel,
@@ -82,7 +86,7 @@ impl TerminalCaps {
 
         // Pixel protocols (Kitty/iTerm2/Sixel) only work when NOT inside tmux,
         // because tmux intercepts escape sequences. Users who have configured
-        // `set -g allow-passthrough on` can use VCAD_PROTOCOL=kitty to override.
+        // `set -g allow-passthrough on` can use TERMVIEW_PROTOCOL=kitty to override.
         if !in_tmux {
             // 1. Check for Kitty
             if env::var("KITTY_WINDOW_ID").is_ok() {
@@ -146,13 +150,7 @@ impl TerminalCaps {
     fn likely_sixel_support() -> bool {
         if let Ok(term) = env::var("TERM") {
             // Only terminals with reliable Sixel support
-            let sixel_terms = [
-                "mlterm",
-                "foot",
-                "foot-extra",
-                "contour",
-                "yaft-256color",
-            ];
+            let sixel_terms = ["mlterm", "foot", "foot-extra", "contour", "yaft-256color"];
 
             for supported in sixel_terms {
                 if term.starts_with(supported) {

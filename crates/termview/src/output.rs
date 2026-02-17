@@ -2,13 +2,13 @@
 //!
 //! Provides a single interface for rendering to any supported terminal graphics protocol.
 
-#![allow(dead_code)] // These will be used in TUI mode
+#![allow(dead_code)]
 
 use std::io::{self, Write};
 
-use super::protocols::{kitty, sixel};
-use super::terminal::{GraphicsProtocol, TerminalCaps};
-use super::{buffer_to_braille, RenderBuffer};
+use crate::protocols::{kitty, sixel};
+use crate::terminal::{GraphicsProtocol, TerminalCaps};
+use crate::{buffer_to_braille, RenderBuffer};
 
 /// Graphics output manager that automatically uses the best available protocol.
 pub struct GraphicsOutput {
@@ -151,8 +151,9 @@ impl GraphicsOutput {
         use image::{ImageBuffer, ImageEncoder, Rgba};
 
         let img: ImageBuffer<Rgba<u8>, _> =
-            ImageBuffer::from_raw(buffer.width, buffer.height, buffer.pixels.clone())
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "buffer size mismatch"))?;
+            ImageBuffer::from_raw(buffer.width, buffer.height, buffer.pixels.clone()).ok_or_else(
+                || io::Error::new(io::ErrorKind::InvalidData, "buffer size mismatch"),
+            )?;
 
         let mut png_bytes = Vec::new();
         let encoder = image::codecs::png::PngEncoder::new(&mut png_bytes);
