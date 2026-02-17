@@ -47,7 +47,7 @@ fn render_sidebar(
     // Fill background
     for y in area.y..area.y + area.height {
         for x in area.x..area.x + area.width {
-            set_char(buf, x, y, ' ', theme::SURFACE, theme::SURFACE);
+            set_char(buf, x, y, ' ', theme::SURFACE(), theme::SURFACE());
         }
     }
 
@@ -57,28 +57,28 @@ fn render_sidebar(
     let left = area.x;
     let right = area.x + area.width - 1;
 
-    set_char(buf, left, top, '\u{250C}', theme::BORDER, theme::SURFACE);
-    set_char(buf, right, top, '\u{2510}', theme::BORDER, theme::SURFACE);
-    set_char(buf, left, bot, '\u{2514}', theme::BORDER, theme::SURFACE);
-    set_char(buf, right, bot, '\u{2518}', theme::BORDER, theme::SURFACE);
+    set_char(buf, left, top, '\u{250C}', theme::BORDER(), theme::SURFACE());
+    set_char(buf, right, top, '\u{2510}', theme::BORDER(), theme::SURFACE());
+    set_char(buf, left, bot, '\u{2514}', theme::BORDER(), theme::SURFACE());
+    set_char(buf, right, bot, '\u{2518}', theme::BORDER(), theme::SURFACE());
 
     for x in (left + 1)..right {
-        set_char(buf, x, top, '\u{2500}', theme::BORDER, theme::SURFACE);
-        set_char(buf, x, bot, '\u{2500}', theme::BORDER, theme::SURFACE);
+        set_char(buf, x, top, '\u{2500}', theme::BORDER(), theme::SURFACE());
+        set_char(buf, x, bot, '\u{2500}', theme::BORDER(), theme::SURFACE());
     }
     for y in (top + 1)..bot {
-        set_char(buf, left, y, '\u{2502}', theme::BORDER, theme::SURFACE);
-        set_char(buf, right, y, '\u{2502}', theme::BORDER, theme::SURFACE);
+        set_char(buf, left, y, '\u{2502}', theme::BORDER(), theme::SURFACE());
+        set_char(buf, right, y, '\u{2502}', theme::BORDER(), theme::SURFACE());
     }
 
     // Header: "─ PARTS ─"
     let header = " PARTS ";
     let hx = left + 1;
-    set_char(buf, hx, top, '\u{2500}', theme::BORDER, theme::SURFACE);
+    set_char(buf, hx, top, '\u{2500}', theme::BORDER(), theme::SURFACE());
     for (i, ch) in header.chars().enumerate() {
         let x = hx + 1 + i as u16;
         if x < right {
-            set_char(buf, x, top, ch, theme::TEXT_MUTED, theme::SURFACE);
+            set_char(buf, x, top, ch, theme::TEXT_MUTED(), theme::SURFACE());
         }
     }
 
@@ -92,7 +92,7 @@ fn render_sidebar(
         for (i, ch) in msg.chars().enumerate() {
             let x = left + 2 + i as u16;
             if x < right {
-                set_char(buf, x, inner_top, ch, theme::TEXT_MUTED, theme::SURFACE);
+                set_char(buf, x, inner_top, ch, theme::TEXT_MUTED(), theme::SURFACE());
             }
         }
         return;
@@ -110,11 +110,11 @@ fn render_sidebar(
         let is_hovered = mouse_row.is_some_and(|mr| mr == y);
 
         let row_bg = if is_selected {
-            theme::SELECTION_BG
+            theme::SELECTION_BG()
         } else if is_hovered || is_focused {
-            theme::CARD
+            theme::CARD()
         } else {
-            theme::SURFACE
+            theme::SURFACE()
         };
 
         // Clear row
@@ -124,8 +124,8 @@ fn render_sidebar(
 
         // Expand caret
         let caret = if is_selected { '\u{25B8}' } else { ' ' };
-        set_char(buf, left + 1, y, ' ', theme::TEXT_MUTED, row_bg);
-        set_char(buf, left + 2, y, caret, theme::TEXT_MUTED, row_bg);
+        set_char(buf, left + 1, y, ' ', theme::TEXT_MUTED(), row_bg);
+        set_char(buf, left + 2, y, caret, theme::TEXT_MUTED(), row_bg);
 
         // Part icon
         let (icon, icon_color) = part_icon(name);
@@ -133,9 +133,9 @@ fn render_sidebar(
 
         // Part name
         let name_color = if is_selected {
-            theme::ACCENT
+            theme::ACCENT()
         } else {
-            theme::TEXT
+            theme::TEXT()
         };
         let max_name_len = inner_width.saturating_sub(6);
         for (i, ch) in name.chars().take(max_name_len).enumerate() {
@@ -166,7 +166,7 @@ fn part_icon(name: &str) -> (char, Color) {
     } else if lower.contains("translate") || lower.contains("rotate") || lower.contains("scale") {
         ('\u{2194}', theme::TAB_TRANSFORM)
     } else {
-        ('\u{25C6}', theme::TEXT_MUTED)
+        ('\u{25C6}', theme::TEXT_MUTED())
     }
 }
 

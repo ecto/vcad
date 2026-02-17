@@ -748,6 +748,11 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
             }
             KeyCode::Char('a') => app.translate_selected(-5.0, 0.0, 0.0)?,
             KeyCode::Char('d') => app.translate_selected(5.0, 0.0, 0.0)?,
+            KeyCode::Char('t') => {
+                let mode_name = crate::ui::theme::toggle();
+                app.render_dirty = true;
+                app.set_status(format!("Theme: {mode_name}"));
+            }
             _ => {}
         },
         // Other modes — Esc to exit

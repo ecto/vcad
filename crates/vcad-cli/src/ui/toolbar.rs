@@ -219,7 +219,7 @@ fn render_toolbar(
     // Fill background
     for y in area.y..area.y + area.height {
         for x in area.x..area.x + area.width {
-            set_char(buf, x, y, ' ', theme::SURFACE, theme::SURFACE);
+            set_char(buf, x, y, ' ', theme::SURFACE(), theme::SURFACE());
         }
     }
 
@@ -249,11 +249,11 @@ fn render_toolbar(
 
     for (i, (icon, label, color)) in theme::TABS.iter().enumerate() {
         if i > 0 && cx + 2 < area.x + area.width {
-            set_char(buf, cx, tab_row, ' ', theme::SURFACE, theme::SURFACE);
+            set_char(buf, cx, tab_row, ' ', theme::SURFACE(), theme::SURFACE());
             cx += 1;
-            set_char(buf, cx, tab_row, '\u{2502}', theme::BORDER, theme::SURFACE);
+            set_char(buf, cx, tab_row, '\u{2502}', theme::BORDER(), theme::SURFACE());
             cx += 1;
-            set_char(buf, cx, tab_row, ' ', theme::SURFACE, theme::SURFACE);
+            set_char(buf, cx, tab_row, ' ', theme::SURFACE(), theme::SURFACE());
             cx += 1;
         }
 
@@ -264,26 +264,26 @@ fn render_toolbar(
         let icon_color = *color;
         for ch in icon.chars() {
             if cx < area.x + area.width - 1 {
-                set_char(buf, cx, tab_row, ch, icon_color, theme::SURFACE);
+                set_char(buf, cx, tab_row, ch, icon_color, theme::SURFACE());
                 cx += 1;
             }
         }
 
         if cx < area.x + area.width - 1 {
-            set_char(buf, cx, tab_row, ' ', theme::SURFACE, theme::SURFACE);
+            set_char(buf, cx, tab_row, ' ', theme::SURFACE(), theme::SURFACE());
             cx += 1;
         }
 
         let label_color = if is_active {
             *color
         } else if is_hovered {
-            theme::TEXT
+            theme::TEXT()
         } else {
-            theme::TEXT_MUTED
+            theme::TEXT_MUTED()
         };
         for ch in label.chars() {
             if cx < area.x + area.width - 1 {
-                set_char(buf, cx, tab_row, ch, label_color, theme::SURFACE);
+                set_char(buf, cx, tab_row, ch, label_color, theme::SURFACE());
                 cx += 1;
             }
         }
@@ -293,10 +293,10 @@ fn render_toolbar(
     if has_sub_row {
         // Separator line between tabs and sub-tools
         let sep_y = area.y + 2;
-        set_char(buf, left, sep_y, '\u{251C}', theme::BORDER, theme::SURFACE);
-        set_char(buf, right, sep_y, '\u{2524}', theme::BORDER, theme::SURFACE);
+        set_char(buf, left, sep_y, '\u{251C}', theme::BORDER(), theme::SURFACE());
+        set_char(buf, right, sep_y, '\u{2524}', theme::BORDER(), theme::SURFACE());
         for x in (left + 1)..right {
-            set_char(buf, x, sep_y, '\u{2500}', theme::BORDER, theme::SURFACE);
+            set_char(buf, x, sep_y, '\u{2500}', theme::BORDER(), theme::SURFACE());
         }
 
         let sub_row = area.y + 3;
@@ -357,16 +357,16 @@ fn render_tool_input(
         // Color: label part in tab_color, value part in TEXT
         let fg = if ch == '[' {
             in_label = false;
-            theme::TEXT
+            theme::TEXT()
         } else if ch == ']' {
             in_label = true;
-            theme::TEXT
+            theme::TEXT()
         } else if in_label {
             tab_color
         } else {
-            theme::TEXT
+            theme::TEXT()
         };
-        set_char(buf, tx, sub_row, ch, fg, theme::SURFACE);
+        set_char(buf, tx, sub_row, ch, fg, theme::SURFACE());
         tx += 1;
     }
 
@@ -377,7 +377,7 @@ fn render_tool_input(
         "\u{2190}\u{2192}:scrub  Enter:apply  Esc:cancel"
     };
     let hint_x = area.x + (area.width.saturating_sub(hints.len() as u16)) / 2;
-    set_string(buf, hint_x, bot, hints, theme::TEXT_MUTED, theme::SURFACE);
+    set_string(buf, hint_x, bot, hints, theme::TEXT_MUTED(), theme::SURFACE());
 }
 
 /// Render the normal sub-tool buttons.
@@ -411,11 +411,11 @@ fn render_sub_tools(
     let mut tx = tools_start;
     for (i, tool) in tools.iter().enumerate() {
         if i > 0 {
-            set_char(buf, tx, sub_row, ' ', theme::SURFACE, theme::SURFACE);
+            set_char(buf, tx, sub_row, ' ', theme::SURFACE(), theme::SURFACE());
             tx += 1;
-            set_char(buf, tx, sub_row, '\u{00B7}', theme::BORDER, theme::SURFACE);
+            set_char(buf, tx, sub_row, '\u{00B7}', theme::BORDER(), theme::SURFACE());
             tx += 1;
-            set_char(buf, tx, sub_row, ' ', theme::SURFACE, theme::SURFACE);
+            set_char(buf, tx, sub_row, ' ', theme::SURFACE(), theme::SURFACE());
             tx += 1;
         }
 
@@ -426,7 +426,7 @@ fn render_sub_tools(
         let fg = if !enabled {
             disabled_color
         } else if is_hovered {
-            theme::TEXT
+            theme::TEXT()
         } else {
             tab_color
         };
@@ -434,26 +434,26 @@ fn render_sub_tools(
         // Icon
         for ch in tool.icon.chars() {
             if tx < area.x + area.width - 1 {
-                set_char(buf, tx, sub_row, ch, fg, theme::SURFACE);
+                set_char(buf, tx, sub_row, ch, fg, theme::SURFACE());
                 tx += 1;
             }
         }
         // Space
         if tx < area.x + area.width - 1 {
-            set_char(buf, tx, sub_row, ' ', theme::SURFACE, theme::SURFACE);
+            set_char(buf, tx, sub_row, ' ', theme::SURFACE(), theme::SURFACE());
             tx += 1;
         }
         // Label
         let label_fg = if !enabled {
             disabled_color
         } else if is_hovered {
-            theme::TEXT
+            theme::TEXT()
         } else {
-            theme::TEXT_MUTED
+            theme::TEXT_MUTED()
         };
         for ch in tool.label.chars() {
             if tx < area.x + area.width - 1 {
-                set_char(buf, tx, sub_row, ch, label_fg, theme::SURFACE);
+                set_char(buf, tx, sub_row, ch, label_fg, theme::SURFACE());
                 tx += 1;
             }
         }
@@ -471,12 +471,12 @@ fn render_sub_tools(
     }
     if !hints.is_empty() {
         let hint_x = area.x + (area.width.saturating_sub(hints.len() as u16)) / 2;
-        set_string(buf, hint_x, bot, &hints, theme::TEXT_MUTED, theme::SURFACE);
+        set_string(buf, hint_x, bot, &hints, theme::TEXT_MUTED(), theme::SURFACE());
     }
 }
 
 fn set_border_char(buf: &mut CellBuffer, x: u16, y: u16, ch: char) {
-    set_char(buf, x, y, ch, theme::BORDER, theme::SURFACE);
+    set_char(buf, x, y, ch, theme::BORDER(), theme::SURFACE());
 }
 
 /// Returns the tab index at the given column position, if any.

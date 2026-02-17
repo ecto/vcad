@@ -50,23 +50,23 @@ fn render_palette(
     // Fill background
     for y in area.y..area.y + area.height {
         for x in area.x..area.x + area.width {
-            set_char(buf, x, y, ' ', theme::SURFACE, theme::SURFACE);
+            set_char(buf, x, y, ' ', theme::SURFACE(), theme::SURFACE());
         }
     }
 
     // Rounded border
-    set_char(buf, left, top, '\u{256D}', theme::BORDER, theme::SURFACE);
-    set_char(buf, right, top, '\u{256E}', theme::BORDER, theme::SURFACE);
-    set_char(buf, left, bot, '\u{2570}', theme::BORDER, theme::SURFACE);
-    set_char(buf, right, bot, '\u{256F}', theme::BORDER, theme::SURFACE);
+    set_char(buf, left, top, '\u{256D}', theme::BORDER(), theme::SURFACE());
+    set_char(buf, right, top, '\u{256E}', theme::BORDER(), theme::SURFACE());
+    set_char(buf, left, bot, '\u{2570}', theme::BORDER(), theme::SURFACE());
+    set_char(buf, right, bot, '\u{256F}', theme::BORDER(), theme::SURFACE());
 
     for x in (left + 1)..right {
-        set_char(buf, x, top, '\u{2500}', theme::BORDER, theme::SURFACE);
-        set_char(buf, x, bot, '\u{2500}', theme::BORDER, theme::SURFACE);
+        set_char(buf, x, top, '\u{2500}', theme::BORDER(), theme::SURFACE());
+        set_char(buf, x, bot, '\u{2500}', theme::BORDER(), theme::SURFACE());
     }
     for y in (top + 1)..bot {
-        set_char(buf, left, y, '\u{2502}', theme::BORDER, theme::SURFACE);
-        set_char(buf, right, y, '\u{2502}', theme::BORDER, theme::SURFACE);
+        set_char(buf, left, y, '\u{2502}', theme::BORDER(), theme::SURFACE());
+        set_char(buf, right, y, '\u{2502}', theme::BORDER(), theme::SURFACE());
     }
 
     // Search input row
@@ -74,37 +74,37 @@ fn render_palette(
     let inner_left = left + 1;
     let inner_right = right;
 
-    set_char(buf, inner_left + 1, search_y, '>', theme::ACCENT, theme::SURFACE);
-    set_char(buf, inner_left + 2, search_y, ' ', theme::SURFACE, theme::SURFACE);
+    set_char(buf, inner_left + 1, search_y, '>', theme::ACCENT(), theme::SURFACE());
+    set_char(buf, inner_left + 2, search_y, ' ', theme::SURFACE(), theme::SURFACE());
 
     for (i, ch) in input.chars().enumerate() {
         let x = inner_left + 3 + i as u16;
         if x < inner_right {
-            set_char(buf, x, search_y, ch, theme::TEXT, theme::SURFACE);
+            set_char(buf, x, search_y, ch, theme::TEXT(), theme::SURFACE());
         }
     }
 
     // Cursor
     let cursor_x = inner_left + 3 + input.len() as u16;
     if cursor_x < inner_right {
-        set_char(buf, cursor_x, search_y, '\u{2588}', theme::ACCENT, theme::SURFACE);
+        set_char(buf, cursor_x, search_y, '\u{2588}', theme::ACCENT(), theme::SURFACE());
     }
 
     // "esc" hint right-aligned
     let esc_text = "esc";
     let esc_x = inner_right.saturating_sub(esc_text.len() as u16 + 1);
     for (i, ch) in esc_text.chars().enumerate() {
-        set_char(buf, esc_x + i as u16, search_y, ch, theme::TEXT_MUTED, theme::SURFACE);
+        set_char(buf, esc_x + i as u16, search_y, ch, theme::TEXT_MUTED(), theme::SURFACE());
     }
 
     // Separator line
     if area.height > 3 {
         let sep_y = search_y + 1;
         for x in (left + 1)..right {
-            set_char(buf, x, sep_y, '\u{2500}', theme::BORDER, theme::SURFACE);
+            set_char(buf, x, sep_y, '\u{2500}', theme::BORDER(), theme::SURFACE());
         }
-        set_char(buf, left, sep_y, '\u{251C}', theme::BORDER, theme::SURFACE);
-        set_char(buf, right, sep_y, '\u{2524}', theme::BORDER, theme::SURFACE);
+        set_char(buf, left, sep_y, '\u{251C}', theme::BORDER(), theme::SURFACE());
+        set_char(buf, right, sep_y, '\u{2524}', theme::BORDER(), theme::SURFACE());
 
         // Items
         let items_start_y = sep_y + 1;
@@ -115,7 +115,7 @@ fn render_palette(
             }
 
             let is_selected = i == selected_index;
-            let row_bg = if is_selected { theme::CARD } else { theme::SURFACE };
+            let row_bg = if is_selected { theme::CARD() } else { theme::SURFACE() };
 
             // Clear row
             for x in (left + 1)..right {
@@ -126,7 +126,7 @@ fn render_palette(
             let mut cx = inner_left + 1;
             for ch in item.icon.chars() {
                 if cx < inner_right {
-                    set_char(buf, cx, y, ch, theme::GREEN, row_bg);
+                    set_char(buf, cx, y, ch, theme::GREEN(), row_bg);
                     cx += 1;
                 }
             }
@@ -136,7 +136,7 @@ fn render_palette(
             // Label
             for ch in item.label.chars() {
                 if cx < inner_right {
-                    set_char(buf, cx, y, ch, theme::TEXT, row_bg);
+                    set_char(buf, cx, y, ch, theme::TEXT(), row_bg);
                     cx += 1;
                 }
             }
@@ -146,7 +146,7 @@ fn render_palette(
                 let desc_x = inner_right.saturating_sub(item.description.len() as u16 + 1);
                 if desc_x > cx + 1 {
                     for (j, ch) in item.description.chars().enumerate() {
-                        set_char(buf, desc_x + j as u16, y, ch, theme::TEXT_MUTED, row_bg);
+                        set_char(buf, desc_x + j as u16, y, ch, theme::TEXT_MUTED(), row_bg);
                     }
                 }
             }

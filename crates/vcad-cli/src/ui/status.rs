@@ -16,25 +16,25 @@ pub fn draw_status_bar(
 
     // Fill background
     for x in area.x..area.x + area.width {
-        set_char(buf, x, bar_y, ' ', theme::SURFACE, theme::SURFACE);
+        set_char(buf, x, bar_y, ' ', theme::SURFACE(), theme::SURFACE());
     }
 
     let mut cx = area.x + 1;
 
     // Status message
     let status_color = if status.starts_with("Error") {
-        theme::ACCENT
+        theme::ACCENT()
     } else if status.starts_with("Warning") {
-        theme::YELLOW
+        theme::YELLOW()
     } else {
-        theme::GREEN
+        theme::GREEN()
     };
 
     for ch in status.chars() {
         if cx >= area.x + area.width - 1 {
             break;
         }
-        set_char(buf, cx, bar_y, ch, status_color, theme::SURFACE);
+        set_char(buf, cx, bar_y, ch, status_color, theme::SURFACE());
         cx += 1;
     }
 
@@ -50,7 +50,7 @@ pub fn draw_status_bar(
 
     // Separator
     if metrics_start > cx + 2 {
-        set_char(buf, cx + 1, bar_y, '\u{2502}', theme::BORDER, theme::SURFACE);
+        set_char(buf, cx + 1, bar_y, '\u{2502}', theme::BORDER(), theme::SURFACE());
     }
 
     // Metrics
@@ -61,13 +61,13 @@ pub fn draw_status_bar(
         }
         let is_digit = ch.is_ascii_digit() || ch == '.' || ch == 'K';
         let color = if ch == '\u{2502}' {
-            theme::BORDER
+            theme::BORDER()
         } else if is_digit {
-            theme::TEXT
+            theme::TEXT()
         } else {
-            theme::TEXT_MUTED
+            theme::TEXT_MUTED()
         };
-        set_char(buf, mx, bar_y, ch, color, theme::SURFACE);
+        set_char(buf, mx, bar_y, ch, color, theme::SURFACE());
         mx += 1;
     }
 }

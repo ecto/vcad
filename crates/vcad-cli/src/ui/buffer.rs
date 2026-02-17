@@ -9,6 +9,8 @@ use crossterm::{
 };
 use std::io::{self, Write};
 
+use super::theme;
+
 /// Screen rectangle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rect {
@@ -55,8 +57,8 @@ impl Default for Cell {
     fn default() -> Self {
         Self {
             ch: ' ',
-            fg: Color::rgb(0xF8, 0xF8, 0xF2),
-            bg: Color::rgb(0x22, 0x22, 0x22),
+            fg: theme::TEXT(),
+            bg: theme::BG(),
         }
     }
 }
@@ -100,7 +102,7 @@ impl CellBuffer {
     pub fn clear(&mut self, bg: Color) {
         for cell in &mut self.cells {
             cell.ch = ' ';
-            cell.fg = Color::rgb(0xF8, 0xF8, 0xF2);
+            cell.fg = theme::TEXT();
             cell.bg = bg;
         }
     }

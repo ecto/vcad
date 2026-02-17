@@ -1095,6 +1095,7 @@ fn evaluate_node(doc: &Document, node_id: NodeId) -> Result<Option<vcad_kernel::
 
 /// Run the TUI application.
 pub fn run_tui(file: Option<PathBuf>) -> Result<()> {
+    crate::ui::theme::init();
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture, cursor::Hide)?;
@@ -1169,7 +1170,8 @@ fn run_loop(stdout: &mut Stdout, app: &mut App) -> Result<()> {
                 render_raytrace(app, &mut render_buffer);
             } else {
                 let triangles = app.get_triangles();
-                render_buffer.clear(0x22, 0x22, 0x22);
+                let bg = crate::ui::theme::BG_RGB();
+                render_buffer.clear(bg.0, bg.1, bg.2);
                 crate::render::render_scene(&mut render_buffer, &triangles, &app.camera);
             }
             last_camera = current_camera;

@@ -1,12 +1,13 @@
 //! 3D viewport rendering — HalfBlock (true-color) and Braille (fallback).
 
 use super::buffer::{Color, CellBuffer, Rect};
+use super::theme;
 use crate::render::RenderBuffer;
 
 /// Sample a pixel from the render buffer, returning Color.
 fn sample(render_buffer: &RenderBuffer, px: u32, py: u32) -> Color {
     if px >= render_buffer.width || py >= render_buffer.height {
-        return Color::rgb(0x22, 0x22, 0x22);
+        return theme::BG();
     }
     let idx = (py * render_buffer.width + px) as usize * 4;
     if idx + 2 < render_buffer.pixels.len() {
@@ -16,7 +17,7 @@ fn sample(render_buffer: &RenderBuffer, px: u32, py: u32) -> Color {
             render_buffer.pixels[idx + 2],
         )
     } else {
-        Color::rgb(0x22, 0x22, 0x22)
+        theme::BG()
     }
 }
 
@@ -91,13 +92,13 @@ pub fn render_viewport_braille(buf: &mut CellBuffer, render_buffer: &RenderBuffe
                     (total_b / count) as u8,
                 )
             } else {
-                Color::rgb(0x22, 0x22, 0x22)
+                theme::BG()
             };
 
             if let Some(cell) = buf.cell_mut(area.x + col, area.y + row) {
                 cell.ch = ch;
                 cell.fg = color;
-                cell.bg = Color::rgb(0x22, 0x22, 0x22);
+                cell.bg = theme::BG();
             }
         }
     }

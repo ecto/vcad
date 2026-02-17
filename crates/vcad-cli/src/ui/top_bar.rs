@@ -9,22 +9,22 @@ pub fn draw_top_bar(buf: &mut CellBuffer, sidebar_visible: bool, mode_name: &str
 
     // Fill background
     for x in area.x..area.x + area.width {
-        set_char(buf, x, y, ' ', theme::SURFACE, theme::SURFACE);
+        set_char(buf, x, y, ' ', theme::SURFACE(), theme::SURFACE());
     }
 
     // Left side: sidebar toggle + logo
     let sidebar_color = if sidebar_visible {
-        theme::ACCENT
+        theme::ACCENT()
     } else {
-        theme::TEXT_MUTED
+        theme::TEXT_MUTED()
     };
 
     let mut cx = area.x + 1;
-    set_char(buf, cx, y, '\u{2630}', sidebar_color, theme::SURFACE); // ☰
+    set_char(buf, cx, y, '\u{2630}', sidebar_color, theme::SURFACE()); // ☰
     cx += 3;
-    set_string(buf, cx, y, "vcad", theme::TEXT, theme::SURFACE);
+    set_string(buf, cx, y, "vcad", theme::TEXT(), theme::SURFACE());
     cx += 4;
-    set_char(buf, cx, y, '\u{00B7}', theme::ACCENT, theme::SURFACE); // ·
+    set_char(buf, cx, y, '\u{00B7}', theme::ACCENT(), theme::SURFACE()); // ·
 
     // Right side: save + settings + mode
     let right_text = format!(" S  \u{2699}  {} ", mode_name);
@@ -33,19 +33,19 @@ pub fn draw_top_bar(buf: &mut CellBuffer, sidebar_visible: bool, mode_name: &str
     if area.width > right_width {
         let rx = area.x + area.width - right_width;
         let mut rcx = rx;
-        set_char(buf, rcx, y, ' ', theme::SURFACE, theme::SURFACE);
+        set_char(buf, rcx, y, ' ', theme::SURFACE(), theme::SURFACE());
         rcx += 1;
-        set_char(buf, rcx, y, 'S', theme::TEXT_MUTED, theme::SURFACE);
+        set_char(buf, rcx, y, 'S', theme::TEXT_MUTED(), theme::SURFACE());
         rcx += 1;
-        set_string(buf, rcx, y, "  ", theme::BORDER, theme::SURFACE);
+        set_string(buf, rcx, y, "  ", theme::BORDER(), theme::SURFACE());
         rcx += 2;
-        set_char(buf, rcx, y, '\u{2699}', theme::TEXT_MUTED, theme::SURFACE);
+        set_char(buf, rcx, y, '\u{2699}', theme::TEXT_MUTED(), theme::SURFACE());
         rcx += 1;
-        set_string(buf, rcx, y, "  ", theme::BORDER, theme::SURFACE);
+        set_string(buf, rcx, y, "  ", theme::BORDER(), theme::SURFACE());
         rcx += 2;
-        set_string(buf, rcx, y, mode_name, theme::GREEN, theme::SURFACE);
+        set_string(buf, rcx, y, mode_name, theme::GREEN(), theme::SURFACE());
         rcx += mode_name.len() as u16;
-        set_char(buf, rcx, y, ' ', theme::SURFACE, theme::SURFACE);
+        set_char(buf, rcx, y, ' ', theme::SURFACE(), theme::SURFACE());
     }
 }
 
