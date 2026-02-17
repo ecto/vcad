@@ -1548,7 +1548,9 @@ fn parse_ao(doc: &mut Document, parts: &[&str], line: usize) -> Result<(), Compa
     }
 
     let scene = doc.scene.get_or_insert_with(SceneSettings::default);
-    let pp = scene.post_processing.get_or_insert_with(PostProcessing::default);
+    let pp = scene
+        .post_processing
+        .get_or_insert_with(PostProcessing::default);
 
     pp.ambient_occlusion = Some(AmbientOcclusion {
         enabled: parse_u32(parts[1], line)? != 0,
@@ -1569,7 +1571,9 @@ fn parse_bloom(doc: &mut Document, parts: &[&str], line: usize) -> Result<(), Co
     }
 
     let scene = doc.scene.get_or_insert_with(SceneSettings::default);
-    let pp = scene.post_processing.get_or_insert_with(PostProcessing::default);
+    let pp = scene
+        .post_processing
+        .get_or_insert_with(PostProcessing::default);
 
     pp.bloom = Some(Bloom {
         enabled: parse_u32(parts[1], line)? != 0,
@@ -1594,7 +1598,9 @@ fn parse_vignette(
     }
 
     let scene = doc.scene.get_or_insert_with(SceneSettings::default);
-    let pp = scene.post_processing.get_or_insert_with(PostProcessing::default);
+    let pp = scene
+        .post_processing
+        .get_or_insert_with(PostProcessing::default);
 
     pp.vignette = Some(Vignette {
         enabled: parse_u32(parts[1], line)? != 0,
@@ -1619,7 +1625,9 @@ fn parse_tone_mapping(
     }
 
     let scene = doc.scene.get_or_insert_with(SceneSettings::default);
-    let pp = scene.post_processing.get_or_insert_with(PostProcessing::default);
+    let pp = scene
+        .post_processing
+        .get_or_insert_with(PostProcessing::default);
 
     pp.tone_mapping = Some(match parts[1] {
         "none" => ToneMapping::None,
@@ -1653,7 +1661,9 @@ fn parse_exposure(
     }
 
     let scene = doc.scene.get_or_insert_with(SceneSettings::default);
-    let pp = scene.post_processing.get_or_insert_with(PostProcessing::default);
+    let pp = scene
+        .post_processing
+        .get_or_insert_with(PostProcessing::default);
     pp.exposure = Some(parse_f64(parts[1], line)?);
 
     Ok(())
@@ -2143,7 +2153,10 @@ fn get_children(op: &CsgOp) -> Vec<u64> {
         | CsgOp::Shell { child, .. }
         | CsgOp::Fillet { child, .. }
         | CsgOp::Chamfer { child, .. } => vec![*child],
-        CsgOp::Extrude { sketch, .. } | CsgOp::Revolve { sketch, .. } => vec![*sketch],
+        CsgOp::Extrude { sketch, .. }
+        | CsgOp::Revolve { sketch, .. }
+        | CsgOp::Sweep { sketch, .. } => vec![*sketch],
+        CsgOp::Loft { sketches, .. } => sketches.clone(),
         _ => vec![],
     }
 }
@@ -2211,14 +2224,11 @@ fn format_op(
         .unwrap_or_default();
 
     match op {
-        CsgOp::Cube { size } => Ok(format!(
-            "C {} {} {}{}",
-            size.x, size.y, size.z, name_suffix
-        )),
+        CsgOp::Cube { size } => Ok(format!("C {} {} {}{}", size.x, size.y, size.z, name_suffix)),
 
-        CsgOp::Cylinder {
-            radius, height, ..
-        } => Ok(format!("Y {} {}{}", radius, height, name_suffix)),
+        CsgOp::Cylinder { radius, height, .. } => {
+            Ok(format!("Y {} {}{}", radius, height, name_suffix))
+        }
 
         CsgOp::Sphere { radius, .. } => Ok(format!("S {}{}", radius, name_suffix)),
 
@@ -2418,7 +2428,9 @@ fn format_op(
             Ok(lines.join("\n"))
         }
 
-        CsgOp::Extrude { sketch, direction, .. } => {
+        CsgOp::Extrude {
+            sketch, direction, ..
+        } => {
             let sk = id_map.get(sketch).ok_or_else(|| CompactParseError {
                 line: 0,
                 message: format!("unknown node {}", sketch),
@@ -2463,9 +2475,23 @@ fn format_op(
             line: 0,
             message: "Text2D not supported in compact format".to_string(),
         }),
+
+        CsgOp::Sweep { .. } => Err(CompactParseError {
+            line: 0,
+            message: "Sweep not supported in compact format".to_string(),
+        }),
+
+        CsgOp::Loft { .. } => Err(CompactParseError {
+            line: 0,
+            message: "Loft not supported in compact format".to_string(),
+        }),
+
+        CsgOp::ImportedMesh { .. } => Err(CompactParseError {
+            line: 0,
+            message: "ImportedMesh not supported in compact format".to_string(),
+        }),
     }
 }
-
 
 fn parse_f64(s: &str, line: usize) -> Result<f64, CompactParseError> {
     s.parse().map_err(|_| CompactParseError {
@@ -2853,7 +2879,9 @@ mod tests {
 
         // Extrude is node 1 (sequential)
         match &doc.nodes[&1].op {
-            CsgOp::Extrude { sketch, direction, .. } => {
+            CsgOp::Extrude {
+                sketch, direction, ..
+            } => {
                 assert_eq!(*sketch, 0);
                 assert_eq!(*direction, Vec3::new(0.0, 0.0, 20.0));
             }
@@ -3301,13 +3329,7 @@ CAM cam1 100 100 100 0 0 0 60 "Front View"
 CAM cam2 0 100 0 0 0 0"#;
 
         let doc = from_compact(compact).unwrap();
-        let cams = doc
-            .scene
-            .as_ref()
-            .unwrap()
-            .camera_presets
-            .as_ref()
-            .unwrap();
+        let cams = doc.scene.as_ref().unwrap().camera_presets.as_ref().unwrap();
         assert_eq!(cams.len(), 2);
 
         assert_eq!(cams[0].id, "cam1");

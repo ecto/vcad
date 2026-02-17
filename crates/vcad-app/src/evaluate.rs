@@ -171,7 +171,10 @@ fn evaluate_node(doc: &Document, node_id: NodeId) -> Result<Option<Solid>> {
         CsgOp::Sketch2D { .. }
         | CsgOp::Extrude { .. }
         | CsgOp::Revolve { .. }
-        | CsgOp::Text2D { .. } => None,
+        | CsgOp::Text2D { .. }
+        | CsgOp::Sweep { .. }
+        | CsgOp::Loft { .. }
+        | CsgOp::ImportedMesh { .. } => None,
     };
 
     Ok(solid)

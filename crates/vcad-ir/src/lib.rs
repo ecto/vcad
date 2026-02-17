@@ -218,6 +218,30 @@ pub enum SketchSegment2D {
     },
 }
 
+/// A straight line path from start to end.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum PathCurve {
+    /// A straight line from start to end.
+    Line {
+        /// Start point.
+        start: Vec3,
+        /// End point.
+        end: Vec3,
+    },
+    /// A helical path.
+    Helix {
+        /// Helix radius.
+        radius: f64,
+        /// Pitch (height per turn).
+        pitch: f64,
+        /// Total height.
+        height: f64,
+        /// Number of turns.
+        turns: f64,
+    },
+}
+
 /// CSG operation — the core building block of the IR DAG.
 ///
 /// Each variant is either a leaf primitive or a combining/transform operation
@@ -410,6 +434,52 @@ pub enum CsgOp {
         /// Text alignment.
         #[serde(default)]
         alignment: TextAlignment,
+    },
+    /// Sweep a profile along a path curve.
+    Sweep {
+        /// The sketch node to sweep.
+        sketch: NodeId,
+        /// The path curve to sweep along.
+        path: PathCurve,
+        /// Total twist in radians (default 0).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        twist_angle: Option<f64>,
+        /// Scale at start (default 1.0).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scale_start: Option<f64>,
+        /// Scale at end (default 1.0).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scale_end: Option<f64>,
+        /// Initial profile rotation around path tangent (radians, default 0).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        orientation: Option<f64>,
+        /// Segments along path (0 = auto).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path_segments: Option<u32>,
+        /// Segments per arc in profile (default 8).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        arc_segments: Option<u32>,
+    },
+    /// Loft between multiple profiles.
+    Loft {
+        /// Array of Sketch2D node references (>= 2).
+        sketches: Vec<NodeId>,
+        /// Connect last profile to first (creates tube).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        closed: Option<bool>,
+    },
+    /// Imported pre-tessellated mesh (e.g. from drag-drop STL/GLB).
+    ImportedMesh {
+        /// Flat array of vertex positions (x, y, z, x, y, z, ...).
+        positions: Vec<f64>,
+        /// Triangle indices.
+        indices: Vec<u32>,
+        /// Optional vertex normals (nx, ny, nz, ...).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        normals: Option<Vec<f64>>,
+        /// Source filename for display purposes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
     },
     /// Imported geometry from a STEP file.
     #[serde(rename = "step_import")]
@@ -998,7 +1068,9 @@ mod tests {
             _ => panic!("expected Sketch2D"),
         }
         match &restored.nodes[&extrude_id].op {
-            CsgOp::Extrude { sketch, direction, .. } => {
+            CsgOp::Extrude {
+                sketch, direction, ..
+            } => {
                 assert_eq!(*sketch, sketch_id);
                 assert_eq!(direction.z, 20.0);
             }
@@ -1207,6 +1279,73 @@ mod tests {
 
         let t2 = Transform3D::identity();
         assert_eq!(t, t2);
+    }
+
+    #[test]
+    fn sweep_operation_roundtrip() {
+        let op = CsgOp::Sweep {
+            sketch: 1,
+            path: PathCurve::Line {
+                start: Vec3::new(0.0, 0.0, 0.0),
+                end: Vec3::new(0.0, 0.0, 50.0),
+            },
+            twist_angle: Some(std::f64::consts::PI),
+            scale_start: None,
+            scale_end: Some(0.5),
+            orientation: None,
+            path_segments: Some(32),
+            arc_segments: None,
+        };
+        let json = serde_json::to_string(&op).unwrap();
+        assert!(json.contains(r#""type":"Sweep""#));
+        let restored: CsgOp = serde_json::from_str(&json).unwrap();
+        assert_eq!(op, restored);
+
+        // Helix path variant
+        let op2 = CsgOp::Sweep {
+            sketch: 2,
+            path: PathCurve::Helix {
+                radius: 10.0,
+                pitch: 5.0,
+                height: 20.0,
+                turns: 4.0,
+            },
+            twist_angle: None,
+            scale_start: None,
+            scale_end: None,
+            orientation: None,
+            path_segments: None,
+            arc_segments: None,
+        };
+        let json2 = serde_json::to_string(&op2).unwrap();
+        let restored2: CsgOp = serde_json::from_str(&json2).unwrap();
+        assert_eq!(op2, restored2);
+    }
+
+    #[test]
+    fn loft_operation_roundtrip() {
+        let op = CsgOp::Loft {
+            sketches: vec![1, 2, 3],
+            closed: Some(true),
+        };
+        let json = serde_json::to_string(&op).unwrap();
+        assert!(json.contains(r#""type":"Loft""#));
+        let restored: CsgOp = serde_json::from_str(&json).unwrap();
+        assert_eq!(op, restored);
+    }
+
+    #[test]
+    fn imported_mesh_roundtrip() {
+        let op = CsgOp::ImportedMesh {
+            positions: vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+            indices: vec![0, 1, 2],
+            normals: Some(vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0]),
+            source: Some("model.stl".to_string()),
+        };
+        let json = serde_json::to_string(&op).unwrap();
+        assert!(json.contains(r#""type":"ImportedMesh""#));
+        let restored: CsgOp = serde_json::from_str(&json).unwrap();
+        assert_eq!(op, restored);
     }
 
     #[test]

@@ -330,8 +330,11 @@ impl<'a> UrdfWriter<'a> {
             CsgOp::Sketch2D { .. }
             | CsgOp::Text2D { .. }
             | CsgOp::Extrude { .. }
-            | CsgOp::Revolve { .. } => {
-                // Sketch-based geometry - approximate as box
+            | CsgOp::Revolve { .. }
+            | CsgOp::Sweep { .. }
+            | CsgOp::Loft { .. }
+            | CsgOp::ImportedMesh { .. } => {
+                // Sketch-based / imported geometry - cannot export to URDF directly
                 Err(UrdfError::Conversion(
                     "Sketch-based geometry cannot be exported to URDF directly".to_string(),
                 ))

@@ -584,6 +584,9 @@ fn op_type_name(op: &CsgOp) -> &'static str {
         CsgOp::Extrude { .. } => "extrude",
         CsgOp::Revolve { .. } => "revolve",
         CsgOp::Text2D { .. } => "text",
+        CsgOp::Sweep { .. } => "sweep",
+        CsgOp::Loft { .. } => "loft",
+        CsgOp::ImportedMesh { .. } => "imported mesh",
         CsgOp::StepImport { .. } => "step import",
     }
 }
