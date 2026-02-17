@@ -107,6 +107,8 @@ export interface KernelModule {
     height: number,
     label: string,
   ) => DetailView;
+  /** Full document evaluator (Rust-side, handles all CsgOp variants). */
+  evaluateDocument?: (docJson: string, skipClashDetection: boolean) => unknown;
 }
 
 /** Rendered dimension types from the annotation layer */
@@ -203,6 +205,7 @@ export class Engine {
       importStepBuffer: wasmModule.importStepBuffer,
       exportProjectedViewToDxf: wasmModule.exportProjectedViewToDxf,
       createDetailView: wasmModule.createDetailView,
+      evaluateDocument: (wasmModule as Record<string, unknown>).evaluateDocument as KernelModule["evaluateDocument"],
     });
   }
 

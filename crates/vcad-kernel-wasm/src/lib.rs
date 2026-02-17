@@ -2923,6 +2923,18 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
             // The TypeScript evaluate.ts handles converting Text2D inside Extrude
             Err(JsError::new("Text2D cannot be evaluated directly - use Extrude to convert to solid"))
         }
+
+        vcad_ir::CsgOp::Sweep { .. } => {
+            Err(JsError::new("Sweep not supported in compact IR evaluation - use evaluateDocument"))
+        }
+
+        vcad_ir::CsgOp::Loft { .. } => {
+            Err(JsError::new("Loft not supported in compact IR evaluation - use evaluateDocument"))
+        }
+
+        vcad_ir::CsgOp::ImportedMesh { .. } => {
+            Err(JsError::new("ImportedMesh not supported in compact IR evaluation - use evaluateDocument"))
+        }
     }
 }
 
@@ -3720,6 +3732,77 @@ mod cam_wasm {
 // Re-export CAM types at module level when feature is enabled
 #[cfg(feature = "cam")]
 pub use cam_wasm::*;
+
+// =============================================================================
+// Full document evaluation
+// =============================================================================
+
+/// Evaluate a full vcad document JSON into a serialized EvaluatedScene.
+///
+/// This is the canonical Rust-side evaluator that handles all CsgOp variants
+/// including Sketch2D, Extrude, Revolve, Sweep, Loft, Text2D, ImportedMesh,
+/// assembly with forward kinematics, and clash detection.
+///
+/// # Arguments
+///
+/// * `doc_json` - A JSON string representing a vcad Document
+/// * `skip_clash_detection` - If true, skip O(n²) clash detection
+///
+/// # Returns
+///
+/// A JsValue containing the serialized EvaluatedScene.
+#[wasm_bindgen(js_name = evaluateDocument)]
+pub fn evaluate_document(doc_json: &str, skip_clash_detection: bool) -> Result<JsValue, JsError> {
+    let doc: vcad_ir::Document = serde_json::from_str(doc_json)
+        .map_err(|e| JsError::new(&format!("Failed to parse document: {}", e)))?;
+
+    let options = vcad_eval::EvalOptions {
+        skip_clash_detection,
+    };
+
+    let scene = vcad_eval::evaluate_document(&doc, &options)
+        .map_err(|e| JsError::new(&format!("Evaluation error: {}", e)))?;
+
+    // Serialize the scene to a JS-friendly format
+    let result = EvaluatedSceneJs::from(scene);
+    serde_wasm_bindgen::to_value(&result)
+        .map_err(|e| JsError::new(&format!("Serialization error: {}", e)))
+}
+
+/// JS-friendly scene output (all fields serializable).
+#[derive(serde::Serialize)]
+struct EvaluatedSceneJs {
+    parts: Vec<EvaluatedPartJs>,
+    #[serde(rename = "partDefs", skip_serializing_if = "Option::is_none")]
+    part_defs: Option<Vec<vcad_eval::EvaluatedPartDef>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    instances: Option<Vec<vcad_eval::EvaluatedInstance>>,
+    clashes: Vec<vcad_eval::EvaluatedMesh>,
+}
+
+#[derive(serde::Serialize)]
+struct EvaluatedPartJs {
+    mesh: vcad_eval::EvaluatedMesh,
+    material: String,
+}
+
+impl From<vcad_eval::EvaluatedScene> for EvaluatedSceneJs {
+    fn from(scene: vcad_eval::EvaluatedScene) -> Self {
+        Self {
+            parts: scene
+                .parts
+                .into_iter()
+                .map(|p| EvaluatedPartJs {
+                    mesh: p.mesh,
+                    material: p.material,
+                })
+                .collect(),
+            part_defs: scene.part_defs,
+            instances: scene.instances,
+            clashes: scene.clashes,
+        }
+    }
+}
 
 // =============================================================================
 // TypeScript type generation (ts-rs)

@@ -955,142 +955,22 @@ impl App {
     }
 }
 
-/// Evaluate a document to meshes.
+/// Evaluate a document to meshes using the canonical vcad-eval evaluator.
 pub fn evaluate_document(doc: &Document) -> Result<Vec<EvaluatedMesh>> {
-    let mut meshes = Vec::new();
-
-    for entry in &doc.roots {
-        if let Some(solid) = evaluate_node(doc, entry.root)? {
-            let mesh = solid.to_mesh(32);
-            meshes.push(EvaluatedMesh {
-                vertices: mesh.vertices,
-                indices: mesh.indices,
-            });
-        }
-    }
-
-    Ok(meshes)
-}
-
-/// Recursively evaluate a node to a Solid.
-fn evaluate_node(doc: &Document, node_id: NodeId) -> Result<Option<vcad_kernel::Solid>> {
-    use vcad_kernel::Solid;
-
-    let node = doc
-        .nodes
-        .get(&node_id)
-        .ok_or_else(|| anyhow::anyhow!("Node {} not found", node_id))?;
-
-    let solid = match &node.op {
-        CsgOp::Empty => Some(Solid::empty()),
-        CsgOp::Cube { size } => Some(Solid::cube(size.x, size.y, size.z)),
-        CsgOp::Cylinder {
-            radius,
-            height,
-            segments,
-        } => Some(Solid::cylinder(*radius, *height, *segments)),
-        CsgOp::Sphere { radius, segments } => Some(Solid::sphere(*radius, *segments)),
-        CsgOp::Cone {
-            radius_bottom,
-            radius_top,
-            height,
-            segments,
-        } => Some(Solid::cone(*radius_bottom, *radius_top, *height, *segments)),
-        CsgOp::Union { left, right } => {
-            let l = evaluate_node(doc, *left)?;
-            let r = evaluate_node(doc, *right)?;
-            match (l, r) {
-                (Some(l), Some(r)) => Some(l.union(&r)),
-                (Some(l), None) => Some(l),
-                (None, Some(r)) => Some(r),
-                (None, None) => None,
-            }
-        }
-        CsgOp::Difference { left, right } => {
-            let l = evaluate_node(doc, *left)?;
-            let r = evaluate_node(doc, *right)?;
-            match (l, r) {
-                (Some(l), Some(r)) => Some(l.difference(&r)),
-                (Some(l), None) => Some(l),
-                _ => None,
-            }
-        }
-        CsgOp::Intersection { left, right } => {
-            let l = evaluate_node(doc, *left)?;
-            let r = evaluate_node(doc, *right)?;
-            match (l, r) {
-                (Some(l), Some(r)) => Some(l.intersection(&r)),
-                _ => None,
-            }
-        }
-        CsgOp::Translate { child, offset } => {
-            let c = evaluate_node(doc, *child)?;
-            c.map(|s| s.translate(offset.x, offset.y, offset.z))
-        }
-        CsgOp::Rotate { child, angles } => {
-            let c = evaluate_node(doc, *child)?;
-            c.map(|s| s.rotate(angles.x, angles.y, angles.z))
-        }
-        CsgOp::Scale { child, factor } => {
-            let c = evaluate_node(doc, *child)?;
-            c.map(|s| s.scale(factor.x, factor.y, factor.z))
-        }
-        CsgOp::Sketch2D { .. } => None,
-        CsgOp::Extrude { .. } => None,
-        CsgOp::Revolve { .. } => None,
-        CsgOp::LinearPattern {
-            child,
-            direction,
-            count,
-            spacing,
-        } => {
-            let c = evaluate_node(doc, *child)?;
-            c.map(|s| {
-                s.linear_pattern(
-                    vcad_kernel::vcad_kernel_math::Vec3::new(direction.x, direction.y, direction.z),
-                    *count,
-                    *spacing,
-                )
-            })
-        }
-        CsgOp::CircularPattern {
-            child,
-            axis_origin,
-            axis_dir,
-            count,
-            angle_deg,
-        } => {
-            let c = evaluate_node(doc, *child)?;
-            c.map(|s| {
-                s.circular_pattern(
-                    vcad_kernel::vcad_kernel_math::Point3::new(
-                        axis_origin.x,
-                        axis_origin.y,
-                        axis_origin.z,
-                    ),
-                    vcad_kernel::vcad_kernel_math::Vec3::new(axis_dir.x, axis_dir.y, axis_dir.z),
-                    *count,
-                    *angle_deg,
-                )
-            })
-        }
-        CsgOp::Shell { child, thickness } => {
-            let c = evaluate_node(doc, *child)?;
-            c.map(|s| s.shell(*thickness))
-        }
-        CsgOp::Fillet { child, radius } => {
-            let c = evaluate_node(doc, *child)?;
-            c.map(|s| s.fillet(*radius))
-        }
-        CsgOp::Chamfer { child, distance } => {
-            let c = evaluate_node(doc, *child)?;
-            c.map(|s| s.chamfer(*distance))
-        }
-        CsgOp::StepImport { path } => Solid::from_step(path).ok(),
-        CsgOp::Text2D { .. } => None,
+    let opts = vcad_eval::EvalOptions {
+        skip_clash_detection: true,
     };
+    let scene = vcad_eval::evaluate_document(doc, &opts)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    Ok(solid)
+    Ok(scene
+        .parts
+        .into_iter()
+        .map(|p| EvaluatedMesh {
+            vertices: p.mesh.positions,
+            indices: p.mesh.indices,
+        })
+        .collect())
 }
 
 /// Run the TUI application.
@@ -1247,7 +1127,8 @@ fn render_raytrace(app: &App, buffer: &mut RenderBuffer) {
     let mut colors_vec = Vec::new();
 
     for entry in &app.document.roots {
-        if let Ok(Some(solid)) = evaluate_node(&app.document, entry.root) {
+        let mut cache = std::collections::HashMap::new();
+        if let Ok(Some(solid)) = vcad_eval::evaluate_node(entry.root, &app.document.nodes, &mut cache) {
             if let Some(brep) = solid.brep() {
                 solids.push(Arc::new(brep.clone()));
                 let pick_id = entry.root as u32;

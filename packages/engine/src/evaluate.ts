@@ -23,6 +23,108 @@ import { solveForwardKinematics } from "./kinematics.js";
 /** Debug flag - set to true to enable verbose console logging */
 const DEBUG_EVAL = false;
 
+/** Options for document evaluation */
+export interface EvaluateOptions {
+  /** Skip O(n²) clash detection for faster updates during parametric editing */
+  skipClashDetection?: boolean;
+}
+
+/** Type for the kernel module */
+interface KernelModule {
+  Solid: typeof Solid;
+  evaluateDocument?: (docJson: string, skipClashDetection: boolean) => unknown;
+}
+
+/** Shape of the WASM evaluator result */
+interface WasmEvaluatedScene {
+  parts: Array<{ mesh: WasmMesh; material: string }>;
+  partDefs?: Array<{ id: string; mesh: WasmMesh }>;
+  instances?: Array<{
+    instance_id: string;
+    part_def_id: string;
+    name?: string;
+    mesh: WasmMesh;
+    material: string;
+    transform?: Transform3D;
+  }>;
+  clashes: Array<WasmMesh>;
+}
+
+interface WasmMesh {
+  positions: number[];
+  indices: number[];
+  normals?: number[];
+}
+
+/** Convert a WASM mesh to a TriangleMesh (typed arrays). */
+function wasmMeshToTriangleMesh(m: WasmMesh): TriangleMesh {
+  return {
+    positions: new Float32Array(m.positions),
+    indices: new Uint32Array(m.indices),
+    normals: m.normals ? new Float32Array(m.normals) : undefined,
+  };
+}
+
+/**
+ * Evaluate a vcad IR Document into an EvaluatedScene.
+ *
+ * Prefers the Rust WASM evaluator (evaluateDocument) when available, which
+ * handles ALL CsgOp variants including Sketch2D, Extrude, Revolve, Sweep,
+ * Loft, Text2D, ImportedMesh, assembly with forward kinematics, and clash
+ * detection.
+ *
+ * Falls back to the TypeScript evaluator when the WASM evaluator is not
+ * available (e.g., older WASM builds).
+ */
+export function evaluateDocument(
+  doc: Document,
+  kernel: KernelModule,
+  options: EvaluateOptions = {},
+): EvaluatedScene {
+  // Try the Rust WASM evaluator first
+  if (kernel.evaluateDocument) {
+    try {
+      const docJson = JSON.stringify(doc);
+      const result = kernel.evaluateDocument(
+        docJson,
+        options.skipClashDetection ?? false,
+      ) as WasmEvaluatedScene;
+
+      return {
+        parts: result.parts.map((p) => ({
+          mesh: wasmMeshToTriangleMesh(p.mesh),
+          material: p.material,
+        })),
+        partDefs: result.partDefs?.map((pd) => ({
+          id: pd.id,
+          mesh: wasmMeshToTriangleMesh(pd.mesh),
+        })),
+        instances: result.instances?.map((inst) => ({
+          instanceId: inst.instance_id,
+          partDefId: inst.part_def_id,
+          name: inst.name,
+          mesh: wasmMeshToTriangleMesh(inst.mesh),
+          material: inst.material,
+          transform: inst.transform,
+        })),
+        clashes: result.clashes.map(wasmMeshToTriangleMesh),
+      };
+    } catch (e) {
+      if (DEBUG_EVAL) {
+        console.warn("[ENGINE] WASM evaluateDocument failed, falling back to TS:", e);
+      }
+      // Fall through to TS evaluator
+    }
+  }
+
+  // Fallback: TypeScript evaluator
+  return evaluateDocumentTS(doc, kernel, options);
+}
+
+// =========================================================================
+// TypeScript fallback evaluator (original implementation)
+// =========================================================================
+
 /** Convert IR sketch segment to WASM format */
 function convertSegment(seg: SketchSegment2D) {
   if (seg.type === "Line") {
@@ -52,11 +154,6 @@ function convertSketchToProfile(op: Sketch2DOp) {
   };
 }
 
-/** Type for the kernel module */
-interface KernelModule {
-  Solid: typeof Solid;
-}
-
 /** Extract a TriangleMesh from a Solid. */
 function solidToMesh(solid: Solid): TriangleMesh {
   const meshData = solid.getMesh();
@@ -69,13 +166,11 @@ function solidToMesh(solid: Solid): TriangleMesh {
   for (let i = 0; i < indices.length; i++) {
     if (indices[i] >= numVertices) {
       hasInvalidIndices = true;
-      if (DEBUG_EVAL) console.warn(`[MESH] Invalid index ${indices[i]} at position ${i}, max vertex is ${numVertices - 1}`);
       break;
     }
   }
 
   if (hasInvalidIndices) {
-    // Filter out invalid triangles
     const validIndices: number[] = [];
     for (let i = 0; i < indices.length; i += 3) {
       const i0 = indices[i];
@@ -85,7 +180,6 @@ function solidToMesh(solid: Solid): TriangleMesh {
         validIndices.push(i0, i1, i2);
       }
     }
-    if (DEBUG_EVAL) console.warn(`[MESH] Filtered ${(indices.length - validIndices.length) / 3} invalid triangles, ${validIndices.length / 3} remaining`);
     return {
       positions,
       indices: new Uint32Array(validIndices),
@@ -109,7 +203,6 @@ interface TransformInfo {
 
 /**
  * Find an ImportedMesh in the node chain and extract transforms.
- * Returns null if the chain doesn't contain an ImportedMesh.
  */
 function findImportedMesh(
   rootId: NodeId,
@@ -130,7 +223,6 @@ function findImportedMesh(
       return { mesh: node.op, transform };
     }
 
-    // Extract transforms and follow child
     if (node.op.type === "Translate") {
       transform.translate = node.op.offset;
       current = node.op.child;
@@ -148,7 +240,6 @@ function findImportedMesh(
 
 /**
  * Apply a transform to mesh positions.
- * Order: scale → rotate → translate (matching typical CAD order)
  */
 function transformMesh(
   mesh: TriangleMesh,
@@ -157,17 +248,14 @@ function transformMesh(
   const { translate, rotate, scale } = transform;
   const positions = new Float32Array(mesh.positions.length);
 
-  // Convert rotation from degrees to radians
   const rx = (rotate.x * Math.PI) / 180;
   const ry = (rotate.y * Math.PI) / 180;
   const rz = (rotate.z * Math.PI) / 180;
 
-  // Precompute trig values
   const cx = Math.cos(rx), sx = Math.sin(rx);
   const cy = Math.cos(ry), sy = Math.sin(ry);
   const cz = Math.cos(rz), sz = Math.sin(rz);
 
-  // Rotation matrix (Z * Y * X order)
   const m00 = cy * cz;
   const m01 = sx * sy * cz - cx * sz;
   const m02 = cx * sy * cz + sx * sz;
@@ -179,23 +267,19 @@ function transformMesh(
   const m22 = cx * cy;
 
   for (let i = 0; i < mesh.positions.length; i += 3) {
-    // Scale
     let x = mesh.positions[i] * scale.x;
     let y = mesh.positions[i + 1] * scale.y;
     let z = mesh.positions[i + 2] * scale.z;
 
-    // Rotate
-    const rx = m00 * x + m01 * y + m02 * z;
-    const ry = m10 * x + m11 * y + m12 * z;
-    const rz = m20 * x + m21 * y + m22 * z;
+    const rx2 = m00 * x + m01 * y + m02 * z;
+    const ry2 = m10 * x + m11 * y + m12 * z;
+    const rz2 = m20 * x + m21 * y + m22 * z;
 
-    // Translate
-    positions[i] = rx + translate.x;
-    positions[i + 1] = ry + translate.y;
-    positions[i + 2] = rz + translate.z;
+    positions[i] = rx2 + translate.x;
+    positions[i + 1] = ry2 + translate.y;
+    positions[i + 2] = rz2 + translate.z;
   }
 
-  // Transform normals if present (rotation only, no translation)
   let normals = mesh.normals;
   if (mesh.normals) {
     normals = new Float32Array(mesh.normals.length);
@@ -213,23 +297,10 @@ function transformMesh(
   return { positions, indices: mesh.indices, normals };
 }
 
-/** Options for document evaluation */
-export interface EvaluateOptions {
-  /** Skip O(n²) clash detection for faster updates during parametric editing */
-  skipClashDetection?: boolean;
-}
-
 /**
- * Evaluate a vcad IR Document into an EvaluatedScene using vcad-kernel-wasm.
- *
- * Supports two modes:
- * - Traditional mode: evaluates `doc.roots` as independent parts
- * - Assembly mode: evaluates `doc.partDefs`, applies kinematics to `doc.instances`
- *
- * If both are present, assembly mode takes precedence but traditional parts
- * are also included.
+ * TypeScript fallback evaluator (original implementation).
  */
-export function evaluateDocument(
+function evaluateDocumentTS(
   doc: Document,
   kernel: KernelModule,
   options: EvaluateOptions = {},
@@ -237,96 +308,55 @@ export function evaluateDocument(
   const { Solid } = kernel;
   const cache = new Map<NodeId, Solid>();
 
-  if (DEBUG_EVAL) {
-    console.group("[ENGINE] evaluateDocument");
-    console.log("Number of roots:", doc.roots.length);
-    console.log("Roots:", JSON.stringify(doc.roots, null, 2));
-  }
-
   // Traditional mode: evaluate roots (filter out hidden parts)
   const visibleRoots = doc.roots.filter((entry) => entry.visible !== false);
   const solids: Solid[] = [];
-  const parts = visibleRoots.map((entry, idx) => {
-    const node = doc.nodes[String(entry.root)];
-    if (DEBUG_EVAL) {
-      console.group(`[ENGINE] Evaluating root[${idx}] nodeId=${entry.root}`);
-      console.log("Node:", JSON.stringify(node, null, 2));
-    }
-
+  const parts = visibleRoots.map((entry) => {
     // Check if this is an imported mesh (doesn't go through Solid pipeline)
     const imported = findImportedMesh(entry.root, doc.nodes);
     if (imported) {
-      if (DEBUG_EVAL) console.log("Found ImportedMesh with", imported.mesh.positions.length / 3, "vertices");
       const baseMesh: TriangleMesh = {
         positions: new Float32Array(imported.mesh.positions),
         indices: new Uint32Array(imported.mesh.indices),
         normals: imported.mesh.normals ? new Float32Array(imported.mesh.normals) : undefined,
       };
       const mesh = transformMesh(baseMesh, imported.transform);
-      if (DEBUG_EVAL) {
-        console.log("Result mesh - triangles:", mesh.indices.length / 3, "vertices:", mesh.positions.length / 3);
-        console.groupEnd();
-      }
-      // Push empty solid for clash detection (imported meshes don't participate)
       solids.push(Solid.empty());
       return { mesh, material: entry.material };
     }
 
-    // Normal solid-based evaluation
     const solid = evaluateNode(entry.root, doc.nodes, Solid, cache, 0);
     const mesh = solidToMesh(solid);
-    if (DEBUG_EVAL) {
-      console.log("Result mesh - triangles:", mesh.indices.length / 3, "vertices:", mesh.positions.length / 3);
-      console.groupEnd();
-    }
     solids.push(solid);
     return {
       mesh,
       material: entry.material,
-      // Include solid for ray tracing (if it has BRep data)
       solid: solid,
     };
   });
 
-  if (DEBUG_EVAL) {
-    console.log("Total parts evaluated:", parts.length);
-    console.groupEnd();
-  }
-
-  // Assembly mode: evaluate partDefs and instances
+  // Assembly mode
   let evaluatedPartDefs: EvaluatedPartDef[] | undefined;
   let evaluatedInstances: EvaluatedInstance[] | undefined;
 
   if (doc.partDefs && Object.keys(doc.partDefs).length > 0 && doc.instances && doc.instances.length > 0) {
-    // Solve forward kinematics to get world transforms
     const worldTransforms = solveForwardKinematics(doc);
 
-    // Evaluate each part definition once
-    const partDefSolids = new Map<string, Solid>();
     const partDefMeshes = new Map<string, TriangleMesh>();
-
     evaluatedPartDefs = [];
     for (const [id, partDef] of Object.entries(doc.partDefs)) {
       const solid = evaluateNode(partDef.root, doc.nodes, Solid, cache, 0);
-      partDefSolids.set(id, solid);
       const mesh = solidToMesh(solid);
       partDefMeshes.set(id, mesh);
       evaluatedPartDefs.push({ id, mesh });
     }
 
-    // Create evaluated instances with world transforms
     evaluatedInstances = [];
     for (const instance of doc.instances) {
       const mesh = partDefMeshes.get(instance.partDefId);
-      if (!mesh) {
-        if (DEBUG_EVAL) console.warn(`Instance ${instance.id} references unknown partDef ${instance.partDefId}`);
-        continue;
-      }
+      if (!mesh) continue;
 
-      // Get world transform (from kinematics or instance's own transform)
       const worldTransform = worldTransforms.get(instance.id) ?? instance.transform;
-
-      // Determine material: instance override > partDef default > "default"
       const partDef = doc.partDefs[instance.partDefId];
       const material = instance.material ?? partDef?.defaultMaterial ?? "default";
 
@@ -338,19 +368,12 @@ export function evaluateDocument(
         material,
         transform: worldTransform,
       });
-
-      // Note: Clash detection for assembly instances is disabled because FK transforms
-      // are applied in Three.js, not baked into the solid geometry. Proper clash detection
-      // for assemblies would require computing transformed meshes, not boolean operations.
     }
   }
 
-  // Compute pairwise intersections for clash detection
-  // Skip during parametric editing for performance (O(n²) operation)
+  // Clash detection
   const clashes: TriangleMesh[] = [];
-
   if (!options.skipClashDetection) {
-    // Clashes between traditional parts (non-assembly mode)
     for (let i = 0; i < solids.length; i++) {
       for (let j = i + 1; j < solids.length; j++) {
         const intersection = solids[i].intersection(solids[j]);
@@ -370,10 +393,6 @@ export function evaluateDocument(
     }
   }
 
-  // Note: Assembly clash detection is disabled. FK transforms are applied in the
-  // renderer, not baked into geometry, so boolean intersection won't work correctly.
-  // TODO: Implement proper assembly clash detection using transformed mesh positions.
-
   return {
     parts,
     partDefs: evaluatedPartDefs,
@@ -390,23 +409,11 @@ function evaluateNode(
   depth = 0,
 ): import("@vcad/kernel-wasm").Solid {
   const cached = cache.get(nodeId);
-  if (cached) {
-    if (DEBUG_EVAL) {
-      const indent = "  ".repeat(depth);
-      console.log(`${indent}[NODE] ${nodeId} (CACHED)`);
-    }
-    return cached;
-  }
+  if (cached) return cached;
 
   const node = nodes[String(nodeId)];
-  if (!node) {
-    throw new Error(`Missing node: ${nodeId}`);
-  }
+  if (!node) throw new Error(`Missing node: ${nodeId}`);
 
-  if (DEBUG_EVAL) {
-    const indent = "  ".repeat(depth);
-    console.log(`${indent}[NODE] ${nodeId} type=${node.op.type} name=${node.name || "(unnamed)"}`);
-  }
   const result = evaluateOp(node.op, nodes, Solid, cache, depth);
   cache.set(nodeId, result);
   return result;
@@ -421,17 +428,9 @@ function evaluateOp(
 ): import("@vcad/kernel-wasm").Solid {
   switch (op.type) {
     case "Cube":
-      if (DEBUG_EVAL) {
-        const indent = "  ".repeat(depth);
-        console.log(`${indent}  -> Cube(${op.size.x}, ${op.size.y}, ${op.size.z})`);
-      }
       return Solid.cube(op.size.x, op.size.y, op.size.z);
 
     case "Cylinder":
-      if (DEBUG_EVAL) {
-        const indent = "  ".repeat(depth);
-        console.log(`${indent}  -> Cylinder(r=${op.radius}, h=${op.height})`);
-      }
       return Solid.cylinder(op.radius, op.height, op.segments || undefined);
 
     case "Sphere":
@@ -449,34 +448,15 @@ function evaluateOp(
       return Solid.empty();
 
     case "Union": {
-      if (DEBUG_EVAL) {
-        const indent = "  ".repeat(depth);
-        console.log(`${indent}  -> Union(left=${op.left}, right=${op.right})`);
-      }
       const left = evaluateNode(op.left, nodes, Solid, cache, depth + 1);
       const right = evaluateNode(op.right, nodes, Solid, cache, depth + 1);
       return left.union(right);
     }
 
     case "Difference": {
-      if (DEBUG_EVAL) {
-        const indent = "  ".repeat(depth);
-        console.log(`${indent}  -> Difference(left=${op.left}, right=${op.right})`);
-      }
       const left = evaluateNode(op.left, nodes, Solid, cache, depth + 1);
       const right = evaluateNode(op.right, nodes, Solid, cache, depth + 1);
-      if (DEBUG_EVAL) {
-        const indent = "  ".repeat(depth);
-        const leftTris = left.getMesh().indices.length / 3;
-        const rightTris = right.getMesh().indices.length / 3;
-        console.log(`${indent}  -> Difference: left has ${leftTris} tris, right has ${rightTris} tris`);
-      }
-      const result = left.difference(right);
-      if (DEBUG_EVAL) {
-        const indent = "  ".repeat(depth);
-        console.log(`${indent}  -> Difference result: ${result.getMesh().indices.length / 3} tris`);
-      }
-      return result;
+      return left.difference(right);
     }
 
     case "Intersection": {
@@ -486,42 +466,24 @@ function evaluateOp(
     }
 
     case "Translate": {
-      if (DEBUG_EVAL) {
-        const indent = "  ".repeat(depth);
-        console.log(`${indent}  -> Translate(${op.offset.x}, ${op.offset.y}, ${op.offset.z}) child=${op.child}`);
-      }
       const child = evaluateNode(op.child, nodes, Solid, cache, depth + 1);
       return child.translate(op.offset.x, op.offset.y, op.offset.z);
     }
 
     case "Rotate": {
-      if (DEBUG_EVAL) {
-        const indent = "  ".repeat(depth);
-        console.log(`${indent}  -> Rotate(${op.angles.x}, ${op.angles.y}, ${op.angles.z}) child=${op.child}`);
-      }
       const child = evaluateNode(op.child, nodes, Solid, cache, depth + 1);
       return child.rotate(op.angles.x, op.angles.y, op.angles.z);
     }
 
     case "Scale": {
-      if (DEBUG_EVAL) {
-        const indent = "  ".repeat(depth);
-        console.log(`${indent}  -> Scale(${op.factor.x}, ${op.factor.y}, ${op.factor.z}) child=${op.child}`);
-      }
       const child = evaluateNode(op.child, nodes, Solid, cache, depth + 1);
       return child.scale(op.factor.x, op.factor.y, op.factor.z);
     }
 
     case "Sketch2D":
-      // Sketch2D nodes don't produce geometry directly — they're referenced by Extrude/Revolve
-      // Return an empty solid as a placeholder
       return Solid.empty();
 
     case "Extrude": {
-      if (DEBUG_EVAL) {
-        const indent = "  ".repeat(depth);
-        console.log(`${indent}  -> Extrude(sketch=${op.sketch}, dir=(${op.direction.x}, ${op.direction.y}, ${op.direction.z}), twist=${op.twist_angle ?? 0}, scale=${op.scale_end ?? 1})`);
-      }
       const sketchNode = nodes[String(op.sketch)];
       if (!sketchNode) {
         throw new Error(`Extrude references missing node: ${op.sketch}`);
@@ -540,7 +502,7 @@ function evaluateOp(
         const xDir = new Float64Array([textOp.x_dir.x, textOp.x_dir.y, textOp.x_dir.z]);
         const yDir = new Float64Array([textOp.y_dir.x, textOp.y_dir.y, textOp.y_dir.z]);
 
-        const result = Solid.textExtrude(
+        return Solid.textExtrude(
           textOp.text,
           origin,
           xDir,
@@ -552,22 +514,15 @@ function evaluateOp(
           textOp.letter_spacing ?? undefined,
           textOp.line_spacing ?? undefined,
         );
-        if (DEBUG_EVAL) {
-          const indent = "  ".repeat(depth);
-          console.log(`${indent}  -> TextExtrude result: ${result.getMesh().indices.length / 3} tris`);
-        }
-        return result;
       }
 
-      // Handle Sketch2D nodes (normal sketch extrusion)
       if (sketchNode.op.type !== "Sketch2D") {
         throw new Error(`Extrude references invalid sketch node: ${op.sketch} (type=${sketchNode.op.type})`);
       }
       const profile = convertSketchToProfile(sketchNode.op);
-      // Use extrudeWithOptions if twist or scale is specified
       const hasTwist = op.twist_angle !== undefined && Math.abs(op.twist_angle) > 1e-12;
       const hasScale = op.scale_end !== undefined && Math.abs(op.scale_end - 1.0) > 1e-12;
-      const result = (hasTwist || hasScale)
+      return (hasTwist || hasScale)
         ? Solid.extrudeWithOptions(
             profile,
             direction,
@@ -575,11 +530,6 @@ function evaluateOp(
             op.scale_end ?? 1.0
           )
         : Solid.extrude(profile, direction);
-      if (DEBUG_EVAL) {
-        const indent = "  ".repeat(depth);
-        console.log(`${indent}  -> Extrude result: ${result.getMesh().indices.length / 3} tris`);
-      }
-      return result;
     }
 
     case "Revolve": {
@@ -669,7 +619,6 @@ function evaluateOp(
           op.orientation,
         );
       } else {
-        // Helix path
         return Solid.sweepHelix(
           profile,
           op.path.radius,
@@ -698,21 +647,9 @@ function evaluateOp(
     }
 
     case "ImportedMesh":
-      // ImportedMesh is handled specially in evaluateDocument, not through Solid
-      // Return empty solid as fallback
-      if (DEBUG_EVAL) {
-        const indent = "  ".repeat(depth);
-        console.log(`${indent}  -> ImportedMesh (handled at document level)`);
-      }
       return Solid.empty();
 
     case "Text2D":
-      // Text2D nodes don't produce geometry directly — they're referenced by Extrude
-      // Return an empty solid as a placeholder
-      if (DEBUG_EVAL) {
-        const indent = "  ".repeat(depth);
-        console.log(`${indent}  -> Text2D (placeholder, use Extrude to convert)`);
-      }
       return Solid.empty();
   }
 }
