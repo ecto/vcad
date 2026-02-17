@@ -1,0 +1,20 @@
+# vcad
+
+> Open-source parametric CAD for the AI era. Browser-based modeling with a Rust BRep kernel, AI agent support via MCP, and cloud sync.
+
+## Features
+
+- Modeling: Primitives, booleans, fillets, chamfers, shell
+- Sketching: 2D constraints, extrude, revolve, sweep, loft
+- Assembly: Parts, instances, joints, forward kinematics
+- Simulation: Physics with Rapier3D, gym-style RL interface
+- Import/Export: STEP import, STL/GLB/STEP/DXF export
+- Rendering: Direct BRep ray tracing + tessellated mode
+- Cloud: Supabase sync with Google/GitHub auth
+- MCP Server: AI agents can create and manipulate CAD models
+- CLI: Headless export and STEP import
+
+## Links
+
+- [Web App](https://vcad.io): Try vcad in the browser — no install required
+- [GitHub](https://github.com/ecto/vcad): Source code and documentation
