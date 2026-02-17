@@ -1,0 +1,20 @@
+[package]
+name = "vcad-eval"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Canonical document evaluator for vcad IR"
+
+[dependencies]
+vcad-ir.workspace = true
+vcad-kernel.workspace = true
+vcad-kernel-math.workspace = true
+vcad-kernel-sketch.workspace = true
+vcad-kernel-sweep.workspace = true
+vcad-kernel-text.workspace = true
+vcad-kernel-tessellate.workspace = true
+vcad-kernel-geom.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
