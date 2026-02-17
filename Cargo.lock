@@ -173,14 +173,8 @@ version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08807e080ed7f9d5433fa9b275196cfc35414f66a0c79d864dc51a0d825231a3"
 dependencies = [
- "bit-vec 0.8.0",
+ "bit-vec",
 ]
-
-[[package]]
-name = "bit-vec"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2c54ff287cfc0a34f38a6b832ea1bd8e448a330b3e40a50859e6488bee07f22"
 
 [[package]]
 name = "bit-vec"
@@ -473,28 +467,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crossbeam"
-version = "0.8.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1137cd7e7fc0fb5d3c5a8678be38ec56e819125d8d7907411fe24ccb943faca8"
-dependencies = [
- "crossbeam-channel",
- "crossbeam-deque",
- "crossbeam-epoch",
- "crossbeam-queue",
- "crossbeam-utils",
-]
-
-[[package]]
-name = "crossbeam-channel"
-version = "0.5.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82b8f8f868b36967f9606790d1903570de9ceaf870a7bf9fbbd3016d636a2cb2"
-dependencies = [
- "crossbeam-utils",
-]
-
-[[package]]
 name = "crossbeam-deque"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -509,15 +481,6 @@ name = "crossbeam-epoch"
 version = "0.9.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b82ac4a3c2ca9c3460964f020e1402edd5753411d7737aa39c3714ad1b5420e"
-dependencies = [
- "crossbeam-utils",
-]
-
-[[package]]
-name = "crossbeam-queue"
-version = "0.3.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f58bbc28f91df819d0aa2a2c00cd19754769c2fad90579b3592b1c9ba7a3115"
 dependencies = [
  "crossbeam-utils",
 ]
@@ -591,12 +554,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "downcast-rs"
-version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
-
-[[package]]
 name = "dunce"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -617,15 +574,6 @@ name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
-
-[[package]]
-name = "ena"
-version = "0.14.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d248bdd43ce613d87415282f69b9bb99d947d290b10962dd6c56233312c2ad5"
-dependencies = [
- "log",
-]
 
 [[package]]
 name = "endian-type"
@@ -760,6 +708,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05f29059c0c2090612e8d742178b0580d2dc940c837851ad723096f87af6663e"
 
 [[package]]
+name = "futures-intrusive"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d930c203dd0b6ff06e0201a4a2fe9149b43c684fd4420555b26d21b1a02956f"
+dependencies = [
+ "futures-core",
+ "lock_api",
+ "parking_lot",
+]
+
+[[package]]
 name = "futures-sink"
 version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -839,8 +798,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "wasi",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1313,7 +1274,7 @@ dependencies = [
  "hexf-parse",
  "indexmap",
  "log",
- "rustc-hash 1.1.0",
+ "rustc-hash",
  "spirv",
  "termcolor",
  "thiserror 1.0.69",
@@ -1397,17 +1358,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "num-derive"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed3955f1a9c7c0c15e092f9c887db08b1fc683305fdf6eb6684f22555355e202"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "num-integer"
 version = "0.1.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1471,15 +1421,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d05e27ee213611ffe7d6348b942e8f942b37114c00cc03cec254295a4a17852e"
 
 [[package]]
-name = "ordered-float"
-version = "4.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7bb71e1b3fa6ca1c61f383464aaf2bb0e2f8e772a1f01d486832464de363b951"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
 name = "parking_lot"
 version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1503,36 +1444,244 @@ dependencies = [
 ]
 
 [[package]]
-name = "parry3d"
-version = "0.18.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ecb572cea5c76b06bc744aaefdbb9e6ea9e5695f50f79c0227bddecd6ec925a4"
-dependencies = [
- "approx",
- "arrayvec",
- "bitflags 2.10.0",
- "downcast-rs",
- "either",
- "ena",
- "log",
- "nalgebra",
- "num-derive",
- "num-traits",
- "ordered-float",
- "rstar",
- "rustc-hash 2.1.1",
- "simba",
- "slab",
- "smallvec",
- "spade",
- "thiserror 1.0.69",
-]
-
-[[package]]
 name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
+
+[[package]]
+name = "phyz"
+version = "0.1.0"
+dependencies = [
+ "nalgebra",
+ "phyz-collision",
+ "phyz-compile",
+ "phyz-contact",
+ "phyz-coupling",
+ "phyz-diff",
+ "phyz-em",
+ "phyz-format",
+ "phyz-gpu",
+ "phyz-gravity",
+ "phyz-guardian",
+ "phyz-lbm",
+ "phyz-math",
+ "phyz-md",
+ "phyz-mjcf",
+ "phyz-model",
+ "phyz-particle",
+ "phyz-prob",
+ "phyz-qft",
+ "phyz-real2sim",
+ "phyz-rigid",
+ "phyz-world",
+ "rand",
+ "rand_distr",
+]
+
+[[package]]
+name = "phyz-collision"
+version = "0.1.0"
+dependencies = [
+ "nalgebra",
+ "phyz-math",
+ "phyz-model",
+]
+
+[[package]]
+name = "phyz-compile"
+version = "0.1.0"
+dependencies = [
+ "naga",
+ "nalgebra",
+ "phyz-math",
+ "wgpu",
+]
+
+[[package]]
+name = "phyz-contact"
+version = "0.1.0"
+dependencies = [
+ "nalgebra",
+ "phyz-collision",
+ "phyz-math",
+ "phyz-model",
+]
+
+[[package]]
+name = "phyz-coupling"
+version = "0.1.0"
+dependencies = [
+ "nalgebra",
+ "phyz-math",
+]
+
+[[package]]
+name = "phyz-diff"
+version = "0.1.0"
+dependencies = [
+ "nalgebra",
+ "phyz-math",
+ "phyz-model",
+ "phyz-rigid",
+]
+
+[[package]]
+name = "phyz-em"
+version = "0.1.0"
+dependencies = [
+ "nalgebra",
+ "phyz-math",
+]
+
+[[package]]
+name = "phyz-format"
+version = "0.1.0"
+dependencies = [
+ "nalgebra",
+ "phyz-math",
+ "phyz-mjcf",
+ "phyz-model",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "phyz-gpu"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "futures-intrusive",
+ "nalgebra",
+ "phyz-math",
+ "phyz-model",
+ "phyz-rigid",
+ "pollster",
+ "wgpu",
+]
+
+[[package]]
+name = "phyz-gravity"
+version = "0.1.0"
+dependencies = [
+ "nalgebra",
+ "phyz-math",
+]
+
+[[package]]
+name = "phyz-guardian"
+version = "0.1.0"
+dependencies = [
+ "nalgebra",
+ "phyz-math",
+ "phyz-model",
+ "phyz-rigid",
+]
+
+[[package]]
+name = "phyz-lbm"
+version = "0.1.0"
+dependencies = [
+ "nalgebra",
+ "phyz-math",
+]
+
+[[package]]
+name = "phyz-math"
+version = "0.1.0"
+dependencies = [
+ "nalgebra",
+]
+
+[[package]]
+name = "phyz-md"
+version = "0.1.0"
+dependencies = [
+ "nalgebra",
+ "phyz-math",
+]
+
+[[package]]
+name = "phyz-mjcf"
+version = "0.1.0"
+dependencies = [
+ "phyz-math",
+ "phyz-model",
+ "quick-xml 0.37.5",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "phyz-model"
+version = "0.1.0"
+dependencies = [
+ "nalgebra",
+ "phyz-math",
+]
+
+[[package]]
+name = "phyz-particle"
+version = "0.1.0"
+dependencies = [
+ "nalgebra",
+ "phyz-math",
+ "phyz-model",
+]
+
+[[package]]
+name = "phyz-prob"
+version = "0.1.0"
+dependencies = [
+ "nalgebra",
+ "phyz-math",
+ "phyz-model",
+ "rand",
+ "rand_distr",
+]
+
+[[package]]
+name = "phyz-qft"
+version = "0.1.0"
+dependencies = [
+ "nalgebra",
+ "phyz-math",
+ "rand",
+]
+
+[[package]]
+name = "phyz-real2sim"
+version = "0.1.0"
+dependencies = [
+ "nalgebra",
+ "phyz-diff",
+ "phyz-format",
+ "phyz-math",
+ "phyz-model",
+ "phyz-rigid",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "phyz-rigid"
+version = "0.1.0"
+dependencies = [
+ "nalgebra",
+ "phyz-math",
+ "phyz-model",
+]
+
+[[package]]
+name = "phyz-world"
+version = "0.1.0"
+dependencies = [
+ "phyz-math",
+ "phyz-model",
+ "rand",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "pin-project-lite"
@@ -1600,6 +1749,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2f3a9f18d041e6d0e102a0a46750538147e5e8992d3b4873aaafee2520b00ce3"
 
 [[package]]
+name = "ppv-lite86"
+version = "0.2.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9"
+dependencies = [
+ "zerocopy",
+]
+
+[[package]]
 name = "presser"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1619,19 +1777,6 @@ name = "profiling"
 version = "1.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eb8486b569e12e2c32ad3e204dbaba5e4b5b216e9367044f25f1dba42341773"
-dependencies = [
- "profiling-procmacros",
-]
-
-[[package]]
-name = "profiling-procmacros"
-version = "1.0.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52717f9a02b6965224f95ca2a81e2e0c5c43baacd28ca057577988930b6c3d5b"
-dependencies = [
- "quote",
- "syn",
-]
 
 [[package]]
 name = "pxfm"
@@ -1688,34 +1833,50 @@ dependencies = [
 ]
 
 [[package]]
+name = "rand"
+version = "0.8.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34af8d1a0e25924bc5b7c43c079c942339d8f0a8b57c39049bef581b46327404"
+dependencies = [
+ "libc",
+ "rand_chacha",
+ "rand_core",
+]
+
+[[package]]
+name = "rand_chacha"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6c10a63a0fa32252be49d21e7709d4d4baf8d231c2dbce1eaa8141b9b127d88"
+dependencies = [
+ "ppv-lite86",
+ "rand_core",
+]
+
+[[package]]
+name = "rand_core"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
+dependencies = [
+ "getrandom 0.2.17",
+]
+
+[[package]]
+name = "rand_distr"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32cb0b9bc82b0a0876c2dd994a7e7a2683d3e7390ca40e6886785ef0c7e3ee31"
+dependencies = [
+ "num-traits",
+ "rand",
+]
+
+[[package]]
 name = "range-alloc"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d6831663a5098ea164f89cff59c6284e95f4e3c76ce9848d4529f5ccca9bde"
-
-[[package]]
-name = "rapier3d"
-version = "0.23.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37d84644f385b81f065576058bc8f7e3d64e56a66f2f5fc40bfd917774659e12"
-dependencies = [
- "approx",
- "arrayvec",
- "bit-vec 0.7.0",
- "bitflags 2.10.0",
- "crossbeam",
- "downcast-rs",
- "log",
- "nalgebra",
- "num-derive",
- "num-traits",
- "ordered-float",
- "parry3d",
- "profiling",
- "rustc-hash 2.1.1",
- "simba",
- "thiserror 1.0.69",
-]
 
 [[package]]
 name = "raw-window-handle"
@@ -1847,12 +2008,6 @@ name = "rustc-hash"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
-
-[[package]]
-name = "rustc-hash"
-version = "2.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "357703d41365b4b27c590e3ed91eabb1b663f07c4c084095e60cbed4362dff0d"
 
 [[package]]
 name = "rustix"
@@ -2714,8 +2869,7 @@ name = "vcad-kernel-physics"
 version = "0.8.0"
 dependencies = [
  "nalgebra",
- "parry3d",
- "rapier3d",
+ "phyz",
  "serde",
  "thiserror 2.0.18",
  "vcad-ir",
@@ -2856,6 +3010,7 @@ name = "vcad-kernel-wasm"
 version = "0.8.0"
 dependencies = [
  "console_error_panic_hook",
+ "getrandom 0.2.17",
  "js-sys",
  "serde",
  "serde-wasm-bindgen",
@@ -3107,7 +3262,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d63c3c478de8e7e01786479919c8769f62a22eec16788d8c2ac77ce2c132778a"
 dependencies = [
  "arrayvec",
- "bit-vec 0.8.0",
+ "bit-vec",
  "bitflags 2.10.0",
  "cfg_aliases",
  "document-features",
@@ -3118,7 +3273,7 @@ dependencies = [
  "parking_lot",
  "profiling",
  "raw-window-handle",
- "rustc-hash 1.1.0",
+ "rustc-hash",
  "smallvec",
  "thiserror 1.0.69",
  "wgpu-hal",
@@ -3160,7 +3315,7 @@ dependencies = [
  "range-alloc",
  "raw-window-handle",
  "renderdoc-sys",
- "rustc-hash 1.1.0",
+ "rustc-hash",
  "smallvec",
  "thiserror 1.0.69",
  "wasm-bindgen",

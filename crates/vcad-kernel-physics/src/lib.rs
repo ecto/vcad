@@ -1,16 +1,17 @@
 #![warn(missing_docs)]
 
-//! Physics simulation for vcad robotics using Rapier3d.
+//! Physics simulation for vcad robotics using phyz.
 //!
 //! This crate provides physics simulation capabilities for robot assemblies,
 //! enabling dynamics simulation, collision detection, and reinforcement learning
-//! through a gym-like interface.
+//! through a gym-like interface. Powered by phyz (Featherstone articulated-body
+//! dynamics with penalty-based contacts).
 //!
 //! # Features
 //!
 //! - Convert vcad assemblies to physics simulation
-//! - Joint dynamics with position/velocity/torque control
-//! - Collision detection using convex hulls or trimesh
+//! - Joint dynamics with position/velocity/torque control (PD motors)
+//! - Collision detection using mesh and box geometries
 //! - Gym-style observation/action API for RL training
 //!
 //! # Example

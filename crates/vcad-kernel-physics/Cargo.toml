@@ -1,6 +1,6 @@
 [package]
 name = "vcad-kernel-physics"
-description = "Physics simulation for vcad robotics using Rapier"
+description = "Physics simulation for vcad robotics using phyz"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,8 +10,7 @@ repository.workspace = true
 vcad-ir = { workspace = true }
 vcad-kernel = { workspace = true }
 vcad-kernel-tessellate = { workspace = true }
-rapier3d = "0.23"
-parry3d = "0.18"
+phyz = { path = "../../../tau/crates/phyz" }
 nalgebra = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }

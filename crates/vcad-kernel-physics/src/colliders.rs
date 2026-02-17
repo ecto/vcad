@@ -1,7 +1,7 @@
 //! Collision shape generation from vcad geometry.
 
-use nalgebra::{Point3, Vector3};
-use parry3d::shape::{ConvexPolyhedron, SharedShape, TriMesh};
+use phyz::Geometry;
+use phyz::phyz_math::Vec3;
 use vcad_kernel_tessellate::TriangleMesh;
 
 use crate::error::PhysicsError;
@@ -10,7 +10,7 @@ use crate::error::PhysicsError;
 #[derive(Debug, Clone, Copy, Default)]
 #[allow(dead_code)]
 pub enum ColliderStrategy {
-    /// Use convex hull (fast, approximate).
+    /// Use convex hull (fast, approximate) — mapped to Mesh.
     #[default]
     ConvexHull,
     /// Use triangle mesh (accurate, slower).
@@ -19,7 +19,7 @@ pub enum ColliderStrategy {
     Aabb,
 }
 
-/// Generate a collision shape from a triangle mesh.
+/// Generate a collision geometry from a triangle mesh.
 ///
 /// # Arguments
 ///
@@ -29,12 +29,12 @@ pub enum ColliderStrategy {
 ///
 /// # Returns
 ///
-/// A shared collision shape ready for use with Rapier.
+/// A `phyz::Geometry` ready for use with the physics engine.
 pub fn mesh_to_collider(
     mesh: &TriangleMesh,
     strategy: ColliderStrategy,
     name: &str,
-) -> Result<SharedShape, PhysicsError> {
+) -> Result<Geometry, PhysicsError> {
     if mesh.vertices.is_empty() || mesh.indices.is_empty() {
         return Err(PhysicsError::CollisionShape {
             name: name.to_string(),
@@ -43,84 +43,53 @@ pub fn mesh_to_collider(
     }
 
     match strategy {
-        ColliderStrategy::ConvexHull => create_convex_hull(mesh, name),
-        ColliderStrategy::TriMesh => create_trimesh(mesh, name),
+        ColliderStrategy::ConvexHull | ColliderStrategy::TriMesh => create_mesh(mesh, name),
         ColliderStrategy::Aabb => create_aabb(mesh, name),
     }
 }
 
-fn create_convex_hull(mesh: &TriangleMesh, name: &str) -> Result<SharedShape, PhysicsError> {
-    // Extract points from mesh vertices
-    let points: Vec<Point3<f32>> = mesh
+fn create_mesh(mesh: &TriangleMesh, name: &str) -> Result<Geometry, PhysicsError> {
+    // Extract vertices, converting from mm to meters
+    let vertices: Vec<Vec3> = mesh
         .vertices
         .chunks(3)
-        .map(|v| {
-            // Convert from mm to meters
-            Point3::new(v[0] / 1000.0, v[1] / 1000.0, v[2] / 1000.0)
-        })
+        .map(|v| Vec3::new(v[0] as f64 / 1000.0, v[1] as f64 / 1000.0, v[2] as f64 / 1000.0))
         .collect();
 
-    if points.len() < 4 {
+    if vertices.len() < 4 {
         return Err(PhysicsError::CollisionShape {
             name: name.to_string(),
-            reason: "Need at least 4 points for convex hull".to_string(),
+            reason: "Need at least 4 vertices for mesh collider".to_string(),
         });
     }
 
-    // Create convex hull
-    match ConvexPolyhedron::from_convex_hull(&points) {
-        Some(hull) => Ok(SharedShape::new(hull)),
-        None => {
-            // Fall back to AABB if convex hull fails (degenerate geometry)
-            create_aabb(mesh, name)
-        }
-    }
-}
-
-fn create_trimesh(mesh: &TriangleMesh, name: &str) -> Result<SharedShape, PhysicsError> {
-    // Extract vertices
-    let vertices: Vec<Point3<f32>> = mesh
-        .vertices
-        .chunks(3)
-        .map(|v| {
-            // Convert from mm to meters
-            Point3::new(v[0] / 1000.0, v[1] / 1000.0, v[2] / 1000.0)
-        })
-        .collect();
-
-    // Extract triangle indices
-    let indices: Vec<[u32; 3]> = mesh
+    // Extract triangle faces
+    let faces: Vec<[usize; 3]> = mesh
         .indices
         .chunks(3)
-        .map(|i| [i[0], i[1], i[2]])
+        .map(|i| [i[0] as usize, i[1] as usize, i[2] as usize])
         .collect();
 
-    if indices.is_empty() {
+    if faces.is_empty() {
         return Err(PhysicsError::CollisionShape {
             name: name.to_string(),
             reason: "No triangles in mesh".to_string(),
         });
     }
 
-    match TriMesh::new(vertices, indices) {
-        Ok(trimesh) => Ok(SharedShape::new(trimesh)),
-        Err(e) => Err(PhysicsError::CollisionShape {
-            name: name.to_string(),
-            reason: format!("Failed to create trimesh: {:?}", e),
-        }),
-    }
+    Ok(Geometry::Mesh { vertices, faces })
 }
 
-fn create_aabb(mesh: &TriangleMesh, _name: &str) -> Result<SharedShape, PhysicsError> {
+fn create_aabb(mesh: &TriangleMesh, _name: &str) -> Result<Geometry, PhysicsError> {
     // Compute bounding box
-    let mut min = Vector3::new(f32::INFINITY, f32::INFINITY, f32::INFINITY);
-    let mut max = Vector3::new(f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
+    let mut min = Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
+    let mut max = Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
 
     for v in mesh.vertices.chunks(3) {
         // Convert from mm to meters
-        let x = v[0] / 1000.0;
-        let y = v[1] / 1000.0;
-        let z = v[2] / 1000.0;
+        let x = v[0] as f64 / 1000.0;
+        let y = v[1] as f64 / 1000.0;
+        let z = v[2] as f64 / 1000.0;
 
         min.x = min.x.min(x);
         min.y = min.y.min(y);
@@ -132,29 +101,29 @@ fn create_aabb(mesh: &TriangleMesh, _name: &str) -> Result<SharedShape, PhysicsE
 
     let half_extents = (max - min) / 2.0;
 
-    Ok(SharedShape::cuboid(half_extents.x, half_extents.y, half_extents.z))
+    Ok(Geometry::Box { half_extents })
 }
 
 /// Compute the center of mass from a triangle mesh.
 ///
 /// Returns the center of mass in meters.
 #[allow(dead_code)]
-pub fn compute_center_of_mass(mesh: &TriangleMesh) -> Point3<f32> {
+pub fn compute_center_of_mass(mesh: &TriangleMesh) -> Vec3 {
     if mesh.vertices.is_empty() {
-        return Point3::origin();
+        return Vec3::zeros();
     }
 
-    let mut sum = Vector3::zeros();
+    let mut sum = Vec3::zeros();
     let count = mesh.vertices.len() / 3;
 
     for v in mesh.vertices.chunks(3) {
         // Convert from mm to meters
-        sum.x += v[0] / 1000.0;
-        sum.y += v[1] / 1000.0;
-        sum.z += v[2] / 1000.0;
+        sum.x += v[0] as f64 / 1000.0;
+        sum.y += v[1] as f64 / 1000.0;
+        sum.z += v[2] as f64 / 1000.0;
     }
 
-    Point3::from(sum / count as f32)
+    sum / count as f64
 }
 
 /// Estimate mass from mesh volume assuming uniform density.
@@ -167,9 +136,9 @@ pub fn compute_center_of_mass(mesh: &TriangleMesh) -> Point3<f32> {
 /// # Returns
 ///
 /// Estimated mass in kg.
-pub fn estimate_mass(mesh: &TriangleMesh, density: f32) -> f32 {
+pub fn estimate_mass(mesh: &TriangleMesh, density: f64) -> f64 {
     // Use signed volume method
-    let mut volume = 0.0f32;
+    let mut volume = 0.0f64;
 
     for tri in mesh.indices.chunks(3) {
         let i0 = tri[0] as usize * 3;
@@ -177,24 +146,24 @@ pub fn estimate_mass(mesh: &TriangleMesh, density: f32) -> f32 {
         let i2 = tri[2] as usize * 3;
 
         // Convert from mm to meters
-        let v0 = Point3::new(
-            mesh.vertices[i0] / 1000.0,
-            mesh.vertices[i0 + 1] / 1000.0,
-            mesh.vertices[i0 + 2] / 1000.0,
+        let v0 = Vec3::new(
+            mesh.vertices[i0] as f64 / 1000.0,
+            mesh.vertices[i0 + 1] as f64 / 1000.0,
+            mesh.vertices[i0 + 2] as f64 / 1000.0,
         );
-        let v1 = Point3::new(
-            mesh.vertices[i1] / 1000.0,
-            mesh.vertices[i1 + 1] / 1000.0,
-            mesh.vertices[i1 + 2] / 1000.0,
+        let v1 = Vec3::new(
+            mesh.vertices[i1] as f64 / 1000.0,
+            mesh.vertices[i1 + 1] as f64 / 1000.0,
+            mesh.vertices[i1 + 2] as f64 / 1000.0,
         );
-        let v2 = Point3::new(
-            mesh.vertices[i2] / 1000.0,
-            mesh.vertices[i2 + 1] / 1000.0,
-            mesh.vertices[i2 + 2] / 1000.0,
+        let v2 = Vec3::new(
+            mesh.vertices[i2] as f64 / 1000.0,
+            mesh.vertices[i2 + 1] as f64 / 1000.0,
+            mesh.vertices[i2 + 2] as f64 / 1000.0,
         );
 
         // Signed volume of tetrahedron with origin
-        volume += v0.coords.dot(&v1.coords.cross(&v2.coords)) / 6.0;
+        volume += v0.dot(&v1.cross(&v2)) / 6.0;
     }
 
     (volume.abs() * density).max(0.001) // Minimum mass of 1 gram
@@ -227,24 +196,24 @@ mod tests {
     }
 
     #[test]
-    fn test_convex_hull() {
+    fn test_mesh_collider() {
         let mesh = simple_cube_mesh();
-        let shape = mesh_to_collider(&mesh, ColliderStrategy::ConvexHull, "test").unwrap();
-        assert!(shape.as_ball().is_none()); // Not a ball
+        let geom = mesh_to_collider(&mesh, ColliderStrategy::ConvexHull, "test").unwrap();
+        assert!(matches!(geom, Geometry::Mesh { .. }));
     }
 
     #[test]
     fn test_trimesh() {
         let mesh = simple_cube_mesh();
-        let shape = mesh_to_collider(&mesh, ColliderStrategy::TriMesh, "test").unwrap();
-        assert!(shape.as_trimesh().is_some());
+        let geom = mesh_to_collider(&mesh, ColliderStrategy::TriMesh, "test").unwrap();
+        assert!(matches!(geom, Geometry::Mesh { .. }));
     }
 
     #[test]
     fn test_aabb() {
         let mesh = simple_cube_mesh();
-        let shape = mesh_to_collider(&mesh, ColliderStrategy::Aabb, "test").unwrap();
-        assert!(shape.as_cuboid().is_some());
+        let geom = mesh_to_collider(&mesh, ColliderStrategy::Aabb, "test").unwrap();
+        assert!(matches!(geom, Geometry::Box { .. }));
     }
 
     #[test]
@@ -252,6 +221,6 @@ mod tests {
         let mesh = simple_cube_mesh();
         let com = compute_center_of_mass(&mesh);
         // Should be near origin
-        assert!(com.coords.norm() < 0.001);
+        assert!(com.norm() < 0.001);
     }
 }
