@@ -1,0 +1,94 @@
+; Test file — verifies the vcad package types work correctly
+
+[use lib]
+
+; Test primitives
+[let box [lib.cube 10.0 20.0 30.0]]
+[let cyl [lib.cylinder 5.0 15.0]]
+[let sph [lib.sphere 8.0]]
+[let cn [lib.cone 5.0 2.0 10.0]]
+
+; Test booleans (subject-last)
+[let u [lib.union cyl box]]
+[let d [lib.difference cyl box]]
+[let i [lib.intersection sph box]]
+
+; Test transforms (subject-last)
+[let moved [lib.translate 10.0 0.0 5.0 box]]
+[let rotated [lib.rotate 0.0 45.0 0.0 box]]
+[let scaled [lib.scale 2.0 1.0 0.5 box]]
+
+; Test sketch + extrude
+[let sk [lib.sketch
+  0.0 0.0 0.0
+  1.0 0.0 0.0
+  0.0 1.0 0.0
+  #[[lib.line 0.0 0.0 10.0 0.0]
+    [lib.line 10.0 0.0 10.0 5.0]
+    [lib.line 10.0 5.0 0.0 5.0]
+    [lib.line 0.0 5.0 0.0 0.0]]]]
+[let ext [lib.extrude 0.0 0.0 20.0 sk]]
+
+; Test features (subject-last)
+[let shelled [lib.shell 1.0 box]]
+[let filleted [lib.fillet 2.0 box]]
+[let chamfered [lib.chamfer 1.5 box]]
+
+; Test patterns (subject-last)
+[let lin-pat [lib.linear-pattern 20.0 0.0 0.0 5 25.0 box]]
+[let circ-pat [lib.circular-pattern 0.0 0.0 0.0 0.0 0.0 1.0 8 360.0 box]]
+
+; Test material
+[let mat [lib.material "aluminum" 0.91 0.92 0.93 1.0 0.4]]
+
+; Test scene entry
+[let entry [lib.root box "aluminum"]]
+
+; Test pipe chain (thread-last: subject goes last)
+[let part [pipe [lib.cube 50.0 30.0 5.0]
+  [lib.difference [lib.cylinder 3.0 10.0]]
+  [lib.fillet 1.0]
+  [lib.translate 0.0 0.0 10.0]]]
+
+; Test match on Solid (tag-based matching)
+[fn describe [s]
+  [match s
+    [Cube x y z] => [str "cube " x "x" y "x" z]
+    [Cylinder r h] => [str "cylinder r=" r " h=" h]
+    [Sphere r] => [str "sphere r=" r]
+    _ => "other"]]
+
+[assert-eq [describe box] "cube 10x20x30"]
+[assert-eq [describe cyl] "cylinder r=5 h=15"]
+[assert-eq [describe sph] "sphere r=8"]
+[assert-eq [describe part] "other"]
+
+; Verify SceneEntry
+[let se [lib.root [lib.cube 10.0 10.0 10.0] "steel"]]
+[fn describe-scene [entry]
+  [match entry
+    [SceneEntry solid mat] => [str "SceneEntry(material=" mat ")"]]]
+[assert-eq [describe-scene se] "SceneEntry(material=steel)"]
+
+; Verify difference arg order: [difference tool body] → [Difference body tool]
+[let diff [lib.difference [lib.sphere 1.0] [lib.cube 10.0 10.0 10.0]]]
+[fn diff-check [s]
+  [match s
+    [Difference left right] =>
+      [match left
+        [Cube x y z] => "body-is-cube"
+        _ => "body-is-other"]
+    _ => "not-diff"]]
+[assert-eq [diff-check diff] "body-is-cube"]
+
+; Verify pipe chain produces correct nesting
+[fn outer-tag [s]
+  [match s
+    [Translate inner x y z] => "translate"
+    [Fillet inner r] => "fillet"
+    [Difference l r] => "difference"
+    [Cube x y z] => "cube"
+    _ => "unknown"]]
+[assert-eq [outer-tag part] "translate"]
+
+[println "all tests passed"]

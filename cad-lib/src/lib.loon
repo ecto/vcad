@@ -1,0 +1,119 @@
+; vcad — CSG geometry types for parametric CAD
+;
+; All geometry is represented as pure data (ADTs).
+; The vcad kernel evaluates these trees into meshes.
+;
+; Convenience constructors use [let name [fn ...]] (closures) so that
+; ADT constructors from [type] are captured in the closure env and
+; remain available when called from other modules.
+;
+; Functions that take a solid/subject use it as the LAST parameter
+; for thread-last pipe compatibility:
+;   [pipe [cube 50 30 5] [fillet 1.0] [translate 10 0 0]]
+
+; ---------------------------------------------------------------------------
+; Solid — the CSG tree
+; ---------------------------------------------------------------------------
+
+[type Solid
+  ; Primitives
+  [Cube f64 f64 f64]
+  [Cylinder f64 f64]
+  [Sphere f64]
+  [Cone f64 f64 f64]
+  ; Empty (identity for union)
+  Empty
+  ; Booleans
+  [Union Solid Solid]
+  [Difference Solid Solid]
+  [Intersection Solid Solid]
+  ; Transforms
+  [Translate Solid f64 f64 f64]
+  [Rotate Solid f64 f64 f64]
+  [Scale Solid f64 f64 f64]
+  ; Features
+  [Extrude Sketch f64 f64 f64]
+  [Revolve Sketch f64 f64 f64 f64 f64 f64 f64]
+  [Shell Solid f64]
+  [Fillet Solid f64]
+  [Chamfer Solid f64]
+  ; Patterns
+  [LinearPattern Solid f64 f64 f64 Int f64]
+  [CircularPattern Solid f64 f64 f64 f64 f64 f64 Int f64]]
+
+; ---------------------------------------------------------------------------
+; Sketch — 2D profiles for extrude/revolve
+; ---------------------------------------------------------------------------
+
+[type SketchSeg
+  [SLine f64 f64 f64 f64]
+  [SArc f64 f64 f64 f64 f64 f64 Bool]]
+
+[type Sketch
+  [Sketch f64 f64 f64 f64 f64 f64 f64 f64 f64 (Vec SketchSeg)]]
+
+; ---------------------------------------------------------------------------
+; Material — PBR surface properties
+; ---------------------------------------------------------------------------
+
+[type Material
+  [Material Str f64 f64 f64 f64 f64]]
+
+; ---------------------------------------------------------------------------
+; Scene output
+; ---------------------------------------------------------------------------
+
+[type SceneEntry
+  [SceneEntry Solid Str]]
+
+; ---------------------------------------------------------------------------
+; Convenience constructors (closures — capture ADT constructors)
+;
+; Subject-last for pipe: [pipe solid [fillet 1.0] [translate 10 0 0]]
+; ---------------------------------------------------------------------------
+
+; Primitives (no subject — these create new geometry)
+[let cube [fn [x y z] [Cube x y z]]]
+[let cylinder [fn [r h] [Cylinder r h]]]
+[let sphere [fn [r] [Sphere r]]]
+[let cone [fn [r-bottom r-top h] [Cone r-bottom r-top h]]]
+
+; Booleans (subject-last: [pipe body [difference tool]] → subtract tool from body)
+[let union [fn [other s] [Union s other]]]
+[let difference [fn [tool s] [Difference s tool]]]
+[let intersection [fn [other s] [Intersection s other]]]
+
+; Transforms (subject-last)
+[let translate [fn [x y z s] [Translate s x y z]]]
+[let rotate [fn [rx ry rz s] [Rotate s rx ry rz]]]
+[let scale [fn [sx sy sz s] [Scale s sx sy sz]]]
+
+; Sketch (no subject — creates new geometry)
+[let sketch [fn [ox oy oz xx xy xz yx yy yz segs]
+  [Sketch ox oy oz xx xy xz yx yy yz segs]]]
+[let line [fn [x1 y1 x2 y2] [SLine x1 y1 x2 y2]]]
+[let arc [fn [x1 y1 x2 y2 cx cy ccw] [SArc x1 y1 x2 y2 cx cy ccw]]]
+
+; Extrude/Revolve (subject-last: sketch is the subject)
+[let extrude [fn [dx dy dz sk] [Extrude sk dx dy dz]]]
+[let revolve [fn [aox aoy aoz adx ady adz angle sk]
+  [Revolve sk aox aoy aoz adx ady adz angle]]]
+
+; Features (subject-last)
+[let shell [fn [t s] [Shell s t]]]
+[let fillet [fn [r s] [Fillet s r]]]
+[let chamfer [fn [d s] [Chamfer s d]]]
+
+; Patterns (subject-last)
+[let linear-pattern [fn [dx dy dz count spacing s]
+  [LinearPattern s dx dy dz count spacing]]]
+[let circular-pattern [fn [ox oy oz ax ay az count angle s]
+  [CircularPattern s ox oy oz ax ay az count angle]]]
+
+; Material (no subject)
+[let material [fn [name r g b metallic roughness]
+  [Material name r g b metallic roughness]]]
+
+; Scene (no subject)
+[let root [fn [solid material-name]
+  [SceneEntry solid material-name]]]

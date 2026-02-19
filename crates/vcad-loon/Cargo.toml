@@ -1,0 +1,9 @@
+[package]
+name = "vcad-loon"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+loon-lang = { path = "../../../loon/crates/loon-lang" }
+vcad-ir = { path = "../vcad-ir" }
+serde_json.workspace = true
