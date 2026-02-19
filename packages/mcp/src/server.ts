@@ -26,6 +26,7 @@ import {
   gymCloseSchema,
 } from "./tools/gym.js";
 import { getChangelog, getChangelogSchema } from "./tools/changelog.js";
+import { createCadLoon, createCadLoonSchema } from "./tools/loon.js";
 
 export async function createServer(): Promise<Server> {
   // Initialize the WASM engine
@@ -61,6 +62,19 @@ export async function createServer(): Promise<Server> {
           "Positioning: absolute {x,y,z}, named ('center', 'top-center'), percentage {x:'50%'}\n\n" +
           "Assembly: Optional 'assembly' block with instances and joints for physics simulation.",
         inputSchema: createCadDocumentSchema,
+      },
+      {
+        name: "create_cad_loon",
+        description:
+          "Create a CAD document from loon source code. Loon is a Lisp-like language for parametric CAD.\n\n" +
+          "Primitives: [cube x y z], [cylinder r h], [sphere r], [cone r-bottom r-top h]\n" +
+          "Booleans (subject-last): [difference tool subject], [union other subject]\n" +
+          "Transforms (subject-last): [translate x y z s], [rotate rx ry rz s], [scale sx sy sz s]\n" +
+          "Features: [fillet r s], [chamfer d s], [shell t s]\n" +
+          "Pipe: [pipe [cube 50 30 5] [difference [cylinder 3 10]] [fillet 1.0]]\n" +
+          "Let bindings: [let body [cube 50 30 5]]\n" +
+          "Scene: [root solid \"material-name\"]",
+        inputSchema: createCadLoonSchema,
       },
       {
         name: "export_cad",
@@ -142,6 +156,9 @@ export async function createServer(): Promise<Server> {
       switch (name) {
         case "create_cad_document":
           return createCadDocument(args);
+
+        case "create_cad_loon":
+          return createCadLoon(args, engine);
 
         case "export_cad":
           return exportCad(args, engine);

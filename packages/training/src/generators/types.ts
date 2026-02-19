@@ -14,6 +14,8 @@ export interface PartParams {
 export interface GeneratedPart {
   /** Compact IR representation. */
   compact: string;
+  /** Loon source equivalent (for training loon-native models). */
+  loon?: string;
   /** Parameters used to generate this part. */
   params: PartParams;
   /** Part family name (e.g., "plate", "bracket"). */
@@ -65,6 +67,8 @@ export interface TrainingExample {
   text: string;
   /** Compact IR representation. */
   ir: string;
+  /** Loon source equivalent (for training loon output). */
+  loon?: string;
   /** Part family name. */
   family: string;
   /** Complexity score. */

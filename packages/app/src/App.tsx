@@ -28,6 +28,7 @@ import { LogViewer } from "@/components/LogViewer";
 import { PrintPanel } from "@/components/print";
 import { CamPanel } from "@/components/cam";
 import { AIPanel } from "@/components/AIPanel";
+import { LoonEditor } from "@/components/LoonEditor";
 import { DocumentPicker } from "@/components/DocumentPicker";
 import { OfflineIndicator } from "@/components/OfflineIndicator";
 import { UpdateNotification } from "@/components/UpdateNotification";
@@ -122,6 +123,7 @@ export function App() {
   const [isDragging, setIsDragging] = useState(false);
   const [initialized, setInitialized] = useState(false);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [loonEditorOpen, setLoonEditorOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const engineReady = useEngineStore((s) => s.engineReady);
@@ -282,10 +284,18 @@ export function App() {
       return;
     }
 
-    // Handle .vcad/.json files
+    // Handle .vcad/.loon/.json files
     try {
       const text = await file.text();
-      const vcadFile = parseVcadFile(text);
+      const engine = useEngineStore.getState().engine;
+      const evalLoon = engine
+        ? (source: string) => {
+            const doc = engine.evalVcadSource(source);
+            if (!doc) throw new Error("Loon evaluation not supported by this engine build");
+            return JSON.stringify(doc);
+          }
+        : undefined;
+      const vcadFile = parseVcadFile(text, evalLoon);
       useDocumentStore.getState().loadDocument(vcadFile);
       useUiStore.getState().clearSelection();
     } catch (err) {
@@ -544,8 +554,21 @@ export function App() {
           {/* CAM panel (for CNC toolpath generation) */}
           {camPanelOpen && <CamPanel />}
 
+          {/* Loon source editor */}
+          <LoonEditor open={loonEditorOpen} onOpenChange={setLoonEditorOpen} />
+
           {/* AI panel (temp - for testing cad0-mini) */}
           <AIPanel open={aiPanelOpen} onOpenChange={setAiPanelOpen} />
+          <button
+            onClick={() => setLoonEditorOpen((o) => !o)}
+            className="fixed bottom-4 right-16 z-30 flex h-10 w-10 items-center justify-center rounded-full bg-bg-elevated text-text shadow-lg hover:bg-bg-hover border border-border"
+            title="Toggle loon editor"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="16 18 22 12 16 6" />
+              <polyline points="8 6 2 12 8 18" />
+            </svg>
+          </button>
           <button
             onClick={() => setAiPanelOpen(true)}
             className="fixed bottom-4 right-4 z-30 flex h-10 w-10 items-center justify-center rounded-full bg-accent text-white shadow-lg hover:bg-accent/90"
@@ -564,7 +587,7 @@ export function App() {
             <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-accent/10 backdrop-blur-sm">
               <div className="rounded-lg border-2 border-dashed border-accent bg-bg/90 px-8 py-6 text-center">
                 <div className="text-lg font-medium text-text">Drop file to import</div>
-                <div className="mt-1 text-sm text-text-muted">.vcad, .stl, .step</div>
+                <div className="mt-1 text-sm text-text-muted">.vcad, .loon, .stl, .step</div>
               </div>
             </div>
           )}
@@ -585,7 +608,7 @@ export function App() {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".vcad,.json,.step,.stp,.stl"
+          accept=".vcad,.loon,.json,.step,.stp,.stl"
           className="hidden"
           onChange={handleFileChange}
         />

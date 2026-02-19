@@ -9,10 +9,11 @@ export interface VcadFile {
   consumedParts?: Record<string, PartInfo>;
   nextNodeId: number;
   nextPartNum: number;
+  loonSource?: string | null;
 }
 
 /**
- * Serialize document to compact IR format (v0.2)
+ * Serialize document — uses loon source if available, otherwise compact IR.
  */
 export function serializeDocument(state: {
   document: Document;
@@ -20,19 +21,31 @@ export function serializeDocument(state: {
   consumedParts: Record<string, PartInfo>;
   nextNodeId: number;
   nextPartNum: number;
+  loonSource?: string | null;
 }): string {
+  if (state.loonSource) return state.loonSource;
   return toCompact(state.document);
 }
 
 /**
- * Parse a .vcad file (supports both JSON v0.1 and compact v0.2 formats)
+ * Parse a .vcad file (supports JSON v0.1, compact v0.2, and loon v0.3 formats)
+ *
+ * @param evalLoon - Optional callback to evaluate loon source → JSON Document string.
+ *   Required when the content is loon format (starts with `[` or `;`).
  */
-export function parseVcadFile(content: string): VcadFile {
+export function parseVcadFile(
+  content: string,
+  evalLoon?: (source: string) => string,
+): VcadFile {
   const trimmed = content.trim();
 
-  // Detect format: JSON starts with '{', compact starts with '#' or opcode
+  // Detect format: JSON starts with '{', loon starts with '[' or ';'
   if (trimmed.startsWith("{")) {
     return parseJsonVcadFile(trimmed);
+  }
+
+  if (trimmed.startsWith("[") || trimmed.startsWith(";")) {
+    return parseLoonVcadFile(trimmed, evalLoon);
   }
 
   return parseCompactVcadFile(trimmed);
@@ -53,6 +66,32 @@ function parseJsonVcadFile(json: string): VcadFile {
   }
 
   return data;
+}
+
+/**
+ * Parse loon format (v0.3)
+ */
+function parseLoonVcadFile(
+  source: string,
+  evalLoon?: (source: string) => string,
+): VcadFile {
+  if (!evalLoon) {
+    throw new Error("Loon format detected but no evaluator provided. Engine may not be ready.");
+  }
+  const json = evalLoon(source);
+  const document: Document = JSON.parse(json);
+  const parts = deriveParts(document);
+  const { nextNodeId, nextPartNum } = computeNextIds(document, parts);
+
+  return {
+    version: "0.3",
+    document,
+    parts,
+    consumedParts: {},
+    nextNodeId,
+    nextPartNum,
+    loonSource: source,
+  };
 }
 
 /**

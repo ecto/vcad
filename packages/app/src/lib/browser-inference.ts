@@ -26,7 +26,11 @@ Format:
 - U a b = Union nodes
 - D a b = Difference (subtract b from a)
 
-Node IDs are sequential from 0. Output ONLY the IR code, no explanations.`;
+Node IDs are sequential from 0. Output ONLY the IR code, no explanations.
+
+Alternative: You may also output loon source (starts with [):
+[cube 20.0 20.0 20.0]
+[pipe [cube 50.0 30.0 5.0] [difference [cylinder 3.0 10.0]] [fillet 1.0]]`;
 
 /** Progress callback type. */
 export type ProgressCallback = (

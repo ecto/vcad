@@ -68,6 +68,7 @@ interface Snapshot {
   nextNodeId: number;
   nextPartNum: number;
   actionName: string; // Describes what action created this snapshot
+  loonSource: string | null;
 }
 
 export interface VcadFile {
@@ -76,6 +77,7 @@ export interface VcadFile {
   consumedParts?: Record<string, PartInfo>;
   nextNodeId: number;
   nextPartNum: number;
+  loonSource?: string | null;
 }
 
 export interface DocumentState {
@@ -97,6 +99,9 @@ export interface DocumentState {
   dirtyNodeIds: Set<NodeId>;
   /** Whether a parametric drag is in progress (enables LOD mode) */
   isParameterDragging: boolean;
+
+  /** Loon source code — non-null when document was loaded from loon format. */
+  loonSource: string | null;
 
   // undo/redo
   undoStack: Snapshot[];
@@ -268,6 +273,7 @@ function snapshot(state: DocumentState, actionName: string): Snapshot {
     nextNodeId: state.nextNodeId,
     nextPartNum: state.nextPartNum,
     actionName,
+    loonSource: state.loonSource,
   };
 }
 
@@ -326,6 +332,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   lastSavedAt: null,
   dirtyNodeIds: new Set<NodeId>(),
   isParameterDragging: false,
+  loonSource: null,
   undoStack: [],
   redoStack: [],
 
@@ -890,6 +897,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       isDirty: false,
       dirtyNodeIds: new Set<NodeId>(),
       isParameterDragging: false,
+      loonSource: file.loonSource ?? null,
       undoStack: [],
       redoStack: [],
     });
@@ -2158,6 +2166,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       consumedParts: prevSnap.consumedParts,
       nextNodeId: prevSnap.nextNodeId,
       nextPartNum: prevSnap.nextPartNum,
+      loonSource: prevSnap.loonSource,
       isDirty: true,
       undoStack: state.undoStack.slice(0, -1),
       redoStack: [...state.redoStack, currentSnap],
@@ -2179,6 +2188,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       consumedParts: nextSnap.consumedParts,
       nextNodeId: nextSnap.nextNodeId,
       nextPartNum: nextSnap.nextPartNum,
+      loonSource: nextSnap.loonSource,
       isDirty: true,
       undoStack: [...state.undoStack, currentSnap],
       redoStack: state.redoStack.slice(0, -1),
@@ -2457,6 +2467,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       lastSavedAt: null,
       dirtyNodeIds: new Set<NodeId>(),
       isParameterDragging: false,
+      loonSource: null,
       undoStack: [],
       redoStack: [],
     });

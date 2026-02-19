@@ -3769,6 +3769,20 @@ pub fn evaluate_document(doc_json: &str, skip_clash_detection: bool) -> Result<J
         .map_err(|e| JsError::new(&format!("Serialization error: {}", e)))
 }
 
+/// Evaluate a loon source string and return a JSON-serialized vcad Document.
+///
+/// The vcad library (types, constructors) is automatically prepended.
+/// Module resolution (`[use ...]`) is not available in WASM — all code
+/// must be self-contained or use the bundled vcad library.
+#[wasm_bindgen(js_name = evalVcadSource)]
+pub fn eval_vcad_source(source: &str) -> Result<JsValue, JsError> {
+    let doc = vcad_loon::eval_vcad(source, None)
+        .map_err(|e| JsError::new(&e))?;
+    let json = serde_json::to_string(&doc)
+        .map_err(|e| JsError::new(&format!("Serialization error: {}", e)))?;
+    Ok(JsValue::from_str(&json))
+}
+
 /// JS-friendly scene output (all fields serializable).
 #[derive(serde::Serialize)]
 struct EvaluatedSceneJs {

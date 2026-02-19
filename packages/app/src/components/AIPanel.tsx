@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { useDocumentStore } from "@vcad/core";
 import { useNotificationStore } from "@/stores/notification-store";
 import { fromCompact, type Document } from "@vcad/ir";
+import { useEngineStore } from "@vcad/core";
 import {
   generateCAD,
   getInferenceStatus,
@@ -11,6 +12,21 @@ import {
 } from "@/lib/browser-inference";
 import { generateCADServer, rateGeneration } from "@/lib/server-inference";
 import { useRequireAuth, AuthModal, useAuthStore } from "@vcad/auth";
+
+/** Parse AI output as either loon or compact IR. */
+function parseAIOutput(ir: string): Document {
+  const trimmed = ir.trim();
+  // Detect loon format: starts with [ or ;
+  if (trimmed.startsWith("[") || trimmed.startsWith(";")) {
+    const engine = useEngineStore.getState().engine;
+    if (engine) {
+      const doc = engine.evalVcadSource(trimmed);
+      if (doc) return doc;
+    }
+    // Fall through to compact IR if engine unavailable
+  }
+  return fromCompact(trimmed);
+}
 
 interface AIPanelProps {
   open: boolean;
@@ -118,7 +134,7 @@ export function AIPanel({ open, onOpenChange }: AIPanelProps) {
 
         // Parse the Compact IR to a Document
         try {
-          document = fromCompact(result.ir);
+          document = parseAIOutput(result.ir);
         } catch (parseError) {
           console.error("Failed to parse generated IR:", result.ir);
           throw new Error("Generated invalid CAD code. Please try rephrasing your description.");
@@ -160,7 +176,7 @@ export function AIPanel({ open, onOpenChange }: AIPanelProps) {
 
         // Parse the Compact IR to a Document
         try {
-          document = fromCompact(result.ir);
+          document = parseAIOutput(result.ir);
         } catch (parseError) {
           console.error("Failed to parse generated IR:", result.ir);
           throw new Error("Generated invalid CAD code. Please try rephrasing your description.");

@@ -109,6 +109,8 @@ export interface KernelModule {
   ) => DetailView;
   /** Full document evaluator (Rust-side, handles all CsgOp variants). */
   evaluateDocument?: (docJson: string, skipClashDetection: boolean) => unknown;
+  /** Evaluate loon source → JSON-serialized Document. */
+  evalVcadSource?: (source: string) => string;
 }
 
 /** Rendered dimension types from the annotation layer */
@@ -206,6 +208,7 @@ export class Engine {
       exportProjectedViewToDxf: wasmModule.exportProjectedViewToDxf,
       createDetailView: wasmModule.createDetailView,
       evaluateDocument: (wasmModule as Record<string, unknown>).evaluateDocument as KernelModule["evaluateDocument"],
+      evalVcadSource: (wasmModule as Record<string, unknown>).evalVcadSource as KernelModule["evalVcadSource"],
     });
   }
 
@@ -311,6 +314,16 @@ export class Engine {
   ): DetailView {
     const json = JSON.stringify(view);
     return this.kernel.createDetailView(json, centerX, centerY, scale, width, height, label);
+  }
+
+  /**
+   * Evaluate loon source code and return a parsed Document.
+   * Returns null if the kernel doesn't support loon evaluation.
+   */
+  evalVcadSource(source: string): Document | null {
+    if (!this.kernel.evalVcadSource) return null;
+    const json = this.kernel.evalVcadSource(source);
+    return JSON.parse(json) as Document;
   }
 
   /** Evaluate a preview extrusion without adding to document */
