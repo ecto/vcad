@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use loon_lang::interp::Value;
+use vcad_ir::ecad;
 use vcad_ir::*;
 
 /// Walk a loon `Value::Adt` tree and produce a vcad-ir `Document`.
@@ -126,7 +127,10 @@ fn merge_value_into_doc(ctx: &mut ConvertCtx, value: &Value) -> Result<(), Strin
                 visible: None,
             });
         }
-        _ => return Err(format!("expected SceneEntry, Material, Assembly, or Solid in Vec, got {value}")),
+        Value::Adt(tag, _) if is_ecad_tag(tag) => {
+            convert_ecad_value(ctx, value)?;
+        }
+        _ => return Err(format!("expected SceneEntry, Material, Assembly, ECAD, or Solid in Vec, got {value}")),
     }
     Ok(())
 }
@@ -329,6 +333,110 @@ fn convert_assembly(ctx: &mut ConvertCtx, fields: &[Value]) -> Result<(), String
                 friction: None,
             },
         );
+    }
+
+    Ok(())
+}
+
+fn is_ecad_tag(tag: &str) -> bool {
+    matches!(
+        tag,
+        "EcadComponent"
+            | "EcadWire"
+            | "EcadLabel"
+            | "EcadTrace"
+            | "EcadVia"
+            | "EcadFootprint"
+            | "EcadNet"
+            | "EcadRules"
+    )
+}
+
+/// Convert an ECAD ADT value and merge it into the document.
+fn convert_ecad_value(ctx: &mut ConvertCtx, value: &Value) -> Result<(), String> {
+    let (tag, fields) = match value {
+        Value::Adt(t, f) => (t.as_str(), f.as_slice()),
+        _ => return Err(format!("expected ECAD ADT, got {value}")),
+    };
+
+    // Ensure schematic exists
+    let ensure_schematic = |ctx: &mut ConvertCtx| {
+        if ctx.doc.schematic.is_none() {
+            ctx.doc.schematic = Some(ecad::SchematicSheet {
+                title: None,
+                components: vec![],
+                wires: vec![],
+                junctions: vec![],
+                labels: vec![],
+            });
+        }
+    };
+
+    match tag {
+        // [EcadComponent ref value footprint-id x y rotation]
+        "EcadComponent" => {
+            assert_fields(tag, fields, 6)?;
+            let reference = ctx.str_val(&fields[0])?;
+            let value = ctx.str_val(&fields[1])?;
+            let footprint_id = ctx.str_val(&fields[2])?;
+            let x = ctx.f64_val(&fields[3])?;
+            let y = ctx.f64_val(&fields[4])?;
+            let rotation = ctx.f64_val(&fields[5])?;
+            ensure_schematic(ctx);
+            let sheet = ctx.doc.schematic.as_mut().unwrap();
+            sheet.components.push(ecad::SchematicComponent {
+                reference,
+                value,
+                footprint_id,
+                position: Vec2::new(x, y),
+                rotation,
+                mirror: false,
+                pins: vec![],
+                properties: HashMap::new(),
+            });
+        }
+        // [EcadWire x1 y1 x2 y2]
+        "EcadWire" => {
+            assert_fields(tag, fields, 4)?;
+            let x1 = ctx.f64_val(&fields[0])?;
+            let y1 = ctx.f64_val(&fields[1])?;
+            let x2 = ctx.f64_val(&fields[2])?;
+            let y2 = ctx.f64_val(&fields[3])?;
+            ensure_schematic(ctx);
+            let sheet = ctx.doc.schematic.as_mut().unwrap();
+            sheet.wires.push(ecad::SchematicWire {
+                start: Vec2::new(x1, y1),
+                end: Vec2::new(x2, y2),
+            });
+        }
+        // [EcadLabel name x y scope]
+        "EcadLabel" => {
+            assert_fields(tag, fields, 4)?;
+            let name = ctx.str_val(&fields[0])?;
+            let x = ctx.f64_val(&fields[1])?;
+            let y = ctx.f64_val(&fields[2])?;
+            let scope_str = ctx.str_val(&fields[3])?;
+            let scope = match scope_str.as_str() {
+                "global" | "Global" => ecad::LabelScope::Global,
+                "hierarchical" | "Hierarchical" => ecad::LabelScope::Hierarchical,
+                _ => ecad::LabelScope::Local,
+            };
+            ensure_schematic(ctx);
+            let sheet = ctx.doc.schematic.as_mut().unwrap();
+            sheet.labels.push(ecad::SchematicLabel {
+                name,
+                position: Vec2::new(x, y),
+                rotation: 0.0,
+                scope,
+            });
+        }
+        // [EcadNet id name] — stored on PCB
+        "EcadNet" => {
+            assert_fields(tag, fields, 2)?;
+            // Nets are typically used when building PCB data; store for later use
+        }
+        // Other ECAD types are PCB-level and handled during PCB construction
+        _ => {}
     }
 
     Ok(())

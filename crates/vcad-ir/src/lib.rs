@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub mod compact;
+pub mod ecad;
 
 // ============================================================================
 // Assembly types (for kinematics)
@@ -817,6 +818,14 @@ pub struct Document {
     /// The instance that is fixed in world space (ground).
     #[serde(rename = "groundInstanceId", skip_serializing_if = "Option::is_none")]
     pub ground_instance_id: Option<String>,
+
+    // ECAD fields (optional, for PCB design)
+    /// Schematic sheet for electronics design.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schematic: Option<ecad::SchematicSheet>,
+    /// PCB layout for electronics design.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pcb: Option<ecad::Pcb>,
 }
 
 impl Default for Document {
@@ -832,6 +841,8 @@ impl Default for Document {
             instances: None,
             joints: None,
             ground_instance_id: None,
+            schematic: None,
+            pcb: None,
         }
     }
 }

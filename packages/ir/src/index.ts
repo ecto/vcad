@@ -639,6 +639,263 @@ export interface SceneSettings {
   cameraPresets?: CameraPreset[];
 }
 
+// ============================================================================
+// ECAD (PCB/Schematic) types
+// ============================================================================
+
+/** Pin electrical type for ERC validation. */
+export type PinType =
+  | "Input"
+  | "Output"
+  | "Bidirectional"
+  | "TriState"
+  | "Passive"
+  | "PowerInput"
+  | "PowerOutput"
+  | "OpenCollector"
+  | "OpenEmitter"
+  | "NotConnected"
+  | "Free";
+
+/** Label scope for schematic net labels. */
+export type LabelScope = "Local" | "Global" | "Hierarchical";
+
+/** A net label on a schematic. */
+export interface SchematicLabel {
+  name: string;
+  position: Vec2;
+  rotation?: number;
+  scope: LabelScope;
+}
+
+/** A pin on a schematic symbol. */
+export interface SchematicPin {
+  number: string;
+  name: string;
+  pin_type: PinType;
+  position: Vec2;
+}
+
+/** A placed component instance on a schematic sheet. */
+export interface SchematicComponent {
+  ref: string;
+  value: string;
+  footprintId: string;
+  position: Vec2;
+  rotation?: number;
+  mirror?: boolean;
+  pins: SchematicPin[];
+  properties?: Record<string, string>;
+}
+
+/** A wire connection on a schematic. */
+export interface SchematicWire {
+  start: Vec2;
+  end: Vec2;
+}
+
+/** An explicit wire junction point. */
+export interface SchematicJunction {
+  position: Vec2;
+}
+
+/** A schematic sheet — top-level schematic container. */
+export interface SchematicSheet {
+  title?: string;
+  components: SchematicComponent[];
+  wires: SchematicWire[];
+  junctions: SchematicJunction[];
+  labels: SchematicLabel[];
+}
+
+/** PCB layer identifiers. */
+export type PcbLayer =
+  | "FCu" | "BCu"
+  | "In1Cu" | "In2Cu" | "In3Cu" | "In4Cu" | "In5Cu" | "In6Cu"
+  | "FSilkS" | "BSilkS"
+  | "FMask" | "BMask"
+  | "FPaste" | "BPaste"
+  | "FFab" | "BFab"
+  | "FCrtYd" | "BCrtYd"
+  | "EdgeCuts" | "UserDrawings" | "UserComments";
+
+/** A single layer in the physical board stackup. */
+export interface StackupLayer {
+  layer: PcbLayer;
+  copperThickness?: number;
+  dielectricThickness?: number;
+  dielectricEr?: number;
+  material?: string;
+}
+
+/** Physical layer stackup. */
+export interface LayerStackup {
+  layers: StackupLayer[];
+}
+
+/** Board outline profile. */
+export interface BoardOutline {
+  vertices: Vec2[];
+  cutouts?: Vec2[][];
+  thickness: number;
+}
+
+/** A named electrical connection. */
+export interface Net {
+  id: string;
+  name: string;
+}
+
+/** Per-net-class design rules. */
+export interface NetClassRules {
+  name: string;
+  traceWidth: number;
+  clearance: number;
+  viaDiameter: number;
+  viaDrill: number;
+  diffPairGap?: number;
+  diffPairWidth?: number;
+}
+
+/** Board-level design rules. */
+export interface DesignRules {
+  defaultRules: NetClassRules;
+  classRules?: NetClassRules[];
+  netClassAssignments?: Record<string, string[]>;
+  edgeClearance: number;
+  holeToHole: number;
+  minAnnularRing: number;
+  minDrill: number;
+}
+
+/** Pad shape. */
+export type PadShape =
+  | { type: "Circle"; diameter: number }
+  | { type: "Rect"; width: number; height: number }
+  | { type: "Oval"; width: number; height: number }
+  | { type: "RoundRect"; width: number; height: number; cornerRatio: number }
+  | { type: "Custom"; vertices: Vec2[] };
+
+/** Pad mounting type. */
+export type PadType = "THT" | "SMD" | "NPTH";
+
+/** Drill specification. */
+export interface DrillSpec {
+  diameter: number;
+  oval?: boolean;
+  ovalHeight?: number;
+}
+
+/** A pad on a footprint. */
+export interface Pad {
+  number: string;
+  padType: PadType;
+  shape: PadShape;
+  position: Vec2;
+  rotation?: number;
+  drill?: DrillSpec;
+  net?: string;
+  layers: PcbLayer[];
+}
+
+/** Footprint graphic element. */
+export type FootprintGraphic =
+  | { type: "Line"; start: Vec2; end: Vec2; width: number; layer: PcbLayer }
+  | { type: "Circle"; center: Vec2; radius: number; width: number; layer: PcbLayer }
+  | { type: "Arc"; center: Vec2; radius: number; startAngle: number; endAngle: number; width: number; layer: PcbLayer }
+  | { type: "Rect"; start: Vec2; end: Vec2; width: number; layer: PcbLayer }
+  | { type: "Polygon"; vertices: Vec2[]; width: number; layer: PcbLayer }
+  | { type: "Text"; text: string; position: Vec2; rotation?: number; height: number; width: number; layer: PcbLayer };
+
+/** A placed footprint on the PCB. */
+export interface Footprint {
+  ref: string;
+  value: string;
+  footprintName: string;
+  position: Vec2;
+  rotation?: number;
+  front?: boolean;
+  pads: Pad[];
+  graphics?: FootprintGraphic[];
+  model3d?: string;
+  properties?: Record<string, string>;
+}
+
+/** A straight routed copper trace segment. */
+export interface Trace {
+  start: Vec2;
+  end: Vec2;
+  width: number;
+  layer: PcbLayer;
+  net: string;
+}
+
+/** An arc routed copper trace segment. */
+export interface TraceArc {
+  center: Vec2;
+  radius: number;
+  startAngle: number;
+  endAngle: number;
+  width: number;
+  layer: PcbLayer;
+  net: string;
+}
+
+/** A via (layer-spanning connection). */
+export interface Via {
+  position: Vec2;
+  diameter: number;
+  drill: number;
+  startLayer: PcbLayer;
+  endLayer: PcbLayer;
+  net: string;
+}
+
+/** Copper fill type. */
+export type ZoneFillType = "Solid" | "Hatched";
+
+/** Thermal relief style. */
+export type ThermalReliefStyle = "Direct" | "Relief" | "None";
+
+/** A copper pour zone. */
+export interface Zone {
+  outline: Vec2[];
+  holes?: Vec2[][];
+  net: string;
+  layer: PcbLayer;
+  clearance: number;
+  minArea?: number;
+  fillType?: ZoneFillType;
+  thermalRelief?: ThermalReliefStyle;
+  thermalGap?: number;
+  thermalSpokeWidth?: number;
+  priority?: number;
+}
+
+/** A keepout region. */
+export interface Keepout {
+  outline: Vec2[];
+  layers: PcbLayer[];
+  noTracks?: boolean;
+  noVias?: boolean;
+  noPour?: boolean;
+  noComponents?: boolean;
+}
+
+/** A complete PCB design. */
+export interface Pcb {
+  outline: BoardOutline;
+  stackup: LayerStackup;
+  nets: Net[];
+  rules: DesignRules;
+  footprints: Footprint[];
+  traces: Trace[];
+  traceArcs?: TraceArc[];
+  vias: Via[];
+  zones: Zone[];
+  keepouts?: Keepout[];
+}
+
 /** A vcad document — the `.vcad` file format. */
 export interface Document {
   version: string;
@@ -656,6 +913,10 @@ export interface Document {
   joints?: Joint[];
   /** The instance that is fixed in world space (ground). */
   groundInstanceId?: string;
+  /** Schematic sheet for electronics design. */
+  schematic?: SchematicSheet;
+  /** PCB layout for electronics design. */
+  pcb?: Pcb;
 }
 
 /** Create a new empty document. */

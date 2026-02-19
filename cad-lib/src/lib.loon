@@ -187,3 +187,36 @@
   [SimConfig dt gravity ground-height]]]
 [let train-config [fn [n-envs lr gamma epochs]
   [TrainConfig n-envs lr gamma epochs]]]
+
+; ---------------------------------------------------------------------------
+; ECAD — schematic and PCB types
+; ---------------------------------------------------------------------------
+
+; Schematic component: [EcadComponent ref value footprint-id x y rotation]
+[type EcadComponent [EcadComponent Str Str Str f64 f64 f64]]
+; Schematic wire: [EcadWire x1 y1 x2 y2]
+[type EcadWire [EcadWire f64 f64 f64 f64]]
+; Net label: [EcadLabel name x y scope]
+; scope: "local", "global", or "hierarchical"
+[type EcadLabel [EcadLabel Str f64 f64 Str]]
+
+; PCB trace: [EcadTrace x1 y1 x2 y2 width layer net]
+[type EcadTrace [EcadTrace f64 f64 f64 f64 f64 Str Str]]
+; PCB via: [EcadVia x y diameter drill net]
+[type EcadVia [EcadVia f64 f64 f64 f64 Str]]
+; PCB footprint: [EcadFootprint ref value footprint-name x y rotation front]
+[type EcadFootprint [EcadFootprint Str Str Str f64 f64 f64 Bool]]
+; Net: [EcadNet id name]
+[type EcadNet [EcadNet Str Str]]
+; Design rules: [EcadRules trace-width clearance via-dia via-drill edge-clr hole-to-hole]
+[type EcadRules [EcadRules f64 f64 f64 f64 f64 f64]]
+
+; ECAD constructors
+[let ecad-component [fn [ref val fp x y rot] [EcadComponent ref val fp x y rot]]]
+[let ecad-wire [fn [x1 y1 x2 y2] [EcadWire x1 y1 x2 y2]]]
+[let ecad-label [fn [name x y scope] [EcadLabel name x y scope]]]
+[let ecad-trace [fn [x1 y1 x2 y2 w layer net] [EcadTrace x1 y1 x2 y2 w layer net]]]
+[let ecad-via [fn [x y dia drill net] [EcadVia x y dia drill net]]]
+[let ecad-footprint [fn [ref val fp x y rot front] [EcadFootprint ref val fp x y rot front]]]
+[let ecad-net [fn [id name] [EcadNet id name]]]
+[let ecad-rules [fn [tw clr vdia vdrl eclr h2h] [EcadRules tw clr vdia vdrl eclr h2h]]]
