@@ -117,6 +117,61 @@ mod tests {
     }
 
     #[test]
+    fn eval_sweep_line() {
+        let source = r#"
+[let sk [sketch
+  0.0 0.0 0.0
+  1.0 0.0 0.0
+  0.0 1.0 0.0
+  #[[line 0.0 0.0 5.0 0.0]
+    [line 5.0 0.0 5.0 3.0]
+    [line 5.0 3.0 0.0 3.0]
+    [line 0.0 3.0 0.0 0.0]]]]
+[sweep-line 0.0 0.0 0.0 0.0 0.0 50.0 sk]
+"#;
+        let doc = eval_vcad(source, None).unwrap();
+        assert_eq!(doc.nodes.len(), 2); // sketch + sweep
+    }
+
+    #[test]
+    fn eval_sweep_helix() {
+        let source = r#"
+[let sk [sketch
+  0.0 0.0 0.0
+  1.0 0.0 0.0
+  0.0 1.0 0.0
+  #[[line 0.0 0.0 2.0 0.0]
+    [line 2.0 0.0 2.0 2.0]
+    [line 2.0 2.0 0.0 2.0]
+    [line 0.0 2.0 0.0 0.0]]]]
+[sweep-helix 10.0 5.0 20.0 4.0 sk]
+"#;
+        let doc = eval_vcad(source, None).unwrap();
+        assert_eq!(doc.nodes.len(), 2); // sketch + sweep
+    }
+
+    #[test]
+    fn eval_loft() {
+        let source = r#"
+[let sk1 [sketch
+  0.0 0.0 0.0  1.0 0.0 0.0  0.0 0.0 1.0
+  #[[line 0.0 0.0 10.0 0.0]
+    [line 10.0 0.0 10.0 10.0]
+    [line 10.0 10.0 0.0 10.0]
+    [line 0.0 10.0 0.0 0.0]]]]
+[let sk2 [sketch
+  0.0 20.0 0.0  1.0 0.0 0.0  0.0 0.0 1.0
+  #[[line 2.0 2.0 8.0 2.0]
+    [line 8.0 2.0 8.0 8.0]
+    [line 8.0 8.0 2.0 8.0]
+    [line 2.0 8.0 2.0 2.0]]]]
+[loft #[sk1 sk2]]
+"#;
+        let doc = eval_vcad(source, None).unwrap();
+        assert_eq!(doc.nodes.len(), 3); // 2 sketches + loft
+    }
+
+    #[test]
     fn eval_complex_part() {
         let source = r#"
 [let base [cube 100.0 60.0 10.0]]

@@ -37,6 +37,11 @@
   [Shell Solid f64]
   [Fillet Solid f64]
   [Chamfer Solid f64]
+  ; Sweep/Loft
+  [SweepLine Sketch f64 f64 f64 f64 f64 f64]
+  [SweepHelix Sketch f64 f64 f64 f64]
+  [Loft (Vec Sketch)]
+  [LoftClosed (Vec Sketch)]
   ; Patterns
   [LinearPattern Solid f64 f64 f64 Int f64]
   [CircularPattern Solid f64 f64 f64 f64 f64 f64 Int f64]]
@@ -98,6 +103,19 @@
 [let extrude [fn [dx dy dz sk] [Extrude sk dx dy dz]]]
 [let revolve [fn [aox aoy aoz adx ady adz angle sk]
   [Revolve sk aox aoy aoz adx ady adz angle]]]
+
+; Sweep (subject-last: sketch is the subject)
+; sweep-line: sweep along a straight line path
+;   start/end are Vec3, subject is sketch
+[let sweep-line [fn [sx sy sz ex ey ez sk]
+  [SweepLine sk sx sy sz ex ey ez]]]
+; sweep-helix: sweep along a helical path
+;   radius, pitch, height, turns
+[let sweep-helix [fn [radius pitch height turns sk]
+  [SweepHelix sk radius pitch height turns]]]
+; Loft (takes a Vec of sketches)
+[let loft [fn [sketches] [Loft sketches]]]
+[let loft-closed [fn [sketches] [LoftClosed sketches]]]
 
 ; Features (subject-last)
 [let shell [fn [t s] [Shell s t]]]

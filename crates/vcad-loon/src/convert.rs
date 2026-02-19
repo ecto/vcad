@@ -143,6 +143,10 @@ fn is_solid_tag(tag: &str) -> bool {
             | "Chamfer"
             | "LinearPattern"
             | "CircularPattern"
+            | "SweepLine"
+            | "SweepHelix"
+            | "Loft"
+            | "LoftClosed"
     )
 }
 
@@ -367,10 +371,77 @@ impl ConvertCtx {
                 }
             }
 
+            // Sweep along a line path
+            // [SweepLine sketch sx sy sz ex ey ez]
+            "SweepLine" => {
+                assert_fields(tag, fields, 7)?;
+                let sketch = self.convert_sketch(&fields[0])?;
+                CsgOp::Sweep {
+                    sketch,
+                    path: PathCurve::Line {
+                        start: self.vec3(fields, 1)?,
+                        end: self.vec3(fields, 4)?,
+                    },
+                    twist_angle: None,
+                    scale_start: None,
+                    scale_end: None,
+                    orientation: None,
+                    path_segments: None,
+                    arc_segments: None,
+                }
+            }
+            // Sweep along a helix path
+            // [SweepHelix sketch radius pitch height turns]
+            "SweepHelix" => {
+                assert_fields(tag, fields, 5)?;
+                let sketch = self.convert_sketch(&fields[0])?;
+                CsgOp::Sweep {
+                    sketch,
+                    path: PathCurve::Helix {
+                        radius: self.f64_val(&fields[1])?,
+                        pitch: self.f64_val(&fields[2])?,
+                        height: self.f64_val(&fields[3])?,
+                        turns: self.f64_val(&fields[4])?,
+                    },
+                    twist_angle: None,
+                    scale_start: None,
+                    scale_end: None,
+                    orientation: None,
+                    path_segments: None,
+                    arc_segments: None,
+                }
+            }
+            // Loft between sketches (open)
+            "Loft" => {
+                assert_fields(tag, fields, 1)?;
+                let sketches = self.convert_sketch_list(&fields[0])?;
+                CsgOp::Loft {
+                    sketches,
+                    closed: None,
+                }
+            }
+            // Loft between sketches (closed — last connects to first)
+            "LoftClosed" => {
+                assert_fields(tag, fields, 1)?;
+                let sketches = self.convert_sketch_list(&fields[0])?;
+                CsgOp::Loft {
+                    sketches,
+                    closed: Some(true),
+                }
+            }
+
             _ => return Err(format!("unknown Solid variant: {tag}")),
         };
 
         Ok(self.insert_node(op))
+    }
+
+    fn convert_sketch_list(&mut self, value: &Value) -> Result<Vec<NodeId>, String> {
+        let items = match value {
+            Value::Vec(v) => v,
+            _ => return Err(format!("expected Vec of Sketch, got {value}")),
+        };
+        items.iter().map(|item| self.convert_sketch(item)).collect()
     }
 
     fn convert_sketch(&mut self, value: &Value) -> Result<NodeId, String> {
@@ -751,6 +822,125 @@ mod tests {
     fn error_on_wrong_field_count() {
         let val = adt("Cube", vec![f(10.0), f(20.0)]);
         assert!(value_to_document(&val).is_err());
+    }
+
+    #[test]
+    fn sweep_line_to_document() {
+        let line1 = adt("SLine", vec![f(0.0), f(0.0), f(10.0), f(0.0)]);
+        let line2 = adt("SLine", vec![f(10.0), f(0.0), f(10.0), f(5.0)]);
+        let line3 = adt("SLine", vec![f(10.0), f(5.0), f(0.0), f(5.0)]);
+        let line4 = adt("SLine", vec![f(0.0), f(5.0), f(0.0), f(0.0)]);
+        let sketch = adt(
+            "Sketch",
+            vec![
+                f(0.0), f(0.0), f(0.0),
+                f(1.0), f(0.0), f(0.0),
+                f(0.0), f(1.0), f(0.0),
+                Value::Vec(vec![line1, line2, line3, line4]),
+            ],
+        );
+        let sweep = adt(
+            "SweepLine",
+            vec![sketch, f(0.0), f(0.0), f(0.0), f(0.0), f(0.0), f(50.0)],
+        );
+        let doc = value_to_document(&sweep).unwrap();
+        assert_eq!(doc.nodes.len(), 2); // sketch + sweep
+        match &doc.nodes[&1].op {
+            CsgOp::Sweep { path, .. } => match path {
+                PathCurve::Line { end, .. } => assert_eq!(end.z, 50.0),
+                _ => panic!("expected Line path"),
+            },
+            _ => panic!("expected Sweep"),
+        }
+    }
+
+    #[test]
+    fn sweep_helix_to_document() {
+        let line1 = adt("SLine", vec![f(0.0), f(0.0), f(5.0), f(0.0)]);
+        let line2 = adt("SLine", vec![f(5.0), f(0.0), f(5.0), f(3.0)]);
+        let line3 = adt("SLine", vec![f(5.0), f(3.0), f(0.0), f(3.0)]);
+        let line4 = adt("SLine", vec![f(0.0), f(3.0), f(0.0), f(0.0)]);
+        let sketch = adt(
+            "Sketch",
+            vec![
+                f(0.0), f(0.0), f(0.0),
+                f(1.0), f(0.0), f(0.0),
+                f(0.0), f(1.0), f(0.0),
+                Value::Vec(vec![line1, line2, line3, line4]),
+            ],
+        );
+        let sweep = adt(
+            "SweepHelix",
+            vec![sketch, f(10.0), f(5.0), f(20.0), f(4.0)],
+        );
+        let doc = value_to_document(&sweep).unwrap();
+        match &doc.nodes[&1].op {
+            CsgOp::Sweep { path, .. } => match path {
+                PathCurve::Helix { radius, turns, .. } => {
+                    assert_eq!(*radius, 10.0);
+                    assert_eq!(*turns, 4.0);
+                }
+                _ => panic!("expected Helix path"),
+            },
+            _ => panic!("expected Sweep"),
+        }
+    }
+
+    #[test]
+    fn loft_to_document() {
+        let mk_sketch = |y: f64| {
+            let l1 = adt("SLine", vec![f(0.0), f(0.0), f(10.0), f(0.0)]);
+            let l2 = adt("SLine", vec![f(10.0), f(0.0), f(10.0), f(5.0)]);
+            let l3 = adt("SLine", vec![f(10.0), f(5.0), f(0.0), f(5.0)]);
+            let l4 = adt("SLine", vec![f(0.0), f(5.0), f(0.0), f(0.0)]);
+            adt(
+                "Sketch",
+                vec![
+                    f(0.0), f(y), f(0.0),
+                    f(1.0), f(0.0), f(0.0),
+                    f(0.0), f(0.0), f(1.0),
+                    Value::Vec(vec![l1, l2, l3, l4]),
+                ],
+            )
+        };
+        let loft = adt("Loft", vec![Value::Vec(vec![mk_sketch(0.0), mk_sketch(20.0)])]);
+        let doc = value_to_document(&loft).unwrap();
+        assert_eq!(doc.nodes.len(), 3); // 2 sketches + loft
+        match &doc.nodes[&2].op {
+            CsgOp::Loft { sketches, closed } => {
+                assert_eq!(sketches.len(), 2);
+                assert!(closed.is_none());
+            }
+            _ => panic!("expected Loft"),
+        }
+    }
+
+    #[test]
+    fn loft_closed_to_document() {
+        let mk_sketch = |y: f64| {
+            let l1 = adt("SLine", vec![f(0.0), f(0.0), f(10.0), f(0.0)]);
+            let l2 = adt("SLine", vec![f(10.0), f(0.0), f(0.0), f(0.0)]);
+            adt(
+                "Sketch",
+                vec![
+                    f(0.0), f(y), f(0.0),
+                    f(1.0), f(0.0), f(0.0),
+                    f(0.0), f(0.0), f(1.0),
+                    Value::Vec(vec![l1, l2]),
+                ],
+            )
+        };
+        let loft = adt("LoftClosed", vec![Value::Vec(vec![
+            mk_sketch(0.0), mk_sketch(10.0), mk_sketch(20.0),
+        ])]);
+        let doc = value_to_document(&loft).unwrap();
+        match &doc.nodes[&3].op {
+            CsgOp::Loft { sketches, closed } => {
+                assert_eq!(sketches.len(), 3);
+                assert_eq!(*closed, Some(true));
+            }
+            _ => panic!("expected Loft"),
+        }
     }
 
     #[test]
