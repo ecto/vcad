@@ -1,0 +1,14 @@
+[package]
+name = "vcad-ecad-pcb"
+description = "PCB layout operations: routing, copper pour, DRC, and spatial indexing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+vcad-ir = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+rstar = { workspace = true }

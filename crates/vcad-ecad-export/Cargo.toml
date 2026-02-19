@@ -1,0 +1,11 @@
+[package]
+name = "vcad-ecad-export"
+description = "Fabrication-ready file export (Gerber, Excellon, BOM, pick-and-place) for vcad PCB designs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+vcad-ir = { workspace = true }
+thiserror = { workspace = true }

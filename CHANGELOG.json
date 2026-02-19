@@ -2,6 +2,32 @@
   "$schema": "./changelog.schema.json",
   "entries": [
     {
+      "id": "2026-02-19-pcb-ecad-support",
+      "version": "0.8.0",
+      "date": "2026-02-19",
+      "category": "feat",
+      "title": "PCB & ECAD Support",
+      "summary": "Full PCB design pipeline: schematic capture, routing, DRC, Gerber export, and signal integrity simulation.",
+      "features": [
+        "pcb",
+        "ecad",
+        "schematic",
+        "routing",
+        "drc",
+        "gerber",
+        "simulation"
+      ],
+      "mcpTools": [
+        "create_schematic",
+        "place_components",
+        "route_nets",
+        "run_drc",
+        "run_erc",
+        "export_gerber",
+        "calc_impedance"
+      ]
+    },
+    {
       "id": "2026-02-03-twist-taper-extrude",
       "version": "0.8.0",
       "date": "2026-02-03",

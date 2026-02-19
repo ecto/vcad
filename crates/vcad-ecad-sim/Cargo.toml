@@ -1,0 +1,13 @@
+[package]
+name = "vcad-ecad-sim"
+description = "PCB simulation: impedance calculation, signal integrity, and thermal analysis"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+vcad-ir = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]

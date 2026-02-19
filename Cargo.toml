@@ -37,6 +37,11 @@ members = [
     "crates/vcad-eval",
     "crates/vcad-loon",
     "crates/vcad-sim",
+    "crates/vcad-ecad-symbols",
+    "crates/vcad-ecad-schematic",
+    "crates/vcad-ecad-pcb",
+    "crates/vcad-ecad-export",
+    "crates/vcad-ecad-sim",
     "crates/stepperoni",
     "crates/termview",
 ]
@@ -91,5 +96,12 @@ vcad-app = { path = "crates/vcad-app" }
 vcad-eval = { path = "crates/vcad-eval" }
 vcad-loon = { path = "crates/vcad-loon" }
 vcad-sim = { path = "crates/vcad-sim" }
+vcad-ecad-symbols = { path = "crates/vcad-ecad-symbols" }
+vcad-ecad-schematic = { path = "crates/vcad-ecad-schematic" }
+vcad-ecad-pcb = { path = "crates/vcad-ecad-pcb" }
+vcad-ecad-export = { path = "crates/vcad-ecad-export" }
+vcad-ecad-sim = { path = "crates/vcad-ecad-sim" }
+nom = "7"
+rstar = "0.12"
 stepperoni = { path = "crates/stepperoni" }
 termview = { path = "crates/termview" }

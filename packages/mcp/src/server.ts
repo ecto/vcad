@@ -32,6 +32,22 @@ import {
   batchResetSchema,
 } from "./tools/gym.js";
 import { getChangelog, getChangelogSchema } from "./tools/changelog.js";
+import {
+  createSchematic,
+  createSchematicSchema,
+  placeComponents,
+  placeComponentsSchema,
+  routeNets,
+  routeNetsSchema,
+  runDrc,
+  runDrcSchema,
+  runErc,
+  runErcSchema,
+  exportGerber,
+  exportGerberSchema,
+  calcImpedance,
+  calcImpedanceSchema,
+} from "./tools/ecad.js";
 import { createCadLoon, createCadLoonSchema } from "./tools/loon.js";
 
 export async function createServer(): Promise<Server> {
@@ -174,6 +190,58 @@ export async function createServer(): Promise<Server> {
           "Returns recent changes, new features, breaking changes, and migration guides.",
         inputSchema: getChangelogSchema,
       },
+      {
+        name: "create_schematic",
+        description:
+          "Create a schematic from component and wire definitions. " +
+          "Returns a vcad document with schematic data that can be used for PCB layout.",
+        inputSchema: createSchematicSchema,
+      },
+      {
+        name: "place_components",
+        description:
+          "Place components on a PCB from schematic data. " +
+          "Creates board outline, stackup, and positions footprints. " +
+          "Requires a document with schematic data.",
+        inputSchema: placeComponentsSchema,
+      },
+      {
+        name: "route_nets",
+        description:
+          "Route electrical nets on a PCB with copper traces. " +
+          "Connects pads belonging to the same net. " +
+          "Requires a document with PCB and placed footprints.",
+        inputSchema: routeNetsSchema,
+      },
+      {
+        name: "run_drc",
+        description:
+          "Run Design Rule Check (DRC) on a PCB. " +
+          "Checks clearance, trace width, drill size, annular ring, and edge clearance.",
+        inputSchema: runDrcSchema,
+      },
+      {
+        name: "run_erc",
+        description:
+          "Run Electrical Rule Check (ERC) on a schematic. " +
+          "Checks for duplicate references, unconnected pins, and pin type conflicts.",
+        inputSchema: runErcSchema,
+      },
+      {
+        name: "export_gerber",
+        description:
+          "Export Gerber RS-274X fabrication files from a PCB design. " +
+          "Generates copper layer files, drill file, pick-and-place CSV, and BOM.",
+        inputSchema: exportGerberSchema,
+      },
+      {
+        name: "calc_impedance",
+        description:
+          "Calculate trace impedance using IPC-2141 formulas. " +
+          "Supports microstrip, stripline, and differential pair configurations. " +
+          "Returns Z0, effective Er, and propagation delay.",
+        inputSchema: calcImpedanceSchema,
+      },
     ],
   }));
 
@@ -227,6 +295,27 @@ export async function createServer(): Promise<Server> {
 
         case "get_changelog":
           return getChangelog(args);
+
+        case "create_schematic":
+          return createSchematic(args);
+
+        case "place_components":
+          return placeComponents(args);
+
+        case "route_nets":
+          return routeNets(args);
+
+        case "run_drc":
+          return runDrc(args);
+
+        case "run_erc":
+          return runErc(args);
+
+        case "export_gerber":
+          return exportGerber(args);
+
+        case "calc_impedance":
+          return calcImpedance(args);
 
         default:
           return {

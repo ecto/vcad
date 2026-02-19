@@ -1,0 +1,13 @@
+[package]
+name = "vcad-ecad-schematic"
+description = "Netlist generation and ERC (electrical rule checking) for vcad schematics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+vcad-ir.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
