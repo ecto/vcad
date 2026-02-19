@@ -24,6 +24,12 @@ import {
   gymObserveSchema,
   gymClose,
   gymCloseSchema,
+  batchCreateEnvs,
+  batchCreateEnvsSchema,
+  batchStep,
+  batchStepSchema,
+  batchReset,
+  batchResetSchema,
 } from "./tools/gym.js";
 import { getChangelog, getChangelogSchema } from "./tools/changelog.js";
 import { createCadLoon, createCadLoonSchema } from "./tools/loon.js";
@@ -139,6 +145,29 @@ export async function createServer(): Promise<Server> {
         inputSchema: gymCloseSchema,
       },
       {
+        name: "batch_create_envs",
+        description:
+          "Create N parallel simulation environments from a single robot assembly. " +
+          "Returns a batch_id for use with batch_step and batch_reset. " +
+          "Enables parallel RL training across multiple environments.",
+        inputSchema: batchCreateEnvsSchema,
+      },
+      {
+        name: "batch_step",
+        description:
+          "Step all environments in a batch simultaneously with per-env actions. " +
+          "Returns observations, rewards, and done flags for all environments. " +
+          "action_type can be 'torque', 'position', or 'velocity'.",
+        inputSchema: batchStepSchema,
+      },
+      {
+        name: "batch_reset",
+        description:
+          "Reset all environments in a batch to their initial state. " +
+          "Returns initial observations for all environments.",
+        inputSchema: batchResetSchema,
+      },
+      {
         name: "get_changelog",
         description:
           "Query vcad changelog by version, category, feature, or MCP tool. " +
@@ -186,6 +215,15 @@ export async function createServer(): Promise<Server> {
 
         case "gym_close":
           return gymClose(args);
+
+        case "batch_create_envs":
+          return await batchCreateEnvs(args);
+
+        case "batch_step":
+          return batchStep(args);
+
+        case "batch_reset":
+          return batchReset(args);
 
         case "get_changelog":
           return getChangelog(args);
