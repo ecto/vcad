@@ -135,3 +135,55 @@
 ; Scene (no subject)
 [let root [fn [solid material-name]
   [SceneEntry solid material-name]]]
+
+; ---------------------------------------------------------------------------
+; Assembly — parts, instances, joints, and robot assemblies
+; ---------------------------------------------------------------------------
+
+[type JointDef
+  ; [RevoluteJoint name ax ay az lo hi parent px py pz child cx cy cz]
+  [RevoluteJoint Str f64 f64 f64 f64 f64 Str f64 f64 f64 Str f64 f64 f64]
+  ; [PrismaticJoint name ax ay az lo hi parent px py pz child cx cy cz]
+  [PrismaticJoint Str f64 f64 f64 f64 f64 Str f64 f64 f64 Str f64 f64 f64]
+  ; [FixedJoint name parent px py pz child cx cy cz]
+  [FixedJoint Str Str f64 f64 f64 Str f64 f64 f64]
+  ; [BallJoint name parent px py pz child cx cy cz]
+  [BallJoint Str Str f64 f64 f64 Str f64 f64 f64]]
+
+[type PartEntry [PartEntry Str Solid Str]]
+[type InstanceEntry [InstanceEntry Str Str f64 f64 f64]]
+
+[type Assembly
+  [Assembly (Vec PartEntry) (Vec InstanceEntry) (Vec JointDef) Str]]
+
+; Assembly constructors
+[let part [fn [name solid material-name] [PartEntry name solid material-name]]]
+[let instance [fn [name part-name x y z] [InstanceEntry name part-name x y z]]]
+
+; Joint constructors
+[let revolute-joint [fn [name ax ay az lo hi parent px py pz child cx cy cz]
+  [RevoluteJoint name ax ay az lo hi parent px py pz child cx cy cz]]]
+[let prismatic-joint [fn [name ax ay az lo hi parent px py pz child cx cy cz]
+  [PrismaticJoint name ax ay az lo hi parent px py pz child cx cy cz]]]
+[let fixed-joint [fn [name parent px py pz child cx cy cz]
+  [FixedJoint name parent px py pz child cx cy cz]]]
+[let ball-joint [fn [name parent px py pz child cx cy cz]
+  [BallJoint name parent px py pz child cx cy cz]]]
+
+; Assembly constructor
+[let assembly [fn [parts instances joints ground]
+  [Assembly parts instances joints ground]]]
+
+; ---------------------------------------------------------------------------
+; Simulation configuration (data types for sim pipeline)
+; ---------------------------------------------------------------------------
+
+; [SimConfig dt gravity ground_height]
+[type SimConfig [SimConfig f64 f64 f64]]
+; [TrainConfig n_envs lr gamma epochs]
+[type TrainConfig [TrainConfig Int f64 f64 Int]]
+
+[let sim-config [fn [dt gravity ground-height]
+  [SimConfig dt gravity ground-height]]]
+[let train-config [fn [n-envs lr gamma epochs]
+  [TrainConfig n-envs lr gamma epochs]]]

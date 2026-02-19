@@ -172,6 +172,29 @@ mod tests {
     }
 
     #[test]
+    fn eval_assembly() {
+        let source = r#"
+[assembly
+  #[[part "base" [cylinder 40.0 30.0] "steel"]
+    [part "arm1" [cube 80.0 20.0 20.0] "aluminum"]]
+  #[[instance "base-inst" "base" 0.0 0.0 0.0]
+    [instance "arm1-inst" "arm1" 0.0 0.0 30.0]]
+  #[[revolute-joint "shoulder" 0.0 1.0 0.0 -90.0 90.0
+      "base-inst" 0.0 0.0 25.0
+      "arm1-inst" 0.0 0.0 0.0]]
+  "base-inst"]
+"#;
+        let doc = eval_vcad(source, None).unwrap();
+        assert!(doc.part_defs.is_some());
+        assert_eq!(doc.part_defs.as_ref().unwrap().len(), 2);
+        assert!(doc.instances.is_some());
+        assert_eq!(doc.instances.as_ref().unwrap().len(), 2);
+        assert!(doc.joints.is_some());
+        assert_eq!(doc.joints.as_ref().unwrap().len(), 1);
+        assert_eq!(doc.ground_instance_id, Some("base-inst".to_string()));
+    }
+
+    #[test]
     fn eval_complex_part() {
         let source = r#"
 [let base [cube 100.0 60.0 10.0]]

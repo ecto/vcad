@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use loon_lang::interp::Value;
 use vcad_ir::*;
 
@@ -48,13 +50,17 @@ pub fn value_to_document(value: &Value) -> Result<Document, String> {
                 },
             );
         }
+        // Assembly
+        Value::Adt(tag, fields) if tag == "Assembly" && fields.len() == 4 => {
+            convert_assembly(&mut ctx, fields)?;
+        }
         // Vec of entries
         Value::Vec(items) => {
             for item in items {
                 merge_value_into_doc(&mut ctx, item)?;
             }
         }
-        _ => return Err(format!("expected Solid, SceneEntry, or Vec, got {value}")),
+        _ => return Err(format!("expected Solid, SceneEntry, Assembly, or Vec, got {value}")),
     }
 
     // Add default material if any root references it and it's missing
@@ -109,6 +115,9 @@ fn merge_value_into_doc(ctx: &mut ConvertCtx, value: &Value) -> Result<(), Strin
                 },
             );
         }
+        Value::Adt(tag, fields) if tag == "Assembly" && fields.len() == 4 => {
+            convert_assembly(ctx, fields)?;
+        }
         Value::Adt(tag, _) if is_solid_tag(tag) => {
             let root_id = ctx.convert_solid(value)?;
             ctx.doc.roots.push(SceneEntry {
@@ -117,8 +126,211 @@ fn merge_value_into_doc(ctx: &mut ConvertCtx, value: &Value) -> Result<(), Strin
                 visible: None,
             });
         }
-        _ => return Err(format!("expected SceneEntry, Material, or Solid in Vec, got {value}")),
+        _ => return Err(format!("expected SceneEntry, Material, Assembly, or Solid in Vec, got {value}")),
     }
+    Ok(())
+}
+
+/// Convert an Assembly ADT into Document assembly fields.
+///
+/// Assembly fields: [parts_vec, instances_vec, joints_vec, ground_str]
+fn convert_assembly(ctx: &mut ConvertCtx, fields: &[Value]) -> Result<(), String> {
+    // 1. Parts → PartDef + geometry nodes
+    let parts = match &fields[0] {
+        Value::Vec(v) => v,
+        _ => return Err(format!("Assembly: expected Vec of PartEntry, got {}", fields[0])),
+    };
+
+    let mut part_defs = HashMap::new();
+    for part_val in parts {
+        let (tag, pf) = match part_val {
+            Value::Adt(t, f) => (t.as_str(), f.as_slice()),
+            _ => return Err(format!("expected PartEntry ADT, got {part_val}")),
+        };
+        if tag != "PartEntry" || pf.len() != 3 {
+            return Err(format!("expected PartEntry with 3 fields, got {tag}/{}", pf.len()));
+        }
+        let name = ctx.str_val(&pf[0])?;
+        let root_id = ctx.convert_solid(&pf[1])?;
+        let material = ctx.str_val(&pf[2])?;
+        part_defs.insert(
+            name.clone(),
+            PartDef {
+                id: name.clone(),
+                name: Some(name),
+                root: root_id,
+                default_material: Some(material),
+            },
+        );
+    }
+    ctx.doc.part_defs = Some(part_defs);
+
+    // 2. Instances → Instance list
+    let instances = match &fields[1] {
+        Value::Vec(v) => v,
+        _ => return Err(format!("Assembly: expected Vec of InstanceEntry, got {}", fields[1])),
+    };
+
+    let mut inst_list = Vec::new();
+    for inst_val in instances {
+        let (tag, inf) = match inst_val {
+            Value::Adt(t, f) => (t.as_str(), f.as_slice()),
+            _ => return Err(format!("expected InstanceEntry ADT, got {inst_val}")),
+        };
+        if tag != "InstanceEntry" || inf.len() != 5 {
+            return Err(format!("expected InstanceEntry with 5 fields, got {tag}/{}", inf.len()));
+        }
+        let id = ctx.str_val(&inf[0])?;
+        let part_def_id = ctx.str_val(&inf[1])?;
+        let tx = ctx.f64_val(&inf[2])?;
+        let ty = ctx.f64_val(&inf[3])?;
+        let tz = ctx.f64_val(&inf[4])?;
+
+        let transform = if tx != 0.0 || ty != 0.0 || tz != 0.0 {
+            Some(Transform3D {
+                translation: Vec3::new(tx, ty, tz),
+                ..Transform3D::default()
+            })
+        } else {
+            None
+        };
+
+        inst_list.push(Instance {
+            id: id.clone(),
+            part_def_id,
+            name: Some(id),
+            transform,
+            material: None,
+        });
+    }
+    ctx.doc.instances = Some(inst_list);
+
+    // 3. Joints → Joint list
+    let joints = match &fields[2] {
+        Value::Vec(v) => v,
+        _ => return Err(format!("Assembly: expected Vec of JointDef, got {}", fields[2])),
+    };
+
+    let mut joint_list = Vec::new();
+    for (idx, jval) in joints.iter().enumerate() {
+        let (tag, jf) = match jval {
+            Value::Adt(t, f) => (t.as_str(), f.as_slice()),
+            _ => return Err(format!("expected JointDef ADT, got {jval}")),
+        };
+        let joint = match tag {
+            // [RevoluteJoint name ax ay az lo hi parent px py pz child cx cy cz]
+            "RevoluteJoint" => {
+                assert_fields(tag, jf, 14)?;
+                let name = ctx.str_val(&jf[0])?;
+                let axis = ctx.vec3(jf, 1)?;
+                let lo = ctx.f64_val(&jf[4])?;
+                let hi = ctx.f64_val(&jf[5])?;
+                let parent_id = ctx.str_val(&jf[6])?;
+                let parent_anchor = ctx.vec3(jf, 7)?;
+                let child_id = ctx.str_val(&jf[10])?;
+                let child_anchor = ctx.vec3(jf, 11)?;
+                Joint {
+                    id: format!("joint_{idx}"),
+                    name: Some(name),
+                    parent_instance_id: Some(parent_id),
+                    child_instance_id: child_id,
+                    parent_anchor,
+                    child_anchor,
+                    kind: JointKind::Revolute {
+                        axis,
+                        limits: Some((lo, hi)),
+                    },
+                    state: 0.0,
+                }
+            }
+            // [PrismaticJoint name ax ay az lo hi parent px py pz child cx cy cz]
+            "PrismaticJoint" => {
+                assert_fields(tag, jf, 14)?;
+                let name = ctx.str_val(&jf[0])?;
+                let axis = ctx.vec3(jf, 1)?;
+                let lo = ctx.f64_val(&jf[4])?;
+                let hi = ctx.f64_val(&jf[5])?;
+                let parent_id = ctx.str_val(&jf[6])?;
+                let parent_anchor = ctx.vec3(jf, 7)?;
+                let child_id = ctx.str_val(&jf[10])?;
+                let child_anchor = ctx.vec3(jf, 11)?;
+                Joint {
+                    id: format!("joint_{idx}"),
+                    name: Some(name),
+                    parent_instance_id: Some(parent_id),
+                    child_instance_id: child_id,
+                    parent_anchor,
+                    child_anchor,
+                    kind: JointKind::Slider {
+                        axis,
+                        limits: Some((lo, hi)),
+                    },
+                    state: 0.0,
+                }
+            }
+            // [FixedJoint name parent px py pz child cx cy cz]
+            "FixedJoint" => {
+                assert_fields(tag, jf, 9)?;
+                let name = ctx.str_val(&jf[0])?;
+                let parent_id = ctx.str_val(&jf[1])?;
+                let parent_anchor = ctx.vec3(jf, 2)?;
+                let child_id = ctx.str_val(&jf[5])?;
+                let child_anchor = ctx.vec3(jf, 6)?;
+                Joint {
+                    id: format!("joint_{idx}"),
+                    name: Some(name),
+                    parent_instance_id: Some(parent_id),
+                    child_instance_id: child_id,
+                    parent_anchor,
+                    child_anchor,
+                    kind: JointKind::Fixed,
+                    state: 0.0,
+                }
+            }
+            // [BallJoint name parent px py pz child cx cy cz]
+            "BallJoint" => {
+                assert_fields(tag, jf, 9)?;
+                let name = ctx.str_val(&jf[0])?;
+                let parent_id = ctx.str_val(&jf[1])?;
+                let parent_anchor = ctx.vec3(jf, 2)?;
+                let child_id = ctx.str_val(&jf[5])?;
+                let child_anchor = ctx.vec3(jf, 6)?;
+                Joint {
+                    id: format!("joint_{idx}"),
+                    name: Some(name),
+                    parent_instance_id: Some(parent_id),
+                    child_instance_id: child_id,
+                    parent_anchor,
+                    child_anchor,
+                    kind: JointKind::Ball,
+                    state: 0.0,
+                }
+            }
+            _ => return Err(format!("unknown JointDef variant: {tag}")),
+        };
+        joint_list.push(joint);
+    }
+    ctx.doc.joints = Some(joint_list);
+
+    // 4. Ground instance
+    let ground_id = ctx.str_val(&fields[3])?;
+    ctx.doc.ground_instance_id = Some(ground_id);
+
+    // Add default material if missing
+    if !ctx.doc.materials.contains_key("default") {
+        ctx.doc.materials.insert(
+            "default".into(),
+            MaterialDef {
+                name: "default".into(),
+                color: [0.8, 0.8, 0.8],
+                metallic: 0.0,
+                roughness: 0.5,
+                density: None,
+                friction: None,
+            },
+        );
+    }
+
     Ok(())
 }
 
@@ -947,6 +1159,103 @@ mod tests {
     fn error_on_unknown_tag() {
         let val = adt("UnknownShape", vec![f(1.0)]);
         assert!(value_to_document(&val).is_err());
+    }
+
+    #[test]
+    fn assembly_to_document() {
+        // Build: Assembly([parts], [instances], [joints], ground)
+        let parts = Value::Vec(vec![
+            adt("PartEntry", vec![
+                s("base"), adt("Cylinder", vec![f(40.0), f(30.0)]), s("steel"),
+            ]),
+            adt("PartEntry", vec![
+                s("arm1"), adt("Cube", vec![f(80.0), f(20.0), f(20.0)]), s("aluminum"),
+            ]),
+        ]);
+        let instances = Value::Vec(vec![
+            adt("InstanceEntry", vec![s("base-inst"), s("base"), f(0.0), f(0.0), f(0.0)]),
+            adt("InstanceEntry", vec![s("arm1-inst"), s("arm1"), f(0.0), f(0.0), f(30.0)]),
+        ]);
+        let joints = Value::Vec(vec![
+            adt("RevoluteJoint", vec![
+                s("shoulder"),
+                f(0.0), f(1.0), f(0.0),     // axis
+                f(-90.0), f(90.0),           // limits
+                s("base-inst"),              // parent
+                f(0.0), f(0.0), f(25.0),    // parent anchor
+                s("arm1-inst"),              // child
+                f(0.0), f(0.0), f(0.0),     // child anchor
+            ]),
+        ]);
+        let ground = s("base-inst");
+        let assembly = adt("Assembly", vec![parts, instances, joints, ground]);
+
+        let doc = value_to_document(&assembly).unwrap();
+
+        // Verify part_defs
+        let pd = doc.part_defs.as_ref().unwrap();
+        assert_eq!(pd.len(), 2);
+        assert!(pd.contains_key("base"));
+        assert!(pd.contains_key("arm1"));
+        assert_eq!(pd["base"].default_material, Some("steel".into()));
+
+        // Verify instances
+        let insts = doc.instances.as_ref().unwrap();
+        assert_eq!(insts.len(), 2);
+        assert_eq!(insts[0].id, "base-inst");
+        assert_eq!(insts[0].part_def_id, "base");
+        assert!(insts[0].transform.is_none()); // all zeros → None
+        assert_eq!(insts[1].id, "arm1-inst");
+        assert!(insts[1].transform.is_some()); // z=30 → Some
+
+        // Verify joints
+        let jts = doc.joints.as_ref().unwrap();
+        assert_eq!(jts.len(), 1);
+        assert_eq!(jts[0].name, Some("shoulder".into()));
+        assert_eq!(jts[0].parent_instance_id, Some("base-inst".into()));
+        assert_eq!(jts[0].child_instance_id, "arm1-inst");
+        match &jts[0].kind {
+            JointKind::Revolute { axis, limits } => {
+                assert_eq!(axis.y, 1.0);
+                assert_eq!(*limits, Some((-90.0, 90.0)));
+            }
+            _ => panic!("expected Revolute"),
+        }
+
+        // Verify ground
+        assert_eq!(doc.ground_instance_id, Some("base-inst".into()));
+
+        // Verify geometry nodes were created
+        assert!(doc.nodes.len() >= 2); // cylinder + cube
+    }
+
+    #[test]
+    fn assembly_with_multiple_joint_types() {
+        let parts = Value::Vec(vec![
+            adt("PartEntry", vec![s("a"), adt("Cube", vec![f(10.0), f(10.0), f(10.0)]), s("default")]),
+            adt("PartEntry", vec![s("b"), adt("Cube", vec![f(10.0), f(10.0), f(10.0)]), s("default")]),
+            adt("PartEntry", vec![s("c"), adt("Cube", vec![f(10.0), f(10.0), f(10.0)]), s("default")]),
+        ]);
+        let instances = Value::Vec(vec![
+            adt("InstanceEntry", vec![s("a-inst"), s("a"), f(0.0), f(0.0), f(0.0)]),
+            adt("InstanceEntry", vec![s("b-inst"), s("b"), f(0.0), f(0.0), f(0.0)]),
+            adt("InstanceEntry", vec![s("c-inst"), s("c"), f(0.0), f(0.0), f(0.0)]),
+        ]);
+        let joints = Value::Vec(vec![
+            adt("FixedJoint", vec![
+                s("fix"), s("a-inst"), f(0.0), f(0.0), f(5.0), s("b-inst"), f(0.0), f(0.0), f(0.0),
+            ]),
+            adt("BallJoint", vec![
+                s("ball"), s("b-inst"), f(0.0), f(0.0), f(5.0), s("c-inst"), f(0.0), f(0.0), f(0.0),
+            ]),
+        ]);
+        let assembly = adt("Assembly", vec![parts, instances, joints, s("a-inst")]);
+        let doc = value_to_document(&assembly).unwrap();
+
+        let jts = doc.joints.as_ref().unwrap();
+        assert_eq!(jts.len(), 2);
+        assert!(matches!(jts[0].kind, JointKind::Fixed));
+        assert!(matches!(jts[1].kind, JointKind::Ball));
     }
 
     #[test]
