@@ -3192,6 +3192,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-sim"
+version = "0.8.0"
+dependencies = [
+ "phyz",
+ "phyz-gpu",
+ "phyz-math",
+ "phyz-model",
+ "serde",
+ "thiserror 2.0.18",
+ "vcad-ir",
+ "vcad-kernel-physics",
+]
+
+[[package]]
 name = "vcad-slicer"
 version = "0.8.0"
 dependencies = [

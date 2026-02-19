@@ -1,0 +1,19 @@
+[package]
+name = "vcad-sim"
+description = "Unified simulation pipeline for vcad (CPU single-env + GPU batch)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+vcad-ir = { workspace = true }
+vcad-kernel-physics = { workspace = true }
+phyz = { path = "../../../phyz/crates/phyz" }
+phyz-gpu = { path = "../../../phyz/crates/phyz-gpu" }
+phyz-model = { path = "../../../phyz/crates/phyz-model" }
+phyz-math = { path = "../../../phyz/crates/phyz-math" }
+thiserror = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]

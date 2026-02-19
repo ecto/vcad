@@ -6,9 +6,11 @@ use vcad_ir::{Joint as VcadJoint, JointKind};
 
 use crate::error::PhysicsError;
 
-/// Default motor parameters.
+/// Default proportional gain for PD motor control.
 pub const DEFAULT_MOTOR_KP: f64 = 1000.0;
+/// Default derivative gain for PD motor control.
 pub const DEFAULT_MOTOR_KD: f64 = 100.0;
+/// Default maximum force/torque for motor control.
 pub const DEFAULT_MAX_FORCE: f64 = 1000.0;
 
 /// Motor control mode.

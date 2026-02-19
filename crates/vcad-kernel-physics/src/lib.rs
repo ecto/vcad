@@ -35,7 +35,8 @@
 mod colliders;
 mod error;
 mod gym;
-mod joints;
+/// Joint conversion utilities.
+pub mod joints;
 mod world;
 
 pub use error::PhysicsError;

@@ -36,6 +36,7 @@ members = [
     "crates/vcad-app",
     "crates/vcad-eval",
     "crates/vcad-loon",
+    "crates/vcad-sim",
     "crates/stepperoni",
     "crates/termview",
 ]
@@ -89,5 +90,6 @@ vcad-kernel-text = { path = "crates/vcad-kernel-text" }
 vcad-app = { path = "crates/vcad-app" }
 vcad-eval = { path = "crates/vcad-eval" }
 vcad-loon = { path = "crates/vcad-loon" }
+vcad-sim = { path = "crates/vcad-sim" }
 stepperoni = { path = "crates/stepperoni" }
 termview = { path = "crates/termview" }
