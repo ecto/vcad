@@ -13,6 +13,7 @@ export interface Command {
 
 export type CommandRegistry = Command[];
 
+/** Core actions required by all consumers. */
 export interface CommandActions {
   addPrimitive: (kind: PrimitiveKind) => void;
   applyBoolean: (type: BooleanType) => void;
@@ -35,26 +36,29 @@ export interface CommandActions {
   hasParts: () => boolean;
   canUndo: () => boolean;
   canRedo: () => boolean;
-  // Assembly actions
-  createPartDef: () => void;
-  insertInstance: () => void;
-  addJoint: (kind: JointKind) => void;
-  setGroundInstance: () => void;
-  hasOnePartSelected: () => boolean;
-  hasPartDefs: () => boolean;
-  hasTwoInstancesSelected: () => boolean;
-  hasOneInstanceSelected: () => boolean;
-  // Modify operations
-  applyFillet: () => void;
-  applyChamfer: () => void;
-  applyShell: () => void;
-  applyLinearPattern: () => void;
-  applyCircularPattern: () => void;
-  applyMirror: () => void;
+  // Assembly actions (optional — only needed by full app)
+  createPartDef?: () => void;
+  insertInstance?: () => void;
+  addJoint?: (kind: JointKind) => void;
+  setGroundInstance?: () => void;
+  hasOnePartSelected?: () => boolean;
+  hasPartDefs?: () => boolean;
+  hasTwoInstancesSelected?: () => boolean;
+  hasOneInstanceSelected?: () => boolean;
+  // Modify operations (optional — only needed by full app)
+  applyFillet?: () => void;
+  applyChamfer?: () => void;
+  applyShell?: () => void;
+  applyLinearPattern?: () => void;
+  applyCircularPattern?: () => void;
+  applyMirror?: () => void;
 }
 
+const noop = () => {};
+const alwaysFalse = () => false;
+
 export function createCommandRegistry(actions: CommandActions): CommandRegistry {
-  return [
+  const cmds: CommandRegistry = [
     // Primitives
     {
       id: "add-box",
@@ -246,113 +250,132 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       keywords: ["about", "help", "info", "version"],
       action: actions.openAbout,
     },
+  ];
 
-    // Assembly commands
-    {
+  // Assembly commands — only added when actions are provided
+  if (actions.createPartDef) {
+    cmds.push({
       id: "create-part-def",
       label: "Create Part Definition",
       icon: "Package",
       keywords: ["part", "definition", "assembly", "create", "convert"],
       action: actions.createPartDef,
-      enabled: actions.hasOnePartSelected,
-    },
-    {
+      enabled: actions.hasOnePartSelected ?? alwaysFalse,
+    });
+  }
+  if (actions.insertInstance) {
+    cmds.push({
       id: "insert-instance",
       label: "Insert Instance",
       icon: "PlusSquare",
       keywords: ["insert", "instance", "assembly", "add", "part"],
       action: actions.insertInstance,
-      enabled: actions.hasPartDefs,
-    },
-    {
-      id: "add-fixed-joint",
-      label: "Add Fixed Joint",
-      icon: "Anchor",
-      keywords: ["joint", "fixed", "assembly", "connect", "weld"],
-      action: () => actions.addJoint({ type: "Fixed" }),
-      enabled: actions.hasTwoInstancesSelected,
-    },
-    {
-      id: "add-revolute-joint",
-      label: "Add Revolute Joint",
-      icon: "ArrowsClockwise",
-      keywords: ["joint", "revolute", "hinge", "assembly", "rotate"],
-      action: () =>
-        actions.addJoint({
-          type: "Revolute",
-          axis: { x: 0, y: 0, z: 1 },
-        }),
-      enabled: actions.hasTwoInstancesSelected,
-    },
-    {
-      id: "add-slider-joint",
-      label: "Add Slider Joint",
-      icon: "ArrowsHorizontal",
-      keywords: ["joint", "slider", "prismatic", "assembly", "slide"],
-      action: () =>
-        actions.addJoint({
-          type: "Slider",
-          axis: { x: 0, y: 0, z: 1 },
-        }),
-      enabled: actions.hasTwoInstancesSelected,
-    },
-    {
+      enabled: actions.hasPartDefs ?? alwaysFalse,
+    });
+  }
+  if (actions.addJoint) {
+    const addJoint = actions.addJoint;
+    const enabledTwoInst = actions.hasTwoInstancesSelected ?? alwaysFalse;
+    cmds.push(
+      {
+        id: "add-fixed-joint",
+        label: "Add Fixed Joint",
+        icon: "Anchor",
+        keywords: ["joint", "fixed", "assembly", "connect", "weld"],
+        action: () => addJoint({ type: "Fixed" }),
+        enabled: enabledTwoInst,
+      },
+      {
+        id: "add-revolute-joint",
+        label: "Add Revolute Joint",
+        icon: "ArrowsClockwise",
+        keywords: ["joint", "revolute", "hinge", "assembly", "rotate"],
+        action: () => addJoint({ type: "Revolute", axis: { x: 0, y: 0, z: 1 } }),
+        enabled: enabledTwoInst,
+      },
+      {
+        id: "add-slider-joint",
+        label: "Add Slider Joint",
+        icon: "ArrowsHorizontal",
+        keywords: ["joint", "slider", "prismatic", "assembly", "slide"],
+        action: () => addJoint({ type: "Slider", axis: { x: 0, y: 0, z: 1 } }),
+        enabled: enabledTwoInst,
+      },
+    );
+  }
+  if (actions.setGroundInstance) {
+    cmds.push({
       id: "set-ground",
       label: "Set as Ground",
       icon: "Anchor",
       keywords: ["ground", "fix", "base", "assembly", "anchor"],
       action: actions.setGroundInstance,
-      enabled: actions.hasOneInstanceSelected,
-    },
+      enabled: actions.hasOneInstanceSelected ?? alwaysFalse,
+    });
+  }
 
-    // Modify operations
-    {
+  // Modify operations — only added when actions are provided
+  const enabledOnePart = actions.hasOnePartSelected ?? alwaysFalse;
+  if (actions.applyFillet) {
+    cmds.push({
       id: "apply-fillet",
       label: "Fillet",
       icon: "Circle",
       keywords: ["fillet", "round", "radius", "edge"],
       action: actions.applyFillet,
-      enabled: actions.hasOnePartSelected,
-    },
-    {
+      enabled: enabledOnePart,
+    });
+  }
+  if (actions.applyChamfer) {
+    cmds.push({
       id: "apply-chamfer",
       label: "Chamfer",
       icon: "Octagon",
       keywords: ["chamfer", "bevel", "edge", "corner"],
       action: actions.applyChamfer,
-      enabled: actions.hasOnePartSelected,
-    },
-    {
+      enabled: enabledOnePart,
+    });
+  }
+  if (actions.applyShell) {
+    cmds.push({
       id: "apply-shell",
       label: "Shell",
       icon: "Cube",
       keywords: ["shell", "hollow", "thickness", "wall"],
       action: actions.applyShell,
-      enabled: actions.hasOnePartSelected,
-    },
-    {
+      enabled: enabledOnePart,
+    });
+  }
+  if (actions.applyLinearPattern) {
+    cmds.push({
       id: "apply-linear-pattern",
       label: "Linear Pattern",
       icon: "DotsThree",
       keywords: ["pattern", "linear", "array", "repeat", "copy"],
       action: actions.applyLinearPattern,
-      enabled: actions.hasOnePartSelected,
-    },
-    {
+      enabled: enabledOnePart,
+    });
+  }
+  if (actions.applyCircularPattern) {
+    cmds.push({
       id: "apply-circular-pattern",
       label: "Circular Pattern",
       icon: "CircleNotch",
       keywords: ["pattern", "circular", "radial", "array", "repeat"],
       action: actions.applyCircularPattern,
-      enabled: actions.hasOnePartSelected,
-    },
-    {
+      enabled: enabledOnePart,
+    });
+  }
+  if (actions.applyMirror) {
+    cmds.push({
       id: "apply-mirror",
       label: "Mirror",
       icon: "ArrowsHorizontal",
       keywords: ["mirror", "reflect", "flip", "symmetry"],
       action: actions.applyMirror,
-      enabled: actions.hasOnePartSelected,
-    },
-  ];
+      enabled: enabledOnePart,
+    });
+  }
+
+  return cmds;
 }

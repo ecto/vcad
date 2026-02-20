@@ -77,6 +77,10 @@ export type {
 // Commands
 export { createCommandRegistry } from "./commands.js";
 export type { Command, CommandRegistry, CommandActions } from "./commands.js";
+export { createDefaultCommandActions } from "./command-actions.js";
+
+// Part labels
+export { PART_GLYPHS, getPartGlyph } from "./part-labels.js";
 
 // Export utilities
 export { exportStlBuffer, exportStlBlob } from "./utils/export-stl.js";
@@ -87,6 +91,10 @@ export { documentToLoon } from "./utils/document-to-loon.js";
 export type { VcadFile as VcadFileFormat } from "./utils/save-load.js";
 export { computeVolume, computeMass, formatMass, formatVolume } from "./utils/geometry.js";
 export { parseStl } from "./utils/import-stl.js";
+
+// Engine lifecycle
+export { initEngineLifecycle } from "./engine-lifecycle.js";
+export type { EngineLifecycleOptions } from "./engine-lifecycle.js";
 
 // Re-export engine initialization
 export { Engine } from "@vcad/engine";

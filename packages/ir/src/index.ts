@@ -4,6 +4,18 @@
  * Mirrors the Rust `vcad-ir` crate types exactly for cross-language compatibility.
  */
 
+export {
+  vec3Add,
+  vec3Sub,
+  vec3Scale,
+  vec3Dot,
+  vec3Cross,
+  vec3Length,
+  vec3Normalize,
+  vec3Negate,
+  vec3Zero,
+} from "./vec3.js";
+
 /** Unique identifier for a node in the IR graph. */
 export type NodeId = number;
 
