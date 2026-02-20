@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
-import { createCommandRegistry, useDocumentStore, useUiStore } from "@vcad/core";
+import { createCommandRegistry, createDefaultCommandActions } from "@vcad/core";
 
 interface Props {
   active: boolean;
@@ -13,94 +13,9 @@ export function CommandInput({ active, onActivate, onDeactivate }: Props) {
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
 
-  // Store actions
-  const addPrimitive = useDocumentStore((s) => s.addPrimitive);
-  const applyBoolean = useDocumentStore((s) => s.applyBoolean);
-  const undo = useDocumentStore((s) => s.undo);
-  const redo = useDocumentStore((s) => s.redo);
-  const removePart = useDocumentStore((s) => s.removePart);
-  const duplicateParts = useDocumentStore((s) => s.duplicateParts);
-  const undoStack = useDocumentStore((s) => s.undoStack);
-  const redoStack = useDocumentStore((s) => s.redoStack);
-  const parts = useDocumentStore((s) => s.parts);
-
-  const selectedPartIds = useUiStore((s) => s.selectedPartIds);
-  const select = useUiStore((s) => s.select);
-  const selectMultiple = useUiStore((s) => s.selectMultiple);
-  const clearSelection = useUiStore((s) => s.clearSelection);
-  const setTransformMode = useUiStore((s) => s.setTransformMode);
-  const toggleWireframe = useUiStore((s) => s.toggleWireframe);
-  const toggleGridSnap = useUiStore((s) => s.toggleGridSnap);
-  const toggleFeatureTree = useUiStore((s) => s.toggleFeatureTree);
-
-  const commands = createCommandRegistry({
-    addPrimitive: (kind) => {
-      const partId = addPrimitive(kind);
-      select(partId);
-      onDeactivate();
-    },
-    applyBoolean: (type) => {
-      const ids = Array.from(selectedPartIds);
-      if (ids.length === 2) {
-        const newId = applyBoolean(type, ids[0]!, ids[1]!);
-        if (newId) select(newId);
-      }
-      onDeactivate();
-    },
-    setTransformMode: (mode) => {
-      setTransformMode(mode);
-      onDeactivate();
-    },
-    undo: () => {
-      undo();
-      onDeactivate();
-    },
-    redo: () => {
-      redo();
-      onDeactivate();
-    },
-    toggleWireframe: () => {
-      toggleWireframe();
-      onDeactivate();
-    },
-    toggleGridSnap: () => {
-      toggleGridSnap();
-      onDeactivate();
-    },
-    toggleFeatureTree: () => {
-      toggleFeatureTree();
-      onDeactivate();
-    },
-    save: () => onDeactivate(),
-    open: () => onDeactivate(),
-    exportStl: () => onDeactivate(),
-    exportGlb: () => onDeactivate(),
-    openAbout: () => onDeactivate(),
-    deleteSelected: () => {
-      for (const id of selectedPartIds) {
-        removePart(id);
-      }
-      clearSelection();
-      onDeactivate();
-    },
-    duplicateSelected: () => {
-      if (selectedPartIds.size > 0) {
-        const ids = Array.from(selectedPartIds);
-        const newIds = duplicateParts(ids);
-        selectMultiple(newIds);
-      }
-      onDeactivate();
-    },
-    deselectAll: () => {
-      clearSelection();
-      onDeactivate();
-    },
-    hasTwoSelected: () => selectedPartIds.size === 2,
-    hasSelection: () => selectedPartIds.size > 0,
-    hasParts: () => parts.length > 0,
-    canUndo: () => undoStack.length > 0,
-    canRedo: () => redoStack.length > 0,
-  });
+  const commands = createCommandRegistry(
+    createDefaultCommandActions(onDeactivate),
+  );
 
   const filteredCommands = query.trim()
     ? commands.filter((cmd) => {

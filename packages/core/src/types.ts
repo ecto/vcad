@@ -1,4 +1,5 @@
 import type { NodeId, Vec2, Vec3, SketchSegment2D, SketchConstraint } from "@vcad/ir";
+import { vec3Cross, vec3Normalize } from "@vcad/ir";
 
 export type PrimitiveKind = "cube" | "cylinder" | "sphere";
 export type BooleanType = "union" | "difference" | "intersection";
@@ -306,30 +307,14 @@ export function isAxisAlignedPlane(plane: SketchPlane): plane is AxisAlignedPlan
   return typeof plane === "string";
 }
 
-/** Helper to compute cross product */
-function cross(a: Vec3, b: Vec3): Vec3 {
-  return {
-    x: a.y * b.z - a.z * b.y,
-    y: a.z * b.x - a.x * b.z,
-    z: a.x * b.y - a.y * b.x,
-  };
-}
-
-/** Helper to normalize a vector */
-function normalize(v: Vec3): Vec3 {
-  const len = Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
-  if (len < 0.0001) return { x: 0, y: 0, z: 1 };
-  return { x: v.x / len, y: v.y / len, z: v.z / len };
-}
-
 /** Compute a sketch plane from a face selection */
 export function computePlaneFromFace(face: FaceInfo): ArbitraryPlane {
-  const normal = normalize(face.normal);
+  const normal = vec3Normalize(face.normal);
 
   // Build orthonormal basis - pick reference vector that isn't parallel to normal
   const ref = Math.abs(normal.z) < 0.9 ? { x: 0, y: 0, z: 1 } : { x: 1, y: 0, z: 0 };
-  const xDir = normalize(cross(ref, normal));
-  const yDir = cross(normal, xDir);
+  const xDir = vec3Normalize(vec3Cross(ref, normal));
+  const yDir = vec3Cross(normal, xDir);
 
   return { type: "face", origin: face.centroid, xDir, yDir, normal };
 }

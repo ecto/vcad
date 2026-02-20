@@ -40,7 +40,7 @@ import { useNotificationStore } from "@/stores/notification-store";
 import { useRequireAuth, AuthModal, useAuthStore } from "@vcad/auth";
 import { useOnboardingStore } from "@/stores/onboarding-store";
 import type { Command } from "@vcad/core";
-import { createCommandRegistry, useUiStore, useDocumentStore, useEngineStore, exportStlBlob, exportGltfBlob, parseVcadFile } from "@vcad/core";
+import { createCommandRegistry, createDefaultCommandActions, useUiStore, useDocumentStore, useEngineStore, exportStlBlob, exportGltfBlob, parseVcadFile } from "@vcad/core";
 import { downloadBlob } from "@/lib/download";
 import { cn } from "@/lib/utils";
 import { examples, type Example } from "@/data/examples";
@@ -155,15 +155,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
   const startGuidedFlow = useOnboardingStore((s) => s.startGuidedFlow);
   const incrementProjectsCreated = useOnboardingStore((s) => s.incrementProjectsCreated);
 
-  // Get store actions
   const addPrimitive = useDocumentStore((s) => s.addPrimitive);
-  const applyBoolean = useDocumentStore((s) => s.applyBoolean);
-  const undo = useDocumentStore((s) => s.undo);
-  const redo = useDocumentStore((s) => s.redo);
-  const removePart = useDocumentStore((s) => s.removePart);
-  const duplicateParts = useDocumentStore((s) => s.duplicateParts);
-  const undoStack = useDocumentStore((s) => s.undoStack);
-  const redoStack = useDocumentStore((s) => s.redoStack);
   const parts = useDocumentStore((s) => s.parts);
   const document = useDocumentStore((s) => s.document);
   const createPartDef = useDocumentStore((s) => s.createPartDef);
@@ -172,105 +164,49 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
 
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
   const select = useUiStore((s) => s.select);
-  const selectMultiple = useUiStore((s) => s.selectMultiple);
-  const clearSelection = useUiStore((s) => s.clearSelection);
   const setTransformMode = useUiStore((s) => s.setTransformMode);
-  const toggleWireframe = useUiStore((s) => s.toggleWireframe);
-  const toggleGridSnap = useUiStore((s) => s.toggleGridSnap);
-  const toggleFeatureTree = useUiStore((s) => s.toggleFeatureTree);
 
   const scene = useEngineStore((s) => s.scene);
 
   const commands = useMemo(() => {
+    const dismiss = () => onOpenChange(false);
+    const base = createDefaultCommandActions(dismiss);
+
     return createCommandRegistry({
+      ...base,
+      // App-specific overrides
       addPrimitive: (kind) => {
         const partId = addPrimitive(kind);
         select(partId);
         setTransformMode("translate");
-        onOpenChange(false);
-      },
-      applyBoolean: (type) => {
-        const ids = Array.from(selectedPartIds);
-        if (ids.length === 2) {
-          const newId = applyBoolean(type, ids[0]!, ids[1]!);
-          if (newId) select(newId);
-        }
-        onOpenChange(false);
-      },
-      setTransformMode: (mode) => {
-        setTransformMode(mode);
-        onOpenChange(false);
-      },
-      undo: () => {
-        undo();
-        onOpenChange(false);
-      },
-      redo: () => {
-        redo();
-        onOpenChange(false);
-      },
-      toggleWireframe: () => {
-        toggleWireframe();
-        onOpenChange(false);
-      },
-      toggleGridSnap: () => {
-        toggleGridSnap();
-        onOpenChange(false);
-      },
-      toggleFeatureTree: () => {
-        toggleFeatureTree();
-        onOpenChange(false);
+        dismiss();
       },
       save: () => {
         window.dispatchEvent(new CustomEvent("vcad:save"));
-        onOpenChange(false);
+        dismiss();
       },
       open: () => {
         window.dispatchEvent(new CustomEvent("vcad:open"));
-        onOpenChange(false);
+        dismiss();
       },
       exportStl: () => {
         if (scene) {
           const blob = exportStlBlob(scene);
           downloadBlob(blob, "model.stl");
         }
-        onOpenChange(false);
+        dismiss();
       },
       exportGlb: () => {
         if (scene) {
           const blob = exportGltfBlob(scene);
           downloadBlob(blob, "model.glb");
         }
-        onOpenChange(false);
+        dismiss();
       },
       openAbout: () => {
         onAboutOpen();
-        onOpenChange(false);
+        dismiss();
       },
-      deleteSelected: () => {
-        for (const id of selectedPartIds) {
-          removePart(id);
-        }
-        clearSelection();
-        onOpenChange(false);
-      },
-      duplicateSelected: () => {
-        if (selectedPartIds.size > 0) {
-          const ids = Array.from(selectedPartIds);
-          const newIds = duplicateParts(ids);
-          selectMultiple(newIds);
-        }
-        onOpenChange(false);
-      },
-      deselectAll: () => {
-        clearSelection();
-        onOpenChange(false);
-      },
-      hasTwoSelected: () => selectedPartIds.size === 2,
-      hasSelection: () => selectedPartIds.size > 0,
-      hasParts: () => parts.length > 0,
-      canUndo: () => undoStack.length > 0,
-      canRedo: () => redoStack.length > 0,
       // Assembly actions
       createPartDef: () => {
         const partId = Array.from(selectedPartIds)[0];
@@ -281,12 +217,11 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
             if (instance) select(instance.id);
           }
         }
-        onOpenChange(false);
+        dismiss();
       },
       insertInstance: () => {
-        // Dispatch event to open the insert instance dialog
         window.dispatchEvent(new CustomEvent("vcad:insert-instance"));
-        onOpenChange(false);
+        dismiss();
       },
       addJoint: (kind) => {
         const instanceIds = Array.from(selectedPartIds).filter((id) =>
@@ -302,14 +237,14 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
           });
           select(`joint:${jointId}`);
         }
-        onOpenChange(false);
+        dismiss();
       },
       setGroundInstance: () => {
         const instanceId = Array.from(selectedPartIds)[0];
         if (instanceId && document.instances?.some((i) => i.id === instanceId)) {
           setGroundInstance(instanceId);
         }
-        onOpenChange(false);
+        dismiss();
       },
       hasOnePartSelected: () =>
         selectedPartIds.size === 1 && parts.some((p) => selectedPartIds.has(p.id)),
@@ -327,57 +262,45 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
         );
         return instanceIds.length === 1;
       },
-      // Modify operations - dispatch events to open dialogs
+      // Modify operations
       applyFillet: () => {
         window.dispatchEvent(new CustomEvent("vcad:apply-fillet"));
-        onOpenChange(false);
+        dismiss();
       },
       applyChamfer: () => {
         window.dispatchEvent(new CustomEvent("vcad:apply-chamfer"));
-        onOpenChange(false);
+        dismiss();
       },
       applyShell: () => {
         window.dispatchEvent(new CustomEvent("vcad:apply-shell"));
-        onOpenChange(false);
+        dismiss();
       },
       applyLinearPattern: () => {
         window.dispatchEvent(new CustomEvent("vcad:apply-pattern"));
-        onOpenChange(false);
+        dismiss();
       },
       applyCircularPattern: () => {
         window.dispatchEvent(new CustomEvent("vcad:apply-pattern"));
-        onOpenChange(false);
+        dismiss();
       },
       applyMirror: () => {
         window.dispatchEvent(new CustomEvent("vcad:apply-mirror"));
-        onOpenChange(false);
+        dismiss();
       },
     });
   }, [
     addJoint,
     addPrimitive,
-    applyBoolean,
-    clearSelection,
     createPartDef,
     document,
-    duplicateParts,
     onAboutOpen,
     onOpenChange,
     parts,
-    redo,
-    redoStack.length,
-    removePart,
     scene,
     select,
-    selectMultiple,
     selectedPartIds,
     setGroundInstance,
     setTransformMode,
-    toggleFeatureTree,
-    toggleGridSnap,
-    toggleWireframe,
-    undo,
-    undoStack.length,
   ]);
 
   // AI generation handler (inner function that does the actual work)

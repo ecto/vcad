@@ -6,7 +6,7 @@
  */
 
 import type { Document, Joint, Transform3D, Vec3 } from "@vcad/ir";
-import { identityTransform } from "@vcad/ir";
+import { identityTransform, vec3Add, vec3Sub, vec3Scale, vec3Normalize } from "@vcad/ir";
 
 /** Convert degrees to radians. */
 function degToRad(deg: number): number {
@@ -77,28 +77,6 @@ function matrixToEuler(m: number[][]): Vec3 {
       z: 0,
     };
   }
-}
-
-/** Add two Vec3. */
-function vec3Add(a: Vec3, b: Vec3): Vec3 {
-  return { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z };
-}
-
-/** Subtract two Vec3. */
-function vec3Sub(a: Vec3, b: Vec3): Vec3 {
-  return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
-}
-
-/** Scale a Vec3. */
-function vec3Scale(v: Vec3, s: number): Vec3 {
-  return { x: v.x * s, y: v.y * s, z: v.z * s };
-}
-
-/** Normalize a Vec3. */
-function vec3Normalize(v: Vec3): Vec3 {
-  const len = Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
-  if (len < 1e-10) return { x: 0, y: 0, z: 1 };
-  return vec3Scale(v, 1 / len);
 }
 
 /** Create rotation matrix from axis-angle (axis should be normalized). */
