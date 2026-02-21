@@ -170,6 +170,47 @@ const SCENE_CACHE_MAX = 10;
 
 /** CSG evaluation engine backed by vcad-kernel (WASM). */
 export class Engine {
+  /** Enable timing logs. Auto-detected from Vite/Node env, or set manually. */
+  static DEV: boolean = (() => {
+    try {
+      // Vite injects import.meta.env at build time
+      return !!(import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV;
+    } catch {
+      return typeof process !== "undefined" && process.env?.NODE_ENV !== "production";
+    }
+  })();
+
+  /** Log full timing breakdown to console. */
+  static logTiming(timing: import("./mesh.js").EvalTimingData, workerMs?: number): void {
+    // Extract node entries — serde_wasm_bindgen may produce Map or Object
+    const nodeEntries: [string, import("./mesh.js").NodeTimingData][] =
+      timing.nodes instanceof Map
+        ? [...timing.nodes.entries()]
+        : Object.entries(timing.nodes);
+
+    // Sort by eval_ms descending
+    nodeEntries.sort((a, b) => b[1].eval_ms - a[1].eval_ms);
+
+    // One-line summary: total + phases
+    const summary = [
+      `total:${timing.total_ms.toFixed(0)}ms`,
+      timing.parse_ms != null ? `parse:${timing.parse_ms.toFixed(0)}ms` : null,
+      `tess:${timing.tessellate_ms.toFixed(0)}ms`,
+      timing.serialize_ms != null ? `ser:${timing.serialize_ms.toFixed(0)}ms` : null,
+      timing.clash_ms > 0.5 ? `clash:${timing.clash_ms.toFixed(0)}ms` : null,
+      timing.assembly_ms > 0.5 ? `asm:${timing.assembly_ms.toFixed(0)}ms` : null,
+      workerMs != null ? `worker:${workerMs.toFixed(0)}ms` : null,
+    ].filter(Boolean).join(" ");
+
+    // Per-node breakdown: show all ops >1ms
+    const ops = nodeEntries
+      .filter(([, n]) => n.eval_ms > 1)
+      .map(([id, n]) => `${n.op}#${id}:${n.eval_ms.toFixed(0)}ms${n.mesh_ms > 0.5 ? `(mesh:${n.mesh_ms.toFixed(0)})` : ""}`)
+      .join(" > ");
+
+    console.debug(`[ENGINE] ${summary}${ops ? `\n         ${ops}` : ""}`);
+  }
+
   private kernel: KernelModule;
 
   /** Persistent cache for evaluated solids */
@@ -362,36 +403,9 @@ export class Engine {
 
         if (e.data.type === "result") {
           const scene = e.data.scene as EvaluatedScene;
-          // Log timing if available
-          const timing = scene.timing;
-          if (timing) {
-            const parts: string[] = [`${timing.total_ms.toFixed(0)}ms`];
-            // Find the slowest node op
-            // serde_wasm_bindgen may serialize HashMap as a JS Map or plain Object
-            const nodeValues: { op: string; eval_ms: number; mesh_ms: number }[] =
-              timing.nodes instanceof Map
-                ? [...timing.nodes.values()]
-                : Object.values(timing.nodes);
-            const slowest = nodeValues.reduce(
-              (a, b) => (b.eval_ms > a.eval_ms ? b : a),
-              nodeValues[0],
-            );
-            if (slowest) {
-              parts.push(
-                `${slowest.op.toLowerCase()}:${slowest.eval_ms.toFixed(0)}ms`,
-              );
-            }
-            if (timing.tessellate_ms > 0.5) {
-              parts.push(`tess:${timing.tessellate_ms.toFixed(0)}ms`);
-            }
-            if (timing.serialize_ms != null && timing.serialize_ms > 0.5) {
-              parts.push(`ser:${timing.serialize_ms.toFixed(0)}ms`);
-            }
-            const workerMs = e.data.workerTotalMs as number | undefined;
-            if (workerMs != null) {
-              parts.push(`worker:${workerMs.toFixed(0)}ms`);
-            }
-            console.debug(`[ENGINE] Eval ${parts.join(" | ")}`);
+          // Log timing in dev mode
+          if (scene.timing && Engine.DEV) {
+            Engine.logTiming(scene.timing, e.data.workerTotalMs as number | undefined);
           }
           resolve(scene);
         } else if (e.data.type === "error") {
