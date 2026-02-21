@@ -3,7 +3,7 @@ import type { Document } from "@vcad/ir";
 import type { PartInfo } from "@vcad/core";
 
 // Coil spring — circular profile swept along a helix path
-// Y is UP, Z is toward camera
+// Z is UP (standard CAD convention)
 //
 // LEARNING POINTS:
 // - Sketch2D with Arc segments to define circular wire cross-section

@@ -32,7 +32,7 @@ const document: Document = {
     // Position at bolt circle radius (35mm from center)
     "11": { id: 11, name: "Bolt Hole at Radius", op: { type: "Translate", child: 10, offset: { x: 35, y: -5, z: 0 } } },
 
-    // CircularPattern: replicate bolt hole 6 times around Y axis
+    // CircularPattern: replicate bolt hole 6 times around Z axis
     "12": {
       id: 12,
       name: "Bolt Hole Pattern",
@@ -40,7 +40,7 @@ const document: Document = {
         type: "CircularPattern",
         child: 11,
         axis_origin: { x: 0, y: 0, z: 0 },
-        axis_dir: { x: 0, y: 1, z: 0 },  // Y-up rotation axis
+        axis_dir: { x: 0, y: 0, z: 1 },  // Z-up rotation axis
         count: 6,                         // 6 holes
         angle_deg: 360,                   // Full circle (60° between holes)
       },

@@ -153,13 +153,13 @@ function computeLevelQuaternion(
   // Forward direction (camera looks down -Z in its local space)
   _tempForward.subVectors(target, eye).normalize();
 
-  // Use world Z as reference up (Z-up convention), unless looking nearly straight up/down
-  const worldUp = new Vector3(0, 0, 1);
+  // Standard Three.js Y-up (rotation group handles kernel Z-up → display Y-up)
+  const worldUp = new Vector3(0, 1, 0);
   const dot = Math.abs(_tempForward.dot(worldUp));
 
   if (dot > 0.999) {
-    // Looking straight up or down Z - use world Y as the reference
-    _tempRight.crossVectors(new Vector3(0, 1, 0), _tempForward).normalize();
+    // Looking straight up or down Y - use world Z as the reference
+    _tempRight.crossVectors(new Vector3(0, 0, 1), _tempForward).normalize();
   } else {
     // Normal case: right = forward × worldUp
     _tempRight.crossVectors(_tempForward, worldUp).normalize();
@@ -205,11 +205,8 @@ export function ViewportContent() {
   const { camera, invalidate } = useThree();
   const { isDark } = useTheme();
 
-  // Set camera up vector for Z-up convention
-  useEffect(() => {
-    camera.up.set(0, 0, 1);
-    camera.lookAt(0, 0, 0);
-  }, [camera]);
+  // Camera uses standard Three.js Y-up; the rotation group on geometry handles Z-up → Y-up
+  // (no need to change camera.up from default [0,1,0])
 
   // Camera settings from store
   const cameraSettings = useCameraSettingsStore();
@@ -244,7 +241,7 @@ export function ViewportContent() {
   const goalQuatRef = useRef(new Quaternion());
 
   // Initial camera state for reset
-  const INITIAL_POSITION = new Vector3(50, -50, 50);
+  const INITIAL_POSITION = new Vector3(50, 50, 50);
   const INITIAL_TARGET = new Vector3(0, 0, 0);
   const INITIAL_DISTANCE = INITIAL_POSITION.distanceTo(INITIAL_TARGET);
 
@@ -457,9 +454,7 @@ export function ViewportContent() {
 
       const target = controls.target;
       const offset = offsetRef.current.subVectors(camera.position, target);
-      // Swizzle Z-up → Y-up for Spherical (which assumes Y-up)
-      const yUpOffset = new Vector3(offset.x, offset.z, -offset.y);
-      const spherical = sphericalRef.current.setFromVector3(yUpOffset);
+      const spherical = sphericalRef.current.setFromVector3(offset);
 
       // Apply fraction of velocity
       spherical.theta += vel.theta * dampingFactor;
@@ -472,9 +467,7 @@ export function ViewportContent() {
       vel.theta *= friction;
       vel.phi *= friction;
 
-      // Convert back and swizzle Y-up → Z-up
-      yUpOffset.setFromSpherical(spherical);
-      offset.set(yUpOffset.x, -yUpOffset.z, yUpOffset.y);
+      offset.setFromSpherical(spherical);
       camera.position.copy(target).add(offset);
       camera.lookAt(target);
       controls.update();
@@ -563,17 +556,13 @@ export function ViewportContent() {
         // Immediate orbit without momentum
         const target = controls.target;
         const offset = offsetRef.current.subVectors(camera.position, target);
-        // Swizzle Z-up → Y-up for Spherical
-        const yUpOff = new Vector3(offset.x, offset.z, -offset.y);
-        const spherical = sphericalRef.current.setFromVector3(yUpOff);
+        const spherical = sphericalRef.current.setFromVector3(offset);
 
         spherical.theta += dx * rotateSpeed;
         spherical.phi += dy * rotateSpeed;
         spherical.phi = Math.max(0.01, Math.min(Math.PI - 0.01, spherical.phi));
 
-        // Convert back Y-up → Z-up
-        yUpOff.setFromSpherical(spherical);
-        offset.set(yUpOff.x, -yUpOff.z, yUpOff.y);
+        offset.setFromSpherical(spherical);
         camera.position.copy(target).add(offset);
         camera.lookAt(target);
         scheduleUpdate();
@@ -725,15 +714,17 @@ export function ViewportContent() {
   // Snap view: animate camera to predefined positions
   useEffect(() => {
     const CAMERA_DISTANCE = 80;
+    // Snap views in Three.js Y-up display space
+    // Kernel→display: (x,y,z) → (x, z, -y)
     const SNAP_VIEWS: Record<string, [number, number, number]> = {
-      front: [0, -CAMERA_DISTANCE, 0],   // Looking along +Y at XZ plane
-      back: [0, CAMERA_DISTANCE, 0],
+      front: [0, 0, CAMERA_DISTANCE],     // Kernel +Y → display -Z, so camera at +Z looks at front
+      back: [0, 0, -CAMERA_DISTANCE],
       right: [CAMERA_DISTANCE, 0, 0],
       left: [-CAMERA_DISTANCE, 0, 0],
-      top: [0, 0, CAMERA_DISTANCE],       // Looking down Z
-      bottom: [0, 0, -CAMERA_DISTANCE],   // Looking up Z
-      iso: [50, -50, 50],
-      hero: [60, -60, 45], // Dramatic presentation angle for Z-up
+      top: [0, CAMERA_DISTANCE, 0],       // Kernel +Z → display +Y, looking down
+      bottom: [0, -CAMERA_DISTANCE, 0],
+      iso: [50, 50, 50],
+      hero: [60, 45, 60],
     };
 
     const handleSnapView = (e: CustomEvent<string>) => {
@@ -894,8 +885,7 @@ export function ViewportContent() {
       {/* Grid */}
       <GridPlane />
 
-      {/* Plane gizmo at origin - click to start sketch */}
-      <PlaneGizmo />
+      {/* Plane gizmo at origin - rendered inside Z-up group so kernel planes display correctly */}
 
       {/* Controls - mouse buttons configured by control scheme */}
       <OrbitControls
@@ -967,6 +957,9 @@ export function ViewportContent() {
           {/* Wrap all kernel geometry in Z-up → Y-up rotation so the kernel
               stays in standard CAD Z-up while Three.js renders Y-up */}
           <group rotation={[-Math.PI / 2, 0, 0]}>
+            {/* Plane gizmo at origin - inside rotation group so kernel planes display correctly */}
+            <PlaneGizmo />
+
             {/* Scene meshes - Assembly mode (instances) */}
               {scene?.instances?.map((inst: EvaluatedInstance) => {
                 const instanceSelectionId = getInstanceSelectionId(inst);

@@ -3,7 +3,7 @@ import type { Document, SketchSegment2D } from "@vcad/ir";
 import type { PartInfo } from "@vcad/core";
 
 // Vase shape using Loft between circular profiles at different heights
-// Y is UP - profiles are on XZ planes at different Y positions
+// Z is UP - profiles are on XY planes at different Z positions
 //
 // LEARNING POINTS:
 // - Loft operation: interpolates surface between multiple sketch profiles
@@ -28,17 +28,17 @@ function createCircleProfile(radius: number, segments: number): SketchSegment2D[
 }
 
 // Profile radii create classic vase silhouette:
-//   Bottom (y=0):  15mm - small base
-//   Bulge (y=30):  35mm - widest point
-//   Neck (y=70):   12mm - narrow waist
-//   Lip (y=90):    18mm - flared opening
+//   Bottom (z=0):  15mm - small base
+//   Bulge (z=30):  35mm - widest point
+//   Neck (z=70):   12mm - narrow waist
+//   Lip (z=90):    18mm - flared opening
 const SEGMENTS = 24;
 
 const document: Document = {
   version: "0.1",
   nodes: {
     // === LOFT PROFILES (horizontal slices at different heights) ===
-    // Profile 1: Base (y=0, r=15mm)
+    // Profile 1: Base (z=0, r=15mm)
     "1": {
       id: 1,
       name: "Profile 1: Base (r=15)",
@@ -46,43 +46,43 @@ const document: Document = {
         type: "Sketch2D",
         origin: { x: 0, y: 0, z: 0 },
         x_dir: { x: 1, y: 0, z: 0 },
-        y_dir: { x: 0, y: 0, z: 1 },
+        y_dir: { x: 0, y: 1, z: 0 },
         segments: createCircleProfile(15, SEGMENTS),
       },
     },
-    // Profile 2: Bulge (y=30, r=35mm)
+    // Profile 2: Bulge (z=30, r=35mm)
     "2": {
       id: 2,
       name: "Profile 2: Bulge (r=35)",
       op: {
         type: "Sketch2D",
-        origin: { x: 0, y: 30, z: 0 },
+        origin: { x: 0, y: 0, z: 30 },
         x_dir: { x: 1, y: 0, z: 0 },
-        y_dir: { x: 0, y: 0, z: 1 },
+        y_dir: { x: 0, y: 1, z: 0 },
         segments: createCircleProfile(35, SEGMENTS),
       },
     },
-    // Profile 3: Neck (y=70, r=12mm)
+    // Profile 3: Neck (z=70, r=12mm)
     "3": {
       id: 3,
       name: "Profile 3: Neck (r=12)",
       op: {
         type: "Sketch2D",
-        origin: { x: 0, y: 70, z: 0 },
+        origin: { x: 0, y: 0, z: 70 },
         x_dir: { x: 1, y: 0, z: 0 },
-        y_dir: { x: 0, y: 0, z: 1 },
+        y_dir: { x: 0, y: 1, z: 0 },
         segments: createCircleProfile(12, SEGMENTS),
       },
     },
-    // Profile 4: Lip (y=90, r=18mm)
+    // Profile 4: Lip (z=90, r=18mm)
     "4": {
       id: 4,
       name: "Profile 4: Lip (r=18)",
       op: {
         type: "Sketch2D",
-        origin: { x: 0, y: 90, z: 0 },
+        origin: { x: 0, y: 0, z: 90 },
         x_dir: { x: 1, y: 0, z: 0 },
-        y_dir: { x: 0, y: 0, z: 1 },
+        y_dir: { x: 0, y: 1, z: 0 },
         segments: createCircleProfile(18, SEGMENTS),
       },
     },

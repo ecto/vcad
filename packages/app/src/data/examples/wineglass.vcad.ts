@@ -4,12 +4,12 @@ import type { PartInfo } from "@vcad/core";
 
 // Wine glass created using Revolve operation
 // Profile is on the XY plane (x = radial distance, y = height)
-// Revolved 360 degrees around the Y axis
+// Revolved 360 degrees around the Z axis
 //
 // LEARNING POINTS:
 // - Revolve operation: rotates a 2D profile around an axis
 // - Profile must be a closed loop for solid geometry
-// - Profile X = radial distance, Profile Y = height (when revolving around Y)
+// - Profile X = radial distance, Profile Y = height (when revolving around Z)
 // - Complex profiles can create detailed shapes (base, stem, bowl, rim)
 // - Wall thickness achieved by tracing outer then inner profile edges
 
@@ -188,7 +188,7 @@ const document: Document = {
         type: "Sketch2D",
         origin: { x: 0, y: 0, z: 0 },
         x_dir: { x: 1, y: 0, z: 0 },
-        y_dir: { x: 0, y: 1, z: 0 },
+        y_dir: { x: 0, y: 0, z: 1 },
         segments: createWineGlassProfile(),
       },
     },
@@ -197,12 +197,12 @@ const document: Document = {
     // Rotate profile 360° around Y axis to create solid
     "2": {
       id: 2,
-      name: "Revolve 360° around Y",
+      name: "Revolve 360° around Z",
       op: {
         type: "Revolve",
         sketch: 1,
         axis_origin: { x: 0, y: 0, z: 0 },
-        axis_dir: { x: 0, y: 1, z: 0 },  // Y axis (vertical)
+        axis_dir: { x: 0, y: 0, z: 1 },  // Z axis (vertical)
         angle_deg: 360,                  // Full rotation
       },
     },

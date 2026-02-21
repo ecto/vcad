@@ -23,7 +23,7 @@ const document: Document = {
         type: "Sketch2D",
         origin: { x: 0, y: 0, z: 0 },
         x_dir: { x: 1, y: 0, z: 0 },  // Sketch X = World X
-        y_dir: { x: 0, y: 0, z: 1 },  // Sketch Y = World Z
+        y_dir: { x: 0, y: 1, z: 0 },  // Sketch Y = World Y
         segments: [
           // Closed rectangle (4 line segments)
           { type: "Line", start: { x: -5, y: -1 }, end: { x: 5, y: -1 } },   // Bottom
@@ -35,7 +35,7 @@ const document: Document = {
     },
 
     // === LINE SWEEP WITH TWIST ===
-    // Sweep profile along Y axis with 720° rotation
+    // Sweep profile along Z axis with 720° rotation
     "2": {
       id: 2,
       name: "Twisted Line Sweep",
@@ -45,7 +45,7 @@ const document: Document = {
         path: {
           type: "Line",
           start: { x: 0, y: 0, z: 0 },
-          end: { x: 0, y: 80, z: 0 },  // 80mm vertical path
+          end: { x: 0, y: 0, z: 80 },  // 80mm vertical path
         },
         twist_angle: 4 * Math.PI,  // 720° = 2 full rotations
         scale_start: 1.0,
@@ -56,7 +56,7 @@ const document: Document = {
     // === FINAL TRANSFORMS ===
     "3": { id: 3, name: "Scale", op: { type: "Scale", child: 2, factor: { x: 1, y: 1, z: 1 } } },
     "4": { id: 4, name: "Rotate", op: { type: "Rotate", child: 3, angles: { x: 0, y: 0, z: 0 } } },
-    "5": { id: 5, name: "Twisted Ribbon", op: { type: "Translate", child: 4, offset: { x: 0, y: -40, z: 0 } } },
+    "5": { id: 5, name: "Twisted Ribbon", op: { type: "Translate", child: 4, offset: { x: 0, y: 0, z: -40 } } },
   },
   materials: {
     copper: {
