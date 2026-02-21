@@ -174,7 +174,8 @@ fn evaluate_node(doc: &Document, node_id: NodeId) -> Result<Option<Solid>> {
         | CsgOp::Text2D { .. }
         | CsgOp::Sweep { .. }
         | CsgOp::Loft { .. }
-        | CsgOp::ImportedMesh { .. } => None,
+        | CsgOp::ImportedMesh { .. }
+        | CsgOp::PcbBoard { .. } => None,
     };
 
     Ok(solid)

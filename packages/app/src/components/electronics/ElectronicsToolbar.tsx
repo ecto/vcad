@@ -29,7 +29,7 @@ import {
 } from "@/components/ui/toolbar";
 import { cn } from "@/lib/utils";
 import { useElectronicsStore } from "@/stores/electronics-store";
-import { useDocumentStore } from "@vcad/core";
+import { useDocumentStore, useCoreElectronicsStore, getNodePcb } from "@vcad/core";
 import { useUiStore } from "@vcad/core";
 
 import { SYMBOL_LIBRARY } from "./symbol-library";
@@ -234,22 +234,24 @@ export function ElectronicsToolbar() {
         case "Delete":
         case "Backspace": {
           const sel = useElectronicsStore.getState().selection;
-          if (sel.type === "trace") {
-            removeTrace(sel.idx);
+          const boardNodeId = useCoreElectronicsStore.getState().activeBoardNodeId;
+          if (sel.type === "trace" && boardNodeId != null) {
+            removeTrace(boardNodeId, sel.idx);
             useElectronicsStore.getState().select({ type: "none" });
-          } else if (sel.type === "via") {
-            removeVia(sel.idx);
+          } else if (sel.type === "via" && boardNodeId != null) {
+            removeVia(boardNodeId, sel.idx);
             useElectronicsStore.getState().select({ type: "none" });
-          } else if (sel.type === "footprint") {
-            const pcb = useDocumentStore.getState().document.pcb;
+          } else if (sel.type === "footprint" && boardNodeId != null) {
+            const doc = useDocumentStore.getState().document;
+            const pcb = getNodePcb(doc, boardNodeId);
             if (pcb) {
               const idx = pcb.footprints.findIndex((f) => f.ref === sel.ref);
               if (idx >= 0) {
-                useDocumentStore.getState().removeFootprint(idx);
-                const sch = useDocumentStore.getState().document.schematic;
+                useDocumentStore.getState().removeFootprint(boardNodeId, idx);
+                const sch = doc.schematic;
                 if (sch) {
                   const ci = sch.components.findIndex((c) => c.ref === sel.ref);
-                  if (ci >= 0) useDocumentStore.getState().removeSchematicComponent(ci);
+                  if (ci >= 0) useDocumentStore.getState().removeSchematicComponent(ci, boardNodeId);
                 }
               }
             }
@@ -258,7 +260,7 @@ export function ElectronicsToolbar() {
             const sch = useDocumentStore.getState().document.schematic;
             if (sch) {
               const ci = sch.components.findIndex((c) => c.ref === sel.ref);
-              if (ci >= 0) useDocumentStore.getState().removeSchematicComponent(ci);
+              if (ci >= 0) useDocumentStore.getState().removeSchematicComponent(ci, boardNodeId ?? undefined);
             }
             useElectronicsStore.getState().select({ type: "none" });
           }
@@ -302,20 +304,26 @@ export function ElectronicsToolbar() {
           if (focusedPane === "schematic" && schTool === "place") {
             rotateSchPlacement();
           } else if (focusedPane === "pcb" && selection.type === "footprint") {
-            const pcb = useDocumentStore.getState().document.pcb;
-            if (pcb) {
-              const idx = pcb.footprints.findIndex((f) => f.ref === selection.ref);
-              if (idx >= 0) rotateFootprint(idx, 90);
+            const bNodeId = useCoreElectronicsStore.getState().activeBoardNodeId;
+            if (bNodeId != null) {
+              const pcb = getNodePcb(useDocumentStore.getState().document, bNodeId);
+              if (pcb) {
+                const idx = pcb.footprints.findIndex((f) => f.ref === selection.ref);
+                if (idx >= 0) rotateFootprint(bNodeId, idx, 90);
+              }
             }
           }
           break;
         case "f":
         case "F":
           if (focusedPane === "pcb" && selection.type === "footprint") {
-            const pcb = useDocumentStore.getState().document.pcb;
-            if (pcb) {
-              const idx = pcb.footprints.findIndex((f) => f.ref === selection.ref);
-              if (idx >= 0) flipFootprint(idx);
+            const bNodeId = useCoreElectronicsStore.getState().activeBoardNodeId;
+            if (bNodeId != null) {
+              const pcb = getNodePcb(useDocumentStore.getState().document, bNodeId);
+              if (pcb) {
+                const idx = pcb.footprints.findIndex((f) => f.ref === selection.ref);
+                if (idx >= 0) flipFootprint(bNodeId, idx);
+              }
             }
           } else if (focusedPane === "pcb") {
             setPcbActiveLayer("FCu");

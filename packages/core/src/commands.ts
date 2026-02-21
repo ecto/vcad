@@ -52,6 +52,10 @@ export interface CommandActions {
   applyLinearPattern?: () => void;
   applyCircularPattern?: () => void;
   applyMirror?: () => void;
+  // Electronics (optional)
+  enterElectronics?: () => void;
+  exitElectronics?: () => void;
+  hasPcb?: () => boolean;
 }
 
 const noop = () => {};
@@ -374,6 +378,27 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       keywords: ["mirror", "reflect", "flip", "symmetry"],
       action: actions.applyMirror,
       enabled: enabledOnePart,
+    });
+  }
+
+  // Electronics commands
+  if (actions.enterElectronics) {
+    cmds.push({
+      id: "enter-electronics",
+      label: "Open Electronics",
+      icon: "CircuitBoard",
+      keywords: ["electronics", "pcb", "schematic", "board", "ecad"],
+      action: actions.enterElectronics,
+      enabled: actions.hasPcb ?? alwaysFalse,
+    });
+  }
+  if (actions.exitElectronics) {
+    cmds.push({
+      id: "exit-electronics",
+      label: "Close Electronics",
+      icon: "X",
+      keywords: ["electronics", "close", "exit", "pcb"],
+      action: actions.exitElectronics,
     });
   }
 

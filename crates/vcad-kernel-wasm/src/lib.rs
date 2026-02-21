@@ -2935,6 +2935,10 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
         vcad_ir::CsgOp::ImportedMesh { .. } => {
             Err(JsError::new("ImportedMesh not supported in compact IR evaluation - use evaluateDocument"))
         }
+
+        vcad_ir::CsgOp::PcbBoard { .. } => {
+            Err(JsError::new("PcbBoard not supported in compact IR evaluation - use evaluateDocument"))
+        }
     }
 }
 

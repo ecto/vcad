@@ -488,6 +488,11 @@ pub enum CsgOp {
         /// Path to the STEP file (relative or absolute).
         path: String,
     },
+    /// PCB board — evaluates the board's outline + components to 3D geometry.
+    /// The `board` field contains the full PCB design data (same ecad::Pcb type).
+    PcbBoard {
+        board: Box<crate::ecad::Pcb>,
+    },
 }
 
 /// A node in the IR graph.
@@ -823,7 +828,7 @@ pub struct Document {
     /// Schematic sheet for electronics design.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schematic: Option<ecad::SchematicSheet>,
-    /// PCB layout for electronics design.
+    /// Legacy PCB field — migrated to PcbBoard node on load.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pcb: Option<ecad::Pcb>,
 }

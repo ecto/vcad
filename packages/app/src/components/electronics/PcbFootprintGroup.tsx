@@ -6,6 +6,7 @@ import type { Footprint, PcbLayer } from "@vcad/ir";
 import type { LayerConfig } from "@/stores/electronics-store";
 import { PcbPadShape } from "./PcbPadShape";
 import { useElectronicsStore } from "@/stores/electronics-store";
+import { useDocumentStore, useCoreElectronicsStore, getNodePcb } from "@vcad/core";
 
 interface PcbFootprintGroupProps {
   footprint: Footprint;
@@ -34,9 +35,12 @@ export function PcbFootprintGroup({
   const setHoveredNet = useElectronicsStore((s) => s.setHoveredNet);
   const inferLayer = useElectronicsStore((s) => s.inferLayerFromPad);
   const startRoute = useElectronicsStore((s) => s.startRoute);
+  const finishRoute = useElectronicsStore((s) => s.finishRoute);
   const pcbTool = useElectronicsStore((s) => s.pcbTool);
   const selection = useElectronicsStore((s) => s.selection);
   const hoveredNet = useElectronicsStore((s) => s.hoveredNet);
+  const routeActive = useElectronicsStore((s) => s.routeActive);
+  const routeStartPad = useElectronicsStore((s) => s.routeStartPad);
 
   // Check if a net is active (selected or hovered)
   const activeNet =
@@ -165,7 +169,38 @@ export function PcbFootprintGroup({
               // Principle 5: layer follows intent
               inferLayer(pad.layers);
               if (pcbTool === "route" && pad.net) {
-                startRoute(footprint.ref, pad.number, pad.net);
+                if (routeActive && routeStartPad && routeStartPad.net === pad.net) {
+                  // Commit route: create trace from start pad to this destination pad
+                  const boardNodeId = useCoreElectronicsStore.getState().activeBoardNodeId;
+                  const doc = useDocumentStore.getState().document;
+                  const pcb = boardNodeId != null ? getNodePcb(doc, boardNodeId) : null;
+                  if (pcb && boardNodeId != null) {
+                    const startFp = pcb.footprints.find((f) => f.ref === routeStartPad.fpRef);
+                    const startPad = startFp?.pads.find((p) => p.number === routeStartPad.padNum);
+                    if (startFp && startPad) {
+                      const startPos = {
+                        x: startFp.position.x + startPad.position.x,
+                        y: startFp.position.y + startPad.position.y,
+                      };
+                      const endPos = {
+                        x: footprint.position.x + pad.position.x,
+                        y: footprint.position.y + pad.position.y,
+                      };
+                      const activeLayer = useElectronicsStore.getState().pcbActiveLayer;
+                      const traceWidth = pcb.rules.defaultRules.traceWidth;
+                      useDocumentStore.getState().addTrace(boardNodeId, {
+                        start: { x: startPos.x, y: startPos.y, z: 0 },
+                        end: { x: endPos.x, y: endPos.y, z: 0 },
+                        width: traceWidth,
+                        layer: activeLayer,
+                        net: pad.net,
+                      });
+                    }
+                  }
+                  finishRoute();
+                } else {
+                  startRoute(footprint.ref, pad.number, pad.net);
+                }
               } else if (pad.net) {
                 select({ type: "pad", fpRef: footprint.ref, padNum: pad.number, net: pad.net });
               }

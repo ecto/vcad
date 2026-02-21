@@ -12,7 +12,7 @@
  */
 
 import { useRef, useCallback, useState, useMemo } from "react";
-import { useDocumentStore } from "@vcad/core";
+import { useDocumentStore, useCoreElectronicsStore, getNodePcb } from "@vcad/core";
 import type { Footprint, Vec2 } from "@vcad/ir";
 import { useElectronicsStore } from "@/stores/electronics-store";
 import { useTheme } from "@/hooks/useTheme";
@@ -90,7 +90,9 @@ export function PcbCanvas() {
   const svgRef = useRef<SVGSVGElement>(null);
   const { isDark } = useTheme();
 
-  const pcb = useDocumentStore((s) => s.document.pcb);
+  const activeBoardNodeId = useCoreElectronicsStore((s) => s.activeBoardNodeId);
+  const pcbDoc = useDocumentStore((s) => s.document);
+  const pcb = activeBoardNodeId != null ? getNodePcb(pcbDoc, activeBoardNodeId) : null;
   const selection = useElectronicsStore((s) => s.selection);
   const hoveredNet = useElectronicsStore((s) => s.hoveredNet);
   const netlist = useElectronicsStore((s) => s.netlist);
@@ -103,14 +105,25 @@ export function PcbCanvas() {
   const routePreview = useElectronicsStore((s) => s.routePreview);
   const routeStartPad = useElectronicsStore((s) => s.routeStartPad);
 
+  const pcbTool = useElectronicsStore((s) => s.pcbTool);
+  const pcbDragging = useElectronicsStore((s) => s.pcbDragging);
+  const pcbSnapToGrid = useElectronicsStore((s) => s.pcbSnapToGrid);
+
   const select = useElectronicsStore((s) => s.select);
   const setHoveredNet = useElectronicsStore((s) => s.setHoveredNet);
   const adjustZoom = useElectronicsStore((s) => s.adjustPcbZoom);
   const adjustPan = useElectronicsStore((s) => s.adjustPcbPan);
   const startRouteFromRatsnest = useElectronicsStore((s) => s.startRouteFromRatsnest);
   const updateRoutePreview = useElectronicsStore((s) => s.updateRoutePreview);
+  const startPcbDrag = useElectronicsStore((s) => s.startPcbDrag);
+  const cancelPcbDrag = useElectronicsStore((s) => s.cancelPcbDrag);
+
+  const moveFootprint = useDocumentStore((s) => s.moveFootprint);
+  const removeTrace = useDocumentStore((s) => s.removeTrace);
+  const removeVia = useDocumentStore((s) => s.removeVia);
 
   const [dragging, setDragging] = useState(false);
+  const [fpDragPreview, setFpDragPreview] = useState<{ x: number; y: number } | null>(null);
   const dragStart = useRef<{ x: number; y: number } | null>(null);
 
   // Active net
@@ -145,6 +158,22 @@ export function PcbCanvas() {
     [adjustZoom],
   );
 
+  /** Convert screen coords to PCB coords */
+  const screenToPcb = useCallback(
+    (e: { clientX: number; clientY: number }) => {
+      if (!svgRef.current) return { x: 0, y: 0 };
+      const rect = svgRef.current.getBoundingClientRect();
+      let x = (e.clientX - rect.left - 200) / zoom - pan.x;
+      let y = (e.clientY - rect.top - 200) / zoom - pan.y;
+      if (pcbSnapToGrid) {
+        x = Math.round(x / pcbGridSize) * pcbGridSize;
+        y = Math.round(y / pcbGridSize) * pcbGridSize;
+      }
+      return { x, y };
+    },
+    [zoom, pan, pcbSnapToGrid, pcbGridSize],
+  );
+
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
       if (e.button === 1 || (e.button === 0 && e.altKey)) {
@@ -152,9 +181,30 @@ export function PcbCanvas() {
         setDragging(true);
         dragStart.current = { x: e.clientX, y: e.clientY };
         (e.target as HTMLElement).setPointerCapture(e.pointerId);
+        return;
+      }
+
+      // Move tool: start footprint drag
+      if (e.button === 0 && pcbTool === "move" && pcb) {
+        const pos = screenToPcb(e);
+        // Hit-test footprints (reverse order for top-most)
+        for (let i = pcb.footprints.length - 1; i >= 0; i--) {
+          const fp = pcb.footprints[i]!;
+          // Simple bounding box hit test
+          const halfW = 5, halfH = 5; // approximate footprint size
+          if (
+            pos.x >= fp.position.x - halfW && pos.x <= fp.position.x + halfW &&
+            pos.y >= fp.position.y - halfH && pos.y <= fp.position.y + halfH
+          ) {
+            startPcbDrag(i, fp.position);
+            setFpDragPreview(fp.position);
+            (e.target as HTMLElement).setPointerCapture(e.pointerId);
+            return;
+          }
+        }
       }
     },
-    [],
+    [pcbTool, pcb, screenToPcb, startPcbDrag],
   );
 
   const onPointerMove = useCallback(
@@ -167,26 +217,55 @@ export function PcbCanvas() {
         return;
       }
 
+      // Footprint drag preview
+      if (pcbDragging) {
+        const pos = screenToPcb(e);
+        setFpDragPreview(pos);
+        return;
+      }
+
       // Route preview
       if (routeActive && svgRef.current) {
-        const rect = svgRef.current.getBoundingClientRect();
-        const mx = (e.clientX - rect.left - 200) / zoom - pan.x;
-        const my = (e.clientY - rect.top - 200) / zoom - pan.y;
-        updateRoutePreview([{ x: mx, y: my }]);
+        const pos = screenToPcb(e);
+        updateRoutePreview([pos]);
       }
     },
-    [dragging, zoom, adjustPan, routeActive, pan, updateRoutePreview],
+    [dragging, zoom, adjustPan, routeActive, updateRoutePreview, pcbDragging, screenToPcb],
   );
 
   const onPointerUp = useCallback(() => {
-    setDragging(false);
-    dragStart.current = null;
-  }, []);
+    // Finish pan
+    if (dragging) {
+      setDragging(false);
+      dragStart.current = null;
+      return;
+    }
+
+    // Finish footprint drag
+    if (pcbDragging && fpDragPreview && activeBoardNodeId != null) {
+      moveFootprint(activeBoardNodeId, pcbDragging.fpIdx, { x: fpDragPreview.x, y: fpDragPreview.y, z: 0 });
+      cancelPcbDrag();
+      setFpDragPreview(null);
+    }
+  }, [dragging, pcbDragging, fpDragPreview, moveFootprint, cancelPcbDrag, activeBoardNodeId]);
+
+  const initSchematic = useDocumentStore((s) => s.initSchematic);
+  const initPcb = useDocumentStore((s) => s.initPcb);
 
   if (!pcb) {
     return (
-      <div className="flex items-center justify-center h-full text-text-muted text-sm">
-        No PCB data
+      <div className="flex flex-col items-center justify-center h-full gap-3">
+        <span className="text-text-muted text-sm">No PCB data</span>
+        <button
+          className="px-3 py-1.5 text-xs bg-accent text-white rounded hover:bg-accent/90 transition-colors"
+          onClick={() => {
+            initPcb();
+            const doc = useDocumentStore.getState().document;
+            if (!doc.schematic) initSchematic();
+          }}
+        >
+          New Circuit
+        </button>
       </div>
     );
   }
@@ -284,7 +363,11 @@ export function PcbCanvas() {
               }
               onClick={(e) => {
                 e.stopPropagation();
-                select({ type: "trace", idx: i, net: trace.net });
+                if (pcbTool === "delete" && activeBoardNodeId != null) {
+                  removeTrace(activeBoardNodeId, i);
+                } else {
+                  select({ type: "trace", idx: i, net: trace.net });
+                }
               }}
               onPointerEnter={() => setHoveredNet(trace.net)}
               onPointerLeave={() => setHoveredNet(null)}
@@ -299,7 +382,11 @@ export function PcbCanvas() {
             className="cursor-pointer"
             onClick={(e) => {
               e.stopPropagation();
-              select({ type: "via", idx: i, net: via.net });
+              if (pcbTool === "delete" && activeBoardNodeId != null) {
+                removeVia(activeBoardNodeId, i);
+              } else {
+                select({ type: "via", idx: i, net: via.net });
+              }
             }}
             onPointerEnter={() => setHoveredNet(via.net)}
             onPointerLeave={() => setHoveredNet(null)}
@@ -326,15 +413,22 @@ export function PcbCanvas() {
         ))}
 
         {/* Footprints */}
-        {pcb.footprints.map((fp, i) => (
-          <PcbFootprintGroup
-            key={`fp-${i}`}
-            footprint={fp}
-            layers={pcbLayers}
-            highlight={activeFootprintRef === fp.ref}
-            accentColor={accentColor}
-          />
-        ))}
+        {pcb.footprints.map((fp, i) => {
+          // Show dragged footprint at preview position
+          const displayFp = (pcbDragging?.fpIdx === i && fpDragPreview)
+            ? { ...fp, position: fpDragPreview }
+            : fp;
+          return (
+            <g key={`fp-${i}`} opacity={pcbDragging?.fpIdx === i ? 0.7 : 1}>
+              <PcbFootprintGroup
+                footprint={displayFp}
+                layers={pcbLayers}
+                highlight={activeFootprintRef === fp.ref}
+                accentColor={accentColor}
+              />
+            </g>
+          );
+        })}
 
         {/* DRC markers */}
         {drcViolations.map((v, i) => (

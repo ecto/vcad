@@ -20,6 +20,12 @@ import type {
   PostProcessing,
   CameraPreset,
   TextAlignment,
+  SchematicComponent,
+  SchematicWire,
+  SchematicLabel,
+  SchematicJunction,
+  Footprint,
+  Pcb,
 } from "@vcad/ir";
 import { createDocument, identityTransform } from "@vcad/ir";
 import type {
@@ -39,6 +45,7 @@ import type {
   CircularPatternPartInfo,
   MirrorPartInfo,
   TextPartInfo,
+  PcbBoardPartInfo,
   SketchPlane,
 } from "../types.js";
 import {
@@ -253,20 +260,20 @@ export interface DocumentState {
 
   // Electronics (ECAD) mutations
   initSchematic: (title?: string) => void;
-  initPcb: () => void;
+  initPcb: () => NodeId;
   moveSchematicComponent: (idx: number, position: Vec3) => void;
-  moveFootprint: (idx: number, position: Vec3) => void;
-  rotateFootprint: (idx: number, angleDeg: number) => void;
-  flipFootprint: (idx: number) => void;
-  addTrace: (trace: {
+  moveFootprint: (nodeId: NodeId, idx: number, position: Vec3) => void;
+  rotateFootprint: (nodeId: NodeId, idx: number, angleDeg: number) => void;
+  flipFootprint: (nodeId: NodeId, idx: number) => void;
+  addTrace: (nodeId: NodeId, trace: {
     start: Vec3;
     end: Vec3;
     width: number;
     layer: string;
     net: string;
   }) => void;
-  removeTrace: (idx: number) => void;
-  addVia: (via: {
+  removeTrace: (nodeId: NodeId, idx: number) => void;
+  addVia: (nodeId: NodeId, via: {
     position: Vec3;
     diameter: number;
     drill: number;
@@ -274,6 +281,21 @@ export interface DocumentState {
     endLayer: string;
     net: string;
   }) => void;
+  removeVia: (nodeId: NodeId, idx: number) => void;
+
+  // Schematic editing mutations
+  addSchematicComponent: (comp: SchematicComponent, boardNodeId?: NodeId) => void;
+  removeSchematicComponent: (idx: number, boardNodeId?: NodeId) => void;
+  updateSchematicComponent: (idx: number, updates: Partial<SchematicComponent>, boardNodeId?: NodeId) => void;
+  addSchematicWire: (wire: SchematicWire) => void;
+  removeSchematicWire: (idx: number) => void;
+  addSchematicLabel: (label: SchematicLabel) => void;
+  removeSchematicLabel: (idx: number) => void;
+  addSchematicJunction: (junction: SchematicJunction) => void;
+
+  // PCB editing mutations
+  addFootprint: (nodeId: NodeId, fp: Footprint) => void;
+  removeFootprint: (nodeId: NodeId, idx: number) => void;
 }
 
 function makeNode(id: NodeId, name: string | null, op: CsgOp): Node {
@@ -287,6 +309,22 @@ function buildPartIndex(parts: PartInfo[]): Map<string, PartInfo> {
     index.set(part.id, part);
   }
   return index;
+}
+
+/** Get a PcbBoard node's Pcb data by node ID. */
+export function getNodePcb(doc: Document, nodeId: NodeId): Pcb | null {
+  const node = doc.nodes[String(nodeId)];
+  if (node?.op.type === "PcbBoard") return (node.op as { type: "PcbBoard"; board: Pcb }).board;
+  return null;
+}
+
+/** Find all PcbBoard node IDs in the document. */
+export function getPcbNodeIds(doc: Document): NodeId[] {
+  const ids: NodeId[] = [];
+  for (const [, node] of Object.entries(doc.nodes)) {
+    if (node.op.type === "PcbBoard") ids.push(node.id);
+  }
+  return ids;
 }
 
 function snapshot(state: DocumentState, actionName: string): Snapshot {
@@ -916,12 +954,61 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   loadDocument: (file) => {
     const parts = file.parts ?? [];
+    let nextNodeId = file.nextNodeId ?? 1;
+
+    // Migrate legacy Document.pcb → PcbBoard DAG node with transform chain
+    const doc = file.document as Document & { pcb?: Pcb };
+    if (doc.pcb && getPcbNodeIds(doc).length === 0) {
+      const boardNodeId = nextNodeId++;
+      const scaleId = nextNodeId++;
+      const rotateId = nextNodeId++;
+      const translateId = nextNodeId++;
+      doc.nodes[String(boardNodeId)] = {
+        id: boardNodeId,
+        name: null,
+        op: { type: "PcbBoard", board: doc.pcb } as any,
+      };
+      doc.nodes[String(scaleId)] = {
+        id: scaleId,
+        name: null,
+        op: { type: "Scale", child: boardNodeId, factor: { x: 1, y: 1, z: 1 } } as any,
+      };
+      doc.nodes[String(rotateId)] = {
+        id: rotateId,
+        name: null,
+        op: { type: "Rotate", child: scaleId, angles: { x: 0, y: 0, z: 0 } } as any,
+      };
+      doc.nodes[String(translateId)] = {
+        id: translateId,
+        name: "PCB Board",
+        op: { type: "Translate", child: rotateId, offset: { x: 0, y: 0, z: 0 } } as any,
+      };
+      doc.roots.push({ root: translateId, material: "__pcb_fr4__" });
+      if (!doc.materials["__pcb_fr4__"]) {
+        doc.materials["__pcb_fr4__"] = {
+          color: [0.05, 0.35, 0.15],
+          roughness: 0.6,
+          metallic: 0.0,
+        } as any;
+      }
+      parts.push({
+        id: `pcb-board-${boardNodeId}`,
+        name: "PCB Board",
+        kind: "pcb-board",
+        boardNodeId,
+        scaleNodeId: scaleId,
+        rotateNodeId: rotateId,
+        translateNodeId: translateId,
+      } as PcbBoardPartInfo);
+      delete doc.pcb;
+    }
+
     set({
-      document: file.document,
+      document: doc,
       parts,
       partIndex: buildPartIndex(parts),
       consumedParts: file.consumedParts ?? {},
-      nextNodeId: file.nextNodeId ?? 1,
+      nextNodeId,
       nextPartNum: file.nextPartNum ?? 1,
       isDirty: false,
       dirtyNodeIds: new Set<NodeId>(),
@@ -2688,29 +2775,15 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const state = get();
     const undoState = pushUndo(state, "Create PCB");
     const newDoc = structuredClone(state.document);
+    const nid = state.nextNodeId;
 
-    // Auto-size from existing footprints or default
-    const fps = newDoc.pcb?.footprints ?? [];
-    let w = 50, h = 30;
-    if (fps.length > 0) {
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      for (const fp of fps) {
-        minX = Math.min(minX, fp.position.x - 5);
-        minY = Math.min(minY, fp.position.y - 5);
-        maxX = Math.max(maxX, fp.position.x + 5);
-        maxY = Math.max(maxY, fp.position.y + 5);
-      }
-      w = Math.max(20, maxX - minX + 10);
-      h = Math.max(15, maxY - minY + 10);
-    }
-
-    newDoc.pcb = {
+    const pcbBoard: Pcb = {
       outline: {
         vertices: [
           { x: 0, y: 0 },
-          { x: w, y: 0 },
-          { x: w, y: h },
-          { x: 0, y: h },
+          { x: 50, y: 0 },
+          { x: 50, y: 30 },
+          { x: 0, y: 30 },
         ],
         thickness: 1.6,
       },
@@ -2720,7 +2793,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           { layer: "BCu" as const, copperThickness: 0.035, dielectricThickness: 1.6, dielectricEr: 4.5, material: "FR4" },
         ],
       },
-      nets: newDoc.pcb?.nets ?? [],
+      nets: [],
       rules: {
         defaultRules: {
           name: "Default",
@@ -2734,12 +2807,70 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         minAnnularRing: 0.13,
         minDrill: 0.2,
       },
-      footprints: fps,
-      traces: newDoc.pcb?.traces ?? [],
-      vias: newDoc.pcb?.vias ?? [],
-      zones: newDoc.pcb?.zones ?? [],
+      footprints: [],
+      traces: [],
+      vias: [],
+      zones: [],
     };
-    set({ document: newDoc, isDirty: true, ...undoState });
+
+    const boardNodeId = nid;
+    const scaleId = nid + 1;
+    const rotateId = nid + 2;
+    const translateId = nid + 3;
+
+    newDoc.nodes[String(boardNodeId)] = {
+      id: boardNodeId,
+      name: null,
+      op: { type: "PcbBoard", board: pcbBoard } as CsgOp,
+    };
+    newDoc.nodes[String(scaleId)] = {
+      id: scaleId,
+      name: null,
+      op: { type: "Scale", child: boardNodeId, factor: { x: 1, y: 1, z: 1 } } as CsgOp,
+    };
+    newDoc.nodes[String(rotateId)] = {
+      id: rotateId,
+      name: null,
+      op: { type: "Rotate", child: scaleId, angles: { x: 0, y: 0, z: 0 } } as CsgOp,
+    };
+    newDoc.nodes[String(translateId)] = {
+      id: translateId,
+      name: "PCB Board",
+      op: { type: "Translate", child: rotateId, offset: { x: 0, y: 0, z: 0 } } as CsgOp,
+    };
+    newDoc.roots.push({ root: translateId, material: "__pcb_fr4__" });
+    if (!newDoc.materials["__pcb_fr4__"]) {
+      newDoc.materials["__pcb_fr4__"] = {
+        name: "__pcb_fr4__",
+        color: [0.05, 0.35, 0.15],
+        metallic: 0,
+        roughness: 0.8,
+      };
+    }
+
+    const newParts = [...state.parts, {
+      id: `pcb-board-${boardNodeId}`,
+      name: "PCB Board",
+      kind: "pcb-board" as const,
+      boardNodeId,
+      scaleNodeId: scaleId,
+      rotateNodeId: rotateId,
+      translateNodeId: translateId,
+    } satisfies PcbBoardPartInfo];
+
+    const dirtyNodeIds = new Set(state.dirtyNodeIds);
+    dirtyNodeIds.add(boardNodeId);
+
+    set({
+      document: newDoc,
+      parts: newParts,
+      partIndex: buildPartIndex(newParts),
+      nextNodeId: nid + 4,
+      isDirty: true,
+      dirtyNodeIds,
+      ...undoState,
+    });
+    return boardNodeId;
   },
 
   moveSchematicComponent: (idx, position) => {
@@ -2752,44 +2883,54 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     set({ document: newDoc, isDirty: true, ...undoState });
   },
 
-  moveFootprint: (idx, position) => {
+  moveFootprint: (nodeId, idx, position) => {
     const state = get();
     const undoState = pushUndo(state, "Move Footprint");
     const newDoc = structuredClone(state.document);
-    if (newDoc.pcb && newDoc.pcb.footprints[idx]) {
-      newDoc.pcb.footprints[idx]!.position = { x: position.x, y: position.y };
+    const pcb = getNodePcb(newDoc, nodeId);
+    if (pcb && pcb.footprints[idx]) {
+      pcb.footprints[idx]!.position = { x: position.x, y: position.y };
     }
-    set({ document: newDoc, isDirty: true, ...undoState });
+    const dirtyNodeIds = new Set(state.dirtyNodeIds);
+    dirtyNodeIds.add(nodeId);
+    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
   },
 
-  rotateFootprint: (idx, angleDeg) => {
+  rotateFootprint: (nodeId, idx, angleDeg) => {
     const state = get();
     const undoState = pushUndo(state, "Rotate Footprint");
     const newDoc = structuredClone(state.document);
-    if (newDoc.pcb && newDoc.pcb.footprints[idx]) {
-      const fp = newDoc.pcb.footprints[idx]!;
+    const pcb = getNodePcb(newDoc, nodeId);
+    if (pcb && pcb.footprints[idx]) {
+      const fp = pcb.footprints[idx]!;
       fp.rotation = ((fp.rotation ?? 0) + angleDeg) % 360;
     }
-    set({ document: newDoc, isDirty: true, ...undoState });
+    const dirtyNodeIds = new Set(state.dirtyNodeIds);
+    dirtyNodeIds.add(nodeId);
+    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
   },
 
-  flipFootprint: (idx) => {
+  flipFootprint: (nodeId, idx) => {
     const state = get();
     const undoState = pushUndo(state, "Flip Footprint");
     const newDoc = structuredClone(state.document);
-    if (newDoc.pcb && newDoc.pcb.footprints[idx]) {
-      const fp = newDoc.pcb.footprints[idx]!;
+    const pcb = getNodePcb(newDoc, nodeId);
+    if (pcb && pcb.footprints[idx]) {
+      const fp = pcb.footprints[idx]!;
       fp.front = !(fp.front ?? true);
     }
-    set({ document: newDoc, isDirty: true, ...undoState });
+    const dirtyNodeIds = new Set(state.dirtyNodeIds);
+    dirtyNodeIds.add(nodeId);
+    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
   },
 
-  addTrace: (trace) => {
+  addTrace: (nodeId, trace) => {
     const state = get();
     const undoState = pushUndo(state, "Add Trace");
     const newDoc = structuredClone(state.document);
-    if (newDoc.pcb) {
-      newDoc.pcb.traces.push({
+    const pcb = getNodePcb(newDoc, nodeId);
+    if (pcb) {
+      pcb.traces.push({
         start: { x: trace.start.x, y: trace.start.y },
         end: { x: trace.end.x, y: trace.end.y },
         width: trace.width,
@@ -2797,25 +2938,31 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         net: trace.net,
       });
     }
-    set({ document: newDoc, isDirty: true, ...undoState });
+    const dirtyNodeIds = new Set(state.dirtyNodeIds);
+    dirtyNodeIds.add(nodeId);
+    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
   },
 
-  removeTrace: (idx) => {
+  removeTrace: (nodeId, idx) => {
     const state = get();
     const undoState = pushUndo(state, "Remove Trace");
     const newDoc = structuredClone(state.document);
-    if (newDoc.pcb) {
-      newDoc.pcb.traces.splice(idx, 1);
+    const pcb = getNodePcb(newDoc, nodeId);
+    if (pcb) {
+      pcb.traces.splice(idx, 1);
     }
-    set({ document: newDoc, isDirty: true, ...undoState });
+    const dirtyNodeIds = new Set(state.dirtyNodeIds);
+    dirtyNodeIds.add(nodeId);
+    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
   },
 
-  addVia: (via) => {
+  addVia: (nodeId, via) => {
     const state = get();
     const undoState = pushUndo(state, "Add Via");
     const newDoc = structuredClone(state.document);
-    if (newDoc.pcb) {
-      newDoc.pcb.vias.push({
+    const pcb = getNodePcb(newDoc, nodeId);
+    if (pcb) {
+      pcb.vias.push({
         position: { x: via.position.x, y: via.position.y },
         diameter: via.diameter,
         drill: via.drill,
@@ -2824,6 +2971,175 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         net: via.net,
       });
     }
+    const dirtyNodeIds = new Set(state.dirtyNodeIds);
+    dirtyNodeIds.add(nodeId);
+    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
+  },
+
+  removeVia: (nodeId, idx) => {
+    const state = get();
+    const undoState = pushUndo(state, "Remove Via");
+    const newDoc = structuredClone(state.document);
+    const pcb = getNodePcb(newDoc, nodeId);
+    if (pcb) {
+      pcb.vias.splice(idx, 1);
+    }
+    const dirtyNodeIds = new Set(state.dirtyNodeIds);
+    dirtyNodeIds.add(nodeId);
+    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
+  },
+
+  addSchematicComponent: (comp, boardNodeId) => {
+    const state = get();
+    const undoState = pushUndo(state, "Add Component");
+    const newDoc = structuredClone(state.document);
+    if (newDoc.schematic) {
+      newDoc.schematic.components.push(structuredClone(comp));
+    }
+    // Auto-add matching footprint to PCB if a board exists and comp has footprint info
+    const pcbNodeId = boardNodeId ?? getPcbNodeIds(newDoc)[0];
+    const pcb = pcbNodeId != null ? getNodePcb(newDoc, pcbNodeId) : null;
+    if (pcb && comp.footprintId && comp.properties?.footprintTemplate) {
+      try {
+        const template = JSON.parse(comp.properties.footprintTemplate);
+        const fpCount = pcb.footprints.length;
+        const staggerX = 10 + (fpCount % 5) * 10;
+        const staggerY = 10 + Math.floor(fpCount / 5) * 10;
+        pcb.footprints.push({
+          ref: comp.ref,
+          value: comp.value,
+          footprintName: comp.footprintId,
+          position: { x: staggerX, y: staggerY },
+          pads: template.pads ?? [],
+          graphics: template.graphics ?? [],
+        });
+      } catch {
+        // No auto-footprint if template parse fails
+      }
+    }
+    const dirtyNodeIds = new Set(state.dirtyNodeIds);
+    if (pcbNodeId != null) dirtyNodeIds.add(pcbNodeId);
+    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
+  },
+
+  removeSchematicComponent: (idx, boardNodeId) => {
+    const state = get();
+    const undoState = pushUndo(state, "Remove Component");
+    const newDoc = structuredClone(state.document);
+    if (newDoc.schematic) {
+      const removed = newDoc.schematic.components.splice(idx, 1);
+      // Also remove matching footprint from PCB board node
+      const pcbNodeId = boardNodeId ?? getPcbNodeIds(newDoc)[0];
+      const pcb = pcbNodeId != null ? getNodePcb(newDoc, pcbNodeId) : null;
+      if (pcb && removed[0]) {
+        const ref = removed[0].ref;
+        pcb.footprints = pcb.footprints.filter((fp) => fp.ref !== ref);
+      }
+      const dirtyNodeIds = new Set(state.dirtyNodeIds);
+      if (pcbNodeId != null) dirtyNodeIds.add(pcbNodeId);
+      set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
+      return;
+    }
     set({ document: newDoc, isDirty: true, ...undoState });
+  },
+
+  updateSchematicComponent: (idx, updates, boardNodeId) => {
+    const state = get();
+    const undoState = pushUndo(state, "Update Component");
+    const newDoc = structuredClone(state.document);
+    if (newDoc.schematic && newDoc.schematic.components[idx]) {
+      Object.assign(newDoc.schematic.components[idx]!, updates);
+      // Sync value to PCB footprint on board node
+      if (updates.value !== undefined) {
+        const pcbNodeId = boardNodeId ?? getPcbNodeIds(newDoc)[0];
+        const pcb = pcbNodeId != null ? getNodePcb(newDoc, pcbNodeId) : null;
+        if (pcb) {
+          const ref = newDoc.schematic.components[idx]!.ref;
+          const fp = pcb.footprints.find((f) => f.ref === ref);
+          if (fp) fp.value = updates.value;
+        }
+        const dirtyNodeIds = new Set(state.dirtyNodeIds);
+        if (pcbNodeId != null) dirtyNodeIds.add(pcbNodeId);
+        set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
+        return;
+      }
+    }
+    set({ document: newDoc, isDirty: true, ...undoState });
+  },
+
+  addSchematicWire: (wire) => {
+    const state = get();
+    const undoState = pushUndo(state, "Add Wire");
+    const newDoc = structuredClone(state.document);
+    if (newDoc.schematic) {
+      newDoc.schematic.wires.push({ start: { ...wire.start }, end: { ...wire.end } });
+    }
+    set({ document: newDoc, isDirty: true, ...undoState });
+  },
+
+  removeSchematicWire: (idx) => {
+    const state = get();
+    const undoState = pushUndo(state, "Remove Wire");
+    const newDoc = structuredClone(state.document);
+    if (newDoc.schematic) {
+      newDoc.schematic.wires.splice(idx, 1);
+    }
+    set({ document: newDoc, isDirty: true, ...undoState });
+  },
+
+  addSchematicLabel: (label) => {
+    const state = get();
+    const undoState = pushUndo(state, "Add Label");
+    const newDoc = structuredClone(state.document);
+    if (newDoc.schematic) {
+      newDoc.schematic.labels.push(structuredClone(label));
+    }
+    set({ document: newDoc, isDirty: true, ...undoState });
+  },
+
+  removeSchematicLabel: (idx) => {
+    const state = get();
+    const undoState = pushUndo(state, "Remove Label");
+    const newDoc = structuredClone(state.document);
+    if (newDoc.schematic) {
+      newDoc.schematic.labels.splice(idx, 1);
+    }
+    set({ document: newDoc, isDirty: true, ...undoState });
+  },
+
+  addSchematicJunction: (junction) => {
+    const state = get();
+    const undoState = pushUndo(state, "Add Junction");
+    const newDoc = structuredClone(state.document);
+    if (newDoc.schematic) {
+      newDoc.schematic.junctions.push({ position: { ...junction.position } });
+    }
+    set({ document: newDoc, isDirty: true, ...undoState });
+  },
+
+  addFootprint: (nodeId, fp) => {
+    const state = get();
+    const undoState = pushUndo(state, "Add Footprint");
+    const newDoc = structuredClone(state.document);
+    const pcb = getNodePcb(newDoc, nodeId);
+    if (pcb) {
+      pcb.footprints.push(structuredClone(fp));
+    }
+    const dirtyNodeIds = new Set(state.dirtyNodeIds);
+    dirtyNodeIds.add(nodeId);
+    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
+  },
+
+  removeFootprint: (nodeId, idx) => {
+    const state = get();
+    const undoState = pushUndo(state, "Remove Footprint");
+    const newDoc = structuredClone(state.document);
+    const pcb = getNodePcb(newDoc, nodeId);
+    if (pcb) {
+      pcb.footprints.splice(idx, 1);
+    }
+    const dirtyNodeIds = new Set(state.dirtyNodeIds);
+    dirtyNodeIds.add(nodeId);
+    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
   },
 }));

@@ -18,32 +18,31 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import {
-  Cube,
-  Cylinder,
-  Globe,
-  Trash,
-  Intersect,
-  CaretRight,
-  CaretDown,
-  ArrowUp,
-  ArrowsClockwise,
-  Spiral,
-  Stack,
-  Package,
-  LinkSimple,
-  Anchor,
-  Copy,
-  PencilSimple,
-  Circle,
-  Octagon,
-  CubeTransparent,
-  DotsThree,
-  ArrowsHorizontal,
-  Eye,
-  EyeSlash,
-  TextT,
-} from "@phosphor-icons/react";
+import { Cube } from "@phosphor-icons/react/dist/ssr/Cube";
+import { Cylinder } from "@phosphor-icons/react/dist/ssr/Cylinder";
+import { Globe } from "@phosphor-icons/react/dist/ssr/Globe";
+import { Trash } from "@phosphor-icons/react/dist/ssr/Trash";
+import { Intersect } from "@phosphor-icons/react/dist/ssr/Intersect";
+import { CaretRight } from "@phosphor-icons/react/dist/ssr/CaretRight";
+import { CaretDown } from "@phosphor-icons/react/dist/ssr/CaretDown";
+import { ArrowUp } from "@phosphor-icons/react/dist/ssr/ArrowUp";
+import { ArrowsClockwise } from "@phosphor-icons/react/dist/ssr/ArrowsClockwise";
+import { Spiral } from "@phosphor-icons/react/dist/ssr/Spiral";
+import { Stack } from "@phosphor-icons/react/dist/ssr/Stack";
+import { Package } from "@phosphor-icons/react/dist/ssr/Package";
+import { LinkSimple } from "@phosphor-icons/react/dist/ssr/LinkSimple";
+import { Anchor } from "@phosphor-icons/react/dist/ssr/Anchor";
+import { Copy } from "@phosphor-icons/react/dist/ssr/Copy";
+import { PencilSimple } from "@phosphor-icons/react/dist/ssr/PencilSimple";
+import { Circle } from "@phosphor-icons/react/dist/ssr/Circle";
+import { Octagon } from "@phosphor-icons/react/dist/ssr/Octagon";
+import { CubeTransparent } from "@phosphor-icons/react/dist/ssr/CubeTransparent";
+import { DotsThree } from "@phosphor-icons/react/dist/ssr/DotsThree";
+import { ArrowsHorizontal } from "@phosphor-icons/react/dist/ssr/ArrowsHorizontal";
+import { Eye } from "@phosphor-icons/react/dist/ssr/Eye";
+import { EyeSlash } from "@phosphor-icons/react/dist/ssr/EyeSlash";
+import { TextT } from "@phosphor-icons/react/dist/ssr/TextT";
+import { Circuitry } from "@phosphor-icons/react/dist/ssr/Circuitry";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ContextMenu } from "@/components/ContextMenu";
@@ -77,6 +76,7 @@ function getPartIcon(part: PartInfo): typeof Cube {
   if (part.kind === "circular-pattern") return ArrowsClockwise;
   if (part.kind === "mirror") return ArrowsHorizontal;
   if (part.kind === "text") return TextT;
+  if (part.kind === "pcb-board") return Circuitry;
   return KIND_ICONS[part.kind];
 }
 

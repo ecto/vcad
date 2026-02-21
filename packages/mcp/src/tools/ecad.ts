@@ -31,6 +31,14 @@ import type {
   Vec2,
 } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
+import { getNodePcb, getPcbNodeIds } from "@vcad/core";
+
+/** Get PCB data from a document — checks PcbBoard nodes first, falls back to legacy doc.pcb */
+function getDocPcb(doc: Document): Pcb | null {
+  const nodeIds = getPcbNodeIds(doc);
+  if (nodeIds.length > 0) return getNodePcb(doc, nodeIds[0]!);
+  return (doc as Document & { pcb?: Pcb }).pcb ?? null;
+}
 
 // ============================================================================
 // Schemas
@@ -400,7 +408,22 @@ export function placeComponents(args: Record<string, unknown>) {
     zones: [],
   };
 
-  doc.pcb = pcb;
+  // Create a PcbBoard DAG node instead of legacy doc.pcb
+  const existingIds = Object.keys(doc.nodes).map(Number);
+  const nid = existingIds.length > 0 ? Math.max(...existingIds) + 1 : 1;
+  doc.nodes[String(nid)] = {
+    id: nid,
+    name: "PCB Board",
+    op: { type: "PcbBoard", board: pcb } as any,
+  };
+  doc.roots.push({ root: nid, material: "__pcb_fr4__" });
+  if (!doc.materials["__pcb_fr4__"]) {
+    doc.materials["__pcb_fr4__"] = {
+      color: [0.05, 0.35, 0.15],
+      roughness: 0.6,
+      metallic: 0.0,
+    } as any;
+  }
 
   return {
     content: [
@@ -422,14 +445,14 @@ export function routeNets(args: Record<string, unknown>) {
   const doc = args.document as Document;
   const traceWidth = (args.trace_width as number) || undefined;
 
-  if (!doc.pcb) {
+  const pcb = getDocPcb(doc);
+  if (!pcb) {
     return {
       content: [{ type: "text" as const, text: "Error: Document has no PCB" }],
       isError: true,
     };
   }
 
-  const pcb = doc.pcb;
   const width = traceWidth || pcb.rules.defaultRules.traceWidth;
 
   // Build net → pad positions map
@@ -486,15 +509,14 @@ export function routeNets(args: Record<string, unknown>) {
 /** Run DRC checks on a PCB. */
 export function runDrc(args: Record<string, unknown>) {
   const doc = args.document as Document;
+  const pcb = getDocPcb(doc);
 
-  if (!doc.pcb) {
+  if (!pcb) {
     return {
       content: [{ type: "text" as const, text: "Error: Document has no PCB" }],
       isError: true,
     };
   }
-
-  const pcb = doc.pcb;
   const violations: Array<{
     rule: string;
     severity: string;
@@ -651,8 +673,9 @@ export function runErc(args: Record<string, unknown>) {
 export function exportGerber(args: Record<string, unknown>) {
   const doc = args.document as Document;
   const outputDir = args.output_dir as string;
+  const pcb = getDocPcb(doc);
 
-  if (!doc.pcb) {
+  if (!pcb) {
     return {
       content: [{ type: "text" as const, text: "Error: Document has no PCB" }],
       isError: true,
@@ -662,7 +685,6 @@ export function exportGerber(args: Record<string, unknown>) {
   // Note: Actual Gerber file generation happens in the Rust vcad-ecad-export crate.
   // This MCP tool wraps it for AI agent access.
   // For now, return file listing that would be generated.
-  const pcb = doc.pcb;
   const layers = new Set<string>();
 
   for (const trace of pcb.traces) layers.add(trace.layer);

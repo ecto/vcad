@@ -1,9 +1,11 @@
 /**
  * Floating property panel for electronics workspace.
  * Adapts content to current selection type.
+ * Supports inline editing for component/footprint properties.
  */
 
-import { useDocumentStore } from "@vcad/core";
+import { useState } from "react";
+import { useDocumentStore, useCoreElectronicsStore, getNodePcb } from "@vcad/core";
 import { useElectronicsStore } from "@/stores/electronics-store";
 
 export function ElectronicsPropertyPanel() {
@@ -11,8 +13,10 @@ export function ElectronicsPropertyPanel() {
   const netlist = useElectronicsStore((s) => s.netlist);
   const drcViolations = useElectronicsStore((s) => s.drcViolations);
   const ercViolations = useElectronicsStore((s) => s.ercViolations);
-  const pcb = useDocumentStore((s) => s.document.pcb);
-  const schematic = useDocumentStore((s) => s.document.schematic);
+  const activeBoardNodeId = useCoreElectronicsStore((s) => s.activeBoardNodeId);
+  const document = useDocumentStore((s) => s.document);
+  const pcb = activeBoardNodeId != null ? getNodePcb(document, activeBoardNodeId) : null;
+  const schematic = document.schematic;
 
   if (selection.type === "none") {
     // Board overview
@@ -57,56 +61,7 @@ export function ElectronicsPropertyPanel() {
   }
 
   if (selection.type === "component" || selection.type === "footprint") {
-    const ref = selection.ref;
-    const schComp = schematic?.components.find((c) => c.ref === ref);
-    const fp = pcb?.footprints.find((f) => f.ref === ref);
-    const nets = new Set<string>();
-    if (netlist) {
-      for (const net of netlist.nets) {
-        for (const conn of net.connections) {
-          if (conn.component_ref === ref) {
-            nets.add(net.name);
-            break;
-          }
-        }
-      }
-    }
-
-    return (
-      <div className="absolute top-3 right-3 w-56 rounded-lg border border-border bg-surface/95 backdrop-blur-sm shadow-lg p-3 text-[11px] pointer-events-auto">
-        <div className="font-medium text-text mb-2">{ref}</div>
-        <div className="space-y-1 text-text-muted">
-          {schComp && <Row label="Value" value={schComp.value} />}
-          {fp && (
-            <>
-              <Row label="Footprint" value={fp.footprintName} />
-              <Row label="Position" value={`${fp.position.x.toFixed(2)}, ${fp.position.y.toFixed(2)}`} />
-              <Row label="Rotation" value={`${fp.rotation ?? 0}deg`} />
-              <Row label="Side" value={fp.front !== false ? "Front" : "Back"} />
-              <Row label="Pads" value={String(fp.pads.length)} />
-            </>
-          )}
-          {nets.size > 0 && (
-            <div className="pt-1 border-t border-border mt-1">
-              <div className="text-[10px] text-text-muted mb-0.5">Nets:</div>
-              <div className="flex flex-wrap gap-1">
-                {[...nets].map((n) => (
-                  <span
-                    key={n}
-                    className="px-1 py-0.5 bg-accent/10 text-accent rounded text-[9px] cursor-pointer hover:bg-accent/20"
-                    onClick={() =>
-                      useElectronicsStore.getState().select({ type: "net", netId: n })
-                    }
-                  >
-                    {n}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    );
+    return <ComponentFootprintPanel compRef={selection.ref} />;
   }
 
   if (selection.type === "net") {
@@ -157,7 +112,19 @@ export function ElectronicsPropertyPanel() {
 
     return (
       <div className="absolute top-3 right-3 w-56 rounded-lg border border-border bg-surface/95 backdrop-blur-sm shadow-lg p-3 text-[11px] pointer-events-auto">
-        <div className="font-medium text-text mb-2">Trace</div>
+        <div className="flex justify-between items-center mb-2">
+          <span className="font-medium text-text">Trace</span>
+          <button
+            className="px-1.5 py-0.5 text-[10px] text-danger hover:bg-danger/10 rounded transition-colors"
+            onClick={() => {
+              const bId = useCoreElectronicsStore.getState().activeBoardNodeId;
+              if (bId != null) useDocumentStore.getState().removeTrace(bId, selection.idx);
+              useElectronicsStore.getState().select({ type: "none" });
+            }}
+          >
+            Delete
+          </button>
+        </div>
         <div className="space-y-1 text-text-muted">
           <Row label="Net" value={trace.net} />
           <Row label="Layer" value={trace.layer} />
@@ -174,7 +141,19 @@ export function ElectronicsPropertyPanel() {
 
     return (
       <div className="absolute top-3 right-3 w-56 rounded-lg border border-border bg-surface/95 backdrop-blur-sm shadow-lg p-3 text-[11px] pointer-events-auto">
-        <div className="font-medium text-text mb-2">Via</div>
+        <div className="flex justify-between items-center mb-2">
+          <span className="font-medium text-text">Via</span>
+          <button
+            className="px-1.5 py-0.5 text-[10px] text-danger hover:bg-danger/10 rounded transition-colors"
+            onClick={() => {
+              const bId = useCoreElectronicsStore.getState().activeBoardNodeId;
+              if (bId != null) useDocumentStore.getState().removeVia(bId, selection.idx);
+              useElectronicsStore.getState().select({ type: "none" });
+            }}
+          >
+            Delete
+          </button>
+        </div>
         <div className="space-y-1 text-text-muted">
           <Row label="Net" value={via.net} />
           <Row label="Diameter" value={`${via.diameter}mm`} />
@@ -204,6 +183,152 @@ export function ElectronicsPropertyPanel() {
 
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// Editable component/footprint panel
+// ---------------------------------------------------------------------------
+
+function ComponentFootprintPanel({ compRef }: { compRef: string }) {
+  const netlist = useElectronicsStore((s) => s.netlist);
+  const activeBoardNodeId = useCoreElectronicsStore((s) => s.activeBoardNodeId);
+  const cpDocument = useDocumentStore((s) => s.document);
+  const pcb = activeBoardNodeId != null ? getNodePcb(cpDocument, activeBoardNodeId) : null;
+  const schematic = cpDocument.schematic;
+
+  const schComp = schematic?.components.find((c) => c.ref === compRef);
+  const schIdx = schematic?.components.findIndex((c) => c.ref === compRef) ?? -1;
+  const fp = pcb?.footprints.find((f) => f.ref === compRef);
+  const fpIdx = pcb?.footprints.findIndex((f) => f.ref === compRef) ?? -1;
+
+  const [editValue, setEditValue] = useState(schComp?.value ?? "");
+  const [editFpX, setEditFpX] = useState(String(fp?.position.x ?? 0));
+  const [editFpY, setEditFpY] = useState(String(fp?.position.y ?? 0));
+  const [editFpRot, setEditFpRot] = useState(String(fp?.rotation ?? 0));
+
+  const nets = new Set<string>();
+  if (netlist) {
+    for (const net of netlist.nets) {
+      for (const conn of net.connections) {
+        if (conn.component_ref === compRef) {
+          nets.add(net.name);
+          break;
+        }
+      }
+    }
+  }
+
+  const commitValue = () => {
+    if (schIdx >= 0 && editValue !== schComp?.value) {
+      useDocumentStore.getState().updateSchematicComponent(schIdx, { value: editValue }, activeBoardNodeId ?? undefined);
+    }
+  };
+
+  const commitFpPosition = () => {
+    const x = parseFloat(editFpX);
+    const y = parseFloat(editFpY);
+    if (fpIdx >= 0 && !isNaN(x) && !isNaN(y)) {
+      if (activeBoardNodeId != null) useDocumentStore.getState().moveFootprint(activeBoardNodeId, fpIdx, { x, y, z: 0 });
+    }
+  };
+
+  const commitFpRotation = () => {
+    const rot = parseFloat(editFpRot);
+    if (fpIdx >= 0 && !isNaN(rot) && rot !== (fp?.rotation ?? 0)) {
+      // rotateFootprint adds to current, so we compute delta
+      const delta = rot - (fp?.rotation ?? 0);
+      if (activeBoardNodeId != null) useDocumentStore.getState().rotateFootprint(activeBoardNodeId, fpIdx, delta);
+    }
+  };
+
+  return (
+    <div className="absolute top-3 right-3 w-56 rounded-lg border border-border bg-surface/95 backdrop-blur-sm shadow-lg p-3 text-[11px] pointer-events-auto">
+      <div className="font-medium text-text mb-2">{compRef}</div>
+      <div className="space-y-1.5 text-text-muted">
+        {/* Editable value */}
+        {schComp && (
+          <div className="flex justify-between items-center">
+            <span>Value</span>
+            <input
+              type="text"
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              onBlur={commitValue}
+              onKeyDown={(e) => e.key === "Enter" && commitValue()}
+              className="w-20 text-[11px] text-text bg-transparent border border-border rounded px-1 py-0.5 text-right"
+            />
+          </div>
+        )}
+        {fp && (
+          <>
+            <Row label="Footprint" value={fp.footprintName} />
+            {/* Editable position */}
+            <div className="flex justify-between items-center">
+              <span>X</span>
+              <input
+                type="number"
+                value={editFpX}
+                onChange={(e) => setEditFpX(e.target.value)}
+                onBlur={commitFpPosition}
+                onKeyDown={(e) => e.key === "Enter" && commitFpPosition()}
+                className="w-16 text-[11px] text-text bg-transparent border border-border rounded px-1 py-0.5 text-right"
+                step={0.1}
+              />
+            </div>
+            <div className="flex justify-between items-center">
+              <span>Y</span>
+              <input
+                type="number"
+                value={editFpY}
+                onChange={(e) => setEditFpY(e.target.value)}
+                onBlur={commitFpPosition}
+                onKeyDown={(e) => e.key === "Enter" && commitFpPosition()}
+                className="w-16 text-[11px] text-text bg-transparent border border-border rounded px-1 py-0.5 text-right"
+                step={0.1}
+              />
+            </div>
+            {/* Editable rotation */}
+            <div className="flex justify-between items-center">
+              <span>Rotation</span>
+              <input
+                type="number"
+                value={editFpRot}
+                onChange={(e) => setEditFpRot(e.target.value)}
+                onBlur={commitFpRotation}
+                onKeyDown={(e) => e.key === "Enter" && commitFpRotation()}
+                className="w-16 text-[11px] text-text bg-transparent border border-border rounded px-1 py-0.5 text-right"
+                step={90}
+              />
+            </div>
+            <Row label="Side" value={fp.front !== false ? "Front" : "Back"} />
+            <Row label="Pads" value={String(fp.pads.length)} />
+          </>
+        )}
+        {nets.size > 0 && (
+          <div className="pt-1 border-t border-border mt-1">
+            <div className="text-[10px] text-text-muted mb-0.5">Nets:</div>
+            <div className="flex flex-wrap gap-1">
+              {[...nets].map((n) => (
+                <span
+                  key={n}
+                  className="px-1 py-0.5 bg-accent/10 text-accent rounded text-[9px] cursor-pointer hover:bg-accent/20"
+                  onClick={() =>
+                    useElectronicsStore.getState().select({ type: "net", netId: n })
+                  }
+                >
+                  {n}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Shared Row component
+// ---------------------------------------------------------------------------
 
 function Row({
   label,

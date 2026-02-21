@@ -3,13 +3,16 @@
  *
  * Renders schematic components, wires, junctions, and labels.
  * Implements Principle 2 (net-centric selection) with cross-probe highlights.
+ * Supports place, wire, label, delete, and move tools.
  */
 
 import { useRef, useCallback, useState, useMemo } from "react";
-import { useDocumentStore } from "@vcad/core";
+import { useDocumentStore, getPcbNodeIds } from "@vcad/core";
 import type { SchematicComponent, SchematicWire } from "@vcad/ir";
 import { useElectronicsStore } from "@/stores/electronics-store";
 import { useTheme } from "@/hooks/useTheme";
+import { getSymbol } from "./symbol-library";
+import type { SymbolGraphic } from "./symbol-library";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -23,6 +26,24 @@ const SCH_GRID = 10;
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** Convert screen coordinates to SVG schematic coordinates. */
+function screenToSvg(
+  e: { clientX: number; clientY: number },
+  svgEl: SVGSVGElement,
+  zoom: number,
+  pan: { x: number; y: number },
+): { x: number; y: number } {
+  const rect = svgEl.getBoundingClientRect();
+  const sx = (e.clientX - rect.left - 200) / zoom - pan.x;
+  const sy = (e.clientY - rect.top - 200) / zoom - pan.y;
+  return { x: sx, y: sy };
+}
+
+/** Snap a value to the nearest grid point. */
+function snapToGrid(v: number, grid: number): number {
+  return Math.round(v / grid) * grid;
+}
 
 /** Determine which net a component pin belongs to (from netlist). */
 function getNetForPin(
@@ -66,7 +87,6 @@ function getNetForWire(
   components: SchematicComponent[],
 ): string | null {
   if (!netlist) return null;
-  // Check each component pin to see if the wire connects
   for (const comp of components) {
     for (const pin of comp.pins) {
       const px = comp.position.x + pin.position.x;
@@ -83,6 +103,71 @@ function getNetForWire(
 }
 
 // ---------------------------------------------------------------------------
+// Symbol graphics renderer
+// ---------------------------------------------------------------------------
+
+function renderSymbolGraphics(
+  graphics: SymbolGraphic[],
+  stroke: string,
+  fill: string,
+) {
+  return graphics.map((g, i) => {
+    switch (g.type) {
+      case "rect":
+        return (
+          <rect
+            key={i}
+            x={g.x}
+            y={g.y}
+            width={g.width}
+            height={g.height}
+            fill={fill}
+            stroke={stroke}
+            strokeWidth={1}
+            rx={1}
+          />
+        );
+      case "line":
+        return (
+          <line
+            key={i}
+            x1={g.x1}
+            y1={g.y1}
+            x2={g.x2}
+            y2={g.y2}
+            stroke={stroke}
+            strokeWidth={1.5}
+          />
+        );
+      case "circle":
+        return (
+          <circle
+            key={i}
+            cx={g.cx}
+            cy={g.cy}
+            r={g.r}
+            fill="none"
+            stroke={stroke}
+            strokeWidth={1}
+          />
+        );
+      case "polyline":
+        return (
+          <polyline
+            key={i}
+            points={(g.points ?? []).map((p) => `${p.x},${p.y}`).join(" ")}
+            fill="none"
+            stroke={stroke}
+            strokeWidth={1.5}
+          />
+        );
+      default:
+        return null;
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -96,12 +181,33 @@ export function SchematicCanvas() {
   const netlist = useElectronicsStore((s) => s.netlist);
   const zoom = useElectronicsStore((s) => s.schZoom);
   const pan = useElectronicsStore((s) => s.schPan);
+  const schTool = useElectronicsStore((s) => s.schTool);
+  const placingSymbol = useElectronicsStore((s) => s.schPlacingSymbol);
+  const placingRotation = useElectronicsStore((s) => s.schPlacingRotation);
+  const wireStart = useElectronicsStore((s) => s.schWireStart);
+  const wirePreview = useElectronicsStore((s) => s.schWirePreview);
+
   const select = useElectronicsStore((s) => s.select);
   const setHoveredNet = useElectronicsStore((s) => s.setHoveredNet);
   const adjustZoom = useElectronicsStore((s) => s.adjustSchZoom);
   const adjustPan = useElectronicsStore((s) => s.adjustSchPan);
+  const startSchWire = useElectronicsStore((s) => s.startSchWire);
+  const updateSchWirePreview = useElectronicsStore((s) => s.updateSchWirePreview);
+  const nextRef = useElectronicsStore((s) => s.nextRef);
+
+  const addSchematicComponent = useDocumentStore((s) => s.addSchematicComponent);
+  const removeSchematicComponent = useDocumentStore((s) => s.removeSchematicComponent);
+  const addSchematicWire = useDocumentStore((s) => s.addSchematicWire);
+  const removeSchematicWire = useDocumentStore((s) => s.removeSchematicWire);
+  const addSchematicLabel = useDocumentStore((s) => s.addSchematicLabel);
+  const removeSchematicLabel = useDocumentStore((s) => s.removeSchematicLabel);
+  const moveSchematicComponent = useDocumentStore((s) => s.moveSchematicComponent);
+  const initSchematic = useDocumentStore((s) => s.initSchematic);
+  const initPcb = useDocumentStore((s) => s.initPcb);
 
   const [dragging, setDragging] = useState(false);
+  const [ghostPos, setGhostPos] = useState<{ x: number; y: number } | null>(null);
+  const [moveDrag, setMoveDrag] = useState<{ compIdx: number; offset: { x: number; y: number } } | null>(null);
   const dragStart = useRef<{ x: number; y: number } | null>(null);
 
   // Active net from selection
@@ -112,7 +218,6 @@ export function SchematicCanvas() {
     return null;
   }, [selection]);
 
-  // Component nets lookup
   const activeComponentRef = useMemo(() => {
     if (selection.type === "component") return selection.ref;
     if (selection.type === "footprint") return selection.ref;
@@ -124,6 +229,9 @@ export function SchematicCanvas() {
     return getNetsForComponent(activeComponentRef, netlist);
   }, [activeComponentRef, netlist]);
 
+  const isNetActive = (net: string | null) =>
+    net !== null && (net === activeNet || net === hoveredNet || activeComponentNets.has(net));
+
   // Scroll zoom
   const onWheel = useCallback(
     (e: React.WheelEvent) => {
@@ -133,39 +241,217 @@ export function SchematicCanvas() {
     [adjustZoom],
   );
 
-  // Pan
+  // Pointer events
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
+      // Middle-click or alt+click for panning
       if (e.button === 1 || (e.button === 0 && e.altKey)) {
         e.preventDefault();
         setDragging(true);
         dragStart.current = { x: e.clientX, y: e.clientY };
         (e.target as HTMLElement).setPointerCapture(e.pointerId);
+        return;
+      }
+
+      if (e.button !== 0 || !svgRef.current) return;
+      const pos = screenToSvg(e, svgRef.current, zoom, pan);
+
+      // Move tool: start drag on component
+      if (schTool === "move" && !moveDrag) {
+        const comps = schematic?.components ?? [];
+        for (let ci = comps.length - 1; ci >= 0; ci--) {
+          const c = comps[ci]!;
+          const sym = c.properties?.symbolId ? getSymbol(c.properties.symbolId) : null;
+          const w = sym ? 56 : COMPONENT_WIDTH;
+          const h = sym ? Math.max(30, c.pins.length * 14 + 10) : Math.max(COMPONENT_HEIGHT, c.pins.length * 8);
+          if (pos.x >= c.position.x - 10 && pos.x <= c.position.x + w + 10 &&
+              pos.y >= c.position.y - 10 && pos.y <= c.position.y + h + 10) {
+            setMoveDrag({
+              compIdx: ci,
+              offset: { x: pos.x - c.position.x, y: pos.y - c.position.y },
+            });
+            (e.target as HTMLElement).setPointerCapture(e.pointerId);
+            return;
+          }
+        }
       }
     },
-    [],
+    [zoom, pan, schTool, moveDrag, schematic],
   );
 
   const onPointerMove = useCallback(
     (e: React.PointerEvent) => {
-      if (!dragging || !dragStart.current) return;
-      const dx = e.clientX - dragStart.current.x;
-      const dy = e.clientY - dragStart.current.y;
-      dragStart.current = { x: e.clientX, y: e.clientY };
-      adjustPan(dx / zoom, dy / zoom);
+      // Panning
+      if (dragging && dragStart.current) {
+        const dx = e.clientX - dragStart.current.x;
+        const dy = e.clientY - dragStart.current.y;
+        dragStart.current = { x: e.clientX, y: e.clientY };
+        adjustPan(dx / zoom, dy / zoom);
+        return;
+      }
+
+      if (!svgRef.current) return;
+      const pos = screenToSvg(e, svgRef.current, zoom, pan);
+      const snapped = { x: snapToGrid(pos.x, SCH_GRID), y: snapToGrid(pos.y, SCH_GRID) };
+
+      // Move drag
+      if (moveDrag) {
+        const newPos = {
+          x: snapToGrid(pos.x - moveDrag.offset.x, SCH_GRID),
+          y: snapToGrid(pos.y - moveDrag.offset.y, SCH_GRID),
+        };
+        setGhostPos(newPos);
+        return;
+      }
+
+      // Ghost position for placement/wire/label
+      if (schTool === "place" || schTool === "wire" || schTool === "label") {
+        setGhostPos(snapped);
+      }
+
+      // Wire preview
+      if (schTool === "wire" && wireStart) {
+        updateSchWirePreview(snapped);
+      }
     },
-    [dragging, zoom, adjustPan],
+    [dragging, zoom, adjustPan, pan, schTool, wireStart, updateSchWirePreview, moveDrag],
   );
 
-  const onPointerUp = useCallback(() => {
-    setDragging(false);
-    dragStart.current = null;
-  }, []);
+  const onPointerUp = useCallback(
+    (_e: React.PointerEvent) => {
+      // Finish panning
+      if (dragging) {
+        setDragging(false);
+        dragStart.current = null;
+        return;
+      }
+
+      // Finish move drag
+      if (moveDrag && ghostPos) {
+        moveSchematicComponent(moveDrag.compIdx, { x: ghostPos.x, y: ghostPos.y, z: 0 });
+        setMoveDrag(null);
+        setGhostPos(null);
+        return;
+      }
+    },
+    [dragging, moveDrag, ghostPos, moveSchematicComponent],
+  );
+
+  const onSvgClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (!svgRef.current || dragging || moveDrag) return;
+      const pos = screenToSvg(e, svgRef.current, zoom, pan);
+      const snapped = { x: snapToGrid(pos.x, SCH_GRID), y: snapToGrid(pos.y, SCH_GRID) };
+
+      // Place tool
+      if (schTool === "place" && placingSymbol) {
+        const sym = getSymbol(placingSymbol);
+        if (!sym) return;
+        const ref = nextRef(sym.prefix);
+        const footprintTemplate = sym.footprintTemplate
+          ? JSON.stringify(sym.footprintTemplate)
+          : undefined;
+        addSchematicComponent({
+          ref,
+          value: sym.defaultValue,
+          footprintId: sym.footprintTemplate?.name ?? "",
+          position: { x: snapped.x, y: snapped.y },
+          rotation: placingRotation,
+          pins: sym.pins.map((p) => ({ ...p })),
+          properties: {
+            symbolId: sym.id,
+            ...(footprintTemplate ? { footprintTemplate } : {}),
+          },
+        });
+        return;
+      }
+
+      // Wire tool
+      if (schTool === "wire") {
+        if (!wireStart) {
+          startSchWire(snapped);
+        } else {
+          // Commit wire segment
+          addSchematicWire({ start: wireStart, end: snapped });
+          // Chain: new start = old end
+          startSchWire(snapped);
+        }
+        return;
+      }
+
+      // Label tool
+      if (schTool === "label") {
+        const labelName = useElectronicsStore.getState().schLabelName;
+        addSchematicLabel({
+          name: labelName,
+          position: snapped,
+          scope: "Global",
+        });
+        return;
+      }
+
+      // Select tool: click on empty space deselects
+      if (schTool === "select") {
+        select({ type: "none" });
+      }
+    },
+    [
+      zoom, pan, schTool, placingSymbol, placingRotation, wireStart,
+      addSchematicComponent, addSchematicWire, addSchematicLabel,
+      startSchWire, nextRef, select, dragging, moveDrag,
+    ],
+  );
+
+  const onComponentClick = useCallback(
+    (e: React.MouseEvent, idx: number, ref: string) => {
+      e.stopPropagation();
+      if (schTool === "delete") {
+        removeSchematicComponent(idx);
+      } else {
+        select({ type: "component", ref });
+      }
+    },
+    [schTool, select, removeSchematicComponent],
+  );
+
+  const onWireClick = useCallback(
+    (e: React.MouseEvent, idx: number, net: string | null) => {
+      e.stopPropagation();
+      if (schTool === "delete") {
+        removeSchematicWire(idx);
+      } else if (net) {
+        select({ type: "net", netId: net });
+      }
+    },
+    [schTool, select, removeSchematicWire],
+  );
+
+  const onLabelClick = useCallback(
+    (e: React.MouseEvent, idx: number, name: string) => {
+      e.stopPropagation();
+      if (schTool === "delete") {
+        removeSchematicLabel(idx);
+      } else {
+        select({ type: "net", netId: name });
+      }
+    },
+    [schTool, select, removeSchematicLabel],
+  );
 
   if (!schematic) {
     return (
-      <div className="flex items-center justify-center h-full text-text-muted text-sm">
-        No schematic data
+      <div className="flex flex-col items-center justify-center h-full gap-3">
+        <span className="text-text-muted text-sm">No schematic data</span>
+        <button
+          className="px-3 py-1.5 text-xs bg-accent text-white rounded hover:bg-accent/90 transition-colors"
+          onClick={() => {
+            initSchematic();
+            const doc = useDocumentStore.getState().document;
+            if (getPcbNodeIds(doc).length === 0) initPcb();
+          }}
+        >
+          New Circuit
+        </button>
       </div>
     );
   }
@@ -181,20 +467,31 @@ export function SchematicCanvas() {
     accentGlow: "rgba(59, 130, 246, 0.3)",
     junction: isDark ? "#4CAF50" : "#2E7D32",
     label: isDark ? "#FFEB3B" : "#F57F17",
+    ghost: "rgba(59, 130, 246, 0.5)",
   };
 
-  const isNetActive = (net: string | null) =>
-    net !== null && (net === activeNet || net === hoveredNet || activeComponentNets.has(net));
+  const cursorStyle = (() => {
+    if (dragging) return "grabbing";
+    if (schTool === "place") return "copy";
+    if (schTool === "wire") return "crosshair";
+    if (schTool === "delete") return "not-allowed";
+    if (schTool === "move") return "move";
+    return "default";
+  })();
+
+  // Ghost symbol for placement preview
+  const ghostSymbol = placingSymbol ? getSymbol(placingSymbol) : null;
 
   return (
     <svg
       ref={svgRef}
       className="w-full h-full"
-      style={{ background: colors.bg, cursor: dragging ? "grabbing" : "default" }}
+      style={{ background: colors.bg, cursor: cursorStyle }}
       onWheel={onWheel}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onClick={onSvgClick}
     >
       <g transform={`translate(${pan.x * zoom + 200}, ${pan.y * zoom + 200}) scale(${zoom})`}>
         {/* Grid */}
@@ -220,10 +517,7 @@ export function SchematicCanvas() {
               strokeWidth={highlight ? 2.5 : 2}
               style={highlight ? { filter: `drop-shadow(0 0 4px ${colors.accentGlow})` } : undefined}
               className="cursor-pointer"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (net) select({ type: "net", netId: net });
-              }}
+              onClick={(e) => onWireClick(e, i, net)}
               onPointerEnter={() => net && setHoveredNet(net)}
               onPointerLeave={() => setHoveredNet(null)}
             />
@@ -259,10 +553,7 @@ export function SchematicCanvas() {
               fontFamily="monospace"
               dominantBaseline="middle"
               className="cursor-pointer"
-              onClick={(e) => {
-                e.stopPropagation();
-                select({ type: "net", netId: label.name });
-              }}
+              onClick={(e) => onLabelClick(e, i, label.name)}
               onPointerEnter={() => setHoveredNet(label.name)}
               onPointerLeave={() => setHoveredNet(null)}
             >
@@ -273,34 +564,98 @@ export function SchematicCanvas() {
 
         {/* Components */}
         {schematic.components.map((comp, i) => {
-          const isSelected =
-            activeComponentRef === comp.ref;
+          const isSelected = activeComponentRef === comp.ref;
           const compNets = getNetsForComponent(comp.ref, netlist);
           const hasActiveNet = [...compNets].some((n) => isNetActive(n));
           const highlighted = isSelected || hasActiveNet;
 
-          const h = Math.max(
-            COMPONENT_HEIGHT,
-            comp.pins.length * 8,
-          );
+          // Check if this component has a known symbol
+          const sym = comp.properties?.symbolId ? getSymbol(comp.properties.symbolId) : null;
+
+          // If being moved, show at ghost position
+          const displayPos = (moveDrag?.compIdx === i && ghostPos)
+            ? ghostPos
+            : comp.position;
+
+          if (sym) {
+            // Render with symbol graphics
+            return (
+              <g
+                key={`c-${i}`}
+                transform={`translate(${displayPos.x}, ${displayPos.y})${comp.rotation ? ` rotate(${comp.rotation})` : ""}`}
+                className="cursor-pointer"
+                onClick={(e) => onComponentClick(e, i, comp.ref)}
+                onPointerEnter={() => {
+                  const nets = getNetsForComponent(comp.ref, netlist);
+                  const first = nets.values().next().value;
+                  if (first) setHoveredNet(first);
+                }}
+                onPointerLeave={() => setHoveredNet(null)}
+                opacity={moveDrag?.compIdx === i ? 0.6 : 1}
+              >
+                {renderSymbolGraphics(
+                  sym.graphics,
+                  highlighted ? colors.accent : colors.bodyStroke,
+                  colors.body,
+                )}
+                {/* Pin endpoints */}
+                {comp.pins.map((pin, pi) => {
+                  const pinNet = getNetForPin(comp.ref, pin.number, netlist);
+                  const pinHighlight = isNetActive(pinNet);
+                  return (
+                    <circle
+                      key={`p-${pi}`}
+                      cx={pin.position.x}
+                      cy={pin.position.y}
+                      r={2}
+                      fill={pinHighlight ? colors.accent : colors.bodyStroke}
+                    />
+                  );
+                })}
+                {/* Reference */}
+                <text
+                  x={20}
+                  y={-6}
+                  fontSize={9}
+                  fontWeight="bold"
+                  fill={colors.text}
+                  textAnchor="middle"
+                  fontFamily="monospace"
+                >
+                  {comp.ref}
+                </text>
+                {/* Value */}
+                <text
+                  x={20}
+                  y={-6 + (sym.graphics.find((g) => g.type === "rect")?.height ?? 30) + 16}
+                  fontSize={8}
+                  fill={colors.textMuted}
+                  textAnchor="middle"
+                  fontFamily="monospace"
+                >
+                  {comp.value}
+                </text>
+              </g>
+            );
+          }
+
+          // Fallback: generic rectangle rendering
+          const h = Math.max(COMPONENT_HEIGHT, comp.pins.length * 8);
 
           return (
             <g
               key={`c-${i}`}
-              transform={`translate(${comp.position.x}, ${comp.position.y})${comp.rotation ? ` rotate(${comp.rotation})` : ""}`}
+              transform={`translate(${displayPos.x}, ${displayPos.y})${comp.rotation ? ` rotate(${comp.rotation})` : ""}`}
               className="cursor-pointer"
-              onClick={(e) => {
-                e.stopPropagation();
-                select({ type: "component", ref: comp.ref });
-              }}
+              onClick={(e) => onComponentClick(e, i, comp.ref)}
               onPointerEnter={() => {
                 const nets = getNetsForComponent(comp.ref, netlist);
                 const first = nets.values().next().value;
                 if (first) setHoveredNet(first);
               }}
               onPointerLeave={() => setHoveredNet(null)}
+              opacity={moveDrag?.compIdx === i ? 0.6 : 1}
             >
-              {/* Body */}
               <rect
                 x={0}
                 y={0}
@@ -316,8 +671,6 @@ export function SchematicCanvas() {
                     : undefined
                 }
               />
-
-              {/* Pins */}
               {comp.pins.map((pin, pi) => {
                 const isLeft = pi < comp.pins.length / 2;
                 const pinIdx = isLeft ? pi : pi - Math.ceil(comp.pins.length / 2);
@@ -326,7 +679,6 @@ export function SchematicCanvas() {
                 const stubDir = isLeft ? -1 : 1;
                 const pinNet = getNetForPin(comp.ref, pin.number, netlist);
                 const pinHighlight = isNetActive(pinNet);
-
                 return (
                   <g key={`p-${pi}`}>
                     <line
@@ -350,8 +702,6 @@ export function SchematicCanvas() {
                   </g>
                 );
               })}
-
-              {/* Reference */}
               <text
                 x={COMPONENT_WIDTH / 2}
                 y={-4}
@@ -363,8 +713,6 @@ export function SchematicCanvas() {
               >
                 {comp.ref}
               </text>
-
-              {/* Value */}
               <text
                 x={COMPONENT_WIDTH / 2}
                 y={h + 10}
@@ -378,6 +726,78 @@ export function SchematicCanvas() {
             </g>
           );
         })}
+
+        {/* Ghost component preview (place tool) */}
+        {schTool === "place" && ghostSymbol && ghostPos && (
+          <g
+            transform={`translate(${ghostPos.x}, ${ghostPos.y})${placingRotation ? ` rotate(${placingRotation})` : ""}`}
+            opacity={0.5}
+            pointerEvents="none"
+          >
+            {renderSymbolGraphics(ghostSymbol.graphics, colors.accent, "none")}
+            {ghostSymbol.pins.map((pin, pi) => (
+              <circle
+                key={`gp-${pi}`}
+                cx={pin.position.x}
+                cy={pin.position.y}
+                r={2}
+                fill={colors.accent}
+                opacity={0.5}
+              />
+            ))}
+          </g>
+        )}
+
+        {/* Wire preview */}
+        {schTool === "wire" && wireStart && wirePreview && (
+          <g pointerEvents="none">
+            {/* Orthogonal routing: horizontal then vertical */}
+            <line
+              x1={wireStart.x}
+              y1={wireStart.y}
+              x2={wirePreview.x}
+              y2={wireStart.y}
+              stroke={colors.accent}
+              strokeWidth={2}
+              opacity={0.6}
+              strokeDasharray="4 2"
+            />
+            <line
+              x1={wirePreview.x}
+              y1={wireStart.y}
+              x2={wirePreview.x}
+              y2={wirePreview.y}
+              stroke={colors.accent}
+              strokeWidth={2}
+              opacity={0.6}
+              strokeDasharray="4 2"
+            />
+            <circle cx={wireStart.x} cy={wireStart.y} r={3} fill={colors.accent} opacity={0.8} />
+          </g>
+        )}
+
+        {/* Label ghost */}
+        {schTool === "label" && ghostPos && (
+          <g transform={`translate(${ghostPos.x}, ${ghostPos.y})`} opacity={0.5} pointerEvents="none">
+            <rect
+              x={-2}
+              y={-10}
+              width={useElectronicsStore.getState().schLabelName.length * 6 + 4}
+              height={14}
+              fill={colors.accent}
+              opacity={0.3}
+              rx={2}
+            />
+            <text
+              fontSize={9}
+              fill={colors.accent}
+              fontFamily="monospace"
+              dominantBaseline="middle"
+            >
+              {useElectronicsStore.getState().schLabelName}
+            </text>
+          </g>
+        )}
       </g>
     </svg>
   );

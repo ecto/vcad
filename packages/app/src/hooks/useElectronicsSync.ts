@@ -7,14 +7,16 @@
  */
 
 import { useEffect } from "react";
-import { useDocumentStore } from "@vcad/core";
+import { useDocumentStore, useCoreElectronicsStore, getNodePcb } from "@vcad/core";
 import { generateNetlist, runDrc, runErc } from "@vcad/engine";
 import { useElectronicsStore } from "@/stores/electronics-store";
 
 export function useElectronicsSync() {
   const active = useElectronicsStore((s) => s.active);
   const schematic = useDocumentStore((s) => s.document.schematic);
-  const pcb = useDocumentStore((s) => s.document.pcb);
+  const activeBoardNodeId = useCoreElectronicsStore((s) => s.activeBoardNodeId);
+  const document = useDocumentStore((s) => s.document);
+  const pcb = activeBoardNodeId != null ? getNodePcb(document, activeBoardNodeId) : null;
 
   // Principle 7: Continuous netlist sync
   useEffect(() => {

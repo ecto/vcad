@@ -2490,6 +2490,11 @@ fn format_op(
             line: 0,
             message: "ImportedMesh not supported in compact format".to_string(),
         }),
+
+        CsgOp::PcbBoard { .. } => Err(CompactParseError {
+            line: 0,
+            message: "PcbBoard not supported in compact format".to_string(),
+        }),
     }
 }
 

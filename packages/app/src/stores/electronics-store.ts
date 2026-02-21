@@ -5,14 +5,15 @@ import type {
   ErcViolationResult,
   NetlistResult,
 } from "@vcad/engine";
+import { useCoreElectronicsStore, getPcbNodeIds, useDocumentStore } from "@vcad/core";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 export type ElectronicsLayout = "split" | "schematic-only" | "pcb-only";
-export type PcbTool = "select" | "move" | "route";
-export type SchTool = "select" | "move";
+export type PcbTool = "select" | "move" | "route" | "delete";
+export type SchTool = "select" | "move" | "place" | "wire" | "label" | "delete";
 
 export type ElectronicsSelection =
   | { type: "none" }
@@ -84,6 +85,18 @@ export interface ElectronicsState {
   schPan: Vec2;
   schTool: SchTool;
 
+  // Schematic editing transient state
+  schPlacingSymbol: string | null;
+  schPlacingRotation: number;
+  schWireStart: Vec2 | null;
+  schWirePreview: Vec2 | null;
+  schLabelName: string;
+  schGridSize: number;
+  schRefCounters: Record<string, number>;
+
+  // PCB drag state
+  pcbDragging: { fpIdx: number; startPos: Vec2 } | null;
+
   // Real-time validation
   drcViolations: DrcViolationResult[];
   ercViolations: ErcViolationResult[];
@@ -123,9 +136,22 @@ export interface ElectronicsState {
   updateRoutePreview: (points: Vec2[]) => void;
   cancelRoute: () => void;
   finishRoute: () => void;
+
+  // Schematic editing actions
+  setSchPlacingSymbol: (symbolId: string | null) => void;
+  rotateSchPlacement: () => void;
+  startSchWire: (pos: Vec2) => void;
+  updateSchWirePreview: (pos: Vec2 | null) => void;
+  cancelSchWire: () => void;
+  setSchLabelName: (name: string) => void;
+  nextRef: (prefix: string) => string;
+
+  // PCB drag actions
+  startPcbDrag: (fpIdx: number, startPos: Vec2) => void;
+  cancelPcbDrag: () => void;
 }
 
-export const useElectronicsStore = create<ElectronicsState>((set) => ({
+export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
   active: false,
   layout: "split",
   splitRatio: 0.5,
@@ -150,6 +176,16 @@ export const useElectronicsStore = create<ElectronicsState>((set) => ({
   schPan: { x: 0, y: 0 },
   schTool: "select",
 
+  schPlacingSymbol: null,
+  schPlacingRotation: 0,
+  schWireStart: null,
+  schWirePreview: null,
+  schLabelName: "NET",
+  schGridSize: 10,
+  schRefCounters: {},
+
+  pcbDragging: null,
+
   drcViolations: [],
   ercViolations: [],
 
@@ -158,8 +194,18 @@ export const useElectronicsStore = create<ElectronicsState>((set) => ({
   routePreview: [],
   routeClearanceCorridor: 0.15,
 
-  enter: () => set({ active: true }),
-  exit: () =>
+  enter: () => {
+    // Find first PcbBoard node and enter the core electronics store with it
+    const doc = useDocumentStore.getState().document;
+    const boardIds = getPcbNodeIds(doc);
+    const boardNodeId = boardIds[0] ?? null;
+    if (boardNodeId != null) {
+      useCoreElectronicsStore.getState().enter(boardNodeId);
+    }
+    set({ active: true });
+  },
+  exit: () => {
+    useCoreElectronicsStore.getState().exit();
     set({
       active: false,
       selection: { type: "none" },
@@ -167,7 +213,8 @@ export const useElectronicsStore = create<ElectronicsState>((set) => ({
       routeActive: false,
       routeStartPad: null,
       routePreview: [],
-    }),
+    });
+  },
 
   setLayout: (layout) => set({ layout }),
   setFocusedPane: (focusedPane) => set({ focusedPane }),
@@ -259,4 +306,39 @@ export const useElectronicsStore = create<ElectronicsState>((set) => ({
       routeStartPad: null,
       routePreview: [],
     }),
+
+  // Schematic editing
+  setSchPlacingSymbol: (symbolId) =>
+    set({
+      schPlacingSymbol: symbolId,
+      schPlacingRotation: 0,
+      schTool: symbolId ? "place" : "select",
+    }),
+
+  rotateSchPlacement: () =>
+    set((s) => ({ schPlacingRotation: (s.schPlacingRotation + 90) % 360 })),
+
+  startSchWire: (pos) =>
+    set({ schWireStart: pos, schWirePreview: pos }),
+
+  updateSchWirePreview: (pos) =>
+    set({ schWirePreview: pos }),
+
+  cancelSchWire: () =>
+    set({ schWireStart: null, schWirePreview: null }),
+
+  setSchLabelName: (name) => set({ schLabelName: name }),
+
+  nextRef: (prefix) => {
+    const s = get();
+    const count = (s.schRefCounters[prefix] ?? 0) + 1;
+    set({ schRefCounters: { ...s.schRefCounters, [prefix]: count } });
+    return `${prefix}${count}`;
+  },
+
+  // PCB drag
+  startPcbDrag: (fpIdx, startPos) =>
+    set({ pcbDragging: { fpIdx, startPos } }),
+
+  cancelPcbDrag: () => set({ pcbDragging: null }),
 }));

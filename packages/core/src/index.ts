@@ -20,6 +20,7 @@ export type {
   CircularPatternPartInfo,
   MirrorPartInfo,
   TextPartInfo,
+  PcbBoardPartInfo,
   PartInfo,
   ToolMode,
   TransformMode,
@@ -44,6 +45,7 @@ export {
   isCircularPatternPart,
   isMirrorPart,
   isTextPart,
+  isPcbBoardPart,
   getSketchPlaneDirections,
   isAxisAlignedPlane,
   computePlaneFromFace,
@@ -53,7 +55,7 @@ export {
 } from "./types.js";
 
 // Stores
-export { useDocumentStore, getUndoActionName, getRedoActionName } from "./stores/document-store.js";
+export { useDocumentStore, getUndoActionName, getRedoActionName, getNodePcb, getPcbNodeIds } from "./stores/document-store.js";
 export type { VcadFile, DocumentState } from "./stores/document-store.js";
 
 export { useUiStore } from "./stores/ui-store.js";
@@ -73,6 +75,14 @@ export type {
   JointState,
   SimulationObservation,
 } from "./stores/simulation-store.js";
+
+export { useCoreElectronicsStore } from "./stores/electronics-store.js";
+export type {
+  CoreElectronicsState,
+  PcbTool,
+  SchTool,
+  ElectronicsSelection,
+} from "./stores/electronics-store.js";
 
 // Commands
 export { createCommandRegistry } from "./commands.js";

@@ -9,6 +9,7 @@ use vcad_ir::{CsgOp, Document, NodeId, PathCurve};
 use vcad_kernel::Solid;
 use vcad_kernel_geom::Line3d;
 use vcad_kernel_math::{Transform, Vec3};
+use vcad_ir::ecad::PadShape;
 use vcad_kernel_sweep::{Helix, LoftOptions, SweepOptions};
 use vcad_kernel_tessellate::TriangleMesh;
 use vcad_kernel_text::{FontRegistry, TextAlignment};
@@ -551,6 +552,94 @@ fn evaluate_op_timed(
         }
 
         CsgOp::StepImport { path } => Ok(Solid::from_step(path).ok()),
+
+        CsgOp::PcbBoard { board } => {
+            // Extrude the board outline into a 3D solid.
+            let verts = &board.outline.vertices;
+            if verts.len() < 3 {
+                return Ok(None);
+            }
+
+            // Build a Sketch2D profile from the outline vertices (XY plane).
+            let mut segments = Vec::with_capacity(verts.len());
+            for i in 0..verts.len() {
+                let next = (i + 1) % verts.len();
+                segments.push(vcad_ir::SketchSegment2D::Line {
+                    start: verts[i],
+                    end: verts[next],
+                });
+            }
+
+            let origin = vcad_ir::Vec3::new(0.0, 0.0, 0.0);
+            let x_dir = vcad_ir::Vec3::new(1.0, 0.0, 0.0);
+            let y_dir = vcad_ir::Vec3::new(0.0, 1.0, 0.0);
+
+            let profile = ir_sketch_to_profile(&origin, &x_dir, &y_dir, &segments)
+                .map_err(EvalError::Sketch)?;
+
+            let dir = Vec3::new(0.0, 0.0, board.outline.thickness);
+            let mut board_solid =
+                Solid::extrude(profile, dir).map_err(EvalError::Sketch)?;
+
+            // Subtract cutout holes
+            for cutout in &board.outline.cutouts {
+                if cutout.len() < 3 {
+                    continue;
+                }
+                let mut cut_segs = Vec::with_capacity(cutout.len());
+                for i in 0..cutout.len() {
+                    let next = (i + 1) % cutout.len();
+                    cut_segs.push(vcad_ir::SketchSegment2D::Line {
+                        start: cutout[i],
+                        end: cutout[next],
+                    });
+                }
+                if let Ok(cut_profile) =
+                    ir_sketch_to_profile(&origin, &x_dir, &y_dir, &cut_segs)
+                {
+                    // Extrude slightly taller to ensure clean boolean
+                    let cut_dir = Vec3::new(0.0, 0.0, board.outline.thickness * 1.1);
+                    if let Ok(cut_solid) = Solid::extrude(cut_profile, cut_dir) {
+                        board_solid = board_solid.difference(&cut_solid);
+                    }
+                }
+            }
+
+            // Add component bounding boxes estimated from footprint pad extents
+            for fp in &board.footprints {
+                if fp.pads.is_empty() {
+                    continue;
+                }
+                let mut min_x = f64::INFINITY;
+                let mut min_y = f64::INFINITY;
+                let mut max_x = f64::NEG_INFINITY;
+                let mut max_y = f64::NEG_INFINITY;
+                for pad in &fp.pads {
+                    let (pw, ph) = pad_extent(&pad.shape);
+                    min_x = min_x.min(pad.position.x - pw / 2.0);
+                    max_x = max_x.max(pad.position.x + pw / 2.0);
+                    min_y = min_y.min(pad.position.y - ph / 2.0);
+                    max_y = max_y.max(pad.position.y + ph / 2.0);
+                }
+                let w = max_x - min_x;
+                let h = max_y - min_y;
+                let comp_h = 1.0; // component height estimate (mm)
+                let cx = fp.position.x + (min_x + max_x) / 2.0;
+                let cy = fp.position.y + (min_y + max_y) / 2.0;
+
+                let comp_box = Solid::cube(w, h, comp_h);
+                let z_off = if fp.front {
+                    board.outline.thickness
+                } else {
+                    -comp_h
+                };
+                let placed =
+                    comp_box.apply_transform(&Transform::translation(cx, cy, z_off));
+                board_solid = board_solid.union(&placed);
+            }
+
+            Ok(Some(board_solid))
+        }
     }
 }
 
@@ -865,8 +954,35 @@ fn op_name(op: &CsgOp) -> String {
         CsgOp::Loft { .. } => "Loft",
         CsgOp::ImportedMesh { .. } => "ImportedMesh",
         CsgOp::StepImport { .. } => "StepImport",
+        CsgOp::PcbBoard { .. } => "PcbBoard",
     }
     .to_string()
+}
+
+/// Estimate the width/height extent of a pad shape.
+fn pad_extent(shape: &PadShape) -> (f64, f64) {
+    match shape {
+        PadShape::Circle { diameter } => (*diameter, *diameter),
+        PadShape::Rect { width, height }
+        | PadShape::Oval { width, height }
+        | PadShape::RoundRect { width, height, .. } => (*width, *height),
+        PadShape::Custom { vertices } => {
+            if vertices.is_empty() {
+                return (0.5, 0.5);
+            }
+            let mut min_x = f64::INFINITY;
+            let mut max_x = f64::NEG_INFINITY;
+            let mut min_y = f64::INFINITY;
+            let mut max_y = f64::NEG_INFINITY;
+            for v in vertices {
+                min_x = min_x.min(v.x);
+                max_x = max_x.max(v.x);
+                min_y = min_y.min(v.y);
+                max_y = max_y.max(v.y);
+            }
+            (max_x - min_x, max_y - min_y)
+        }
+    }
 }
 
 /// Convert kernel TriangleMesh to EvaluatedMesh.

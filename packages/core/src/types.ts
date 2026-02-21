@@ -182,7 +182,17 @@ export interface TextPartInfo {
   translateNodeId: NodeId;
 }
 
-export type PartInfo = PrimitivePartInfo | BooleanPartInfo | ExtrudePartInfo | RevolvePartInfo | SweepPartInfo | LoftPartInfo | ImportedMeshPartInfo | FilletPartInfo | ChamferPartInfo | ShellPartInfo | LinearPatternPartInfo | CircularPatternPartInfo | MirrorPartInfo | TextPartInfo;
+export interface PcbBoardPartInfo {
+  id: string;
+  name: string;
+  kind: "pcb-board";
+  boardNodeId: NodeId;
+  scaleNodeId: NodeId;
+  rotateNodeId: NodeId;
+  translateNodeId: NodeId;
+}
+
+export type PartInfo = PrimitivePartInfo | BooleanPartInfo | ExtrudePartInfo | RevolvePartInfo | SweepPartInfo | LoftPartInfo | ImportedMeshPartInfo | FilletPartInfo | ChamferPartInfo | ShellPartInfo | LinearPatternPartInfo | CircularPatternPartInfo | MirrorPartInfo | TextPartInfo | PcbBoardPartInfo;
 
 export function isPrimitivePart(part: PartInfo): part is PrimitivePartInfo {
   return part.kind === "cube" || part.kind === "cylinder" || part.kind === "sphere";
@@ -238,6 +248,10 @@ export function isMirrorPart(part: PartInfo): part is MirrorPartInfo {
 
 export function isTextPart(part: PartInfo): part is TextPartInfo {
   return part.kind === "text";
+}
+
+export function isPcbBoardPart(part: PartInfo): part is PcbBoardPartInfo {
+  return part.kind === "pcb-board";
 }
 
 export type ToolMode = "select" | "primitive" | "simulate";

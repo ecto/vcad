@@ -387,6 +387,12 @@ export interface LoftOp {
   closed?: boolean;            // Connect last to first (creates tube)
 }
 
+/** PCB board — evaluates the board's outline + components to 3D geometry. */
+export interface PcbBoardOp {
+  type: "PcbBoard";
+  board: Pcb;
+}
+
 /** CSG operation — the core building block of the IR DAG. */
 export type CsgOp =
   | CubeOp
@@ -411,7 +417,8 @@ export type CsgOp =
   | Text2DOp
   | SweepOp
   | LoftOp
-  | ImportedMeshOp;
+  | ImportedMeshOp
+  | PcbBoardOp;
 
 /** A node in the IR graph. */
 export interface Node {
@@ -927,7 +934,7 @@ export interface Document {
   groundInstanceId?: string;
   /** Schematic sheet for electronics design. */
   schematic?: SchematicSheet;
-  /** PCB layout for electronics design. */
+  /** @deprecated Legacy PCB field — migrated to PcbBoard node on load. */
   pcb?: Pcb;
 }
 
@@ -1365,6 +1372,8 @@ function getChildren(op: CsgOp): number[] {
       return [op.sketch];
     case 'Loft':
       return op.sketches;
+    case 'PcbBoard':
+      return [];
     default:
       return [];
   }
@@ -1464,6 +1473,8 @@ function formatOp(op: CsgOp, idMap: Map<number, number>, name?: string): string 
       return `E ${idMap.get(op.sketch)} ${op.direction.x} ${op.direction.y} ${op.direction.z}${nameSuffix}`;
     case 'Revolve':
       return `V ${idMap.get(op.sketch)} ${op.axis_origin.x} ${op.axis_origin.y} ${op.axis_origin.z} ${op.axis_dir.x} ${op.axis_dir.y} ${op.axis_dir.z} ${op.angle_deg}${nameSuffix}`;
+    case 'PcbBoard':
+      throw new Error('PcbBoard not supported in compact IR');
     default:
       throw new Error(`Unsupported op type for compact IR: ${(op as CsgOp).type}`);
   }

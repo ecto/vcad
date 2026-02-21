@@ -10,6 +10,7 @@ import type {
   LoftOp,
   Transform3D,
   ImportedMeshOp,
+  PcbBoardOp,
 } from "@vcad/ir";
 import type {
   EvaluatedScene,
@@ -110,9 +111,7 @@ export function evaluateDocument(
         clashes: result.clashes.map(wasmMeshToTriangleMesh),
       };
     } catch (e) {
-      if (DEBUG_EVAL) {
-        console.warn("[ENGINE] WASM evaluateDocument failed, falling back to TS:", e);
-      }
+      console.warn("[ENGINE] WASM evaluateDocument failed, falling back to TS:", e);
       // Fall through to TS evaluator
     }
   }
@@ -239,6 +238,103 @@ function findImportedMesh(
 }
 
 /**
+ * Find a PcbBoard in the node chain and extract transforms.
+ */
+function findPcbBoard(
+  rootId: NodeId,
+  nodes: Record<string, Node>,
+): { board: PcbBoardOp; transform: TransformInfo } | null {
+  const transform: TransformInfo = {
+    translate: { x: 0, y: 0, z: 0 },
+    rotate: { x: 0, y: 0, z: 0 },
+    scale: { x: 1, y: 1, z: 1 },
+  };
+
+  let current = rootId;
+  while (true) {
+    const node = nodes[String(current)];
+    if (!node) return null;
+
+    if (node.op.type === "PcbBoard") {
+      return { board: node.op, transform };
+    }
+
+    if (node.op.type === "Translate") {
+      transform.translate = node.op.offset;
+      current = node.op.child;
+    } else if (node.op.type === "Rotate") {
+      transform.rotate = node.op.angles;
+      current = node.op.child;
+    } else if (node.op.type === "Scale") {
+      transform.scale = node.op.factor;
+      current = node.op.child;
+    } else {
+      return null;
+    }
+  }
+}
+
+/**
+ * Generate a simple extruded mesh from a PCB board outline (ear-clip triangulation + side faces).
+ */
+function pcbBoardToMesh(op: PcbBoardOp): TriangleMesh {
+  const verts = op.board.outline.vertices;
+  const thickness = op.board.outline.thickness;
+  if (verts.length < 3) {
+    return { positions: new Float32Array(0), indices: new Uint32Array(0) };
+  }
+
+  const n = verts.length;
+  // Simple ear-clip triangulation for convex/simple polygon
+  const topPositions: number[] = [];
+  const botPositions: number[] = [];
+  for (const v of verts) {
+    topPositions.push(v.x, v.y, thickness);
+    botPositions.push(v.x, v.y, 0);
+  }
+
+  const allPositions: number[] = [];
+  const allIndices: number[] = [];
+
+  // Top face (fan triangulation)
+  const topOffset = 0;
+  for (const v of verts) {
+    allPositions.push(v.x, v.y, thickness);
+  }
+  for (let i = 1; i < n - 1; i++) {
+    allIndices.push(topOffset, topOffset + i, topOffset + i + 1);
+  }
+
+  // Bottom face (reversed winding)
+  const botOffset = n;
+  for (const v of verts) {
+    allPositions.push(v.x, v.y, 0);
+  }
+  for (let i = 1; i < n - 1; i++) {
+    allIndices.push(botOffset, botOffset + i + 1, botOffset + i);
+  }
+
+  // Side faces
+  const sideOffset = n * 2;
+  for (let i = 0; i < n; i++) {
+    const next = (i + 1) % n;
+    const base = sideOffset + i * 4;
+    // Four vertices per side quad
+    allPositions.push(verts[i].x, verts[i].y, 0);
+    allPositions.push(verts[next].x, verts[next].y, 0);
+    allPositions.push(verts[next].x, verts[next].y, thickness);
+    allPositions.push(verts[i].x, verts[i].y, thickness);
+    allIndices.push(base, base + 1, base + 2);
+    allIndices.push(base, base + 2, base + 3);
+  }
+
+  return {
+    positions: new Float32Array(allPositions),
+    indices: new Uint32Array(allIndices),
+  };
+}
+
+/**
  * Apply a transform to mesh positions.
  */
 function transformMesh(
@@ -312,6 +408,15 @@ function evaluateDocumentTS(
   const visibleRoots = doc.roots.filter((entry) => entry.visible !== false);
   const solids: Solid[] = [];
   const parts = visibleRoots.map((entry) => {
+    // Check if this is a PcbBoard (doesn't go through Solid pipeline)
+    const pcbBoard = findPcbBoard(entry.root, doc.nodes);
+    if (pcbBoard) {
+      const baseMesh = pcbBoardToMesh(pcbBoard.board);
+      const mesh = transformMesh(baseMesh, pcbBoard.transform);
+      solids.push(Solid.empty());
+      return { mesh, material: entry.material };
+    }
+
     // Check if this is an imported mesh (doesn't go through Solid pipeline)
     const imported = findImportedMesh(entry.root, doc.nodes);
     if (imported) {
@@ -520,16 +625,17 @@ function evaluateOp(
         throw new Error(`Extrude references invalid sketch node: ${op.sketch} (type=${sketchNode.op.type})`);
       }
       const profile = convertSketchToProfile(sketchNode.op);
+      const profileJson = JSON.stringify(profile);
       const hasTwist = op.twist_angle !== undefined && Math.abs(op.twist_angle) > 1e-12;
       const hasScale = op.scale_end !== undefined && Math.abs(op.scale_end - 1.0) > 1e-12;
       return (hasTwist || hasScale)
         ? Solid.extrudeWithOptions(
-            profile,
+            profileJson,
             direction,
             op.twist_angle ?? 0,
             op.scale_end ?? 1.0
           )
-        : Solid.extrude(profile, direction);
+        : Solid.extrude(profileJson, direction);
     }
 
     case "Revolve": {
@@ -538,6 +644,7 @@ function evaluateOp(
         throw new Error(`Revolve references invalid sketch node: ${op.sketch}`);
       }
       const profile = convertSketchToProfile(sketchNode.op);
+      const profileJson = JSON.stringify(profile);
       const axisOrigin = new Float64Array([
         op.axis_origin.x,
         op.axis_origin.y,
@@ -548,7 +655,7 @@ function evaluateOp(
         op.axis_dir.y,
         op.axis_dir.z,
       ]);
-      return Solid.revolve(profile, axisOrigin, axisDir, op.angle_deg);
+      return Solid.revolve(profileJson, axisOrigin, axisDir, op.angle_deg);
     }
 
     case "LinearPattern": {
@@ -597,6 +704,7 @@ function evaluateOp(
         throw new Error(`Sweep references invalid sketch node: ${op.sketch}`);
       }
       const profile = convertSketchToProfile(sketchNode.op);
+      const profileJson = JSON.stringify(profile);
 
       if (op.path.type === "Line") {
         const start = new Float64Array([
@@ -610,7 +718,7 @@ function evaluateOp(
           op.path.end.z,
         ]);
         return Solid.sweepLine(
-          profile,
+          profileJson,
           start,
           end,
           op.twist_angle,
@@ -620,7 +728,7 @@ function evaluateOp(
         );
       } else {
         return Solid.sweepHelix(
-          profile,
+          profileJson,
           op.path.radius,
           op.path.pitch,
           op.path.height,
@@ -643,13 +751,17 @@ function evaluateOp(
         }
         return convertSketchToProfile(sketchNode.op);
       });
-      return Solid.loft(profiles, op.closed);
+      return Solid.loft(JSON.stringify(profiles), op.closed);
     }
 
     case "ImportedMesh":
       return Solid.empty();
 
     case "Text2D":
+      return Solid.empty();
+
+    case "PcbBoard":
+      // PcbBoard is handled at the document level via findPcbBoard.
       return Solid.empty();
   }
 }
