@@ -16,7 +16,7 @@ pub mod erc;
 // ============================================================================
 
 /// A connection point in a netlist: a specific pin on a specific component.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct NetConnection {
     /// Reference designator of the component (e.g. "R1", "U3").
     pub component_ref: String,
@@ -25,7 +25,7 @@ pub struct NetConnection {
 }
 
 /// A net in the netlist: a named set of connected pins.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct NetlistNet {
     /// Net name (from a label, or auto-generated as "NET-001" etc.).
     pub name: String,
@@ -34,7 +34,7 @@ pub struct NetlistNet {
 }
 
 /// A complete netlist extracted from a schematic.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct Netlist {
     /// All nets in the design.
     pub nets: Vec<NetlistNet>,

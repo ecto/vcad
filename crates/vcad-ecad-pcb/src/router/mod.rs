@@ -18,7 +18,7 @@ use vcad_ir::Vec2;
 pub type NetId = u32;
 
 /// Route result for a single net.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct RouteResult {
     /// Net name that was routed.
     pub net: String,

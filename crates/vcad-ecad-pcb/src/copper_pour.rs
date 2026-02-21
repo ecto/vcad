@@ -12,7 +12,7 @@ use vcad_ir::ecad::{Pad, PadShape, Pcb, PcbLayer, Zone};
 use vcad_ir::Vec2;
 
 /// Filled zone result after copper pour calculation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct FilledZone {
     /// Filled polygons (each is a closed outline in board coordinates).
     pub polygons: Vec<Vec<Vec2>>,

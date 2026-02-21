@@ -270,8 +270,8 @@ impl Solid {
     ///
     /// Takes a sketch profile and extrusion direction as JS objects.
     #[wasm_bindgen(js_name = extrude)]
-    pub fn extrude(profile_js: JsValue, direction: Vec<f64>) -> Result<Solid, JsError> {
-        let profile: WasmSketchProfile = serde_wasm_bindgen::from_value(profile_js)
+    pub fn extrude(profile_json: String, direction: Vec<f64>) -> Result<Solid, JsError> {
+        let profile: WasmSketchProfile = serde_json::from_str(&profile_json)
             .map_err(|e| JsError::new(&format!("Invalid profile: {}", e)))?;
 
         if direction.len() != 3 {
@@ -293,12 +293,12 @@ impl Solid {
     /// and scale factor at the end (1.0 = no taper).
     #[wasm_bindgen(js_name = extrudeWithOptions)]
     pub fn extrude_with_options(
-        profile_js: JsValue,
+        profile_json: String,
         direction: Vec<f64>,
         twist_angle: f64,
         scale_end: f64,
     ) -> Result<Solid, JsError> {
-        let profile: WasmSketchProfile = serde_wasm_bindgen::from_value(profile_js)
+        let profile: WasmSketchProfile = serde_json::from_str(&profile_json)
             .map_err(|e| JsError::new(&format!("Invalid profile: {}", e)))?;
 
         if direction.len() != 3 {
@@ -319,12 +319,12 @@ impl Solid {
     /// Takes a sketch profile, axis origin, axis direction, and angle in degrees.
     #[wasm_bindgen(js_name = revolve)]
     pub fn revolve(
-        profile_js: JsValue,
+        profile_json: String,
         axis_origin: Vec<f64>,
         axis_dir: Vec<f64>,
         angle_deg: f64,
     ) -> Result<Solid, JsError> {
-        let profile: WasmSketchProfile = serde_wasm_bindgen::from_value(profile_js)
+        let profile: WasmSketchProfile = serde_json::from_str(&profile_json)
             .map_err(|e| JsError::new(&format!("Invalid profile: {}", e)))?;
 
         if axis_origin.len() != 3 || axis_dir.len() != 3 {
@@ -348,7 +348,7 @@ impl Solid {
     /// Takes a sketch profile and path endpoints.
     #[wasm_bindgen(js_name = sweepLine)]
     pub fn sweep_line(
-        profile_js: JsValue,
+        profile_json: String,
         start: Vec<f64>,
         end: Vec<f64>,
         twist_angle: Option<f64>,
@@ -359,7 +359,7 @@ impl Solid {
         use vcad_kernel::vcad_kernel_geom::Line3d;
         use vcad_kernel::vcad_kernel_sweep::SweepOptions;
 
-        let profile: WasmSketchProfile = serde_wasm_bindgen::from_value(profile_js)
+        let profile: WasmSketchProfile = serde_json::from_str(&profile_json)
             .map_err(|e| JsError::new(&format!("Invalid profile: {}", e)))?;
 
         if start.len() != 3 || end.len() != 3 {
@@ -395,7 +395,7 @@ impl Solid {
     #[wasm_bindgen(js_name = sweepHelix)]
     #[allow(clippy::too_many_arguments)]
     pub fn sweep_helix(
-        profile_js: JsValue,
+        profile_json: String,
         radius: f64,
         pitch: f64,
         height: f64,
@@ -409,7 +409,7 @@ impl Solid {
     ) -> Result<Solid, JsError> {
         use vcad_kernel::vcad_kernel_sweep::{Helix, SweepOptions};
 
-        let profile: WasmSketchProfile = serde_wasm_bindgen::from_value(profile_js)
+        let profile: WasmSketchProfile = serde_json::from_str(&profile_json)
             .map_err(|e| JsError::new(&format!("Invalid profile: {}", e)))?;
 
         // Use centered profile so it wraps around the helix path properly
@@ -437,10 +437,10 @@ impl Solid {
     ///
     /// Takes an array of sketch profiles (minimum 2).
     #[wasm_bindgen(js_name = loft)]
-    pub fn loft(profiles_js: JsValue, closed: Option<bool>) -> Result<Solid, JsError> {
+    pub fn loft(profiles_json: String, closed: Option<bool>) -> Result<Solid, JsError> {
         use vcad_kernel::vcad_kernel_sweep::{LoftMode, LoftOptions};
 
-        let profiles: Vec<WasmSketchProfile> = serde_wasm_bindgen::from_value(profiles_js)
+        let profiles: Vec<WasmSketchProfile> = serde_json::from_str(&profiles_json)
             .map_err(|e| JsError::new(&format!("Invalid profiles: {}", e)))?;
 
         if profiles.len() < 2 {
@@ -1174,12 +1174,12 @@ pub fn text_bounds(
 #[module("sweep")]
 #[wasm_bindgen]
 pub fn op_revolve(
-    profile_js: JsValue,
+    profile_json: String,
     axis_origin: Vec<f64>,
     axis_dir: Vec<f64>,
     angle_deg: f64,
 ) -> Result<Solid, JsError> {
-    Solid::revolve(profile_js, axis_origin, axis_dir, angle_deg)
+    Solid::revolve(profile_json, axis_origin, axis_dir, angle_deg)
 }
 
 /// Create a solid by sweeping a profile along a line path.
@@ -1188,7 +1188,7 @@ pub fn op_revolve(
 #[module("sweep")]
 #[wasm_bindgen]
 pub fn op_sweep_line(
-    profile_js: JsValue,
+    profile_json: String,
     start: Vec<f64>,
     end: Vec<f64>,
     twist_angle: Option<f64>,
@@ -1196,7 +1196,7 @@ pub fn op_sweep_line(
     scale_end: Option<f64>,
     orientation: Option<f64>,
 ) -> Result<Solid, JsError> {
-    Solid::sweep_line(profile_js, start, end, twist_angle, scale_start, scale_end, orientation)
+    Solid::sweep_line(profile_json, start, end, twist_angle, scale_start, scale_end, orientation)
 }
 
 /// Create a solid by sweeping a profile along a helix path.
@@ -1206,7 +1206,7 @@ pub fn op_sweep_line(
 #[wasm_bindgen]
 #[allow(clippy::too_many_arguments)]
 pub fn op_sweep_helix(
-    profile_js: JsValue,
+    profile_json: String,
     radius: f64,
     pitch: f64,
     height: f64,
@@ -1219,7 +1219,7 @@ pub fn op_sweep_helix(
     orientation: Option<f64>,
 ) -> Result<Solid, JsError> {
     Solid::sweep_helix(
-        profile_js,
+        profile_json,
         radius,
         pitch,
         height,
@@ -1238,8 +1238,8 @@ pub fn op_sweep_helix(
 /// This is a standalone wrapper for lazy loading via wasmosis.
 #[module("sweep")]
 #[wasm_bindgen]
-pub fn op_loft(profiles_js: JsValue, closed: Option<bool>) -> Result<Solid, JsError> {
-    Solid::loft(profiles_js, closed)
+pub fn op_loft(profiles_json: String, closed: Option<bool>) -> Result<Solid, JsError> {
+    Solid::loft(profiles_json, closed)
 }
 
 // =========================================================================
@@ -2841,7 +2841,7 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
                         segments: wasm_segments,
                     };
 
-                    let profile_js = serde_wasm_bindgen::to_value(&profile)
+                    let profile_json = serde_json::to_string(&profile)
                         .map_err(|e| JsError::new(&format!("Profile serialization failed: {}", e)))?;
 
                     // Use extrudeWithOptions if twist or scale is specified
@@ -2849,13 +2849,13 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
                     let has_scale = scale_end.is_some_and(|s| (s - 1.0).abs() > 1e-12);
                     if has_twist || has_scale {
                         Solid::extrude_with_options(
-                            profile_js,
+                            profile_json,
                             vec![direction.x, direction.y, direction.z],
                             twist_angle.unwrap_or(0.0),
                             scale_end.unwrap_or(1.0),
                         )
                     } else {
-                        Solid::extrude(profile_js, vec![direction.x, direction.y, direction.z])
+                        Solid::extrude(profile_json, vec![direction.x, direction.y, direction.z])
                     }
                 }
                 _ => Err(JsError::new("Extrude requires a Sketch2D node"))
@@ -2894,11 +2894,11 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
                         segments: wasm_segments,
                     };
 
-                    let profile_js = serde_wasm_bindgen::to_value(&profile)
+                    let profile_json = serde_json::to_string(&profile)
                         .map_err(|e| JsError::new(&format!("Profile serialization failed: {}", e)))?;
 
                     Solid::revolve(
-                        profile_js,
+                        profile_json,
                         vec![axis_origin.x, axis_origin.y, axis_origin.z],
                         vec![axis_dir.x, axis_dir.y, axis_dir.z],
                         *angle_deg,
@@ -3732,6 +3732,158 @@ mod cam_wasm {
 // Re-export CAM types at module level when feature is enabled
 #[cfg(feature = "cam")]
 pub use cam_wasm::*;
+
+// =============================================================================
+// ECAD (Electronics) bindings
+// =============================================================================
+
+#[cfg(feature = "ecad")]
+mod ecad_wasm {
+    use vcad_ir::ecad::{Pcb, SchematicSheet};
+    use wasm_bindgen::prelude::*;
+
+    /// Check if ECAD features are available in this build.
+    #[wasm_bindgen(js_name = isEcadAvailable)]
+    pub fn is_ecad_available() -> bool {
+        true
+    }
+
+    /// Run Design Rule Check on a PCB layout.
+    ///
+    /// # Arguments
+    /// * `pcb_json` - JSON-serialized `Pcb` struct
+    ///
+    /// # Returns
+    /// Array of DRC violations as JsValue.
+    #[wasm_bindgen(js_name = ecadCheckDrc)]
+    pub fn ecad_check_drc(pcb_json: &str) -> Result<JsValue, JsError> {
+        let pcb: Pcb =
+            serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let violations = vcad_ecad_pcb::drc::check_drc(&pcb);
+        serde_wasm_bindgen::to_value(&violations)
+            .map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Run Electrical Rule Check on a schematic sheet.
+    ///
+    /// # Arguments
+    /// * `sch_json` - JSON-serialized `SchematicSheet` struct
+    ///
+    /// # Returns
+    /// Array of ERC violations as JsValue.
+    #[wasm_bindgen(js_name = ecadCheckErc)]
+    pub fn ecad_check_erc(sch_json: &str) -> Result<JsValue, JsError> {
+        let sheet: SchematicSheet =
+            serde_json::from_str(sch_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let violations = vcad_ecad_schematic::erc::check_erc(&sheet);
+        serde_wasm_bindgen::to_value(&violations)
+            .map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Generate a netlist from a schematic sheet.
+    ///
+    /// # Arguments
+    /// * `sch_json` - JSON-serialized `SchematicSheet` struct
+    ///
+    /// # Returns
+    /// Netlist as JsValue.
+    #[wasm_bindgen(js_name = ecadGenerateNetlist)]
+    pub fn ecad_generate_netlist(sch_json: &str) -> Result<JsValue, JsError> {
+        let sheet: SchematicSheet =
+            serde_json::from_str(sch_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let netlist = vcad_ecad_schematic::generate_netlist(&sheet);
+        serde_wasm_bindgen::to_value(&netlist)
+            .map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Route a net between two points on the PCB using the grid router.
+    ///
+    /// # Arguments
+    /// * `pcb_json` - JSON-serialized `Pcb` struct
+    /// * `net` - Net name to route
+    /// * `start_x`, `start_y` - Start coordinates (mm)
+    /// * `end_x`, `end_y` - End coordinates (mm)
+    /// * `width` - Trace width (mm)
+    ///
+    /// # Returns
+    /// Route result with segments and vias.
+    #[wasm_bindgen(js_name = ecadRouteNet)]
+    pub fn ecad_route_net(
+        pcb_json: &str,
+        net: &str,
+        start_x: f64,
+        start_y: f64,
+        end_x: f64,
+        end_y: f64,
+        width: f64,
+    ) -> Result<JsValue, JsError> {
+        let pcb: Pcb =
+            serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+
+        // Determine board extents from outline
+        let (mut min_x, mut min_y) = (f64::MAX, f64::MAX);
+        let (mut max_x, mut max_y) = (f64::MIN, f64::MIN);
+        for v in &pcb.outline.vertices {
+            min_x = min_x.min(v.x);
+            min_y = min_y.min(v.y);
+            max_x = max_x.max(v.x);
+            max_y = max_y.max(v.y);
+        }
+        let board_w = max_x - min_x;
+        let board_h = max_y - min_y;
+
+        // Resolution based on trace width (half width for decent grid)
+        let resolution = (width * 0.5).max(0.1);
+        let mut router =
+            vcad_ecad_pcb::router::grid::GridRouter::new(board_w, board_h, resolution);
+
+        // Add existing traces as obstacles
+        for trace in &pcb.traces {
+            if trace.net != net {
+                let hw = trace.width * 0.5 + pcb.rules.default_rules.clearance;
+                let tx_min = trace.start.x.min(trace.end.x) - hw - min_x;
+                let ty_min = trace.start.y.min(trace.end.y) - hw - min_y;
+                let tx_max = trace.start.x.max(trace.end.x) + hw - min_x;
+                let ty_max = trace.start.y.max(trace.end.y) + hw - min_y;
+                router.add_obstacle(
+                    vcad_ir::Vec2 { x: tx_min, y: ty_min },
+                    vcad_ir::Vec2 { x: tx_max, y: ty_max },
+                );
+            }
+        }
+
+        let start = vcad_ir::Vec2 {
+            x: start_x - min_x,
+            y: start_y - min_y,
+        };
+        let end = vcad_ir::Vec2 {
+            x: end_x - min_x,
+            y: end_y - min_y,
+        };
+        let result = router.route_net(net, start, end);
+        serde_wasm_bindgen::to_value(&result)
+            .map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Fill copper pour zones on the PCB.
+    ///
+    /// # Arguments
+    /// * `pcb_json` - JSON-serialized `Pcb` struct
+    ///
+    /// # Returns
+    /// Array of filled zone polygons.
+    #[wasm_bindgen(js_name = ecadFillZones)]
+    pub fn ecad_fill_zones(pcb_json: &str) -> Result<JsValue, JsError> {
+        let pcb: Pcb =
+            serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let filled = vcad_ecad_pcb::copper_pour::fill_zones(&pcb);
+        serde_wasm_bindgen::to_value(&filled)
+            .map_err(|e| JsError::new(&e.to_string()))
+    }
+}
+
+#[cfg(feature = "ecad")]
+pub use ecad_wasm::*;
 
 // =============================================================================
 // Full document evaluation

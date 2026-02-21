@@ -28,7 +28,7 @@ getrandom = { version = "0.2", features = ["js"] }
 ts-rs = { version = "10", optional = true }
 
 [features]
-default = ["console_error_panic_hook", "physics", "slicer", "cam", "gpu", "raytrace", "cpu-raytrace"]
+default = ["console_error_panic_hook", "physics", "slicer", "cam", "gpu", "raytrace", "cpu-raytrace", "ecad"]
 console_error_panic_hook = ["dep:console_error_panic_hook"]
 gpu = ["dep:vcad-kernel-gpu"]
 raytrace = ["dep:vcad-kernel-raytrace", "dep:vcad-kernel-topo", "dep:vcad-kernel-geom", "dep:vcad-kernel-math", "dep:wgpu", "gpu", "vcad-kernel-raytrace/gpu"]
@@ -36,6 +36,7 @@ cpu-raytrace = ["dep:vcad-kernel-raytrace", "dep:vcad-kernel-topo", "dep:vcad-ke
 physics = ["dep:vcad-kernel-physics"]
 slicer = ["dep:vcad-slicer", "dep:vcad-slicer-gcode"]
 cam = ["dep:vcad-kernel-cam"]
+ecad = ["dep:vcad-ecad-pcb", "dep:vcad-ecad-schematic", "dep:vcad-ecad-sim", "dep:vcad-ecad-export", "dep:vcad-ecad-symbols"]
 ts-rs = ["dep:ts-rs"]
 
 [dependencies.console_error_panic_hook]
@@ -80,4 +81,24 @@ optional = true
 
 [dependencies.vcad-kernel-cam]
 path = "../vcad-kernel-cam"
+optional = true
+
+[dependencies.vcad-ecad-pcb]
+path = "../vcad-ecad-pcb"
+optional = true
+
+[dependencies.vcad-ecad-schematic]
+path = "../vcad-ecad-schematic"
+optional = true
+
+[dependencies.vcad-ecad-sim]
+path = "../vcad-ecad-sim"
+optional = true
+
+[dependencies.vcad-ecad-export]
+path = "../vcad-ecad-export"
+optional = true
+
+[dependencies.vcad-ecad-symbols]
+path = "../vcad-ecad-symbols"
 optional = true

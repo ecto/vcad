@@ -13,7 +13,7 @@ use vcad_ir::Vec2;
 use crate::{generate_netlist, pin_world_position, points_coincident};
 
 /// ERC violation severity.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum ErcSeverity {
     /// A hard error that must be fixed.
     Error,
@@ -22,7 +22,7 @@ pub enum ErcSeverity {
 }
 
 /// An ERC violation found in the schematic.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ErcViolation {
     /// Severity of the violation.
     pub severity: ErcSeverity,

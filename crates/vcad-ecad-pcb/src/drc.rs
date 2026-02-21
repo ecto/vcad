@@ -11,7 +11,7 @@ use vcad_ir::Vec2;
 use crate::spatial::SpatialIndex;
 
 /// DRC rule type.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum DrcRuleType {
     /// Copper-to-copper clearance violation.
     Clearance,
@@ -36,7 +36,7 @@ pub enum DrcRuleType {
 }
 
 /// DRC violation severity.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum DrcSeverity {
     /// Must be fixed before fabrication.
     Error,
@@ -45,7 +45,7 @@ pub enum DrcSeverity {
 }
 
 /// A DRC violation found during checking.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct DrcViolation {
     /// Which rule was violated.
     pub rule: DrcRuleType,
