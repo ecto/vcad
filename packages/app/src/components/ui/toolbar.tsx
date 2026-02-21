@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { DotsThree } from "@phosphor-icons/react";
+import { DotsThree } from "@phosphor-icons/react/dist/ssr/DotsThree";
 import * as Popover from "@radix-ui/react-popover";
 import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -26,6 +26,18 @@ export type SketchTab = "draw" | "constrain" | "finish";
 export const SKETCH_TAB_COLORS: Record<SketchTab, string> = {
   draw: "text-emerald-400",
   constrain: "text-amber-400",
+  finish: "text-rose-400",
+};
+
+// Electronics toolbar tab types
+export type ElectronicsTab = "schematic" | "components" | "pcb" | "view" | "finish";
+
+// Tab colors for electronics toolbar
+export const ELECTRONICS_TAB_COLORS: Record<ElectronicsTab, string> = {
+  schematic: "text-indigo-400",
+  components: "text-violet-400",
+  pcb: "text-teal-400",
+  view: "text-sky-400",
   finish: "text-rose-400",
 };
 

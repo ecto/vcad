@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useUiStore, useDocumentStore, useSketchStore } from "@vcad/core";
+import { useElectronicsStore } from "../stores/electronics-store";
 import { useNotificationStore } from "../stores/notification-store";
 import { useLogStore } from "../stores/log-store";
 import { useChangelogStore } from "../stores/changelog-store";
@@ -17,6 +18,12 @@ export function useKeyboardShortcuts() {
         target.tagName === "TEXTAREA" ||
         target.isContentEditable
       ) {
+        return;
+      }
+
+      // Electronics mode has its own keyboard handler — only allow
+      // modifier-based shortcuts (Cmd+S, Cmd+Z, etc.) to pass through.
+      if (useElectronicsStore.getState().active && !e.ctrlKey && !e.metaKey) {
         return;
       }
 

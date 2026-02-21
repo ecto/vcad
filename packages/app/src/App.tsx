@@ -4,6 +4,8 @@ import {
   useEffect,
   useCallback,
   useLayoutEffect,
+  lazy,
+  Suspense,
 } from "react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { NotificationContainer, ActivityPanel } from "@/components/ui/notifications";
@@ -13,25 +15,31 @@ import { CornerIcons } from "@/components/CornerIcons";
 import { BottomToolbar } from "@/components/BottomToolbar";
 import { Viewport } from "@/components/Viewport";
 import { FeatureTree } from "@/components/FeatureTree";
-import { PropertyPanel } from "@/components/PropertyPanel";
-import { GuidedFlowOverlay } from "@/components/GuidedFlowOverlay";
-import { GhostPromptController } from "@/components/GhostPromptController";
-import { CelebrationOverlay } from "@/components/CelebrationOverlay";
-import { SignInDelight } from "@/components/SignInDelight";
-import { AboutModal } from "@/components/AboutModal";
-import { SketchToolbar } from "@/components/SketchToolbar";
-import { SketchStatusPanel } from "@/components/SketchStatusPanel";
-import { DrawingToolbar } from "@/components/DrawingToolbar";
-import { FaceSelectionOverlay } from "@/components/FaceSelectionOverlay";
-import { QuotePanel } from "@/components/QuotePanel";
-import { LogViewer } from "@/components/LogViewer";
-import { PrintPanel } from "@/components/print";
-import { CamPanel } from "@/components/cam";
-import { AIPanel } from "@/components/AIPanel";
-import { LoonEditor } from "@/components/LoonEditor";
-import { DocumentPicker } from "@/components/DocumentPicker";
-import { OfflineIndicator } from "@/components/OfflineIndicator";
-import { UpdateNotification } from "@/components/UpdateNotification";
+
+// Lazy-loaded components (behind user actions, modals, or conditional renders)
+const PropertyPanel = lazy(() => import("@/components/PropertyPanel").then(m => ({ default: m.PropertyPanel })));
+const GuidedFlowOverlay = lazy(() => import("@/components/GuidedFlowOverlay").then(m => ({ default: m.GuidedFlowOverlay })));
+const GhostPromptController = lazy(() => import("@/components/GhostPromptController").then(m => ({ default: m.GhostPromptController })));
+const CelebrationOverlay = lazy(() => import("@/components/CelebrationOverlay").then(m => ({ default: m.CelebrationOverlay })));
+const SignInDelight = lazy(() => import("@/components/SignInDelight").then(m => ({ default: m.SignInDelight })));
+const AboutModal = lazy(() => import("@/components/AboutModal").then(m => ({ default: m.AboutModal })));
+const SketchToolbar = lazy(() => import("@/components/SketchToolbar").then(m => ({ default: m.SketchToolbar })));
+const SketchStatusPanel = lazy(() => import("@/components/SketchStatusPanel").then(m => ({ default: m.SketchStatusPanel })));
+const DrawingToolbar = lazy(() => import("@/components/DrawingToolbar").then(m => ({ default: m.DrawingToolbar })));
+const FaceSelectionOverlay = lazy(() => import("@/components/FaceSelectionOverlay").then(m => ({ default: m.FaceSelectionOverlay })));
+const QuotePanel = lazy(() => import("@/components/QuotePanel").then(m => ({ default: m.QuotePanel })));
+const LogViewer = lazy(() => import("@/components/LogViewer").then(m => ({ default: m.LogViewer })));
+const PrintPanel = lazy(() => import("@/components/print").then(m => ({ default: m.PrintPanel })));
+const CamPanel = lazy(() => import("@/components/cam").then(m => ({ default: m.CamPanel })));
+const AIPanel = lazy(() => import("@/components/AIPanel").then(m => ({ default: m.AIPanel })));
+const LoonEditor = lazy(() => import("@/components/LoonEditor").then(m => ({ default: m.LoonEditor })));
+const DocumentPicker = lazy(() => import("@/components/DocumentPicker").then(m => ({ default: m.DocumentPicker })));
+const OfflineIndicator = lazy(() => import("@/components/OfflineIndicator").then(m => ({ default: m.OfflineIndicator })));
+const UpdateNotification = lazy(() => import("@/components/UpdateNotification").then(m => ({ default: m.UpdateNotification })));
+const WhatsNewPanel = lazy(() => import("@/components/WhatsNewPanel").then(m => ({ default: m.WhatsNewPanel })));
+const ElectronicsToolbar = lazy(() => import("@/components/electronics/ElectronicsToolbar").then(m => ({ default: m.ElectronicsToolbar })));
+const ElectronicsStatusPanel = lazy(() => import("@/components/electronics/ElectronicsStatusPanel").then(m => ({ default: m.ElectronicsStatusPanel })));
+
 import {
   useSketchStore,
   useEngineStore,
@@ -61,7 +69,7 @@ import { useNotificationStore } from "@/stores/notification-store";
 import { useOnboardingStore } from "@/stores/onboarding-store";
 import { useSlicerStore } from "@/stores/slicer-store";
 import { useCamStore } from "@/stores/cam-store";
-import { WhatsNewPanel } from "@/components/WhatsNewPanel";
+import { useElectronicsStore } from "@/stores/electronics-store";
 
 function useThemeSync() {
   const theme = useUiStore((s) => s.theme);
@@ -107,7 +115,7 @@ function FeatureTreeWithPropertyPanel({ sketchActive }: { sketchActive: boolean 
     <>
       <FeatureTree />
       {/* Only show PropertyPanel when feature tree is closed (fallback for mobile/minimal mode) */}
-      {!featureTreeOpen && <PropertyPanel />}
+      {!featureTreeOpen && <Suspense fallback={null}><PropertyPanel /></Suspense>}
     </>
   );
 }
@@ -130,6 +138,7 @@ export function App() {
   const error = useEngineStore((s) => s.error);
   const hasParts = useDocumentStore((s) => s.parts.length > 0);
   const sketchActive = useSketchStore((s) => s.active);
+  const electronicsActive = useElectronicsStore((s) => s.active);
 
   const guidedFlowActive = useOnboardingStore((s) => s.guidedFlowActive);
   const guidedFlowStep = useOnboardingStore((s) => s.guidedFlowStep);
@@ -525,62 +534,90 @@ export function App() {
           <AppShell>
           {/* Full-bleed viewport */}
           <Viewport />
-          <SketchToolbar />
-          <SketchStatusPanel />
-          <DrawingToolbar />
-          <FaceSelectionOverlay />
+          <Suspense fallback={null}>
+            <SketchToolbar />
+            <SketchStatusPanel />
+            <DrawingToolbar />
+            <FaceSelectionOverlay />
+          </Suspense>
 
-          {/* Floating UI elements */}
-          <CornerIcons
-            onAboutOpen={() => setAboutOpen(true)}
-            onSave={handleSave}
-            onOpen={handleOpen}
-          />
-          <FeatureTreeWithPropertyPanel sketchActive={sketchActive} />
-          {!sketchActive && <BottomToolbar />}
+          {/* Electronics toolbar + status (self-gate via electronicsActive) */}
+          {electronicsActive && (
+            <Suspense fallback={null}>
+              <ElectronicsToolbar />
+              <ElectronicsStatusPanel />
+            </Suspense>
+          )}
+
+          {/* Floating UI elements (hidden during electronics workspace) */}
+          {!electronicsActive && (
+            <>
+              <CornerIcons
+                onAboutOpen={() => setAboutOpen(true)}
+                onSave={handleSave}
+                onOpen={handleOpen}
+              />
+              <FeatureTreeWithPropertyPanel sketchActive={sketchActive} />
+              {!sketchActive && <BottomToolbar />}
+            </>
+          )}
 
           {/* Onboarding overlays */}
-          <GuidedFlowOverlay />
-          <GhostPromptController />
-          <CelebrationOverlay />
-          <SignInDelight />
+          <Suspense fallback={null}>
+            <GuidedFlowOverlay />
+            <GhostPromptController />
+            <CelebrationOverlay />
+            <SignInDelight />
+          </Suspense>
 
           {/* Quote panel (slides in from right when Make It Real clicked) */}
-          <QuotePanel />
+          <Suspense fallback={null}>
+            <QuotePanel />
+          </Suspense>
 
           {/* Print panel (for 3D printing slicer settings) */}
-          {printPanelOpen && <PrintPanel />}
+          {printPanelOpen && <Suspense fallback={null}><PrintPanel /></Suspense>}
 
           {/* CAM panel (for CNC toolpath generation) */}
-          {camPanelOpen && <CamPanel />}
+          {camPanelOpen && <Suspense fallback={null}><CamPanel /></Suspense>}
 
           {/* Loon source editor */}
-          <LoonEditor open={loonEditorOpen} onOpenChange={setLoonEditorOpen} />
+          <Suspense fallback={null}>
+            <LoonEditor open={loonEditorOpen} onOpenChange={setLoonEditorOpen} />
+          </Suspense>
 
           {/* AI panel (temp - for testing cad0-mini) */}
-          <AIPanel open={aiPanelOpen} onOpenChange={setAiPanelOpen} />
-          <button
-            onClick={() => setLoonEditorOpen((o) => !o)}
-            className="fixed bottom-4 right-16 z-30 flex h-10 w-10 items-center justify-center rounded-full bg-bg-elevated text-text shadow-lg hover:bg-bg-hover border border-border"
-            title="Toggle loon editor"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="16 18 22 12 16 6" />
-              <polyline points="8 6 2 12 8 18" />
-            </svg>
-          </button>
-          <button
-            onClick={() => setAiPanelOpen(true)}
-            className="fixed bottom-4 right-4 z-30 flex h-10 w-10 items-center justify-center rounded-full bg-accent text-white shadow-lg hover:bg-accent/90"
-            title="AI Generate (testing)"
-          >
-            <svg width="20" height="20" viewBox="0 0 256 256" fill="currentColor">
-              <path d="M197.58,129.06l-51.61-19-19-51.65a15.92,15.92,0,0,0-29.88,0L78.07,110l-51.65,19a15.92,15.92,0,0,0,0,29.88L78,178l19,51.62a15.92,15.92,0,0,0,29.88,0l19-51.61,51.65-19a15.92,15.92,0,0,0,0-29.88ZM140.39,163a15.87,15.87,0,0,0-9.43,9.43l-19,51.46L93,172.39A15.87,15.87,0,0,0,83.61,163h0L32.15,144l51.46-19A15.87,15.87,0,0,0,93,115.61l19-51.46,19,51.46a15.87,15.87,0,0,0,9.43,9.43l51.46,19ZM144,40a8,8,0,0,1,8-8h16V16a8,8,0,0,1,16,0V32h16a8,8,0,0,1,0,16H184V64a8,8,0,0,1-16,0V48H152A8,8,0,0,1,144,40ZM248,88a8,8,0,0,1-8,8h-8v8a8,8,0,0,1-16,0V96h-8a8,8,0,0,1,0-16h8V72a8,8,0,0,1,16,0v8h8A8,8,0,0,1,248,88Z" />
-            </svg>
-          </button>
+          <Suspense fallback={null}>
+            <AIPanel open={aiPanelOpen} onOpenChange={setAiPanelOpen} />
+          </Suspense>
+          {!electronicsActive && (
+            <>
+              <button
+                onClick={() => setLoonEditorOpen((o) => !o)}
+                className="fixed bottom-4 right-16 z-30 flex h-10 w-10 items-center justify-center rounded-full bg-bg-elevated text-text shadow-lg hover:bg-bg-hover border border-border"
+                title="Toggle loon editor"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="16 18 22 12 16 6" />
+                  <polyline points="8 6 2 12 8 18" />
+                </svg>
+              </button>
+              <button
+                onClick={() => setAiPanelOpen(true)}
+                className="fixed bottom-4 right-4 z-30 flex h-10 w-10 items-center justify-center rounded-full bg-accent text-white shadow-lg hover:bg-accent/90"
+                title="AI Generate (testing)"
+              >
+                <svg width="20" height="20" viewBox="0 0 256 256" fill="currentColor">
+                  <path d="M197.58,129.06l-51.61-19-19-51.65a15.92,15.92,0,0,0-29.88,0L78.07,110l-51.65,19a15.92,15.92,0,0,0,0,29.88L78,178l19,51.62a15.92,15.92,0,0,0,29.88,0l19-51.61,51.65-19a15.92,15.92,0,0,0,0-29.88ZM140.39,163a15.87,15.87,0,0,0-9.43,9.43l-19,51.46L93,172.39A15.87,15.87,0,0,0,83.61,163h0L32.15,144l51.46-19A15.87,15.87,0,0,0,93,115.61l19-51.46,19,51.46a15.87,15.87,0,0,0,9.43,9.43l51.46,19ZM144,40a8,8,0,0,1,8-8h16V16a8,8,0,0,1,16,0V32h16a8,8,0,0,1,0,16H184V64a8,8,0,0,1-16,0V48H152A8,8,0,0,1,144,40ZM248,88a8,8,0,0,1-8,8h-8v8a8,8,0,0,1-16,0V96h-8a8,8,0,0,1,0-16h8V72a8,8,0,0,1,16,0v8h8A8,8,0,0,1,248,88Z" />
+                </svg>
+              </button>
+            </>
+          )}
 
           {/* Log viewer (Cmd+J to toggle) */}
-          <LogViewer />
+          <Suspense fallback={null}>
+            <LogViewer />
+          </Suspense>
 
           {/* Drag overlay */}
           {isDragging && (
@@ -594,17 +631,19 @@ export function App() {
         </AppShell>
 
         {/* Offline indicator */}
-        <OfflineIndicator />
-
-        {/* PWA update prompt */}
-        <UpdateNotification />
+        <Suspense fallback={null}>
+          <OfflineIndicator />
+          <UpdateNotification />
+        </Suspense>
 
         {/* Modals */}
-        <AboutModal open={aboutOpen} onOpenChange={setAboutOpen} />
-        <DocumentPicker
-          open={documentPickerOpen}
-          onOpenChange={setDocumentPickerOpen}
-        />
+        <Suspense fallback={null}>
+          <AboutModal open={aboutOpen} onOpenChange={setAboutOpen} />
+          <DocumentPicker
+            open={documentPickerOpen}
+            onOpenChange={setDocumentPickerOpen}
+          />
+        </Suspense>
         <input
           ref={fileInputRef}
           type="file"
@@ -614,7 +653,9 @@ export function App() {
         />
         <NotificationContainer />
         <ActivityPanel />
-        <WhatsNewPanel />
+        <Suspense fallback={null}>
+          <WhatsNewPanel />
+        </Suspense>
       </div>
       </TooltipProvider>
     </ErrorBoundary>
