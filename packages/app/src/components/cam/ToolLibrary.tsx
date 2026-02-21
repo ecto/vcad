@@ -1,5 +1,9 @@
 import { useState } from "react";
-import { Plus, Trash, Wrench, Circle, ArrowDown } from "@phosphor-icons/react";
+import { Plus } from "@phosphor-icons/react/dist/ssr/Plus";
+import { Trash } from "@phosphor-icons/react/dist/ssr/Trash";
+import { Wrench } from "@phosphor-icons/react/dist/ssr/Wrench";
+import { Circle } from "@phosphor-icons/react/dist/ssr/Circle";
+import { ArrowDown } from "@phosphor-icons/react/dist/ssr/ArrowDown";
 import {
   useCamStore,
   type CamTool,

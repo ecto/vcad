@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from "react";
-import { X, Plus, FolderOpen } from "@phosphor-icons/react";
+import { X } from "@phosphor-icons/react/dist/ssr/X";
+import { Plus } from "@phosphor-icons/react/dist/ssr/Plus";
+import { FolderOpen } from "@phosphor-icons/react/dist/ssr/FolderOpen";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useDocumentStore, useUiStore, parseVcadFile } from "@vcad/core";

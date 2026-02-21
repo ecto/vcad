@@ -1,5 +1,5 @@
 import * as RadixDialog from "@radix-ui/react-dialog";
-import { X } from "@phosphor-icons/react";
+import { X } from "@phosphor-icons/react/dist/ssr/X";
 import { cn } from "@/lib/utils";
 import type { ReactNode } from "react";
 

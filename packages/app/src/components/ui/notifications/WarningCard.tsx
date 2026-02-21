@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import {
-  Warning as WarningIcon,
-  X,
-  ArrowSquareOut,
-} from "@phosphor-icons/react";
+import { Warning as WarningIcon } from "@phosphor-icons/react/dist/ssr/Warning";
+import { X } from "@phosphor-icons/react/dist/ssr/X";
+import { ArrowSquareOut } from "@phosphor-icons/react/dist/ssr/ArrowSquareOut";
 import { cn } from "@/lib/utils";
 import type { Warning, ActionButton } from "@/stores/notification-store";
 

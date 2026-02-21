@@ -1,6 +1,6 @@
 import { useEffect, useRef, useMemo } from "react";
 import { useIsMobile } from "@/hooks/useIsMobile";
-import { X } from "@phosphor-icons/react";
+import { X } from "@phosphor-icons/react/dist/ssr/X";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ScrubInput } from "@/components/ui/scrub-input";
 import { useDocumentStore, useUiStore, isPrimitivePart, isSweepPart } from "@vcad/core";

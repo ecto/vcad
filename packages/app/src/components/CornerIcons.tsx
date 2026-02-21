@@ -1,33 +1,31 @@
 import { useState, useEffect } from "react";
-import {
-  Sun,
-  Moon,
-  Desktop,
-  Command,
-  DotsThree,
-  List,
-  CubeTransparent,
-  GridFour,
-  Info,
-  Keyboard,
-  BookOpen,
-  Cube,
-  ArrowsOutCardinal,
-  GithubLogo,
-  DiscordLogo,
-  Mouse,
-  Sparkle,
-  FolderOpen,
-  CaretRight,
-  Rocket,
-} from "@phosphor-icons/react";
+import { Sun } from "@phosphor-icons/react/dist/ssr/Sun";
+import { Moon } from "@phosphor-icons/react/dist/ssr/Moon";
+import { Desktop } from "@phosphor-icons/react/dist/ssr/Desktop";
+import { Command } from "@phosphor-icons/react/dist/ssr/Command";
+import { DotsThree } from "@phosphor-icons/react/dist/ssr/DotsThree";
+import { List } from "@phosphor-icons/react/dist/ssr/List";
+import { CubeTransparent } from "@phosphor-icons/react/dist/ssr/CubeTransparent";
+import { GridFour } from "@phosphor-icons/react/dist/ssr/GridFour";
+import { Info } from "@phosphor-icons/react/dist/ssr/Info";
+import { Keyboard } from "@phosphor-icons/react/dist/ssr/Keyboard";
+import { BookOpen } from "@phosphor-icons/react/dist/ssr/BookOpen";
+import { Cube } from "@phosphor-icons/react/dist/ssr/Cube";
+import { ArrowsOutCardinal } from "@phosphor-icons/react/dist/ssr/ArrowsOutCardinal";
+import { GithubLogo } from "@phosphor-icons/react/dist/ssr/GithubLogo";
+import { DiscordLogo } from "@phosphor-icons/react/dist/ssr/DiscordLogo";
+import { Mouse } from "@phosphor-icons/react/dist/ssr/Mouse";
+import { Sparkle } from "@phosphor-icons/react/dist/ssr/Sparkle";
+import { FolderOpen } from "@phosphor-icons/react/dist/ssr/FolderOpen";
+import { CaretRight } from "@phosphor-icons/react/dist/ssr/CaretRight";
+import { Rocket } from "@phosphor-icons/react/dist/ssr/Rocket";
+import { FloppyDisk } from "@phosphor-icons/react/dist/ssr/FloppyDisk";
 import * as Popover from "@radix-ui/react-popover";
 import { Tooltip } from "@/components/ui/tooltip";
 import {
   useDocumentStore,
   useUiStore,
 } from "@vcad/core";
-import { FloppyDisk } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import { examples } from "@/data/examples";
 import { CameraSettingsPanel } from "./CameraSettingsPanel";

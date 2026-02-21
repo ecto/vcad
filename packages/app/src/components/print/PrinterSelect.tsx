@@ -1,4 +1,7 @@
-import { MagnifyingGlass, Spinner, WifiHigh, WifiSlash } from "@phosphor-icons/react";
+import { MagnifyingGlass } from "@phosphor-icons/react/dist/ssr/MagnifyingGlass";
+import { Spinner } from "@phosphor-icons/react/dist/ssr/Spinner";
+import { WifiHigh } from "@phosphor-icons/react/dist/ssr/WifiHigh";
+import { WifiSlash } from "@phosphor-icons/react/dist/ssr/WifiSlash";
 import { usePrinterStore } from "@/stores/printer-store";
 
 export function PrinterSelect() {

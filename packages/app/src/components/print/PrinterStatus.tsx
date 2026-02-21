@@ -1,4 +1,6 @@
-import { Thermometer, Clock, Stack } from "@phosphor-icons/react";
+import { Thermometer } from "@phosphor-icons/react/dist/ssr/Thermometer";
+import { Clock } from "@phosphor-icons/react/dist/ssr/Clock";
+import { Stack } from "@phosphor-icons/react/dist/ssr/Stack";
 import { usePrinterStore, formatMinutes } from "@/stores/printer-store";
 
 export function PrinterStatus() {

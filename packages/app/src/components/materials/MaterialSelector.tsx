@@ -4,7 +4,10 @@
  */
 
 import { useState, useMemo, useCallback, useEffect } from "react";
-import { MagnifyingGlass, Plus, Clock, Star } from "@phosphor-icons/react";
+import { MagnifyingGlass } from "@phosphor-icons/react/dist/ssr/MagnifyingGlass";
+import { Plus } from "@phosphor-icons/react/dist/ssr/Plus";
+import { Clock } from "@phosphor-icons/react/dist/ssr/Clock";
+import { Star } from "@phosphor-icons/react/dist/ssr/Star";
 import { Tooltip } from "@/components/ui/tooltip";
 import { useUiStore, useDocumentStore } from "@vcad/core";
 import type { MaterialPreset } from "@/data/materials";

@@ -1,12 +1,10 @@
 import { useState, useRef, useCallback } from "react";
-import {
-  X,
-  Printer,
-  Gear,
-  Eye,
-  Export,
-  Spinner,
-} from "@phosphor-icons/react";
+import { X } from "@phosphor-icons/react/dist/ssr/X";
+import { Printer } from "@phosphor-icons/react/dist/ssr/Printer";
+import { Gear } from "@phosphor-icons/react/dist/ssr/Gear";
+import { Eye } from "@phosphor-icons/react/dist/ssr/Eye";
+import { Export } from "@phosphor-icons/react/dist/ssr/Export";
+import { Spinner } from "@phosphor-icons/react/dist/ssr/Spinner";
 import { useSlicerStore, formatDuration, type SliceResult } from "@/stores/slicer-store";
 import { usePrinterStore } from "@/stores/printer-store";
 import { useEngineStore } from "@vcad/core";

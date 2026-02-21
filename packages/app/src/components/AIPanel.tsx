@@ -1,5 +1,10 @@
 import { useState, useEffect } from "react";
-import { SpinnerGap, Sparkle, CloudArrowDown, Desktop, Warning, Lock } from "@phosphor-icons/react";
+import { SpinnerGap } from "@phosphor-icons/react/dist/ssr/SpinnerGap";
+import { Sparkle } from "@phosphor-icons/react/dist/ssr/Sparkle";
+import { CloudArrowDown } from "@phosphor-icons/react/dist/ssr/CloudArrowDown";
+import { Desktop } from "@phosphor-icons/react/dist/ssr/Desktop";
+import { Warning } from "@phosphor-icons/react/dist/ssr/Warning";
+import { Lock } from "@phosphor-icons/react/dist/ssr/Lock";
 import { cn } from "@/lib/utils";
 import { useDocumentStore } from "@vcad/core";
 import { useNotificationStore } from "@/stores/notification-store";

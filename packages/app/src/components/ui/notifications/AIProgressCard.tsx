@@ -1,11 +1,9 @@
 import { useCallback } from "react";
-import {
-  SpinnerGap,
-  CheckCircle,
-  Circle,
-  XCircle,
-  X,
-} from "@phosphor-icons/react";
+import { SpinnerGap } from "@phosphor-icons/react/dist/ssr/SpinnerGap";
+import { CheckCircle } from "@phosphor-icons/react/dist/ssr/CheckCircle";
+import { Circle } from "@phosphor-icons/react/dist/ssr/Circle";
+import { XCircle } from "@phosphor-icons/react/dist/ssr/XCircle";
+import { X } from "@phosphor-icons/react/dist/ssr/X";
 import { cn } from "@/lib/utils";
 import type { AIProgress, AIStage } from "@/stores/notification-store";
 import { useNotificationStore } from "@/stores/notification-store";

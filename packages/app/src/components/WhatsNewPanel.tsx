@@ -3,7 +3,12 @@
  */
 
 import * as Dialog from "@radix-ui/react-dialog";
-import { X, Rocket, Bug, Warning, Lightning, Book } from "@phosphor-icons/react";
+import { X } from "@phosphor-icons/react/dist/ssr/X";
+import { Rocket } from "@phosphor-icons/react/dist/ssr/Rocket";
+import { Bug } from "@phosphor-icons/react/dist/ssr/Bug";
+import { Warning } from "@phosphor-icons/react/dist/ssr/Warning";
+import { Lightning } from "@phosphor-icons/react/dist/ssr/Lightning";
+import { Book } from "@phosphor-icons/react/dist/ssr/Book";
 import { cn } from "@/lib/utils";
 import { useChangelogStore, CURRENT_VERSION } from "@/stores/changelog-store";
 import { changelog, type ChangelogEntry, type ChangelogCategory } from "@vcad/core";

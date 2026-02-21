@@ -1,4 +1,4 @@
-import { X } from "@phosphor-icons/react";
+import { X } from "@phosphor-icons/react/dist/ssr/X";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useOnboardingStore, type GuidedFlowStep } from "@/stores/onboarding-store";

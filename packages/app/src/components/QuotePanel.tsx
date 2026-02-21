@@ -1,5 +1,9 @@
 import { useState, useEffect, useRef } from "react";
-import { X, Package, Clock, Truck, EnvelopeSimple } from "@phosphor-icons/react";
+import { X } from "@phosphor-icons/react/dist/ssr/X";
+import { Package } from "@phosphor-icons/react/dist/ssr/Package";
+import { Clock } from "@phosphor-icons/react/dist/ssr/Clock";
+import { Truck } from "@phosphor-icons/react/dist/ssr/Truck";
+import { EnvelopeSimple } from "@phosphor-icons/react/dist/ssr/EnvelopeSimple";
 import { cn } from "@/lib/utils";
 import { useNotificationStore } from "@/stores/notification-store";
 import {

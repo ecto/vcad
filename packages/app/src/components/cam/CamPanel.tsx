@@ -1,5 +1,11 @@
 import { useState, useCallback } from "react";
-import { X, Gear, List, Wrench, Export, Spinner, Play } from "@phosphor-icons/react";
+import { X } from "@phosphor-icons/react/dist/ssr/X";
+import { Gear } from "@phosphor-icons/react/dist/ssr/Gear";
+import { List } from "@phosphor-icons/react/dist/ssr/List";
+import { Wrench } from "@phosphor-icons/react/dist/ssr/Wrench";
+import { Export } from "@phosphor-icons/react/dist/ssr/Export";
+import { Spinner } from "@phosphor-icons/react/dist/ssr/Spinner";
+import { Play } from "@phosphor-icons/react/dist/ssr/Play";
 import { useCamStore, formatMachiningTime, toolToJson } from "@/stores/cam-store";
 import { useNotificationStore } from "@/stores/notification-store";
 import { downloadBlob } from "@/lib/download";

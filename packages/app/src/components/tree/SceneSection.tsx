@@ -1,9 +1,7 @@
-import {
-  Image,
-  Cube,
-  CircleHalf,
-  X,
-} from "@phosphor-icons/react";
+import { Image } from "@phosphor-icons/react/dist/ssr/Image";
+import { Cube } from "@phosphor-icons/react/dist/ssr/Cube";
+import { CircleHalf } from "@phosphor-icons/react/dist/ssr/CircleHalf";
+import { X } from "@phosphor-icons/react/dist/ssr/X";
 import { cn } from "@/lib/utils";
 import { Tooltip } from "@/components/ui/tooltip";
 import { useDocumentStore } from "@vcad/core";

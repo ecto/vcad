@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
-import { X, Copy, Trash } from "@phosphor-icons/react";
+import { X } from "@phosphor-icons/react/dist/ssr/X";
+import { Copy } from "@phosphor-icons/react/dist/ssr/Copy";
+import { Trash } from "@phosphor-icons/react/dist/ssr/Trash";
 import { cn } from "@/lib/utils";
 import type { LogEntry, LogLevelName } from "@vcad/core";
 import { useLogStore, getFilteredEntries } from "@/stores/log-store";

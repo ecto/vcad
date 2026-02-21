@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useDocumentStore, useEngineStore } from "@vcad/core";
 import { parseVcadFile } from "@vcad/core";
-import { useNotificationStore } from "@/stores/notification-store";
+
 
 interface LoonEditorProps {
   open: boolean;

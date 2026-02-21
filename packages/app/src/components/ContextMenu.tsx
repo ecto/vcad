@@ -1,12 +1,10 @@
 import * as RadixContextMenu from "@radix-ui/react-context-menu";
-import {
-  Copy,
-  Trash,
-  PencilSimple,
-  Unite,
-  Subtract,
-  Intersect,
-} from "@phosphor-icons/react";
+import { Copy } from "@phosphor-icons/react/dist/ssr/Copy";
+import { Trash } from "@phosphor-icons/react/dist/ssr/Trash";
+import { PencilSimple } from "@phosphor-icons/react/dist/ssr/PencilSimple";
+import { Unite } from "@phosphor-icons/react/dist/ssr/Unite";
+import { Subtract } from "@phosphor-icons/react/dist/ssr/Subtract";
+import { Intersect } from "@phosphor-icons/react/dist/ssr/Intersect";
 import { useDocumentStore, useUiStore } from "@vcad/core";
 import type { ReactNode } from "react";
 

@@ -1,16 +1,14 @@
 import { useState } from "react";
-import {
-  Plus,
-  Trash,
-  ArrowUp,
-  ArrowDown,
-  Eye,
-  EyeSlash,
-  Square,
-  Circle as CircleIcon,
-  Path,
-  SelectionBackground,
-} from "@phosphor-icons/react";
+import { Plus } from "@phosphor-icons/react/dist/ssr/Plus";
+import { Trash } from "@phosphor-icons/react/dist/ssr/Trash";
+import { ArrowUp } from "@phosphor-icons/react/dist/ssr/ArrowUp";
+import { ArrowDown } from "@phosphor-icons/react/dist/ssr/ArrowDown";
+import { Eye } from "@phosphor-icons/react/dist/ssr/Eye";
+import { EyeSlash } from "@phosphor-icons/react/dist/ssr/EyeSlash";
+import { Square } from "@phosphor-icons/react/dist/ssr/Square";
+import { Circle as CircleIcon } from "@phosphor-icons/react/dist/ssr/Circle";
+import { Path } from "@phosphor-icons/react/dist/ssr/Path";
+import { SelectionBackground } from "@phosphor-icons/react/dist/ssr/SelectionBackground";
 import {
   useCamStore,
   type CamOperation,

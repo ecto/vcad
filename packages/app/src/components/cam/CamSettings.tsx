@@ -1,5 +1,5 @@
 import { useCamStore } from "@/stores/cam-store";
-import { ArrowCounterClockwise } from "@phosphor-icons/react";
+import { ArrowCounterClockwise } from "@phosphor-icons/react/dist/ssr/ArrowCounterClockwise";
 
 export function CamSettings() {
   const settings = useCamStore((s) => s.settings);

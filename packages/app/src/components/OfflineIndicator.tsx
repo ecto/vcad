@@ -1,4 +1,4 @@
-import { WifiSlash } from "@phosphor-icons/react";
+import { WifiSlash } from "@phosphor-icons/react/dist/ssr/WifiSlash";
 import { useOfflineStatus } from "@/hooks/useOfflineStatus";
 
 export function OfflineIndicator() {

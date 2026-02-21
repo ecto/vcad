@@ -1,28 +1,26 @@
 import { useState, useEffect, useRef } from "react";
-import {
-  LineSegment,
-  Rectangle,
-  Circle,
-  ArrowUp,
-  X,
-  Trash,
-  ArrowsHorizontal,
-  ArrowsVertical,
-  Ruler,
-  Equals,
-  GitBranch,
-  Play,
-  Plus,
-  Spiral,
-  Stack,
-  Warning,
-  Crosshair,
-  GridFour,
-  ArrowsClockwise,
-  PencilSimple,
-  Hammer,
-  CheckCircle,
-} from "@phosphor-icons/react";
+import { LineSegment } from "@phosphor-icons/react/dist/ssr/LineSegment";
+import { Rectangle } from "@phosphor-icons/react/dist/ssr/Rectangle";
+import { Circle } from "@phosphor-icons/react/dist/ssr/Circle";
+import { ArrowUp } from "@phosphor-icons/react/dist/ssr/ArrowUp";
+import { X } from "@phosphor-icons/react/dist/ssr/X";
+import { Trash } from "@phosphor-icons/react/dist/ssr/Trash";
+import { ArrowsHorizontal } from "@phosphor-icons/react/dist/ssr/ArrowsHorizontal";
+import { ArrowsVertical } from "@phosphor-icons/react/dist/ssr/ArrowsVertical";
+import { Ruler } from "@phosphor-icons/react/dist/ssr/Ruler";
+import { Equals } from "@phosphor-icons/react/dist/ssr/Equals";
+import { GitBranch } from "@phosphor-icons/react/dist/ssr/GitBranch";
+import { Play } from "@phosphor-icons/react/dist/ssr/Play";
+import { Plus } from "@phosphor-icons/react/dist/ssr/Plus";
+import { Spiral } from "@phosphor-icons/react/dist/ssr/Spiral";
+import { Stack } from "@phosphor-icons/react/dist/ssr/Stack";
+import { Warning } from "@phosphor-icons/react/dist/ssr/Warning";
+import { Crosshair } from "@phosphor-icons/react/dist/ssr/Crosshair";
+import { GridFour } from "@phosphor-icons/react/dist/ssr/GridFour";
+import { ArrowsClockwise } from "@phosphor-icons/react/dist/ssr/ArrowsClockwise";
+import { PencilSimple } from "@phosphor-icons/react/dist/ssr/PencilSimple";
+import { Hammer } from "@phosphor-icons/react/dist/ssr/Hammer";
+import { CheckCircle } from "@phosphor-icons/react/dist/ssr/CheckCircle";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import {

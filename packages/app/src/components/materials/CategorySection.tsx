@@ -3,7 +3,9 @@
  */
 
 import { useState } from "react";
-import { CaretRight, CaretDown, Star } from "@phosphor-icons/react";
+import { CaretRight } from "@phosphor-icons/react/dist/ssr/CaretRight";
+import { CaretDown } from "@phosphor-icons/react/dist/ssr/CaretDown";
+import { Star } from "@phosphor-icons/react/dist/ssr/Star";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { MaterialPreset, MaterialCategory } from "@/data/materials";
 import { CATEGORY_LABELS } from "@/data/materials";

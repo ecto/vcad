@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { CheckCircle, XCircle, X } from "@phosphor-icons/react";
+import { CheckCircle } from "@phosphor-icons/react/dist/ssr/CheckCircle";
+import { XCircle } from "@phosphor-icons/react/dist/ssr/XCircle";
+import { X } from "@phosphor-icons/react/dist/ssr/X";
 import { cn } from "@/lib/utils";
 import type { ActionResult, ActionButton } from "@/stores/notification-store";
 

@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { Question } from "@phosphor-icons/react";
+import { Question } from "@phosphor-icons/react/dist/ssr/Question";
 import { cn } from "@/lib/utils";
 import type { Decision } from "@/stores/notification-store";
 

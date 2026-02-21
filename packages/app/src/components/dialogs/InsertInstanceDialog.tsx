@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Package, Check } from "@phosphor-icons/react";
+import { Package } from "@phosphor-icons/react/dist/ssr/Package";
+import { Check } from "@phosphor-icons/react/dist/ssr/Check";
 import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useDocumentStore, useUiStore } from "@vcad/core";

@@ -1,38 +1,36 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
-import {
-  Cube,
-  Cylinder,
-  Globe,
-  ArrowsOutCardinal,
-  ArrowClockwise,
-  ArrowsOut,
-  ArrowCounterClockwise,
-  Unite,
-  Subtract,
-  Intersect,
-  FloppyDisk,
-  FolderOpen,
-  Export,
-  GridFour,
-  CubeTransparent,
-  SidebarSimple,
-  Sun,
-  Info,
-  Trash,
-  Copy,
-  X,
-  MagnifyingGlass,
-  Package,
-  PlusSquare,
-  Anchor,
-  ArrowsHorizontal,
-  Sparkle,
-  SpinnerGap,
-  Play,
-  Plus,
-} from "@phosphor-icons/react";
+import { Cube } from "@phosphor-icons/react/dist/ssr/Cube";
+import { Cylinder } from "@phosphor-icons/react/dist/ssr/Cylinder";
+import { Globe } from "@phosphor-icons/react/dist/ssr/Globe";
+import { ArrowsOutCardinal } from "@phosphor-icons/react/dist/ssr/ArrowsOutCardinal";
+import { ArrowClockwise } from "@phosphor-icons/react/dist/ssr/ArrowClockwise";
+import { ArrowsOut } from "@phosphor-icons/react/dist/ssr/ArrowsOut";
+import { ArrowCounterClockwise } from "@phosphor-icons/react/dist/ssr/ArrowCounterClockwise";
+import { Unite } from "@phosphor-icons/react/dist/ssr/Unite";
+import { Subtract } from "@phosphor-icons/react/dist/ssr/Subtract";
+import { Intersect } from "@phosphor-icons/react/dist/ssr/Intersect";
+import { FloppyDisk } from "@phosphor-icons/react/dist/ssr/FloppyDisk";
+import { FolderOpen } from "@phosphor-icons/react/dist/ssr/FolderOpen";
+import { Export } from "@phosphor-icons/react/dist/ssr/Export";
+import { GridFour } from "@phosphor-icons/react/dist/ssr/GridFour";
+import { CubeTransparent } from "@phosphor-icons/react/dist/ssr/CubeTransparent";
+import { SidebarSimple } from "@phosphor-icons/react/dist/ssr/SidebarSimple";
+import { Sun } from "@phosphor-icons/react/dist/ssr/Sun";
+import { Info } from "@phosphor-icons/react/dist/ssr/Info";
+import { Trash } from "@phosphor-icons/react/dist/ssr/Trash";
+import { Copy } from "@phosphor-icons/react/dist/ssr/Copy";
+import { X } from "@phosphor-icons/react/dist/ssr/X";
+import { MagnifyingGlass } from "@phosphor-icons/react/dist/ssr/MagnifyingGlass";
+import { Package } from "@phosphor-icons/react/dist/ssr/Package";
+import { PlusSquare } from "@phosphor-icons/react/dist/ssr/PlusSquare";
+import { Anchor } from "@phosphor-icons/react/dist/ssr/Anchor";
+import { ArrowsHorizontal } from "@phosphor-icons/react/dist/ssr/ArrowsHorizontal";
+import { Sparkle } from "@phosphor-icons/react/dist/ssr/Sparkle";
+import { SpinnerGap } from "@phosphor-icons/react/dist/ssr/SpinnerGap";
+import { Play } from "@phosphor-icons/react/dist/ssr/Play";
+import { Plus } from "@phosphor-icons/react/dist/ssr/Plus";
 import { fromCompact, type Document } from "@vcad/ir";
 import { generateCADServer } from "@/lib/server-inference";
 import { generateCAD, isWebGPUAvailable } from "@/lib/browser-inference";

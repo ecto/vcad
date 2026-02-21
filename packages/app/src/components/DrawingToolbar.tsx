@@ -1,12 +1,10 @@
-import {
-  Eye,
-  EyeSlash,
-  Ruler,
-  MagnifyingGlassPlus,
-  X,
-  Download,
-  CaretDown,
-} from "@phosphor-icons/react";
+import { Eye } from "@phosphor-icons/react/dist/ssr/Eye";
+import { EyeSlash } from "@phosphor-icons/react/dist/ssr/EyeSlash";
+import { Ruler } from "@phosphor-icons/react/dist/ssr/Ruler";
+import { MagnifyingGlassPlus } from "@phosphor-icons/react/dist/ssr/MagnifyingGlassPlus";
+import { X } from "@phosphor-icons/react/dist/ssr/X";
+import { Download } from "@phosphor-icons/react/dist/ssr/Download";
+import { CaretDown } from "@phosphor-icons/react/dist/ssr/CaretDown";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { Separator } from "@/components/ui/separator";

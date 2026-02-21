@@ -1,12 +1,10 @@
 import { useState } from "react";
-import {
-  Anchor,
-  ArrowsClockwise,
-  ArrowUp,
-  Spiral,
-  Globe,
-  Check,
-} from "@phosphor-icons/react";
+import { Anchor } from "@phosphor-icons/react/dist/ssr/Anchor";
+import { ArrowsClockwise } from "@phosphor-icons/react/dist/ssr/ArrowsClockwise";
+import { ArrowUp } from "@phosphor-icons/react/dist/ssr/ArrowUp";
+import { Spiral } from "@phosphor-icons/react/dist/ssr/Spiral";
+import { Globe } from "@phosphor-icons/react/dist/ssr/Globe";
+import { Check } from "@phosphor-icons/react/dist/ssr/Check";
 import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useDocumentStore, useUiStore } from "@vcad/core";

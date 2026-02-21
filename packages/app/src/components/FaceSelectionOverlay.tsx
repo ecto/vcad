@@ -1,5 +1,6 @@
 import { useSketchStore, useDocumentStore } from "@vcad/core";
-import { Crosshair, X } from "@phosphor-icons/react";
+import { Crosshair } from "@phosphor-icons/react/dist/ssr/Crosshair";
+import { X } from "@phosphor-icons/react/dist/ssr/X";
 import { Button } from "@/components/ui/button";
 
 export function FaceSelectionOverlay() {

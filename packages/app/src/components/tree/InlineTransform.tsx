@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { CaretRight, CaretDown } from "@phosphor-icons/react";
+import { CaretRight } from "@phosphor-icons/react/dist/ssr/CaretRight";
+import { CaretDown } from "@phosphor-icons/react/dist/ssr/CaretDown";
 import { ScrubInput } from "@/components/ui/scrub-input";
 import { useDocumentStore } from "@vcad/core";
 import type { PartInfo } from "@vcad/core";

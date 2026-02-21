@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback } from "react";
 import * as Popover from "@radix-ui/react-popover";
-import { MagnifyingGlass } from "@phosphor-icons/react";
+import { MagnifyingGlass } from "@phosphor-icons/react/dist/ssr/MagnifyingGlass";
 import { useDocumentStore } from "@vcad/core";
 import type { MaterialPreset } from "@/data/materials";
 import {

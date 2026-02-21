@@ -1,5 +1,8 @@
 import { useState } from "react";
-import { ArrowsClockwise, Crosshair, GridFour, Warning } from "@phosphor-icons/react";
+import { ArrowsClockwise } from "@phosphor-icons/react/dist/ssr/ArrowsClockwise";
+import { Crosshair } from "@phosphor-icons/react/dist/ssr/Crosshair";
+import { GridFour } from "@phosphor-icons/react/dist/ssr/GridFour";
+import { Warning } from "@phosphor-icons/react/dist/ssr/Warning";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";

@@ -1,5 +1,9 @@
 import { useEffect, useState, useCallback } from "react";
-import { X, CheckCircle, XCircle, Info, Warning } from "@phosphor-icons/react";
+import { X } from "@phosphor-icons/react/dist/ssr/X";
+import { CheckCircle } from "@phosphor-icons/react/dist/ssr/CheckCircle";
+import { XCircle } from "@phosphor-icons/react/dist/ssr/XCircle";
+import { Info } from "@phosphor-icons/react/dist/ssr/Info";
+import { Warning } from "@phosphor-icons/react/dist/ssr/Warning";
 import { cn } from "@/lib/utils";
 import type { Toast as ToastType } from "@/stores/notification-store";
 

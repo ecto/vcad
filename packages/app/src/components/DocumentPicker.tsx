@@ -1,17 +1,15 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import {
-  X,
-  File,
-  Plus,
-  Trash,
-  Pencil,
-  CloudSlash,
-  Cloud,
-  CloudArrowDown,
-  HardDrives,
-  SpinnerGap,
-  WifiSlash,
-} from "@phosphor-icons/react";
+import { X } from "@phosphor-icons/react/dist/ssr/X";
+import { File } from "@phosphor-icons/react/dist/ssr/File";
+import { Plus } from "@phosphor-icons/react/dist/ssr/Plus";
+import { Trash } from "@phosphor-icons/react/dist/ssr/Trash";
+import { Pencil } from "@phosphor-icons/react/dist/ssr/Pencil";
+import { CloudSlash } from "@phosphor-icons/react/dist/ssr/CloudSlash";
+import { Cloud } from "@phosphor-icons/react/dist/ssr/Cloud";
+import { CloudArrowDown } from "@phosphor-icons/react/dist/ssr/CloudArrowDown";
+import { HardDrives } from "@phosphor-icons/react/dist/ssr/HardDrives";
+import { SpinnerGap } from "@phosphor-icons/react/dist/ssr/SpinnerGap";
+import { WifiSlash } from "@phosphor-icons/react/dist/ssr/WifiSlash";
 import { cn } from "@/lib/utils";
 import { useEffect, useState, useCallback } from "react";
 import { useDocumentStore } from "@vcad/core";

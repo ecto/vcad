@@ -1,18 +1,16 @@
 import { useCallback, useState, useMemo } from "react";
-import {
-  X,
-  CaretDown,
-  CaretRight,
-  Sparkle,
-  Export,
-  Warning,
-  XCircle,
-  Gear,
-  ArrowCounterClockwise,
-  ArrowsClockwise,
-  Trash,
-  Funnel,
-} from "@phosphor-icons/react";
+import { X } from "@phosphor-icons/react/dist/ssr/X";
+import { CaretDown } from "@phosphor-icons/react/dist/ssr/CaretDown";
+import { CaretRight } from "@phosphor-icons/react/dist/ssr/CaretRight";
+import { Sparkle } from "@phosphor-icons/react/dist/ssr/Sparkle";
+import { Export } from "@phosphor-icons/react/dist/ssr/Export";
+import { Warning } from "@phosphor-icons/react/dist/ssr/Warning";
+import { XCircle } from "@phosphor-icons/react/dist/ssr/XCircle";
+import { Gear } from "@phosphor-icons/react/dist/ssr/Gear";
+import { ArrowCounterClockwise } from "@phosphor-icons/react/dist/ssr/ArrowCounterClockwise";
+import { ArrowsClockwise } from "@phosphor-icons/react/dist/ssr/ArrowsClockwise";
+import { Trash } from "@phosphor-icons/react/dist/ssr/Trash";
+import { Funnel } from "@phosphor-icons/react/dist/ssr/Funnel";
 import { cn } from "@/lib/utils";
 import {
   useNotificationStore,

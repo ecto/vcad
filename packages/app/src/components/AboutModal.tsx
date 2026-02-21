@@ -1,14 +1,12 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import {
-  X,
-  Cube,
-  PencilSimple,
-  FolderOpen,
-  Play,
-  GithubLogo,
-  Book,
-  ChatCircle,
-} from "@phosphor-icons/react";
+import { X } from "@phosphor-icons/react/dist/ssr/X";
+import { Cube } from "@phosphor-icons/react/dist/ssr/Cube";
+import { PencilSimple } from "@phosphor-icons/react/dist/ssr/PencilSimple";
+import { FolderOpen } from "@phosphor-icons/react/dist/ssr/FolderOpen";
+import { Play } from "@phosphor-icons/react/dist/ssr/Play";
+import { GithubLogo } from "@phosphor-icons/react/dist/ssr/GithubLogo";
+import { Book } from "@phosphor-icons/react/dist/ssr/Book";
+import { ChatCircle } from "@phosphor-icons/react/dist/ssr/ChatCircle";
 import { cn } from "@/lib/utils";
 import { useDocumentStore, useSketchStore, useUiStore } from "@vcad/core";
 import { useChangelogStore } from "@/stores/changelog-store";
