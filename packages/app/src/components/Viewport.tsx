@@ -1,4 +1,4 @@
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, Suspense, lazy } from "react";
 import * as THREE from "three";
 import { Canvas, useThree } from "@react-three/fiber";
 import { ViewportContent } from "./ViewportContent";
@@ -11,6 +11,11 @@ import {
 } from "@vcad/core";
 import { useTheme } from "@/hooks/useTheme";
 import { useDrawingStore } from "@/stores/drawing-store";
+import { useElectronicsStore } from "@/stores/electronics-store";
+
+const ElectronicsWorkspace = lazy(() =>
+  import("./electronics").then((m) => ({ default: m.ElectronicsWorkspace })),
+);
 
 // Monokai Soda from tmTheme
 const BG_DARK = "#222222";
@@ -187,6 +192,21 @@ export function Viewport() {
   const raytraceAvailable = useUiStore((s) => s.raytraceAvailable);
   const { isDark } = useTheme();
   const viewMode = useDrawingStore((s) => s.viewMode);
+  const electronicsActive = useElectronicsStore((s) => s.active);
+
+  // Render Electronics Workspace
+  if (electronicsActive) {
+    return (
+      <div
+        className="absolute inset-0 overflow-hidden"
+        style={{ backgroundColor: isDark ? "#0a0a0a" : "#ffffff" }}
+      >
+        <Suspense fallback={null}>
+          <ElectronicsWorkspace />
+        </Suspense>
+      </div>
+    );
+  }
 
   // Render 2D Drawing View
   if (viewMode === "2d") {

@@ -1,51 +1,50 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import {
-  Cube,
-  Cylinder,
-  Globe,
-  Unite,
-  Subtract,
-  Intersect,
-  ArrowsOutCardinal,
-  ArrowsClockwise,
-  ArrowsOut,
-  PencilSimple,
-  Package,
-  PlusSquare,
-  LinkSimple,
-  Cube as Cube3D,
-  Blueprint,
-  Download,
-  X,
-  Circle,
-  Octagon,
-  CubeTransparent,
-  DotsThree,
-  ArrowsHorizontal,
-  Play,
-  Pause,
-  Stop,
-  FastForward,
-  Printer,
-  MagnifyingGlass,
-  FloppyDisk,
-  FolderOpen,
-  Export,
-  GridFour,
-  SidebarSimple,
-  Sun,
-  Info,
-  ArrowCounterClockwise,
-  ArrowClockwise,
-  Trash,
-  Copy,
-  Anchor,
-  Sparkle,
-  SpinnerGap,
-  ChatCircle,
-  Path,
-  TextT,
-} from "@phosphor-icons/react";
+import { Cube } from "@phosphor-icons/react/dist/ssr/Cube";
+import { Cylinder } from "@phosphor-icons/react/dist/ssr/Cylinder";
+import { Globe } from "@phosphor-icons/react/dist/ssr/Globe";
+import { Unite } from "@phosphor-icons/react/dist/ssr/Unite";
+import { Subtract } from "@phosphor-icons/react/dist/ssr/Subtract";
+import { Intersect } from "@phosphor-icons/react/dist/ssr/Intersect";
+import { ArrowsOutCardinal } from "@phosphor-icons/react/dist/ssr/ArrowsOutCardinal";
+import { ArrowsClockwise } from "@phosphor-icons/react/dist/ssr/ArrowsClockwise";
+import { ArrowsOut } from "@phosphor-icons/react/dist/ssr/ArrowsOut";
+import { PencilSimple } from "@phosphor-icons/react/dist/ssr/PencilSimple";
+import { Package } from "@phosphor-icons/react/dist/ssr/Package";
+import { PlusSquare } from "@phosphor-icons/react/dist/ssr/PlusSquare";
+import { LinkSimple } from "@phosphor-icons/react/dist/ssr/LinkSimple";
+import { Cube as Cube3D } from "@phosphor-icons/react/dist/ssr/Cube";
+import { Blueprint } from "@phosphor-icons/react/dist/ssr/Blueprint";
+import { Download } from "@phosphor-icons/react/dist/ssr/Download";
+import { X } from "@phosphor-icons/react/dist/ssr/X";
+import { Circle } from "@phosphor-icons/react/dist/ssr/Circle";
+import { Octagon } from "@phosphor-icons/react/dist/ssr/Octagon";
+import { CubeTransparent } from "@phosphor-icons/react/dist/ssr/CubeTransparent";
+import { DotsThree } from "@phosphor-icons/react/dist/ssr/DotsThree";
+import { ArrowsHorizontal } from "@phosphor-icons/react/dist/ssr/ArrowsHorizontal";
+import { Play } from "@phosphor-icons/react/dist/ssr/Play";
+import { Pause } from "@phosphor-icons/react/dist/ssr/Pause";
+import { Stop } from "@phosphor-icons/react/dist/ssr/Stop";
+import { FastForward } from "@phosphor-icons/react/dist/ssr/FastForward";
+import { Printer } from "@phosphor-icons/react/dist/ssr/Printer";
+import { MagnifyingGlass } from "@phosphor-icons/react/dist/ssr/MagnifyingGlass";
+import { FloppyDisk } from "@phosphor-icons/react/dist/ssr/FloppyDisk";
+import { FolderOpen } from "@phosphor-icons/react/dist/ssr/FolderOpen";
+import { Export } from "@phosphor-icons/react/dist/ssr/Export";
+import { GridFour } from "@phosphor-icons/react/dist/ssr/GridFour";
+import { SidebarSimple } from "@phosphor-icons/react/dist/ssr/SidebarSimple";
+import { Sun } from "@phosphor-icons/react/dist/ssr/Sun";
+import { Info } from "@phosphor-icons/react/dist/ssr/Info";
+import { ArrowCounterClockwise } from "@phosphor-icons/react/dist/ssr/ArrowCounterClockwise";
+import { ArrowClockwise } from "@phosphor-icons/react/dist/ssr/ArrowClockwise";
+import { Trash } from "@phosphor-icons/react/dist/ssr/Trash";
+import { Copy } from "@phosphor-icons/react/dist/ssr/Copy";
+import { Anchor } from "@phosphor-icons/react/dist/ssr/Anchor";
+import { Sparkle } from "@phosphor-icons/react/dist/ssr/Sparkle";
+import { SpinnerGap } from "@phosphor-icons/react/dist/ssr/SpinnerGap";
+import { ChatCircle } from "@phosphor-icons/react/dist/ssr/ChatCircle";
+import { Path } from "@phosphor-icons/react/dist/ssr/Path";
+import { Circuitry } from "@phosphor-icons/react/dist/ssr/Circuitry";
+import { TextT } from "@phosphor-icons/react/dist/ssr/TextT";
 import * as Popover from "@radix-ui/react-popover";
 import { Tooltip } from "@/components/ui/tooltip";
 import {
@@ -90,6 +89,7 @@ import { useOnboardingStore, type GuidedFlowStep } from "@/stores/onboarding-sto
 import { useDrawingStore } from "@/stores/drawing-store";
 import { useSlicerStore } from "@/stores/slicer-store";
 import { useCamStore } from "@/stores/cam-store";
+import { useElectronicsStore } from "@/stores/electronics-store";
 import { analytics } from "@/lib/analytics";
 
 const PRIMITIVES: { kind: PrimitiveKind; icon: typeof Cube; label: string }[] = [
@@ -1484,6 +1484,18 @@ export function BottomToolbar() {
               iconColor={color}
             >
               <Path size={20} />
+            </ToolbarButton>
+            <ToolbarButton
+              tooltip="Open Electronics Workspace"
+              disabled={sketchActive}
+              onClick={() => {
+                useElectronicsStore.getState().enter();
+              }}
+              expanded={toolbarExpanded}
+              label="ECAD"
+              iconColor={color}
+            >
+              <Circuitry size={20} />
             </ToolbarButton>
           </>
         );

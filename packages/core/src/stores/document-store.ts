@@ -250,6 +250,30 @@ export interface DocumentState {
   updatePostProcessing: (postProcessing: PostProcessing) => void;
   addCameraPreset: (preset: CameraPreset) => void;
   removeCameraPreset: (presetId: string) => void;
+
+  // Electronics (ECAD) mutations
+  initSchematic: (title?: string) => void;
+  initPcb: () => void;
+  moveSchematicComponent: (idx: number, position: Vec3) => void;
+  moveFootprint: (idx: number, position: Vec3) => void;
+  rotateFootprint: (idx: number, angleDeg: number) => void;
+  flipFootprint: (idx: number) => void;
+  addTrace: (trace: {
+    start: Vec3;
+    end: Vec3;
+    width: number;
+    layer: string;
+    net: string;
+  }) => void;
+  removeTrace: (idx: number) => void;
+  addVia: (via: {
+    position: Vec3;
+    diameter: number;
+    drill: number;
+    startLayer: string;
+    endLayer: string;
+    net: string;
+  }) => void;
 }
 
 function makeNode(id: NodeId, name: string | null, op: CsgOp): Node {
@@ -2638,6 +2662,168 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const newDoc = structuredClone(state.document);
     const currentPresets = newDoc.scene?.cameraPresets ?? [];
     newDoc.scene = { ...newDoc.scene, cameraPresets: currentPresets.filter((p) => p.id !== presetId) };
+    set({ document: newDoc, isDirty: true, ...undoState });
+  },
+
+  // =========================================================================
+  // Electronics (ECAD) mutations — Principle 1: single undo stack
+  // =========================================================================
+
+  initSchematic: (title) => {
+    const state = get();
+    const undoState = pushUndo(state, "Create Schematic");
+    const newDoc = structuredClone(state.document);
+    newDoc.schematic = {
+      title: title ?? "Sheet 1",
+      components: [],
+      wires: [],
+      junctions: [],
+      labels: [],
+    };
+    set({ document: newDoc, isDirty: true, ...undoState });
+  },
+
+  // Principle 6: Smart defaults
+  initPcb: () => {
+    const state = get();
+    const undoState = pushUndo(state, "Create PCB");
+    const newDoc = structuredClone(state.document);
+
+    // Auto-size from existing footprints or default
+    const fps = newDoc.pcb?.footprints ?? [];
+    let w = 50, h = 30;
+    if (fps.length > 0) {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const fp of fps) {
+        minX = Math.min(minX, fp.position.x - 5);
+        minY = Math.min(minY, fp.position.y - 5);
+        maxX = Math.max(maxX, fp.position.x + 5);
+        maxY = Math.max(maxY, fp.position.y + 5);
+      }
+      w = Math.max(20, maxX - minX + 10);
+      h = Math.max(15, maxY - minY + 10);
+    }
+
+    newDoc.pcb = {
+      outline: {
+        vertices: [
+          { x: 0, y: 0 },
+          { x: w, y: 0 },
+          { x: w, y: h },
+          { x: 0, y: h },
+        ],
+        thickness: 1.6,
+      },
+      stackup: {
+        layers: [
+          { layer: "FCu" as const, copperThickness: 0.035 },
+          { layer: "BCu" as const, copperThickness: 0.035, dielectricThickness: 1.6, dielectricEr: 4.5, material: "FR4" },
+        ],
+      },
+      nets: newDoc.pcb?.nets ?? [],
+      rules: {
+        defaultRules: {
+          name: "Default",
+          traceWidth: 0.15,
+          clearance: 0.15,
+          viaDiameter: 0.6,
+          viaDrill: 0.3,
+        },
+        edgeClearance: 0.25,
+        holeToHole: 0.25,
+        minAnnularRing: 0.13,
+        minDrill: 0.2,
+      },
+      footprints: fps,
+      traces: newDoc.pcb?.traces ?? [],
+      vias: newDoc.pcb?.vias ?? [],
+      zones: newDoc.pcb?.zones ?? [],
+    };
+    set({ document: newDoc, isDirty: true, ...undoState });
+  },
+
+  moveSchematicComponent: (idx, position) => {
+    const state = get();
+    const undoState = pushUndo(state, "Move Component");
+    const newDoc = structuredClone(state.document);
+    if (newDoc.schematic && newDoc.schematic.components[idx]) {
+      newDoc.schematic.components[idx]!.position = { x: position.x, y: position.y };
+    }
+    set({ document: newDoc, isDirty: true, ...undoState });
+  },
+
+  moveFootprint: (idx, position) => {
+    const state = get();
+    const undoState = pushUndo(state, "Move Footprint");
+    const newDoc = structuredClone(state.document);
+    if (newDoc.pcb && newDoc.pcb.footprints[idx]) {
+      newDoc.pcb.footprints[idx]!.position = { x: position.x, y: position.y };
+    }
+    set({ document: newDoc, isDirty: true, ...undoState });
+  },
+
+  rotateFootprint: (idx, angleDeg) => {
+    const state = get();
+    const undoState = pushUndo(state, "Rotate Footprint");
+    const newDoc = structuredClone(state.document);
+    if (newDoc.pcb && newDoc.pcb.footprints[idx]) {
+      const fp = newDoc.pcb.footprints[idx]!;
+      fp.rotation = ((fp.rotation ?? 0) + angleDeg) % 360;
+    }
+    set({ document: newDoc, isDirty: true, ...undoState });
+  },
+
+  flipFootprint: (idx) => {
+    const state = get();
+    const undoState = pushUndo(state, "Flip Footprint");
+    const newDoc = structuredClone(state.document);
+    if (newDoc.pcb && newDoc.pcb.footprints[idx]) {
+      const fp = newDoc.pcb.footprints[idx]!;
+      fp.front = !(fp.front ?? true);
+    }
+    set({ document: newDoc, isDirty: true, ...undoState });
+  },
+
+  addTrace: (trace) => {
+    const state = get();
+    const undoState = pushUndo(state, "Add Trace");
+    const newDoc = structuredClone(state.document);
+    if (newDoc.pcb) {
+      newDoc.pcb.traces.push({
+        start: { x: trace.start.x, y: trace.start.y },
+        end: { x: trace.end.x, y: trace.end.y },
+        width: trace.width,
+        layer: trace.layer as any,
+        net: trace.net,
+      });
+    }
+    set({ document: newDoc, isDirty: true, ...undoState });
+  },
+
+  removeTrace: (idx) => {
+    const state = get();
+    const undoState = pushUndo(state, "Remove Trace");
+    const newDoc = structuredClone(state.document);
+    if (newDoc.pcb) {
+      newDoc.pcb.traces.splice(idx, 1);
+    }
+    set({ document: newDoc, isDirty: true, ...undoState });
+  },
+
+  addVia: (via) => {
+    const state = get();
+    const undoState = pushUndo(state, "Add Via");
+    const newDoc = structuredClone(state.document);
+    if (newDoc.pcb) {
+      newDoc.pcb.vias.push({
+        position: { x: via.position.x, y: via.position.y },
+        diameter: via.diameter,
+        drill: via.drill,
+        startLayer: via.startLayer as any,
+        endLayer: via.endLayer as any,
+        net: via.net,
+      });
+    }
     set({ document: newDoc, isDirty: true, ...undoState });
   },
 }));

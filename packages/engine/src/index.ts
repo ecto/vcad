@@ -39,6 +39,25 @@ export { MeshCache } from "./mesh-cache.js";
 export { DependencyGraph } from "./dependency-graph.js";
 export type { EvaluateOptions } from "./evaluate.js";
 
+// ECAD (Electronics)
+export {
+  isEcadAvailable,
+  runDrc,
+  runErc,
+  generateNetlist,
+  routeNet,
+  fillZones,
+} from "./ecad.js";
+export type {
+  DrcViolationResult,
+  ErcViolationResult,
+  NetlistResult,
+  NetlistNet,
+  NetConnection,
+  RouteResult,
+  FilledZoneResult,
+} from "./ecad.js";
+
 // Physics simulation
 export { PhysicsEnv, isPhysicsAvailable } from "./physics.js";
 export type {
@@ -144,6 +163,9 @@ export interface RenderedDimension {
   is_basic: boolean;
 }
 
+/** Maximum number of cached scenes to keep */
+const SCENE_CACHE_MAX = 10;
+
 /** CSG evaluation engine backed by vcad-kernel (WASM). */
 export class Engine {
   private kernel: KernelModule;
@@ -160,11 +182,56 @@ export class Engine {
   /** Last evaluated document hash for change detection */
   private lastDocHash: string | null = null;
 
-  private constructor(kernel: KernelModule) {
+  /** Web Worker for off-main-thread evaluation */
+  private worker: Worker | null = null;
+
+  /** Resolves when the worker has finished WASM init */
+  private workerReady: Promise<void> | null = null;
+
+  /** Document-level scene cache (keyed by doc hash + options) */
+  private sceneCache = new Map<string, EvaluatedScene>();
+
+  private constructor(kernel: KernelModule, compiledWasmModule?: WebAssembly.Module) {
     this.kernel = kernel;
     this.solidCache = new SolidCache();
     this.meshCache = new MeshCache();
     this.dependencyGraph = new DependencyGraph();
+    this.initWorker(compiledWasmModule);
+  }
+
+  /** Spin up the eval worker (browser only, best-effort). */
+  private initWorker(compiledWasmModule?: WebAssembly.Module): void {
+    // Workers only available in browser
+    if (typeof Worker === "undefined") return;
+
+    try {
+      const worker = new Worker(
+        new URL("./eval-worker.js", import.meta.url),
+        { type: "module" },
+      );
+
+      this.workerReady = new Promise<void>((resolve, reject) => {
+        const onMessage = (e: MessageEvent) => {
+          if (e.data.type === "ready") {
+            worker.removeEventListener("message", onMessage);
+            resolve();
+          } else if (e.data.type === "error" && e.data.id === null) {
+            worker.removeEventListener("message", onMessage);
+            console.warn("[ENGINE] Worker WASM init failed:", e.data.message);
+            this.worker = null;
+            this.workerReady = null;
+            reject(new Error(e.data.message));
+          }
+        };
+        worker.addEventListener("message", onMessage);
+      });
+
+      // Pass compiled WASM module to worker to avoid recompilation (~3s savings)
+      worker.postMessage({ type: "init", module: compiledWasmModule });
+      this.worker = worker;
+    } catch (e) {
+      console.warn("[ENGINE] Failed to create eval worker:", e);
+    }
   }
 
   /** Load the vcad-kernel WASM module and return a ready engine. */
@@ -200,6 +267,11 @@ export class Engine {
       await wasmModule.default();
     }
 
+    // Get the compiled WebAssembly.Module to share with the worker.
+    // This avoids a ~3s recompilation in the worker thread.
+    const getCompiledModule = (wasmModule as Record<string, unknown>).getCompiledModule as (() => WebAssembly.Module | undefined) | undefined;
+    const compiledWasmModule = getCompiledModule?.();
+
     return new Engine({
       Solid: wasmModule.Solid,
       WasmAnnotationLayer: wasmModule.WasmAnnotationLayer,
@@ -209,13 +281,12 @@ export class Engine {
       createDetailView: wasmModule.createDetailView,
       evaluateDocument: (wasmModule as Record<string, unknown>).evaluateDocument as KernelModule["evaluateDocument"],
       evalVcadSource: (wasmModule as Record<string, unknown>).evalVcadSource as KernelModule["evalVcadSource"],
-    });
+    }, compiledWasmModule);
   }
 
-  /** Evaluate an IR document into triangle meshes. */
+  /** Evaluate an IR document into triangle meshes (synchronous, main-thread). */
   evaluate(doc: Document, options: EvaluateOptions = {}): EvaluatedScene {
     // Rebuild dependency graph if document structure changed significantly
-    // (This is a simple heuristic - compare node count)
     const nodeCount = Object.keys(doc.nodes).length;
     const currentHash = `${nodeCount}:${doc.roots.length}`;
     if (this.lastDocHash !== currentHash) {
@@ -223,7 +294,102 @@ export class Engine {
       this.lastDocHash = currentHash;
     }
 
-    return evaluateDocument(doc, this.kernel, options);
+    // Check scene cache
+    const cacheKey = this.sceneCacheKey(doc, options);
+    const cached = this.sceneCache.get(cacheKey);
+    if (cached) return cached;
+
+    const scene = evaluateDocument(doc, this.kernel, options);
+    this.cacheScene(cacheKey, scene);
+    return scene;
+  }
+
+  /**
+   * Evaluate a document off the main thread via Web Worker.
+   * Falls back to synchronous evaluation if the worker is unavailable.
+   */
+  async evaluateAsync(doc: Document, options: EvaluateOptions = {}): Promise<EvaluatedScene> {
+    // Rebuild dependency graph
+    const nodeCount = Object.keys(doc.nodes).length;
+    const currentHash = `${nodeCount}:${doc.roots.length}`;
+    if (this.lastDocHash !== currentHash) {
+      this.dependencyGraph.build(doc);
+      this.lastDocHash = currentHash;
+    }
+
+    // Check scene cache first
+    const cacheKey = this.sceneCacheKey(doc, options);
+    const cached = this.sceneCache.get(cacheKey);
+    if (cached) return cached;
+
+    // Try worker path
+    if (this.worker && this.workerReady) {
+      try {
+        await this.workerReady;
+      } catch {
+        // Worker init failed — fall through to sync
+      }
+
+      if (this.worker) {
+        try {
+          const scene = await this.evaluateInWorker(doc, options);
+          this.cacheScene(cacheKey, scene);
+          return scene;
+        } catch (e) {
+          console.warn("[ENGINE] Worker eval failed, falling back to sync:", e);
+        }
+      }
+    }
+
+    // Fallback: synchronous on main thread
+    const scene = evaluateDocument(doc, this.kernel, options);
+    this.cacheScene(cacheKey, scene);
+    return scene;
+  }
+
+  /** Send an evaluate message to the worker and await the result. */
+  private evaluateInWorker(doc: Document, options: EvaluateOptions): Promise<EvaluatedScene> {
+    const worker = this.worker!;
+    const id = Math.random().toString(36).slice(2);
+    const skipClash = options.skipClashDetection ?? false;
+
+    return new Promise<EvaluatedScene>((resolve, reject) => {
+      const onMessage = (e: MessageEvent) => {
+        if (e.data.id !== id) return;
+        worker.removeEventListener("message", onMessage);
+
+        if (e.data.type === "result") {
+          // Scene arrives with typed arrays already transferred (zero-copy)
+          resolve(e.data.scene as EvaluatedScene);
+        } else if (e.data.type === "error") {
+          reject(new Error(e.data.message));
+        }
+      };
+      worker.addEventListener("message", onMessage);
+      worker.postMessage({
+        type: "evaluate",
+        id,
+        docJson: JSON.stringify(doc),
+        skipClashDetection: skipClash,
+      });
+    });
+  }
+
+  /** Document content hash for scene caching. */
+  private sceneCacheKey(doc: Document, options: EvaluateOptions): string {
+    // Full content hash — JSON.stringify is fast for typical documents (<1ms)
+    // and ensures cache correctness when node parameters change.
+    const skipClash = options.skipClashDetection ?? false;
+    return `${skipClash}:${JSON.stringify(doc)}`;
+  }
+
+  /** Insert a scene into the cache, evicting oldest if over limit. */
+  private cacheScene(key: string, scene: EvaluatedScene): void {
+    this.sceneCache.set(key, scene);
+    if (this.sceneCache.size > SCENE_CACHE_MAX) {
+      const oldest = this.sceneCache.keys().next().value;
+      if (oldest !== undefined) this.sceneCache.delete(oldest);
+    }
   }
 
   /**
@@ -242,6 +408,7 @@ export class Engine {
   clearCaches(): void {
     this.solidCache.clear();
     this.meshCache.clear();
+    this.sceneCache.clear();
   }
 
   /** Get the Solid class for direct use */
@@ -361,7 +528,7 @@ export class Engine {
       };
 
       const dirArray = new Float64Array([direction.x, direction.y, direction.z]);
-      const solid = this.kernel.Solid.extrude(profile, dirArray);
+      const solid = this.kernel.Solid.extrude(JSON.stringify(profile), dirArray);
       const meshData = solid.getMesh();
 
       return {
@@ -411,7 +578,7 @@ export class Engine {
 
       const axisOriginArray = new Float64Array([axisOrigin.x, axisOrigin.y, axisOrigin.z]);
       const axisDirArray = new Float64Array([axisDir.x, axisDir.y, axisDir.z]);
-      const solid = this.kernel.Solid.revolve(profile, axisOriginArray, axisDirArray, angleDeg);
+      const solid = this.kernel.Solid.revolve(JSON.stringify(profile), axisOriginArray, axisDirArray, angleDeg);
       const meshData = solid.getMesh();
 
       return {
