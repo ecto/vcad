@@ -2266,7 +2266,7 @@ export function getSlicerPrinterProfiles() {
 /**
  * Get the kernel version string.
  * Use this in browser console to verify the correct WASM build is loaded:
- * `kernelWasm.get_kernel_version()` should return "2025-02-03-geom-debug"
+ * `kernelWasm.get_kernel_version()` should return "2025-02-21-step-facebound-fix"
  * @returns {string}
  */
 export function get_kernel_version() {
@@ -4551,12 +4551,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 1607, function: Function { arguments: [Externref], shim_idx: 1608, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 1625, function: Function { arguments: [Externref], shim_idx: 1626, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__ha8b73a36ae48e470, wasm_bindgen__convert__closures_____invoke__h4488ad9b37e81000);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 862, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 863, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 880, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 881, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h250d7189f9770b99, wasm_bindgen__convert__closures_____invoke__ha8b3f1b8e67fad08);
             return ret;
         },

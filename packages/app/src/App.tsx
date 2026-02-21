@@ -61,8 +61,6 @@ import {
 } from "@/lib/storage";
 import { loadDocumentFromUrl } from "@/lib/url-document";
 import {
-  isGpuAvailable,
-  processGeometryGpu,
   mergeMeshes,
 } from "@vcad/engine";
 import { useNotificationStore } from "@/stores/notification-store";
@@ -200,37 +198,12 @@ export function App() {
         const mergedMesh = mergeMeshes(rawMeshes);
         logger.info("step", `Merged into 1 mesh with ${mergedMesh.indices.length / 3} triangles`);
 
-        // Process geometry with GPU if available (computes creased normals)
-        let finalPositions = mergedMesh.positions;
-        let finalIndices = mergedMesh.indices;
-        let finalNormals: Float32Array | undefined;
-
-        if (isGpuAvailable()) {
-          try {
-            logger.info("step", "Processing geometry on GPU...");
-            const startTime = performance.now();
-            const processed = await processGeometryGpu(
-              mergedMesh.positions,
-              mergedMesh.indices,
-              Math.PI / 6, // 30 degree crease angle
-              false // don't generate LOD for now
-            );
-            const gpuTime = performance.now() - startTime;
-            logger.info("step", `GPU processing complete in ${gpuTime.toFixed(0)}ms`);
-
-            // Use GPU-processed mesh with normals
-            const firstMesh = processed[0];
-            if (firstMesh) {
-              finalPositions = firstMesh.positions;
-              finalIndices = firstMesh.indices;
-              finalNormals = firstMesh.normals;
-            }
-          } catch (gpuErr) {
-            logger.warn("step", `GPU processing failed, using CPU fallback: ${gpuErr}`);
-          }
-        } else {
-          logger.info("step", "GPU not available, using CPU processing");
-        }
+        // Skip GPU normal computation for STEP imports — the wgpu compute
+        // shader uses std::sync::mpsc which deadlocks in WASM's single-threaded
+        // environment. Three.js computes vertex normals at render time instead.
+        const finalPositions = mergedMesh.positions;
+        const finalIndices = mergedMesh.indices;
+        const finalNormals: Float32Array | undefined = undefined;
 
         // Add as a proper document part (not just a scene mesh)
         // This makes it selectable, deletable, and transformable

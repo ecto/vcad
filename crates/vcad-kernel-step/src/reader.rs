@@ -230,10 +230,16 @@ impl<'a> StepReader<'a> {
                 }
             }
 
-            // Create face - skip if no outer bound (malformed or unsupported face)
+            // If no explicit FACE_OUTER_BOUND, treat the first bound as the outer
+            // loop. Many STEP exporters (e.g. Shapr3D) use FACE_BOUND for everything.
+            if outer_loop.is_none() && !inner_loops.is_empty() {
+                outer_loop = Some(inner_loops.remove(0));
+            }
+
+            // Create face - skip if no bounds at all
             let outer = match outer_loop {
                 Some(l) => l,
-                None => continue, // Skip face with no outer boundary
+                None => continue,
             };
 
             let orientation = if step_face.same_sense {

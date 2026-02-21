@@ -961,7 +961,7 @@ export function getSlicerPrinterProfiles(): any;
 /**
  * Get the kernel version string.
  * Use this in browser console to verify the correct WASM build is loaded:
- * `kernelWasm.get_kernel_version()` should return "2025-02-03-geom-debug"
+ * `kernelWasm.get_kernel_version()` should return "2025-02-21-step-facebound-fix"
  */
 export function get_kernel_version(): string;
 

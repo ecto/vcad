@@ -28,6 +28,10 @@ pub async fn compute_creased_normals(
     indices: &[u32],
     crease_angle: f32,
 ) -> Result<Vec<f32>, GpuError> {
+    if positions.is_empty() || indices.is_empty() {
+        return Ok(vec![0.0f32; positions.len()]);
+    }
+
     let ctx = GpuContext::init().await?;
 
     let vertex_count = (positions.len() / 3) as u32;

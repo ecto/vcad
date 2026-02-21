@@ -17,11 +17,11 @@ use wasmosis::module;
 use ts_rs::TS;
 
 /// Version string for verifying correct WASM build is loaded in browser.
-const KERNEL_VERSION: &str = "2025-02-03-geom-debug";
+const KERNEL_VERSION: &str = "2025-02-21-step-facebound-fix";
 
 /// Get the kernel version string.
 /// Use this in browser console to verify the correct WASM build is loaded:
-/// `kernelWasm.get_kernel_version()` should return "2025-02-03-geom-debug"
+/// `kernelWasm.get_kernel_version()` should return "2025-02-21-step-facebound-fix"
 #[wasm_bindgen]
 pub fn get_kernel_version() -> String {
     KERNEL_VERSION.to_string()
