@@ -49,15 +49,15 @@ export async function initializeGpu(): Promise<boolean> {
 
       if (typeof wasmModule.initGpu === "function") {
         gpuAvailable = await wasmModule.initGpu();
-        console.log(`[GPU] WebGPU ${gpuAvailable ? "available" : "not available"}`);
       } else {
-        console.log("[GPU] GPU feature not compiled into WASM module");
         gpuAvailable = false;
       }
 
       return gpuAvailable;
-    } catch (e) {
-      console.warn("[GPU] Init failed:", e);
+    } catch {
+      // GPU init can fail due to missing WebGPU support or
+      // wasm-bindgen closure bugs in Safari. Non-critical —
+      // the app works without GPU acceleration.
       return false;
     }
   })();
