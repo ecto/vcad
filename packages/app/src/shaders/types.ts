@@ -9,7 +9,8 @@ export type ProceduralShaderType =
   | "wood"
   | "brushed-metal"
   | "carbon-fiber"
-  | "concrete";
+  | "concrete"
+  | "pcb-copper";
 
 /** Definition for a procedural material shader */
 export interface ProceduralShaderDef {

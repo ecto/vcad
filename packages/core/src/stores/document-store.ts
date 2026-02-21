@@ -2847,6 +2847,14 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         roughness: 0.8,
       };
     }
+    if (!newDoc.materials["__pcb_copper__"]) {
+      newDoc.materials["__pcb_copper__"] = {
+        name: "__pcb_copper__",
+        color: [0.84, 0.68, 0.37],
+        metallic: 0.95,
+        roughness: 0.15,
+      };
+    }
 
     const newParts = [...state.parts, {
       id: `pcb-board-${boardNodeId}`,

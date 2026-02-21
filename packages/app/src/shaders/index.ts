@@ -8,6 +8,7 @@ import { brushedMetalShader } from "./materials/brushed-metal";
 import { woodShader, walnutColors, oakColors, bambooColors } from "./materials/wood";
 import { carbonFiberShader } from "./materials/carbon-fiber";
 import { concreteShader } from "./materials/concrete";
+import { pcbCopperShader } from "./materials/pcb-copper";
 import * as THREE from "three";
 
 export type { ProceduralShaderDef, ProceduralShaderType } from "./types";
@@ -18,6 +19,7 @@ const SHADERS = new Map<ProceduralShaderType, ProceduralShaderDef>([
   ["wood", woodShader],
   ["carbon-fiber", carbonFiberShader],
   ["concrete", concreteShader],
+  ["pcb-copper", pcbCopperShader],
 ]);
 
 /** Material key to shader mapping (for materials that use procedural shaders) */
@@ -30,6 +32,7 @@ const MATERIAL_SHADER_MAP: Record<string, ProceduralShaderType> = {
   bamboo: "wood",
   "carbon-fiber": "carbon-fiber",
   concrete: "concrete",
+  __pcb_copper__: "pcb-copper",
 };
 
 /** Wood material color overrides */
