@@ -605,60 +605,6 @@ fn tessellate_planar_face_with_holes(
     triangulate_polygon_with_holes(&outer_2d, &inner_2d, &outer_verts, &inner_loops, reversed)
 }
 
-/// Tessellate a disk (synthesized circular outer boundary) with polygon holes.
-///
-/// Used for planar faces whose outer loop has ≤2 vertices (arc boundaries)
-/// but contains inner loops (holes) with polygon vertices.
-fn tessellate_disk_with_holes(
-    outer_verts: &[Point3],
-    inner_loops: &[Vec<Point3>],
-    reversed: bool,
-) -> TriangleMesh {
-    if outer_verts.len() < 3 {
-        return TriangleMesh::new();
-    }
-
-    // Build 2D projection
-    let e1 = outer_verts[1] - outer_verts[0];
-    let e2 = outer_verts[2] - outer_verts[0];
-    let face_normal = e1.cross(&e2);
-    if face_normal.norm() < 1e-12 {
-        return TriangleMesh::new();
-    }
-
-    let u_axis = e1.normalize();
-    let v_axis = face_normal.cross(&e1).normalize();
-    let origin = outer_verts[0];
-
-    let project = |p: &Point3| -> (f64, f64) {
-        let d = *p - origin;
-        (d.dot(&u_axis), d.dot(&v_axis))
-    };
-
-    let outer_2d: Vec<(f64, f64)> = outer_verts.iter().map(&project).collect();
-    let inner_2d: Vec<Vec<(f64, f64)>> = inner_loops
-        .iter()
-        .map(|lv| lv.iter().map(&project).collect())
-        .collect();
-
-    let outer_area = polygon_area_2d(&outer_2d);
-    let total_hole_area: f64 = inner_2d.iter().map(|h| polygon_area_2d(h).abs()).sum();
-
-    if total_hole_area < outer_area.abs() * 0.3 {
-        let unproject = |uv: (f64, f64)| -> Point3 { origin + uv.0 * u_axis + uv.1 * v_axis };
-        return triangulate_with_rings(
-            &outer_2d,
-            &inner_2d,
-            outer_verts,
-            inner_loops,
-            unproject,
-            reversed,
-        );
-    }
-
-    triangulate_polygon_with_holes(&outer_2d, &inner_2d, outer_verts, inner_loops, reversed)
-}
-
 /// Compute signed area of a 2D polygon.
 fn polygon_area_2d(pts: &[(f64, f64)]) -> f64 {
     let mut area = 0.0;
@@ -2415,11 +2361,13 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
 
         match surface.surface_type() {
             SurfaceKind::Plane => {
-                if loop_len <= 2 {
-                    // Cap face with ≤2 vertices — boundary is curved (arcs/circles).
-                    // STEP represents circular boundaries as 2 semicircular arcs (2 edges,
-                    // 2 vertices), or a single degenerate edge (1 vertex).
+                if loop_len <= 1 && face.inner_loops.is_empty() {
+                    // Degenerate cap face with ≤1 vertex and no holes — single
+                    // degenerate edge forming a full circle.
                     // Tessellate as a disk using surface origin as center.
+                    // Note: loop_len==2 faces are NOT safe to treat as disks —
+                    // the 2 vertices may be far from the plane origin (e.g. two
+                    // arcs forming a non-circular boundary).
                     let verts: Vec<_> = brep
                         .topology
                         .loop_half_edges(face.outer_loop)
@@ -2437,44 +2385,15 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
                         let normal = plane.normal(Point2::origin());
                         let y_dir = normal.as_ref().cross(&x_dir);
 
-                        if face.inner_loops.is_empty() {
-                            // Simple disk — no holes
-                            let disk = tessellate_disk_general(
-                                center,
-                                r,
-                                x_dir,
-                                y_dir,
-                                params.circle_segments,
-                                reversed,
-                            );
-                            mesh.merge(&disk);
-                        } else {
-                            // Disk with holes: synthesize circular outer boundary
-                            // vertices, then triangulate with the inner loop holes.
-                            let n_seg = params.circle_segments as usize;
-                            let outer_verts: Vec<Point3> = (0..n_seg)
-                                .map(|i| {
-                                    let theta = 2.0 * PI * (i as f64 / n_seg as f64);
-                                    center + r * (theta.cos() * x_dir + theta.sin() * y_dir)
-                                })
-                                .collect();
-                            let mut inner_loops_verts: Vec<Vec<Point3>> = Vec::new();
-                            for &inner_loop in &face.inner_loops {
-                                let iv: Vec<Point3> = brep.topology
-                                    .loop_half_edges(inner_loop)
-                                    .map(|he| brep.topology.vertices[brep.topology.half_edges[he].origin].point)
-                                    .collect();
-                                if iv.len() >= 3 {
-                                    inner_loops_verts.push(iv);
-                                }
-                            }
-                            let face_mesh = tessellate_disk_with_holes(
-                                &outer_verts,
-                                &inner_loops_verts,
-                                reversed,
-                            );
-                            mesh.merge(&face_mesh);
-                        }
+                        let disk = tessellate_disk_general(
+                            center,
+                            r,
+                            x_dir,
+                            y_dir,
+                            params.circle_segments,
+                            reversed,
+                        );
+                        mesh.merge(&disk);
                     }
                 } else {
                     // Use winding-aware tessellation to handle faces with mismatched loop winding
@@ -2721,4 +2640,5 @@ mod tests {
             area
         );
     }
+
 }
