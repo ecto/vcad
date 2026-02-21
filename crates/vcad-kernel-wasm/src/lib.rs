@@ -3943,27 +3943,130 @@ pub fn evaluate_document(doc_json: &str, skip_clash_detection: bool) -> Result<J
         timing.parse_ms = Some(parse_ms);
     }
 
-    // Serialize the scene to a JS-friendly format
+    // Serialize the scene to a JS-friendly format using typed arrays (not serde_wasm_bindgen)
+    // serde_wasm_bindgen converts Vec<f32> element-by-element → individual JS Numbers,
+    // which is ~300ms for large meshes. Direct typed array copy is ~1ms.
     let t_ser = performance_now();
-    let result = EvaluatedSceneJs::from(scene);
-    let js_val = serde_wasm_bindgen::to_value(&result)
-        .map_err(|e| JsError::new(&format!("Serialization error: {}", e)))?;
-    let _serialize_ms = performance_now() - t_ser;
+    let js_val = scene_to_js(&scene);
+    let serialize_ms = performance_now() - t_ser;
 
-    // We can't inject serialize_ms into the already-serialized JsValue easily,
-    // so we set it on the EvaluatedSceneJs before serialization in a second pass.
-    // Instead, we'll use js_sys to set the property directly.
+    // Inject serialize_ms into timing
     if let Ok(timing_val) = js_sys::Reflect::get(&js_val, &"timing".into()) {
         if !timing_val.is_undefined() && !timing_val.is_null() {
             let _ = js_sys::Reflect::set(
                 &timing_val,
                 &"serialize_ms".into(),
-                &JsValue::from_f64(_serialize_ms),
+                &JsValue::from_f64(serialize_ms),
             );
         }
     }
 
     Ok(js_val)
+}
+
+/// Convert an EvaluatedScene to JsValue using typed arrays for mesh data.
+///
+/// This replaces `serde_wasm_bindgen::to_value` which is ~300ms because it converts
+/// each f32/u32 element individually. Using `js_sys::Float32Array::from` does a single
+/// memcpy, bringing serialization to ~1ms.
+fn scene_to_js(scene: &vcad_eval::EvaluatedScene) -> JsValue {
+    let obj = js_sys::Object::new();
+
+    // Parts
+    let parts_arr = js_sys::Array::new_with_length(scene.parts.len() as u32);
+    for (i, part) in scene.parts.iter().enumerate() {
+        let part_obj = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&part_obj, &"mesh".into(), &mesh_to_js(&part.mesh));
+        let _ = js_sys::Reflect::set(&part_obj, &"material".into(), &part.material.clone().into());
+        parts_arr.set(i as u32, part_obj.into());
+    }
+    let _ = js_sys::Reflect::set(&obj, &"parts".into(), &parts_arr.into());
+
+    // Part defs
+    if let Some(ref part_defs) = scene.part_defs {
+        let defs_arr = js_sys::Array::new_with_length(part_defs.len() as u32);
+        for (i, pd) in part_defs.iter().enumerate() {
+            let pd_obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&pd_obj, &"id".into(), &pd.id.clone().into());
+            let _ = js_sys::Reflect::set(&pd_obj, &"mesh".into(), &mesh_to_js(&pd.mesh));
+            defs_arr.set(i as u32, pd_obj.into());
+        }
+        let _ = js_sys::Reflect::set(&obj, &"partDefs".into(), &defs_arr.into());
+    }
+
+    // Instances
+    if let Some(ref instances) = scene.instances {
+        let inst_arr = js_sys::Array::new_with_length(instances.len() as u32);
+        for (i, inst) in instances.iter().enumerate() {
+            let inst_obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(
+                &inst_obj,
+                &"instance_id".into(),
+                &inst.instance_id.clone().into(),
+            );
+            let _ = js_sys::Reflect::set(
+                &inst_obj,
+                &"part_def_id".into(),
+                &inst.part_def_id.clone().into(),
+            );
+            if let Some(ref name) = inst.name {
+                let _ = js_sys::Reflect::set(&inst_obj, &"name".into(), &name.clone().into());
+            }
+            let _ = js_sys::Reflect::set(&inst_obj, &"mesh".into(), &mesh_to_js(&inst.mesh));
+            let _ = js_sys::Reflect::set(
+                &inst_obj,
+                &"material".into(),
+                &inst.material.clone().into(),
+            );
+            if let Some(ref transform) = inst.transform {
+                // Serialize transform via serde (small object, fast)
+                if let Ok(t) = serde_wasm_bindgen::to_value(transform) {
+                    let _ = js_sys::Reflect::set(&inst_obj, &"transform".into(), &t);
+                }
+            }
+            inst_arr.set(i as u32, inst_obj.into());
+        }
+        let _ = js_sys::Reflect::set(&obj, &"instances".into(), &inst_arr.into());
+    }
+
+    // Clashes
+    let clashes_arr = js_sys::Array::new_with_length(scene.clashes.len() as u32);
+    for (i, clash) in scene.clashes.iter().enumerate() {
+        clashes_arr.set(i as u32, mesh_to_js(clash));
+    }
+    let _ = js_sys::Reflect::set(&obj, &"clashes".into(), &clashes_arr.into());
+
+    // Timing
+    if let Some(ref timing) = scene.timing {
+        if let Ok(t) = serde_wasm_bindgen::to_value(timing) {
+            let _ = js_sys::Reflect::set(&obj, &"timing".into(), &t);
+        }
+    }
+
+    obj.into()
+}
+
+/// Convert an EvaluatedMesh to JsValue using typed arrays (single memcpy each).
+fn mesh_to_js(mesh: &vcad_eval::EvaluatedMesh) -> JsValue {
+    let obj = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(
+        &obj,
+        &"positions".into(),
+        &js_sys::Float32Array::from(mesh.positions.as_slice()).into(),
+    );
+    let _ = js_sys::Reflect::set(
+        &obj,
+        &"indices".into(),
+        &js_sys::Uint32Array::from(mesh.indices.as_slice()).into(),
+    );
+    if let Some(ref normals) = mesh.normals {
+        let _ = js_sys::Reflect::set(
+            &obj,
+            &"normals".into(),
+            &js_sys::Float32Array::from(normals.as_slice()).into(),
+        );
+    }
+    obj.into()
 }
 
 /// Evaluate a loon source string and return a JSON-serialized vcad Document.
@@ -3980,43 +4083,6 @@ pub fn eval_vcad_source(source: &str) -> Result<JsValue, JsError> {
     Ok(JsValue::from_str(&json))
 }
 
-/// JS-friendly scene output (all fields serializable).
-#[derive(serde::Serialize)]
-struct EvaluatedSceneJs {
-    parts: Vec<EvaluatedPartJs>,
-    #[serde(rename = "partDefs", skip_serializing_if = "Option::is_none")]
-    part_defs: Option<Vec<vcad_eval::EvaluatedPartDef>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    instances: Option<Vec<vcad_eval::EvaluatedInstance>>,
-    clashes: Vec<vcad_eval::EvaluatedMesh>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    timing: Option<vcad_eval::EvalTiming>,
-}
-
-#[derive(serde::Serialize)]
-struct EvaluatedPartJs {
-    mesh: vcad_eval::EvaluatedMesh,
-    material: String,
-}
-
-impl From<vcad_eval::EvaluatedScene> for EvaluatedSceneJs {
-    fn from(scene: vcad_eval::EvaluatedScene) -> Self {
-        Self {
-            parts: scene
-                .parts
-                .into_iter()
-                .map(|p| EvaluatedPartJs {
-                    mesh: p.mesh,
-                    material: p.material,
-                })
-                .collect(),
-            part_defs: scene.part_defs,
-            instances: scene.instances,
-            clashes: scene.clashes,
-            timing: scene.timing,
-        }
-    }
-}
 
 // =============================================================================
 // TypeScript type generation (ts-rs)

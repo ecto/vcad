@@ -29,7 +29,7 @@ pub fn evaluate_document(
     let t_start = clock.map(|c| c.now_ms());
 
     let mut cache: HashMap<NodeId, Option<Solid>> = HashMap::new();
-    let mut node_timings: HashMap<NodeId, NodeTiming> = HashMap::new();
+    let mut node_timings: HashMap<String, NodeTiming> = HashMap::new();
     let mut tessellate_ms: f64 = 0.0;
 
     // Evaluate visible roots
@@ -67,7 +67,7 @@ pub fn evaluate_document(
                 if let Some(t0) = t_mesh {
                     let ms = clock.unwrap().now_ms() - t0;
                     tessellate_ms += ms;
-                    if let Some(nt) = node_timings.get_mut(&entry.root) {
+                    if let Some(nt) = node_timings.get_mut(&entry.root.to_string()) {
                         nt.mesh_ms = ms;
                     }
                 }
@@ -229,7 +229,7 @@ fn evaluate_node_timed(
     nodes: &HashMap<NodeId, vcad_ir::Node>,
     cache: &mut HashMap<NodeId, Option<Solid>>,
     clock: Option<&dyn Clock>,
-    timings: &mut HashMap<NodeId, NodeTiming>,
+    timings: &mut HashMap<String, NodeTiming>,
 ) -> Result<Option<Solid>, EvalError> {
     if let Some(cached) = cache.get(&node_id) {
         return Ok(cached.clone());
@@ -238,11 +238,11 @@ fn evaluate_node_timed(
     let node = nodes.get(&node_id).ok_or(EvalError::MissingNode(node_id))?;
 
     let t0 = clock.map(|c| c.now_ms());
-    let result = evaluate_op(&node.op, nodes, cache)?;
+    let result = evaluate_op_timed(&node.op, nodes, cache, clock, timings)?;
     if let Some(t0) = t0 {
         let eval_ms = clock.unwrap().now_ms() - t0;
         timings.insert(
-            node_id,
+            node_id.to_string(),
             NodeTiming {
                 op: op_name(&node.op),
                 eval_ms,
@@ -260,6 +260,23 @@ fn evaluate_op(
     nodes: &HashMap<NodeId, vcad_ir::Node>,
     cache: &mut HashMap<NodeId, Option<Solid>>,
 ) -> Result<Option<Solid>, EvalError> {
+    evaluate_op_timed(op, nodes, cache, None, &mut HashMap::new())
+}
+
+fn evaluate_op_timed(
+    op: &CsgOp,
+    nodes: &HashMap<NodeId, vcad_ir::Node>,
+    cache: &mut HashMap<NodeId, Option<Solid>>,
+    clock: Option<&dyn Clock>,
+    timings: &mut HashMap<String, NodeTiming>,
+) -> Result<Option<Solid>, EvalError> {
+    // Helper to evaluate child nodes with timing
+    let mut eval_child = |id: NodeId,
+                          cache: &mut HashMap<NodeId, Option<Solid>>|
+     -> Result<Option<Solid>, EvalError> {
+        evaluate_node_timed(id, nodes, cache, clock, timings)
+    };
+
     match op {
         CsgOp::Cube { size } => Ok(Some(Solid::cube(size.x, size.y, size.z))),
 
@@ -286,8 +303,8 @@ fn evaluate_op(
         CsgOp::Empty => Ok(Some(Solid::empty())),
 
         CsgOp::Union { left, right } => {
-            let l = evaluate_node(*left, nodes, cache)?;
-            let r = evaluate_node(*right, nodes, cache)?;
+            let l = eval_child(*left, cache)?;
+            let r = eval_child(*right, cache)?;
             match (l, r) {
                 (Some(l), Some(r)) => Ok(Some(l.union(&r))),
                 (Some(l), None) => Ok(Some(l)),
@@ -297,8 +314,8 @@ fn evaluate_op(
         }
 
         CsgOp::Difference { left, right } => {
-            let l = evaluate_node(*left, nodes, cache)?;
-            let r = evaluate_node(*right, nodes, cache)?;
+            let l = eval_child(*left, cache)?;
+            let r = eval_child(*right, cache)?;
             match (l, r) {
                 (Some(l), Some(r)) => Ok(Some(l.difference(&r))),
                 (Some(l), None) => Ok(Some(l)),
@@ -307,8 +324,8 @@ fn evaluate_op(
         }
 
         CsgOp::Intersection { left, right } => {
-            let l = evaluate_node(*left, nodes, cache)?;
-            let r = evaluate_node(*right, nodes, cache)?;
+            let l = eval_child(*left, cache)?;
+            let r = eval_child(*right, cache)?;
             match (l, r) {
                 (Some(l), Some(r)) => Ok(Some(l.intersection(&r))),
                 _ => Ok(None),
@@ -316,17 +333,17 @@ fn evaluate_op(
         }
 
         CsgOp::Translate { child, offset } => {
-            let c = evaluate_node(*child, nodes, cache)?;
+            let c = eval_child(*child, cache)?;
             Ok(c.map(|s| s.translate(offset.x, offset.y, offset.z)))
         }
 
         CsgOp::Rotate { child, angles } => {
-            let c = evaluate_node(*child, nodes, cache)?;
+            let c = eval_child(*child, cache)?;
             Ok(c.map(|s| s.rotate(angles.x, angles.y, angles.z)))
         }
 
         CsgOp::Scale { child, factor } => {
-            let c = evaluate_node(*child, nodes, cache)?;
+            let c = eval_child(*child, cache)?;
             Ok(c.map(|s| s.scale(factor.x, factor.y, factor.z)))
         }
 
@@ -336,7 +353,7 @@ fn evaluate_op(
             count,
             spacing,
         } => {
-            let c = evaluate_node(*child, nodes, cache)?;
+            let c = eval_child(*child, cache)?;
             Ok(c.map(|s| s.linear_pattern(to_vec3(direction), *count, *spacing)))
         }
 
@@ -347,7 +364,7 @@ fn evaluate_op(
             count,
             angle_deg,
         } => {
-            let c = evaluate_node(*child, nodes, cache)?;
+            let c = eval_child(*child, cache)?;
             Ok(c.map(|s| {
                 s.circular_pattern(
                     to_point3(axis_origin),
@@ -359,17 +376,17 @@ fn evaluate_op(
         }
 
         CsgOp::Shell { child, thickness } => {
-            let c = evaluate_node(*child, nodes, cache)?;
+            let c = eval_child(*child, cache)?;
             Ok(c.map(|s| s.shell(*thickness)))
         }
 
         CsgOp::Fillet { child, radius } => {
-            let c = evaluate_node(*child, nodes, cache)?;
+            let c = eval_child(*child, cache)?;
             Ok(c.map(|s| s.fillet(*radius)))
         }
 
         CsgOp::Chamfer { child, distance } => {
-            let c = evaluate_node(*child, nodes, cache)?;
+            let c = eval_child(*child, cache)?;
             Ok(c.map(|s| s.chamfer(*distance)))
         }
 

@@ -23,7 +23,7 @@ pub mod kinematics;
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use vcad_ir::{NodeId, Transform3D};
+use vcad_ir::Transform3D;
 use vcad_kernel::Solid;
 
 // Re-export main entry points
@@ -67,8 +67,8 @@ pub struct EvalTiming {
     pub clash_ms: f64,
     /// Assembly evaluation time (ms).
     pub assembly_ms: f64,
-    /// Per-node timing keyed by NodeId.
-    pub nodes: HashMap<NodeId, NodeTiming>,
+    /// Per-node timing keyed by NodeId (as string for JS object compatibility).
+    pub nodes: HashMap<String, NodeTiming>,
 }
 
 /// Options for document evaluation.

@@ -367,10 +367,14 @@ export class Engine {
           if (timing) {
             const parts: string[] = [`${timing.total_ms.toFixed(0)}ms`];
             // Find the slowest node op
-            const entries = Object.values(timing.nodes);
-            const slowest = entries.reduce(
+            // serde_wasm_bindgen may serialize HashMap as a JS Map or plain Object
+            const nodeValues: { op: string; eval_ms: number; mesh_ms: number }[] =
+              timing.nodes instanceof Map
+                ? [...timing.nodes.values()]
+                : Object.values(timing.nodes);
+            const slowest = nodeValues.reduce(
               (a, b) => (b.eval_ms > a.eval_ms ? b : a),
-              entries[0],
+              nodeValues[0],
             );
             if (slowest) {
               parts.push(

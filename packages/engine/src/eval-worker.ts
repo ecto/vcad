@@ -17,11 +17,11 @@ import { evaluateDocument as evaluateDocumentTS, type EvaluateOptions } from "./
 import type { EvaluatedScene, EvalTimingData, TriangleMesh } from "./mesh.js";
 import type { Document } from "@vcad/ir";
 
-/** WASM evaluator result shape (plain arrays from Rust) */
+/** WASM evaluator result shape (typed arrays from Rust, or plain arrays from legacy) */
 interface WasmMesh {
-  positions: number[];
-  indices: number[];
-  normals?: number[];
+  positions: Float32Array | number[];
+  indices: Uint32Array | number[];
+  normals?: Float32Array | number[];
 }
 
 interface WasmEvaluatedScene {
@@ -69,12 +69,14 @@ function collectTransferables(scene: EvaluatedScene): ArrayBuffer[] {
   return buffers;
 }
 
-/** Convert WASM result (plain arrays) to EvaluatedScene (typed arrays). */
+/** Convert WASM result to EvaluatedScene. Handles both typed arrays (fast path) and plain arrays. */
 function wasmResultToScene(result: WasmEvaluatedScene): EvaluatedScene {
   const toMesh = (m: WasmMesh): TriangleMesh => ({
-    positions: new Float32Array(m.positions),
-    indices: new Uint32Array(m.indices),
-    normals: m.normals ? new Float32Array(m.normals) : undefined,
+    positions: m.positions instanceof Float32Array ? m.positions : new Float32Array(m.positions),
+    indices: m.indices instanceof Uint32Array ? m.indices : new Uint32Array(m.indices),
+    normals: m.normals
+      ? m.normals instanceof Float32Array ? m.normals : new Float32Array(m.normals)
+      : undefined,
   });
 
   return {
