@@ -9,7 +9,7 @@ use vcad_ir::{CsgOp, Document, NodeId, PathCurve};
 use vcad_kernel::Solid;
 use vcad_kernel_geom::Line3d;
 use vcad_kernel_math::{Transform, Vec3};
-use vcad_ir::ecad::PadShape;
+use vcad_ir::ecad::{Footprint, Pad, PadShape, Pcb, PcbLayer, Trace, Via, Zone};
 use vcad_kernel_sweep::{Helix, LoftOptions, SweepOptions};
 use vcad_kernel_tessellate::TriangleMesh;
 use vcad_kernel_text::{FontRegistry, TextAlignment};
@@ -638,6 +638,55 @@ fn evaluate_op_timed(
                 board_solid = board_solid.union(&placed);
             }
 
+            // Generate copper feature meshes
+            let mut copper_meshes: Vec<RawMesh> = Vec::new();
+            for trace in &board.traces {
+                let m = trace_to_mesh(trace, board);
+                if !m.0.is_empty() {
+                    copper_meshes.push(m);
+                }
+            }
+            for via in &board.vias {
+                copper_meshes.push(via_to_mesh(via, board, 16));
+            }
+            for fp in &board.footprints {
+                for pad in &fp.pads {
+                    let m = pad_to_mesh(pad, fp, board);
+                    if !m.0.is_empty() {
+                        copper_meshes.push(m);
+                    }
+                }
+            }
+            for zone in &board.zones {
+                let m = zone_to_mesh(zone, board);
+                if !m.0.is_empty() {
+                    copper_meshes.push(m);
+                }
+            }
+
+            // Merge copper into the board solid's mesh
+            if !copper_meshes.is_empty() {
+                let (copper_positions, copper_indices) = merge_copper_meshes(&copper_meshes);
+                let board_mesh = board_solid.to_mesh(32);
+
+                // Combine board mesh + copper mesh
+                let mut all_verts = board_mesh.vertices.clone();
+                let mut all_indices = board_mesh.indices.clone();
+                let vert_offset = (all_verts.len() / 3) as u32;
+
+                all_verts.extend_from_slice(&copper_positions);
+                for idx in &copper_indices {
+                    all_indices.push(idx + vert_offset);
+                }
+
+                let merged = TriangleMesh {
+                    vertices: all_verts,
+                    indices: all_indices,
+                    normals: vec![],
+                };
+                board_solid = Solid::from_mesh(merged);
+            }
+
             Ok(Some(board_solid))
         }
     }
@@ -983,6 +1032,317 @@ fn pad_extent(shape: &PadShape) -> (f64, f64) {
             (max_x - min_x, max_y - min_y)
         }
     }
+}
+
+// ============================================================================
+// Copper mesh generation helpers
+// ============================================================================
+
+/// A raw triangle mesh: vertices as [x,y,z] and triangle indices as [a,b,c].
+type RawMesh = (Vec<[f64; 3]>, Vec<[u32; 3]>);
+
+/// Default copper thickness (mm) if not specified in stackup.
+const DEFAULT_COPPER_THICKNESS: f64 = 0.035;
+
+/// Z offset for the top of a copper layer.
+fn layer_z_top(pcb: &Pcb, layer: PcbLayer) -> f64 {
+    match layer {
+        PcbLayer::FCu => pcb.outline.thickness,
+        PcbLayer::BCu => 0.0,
+        _ => pcb.outline.thickness / 2.0,
+    }
+}
+
+/// Copper thickness from the stackup, falling back to default.
+fn copper_thickness(pcb: &Pcb, layer: PcbLayer) -> f64 {
+    pcb.stackup
+        .layers
+        .iter()
+        .find(|l| l.layer == layer)
+        .and_then(|l| l.copper_thickness)
+        .unwrap_or(DEFAULT_COPPER_THICKNESS)
+}
+
+/// Generate a box mesh for a trace segment (oriented ribbon at layer Z).
+/// Returns (vertices [x,y,z], triangle indices).
+fn trace_to_mesh(trace: &Trace, pcb: &Pcb) -> RawMesh {
+    let z_top = layer_z_top(pcb, trace.layer);
+    let ct = copper_thickness(pcb, trace.layer);
+    let z_bot = if trace.layer == PcbLayer::FCu {
+        z_top - ct
+    } else {
+        z_top + ct
+    };
+
+    let dx = trace.end.x - trace.start.x;
+    let dy = trace.end.y - trace.start.y;
+    let len = (dx * dx + dy * dy).sqrt();
+    if len < 1e-9 {
+        return (vec![], vec![]);
+    }
+
+    // Perpendicular half-width offset
+    let hw = trace.width / 2.0;
+    let nx = -dy / len * hw;
+    let ny = dx / len * hw;
+
+    let s = trace.start;
+    let e = trace.end;
+
+    // 8 vertices: 4 top, 4 bottom
+    let verts = vec![
+        // top face
+        [s.x + nx, s.y + ny, z_top], // 0
+        [e.x + nx, e.y + ny, z_top], // 1
+        [e.x - nx, e.y - ny, z_top], // 2
+        [s.x - nx, s.y - ny, z_top], // 3
+        // bottom face
+        [s.x + nx, s.y + ny, z_bot], // 4
+        [e.x + nx, e.y + ny, z_bot], // 5
+        [e.x - nx, e.y - ny, z_bot], // 6
+        [s.x - nx, s.y - ny, z_bot], // 7
+    ];
+
+    let tris = vec![
+        // top
+        [0, 1, 2],
+        [0, 2, 3],
+        // bottom
+        [4, 6, 5],
+        [4, 7, 6],
+        // front
+        [0, 5, 1],
+        [0, 4, 5],
+        // back
+        [2, 7, 3],
+        [2, 6, 7],
+        // left
+        [0, 3, 7],
+        [0, 7, 4],
+        // right
+        [1, 5, 6],
+        [1, 6, 2],
+    ];
+
+    (verts, tris)
+}
+
+/// Generate a cylindrical via mesh (outer cylinder + top/bottom annular rings).
+fn via_to_mesh(via: &Via, pcb: &Pcb, n_seg: usize) -> RawMesh {
+    let z_top = pcb.outline.thickness;
+    let z_bot = 0.0;
+    let r_outer = via.diameter / 2.0;
+    let r_inner = via.drill / 2.0;
+    let cx = via.position.x;
+    let cy = via.position.y;
+
+    let mut verts = Vec::new();
+    let mut tris = Vec::new();
+
+    // Generate circle points
+    let angles: Vec<f64> = (0..n_seg)
+        .map(|i| 2.0 * std::f64::consts::PI * i as f64 / n_seg as f64)
+        .collect();
+
+    // Outer cylinder: top ring (0..n_seg), bottom ring (n_seg..2*n_seg)
+    for &a in &angles {
+        let x = cx + r_outer * a.cos();
+        let y = cy + r_outer * a.sin();
+        verts.push([x, y, z_top]);
+    }
+    for &a in &angles {
+        let x = cx + r_outer * a.cos();
+        let y = cy + r_outer * a.sin();
+        verts.push([x, y, z_bot]);
+    }
+
+    // Outer cylinder side faces
+    let n = n_seg as u32;
+    for i in 0..n {
+        let next = (i + 1) % n;
+        // top-ring[i], top-ring[next], bot-ring[next], bot-ring[i]
+        tris.push([i, next, n + next]);
+        tris.push([i, n + next, n + i]);
+    }
+
+    // Inner cylinder (drill hole): top ring, bottom ring
+    let inner_top_start = verts.len() as u32;
+    for &a in &angles {
+        let x = cx + r_inner * a.cos();
+        let y = cy + r_inner * a.sin();
+        verts.push([x, y, z_top]);
+    }
+    let inner_bot_start = verts.len() as u32;
+    for &a in &angles {
+        let x = cx + r_inner * a.cos();
+        let y = cy + r_inner * a.sin();
+        verts.push([x, y, z_bot]);
+    }
+
+    // Inner cylinder side faces (reversed winding — faces inward)
+    for i in 0..n {
+        let next = (i + 1) % n;
+        tris.push([inner_top_start + i, inner_bot_start + next, inner_top_start + next]);
+        tris.push([inner_top_start + i, inner_bot_start + i, inner_bot_start + next]);
+    }
+
+    // Top annular ring: connects outer top ring to inner top ring
+    for i in 0..n {
+        let next = (i + 1) % n;
+        tris.push([i, inner_top_start + next, inner_top_start + i]);
+        tris.push([i, next, inner_top_start + next]);
+    }
+
+    // Bottom annular ring: connects outer bottom ring to inner bottom ring
+    for i in 0..n {
+        let next = (i + 1) % n;
+        tris.push([n + i, inner_bot_start + i, inner_bot_start + next]);
+        tris.push([n + i, inner_bot_start + next, n + next]);
+    }
+
+    (verts, tris)
+}
+
+/// Generate a mesh for a pad on a footprint, positioned in board space.
+fn pad_to_mesh(pad: &Pad, fp: &Footprint, pcb: &Pcb) -> RawMesh {
+    let (pw, ph) = pad_extent(&pad.shape);
+    if pw < 1e-9 || ph < 1e-9 {
+        return (vec![], vec![]);
+    }
+
+    // Determine which copper layer this pad lives on
+    let layer = pad
+        .layers
+        .iter()
+        .find(|l| l.is_copper())
+        .copied()
+        .unwrap_or(if fp.front { PcbLayer::FCu } else { PcbLayer::BCu });
+
+    let z_top = layer_z_top(pcb, layer);
+    let ct = copper_thickness(pcb, layer);
+    let z_bot = if layer == PcbLayer::FCu {
+        z_top - ct
+    } else {
+        z_top + ct
+    };
+
+    // Pad position in board space (footprint position + pad offset)
+    let rot_rad = fp.rotation.to_radians();
+    let cos_r = rot_rad.cos();
+    let sin_r = rot_rad.sin();
+    let px = fp.position.x + pad.position.x * cos_r - pad.position.y * sin_r;
+    let py = fp.position.y + pad.position.x * sin_r + pad.position.y * cos_r;
+
+    let hw = pw / 2.0;
+    let hh = ph / 2.0;
+
+    // Total rotation = footprint rotation + pad rotation
+    let pad_rot = (fp.rotation + pad.rotation).to_radians();
+    let cp = pad_rot.cos();
+    let sp = pad_rot.sin();
+
+    // 4 corners of the pad rectangle, rotated
+    let corners = [
+        (-hw, -hh),
+        (hw, -hh),
+        (hw, hh),
+        (-hw, hh),
+    ];
+
+    let mut verts = Vec::with_capacity(8);
+    for &(lx, ly) in &corners {
+        let rx = lx * cp - ly * sp + px;
+        let ry = lx * sp + ly * cp + py;
+        verts.push([rx, ry, z_top]);
+    }
+    for &(lx, ly) in &corners {
+        let rx = lx * cp - ly * sp + px;
+        let ry = lx * sp + ly * cp + py;
+        verts.push([rx, ry, z_bot]);
+    }
+
+    let tris = vec![
+        [0, 1, 2], [0, 2, 3],       // top
+        [4, 6, 5], [4, 7, 6],       // bottom
+        [0, 5, 1], [0, 4, 5],       // front
+        [2, 7, 3], [2, 6, 7],       // back
+        [0, 3, 7], [0, 7, 4],       // left
+        [1, 5, 6], [1, 6, 2],       // right
+    ];
+
+    (verts, tris)
+}
+
+/// Generate a mesh for a copper zone (fan-triangulated polygon extruded by copper thickness).
+fn zone_to_mesh(zone: &Zone, pcb: &Pcb) -> RawMesh {
+    if zone.outline.len() < 3 {
+        return (vec![], vec![]);
+    }
+
+    let z_top = layer_z_top(pcb, zone.layer);
+    let ct = copper_thickness(pcb, zone.layer);
+    let z_bot = if zone.layer == PcbLayer::FCu {
+        z_top - ct
+    } else {
+        z_top + ct
+    };
+
+    let n = zone.outline.len();
+    let mut verts = Vec::with_capacity(n * 2);
+    let mut tris = Vec::new();
+
+    // Top vertices
+    for v in &zone.outline {
+        verts.push([v.x, v.y, z_top]);
+    }
+    // Bottom vertices
+    for v in &zone.outline {
+        verts.push([v.x, v.y, z_bot]);
+    }
+
+    let nu = n as u32;
+    // Top face (fan triangulation)
+    for i in 1..nu - 1 {
+        tris.push([0, i, i + 1]);
+    }
+    // Bottom face (reversed winding)
+    for i in 1..nu - 1 {
+        tris.push([nu, nu + i + 1, nu + i]);
+    }
+    // Side faces
+    for i in 0..nu {
+        let next = (i + 1) % nu;
+        tris.push([i, next, nu + next]);
+        tris.push([i, nu + next, nu + i]);
+    }
+
+    (verts, tris)
+}
+
+/// Merge multiple meshes into a single flat vertex/index buffer (f32 positions, u32 indices).
+fn merge_copper_meshes(meshes: &[RawMesh]) -> (Vec<f32>, Vec<u32>) {
+    let total_verts: usize = meshes.iter().map(|(v, _)| v.len()).sum();
+    let total_tris: usize = meshes.iter().map(|(_, t)| t.len()).sum();
+
+    let mut positions = Vec::with_capacity(total_verts * 3);
+    let mut indices = Vec::with_capacity(total_tris * 3);
+    let mut vert_offset: u32 = 0;
+
+    for (verts, tris) in meshes {
+        for v in verts {
+            positions.push(v[0] as f32);
+            positions.push(v[1] as f32);
+            positions.push(v[2] as f32);
+        }
+        for tri in tris {
+            indices.push(tri[0] + vert_offset);
+            indices.push(tri[1] + vert_offset);
+            indices.push(tri[2] + vert_offset);
+        }
+        vert_offset += verts.len() as u32;
+    }
+
+    (positions, indices)
 }
 
 /// Convert kernel TriangleMesh to EvaluatedMesh.

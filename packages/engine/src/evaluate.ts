@@ -11,6 +11,14 @@ import type {
   Transform3D,
   ImportedMeshOp,
   PcbBoardOp,
+  Pcb,
+  PcbLayer,
+  Trace,
+  Via,
+  Pad,
+  Footprint,
+  Zone,
+  PadShape,
 } from "@vcad/ir";
 import type {
   EvaluatedScene,
@@ -274,8 +282,203 @@ function findPcbBoard(
   }
 }
 
+// ============================================================================
+// Copper mesh generation helpers
+// ============================================================================
+
+const DEFAULT_COPPER_THICKNESS = 0.035;
+
+function layerZTop(board: Pcb, layer: PcbLayer): number {
+  if (layer === "FCu") return board.outline.thickness;
+  if (layer === "BCu") return 0;
+  return board.outline.thickness / 2;
+}
+
+function copperThickness(board: Pcb, layer: PcbLayer): number {
+  const sl = board.stackup.layers.find((l) => l.layer === layer);
+  return sl?.copperThickness ?? DEFAULT_COPPER_THICKNESS;
+}
+
+function isCopperLayer(layer: PcbLayer): boolean {
+  return layer.endsWith("Cu");
+}
+
+function padExtent(shape: PadShape): [number, number] {
+  switch (shape.type) {
+    case "Circle":
+      return [shape.diameter, shape.diameter];
+    case "Rect":
+    case "Oval":
+    case "RoundRect":
+      return [shape.width, shape.height];
+    case "Custom": {
+      if (!shape.vertices.length) return [0.5, 0.5];
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      for (const v of shape.vertices) {
+        minX = Math.min(minX, v.x); maxX = Math.max(maxX, v.x);
+        minY = Math.min(minY, v.y); maxY = Math.max(maxY, v.y);
+      }
+      return [maxX - minX, maxY - minY];
+    }
+  }
+}
+
+function traceToMesh(
+  trace: Trace, board: Pcb, positions: number[], indices: number[],
+): void {
+  const zTop = layerZTop(board, trace.layer);
+  const ct = copperThickness(board, trace.layer);
+  const zBot = trace.layer === "FCu" ? zTop - ct : zTop + ct;
+
+  const dx = trace.end.x - trace.start.x;
+  const dy = trace.end.y - trace.start.y;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (len < 1e-9) return;
+
+  const hw = trace.width / 2;
+  const nx = (-dy / len) * hw;
+  const ny = (dx / len) * hw;
+  const s = trace.start;
+  const e = trace.end;
+  const base = positions.length / 3;
+
+  // 8 vertices: 4 top, 4 bottom
+  positions.push(
+    s.x + nx, s.y + ny, zTop,  s.x - nx, s.y - ny, zTop,
+    e.x - nx, e.y - ny, zTop,  e.x + nx, e.y + ny, zTop,
+    s.x + nx, s.y + ny, zBot,  s.x - nx, s.y - ny, zBot,
+    e.x - nx, e.y - ny, zBot,  e.x + nx, e.y + ny, zBot,
+  );
+
+  // 12 triangles (6 faces)
+  const b = base;
+  indices.push(
+    b, b+3, b+2, b, b+2, b+1,     // top
+    b+4, b+6, b+7, b+4, b+5, b+6, // bottom
+    b, b+7, b+3, b, b+4, b+7,     // front
+    b+1, b+2, b+6, b+1, b+6, b+5, // back
+    b, b+1, b+5, b, b+5, b+4,     // left
+    b+3, b+7, b+6, b+3, b+6, b+2, // right
+  );
+}
+
+function viaToMesh(
+  via: Via, board: Pcb, positions: number[], indices: number[], nSeg = 16,
+): void {
+  const zTop = board.outline.thickness;
+  const zBot = 0;
+  const rOuter = via.diameter / 2;
+  const rInner = via.drill / 2;
+  const cx = via.position.x;
+  const cy = via.position.y;
+  const base = positions.length / 3;
+
+  const angles: number[] = [];
+  for (let i = 0; i < nSeg; i++) {
+    angles.push((2 * Math.PI * i) / nSeg);
+  }
+
+  // Outer top ring, outer bottom ring
+  for (const a of angles) positions.push(cx + rOuter * Math.cos(a), cy + rOuter * Math.sin(a), zTop);
+  for (const a of angles) positions.push(cx + rOuter * Math.cos(a), cy + rOuter * Math.sin(a), zBot);
+  // Inner top ring, inner bottom ring
+  const innerTopStart = base + nSeg * 2;
+  for (const a of angles) positions.push(cx + rInner * Math.cos(a), cy + rInner * Math.sin(a), zTop);
+  const innerBotStart = base + nSeg * 3;
+  for (const a of angles) positions.push(cx + rInner * Math.cos(a), cy + rInner * Math.sin(a), zBot);
+
+  for (let i = 0; i < nSeg; i++) {
+    const next = (i + 1) % nSeg;
+    const ot = base, ob = base + nSeg;
+    // Outer side
+    indices.push(ot + i, ot + next, ob + next, ot + i, ob + next, ob + i);
+    // Inner side (reversed)
+    indices.push(innerTopStart + i, innerBotStart + next, innerTopStart + next);
+    indices.push(innerTopStart + i, innerBotStart + i, innerBotStart + next);
+    // Top annular ring
+    indices.push(ot + i, innerTopStart + next, innerTopStart + i);
+    indices.push(ot + i, ot + next, innerTopStart + next);
+    // Bottom annular ring
+    indices.push(ob + i, innerBotStart + i, innerBotStart + next);
+    indices.push(ob + i, innerBotStart + next, ob + next);
+  }
+}
+
+function padToMesh(
+  pad: Pad, fp: Footprint, board: Pcb, positions: number[], indices: number[],
+): void {
+  const [pw, ph] = padExtent(pad.shape);
+  if (pw < 1e-9 || ph < 1e-9) return;
+
+  const layer = pad.layers.find(isCopperLayer) ??
+    ((fp.front !== false) ? "FCu" : "BCu") as PcbLayer;
+
+  const zTop = layerZTop(board, layer);
+  const ct = copperThickness(board, layer);
+  const zBot = layer === "FCu" ? zTop - ct : zTop + ct;
+
+  const fpRot = ((fp.rotation ?? 0) * Math.PI) / 180;
+  const cosR = Math.cos(fpRot);
+  const sinR = Math.sin(fpRot);
+  const px = fp.position.x + pad.position.x * cosR - pad.position.y * sinR;
+  const py = fp.position.y + pad.position.x * sinR + pad.position.y * cosR;
+
+  const hw = pw / 2;
+  const hh = ph / 2;
+  const padRot = (((fp.rotation ?? 0) + (pad.rotation ?? 0)) * Math.PI) / 180;
+  const cp = Math.cos(padRot);
+  const sp = Math.sin(padRot);
+
+  const corners: [number, number][] = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]];
+  const base = positions.length / 3;
+
+  for (const [lx, ly] of corners) {
+    positions.push(lx * cp - ly * sp + px, lx * sp + ly * cp + py, zTop);
+  }
+  for (const [lx, ly] of corners) {
+    positions.push(lx * cp - ly * sp + px, lx * sp + ly * cp + py, zBot);
+  }
+
+  const b = base;
+  indices.push(
+    b, b+1, b+2, b, b+2, b+3,     // top
+    b+4, b+6, b+5, b+4, b+7, b+6, // bottom
+    b, b+5, b+1, b, b+4, b+5,     // front
+    b+2, b+7, b+3, b+2, b+6, b+7, // back
+    b, b+3, b+7, b, b+7, b+4,     // left
+    b+1, b+5, b+6, b+1, b+6, b+2, // right
+  );
+}
+
+function zoneToMesh(
+  zone: Zone, board: Pcb, positions: number[], indices: number[],
+): void {
+  if (zone.outline.length < 3) return;
+
+  const zTop = layerZTop(board, zone.layer);
+  const ct = copperThickness(board, zone.layer);
+  const zBot = zone.layer === "FCu" ? zTop - ct : zTop + ct;
+  const n = zone.outline.length;
+  const base = positions.length / 3;
+
+  for (const v of zone.outline) positions.push(v.x, v.y, zTop);
+  for (const v of zone.outline) positions.push(v.x, v.y, zBot);
+
+  // Top face (fan triangulation)
+  for (let i = 1; i < n - 1; i++) indices.push(base, base + i, base + i + 1);
+  // Bottom face (reversed)
+  for (let i = 1; i < n - 1; i++) indices.push(base + n, base + n + i + 1, base + n + i);
+  // Sides
+  for (let i = 0; i < n; i++) {
+    const next = (i + 1) % n;
+    indices.push(base + i, base + next, base + n + next);
+    indices.push(base + i, base + n + next, base + n + i);
+  }
+}
+
 /**
- * Generate a simple extruded mesh from a PCB board outline (ear-clip triangulation + side faces).
+ * Generate a simple extruded mesh from a PCB board outline (ear-clip triangulation + side faces),
+ * plus copper features (traces, vias, pads, zones).
  */
 function pcbBoardToMesh(op: PcbBoardOp): TriangleMesh {
   const verts = op.board.outline.vertices;
@@ -285,13 +488,6 @@ function pcbBoardToMesh(op: PcbBoardOp): TriangleMesh {
   }
 
   const n = verts.length;
-  // Simple ear-clip triangulation for convex/simple polygon
-  const topPositions: number[] = [];
-  const botPositions: number[] = [];
-  for (const v of verts) {
-    topPositions.push(v.x, v.y, thickness);
-    botPositions.push(v.x, v.y, 0);
-  }
 
   const allPositions: number[] = [];
   const allIndices: number[] = [];
@@ -326,6 +522,23 @@ function pcbBoardToMesh(op: PcbBoardOp): TriangleMesh {
     allPositions.push(verts[i].x, verts[i].y, thickness);
     allIndices.push(base, base + 1, base + 2);
     allIndices.push(base, base + 2, base + 3);
+  }
+
+  // Copper features
+  const board = op.board;
+  for (const trace of board.traces) {
+    traceToMesh(trace, board, allPositions, allIndices);
+  }
+  for (const via of board.vias) {
+    viaToMesh(via, board, allPositions, allIndices);
+  }
+  for (const fp of board.footprints) {
+    for (const pad of fp.pads) {
+      padToMesh(pad, fp, board, allPositions, allIndices);
+    }
+  }
+  for (const zone of board.zones) {
+    zoneToMesh(zone, board, allPositions, allIndices);
   }
 
   return {
