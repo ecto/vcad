@@ -839,6 +839,28 @@ impl BilinearSurface {
         let d = self.p11 - self.p00;
         (d.dot(&n).abs() / n.norm()) < 1e-10
     }
+
+    /// Approximate this bilinear surface as a plane using the centroid and
+    /// average normal from the two triangles. Returns `None` if degenerate.
+    pub fn to_approximate_plane(&self) -> Option<Plane> {
+        let centroid = Point3::new(
+            0.25 * (self.p00.x + self.p10.x + self.p01.x + self.p11.x),
+            0.25 * (self.p00.y + self.p10.y + self.p01.y + self.p11.y),
+            0.25 * (self.p00.z + self.p10.z + self.p01.z + self.p11.z),
+        );
+        let e1 = self.p10 - self.p00;
+        let e2 = self.p01 - self.p00;
+        let n = e1.cross(&e2);
+        let len = n.norm();
+        if len < 1e-15 {
+            return None;
+        }
+        let normal = Dir3::new_normalize(n);
+        // Build x_dir from e1, y_dir from normal × x_dir
+        let x_dir = e1.normalize();
+        let y_dir = normal.as_ref().cross(&x_dir);
+        Some(Plane::new(centroid, x_dir, y_dir))
+    }
 }
 
 impl Surface for BilinearSurface {

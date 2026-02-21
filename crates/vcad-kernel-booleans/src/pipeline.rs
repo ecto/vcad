@@ -5,11 +5,17 @@ use std::collections::HashMap;
 use rayon::prelude::*;
 use vcad_kernel_math::Point3;
 use vcad_kernel_primitives::BRepSolid;
-use vcad_kernel_tessellate::TriangleMesh;
+use vcad_kernel_tessellate::{tessellate_brep, TriangleMesh};
 use vcad_kernel_topo::FaceId;
 
 use crate::api::{BooleanOp, BooleanResult};
 use crate::{bbox, classify, sew, split, ssi, trim};
+
+/// Per-face split data: intersection curve with entry/exit points.
+type FaceSplits = Vec<(ssi::IntersectionCurve, Point3, Point3)>;
+
+/// Result of computing SSI for one face pair: splits for face A and face B.
+type SsiPairResult = (FaceId, FaceSplits, FaceId, FaceSplits);
 
 /// Debug logging macro - only prints when debug-boolean feature is enabled
 #[allow(unused_macros)]
@@ -117,7 +123,7 @@ fn evaluate_curve(curve: &ssi::IntersectionCurve, t: f64) -> Point3 {
 /// Apply splits from intersection curves to solid A.
 fn apply_splits_to_solid(
     solid: &mut BRepSolid,
-    splits: HashMap<FaceId, Vec<(ssi::IntersectionCurve, Point3, Point3)>>,
+    splits: HashMap<FaceId, FaceSplits>,
     segments: u32,
     #[allow(unused_variables)] solid_name: &str,
 ) {
@@ -314,13 +320,10 @@ pub(crate) fn brep_boolean(
     debug_bool!("Candidate face pairs: {}", pairs.len());
 
     // 2. For each face pair, compute SSI and collect splits for both A and B
-    // This is the hot path - parallelize with rayon
-    let split_results: Vec<_> = pairs
-        .par_iter()
-        .filter_map(|(face_a, face_b)| {
+    let compute_ssi = |&(face_a, face_b): &(FaceId, FaceId)| -> Option<SsiPairResult> {
             // Get face data with bounds checking to avoid panics
-            let face_data_a = a.topology.faces.get(*face_a)?;
-            let face_data_b = b.topology.faces.get(*face_b)?;
+            let face_data_a = a.topology.faces.get(face_a)?;
+            let face_data_b = b.topology.faces.get(face_b)?;
             let surf_a = a.geometry.surfaces.get(face_data_a.surface_index)?;
             let surf_b = b.geometry.surfaces.get(face_data_b.surface_index)?;
 
@@ -335,13 +338,13 @@ pub(crate) fn brep_boolean(
 
             // For circle curves on planar faces, we don't need to trim
             if let ssi::IntersectionCurve::Circle(circle) = &curve {
-                if split::is_planar_face(&a, *face_a) {
+                if split::is_planar_face(&a, face_a) {
                     results_a.push((curve.clone(), circle.center, circle.center));
                 }
-                if split::is_cylindrical_face(&b, *face_b) {
+                if split::is_cylindrical_face(&b, face_b) {
                     results_b.push((curve.clone(), circle.center, circle.center));
                 }
-                return Some((*face_a, results_a, *face_b, results_b));
+                return Some((face_a, results_a, face_b, results_b));
             }
 
             // Expand TwoLines into individual Line curves for processing
@@ -382,7 +385,7 @@ pub(crate) fn brep_boolean(
 
             for single_curve in &curves_to_process {
                 // Trim curve to A's face boundary (for non-circle curves)
-                let segs_a = trim::trim_curve_to_face(single_curve, *face_a, &a, 64);
+                let segs_a = trim::trim_curve_to_face(single_curve, face_a, &a, 64);
                 debug_bool!(
                     "    Trim to face A ({:?}): {} segments",
                     face_a,
@@ -408,7 +411,7 @@ pub(crate) fn brep_boolean(
                 }
 
                 // Trim curve to B's face boundary (for non-circle curves)
-                let segs_b = trim::trim_curve_to_face(single_curve, *face_b, &b, 64);
+                let segs_b = trim::trim_curve_to_face(single_curve, face_b, &b, 64);
                 debug_bool!(
                     "    Trim to face B ({:?}): {} segments",
                     face_b,
@@ -434,15 +437,19 @@ pub(crate) fn brep_boolean(
                 }
             }
 
-            Some((*face_a, results_a, *face_b, results_b))
-        })
-        .collect();
+            Some((face_a, results_a, face_b, results_b))
+    };
 
-    // Merge parallel results into HashMaps
-    let mut splits_a: HashMap<FaceId, Vec<(ssi::IntersectionCurve, Point3, Point3)>> =
-        HashMap::new();
-    let mut splits_b: HashMap<FaceId, Vec<(ssi::IntersectionCurve, Point3, Point3)>> =
-        HashMap::new();
+    // Use Rayon parallelism only when there are enough pairs to amortize thread overhead
+    let split_results: Vec<_> = if pairs.len() >= 100 {
+        pairs.par_iter().filter_map(compute_ssi).collect()
+    } else {
+        pairs.iter().filter_map(compute_ssi).collect()
+    };
+
+    // Merge results into HashMaps
+    let mut splits_a: HashMap<FaceId, FaceSplits> = HashMap::new();
+    let mut splits_b: HashMap<FaceId, FaceSplits> = HashMap::new();
 
     for (face_a, results_a, face_b, results_b) in split_results {
         if !results_a.is_empty() {
@@ -469,8 +476,11 @@ pub(crate) fn brep_boolean(
     debug_bool!("Solid A has {} faces after splits", a.topology.faces.len());
     debug_bool!("Solid B has {} faces after splits", b.topology.faces.len());
 
-    let classes_a = classify::classify_all_faces(&a, &b, segments);
-    let classes_b = classify::classify_all_faces(&b, &a, segments);
+    // Tessellate each solid once and reuse for classification
+    let mesh_b = tessellate_brep(&b, segments);
+    let mesh_a = tessellate_brep(&a, segments);
+    let classes_a = classify::classify_all_faces_with_mesh(&a, &mesh_b);
+    let classes_b = classify::classify_all_faces_with_mesh(&b, &mesh_a);
 
     debug_bool!("\nClassification of A faces:");
     for (fid, _class) in &classes_a {

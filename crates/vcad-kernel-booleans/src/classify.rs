@@ -420,11 +420,21 @@ pub fn classify_all_faces(
     segments: u32,
 ) -> Vec<(FaceId, FaceClassification)> {
     let other_mesh = tessellate_brep(other, segments);
+    classify_all_faces_with_mesh(brep, &other_mesh)
+}
+
+/// Classify all faces of a solid against a pre-tessellated mesh of the other solid.
+///
+/// This avoids re-tessellating when the same mesh is needed for multiple calls.
+pub fn classify_all_faces_with_mesh(
+    brep: &BRepSolid,
+    other_mesh: &TriangleMesh,
+) -> Vec<(FaceId, FaceClassification)> {
     brep.topology
         .faces
         .iter()
         .map(|(face_id, _)| {
-            let class = classify_face(brep, face_id, &other_mesh);
+            let class = classify_face(brep, face_id, other_mesh);
             (face_id, class)
         })
         .collect()

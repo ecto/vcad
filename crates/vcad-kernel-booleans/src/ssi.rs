@@ -5,7 +5,8 @@
 //! intersections have known closed-form solutions.
 
 use vcad_kernel_geom::{
-    Circle3d, CylinderSurface, Line3d, Plane, SphereSurface, Surface, SurfaceKind, TorusSurface,
+    BilinearSurface, Circle3d, CylinderSurface, Line3d, Plane, SphereSurface, Surface,
+    SurfaceKind, TorusSurface,
 };
 use vcad_kernel_math::{Dir3, Point2, Point3};
 
@@ -106,9 +107,24 @@ pub fn intersect_surfaces(a: &dyn Surface, b: &dyn Surface) -> IntersectionCurve
         }
         // B-spline intersections: use marching/sampling method
         (SurfaceKind::BSpline, _) | (_, SurfaceKind::BSpline) => marching_ssi(a, b, 64),
+        // BilinearSurface (from sweep) — approximate as plane for fast analytic SSI
+        (SurfaceKind::Bilinear, _) => {
+            if let Some(plane) = downcast_bilinear(a).and_then(|b| b.to_approximate_plane()) {
+                intersect_surfaces(&plane, b)
+            } else {
+                marching_ssi(a, b, 16)
+            }
+        }
+        (_, SurfaceKind::Bilinear) => {
+            if let Some(plane) = downcast_bilinear(b).and_then(|b| b.to_approximate_plane()) {
+                intersect_surfaces(a, &plane)
+            } else {
+                marching_ssi(a, b, 16)
+            }
+        }
         _ => {
-            // Unsupported pair — use marching method as fallback
-            marching_ssi(a, b, 32)
+            // Unsupported pair — use marching with fewer samples.
+            marching_ssi(a, b, 16)
         }
     }
 }
@@ -131,6 +147,10 @@ fn downcast_cylinder(s: &dyn Surface) -> Option<&CylinderSurface> {
 
 fn downcast_torus(s: &dyn Surface) -> Option<&TorusSurface> {
     s.as_any().downcast_ref::<TorusSurface>()
+}
+
+fn downcast_bilinear(s: &dyn Surface) -> Option<&BilinearSurface> {
+    s.as_any().downcast_ref::<BilinearSurface>()
 }
 
 // =============================================================================
