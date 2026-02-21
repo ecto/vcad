@@ -1,7 +1,6 @@
 //! Loft operation: create a solid by interpolating between profiles.
 
-use std::collections::HashMap;
-
+use rustc_hash::FxHashMap;
 use vcad_kernel_geom::{GeometryStore, Plane};
 use vcad_kernel_math::{Point3, Vec3};
 use vcad_kernel_primitives::BRepSolid;
@@ -119,7 +118,7 @@ fn loft_ruled(profiles: &[SketchProfile], closed: bool) -> Result<BRepSolid, Lof
     }
 
     let mut all_faces = Vec::new();
-    let mut he_map: HashMap<([i64; 3], [i64; 3]), HalfEdgeId> = HashMap::new();
+    let mut he_map: FxHashMap<([i64; 3], [i64; 3]), HalfEdgeId> = FxHashMap::default();
 
     let quantize_pt = |p: Point3| -> [i64; 3] {
         [
@@ -223,7 +222,7 @@ fn build_cap_face<F>(
     geom: &mut GeometryStore,
     verts: &[VertexId],
     reversed: bool,
-    he_map: &mut HashMap<([i64; 3], [i64; 3]), HalfEdgeId>,
+    he_map: &mut FxHashMap<([i64; 3], [i64; 3]), HalfEdgeId>,
     quantize_pt: F,
 ) -> vcad_kernel_topo::FaceId
 where
@@ -275,7 +274,7 @@ where
     face_id
 }
 
-fn pair_twin_half_edges(topo: &mut Topology, he_map: &HashMap<([i64; 3], [i64; 3]), HalfEdgeId>) {
+fn pair_twin_half_edges(topo: &mut Topology, he_map: &FxHashMap<([i64; 3], [i64; 3]), HalfEdgeId>) {
     let mut paired = std::collections::HashSet::new();
 
     for (&(origin_key, dest_key), &he_id) in he_map {

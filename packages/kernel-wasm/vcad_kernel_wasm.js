@@ -790,14 +790,16 @@ export class Solid {
      * Create a solid by extruding a 2D sketch profile.
      *
      * Takes a sketch profile and extrusion direction as JS objects.
-     * @param {any} profile_js
+     * @param {string} profile_json
      * @param {Float64Array} direction
      * @returns {Solid}
      */
-    static extrude(profile_js, direction) {
-        const ptr0 = passArrayF64ToWasm0(direction, wasm.__wbindgen_malloc);
+    static extrude(profile_json, direction) {
+        const ptr0 = passStringToWasm0(profile_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.solid_extrude(profile_js, ptr0, len0);
+        const ptr1 = passArrayF64ToWasm0(direction, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.solid_extrude(ptr0, len0, ptr1, len1);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
@@ -808,16 +810,18 @@ export class Solid {
      *
      * Takes a sketch profile, extrusion direction, twist angle (radians),
      * and scale factor at the end (1.0 = no taper).
-     * @param {any} profile_js
+     * @param {string} profile_json
      * @param {Float64Array} direction
      * @param {number} twist_angle
      * @param {number} scale_end
      * @returns {Solid}
      */
-    static extrudeWithOptions(profile_js, direction, twist_angle, scale_end) {
-        const ptr0 = passArrayF64ToWasm0(direction, wasm.__wbindgen_malloc);
+    static extrudeWithOptions(profile_json, direction, twist_angle, scale_end) {
+        const ptr0 = passStringToWasm0(profile_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.solid_extrudeWithOptions(profile_js, ptr0, len0, twist_angle, scale_end);
+        const ptr1 = passArrayF64ToWasm0(direction, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.solid_extrudeWithOptions(ptr0, len0, ptr1, len1, twist_angle, scale_end);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
@@ -898,12 +902,14 @@ export class Solid {
      * Create a solid by lofting between multiple profiles.
      *
      * Takes an array of sketch profiles (minimum 2).
-     * @param {any} profiles_js
+     * @param {string} profiles_json
      * @param {boolean | null} [closed]
      * @returns {Solid}
      */
-    static loft(profiles_js, closed) {
-        const ret = wasm.solid_loft(profiles_js, isLikeNone(closed) ? 0xFFFFFF : closed ? 1 : 0);
+    static loft(profiles_json, closed) {
+        const ptr0 = passStringToWasm0(profiles_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.solid_loft(ptr0, len0, isLikeNone(closed) ? 0xFFFFFF : closed ? 1 : 0);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
@@ -940,18 +946,20 @@ export class Solid {
      * Create a solid by revolving a 2D sketch profile around an axis.
      *
      * Takes a sketch profile, axis origin, axis direction, and angle in degrees.
-     * @param {any} profile_js
+     * @param {string} profile_json
      * @param {Float64Array} axis_origin
      * @param {Float64Array} axis_dir
      * @param {number} angle_deg
      * @returns {Solid}
      */
-    static revolve(profile_js, axis_origin, axis_dir, angle_deg) {
-        const ptr0 = passArrayF64ToWasm0(axis_origin, wasm.__wbindgen_malloc);
+    static revolve(profile_json, axis_origin, axis_dir, angle_deg) {
+        const ptr0 = passStringToWasm0(profile_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passArrayF64ToWasm0(axis_dir, wasm.__wbindgen_malloc);
+        const ptr1 = passArrayF64ToWasm0(axis_origin, wasm.__wbindgen_malloc);
         const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.solid_revolve(profile_js, ptr0, len0, ptr1, len1, angle_deg);
+        const ptr2 = passArrayF64ToWasm0(axis_dir, wasm.__wbindgen_malloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.solid_revolve(ptr0, len0, ptr1, len1, ptr2, len2, angle_deg);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
@@ -1033,7 +1041,7 @@ export class Solid {
      * Create a solid by sweeping a profile along a helix path.
      *
      * Takes a sketch profile and helix parameters.
-     * @param {any} profile_js
+     * @param {string} profile_json
      * @param {number} radius
      * @param {number} pitch
      * @param {number} height
@@ -1046,8 +1054,10 @@ export class Solid {
      * @param {number | null} [orientation]
      * @returns {Solid}
      */
-    static sweepHelix(profile_js, radius, pitch, height, turns, twist_angle, scale_start, scale_end, path_segments, arc_segments, orientation) {
-        const ret = wasm.solid_sweepHelix(profile_js, radius, pitch, height, turns, !isLikeNone(twist_angle), isLikeNone(twist_angle) ? 0 : twist_angle, !isLikeNone(scale_start), isLikeNone(scale_start) ? 0 : scale_start, !isLikeNone(scale_end), isLikeNone(scale_end) ? 0 : scale_end, isLikeNone(path_segments) ? 0x100000001 : (path_segments) >>> 0, isLikeNone(arc_segments) ? 0x100000001 : (arc_segments) >>> 0, !isLikeNone(orientation), isLikeNone(orientation) ? 0 : orientation);
+    static sweepHelix(profile_json, radius, pitch, height, turns, twist_angle, scale_start, scale_end, path_segments, arc_segments, orientation) {
+        const ptr0 = passStringToWasm0(profile_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.solid_sweepHelix(ptr0, len0, radius, pitch, height, turns, !isLikeNone(twist_angle), isLikeNone(twist_angle) ? 0 : twist_angle, !isLikeNone(scale_start), isLikeNone(scale_start) ? 0 : scale_start, !isLikeNone(scale_end), isLikeNone(scale_end) ? 0 : scale_end, isLikeNone(path_segments) ? 0x100000001 : (path_segments) >>> 0, isLikeNone(arc_segments) ? 0x100000001 : (arc_segments) >>> 0, !isLikeNone(orientation), isLikeNone(orientation) ? 0 : orientation);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
@@ -1057,7 +1067,7 @@ export class Solid {
      * Create a solid by sweeping a profile along a line path.
      *
      * Takes a sketch profile and path endpoints.
-     * @param {any} profile_js
+     * @param {string} profile_json
      * @param {Float64Array} start
      * @param {Float64Array} end
      * @param {number | null} [twist_angle]
@@ -1066,12 +1076,14 @@ export class Solid {
      * @param {number | null} [orientation]
      * @returns {Solid}
      */
-    static sweepLine(profile_js, start, end, twist_angle, scale_start, scale_end, orientation) {
-        const ptr0 = passArrayF64ToWasm0(start, wasm.__wbindgen_malloc);
+    static sweepLine(profile_json, start, end, twist_angle, scale_start, scale_end, orientation) {
+        const ptr0 = passStringToWasm0(profile_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passArrayF64ToWasm0(end, wasm.__wbindgen_malloc);
+        const ptr1 = passArrayF64ToWasm0(start, wasm.__wbindgen_malloc);
         const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.solid_sweepLine(profile_js, ptr0, len0, ptr1, len1, !isLikeNone(twist_angle), isLikeNone(twist_angle) ? 0 : twist_angle, !isLikeNone(scale_start), isLikeNone(scale_start) ? 0 : scale_start, !isLikeNone(scale_end), isLikeNone(scale_end) ? 0 : scale_end, !isLikeNone(orientation), isLikeNone(orientation) ? 0 : orientation);
+        const ptr2 = passArrayF64ToWasm0(end, wasm.__wbindgen_malloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.solid_sweepLine(ptr0, len0, ptr1, len1, ptr2, len2, !isLikeNone(twist_angle), isLikeNone(twist_angle) ? 0 : twist_angle, !isLikeNone(scale_start), isLikeNone(scale_start) ? 0 : scale_start, !isLikeNone(scale_end), isLikeNone(scale_end) ? 0 : scale_end, !isLikeNone(orientation), isLikeNone(orientation) ? 0 : orientation);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
@@ -1996,6 +2008,142 @@ export function decimateMeshGpu(positions, indices, target_ratio) {
 }
 
 /**
+ * Run Design Rule Check on a PCB layout.
+ *
+ * # Arguments
+ * * `pcb_json` - JSON-serialized `Pcb` struct
+ *
+ * # Returns
+ * Array of DRC violations as JsValue.
+ * @param {string} pcb_json
+ * @returns {any}
+ */
+export function ecadCheckDrc(pcb_json) {
+    const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadCheckDrc(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Run Electrical Rule Check on a schematic sheet.
+ *
+ * # Arguments
+ * * `sch_json` - JSON-serialized `SchematicSheet` struct
+ *
+ * # Returns
+ * Array of ERC violations as JsValue.
+ * @param {string} sch_json
+ * @returns {any}
+ */
+export function ecadCheckErc(sch_json) {
+    const ptr0 = passStringToWasm0(sch_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadCheckErc(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Fill copper pour zones on the PCB.
+ *
+ * # Arguments
+ * * `pcb_json` - JSON-serialized `Pcb` struct
+ *
+ * # Returns
+ * Array of filled zone polygons.
+ * @param {string} pcb_json
+ * @returns {any}
+ */
+export function ecadFillZones(pcb_json) {
+    const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadFillZones(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Generate a netlist from a schematic sheet.
+ *
+ * # Arguments
+ * * `sch_json` - JSON-serialized `SchematicSheet` struct
+ *
+ * # Returns
+ * Netlist as JsValue.
+ * @param {string} sch_json
+ * @returns {any}
+ */
+export function ecadGenerateNetlist(sch_json) {
+    const ptr0 = passStringToWasm0(sch_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadGenerateNetlist(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Route a net between two points on the PCB using the grid router.
+ *
+ * # Arguments
+ * * `pcb_json` - JSON-serialized `Pcb` struct
+ * * `net` - Net name to route
+ * * `start_x`, `start_y` - Start coordinates (mm)
+ * * `end_x`, `end_y` - End coordinates (mm)
+ * * `width` - Trace width (mm)
+ *
+ * # Returns
+ * Route result with segments and vias.
+ * @param {string} pcb_json
+ * @param {string} net
+ * @param {number} start_x
+ * @param {number} start_y
+ * @param {number} end_x
+ * @param {number} end_y
+ * @param {number} width
+ * @returns {any}
+ */
+export function ecadRouteNet(pcb_json, net, start_x, start_y, end_x, end_y, width) {
+    const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(net, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadRouteNet(ptr0, len0, ptr1, len1, start_x, start_y, end_x, end_y, width);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Evaluate a loon source string and return a JSON-serialized vcad Document.
+ *
+ * The vcad library (types, constructors) is automatically prepended.
+ * Module resolution (`[use ...]`) is not available in WASM — all code
+ * must be self-contained or use the bundled vcad library.
+ * @param {string} source
+ * @returns {any}
+ */
+export function evalVcadSource(source) {
+    const ptr0 = passStringToWasm0(source, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.evalVcadSource(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Evaluate compact IR and return a Solid for rendering.
  *
  * This is a convenience function that parses compact IR and evaluates
@@ -2017,6 +2165,35 @@ export function evaluateCompactIR(compact_ir) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return Solid.__wrap(ret[0]);
+}
+
+/**
+ * Evaluate a full vcad document JSON into a serialized EvaluatedScene.
+ *
+ * This is the canonical Rust-side evaluator that handles all CsgOp variants
+ * including Sketch2D, Extrude, Revolve, Sweep, Loft, Text2D, ImportedMesh,
+ * assembly with forward kinematics, and clash detection.
+ *
+ * # Arguments
+ *
+ * * `doc_json` - A JSON string representing a vcad Document
+ * * `skip_clash_detection` - If true, skip O(n²) clash detection
+ *
+ * # Returns
+ *
+ * A JsValue containing the serialized EvaluatedScene.
+ * @param {string} doc_json
+ * @param {boolean} skip_clash_detection
+ * @returns {any}
+ */
+export function evaluateDocument(doc_json, skip_clash_detection) {
+    const ptr0 = passStringToWasm0(doc_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.evaluateDocument(ptr0, len0, skip_clash_detection);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
 }
 
 /**
@@ -2158,6 +2335,15 @@ export function isCamAvailable() {
 }
 
 /**
+ * Check if ECAD features are available in this build.
+ * @returns {boolean}
+ */
+export function isEcadAvailable() {
+    const ret = wasm.isEcadAvailable();
+    return ret !== 0;
+}
+
+/**
  * Check if GPU processing is available.
  * @returns {boolean}
  */
@@ -2255,12 +2441,14 @@ export function op_linear_pattern(solid, dir_x, dir_y, dir_z, count, spacing) {
  * Create a solid by lofting between multiple profiles.
  *
  * This is a standalone wrapper for lazy loading via wasmosis.
- * @param {any} profiles_js
+ * @param {string} profiles_json
  * @param {boolean | null} [closed]
  * @returns {Solid}
  */
-export function op_loft(profiles_js, closed) {
-    const ret = wasm.op_loft(profiles_js, isLikeNone(closed) ? 0xFFFFFF : closed ? 1 : 0);
+export function op_loft(profiles_json, closed) {
+    const ptr0 = passStringToWasm0(profiles_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.op_loft(ptr0, len0, isLikeNone(closed) ? 0xFFFFFF : closed ? 1 : 0);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -2271,18 +2459,20 @@ export function op_loft(profiles_js, closed) {
  * Create a solid by revolving a 2D sketch profile around an axis.
  *
  * This is a standalone wrapper for lazy loading via wasmosis.
- * @param {any} profile_js
+ * @param {string} profile_json
  * @param {Float64Array} axis_origin
  * @param {Float64Array} axis_dir
  * @param {number} angle_deg
  * @returns {Solid}
  */
-export function op_revolve(profile_js, axis_origin, axis_dir, angle_deg) {
-    const ptr0 = passArrayF64ToWasm0(axis_origin, wasm.__wbindgen_malloc);
+export function op_revolve(profile_json, axis_origin, axis_dir, angle_deg) {
+    const ptr0 = passStringToWasm0(profile_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passArrayF64ToWasm0(axis_dir, wasm.__wbindgen_malloc);
+    const ptr1 = passArrayF64ToWasm0(axis_origin, wasm.__wbindgen_malloc);
     const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.op_revolve(profile_js, ptr0, len0, ptr1, len1, angle_deg);
+    const ptr2 = passArrayF64ToWasm0(axis_dir, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.op_revolve(ptr0, len0, ptr1, len1, ptr2, len2, angle_deg);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -2307,7 +2497,7 @@ export function op_shell(solid, thickness) {
  * Create a solid by sweeping a profile along a helix path.
  *
  * This is a standalone wrapper for lazy loading via wasmosis.
- * @param {any} profile_js
+ * @param {string} profile_json
  * @param {number} radius
  * @param {number} pitch
  * @param {number} height
@@ -2320,8 +2510,10 @@ export function op_shell(solid, thickness) {
  * @param {number | null} [orientation]
  * @returns {Solid}
  */
-export function op_sweep_helix(profile_js, radius, pitch, height, turns, twist_angle, scale_start, scale_end, path_segments, arc_segments, orientation) {
-    const ret = wasm.op_sweep_helix(profile_js, radius, pitch, height, turns, !isLikeNone(twist_angle), isLikeNone(twist_angle) ? 0 : twist_angle, !isLikeNone(scale_start), isLikeNone(scale_start) ? 0 : scale_start, !isLikeNone(scale_end), isLikeNone(scale_end) ? 0 : scale_end, isLikeNone(path_segments) ? 0x100000001 : (path_segments) >>> 0, isLikeNone(arc_segments) ? 0x100000001 : (arc_segments) >>> 0, !isLikeNone(orientation), isLikeNone(orientation) ? 0 : orientation);
+export function op_sweep_helix(profile_json, radius, pitch, height, turns, twist_angle, scale_start, scale_end, path_segments, arc_segments, orientation) {
+    const ptr0 = passStringToWasm0(profile_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.op_sweep_helix(ptr0, len0, radius, pitch, height, turns, !isLikeNone(twist_angle), isLikeNone(twist_angle) ? 0 : twist_angle, !isLikeNone(scale_start), isLikeNone(scale_start) ? 0 : scale_start, !isLikeNone(scale_end), isLikeNone(scale_end) ? 0 : scale_end, isLikeNone(path_segments) ? 0x100000001 : (path_segments) >>> 0, isLikeNone(arc_segments) ? 0x100000001 : (arc_segments) >>> 0, !isLikeNone(orientation), isLikeNone(orientation) ? 0 : orientation);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -2332,7 +2524,7 @@ export function op_sweep_helix(profile_js, radius, pitch, height, turns, twist_a
  * Create a solid by sweeping a profile along a line path.
  *
  * This is a standalone wrapper for lazy loading via wasmosis.
- * @param {any} profile_js
+ * @param {string} profile_json
  * @param {Float64Array} start
  * @param {Float64Array} end
  * @param {number | null} [twist_angle]
@@ -2341,12 +2533,14 @@ export function op_sweep_helix(profile_js, radius, pitch, height, turns, twist_a
  * @param {number | null} [orientation]
  * @returns {Solid}
  */
-export function op_sweep_line(profile_js, start, end, twist_angle, scale_start, scale_end, orientation) {
-    const ptr0 = passArrayF64ToWasm0(start, wasm.__wbindgen_malloc);
+export function op_sweep_line(profile_json, start, end, twist_angle, scale_start, scale_end, orientation) {
+    const ptr0 = passStringToWasm0(profile_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passArrayF64ToWasm0(end, wasm.__wbindgen_malloc);
+    const ptr1 = passArrayF64ToWasm0(start, wasm.__wbindgen_malloc);
     const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.op_sweep_line(profile_js, ptr0, len0, ptr1, len1, !isLikeNone(twist_angle), isLikeNone(twist_angle) ? 0 : twist_angle, !isLikeNone(scale_start), isLikeNone(scale_start) ? 0 : scale_start, !isLikeNone(scale_end), isLikeNone(scale_end) ? 0 : scale_end, !isLikeNone(orientation), isLikeNone(orientation) ? 0 : orientation);
+    const ptr2 = passArrayF64ToWasm0(end, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.op_sweep_line(ptr0, len0, ptr1, len1, ptr2, len2, !isLikeNone(twist_angle), isLikeNone(twist_angle) ? 0 : twist_angle, !isLikeNone(scale_start), isLikeNone(scale_start) ? 0 : scale_start, !isLikeNone(scale_end), isLikeNone(scale_end) ? 0 : scale_end, !isLikeNone(orientation), isLikeNone(orientation) ? 0 : orientation);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -2601,12 +2795,6 @@ function __wbg_get_imports() {
             const ret = arg0.WorkerGlobalScope;
             return ret;
         },
-        __wbg___wbindgen_bigint_get_as_i64_8fcf4ce7f1ca72a2: function(arg0, arg1) {
-            const v = arg1;
-            const ret = typeof(v) === 'bigint' ? v : undefined;
-            getDataViewMemory0().setBigInt64(arg0 + 8 * 1, isLikeNone(ret) ? BigInt(0) : ret, true);
-            getDataViewMemory0().setInt32(arg0 + 4 * 0, !isLikeNone(ret), true);
-        },
         __wbg___wbindgen_boolean_get_bbbb1c18aa2f5e25: function(arg0) {
             const v = arg0;
             const ret = typeof(v) === 'boolean' ? v : undefined;
@@ -2621,10 +2809,6 @@ function __wbg_get_imports() {
         },
         __wbg___wbindgen_in_47fa6863be6f2f25: function(arg0, arg1) {
             const ret = arg0 in arg1;
-            return ret;
-        },
-        __wbg___wbindgen_is_bigint_31b12575b56f32fc: function(arg0) {
-            const ret = typeof(arg0) === 'bigint';
             return ret;
         },
         __wbg___wbindgen_is_function_0095a73b8b156f76: function(arg0) {
@@ -2646,10 +2830,6 @@ function __wbg_get_imports() {
         },
         __wbg___wbindgen_is_undefined_9e4d92534c42d778: function(arg0) {
             const ret = arg0 === undefined;
-            return ret;
-        },
-        __wbg___wbindgen_jsval_eq_11888390b0186270: function(arg0, arg1) {
-            const ret = arg0 === arg1;
             return ret;
         },
         __wbg___wbindgen_jsval_loose_eq_9dd77d8cd6671811: function(arg0, arg1) {
@@ -3193,10 +3373,6 @@ function __wbg_get_imports() {
         __wbg_end_6f776519f1faa582: function(arg0) {
             arg0.end();
         },
-        __wbg_entries_58c7934c745daac7: function(arg0) {
-            const ret = Object.entries(arg0);
-            return ret;
-        },
         __wbg_error_7534b8e9a36f1ab4: function(arg0, arg1) {
             let deferred0_0;
             let deferred0_1;
@@ -3519,16 +3695,6 @@ function __wbg_get_imports() {
             const ret = result;
             return ret;
         },
-        __wbg_instanceof_Map_53af74335dec57f4: function(arg0) {
-            let result;
-            try {
-                result = arg0 instanceof Map;
-            } catch (_) {
-                result = false;
-            }
-            const ret = result;
-            return ret;
-        },
         __wbg_instanceof_Object_1c6af87502b733ed: function(arg0) {
             let result;
             try {
@@ -3823,6 +3989,14 @@ function __wbg_get_imports() {
             const ret = new Uint8Array(arg0);
             return ret;
         },
+        __wbg_new_from_slice_132ef6dc5072cf68: function(arg0, arg1) {
+            const ret = new Float32Array(getArrayF32FromWasm0(arg0, arg1));
+            return ret;
+        },
+        __wbg_new_from_slice_19d21922ff3c0ae6: function(arg0, arg1) {
+            const ret = new Uint32Array(getArrayU32FromWasm0(arg0, arg1));
+            return ret;
+        },
         __wbg_new_from_slice_a3d2629dc1826784: function(arg0, arg1) {
             const ret = new Uint8Array(getArrayU8FromWasm0(arg0, arg1));
             return ret;
@@ -3835,12 +4009,20 @@ function __wbg_get_imports() {
             const ret = new Uint8Array(arg0, arg1 >>> 0, arg2 >>> 0);
             return ret;
         },
+        __wbg_new_with_length_1763c527b2923202: function(arg0) {
+            const ret = new Array(arg0 >>> 0);
+            return ret;
+        },
         __wbg_next_3482f54c49e8af19: function() { return handleError(function (arg0) {
             const ret = arg0.next();
             return ret;
         }, arguments); },
         __wbg_next_418f80d8f5303233: function(arg0) {
             const ret = arg0.next;
+            return ret;
+        },
+        __wbg_now_b8bae8295f608868: function() {
+            const ret = performance.now();
             return ret;
         },
         __wbg_of_f915f7cd925b21a5: function(arg0) {
@@ -4369,13 +4551,13 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 1033, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1034, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h0cd8d7c1a52f473f, wasm_bindgen__convert__closures_____invoke__hd187c9a655d7ef17);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 1607, function: Function { arguments: [Externref], shim_idx: 1608, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__ha8b73a36ae48e470, wasm_bindgen__convert__closures_____invoke__h4488ad9b37e81000);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 1778, function: Function { arguments: [Externref], shim_idx: 1779, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__ha8b73a36ae48e470, wasm_bindgen__convert__closures_____invoke__h4488ad9b37e81000);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 862, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 863, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h250d7189f9770b99, wasm_bindgen__convert__closures_____invoke__ha8b3f1b8e67fad08);
             return ret;
         },
         __wbindgen_cast_0000000000000003: function(arg0) {
@@ -4463,12 +4645,12 @@ function __wbg_get_imports() {
     };
 }
 
-function wasm_bindgen__convert__closures_____invoke__hd187c9a655d7ef17(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__hd187c9a655d7ef17(arg0, arg1, arg2);
-}
-
 function wasm_bindgen__convert__closures_____invoke__h4488ad9b37e81000(arg0, arg1, arg2) {
     wasm.wasm_bindgen__convert__closures_____invoke__h4488ad9b37e81000(arg0, arg1, arg2);
+}
+
+function wasm_bindgen__convert__closures_____invoke__ha8b3f1b8e67fad08(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__ha8b3f1b8e67fad08(arg0, arg1, arg2);
 }
 
 function wasm_bindgen__convert__closures_____invoke__h60f25fed64173f82(arg0, arg1, arg2, arg3) {

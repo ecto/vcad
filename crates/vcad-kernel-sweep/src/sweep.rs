@@ -1,8 +1,8 @@
 //! Sweep operation: create a solid by moving a profile along a path.
 
-use std::collections::HashMap;
 use std::f64::consts::PI;
 
+use rustc_hash::FxHashMap;
 use vcad_kernel_geom::{BilinearSurface, Curve3d, CurveKind, GeometryStore, Plane};
 use vcad_kernel_math::{Dir3, Point3, Vec3};
 use vcad_kernel_primitives::BRepSolid;
@@ -123,24 +123,40 @@ pub fn sweep(
     let mut point_grid: Vec<Vec<Point3>> = Vec::with_capacity(n_path_samples);
     let mut key_grid: Vec<Vec<[i64; 3]>> = Vec::with_capacity(n_path_samples);
 
+    let has_twist = options.twist_angle.abs() > 1e-12;
+    let has_scale_variation = (options.scale_end - options.scale_start).abs() > 1e-12;
+
     for (path_idx, frame) in frames.iter().enumerate() {
         let t = path_idx as f64 / (n_path_samples - 1) as f64;
 
         // Compute twist and scale at this position
-        let twist = options.twist_angle * t;
-        let scale = options.scale_start + t * (options.scale_end - options.scale_start);
+        let scale = if has_scale_variation {
+            options.scale_start + t * (options.scale_end - options.scale_start)
+        } else {
+            options.scale_start
+        };
 
-        let twisted_frame = frame.with_twist(twist);
-
+        // Avoid clone + sin/cos when twist is zero
         let mut ring_verts = Vec::with_capacity(n_profile_verts);
         let mut ring_points = Vec::with_capacity(n_profile_verts);
         let mut ring_keys = Vec::with_capacity(n_profile_verts);
-        for p2d in &profile_verts_2d {
-            let p3d = twisted_frame.transform_point_scaled(*p2d, scale);
-            let v_id = topo.add_vertex(p3d);
-            ring_keys.push(quantize_pt(p3d));
-            ring_points.push(p3d);
-            ring_verts.push(v_id);
+        if has_twist {
+            let twisted_frame = frame.with_twist(options.twist_angle * t);
+            for p2d in &profile_verts_2d {
+                let p3d = twisted_frame.transform_point_scaled(*p2d, scale);
+                let v_id = topo.add_vertex(p3d);
+                ring_keys.push(quantize_pt(p3d));
+                ring_points.push(p3d);
+                ring_verts.push(v_id);
+            }
+        } else {
+            for p2d in &profile_verts_2d {
+                let p3d = frame.transform_point_scaled(*p2d, scale);
+                let v_id = topo.add_vertex(p3d);
+                ring_keys.push(quantize_pt(p3d));
+                ring_points.push(p3d);
+                ring_verts.push(v_id);
+            }
         }
         vertex_grid.push(ring_verts);
         point_grid.push(ring_points);
@@ -150,11 +166,25 @@ pub fn sweep(
     // Build faces — pre-allocate with exact capacity
     let n_lateral = n_path_segments * n_profile_verts;
     let mut all_faces = Vec::with_capacity(n_lateral + 2);
-    let mut he_map: HashMap<([i64; 3], [i64; 3]), HalfEdgeId> =
-        HashMap::with_capacity(n_lateral * 4 + n_profile_verts * 2);
+    let mut he_map: FxHashMap<([i64; 3], [i64; 3]), HalfEdgeId> =
+        FxHashMap::with_capacity_and_hasher(n_lateral * 4 + n_profile_verts * 2, Default::default());
+
+    // Radial normal helper (hoisted out of hot loop)
+    let radial_normal = |pt: Point3, c: Point3| -> Dir3 {
+        let d = pt - c;
+        if d.norm() < 1e-12 {
+            Dir3::new_normalize(Vec3::z())
+        } else {
+            Dir3::new_normalize(d)
+        }
+    };
 
     // Build lateral faces (one quad per profile edge × path segment)
     for path_idx in 0..n_path_segments {
+        // Cache frame centers for the entire profile ring (only depends on path_idx)
+        let center0 = frames[path_idx].position;
+        let center1 = frames[path_idx + 1].position;
+
         for profile_idx in 0..n_profile_verts {
             let next_profile_idx = (profile_idx + 1) % n_profile_verts;
 
@@ -179,16 +209,6 @@ pub fn sweep(
             let k3 = key_grid[path_idx + 1][profile_idx];
 
             // Compute radial normals from path center to each vertex for smooth shading
-            let center0 = frames[path_idx].position;
-            let center1 = frames[path_idx + 1].position;
-            let radial_normal = |pt: Point3, c: Point3| -> Dir3 {
-                let d = pt - c;
-                if d.norm() < 1e-12 {
-                    Dir3::new_normalize(Vec3::z())
-                } else {
-                    Dir3::new_normalize(d)
-                }
-            };
             let n0 = radial_normal(p0, center0);
             let n1 = radial_normal(p1, center0);
             let n2 = radial_normal(p2, center1);
@@ -263,7 +283,7 @@ fn build_cap_face<F>(
     geom: &mut GeometryStore,
     verts: &[VertexId],
     reversed: bool,
-    he_map: &mut HashMap<([i64; 3], [i64; 3]), HalfEdgeId>,
+    he_map: &mut FxHashMap<([i64; 3], [i64; 3]), HalfEdgeId>,
     quantize_pt: F,
 ) -> vcad_kernel_topo::FaceId
 where
@@ -315,7 +335,7 @@ where
     face_id
 }
 
-fn pair_twin_half_edges(topo: &mut Topology, he_map: &HashMap<([i64; 3], [i64; 3]), HalfEdgeId>) {
+fn pair_twin_half_edges(topo: &mut Topology, he_map: &FxHashMap<([i64; 3], [i64; 3]), HalfEdgeId>) {
     for (&(origin_key, dest_key), &he_id) in he_map {
         if topo.half_edges[he_id].twin.is_some() {
             continue;

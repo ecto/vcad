@@ -102,3 +102,6 @@ optional = true
 [dependencies.vcad-ecad-symbols]
 path = "../vcad-ecad-symbols"
 optional = true
+
+[package.metadata.wasm-pack.profile.profiling]
+wasm-opt = ['-O', '--debuginfo']

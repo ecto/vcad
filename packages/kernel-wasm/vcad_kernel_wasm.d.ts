@@ -346,14 +346,14 @@ export class Solid {
      *
      * Takes a sketch profile and extrusion direction as JS objects.
      */
-    static extrude(profile_js: any, direction: Float64Array): Solid;
+    static extrude(profile_json: string, direction: Float64Array): Solid;
     /**
      * Create a solid by extruding a 2D sketch profile with twist and/or scale.
      *
      * Takes a sketch profile, extrusion direction, twist angle (radians),
      * and scale factor at the end (1.0 = no taper).
      */
-    static extrudeWithOptions(profile_js: any, direction: Float64Array, twist_angle: number, scale_end: number): Solid;
+    static extrudeWithOptions(profile_json: string, direction: Float64Array, twist_angle: number, scale_end: number): Solid;
     /**
      * Fillet all edges of the solid with the given radius.
      */
@@ -393,7 +393,7 @@ export class Solid {
      *
      * Takes an array of sketch profiles (minimum 2).
      */
-    static loft(profiles_js: any, closed?: boolean | null): Solid;
+    static loft(profiles_json: string, closed?: boolean | null): Solid;
     /**
      * Get the number of triangles in the tessellated mesh.
      */
@@ -414,7 +414,7 @@ export class Solid {
      *
      * Takes a sketch profile, axis origin, axis direction, and angle in degrees.
      */
-    static revolve(profile_js: any, axis_origin: Float64Array, axis_dir: Float64Array, angle_deg: number): Solid;
+    static revolve(profile_json: string, axis_origin: Float64Array, axis_dir: Float64Array, angle_deg: number): Solid;
     /**
      * Rotate the solid by angles in degrees around X, Y, Z axes.
      */
@@ -452,13 +452,13 @@ export class Solid {
      *
      * Takes a sketch profile and helix parameters.
      */
-    static sweepHelix(profile_js: any, radius: number, pitch: number, height: number, turns: number, twist_angle?: number | null, scale_start?: number | null, scale_end?: number | null, path_segments?: number | null, arc_segments?: number | null, orientation?: number | null): Solid;
+    static sweepHelix(profile_json: string, radius: number, pitch: number, height: number, turns: number, twist_angle?: number | null, scale_start?: number | null, scale_end?: number | null, path_segments?: number | null, arc_segments?: number | null, orientation?: number | null): Solid;
     /**
      * Create a solid by sweeping a profile along a line path.
      *
      * Takes a sketch profile and path endpoints.
      */
-    static sweepLine(profile_js: any, start: Float64Array, end: Float64Array, twist_angle?: number | null, scale_start?: number | null, scale_end?: number | null, orientation?: number | null): Solid;
+    static sweepLine(profile_json: string, start: Float64Array, end: Float64Array, twist_angle?: number | null, scale_start?: number | null, scale_end?: number | null, orientation?: number | null): Solid;
     /**
      * Create a solid by extruding text as 2D profiles.
      *
@@ -836,6 +836,74 @@ export function createDetailView(parent_json: string, center_x: number, center_y
 export function decimateMeshGpu(positions: Float32Array, indices: Uint32Array, target_ratio: number): Promise<any>;
 
 /**
+ * Run Design Rule Check on a PCB layout.
+ *
+ * # Arguments
+ * * `pcb_json` - JSON-serialized `Pcb` struct
+ *
+ * # Returns
+ * Array of DRC violations as JsValue.
+ */
+export function ecadCheckDrc(pcb_json: string): any;
+
+/**
+ * Run Electrical Rule Check on a schematic sheet.
+ *
+ * # Arguments
+ * * `sch_json` - JSON-serialized `SchematicSheet` struct
+ *
+ * # Returns
+ * Array of ERC violations as JsValue.
+ */
+export function ecadCheckErc(sch_json: string): any;
+
+/**
+ * Fill copper pour zones on the PCB.
+ *
+ * # Arguments
+ * * `pcb_json` - JSON-serialized `Pcb` struct
+ *
+ * # Returns
+ * Array of filled zone polygons.
+ */
+export function ecadFillZones(pcb_json: string): any;
+
+/**
+ * Generate a netlist from a schematic sheet.
+ *
+ * # Arguments
+ * * `sch_json` - JSON-serialized `SchematicSheet` struct
+ *
+ * # Returns
+ * Netlist as JsValue.
+ */
+export function ecadGenerateNetlist(sch_json: string): any;
+
+/**
+ * Route a net between two points on the PCB using the grid router.
+ *
+ * # Arguments
+ * * `pcb_json` - JSON-serialized `Pcb` struct
+ * * `net` - Net name to route
+ * * `start_x`, `start_y` - Start coordinates (mm)
+ * * `end_x`, `end_y` - End coordinates (mm)
+ * * `width` - Trace width (mm)
+ *
+ * # Returns
+ * Route result with segments and vias.
+ */
+export function ecadRouteNet(pcb_json: string, net: string, start_x: number, start_y: number, end_x: number, end_y: number, width: number): any;
+
+/**
+ * Evaluate a loon source string and return a JSON-serialized vcad Document.
+ *
+ * The vcad library (types, constructors) is automatically prepended.
+ * Module resolution (`[use ...]`) is not available in WASM — all code
+ * must be self-contained or use the bundled vcad library.
+ */
+export function evalVcadSource(source: string): any;
+
+/**
  * Evaluate compact IR and return a Solid for rendering.
  *
  * This is a convenience function that parses compact IR and evaluates
@@ -848,6 +916,24 @@ export function decimateMeshGpu(positions: Float32Array, indices: Uint32Array, t
  * A Solid object that can be rendered or queried.
  */
 export function evaluateCompactIR(compact_ir: string): Solid;
+
+/**
+ * Evaluate a full vcad document JSON into a serialized EvaluatedScene.
+ *
+ * This is the canonical Rust-side evaluator that handles all CsgOp variants
+ * including Sketch2D, Extrude, Revolve, Sweep, Loft, Text2D, ImportedMesh,
+ * assembly with forward kinematics, and clash detection.
+ *
+ * # Arguments
+ *
+ * * `doc_json` - A JSON string representing a vcad Document
+ * * `skip_clash_detection` - If true, skip O(n²) clash detection
+ *
+ * # Returns
+ *
+ * A JsValue containing the serialized EvaluatedScene.
+ */
+export function evaluateDocument(doc_json: string, skip_clash_detection: boolean): any;
 
 /**
  * Export a projected view to DXF format.
@@ -912,6 +998,11 @@ export function initGpu(): Promise<boolean>;
 export function isCamAvailable(): boolean;
 
 /**
+ * Check if ECAD features are available in this build.
+ */
+export function isEcadAvailable(): boolean;
+
+/**
  * Check if GPU processing is available.
  */
 export function isGpuAvailable(): boolean;
@@ -959,14 +1050,14 @@ export function op_linear_pattern(solid: Solid, dir_x: number, dir_y: number, di
  *
  * This is a standalone wrapper for lazy loading via wasmosis.
  */
-export function op_loft(profiles_js: any, closed?: boolean | null): Solid;
+export function op_loft(profiles_json: string, closed?: boolean | null): Solid;
 
 /**
  * Create a solid by revolving a 2D sketch profile around an axis.
  *
  * This is a standalone wrapper for lazy loading via wasmosis.
  */
-export function op_revolve(profile_js: any, axis_origin: Float64Array, axis_dir: Float64Array, angle_deg: number): Solid;
+export function op_revolve(profile_json: string, axis_origin: Float64Array, axis_dir: Float64Array, angle_deg: number): Solid;
 
 /**
  * Shell (hollow) a solid by offsetting all faces inward.
@@ -980,14 +1071,14 @@ export function op_shell(solid: Solid, thickness: number): Solid;
  *
  * This is a standalone wrapper for lazy loading via wasmosis.
  */
-export function op_sweep_helix(profile_js: any, radius: number, pitch: number, height: number, turns: number, twist_angle?: number | null, scale_start?: number | null, scale_end?: number | null, path_segments?: number | null, arc_segments?: number | null, orientation?: number | null): Solid;
+export function op_sweep_helix(profile_json: string, radius: number, pitch: number, height: number, turns: number, twist_angle?: number | null, scale_start?: number | null, scale_end?: number | null, path_segments?: number | null, arc_segments?: number | null, orientation?: number | null): Solid;
 
 /**
  * Create a solid by sweeping a profile along a line path.
  *
  * This is a standalone wrapper for lazy loading via wasmosis.
  */
-export function op_sweep_line(profile_js: any, start: Float64Array, end: Float64Array, twist_angle?: number | null, scale_start?: number | null, scale_end?: number | null, orientation?: number | null): Solid;
+export function op_sweep_line(profile_json: string, start: Float64Array, end: Float64Array, twist_angle?: number | null, scale_start?: number | null, scale_end?: number | null, orientation?: number | null): Solid;
 
 /**
  * Parse compact IR text format into a vcad IR Document (JSON).
@@ -1106,7 +1197,9 @@ export interface InitOutput {
     readonly computeCreasedNormalsGpu: (a: number, b: number, c: number, d: number, e: number) => any;
     readonly createDetailView: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
     readonly decimateMeshGpu: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly evalVcadSource: (a: number, b: number) => [number, number, number];
     readonly evaluateCompactIR: (a: number, b: number) => [number, number, number];
+    readonly evaluateDocument: (a: number, b: number, c: number) => [number, number, number];
     readonly exportProjectedViewToDxf: (a: number, b: number) => [number, number, number, number];
     readonly get_kernel_version: () => [number, number];
     readonly importStepBuffer: (a: number, b: number) => [number, number, number];
@@ -1118,11 +1211,11 @@ export interface InitOutput {
     readonly op_circular_pattern: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
     readonly op_fillet: (a: number, b: number) => number;
     readonly op_linear_pattern: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
-    readonly op_loft: (a: any, b: number) => [number, number, number];
-    readonly op_revolve: (a: any, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly op_loft: (a: number, b: number, c: number) => [number, number, number];
+    readonly op_revolve: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number];
     readonly op_shell: (a: number, b: number) => number;
-    readonly op_sweep_helix: (a: any, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number) => [number, number, number];
-    readonly op_sweep_line: (a: any, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number) => [number, number, number];
+    readonly op_sweep_helix: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number) => [number, number, number];
+    readonly op_sweep_line: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => [number, number, number];
     readonly parseCompactIR: (a: number, b: number) => [number, number, number, number];
     readonly physicssim_actionDim: (a: number) => number;
     readonly physicssim_new: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
@@ -1157,13 +1250,13 @@ export interface InitOutput {
     readonly solid_cylinder: (a: number, b: number, c: number) => number;
     readonly solid_difference: (a: number, b: number) => number;
     readonly solid_empty: () => number;
-    readonly solid_extrude: (a: any, b: number, c: number) => [number, number, number];
-    readonly solid_extrudeWithOptions: (a: any, b: number, c: number, d: number, e: number) => [number, number, number];
+    readonly solid_extrude: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly solid_extrudeWithOptions: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly solid_getMesh: (a: number, b: number) => any;
     readonly solid_horizontalSection: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
     readonly solid_intersection: (a: number, b: number) => number;
     readonly solid_isEmpty: (a: number) => number;
-    readonly solid_loft: (a: any, b: number) => [number, number, number];
+    readonly solid_loft: (a: number, b: number, c: number) => [number, number, number];
     readonly solid_numTriangles: (a: number) => number;
     readonly solid_projectView: (a: number, b: number, c: number, d: number) => any;
     readonly solid_rotate: (a: number, b: number, c: number, d: number) => number;
@@ -1171,8 +1264,8 @@ export interface InitOutput {
     readonly solid_sectionView: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
     readonly solid_sphere: (a: number, b: number) => number;
     readonly solid_surfaceArea: (a: number) => number;
-    readonly solid_sweepHelix: (a: any, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number) => [number, number, number];
-    readonly solid_sweepLine: (a: any, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number) => [number, number, number];
+    readonly solid_sweepHelix: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number) => [number, number, number];
+    readonly solid_sweepLine: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => [number, number, number];
     readonly solid_textExtrude: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number) => [number, number, number];
     readonly solid_toStepBuffer: (a: number) => [number, number, number, number];
     readonly solid_translate: (a: number, b: number, c: number, d: number) => number;
@@ -1191,9 +1284,9 @@ export interface InitOutput {
     readonly wasmannotationlayer_isEmpty: (a: number) => number;
     readonly wasmannotationlayer_new: () => number;
     readonly wasmannotationlayer_renderAll: (a: number, b: number, c: number) => any;
+    readonly solid_revolve: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number];
     readonly physicssim_numJoints: (a: number) => number;
     readonly solid_linearPattern: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
-    readonly solid_revolve: (a: any, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly solid_canExportStep: (a: number) => number;
     readonly solid_chamfer: (a: number, b: number) => number;
     readonly solid_fillet: (a: number, b: number) => number;
@@ -1260,11 +1353,17 @@ export interface InitOutput {
     readonly sliceresult_statsJson: (a: number) => [number, number, number, number];
     readonly slicersettings_fromJson: (a: number, b: number) => [number, number, number];
     readonly slicersettings_new: () => number;
-    readonly wasm_bindgen__closure__destroy__h0cd8d7c1a52f473f: (a: number, b: number) => void;
+    readonly ecadCheckDrc: (a: number, b: number) => [number, number, number];
+    readonly ecadCheckErc: (a: number, b: number) => [number, number, number];
+    readonly ecadFillZones: (a: number, b: number) => [number, number, number];
+    readonly ecadGenerateNetlist: (a: number, b: number) => [number, number, number];
+    readonly ecadRouteNet: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
+    readonly isEcadAvailable: () => number;
     readonly wasm_bindgen__closure__destroy__ha8b73a36ae48e470: (a: number, b: number) => void;
+    readonly wasm_bindgen__closure__destroy__h250d7189f9770b99: (a: number, b: number) => void;
     readonly wasm_bindgen__convert__closures_____invoke__h60f25fed64173f82: (a: number, b: number, c: any, d: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__hd187c9a655d7ef17: (a: number, b: number, c: any) => void;
     readonly wasm_bindgen__convert__closures_____invoke__h4488ad9b37e81000: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__ha8b3f1b8e67fad08: (a: number, b: number, c: any) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;

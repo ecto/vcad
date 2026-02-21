@@ -1278,6 +1278,7 @@ dependencies = [
  "codespan-reporting",
  "dirs-next",
  "logos",
+ "serde_json",
  "wasm-encoder",
 ]
 
@@ -3165,6 +3166,7 @@ dependencies = [
 name = "vcad-kernel-sweep"
 version = "0.8.0"
 dependencies = [
+ "rustc-hash",
  "thiserror 2.0.18",
  "vcad-kernel-geom",
  "vcad-kernel-math",
@@ -3224,6 +3226,11 @@ dependencies = [
  "serde-wasm-bindgen",
  "serde_json",
  "ts-rs",
+ "vcad-ecad-export",
+ "vcad-ecad-pcb",
+ "vcad-ecad-schematic",
+ "vcad-ecad-sim",
+ "vcad-ecad-symbols",
  "vcad-eval",
  "vcad-ir",
  "vcad-kernel",

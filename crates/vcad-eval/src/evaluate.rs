@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use vcad_ir::{CsgOp, Document, NodeId, PathCurve};
 use vcad_kernel::Solid;
 use vcad_kernel_geom::Line3d;
-use vcad_kernel_math::Vec3;
+use vcad_kernel_math::{Transform, Vec3};
 use vcad_kernel_sweep::{Helix, LoftOptions, SweepOptions};
 use vcad_kernel_tessellate::TriangleMesh;
 use vcad_kernel_text::{FontRegistry, TextAlignment};
@@ -167,13 +167,13 @@ pub fn evaluate_document(
     // Clash detection
     let mut clashes = Vec::new();
     let t_clash = clock.map(|c| c.now_ms());
-    if !options.skip_clash_detection {
+    if !options.skip_clash_detection && solids.len() >= 2 {
         for i in 0..solids.len() {
             for j in (i + 1)..solids.len() {
                 if let (Some(a), Some(b)) = (&solids[i], &solids[j]) {
                     let intersection = a.intersection(b);
                     if !intersection.is_empty() {
-                        let tri = intersection.to_mesh(32);
+                        let tri = intersection.to_mesh(16);
                         if !tri.vertices.is_empty() {
                             clashes.push(tri_to_evaluated(&tri));
                         }
@@ -332,19 +332,12 @@ fn evaluate_op_timed(
             }
         }
 
-        CsgOp::Translate { child, offset } => {
-            let c = eval_child(*child, cache)?;
-            Ok(c.map(|s| s.translate(offset.x, offset.y, offset.z)))
-        }
-
-        CsgOp::Rotate { child, angles } => {
-            let c = eval_child(*child, cache)?;
-            Ok(c.map(|s| s.rotate(angles.x, angles.y, angles.z)))
-        }
-
-        CsgOp::Scale { child, factor } => {
-            let c = eval_child(*child, cache)?;
-            Ok(c.map(|s| s.scale(factor.x, factor.y, factor.z)))
+        CsgOp::Translate { .. } | CsgOp::Rotate { .. } | CsgOp::Scale { .. } => {
+            // Fuse chains of Translate/Rotate/Scale into a single transform
+            // to avoid cloning the BRep once per transform node.
+            let (composed, inner_child) = collect_transform_chain(op, nodes);
+            let c = eval_child(inner_child, cache)?;
+            Ok(c.map(|s| s.apply_transform(&composed)))
         }
 
         CsgOp::LinearPattern {
@@ -559,6 +552,50 @@ fn evaluate_op_timed(
 
         CsgOp::StepImport { path } => Ok(Solid::from_step(path).ok()),
     }
+}
+
+/// Walk a chain of Translate/Rotate/Scale nodes and compose into a single Transform.
+/// Returns the composed transform and the innermost non-transform child node ID.
+fn collect_transform_chain(
+    op: &CsgOp,
+    nodes: &HashMap<NodeId, vcad_ir::Node>,
+) -> (Transform, NodeId) {
+    let mut composed = Transform::identity();
+    let mut current_op = op;
+
+    loop {
+        match current_op {
+            CsgOp::Translate { child, offset } => {
+                composed = composed.then(&Transform::translation(offset.x, offset.y, offset.z));
+                match nodes.get(child) {
+                    Some(node) if is_transform_op(&node.op) => current_op = &node.op,
+                    _ => return (composed, *child),
+                }
+            }
+            CsgOp::Rotate { child, angles } => {
+                let rx = Transform::rotation_x(angles.x.to_radians());
+                let ry = Transform::rotation_y(angles.y.to_radians());
+                let rz = Transform::rotation_z(angles.z.to_radians());
+                composed = composed.then(&rx.then(&ry).then(&rz));
+                match nodes.get(child) {
+                    Some(node) if is_transform_op(&node.op) => current_op = &node.op,
+                    _ => return (composed, *child),
+                }
+            }
+            CsgOp::Scale { child, factor } => {
+                composed = composed.then(&Transform::scale(factor.x, factor.y, factor.z));
+                match nodes.get(child) {
+                    Some(node) if is_transform_op(&node.op) => current_op = &node.op,
+                    _ => return (composed, *child),
+                }
+            }
+            _ => unreachable!("collect_transform_chain called with non-transform op"),
+        }
+    }
+}
+
+fn is_transform_op(op: &CsgOp) -> bool {
+    matches!(op, CsgOp::Translate { .. } | CsgOp::Rotate { .. } | CsgOp::Scale { .. })
 }
 
 /// Extract sketch fields from a CsgOp, returning error if not a Sketch2D.

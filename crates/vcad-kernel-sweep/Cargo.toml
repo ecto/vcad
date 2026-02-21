@@ -12,6 +12,7 @@ vcad-kernel-topo = { path = "../vcad-kernel-topo" }
 vcad-kernel-geom = { path = "../vcad-kernel-geom" }
 vcad-kernel-primitives = { path = "../vcad-kernel-primitives" }
 vcad-kernel-sketch = { path = "../vcad-kernel-sketch" }
+rustc-hash = "1.1"
 thiserror.workspace = true
 
 [dev-dependencies]

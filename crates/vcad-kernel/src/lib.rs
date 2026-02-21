@@ -528,7 +528,8 @@ impl Solid {
         self.apply_transform(&t)
     }
 
-    fn apply_transform(&self, transform: &Transform) -> Solid {
+    /// Apply an arbitrary affine transform to the solid.
+    pub fn apply_transform(&self, transform: &Transform) -> Solid {
         match &self.repr {
             SolidRepr::Empty => Solid::empty(),
             SolidRepr::BRep(brep) => {
@@ -624,6 +625,55 @@ impl Solid {
     /// For B-rep solids with only planar faces, computes directly from vertex
     /// positions (no tessellation needed). For curved surfaces, falls back to
     /// the tessellated mesh since vertices alone don't capture the full extent.
+    /// Check if the axis-aligned bounding boxes of two solids overlap.
+    ///
+    /// Uses a fast vertex-based AABB (no tessellation) for BRep solids.
+    pub fn aabb_overlaps(&self, other: &Solid) -> bool {
+        let (min_a, max_a) = self.vertex_aabb();
+        let (min_b, max_b) = other.vertex_aabb();
+        min_a[0] <= max_b[0]
+            && max_a[0] >= min_b[0]
+            && min_a[1] <= max_b[1]
+            && max_a[1] >= min_b[1]
+            && min_a[2] <= max_b[2]
+            && max_a[2] >= min_b[2]
+    }
+
+    /// Fast vertex-only AABB (no tessellation). Slightly underestimates for curved surfaces.
+    fn vertex_aabb(&self) -> ([f64; 3], [f64; 3]) {
+        match &self.repr {
+            SolidRepr::Empty => ([0.0; 3], [0.0; 3]),
+            SolidRepr::BRep(brep) => {
+                let mut min = [f64::MAX; 3];
+                let mut max = [f64::MIN; 3];
+                for (_id, v) in &brep.topology.vertices {
+                    let p = v.point;
+                    min[0] = min[0].min(p.x);
+                    min[1] = min[1].min(p.y);
+                    min[2] = min[2].min(p.z);
+                    max[0] = max[0].max(p.x);
+                    max[1] = max[1].max(p.y);
+                    max[2] = max[2].max(p.z);
+                }
+                (min, max)
+            }
+            SolidRepr::Mesh(mesh) => {
+                let mut min = [f64::MAX; 3];
+                let mut max = [f64::MIN; 3];
+                for chunk in mesh.vertices.chunks(3) {
+                    min[0] = min[0].min(chunk[0] as f64);
+                    min[1] = min[1].min(chunk[1] as f64);
+                    min[2] = min[2].min(chunk[2] as f64);
+                    max[0] = max[0].max(chunk[0] as f64);
+                    max[1] = max[1].max(chunk[1] as f64);
+                    max[2] = max[2].max(chunk[2] as f64);
+                }
+                (min, max)
+            }
+        }
+    }
+
+    /// Compute the axis-aligned bounding box as `([min_x, min_y, min_z], [max_x, max_y, max_z])`.
     pub fn bounding_box(&self) -> ([f64; 3], [f64; 3]) {
         match &self.repr {
             SolidRepr::BRep(brep) => {
