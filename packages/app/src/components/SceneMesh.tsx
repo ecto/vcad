@@ -1,4 +1,4 @@
-import { useEffect, useRef, useMemo, useCallback, useState } from "react";
+import { memo, useEffect, useRef, useMemo, useCallback, useState } from "react";
 import * as THREE from "three";
 import { toCreasedNormals } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { Edges, Html } from "@react-three/drei";
@@ -186,12 +186,12 @@ export function ImportedMesh({ mesh, materialKey }: ImportedMeshProps) {
   const [geoReady, setGeoReady] = useState(false);
   const showWireframe = useUiStore((s) => s.showWireframe);
   const isOrbiting = useUiStore((s) => s.isOrbiting);
-  const document = useDocumentStore((s) => s.document);
+  const materials = useDocumentStore((s) => s.document.materials);
 
   // Resolve material from document
   const materialDef = useMemo(() => {
-    return document.materials[materialKey] ?? null;
-  }, [document, materialKey]);
+    return materials[materialKey] ?? null;
+  }, [materials, materialKey]);
 
   const materialColor = useMemo(() => {
     if (materialDef) {
@@ -273,7 +273,7 @@ export function ImportedMesh({ mesh, materialKey }: ImportedMeshProps) {
   );
 }
 
-export function SceneMesh({
+export const SceneMesh = memo(function SceneMesh({
   partInfo,
   mesh,
   materialKey,
@@ -289,7 +289,7 @@ export function SceneMesh({
   const showWireframe = useUiStore((s) => s.showWireframe);
   const hoveredPartId = useUiStore((s) => s.hoveredPartId);
   const setHoveredPartId = useUiStore((s) => s.setHoveredPartId);
-  const document = useDocumentStore((s) => s.document);
+  const materials = useDocumentStore((s) => s.document.materials);
   const renamePart = useDocumentStore((s) => s.renamePart);
 
   // Face selection state
@@ -345,8 +345,8 @@ export function SceneMesh({
     if (previewMaterial?.partId === partInfo.id) {
       const previewKey = previewMaterial.materialKey;
       // First check document materials
-      if (document.materials[previewKey]) {
-        return document.materials[previewKey];
+      if (materials[previewKey]) {
+        return materials[previewKey];
       }
       // Fall back to preset materials library
       const preset = getMaterialByKey(previewKey);
@@ -359,8 +359,8 @@ export function SceneMesh({
         };
       }
     }
-    return document.materials[materialKey] ?? null;
-  }, [document, materialKey, previewMaterial, partInfo.id]);
+    return materials[materialKey] ?? null;
+  }, [materials, materialKey, previewMaterial, partInfo.id]);
 
   // Check if this material should use a procedural shader
   const proceduralShader = useMemo(() => {
@@ -693,4 +693,4 @@ export function SceneMesh({
       )}
     </mesh>
   );
-}
+});

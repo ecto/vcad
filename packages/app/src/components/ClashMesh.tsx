@@ -52,7 +52,12 @@ export function ClashMesh({ mesh }: ClashMeshProps) {
       new THREE.BufferAttribute(mesh.positions, 3),
     );
     geo.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
-    geo.computeVertexNormals();
+
+    if (mesh.normals && mesh.normals.length === mesh.positions.length) {
+      geo.setAttribute("normal", new THREE.BufferAttribute(mesh.normals, 3));
+    } else {
+      geo.computeVertexNormals();
+    }
 
     return () => {
       geo.dispose();

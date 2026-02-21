@@ -592,7 +592,12 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       node.op = { ...node.op, ...updates };
     }
 
-    set({ document: newDoc, isDirty: true, ...undoState });
+    set({
+      document: newDoc,
+      isDirty: true,
+      dirtyNodeIds: markNodeDirty(state, part.sweepNodeId),
+      ...undoState,
+    });
   },
 
   applyBoolean: (type, partIdA, partIdB) => {

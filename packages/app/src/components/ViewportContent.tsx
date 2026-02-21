@@ -190,7 +190,10 @@ export function ViewportContent() {
   const scene = useEngineStore((s) => s.scene);
   const previewMesh = useEngineStore((s) => s.previewMesh);
   const parts = useDocumentStore((s) => s.parts);
-  const document = useDocumentStore((s) => s.document);
+  const docInstances = useDocumentStore((s) => s.document.instances);
+  const docPartDefs = useDocumentStore((s) => s.document.partDefs);
+  const docRoots = useDocumentStore((s) => s.document.roots);
+  const docScene = useDocumentStore((s) => s.document.scene);
 
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
   const isDraggingGizmo = useUiStore((s) => s.isDraggingGizmo);
@@ -242,17 +245,17 @@ export function ViewportContent() {
   // Build mapping from root index to instance ID (for assembly mode rendering with legacy parts)
   const rootIndexToInstanceId = useMemo(() => {
     const mapping = new Map<number, string>();
-    if (!document.instances || !document.partDefs) return mapping;
+    if (!docInstances || !docPartDefs) return mapping;
 
     // Build root NodeId -> root index lookup
     const rootToIndex = new Map<number, number>();
-    document.roots.forEach((entry, idx) => {
+    docRoots.forEach((entry, idx) => {
       rootToIndex.set(entry.root, idx);
     });
 
     // Map each instance to its corresponding root index
-    for (const instance of document.instances) {
-      const partDef = document.partDefs[instance.partDefId];
+    for (const instance of docInstances) {
+      const partDef = docPartDefs[instance.partDefId];
       if (!partDef) continue;
       const rootIdx = rootToIndex.get(partDef.root);
       if (rootIdx !== undefined) {
@@ -260,7 +263,7 @@ export function ViewportContent() {
       }
     }
     return mapping;
-  }, [document.instances, document.partDefs, document.roots]);
+  }, [docInstances, docPartDefs, docRoots]);
 
   // Check if a part at given index is selected (handles both part IDs and instance IDs)
   const isPartSelected = (partId: string, partIndex: number): boolean => {
@@ -769,8 +772,8 @@ export function ViewportContent() {
 
   // Get effective scene settings
   const sceneSettings = useMemo(
-    () => getEffectiveSceneSettings(document.scene, isDark),
-    [document.scene, isDark]
+    () => getEffectiveSceneSettings(docScene, isDark),
+    [docScene, isDark]
   );
 
   // Get environment preset name for drei (null = no environment map)

@@ -12,6 +12,38 @@ import { createClient } from "@supabase/supabase-js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+/**
+ * esbuild plugin: Disables R3F's reconciler profiling marks in dev mode.
+ *
+ * React 19's dev reconciler runs expensive profiling (prop serialization + performance.measure)
+ * for every fiber on every render, costing 10-15s on R3F scenes. The profiling is gated by a
+ * `Me` flag that checks for `console.timeStamp` and `performance.measure` support — always true
+ * in modern browsers. This patches the flag to `false`, skipping profiling while keeping all
+ * other dev reconciler functionality (warnings, getOwner, etc.) intact.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function r3fDisableProfilingPlugin(): any {
+  return {
+    name: "r3f-disable-profiling",
+    setup(build: any) {
+      build.onLoad(
+        { filter: /events-.*\.esm\.js$/ },
+        async (args: any) => {
+          if (!args.path.includes("@react-three/fiber")) return;
+          const fs = await import("fs");
+          let contents = await fs.promises.readFile(args.path, "utf8");
+          // Disable the profiling flag: Me = typeof console < "u" && ... → Me = false
+          const pattern = /(\w+)\s*=\s*typeof console\s*<\s*"u"\s*&&\s*typeof console\.timeStamp\s*==\s*"function"\s*&&\s*typeof performance\s*<\s*"u"\s*&&\s*typeof performance\.measure\s*==\s*"function"/;
+          if (pattern.test(contents)) {
+            contents = contents.replace(pattern, "$1 = false");
+            return { contents, loader: "js" };
+          }
+        },
+      );
+    },
+  };
+}
+
 /** Dev-only plugin that handles /api/generate requests */
 function devApiPlugin(env: Record<string, string>): Plugin {
   const SYSTEM_PROMPT =
@@ -151,25 +183,15 @@ export default defineConfig(({ mode }) => {
       VitePWA({
         registerType: "prompt",
         devOptions: {
-          enabled: true,
+          enabled: false,
         },
         includeAssets: ["fonts/**/*", "assets/**/*"],
         manifest: false,
         workbox: {
-          globPatterns: ["**/*.{js,css,html,woff,woff2,otf}"],
+          globPatterns: ["**/*.{js,css,html,woff,woff2,otf,wasm}"],
           globIgnores: ["**/ort-*.wasm"],
-          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+          maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
           runtimeCaching: [
-            {
-              urlPattern: /\.wasm$/,
-              handler: "CacheFirst",
-              options: { cacheName: "wasm-cache", expiration: { maxEntries: 20, maxAgeSeconds: 60 * 60 * 24 * 365 } },
-            },
-            {
-              urlPattern: /\.js$/,
-              handler: "StaleWhileRevalidate",
-              options: { cacheName: "js-cache", expiration: { maxEntries: 50, maxAgeSeconds: 60 * 60 * 24 * 30 } },
-            },
             {
               urlPattern: /\.(woff|woff2|otf|ttf)$/,
               handler: "CacheFirst",
@@ -189,8 +211,27 @@ export default defineConfig(({ mode }) => {
         "@": resolve(__dirname, "./src"),
       },
     },
+    worker: {
+      format: "es",
+      plugins: () => [wasm(), topLevelAwait()],
+    },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            three: ["three"],
+            "three-fiber": ["@react-three/fiber"],
+            "three-drei": ["@react-three/drei"],
+            "three-postprocessing": ["@react-three/postprocessing"],
+          },
+        },
+      },
+    },
     optimizeDeps: {
       exclude: ["@vcad/kernel-wasm"],
+      esbuildOptions: {
+        plugins: [r3fDisableProfilingPlugin()],
+      },
     },
     test: {
       environment: "happy-dom",
