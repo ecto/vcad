@@ -1,6 +1,5 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import posthog from "posthog-js";
 
 // Unregister service workers in dev mode to prevent stale cache issues
 if (import.meta.env.DEV && "serviceWorker" in navigator) {
@@ -27,24 +26,6 @@ import {
   saveCompleteDocument,
   updateDocument,
 } from "./lib/storage";
-
-// Initialize PostHog
-const posthogKey = import.meta.env.VITE_POSTHOG_KEY;
-const posthogHost = import.meta.env.VITE_POSTHOG_HOST || "https://us.i.posthog.com";
-
-if (posthogKey) {
-  posthog.init(posthogKey, {
-    api_host: posthogHost,
-    person_profiles: "identified_only",
-    capture_pageview: true,
-    capture_pageleave: true,
-    // Session recording
-    session_recording: {
-      maskAllInputs: false,
-      maskInputOptions: { password: true },
-    },
-  });
-}
 
 // Configure storage adapter for auth/sync
 const storageAdapter: StorageAdapter = {
@@ -106,3 +87,29 @@ createRoot(document.getElementById("root")!).render(
     </AuthProvider>
   </StrictMode>,
 );
+
+// Defer analytics until after first paint
+const initAnalytics = () => {
+  const posthogKey = import.meta.env.VITE_POSTHOG_KEY;
+  const posthogHost =
+    import.meta.env.VITE_POSTHOG_HOST || "https://us.i.posthog.com";
+  if (posthogKey) {
+    import("posthog-js").then(({ default: posthog }) => {
+      posthog.init(posthogKey, {
+        api_host: posthogHost,
+        person_profiles: "identified_only",
+        capture_pageview: true,
+        capture_pageleave: true,
+        session_recording: {
+          maskAllInputs: false,
+          maskInputOptions: { password: true },
+        },
+      });
+    });
+  }
+};
+if ("requestIdleCallback" in window) {
+  requestIdleCallback(initAnalytics);
+} else {
+  setTimeout(initAnalytics, 1000);
+}

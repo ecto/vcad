@@ -1,5 +1,4 @@
 import { Component, type ReactNode } from "react";
-import posthog from "posthog-js";
 
 interface Props {
   children: ReactNode;
@@ -24,12 +23,14 @@ export class ErrorBoundary extends Component<Props, State> {
     console.error("React error boundary caught error:", error);
     console.error("Component stack:", errorInfo.componentStack);
 
-    // Log to PostHog for analytics
-    posthog.capture("react_error_boundary", {
-      error_message: error.message,
-      error_name: error.name,
-      error_stack: error.stack?.slice(0, 2000), // Truncate for payload size
-      component_stack: errorInfo.componentStack?.slice(0, 2000),
+    // Log to PostHog for analytics (lazy — no-ops if not loaded yet)
+    import("posthog-js").then(({ default: posthog }) => {
+      posthog.capture("react_error_boundary", {
+        error_message: error.message,
+        error_name: error.name,
+        error_stack: error.stack?.slice(0, 2000),
+        component_stack: errorInfo.componentStack?.slice(0, 2000),
+      });
     });
   }
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Engine, useDocumentStore, useEngineStore, useSimulationStore, useUiStore, logger } from "@vcad/core";
 import { initializeGpu, initializeRayTracer } from "@vcad/engine";
+import type { Document } from "@vcad/ir";
 
 // Module-level engine instance to survive HMR
 let globalEngine: Engine | null = null;
@@ -9,6 +10,29 @@ let engineInitPromise: Promise<Engine> | null = null;
 
 /** Debounce timeout for full-quality re-render after drag ends */
 let refinementTimeout: ReturnType<typeof setTimeout> | null = null;
+
+/** Monotonically increasing eval request ID for cancellation of stale results */
+let evalGeneration = 0;
+
+/** Schedule deferred clash detection via requestIdleCallback (or setTimeout fallback). */
+function scheduleDeferredClash(engine: Engine): void {
+  const run = () => {
+    try {
+      const doc = useDocumentStore.getState().document;
+      if (doc.roots.length === 0) return;
+      const scene = engine.evaluate(doc, { skipClashDetection: false });
+      useEngineStore.getState().setScene(scene);
+    } catch (e) {
+      useEngineStore.getState().setError(String(e));
+    }
+  };
+
+  if (typeof requestIdleCallback === "function") {
+    requestIdleCallback(run);
+  } else {
+    setTimeout(run, 200);
+  }
+}
 
 export function useEngine() {
   const engineRef = useRef<Engine | null>(globalEngine);
@@ -23,19 +47,23 @@ export function useEngine() {
       useEngineStore.getState().setEngineReady(true);
       useEngineStore.getState().setLoading(false);
 
-      // Re-evaluate the document to restore the scene
+      // Re-evaluate the document to restore the scene (async, off main thread)
       const doc = useDocumentStore.getState().document;
       if (doc.roots.length > 0) {
-        try {
-          useEngineStore.getState().setScene(globalEngine.evaluate(doc));
-        } catch (e) {
+        const gen = ++evalGeneration;
+        globalEngine.evaluateAsync(doc, { skipClashDetection: true }).then((scene) => {
+          if (gen !== evalGeneration) return; // stale
+          useEngineStore.getState().setScene(scene);
+          scheduleDeferredClash(globalEngine!);
+        }).catch((e) => {
           useEngineStore.getState().setError(String(e));
-        }
+        });
       }
       return;
     }
 
     let cancelled = false;
+    let initDocSub: (() => void) | null = null;
     useEngineStore.getState().setLoading(true);
     performance.mark("engine-init-start");
 
@@ -70,14 +98,32 @@ export function useEngine() {
             logger.warn("gpu", `Failed to initialize: ${e}`);
           });
 
-        // Evaluate initial document
+        // Evaluate initial document — skip clashes for fast first paint.
+        // The document may not have loaded from IDB yet (race with App initDocument),
+        // so if roots are empty, subscribe for the first non-empty document.
+        const evalInitialDoc = (doc: Document) => {
+          const gen = ++evalGeneration;
+          engine.evaluateAsync(doc, { skipClashDetection: true }).then((scene) => {
+            if (gen !== evalGeneration) return; // stale
+            useEngineStore.getState().setScene(scene);
+            scheduleDeferredClash(engine);
+          }).catch((e) => {
+            useEngineStore.getState().setError(String(e));
+          });
+        };
+
         const doc = useDocumentStore.getState().document;
         if (doc.roots.length > 0) {
-          try {
-            useEngineStore.getState().setScene(engine.evaluate(doc));
-          } catch (e) {
-            useEngineStore.getState().setError(String(e));
-          }
+          evalInitialDoc(doc);
+        } else {
+          // Watch for document load from IDB
+          initDocSub = useDocumentStore.subscribe((state) => {
+            if (state.document.roots.length > 0) {
+              initDocSub?.();
+              initDocSub = null;
+              evalInitialDoc(state.document);
+            }
+          });
         }
       })
       .catch((e) => {
@@ -86,6 +132,8 @@ export function useEngine() {
 
     return () => {
       cancelled = true;
+      initDocSub?.();
+      initDocSub = null;
     };
   }, []); // Empty deps - only run on initial mount
 
@@ -119,58 +167,55 @@ export function useEngine() {
 
         // Skip re-evaluation for empty documents if we already have a scene
         // (preserves imported STL/STEP meshes that bypass the document model)
-        // Check must be inside RAF so it runs after setScene() has been called
         if (state.document.roots.length === 0) {
           const currentScene = useEngineStore.getState().scene;
-          // Only preserve if document was already empty (STL/STEP import case)
-          // NOT if user just deleted all features (transition from non-empty → empty)
           const wasAlreadyEmpty = prevState?.document.roots.length === 0;
           if (currentScene && currentScene.parts.length > 0 && wasAlreadyEmpty) {
             return;
           }
         }
 
-        try {
-          // During parameter dragging: skip clash detection for faster updates
-          const isDragging = state.isParameterDragging;
+        // During parameter dragging: skip clash detection for faster updates
+        const isDragging = state.isParameterDragging;
 
-          // Get dirty nodes and clear them
-          const dirtyNodes = state.dirtyNodeIds;
+        // Get dirty nodes and clear them
+        const dirtyNodes = state.dirtyNodeIds;
 
-          // Invalidate caches for dirty nodes (if any)
-          if (dirtyNodes.size > 0) {
-            engine.invalidateNodes(dirtyNodes);
-            // Clear dirty nodes after invalidation
-            useDocumentStore.getState().clearDirtyNodes();
-          }
+        // Invalidate caches for dirty nodes (if any)
+        if (dirtyNodes.size > 0) {
+          engine.invalidateNodes(dirtyNodes);
+          useDocumentStore.getState().clearDirtyNodes();
+        }
 
-          // Evaluate with optimizations during dragging
-          const scene = engine.evaluate(state.document, {
-            skipClashDetection: isDragging,
-          });
+        // Async evaluation — off main thread when worker is available
+        const gen = ++evalGeneration;
+        engine.evaluateAsync(state.document, {
+          skipClashDetection: isDragging,
+        }).then((scene) => {
+          if (gen !== evalGeneration) return; // stale — newer eval superseded this one
           useEngineStore.getState().setScene(scene);
-
-          // If dragging just ended, schedule a refinement pass
-          if (prevState?.isParameterDragging && !isDragging) {
-            if (refinementTimeout) {
-              clearTimeout(refinementTimeout);
-            }
-            refinementTimeout = setTimeout(() => {
-              // Full quality re-evaluation with clash detection
-              try {
-                const doc = useDocumentStore.getState().document;
-                const refinedScene = engine.evaluate(doc, {
-                  skipClashDetection: false,
-                });
-                useEngineStore.getState().setScene(refinedScene);
-              } catch (e) {
-                useEngineStore.getState().setError(String(e));
-              }
-              refinementTimeout = null;
-            }, 100);
-          }
-        } catch (e) {
+        }).catch((e) => {
+          if (gen !== evalGeneration) return;
           useEngineStore.getState().setError(String(e));
+        });
+
+        // If dragging just ended, schedule a refinement pass with clash detection
+        if (prevState?.isParameterDragging && !isDragging) {
+          if (refinementTimeout) {
+            clearTimeout(refinementTimeout);
+          }
+          refinementTimeout = setTimeout(() => {
+            const refGen = ++evalGeneration;
+            const doc = useDocumentStore.getState().document;
+            engine.evaluateAsync(doc, { skipClashDetection: false }).then((refinedScene) => {
+              if (refGen !== evalGeneration) return;
+              useEngineStore.getState().setScene(refinedScene);
+            }).catch((e) => {
+              if (refGen !== evalGeneration) return;
+              useEngineStore.getState().setError(String(e));
+            });
+            refinementTimeout = null;
+          }, 100);
         }
       });
     });
