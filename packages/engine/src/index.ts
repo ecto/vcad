@@ -12,6 +12,8 @@ export type {
   EvaluatedPartDef,
   EvaluatedInstance,
   EvaluatedScene,
+  EvalTimingData,
+  NodeTimingData,
 } from "./mesh.js";
 
 export {
@@ -359,8 +361,35 @@ export class Engine {
         worker.removeEventListener("message", onMessage);
 
         if (e.data.type === "result") {
-          // Scene arrives with typed arrays already transferred (zero-copy)
-          resolve(e.data.scene as EvaluatedScene);
+          const scene = e.data.scene as EvaluatedScene;
+          // Log timing if available
+          const timing = scene.timing;
+          if (timing) {
+            const parts: string[] = [`${timing.total_ms.toFixed(0)}ms`];
+            // Find the slowest node op
+            const entries = Object.values(timing.nodes);
+            const slowest = entries.reduce(
+              (a, b) => (b.eval_ms > a.eval_ms ? b : a),
+              entries[0],
+            );
+            if (slowest) {
+              parts.push(
+                `${slowest.op.toLowerCase()}:${slowest.eval_ms.toFixed(0)}ms`,
+              );
+            }
+            if (timing.tessellate_ms > 0.5) {
+              parts.push(`tess:${timing.tessellate_ms.toFixed(0)}ms`);
+            }
+            if (timing.serialize_ms != null && timing.serialize_ms > 0.5) {
+              parts.push(`ser:${timing.serialize_ms.toFixed(0)}ms`);
+            }
+            const workerMs = e.data.workerTotalMs as number | undefined;
+            if (workerMs != null) {
+              parts.push(`worker:${workerMs.toFixed(0)}ms`);
+            }
+            console.debug(`[ENGINE] Eval ${parts.join(" | ")}`);
+          }
+          resolve(scene);
         } else if (e.data.type === "error") {
           reject(new Error(e.data.message));
         }

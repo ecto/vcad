@@ -106,11 +106,22 @@ pub fn sweep(
     // Get profile vertices in 2D (from tessellated profile)
     let profile_verts_2d = tessellated_profile.vertices_2d();
 
+    let quantize_pt = |p: Point3| -> [i64; 3] {
+        [
+            (p.x * 1e9).round() as i64,
+            (p.y * 1e9).round() as i64,
+            (p.z * 1e9).round() as i64,
+        ]
+    };
+
     let mut topo = Topology::new();
     let mut geom = GeometryStore::new();
 
-    // Build vertex grid: [path_sample][profile_vertex]
+    // Build vertex grid with parallel point/key caches to avoid slotmap lookups
+    // in the hot lateral-face loop.
     let mut vertex_grid: Vec<Vec<VertexId>> = Vec::with_capacity(n_path_samples);
+    let mut point_grid: Vec<Vec<Point3>> = Vec::with_capacity(n_path_samples);
+    let mut key_grid: Vec<Vec<[i64; 3]>> = Vec::with_capacity(n_path_samples);
 
     for (path_idx, frame) in frames.iter().enumerate() {
         let t = path_idx as f64 / (n_path_samples - 1) as f64;
@@ -122,25 +133,25 @@ pub fn sweep(
         let twisted_frame = frame.with_twist(twist);
 
         let mut ring_verts = Vec::with_capacity(n_profile_verts);
+        let mut ring_points = Vec::with_capacity(n_profile_verts);
+        let mut ring_keys = Vec::with_capacity(n_profile_verts);
         for p2d in &profile_verts_2d {
             let p3d = twisted_frame.transform_point_scaled(*p2d, scale);
             let v_id = topo.add_vertex(p3d);
+            ring_keys.push(quantize_pt(p3d));
+            ring_points.push(p3d);
             ring_verts.push(v_id);
         }
         vertex_grid.push(ring_verts);
+        point_grid.push(ring_points);
+        key_grid.push(ring_keys);
     }
 
-    // Build faces
-    let mut all_faces = Vec::new();
-    let mut he_map: HashMap<([i64; 3], [i64; 3]), HalfEdgeId> = HashMap::new();
-
-    let quantize_pt = |p: Point3| -> [i64; 3] {
-        [
-            (p.x * 1e9).round() as i64,
-            (p.y * 1e9).round() as i64,
-            (p.z * 1e9).round() as i64,
-        ]
-    };
+    // Build faces — pre-allocate with exact capacity
+    let n_lateral = n_path_segments * n_profile_verts;
+    let mut all_faces = Vec::with_capacity(n_lateral + 2);
+    let mut he_map: HashMap<([i64; 3], [i64; 3]), HalfEdgeId> =
+        HashMap::with_capacity(n_lateral * 4 + n_profile_verts * 2);
 
     // Build lateral faces (one quad per profile edge × path segment)
     for path_idx in 0..n_path_segments {
@@ -155,10 +166,17 @@ pub fn sweep(
             let v2 = vertex_grid[path_idx + 1][next_profile_idx];
             let v3 = vertex_grid[path_idx + 1][profile_idx];
 
-            let p0 = topo.vertices[v0].point;
-            let p1 = topo.vertices[v1].point;
-            let p2 = topo.vertices[v2].point;
-            let p3 = topo.vertices[v3].point;
+            // Use cached points instead of slotmap indirection
+            let p0 = point_grid[path_idx][profile_idx];
+            let p1 = point_grid[path_idx][next_profile_idx];
+            let p2 = point_grid[path_idx + 1][next_profile_idx];
+            let p3 = point_grid[path_idx + 1][profile_idx];
+
+            // Use pre-computed quantized keys
+            let k0 = key_grid[path_idx][profile_idx];
+            let k1 = key_grid[path_idx][next_profile_idx];
+            let k2 = key_grid[path_idx + 1][next_profile_idx];
+            let k3 = key_grid[path_idx + 1][profile_idx];
 
             // Compute radial normals from path center to each vertex for smooth shading
             let center0 = frames[path_idx].position;
@@ -194,14 +212,11 @@ pub fn sweep(
             let face_id = topo.add_face(loop_id, surf_idx, Orientation::Forward);
             all_faces.push(face_id);
 
-            // Record half-edges for twin pairing
-            for he_id in [he0, he1, he2, he3] {
-                let he = &topo.half_edges[he_id];
-                let origin = topo.vertices[he.origin].point;
-                let next = he.next.unwrap();
-                let dest = topo.vertices[topo.half_edges[next].origin].point;
-                he_map.insert((quantize_pt(origin), quantize_pt(dest)), he_id);
-            }
+            // Record half-edges for twin pairing using pre-computed keys
+            he_map.insert((k0, k1), he0);
+            he_map.insert((k1, k2), he1);
+            he_map.insert((k2, k3), he2);
+            he_map.insert((k3, k0), he3);
         }
     }
 
@@ -301,17 +316,13 @@ where
 }
 
 fn pair_twin_half_edges(topo: &mut Topology, he_map: &HashMap<([i64; 3], [i64; 3]), HalfEdgeId>) {
-    let mut paired = std::collections::HashSet::new();
-
     for (&(origin_key, dest_key), &he_id) in he_map {
-        if paired.contains(&(dest_key, origin_key)) {
+        if topo.half_edges[he_id].twin.is_some() {
             continue;
         }
-
         if let Some(&twin_id) = he_map.get(&(dest_key, origin_key)) {
-            if topo.half_edges[he_id].twin.is_none() && topo.half_edges[twin_id].twin.is_none() {
+            if topo.half_edges[twin_id].twin.is_none() {
                 topo.add_edge(he_id, twin_id);
-                paired.insert((origin_key, dest_key));
             }
         }
     }

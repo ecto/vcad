@@ -959,6 +959,7 @@ impl App {
 pub fn evaluate_document(doc: &Document) -> Result<Vec<EvaluatedMesh>> {
     let opts = vcad_eval::EvalOptions {
         skip_clash_detection: true,
+        ..Default::default()
     };
     let scene = vcad_eval::evaluate_document(doc, &opts)
         .map_err(|e| anyhow::anyhow!("{}", e))?;

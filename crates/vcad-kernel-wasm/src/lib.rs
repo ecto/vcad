@@ -3889,6 +3889,26 @@ pub use ecad_wasm::*;
 // Full document evaluation
 // =============================================================================
 
+// =============================================================================
+// WASM Clock for timing instrumentation
+// =============================================================================
+
+#[wasm_bindgen]
+extern "C" {
+    /// Binding to `performance.now()` — works in both main thread and web workers.
+    #[wasm_bindgen(js_namespace = performance, js_name = now)]
+    fn performance_now() -> f64;
+}
+
+/// Clock implementation backed by `performance.now()`.
+struct WasmClock;
+
+impl vcad_eval::Clock for WasmClock {
+    fn now_ms(&self) -> f64 {
+        performance_now()
+    }
+}
+
 /// Evaluate a full vcad document JSON into a serialized EvaluatedScene.
 ///
 /// This is the canonical Rust-side evaluator that handles all CsgOp variants
@@ -3905,20 +3925,45 @@ pub use ecad_wasm::*;
 /// A JsValue containing the serialized EvaluatedScene.
 #[wasm_bindgen(js_name = evaluateDocument)]
 pub fn evaluate_document(doc_json: &str, skip_clash_detection: bool) -> Result<JsValue, JsError> {
+    let t_parse = performance_now();
     let doc: vcad_ir::Document = serde_json::from_str(doc_json)
         .map_err(|e| JsError::new(&format!("Failed to parse document: {}", e)))?;
+    let parse_ms = performance_now() - t_parse;
 
     let options = vcad_eval::EvalOptions {
         skip_clash_detection,
+        clock: Some(Box::new(WasmClock)),
     };
 
-    let scene = vcad_eval::evaluate_document(&doc, &options)
+    let mut scene = vcad_eval::evaluate_document(&doc, &options)
         .map_err(|e| JsError::new(&format!("Evaluation error: {}", e)))?;
 
+    // Inject parse_ms into timing
+    if let Some(ref mut timing) = scene.timing {
+        timing.parse_ms = Some(parse_ms);
+    }
+
     // Serialize the scene to a JS-friendly format
+    let t_ser = performance_now();
     let result = EvaluatedSceneJs::from(scene);
-    serde_wasm_bindgen::to_value(&result)
-        .map_err(|e| JsError::new(&format!("Serialization error: {}", e)))
+    let js_val = serde_wasm_bindgen::to_value(&result)
+        .map_err(|e| JsError::new(&format!("Serialization error: {}", e)))?;
+    let _serialize_ms = performance_now() - t_ser;
+
+    // We can't inject serialize_ms into the already-serialized JsValue easily,
+    // so we set it on the EvaluatedSceneJs before serialization in a second pass.
+    // Instead, we'll use js_sys to set the property directly.
+    if let Ok(timing_val) = js_sys::Reflect::get(&js_val, &"timing".into()) {
+        if !timing_val.is_undefined() && !timing_val.is_null() {
+            let _ = js_sys::Reflect::set(
+                &timing_val,
+                &"serialize_ms".into(),
+                &JsValue::from_f64(_serialize_ms),
+            );
+        }
+    }
+
+    Ok(js_val)
 }
 
 /// Evaluate a loon source string and return a JSON-serialized vcad Document.
@@ -3944,6 +3989,8 @@ struct EvaluatedSceneJs {
     #[serde(skip_serializing_if = "Option::is_none")]
     instances: Option<Vec<vcad_eval::EvaluatedInstance>>,
     clashes: Vec<vcad_eval::EvaluatedMesh>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    timing: Option<vcad_eval::EvalTiming>,
 }
 
 #[derive(serde::Serialize)]
@@ -3966,6 +4013,7 @@ impl From<vcad_eval::EvaluatedScene> for EvaluatedSceneJs {
             part_defs: scene.part_defs,
             instances: scene.instances,
             clashes: scene.clashes,
+            timing: scene.timing,
         }
     }
 }

@@ -35,6 +35,34 @@ export interface EvaluatedInstance {
   };
 }
 
+/** Per-node timing from the kernel evaluator. */
+export interface NodeTimingData {
+  /** Operation name (e.g. "Sweep", "Union"). */
+  op: string;
+  /** Kernel operation time (ms). */
+  eval_ms: number;
+  /** Tessellation time for this node (ms). */
+  mesh_ms: number;
+}
+
+/** Timing breakdown for a document evaluation. */
+export interface EvalTimingData {
+  /** Total evaluation time inside the kernel (ms). */
+  total_ms: number;
+  /** JSON parse time at WASM boundary (ms). */
+  parse_ms?: number;
+  /** serde_wasm_bindgen serialization time (ms). */
+  serialize_ms?: number;
+  /** Total tessellation time across all nodes (ms). */
+  tessellate_ms: number;
+  /** Clash detection time (ms). */
+  clash_ms: number;
+  /** Assembly evaluation time (ms). */
+  assembly_ms: number;
+  /** Per-node timing keyed by node ID. */
+  nodes: Record<string, NodeTimingData>;
+}
+
 /** Result of evaluating a full document — one part per scene root. */
 export interface EvaluatedScene {
   parts: EvaluatedPart[];
@@ -44,4 +72,6 @@ export interface EvaluatedScene {
   instances?: EvaluatedInstance[];
   /** Meshes representing intersections between overlapping parts (for clash visualization). */
   clashes: TriangleMesh[];
+  /** Timing breakdown (present when WASM evaluator provides it). */
+  timing?: EvalTimingData;
 }

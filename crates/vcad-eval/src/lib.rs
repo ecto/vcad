@@ -20,19 +20,64 @@ pub mod convert;
 pub mod evaluate;
 pub mod kinematics;
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
-use vcad_ir::Transform3D;
+use vcad_ir::{NodeId, Transform3D};
 use vcad_kernel::Solid;
 
 // Re-export main entry points
 pub use evaluate::{evaluate_document, evaluate_node};
 pub use kinematics::solve_forward_kinematics;
 
+/// Platform-agnostic clock for timing instrumentation.
+///
+/// Implement this trait to provide millisecond-precision timing.
+/// In WASM, use `performance.now()`; in native, use `std::time::Instant`.
+pub trait Clock: Send + Sync {
+    /// Returns the current time in milliseconds (monotonic).
+    fn now_ms(&self) -> f64;
+}
+
+/// Timing data for a single evaluated node.
+#[derive(Debug, Clone, Serialize)]
+pub struct NodeTiming {
+    /// Operation name (e.g. "Sweep", "Union").
+    pub op: String,
+    /// Time spent in the kernel operation (ms).
+    pub eval_ms: f64,
+    /// Time spent tessellating this node (ms).
+    pub mesh_ms: f64,
+}
+
+/// Timing breakdown for a full document evaluation.
+#[derive(Debug, Clone, Serialize)]
+pub struct EvalTiming {
+    /// Total evaluation time (ms).
+    pub total_ms: f64,
+    /// JSON parse time at the WASM boundary (ms). Only set in WASM.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parse_ms: Option<f64>,
+    /// serde_wasm_bindgen serialization time (ms). Only set in WASM.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub serialize_ms: Option<f64>,
+    /// Total tessellation time across all nodes (ms).
+    pub tessellate_ms: f64,
+    /// Clash detection time (ms).
+    pub clash_ms: f64,
+    /// Assembly evaluation time (ms).
+    pub assembly_ms: f64,
+    /// Per-node timing keyed by NodeId.
+    pub nodes: HashMap<NodeId, NodeTiming>,
+}
+
 /// Options for document evaluation.
-#[derive(Debug, Clone, Default)]
+#[derive(Default)]
 pub struct EvalOptions {
     /// Skip O(n^2) clash detection for faster parametric editing.
     pub skip_clash_detection: bool,
+    /// Optional clock for timing instrumentation. When `None`, timing is zero-cost.
+    pub clock: Option<Box<dyn Clock>>,
 }
 
 /// Errors that can occur during evaluation.
@@ -136,6 +181,8 @@ pub struct EvaluatedScene {
     pub instances: Option<Vec<EvaluatedInstance>>,
     /// Clash meshes (intersections between overlapping parts).
     pub clashes: Vec<EvaluatedMesh>,
+    /// Timing breakdown (populated when a `Clock` is provided in `EvalOptions`).
+    pub timing: Option<EvalTiming>,
 }
 
 #[cfg(test)]

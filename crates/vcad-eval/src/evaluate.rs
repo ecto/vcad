@@ -16,8 +16,8 @@ use vcad_kernel_text::{FontRegistry, TextAlignment};
 use crate::convert::{ir_sketch_to_profile, to_point3, to_vec3};
 use crate::kinematics::solve_forward_kinematics;
 use crate::{
-    EvalError, EvalOptions, EvaluatedInstance, EvaluatedMesh, EvaluatedPart, EvaluatedPartDef,
-    EvaluatedScene,
+    Clock, EvalError, EvalOptions, EvalTiming, EvaluatedInstance, EvaluatedMesh, EvaluatedPart,
+    EvaluatedPartDef, EvaluatedScene, NodeTiming,
 };
 
 /// Evaluate a full document into an EvaluatedScene.
@@ -25,7 +25,12 @@ pub fn evaluate_document(
     doc: &Document,
     options: &EvalOptions,
 ) -> Result<EvaluatedScene, EvalError> {
+    let clock = options.clock.as_deref();
+    let t_start = clock.map(|c| c.now_ms());
+
     let mut cache: HashMap<NodeId, Option<Solid>> = HashMap::new();
+    let mut node_timings: HashMap<NodeId, NodeTiming> = HashMap::new();
+    let mut tessellate_ms: f64 = 0.0;
 
     // Evaluate visible roots
     let mut parts = Vec::new();
@@ -48,10 +53,24 @@ pub fn evaluate_document(
             continue;
         }
 
-        let solid = evaluate_node(entry.root, &doc.nodes, &mut cache)?;
+        let solid = evaluate_node_timed(
+            entry.root,
+            &doc.nodes,
+            &mut cache,
+            clock,
+            &mut node_timings,
+        )?;
         match solid {
             Some(ref s) => {
+                let t_mesh = clock.map(|c| c.now_ms());
                 let tri = s.to_mesh(32);
+                if let Some(t0) = t_mesh {
+                    let ms = clock.unwrap().now_ms() - t0;
+                    tessellate_ms += ms;
+                    if let Some(nt) = node_timings.get_mut(&entry.root) {
+                        nt.mesh_ms = ms;
+                    }
+                }
                 let mesh = tri_to_evaluated(&tri);
                 parts.push(EvaluatedPart {
                     mesh,
@@ -74,6 +93,7 @@ pub fn evaluate_document(
     // Assembly mode
     let mut part_defs = None;
     let mut instances = None;
+    let t_assembly = clock.map(|c| c.now_ms());
 
     if let (Some(pd_map), Some(inst_list)) = (&doc.part_defs, &doc.instances) {
         if !pd_map.is_empty() && !inst_list.is_empty() {
@@ -83,9 +103,22 @@ pub fn evaluate_document(
             let mut part_def_meshes: HashMap<String, EvaluatedMesh> = HashMap::new();
 
             for (id, part_def) in pd_map {
-                let solid = evaluate_node(part_def.root, &doc.nodes, &mut cache)?;
+                let solid = evaluate_node_timed(
+                    part_def.root,
+                    &doc.nodes,
+                    &mut cache,
+                    clock,
+                    &mut node_timings,
+                )?;
                 let mesh = match solid {
-                    Some(s) => tri_to_evaluated(&s.to_mesh(32)),
+                    Some(s) => {
+                        let t_mesh = clock.map(|c| c.now_ms());
+                        let tri = s.to_mesh(32);
+                        if let Some(t0) = t_mesh {
+                            tessellate_ms += clock.unwrap().now_ms() - t0;
+                        }
+                        tri_to_evaluated(&tri)
+                    }
                     None => EvaluatedMesh::empty(),
                 };
                 part_def_meshes.insert(id.clone(), mesh.clone());
@@ -126,8 +159,14 @@ pub fn evaluate_document(
         }
     }
 
+    let assembly_ms = match (t_assembly, clock) {
+        (Some(t0), Some(c)) => c.now_ms() - t0,
+        _ => 0.0,
+    };
+
     // Clash detection
     let mut clashes = Vec::new();
+    let t_clash = clock.map(|c| c.now_ms());
     if !options.skip_clash_detection {
         for i in 0..solids.len() {
             for j in (i + 1)..solids.len() {
@@ -143,12 +182,27 @@ pub fn evaluate_document(
             }
         }
     }
+    let clash_ms = match (t_clash, clock) {
+        (Some(t0), Some(c)) => c.now_ms() - t0,
+        _ => 0.0,
+    };
+
+    let timing = t_start.map(|t0| EvalTiming {
+        total_ms: clock.unwrap().now_ms() - t0,
+        parse_ms: None,
+        serialize_ms: None,
+        tessellate_ms,
+        clash_ms,
+        assembly_ms,
+        nodes: node_timings,
+    });
 
     Ok(EvaluatedScene {
         parts,
         part_defs,
         instances,
         clashes,
+        timing,
     })
 }
 
@@ -165,6 +219,38 @@ pub fn evaluate_node(
     let node = nodes.get(&node_id).ok_or(EvalError::MissingNode(node_id))?;
 
     let result = evaluate_op(&node.op, nodes, cache)?;
+    cache.insert(node_id, result.clone());
+    Ok(result)
+}
+
+/// Recursively evaluate a node with timing instrumentation.
+fn evaluate_node_timed(
+    node_id: NodeId,
+    nodes: &HashMap<NodeId, vcad_ir::Node>,
+    cache: &mut HashMap<NodeId, Option<Solid>>,
+    clock: Option<&dyn Clock>,
+    timings: &mut HashMap<NodeId, NodeTiming>,
+) -> Result<Option<Solid>, EvalError> {
+    if let Some(cached) = cache.get(&node_id) {
+        return Ok(cached.clone());
+    }
+
+    let node = nodes.get(&node_id).ok_or(EvalError::MissingNode(node_id))?;
+
+    let t0 = clock.map(|c| c.now_ms());
+    let result = evaluate_op(&node.op, nodes, cache)?;
+    if let Some(t0) = t0 {
+        let eval_ms = clock.unwrap().now_ms() - t0;
+        timings.insert(
+            node_id,
+            NodeTiming {
+                op: op_name(&node.op),
+                eval_ms,
+                mesh_ms: 0.0, // filled in by caller during tessellation
+            },
+        );
+    }
+
     cache.insert(node_id, result.clone());
     Ok(result)
 }
@@ -696,6 +782,37 @@ fn transform_imported_mesh(data: &ImportedMeshData) -> EvaluatedMesh {
         indices: data.indices.clone(),
         normals,
     }
+}
+
+/// Get a short human-readable name for a CsgOp variant.
+fn op_name(op: &CsgOp) -> String {
+    match op {
+        CsgOp::Cube { .. } => "Cube",
+        CsgOp::Cylinder { .. } => "Cylinder",
+        CsgOp::Sphere { .. } => "Sphere",
+        CsgOp::Cone { .. } => "Cone",
+        CsgOp::Empty => "Empty",
+        CsgOp::Union { .. } => "Union",
+        CsgOp::Difference { .. } => "Difference",
+        CsgOp::Intersection { .. } => "Intersection",
+        CsgOp::Translate { .. } => "Translate",
+        CsgOp::Rotate { .. } => "Rotate",
+        CsgOp::Scale { .. } => "Scale",
+        CsgOp::LinearPattern { .. } => "LinearPattern",
+        CsgOp::CircularPattern { .. } => "CircularPattern",
+        CsgOp::Shell { .. } => "Shell",
+        CsgOp::Fillet { .. } => "Fillet",
+        CsgOp::Chamfer { .. } => "Chamfer",
+        CsgOp::Sketch2D { .. } => "Sketch2D",
+        CsgOp::Text2D { .. } => "Text2D",
+        CsgOp::Extrude { .. } => "Extrude",
+        CsgOp::Revolve { .. } => "Revolve",
+        CsgOp::Sweep { .. } => "Sweep",
+        CsgOp::Loft { .. } => "Loft",
+        CsgOp::ImportedMesh { .. } => "ImportedMesh",
+        CsgOp::StepImport { .. } => "StepImport",
+    }
+    .to_string()
 }
 
 /// Convert kernel TriangleMesh to EvaluatedMesh.
