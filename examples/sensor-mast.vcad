@@ -1,0 +1,97 @@
+# vcad 0.2
+# Sensor Mast Assembly — Z-up coordinate system
+
+# Materials
+M aluminum 0.91 0.92 0.93 1.0 0.4 2700 0.6
+M extrusion 0.25 0.25 0.27 1.0 0.3 2700 0.5
+M rubber 0.1 0.1 0.1 0.0 0.9 1100 0.8
+M sensor 0.2 0.5 0.8 0.0 0.5
+
+# Geometry — Base Plate (80x80x5mm, Z is thickness)
+C 80 80 5 "Base Plate Body"
+C 20 20 2 "Pocket Tool"
+T 1 30 30 3 "Pocket Positioned"
+D 0 2 "Base with Pocket"
+Y 2.5 10 "M5 Hole"
+T 4 10 10 -1 "Corner Hole 1"
+D 3 5
+T 4 70 10 -1 "Corner Hole 2"
+D 6 7
+T 4 10 70 -1 "Corner Hole 3"
+D 8 9
+T 4 70 70 -1 "Corner Hole 4"
+D 10 11 "Base Plate"
+
+# Geometry — Vertical Mast (20x20x200mm, Z is height)
+C 20 20 200 "Vertical Mast"
+
+# Geometry — Gimbal Bracket (L-shaped)
+C 60 3 40 "Bracket Vertical Face"
+C 40 40 3 "Bracket Shelf"
+T 15 10 3 0 "Shelf Positioned"
+U 14 16 "Gimbal Bracket"
+
+# Geometry — Lidar Mount Plate (100x100x4mm with cable hole and M3 bolt circle)
+C 100 100 4 "Lidar Plate Body"
+Y 6 10 "Cable Passthrough"
+T 19 50 50 -1 "Cable Hole Positioned"
+D 18 20 "Plate with Cable Hole"
+Y 1.5 10 "M3 Hole"
+T 22 90 50 -1 "M3 Hole 1"
+D 21 23
+T 22 10 50 -1 "M3 Hole 2"
+D 24 25
+T 22 50 90 -1 "M3 Hole 3"
+D 26 27
+T 22 50 10 -1 "M3 Hole 4"
+D 28 29 "Lidar Mount Plate"
+
+# Geometry — Vibration Isolator (20x20x10mm)
+C 20 20 10 "Vibration Isolator"
+
+# Geometry — Placeholder Volumes
+Y 49 77 "Lidar Volume"
+C 60 60 80 "Camera Volume"
+
+# Scene roots (hidden — assembly instances handle rendering)
+ROOT 12 aluminum hidden
+ROOT 13 extrusion hidden
+ROOT 17 aluminum hidden
+ROOT 30 aluminum hidden
+ROOT 31 rubber hidden
+ROOT 32 sensor hidden
+ROOT 33 sensor hidden
+
+# Parts
+PDEF base_plate "Base Plate" 12 aluminum
+PDEF mast "Vertical Mast" 13 extrusion
+PDEF gimbal_bracket "Gimbal Bracket" 17 aluminum
+PDEF lidar_plate "Lidar Mount Plate" 30 aluminum
+PDEF isolator "Vibration Isolator" 31 rubber
+PDEF lidar_placeholder "Livox Mid-360" 32 sensor
+PDEF camera_placeholder "reCamera Gimbal" 33 sensor
+
+# Instances — identity transforms; joints handle positioning
+INST base_plate_inst base_plate "Base Plate" 0 0 0 0 0 0 1 1 1
+INST mast_inst mast "Vertical Mast" 0 0 0 0 0 0 1 1 1
+INST gimbal_bracket_inst gimbal_bracket "Gimbal Bracket" 0 0 0 0 0 0 1 1 1
+INST camera_placeholder_inst camera_placeholder "reCamera Gimbal" 0 0 0 0 0 0 1 1 1
+INST isolator_inst isolator "Vibration Isolator" 0 0 0 0 0 0 1 1 1
+INST lidar_plate_inst lidar_plate "Lidar Mount Plate" 0 0 0 0 0 0 1 1 1
+INST lidar_placeholder_inst lidar_placeholder "Livox Mid-360" 0 0 0 0 0 0 1 1 1
+
+# Joints — parentAnchor places child origin in parent's local frame
+# Mast on base plate pocket center: (30, 30, 5)
+JFIX j_mast_base base_plate_inst mast_inst 30 30 5 0 0 0
+# Bracket on mast at 60mm height, front face
+JFIX j_bracket_mast mast_inst gimbal_bracket_inst -20 20 60 0 0 0
+# Camera on bracket shelf
+JFIX j_camera_bracket gimbal_bracket_inst camera_placeholder_inst 0 -7 3 0 0 0
+# Isolator on mast top: (0, 0, 200)
+JFIX j_isolator_mast mast_inst isolator_inst 0 0 200 0 0 0
+# Lidar plate on isolator: (-40, -40, 10)
+JFIX j_plate_isolator isolator_inst lidar_plate_inst -40 -40 10 0 0 0
+# Lidar on plate center: (50, 50, 4)
+JFIX j_lidar_plate lidar_plate_inst lidar_placeholder_inst 50 50 4 0 0 0
+
+GROUND base_plate_inst

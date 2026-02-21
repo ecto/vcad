@@ -153,13 +153,13 @@ function computeLevelQuaternion(
   // Forward direction (camera looks down -Z in its local space)
   _tempForward.subVectors(target, eye).normalize();
 
-  // Use world Y as reference up, unless looking nearly straight up/down
-  const worldUp = new Vector3(0, 1, 0);
+  // Use world Z as reference up (Z-up convention), unless looking nearly straight up/down
+  const worldUp = new Vector3(0, 0, 1);
   const dot = Math.abs(_tempForward.dot(worldUp));
 
   if (dot > 0.999) {
-    // Looking straight up or down - use world Z as the reference
-    _tempRight.crossVectors(new Vector3(0, 0, 1), _tempForward).normalize();
+    // Looking straight up or down Z - use world Y as the reference
+    _tempRight.crossVectors(new Vector3(0, 1, 0), _tempForward).normalize();
   } else {
     // Normal case: right = forward × worldUp
     _tempRight.crossVectors(_tempForward, worldUp).normalize();
@@ -205,6 +205,12 @@ export function ViewportContent() {
   const { camera, invalidate } = useThree();
   const { isDark } = useTheme();
 
+  // Set camera up vector for Z-up convention
+  useEffect(() => {
+    camera.up.set(0, 0, 1);
+    camera.lookAt(0, 0, 0);
+  }, [camera]);
+
   // Camera settings from store
   const cameraSettings = useCameraSettingsStore();
   const controlScheme = getActiveControlScheme(cameraSettings);
@@ -238,7 +244,7 @@ export function ViewportContent() {
   const goalQuatRef = useRef(new Quaternion());
 
   // Initial camera state for reset
-  const INITIAL_POSITION = new Vector3(50, 50, 50);
+  const INITIAL_POSITION = new Vector3(50, -50, 50);
   const INITIAL_TARGET = new Vector3(0, 0, 0);
   const INITIAL_DISTANCE = INITIAL_POSITION.distanceTo(INITIAL_TARGET);
 
@@ -324,11 +330,14 @@ export function ViewportContent() {
     }
 
     if (!hasPoints) return null;
-    const center = new Vector3();
-    box.getCenter(center);
+    const kernelCenter = new Vector3();
+    box.getCenter(kernelCenter);
     const size = new Vector3();
     box.getSize(size);
     const maxDim = Math.max(size.x, size.y, size.z);
+    // Transform kernel Z-up center to Three.js Y-up world space
+    // Rotation -90° around X: (x, y, z) → (x, z, -y)
+    const center = new Vector3(kernelCenter.x, kernelCenter.z, -kernelCenter.y);
     return { center, maxDim };
   }, [selectedPartIds, scene, parts, rootIndexToInstanceId]);
 
@@ -448,7 +457,9 @@ export function ViewportContent() {
 
       const target = controls.target;
       const offset = offsetRef.current.subVectors(camera.position, target);
-      const spherical = sphericalRef.current.setFromVector3(offset);
+      // Swizzle Z-up → Y-up for Spherical (which assumes Y-up)
+      const yUpOffset = new Vector3(offset.x, offset.z, -offset.y);
+      const spherical = sphericalRef.current.setFromVector3(yUpOffset);
 
       // Apply fraction of velocity
       spherical.theta += vel.theta * dampingFactor;
@@ -461,8 +472,9 @@ export function ViewportContent() {
       vel.theta *= friction;
       vel.phi *= friction;
 
-      // Update camera position
-      offset.setFromSpherical(spherical);
+      // Convert back and swizzle Y-up → Z-up
+      yUpOffset.setFromSpherical(spherical);
+      offset.set(yUpOffset.x, -yUpOffset.z, yUpOffset.y);
       camera.position.copy(target).add(offset);
       camera.lookAt(target);
       controls.update();
@@ -551,13 +563,17 @@ export function ViewportContent() {
         // Immediate orbit without momentum
         const target = controls.target;
         const offset = offsetRef.current.subVectors(camera.position, target);
-        const spherical = sphericalRef.current.setFromVector3(offset);
+        // Swizzle Z-up → Y-up for Spherical
+        const yUpOff = new Vector3(offset.x, offset.z, -offset.y);
+        const spherical = sphericalRef.current.setFromVector3(yUpOff);
 
         spherical.theta += dx * rotateSpeed;
         spherical.phi += dy * rotateSpeed;
         spherical.phi = Math.max(0.01, Math.min(Math.PI - 0.01, spherical.phi));
 
-        offset.setFromSpherical(spherical);
+        // Convert back Y-up → Z-up
+        yUpOff.setFromSpherical(spherical);
+        offset.set(yUpOff.x, -yUpOff.z, yUpOff.y);
         camera.position.copy(target).add(offset);
         camera.lookAt(target);
         scheduleUpdate();
@@ -667,16 +683,20 @@ export function ViewportContent() {
     ) => {
       const { normal, centroid } = e.detail;
 
-      // Set target to face centroid
+      // centroid is in world space (from Three.js e.point), but normal is in
+      // kernel Z-up space — transform normal: (nx, ny, nz) → (nx, nz, -ny)
+      const wNormal = new Vector3(normal.x, normal.z, -normal.y);
+
+      // Set target to face centroid (already world space)
       targetGoalRef.current.set(centroid.x, centroid.y, centroid.z);
 
       // Camera should be positioned along the positive normal (in front of the face, looking at it)
       // Distance of 60mm for a good view
       const viewDistance = 60;
       const cameraPos = new Vector3(
-        centroid.x + normal.x * viewDistance,
-        centroid.y + normal.y * viewDistance,
-        centroid.z + normal.z * viewDistance,
+        centroid.x + wNormal.x * viewDistance,
+        centroid.y + wNormal.y * viewDistance,
+        centroid.z + wNormal.z * viewDistance,
       );
       cameraPositionGoalRef.current = cameraPos;
       distanceGoalRef.current = viewDistance;
@@ -706,14 +726,14 @@ export function ViewportContent() {
   useEffect(() => {
     const CAMERA_DISTANCE = 80;
     const SNAP_VIEWS: Record<string, [number, number, number]> = {
-      front: [0, 0, CAMERA_DISTANCE],
-      back: [0, 0, -CAMERA_DISTANCE],
+      front: [0, -CAMERA_DISTANCE, 0],   // Looking along +Y at XZ plane
+      back: [0, CAMERA_DISTANCE, 0],
       right: [CAMERA_DISTANCE, 0, 0],
       left: [-CAMERA_DISTANCE, 0, 0],
-      top: [0, CAMERA_DISTANCE, 0],
-      bottom: [0, -CAMERA_DISTANCE, 0],
-      iso: [50, 50, 50],
-      hero: [60, 45, 60], // 45deg azimuth, 30deg elevation - dramatic presentation angle
+      top: [0, 0, CAMERA_DISTANCE],       // Looking down Z
+      bottom: [0, 0, -CAMERA_DISTANCE],   // Looking up Z
+      iso: [50, -50, 50],
+      hero: [60, -60, 45], // Dramatic presentation angle for Z-up
     };
 
     const handleSnapView = (e: CustomEvent<string>) => {
@@ -749,7 +769,7 @@ export function ViewportContent() {
   useEffect(() => {
     const handleHeroView = () => {
       // Hero angle: 45deg azimuth, 30deg elevation - dramatic presentation angle
-      const heroPos = new Vector3(60, 45, 60);
+      const heroPos = new Vector3(60, -60, 45);
       const targetVec = new Vector3(0, 0, 0);
 
       // Animate to hero position
@@ -898,10 +918,12 @@ export function ViewportContent() {
       />
 
       {/* Orientation gizmo - RGB axes, click to snap view */}
+      {/* Gizmo in Three.js space: X→X(red), Y→Z(blue), Z→Y(green) */}
       <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
         <GizmoViewport
-          axisColors={["#e06c75", "#98c379", "#61afef"]}
+          axisColors={["#e06c75", "#61afef", "#98c379"]}
           labelColor="#abb2bf"
+          labels={["X", "Z", "Y"]}
         />
       </GizmoHelper>
 
@@ -942,7 +964,9 @@ export function ViewportContent() {
           )}
 
           {/* Scene meshes - always render (ray trace overlays on top for BRep parts) */}
-          <>
+          {/* Wrap all kernel geometry in Z-up → Y-up rotation so the kernel
+              stays in standard CAD Z-up while Three.js renders Y-up */}
+          <group rotation={[-Math.PI / 2, 0, 0]}>
             {/* Scene meshes - Assembly mode (instances) */}
               {scene?.instances?.map((inst: EvaluatedInstance) => {
                 const instanceSelectionId = getInstanceSelectionId(inst);
@@ -995,8 +1019,6 @@ export function ViewportContent() {
                     />
                   );
                 })}
-          </>
-
           {/* Clash visualization (zebra pattern on intersections) */}
           {scene?.clashes.map((clashMesh, idx) => (
             <ClashMesh key={`clash-${idx}`} mesh={clashMesh} />
@@ -1016,6 +1038,7 @@ export function ViewportContent() {
 
           {/* Transform gizmo for selected part */}
           <TransformGizmo orbitControls={orbitRef} />
+          </group>
         </>
       )}
 

@@ -258,11 +258,13 @@ Need CAD interchange?
 
 ## Coordinate Systems
 
-All formats use the same coordinate system:
+vcad uses a **Z-up** coordinate system (standard CAD convention):
 
 - **X** — Right
 - **Y** — Forward
 - **Z** — Up
 - **Units** — Millimeters (by convention)
 
-Some software uses Y-up. vcad does not transform coordinates on export—the model appears the same orientation.
+The grid lies in the XY plane. Cylinder and cone primitives are created along the Z axis — already vertical, no rotation needed.
+
+vcad does not transform coordinates on export — the model appears the same orientation in Z-up software (e.g., FreeCAD, most CAD tools). Y-up software (e.g., Blender default) may show the model on its side. The Three.js renderer internally applies a −90° X rotation to convert Z-up kernel data to Y-up display space.

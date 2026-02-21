@@ -1033,7 +1033,7 @@ function createPartBaseNode(
     const offset = axis_offset ?? 0;
 
     if (typeof axis === "string" || axis === undefined) {
-      const axisName = axis ?? "y";
+      const axisName = axis ?? "z";
       switch (axisName) {
         case "x":
           axisOrigin = { x: 0, y: offset, z: 0 };
@@ -1394,7 +1394,7 @@ export function createCadDocument(
       // Convert axis to Vec3
       let axisVec: Vec3;
       if (typeof joint.axis === "string" || joint.axis === undefined) {
-        const axisName = joint.axis ?? "y";
+        const axisName = joint.axis ?? "z";
         switch (axisName) {
           case "x":
             axisVec = { x: 1, y: 0, z: 0 };

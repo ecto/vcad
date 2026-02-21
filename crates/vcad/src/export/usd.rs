@@ -135,7 +135,7 @@ fn generate_part_usda(part: &Part, material: &Material) -> Result<String, CadErr
         r#"#usda 1.0
 (
     defaultPrim = "{name}"
-    upAxis = "Y"
+    upAxis = "Z"
     metersPerUnit = 0.001
 )
 
@@ -249,14 +249,14 @@ fn generate_robot_usda(
         r#"#usda 1.0
 (
     defaultPrim = "{rn}"
-    upAxis = "Y"
+    upAxis = "Z"
     metersPerUnit = 0.001
     doc = "{rn} Robot - Municipal Robotics"
 )
 
 def PhysicsScene "PhysicsScene"
 {{
-    vector3f physics:gravityDirection = (0, -1, 0)
+    vector3f physics:gravityDirection = (0, 0, -1)
     float physics:gravityMagnitude = 9.81
 }}
 

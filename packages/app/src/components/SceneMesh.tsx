@@ -512,7 +512,7 @@ export const SceneMesh = memo(function SceneMesh({
     }
     const topCenter = new THREE.Vector3();
     box.getCenter(topCenter);
-    topCenter.y = box.max.y + 4;
+    topCenter.z = box.max.z + 4;
     return topCenter;
   }, [mesh.positions]);
 

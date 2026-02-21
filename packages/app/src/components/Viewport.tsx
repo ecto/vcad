@@ -225,7 +225,7 @@ export function Viewport() {
     <div ref={containerRef} className="absolute inset-0">
       <Canvas
         frameloop="demand"
-        camera={{ position: [50, 50, 50], fov: 50, near: 0.1, far: 10000 }}
+        camera={{ position: [50, -50, 50], fov: 50, near: 0.1, far: 10000, up: [0, 0, 1] }}
         onPointerMissed={() => clearSelection()}
         onCreated={() => performance.mark("canvas-ready")}
         shadows

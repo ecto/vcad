@@ -6,6 +6,8 @@ export function GridPlane() {
   const { isDark } = useTheme();
 
   // Axis lines at origin - RGB convention (X=red, Y=green, Z=blue)
+  // Grid is outside the Z-up rotation group, so we draw in Three.js Y-up space
+  // but label as Z-up: Three.js X→X (red), Three.js Z→Y (green), Three.js Y→Z (blue)
   const xAxisPoints = useMemo(
     () =>
       [
@@ -15,20 +17,22 @@ export function GridPlane() {
     [],
   );
 
+  // Y axis (green) → lies in the ground plane (Three.js Z direction)
   const yAxisPoints = useMemo(
-    () =>
-      [
-        [0, 0, 0],
-        [0, 500, 0],
-      ] as [number, number, number][],
-    [],
-  );
-
-  const zAxisPoints = useMemo(
     () =>
       [
         [0, 0, -500],
         [0, 0, 500],
+      ] as [number, number, number][],
+    [],
+  );
+
+  // Z axis (blue) → vertical (Three.js Y direction)
+  const zAxisPoints = useMemo(
+    () =>
+      [
+        [0, 0, 0],
+        [0, 500, 0],
       ] as [number, number, number][],
     [],
   );

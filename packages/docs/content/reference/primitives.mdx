@@ -24,7 +24,7 @@ Width (size along X axis) in millimeters.
 Depth (size along Y axis) in millimeters.
 </Param>
 <Param name="z" type="f64">
-Height (size along Z axis) in millimeters.
+Height (size along Z axis, vertical) in millimeters.
 </Param>
 
 **Origin:** Corner at (0, 0, 0), extends to (x, y, z).
@@ -55,7 +55,7 @@ Use `centered_cube` when combining shapes at the origin. Use `Part::cube` when p
 
 ## Cylinder
 
-Creates a cylinder along the Z axis.
+Creates a cylinder along the Z axis (vertical in Z-up convention).
 
 ```rust
 Part::cylinder(name: &str, radius: f64, height: f64, segments: i32) -> Part
@@ -68,7 +68,7 @@ Part name.
 Radius in millimeters.
 </Param>
 <Param name="height" type="f64">
-Height along Z axis in millimeters.
+Height along Z axis in millimeters (already vertical).
 </Param>
 <Param name="segments" type="i32">
 Number of facets around circumference. Higher = smoother.
@@ -133,7 +133,7 @@ let ball = Part::sphere("ball", 15.0, 32);
 
 ## Cone
 
-Creates a cone or truncated cone along the Z axis.
+Creates a cone or truncated cone along the Z axis (vertical in Z-up convention).
 
 ```rust
 Part::cone(name: &str, r_bottom: f64, r_top: f64, height: f64, segments: i32) -> Part

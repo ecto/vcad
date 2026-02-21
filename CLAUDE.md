@@ -205,6 +205,12 @@ vcad info input.vcad                # Show document info
 
 ## Conventions
 
+- **Coordinate system: Z-up** — X right, Y forward, Z up (standard CAD convention)
+  - Cube `(sx, sy, sz)` → corner at origin, extends to `(sx, sy, sz)` — `sz` is height
+  - Cylinder axis is along **Z** — already vertical, no rotation needed
+  - Grid lies in the XY plane; Z is the vertical axis
+  - Assembly instance transforms and joint anchors use this Z-up frame
+  - The Three.js renderer wraps kernel geometry in a `-90°` X rotation to convert Z-up → Y-up for display
 - `#![warn(missing_docs)]` on public items
 - Tests in `#[cfg(test)] mod tests` at file bottom
 - Units are `f64`, conventionally millimeters

@@ -73,7 +73,7 @@ impl PhysicsWorld {
         // We'll build bodies in order: ground first, then joint-connected instances
         // in topological order, then free-floating instances.
         let mut builder = ModelBuilder::new()
-            .gravity(Vec3::new(0.0, -9.81, 0.0))
+            .gravity(Vec3::new(0.0, 0.0, -9.81))
             .dt(1.0 / 240.0);
 
         let mut instance_to_body: HashMap<String, usize> = HashMap::new();

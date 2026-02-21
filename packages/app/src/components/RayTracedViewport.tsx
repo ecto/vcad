@@ -264,7 +264,7 @@ export function RayTracedViewportOverlay() {
         rayTracer.render(
           state.position,
           state.target,
-          [0, 1, 0], // up vector
+          [0, 0, 1], // up vector (Z-up)
           renderWidth,
           renderHeight,
           (state.fov * Math.PI) / 180
