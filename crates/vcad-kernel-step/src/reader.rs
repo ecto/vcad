@@ -18,6 +18,28 @@ use vcad_kernel_topo::{EdgeId, HalfEdgeId, LoopId, Orientation, ShellType, Topol
 /// Number of intermediate points to sample along a circular arc edge.
 const ARC_SAMPLE_COUNT: usize = 8;
 
+/// Compute the absolute enclosed area of a topology loop using Newell's method.
+/// Works in 3D — the magnitude of the cross-product sum gives twice the area.
+fn loop_area_3d(topo: &Topology, loop_id: LoopId) -> f64 {
+    let verts: Vec<vcad_kernel_math::Point3> = topo
+        .loop_half_edges(loop_id)
+        .map(|he| topo.vertices[topo.half_edges[he].origin].point)
+        .collect();
+    let n = verts.len();
+    if n < 3 {
+        return 0.0;
+    }
+    let mut cross = vcad_kernel_math::Vec3::zeros();
+    for i in 0..n {
+        let c = verts[i];
+        let nx = verts[(i + 1) % n];
+        cross.x += (c.y - nx.y) * (c.z + nx.z);
+        cross.y += (c.z - nx.z) * (c.x + nx.x);
+        cross.z += (c.x - nx.x) * (c.y + nx.y);
+    }
+    cross.norm() * 0.5
+}
+
 /// Compute the angle parameter of a point on a circle.
 fn point_angle_on_circle(circle: &vcad_kernel_geom::Circle3d, pt: &vcad_kernel_math::Point3) -> f64 {
     let d = *pt - circle.center;
@@ -262,10 +284,21 @@ impl<'a> StepReader<'a> {
                 }
             }
 
-            // If no explicit FACE_OUTER_BOUND, treat the first bound as the outer
-            // loop. Many STEP exporters (e.g. Shapr3D) use FACE_BOUND for everything.
+            // If no explicit FACE_OUTER_BOUND, pick the loop with the largest
+            // enclosed area as the outer loop. Many STEP exporters (e.g. Shapr3D)
+            // use FACE_BOUND for everything, and the first bound listed is not
+            // necessarily the enclosing boundary.
             if outer_loop.is_none() && !inner_loops.is_empty() {
-                outer_loop = Some(inner_loops.remove(0));
+                let mut best_idx = 0;
+                let mut best_area = 0.0f64;
+                for (i, &lid) in inner_loops.iter().enumerate() {
+                    let area = loop_area_3d(&topo, lid);
+                    if area > best_area {
+                        best_area = area;
+                        best_idx = i;
+                    }
+                }
+                outer_loop = Some(inner_loops.remove(best_idx));
             }
 
             // Create face - skip if no bounds at all

@@ -528,7 +528,7 @@ fn tessellate_planar_face_with_holes(
     let face = &topo.faces[face_id];
 
     // Get outer loop vertices
-    let outer_verts: Vec<Point3> = topo
+    let mut outer_verts: Vec<Point3> = topo
         .loop_half_edges(face.outer_loop)
         .map(|he| topo.vertices[topo.half_edges[he].origin].point)
         .collect();
@@ -577,15 +577,31 @@ fn tessellate_planar_face_with_holes(
     let unproject = |uv: (f64, f64)| -> Point3 { origin + uv.0 * u_axis + uv.1 * v_axis };
 
     // Project outer loop
-    let outer_2d: Vec<(f64, f64)> = outer_verts.iter().map(&project).collect();
+    let mut outer_2d: Vec<(f64, f64)> = outer_verts.iter().map(&project).collect();
 
     // Project inner loops
-    let inner_2d: Vec<Vec<(f64, f64)>> = inner_loops
+    let mut inner_2d: Vec<Vec<(f64, f64)>> = inner_loops
         .iter()
         .map(|loop_verts| loop_verts.iter().map(&project).collect())
         .collect();
 
-    // Check if we need the ring-based approach (large face with small hole)
+    // Normalize winding: outer loop must be CCW (positive area),
+    // inner loops must be CW (negative area). STEP files may have
+    // inconsistent winding depending on the exporter.
+    let outer_area = polygon_area_2d(&outer_2d);
+    if outer_area < 0.0 {
+        outer_verts.reverse();
+        outer_2d.reverse();
+    }
+    for (i, hole_2d) in inner_2d.iter_mut().enumerate() {
+        let hole_area = polygon_area_2d(hole_2d);
+        if hole_area > 0.0 {
+            inner_loops[i].reverse();
+            hole_2d.reverse();
+        }
+    }
+
+    // Re-compute areas after normalization
     let outer_area = polygon_area_2d(&outer_2d);
     let total_hole_area: f64 = inner_2d.iter().map(|h| polygon_area_2d(h).abs()).sum();
 
