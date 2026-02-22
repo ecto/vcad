@@ -30,6 +30,7 @@ const FaceSelectionOverlay = lazy(() => import("@/components/FaceSelectionOverla
 const QuotePanel = lazy(() => import("@/components/QuotePanel").then(m => ({ default: m.QuotePanel })));
 const LogViewer = lazy(() => import("@/components/LogViewer").then(m => ({ default: m.LogViewer })));
 const PrintPanel = lazy(() => import("@/components/print").then(m => ({ default: m.PrintPanel })));
+const DfmOverlay = lazy(() => import("@/components/print/DfmOverlay").then(m => ({ default: m.DfmOverlay })));
 const CamPanel = lazy(() => import("@/components/cam").then(m => ({ default: m.CamPanel })));
 const AIPanel = lazy(() => import("@/components/AIPanel").then(m => ({ default: m.AIPanel })));
 const LoonEditor = lazy(() => import("@/components/LoonEditor").then(m => ({ default: m.LoonEditor })));
@@ -543,6 +544,7 @@ export function App() {
 
           {/* Print panel (for 3D printing slicer settings) */}
           {printPanelOpen && <Suspense fallback={null}><PrintPanel /></Suspense>}
+          {printPanelOpen && <Suspense fallback={null}><DfmOverlay /></Suspense>}
 
           {/* CAM panel (for CNC toolpath generation) */}
           {camPanelOpen && <Suspense fallback={null}><CamPanel /></Suspense>}
