@@ -134,7 +134,6 @@ export function App() {
 
   const engineReady = useEngineStore((s) => s.engineReady);
   const error = useEngineStore((s) => s.error);
-  const hasParts = useDocumentStore((s) => s.parts.length > 0);
   const sketchActive = useSketchStore((s) => s.active);
   const electronicsActive = useElectronicsStore((s) => s.active);
 
@@ -484,12 +483,6 @@ export function App() {
     }
   }, [guidedFlowActive, guidedFlowStep, parts, selectedPartIds, selectMultiple]);
 
-  // Auto-open welcome screen on startup when canvas is empty
-  useEffect(() => {
-    if (initialized && !hasParts && !guidedFlowActive && !sketchActive) {
-      setAboutOpen(true);
-    }
-  }, [initialized, hasParts, guidedFlowActive, sketchActive]);
 
 
   // Only block on fatal error - let viewport render while engine loads

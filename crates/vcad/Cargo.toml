@@ -8,7 +8,7 @@ repository.workspace = true
 readme = "../../README.md"
 keywords = ["cad", "csg", "stl", "gltf", "parametric"]
 categories = ["rendering::data-formats", "science"]
-exclude = ["../../web/", "../../assets/"]
+exclude = ["../../assets/"]
 
 [features]
 default = ["gltf"]

@@ -44,13 +44,13 @@ export default async function ArchitecturePage({ params }: PageProps) {
 
   // Get all architecture pages for navigation
   const allPages = getAllContent("architecture");
-  const { prev, next } = getNavigation(allPages, slug, "/docs/architecture");
+  const { prev, next } = getNavigation(allPages, slug, "/architecture");
 
   return (
     <div className="max-w-4xl mx-auto px-8 py-16">
       {/* Breadcrumb */}
       <Link
-        href="/docs/architecture"
+        href="/architecture"
         className="inline-flex items-center gap-2 text-sm text-text-muted hover:text-text mb-8"
       >
         <ArrowLeft size={14} />

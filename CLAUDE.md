@@ -90,7 +90,6 @@ vcad/
 │   └── docs/                      # Documentation site
 ├── supabase/                      # Database migrations and config
 │   └── migrations/                # SQL migrations (pushed via `supabase db push`)
-└── web/                           # Landing page (vcad.io)
 ```
 
 ## Key Concepts

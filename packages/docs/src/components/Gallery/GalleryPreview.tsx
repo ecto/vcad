@@ -32,7 +32,7 @@ export function GalleryPreview() {
       {galleryItems.map((item) => (
         <Link
           key={item.id}
-          href={`/docs/gallery/${item.id}`}
+          href={`/gallery/${item.id}`}
           className="group block"
         >
           <div className="rounded-lg border border-border overflow-hidden bg-surface transition-colors group-hover:border-text-muted">

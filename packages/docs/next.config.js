@@ -1,5 +1,10 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Static export for integration with Vite SPA
+  output: 'export',
+  basePath: '/docs',
+  trailingSlash: true,
+
   // Transpile workspace packages
   transpilePackages: ["@vcad/ir"],
 
@@ -39,9 +44,9 @@ const nextConfig = {
     return config;
   },
 
-  // Images configuration for Vercel
+  // Images configuration - must be unoptimized for static export
   images: {
-    unoptimized: false,
+    unoptimized: true,
   },
 };
 

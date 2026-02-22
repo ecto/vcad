@@ -42,7 +42,7 @@ export default function AdvancedPage() {
   return (
     <div className="max-w-3xl mx-auto px-8 py-16">
       <Link
-        href="/docs/learn"
+        href="/learn"
         className="inline-flex items-center gap-2 text-sm text-text-muted hover:text-text mb-8"
       >
         <ArrowLeft size={14} />
@@ -73,7 +73,7 @@ export default function AdvancedPage() {
         {lessons.map((lesson, idx) => (
           <Link
             key={lesson.id}
-            href={`/docs/learn/advanced/${lesson.id}`}
+            href={`/learn/advanced/${lesson.id}`}
             className="flex items-center gap-4 p-4 rounded-lg border border-border hover:border-text-muted bg-surface hover:bg-hover transition-all group"
           >
             <div className="flex-shrink-0">
@@ -109,7 +109,7 @@ export default function AdvancedPage() {
 
       <div className="mt-12 text-center">
         <Link
-          href="/docs/learn/advanced/parametric"
+          href="/learn/advanced/parametric"
           className="inline-flex items-center gap-2 px-6 py-3 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium transition-colors"
         >
           Start Learning

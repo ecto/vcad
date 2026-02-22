@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 
 const navLinks = [
   { label: "Features", href: "/#features" },
-  { label: "Docs", href: "/docs" },
+  { label: "Docs", href: "/" },
   { label: "Source", href: "https://github.com/ecto/vcad", external: true },
 ];
 
@@ -18,7 +18,7 @@ export function Header() {
   const { theme, toggleTheme } = useTheme();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const isDocsPage = pathname.startsWith("/docs");
+  const isDocsPage = true;
 
   return (
     <>

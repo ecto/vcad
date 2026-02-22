@@ -86,7 +86,7 @@ export default function CookbookPage() {
         {recipes.map((recipe) => (
           <Link
             key={recipe.id}
-            href={`/docs/cookbook/${recipe.id}`}
+            href={`/cookbook/${recipe.id}`}
             className="flex items-center gap-4 p-4 rounded-lg border border-border hover:border-text-muted bg-surface hover:bg-hover transition-all group"
           >
             <div className="p-3 rounded-lg bg-accent/10 text-accent">

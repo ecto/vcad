@@ -106,7 +106,7 @@ export default function GalleryPage() {
         {galleryItems.map((item) => (
           <Link
             key={item.id}
-            href={`/docs/gallery/${item.id}`}
+            href={`/gallery/${item.id}`}
             className="group block rounded-lg border border-border overflow-hidden bg-surface hover:border-text-muted transition-all"
           >
             {/* Image placeholder */}

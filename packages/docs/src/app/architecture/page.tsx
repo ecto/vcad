@@ -63,7 +63,7 @@ export default function ArchitecturePage() {
         {topics.map((topic) => (
           <Link
             key={topic.id}
-            href={`/docs/architecture/${topic.id}`}
+            href={`/architecture/${topic.id}`}
             className="flex items-start gap-4 p-5 rounded-lg border border-border hover:border-text-muted bg-surface hover:bg-hover transition-all group"
           >
             <div className="p-3 rounded-lg bg-accent/10 text-accent">

@@ -11,10 +11,10 @@ export const metadata: Metadata = {
     title: "Onshape Alternative – vcad",
     description: "Free, open-source CAD for makers. No cloud, no subscription.",
     type: "article",
-    url: "https://vcad.io/alternatives/onshape",
+    url: "https://vcad.io/docs/alternatives/onshape",
   },
   alternates: {
-    canonical: "https://vcad.io/alternatives/onshape",
+    canonical: "https://vcad.io/docs/alternatives/onshape",
   },
 };
 

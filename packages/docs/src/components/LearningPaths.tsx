@@ -10,10 +10,10 @@ const paths = [
     bgColor: "bg-green-500/10",
     borderColor: "border-green-500/20",
     lessons: [
-      { title: "Hello Cube", href: "/docs/learn/beginner/hello-cube" },
-      { title: "Basic Transforms", href: "/docs/learn/beginner/transforms" },
-      { title: "Your First Hole", href: "/docs/learn/beginner/first-hole" },
-      { title: "Export to STL", href: "/docs/learn/beginner/export" },
+      { title: "Hello Cube", href: "/learn/beginner/hello-cube" },
+      { title: "Basic Transforms", href: "/learn/beginner/transforms" },
+      { title: "Your First Hole", href: "/learn/beginner/first-hole" },
+      { title: "Export to STL", href: "/learn/beginner/export" },
     ],
   },
   {
@@ -23,10 +23,10 @@ const paths = [
     bgColor: "bg-yellow-500/10",
     borderColor: "border-yellow-500/20",
     lessons: [
-      { title: "Bolt Patterns", href: "/docs/learn/intermediate/patterns" },
-      { title: "Multi-Part Assembly", href: "/docs/learn/intermediate/assembly" },
-      { title: "Materials & GLB", href: "/docs/learn/intermediate/materials" },
-      { title: "Scene Composition", href: "/docs/learn/intermediate/scenes" },
+      { title: "Bolt Patterns", href: "/learn/intermediate/patterns" },
+      { title: "Multi-Part Assembly", href: "/learn/intermediate/assembly" },
+      { title: "Materials & GLB", href: "/learn/intermediate/materials" },
+      { title: "Scene Composition", href: "/learn/intermediate/scenes" },
     ],
   },
   {
@@ -36,10 +36,10 @@ const paths = [
     bgColor: "bg-red-500/10",
     borderColor: "border-red-500/20",
     lessons: [
-      { title: "Parametric Design", href: "/docs/learn/advanced/parametric" },
-      { title: "STEP Import/Export", href: "/docs/learn/advanced/step" },
-      { title: "Kernel Internals", href: "/docs/learn/advanced/kernel" },
-      { title: "Contributing", href: "/docs/learn/advanced/contributing" },
+      { title: "Parametric Design", href: "/learn/advanced/parametric" },
+      { title: "STEP Import/Export", href: "/learn/advanced/step" },
+      { title: "Kernel Internals", href: "/learn/advanced/kernel" },
+      { title: "Contributing", href: "/learn/advanced/contributing" },
     ],
   },
 ];

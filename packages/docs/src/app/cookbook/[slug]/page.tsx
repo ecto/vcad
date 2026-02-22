@@ -51,13 +51,13 @@ export default async function CookbookRecipePage({ params }: PageProps) {
 
   // Get all recipes for navigation
   const allRecipes = getAllContent("cookbook");
-  const { prev, next } = getNavigation(allRecipes, slug, "/docs/cookbook");
+  const { prev, next } = getNavigation(allRecipes, slug, "/cookbook");
 
   return (
     <div className="max-w-4xl mx-auto px-8 py-16">
       {/* Breadcrumb */}
       <Link
-        href="/docs/cookbook"
+        href="/cookbook"
         className="inline-flex items-center gap-2 text-sm text-text-muted hover:text-text mb-8"
       >
         <ArrowLeft size={14} />

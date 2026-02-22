@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { useDocumentStore, useUiStore, parseVcadFile } from "@vcad/core";
 import { useAuth, isAuthEnabled, getSupabase, AuthModal } from "@vcad/auth";
 import { useOnboardingStore } from "@/stores/onboarding-store";
-import { useChangelogStore } from "@/stores/changelog-store";
 import { examples } from "@/data/examples";
 import type { Example } from "@/data/examples";
 
@@ -25,7 +24,6 @@ export function InlineOnboarding({ visible }: InlineOnboardingProps) {
   const addPrimitive = useDocumentStore((s) => s.addPrimitive);
   const select = useUiStore((s) => s.select);
   const setTransformMode = useUiStore((s) => s.setTransformMode);
-  const openWhatsNew = useChangelogStore((s) => s.openPanel);
   const incrementProjectsCreated = useOnboardingStore(
     (s) => s.incrementProjectsCreated
   );
@@ -152,13 +150,6 @@ export function InlineOnboarding({ visible }: InlineOnboardingProps) {
           </h1>
           <p className="text-xs text-text-muted mb-5">
             free parametric cad for everyone
-            {" · "}
-            <button
-              onClick={openWhatsNew}
-              className="text-accent hover:underline"
-            >
-              what's new
-            </button>
           </p>
 
           {/* Action buttons */}

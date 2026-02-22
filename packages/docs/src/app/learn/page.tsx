@@ -17,7 +17,7 @@ const paths = [
     color: "text-green-500",
     bgColor: "bg-green-500/10",
     borderColor: "border-green-500/30 hover:border-green-500/60",
-    href: "/docs/learn/beginner",
+    href: "/learn/beginner",
     lessons: [
       { title: "Hello Cube", description: "Create your first 3D shape" },
       { title: "Basic Transforms", description: "Move, rotate, and scale" },
@@ -33,7 +33,7 @@ const paths = [
     color: "text-yellow-500",
     bgColor: "bg-yellow-500/10",
     borderColor: "border-yellow-500/30 hover:border-yellow-500/60",
-    href: "/docs/learn/intermediate",
+    href: "/learn/intermediate",
     lessons: [
       { title: "Bolt Patterns", description: "Linear and circular arrays" },
       { title: "Multi-Part Assembly", description: "Combine multiple parts" },
@@ -49,7 +49,7 @@ const paths = [
     color: "text-red-500",
     bgColor: "bg-red-500/10",
     borderColor: "border-red-500/30 hover:border-red-500/60",
-    href: "/docs/learn/advanced",
+    href: "/learn/advanced",
     lessons: [
       { title: "Parametric Design", description: "Configuration-driven models" },
       { title: "STEP Import/Export", description: "Industry-standard CAD exchange" },

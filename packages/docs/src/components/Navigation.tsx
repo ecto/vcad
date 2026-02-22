@@ -32,48 +32,48 @@ interface NavItem {
 const navItems: NavItem[] = [
   {
     label: "Home",
-    href: "/docs",
+    href: "/",
     icon: <House size={18} weight="regular" />,
   },
   {
     label: "Learn",
-    href: "/docs/learn",
+    href: "/learn",
     icon: <Book size={18} weight="regular" />,
     children: [
-      { label: "Beginner", href: "/docs/learn/beginner" },
-      { label: "Intermediate", href: "/docs/learn/intermediate" },
-      { label: "Advanced", href: "/docs/learn/advanced" },
+      { label: "Beginner", href: "/learn/beginner" },
+      { label: "Intermediate", href: "/learn/intermediate" },
+      { label: "Advanced", href: "/learn/advanced" },
     ],
   },
   {
     label: "Cookbook",
-    href: "/docs/cookbook",
+    href: "/cookbook",
     icon: <CookingPot size={18} weight="regular" />,
   },
   {
     label: "Reference",
-    href: "/docs/reference",
+    href: "/reference",
     icon: <Code size={18} weight="regular" />,
   },
   {
     label: "Gallery",
-    href: "/docs/gallery",
+    href: "/gallery",
     icon: <Images size={18} weight="regular" />,
   },
   {
     label: "Playground",
-    href: "/docs/playground",
+    href: "/playground",
     icon: <GameController size={18} weight="regular" />,
   },
   {
     label: "Architecture",
-    href: "/docs/architecture",
+    href: "/architecture",
     icon: <Cpu size={18} weight="regular" />,
     children: [
-      { label: "How Booleans Work", href: "/docs/architecture/booleans" },
-      { label: "The IR Format", href: "/docs/architecture/ir" },
-      { label: "WASM Pipeline", href: "/docs/architecture/wasm" },
-      { label: "Export Formats", href: "/docs/architecture/exports" },
+      { label: "How Booleans Work", href: "/architecture/booleans" },
+      { label: "The IR Format", href: "/architecture/ir" },
+      { label: "WASM Pipeline", href: "/architecture/wasm" },
+      { label: "Export Formats", href: "/architecture/exports" },
     ],
   },
 ];
@@ -87,8 +87,8 @@ export function Navigation() {
     new Set(["Learn", "Architecture"])
   );
 
-  // Only show sidebar on /docs/* routes
-  const isDocsRoute = pathname.startsWith("/docs");
+  // Show sidebar on all routes (all routes are docs routes with basePath)
+  const isDocsRoute = true;
 
   const toggleSection = (label: string) => {
     setExpandedSections(prev => {
@@ -103,7 +103,7 @@ export function Navigation() {
   };
 
   const isActive = (href: string) => {
-    if (href === "/docs") return pathname === "/docs";
+    if (href === "/") return pathname === "/";
     return pathname.startsWith(href);
   };
 

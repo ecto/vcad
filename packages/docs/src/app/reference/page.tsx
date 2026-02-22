@@ -43,7 +43,7 @@ export default function ReferencePage() {
           return (
             <Link
               key={page.slug}
-              href={`/docs/reference/${page.slug}`}
+              href={`/reference/${page.slug}`}
               className="flex items-start gap-4 p-4 rounded-lg border border-border hover:border-text-muted bg-surface hover:bg-hover transition-all group"
             >
               <div className="p-3 rounded-lg bg-accent/10 text-accent">
@@ -67,25 +67,25 @@ export default function ReferencePage() {
         <h3 className="font-bold mb-4">Common Tasks</h3>
         <div className="grid gap-2 sm:grid-cols-2 text-sm">
           <Link
-            href="/docs/reference/primitives#cube"
+            href="/reference/primitives#cube"
             className="text-accent hover:text-accent-hover"
           >
             Create a cube
           </Link>
           <Link
-            href="/docs/reference/csg-operations#difference"
+            href="/reference/csg-operations#difference"
             className="text-accent hover:text-accent-hover"
           >
             Cut a hole
           </Link>
           <Link
-            href="/docs/reference/transforms#linear-pattern"
+            href="/reference/transforms#linear-pattern"
             className="text-accent hover:text-accent-hover"
           >
             Create a pattern
           </Link>
           <Link
-            href="/docs/reference/export#stl"
+            href="/reference/export#stl"
             className="text-accent hover:text-accent-hover"
           >
             Export to STL

@@ -44,13 +44,13 @@ export default async function ReferencePage({ params }: PageProps) {
 
   // Get all reference pages for navigation
   const allPages = getAllContent("reference");
-  const { prev, next } = getNavigation(allPages, slug, "/docs/reference");
+  const { prev, next } = getNavigation(allPages, slug, "/reference");
 
   return (
     <div className="max-w-4xl mx-auto px-8 py-16">
       {/* Breadcrumb */}
       <Link
-        href="/docs/reference"
+        href="/reference"
         className="inline-flex items-center gap-2 text-sm text-text-muted hover:text-text mb-8"
       >
         <ArrowLeft size={14} />

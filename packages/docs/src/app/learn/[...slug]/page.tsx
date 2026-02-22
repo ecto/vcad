@@ -54,7 +54,7 @@ export default async function LearnPage({ params }: PageProps) {
 
   // Get all pages in this section for navigation
   const sectionPages = getNestedContent("learn", section);
-  const { prev, next } = getNavigation(sectionPages, pageSlug, `/docs/learn/${section}`);
+  const { prev, next } = getNavigation(sectionPages, pageSlug, `/learn/${section}`);
 
   const validSection = section as "beginner" | "intermediate" | "advanced";
 
