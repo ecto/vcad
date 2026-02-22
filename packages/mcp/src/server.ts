@@ -247,7 +247,7 @@ export async function createServer(): Promise<Server> {
 
   // Handle tool calls
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const { name, arguments: args } = request.params;
+    const { name, arguments: args = {} } = request.params;
 
     try {
       switch (name) {
