@@ -16,7 +16,7 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     locale: "en_US",
-    url: "https://vcad.io",
+    url: "https://docs.vcad.io",
     siteName: "vcad",
     title: "vcad",
     description: "Parametric CAD in Rust",

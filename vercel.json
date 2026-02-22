@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "npm ci",
-  "buildCommand": "cd ../.. && bash scripts/build-vercel.sh",
+  "buildCommand": "npm run build --workspace=@vcad/ir && npm run build --workspace=@vcad/engine && npm run build --workspace=@vcad/core && npm run build --workspace=@vcad/app && cp -r dist ../../dist",
   "outputDirectory": "dist",
   "functions": {
     "packages/api/api/**/*.ts": {
@@ -9,7 +9,6 @@
     }
   },
   "rewrites": [
-    { "source": "/api/:path*", "destination": "/packages/api/api/:path*" },
-    { "source": "/((?!docs|api/|_next/).*)", "destination": "/index.html" }
+    { "source": "/api/:path*", "destination": "/packages/api/api/:path*" }
   ]
 }

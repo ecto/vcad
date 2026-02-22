@@ -10,10 +10,10 @@ export const metadata: Metadata = {
     title: "vcad vs Onshape",
     description: "Free local CAD vs cloud subscription. Compare for 3D printing and making.",
     type: "article",
-    url: "https://vcad.io/docs/vs/onshape",
+    url: "https://docs.vcad.io/vs/onshape",
   },
   alternates: {
-    canonical: "https://vcad.io/docs/vs/onshape",
+    canonical: "https://docs.vcad.io/vs/onshape",
   },
 };
 
