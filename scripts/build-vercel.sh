@@ -12,7 +12,8 @@ mkdir -p dist
 cp -r packages/app/dist/. dist/
 
 # Build docs (static export)
-# next is only available in the docs workspace, resolve from there
+# Vercel's Turbo pruning may skip docs deps — ensure they're installed
+npm install -w @vcad/docs --ignore-scripts 2>/dev/null || true
 cd packages/docs
 NEXT_BIN=$(node -e "console.log(require.resolve('next/dist/bin/next'))")
 node "$NEXT_BIN" build
