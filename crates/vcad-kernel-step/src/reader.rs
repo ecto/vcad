@@ -4,15 +4,27 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::entities::{
+    curves::{parse_curve, StepCurve},
     parse_advanced_face, parse_edge_curve, parse_edge_loop, parse_manifold_solid_brep,
     parse_oriented_edge, parse_shell, parse_surface, parse_vertex_point,
 };
 use crate::error::StepError;
 use stepperoni::{Parser, StepFile};
 
-use vcad_kernel_geom::GeometryStore;
+use vcad_kernel_geom::{Curve3d, GeometryStore};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_topo::{EdgeId, HalfEdgeId, LoopId, Orientation, ShellType, Topology, VertexId};
+
+/// Number of intermediate points to sample along a circular arc edge.
+const ARC_SAMPLE_COUNT: usize = 8;
+
+/// Compute the angle parameter of a point on a circle.
+fn point_angle_on_circle(circle: &vcad_kernel_geom::Circle3d, pt: &vcad_kernel_math::Point3) -> f64 {
+    let d = *pt - circle.center;
+    let x = d.dot(circle.x_dir.as_ref());
+    let y = d.dot(circle.y_dir.as_ref());
+    y.atan2(x)
+}
 
 /// Read STEP file from a path.
 ///
@@ -54,6 +66,9 @@ struct StepReader<'a> {
     half_edge_map: HashMap<(u64, bool), HalfEdgeId>,
     /// Maps STEP surface ID to vcad geometry store index.
     surface_map: HashMap<u64, usize>,
+    /// For subdivided circle edges: maps (STEP edge ID, orientation) to
+    /// an ordered chain of half-edge IDs that replace the single original.
+    subdivided_edges: HashMap<(u64, bool), Vec<HalfEdgeId>>,
 }
 
 impl<'a> StepReader<'a> {
@@ -64,6 +79,7 @@ impl<'a> StepReader<'a> {
             edge_map: HashMap::new(),
             half_edge_map: HashMap::new(),
             surface_map: HashMap::new(),
+            subdivided_edges: HashMap::new(),
         }
     }
 
@@ -80,6 +96,7 @@ impl<'a> StepReader<'a> {
             self.edge_map.clear();
             self.half_edge_map.clear();
             self.surface_map.clear();
+            self.subdivided_edges.clear();
 
             let solid = self.read_solid(entity.id)?;
             solids.push(solid);
@@ -142,7 +159,9 @@ impl<'a> StepReader<'a> {
             }
         }
 
-        // Second pass: create half-edges and edges
+        // Second pass: create half-edges and edges.
+        // For CIRCLE edges, sample intermediate points along the arc so that
+        // loops with only 2 vertices get enough points for tessellation.
         for &face_id in &step_shell.face_ids {
             if skipped_faces.contains(&face_id) {
                 continue;
@@ -155,6 +174,11 @@ impl<'a> StepReader<'a> {
                     let oe = parse_oriented_edge(self.file, oe_id)?;
                     let edge = parse_edge_curve(self.file, oe.edge_id)?;
 
+                    // Skip if already processed
+                    if self.half_edge_map.contains_key(&(edge.id, oe.orientation)) {
+                        continue;
+                    }
+
                     // Determine half-edge direction based on orientation
                     let (start_v, end_v) = if oe.orientation == edge.same_sense {
                         (edge.start_vertex_id, edge.end_vertex_id)
@@ -162,30 +186,33 @@ impl<'a> StepReader<'a> {
                         (edge.end_vertex_id, edge.start_vertex_id)
                     };
 
-                    let start_vid = self.vertex_map[&start_v];
+                    // Try to parse the edge curve for arc sampling
+                    let curve = parse_curve(self.file, edge.curve_id).ok();
+                    let is_circle = matches!(&curve, Some(StepCurve::Circle(_)));
 
-                    // Create half-edge if not already created
-                    let key = (edge.id, oe.orientation);
-                    use std::collections::hash_map::Entry;
-                    if let Entry::Vacant(e) = self.half_edge_map.entry(key) {
+                    if is_circle {
+                        // Subdivide this circle arc into multiple segments
+                        self.subdivide_circle_edge(
+                            &mut topo, &edge, &oe, &curve.unwrap(),
+                            start_v, end_v,
+                        );
+                    } else {
+                        // Simple edge: single half-edge per direction
+                        let start_vid = self.vertex_map[&start_v];
                         let he_id = topo.add_half_edge(start_vid);
-                        e.insert(he_id);
-                    }
+                        self.half_edge_map.insert((edge.id, oe.orientation), he_id);
 
-                    // Create the twin half-edge
-                    let twin_key = (edge.id, !oe.orientation);
-                    if let Entry::Vacant(e) = self.half_edge_map.entry(twin_key) {
                         let twin_start = self.vertex_map[&end_v];
                         let twin_he_id = topo.add_half_edge(twin_start);
-                        e.insert(twin_he_id);
-                    }
+                        self.half_edge_map.insert((edge.id, !oe.orientation), twin_he_id);
 
-                    // Create edge if not already created
-                    if let Entry::Vacant(e) = self.edge_map.entry(edge.id) {
-                        let he1 = self.half_edge_map[&(edge.id, true)];
-                        let he2 = self.half_edge_map[&(edge.id, false)];
-                        let edge_id = topo.add_edge(he1, he2);
-                        e.insert(edge_id);
+                        use std::collections::hash_map::Entry;
+                        if let Entry::Vacant(e) = self.edge_map.entry(edge.id) {
+                            let he1 = self.half_edge_map[&(edge.id, true)];
+                            let he2 = self.half_edge_map[&(edge.id, false)];
+                            let edge_id = topo.add_edge(he1, he2);
+                            e.insert(edge_id);
+                        }
                     }
                 }
             }
@@ -212,13 +239,18 @@ impl<'a> StepReader<'a> {
                     continue;
                 }
 
-                // Collect half-edges for this loop
+                // Collect half-edges for this loop.
+                // For subdivided circle edges, expand to the chain of sub-half-edges.
                 let mut loop_hes = Vec::new();
                 for &oe_id in &loop_.edge_ids {
                     let oe = parse_oriented_edge(self.file, oe_id)?;
                     let key = (oe.edge_id, oe.orientation);
-                    let he_id = self.half_edge_map[&key];
-                    loop_hes.push(he_id);
+                    if let Some(chain) = self.subdivided_edges.get(&key) {
+                        loop_hes.extend_from_slice(chain);
+                    } else {
+                        let he_id = self.half_edge_map[&key];
+                        loop_hes.push(he_id);
+                    }
                 }
 
                 let loop_id = topo.add_loop(&loop_hes);
@@ -266,6 +298,99 @@ impl<'a> StepReader<'a> {
             geometry: geom,
             solid_id,
         })
+    }
+
+    /// Subdivide a CIRCLE edge into multiple segments by sampling intermediate
+    /// points along the arc. This ensures loops with only 2 edges (2 vertices)
+    /// get enough vertices for proper tessellation.
+    fn subdivide_circle_edge(
+        &mut self,
+        topo: &mut Topology,
+        edge: &crate::entities::topology::StepEdge,
+        oe: &crate::entities::topology::StepOrientedEdge,
+        curve: &StepCurve,
+        start_v: u64,
+        end_v: u64,
+    ) {
+        let StepCurve::Circle(circle) = curve else {
+            return;
+        };
+
+        let start_pt = topo.vertices[self.vertex_map[&start_v]].point;
+        let end_pt = topo.vertices[self.vertex_map[&end_v]].point;
+
+        // Compute angle parameters for start and end points on the circle
+        let t_start = point_angle_on_circle(circle, &start_pt);
+        let t_end = point_angle_on_circle(circle, &end_pt);
+
+        // Determine arc sweep: the EDGE_CURVE same_sense tells us if the
+        // curve parameter increases from start to end vertex. Combined with
+        // the oriented edge orientation, we know the arc direction.
+        let forward_on_curve = oe.orientation == edge.same_sense;
+        let sweep = if forward_on_curve {
+            let mut s = t_end - t_start;
+            if s <= 1e-10 {
+                s += std::f64::consts::TAU;
+            }
+            s
+        } else {
+            let mut s = t_start - t_end;
+            if s <= 1e-10 {
+                s += std::f64::consts::TAU;
+            }
+            -s
+        };
+
+        let n = ARC_SAMPLE_COUNT;
+        // Sample intermediate points (not including endpoints)
+        let mut mid_vids = Vec::with_capacity(n);
+        for i in 1..=n {
+            let frac = i as f64 / (n + 1) as f64;
+            let t = t_start + sweep * frac;
+            let pt = circle.evaluate(t);
+            let vid = topo.add_vertex(pt);
+            mid_vids.push(vid);
+        }
+
+        // Build forward chain: start → m0 → m1 → ... → mn → (end is next edge's start)
+        let start_vid = self.vertex_map[&start_v];
+        let end_vid = self.vertex_map[&end_v];
+
+        let mut fwd_chain = Vec::with_capacity(n + 1);
+        let mut rev_chain = Vec::with_capacity(n + 1);
+
+        // Forward: start, m0, m1, ..., mn — each is origin of a half-edge
+        let mut fwd_origins = vec![start_vid];
+        fwd_origins.extend_from_slice(&mid_vids);
+
+        // Reverse: end, mn, mn-1, ..., m0 — each is origin of a half-edge
+        let mut rev_origins = vec![end_vid];
+        for &vid in mid_vids.iter().rev() {
+            rev_origins.push(vid);
+        }
+
+        for &origin in &fwd_origins {
+            let he = topo.add_half_edge(origin);
+            fwd_chain.push(he);
+        }
+        for &origin in &rev_origins {
+            let he = topo.add_half_edge(origin);
+            rev_chain.push(he);
+        }
+
+        // Create edges pairing forward[i] with reverse[n-i]
+        for i in 0..fwd_chain.len() {
+            let fwd_he = fwd_chain[i];
+            let rev_he = rev_chain[fwd_chain.len() - 1 - i];
+            topo.add_edge(fwd_he, rev_he);
+        }
+
+        // Store the chains for loop building.
+        // The oriented edge orientation determines which chain to use.
+        self.subdivided_edges
+            .insert((edge.id, oe.orientation), fwd_chain);
+        self.subdivided_edges
+            .insert((edge.id, !oe.orientation), rev_chain);
     }
 }
 
