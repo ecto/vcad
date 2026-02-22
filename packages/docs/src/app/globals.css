@@ -24,41 +24,41 @@
   --color-text-muted: var(--text-muted);
   --color-hover: var(--hover);
 
-  /* Brand accent - vcad orange/red */
-  --color-accent: #f04000;
-  --color-accent-hover: #d63800;
-  --color-accent-muted: #f04000/20;
+  /* Brand accent - Monokai Soda pink */
+  --color-accent: #F92672;
+  --color-accent-hover: #d91e63;
+  --color-accent-muted: #F92672/20;
 
-  /* Code syntax colors (Monokai-inspired) */
-  --color-syntax-keyword: #cc7832;
-  --color-syntax-string: #6a8759;
-  --color-syntax-number: #6897bb;
-  --color-syntax-comment: #777777;
+  /* Code syntax colors (Monokai Soda) */
+  --color-syntax-keyword: #F92672;
+  --color-syntax-string: #A6E22E;
+  --color-syntax-number: #AE81FF;
+  --color-syntax-comment: #75715E;
   --color-syntax-operator: var(--text);
 }
 
 /* Dark mode (default) */
 :root {
   color-scheme: dark;
-  --bg: #050505;
-  --surface: #0c0c0c;
-  --card: #111111;
-  --border: #1a1a1a;
-  --text: #e0e0e0;
-  --text-muted: #666666;
-  --hover: rgba(255, 255, 255, 0.05);
+  --bg: #222222;
+  --surface: #2a2a2a;
+  --card: #333333;
+  --border: #444444;
+  --text: #F8F8F2;
+  --text-muted: #75715E;
+  --hover: rgba(255, 255, 255, 0.1);
 }
 
 /* Light mode */
 :root.light {
   color-scheme: light;
-  --bg: #fafafa;
-  --surface: #f3f3f3;
-  --card: #ffffff;
-  --border: #e0e0e0;
-  --text: #111111;
-  --text-muted: #555555;
-  --hover: rgba(0, 0, 0, 0.03);
+  --bg: oklch(0.96 0.02 85);
+  --surface: oklch(0.93 0.025 80);
+  --card: oklch(0.98 0.015 90);
+  --border: oklch(0.82 0.03 75);
+  --text: oklch(0.22 0.02 55);
+  --text-muted: oklch(0.50 0.03 65);
+  --hover: rgba(0, 0, 0, 0.06);
 }
 
 /* Base styles */

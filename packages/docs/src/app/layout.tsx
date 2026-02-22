@@ -10,8 +10,8 @@ export const metadata: Metadata = {
     default: "vcad",
     template: "%s | vcad",
   },
-  description: "Parametric CAD in Rust. CSG primitives, boolean operators, multi-format export.",
-  keywords: ["CAD", "Rust", "CSG", "3D modeling", "parametric", "STL", "GLTF", "STEP"],
+  description: "Open-source CAD for makers. Web app, Rust library, CLI, and AI tools.",
+  keywords: ["CAD", "Rust", "3D modeling", "parametric", "STL", "GLTF", "STEP", "BRep", "MCP"],
   authors: [{ name: "vcad" }],
   openGraph: {
     type: "website",
@@ -19,12 +19,12 @@ export const metadata: Metadata = {
     url: "https://docs.vcad.io",
     siteName: "vcad",
     title: "vcad",
-    description: "Parametric CAD in Rust",
+    description: "Open-source CAD for makers",
   },
   twitter: {
     card: "summary_large_image",
     title: "vcad",
-    description: "Parametric CAD in Rust",
+    description: "Open-source CAD for makers",
   },
   icons: {
     icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x25E6;</text></svg>",

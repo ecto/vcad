@@ -15,19 +15,26 @@ export default function DocsHomePage() {
               vcad<span className="text-accent">.</span>
             </h1>
             <p className="text-xl text-text-muted mb-2">
-              parametric cad in rust
+              open-source cad for makers
             </p>
             <p className="text-text-muted max-w-lg">
-              csg primitives, boolean operators, multi-format export.
-              built on manifold. mit licensed.
+              web app, rust library, cli, and ai tools.
+              custom brep kernel. mit licensed.
             </p>
           </div>
 
           {/* Hero Playground */}
           <HeroPlayground />
 
-          {/* Install command */}
-          <div className="mt-8">
+          {/* Install options */}
+          <div className="mt-8 flex flex-wrap gap-4">
+            <a
+              href="https://vcad.io"
+              className="inline-flex items-center gap-2 text-sm bg-accent text-white px-4 py-2 rounded-md hover:bg-accent-hover transition-colors"
+            >
+              vcad.io
+              <span className="text-white/60">→</span>
+            </a>
             <code className="inline-flex items-center gap-2 text-sm bg-surface px-4 py-2 rounded-md border border-border">
               <span className="text-text-muted select-none">$</span>
               <span>cargo add vcad</span>
@@ -93,8 +100,9 @@ export default function DocsHomePage() {
           <span>mit license</span>
           <div className="flex gap-6">
             <a href="https://github.com/ecto/vcad" className="hover:text-text">github</a>
+            <a href="https://vcad.io" className="hover:text-text">vcad.io</a>
             <a href="https://crates.io/crates/vcad" className="hover:text-text">crates.io</a>
-            <a href="https://docs.rs/vcad" className="hover:text-text">docs.rs</a>
+            <a href="https://www.npmjs.com/org/vcad" className="hover:text-text">npm</a>
           </div>
         </div>
       </footer>

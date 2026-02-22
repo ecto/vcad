@@ -1,42 +1,42 @@
 import {
+  Browser,
   Cube,
   Export,
-  MagnifyingGlass,
-  ArrowsOutCardinal,
-  Palette,
+  Terminal,
   Robot,
+  LockOpen,
 } from "@phosphor-icons/react/dist/ssr";
 
 const features = [
   {
+    icon: Browser,
+    title: "Web App",
+    description: "full cad in your browser at vcad.io",
+  },
+  {
     icon: Cube,
-    title: "CSG",
-    description: "union, difference, intersection — as operators (+, -, &)",
+    title: "BRep Kernel",
+    description: "custom half-edge kernel in rust. sketching, booleans, fillets, sweeps.",
   },
   {
     icon: Export,
     title: "Export",
-    description: "stl, gltf, usd, dxf, step. one model, every format.",
+    description: "stl, gltf, step, dxf, usd. one model, every format.",
   },
   {
-    icon: MagnifyingGlass,
-    title: "Inspect",
-    description: "volume, surface area, bounding box, center of mass",
-  },
-  {
-    icon: ArrowsOutCardinal,
-    title: "Transform",
-    description: "mirror, linear pattern, circular pattern, translate, rotate, scale",
-  },
-  {
-    icon: Palette,
-    title: "Materials",
-    description: "pbr from toml. metallic, roughness, color, density.",
+    icon: Terminal,
+    title: "CLI",
+    description: "create and export models from the terminal",
   },
   {
     icon: Robot,
-    title: "Agents",
-    description: "built for coding agents. api tables, cookbook, blender mcp.",
+    title: "MCP",
+    description: "ai agents can create, inspect, and export models",
+  },
+  {
+    icon: LockOpen,
+    title: "Open Source",
+    description: "mit licensed. run locally, own your files.",
   },
 ];
 

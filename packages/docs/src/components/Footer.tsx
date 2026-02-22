@@ -16,6 +16,14 @@ export function Footer() {
               github
             </a>
             <a
+              href="https://vcad.io"
+              className="hover:text-text transition-colors"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              vcad.io
+            </a>
+            <a
               href="https://crates.io/crates/vcad"
               className="hover:text-text transition-colors"
               target="_blank"
@@ -24,12 +32,12 @@ export function Footer() {
               crates.io
             </a>
             <a
-              href="https://docs.rs/vcad"
+              href="https://www.npmjs.com/org/vcad"
               className="hover:text-text transition-colors"
               target="_blank"
               rel="noopener noreferrer"
             >
-              docs.rs
+              npm
             </a>
           </div>
         </div>

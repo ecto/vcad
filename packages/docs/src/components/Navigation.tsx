@@ -264,6 +264,15 @@ export function Navigation() {
               </a>
               <span>·</span>
               <a
+                href="https://vcad.io"
+                className="hover:text-text transition-colors"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                vcad.io
+              </a>
+              <span>·</span>
+              <a
                 href="https://crates.io/crates/vcad"
                 className="hover:text-text transition-colors"
                 target="_blank"
