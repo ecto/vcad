@@ -1273,7 +1273,7 @@ dependencies = [
 
 [[package]]
 name = "loon-lang"
-version = "0.1.0"
+version = "0.4.20"
 dependencies = [
  "codespan-reporting",
  "dirs-next",
@@ -3183,6 +3183,7 @@ dependencies = [
  "vcad-kernel-geom",
  "vcad-kernel-math",
  "vcad-kernel-primitives",
+ "vcad-kernel-step",
  "vcad-kernel-topo",
 ]
 
