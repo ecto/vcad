@@ -6,6 +6,7 @@
     "build": "turbo build",
     "test": "turbo test",
     "dev": "turbo dev",
+    "build:vercel": "npm run build -w @vcad/ir && npm run build -w @vcad/engine && npm run build -w @vcad/core && npm run build -w @vcad/app && mkdir -p dist && cp -r packages/app/dist/. dist/ && npm run build -w @vcad/docs && mkdir -p dist/docs && cp -r packages/docs/out/. dist/docs/ && cp -r packages/docs/out/fonts dist/fonts 2>/dev/null || true",
     "version:sync": "node scripts/sync-version.mjs",
     "version:check": "node scripts/sync-version.mjs --check"
   },
