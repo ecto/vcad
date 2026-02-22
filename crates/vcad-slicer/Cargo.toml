@@ -6,6 +6,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["analysis"]
+analysis = ["dep:vcad-kernel-topo", "dep:vcad-kernel-geom", "dep:vcad-kernel-primitives"]
+
 [dependencies]
 vcad-kernel-tessellate = { workspace = true }
 vcad-kernel-math = { workspace = true }
@@ -13,5 +17,20 @@ thiserror = { workspace = true }
 serde = { workspace = true }
 rayon = "1.10"
 
+[dependencies.vcad-kernel-topo]
+workspace = true
+optional = true
+
+[dependencies.vcad-kernel-geom]
+workspace = true
+optional = true
+
+[dependencies.vcad-kernel-primitives]
+workspace = true
+optional = true
+
 [dev-dependencies]
 approx = "0.5"
+vcad-kernel-topo = { workspace = true }
+vcad-kernel-geom = { workspace = true }
+vcad-kernel-primitives = { workspace = true }

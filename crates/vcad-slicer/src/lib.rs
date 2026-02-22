@@ -26,6 +26,14 @@ pub mod perimeter;
 pub mod slice;
 pub mod support;
 
+#[cfg(feature = "analysis")]
+pub mod analyze;
+pub mod cost;
+#[cfg(feature = "analysis")]
+pub mod dfm;
+#[cfg(feature = "analysis")]
+pub mod smart_defaults;
+
 pub use error::{Result, SlicerError};
 pub use infill::{generate_infill, InfillPattern, InfillResult, InfillSettings};
 pub use path::{Polygon, Polyline};
