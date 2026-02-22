@@ -10,6 +10,6 @@
   },
   "rewrites": [
     { "source": "/api/:path*", "destination": "/packages/api/api/:path*" },
-    { "source": "/((?!docs/|api/|_next/).*)", "destination": "/index.html" }
+    { "source": "/((?!docs|api/|_next/).*)", "destination": "/index.html" }
   ]
 }
