@@ -11,3 +11,6 @@ vcad-kernel-math = { path = "../vcad-kernel-math" }
 vcad-kernel-topo = { path = "../vcad-kernel-topo" }
 vcad-kernel-geom = { path = "../vcad-kernel-geom" }
 vcad-kernel-primitives = { path = "../vcad-kernel-primitives" }
+
+[dev-dependencies]
+vcad-kernel-step = { path = "../vcad-kernel-step" }

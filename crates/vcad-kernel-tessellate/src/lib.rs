@@ -573,9 +573,6 @@ fn tessellate_planar_face_with_holes(
         (d.dot(&u_axis), d.dot(&v_axis))
     };
 
-    // Unproject 2D points back to 3D
-    let unproject = |uv: (f64, f64)| -> Point3 { origin + uv.0 * u_axis + uv.1 * v_axis };
-
     // Project outer loop
     let mut outer_2d: Vec<(f64, f64)> = outer_verts.iter().map(&project).collect();
 
@@ -601,24 +598,122 @@ fn tessellate_planar_face_with_holes(
         }
     }
 
-    // Re-compute areas after normalization
-    let outer_area = polygon_area_2d(&outer_2d);
-    let total_hole_area: f64 = inner_2d.iter().map(|h| polygon_area_2d(h).abs()).sum();
+    // Merge overlapping inner loops (e.g., semicircular arcs from STEP
+    // that together form a full circle at the same position).
+    merge_overlapping_holes(&mut inner_2d, &mut inner_loops);
 
-    // Use ring-based approach if holes are small relative to the face
-    if total_hole_area < outer_area.abs() * 0.3 {
-        return triangulate_with_rings(
-            &outer_2d,
-            &inner_2d,
-            &outer_verts,
-            &inner_loops,
-            unproject,
-            reversed,
-        );
+    // After merging overlapping arcs, use bridge+ear-clip directly.
+    // The merged holes are well-shaped (no more overlapping semicircles),
+    // so bridge construction works reliably.
+    triangulate_polygon_with_holes(
+        &outer_2d,
+        &inner_2d,
+        &outer_verts,
+        &inner_loops,
+        reversed,
+    )
+}
+
+/// Merge inner loops that overlap (e.g., two semicircular arcs forming a full circle).
+/// Loops are merged when their centroids are closer than the sum of their average radii.
+fn merge_overlapping_holes(
+    inner_2d: &mut Vec<Vec<(f64, f64)>>,
+    inner_3d: &mut Vec<Vec<Point3>>,
+) {
+    loop {
+        let mut merge_pair = None;
+        'search: for i in 0..inner_2d.len() {
+            let ci = centroid_2d(&inner_2d[i]);
+            let ri = avg_radius_2d(&inner_2d[i], ci);
+            #[allow(clippy::needless_range_loop)]
+            for j in (i + 1)..inner_2d.len() {
+                let cj = centroid_2d(&inner_2d[j]);
+                let rj = avg_radius_2d(&inner_2d[j], cj);
+                let dist = ((ci.0 - cj.0).powi(2) + (ci.1 - cj.1).powi(2)).sqrt();
+                // Only merge loops whose centroids are very close — i.e., they
+                // represent split arcs (semicircles) of the same hole.
+                if dist < ri.min(rj) * 0.5 {
+                    merge_pair = Some((i, j));
+                    break 'search;
+                }
+            }
+        }
+
+        let Some((i, j)) = merge_pair else { break };
+
+        // Merge loop j into loop i by combining vertices and sorting by angle
+        let mut combined_2d = std::mem::take(&mut inner_2d[i]);
+        combined_2d.extend_from_slice(&inner_2d[j]);
+        let mut combined_3d = std::mem::take(&mut inner_3d[i]);
+        combined_3d.extend_from_slice(&inner_3d[j]);
+
+        // Compute combined centroid
+        let c = centroid_2d(&combined_2d);
+
+        // Sort by angle from centroid, removing near-duplicate angles
+        let mut indexed: Vec<(f64, (f64, f64), Point3)> = combined_2d
+            .iter()
+            .zip(combined_3d.iter())
+            .map(|(&p2, &p3)| {
+                let angle = (p2.1 - c.1).atan2(p2.0 - c.0);
+                (angle, p2, p3)
+            })
+            .collect();
+        indexed.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Remove near-duplicate angles (from shared seam vertices)
+        let mut deduped_2d = Vec::new();
+        let mut deduped_3d = Vec::new();
+        for &(angle, p2, p3) in &indexed {
+            if deduped_2d.is_empty() {
+                deduped_2d.push(p2);
+                deduped_3d.push(p3);
+            } else {
+                let last = *deduped_2d.last().unwrap();
+                let dist = ((p2.0 - last.0).powi(2) + (p2.1 - last.1).powi(2)).sqrt();
+                if dist > 0.01 {
+                    deduped_2d.push(p2);
+                    deduped_3d.push(p3);
+                }
+            }
+            let _ = angle;
+        }
+        // Also check wrap-around duplicate
+        if deduped_2d.len() > 1 {
+            let first = deduped_2d[0];
+            let last = *deduped_2d.last().unwrap();
+            if ((first.0 - last.0).powi(2) + (first.1 - last.1).powi(2)).sqrt() < 0.01 {
+                deduped_2d.pop();
+                deduped_3d.pop();
+            }
+        }
+
+        // Ensure merged loop has CW winding (negative area = hole)
+        if polygon_area_2d(&deduped_2d) > 0.0 {
+            deduped_2d.reverse();
+            deduped_3d.reverse();
+        }
+
+        inner_2d[i] = deduped_2d;
+        inner_3d[i] = deduped_3d;
+
+        // Remove the merged loop
+        inner_2d.remove(j);
+        inner_3d.remove(j);
     }
+}
 
-    // Use ear-clipping with hole bridging for larger holes
-    triangulate_polygon_with_holes(&outer_2d, &inner_2d, &outer_verts, &inner_loops, reversed)
+fn centroid_2d(pts: &[(f64, f64)]) -> (f64, f64) {
+    let n = pts.len() as f64;
+    pts.iter().fold((0.0, 0.0), |a, p| (a.0 + p.0 / n, a.1 + p.1 / n))
+}
+
+fn avg_radius_2d(pts: &[(f64, f64)], c: (f64, f64)) -> f64 {
+    let n = pts.len() as f64;
+    pts.iter()
+        .map(|p| ((p.0 - c.0).powi(2) + (p.1 - c.1).powi(2)).sqrt())
+        .sum::<f64>()
+        / n
 }
 
 /// Compute signed area of a 2D polygon.
@@ -630,151 +725,6 @@ fn polygon_area_2d(pts: &[(f64, f64)]) -> f64 {
         area += pts[i].0 * pts[j].1 - pts[j].0 * pts[i].1;
     }
     area / 2.0
-}
-
-/// Triangulate a face with holes using rings around each hole.
-/// This creates better quality triangles by adding intermediate Steiner points.
-fn triangulate_with_rings<F>(
-    outer_2d: &[(f64, f64)],
-    inner_2d: &[Vec<(f64, f64)>],
-    outer_3d: &[Point3],
-    inner_3d: &[Vec<Point3>],
-    unproject: F,
-    reversed: bool,
-) -> TriangleMesh
-where
-    F: Fn((f64, f64)) -> Point3,
-{
-    let mut mesh = TriangleMesh::new();
-
-    // For each hole, create a ring of points and triangulate hole-to-ring
-    let mut ring_loops_2d: Vec<Vec<(f64, f64)>> = Vec::new();
-    let mut ring_loops_3d: Vec<Vec<Point3>> = Vec::new();
-
-    for (hole_2d, hole_3d) in inner_2d.iter().zip(inner_3d.iter()) {
-        // Compute hole centroid
-        let centroid: (f64, f64) = hole_2d
-            .iter()
-            .fold((0.0, 0.0), |acc, p| (acc.0 + p.0, acc.1 + p.1));
-        let n = hole_2d.len() as f64;
-        let centroid = (centroid.0 / n, centroid.1 / n);
-
-        // Compute approximate hole radius
-        let hole_radius: f64 = hole_2d
-            .iter()
-            .map(|p| ((p.0 - centroid.0).powi(2) + (p.1 - centroid.1).powi(2)).sqrt())
-            .sum::<f64>()
-            / n;
-
-        // Compute the maximum safe ring radius (must stay inside outer polygon)
-        // Find the minimum distance from hole centroid to any outer edge
-        let max_ring_radius = {
-            let mut min_dist = f64::INFINITY;
-            let n_outer = outer_2d.len();
-            for i in 0..n_outer {
-                let j = (i + 1) % n_outer;
-                let a = outer_2d[i];
-                let b = outer_2d[j];
-                // Distance from centroid to edge a-b
-                let ab = (b.0 - a.0, b.1 - a.1);
-                let len2 = ab.0 * ab.0 + ab.1 * ab.1;
-                let dist = if len2 < 1e-12 {
-                    // Degenerate edge
-                    ((centroid.0 - a.0).powi(2) + (centroid.1 - a.1).powi(2)).sqrt()
-                } else {
-                    let ap = (centroid.0 - a.0, centroid.1 - a.1);
-                    let t = (ap.0 * ab.0 + ap.1 * ab.1) / len2;
-                    let t = t.clamp(0.0, 1.0);
-                    let proj = (a.0 + t * ab.0, a.1 + t * ab.1);
-                    ((centroid.0 - proj.0).powi(2) + (centroid.1 - proj.1).powi(2)).sqrt()
-                };
-                min_dist = min_dist.min(dist);
-            }
-            // Use 80% of the distance to the nearest edge as max ring radius
-            min_dist * 0.8
-        };
-
-        // Create ring at 2x the hole radius, but capped at the max safe radius
-        let desired_ring_radius = hole_radius * 2.5;
-        let ring_radius = desired_ring_radius
-            .min(max_ring_radius)
-            .max(hole_radius * 1.2);
-
-        // Create ring vertices aligned with hole vertices (same angle, larger radius)
-        // This ensures proper 1-to-1 correspondence for triangle creation
-        let ring_2d: Vec<(f64, f64)> = hole_2d
-            .iter()
-            .map(|h| {
-                // Compute angle from centroid to this hole vertex
-                let dx = h.0 - centroid.0;
-                let dy = h.1 - centroid.1;
-                let dist = (dx * dx + dy * dy).sqrt();
-                if dist < 1e-12 {
-                    // Degenerate case: hole vertex at centroid
-                    (centroid.0 + ring_radius, centroid.1)
-                } else {
-                    // Scale to ring radius while preserving angle
-                    let scale = ring_radius / dist;
-                    (centroid.0 + dx * scale, centroid.1 + dy * scale)
-                }
-            })
-            .collect();
-
-        let ring_3d: Vec<Point3> = ring_2d.iter().map(|&uv| unproject(uv)).collect();
-
-        // Triangulate from hole to ring
-        let hole_start = mesh.num_vertices();
-        for v in hole_3d {
-            mesh.vertices.push(v.x as f32);
-            mesh.vertices.push(v.y as f32);
-            mesh.vertices.push(v.z as f32);
-        }
-        let ring_start = mesh.num_vertices();
-        for v in &ring_3d {
-            mesh.vertices.push(v.x as f32);
-            mesh.vertices.push(v.y as f32);
-            mesh.vertices.push(v.z as f32);
-        }
-
-        // Create triangles between hole and ring (quad strips)
-        let count = hole_2d.len();
-        for i in 0..count {
-            let h0 = (hole_start + i) as u32;
-            let h1 = (hole_start + (i + 1) % count) as u32;
-            let r0 = (ring_start + i) as u32;
-            let r1 = (ring_start + (i + 1) % count) as u32;
-
-            // Two triangles per quad
-            if reversed {
-                mesh.indices.extend_from_slice(&[h0, r0, h1]);
-                mesh.indices.extend_from_slice(&[h1, r0, r1]);
-            } else {
-                mesh.indices.extend_from_slice(&[h0, h1, r0]);
-                mesh.indices.extend_from_slice(&[h1, r1, r0]);
-            }
-        }
-
-        ring_loops_2d.push(ring_2d);
-        ring_loops_3d.push(ring_3d);
-    }
-
-    // Now triangulate from rings to outer boundary
-    // Treat rings as new inner loops and use ear-clipping
-    let ring_outer_mesh = triangulate_polygon_with_holes(
-        outer_2d,
-        &ring_loops_2d,
-        outer_3d,
-        &ring_loops_3d,
-        reversed,
-    );
-
-    // Merge ring-to-outer mesh into our mesh (with vertex offset)
-    let offset = mesh.num_vertices() as u32;
-    mesh.vertices.extend_from_slice(&ring_outer_mesh.vertices);
-    mesh.indices
-        .extend(ring_outer_mesh.indices.iter().map(|&i| i + offset));
-
-    mesh
 }
 
 /// Add Steiner points to the outer polygon to improve triangulation quality.
@@ -1098,8 +1048,23 @@ fn ear_clip_triangulate(
                 }
             }
 
+            // Check that the ear diagonal (a→c) doesn't cross any polygon edge
             if is_ear {
-                // Add triangle
+                for j in 0..n {
+                    let j_next = (j + 1) % n;
+                    if j == prev || j_next == prev || j == next || j_next == next {
+                        continue;
+                    }
+                    let p1 = verts_2d[remaining[j]];
+                    let p2 = verts_2d[remaining[j_next]];
+                    if segments_intersect(a, c, p1, p2) {
+                        is_ear = false;
+                        break;
+                    }
+                }
+            }
+
+            if is_ear {
                 if reversed {
                     out_indices.push(remaining[prev] as u32);
                     out_indices.push(remaining[next] as u32);
@@ -1116,7 +1081,6 @@ fn ear_clip_triangulate(
         }
 
         if !found_ear {
-            // Degenerate case - just triangulate remaining as fan
             break;
         }
     }
@@ -1154,6 +1118,28 @@ fn point_in_triangle_2d(p: (f64, f64), a: (f64, f64), b: (f64, f64), c: (f64, f6
     // Use small epsilon to avoid boundary issues
     let eps = 1e-10;
     u > eps && v > eps && (u + v) < 1.0 - eps
+}
+
+/// Check if two line segments (a1→a2) and (b1→b2) properly intersect.
+/// Returns true only for proper crossings (not shared endpoints or collinear overlap).
+fn segments_intersect(
+    a1: (f64, f64),
+    a2: (f64, f64),
+    b1: (f64, f64),
+    b2: (f64, f64),
+) -> bool {
+    let d1 = (a2.0 - a1.0, a2.1 - a1.1);
+    let d2 = (b2.0 - b1.0, b2.1 - b1.1);
+    let denom = d1.0 * d2.1 - d1.1 * d2.0;
+    if denom.abs() < 1e-12 {
+        return false; // Parallel or collinear
+    }
+    let d = (b1.0 - a1.0, b1.1 - a1.1);
+    let t = (d.0 * d2.1 - d.1 * d2.0) / denom;
+    let u = (d.0 * d1.1 - d.1 * d1.0) / denom;
+    // Proper intersection: both parameters strictly in (0, 1)
+    let eps = 1e-8;
+    t > eps && t < 1.0 - eps && u > eps && u < 1.0 - eps
 }
 
 /// Simple fan triangulation for a convex polygon.
@@ -1254,63 +1240,68 @@ fn tessellate_cylindrical_face(
         }
 
 
-        if unique_angles.len() == 1 {
-            // Full cylinder (all vertices at same seam angle)
+        // Sort unique angles and check if they cover the full circle
+        unique_angles.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Detect full cylinder: check if vertices are distributed around
+        // the entire circle by looking at the largest angular gap.
+        // For a full cylinder with arc-sampled edges, vertices are evenly
+        // spaced and no gap exceeds ~40°. For a partial cylinder, the
+        // "missing" section creates a gap > 90°.
+        let is_full = if unique_angles.len() <= 1 {
+            true
+        } else {
+            let mut max_gap = 0.0f64;
+            for i in 0..unique_angles.len() - 1 {
+                let gap = unique_angles[i + 1] - unique_angles[i];
+                max_gap = max_gap.max(gap);
+            }
+            // Wrap-around gap from last angle back to first + 2π
+            let wrap_gap =
+                2.0 * PI - (unique_angles[unique_angles.len() - 1] - unique_angles[0]);
+            max_gap = max_gap.max(wrap_gap);
+            max_gap < PI / 2.0
+        };
+
+        if is_full {
             u_min = 0.0;
             u_max = 2.0 * PI;
         } else {
+            let a_min = unique_angles[0];
+            let a_max = unique_angles[unique_angles.len() - 1];
+
             // Determine angular direction from loop vertex order
-            // Find the first significant angle change to detect winding direction
             let mut first_dir = 0.0;
             for i in 0..angles.len() {
                 let a1 = angles[i];
                 let a2 = angles[(i + 1) % angles.len()];
                 let mut diff = a2 - a1;
-                // Normalize to [-π, π]
                 if diff > PI {
                     diff -= 2.0 * PI;
                 } else if diff < -PI {
                     diff += 2.0 * PI;
                 }
-                // Use first significant change (> ~6 degrees)
                 if diff.abs() > 0.1 {
                     first_dir = diff;
                     break;
                 }
             }
 
-            // Sort to find min/max
-            unique_angles.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            let a_min = unique_angles[0];
-            let a_max = unique_angles[unique_angles.len() - 1];
-
-            // Determine which arc the face covers based on the direct span vs wrap-around
-            // Direct span: [a_min, a_max]
-            // Wrap-around: [a_max, a_min + 2π] (goes through the seam at 0/2π)
             let direct_span = a_max - a_min;
             let wrap_span = 2.0 * PI - direct_span;
 
-            // Use the smaller span, unless it's very close to half the circle
-            // (in which case use the winding direction to disambiguate)
-            if wrap_span < direct_span - 0.1 {
-                // Wrap-around is smaller - face goes through the seam
+            // Face wraps through the seam when the wrap-around arc is
+            // clearly smaller, or when spans are ambiguous and loop
+            // winding is clockwise.
+            let wraps = (wrap_span < direct_span - 0.1)
+                || (wrap_span - direct_span).abs() <= 0.1 && first_dir < 0.0;
+
+            if wraps {
                 u_min = a_max;
                 u_max = a_min + 2.0 * PI;
-            } else if direct_span < wrap_span - 0.1 {
-                // Direct span is smaller
+            } else {
                 u_min = a_min;
                 u_max = a_max;
-            } else {
-                // Spans are similar (nearly half-circle) - use winding direction
-                if first_dir >= 0.0 {
-                    // Counterclockwise in UV space means going from lower to higher U
-                    u_min = a_min;
-                    u_max = a_max;
-                } else {
-                    // Clockwise means wrap-around
-                    u_min = a_max;
-                    u_max = a_min + 2.0 * PI;
-                }
             }
         }
 
