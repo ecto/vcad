@@ -419,8 +419,8 @@ export function ViewportContent() {
     const domElement = controls?.domElement;
     if (!domElement) return;
 
-    const dampingFactor = 0.15; // fraction of velocity applied per frame
-    const friction = 0.92; // velocity decay per frame
+    const dampingFactor = 1.0;
+    const friction = 0.0;
 
     // Batch wheel events to avoid multiple renders per frame
     let pendingUpdate = false;
@@ -891,8 +891,7 @@ export function ViewportContent() {
       <OrbitControls
         ref={orbitRef}
         makeDefault
-        enableDamping
-        dampingFactor={0.1}
+        enableDamping={false}
         enableZoom={false}
         mouseButtons={(() => {
           const schemeButtons = getOrbitControlsMouseButtons(
