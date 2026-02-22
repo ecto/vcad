@@ -15,7 +15,9 @@ mkdir -p dist
 cp -r packages/app/dist/. dist/
 
 # Build docs (static export)
-npm run build -w @vcad/docs
+cd packages/docs
+../../node_modules/.bin/next build
+cd ../..
 
 # Merge docs output into dist/docs/
 mkdir -p dist/docs
