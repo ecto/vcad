@@ -23,8 +23,15 @@ vcad-kernel-constraints = { path = "../vcad-kernel-constraints" }
 vcad-kernel-physics = { path = "../vcad-kernel-physics" }
 vcad-kernel-cam = { path = "../vcad-kernel-cam" }
 vcad-kernel-raytrace = { path = "../vcad-kernel-raytrace" }
+vcad-kernel-tessellate = { workspace = true }
 vcad-slicer = { path = "../vcad-slicer" }
 vcad-slicer-gcode = { path = "../vcad-slicer-gcode" }
+vcad-slicer-bambu = { path = "../vcad-slicer-bambu", default-features = false }
+
+# Print server (optional feature)
+axum = { version = "0.8", optional = true }
+tower-http = { version = "0.6", features = ["cors"], optional = true }
+tokio = { version = "1", features = ["full"], optional = true }
 termview = { path = "../termview" }
 
 # TUI framework
@@ -43,6 +50,9 @@ serde_json.workspace = true
 # Error handling
 anyhow.workspace = true
 thiserror.workspace = true
+
+[features]
+print-server = ["dep:axum", "dep:tower-http", "dep:tokio", "vcad-slicer-bambu/network"]
 
 [dev-dependencies]
 tempfile = "3"

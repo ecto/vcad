@@ -9,6 +9,8 @@ use std::path::PathBuf;
 
 mod app;
 mod input;
+#[cfg(feature = "print-server")]
+mod print_server;
 mod render;
 mod repl;
 mod tui;
@@ -143,6 +145,50 @@ enum Commands {
         /// Path to the .vcad file
         file: PathBuf,
     },
+
+    /// Slice a .vcad file for 3D printing
+    Slice {
+        /// Input .vcad file
+        input: PathBuf,
+        /// Output file (.gcode or .3mf)
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Printer profile
+        #[arg(long, default_value = "generic")]
+        profile: String,
+        /// Layer height (mm)
+        #[arg(long)]
+        layer_height: Option<f64>,
+        /// Wall count
+        #[arg(long)]
+        wall_count: Option<u32>,
+        /// Infill density (0-100)
+        #[arg(long)]
+        infill: Option<u32>,
+        /// Enable support
+        #[arg(long)]
+        support: bool,
+        /// Print temperature (°C)
+        #[arg(long)]
+        print_temp: Option<u32>,
+        /// Bed temperature (°C)
+        #[arg(long)]
+        bed_temp: Option<u32>,
+        /// Use smart defaults from BRep analysis
+        #[arg(long)]
+        smart: bool,
+        /// Print reasoning for smart defaults
+        #[arg(long)]
+        explain: bool,
+    },
+
+    /// Start the print relay server for web app → printer communication
+    #[cfg(feature = "print-server")]
+    PrintServer {
+        /// Port to listen on
+        #[arg(long, default_value = "7878")]
+        port: u16,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -212,6 +258,29 @@ fn main() -> Result<()> {
         }
         Some(Commands::Info { file }) => {
             show_info(&file)?;
+        }
+        Some(Commands::Slice {
+            input,
+            output,
+            profile,
+            layer_height,
+            wall_count,
+            infill,
+            support,
+            print_temp,
+            bed_temp,
+            smart,
+            explain,
+        }) => {
+            slice_file(
+                &input, &output, &profile, layer_height, wall_count, infill, support, print_temp,
+                bed_temp, smart, explain,
+            )?;
+        }
+        #[cfg(feature = "print-server")]
+        Some(Commands::PrintServer { port }) => {
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(print_server::start_server(port))?;
         }
         None => {
             // Default to TUI with no file
@@ -547,6 +616,230 @@ pub fn export_file_from_doc(doc: &vcad_ir::Document, output: &PathBuf) -> Result
         }
     }
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn slice_file(
+    input: &PathBuf,
+    output: &PathBuf,
+    profile: &str,
+    layer_height: Option<f64>,
+    wall_count: Option<u32>,
+    infill: Option<u32>,
+    support: bool,
+    print_temp: Option<u32>,
+    bed_temp: Option<u32>,
+    smart: bool,
+    explain: bool,
+) -> Result<()> {
+    use vcad_slicer::{SliceSettings, SliceResult};
+    use vcad_slicer_gcode::{GcodeSettings, PrinterProfile};
+
+    let json = std::fs::read_to_string(input)?;
+    let doc = vcad_ir::Document::from_json(&json)?;
+    let meshes = crate::app::evaluate_document(&doc)?;
+
+    if meshes.is_empty() {
+        anyhow::bail!("No geometry to slice");
+    }
+
+    // Combine all meshes
+    let mut combined_verts = Vec::new();
+    let mut combined_idxs = Vec::new();
+    for mesh in &meshes {
+        let base_idx = (combined_verts.len() / 3) as u32;
+        combined_verts.extend_from_slice(&mesh.vertices);
+        for idx in &mesh.indices {
+            combined_idxs.push(idx + base_idx);
+        }
+    }
+
+    let mesh = vcad_kernel_tessellate::TriangleMesh {
+        vertices: combined_verts,
+        indices: combined_idxs,
+        normals: Vec::new(),
+    };
+
+    // Resolve printer profile
+    let printer_profile = match profile {
+        "bambu_x1c" => PrinterProfile::bambu_x1c(),
+        "bambu_p1s" => PrinterProfile::bambu_p1s(),
+        "bambu_a1" => PrinterProfile::bambu_a1(),
+        "bambu_a1_mini" => PrinterProfile::bambu_a1_mini(),
+        "ender3" => PrinterProfile::ender3(),
+        "prusa_mk4" => PrinterProfile::prusa_mk4(),
+        "voron_24" => PrinterProfile::voron_24(),
+        _ => PrinterProfile::generic(),
+    };
+
+    // Build settings — use smart defaults from BRep analysis if requested
+    let settings = if smart {
+        // Try to get BRep data for analysis
+        let solid = try_build_solid(&doc);
+        if let Some(solid) = solid {
+            if let Some(brep) = solid.brep() {
+                let volume = solid.volume();
+                let surface_area = solid.surface_area();
+                let analysis = vcad_slicer::analyze::analyze_for_printing(brep, volume, surface_area);
+                let params = vcad_slicer::smart_defaults::PrinterParams {
+                    nozzle_diameter: printer_profile.nozzle_diameter,
+                    bed_x: printer_profile.bed_x,
+                    bed_y: printer_profile.bed_y,
+                    bed_z: printer_profile.bed_z,
+                };
+                let smart_defaults = vcad_slicer::smart_defaults::recommend_settings(&analysis, &params);
+
+                if explain {
+                    println!("\nBRep Analysis:");
+                    for note in &analysis.notes {
+                        println!("  - {}", note);
+                    }
+                    println!("\nSmart Defaults:");
+                    for rec in &smart_defaults.recommendations {
+                        println!("  {} = {} — {}", rec.setting, rec.value, rec.reason);
+                    }
+                    println!();
+                }
+
+                // Allow CLI overrides on top of smart defaults
+                let mut s = smart_defaults.settings;
+                if let Some(lh) = layer_height { s.layer_height = lh; }
+                if let Some(wc) = wall_count { s.wall_count = wc; }
+                if let Some(inf) = infill { s.infill_density = inf as f64 / 100.0; }
+                if support { s.support_enabled = true; }
+                s
+            } else {
+                if explain {
+                    println!("  Note: No BRep data available, using manual defaults");
+                }
+                SliceSettings {
+                    layer_height: layer_height.unwrap_or(0.2),
+                    wall_count: wall_count.unwrap_or(3),
+                    infill_density: infill.map(|i| i as f64 / 100.0).unwrap_or(0.15),
+                    support_enabled: support,
+                    ..Default::default()
+                }
+            }
+        } else {
+            if explain {
+                println!("  Note: Could not build solid for analysis, using manual defaults");
+            }
+            SliceSettings {
+                layer_height: layer_height.unwrap_or(0.2),
+                wall_count: wall_count.unwrap_or(3),
+                infill_density: infill.map(|i| i as f64 / 100.0).unwrap_or(0.15),
+                support_enabled: support,
+                ..Default::default()
+            }
+        }
+    } else {
+        SliceSettings {
+            layer_height: layer_height.unwrap_or(0.2),
+            wall_count: wall_count.unwrap_or(3),
+            infill_density: infill.map(|i| i as f64 / 100.0).unwrap_or(0.15),
+            support_enabled: support,
+            ..Default::default()
+        }
+    };
+
+    println!("Slicing with profile: {}", printer_profile.name);
+    println!(
+        "  Layer height: {:.2}mm, Walls: {}, Infill: {}%, Support: {}",
+        settings.layer_height,
+        settings.wall_count,
+        (settings.infill_density * 100.0) as u32,
+        if settings.support_enabled { "on" } else { "off" }
+    );
+
+    let result: SliceResult = vcad_slicer::slice(&mesh, &settings)?;
+    println!(
+        "  {} layers, {:.1}g filament, ~{}",
+        result.stats.layer_count,
+        result.stats.filament_grams,
+        format_duration(result.stats.print_time_seconds),
+    );
+
+    let ext = output.extension().and_then(|e| e.to_str()).unwrap_or("");
+    match ext.to_lowercase().as_str() {
+        "gcode" => {
+            let pt = print_temp.unwrap_or(printer_profile.default_print_temp);
+            let bt = bed_temp.unwrap_or(printer_profile.default_bed_temp);
+            let gcode_settings = GcodeSettings {
+                printer: printer_profile,
+                print_temp: pt,
+                bed_temp: bt,
+                ..Default::default()
+            };
+            let gcode = vcad_slicer_gcode::generate_gcode(&result, gcode_settings);
+            std::fs::write(output, gcode)?;
+            println!("Exported G-code to {}", output.display());
+        }
+        "3mf" => {
+            use vcad_slicer_bambu::{PrintSettings, ThreeMfModel};
+
+            let pt = print_temp.unwrap_or(printer_profile.default_print_temp);
+            let bt = bed_temp.unwrap_or(printer_profile.default_bed_temp);
+
+            let mut model = ThreeMfModel::new(
+                input.file_stem().and_then(|s| s.to_str()).unwrap_or("model").to_string(),
+                mesh.vertices,
+                mesh.indices,
+            );
+            model.settings = PrintSettings {
+                layer_height: settings.layer_height,
+                first_layer_height: settings.first_layer_height,
+                wall_count: settings.wall_count,
+                infill_density: settings.infill_density,
+                print_temp: pt,
+                bed_temp: bt,
+                ..Default::default()
+            };
+            let bytes = model.to_bytes()?;
+            std::fs::write(output, bytes)?;
+            println!("Exported 3MF to {}", output.display());
+        }
+        _ => {
+            anyhow::bail!("Unknown output format '{}'. Use .gcode or .3mf", ext);
+        }
+    }
+
+    Ok(())
+}
+
+/// Try to build a Solid from the first root of a document for BRep analysis.
+fn try_build_solid(doc: &vcad_ir::Document) -> Option<vcad_kernel::Solid> {
+    use vcad_kernel::Solid;
+
+    if doc.roots.is_empty() {
+        return None;
+    }
+
+    let root_id = doc.roots[0].root;
+    let root_node = doc.nodes.get(&root_id)?;
+
+    match &root_node.op {
+        vcad_ir::CsgOp::Cube { size } => Some(Solid::cube(size.x, size.y, size.z)),
+        vcad_ir::CsgOp::Cylinder { radius, height, segments } => {
+            Some(Solid::cylinder(*radius, *height, if *segments == 0 { 32 } else { *segments }))
+        }
+        vcad_ir::CsgOp::Sphere { radius, segments } => {
+            Some(Solid::sphere(*radius, if *segments == 0 { 32 } else { *segments }))
+        }
+        vcad_ir::CsgOp::Cone { radius_bottom, radius_top, height, segments } => {
+            Some(Solid::cone(*radius_bottom, *radius_top, *height, if *segments == 0 { 32 } else { *segments }))
+        }
+        _ => None,
+    }
+}
+
+fn format_duration(seconds: f64) -> String {
+    let hours = (seconds / 3600.0) as u32;
+    let minutes = ((seconds % 3600.0) / 60.0) as u32;
+    if hours > 0 {
+        format!("{}h {}m", hours, minutes)
+    } else {
+        format!("{}m", minutes)
+    }
 }
 
 fn create_new(file: &PathBuf, template: &str) -> Result<()> {

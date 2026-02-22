@@ -1,8 +1,11 @@
+import { useState } from "react";
 import { MagnifyingGlass } from "@phosphor-icons/react/dist/ssr/MagnifyingGlass";
 import { Spinner } from "@phosphor-icons/react/dist/ssr/Spinner";
 import { WifiHigh } from "@phosphor-icons/react/dist/ssr/WifiHigh";
 import { WifiSlash } from "@phosphor-icons/react/dist/ssr/WifiSlash";
 import { usePrinterStore } from "@/stores/printer-store";
+import { isRelayAvailable, discoverPrinters } from "@/lib/print-relay";
+import { useNotificationStore } from "@/stores/notification-store";
 
 export function PrinterSelect() {
   const isDiscovering = usePrinterStore((s) => s.isDiscovering);
@@ -15,22 +18,47 @@ export function PrinterSelect() {
   const profiles = usePrinterStore((s) => s.profiles);
   const selectedProfile = usePrinterStore((s) => s.selectedProfile);
   const setSelectedProfile = usePrinterStore((s) => s.setSelectedProfile);
+  const addToast = useNotificationStore((s) => s.addToast);
+  const [relayAvailable, setRelayAvailable] = useState<boolean | null>(null);
 
   async function handleDiscover() {
     setDiscovering(true);
-    // In real implementation, this would call the WASM/native printer discovery
-    // For now, simulate discovery
-    await new Promise((r) => setTimeout(r, 2000));
-    setDiscoveredPrinters([
-      {
-        id: "mock-1",
-        name: "Bambu X1C - Workshop",
-        model: "X1C",
-        ip: "192.168.1.100",
-        serial: "00M00A2B012345",
-      },
-    ]);
-    setDiscovering(false);
+
+    try {
+      // Check if relay server is available
+      const available = await isRelayAvailable();
+      setRelayAvailable(available);
+
+      if (available) {
+        // Real discovery via relay
+        const printers = await discoverPrinters();
+        setDiscoveredPrinters(
+          printers.map((p) => ({
+            id: `${p.serial}`,
+            name: `${p.model} - ${p.name}`,
+            model: p.model,
+            ip: p.ip,
+            serial: p.serial,
+          }))
+        );
+        if (printers.length === 0) {
+          addToast("No printers found on network", "info");
+        }
+      } else {
+        // No relay — tell user to start it
+        setDiscoveredPrinters([]);
+        addToast(
+          "Print relay not running. Start with: vcad print-server",
+          "info"
+        );
+      }
+    } catch (err) {
+      console.error("Discovery failed:", err);
+      addToast("Printer discovery failed", "error");
+      setDiscoveredPrinters([]);
+    } finally {
+      setDiscovering(false);
+    }
   }
 
   return (
@@ -69,6 +97,14 @@ export function PrinterSelect() {
           </button>
         </div>
 
+        {/* Relay status */}
+        {relayAvailable === false && (
+          <div className="text-xs text-text-muted text-center py-1 mb-2 bg-hover rounded p-2">
+            Print relay not running. Start with:
+            <code className="block mt-1 text-accent">vcad print-server</code>
+          </div>
+        )}
+
         {/* Discovered printers */}
         {discoveredPrinters.length > 0 && (
           <div className="space-y-1">
@@ -97,7 +133,7 @@ export function PrinterSelect() {
         )}
 
         {/* No printers found message */}
-        {!isDiscovering && discoveredPrinters.length === 0 && (
+        {!isDiscovering && discoveredPrinters.length === 0 && relayAvailable !== false && (
           <div className="text-xs text-text-muted text-center py-2">
             No printers found. Make sure your printer is on the same network.
           </div>

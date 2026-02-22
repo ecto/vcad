@@ -271,6 +271,36 @@ impl BambuPrinter {
             .await
     }
 
+    /// Upload a 3MF file and start printing.
+    ///
+    /// Uploads via FTPS, then sends a PrintStart MQTT command.
+    pub async fn print_3mf(&self, filename: &str, data: &[u8]) -> Result<()> {
+        // Upload via FTPS
+        crate::ftp::upload_3mf(
+            self.client.ip(),
+            &self.client.config.access_code,
+            filename,
+            data,
+        )
+        .await?;
+
+        // Send print start command
+        self.client
+            .send_command(PrinterCommand::PrintStart {
+                file: format!("/sdcard/{}", filename),
+                plate_index: 0,
+                use_ams: false,
+                ams_mapping: vec![0],
+                bed_leveling: true,
+                flow_calibration: true,
+                vibration_calibration: true,
+                skip_objects: vec![],
+            })
+            .await?;
+
+        Ok(())
+    }
+
     /// Get the underlying MQTT client.
     pub fn mqtt_client(&self) -> &BambuMqttClient {
         &self.client
