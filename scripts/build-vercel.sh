@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 set -e
 
-# Ensure hoisted binaries (next, etc.) are in PATH
-export PATH="$PWD/node_modules/.bin:$PATH"
-
 # Build app
 npm run build -w @vcad/ir
 npm run build -w @vcad/engine
@@ -15,8 +12,10 @@ mkdir -p dist
 cp -r packages/app/dist/. dist/
 
 # Build docs (static export)
+# Resolve next binary from wherever npm installed it
+NEXT_BIN=$(node -e "console.log(require.resolve('next/dist/bin/next'))")
 cd packages/docs
-node ../../node_modules/next/dist/bin/next build
+node "$NEXT_BIN" build
 cd ../..
 
 # Merge docs output into dist/docs/
