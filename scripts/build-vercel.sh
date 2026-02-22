@@ -1,13 +1,6 @@
 #!/usr/bin/env bash
 set -e
 
-echo "=== build-vercel.sh ==="
-echo "PWD: $(pwd)"
-echo "node_modules exists: $(test -d node_modules && echo yes || echo no)"
-echo "next in node_modules: $(test -f node_modules/next/dist/bin/next && echo yes || echo no)"
-echo "next in .bin: $(test -f node_modules/.bin/next && echo yes || echo no)"
-ls node_modules/.bin/next* 2>/dev/null || echo "no next in .bin"
-
 # Build app
 npm run build -w @vcad/ir
 npm run build -w @vcad/engine
@@ -19,13 +12,9 @@ mkdir -p dist
 cp -r packages/app/dist/. dist/
 
 # Build docs (static export)
-echo "=== building docs ==="
-echo "PWD before cd: $(pwd)"
+# next is only available in the docs workspace, resolve from there
 cd packages/docs
-echo "PWD after cd: $(pwd)"
-echo "Resolving next..."
 NEXT_BIN=$(node -e "console.log(require.resolve('next/dist/bin/next'))")
-echo "NEXT_BIN: $NEXT_BIN"
 node "$NEXT_BIN" build
 cd ../..
 
