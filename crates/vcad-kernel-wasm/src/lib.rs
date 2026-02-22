@@ -3156,6 +3156,7 @@ mod slicer_wasm {
             "bambu_x1c" => PrinterProfile::bambu_x1c(),
             "bambu_p1s" => PrinterProfile::bambu_p1s(),
             "bambu_a1" => PrinterProfile::bambu_a1(),
+            "bambu_a1_mini" | "bambu_lab_a1_mini" => PrinterProfile::bambu_a1_mini(),
             "ender3" => PrinterProfile::ender3(),
             "prusa_mk4" => PrinterProfile::prusa_mk4(),
             "voron_24" => PrinterProfile::voron_24(),
@@ -3210,6 +3211,161 @@ mod slicer_wasm {
     #[wasm_bindgen(js_name = isSlicerAvailable)]
     pub fn is_slicer_available() -> bool {
         true
+    }
+
+    /// Analyze a solid for 3D printing characteristics.
+    ///
+    /// Returns JSON with wall thicknesses, overhang angles, hole sizes, etc.
+    /// Only works on solids with BRep data (primitives, not boolean results).
+    #[wasm_bindgen(js_name = analyzeForPrinting)]
+    pub fn analyze_for_printing(solid: &Solid) -> Result<JsValue, JsError> {
+        let brep = solid
+            .inner
+            .brep()
+            .ok_or_else(|| JsError::new("Solid has no BRep data (mesh-only)"))?;
+
+        let volume = solid.inner.volume();
+        let surface_area = solid.inner.surface_area();
+
+        let analysis = vcad_slicer::analyze::analyze_for_printing(brep, volume, surface_area);
+        serde_wasm_bindgen::to_value(&analysis).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Recommend smart print settings from analysis results.
+    ///
+    /// Takes a PrintAnalysis JSON and printer profile name,
+    /// returns recommended SliceSettings + explanations.
+    #[wasm_bindgen(js_name = recommendPrintSettings)]
+    pub fn recommend_print_settings(
+        analysis_json: &str,
+        printer_profile: &str,
+    ) -> Result<JsValue, JsError> {
+        let analysis: vcad_slicer::analyze::PrintAnalysis =
+            serde_json::from_str(analysis_json).map_err(|e| JsError::new(&e.to_string()))?;
+
+        let profile = match printer_profile {
+            "bambu_x1c" => PrinterProfile::bambu_x1c(),
+            "bambu_p1s" => PrinterProfile::bambu_p1s(),
+            "bambu_a1" => PrinterProfile::bambu_a1(),
+            "bambu_a1_mini" | "bambu_lab_a1_mini" => PrinterProfile::bambu_a1_mini(),
+            "ender3" => PrinterProfile::ender3(),
+            "prusa_mk4" => PrinterProfile::prusa_mk4(),
+            "voron_24" => PrinterProfile::voron_24(),
+            _ => PrinterProfile::generic(),
+        };
+
+        let params = vcad_slicer::smart_defaults::PrinterParams {
+            nozzle_diameter: profile.nozzle_diameter,
+            bed_x: profile.bed_x,
+            bed_y: profile.bed_y,
+            bed_z: profile.bed_z,
+        };
+
+        let defaults = vcad_slicer::smart_defaults::recommend_settings(&analysis, &params);
+        serde_wasm_bindgen::to_value(&defaults).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Check a solid for DFM (Design for Manufacturing) printability issues.
+    ///
+    /// Returns warnings with face indices for viewport highlighting.
+    #[wasm_bindgen(js_name = checkPrintability)]
+    pub fn check_printability(
+        solid: &Solid,
+        printer_profile: &str,
+    ) -> Result<JsValue, JsError> {
+        let brep = solid
+            .inner
+            .brep()
+            .ok_or_else(|| JsError::new("Solid has no BRep data (mesh-only)"))?;
+
+        let profile = match printer_profile {
+            "bambu_x1c" => PrinterProfile::bambu_x1c(),
+            "bambu_p1s" => PrinterProfile::bambu_p1s(),
+            "bambu_a1" => PrinterProfile::bambu_a1(),
+            "bambu_a1_mini" | "bambu_lab_a1_mini" => PrinterProfile::bambu_a1_mini(),
+            "ender3" => PrinterProfile::ender3(),
+            "prusa_mk4" => PrinterProfile::prusa_mk4(),
+            "voron_24" => PrinterProfile::voron_24(),
+            _ => PrinterProfile::generic(),
+        };
+
+        let params = vcad_slicer::smart_defaults::PrinterParams {
+            nozzle_diameter: profile.nozzle_diameter,
+            bed_x: profile.bed_x,
+            bed_y: profile.bed_y,
+            bed_z: profile.bed_z,
+        };
+
+        let result = vcad_slicer::dfm::check_printability(brep, &params);
+        serde_wasm_bindgen::to_value(&result).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Estimate print cost from volume (instant, pre-slice).
+    #[wasm_bindgen(js_name = estimatePrintCost)]
+    pub fn estimate_print_cost(
+        volume_mm3: f64,
+        infill_density: f64,
+        wall_count: u32,
+        line_width: f64,
+        material_name: &str,
+    ) -> Result<JsValue, JsError> {
+        let material = match material_name {
+            "PETG" | "petg" => vcad_slicer::cost::Material::petg(),
+            "ABS" | "abs" => vcad_slicer::cost::Material::abs(),
+            "TPU" | "tpu" => vcad_slicer::cost::Material::tpu(),
+            _ => vcad_slicer::cost::Material::pla(),
+        };
+
+        let estimate = vcad_slicer::cost::estimate_cost_from_volume(
+            volume_mm3, infill_density, wall_count, line_width, &material,
+        );
+        serde_wasm_bindgen::to_value(&estimate).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Generate a 3MF file from mesh data.
+    ///
+    /// Returns the 3MF file as a byte array suitable for download or upload to a printer.
+    #[wasm_bindgen(js_name = generate3mf)]
+    pub fn generate_3mf(
+        name: &str,
+        vertices: &[f32],
+        indices: &[u32],
+        settings_json: &str,
+    ) -> Result<Vec<u8>, JsError> {
+        use vcad_slicer_bambu::{PrintSettings, ThreeMfModel};
+
+        let mut model = ThreeMfModel::new(name.to_string(), vertices.to_vec(), indices.to_vec());
+
+        // Parse optional settings
+        if !settings_json.is_empty() {
+            #[derive(Deserialize)]
+            struct ThreeMfSettings {
+                layer_height: Option<f64>,
+                first_layer_height: Option<f64>,
+                wall_count: Option<u32>,
+                infill_density: Option<f64>,
+                print_temp: Option<u32>,
+                bed_temp: Option<u32>,
+                filament_type: Option<String>,
+            }
+
+            if let Ok(s) = serde_json::from_str::<ThreeMfSettings>(settings_json) {
+                let defaults = PrintSettings::default();
+                model.settings = PrintSettings {
+                    layer_height: s.layer_height.unwrap_or(defaults.layer_height),
+                    first_layer_height: s.first_layer_height.unwrap_or(defaults.first_layer_height),
+                    wall_count: s.wall_count.unwrap_or(defaults.wall_count),
+                    infill_density: s.infill_density.unwrap_or(defaults.infill_density),
+                    print_temp: s.print_temp.unwrap_or(defaults.print_temp),
+                    bed_temp: s.bed_temp.unwrap_or(defaults.bed_temp),
+                    filament_type: s.filament_type.unwrap_or(defaults.filament_type),
+                };
+            }
+        }
+
+        model
+            .to_bytes()
+            .map_err(|e| JsError::new(&e.to_string()))
     }
 }
 

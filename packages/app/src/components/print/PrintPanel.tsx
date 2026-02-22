@@ -5,7 +5,7 @@ import { Gear } from "@phosphor-icons/react/dist/ssr/Gear";
 import { Eye } from "@phosphor-icons/react/dist/ssr/Eye";
 import { Export } from "@phosphor-icons/react/dist/ssr/Export";
 import { Spinner } from "@phosphor-icons/react/dist/ssr/Spinner";
-import { useSlicerStore, formatDuration, type SliceResult } from "@/stores/slicer-store";
+import { useSlicerStore, formatDuration, infillPatternToId, type SliceResult } from "@/stores/slicer-store";
 import { usePrinterStore } from "@/stores/printer-store";
 import { useEngineStore } from "@vcad/core";
 import { useNotificationStore } from "@/stores/notification-store";
@@ -13,8 +13,47 @@ import { SlicerSettings } from "./SlicerSettings";
 import { PrinterSelect } from "./PrinterSelect";
 import { PrinterStatus } from "./PrinterStatus";
 import { PrintPreview } from "./PrintPreview";
+import { downloadBlob } from "@/lib/download";
 
 type Tab = "settings" | "preview" | "printer";
+
+// Module-level WASM cache
+let wasmModule: typeof import("@vcad/kernel-wasm") | null = null;
+
+async function loadSlicerWasm(): Promise<typeof import("@vcad/kernel-wasm") | null> {
+  if (wasmModule) return wasmModule;
+  try {
+    const wasm = await import("@vcad/kernel-wasm");
+    if (typeof (wasm as Record<string, unknown>).isSlicerAvailable !== "function") {
+      return null;
+    }
+    wasmModule = wasm;
+    return wasmModule;
+  } catch {
+    return null;
+  }
+}
+
+/** Collect all mesh data from scene parts into flat vertex/index arrays. */
+function collectMeshData(scene: { parts: Array<{ mesh: { positions: Float32Array; indices: Uint32Array } }> }) {
+  const allVertices: number[] = [];
+  const allIndices: number[] = [];
+
+  for (const part of scene.parts) {
+    const baseIdx = allVertices.length / 3;
+    for (let i = 0; i < part.mesh.positions.length; i++) {
+      allVertices.push(part.mesh.positions[i]!);
+    }
+    for (let i = 0; i < part.mesh.indices.length; i++) {
+      allIndices.push(part.mesh.indices[i]! + baseIdx);
+    }
+  }
+
+  return {
+    vertices: new Float32Array(allVertices),
+    indices: new Uint32Array(allIndices),
+  };
+}
 
 export function PrintPanel() {
   const [activeTab, setActiveTab] = useState<Tab>("settings");
@@ -58,9 +97,70 @@ export function PrintPanel() {
     sliceResultRef.current = null;
 
     try {
-      // Slicer is not yet implemented in kernel-wasm
-      // This will be enabled once vcad-kernel-slicer is complete
-      throw new Error("Slicer not yet available. Coming soon!");
+      const wasm = await loadSlicerWasm();
+      if (!wasm) throw new Error("Slicer not available in this build");
+
+      const slicerWasm = wasm as typeof wasm & {
+        SlicerSettings: new () => {
+          layer_height: number;
+          first_layer_height: number;
+          nozzle_diameter: number;
+          line_width: number;
+          wall_count: number;
+          infill_density: number;
+          infill_pattern: number;
+          support_enabled: boolean;
+          support_angle: number;
+        };
+        sliceMesh: (vertices: Float32Array, indices: Uint32Array, settings: unknown) => SliceResult;
+      };
+
+      // Collect mesh from all parts
+      const { vertices, indices } = collectMeshData(scene);
+
+      // Build WASM slicer settings
+      const settings = new slicerWasm.SlicerSettings();
+      settings.layer_height = slicerSettings.layerHeight;
+      settings.first_layer_height = slicerSettings.firstLayerHeight;
+      settings.nozzle_diameter = slicerSettings.nozzleDiameter;
+      settings.line_width = slicerSettings.lineWidth;
+      settings.wall_count = slicerSettings.wallCount;
+      settings.infill_density = slicerSettings.infillDensity;
+      settings.infill_pattern = infillPatternToId(slicerSettings.infillPattern);
+      settings.support_enabled = slicerSettings.supportEnabled;
+      settings.support_angle = slicerSettings.supportAngle;
+
+      // Slice
+      const result = slicerWasm.sliceMesh(vertices, indices, settings);
+      sliceResultRef.current = result;
+      setSliceResult(result);
+
+      // Parse stats
+      const statsJson = result.statsJson();
+      const parsedStats = JSON.parse(statsJson);
+      setStats({
+        layerCount: parsedStats.layer_count,
+        printTimeSeconds: parsedStats.print_time_seconds,
+        filamentMm: parsedStats.filament_mm,
+        filamentGrams: parsedStats.filament_grams,
+        boundsMin: parsedStats.bounds_min,
+        boundsMax: parsedStats.bounds_max,
+      });
+
+      // Show first layer preview
+      if (result.layerCount > 0) {
+        const preview = result.getLayerPreview(0);
+        setCurrentLayerPreview({
+          z: preview.z,
+          index: preview.index,
+          outerPerimeters: preview.outer_perimeters,
+          innerPerimeters: preview.inner_perimeters,
+          infill: preview.infill,
+        });
+      }
+
+      addToast(`Sliced: ${result.layerCount} layers`, "success");
+      setActiveTab("preview");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Slicing failed";
       setSliceError(message);
@@ -75,13 +175,54 @@ export function PrintPanel() {
     if (!result || !stats) return;
 
     try {
-      // G-code export not yet implemented
-      addToast("G-code export coming soon", "info");
+      const wasm = await loadSlicerWasm();
+      if (!wasm) throw new Error("Slicer not available");
+
+      const slicerWasm = wasm as typeof wasm & {
+        generateGcode: (result: SliceResult, profile: string, printTemp: number, bedTemp: number) => string;
+      };
+
+      const profileId = selectedPrinter?.id || "generic";
+      const gcode = slicerWasm.generateGcode(result, profileId, printTemp, bedTemp);
+      const blob = new Blob([gcode], { type: "text/plain" });
+      downloadBlob(blob, "model.gcode");
+      addToast("G-code exported", "success");
     } catch (err) {
-      console.error("Export failed:", err);
-      addToast("Export failed", "error");
+      console.error("G-code export failed:", err);
+      addToast("G-code export failed", "error");
     }
-  }, [stats, addToast]);
+  }, [stats, selectedPrinter, printTemp, bedTemp, addToast]);
+
+  const handleExport3mf = useCallback(async () => {
+    if (!scene?.parts?.length) return;
+
+    try {
+      const wasm = await loadSlicerWasm();
+      if (!wasm) throw new Error("Slicer not available");
+
+      const slicerWasm = wasm as typeof wasm & {
+        generate3mf: (name: string, vertices: Float32Array, indices: Uint32Array, settingsJson: string) => Uint8Array;
+      };
+
+      const { vertices, indices } = collectMeshData(scene);
+      const settingsJson = JSON.stringify({
+        layer_height: slicerSettings.layerHeight,
+        first_layer_height: slicerSettings.firstLayerHeight,
+        wall_count: slicerSettings.wallCount,
+        infill_density: slicerSettings.infillDensity,
+        print_temp: printTemp,
+        bed_temp: bedTemp,
+      });
+
+      const bytes = slicerWasm.generate3mf("model", vertices, indices, settingsJson);
+      const blob = new Blob([bytes as unknown as BlobPart], { type: "application/vnd.ms-package.3dmanufacturing-3dmodel+xml" });
+      downloadBlob(blob, "model.3mf");
+      addToast("3MF exported", "success");
+    } catch (err) {
+      console.error("3MF export failed:", err);
+      addToast("3MF export failed", "error");
+    }
+  }, [scene, slicerSettings, printTemp, bedTemp, addToast]);
 
   async function handleStartPrint() {
     if (!selectedPrinter || connectionState !== "connected") {
@@ -254,7 +395,14 @@ export function PrintPanel() {
               className="flex-1 flex items-center justify-center gap-1 py-2 bg-hover hover:bg-border rounded text-sm"
             >
               <Export size={16} />
-              Export G-code
+              G-code
+            </button>
+            <button
+              onClick={handleExport3mf}
+              className="flex-1 flex items-center justify-center gap-1 py-2 bg-hover hover:bg-border rounded text-sm"
+            >
+              <Export size={16} />
+              3MF
             </button>
             <button
               onClick={handleStartPrint}

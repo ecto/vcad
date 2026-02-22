@@ -154,6 +154,31 @@ impl PrinterProfile {
         }
     }
 
+    /// Bambu Lab A1 Mini profile.
+    pub fn bambu_a1_mini() -> Self {
+        Self {
+            name: "Bambu Lab A1 Mini".into(),
+            flavor: GcodeFlavor::Bambu,
+            bed_x: 180.0,
+            bed_y: 180.0,
+            bed_z: 180.0,
+            heated_bed: true,
+            extruder_count: 1,
+            nozzle_diameter: 0.4,
+            filament_diameter: 1.75,
+            max_feedrate_x: 500.0,
+            max_feedrate_y: 500.0,
+            max_feedrate_z: 16.0,
+            max_feedrate_e: 60.0,
+            max_acceleration: 10000.0,
+            default_print_temp: 220,
+            default_bed_temp: 55,
+            retraction_distance: 0.8,
+            retraction_speed: 30.0,
+            z_hop: 0.4,
+        }
+    }
+
     /// Creality Ender 3 profile.
     pub fn ender3() -> Self {
         Self {
@@ -236,6 +261,7 @@ impl PrinterProfile {
             Self::bambu_x1c(),
             Self::bambu_p1s(),
             Self::bambu_a1(),
+            Self::bambu_a1_mini(),
             Self::ender3(),
             Self::prusa_mk4(),
             Self::voron_24(),

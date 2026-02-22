@@ -6,20 +6,42 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["network"]
+network = ["dep:tokio", "dep:rumqttc", "dep:rustls", "dep:webpki-roots", "dep:suppaftp"]
+
 [dependencies]
 vcad-slicer = { path = "../vcad-slicer" }
 vcad-slicer-gcode = { path = "../vcad-slicer-gcode" }
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { version = "1", features = ["full", "net", "time", "sync"] }
-rumqttc = "0.24"
-rustls = "0.23"
-webpki-roots = "0.26"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 quick-xml = { version = "0.36", features = ["serialize"] }
 base64 = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
+
+[dependencies.tokio]
+version = "1"
+features = ["full", "net", "time", "sync"]
+optional = true
+
+[dependencies.rumqttc]
+version = "0.24"
+optional = true
+
+[dependencies.rustls]
+version = "0.23"
+optional = true
+
+[dependencies.webpki-roots]
+version = "0.26"
+optional = true
+
+[dependencies.suppaftp]
+version = "6"
+features = ["rustls", "deprecated"]
+optional = true
 
 [dev-dependencies]
 tokio-test = "0.4"

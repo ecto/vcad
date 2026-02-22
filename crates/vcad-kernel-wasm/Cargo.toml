@@ -34,7 +34,7 @@ gpu = ["dep:vcad-kernel-gpu"]
 raytrace = ["dep:vcad-kernel-raytrace", "dep:vcad-kernel-topo", "dep:vcad-kernel-geom", "dep:vcad-kernel-math", "dep:wgpu", "gpu", "vcad-kernel-raytrace/gpu"]
 cpu-raytrace = ["dep:vcad-kernel-raytrace", "dep:vcad-kernel-topo", "dep:vcad-kernel-geom", "dep:vcad-kernel-math"]
 physics = ["dep:vcad-kernel-physics"]
-slicer = ["dep:vcad-slicer", "dep:vcad-slicer-gcode"]
+slicer = ["dep:vcad-slicer", "dep:vcad-slicer-gcode", "dep:vcad-slicer-bambu"]
 cam = ["dep:vcad-kernel-cam"]
 ecad = ["dep:vcad-ecad-pcb", "dep:vcad-ecad-schematic", "dep:vcad-ecad-sim", "dep:vcad-ecad-export", "dep:vcad-ecad-symbols"]
 ts-rs = ["dep:ts-rs"]
@@ -77,6 +77,11 @@ optional = true
 
 [dependencies.vcad-slicer-gcode]
 path = "../vcad-slicer-gcode"
+optional = true
+
+[dependencies.vcad-slicer-bambu]
+path = "../vcad-slicer-bambu"
+default-features = false
 optional = true
 
 [dependencies.vcad-kernel-cam]

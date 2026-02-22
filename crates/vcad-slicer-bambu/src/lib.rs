@@ -3,11 +3,11 @@
 //! Bambu Lab printer integration for the vcad slicer.
 //!
 //! This crate provides:
-//! - MQTT communication with Bambu printers
-//! - Printer discovery via SSDP
-//! - 3MF file generation
-//! - Print control (start, pause, stop)
-//! - Status monitoring
+//! - 3MF file generation (always available)
+//! - MQTT communication with Bambu printers (requires `network` feature)
+//! - Printer discovery via SSDP (requires `network` feature)
+//! - Print control (start, pause, stop) (requires `network` feature)
+//! - Status monitoring (requires `network` feature)
 //!
 //! # Example
 //!
@@ -35,15 +35,21 @@
 //! ```
 
 pub mod commands;
+#[cfg(feature = "network")]
 pub mod discovery;
 pub mod error;
+#[cfg(feature = "network")]
+pub mod ftp;
+#[cfg(feature = "network")]
 pub mod mqtt;
 pub mod status;
 pub mod threemf;
 
 pub use commands::PrinterCommand;
+#[cfg(feature = "network")]
 pub use discovery::{discover_printers, discover_printers_async, PrinterInfo};
 pub use error::{BambuError, Result};
+#[cfg(feature = "network")]
 pub use mqtt::{BambuConfig, BambuMqttClient, BambuPrinter};
 pub use status::{AmsSlot, AmsStatus, AmsUnit, PrintState, PrinterStatus};
 pub use threemf::{PlateConfig, PrintSettings, ThreeMfModel};
