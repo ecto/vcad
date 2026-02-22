@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -e
 
+# Ensure hoisted binaries (next, etc.) are in PATH
+export PATH="$PWD/node_modules/.bin:$PATH"
+
 # Build app
 npm run build -w @vcad/ir
 npm run build -w @vcad/engine
