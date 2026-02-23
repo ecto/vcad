@@ -1,0 +1,12 @@
+[package]
+name = "vcad-embroidery-pes"
+description = "PES/PEC embroidery file format read/write for vcad"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+vcad-embroidery = { path = "../vcad-embroidery" }
+thiserror = { workspace = true }
+serde = { workspace = true }

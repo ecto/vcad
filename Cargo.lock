@@ -3311,6 +3311,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-embroidery"
+version = "0.8.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "vcad-embroidery-pes"
+version = "0.8.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.18",
+ "vcad-embroidery",
+]
+
+[[package]]
 name = "vcad-eval"
 version = "0.8.0"
 dependencies = [

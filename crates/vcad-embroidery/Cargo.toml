@@ -1,0 +1,11 @@
+[package]
+name = "vcad-embroidery"
+description = "Embroidery pattern types and utilities for vcad"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+serde = { workspace = true }

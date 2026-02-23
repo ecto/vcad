@@ -44,6 +44,8 @@ members = [
     "crates/vcad-ecad-sim",
     "crates/stepperoni",
     "crates/termview",
+    "crates/vcad-embroidery",
+    "crates/vcad-embroidery-pes",
 ]
 
 [workspace.package]
@@ -105,3 +107,5 @@ nom = "7"
 rstar = "0.12"
 stepperoni = { path = "crates/stepperoni" }
 termview = { path = "crates/termview" }
+vcad-embroidery = { path = "crates/vcad-embroidery" }
+vcad-embroidery-pes = { path = "crates/vcad-embroidery-pes" }
