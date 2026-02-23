@@ -162,6 +162,64 @@ impl Vec2 {
     pub fn new(x: f64, y: f64) -> Self {
         Self { x, y }
     }
+
+    /// Euclidean length.
+    pub fn length(self) -> f64 {
+        (self.x * self.x + self.y * self.y).sqrt()
+    }
+
+    /// Unit vector (returns zero if degenerate).
+    pub fn normalize(self) -> Vec2 {
+        let len = self.length();
+        if len < f64::EPSILON {
+            Vec2::new(0.0, 0.0)
+        } else {
+            Vec2::new(self.x / len, self.y / len)
+        }
+    }
+
+    /// Dot product.
+    pub fn dot(self, other: Vec2) -> f64 {
+        self.x * other.x + self.y * other.y
+    }
+
+    /// 90° CCW rotation: `(-y, x)`.
+    pub fn perp(self) -> Vec2 {
+        Vec2::new(-self.y, self.x)
+    }
+
+    /// Scalar multiply.
+    pub fn scale(self, s: f64) -> Vec2 {
+        Vec2::new(self.x * s, self.y * s)
+    }
+}
+
+impl std::ops::Add for Vec2 {
+    type Output = Vec2;
+    fn add(self, rhs: Vec2) -> Vec2 {
+        Vec2::new(self.x + rhs.x, self.y + rhs.y)
+    }
+}
+
+impl std::ops::Sub for Vec2 {
+    type Output = Vec2;
+    fn sub(self, rhs: Vec2) -> Vec2 {
+        Vec2::new(self.x - rhs.x, self.y - rhs.y)
+    }
+}
+
+impl std::ops::Mul<f64> for Vec2 {
+    type Output = Vec2;
+    fn mul(self, rhs: f64) -> Vec2 {
+        Vec2::new(self.x * rhs, self.y * rhs)
+    }
+}
+
+impl std::ops::Neg for Vec2 {
+    type Output = Vec2;
+    fn neg(self) -> Vec2 {
+        Vec2::new(-self.x, -self.y)
+    }
 }
 
 /// 3D vector with f64 components (conventionally millimeters).
@@ -1374,5 +1432,64 @@ mod tests {
         assert!(!json.contains(r#""instances""#));
         assert!(!json.contains(r#""joints""#));
         assert!(!json.contains(r#""groundInstanceId""#));
+    }
+
+    #[test]
+    fn vec2_length() {
+        assert!((Vec2::new(3.0, 4.0).length() - 5.0).abs() < 1e-12);
+        assert!((Vec2::new(0.0, 0.0).length()).abs() < 1e-12);
+        assert!((Vec2::new(1.0, 0.0).length() - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn vec2_normalize() {
+        let n = Vec2::new(3.0, 4.0).normalize();
+        assert!((n.length() - 1.0).abs() < 1e-12);
+        assert!((n.x - 0.6).abs() < 1e-12);
+        assert!((n.y - 0.8).abs() < 1e-12);
+        // degenerate returns zero
+        let z = Vec2::new(0.0, 0.0).normalize();
+        assert!(z.x.abs() < 1e-12 && z.y.abs() < 1e-12);
+    }
+
+    #[test]
+    fn vec2_dot() {
+        assert!((Vec2::new(1.0, 0.0).dot(Vec2::new(0.0, 1.0))).abs() < 1e-12);
+        assert!((Vec2::new(2.0, 3.0).dot(Vec2::new(4.0, 5.0)) - 23.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn vec2_perp() {
+        let p = Vec2::new(1.0, 0.0).perp();
+        assert!((p.x - 0.0).abs() < 1e-12);
+        assert!((p.y - 1.0).abs() < 1e-12);
+        // perp is orthogonal
+        let v = Vec2::new(3.0, 7.0);
+        assert!(v.dot(v.perp()).abs() < 1e-12);
+    }
+
+    #[test]
+    fn vec2_scale() {
+        let s = Vec2::new(2.0, 3.0).scale(4.0);
+        assert!((s.x - 8.0).abs() < 1e-12);
+        assert!((s.y - 12.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn vec2_ops() {
+        let a = Vec2::new(1.0, 2.0);
+        let b = Vec2::new(3.0, 4.0);
+        let sum = a + b;
+        assert!((sum.x - 4.0).abs() < 1e-12);
+        assert!((sum.y - 6.0).abs() < 1e-12);
+        let diff = b - a;
+        assert!((diff.x - 2.0).abs() < 1e-12);
+        assert!((diff.y - 2.0).abs() < 1e-12);
+        let mul = a * 3.0;
+        assert!((mul.x - 3.0).abs() < 1e-12);
+        assert!((mul.y - 6.0).abs() < 1e-12);
+        let neg = -a;
+        assert!((neg.x - (-1.0)).abs() < 1e-12);
+        assert!((neg.y - (-2.0)).abs() < 1e-12);
     }
 }
