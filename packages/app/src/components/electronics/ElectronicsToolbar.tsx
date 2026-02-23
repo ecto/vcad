@@ -21,6 +21,7 @@ import { Columns } from "@phosphor-icons/react/dist/ssr/Columns";
 import { Square } from "@phosphor-icons/react/dist/ssr/Square";
 import { MagnetStraight } from "@phosphor-icons/react/dist/ssr/MagnetStraight";
 import { Package } from "@phosphor-icons/react/dist/ssr/Package";
+import { Ruler } from "@phosphor-icons/react/dist/ssr/Ruler";
 import {
   TabDropdown,
   ToolbarButton,
@@ -297,6 +298,10 @@ export function ElectronicsToolbar() {
         case "X":
           if (focusedPane === "pcb") setPcbTool("route");
           break;
+        case "t":
+        case "T":
+          if (focusedPane === "pcb") setPcbTool("length-tune");
+          break;
 
         // Rotate / flip
         case "r":
@@ -448,6 +453,14 @@ export function ElectronicsToolbar() {
         iconColor={ELECTRONICS_TAB_COLORS.pcb}
       >
         <Plugs size={20} />
+      </ToolbarButton>
+      <ToolbarButton
+        tooltip="Length tune (T)"
+        active={pcbTool === "length-tune"}
+        onClick={() => setPcbTool("length-tune")}
+        iconColor={ELECTRONICS_TAB_COLORS.pcb}
+      >
+        <Ruler size={20} />
       </ToolbarButton>
       <ToolbarButton
         tooltip="Delete (D)"

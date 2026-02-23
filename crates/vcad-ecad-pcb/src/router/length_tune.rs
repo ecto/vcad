@@ -38,6 +38,12 @@ pub struct MeanderSegment {
     pub segment_index: usize,
 }
 
+/// Maximum number of amplitude reduction attempts in clearance-checked generation.
+const MAX_REDUCTION_ATTEMPTS: u32 = 10;
+
+/// Amplitude reduction factor per attempt (10% reduction each time).
+const AMPLITUDE_REDUCTION: f64 = 0.9;
+
 /// Generate meander segments to achieve a target trace length.
 ///
 /// Returns `Some(vec![])` if the path already meets or exceeds the target,
@@ -46,6 +52,15 @@ pub struct MeanderSegment {
 pub fn generate_meanders(
     existing_points: &[Vec2],
     params: &LengthTuneParams,
+) -> Option<Vec<MeanderSegment>> {
+    generate_meanders_inner(existing_points, params, params.max_amplitude)
+}
+
+/// Core meander generation with an explicit amplitude cap.
+fn generate_meanders_inner(
+    existing_points: &[Vec2],
+    params: &LengthTuneParams,
+    amplitude_cap: f64,
 ) -> Option<Vec<MeanderSegment>> {
     let current_length = path_length(existing_points);
     let deficit = params.target_length - current_length;
@@ -73,16 +88,13 @@ pub fn generate_meanders(
     // Solve amplitude from deficit and total periods.
     let n = total_periods as f64;
     let s = params.spacing;
-    let amplitude = match params.style {
+    let ideal_amplitude = match params.style {
         MeanderStyle::Trombone => {
             // Each U-bend adds 2*A extra length.
             deficit / (2.0 * n)
         }
         MeanderStyle::Sawtooth => {
             // Each zigzag period adds 2*sqrt((S/2)^2 + A^2) - S.
-            // deficit = N * (2*sqrt((S/2)^2 + A^2) - S)
-            // deficit/N + S = 2*sqrt((S/2)^2 + A^2)
-            // ((deficit/N + S) / 2)^2 = (S/2)^2 + A^2
             let half_hyp = (deficit / n + s) / 2.0;
             let half_s = s / 2.0;
             let a_sq = half_hyp * half_hyp - half_s * half_s;
@@ -93,9 +105,11 @@ pub fn generate_meanders(
         }
     };
 
-    if amplitude > params.max_amplitude {
+    if ideal_amplitude > params.max_amplitude {
         return None;
     }
+
+    let amplitude = ideal_amplitude.min(amplitude_cap);
 
     // Generate meander waypoints per candidate segment.
     let mut segments = Vec::new();
@@ -152,6 +166,71 @@ pub fn generate_meanders(
     }
 
     Some(segments)
+}
+
+/// Compute the minimum distance from a point to a line segment.
+pub fn point_to_segment_distance(point: Vec2, seg_start: Vec2, seg_end: Vec2) -> f64 {
+    let d = seg_end - seg_start;
+    let len_sq = d.dot(d);
+
+    if len_sq < 1e-12 {
+        return (point - seg_start).length();
+    }
+
+    let t = ((point - seg_start).dot(d) / len_sq).clamp(0.0, 1.0);
+    let proj = seg_start + d.scale(t);
+    (point - proj).length()
+}
+
+/// Check whether all waypoints maintain minimum clearance from obstacles.
+fn check_clearances(
+    segments: &[MeanderSegment],
+    obstacles: &[(Vec2, Vec2)],
+    min_clearance: f64,
+) -> bool {
+    for seg in segments {
+        for pt in &seg.points {
+            for &(obs_start, obs_end) in obstacles {
+                if point_to_segment_distance(*pt, obs_start, obs_end) < min_clearance {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+/// Generate meander segments with DRC-aware clearance checking.
+///
+/// Works like [`generate_meanders`] but checks that every meander waypoint
+/// maintains at least `min_clearance` distance from all obstacle segments.
+/// If a clearance violation is found, amplitude is reduced by 10% and
+/// regeneration is attempted, up to 10 times.
+pub fn generate_meanders_checked(
+    existing_points: &[Vec2],
+    params: &LengthTuneParams,
+    min_clearance: f64,
+    obstacles: &[(Vec2, Vec2)],
+) -> Option<Vec<MeanderSegment>> {
+    let mut amplitude_cap = params.max_amplitude;
+
+    for _ in 0..MAX_REDUCTION_ATTEMPTS {
+        let segments = generate_meanders_inner(existing_points, params, amplitude_cap)?;
+
+        if obstacles.is_empty() || check_clearances(&segments, obstacles, min_clearance) {
+            return Some(segments);
+        }
+
+        amplitude_cap *= AMPLITUDE_REDUCTION;
+    }
+
+    // Final attempt after all reductions.
+    let segments = generate_meanders_inner(existing_points, params, amplitude_cap)?;
+    if obstacles.is_empty() || check_clearances(&segments, obstacles, min_clearance) {
+        return Some(segments);
+    }
+
+    None
 }
 
 /// Calculate the total length of a polyline path.
@@ -367,5 +446,105 @@ mod tests {
                 "last point should match segment end"
             );
         }
+    }
+
+    #[test]
+    fn point_to_segment_distance_basic() {
+        // Point above midpoint of horizontal segment.
+        let dist = point_to_segment_distance(
+            Vec2::new(1.0, 1.0),
+            Vec2::new(0.0, 0.0),
+            Vec2::new(2.0, 0.0),
+        );
+        assert!((dist - 1.0).abs() < 1e-10);
+
+        // Point at endpoint.
+        let dist = point_to_segment_distance(
+            Vec2::new(0.0, 0.0),
+            Vec2::new(0.0, 0.0),
+            Vec2::new(2.0, 0.0),
+        );
+        assert!(dist.abs() < 1e-10);
+
+        // Point beyond segment end.
+        let dist = point_to_segment_distance(
+            Vec2::new(3.0, 0.0),
+            Vec2::new(0.0, 0.0),
+            Vec2::new(2.0, 0.0),
+        );
+        assert!((dist - 1.0).abs() < 1e-10);
+
+        // Degenerate (zero-length) segment.
+        let dist = point_to_segment_distance(
+            Vec2::new(3.0, 4.0),
+            Vec2::new(0.0, 0.0),
+            Vec2::new(0.0, 0.0),
+        );
+        assert!((dist - 5.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn clearance_no_obstacles() {
+        let params = LengthTuneParams {
+            target_length: 80.0,
+            max_amplitude: 5.0,
+            spacing: 2.0,
+            style: MeanderStyle::Trombone,
+        };
+        let points = vec![Vec2::new(0.0, 0.0), Vec2::new(50.0, 0.0)];
+
+        let unchecked = generate_meanders(&points, &params).unwrap();
+        let checked = generate_meanders_checked(&points, &params, 0.2, &[]).unwrap();
+
+        assert_eq!(unchecked.len(), checked.len());
+        for (u, c) in unchecked.iter().zip(checked.iter()) {
+            assert_eq!(u.points.len(), c.points.len());
+            assert!((u.added_length - c.added_length).abs() < 1e-10);
+        }
+    }
+
+    #[test]
+    fn clearance_reduces_amplitude() {
+        // Ideal amplitude = 30/(2*5) = 3.0mm. Obstacle at y=2.6 with 0.5mm
+        // clearance means peaks at y=3.0 violate (only 0.4mm gap).
+        let params = LengthTuneParams {
+            target_length: 80.0,
+            max_amplitude: 3.0,
+            spacing: 10.0,
+            style: MeanderStyle::Trombone,
+        };
+        let points = vec![Vec2::new(0.0, 0.0), Vec2::new(50.0, 0.0)];
+        let obstacles = vec![(Vec2::new(-5.0, 2.6), Vec2::new(55.0, 2.6))];
+
+        // Full amplitude should violate.
+        let full = generate_meanders(&points, &params).unwrap();
+        assert!(!check_clearances(&full, &obstacles, 0.5));
+
+        // Checked version should find a reduced-amplitude solution.
+        let result = generate_meanders_checked(&points, &params, 0.5, &obstacles);
+        assert!(result.is_some());
+
+        let segs = result.unwrap();
+        let max_y = segs
+            .iter()
+            .flat_map(|s| s.points.iter())
+            .map(|p| p.y.abs())
+            .fold(0.0_f64, f64::max);
+        assert!(max_y < 3.0, "amplitude should be reduced: max_y={max_y}");
+    }
+
+    #[test]
+    fn clearance_impossible() {
+        let params = LengthTuneParams {
+            target_length: 80.0,
+            max_amplitude: 5.0,
+            spacing: 5.0,
+            style: MeanderStyle::Trombone,
+        };
+        let points = vec![Vec2::new(0.0, 0.0), Vec2::new(50.0, 0.0)];
+        // Obstacle on the trace itself — 1mm clearance is impossible.
+        let obstacles = vec![(Vec2::new(0.0, 0.0), Vec2::new(50.0, 0.0))];
+
+        assert!(generate_meanders_checked(&points, &params, 1.0, &obstacles).is_none());
     }
 }

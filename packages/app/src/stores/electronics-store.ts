@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { PcbLayer, Vec2 } from "@vcad/ir";
+import type { PcbLayer, Vec2, MeanderStyle, LengthTuneParams } from "@vcad/ir";
 import type {
   DrcViolationResult,
   ErcViolationResult,
@@ -12,7 +12,7 @@ import { useCoreElectronicsStore, getPcbNodeIds, useDocumentStore } from "@vcad/
 // ---------------------------------------------------------------------------
 
 export type ElectronicsLayout = "split" | "schematic-only" | "pcb-only";
-export type PcbTool = "select" | "move" | "route" | "delete";
+export type PcbTool = "select" | "move" | "route" | "length-tune" | "delete";
 export type SchTool = "select" | "move" | "place" | "wire" | "label" | "delete";
 
 export type ElectronicsSelection =
@@ -107,6 +107,10 @@ export interface ElectronicsState {
   routePreview: Vec2[];
   routeClearanceCorridor: number;
 
+  // Length tuning state
+  lengthTuneParams: LengthTuneParams;
+  lengthTuneNet: string | null;
+
   // Actions
   enter: () => void;
   exit: () => void;
@@ -145,6 +149,11 @@ export interface ElectronicsState {
   cancelSchWire: () => void;
   setSchLabelName: (name: string) => void;
   nextRef: (prefix: string) => string;
+
+  // Length tuning actions
+  setLengthTuneParams: (params: Partial<LengthTuneParams>) => void;
+  startLengthTune: (net: string) => void;
+  cancelLengthTune: () => void;
 
   // PCB drag actions
   startPcbDrag: (fpIdx: number, startPos: Vec2) => void;
@@ -193,6 +202,14 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
   routeStartPad: null,
   routePreview: [],
   routeClearanceCorridor: 0.15,
+
+  lengthTuneParams: {
+    target_length: 50.0,
+    max_amplitude: 2.0,
+    spacing: 1.0,
+    style: "Trombone" as MeanderStyle,
+  },
+  lengthTuneNet: null,
 
   enter: () => {
     // Find first PcbBoard node and enter the core electronics store with it
@@ -335,6 +352,24 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
     set({ schRefCounters: { ...s.schRefCounters, [prefix]: count } });
     return `${prefix}${count}`;
   },
+
+  // Length tuning
+  setLengthTuneParams: (params) =>
+    set((s) => ({
+      lengthTuneParams: { ...s.lengthTuneParams, ...params },
+    })),
+
+  startLengthTune: (net) =>
+    set({
+      pcbTool: "length-tune",
+      lengthTuneNet: net,
+    }),
+
+  cancelLengthTune: () =>
+    set({
+      lengthTuneNet: null,
+      pcbTool: "select",
+    }),
 
   // PCB drag
   startPcbDrag: (fpIdx, startPos) =>

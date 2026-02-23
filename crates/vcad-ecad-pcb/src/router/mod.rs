@@ -2,10 +2,10 @@
 //!
 //! This module provides multiple routing strategies:
 //!
-//! - [`grid`] -- Lee/wave BFS-based grid router (fully implemented)
-//! - [`push_shove`] -- Interactive push-and-shove router (stub)
-//! - [`diff_pair`] -- Differential pair router (stub)
-//! - [`length_tune`] -- Length tuning meander generator (stub)
+//! - [`grid`] -- Lee/wave BFS-based grid router
+//! - [`push_shove`] -- Interactive push-and-shove router with visibility-graph pathfinding
+//! - [`diff_pair`] -- Differential pair router with phase matching
+//! - [`length_tune`] -- Length tuning meander generator with DRC-aware clearance checking
 
 pub mod diff_pair;
 pub mod grid;

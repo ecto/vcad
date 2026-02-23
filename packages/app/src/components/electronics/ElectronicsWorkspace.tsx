@@ -22,6 +22,11 @@ const ElectronicsPropertyPanel = lazy(() =>
     default: m.ElectronicsPropertyPanel,
   })),
 );
+const LengthTunePanel = lazy(() =>
+  import("./LengthTunePanel").then((m) => ({
+    default: m.LengthTunePanel,
+  })),
+);
 
 export function ElectronicsWorkspace() {
   useElectronicsSync();
@@ -128,6 +133,11 @@ export function ElectronicsWorkspace() {
         {/* Property panel */}
         <Suspense fallback={null}>
           <ElectronicsPropertyPanel />
+        </Suspense>
+
+        {/* Length tuning panel */}
+        <Suspense fallback={null}>
+          <LengthTunePanel />
         </Suspense>
       </div>
     </div>

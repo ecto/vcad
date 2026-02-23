@@ -915,6 +915,35 @@ export interface Pcb {
   keepouts?: Keepout[];
 }
 
+// ============================================================================
+// Length Tuning / Meander types (mirrors vcad-ecad-pcb router)
+// ============================================================================
+
+/** Meander pattern style. */
+export type MeanderStyle = "Trombone" | "Sawtooth";
+
+/** Length tuning parameters for meander generation. */
+export interface LengthTuneParams {
+  /** Target trace length in mm. */
+  target_length: number;
+  /** Maximum meander amplitude in mm. */
+  max_amplitude: number;
+  /** Meander spacing in mm. */
+  spacing: number;
+  /** Meander pattern style. */
+  style: MeanderStyle;
+}
+
+/** A meander segment to insert into a trace. */
+export interface MeanderSegment {
+  /** Meander waypoints in board coordinates. */
+  points: Vec2[];
+  /** Total added length from this meander. */
+  added_length: number;
+  /** Which segment of the input polyline this replaces. */
+  segment_index: number;
+}
+
 /** A vcad document — the `.vcad` file format. */
 export interface Document {
   version: string;
