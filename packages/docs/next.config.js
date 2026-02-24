@@ -1,10 +1,10 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // Transpile workspace packages
-  transpilePackages: ["@vcad/ir"],
+  transpilePackages: ["@vcad/ir", "@vcad/engine", "@vcad/kernel-wasm"],
 
   // WASM support
-  webpack: (config, { isServer }) => {
+  webpack: (config, { isServer, webpack }) => {
     // Enable WASM
     config.experiments = {
       ...config.experiments,
@@ -27,14 +27,27 @@ const nextConfig = {
       });
     }
 
-    // Resolve node: protocol imports (for compatibility)
-    config.resolve = config.resolve || {};
-    config.resolve.fallback = {
-      ...config.resolve.fallback,
-      fs: false,
-      path: false,
-      url: false,
-    };
+    // On client: stub out node: protocol imports (used in Node-only branches)
+    if (!isServer) {
+      config.plugins.push(
+        new webpack.NormalModuleReplacementPlugin(/^node:/, (resource) => {
+          resource.request = resource.request.replace(/^node:/, "");
+        })
+      );
+
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        fs: false,
+        "fs/promises": false,
+        path: false,
+        url: false,
+        os: false,
+        crypto: false,
+        stream: false,
+        buffer: false,
+        util: false,
+      };
+    }
 
     return config;
   },

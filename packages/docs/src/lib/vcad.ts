@@ -31,11 +31,8 @@ export async function evaluateDocument(doc: Document): Promise<EvaluatedScene> {
   }
 
   if (!enginePromise) {
-    // Use Function constructor to hide dynamic import from webpack static analysis
-    // This is a common pattern for browser-only packages with Node.js code
-    const importFn = new Function("specifier", "return import(specifier)");
-    enginePromise = importFn("@vcad/engine").then(async (mod: { Engine: { init: () => Promise<unknown> } }) => {
-      return mod.Engine.init();
+    enginePromise = import("@vcad/engine").then(async (mod) => {
+      return (mod as { Engine: { init: () => Promise<unknown> } }).Engine.init();
     });
   }
 

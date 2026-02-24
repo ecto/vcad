@@ -17,16 +17,25 @@ import {
   CaretRight,
   GameController,
   Code,
+  Compass,
+  Wrench,
+  Scales,
+  RocketLaunch,
 } from "@phosphor-icons/react";
 import { useTheme } from "./ThemeProvider";
 import { useSearch } from "./Search/SearchProvider";
 import { cn } from "@/lib/utils";
 
+interface NavChild {
+  label: string;
+  href: string;
+}
+
 interface NavItem {
   label: string;
   href: string;
   icon: React.ReactNode;
-  children?: { label: string; href: string }[];
+  children?: NavChild[];
 }
 
 const navItems: NavItem[] = [
@@ -36,13 +45,49 @@ const navItems: NavItem[] = [
     icon: <House size={18} weight="regular" />,
   },
   {
-    label: "Learn",
-    href: "/learn",
+    label: "Get Started",
+    href: "/start",
+    icon: <RocketLaunch size={18} weight="regular" />,
+    children: [
+      { label: "Quick Start", href: "/start/quick-start" },
+      { label: "Install & Setup", href: "/start/install" },
+      { label: "Core Concepts", href: "/start/concepts" },
+    ],
+  },
+  {
+    label: "Tutorials",
+    href: "/tutorials",
     icon: <Book size={18} weight="regular" />,
     children: [
-      { label: "Beginner", href: "/learn/beginner" },
-      { label: "Intermediate", href: "/learn/intermediate" },
-      { label: "Advanced", href: "/learn/advanced" },
+      { label: "App Tutorials", href: "/tutorials/app" },
+      { label: "Rust Tutorials", href: "/tutorials/rust" },
+      { label: "CLI Tutorials", href: "/tutorials/cli" },
+      { label: "MCP / AI Tutorials", href: "/tutorials/mcp" },
+    ],
+  },
+  {
+    label: "Guides",
+    href: "/guides",
+    icon: <Compass size={18} weight="regular" />,
+    children: [
+      { label: "Modeling", href: "/guides/modeling" },
+      { label: "Assembly & Motion", href: "/guides/assembly" },
+      { label: "Manufacturing", href: "/guides/mfg" },
+      { label: "Electronics", href: "/guides/electronics" },
+      { label: "AI & Automation", href: "/guides/ai" },
+    ],
+  },
+  {
+    label: "Reference",
+    href: "/reference",
+    icon: <Code size={18} weight="regular" />,
+    children: [
+      { label: "App", href: "/reference/app" },
+      { label: "Rust API", href: "/reference/rust" },
+      { label: "CLI", href: "/reference/cli" },
+      { label: "MCP Tools", href: "/reference/mcp" },
+      { label: "IR & Format", href: "/reference/format" },
+      { label: "Loon Language", href: "/reference/loon" },
     ],
   },
   {
@@ -51,14 +96,9 @@ const navItems: NavItem[] = [
     icon: <CookingPot size={18} weight="regular" />,
   },
   {
-    label: "Reference",
-    href: "/reference",
-    icon: <Code size={18} weight="regular" />,
-  },
-  {
-    label: "Gallery",
-    href: "/gallery",
-    icon: <Images size={18} weight="regular" />,
+    label: "Architecture",
+    href: "/architecture",
+    icon: <Cpu size={18} weight="regular" />,
   },
   {
     label: "Playground",
@@ -66,14 +106,20 @@ const navItems: NavItem[] = [
     icon: <GameController size={18} weight="regular" />,
   },
   {
-    label: "Architecture",
-    href: "/architecture",
-    icon: <Cpu size={18} weight="regular" />,
+    label: "Gallery",
+    href: "/gallery",
+    icon: <Images size={18} weight="regular" />,
+  },
+  {
+    label: "Comparisons",
+    href: "/vs",
+    icon: <Scales size={18} weight="regular" />,
     children: [
-      { label: "How Booleans Work", href: "/architecture/booleans" },
-      { label: "The IR Format", href: "/architecture/ir" },
-      { label: "WASM Pipeline", href: "/architecture/wasm" },
-      { label: "Export Formats", href: "/architecture/exports" },
+      { label: "vs Onshape", href: "/vs/onshape" },
+      { label: "vs Fusion 360", href: "/vs/fusion360" },
+      { label: "vs OpenSCAD", href: "/vs/openscad" },
+      { label: "vs FreeCAD", href: "/vs/freecad" },
+      { label: "vs CadQuery", href: "/vs/cadquery" },
     ],
   },
 ];
@@ -84,11 +130,17 @@ export function Navigation() {
   const { openSearch } = useSearch();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(
-    new Set(["Learn", "Architecture"])
+    () => {
+      // Auto-expand the section matching the current path
+      const initial = new Set<string>();
+      for (const item of navItems) {
+        if (item.children && pathname.startsWith(item.href) && item.href !== "/") {
+          initial.add(item.label);
+        }
+      }
+      return initial;
+    }
   );
-
-  // Show sidebar on all routes (all routes are docs routes with basePath)
-  const isDocsRoute = true;
 
   const toggleSection = (label: string) => {
     setExpandedSections(prev => {
@@ -107,16 +159,11 @@ export function Navigation() {
     return pathname.startsWith(href);
   };
 
-  // Don't render sidebar on non-docs pages
-  if (!isDocsRoute) {
-    return null;
-  }
-
   return (
     <>
       {/* Mobile header */}
       <header className="lg:hidden fixed top-0 left-0 right-0 z-50 h-14 bg-bg/95 backdrop-blur border-b border-border flex items-center justify-between px-4">
-        <Link href="/" className="font-bold text-lg">
+        <Link href="/" className="font-bold text-lg font-mono">
           vcad<span className="text-accent">.</span>
         </Link>
         <div className="flex items-center gap-2">
@@ -156,15 +203,15 @@ export function Navigation() {
       <aside
         className={cn(
           "fixed lg:sticky top-0 left-0 z-50 lg:z-0",
-          "h-screen w-64 bg-bg border-r border-border",
+          "h-screen w-64 bg-surface border-r border-border",
           "flex flex-col overflow-hidden",
           "transition-transform lg:translate-x-0",
           mobileOpen ? "translate-x-0" : "-translate-x-full"
         )}
       >
         {/* Logo */}
-        <div className="h-14 flex items-center px-4 border-b border-border">
-          <Link href="/" className="font-bold text-lg" onClick={() => setMobileOpen(false)}>
+        <div className="h-14 flex items-center px-4 border-b border-border-subtle">
+          <Link href="/" className="font-bold text-lg font-mono" onClick={() => setMobileOpen(false)}>
             vcad<span className="text-accent">.</span>
           </Link>
         </div>
@@ -200,7 +247,7 @@ export function Navigation() {
                       )}
                     >
                       {item.icon}
-                      <span className="flex-1 text-left">{item.label}</span>
+                      <span className="flex-1 text-left font-mono">{item.label}</span>
                       <CaretRight
                         size={14}
                         className={cn(
@@ -218,7 +265,7 @@ export function Navigation() {
                               onClick={() => setMobileOpen(false)}
                               className={cn(
                                 "block px-3 py-1.5 rounded-md text-sm transition-colors",
-                                pathname === child.href
+                                pathname === child.href || pathname.startsWith(child.href + "/")
                                   ? "bg-accent/10 text-accent"
                                   : "text-text-muted hover:text-text hover:bg-hover"
                               )}
@@ -242,7 +289,7 @@ export function Navigation() {
                     )}
                   >
                     {item.icon}
-                    <span>{item.label}</span>
+                    <span className="font-mono">{item.label}</span>
                   </Link>
                 )}
               </li>

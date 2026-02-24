@@ -76,7 +76,7 @@ export default function GalleryPage() {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-4xl font-bold mb-2">Gallery</h1>
-          <p className="text-text-muted">
+          <p className="text-text-body">
             Community showcase of vcad models. Fork, learn, and remix.
           </p>
         </div>

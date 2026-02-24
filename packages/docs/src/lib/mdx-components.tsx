@@ -6,6 +6,9 @@ import {
 } from "@phosphor-icons/react/dist/ssr";
 import { cn } from "./utils";
 import { Playground } from "@/components/Playground/MdxPlayground";
+import { Figure } from "@/components/Figure";
+import { BeforeAfter } from "@/components/BeforeAfter";
+import { Steps } from "@/components/Steps";
 
 /**
  * Renders a table of API methods with signatures.
@@ -30,8 +33,8 @@ export function ApiTable({ methods, title }: ApiTableProps) {
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border">
-            <th className="text-left py-2 pr-4 font-medium">Method</th>
-            <th className="text-left py-2 font-medium">Description</th>
+            <th className="text-left py-2 pr-4 font-mono font-medium text-sm">Method</th>
+            <th className="text-left py-2 font-mono font-medium text-sm">Description</th>
           </tr>
         </thead>
         <tbody>
@@ -42,7 +45,7 @@ export function ApiTable({ methods, title }: ApiTableProps) {
                   {method.signature || method.name}
                 </code>
               </td>
-              <td className="py-2 text-text-muted">{method.description}</td>
+              <td className="py-2 text-text-body">{method.description}</td>
             </tr>
           ))}
         </tbody>
@@ -164,7 +167,7 @@ export function Param({ name, type, required = true, children }: ParamProps) {
           <span className="text-xs text-text-muted">optional</span>
         )}
       </div>
-      <div className="text-sm text-text-muted">{children}</div>
+      <div className="text-sm text-text-body">{children}</div>
     </div>
   );
 }
@@ -175,31 +178,34 @@ export function Param({ name, type, required = true, children }: ParamProps) {
 export function getMdxComponents() {
   return {
     Playground,
+    Figure,
+    BeforeAfter,
+    Steps,
     ApiTable,
     Callout,
     TypeDef,
     Param,
     // Override default elements for consistent styling
     h1: (props: React.HTMLAttributes<HTMLHeadingElement>) => (
-      <h1 className="text-3xl font-bold mt-8 mb-4 first:mt-0" {...props} />
+      <h1 className="text-4xl font-bold font-mono tracking-tight mt-8 mb-4 first:mt-0" {...props} />
     ),
     h2: (props: React.HTMLAttributes<HTMLHeadingElement>) => (
-      <h2 className="text-2xl font-bold mt-8 mb-4" {...props} />
+      <h2 className="text-2xl font-bold font-mono tracking-tight mt-8 mb-4 pb-3 border-b border-border" {...props} />
     ),
     h3: (props: React.HTMLAttributes<HTMLHeadingElement>) => (
-      <h3 className="text-xl font-semibold mt-6 mb-3" {...props} />
+      <h3 className="text-xl font-semibold font-mono tracking-tight mt-6 mb-3" {...props} />
     ),
     h4: (props: React.HTMLAttributes<HTMLHeadingElement>) => (
-      <h4 className="text-lg font-semibold mt-4 mb-2" {...props} />
+      <h4 className="text-lg font-semibold font-mono tracking-tight mt-4 mb-2" {...props} />
     ),
     p: (props: React.HTMLAttributes<HTMLParagraphElement>) => (
-      <p className="my-4 leading-relaxed" {...props} />
+      <p className="my-4 leading-relaxed text-text-body" {...props} />
     ),
     ul: (props: React.HTMLAttributes<HTMLUListElement>) => (
-      <ul className="my-4 pl-6 list-disc space-y-2" {...props} />
+      <ul className="my-4 pl-6 list-disc space-y-2 text-text-body" {...props} />
     ),
     ol: (props: React.HTMLAttributes<HTMLOListElement>) => (
-      <ol className="my-4 pl-6 list-decimal space-y-2" {...props} />
+      <ol className="my-4 pl-6 list-decimal space-y-2 text-text-body" {...props} />
     ),
     li: (props: React.HTMLAttributes<HTMLLIElement>) => (
       <li className="leading-relaxed" {...props} />
@@ -232,10 +238,10 @@ export function getMdxComponents() {
       <thead className="border-b border-border" {...props} />
     ),
     th: (props: React.HTMLAttributes<HTMLTableCellElement>) => (
-      <th className="text-left py-2 pr-4 font-medium" {...props} />
+      <th className="text-left py-3 px-4 font-mono font-medium text-sm" {...props} />
     ),
     td: (props: React.HTMLAttributes<HTMLTableCellElement>) => (
-      <td className="py-2 pr-4 border-b border-border/50" {...props} />
+      <td className="py-3 px-4 border-b border-border/50 text-text-body" {...props} />
     ),
     a: (props: React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
       <a
@@ -253,7 +259,7 @@ export function getMdxComponents() {
       <hr className="my-8 border-border" {...props} />
     ),
     strong: (props: React.HTMLAttributes<HTMLElement>) => (
-      <strong className="font-semibold" {...props} />
+      <strong className="font-semibold text-text" {...props} />
     ),
   };
 }

@@ -1,96 +1,109 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import {
-  Cube,
-  ArrowsOutCardinal,
-  Intersect,
-  MagnifyingGlass,
-  Export,
+  Browser,
+  Code,
+  Terminal,
+  Robot,
   TreeStructure,
+  Translate,
+  ArrowRight,
 } from "@phosphor-icons/react/dist/ssr";
-import { getAllContent } from "@/lib/content";
+import { getNestedContent } from "@/lib/content";
 
 export const metadata: Metadata = {
-  title: "API Reference",
-  description: "Complete API documentation for vcad",
+  title: "Reference",
+  description: "Complete reference documentation for all vcad interfaces",
 };
 
-const categoryIcons: Record<string, typeof Cube> = {
-  primitives: Cube,
-  transforms: ArrowsOutCardinal,
-  "csg-operations": Intersect,
-  inspection: MagnifyingGlass,
-  export: Export,
-  "ir-types": TreeStructure,
-};
+const subcategories = [
+  {
+    id: "app",
+    title: "App",
+    description: "Viewport, panels, sketch mode, drawing mode, and all UI features.",
+    icon: Browser,
+    color: "text-green-500",
+  },
+  {
+    id: "rust",
+    title: "Rust API",
+    description: "Solid, Part, primitives, booleans, transforms, patterns, and STEP I/O.",
+    icon: Code,
+    color: "text-blue-500",
+  },
+  {
+    id: "cli",
+    title: "CLI",
+    description: "Commands, REPL, and printer profiles.",
+    icon: Terminal,
+    color: "text-yellow-500",
+  },
+  {
+    id: "mcp",
+    title: "MCP Tools",
+    description: "All MCP server tools for AI agent workflows.",
+    icon: Robot,
+    color: "text-purple-500",
+  },
+  {
+    id: "format",
+    title: "IR & Format",
+    description: "Document format, IR operations, and compact format for ML.",
+    icon: TreeStructure,
+    color: "text-orange-500",
+  },
+  {
+    id: "loon",
+    title: "Loon Language",
+    description: "Lisp-like CAD language with pipe operator and let bindings.",
+    icon: Translate,
+    color: "text-pink-500",
+  },
+];
 
-export default function ReferencePage() {
-  const pages = getAllContent("reference");
-
+export default function ReferenceIndexPage() {
   return (
     <div className="max-w-4xl mx-auto px-8 py-16">
       <div className="mb-12">
-        <h1 className="text-4xl font-bold mb-4">API Reference</h1>
-        <p className="text-text-muted text-lg max-w-2xl">
-          Complete documentation for all vcad primitives, transforms, CSG operations,
-          and export formats.
+        <h1 className="text-4xl font-bold mb-4">Reference</h1>
+        <p className="text-text-body text-lg max-w-2xl">
+          Complete documentation for every vcad interface. Find the section
+          that matches what you're looking up.
         </p>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        {pages.map((page) => {
-          const Icon = categoryIcons[page.slug] || Cube;
+        {subcategories.map((sub) => {
+          const pages = getNestedContent("reference", sub.id);
           return (
             <Link
-              key={page.slug}
-              href={`/reference/${page.slug}`}
+              key={sub.id}
+              href={`/reference/${sub.id}`}
               className="flex items-start gap-4 p-4 rounded-lg border border-border hover:border-text-muted bg-surface hover:bg-hover transition-all group"
             >
-              <div className="p-3 rounded-lg bg-accent/10 text-accent">
-                <Icon size={24} />
+              <div className={`p-3 rounded-lg bg-accent/10 ${sub.color}`}>
+                <sub.icon size={24} />
               </div>
-              <div>
-                <h2 className="font-bold group-hover:text-accent transition-colors">
-                  {page.meta.title}
-                </h2>
-                <p className="text-sm text-text-muted mt-1">
-                  {page.meta.description}
-                </p>
+              <div className="flex-1">
+                <div className="flex items-center justify-between">
+                  <h2 className="font-bold group-hover:text-accent transition-colors">
+                    {sub.title}
+                  </h2>
+                  <ArrowRight
+                    size={16}
+                    className="text-text-muted group-hover:text-accent transition-colors"
+                  />
+                </div>
+                <p className="text-sm text-text-muted mt-1">{sub.description}</p>
+                {pages.length > 0 && (
+                  <span className="text-xs text-text-muted mt-2 block">
+                    {pages.length} pages
+                  </span>
+                )}
               </div>
             </Link>
           );
         })}
-      </div>
-
-      {/* Quick links */}
-      <div className="mt-12 p-6 rounded-lg border border-border bg-surface">
-        <h3 className="font-bold mb-4">Common Tasks</h3>
-        <div className="grid gap-2 sm:grid-cols-2 text-sm">
-          <Link
-            href="/reference/primitives#cube"
-            className="text-accent hover:text-accent-hover"
-          >
-            Create a cube
-          </Link>
-          <Link
-            href="/reference/csg-operations#difference"
-            className="text-accent hover:text-accent-hover"
-          >
-            Cut a hole
-          </Link>
-          <Link
-            href="/reference/transforms#linear-pattern"
-            className="text-accent hover:text-accent-hover"
-          >
-            Create a pattern
-          </Link>
-          <Link
-            href="/reference/export#stl"
-            className="text-accent hover:text-accent-hover"
-          >
-            Export to STL
-          </Link>
-        </div>
       </div>
     </div>
   );

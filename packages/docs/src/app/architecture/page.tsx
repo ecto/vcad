@@ -5,46 +5,106 @@ import {
   Tree,
   Package,
   FileCode,
+  Cpu,
+  GridFour,
+  Cube,
+  Eye,
+  Atom,
+  GitBranch,
+  Users,
+  ClockCounterClockwise,
   ArrowRight,
 } from "@phosphor-icons/react/dist/ssr";
 
 export const metadata: Metadata = {
   title: "Architecture",
-  description: "Deep dives into vcad internals - radical transparency",
+  description: "Deep dives into vcad internals",
 };
 
 const topics = [
   {
+    id: "overview",
+    title: "System Overview",
+    description: "Crate map, package map, data flow from IR to viewport.",
+    icon: GridFour,
+    readTime: "10 min",
+  },
+  {
+    id: "kernel",
+    title: "BRep Kernel",
+    description: "Half-edge topology, slotmap arenas, surface types, exact predicates.",
+    icon: Cube,
+    readTime: "15 min",
+  },
+  {
     id: "booleans",
-    title: "How Booleans Work",
-    description:
-      "Deep dive into CSG boolean operations. How Manifold achieves robust mesh booleans, BSP trees, and mesh repair.",
+    title: "Boolean Pipeline",
+    description: "AABB filter, surface-surface intersection, face classification, sewing.",
     icon: Graph,
     readTime: "15 min",
   },
   {
-    id: "ir",
-    title: "The IR Format",
-    description:
-      "Understanding the intermediate representation. Why a DAG, serialization format, versioning strategy.",
-    icon: Tree,
-    readTime: "10 min",
+    id: "constraints",
+    title: "Constraint Solver",
+    description: "Levenberg-Marquardt, residual functions, convergence criteria.",
+    icon: GitBranch,
+    readTime: "12 min",
   },
   {
     id: "wasm",
     title: "WASM Pipeline",
-    description:
-      "How @vcad/engine compiles and runs. The Rust → WASM → JavaScript bridge and memory management.",
+    description: "Rust to WASM to JavaScript bridge, memory management.",
     icon: Package,
+    readTime: "12 min",
+  },
+  {
+    id: "ir",
+    title: "IR Format Design",
+    description: "DAG-based IR, serialization, compact format, versioning.",
+    icon: Tree,
+    readTime: "10 min",
+  },
+  {
+    id: "tessellation",
+    title: "Tessellation",
+    description: "BRep to triangle mesh, per-surface strategies, quality tradeoffs.",
+    icon: GridFour,
+    readTime: "10 min",
+  },
+  {
+    id: "ray-tracing",
+    title: "Ray Tracing",
+    description: "Analytic ray-surface intersection, BVH/SAH, trimmed surfaces, WebGPU.",
+    icon: Eye,
+    readTime: "15 min",
+  },
+  {
+    id: "physics",
+    title: "Physics Engine",
+    description: "Rapier3D integration, BRep-to-physics, joint mapping, gym interface.",
+    icon: Atom,
     readTime: "12 min",
   },
   {
     id: "exports",
     title: "Export Formats",
-    description:
-      "STL vs GLTF vs STEP tradeoffs. When to use each format, limitations, and conversion strategies.",
+    description: "STL, GLB, STEP AP214, DXF, URDF. Tradeoffs and limitations.",
     icon: FileCode,
     readTime: "8 min",
+  },
+  {
+    id: "contributing",
+    title: "Contributing Guide",
+    description: "Dev environment, tests, conventions, PR process.",
+    icon: Users,
+    readTime: "8 min",
+  },
+  {
+    id: "changelog",
+    title: "Changelog",
+    description: "Entry format, when to add entries, schema validation.",
+    icon: ClockCounterClockwise,
+    readTime: "5 min",
   },
 ];
 
@@ -53,7 +113,7 @@ export default function ArchitecturePage() {
     <div className="max-w-4xl mx-auto px-8 py-16">
       <div className="mb-12">
         <h1 className="text-4xl font-bold mb-4">Architecture</h1>
-        <p className="text-text-muted text-lg max-w-2xl">
+        <p className="text-text-body text-lg max-w-2xl">
           Radical transparency. These deep-dives explain how vcad works under the hood,
           the design decisions we made, and the tradeoffs involved.
         </p>
@@ -84,35 +144,6 @@ export default function ArchitecturePage() {
             />
           </Link>
         ))}
-      </div>
-
-      {/* Additional resources */}
-      <div className="mt-16 pt-8 border-t border-border">
-        <h2 className="text-xl font-bold mb-6">Additional Resources</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <a
-            href="https://github.com/elalish/manifold"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="p-4 rounded-lg border border-border hover:border-text-muted bg-surface transition-all"
-          >
-            <h3 className="font-medium">Manifold Geometry Kernel</h3>
-            <p className="text-sm text-text-muted mt-1">
-              The underlying boolean engine powering vcad
-            </p>
-          </a>
-          <a
-            href="https://docs.rs/vcad"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="p-4 rounded-lg border border-border hover:border-text-muted bg-surface transition-all"
-          >
-            <h3 className="font-medium">Rust API Documentation</h3>
-            <p className="text-sm text-text-muted mt-1">
-              Complete API reference on docs.rs
-            </p>
-          </a>
-        </div>
       </div>
     </div>
   );

@@ -7,6 +7,12 @@ import {
   Package,
   Cube,
   Cylinder,
+  Spiral,
+  Drop,
+  Circuitry,
+  Robot,
+  Aperture,
+  Nut,
 } from "@phosphor-icons/react/dist/ssr";
 
 export const metadata: Metadata = {
@@ -20,31 +26,23 @@ const recipes = [
     title: "Mounting Plate",
     description: "Design a plate with bolt pattern holes",
     icon: Cube,
-    difficulty: "Beginner",
+    difficulty: "Simple",
     time: "10 min",
   },
   {
-    id: "bracket",
+    id: "l-bracket",
     title: "L-Bracket",
     description: "Create an L-shaped mounting bracket",
     icon: Wrench,
-    difficulty: "Beginner",
+    difficulty: "Simple",
     time: "15 min",
-  },
-  {
-    id: "circular-pattern",
-    title: "Circular Hole Pattern",
-    description: "Bolt circle and radial patterns",
-    icon: CircleNotch,
-    difficulty: "Intermediate",
-    time: "10 min",
   },
   {
     id: "flanged-hub",
     title: "Flanged Hub",
     description: "Shaft hub with mounting flange",
     icon: Cylinder,
-    difficulty: "Intermediate",
+    difficulty: "Medium",
     time: "20 min",
   },
   {
@@ -52,22 +50,78 @@ const recipes = [
     title: "Electronics Enclosure",
     description: "Box with lid, standoffs, and vent holes",
     icon: Package,
-    difficulty: "Intermediate",
+    difficulty: "Medium",
     time: "30 min",
   },
   {
-    id: "gear",
-    title: "Parametric Spur Gear",
+    id: "parametric-gear",
+    title: "Parametric Gear",
     description: "Generate gears with any tooth count",
     icon: Gear,
     difficulty: "Advanced",
     time: "25 min",
   },
+  {
+    id: "spoke-wheel",
+    title: "Spoke Wheel",
+    description: "Multi-spoke wheel with hub and rim",
+    icon: Aperture,
+    difficulty: "Medium",
+    time: "20 min",
+  },
+  {
+    id: "turned-part",
+    title: "Turned Part (Lathe)",
+    description: "Revolved profile for CNC turning",
+    icon: CircleNotch,
+    difficulty: "Medium",
+    time: "15 min",
+  },
+  {
+    id: "spring",
+    title: "Spring (Helix Sweep)",
+    description: "Helical spring via swept circle",
+    icon: Spiral,
+    difficulty: "Medium",
+    time: "15 min",
+  },
+  {
+    id: "bottle",
+    title: "Bottle (Loft)",
+    description: "Multi-section loft with varying profiles",
+    icon: Drop,
+    difficulty: "Medium",
+    time: "20 min",
+  },
+  {
+    id: "pcb-standoff",
+    title: "PCB Standoff",
+    description: "Threaded standoff for PCB mounting",
+    icon: Nut,
+    difficulty: "Medium",
+    time: "10 min",
+  },
+  {
+    id: "robot-arm",
+    title: "Robot Arm Assembly",
+    description: "Multi-joint robot arm with revolute joints",
+    icon: Robot,
+    difficulty: "Advanced",
+    time: "45 min",
+  },
+  {
+    id: "enclosure-pcb",
+    title: "Enclosure with PCB",
+    description: "Full electronics enclosure with integrated PCB layout",
+    icon: Circuitry,
+    difficulty: "Advanced",
+    time: "60 min",
+  },
 ];
 
 const difficultyColors = {
-  Beginner: "bg-green-500/20 text-green-500",
-  Intermediate: "bg-yellow-500/20 text-yellow-500",
+  Simple: "bg-green-500/20 text-green-500",
+  Medium: "bg-yellow-500/20 text-yellow-500",
   Advanced: "bg-red-500/20 text-red-500",
 };
 
@@ -76,9 +130,9 @@ export default function CookbookPage() {
     <div className="max-w-4xl mx-auto px-8 py-16">
       <div className="mb-12">
         <h1 className="text-4xl font-bold mb-4">Cookbook</h1>
-        <p className="text-text-muted text-lg max-w-2xl">
+        <p className="text-text-body text-lg max-w-2xl">
           Recipe-style tutorials for common CAD patterns. Each recipe is self-contained
-          and includes a working example you can run immediately.
+          and builds something real you can export and use.
         </p>
       </div>
 
@@ -110,20 +164,6 @@ export default function CookbookPage() {
             </span>
           </Link>
         ))}
-      </div>
-
-      {/* Coming soon notice */}
-      <div className="mt-12 p-6 rounded-lg border border-border bg-surface text-center">
-        <h3 className="font-bold mb-2">More recipes coming soon</h3>
-        <p className="text-sm text-text-muted">
-          Have a pattern you'd like to see documented?{" "}
-          <a
-            href="https://github.com/ecto/vcad/issues"
-            className="text-accent hover:text-accent-hover"
-          >
-            Open an issue
-          </a>
-        </p>
       </div>
     </div>
   );

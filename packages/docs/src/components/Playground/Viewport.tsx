@@ -22,8 +22,8 @@ interface MeshData {
 }
 
 // Background colors matching app
-const BG_DARK = "#0c0c0c";
-const BG_LIGHT = "#f3f3f3";
+const BG_DARK = "#09090b";
+const BG_LIGHT = "#f4f4f5";
 
 function SceneMesh({ mesh, material }: { mesh: TriangleMesh; material: MaterialDef }) {
   const geometry = useMemo(() => {

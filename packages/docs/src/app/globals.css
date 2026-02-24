@@ -12,53 +12,59 @@
 }
 
 @theme {
+  --font-sans: var(--font-geist-sans), system-ui, sans-serif;
   --font-mono: "Berkeley Mono", ui-monospace, monospace;
-  --font-sans: "Berkeley Mono", ui-monospace, monospace;
 
   /* Semantic colors */
   --color-bg: var(--bg);
   --color-surface: var(--surface);
   --color-card: var(--card);
   --color-border: var(--border);
+  --color-border-subtle: var(--border-subtle);
   --color-text: var(--text);
+  --color-text-body: var(--text-body);
   --color-text-muted: var(--text-muted);
   --color-hover: var(--hover);
 
-  /* Brand accent - Monokai Soda pink */
+  /* Brand accent */
   --color-accent: #F92672;
   --color-accent-hover: #d91e63;
   --color-accent-muted: #F92672/20;
 
-  /* Code syntax colors (Monokai Soda) */
+  /* Code syntax colors (Monokai — code blocks only) */
   --color-syntax-keyword: #F92672;
   --color-syntax-string: #A6E22E;
   --color-syntax-number: #AE81FF;
-  --color-syntax-comment: #75715E;
+  --color-syntax-comment: #71717a;
   --color-syntax-operator: var(--text);
 }
 
 /* Dark mode (default) */
 :root {
   color-scheme: dark;
-  --bg: #222222;
-  --surface: #2a2a2a;
-  --card: #333333;
-  --border: #444444;
-  --text: #F8F8F2;
-  --text-muted: #75715E;
-  --hover: rgba(255, 255, 255, 0.1);
+  --bg: #09090b;
+  --surface: #18181b;
+  --card: #27272a;
+  --border: #27272a;
+  --border-subtle: #1c1c1f;
+  --text: #fafafa;
+  --text-body: #d4d4d8;
+  --text-muted: #71717a;
+  --hover: rgba(255, 255, 255, 0.06);
 }
 
 /* Light mode */
 :root.light {
   color-scheme: light;
-  --bg: oklch(0.96 0.02 85);
-  --surface: oklch(0.93 0.025 80);
-  --card: oklch(0.98 0.015 90);
-  --border: oklch(0.82 0.03 75);
-  --text: oklch(0.22 0.02 55);
-  --text-muted: oklch(0.50 0.03 65);
-  --hover: rgba(0, 0, 0, 0.06);
+  --bg: #ffffff;
+  --surface: #f4f4f5;
+  --card: #e4e4e7;
+  --border: #e4e4e7;
+  --border-subtle: #f4f4f5;
+  --text: #09090b;
+  --text-body: #27272a;
+  --text-muted: #71717a;
+  --hover: rgba(0, 0, 0, 0.04);
 }
 
 /* Base styles */
@@ -68,13 +74,13 @@ html {
 
 body {
   margin: 0;
-  font-family: var(--font-mono);
-  font-size: 14px;
-  line-height: 1.6;
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.7;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background: var(--bg);
-  color: var(--text);
+  color: var(--text-body);
 }
 
 /* Selection */
@@ -111,8 +117,8 @@ body {
 /* Code blocks */
 pre {
   font-family: var(--font-mono);
-  font-size: 13px;
-  line-height: 1.7;
+  font-size: 14px;
+  line-height: 1.6;
   overflow-x: auto;
   background: var(--surface);
   padding: 1rem;
@@ -122,7 +128,7 @@ pre {
 
 code {
   font-family: var(--font-mono);
-  font-size: 0.9em;
+  font-size: 0.875em;
 }
 
 :not(pre) > code {
@@ -144,19 +150,55 @@ a:hover {
 }
 
 /* Headings */
-h1, h2, h3, h4, h5, h6 {
+h1 {
   color: var(--text);
+  font-family: var(--font-mono);
   font-weight: 700;
+  font-size: 2.25rem;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+}
+
+h2 {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 1.5rem;
   letter-spacing: -0.02em;
+  line-height: 1.25;
+}
+
+h3 {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 1.25rem;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+}
+
+h4 {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 1.125rem;
+  line-height: 1.4;
+}
+
+h5, h6 {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 /* Prose content */
 .prose {
-  max-width: 65ch;
+  max-width: 720px;
 }
 
 .prose h1 {
-  font-size: 2rem;
+  font-size: 2.25rem;
   margin-top: 0;
   margin-bottom: 1rem;
 }
@@ -165,7 +207,7 @@ h1, h2, h3, h4, h5, h6 {
   font-size: 1.5rem;
   margin-top: 2rem;
   margin-bottom: 0.75rem;
-  padding-bottom: 0.5rem;
+  padding-bottom: 0.75rem;
   border-bottom: 1px solid var(--border);
 }
 
@@ -177,13 +219,13 @@ h1, h2, h3, h4, h5, h6 {
 
 .prose p {
   margin-bottom: 1rem;
-  color: var(--text-muted);
+  color: var(--text-body);
 }
 
 .prose ul, .prose ol {
   margin-bottom: 1rem;
   padding-left: 1.5rem;
-  color: var(--text-muted);
+  color: var(--text-body);
 }
 
 .prose li {
@@ -205,14 +247,16 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .prose th, .prose td {
-  padding: 0.5rem;
+  padding: 0.75rem 1rem;
   border: 1px solid var(--border);
   text-align: left;
 }
 
 .prose th {
   background: var(--surface);
+  font-family: var(--font-mono);
   font-weight: 700;
+  font-size: 0.875rem;
 }
 
 /* Blinking cursor */
