@@ -1516,6 +1516,23 @@ export class WasmCamSettings {
 if (Symbol.dispose) WasmCamSettings.prototype[Symbol.dispose] = WasmCamSettings.prototype.free;
 
 /**
+ * Analyze a solid for 3D printing characteristics.
+ *
+ * Returns JSON with wall thicknesses, overhang angles, hole sizes, etc.
+ * Only works on solids with BRep data (primitives, not boolean results).
+ * @param {Solid} solid
+ * @returns {any}
+ */
+export function analyzeForPrinting(solid) {
+    _assertClass(solid, Solid);
+    const ret = wasm.analyzeForPrinting(solid.__wbg_ptr);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Generate a height field from mesh using drop-cutter algorithm.
  *
  * # Arguments
@@ -1922,6 +1939,25 @@ export function camToolpathStats(toolpath_json) {
 }
 
 /**
+ * Check a solid for DFM (Design for Manufacturing) printability issues.
+ *
+ * Returns warnings with face indices for viewport highlighting.
+ * @param {Solid} solid
+ * @param {string} printer_profile
+ * @returns {any}
+ */
+export function checkPrintability(solid, printer_profile) {
+    _assertClass(solid, Solid);
+    const ptr0 = passStringToWasm0(printer_profile, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.checkPrintability(solid.__wbg_ptr, ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Compute creased normals using GPU acceleration.
  *
  * # Arguments
@@ -2005,6 +2041,72 @@ export function decimateMeshGpu(positions, indices, target_ratio) {
     const len1 = WASM_VECTOR_LEN;
     const ret = wasm.decimateMeshGpu(ptr0, len0, ptr1, len1, target_ratio);
     return ret;
+}
+
+/**
+ * Digitize sketch segments into embroidery stitches.
+ *
+ * Takes a JSON array of `SketchSegment2D` (from a Sketch2D node) plus
+ * stitch options, and returns an `EmbPattern` JSON string.
+ * @param {string} segments_json
+ * @param {string} options_json
+ * @returns {string}
+ */
+export function digitizeSketch(segments_json, options_json) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(segments_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.digitizeSketch(ptr0, len0, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * Digitize text into embroidery stitches.
+ *
+ * Converts a text string into glyph outlines, then applies the specified
+ * stitch algorithm (running, satin, or fill) to produce an `EmbPattern`.
+ * Returns the same JSON shape as `readEmbroideryPes`.
+ * @param {string} text
+ * @param {number} height
+ * @param {string} options_json
+ * @returns {string}
+ */
+export function digitizeText(text, height, options_json) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.digitizeText(ptr0, len0, height, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
 }
 
 /**
@@ -2125,6 +2227,25 @@ export function ecadRouteNet(pcb_json, net, start_x, start_y, end_x, end_y, widt
 }
 
 /**
+ * Estimate print cost from volume (instant, pre-slice).
+ * @param {number} volume_mm3
+ * @param {number} infill_density
+ * @param {number} wall_count
+ * @param {number} line_width
+ * @param {string} material_name
+ * @returns {any}
+ */
+export function estimatePrintCost(volume_mm3, infill_density, wall_count, line_width, material_name) {
+    const ptr0 = passStringToWasm0(material_name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.estimatePrintCost(volume_mm3, infill_density, wall_count, line_width, ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Evaluate a loon source string and return a JSON-serialized vcad Document.
  *
  * The vcad library (types, constructors) is automatically prepended.
@@ -2219,6 +2340,34 @@ export function exportProjectedViewToDxf(view_json) {
     var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
     return v2;
+}
+
+/**
+ * Generate a 3MF file from mesh data.
+ *
+ * Returns the 3MF file as a byte array suitable for download or upload to a printer.
+ * @param {string} name
+ * @param {Float32Array} vertices
+ * @param {Uint32Array} indices
+ * @param {string} settings_json
+ * @returns {Uint8Array}
+ */
+export function generate3mf(name, vertices, indices, settings_json) {
+    const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArrayF32ToWasm0(vertices, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArray32ToWasm0(indices, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ptr3 = passStringToWasm0(settings_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len3 = WASM_VECTOR_LEN;
+    const ret = wasm.generate3mf(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v5 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v5;
 }
 
 /**
@@ -2340,6 +2489,15 @@ export function isCamAvailable() {
  */
 export function isEcadAvailable() {
     const ret = wasm.isEcadAvailable();
+    return ret !== 0;
+}
+
+/**
+ * Check if embroidery support is available.
+ * @returns {boolean}
+ */
+export function isEmbroideryAvailable() {
+    const ret = wasm.isEmbroideryAvailable();
     return ret !== 0;
 }
 
@@ -2639,6 +2797,81 @@ export function projectMesh(mesh_js, view_direction) {
 }
 
 /**
+ * Read a DST file and return embroidery data as JSON.
+ * @param {Uint8Array} data
+ * @returns {string}
+ */
+export function readEmbroideryDst(data) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.readEmbroideryDst(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Read a PES file and return embroidery data as JSON.
+ *
+ * Returns `{ threads, stitchPaths, stats }` as a JSON string.
+ * @param {Uint8Array} data
+ * @returns {string}
+ */
+export function readEmbroideryPes(data) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.readEmbroideryPes(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Recommend smart print settings from analysis results.
+ *
+ * Takes a PrintAnalysis JSON and printer profile name,
+ * returns recommended SliceSettings + explanations.
+ * @param {string} analysis_json
+ * @param {string} printer_profile
+ * @returns {any}
+ */
+export function recommendPrintSettings(analysis_json, printer_profile) {
+    const ptr0 = passStringToWasm0(analysis_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(printer_profile, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.recommendPrintSettings(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Generate a section view from a triangle mesh.
  *
  * # Arguments
@@ -2767,6 +3000,40 @@ export function toCompactIR(doc_json) {
     } finally {
         wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
     }
+}
+
+/**
+ * Write a DST file from an embroidery pattern JSON string.
+ * @param {string} json
+ * @returns {Uint8Array}
+ */
+export function writeEmbroideryDst(json) {
+    const ptr0 = passStringToWasm0(json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.writeEmbroideryDst(ptr0, len0);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v2;
+}
+
+/**
+ * Write a PES file from an embroidery pattern JSON string.
+ * @param {string} json
+ * @returns {Uint8Array}
+ */
+export function writeEmbroideryPes(json) {
+    const ptr0 = passStringToWasm0(json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.writeEmbroideryPes(ptr0, len0);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v2;
 }
 
 function __wbg_get_imports() {
@@ -3531,6 +3798,9 @@ function __wbg_get_imports() {
             const ret = arg0.getQueryParameter(arg1, arg2 >>> 0);
             return ret;
         },
+        __wbg_getRandomValues_9c5c1b115e142bb8: function() { return handleError(function (arg0, arg1) {
+            globalThis.crypto.getRandomValues(getArrayU8FromWasm0(arg0, arg1));
+        }, arguments); },
         __wbg_getShaderInfoLog_9991e9e77b0c6805: function(arg0, arg1, arg2) {
             const ret = arg1.getShaderInfoLog(arg2);
             var ptr1 = isLikeNone(ret) ? 0 : passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
@@ -3970,7 +4240,7 @@ function __wbg_get_imports() {
                     const a = state0.a;
                     state0.a = 0;
                     try {
-                        return wasm_bindgen__convert__closures_____invoke__h60f25fed64173f82(a, state0.b, arg0, arg1);
+                        return wasm_bindgen__convert__closures_____invoke__h7fe4e9d895e0bfbd(a, state0.b, arg0, arg1);
                     } finally {
                         state0.a = a;
                     }
@@ -4551,13 +4821,13 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 1625, function: Function { arguments: [Externref], shim_idx: 1626, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__ha8b73a36ae48e470, wasm_bindgen__convert__closures_____invoke__h4488ad9b37e81000);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 1031, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1032, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hb866a658679f7c90, wasm_bindgen__convert__closures_____invoke__hd3174526aa1241bc);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 880, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 881, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h250d7189f9770b99, wasm_bindgen__convert__closures_____invoke__ha8b3f1b8e67fad08);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 1774, function: Function { arguments: [Externref], shim_idx: 1775, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__ha3f46f4f424453fe, wasm_bindgen__convert__closures_____invoke__h3b7e8ca02e296028);
             return ret;
         },
         __wbindgen_cast_0000000000000003: function(arg0) {
@@ -4645,16 +4915,16 @@ function __wbg_get_imports() {
     };
 }
 
-function wasm_bindgen__convert__closures_____invoke__h4488ad9b37e81000(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h4488ad9b37e81000(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__hd3174526aa1241bc(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__hd3174526aa1241bc(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__ha8b3f1b8e67fad08(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__ha8b3f1b8e67fad08(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h3b7e8ca02e296028(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h3b7e8ca02e296028(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h60f25fed64173f82(arg0, arg1, arg2, arg3) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h60f25fed64173f82(arg0, arg1, arg2, arg3);
+function wasm_bindgen__convert__closures_____invoke__h7fe4e9d895e0bfbd(arg0, arg1, arg2, arg3) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h7fe4e9d895e0bfbd(arg0, arg1, arg2, arg3);
 }
 
 

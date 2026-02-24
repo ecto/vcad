@@ -1507,7 +1507,7 @@ dependencies = [
 
 [[package]]
 name = "loon-lang"
-version = "0.4.20"
+version = "0.4.3"
 dependencies = [
  "codespan-reporting",
  "dirs-next",
@@ -3319,12 +3319,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-embroidery-dst"
+version = "0.8.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.18",
+ "vcad-embroidery",
+]
+
+[[package]]
 name = "vcad-embroidery-pes"
 version = "0.8.0"
 dependencies = [
  "serde",
  "thiserror 2.0.18",
  "vcad-embroidery",
+]
+
+[[package]]
+name = "vcad-embroidery-wasm"
+version = "0.8.0"
+dependencies = [
+ "console_error_panic_hook",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "vcad-embroidery",
+ "vcad-embroidery-pes",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -3624,6 +3646,9 @@ dependencies = [
  "vcad-ecad-schematic",
  "vcad-ecad-sim",
  "vcad-ecad-symbols",
+ "vcad-embroidery",
+ "vcad-embroidery-dst",
+ "vcad-embroidery-pes",
  "vcad-eval",
  "vcad-ir",
  "vcad-kernel",

@@ -192,7 +192,29 @@ export interface PcbBoardPartInfo {
   translateNodeId: NodeId;
 }
 
-export type PartInfo = PrimitivePartInfo | BooleanPartInfo | ExtrudePartInfo | RevolvePartInfo | SweepPartInfo | LoftPartInfo | ImportedMeshPartInfo | FilletPartInfo | ChamferPartInfo | ShellPartInfo | LinearPatternPartInfo | CircularPatternPartInfo | MirrorPartInfo | TextPartInfo | PcbBoardPartInfo;
+export interface EmbroideryPatternPartInfo {
+  id: string;
+  name: string;
+  kind: "embroidery-pattern";
+  patternNodeId: NodeId;
+  scaleNodeId: NodeId;
+  rotateNodeId: NodeId;
+  translateNodeId: NodeId;
+  source?: string;
+}
+
+export interface StitchPartInfo {
+  id: string;
+  name: string;
+  kind: "stitch";
+  sourcePartId: string;
+  patternNodeId: NodeId;
+  scaleNodeId: NodeId;
+  rotateNodeId: NodeId;
+  translateNodeId: NodeId;
+}
+
+export type PartInfo = PrimitivePartInfo | BooleanPartInfo | ExtrudePartInfo | RevolvePartInfo | SweepPartInfo | LoftPartInfo | ImportedMeshPartInfo | FilletPartInfo | ChamferPartInfo | ShellPartInfo | LinearPatternPartInfo | CircularPatternPartInfo | MirrorPartInfo | TextPartInfo | PcbBoardPartInfo | EmbroideryPatternPartInfo | StitchPartInfo;
 
 export function isPrimitivePart(part: PartInfo): part is PrimitivePartInfo {
   return part.kind === "cube" || part.kind === "cylinder" || part.kind === "sphere";
@@ -252,6 +274,19 @@ export function isTextPart(part: PartInfo): part is TextPartInfo {
 
 export function isPcbBoardPart(part: PartInfo): part is PcbBoardPartInfo {
   return part.kind === "pcb-board";
+}
+
+export function isEmbroideryPatternPart(part: PartInfo): part is EmbroideryPatternPartInfo {
+  return part.kind === "embroidery-pattern";
+}
+
+export function isStitchPart(part: PartInfo): part is StitchPartInfo {
+  return part.kind === "stitch";
+}
+
+/** Returns true if a part can be converted to embroidery stitches (text, extrude, revolve, sweep, loft). */
+export function isStitchEligible(part: PartInfo): boolean {
+  return part.kind === "text" || part.kind === "extrude" || part.kind === "revolve" || part.kind === "sweep" || part.kind === "loft";
 }
 
 export type ToolMode = "select" | "primitive" | "simulate";

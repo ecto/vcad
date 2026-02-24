@@ -175,7 +175,8 @@ fn evaluate_node(doc: &Document, node_id: NodeId) -> Result<Option<Solid>> {
         | CsgOp::Sweep { .. }
         | CsgOp::Loft { .. }
         | CsgOp::ImportedMesh { .. }
-        | CsgOp::PcbBoard { .. } => None,
+        | CsgOp::PcbBoard { .. }
+        | CsgOp::EmbroideryPattern { .. } => None,
     };
 
     Ok(solid)

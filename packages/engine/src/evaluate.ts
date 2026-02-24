@@ -11,6 +11,7 @@ import type {
   Transform3D,
   ImportedMeshOp,
   PcbBoardOp,
+  EmbroideryPatternOp,
   Pcb,
   PcbLayer,
   Trace,
@@ -99,11 +100,25 @@ export function evaluateDocument(
         options.skipClashDetection ?? false,
       ) as WasmEvaluatedScene;
 
+      // Post-process: generate TS-side meshes for types the Rust evaluator
+      // doesn't tessellate (e.g. EmbroideryPattern).
+      const visibleRoots = doc.roots.filter((e) => e.visible !== false);
+      const parts = result.parts.map((p, i) => {
+        // If the WASM evaluator returned an empty mesh, check if it's an
+        // embroidery pattern and generate the mesh in TypeScript.
+        if (p.mesh.positions.length === 0 && i < visibleRoots.length) {
+          const emb = findEmbroideryPattern(visibleRoots[i].root, doc.nodes);
+          if (emb) {
+            const baseMesh = embroideryPatternToMesh(emb.pattern);
+            const mesh = transformMesh(baseMesh, emb.transform);
+            return { mesh, material: p.material };
+          }
+        }
+        return { mesh: wasmMeshToTriangleMesh(p.mesh), material: p.material };
+      });
+
       return {
-        parts: result.parts.map((p) => ({
-          mesh: wasmMeshToTriangleMesh(p.mesh),
-          material: p.material,
-        })),
+        parts,
         partDefs: result.partDefs?.map((pd) => ({
           id: pd.id,
           mesh: wasmMeshToTriangleMesh(pd.mesh),
@@ -265,6 +280,43 @@ function findPcbBoard(
 
     if (node.op.type === "PcbBoard") {
       return { board: node.op, transform };
+    }
+
+    if (node.op.type === "Translate") {
+      transform.translate = node.op.offset;
+      current = node.op.child;
+    } else if (node.op.type === "Rotate") {
+      transform.rotate = node.op.angles;
+      current = node.op.child;
+    } else if (node.op.type === "Scale") {
+      transform.scale = node.op.factor;
+      current = node.op.child;
+    } else {
+      return null;
+    }
+  }
+}
+
+/**
+ * Find an EmbroideryPattern in the node chain and extract transforms.
+ */
+export function findEmbroideryPattern(
+  rootId: NodeId,
+  nodes: Record<string, Node>,
+): { pattern: EmbroideryPatternOp; transform: TransformInfo } | null {
+  const transform: TransformInfo = {
+    translate: { x: 0, y: 0, z: 0 },
+    rotate: { x: 0, y: 0, z: 0 },
+    scale: { x: 1, y: 1, z: 1 },
+  };
+
+  let current = rootId;
+  while (true) {
+    const node = nodes[String(current)];
+    if (!node) return null;
+
+    if (node.op.type === "EmbroideryPattern") {
+      return { pattern: node.op, transform };
     }
 
     if (node.op.type === "Translate") {
@@ -477,6 +529,63 @@ function zoneToMesh(
 }
 
 /**
+ * Generate ribbon-quad mesh from embroidery stitch data.
+ * Each consecutive stitch pair becomes a thin quad (2 triangles) at Z=0.
+ */
+export function embroideryPatternToMesh(op: EmbroideryPatternOp): TriangleMesh {
+  const RIBBON_HALF_WIDTH = 0.15; // 0.3mm total width
+  const allPositions: number[] = [];
+  const allIndices: number[] = [];
+  const allColors: number[] = [];
+
+  for (const group of op.design.stitch_groups) {
+    // Resolve thread color (default to mid-gray)
+    const thread = op.design.threads[group.thread_index];
+    const r = thread ? thread.color[0] / 255 : 0.5;
+    const g = thread ? thread.color[1] / 255 : 0.5;
+    const b = thread ? thread.color[2] / 255 : 0.5;
+
+    const stitches = group.stitches;
+    for (let i = 0; i < stitches.length - 1; i++) {
+      const [x0, rawY0] = stitches[i];
+      const [x1, rawY1] = stitches[i + 1];
+      // Flip Y: embroidery uses Y-down, CAD uses Y-up
+      const y0 = -rawY0;
+      const y1 = -rawY1;
+
+      const dx = x1 - x0;
+      const dy = y1 - y0;
+      const len = Math.sqrt(dx * dx + dy * dy);
+      if (len < 1e-6) continue;
+
+      // Perpendicular direction
+      const px = (-dy / len) * RIBBON_HALF_WIDTH;
+      const py = (dx / len) * RIBBON_HALF_WIDTH;
+
+      const base = allPositions.length / 3;
+      // 4 vertices: left-start, right-start, right-end, left-end
+      allPositions.push(x0 + px, y0 + py, 0);
+      allPositions.push(x0 - px, y0 - py, 0);
+      allPositions.push(x1 - px, y1 - py, 0);
+      allPositions.push(x1 + px, y1 + py, 0);
+
+      // 4 vertex colors (same thread color per quad)
+      allColors.push(r, g, b, r, g, b, r, g, b, r, g, b);
+
+      // 2 triangles
+      allIndices.push(base, base + 1, base + 2);
+      allIndices.push(base, base + 2, base + 3);
+    }
+  }
+
+  return {
+    positions: new Float32Array(allPositions),
+    indices: new Uint32Array(allIndices),
+    colors: new Float32Array(allColors),
+  };
+}
+
+/**
  * Generate a simple extruded mesh from a PCB board outline (ear-clip triangulation + side faces),
  * plus copper features (traces, vias, pads, zones).
  */
@@ -550,7 +659,7 @@ function pcbBoardToMesh(op: PcbBoardOp): TriangleMesh {
 /**
  * Apply a transform to mesh positions.
  */
-function transformMesh(
+export function transformMesh(
   mesh: TriangleMesh,
   transform: TransformInfo,
 ): TriangleMesh {
@@ -603,7 +712,7 @@ function transformMesh(
     }
   }
 
-  return { positions, indices: mesh.indices, normals };
+  return { positions, indices: mesh.indices, normals, colors: mesh.colors };
 }
 
 /**
@@ -621,6 +730,15 @@ function evaluateDocumentTS(
   const visibleRoots = doc.roots.filter((entry) => entry.visible !== false);
   const solids: Solid[] = [];
   const parts = visibleRoots.map((entry) => {
+    // Check if this is an EmbroideryPattern
+    const embPattern = findEmbroideryPattern(entry.root, doc.nodes);
+    if (embPattern) {
+      const baseMesh = embroideryPatternToMesh(embPattern.pattern);
+      const mesh = transformMesh(baseMesh, embPattern.transform);
+      solids.push(Solid.empty());
+      return { mesh, material: entry.material };
+    }
+
     // Check if this is a PcbBoard (doesn't go through Solid pipeline)
     const pcbBoard = findPcbBoard(entry.root, doc.nodes);
     if (pcbBoard) {
@@ -975,6 +1093,10 @@ function evaluateOp(
 
     case "PcbBoard":
       // PcbBoard is handled at the document level via findPcbBoard.
+      return Solid.empty();
+
+    case "EmbroideryPattern":
+      // EmbroideryPattern is handled at the document level.
       return Solid.empty();
   }
 }

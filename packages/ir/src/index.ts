@@ -393,6 +393,54 @@ export interface PcbBoardOp {
   board: Pcb;
 }
 
+/** A thread color in an embroidery design. */
+export interface EmbroideryThread {
+  color: [number, number, number];
+  name: string;
+}
+
+/** Stitch fill strategy. */
+export type StitchFillType = "fill" | "satin" | "running" | "manual";
+
+/** Parameters controlling how a stitch group is filled. */
+export interface FillParams {
+  fill_type: StitchFillType;
+  angle_deg: number;
+  density_mm: number;
+  underlay: boolean;
+  max_stitch_length_mm: number;
+}
+
+/** Default fill parameters (manual / no auto-fill). */
+export const DEFAULT_FILL_PARAMS: FillParams = {
+  fill_type: "manual",
+  angle_deg: 0,
+  density_mm: 0.4,
+  underlay: false,
+  max_stitch_length_mm: 7.0,
+};
+
+/** A group of stitches sharing a thread color. */
+export interface IrStitchGroup {
+  thread_index: number;
+  stitches: [number, number][];
+  fill_params?: FillParams;
+}
+
+/** An embroidery design for the IR. */
+export interface EmbroideryDesign {
+  threads: EmbroideryThread[];
+  stitch_groups: IrStitchGroup[];
+  hoop_width: number;
+  hoop_height: number;
+}
+
+/** Embroidery pattern — a 2D stitch design. */
+export interface EmbroideryPatternOp {
+  type: "EmbroideryPattern";
+  design: EmbroideryDesign;
+}
+
 /** CSG operation — the core building block of the IR DAG. */
 export type CsgOp =
   | CubeOp
@@ -418,7 +466,8 @@ export type CsgOp =
   | SweepOp
   | LoftOp
   | ImportedMeshOp
-  | PcbBoardOp;
+  | PcbBoardOp
+  | EmbroideryPatternOp;
 
 /** A node in the IR graph. */
 export interface Node {
@@ -1403,6 +1452,8 @@ function getChildren(op: CsgOp): number[] {
       return op.sketches;
     case 'PcbBoard':
       return [];
+    case 'EmbroideryPattern':
+      return [];
     default:
       return [];
   }
@@ -1504,6 +1555,8 @@ function formatOp(op: CsgOp, idMap: Map<number, number>, name?: string): string 
       return `V ${idMap.get(op.sketch)} ${op.axis_origin.x} ${op.axis_origin.y} ${op.axis_origin.z} ${op.axis_dir.x} ${op.axis_dir.y} ${op.axis_dir.z} ${op.angle_deg}${nameSuffix}`;
     case 'PcbBoard':
       throw new Error('PcbBoard not supported in compact IR');
+    case 'EmbroideryPattern':
+      throw new Error('EmbroideryPattern not supported in compact IR');
     default:
       throw new Error(`Unsupported op type for compact IR: ${(op as CsgOp).type}`);
   }

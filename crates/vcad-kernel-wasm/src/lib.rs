@@ -2939,6 +2939,10 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
         vcad_ir::CsgOp::PcbBoard { .. } => {
             Err(JsError::new("PcbBoard not supported in compact IR evaluation - use evaluateDocument"))
         }
+
+        vcad_ir::CsgOp::EmbroideryPattern { .. } => {
+            Err(JsError::new("EmbroideryPattern not supported in compact IR evaluation - use evaluateDocument"))
+        }
     }
 }
 
@@ -4243,6 +4247,536 @@ pub fn eval_vcad_source(source: &str) -> Result<JsValue, JsError> {
     Ok(JsValue::from_str(&json))
 }
 
+
+// =============================================================================
+// Embroidery module (feature-gated)
+// =============================================================================
+
+#[cfg(feature = "embroidery")]
+mod embroidery_wasm {
+    use serde::{Deserialize, Serialize};
+    use vcad_embroidery::{
+        EmbPattern, FillParams, Path2D, PatternMetadata, RunningStitchParams, SatinParams,
+        StitchCommand, StitchGroup, Thread, fill_stitch, running_stitch, satin_stitch,
+    };
+    use wasm_bindgen::prelude::*;
+
+    /// Check if embroidery support is available.
+    #[wasm_bindgen(js_name = isEmbroideryAvailable)]
+    pub fn is_embroidery_available() -> bool {
+        true
+    }
+
+    /// Read a PES file and return embroidery data as JSON.
+    ///
+    /// Returns `{ threads, stitchPaths, stats }` as a JSON string.
+    #[wasm_bindgen(js_name = readEmbroideryPes)]
+    pub fn read_embroidery_pes(data: &[u8]) -> Result<String, JsError> {
+        let pattern = vcad_embroidery_pes::read_pes(data)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        serialize_pattern(&pattern).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Read a DST file and return embroidery data as JSON.
+    #[wasm_bindgen(js_name = readEmbroideryDst)]
+    pub fn read_embroidery_dst(data: &[u8]) -> Result<String, JsError> {
+        let pattern = vcad_embroidery_dst::read_dst(data)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        serialize_pattern(&pattern).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Write a PES file from an embroidery pattern JSON string.
+    #[wasm_bindgen(js_name = writeEmbroideryPes)]
+    pub fn write_embroidery_pes(json: &str) -> Result<Vec<u8>, JsError> {
+        let pattern: EmbPattern =
+            serde_json::from_str(json).map_err(|e| JsError::new(&e.to_string()))?;
+        vcad_embroidery_pes::write_pes(&pattern)
+            .map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Write a DST file from an embroidery pattern JSON string.
+    #[wasm_bindgen(js_name = writeEmbroideryDst)]
+    pub fn write_embroidery_dst(json: &str) -> Result<Vec<u8>, JsError> {
+        let pattern: EmbPattern =
+            serde_json::from_str(json).map_err(|e| JsError::new(&e.to_string()))?;
+        vcad_embroidery_dst::write_dst(&pattern)
+            .map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Options for text digitization.
+    #[derive(Deserialize)]
+    struct DigitizeTextOptions {
+        #[serde(default = "default_stitch_type")]
+        stitch_type: String,
+        #[serde(default = "default_thread_color")]
+        color: [u8; 3],
+        #[serde(default = "default_stitch_length")]
+        stitch_length: f64,
+        #[serde(default = "default_density")]
+        density: f64,
+        #[serde(default = "default_satin_width")]
+        satin_width: f64,
+        #[serde(default)]
+        fill_angle: f64,
+        #[serde(default = "default_letter_spacing")]
+        letter_spacing: f64,
+        #[serde(default = "default_line_spacing")]
+        line_spacing: f64,
+        #[serde(default = "default_alignment")]
+        alignment: String,
+    }
+
+    fn default_stitch_type() -> String { "running".into() }
+    fn default_thread_color() -> [u8; 3] { [255, 255, 255] }
+    fn default_stitch_length() -> f64 { 2.5 }
+    fn default_density() -> f64 { 4.0 }
+    fn default_satin_width() -> f64 { 3.0 }
+    fn default_letter_spacing() -> f64 { 1.0 }
+    fn default_line_spacing() -> f64 { 1.2 }
+    fn default_alignment() -> String { "left".into() }
+
+    /// Convert a `SketchProfile` from text_to_profiles into a `Path2D`.
+    ///
+    /// Line segments contribute their start point; arcs are discretized into
+    /// small line segments. The path is always marked as closed since glyph
+    /// contours are closed loops.
+    fn sketch_profile_to_path2d(
+        profile: &vcad_kernel::vcad_kernel_sketch::SketchProfile,
+    ) -> Path2D {
+        let mut points: Vec<(f64, f64)> = Vec::new();
+        for seg in &profile.segments {
+            match seg {
+                vcad_kernel::vcad_kernel_sketch::SketchSegment::Line { start, end } => {
+                    if points.is_empty()
+                        || (points.last().unwrap().0 - start.x).abs() > 1e-9
+                        || (points.last().unwrap().1 - start.y).abs() > 1e-9
+                    {
+                        points.push((start.x, start.y));
+                    }
+                    points.push((end.x, end.y));
+                }
+                vcad_kernel::vcad_kernel_sketch::SketchSegment::Arc {
+                    start,
+                    end,
+                    center,
+                    ccw,
+                } => {
+                    // Discretize arc into line segments
+                    if points.is_empty()
+                        || (points.last().unwrap().0 - start.x).abs() > 1e-9
+                        || (points.last().unwrap().1 - start.y).abs() > 1e-9
+                    {
+                        points.push((start.x, start.y));
+                    }
+                    let radius =
+                        ((start.x - center.x).powi(2) + (start.y - center.y).powi(2)).sqrt();
+                    let start_angle = (start.y - center.y).atan2(start.x - center.x);
+                    let end_angle = (end.y - center.y).atan2(end.x - center.x);
+                    let mut sweep = end_angle - start_angle;
+                    if *ccw && sweep < 0.0 {
+                        sweep += 2.0 * std::f64::consts::PI;
+                    } else if !ccw && sweep > 0.0 {
+                        sweep -= 2.0 * std::f64::consts::PI;
+                    }
+                    // ~1 segment per 10 degrees
+                    let n_segs = ((sweep.abs() / (10.0_f64.to_radians())).ceil() as usize).max(2);
+                    for i in 1..=n_segs {
+                        let t = i as f64 / n_segs as f64;
+                        let angle = start_angle + sweep * t;
+                        points.push((
+                            center.x + radius * angle.cos(),
+                            center.y + radius * angle.sin(),
+                        ));
+                    }
+                }
+            }
+        }
+        Path2D {
+            points,
+            closed: true,
+        }
+    }
+
+    /// Digitize text into embroidery stitches.
+    ///
+    /// Converts a text string into glyph outlines, then applies the specified
+    /// stitch algorithm (running, satin, or fill) to produce an `EmbPattern`.
+    /// Returns the same JSON shape as `readEmbroideryPes`.
+    #[wasm_bindgen(js_name = digitizeText)]
+    pub fn digitize_text(
+        text: &str,
+        height: f64,
+        options_json: &str,
+    ) -> Result<String, JsError> {
+        use vcad_kernel::vcad_kernel_text::{FontRegistry, TextAlignment};
+
+        let opts: DigitizeTextOptions =
+            serde_json::from_str(options_json).map_err(|e| JsError::new(&e.to_string()))?;
+
+        let align = match opts.alignment.as_str() {
+            "center" => TextAlignment::Center,
+            "right" => TextAlignment::Right,
+            _ => TextAlignment::Left,
+        };
+
+        let font = FontRegistry::builtin_sans();
+        let profiles = vcad_kernel::vcad_kernel_text::text_to_profiles(
+            text,
+            font,
+            height,
+            opts.letter_spacing,
+            opts.line_spacing,
+            align,
+        );
+
+        if profiles.is_empty() {
+            return Err(JsError::new("Text produced no glyph outlines"));
+        }
+
+        let color = opts.color;
+        let thread = Thread::new(color, "Thread 1");
+
+        let mut all_commands: Vec<StitchCommand> = Vec::new();
+
+        for profile in &profiles {
+            let path = sketch_profile_to_path2d(profile);
+            if path.points.len() < 2 {
+                continue;
+            }
+
+            let cmds = match opts.stitch_type.as_str() {
+                "satin" => satin_stitch(
+                    &path,
+                    &SatinParams {
+                        width: opts.satin_width,
+                        density: opts.density,
+                        pull_compensation: 0.0,
+                    },
+                ),
+                "fill" => fill_stitch(
+                    &path,
+                    &FillParams {
+                        angle: opts.fill_angle,
+                        row_spacing: 1.0 / opts.density.max(0.1),
+                        stitch_length: opts.stitch_length,
+                        stagger: 0.25,
+                    },
+                ),
+                _ => running_stitch(
+                    &path,
+                    &RunningStitchParams {
+                        stitch_length: opts.stitch_length,
+                    },
+                ),
+            };
+
+            if !cmds.is_empty() {
+                // Add a trim between contours to separate paths
+                if !all_commands.is_empty() {
+                    all_commands.push(StitchCommand::Trim);
+                }
+                all_commands.extend(cmds);
+            }
+        }
+
+        if all_commands.is_empty() {
+            return Err(JsError::new("No stitches generated from text"));
+        }
+
+        // Flip Y: font coordinates are Y-up, embroidery renderer expects Y-down
+        for cmd in &mut all_commands {
+            match cmd {
+                StitchCommand::MoveTo { y, .. }
+                | StitchCommand::StitchTo { y, .. }
+                | StitchCommand::Jump { y, .. } => {
+                    *y = -*y;
+                }
+                _ => {}
+            }
+        }
+
+        all_commands.push(StitchCommand::End);
+
+        let pattern = EmbPattern {
+            threads: vec![thread],
+            stitch_groups: vec![StitchGroup {
+                thread_index: 0,
+                commands: all_commands,
+            }],
+            metadata: PatternMetadata {
+                name: text.chars().take(50).collect(),
+                author: String::new(),
+                category: Some("Text".into()),
+            },
+        };
+
+        serialize_pattern(&pattern).map_err(|e| JsError::new(&e))
+    }
+
+    /// Options for sketch digitization (subset of text options, no text-specific fields).
+    #[derive(Deserialize)]
+    struct DigitizeSketchOptions {
+        #[serde(default = "default_stitch_type")]
+        stitch_type: String,
+        #[serde(default = "default_thread_color")]
+        color: [u8; 3],
+        #[serde(default = "default_stitch_length")]
+        stitch_length: f64,
+        #[serde(default = "default_density")]
+        density: f64,
+        #[serde(default = "default_satin_width")]
+        satin_width: f64,
+        #[serde(default)]
+        fill_angle: f64,
+    }
+
+    /// Convert IR `SketchSegment2D` segments into a `Path2D`.
+    fn sketch_segments_to_path2d(segments: &[vcad_ir::SketchSegment2D]) -> Path2D {
+        let mut points: Vec<(f64, f64)> = Vec::new();
+        for seg in segments {
+            match seg {
+                vcad_ir::SketchSegment2D::Line { start, end } => {
+                    if points.is_empty()
+                        || (points.last().unwrap().0 - start.x).abs() > 1e-9
+                        || (points.last().unwrap().1 - start.y).abs() > 1e-9
+                    {
+                        points.push((start.x, start.y));
+                    }
+                    points.push((end.x, end.y));
+                }
+                vcad_ir::SketchSegment2D::Arc {
+                    start,
+                    end,
+                    center,
+                    ccw,
+                } => {
+                    if points.is_empty()
+                        || (points.last().unwrap().0 - start.x).abs() > 1e-9
+                        || (points.last().unwrap().1 - start.y).abs() > 1e-9
+                    {
+                        points.push((start.x, start.y));
+                    }
+                    let radius =
+                        ((start.x - center.x).powi(2) + (start.y - center.y).powi(2)).sqrt();
+                    let start_angle = (start.y - center.y).atan2(start.x - center.x);
+                    let end_angle = (end.y - center.y).atan2(end.x - center.x);
+                    let mut sweep = end_angle - start_angle;
+                    if *ccw && sweep < 0.0 {
+                        sweep += 2.0 * std::f64::consts::PI;
+                    } else if !ccw && sweep > 0.0 {
+                        sweep -= 2.0 * std::f64::consts::PI;
+                    }
+                    let n_segs =
+                        ((sweep.abs() / (10.0_f64.to_radians())).ceil() as usize).max(2);
+                    for i in 1..=n_segs {
+                        let t = i as f64 / n_segs as f64;
+                        let angle = start_angle + sweep * t;
+                        points.push((
+                            center.x + radius * angle.cos(),
+                            center.y + radius * angle.sin(),
+                        ));
+                    }
+                }
+            }
+        }
+        Path2D {
+            points,
+            closed: true,
+        }
+    }
+
+    /// Digitize sketch segments into embroidery stitches.
+    ///
+    /// Takes a JSON array of `SketchSegment2D` (from a Sketch2D node) plus
+    /// stitch options, and returns an `EmbPattern` JSON string.
+    #[wasm_bindgen(js_name = digitizeSketch)]
+    pub fn digitize_sketch(
+        segments_json: &str,
+        options_json: &str,
+    ) -> Result<String, JsError> {
+        let segments: Vec<vcad_ir::SketchSegment2D> =
+            serde_json::from_str(segments_json).map_err(|e| JsError::new(&e.to_string()))?;
+
+        if segments.is_empty() {
+            return Err(JsError::new("No sketch segments provided"));
+        }
+
+        let opts: DigitizeSketchOptions =
+            serde_json::from_str(options_json).map_err(|e| JsError::new(&e.to_string()))?;
+
+        let path = sketch_segments_to_path2d(&segments);
+        if path.points.len() < 2 {
+            return Err(JsError::new("Sketch produced too few points"));
+        }
+
+        let color = opts.color;
+        let thread = Thread::new(color, "Thread 1");
+
+        let cmds = match opts.stitch_type.as_str() {
+            "satin" => satin_stitch(
+                &path,
+                &SatinParams {
+                    width: opts.satin_width,
+                    density: opts.density,
+                    pull_compensation: 0.0,
+                },
+            ),
+            "fill" => fill_stitch(
+                &path,
+                &FillParams {
+                    angle: opts.fill_angle,
+                    row_spacing: 1.0 / opts.density.max(0.1),
+                    stitch_length: opts.stitch_length,
+                    stagger: 0.25,
+                },
+            ),
+            _ => running_stitch(
+                &path,
+                &RunningStitchParams {
+                    stitch_length: opts.stitch_length,
+                },
+            ),
+        };
+
+        if cmds.is_empty() {
+            return Err(JsError::new("No stitches generated from sketch"));
+        }
+
+        let mut all_commands = cmds;
+        all_commands.push(StitchCommand::End);
+
+        let pattern = EmbPattern {
+            threads: vec![thread],
+            stitch_groups: vec![StitchGroup {
+                thread_index: 0,
+                commands: all_commands,
+            }],
+            metadata: PatternMetadata {
+                name: "Sketch".into(),
+                author: String::new(),
+                category: Some("Sketch".into()),
+            },
+        };
+
+        serialize_pattern(&pattern).map_err(|e| JsError::new(&e))
+    }
+
+    #[derive(Serialize)]
+    struct EmbroideryResult {
+        threads: Vec<ThreadInfo>,
+        #[serde(rename = "stitchPaths")]
+        stitch_paths: Vec<StitchPathInfo>,
+        stats: StatsInfo,
+        /// Serialized pattern JSON for round-trip export
+        #[serde(rename = "patternJson")]
+        pattern_json: String,
+    }
+
+    #[derive(Serialize)]
+    struct ThreadInfo {
+        color: [u8; 3],
+        name: String,
+    }
+
+    #[derive(Serialize)]
+    struct StitchPathInfo {
+        #[serde(rename = "threadIndex")]
+        thread_index: usize,
+        color: [u8; 3],
+        points: Vec<[f64; 2]>,
+    }
+
+    #[derive(Serialize)]
+    struct StatsInfo {
+        #[serde(rename = "stitchCount")]
+        stitch_count: usize,
+        #[serde(rename = "colorCount")]
+        color_count: usize,
+        width: f64,
+        height: f64,
+        #[serde(rename = "threadLength")]
+        thread_length: f64,
+        #[serde(rename = "estimatedTimeSeconds")]
+        estimated_time_seconds: f64,
+    }
+
+    fn serialize_pattern(pattern: &EmbPattern) -> Result<String, String> {
+        let stats = pattern.stats();
+
+        let threads: Vec<ThreadInfo> = pattern
+            .threads
+            .iter()
+            .map(|t| ThreadInfo {
+                color: t.color,
+                name: t.name.clone(),
+            })
+            .collect();
+
+        let mut paths: Vec<StitchPathInfo> = Vec::new();
+        for group in &pattern.stitch_groups {
+            let thread = pattern
+                .threads
+                .get(group.thread_index)
+                .cloned()
+                .unwrap_or_else(|| Thread::new([128, 128, 128], "Unknown"));
+
+            let mut points: Vec<[f64; 2]> = Vec::new();
+            for cmd in &group.commands {
+                match cmd {
+                    StitchCommand::MoveTo { x, y } | StitchCommand::StitchTo { x, y } => {
+                        points.push([*x, *y]);
+                    }
+                    StitchCommand::Jump { x, y } => {
+                        if !points.is_empty() {
+                            paths.push(StitchPathInfo {
+                                thread_index: group.thread_index,
+                                color: thread.color,
+                                points: std::mem::take(&mut points),
+                            });
+                        }
+                        points.push([*x, *y]);
+                    }
+                    StitchCommand::Trim | StitchCommand::End => {
+                        if !points.is_empty() {
+                            paths.push(StitchPathInfo {
+                                thread_index: group.thread_index,
+                                color: thread.color,
+                                points: std::mem::take(&mut points),
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if !points.is_empty() {
+                paths.push(StitchPathInfo {
+                    thread_index: group.thread_index,
+                    color: thread.color,
+                    points,
+                });
+            }
+        }
+
+        let pattern_json =
+            serde_json::to_string(pattern).map_err(|e| e.to_string())?;
+
+        let result = EmbroideryResult {
+            threads,
+            stitch_paths: paths,
+            stats: StatsInfo {
+                stitch_count: stats.stitch_count,
+                color_count: stats.color_count,
+                width: stats.width,
+                height: stats.height,
+                thread_length: stats.thread_length,
+                estimated_time_seconds: stats.estimated_time_seconds,
+            },
+            pattern_json,
+        };
+
+        serde_json::to_string(&result).map_err(|e| e.to_string())
+    }
+}
 
 // =============================================================================
 // TypeScript type generation (ts-rs)

@@ -301,6 +301,73 @@ pub enum PathCurve {
     },
 }
 
+// ============================================================================
+// Embroidery types
+// ============================================================================
+
+/// A thread color in an embroidery design.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EmbroideryThread {
+    /// RGB color.
+    pub color: [u8; 3],
+    /// Thread name.
+    pub name: String,
+}
+
+/// Stitch fill strategy.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FillType {
+    /// Automatic fill stitch.
+    Fill,
+    /// Satin stitch.
+    Satin,
+    /// Running stitch.
+    Running,
+    /// Manual / pre-digitized stitches.
+    Manual,
+}
+
+/// Parameters controlling how a stitch group is filled.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct FillParams {
+    /// Fill strategy.
+    pub fill_type: FillType,
+    /// Fill angle in degrees.
+    pub angle_deg: f64,
+    /// Row spacing in mm.
+    pub density_mm: f64,
+    /// Whether to add underlay stitches.
+    pub underlay: bool,
+    /// Maximum stitch length in mm.
+    pub max_stitch_length_mm: f64,
+}
+
+/// A group of stitches sharing a thread color.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IrStitchGroup {
+    /// Index into the design's thread palette.
+    pub thread_index: usize,
+    /// Stitch positions as flat `[x, y]` pairs in mm.
+    pub stitches: Vec<[f64; 2]>,
+    /// Optional fill parameters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fill_params: Option<FillParams>,
+}
+
+/// An embroidery design for the IR.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EmbroideryDesign {
+    /// Thread palette.
+    pub threads: Vec<EmbroideryThread>,
+    /// Stitch groups.
+    pub stitch_groups: Vec<IrStitchGroup>,
+    /// Hoop width in mm.
+    pub hoop_width: f64,
+    /// Hoop height in mm.
+    pub hoop_height: f64,
+}
+
 /// CSG operation — the core building block of the IR DAG.
 ///
 /// Each variant is either a leaf primitive or a combining/transform operation
@@ -550,6 +617,11 @@ pub enum CsgOp {
     /// The `board` field contains the full PCB design data (same ecad::Pcb type).
     PcbBoard {
         board: Box<crate::ecad::Pcb>,
+    },
+    /// Embroidery pattern — a 2D stitch design.
+    EmbroideryPattern {
+        /// The embroidery design data.
+        design: Box<EmbroideryDesign>,
     },
 }
 
@@ -1491,5 +1563,43 @@ mod tests {
         let neg = -a;
         assert!((neg.x - (-1.0)).abs() < 1e-12);
         assert!((neg.y - (-2.0)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn embroidery_pattern_roundtrip() {
+        let op = CsgOp::EmbroideryPattern {
+            design: Box::new(EmbroideryDesign {
+                threads: vec![EmbroideryThread {
+                    color: [255, 0, 0],
+                    name: "Red".to_string(),
+                }],
+                stitch_groups: vec![
+                    IrStitchGroup {
+                        thread_index: 0,
+                        stitches: vec![[0.0, 0.0], [5.0, 0.0], [5.0, 5.0]],
+                        fill_params: None,
+                    },
+                    IrStitchGroup {
+                        thread_index: 0,
+                        stitches: vec![[10.0, 10.0], [15.0, 10.0]],
+                        fill_params: Some(FillParams {
+                            fill_type: FillType::Satin,
+                            angle_deg: 45.0,
+                            density_mm: 0.3,
+                            underlay: true,
+                            max_stitch_length_mm: 5.0,
+                        }),
+                    },
+                ],
+                hoop_width: 100.0,
+                hoop_height: 100.0,
+            }),
+        };
+        let json = serde_json::to_string(&op).unwrap();
+        assert!(json.contains(r#""type":"EmbroideryPattern""#));
+        let restored: CsgOp = serde_json::from_str(&json).unwrap();
+        assert_eq!(op, restored);
+        // Ensure fill_params is omitted when None
+        assert!(!json.contains(r#""fill_params":null"#));
     }
 }

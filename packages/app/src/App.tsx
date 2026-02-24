@@ -40,12 +40,14 @@ const UpdateNotification = lazy(() => import("@/components/UpdateNotification").
 const WhatsNewPanel = lazy(() => import("@/components/WhatsNewPanel").then(m => ({ default: m.WhatsNewPanel })));
 const ElectronicsToolbar = lazy(() => import("@/components/electronics/ElectronicsToolbar").then(m => ({ default: m.ElectronicsToolbar })));
 const ElectronicsStatusPanel = lazy(() => import("@/components/electronics/ElectronicsStatusPanel").then(m => ({ default: m.ElectronicsStatusPanel })));
+const EmbroideryPanel = lazy(() => import("@/components/embroidery").then(m => ({ default: m.EmbroideryPanel })));
 
 import {
   useSketchStore,
   useEngineStore,
   useDocumentStore,
   useUiStore,
+  isEmbroideryPatternPart,
   parseVcadFile,
   parseStl,
   logger,
@@ -64,11 +66,13 @@ import { loadDocumentFromUrl } from "@/lib/url-document";
 import {
   mergeMeshes,
 } from "@vcad/engine";
+import type { EmbroideryDesign } from "@vcad/ir";
 import { useNotificationStore } from "@/stores/notification-store";
 import { useOnboardingStore } from "@/stores/onboarding-store";
 import { useSlicerStore } from "@/stores/slicer-store";
 import { useCamStore } from "@/stores/cam-store";
 import { useElectronicsStore } from "@/stores/electronics-store";
+import { useEmbroideryStore } from "@/stores/embroidery-store";
 
 function useThemeSync() {
   const theme = useUiStore((s) => s.theme);
@@ -147,6 +151,11 @@ export function App() {
   const selectMultiple = useUiStore((s) => s.selectMultiple);
   const printPanelOpen = useSlicerStore((s) => s.printPanelOpen);
   const camPanelOpen = useCamStore((s) => s.camPanelOpen);
+  const embroideryPanelOpen = useEmbroideryStore((s) => s.panelOpen);
+  const partIndex = useDocumentStore((s) => s.partIndex);
+  const selIds = useUiStore((s) => s.selectedPartIds);
+  const selPart = selIds.size === 1 ? partIndex.get(Array.from(selIds)[0]!) : undefined;
+  const hasSelectedEmbroideryPart = selPart != null && isEmbroideryPatternPart(selPart);
 
   const handleSave = useCallback(() => {
     const state = useDocumentStore.getState();
@@ -262,6 +271,60 @@ export function App() {
       } catch (err) {
         console.error("Failed to import STL:", err);
         useNotificationStore.getState().addToast("Failed to import STL file", "error");
+      }
+      return;
+    }
+
+    // Handle embroidery files
+    if (ext === "pes" || ext === "dst") {
+      try {
+        const buffer = await file.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        const wasm = await import("@vcad/kernel-wasm");
+        const json = ext === "pes"
+          ? wasm.readEmbroideryPes(bytes)
+          : wasm.readEmbroideryDst(bytes);
+        const result = JSON.parse(json);
+
+        // Build EmbroideryDesign for the IR node
+        const design: EmbroideryDesign = {
+          threads: result.threads,
+          stitch_groups: result.stitchPaths.map((sp: { threadIndex: number; points: [number, number][] }) => ({
+            thread_index: sp.threadIndex,
+            stitches: sp.points,
+          })),
+          hoop_width: result.stats.width,
+          hoop_height: result.stats.height,
+        };
+
+        // Add to document as a proper node
+        useDocumentStore.getState().addEmbroideryPattern(design, file.name);
+
+        // Also populate embroidery store for the panel (stats, export, etc.)
+        const store = useEmbroideryStore.getState();
+        store.setFileName(file.name);
+        store.setError(null);
+        store.setSelectedFormat(ext as "pes" | "dst");
+        store.setPattern({
+          stitchCount: result.stats.stitchCount,
+          colorCount: result.stats.colorCount,
+          width: result.stats.width,
+          height: result.stats.height,
+          threads: result.threads,
+          stitchPaths: result.stitchPaths,
+        });
+        store.setStats(result.stats);
+        store.setPatternJson(result.patternJson);
+        store.openPanel();
+        useNotificationStore.getState().addToast(
+          `Loaded ${file.name} (${result.stats.stitchCount.toLocaleString()} stitches)`,
+          "success"
+        );
+      } catch (err) {
+        console.error("Failed to load embroidery file:", err);
+        useEmbroideryStore.getState().setError(String(err));
+        useEmbroideryStore.getState().openPanel();
+        useNotificationStore.getState().addToast("Failed to load embroidery file", "error");
       }
       return;
     }
@@ -549,6 +612,9 @@ export function App() {
           {/* CAM panel (for CNC toolpath generation) */}
           {camPanelOpen && <Suspense fallback={null}><CamPanel /></Suspense>}
 
+          {/* Embroidery panel — hide when an embroidery part is selected so PropertyPanel shows */}
+          {embroideryPanelOpen && !hasSelectedEmbroideryPart && <Suspense fallback={null}><EmbroideryPanel /></Suspense>}
+
           {/* Loon source editor */}
           <Suspense fallback={null}>
             <LoonEditor open={loonEditorOpen} onOpenChange={setLoonEditorOpen} />
@@ -592,7 +658,7 @@ export function App() {
             <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-accent/10 backdrop-blur-sm">
               <div className="rounded-lg border-2 border-dashed border-accent bg-bg/90 px-8 py-6 text-center">
                 <div className="text-lg font-medium text-text">Drop file to import</div>
-                <div className="mt-1 text-sm text-text-muted">.vcad, .loon, .stl, .step</div>
+                <div className="mt-1 text-sm text-text-muted">.vcad, .loon, .stl, .step, .pes, .dst</div>
               </div>
             </div>
           )}
@@ -615,7 +681,7 @@ export function App() {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".vcad,.loon,.json,.step,.stp,.stl"
+          accept=".vcad,.loon,.json,.step,.stp,.stl,.pes,.dst"
           className="hidden"
           onChange={handleFileChange}
         />

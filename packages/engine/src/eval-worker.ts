@@ -13,7 +13,7 @@
  *   ← {type: 'error', id, message}                       — evaluation error
  */
 
-import { evaluateDocument as evaluateDocumentTS, type EvaluateOptions } from "./evaluate.js";
+import { evaluateDocument as evaluateDocumentTS, type EvaluateOptions, embroideryPatternToMesh, findEmbroideryPattern, transformMesh } from "./evaluate.js";
 import type { EvaluatedScene, EvalTimingData, TriangleMesh } from "./mesh.js";
 import type { Document } from "@vcad/ir";
 
@@ -59,6 +59,7 @@ function collectTransferables(scene: EvaluatedScene): ArrayBuffer[] {
     buffers.push(m.positions.buffer as ArrayBuffer);
     buffers.push(m.indices.buffer as ArrayBuffer);
     if (m.normals) buffers.push(m.normals.buffer as ArrayBuffer);
+    if (m.colors) buffers.push(m.colors.buffer as ArrayBuffer);
   };
 
   for (const p of scene.parts) collectMesh(p.mesh);
@@ -95,13 +96,35 @@ function wasmResultToScene(result: WasmEvaluatedScene): EvaluatedScene {
   };
 }
 
+/** Post-process WASM result: generate TS-side meshes for types the Rust
+ *  evaluator doesn't tessellate (e.g. EmbroideryPattern). */
+function postProcessEmbroidery(scene: EvaluatedScene, doc: Document): EvaluatedScene {
+  const visibleRoots = doc.roots.filter((e) => e.visible !== false);
+  let changed = false;
+  const parts = scene.parts.map((p, i) => {
+    if (p.mesh.positions.length === 0 && i < visibleRoots.length) {
+      const emb = findEmbroideryPattern(visibleRoots[i].root, doc.nodes);
+      if (emb) {
+        changed = true;
+        const baseMesh = embroideryPatternToMesh(emb.pattern);
+        const mesh = transformMesh(baseMesh, emb.transform);
+        return { mesh, material: p.material };
+      }
+    }
+    return p;
+  });
+  return changed ? { ...scene, parts } : scene;
+}
+
 /** Run evaluation using whichever path is available. */
 function evaluate(docJson: string, skipClashDetection: boolean): EvaluatedScene {
   // Fast path: native WASM evaluator (with fallback to TS on failure)
   if (evaluatorMode === "wasm" && wasmEvaluateDocument) {
     try {
       const result = wasmEvaluateDocument(docJson, skipClashDetection);
-      return wasmResultToScene(result);
+      const scene = wasmResultToScene(result);
+      const doc: Document = JSON.parse(docJson);
+      return postProcessEmbroidery(scene, doc);
     } catch {
       // WASM evaluator failed — fall through to TS evaluator
     }

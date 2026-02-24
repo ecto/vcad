@@ -44,6 +44,7 @@ import { SpinnerGap } from "@phosphor-icons/react/dist/ssr/SpinnerGap";
 import { ChatCircle } from "@phosphor-icons/react/dist/ssr/ChatCircle";
 import { Path } from "@phosphor-icons/react/dist/ssr/Path";
 import { Circuitry } from "@phosphor-icons/react/dist/ssr/Circuitry";
+import { Scissors } from "@phosphor-icons/react/dist/ssr/Scissors";
 import { TextT } from "@phosphor-icons/react/dist/ssr/TextT";
 import * as Popover from "@radix-ui/react-popover";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -68,6 +69,7 @@ import {
   type Command as CommandType,
 } from "@vcad/core";
 import type { PrimitiveKind, BooleanType } from "@vcad/core";
+import { isStitchEligible } from "@vcad/core";
 import { downloadBlob } from "@/lib/download";
 import { useNotificationStore } from "@/stores/notification-store";
 import { generateCADServer, rateGeneration } from "@/lib/server-inference";
@@ -84,12 +86,14 @@ import {
   PatternDialog,
   MirrorDialog,
   TextDialog,
+  StitchDialog,
 } from "@/components/dialogs";
 import { useOnboardingStore, type GuidedFlowStep } from "@/stores/onboarding-store";
 import { useDrawingStore } from "@/stores/drawing-store";
 import { useSlicerStore } from "@/stores/slicer-store";
 import { useCamStore } from "@/stores/cam-store";
 import { useElectronicsStore } from "@/stores/electronics-store";
+import { useEmbroideryStore } from "@/stores/embroidery-store";
 import { analytics } from "@/lib/analytics";
 
 const PRIMITIVES: { kind: PrimitiveKind; icon: typeof Cube; label: string }[] = [
@@ -512,6 +516,10 @@ function CommandDropdown() {
         window.dispatchEvent(new CustomEvent("vcad:apply-mirror"));
         setOpen(false);
       },
+      applyStitch: () => {
+        window.dispatchEvent(new CustomEvent("vcad:apply-stitch"));
+        setOpen(false);
+      },
     });
   }, [
     addJoint,
@@ -813,6 +821,7 @@ export function BottomToolbar() {
   const [patternDialogOpen, setPatternDialogOpen] = useState(false);
   const [mirrorDialogOpen, setMirrorDialogOpen] = useState(false);
   const [textDialogOpen, setTextDialogOpen] = useState(false);
+  const [stitchDialogOpen, setStitchDialogOpen] = useState(false);
 
   // Responsive toolbar - track how many tabs fit
   const [visibleTabCount, setVisibleTabCount] = useState(ALL_TABS.length);
@@ -930,6 +939,14 @@ export function BottomToolbar() {
     ? Array.from(selectedPartIds).find((id) => parts.some((p) => p.id === id))
     : null;
 
+  // Check if selected part is eligible for stitch conversion
+  const selectedPartStitchEligible = selectedPartId
+    ? (() => {
+        const p = parts.find((pp) => pp.id === selectedPartId);
+        return p ? isStitchEligible(p) : false;
+      })()
+    : false;
+
   // Listen for modify operation events from command palette
   useEffect(() => {
     function handleFillet() {
@@ -947,17 +964,22 @@ export function BottomToolbar() {
     function handleMirror() {
       if (selectedPartId) setMirrorDialogOpen(true);
     }
+    function handleStitch() {
+      if (selectedPartId) setStitchDialogOpen(true);
+    }
     window.addEventListener("vcad:apply-fillet", handleFillet);
     window.addEventListener("vcad:apply-chamfer", handleChamfer);
     window.addEventListener("vcad:apply-shell", handleShell);
     window.addEventListener("vcad:apply-pattern", handlePattern);
     window.addEventListener("vcad:apply-mirror", handleMirror);
+    window.addEventListener("vcad:apply-stitch", handleStitch);
     return () => {
       window.removeEventListener("vcad:apply-fillet", handleFillet);
       window.removeEventListener("vcad:apply-chamfer", handleChamfer);
       window.removeEventListener("vcad:apply-shell", handleShell);
       window.removeEventListener("vcad:apply-pattern", handlePattern);
       window.removeEventListener("vcad:apply-mirror", handleMirror);
+      window.removeEventListener("vcad:apply-stitch", handleStitch);
     };
   }, [selectedPartId]);
 
@@ -1260,6 +1282,16 @@ export function BottomToolbar() {
             >
               <ArrowsHorizontal size={20} />
             </ToolbarButton>
+            <ToolbarButton
+              tooltip={!hasOnePartSelected ? "Stitch (select a part)" : !selectedPartStitchEligible ? "Stitch (requires text/extrude/revolve/sweep/loft)" : "Stitch"}
+              disabled={!hasOnePartSelected || !selectedPartStitchEligible || sketchActive}
+              onClick={() => setStitchDialogOpen(true)}
+              expanded={toolbarExpanded}
+              label="Stitch"
+              iconColor={color}
+            >
+              <Scissors size={20} />
+            </ToolbarButton>
           </>
         );
 
@@ -1497,6 +1529,18 @@ export function BottomToolbar() {
             >
               <Circuitry size={20} />
             </ToolbarButton>
+            <ToolbarButton
+              tooltip="Open Embroidery Panel"
+              disabled={sketchActive}
+              onClick={() => {
+                useEmbroideryStore.getState().openPanel();
+              }}
+              expanded={toolbarExpanded}
+              label="Emb"
+              iconColor={color}
+            >
+              <Scissors size={20} />
+            </ToolbarButton>
           </>
         );
 
@@ -1540,6 +1584,11 @@ export function BottomToolbar() {
           <MirrorDialog
             open={mirrorDialogOpen}
             onOpenChange={setMirrorDialogOpen}
+            partId={selectedPartId}
+          />
+          <StitchDialog
+            open={stitchDialogOpen}
+            onOpenChange={setStitchDialogOpen}
             partId={selectedPartId}
           />
         </>

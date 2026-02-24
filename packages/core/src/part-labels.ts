@@ -19,6 +19,8 @@ export const PART_GLYPHS: Record<PartInfo["kind"], string> = {
   mirror: "\u21C4",          // ⇄
   text: "A",
   "pcb-board": "\u2339",     // ⌹
+  "embroidery-pattern": "\u2702", // ✂
+  stitch: "\u2702",              // ✂
 };
 
 /** Look up the glyph for a part kind. */

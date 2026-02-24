@@ -26,7 +26,10 @@ import type {
   SchematicJunction,
   Footprint,
   Pcb,
+  EmbroideryDesign,
+  FillParams,
 } from "@vcad/ir";
+import { DEFAULT_FILL_PARAMS } from "@vcad/ir";
 import { createDocument, identityTransform } from "@vcad/ir";
 import type {
   PartInfo,
@@ -46,6 +49,8 @@ import type {
   MirrorPartInfo,
   TextPartInfo,
   PcbBoardPartInfo,
+  EmbroideryPatternPartInfo,
+  StitchPartInfo,
   SketchPlane,
 } from "../types.js";
 import {
@@ -63,6 +68,7 @@ import {
   isCircularPatternPart,
   isMirrorPart,
   isTextPart,
+  isStitchEligible,
   getSketchPlaneDirections,
 } from "../types.js";
 
@@ -213,6 +219,25 @@ export interface DocumentState {
     normals?: Float32Array,
     source?: string,
   ) => string;
+  addEmbroideryPattern: (design: EmbroideryDesign, source?: string) => string;
+  addTextEmbroidery: (options: {
+    text: string;
+    height: number;
+    color?: [number, number, number];
+    stitchType?: "running" | "satin" | "fill";
+    stitchLength?: number;
+    density?: number;
+    satinWidth?: number;
+    fillAngle?: number;
+    letterSpacing?: number;
+    lineSpacing?: number;
+    alignment?: "left" | "center" | "right";
+  }) => Promise<{ partId: string; result: Record<string, unknown> } | null>;
+  // Embroidery editing mutations
+  setThreadColor: (nodeId: NodeId, threadIdx: number, color: [number, number, number]) => void;
+  setThreadName: (nodeId: NodeId, threadIdx: number, name: string) => void;
+  setStitchGroupFillParams: (nodeId: NodeId, groupIdx: number, params: Partial<FillParams>) => void;
+  optimizeJumpStitches: (nodeId: NodeId) => void;
   // Modify operations (wrap existing part)
   addFillet: (partId: string, radius: number) => string | null;
   addChamfer: (partId: string, distance: number) => string | null;
@@ -231,6 +256,14 @@ export interface DocumentState {
     angleDeg: number,
   ) => string | null;
   addMirror: (partId: string, plane: "XY" | "XZ" | "YZ") => string | null;
+  addStitch: (partId: string, options: {
+    stitchType?: "running" | "satin" | "fill";
+    color?: [number, number, number];
+    stitchLength?: number;
+    density?: number;
+    satinWidth?: number;
+    fillAngle?: number;
+  }) => Promise<string | null>;
   addText: (options: {
     text: string;
     height: number;
@@ -315,6 +348,13 @@ function buildPartIndex(parts: PartInfo[]): Map<string, PartInfo> {
 export function getNodePcb(doc: Document, nodeId: NodeId): Pcb | null {
   const node = doc.nodes[String(nodeId)];
   if (node?.op.type === "PcbBoard") return (node.op as { type: "PcbBoard"; board: Pcb }).board;
+  return null;
+}
+
+/** Get an EmbroideryPattern node's design data by node ID. */
+export function getNodeEmbroideryDesign(doc: Document, nodeId: NodeId): EmbroideryDesign | null {
+  const node = doc.nodes[String(nodeId)];
+  if (node?.op.type === "EmbroideryPattern") return (node.op as { type: "EmbroideryPattern"; design: EmbroideryDesign }).design;
   return null;
 }
 
@@ -1634,6 +1674,215 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     return partId;
   },
 
+  addEmbroideryPattern: (design, source) => {
+    const state = get();
+    let nid = state.nextNodeId;
+    const partNum = state.nextPartNum;
+
+    const patternId = nid++;
+    const scaleId = nid++;
+    const rotateId = nid++;
+    const translateId = nid++;
+
+    const patternOp: CsgOp = {
+      type: "EmbroideryPattern",
+      design,
+    };
+
+    const scaleOp: CsgOp = {
+      type: "Scale",
+      child: patternId,
+      factor: { x: 1, y: 1, z: 1 },
+    };
+    const rotateOp: CsgOp = {
+      type: "Rotate",
+      child: scaleId,
+      angles: { x: 0, y: 0, z: 0 },
+    };
+    const translateOp: CsgOp = {
+      type: "Translate",
+      child: rotateId,
+      offset: { x: 0, y: 0, z: 0 },
+    };
+
+    const filename = source?.split(/[/\\]/).pop()?.replace(/\.(pes|dst)$/i, "") ?? "Embroidery";
+    const partId = `part-${partNum}`;
+    const name = `${filename} ${partNum}`;
+
+    const undoState = pushUndo(state, "Import Embroidery");
+    const newDoc = structuredClone(state.document);
+
+    newDoc.nodes[String(patternId)] = makeNode(patternId, null, patternOp);
+    newDoc.nodes[String(scaleId)] = makeNode(scaleId, null, scaleOp);
+    newDoc.nodes[String(rotateId)] = makeNode(rotateId, null, rotateOp);
+    newDoc.nodes[String(translateId)] = makeNode(translateId, name, translateOp);
+    newDoc.roots.push({ root: translateId, material: "default" });
+
+    if (!newDoc.materials["default"]) {
+      newDoc.materials["default"] = {
+        name: "Default",
+        color: [0.55, 0.55, 0.55],
+        metallic: 0.0,
+        roughness: 0.7,
+      };
+    }
+
+    const partInfo: EmbroideryPatternPartInfo = {
+      id: partId,
+      name,
+      kind: "embroidery-pattern",
+      patternNodeId: patternId,
+      scaleNodeId: scaleId,
+      rotateNodeId: rotateId,
+      translateNodeId: translateId,
+      source,
+    };
+
+    const newParts = [...state.parts, partInfo];
+    set({
+      document: newDoc,
+      parts: newParts,
+      partIndex: buildPartIndex(newParts),
+      nextNodeId: nid,
+      nextPartNum: partNum + 1,
+      isDirty: true,
+      ...undoState,
+    });
+
+    return partId;
+  },
+
+  addTextEmbroidery: async (options) => {
+    try {
+      const wasm = await import("@vcad/kernel-wasm");
+      const optionsJson = JSON.stringify({
+        stitch_type: options.stitchType ?? "running",
+        color: options.color ?? [0, 0, 0],
+        stitch_length: options.stitchLength ?? 2.5,
+        density: options.density ?? 4.0,
+        satin_width: options.satinWidth ?? 3.0,
+        fill_angle: options.fillAngle ?? 0,
+        letter_spacing: options.letterSpacing ?? 1.0,
+        line_spacing: options.lineSpacing ?? 1.2,
+        alignment: options.alignment ?? "left",
+      });
+
+      const json = wasm.digitizeText(options.text, options.height, optionsJson);
+      const result = JSON.parse(json);
+
+      // Build EmbroideryDesign for the IR node (same as PES import)
+      const design: EmbroideryDesign = {
+        threads: result.threads,
+        stitch_groups: result.stitchPaths.map(
+          (sp: { threadIndex: number; points: [number, number][] }) => ({
+            thread_index: sp.threadIndex,
+            stitches: sp.points,
+          }),
+        ),
+        hoop_width: result.stats.width,
+        hoop_height: result.stats.height,
+      };
+
+      const partId = get().addEmbroideryPattern(design, "Text Embroidery");
+      return { partId, result };
+    } catch (err) {
+      console.error("Failed to digitize text:", err);
+      return null;
+    }
+  },
+
+  setThreadColor: (nodeId, threadIdx, color) => {
+    const state = get();
+    const undoState = pushUndo(state, "Set Thread Color");
+    const newDoc = structuredClone(state.document);
+    const design = getNodeEmbroideryDesign(newDoc, nodeId);
+    if (design && design.threads[threadIdx]) {
+      design.threads[threadIdx]!.color = color;
+    }
+    const dirtyNodeIds = new Set(state.dirtyNodeIds);
+    dirtyNodeIds.add(nodeId);
+    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
+  },
+
+  setThreadName: (nodeId, threadIdx, name) => {
+    const state = get();
+    const undoState = pushUndo(state, "Set Thread Name");
+    const newDoc = structuredClone(state.document);
+    const design = getNodeEmbroideryDesign(newDoc, nodeId);
+    if (design && design.threads[threadIdx]) {
+      design.threads[threadIdx]!.name = name;
+    }
+    const dirtyNodeIds = new Set(state.dirtyNodeIds);
+    dirtyNodeIds.add(nodeId);
+    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
+  },
+
+  setStitchGroupFillParams: (nodeId, groupIdx, params) => {
+    const state = get();
+    const undoState = pushUndo(state, "Set Fill Params");
+    const newDoc = structuredClone(state.document);
+    const design = getNodeEmbroideryDesign(newDoc, nodeId);
+    if (design && design.stitch_groups[groupIdx]) {
+      const group = design.stitch_groups[groupIdx]!;
+      group.fill_params = { ...(group.fill_params ?? DEFAULT_FILL_PARAMS), ...params };
+    }
+    const dirtyNodeIds = new Set(state.dirtyNodeIds);
+    dirtyNodeIds.add(nodeId);
+    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
+  },
+
+  optimizeJumpStitches: (nodeId) => {
+    const state = get();
+    const undoState = pushUndo(state, "Optimize Jump Stitches");
+    const newDoc = structuredClone(state.document);
+    const design = getNodeEmbroideryDesign(newDoc, nodeId);
+    if (design && design.stitch_groups.length > 1) {
+      // Nearest-neighbor reorder: start from first group, greedily pick closest next group
+      const groups = design.stitch_groups;
+      const used = new Set<number>();
+      const ordered: typeof groups = [];
+
+      // Helper: get last stitch position of a group (or [0,0] if empty)
+      const lastPos = (g: typeof groups[number]) => {
+        const s = g.stitches;
+        return s.length > 0 ? s[s.length - 1]! : [0, 0] as [number, number];
+      };
+      // Helper: get first stitch position of a group
+      const firstPos = (g: typeof groups[number]) => {
+        const s = g.stitches;
+        return s.length > 0 ? s[0]! : [0, 0] as [number, number];
+      };
+
+      // Start with group 0
+      ordered.push(groups[0]!);
+      used.add(0);
+
+      for (let step = 1; step < groups.length; step++) {
+        const [lx, ly] = lastPos(ordered[ordered.length - 1]!);
+        let bestIdx = -1;
+        let bestDist = Infinity;
+        for (let i = 0; i < groups.length; i++) {
+          if (used.has(i)) continue;
+          const [fx, fy] = firstPos(groups[i]!);
+          const d = (fx - lx) ** 2 + (fy - ly) ** 2;
+          if (d < bestDist) {
+            bestDist = d;
+            bestIdx = i;
+          }
+        }
+        if (bestIdx >= 0) {
+          ordered.push(groups[bestIdx]!);
+          used.add(bestIdx);
+        }
+      }
+
+      design.stitch_groups = ordered;
+    }
+    const dirtyNodeIds = new Set(state.dirtyNodeIds);
+    dirtyNodeIds.add(nodeId);
+    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
+  },
+
   addFillet: (partId, radius) => {
     const state = get();
     const sourcePart = state.partIndex.get(partId);
@@ -1874,6 +2123,147 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     });
 
     return newPartId;
+  },
+
+  addStitch: async (partId, options) => {
+    const state = get();
+    const sourcePart = state.partIndex.get(partId);
+    if (!sourcePart || !isStitchEligible(sourcePart)) return null;
+
+    try {
+      const wasm = await import("@vcad/kernel-wasm");
+
+      let resultJson: string;
+
+      if (isTextPart(sourcePart)) {
+        // Text part: read text properties from the Text2D node, call digitizeText
+        const textNode = state.document.nodes[String(sourcePart.textNodeId)];
+        if (!textNode || textNode.op.type !== "Text2D") return null;
+        const textOp = textNode.op;
+        const optionsJson = JSON.stringify({
+          stitch_type: options.stitchType ?? "running",
+          color: options.color ?? [0, 0, 0],
+          stitch_length: options.stitchLength ?? 2.5,
+          density: options.density ?? 4.0,
+          satin_width: options.satinWidth ?? 3.0,
+          fill_angle: options.fillAngle ?? 0,
+          letter_spacing: textOp.letter_spacing ?? 1.0,
+          line_spacing: textOp.line_spacing ?? 1.2,
+          alignment: textOp.alignment ?? "left",
+        });
+        resultJson = wasm.digitizeText(textOp.text, textOp.height, optionsJson);
+      } else {
+        // Extrude/revolve/sweep/loft: read sketch segments, call digitizeSketch
+        let sketchNodeId: number | undefined;
+        if (isExtrudePart(sourcePart)) {
+          const extNode = state.document.nodes[String(sourcePart.extrudeNodeId)];
+          if (extNode?.op.type === "Extrude") sketchNodeId = extNode.op.sketch;
+        } else if (isRevolvePart(sourcePart)) {
+          const revNode = state.document.nodes[String(sourcePart.revolveNodeId)];
+          if (revNode?.op.type === "Revolve") sketchNodeId = revNode.op.sketch;
+        } else if (isSweepPart(sourcePart)) {
+          const sweepNode = state.document.nodes[String(sourcePart.sweepNodeId)];
+          if (sweepNode?.op.type === "Sweep") sketchNodeId = sweepNode.op.sketch;
+        } else if (isLoftPart(sourcePart)) {
+          // Use first sketch
+          sketchNodeId = sourcePart.sketchNodeIds[0];
+        }
+
+        if (sketchNodeId == null) return null;
+
+        const sketchNode = state.document.nodes[String(sketchNodeId)];
+        if (!sketchNode || sketchNode.op.type !== "Sketch2D") return null;
+
+        const segmentsJson = JSON.stringify(sketchNode.op.segments);
+        const optionsJson = JSON.stringify({
+          stitch_type: options.stitchType ?? "running",
+          color: options.color ?? [0, 0, 0],
+          stitch_length: options.stitchLength ?? 2.5,
+          density: options.density ?? 4.0,
+          satin_width: options.satinWidth ?? 3.0,
+          fill_angle: options.fillAngle ?? 0,
+        });
+        resultJson = wasm.digitizeSketch(segmentsJson, optionsJson);
+      }
+
+      const result = JSON.parse(resultJson);
+
+      // Build EmbroideryDesign for the IR node
+      const design: EmbroideryDesign = {
+        threads: result.threads,
+        stitch_groups: result.stitchPaths.map(
+          (sp: { threadIndex: number; points: [number, number][] }) => ({
+            thread_index: sp.threadIndex,
+            stitches: sp.points,
+          }),
+        ),
+        hoop_width: result.stats.width,
+        hoop_height: result.stats.height,
+      };
+
+      // Re-read state (async boundary)
+      const state2 = get();
+      let nid = state2.nextNodeId;
+      const partNum = state2.nextPartNum;
+
+      const patternId = nid++;
+      const scaleId = nid++;
+      const rotateId = nid++;
+      const translateId = nid++;
+
+      const patternOp: CsgOp = { type: "EmbroideryPattern", design };
+      const scaleOp: CsgOp = { type: "Scale", child: patternId, factor: { x: 1, y: 1, z: 1 } };
+      const rotateOp: CsgOp = { type: "Rotate", child: scaleId, angles: { x: 0, y: 0, z: 0 } };
+      const translateOp: CsgOp = { type: "Translate", child: rotateId, offset: { x: 0, y: 0, z: 0 } };
+
+      const newPartId = `part-${partNum}`;
+      const name = `Stitch ${partNum}`;
+
+      const undoState = pushUndo(state2, "Stitch");
+      const newDoc = structuredClone(state2.document);
+
+      newDoc.nodes[String(patternId)] = makeNode(patternId, null, patternOp);
+      newDoc.nodes[String(scaleId)] = makeNode(scaleId, null, scaleOp);
+      newDoc.nodes[String(rotateId)] = makeNode(rotateId, null, rotateOp);
+      newDoc.nodes[String(translateId)] = makeNode(translateId, name, translateOp);
+
+      // Remove source part from roots (consume it)
+      newDoc.roots = newDoc.roots.filter((r) => r.root !== sourcePart.translateNodeId);
+      newDoc.roots.push({ root: translateId, material: "default" });
+
+      const partInfo: StitchPartInfo = {
+        id: newPartId,
+        name,
+        kind: "stitch",
+        sourcePartId: partId,
+        patternNodeId: patternId,
+        scaleNodeId: scaleId,
+        rotateNodeId: rotateId,
+        translateNodeId: translateId,
+      };
+
+      const newConsumedParts = { ...state2.consumedParts };
+      newConsumedParts[partId] = sourcePart;
+
+      const newParts = state2.parts.filter((p) => p.id !== partId);
+      newParts.push(partInfo);
+
+      set({
+        document: newDoc,
+        parts: newParts,
+        partIndex: buildPartIndex(newParts),
+        consumedParts: newConsumedParts,
+        nextNodeId: nid,
+        nextPartNum: partNum + 1,
+        isDirty: true,
+        ...undoState,
+      });
+
+      return newPartId;
+    } catch (err) {
+      console.error("Failed to create stitch:", err);
+      return null;
+    }
   },
 
   addLinearPattern: (partId, direction, count, spacing) => {

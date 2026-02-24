@@ -689,6 +689,11 @@ fn evaluate_op_timed(
 
             Ok(Some(board_solid))
         }
+
+        CsgOp::EmbroideryPattern { .. } => {
+            // Embroidery is 2D — no 3D solid.
+            Ok(None)
+        }
     }
 }
 
@@ -1004,6 +1009,7 @@ fn op_name(op: &CsgOp) -> String {
         CsgOp::ImportedMesh { .. } => "ImportedMesh",
         CsgOp::StepImport { .. } => "StepImport",
         CsgOp::PcbBoard { .. } => "PcbBoard",
+        CsgOp::EmbroideryPattern { .. } => "EmbroideryPattern",
     }
     .to_string()
 }

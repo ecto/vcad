@@ -461,6 +461,15 @@ export const SceneMesh = memo(function SceneMesh({
     } else {
       geo.computeVertexNormals();
     }
+
+    // Per-vertex colors (e.g. embroidery thread colors)
+    if (mesh.colors && mesh.colors.length === positions.length) {
+      const colors = new Float32Array(mesh.colors);
+      geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    } else {
+      geo.deleteAttribute("color");
+    }
+
     geo.computeBoundingSphere();
     geo.computeBoundingBox();
     setGeoReady(true);
@@ -630,7 +639,8 @@ export const SceneMesh = memo(function SceneMesh({
       {/* Use procedural shader if available, otherwise standard PBR */}
       {!shaderMaterial && (
         <meshStandardMaterial
-          color={materialColor}
+          color={mesh.colors ? undefined : materialColor}
+          vertexColors={!!mesh.colors}
           emissive={emissiveColor}
           emissiveIntensity={emissiveIntensity}
           metalness={materialDef?.metallic ?? 0.0}

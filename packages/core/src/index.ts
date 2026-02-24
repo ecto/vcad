@@ -21,6 +21,8 @@ export type {
   MirrorPartInfo,
   TextPartInfo,
   PcbBoardPartInfo,
+  EmbroideryPatternPartInfo,
+  StitchPartInfo,
   PartInfo,
   ToolMode,
   TransformMode,
@@ -46,6 +48,9 @@ export {
   isMirrorPart,
   isTextPart,
   isPcbBoardPart,
+  isEmbroideryPatternPart,
+  isStitchPart,
+  isStitchEligible,
   getSketchPlaneDirections,
   isAxisAlignedPlane,
   computePlaneFromFace,
@@ -55,7 +60,7 @@ export {
 } from "./types.js";
 
 // Stores
-export { useDocumentStore, getUndoActionName, getRedoActionName, getNodePcb, getPcbNodeIds } from "./stores/document-store.js";
+export { useDocumentStore, getUndoActionName, getRedoActionName, getNodePcb, getPcbNodeIds, getNodeEmbroideryDesign } from "./stores/document-store.js";
 export type { VcadFile, DocumentState } from "./stores/document-store.js";
 
 export { useUiStore } from "./stores/ui-store.js";

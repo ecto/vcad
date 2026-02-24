@@ -46,6 +46,8 @@ members = [
     "crates/termview",
     "crates/vcad-embroidery",
     "crates/vcad-embroidery-pes",
+    "crates/vcad-embroidery-dst",
+    "crates/vcad-embroidery-wasm",
 ]
 
 [workspace.package]
@@ -109,3 +111,5 @@ stepperoni = { path = "crates/stepperoni" }
 termview = { path = "crates/termview" }
 vcad-embroidery = { path = "crates/vcad-embroidery" }
 vcad-embroidery-pes = { path = "crates/vcad-embroidery-pes" }
+vcad-embroidery-dst = { path = "crates/vcad-embroidery-dst" }
+vcad-embroidery-wasm = { path = "crates/vcad-embroidery-wasm" }

@@ -52,6 +52,7 @@ export interface CommandActions {
   applyLinearPattern?: () => void;
   applyCircularPattern?: () => void;
   applyMirror?: () => void;
+  applyStitch?: () => void;
   // Electronics (optional)
   enterElectronics?: () => void;
   exitElectronics?: () => void;
@@ -377,6 +378,16 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       icon: "ArrowsHorizontal",
       keywords: ["mirror", "reflect", "flip", "symmetry"],
       action: actions.applyMirror,
+      enabled: enabledOnePart,
+    });
+  }
+  if (actions.applyStitch) {
+    cmds.push({
+      id: "apply-stitch",
+      label: "Stitch",
+      icon: "Scissors",
+      keywords: ["stitch", "embroidery", "sew", "embroider"],
+      action: actions.applyStitch,
       enabled: enabledOnePart,
     });
   }

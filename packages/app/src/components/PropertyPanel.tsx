@@ -1,15 +1,21 @@
-import { useEffect, useRef, useMemo } from "react";
+import { useEffect, useRef, useMemo, lazy, Suspense } from "react";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { X } from "@phosphor-icons/react/dist/ssr/X";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ScrubInput } from "@/components/ui/scrub-input";
-import { useDocumentStore, useUiStore, isPrimitivePart, isSweepPart } from "@vcad/core";
+import { useDocumentStore, useUiStore, isPrimitivePart, isSweepPart, isEmbroideryPatternPart, isStitchPart } from "@vcad/core";
 import type { PartInfo, PrimitivePartInfo, SweepPartInfo } from "@vcad/core";
 import type { Vec3, PartInstance, Joint, JointKind } from "@vcad/ir";
 import { identityTransform } from "@vcad/ir";
 import { cn } from "@/lib/utils";
 import { MaterialSelector, InstanceMaterialSelector } from "@/components/materials";
 import { useVolumeCalculation } from "@/hooks/useVolumeCalculation";
+
+const EmbroideryProperties = lazy(() =>
+  import("@/components/embroidery/EmbroideryProperties").then((m) => ({
+    default: m.EmbroideryProperties,
+  }))
+);
 
 
 function SectionHeader({ children, tooltip }: { children: string; tooltip?: string }) {
@@ -846,6 +852,14 @@ export function PropertyPanel() {
             <SweepProperties part={part} />
             <Divider />
           </>
+        )}
+
+        {/* Embroidery properties */}
+        {(isEmbroideryPatternPart(part) || isStitchPart(part)) && (
+          <Suspense fallback={null}>
+            <EmbroideryProperties part={part} />
+            <Divider />
+          </Suspense>
         )}
 
         <PositionSection part={part} offset={offset} />

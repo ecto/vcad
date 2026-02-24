@@ -28,6 +28,7 @@
 //! assert_eq!(stats.stitch_count, 2);
 //! ```
 
+pub mod digitize;
 pub mod error;
 pub mod hoop;
 pub mod pattern;
@@ -35,6 +36,10 @@ pub mod stats;
 pub mod stitch;
 pub mod thread;
 
+pub use digitize::{
+    fill_stitch, running_stitch, satin_stitch, underlay_stitch, FillParams, Path2D,
+    RunningStitchParams, SatinParams, UnderlayParams,
+};
 pub use error::{EmbroideryError, Result};
 pub use hoop::{brother_pe800, brother_se1900, Hoop, MachineProfile};
 pub use pattern::{EmbPattern, PatternMetadata};

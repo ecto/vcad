@@ -2495,6 +2495,11 @@ fn format_op(
             line: 0,
             message: "PcbBoard not supported in compact format".to_string(),
         }),
+
+        CsgOp::EmbroideryPattern { .. } => Err(CompactParseError {
+            line: 0,
+            message: "EmbroideryPattern not supported in compact format".to_string(),
+        }),
     }
 }
 

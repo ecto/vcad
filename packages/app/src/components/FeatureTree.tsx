@@ -43,10 +43,11 @@ import { Eye } from "@phosphor-icons/react/dist/ssr/Eye";
 import { EyeSlash } from "@phosphor-icons/react/dist/ssr/EyeSlash";
 import { TextT } from "@phosphor-icons/react/dist/ssr/TextT";
 import { Circuitry } from "@phosphor-icons/react/dist/ssr/Circuitry";
+import { Scissors } from "@phosphor-icons/react/dist/ssr/Scissors";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ContextMenu } from "@/components/ContextMenu";
-import { useDocumentStore, useUiStore, isBooleanPart, isPrimitivePart, isSweepPart } from "@vcad/core";
+import { useDocumentStore, useUiStore, isBooleanPart, isPrimitivePart, isSweepPart, isEmbroideryPatternPart } from "@vcad/core";
 import type { PrimitiveKind, PartInfo, BooleanPartInfo, PrimitivePartInfo, SweepPartInfo } from "@vcad/core";
 import type { PartInstance, Joint, JointKind } from "@vcad/ir";
 import { cn } from "@/lib/utils";
@@ -54,6 +55,7 @@ import { getPartSummary } from "./tree/part-summary";
 import { InlineCubeDimensions, InlineCylinderDimensions, InlineSphereDimensions, InlineSweepProperties } from "./tree/InlineDimensions";
 import { InlinePositionSection, InlineRotationSection } from "./tree/InlineTransform";
 import { InlineMaterial } from "./tree/InlineMaterial";
+import { EmbroideryProperties } from "./embroidery/EmbroideryProperties";
 import { SceneSection } from "./tree/SceneSection";
 
 const KIND_ICONS: Record<PrimitiveKind, typeof Cube> = {
@@ -77,6 +79,8 @@ function getPartIcon(part: PartInfo): typeof Cube {
   if (part.kind === "mirror") return ArrowsHorizontal;
   if (part.kind === "text") return TextT;
   if (part.kind === "pcb-board") return Circuitry;
+  if (part.kind === "embroidery-pattern") return Scissors;
+  if (part.kind === "stitch") return Scissors;
   return KIND_ICONS[part.kind];
 }
 
@@ -341,6 +345,8 @@ function TreeNode({
         <div className="pl-6 space-y-0.5">
           {/* Dimensions (for primitives only) */}
           {renderInlineDimensions()}
+          {/* Embroidery properties */}
+          {isEmbroideryPatternPart(part) && <EmbroideryProperties part={part} />}
           {/* Position & Rotation */}
           <InlinePositionSection part={part} offset={offset} />
           <InlineRotationSection part={part} angles={angles} />

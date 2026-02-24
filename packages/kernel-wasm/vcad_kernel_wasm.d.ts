@@ -647,6 +647,14 @@ export class WasmCamSettings {
 }
 
 /**
+ * Analyze a solid for 3D printing characteristics.
+ *
+ * Returns JSON with wall thicknesses, overhang angles, hole sizes, etc.
+ * Only works on solids with BRep data (primitives, not boolean results).
+ */
+export function analyzeForPrinting(solid: Solid): any;
+
+/**
  * Generate a height field from mesh using drop-cutter algorithm.
  *
  * # Arguments
@@ -790,6 +798,13 @@ export function camGetDefaultTools(): string;
 export function camToolpathStats(toolpath_json: string): any;
 
 /**
+ * Check a solid for DFM (Design for Manufacturing) printability issues.
+ *
+ * Returns warnings with face indices for viewport highlighting.
+ */
+export function checkPrintability(solid: Solid, printer_profile: string): any;
+
+/**
  * Compute creased normals using GPU acceleration.
  *
  * # Arguments
@@ -834,6 +849,23 @@ export function createDetailView(parent_json: string, center_x: number, center_y
  * A JS object with decimated positions, indices, and normals.
  */
 export function decimateMeshGpu(positions: Float32Array, indices: Uint32Array, target_ratio: number): Promise<any>;
+
+/**
+ * Digitize sketch segments into embroidery stitches.
+ *
+ * Takes a JSON array of `SketchSegment2D` (from a Sketch2D node) plus
+ * stitch options, and returns an `EmbPattern` JSON string.
+ */
+export function digitizeSketch(segments_json: string, options_json: string): string;
+
+/**
+ * Digitize text into embroidery stitches.
+ *
+ * Converts a text string into glyph outlines, then applies the specified
+ * stitch algorithm (running, satin, or fill) to produce an `EmbPattern`.
+ * Returns the same JSON shape as `readEmbroideryPes`.
+ */
+export function digitizeText(text: string, height: number, options_json: string): string;
 
 /**
  * Run Design Rule Check on a PCB layout.
@@ -895,6 +927,11 @@ export function ecadGenerateNetlist(sch_json: string): any;
 export function ecadRouteNet(pcb_json: string, net: string, start_x: number, start_y: number, end_x: number, end_y: number, width: number): any;
 
 /**
+ * Estimate print cost from volume (instant, pre-slice).
+ */
+export function estimatePrintCost(volume_mm3: number, infill_density: number, wall_count: number, line_width: number, material_name: string): any;
+
+/**
  * Evaluate a loon source string and return a JSON-serialized vcad Document.
  *
  * The vcad library (types, constructors) is automatically prepended.
@@ -949,6 +986,13 @@ export function evaluateDocument(doc_json: string, skip_clash_detection: boolean
 export function exportProjectedViewToDxf(view_json: string): Uint8Array;
 
 /**
+ * Generate a 3MF file from mesh data.
+ *
+ * Returns the 3MF file as a byte array suitable for download or upload to a printer.
+ */
+export function generate3mf(name: string, vertices: Float32Array, indices: Uint32Array, settings_json: string): Uint8Array;
+
+/**
  * Generate G-code from slice result.
  */
 export function generateGcode(result: SliceResult, printer_profile: string, print_temp: number, bed_temp: number): string;
@@ -1001,6 +1045,11 @@ export function isCamAvailable(): boolean;
  * Check if ECAD features are available in this build.
  */
 export function isEcadAvailable(): boolean;
+
+/**
+ * Check if embroidery support is available.
+ */
+export function isEmbroideryAvailable(): boolean;
 
 /**
  * Check if GPU processing is available.
@@ -1131,6 +1180,26 @@ export function processGeometryGpu(positions: Float32Array, indices: Uint32Array
 export function projectMesh(mesh_js: any, view_direction: string): any;
 
 /**
+ * Read a DST file and return embroidery data as JSON.
+ */
+export function readEmbroideryDst(data: Uint8Array): string;
+
+/**
+ * Read a PES file and return embroidery data as JSON.
+ *
+ * Returns `{ threads, stitchPaths, stats }` as a JSON string.
+ */
+export function readEmbroideryPes(data: Uint8Array): string;
+
+/**
+ * Recommend smart print settings from analysis results.
+ *
+ * Takes a PrintAnalysis JSON and printer profile name,
+ * returns recommended SliceSettings + explanations.
+ */
+export function recommendPrintSettings(analysis_json: string, printer_profile: string): any;
+
+/**
  * Generate a section view from a triangle mesh.
  *
  * # Arguments
@@ -1185,6 +1254,16 @@ export function textBounds(text: string, height: number, font?: string | null, l
  * ```
  */
 export function toCompactIR(doc_json: string): string;
+
+/**
+ * Write a DST file from an embroidery pattern JSON string.
+ */
+export function writeEmbroideryDst(json: string): Uint8Array;
+
+/**
+ * Write a PES file from an embroidery pattern JSON string.
+ */
+export function writeEmbroideryPes(json: string): Uint8Array;
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
@@ -1292,6 +1371,57 @@ export interface InitOutput {
     readonly solid_fillet: (a: number, b: number) => number;
     readonly solid_shell: (a: number, b: number) => number;
     readonly solid_circularPattern: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
+    readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly isEmbroideryAvailable: () => number;
+    readonly readEmbroideryDst: (a: number, b: number) => [number, number, number, number];
+    readonly readEmbroideryPes: (a: number, b: number) => [number, number, number, number];
+    readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
+    readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
+    readonly __wbg_get_slicersettings_first_layer_height: (a: number) => number;
+    readonly __wbg_get_slicersettings_infill_density: (a: number) => number;
+    readonly __wbg_get_slicersettings_infill_pattern: (a: number) => number;
+    readonly __wbg_get_slicersettings_layer_height: (a: number) => number;
+    readonly __wbg_get_slicersettings_line_width: (a: number) => number;
+    readonly __wbg_get_slicersettings_nozzle_diameter: (a: number) => number;
+    readonly __wbg_get_slicersettings_support_angle: (a: number) => number;
+    readonly __wbg_get_slicersettings_support_enabled: (a: number) => number;
+    readonly __wbg_get_slicersettings_wall_count: (a: number) => number;
+    readonly __wbg_set_slicersettings_first_layer_height: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_infill_density: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_infill_pattern: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_layer_height: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_line_width: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_nozzle_diameter: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_support_angle: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_support_enabled: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_wall_count: (a: number, b: number) => void;
+    readonly __wbg_sliceresult_free: (a: number, b: number) => void;
+    readonly __wbg_slicersettings_free: (a: number, b: number) => void;
+    readonly analyzeForPrinting: (a: number) => [number, number, number];
+    readonly checkPrintability: (a: number, b: number, c: number) => [number, number, number];
+    readonly estimatePrintCost: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly generate3mf: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly generateGcode: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly getSlicerPrinterProfiles: () => [number, number, number];
+    readonly isSlicerAvailable: () => number;
+    readonly recommendPrintSettings: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly sliceMesh: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
+    readonly sliceSolid: (a: number, b: number, c: number) => [number, number, number];
+    readonly sliceresult_filamentGrams: (a: number) => number;
+    readonly sliceresult_filamentMm: (a: number) => number;
+    readonly sliceresult_getLayerPreview: (a: number, b: number) => [number, number, number];
+    readonly sliceresult_layerCount: (a: number) => number;
+    readonly sliceresult_printTimeSeconds: (a: number) => number;
+    readonly sliceresult_statsJson: (a: number) => [number, number, number, number];
+    readonly slicersettings_fromJson: (a: number, b: number) => [number, number, number];
+    readonly slicersettings_new: () => number;
+    readonly ecadCheckDrc: (a: number, b: number) => [number, number, number];
+    readonly ecadCheckErc: (a: number, b: number) => [number, number, number];
+    readonly ecadFillZones: (a: number, b: number) => [number, number, number];
+    readonly ecadGenerateNetlist: (a: number, b: number) => [number, number, number];
+    readonly ecadRouteNet: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
+    readonly isEcadAvailable: () => number;
     readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
     readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
     readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;
@@ -1320,50 +1450,11 @@ export interface InitOutput {
     readonly isCamAvailable: () => number;
     readonly wasmcamsettings_fromJson: (a: number, b: number) => [number, number, number];
     readonly wasmcamsettings_new: () => number;
-    readonly __wbg_get_slicersettings_first_layer_height: (a: number) => number;
-    readonly __wbg_get_slicersettings_infill_density: (a: number) => number;
-    readonly __wbg_get_slicersettings_infill_pattern: (a: number) => number;
-    readonly __wbg_get_slicersettings_layer_height: (a: number) => number;
-    readonly __wbg_get_slicersettings_line_width: (a: number) => number;
-    readonly __wbg_get_slicersettings_nozzle_diameter: (a: number) => number;
-    readonly __wbg_get_slicersettings_support_angle: (a: number) => number;
-    readonly __wbg_get_slicersettings_support_enabled: (a: number) => number;
-    readonly __wbg_get_slicersettings_wall_count: (a: number) => number;
-    readonly __wbg_set_slicersettings_first_layer_height: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_infill_density: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_infill_pattern: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_layer_height: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_line_width: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_nozzle_diameter: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_support_angle: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_support_enabled: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_wall_count: (a: number, b: number) => void;
-    readonly __wbg_sliceresult_free: (a: number, b: number) => void;
-    readonly __wbg_slicersettings_free: (a: number, b: number) => void;
-    readonly generateGcode: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
-    readonly getSlicerPrinterProfiles: () => [number, number, number];
-    readonly isSlicerAvailable: () => number;
-    readonly sliceMesh: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
-    readonly sliceSolid: (a: number, b: number, c: number) => [number, number, number];
-    readonly sliceresult_filamentGrams: (a: number) => number;
-    readonly sliceresult_filamentMm: (a: number) => number;
-    readonly sliceresult_getLayerPreview: (a: number, b: number) => [number, number, number];
-    readonly sliceresult_layerCount: (a: number) => number;
-    readonly sliceresult_printTimeSeconds: (a: number) => number;
-    readonly sliceresult_statsJson: (a: number) => [number, number, number, number];
-    readonly slicersettings_fromJson: (a: number, b: number) => [number, number, number];
-    readonly slicersettings_new: () => number;
-    readonly ecadCheckDrc: (a: number, b: number) => [number, number, number];
-    readonly ecadCheckErc: (a: number, b: number) => [number, number, number];
-    readonly ecadFillZones: (a: number, b: number) => [number, number, number];
-    readonly ecadGenerateNetlist: (a: number, b: number) => [number, number, number];
-    readonly ecadRouteNet: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
-    readonly isEcadAvailable: () => number;
-    readonly wasm_bindgen__closure__destroy__ha8b73a36ae48e470: (a: number, b: number) => void;
-    readonly wasm_bindgen__closure__destroy__h250d7189f9770b99: (a: number, b: number) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h60f25fed64173f82: (a: number, b: number, c: any, d: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h4488ad9b37e81000: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__ha8b3f1b8e67fad08: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__closure__destroy__hb866a658679f7c90: (a: number, b: number) => void;
+    readonly wasm_bindgen__closure__destroy__ha3f46f4f424453fe: (a: number, b: number) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h7fe4e9d895e0bfbd: (a: number, b: number, c: any, d: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__hd3174526aa1241bc: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h3b7e8ca02e296028: (a: number, b: number, c: any) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;

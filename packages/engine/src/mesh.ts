@@ -4,6 +4,8 @@ export interface TriangleMesh {
   indices: Uint32Array;
   /** Optional vertex normals for smooth shading. If undefined, renderer computes them. */
   normals?: Float32Array;
+  /** Optional per-vertex RGB colors (3 floats per vertex, 0–1 range). */
+  colors?: Float32Array;
 }
 
 /** A single evaluated part with its mesh and material key. */

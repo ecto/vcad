@@ -321,6 +321,28 @@ function derivePartFromRoot(
         translateNodeId,
       };
 
+    case "PcbBoard":
+      return {
+        id: partId,
+        name,
+        kind: "pcb-board",
+        boardNodeId: coreNodeId,
+        scaleNodeId,
+        rotateNodeId,
+        translateNodeId,
+      };
+
+    case "EmbroideryPattern":
+      return {
+        id: partId,
+        name,
+        kind: "embroidery-pattern",
+        patternNodeId: coreNodeId,
+        scaleNodeId,
+        rotateNodeId,
+        translateNodeId,
+      };
+
     // Note: Mirror is in PartInfo types but not yet in IR CsgOp
 
     default:
