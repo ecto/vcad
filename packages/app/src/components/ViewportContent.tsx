@@ -1027,10 +1027,11 @@ export function ViewportContent() {
 
           {/* Dimension annotations for primitives */}
           <DimensionOverlay />
-
-          {/* Transform gizmo for selected part */}
-          <TransformGizmo orbitControls={orbitRef} />
           </group>
+
+          {/* Transform gizmo — outside rotation group; does its own Z-up ↔ Y-up conversion
+              so that gizmo handle colors (RGB=XYZ) match the kernel axis colors */}
+          <TransformGizmo orbitControls={orbitRef} />
         </>
       )}
 

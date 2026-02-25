@@ -8,6 +8,52 @@ import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 const DEG2RAD = Math.PI / 180;
 const RAD2DEG = 180 / Math.PI;
 
+// Kernel Z-up → Three.js Y-up coordinate conversion quaternion
+const COORD_QUAT = new THREE.Quaternion().setFromAxisAngle(
+  new THREE.Vector3(1, 0, 0),
+  -Math.PI / 2,
+);
+const COORD_QUAT_INV = new THREE.Quaternion().setFromAxisAngle(
+  new THREE.Vector3(1, 0, 0),
+  Math.PI / 2,
+);
+
+/** Kernel (x,y,z) Z-up → display (x,z,-y) Y-up */
+function kernelToDisplay(k: { x: number; y: number; z: number }): [number, number, number] {
+  return [k.x, k.z, -k.y];
+}
+
+/** Display (x,y,z) Y-up → kernel (x,-z,y) Z-up */
+function displayToKernel(d: THREE.Vector3): { x: number; y: number; z: number } {
+  return { x: d.x, y: -d.z, z: d.y };
+}
+
+/** Kernel Euler angles → display quaternion (bakes in coord rotation) */
+function kernelEulerToDisplayQuat(
+  angles: { x: number; y: number; z: number },
+  out: THREE.Quaternion,
+): THREE.Quaternion {
+  const kernelQuat = _tempQuat.setFromEuler(
+    _tempEuler.set(angles.x * DEG2RAD, angles.y * DEG2RAD, angles.z * DEG2RAD),
+  );
+  return out.copy(COORD_QUAT).multiply(kernelQuat);
+}
+
+/** Display quaternion → kernel Euler angles (strips coord rotation) */
+function displayQuatToKernelEuler(q: THREE.Quaternion): { x: number; y: number; z: number } {
+  _tempQuat.copy(COORD_QUAT_INV).multiply(q);
+  _tempEuler.setFromQuaternion(_tempQuat, "XYZ");
+  return {
+    x: _tempEuler.x * RAD2DEG,
+    y: _tempEuler.y * RAD2DEG,
+    z: _tempEuler.z * RAD2DEG,
+  };
+}
+
+// Reusable temp objects to avoid GC pressure during drag
+const _tempQuat = new THREE.Quaternion();
+const _tempEuler = new THREE.Euler();
+
 export function TransformGizmo({
   orbitControls,
 }: {
@@ -54,52 +100,35 @@ export function TransformGizmo({
     if (isDraggingRef.current) return;
 
     if (selectedPart) {
-      // Handle part transform (from nodes)
+      // Handle part transform — convert kernel Z-up to display Y-up
       const translateNode = document.nodes[String(selectedPart.translateNodeId)];
       const rotateNode = document.nodes[String(selectedPart.rotateNodeId)];
       const scaleNode = document.nodes[String(selectedPart.scaleNodeId)];
 
       if (translateNode?.op.type === "Translate") {
-        const { offset } = translateNode.op;
-        proxy.position.set(offset.x, offset.y, offset.z);
+        proxy.position.set(...kernelToDisplay(translateNode.op.offset));
       }
-      if (rotateNode?.op.type === "Rotate") {
-        const { angles } = rotateNode.op;
-        proxy.rotation.set(
-          angles.x * DEG2RAD,
-          angles.y * DEG2RAD,
-          angles.z * DEG2RAD,
-        );
-      }
+      // Always set quaternion with coord rotation baked in
+      const rotAngles =
+        rotateNode?.op.type === "Rotate"
+          ? rotateNode.op.angles
+          : { x: 0, y: 0, z: 0 };
+      kernelEulerToDisplayQuat(rotAngles, proxy.quaternion);
       if (scaleNode?.op.type === "Scale") {
         const { factor } = scaleNode.op;
         proxy.scale.set(factor.x, factor.y, factor.z);
       }
     } else if (selectedInstance) {
-      // Handle instance transform
+      // Handle instance transform — convert kernel Z-up to display Y-up
       const transform = selectedInstance.transform;
-      if (transform) {
-        proxy.position.set(
-          transform.translation.x,
-          transform.translation.y,
-          transform.translation.z,
-        );
-        proxy.rotation.set(
-          transform.rotation.x * DEG2RAD,
-          transform.rotation.y * DEG2RAD,
-          transform.rotation.z * DEG2RAD,
-        );
-        proxy.scale.set(
-          transform.scale.x,
-          transform.scale.y,
-          transform.scale.z,
-        );
-      } else {
-        // Default identity transform
-        proxy.position.set(0, 0, 0);
-        proxy.rotation.set(0, 0, 0);
-        proxy.scale.set(1, 1, 1);
-      }
+      const t = transform ?? {
+        translation: { x: 0, y: 0, z: 0 },
+        rotation: { x: 0, y: 0, z: 0 },
+        scale: { x: 1, y: 1, z: 1 },
+      };
+      proxy.position.set(...kernelToDisplay(t.translation));
+      kernelEulerToDisplayQuat(t.rotation, proxy.quaternion);
+      proxy.scale.set(t.scale.x, t.scale.y, t.scale.z);
     }
   }, [proxy, selectedPart, selectedInstance, hasTransformableSelection, document]);
 
@@ -141,21 +170,17 @@ export function TransformGizmo({
       const store = useDocumentStore.getState();
 
       if (selectedPart) {
-        // Update part transform
+        // Update part transform — convert display Y-up back to kernel Z-up
         if (transformMode === "translate") {
           store.setTranslation(
             singleSelectedId,
-            { x: proxy.position.x, y: proxy.position.y, z: proxy.position.z },
+            displayToKernel(proxy.position),
             true, // skipUndo — we pushed at drag start
           );
         } else if (transformMode === "rotate") {
           store.setRotation(
             singleSelectedId,
-            {
-              x: proxy.rotation.x * RAD2DEG,
-              y: proxy.rotation.y * RAD2DEG,
-              z: proxy.rotation.z * RAD2DEG,
-            },
+            displayQuatToKernelEuler(proxy.quaternion),
             true,
           );
         } else if (transformMode === "scale") {
@@ -166,20 +191,12 @@ export function TransformGizmo({
           );
         }
       } else if (selectedInstance) {
-        // Update instance transform (all in one call)
+        // Update instance transform — convert display Y-up back to kernel Z-up
         store.setInstanceTransform(
           singleSelectedId,
           {
-            translation: {
-              x: proxy.position.x,
-              y: proxy.position.y,
-              z: proxy.position.z,
-            },
-            rotation: {
-              x: proxy.rotation.x * RAD2DEG,
-              y: proxy.rotation.y * RAD2DEG,
-              z: proxy.rotation.z * RAD2DEG,
-            },
+            translation: displayToKernel(proxy.position),
+            rotation: displayQuatToKernelEuler(proxy.quaternion),
             scale: {
               x: proxy.scale.x,
               y: proxy.scale.y,
@@ -215,6 +232,7 @@ export function TransformGizmo({
           ref={controlsRef}
           object={proxy}
           mode={transformMode}
+          space="local"
           size={0.8}
           {...snapProps}
         />
