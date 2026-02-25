@@ -1,0 +1,63 @@
+---
+title: "Clash Detection"
+description: "Interference detection, interpreting results, fixing clashes"
+order: 4
+---
+
+Clash detection checks whether assembly instances physically overlap. Two parts that look fine in their neutral position might collide when a joint rotates to its limit. A bracket might intersect a cable routing channel. A bolt head might protrude into an adjacent part's swept volume. Catching these interferences before manufacturing saves time, material, and frustration.
+
+## Running Clash Detection
+
+Press **Cmd+K** and choose **Check Clashes**, or click the clash detection icon in the assembly toolbar. vcad analyzes all instance pairs in the assembly and reports any overlaps.
+
+The analysis runs in two phases. The **broadphase** tests axis-aligned bounding boxes (AABBs) for every instance pair. If two bounding boxes do not overlap, the instances cannot possibly collide, and the pair is skipped. This eliminates the vast majority of pairs quickly -- an assembly with 50 instances has 1,225 possible pairs, but only a handful will have overlapping bounding boxes.
+
+The **narrowphase** performs exact mesh intersection tests on the pairs that passed the broadphase. The BRep geometry of each instance is tessellated (if not already cached) and the triangle meshes are tested for intersection. This produces the precise overlap volume and the location of the interference.
+
+<Callout type="info" title="Performance">
+Broadphase is nearly instant regardless of assembly size. Narrowphase depends on mesh complexity and the number of candidate pairs. For typical mechanical assemblies (10-50 instances), the full analysis completes in under a second. Very large assemblies with hundreds of instances and complex geometry may take a few seconds.
+</Callout>
+
+## Interpreting Results
+
+The clash report lists every interfering pair with three pieces of information: the two instance names, the **overlap volume** in cubic millimeters, and the **interference zone** highlighted on the model.
+
+A small overlap volume (under 0.1 mm^3) usually indicates a tangent contact or a numerical artifact at a shared face boundary. These are typically harmless and can be ignored unless they occur at a clearance-critical location.
+
+A moderate overlap (0.1 to 10 mm^3) suggests parts are close to colliding and may interfere at certain joint configurations or under manufacturing tolerances. Investigate whether the overlap occurs across the full range of motion or only at extreme joint positions.
+
+A large overlap (above 10 mm^3) means the parts definitively occupy the same space. This is a design error that must be fixed before manufacturing.
+
+The viewport highlights interference zones in red, making it easy to see exactly where the overlap occurs. Click an interference in the report to zoom to the affected area.
+
+## Dynamic Clash Checking
+
+Static clash detection tests one assembly configuration at a time -- whatever pose the joints are currently in. For mechanisms that move, you need to check across the full range of motion.
+
+Scrub each joint from its minimum limit to its maximum limit while clash detection is active. The clash report updates in real time as the assembly configuration changes. Watch for pairs that transition from clear to clashing as a joint rotates or extends. The joint angle at which the clash first appears tells you the usable range of motion before interference.
+
+For thorough coverage of multi-DOF mechanisms, test each joint individually at its extremes, then test combinations. A two-joint arm might have no clashes at (0, 0), (90, 0), or (0, 90), but clash at (90, 90) when both joints are at their limits simultaneously.
+
+<Callout type="tip" title="Automated sweep">
+For mechanisms with many DOF, manually scrubbing every combination is impractical. Use the physics simulation to sweep the joint space: apply random torques over many timesteps and check for collision events. The physics engine reports contact points at each timestep, giving you comprehensive coverage.
+</Callout>
+
+## Fixing Clashes
+
+Once you identify an interference, there are several resolution strategies.
+
+**Adjust joint limits.** If the clash only occurs at extreme joint positions that are not physically necessary, tighten the joint limits to exclude the clashing range. A hinge that clashes above 95 degrees can have its max limit set to 90 degrees with a 5-degree safety margin.
+
+**Modify geometry.** If parts must operate through the clashing range, redesign one or both parts to provide clearance. Add a cutout, reduce a protrusion, or reshape a contour to avoid the overlap. This is the most common fix and the reason you catch clashes early -- geometry changes are cheap in CAD and expensive in manufacturing.
+
+**Add clearance.** If parts are just barely touching, add explicit clearance by offsetting one part slightly. For rotating mechanisms, remember that clearance must exist at every point in the swept volume, not just at the current configuration.
+
+**Reposition instances.** Sometimes a clash is caused by poor initial placement rather than geometric conflict. Move one instance to a better position, update the joint anchors, and recheck.
+
+## Clearance Analysis
+
+Beyond clash detection (binary overlap / no overlap), you sometimes need to know the **minimum clearance** between two instances -- the smallest gap between their surfaces. Two parts might not clash but be so close that manufacturing tolerances could push them into contact.
+
+vcad reports minimum clearance for instance pairs that pass the narrowphase without clashing. A clearance of 0.1 mm between two parts that each have manufacturing tolerances of +/- 0.05 mm means the parts might contact in the worst case. You would either increase the clearance in the design or tighten the tolerances.
+
+For importing robot descriptions that need clash checking across their entire joint space, continue to the [URDF Import](/guides/assembly/urdf) guide.

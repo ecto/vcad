@@ -1,0 +1,53 @@
+---
+title: "Your First Part"
+description: "Create and customize a 3D shape in the vcad app"
+order: 1
+difficulty: Beginner
+time: "5 minutes"
+playground:
+  exampleId: "cube"
+---
+
+<Playground exampleId="cube" />
+
+Open [vcad.io](https://vcad.io) in your browser. You are looking at the vcad viewport -- a 3D workspace with a grid on the XY plane and Z pointing up. This is the standard CAD coordinate system: X goes right, Y goes forward, and Z goes up.
+
+## Add a Cube
+
+Press **Cmd+K** (or **Ctrl+K** on Windows/Linux) to open the command palette. Type "cube" and select **Add Cube**. A cube appears at the origin, sitting on the grid with its corner at (0, 0, 0). The feature tree on the left now shows your cube as the first operation.
+
+The cube starts with default dimensions of 10 mm on each side. You will change that next.
+
+## Resize with the Property Panel
+
+Click your cube in the viewport or in the feature tree to select it. The property panel on the right shows three dimension fields: **Size X**, **Size Y**, and **Size Z**. These correspond to width, depth, and height respectively.
+
+Change the values to 40, 30, and 20. You can type directly into the fields or click-drag horizontally on any field to scrub the value up and down. The viewport updates immediately as you adjust each dimension -- there is no "apply" step.
+
+<Callout type="tip" title="Scrub inputs">
+Click and drag left/right on any numeric field to change its value smoothly. Hold **Shift** while dragging for finer control, or hold **Alt** for coarser steps. This is the fastest way to explore different dimensions.
+</Callout>
+
+## Navigate the Viewport
+
+Three mouse actions control the camera. **Left-click drag** orbits the view around the center of the scene. **Right-click drag** (or two-finger drag on a trackpad) pans the view. **Scroll wheel** zooms in and out. To reset the camera to the default view, press **Numpad 0** or use the command palette and search for "Reset Camera".
+
+The small axis widget in the corner shows your current orientation. The red axis is X, the green axis is Y, and the blue axis is Z. Click any axis label to snap to that orthographic view -- useful for checking alignment.
+
+## Rename Your Part
+
+Double-click the cube's name in the feature tree (it defaults to "Cube"). Type a new name like "base plate" and press Enter. Naming parts clearly is a good habit that pays off quickly as your models grow beyond a handful of operations.
+
+## The Feature Tree
+
+The feature tree on the left is your model's history. Every operation you perform -- adding primitives, applying booleans, adding fillets -- appears as a node in this tree. You can click any node to select it and edit its parameters. The operations are evaluated top to bottom, and the final shape in the viewport is the result of the entire tree.
+
+<Callout type="info" title="Non-destructive modeling">
+vcad is fully parametric. Change any parameter at any point in the feature tree and everything downstream updates automatically. You are never locked into decisions you made earlier.
+</Callout>
+
+## What You Built
+
+You created a box primitive, resized it to custom dimensions, and learned how to navigate the viewport and feature tree. These are the fundamental interactions you will use in every vcad session.
+
+Next, learn how to combine shapes using [boolean operations](/tutorials/app/02-booleans) to build more complex geometry.

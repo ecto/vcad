@@ -1,0 +1,76 @@
+---
+title: "vcad vs Onshape"
+description: "Cloud-native CAD vs free open-source local-first CAD"
+order: 1
+---
+
+Onshape pioneered browser-based parametric CAD when it launched in 2015, proving that serious 3D modeling could work entirely in the cloud. vcad takes a different approach: an open-source, local-first CAD system with its own BRep kernel, optional cloud sync, and native AI integration. Both run in the browser, but their architectures and business models diverge sharply.
+
+## At a Glance
+
+| Feature | **vcad** | **Onshape** |
+|---------|----------|-------------|
+| **Price** | Free (MIT license) | $1,500+/year (Standard), $2,500+/year (Professional) |
+| **Source** | Open source | Proprietary |
+| **Data storage** | Local files + optional Supabase sync | Cloud-only (PTC servers) |
+| **Geometry kernel** | Custom BRep (Rust) | Parasolid (Siemens) |
+| **Platform** | Browser, CLI, Rust library | Browser only |
+| **Offline use** | Full offline support | Requires internet connection |
+| **AI integration** | Native MCP server | None (third-party integrations) |
+| **Collaboration** | Git-based version control | Built-in multi-user editing |
+| **CAM** | Basic toolpath generation | FeatureScript CAM, partner integrations |
+| **Simulation** | Physics (Rapier3D) | Partner integrations (SimScale) |
+| **File formats** | STEP, STL, GLB, DXF, .vcad | STEP, STL, Parasolid, IGES, more |
+| **API** | Rust crate, TypeScript, MCP, CLI | REST API |
+
+## Pricing and Access
+
+Onshape's free tier restricts you to 10 active documents that are publicly visible -- every model you create is accessible to anyone. Private documents require the Standard plan at $1,500/year per user. The Professional plan ($2,500/year) adds simulation integrations, release management, and enterprise features. For a team of five engineers, Onshape costs $7,500-$12,500 annually.
+
+vcad is free for everyone. The entire codebase is MIT-licensed, meaning you can use it commercially, modify it, embed it in products, and self-host it without paying anything. There is no free tier with limitations -- the full feature set is always available.
+
+## Data Ownership and Privacy
+
+This is the starkest difference between the two tools. Onshape stores all data on PTC's cloud servers. You cannot download your design history, branch structure, or configuration data -- only export current geometry as STEP/STL. If PTC changes terms, raises prices, or discontinues the service, your data is locked in their platform.
+
+vcad stores documents as `.vcad` JSON files on your local filesystem. You own them completely. Optional cloud sync through Supabase is available but not required, and the sync server can be self-hosted. Version history uses standard git. If you stop using vcad, your files remain readable JSON containing the parametric operations, part definitions, and assembly relationships.
+
+<Callout type="info" title="Export everything">
+vcad's `.vcad` format is documented JSON. Even without vcad installed, you can parse your files, extract the parametric DAG, and migrate to another tool. Onshape's native format is proprietary and only accessible through their REST API.
+</Callout>
+
+## Geometry Kernels
+
+Onshape licenses Parasolid from Siemens, the same kernel used by SolidWorks, NX, and Solid Edge. Parasolid is the most battle-tested BRep kernel in the industry, with decades of development covering edge cases in fillet, boolean, and surfacing operations. Its reliability is Onshape's greatest technical strength.
+
+vcad uses a custom BRep kernel written in Rust. The kernel implements half-edge topology with exact geometric predicates (Shewchuk adaptive precision) for robust boolean operations. While younger than Parasolid, the vcad kernel benefits from modern language safety guarantees (no null pointer crashes, no memory corruption) and compiles to WebAssembly for browser execution. The kernel supports analytic surfaces (planes, cylinders, cones, spheres, tori) and NURBS, with direct BRep ray tracing for pixel-perfect rendering without tessellation.
+
+## Collaboration
+
+Onshape's defining feature is real-time multi-user editing. Multiple engineers can work on the same document simultaneously, seeing each other's cursors and changes live. This Google Docs-style collaboration is genuinely powerful for co-located teams working on the same assembly.
+
+vcad uses a different model: file-based collaboration through git. Designers work independently on their local copies and merge changes through standard git workflows. This is more familiar to software engineers and works well for distributed teams, but lacks the real-time presence features of Onshape. For teams that need real-time co-editing, Onshape has a clear advantage here.
+
+## Programmatic Access
+
+Onshape provides a REST API for automating tasks, reading documents, and creating features. The API is capable but requires network requests to Onshape's servers for every operation, making it slow for batch processing. FeatureScript, Onshape's built-in scripting language, adds custom features but runs only within the Onshape environment.
+
+vcad offers four programmatic interfaces: a Rust crate for native integration, a TypeScript library for web applications, a CLI for shell scripting and CI pipelines, and an MCP server for AI agent integration. All run locally with no network dependency. The Rust API is fast enough for generative design loops (hundreds of geometry evaluations per second), and the MCP server enables AI assistants like Claude to create, modify, and analyze CAD documents through natural language.
+
+## AI Integration
+
+Onshape has no built-in AI features. Third-party tools can interact through the REST API, but there is no standardized way for an AI agent to create parametric features, inspect geometry, or modify designs.
+
+vcad includes a Model Context Protocol (MCP) server as a first-class feature. AI agents can create documents from primitives and operations, export to STL/GLB, inspect volume/area/bbox, set up physics simulations, and control robot assemblies through gym-style step/reset/observe interfaces. The MCP server runs locally, so sensitive designs never leave your machine.
+
+## Where Onshape Wins
+
+Onshape is a mature production tool with a decade of development behind it. Its advantages are substantial: real-time collaboration with presence awareness, a massive library of standard parts and community content, comprehensive PDM (Product Data Management) for release processes and change orders, and the reliability of Parasolid for complex surfacing and sheet metal operations. If you are a team of mechanical engineers working on production hardware with established PDM workflows, Onshape is the more proven choice today.
+
+## Where vcad Wins
+
+vcad excels in scenarios where Onshape's model is a poor fit: solo engineers and small teams who do not want to pay $1,500/year per seat, privacy-sensitive projects where data cannot leave your machine, programmatic CAD workflows that need fast local API access, AI-integrated design workflows using MCP, and open-source projects that need a CAD tool matching their licensing philosophy. The Rust kernel compiles to WASM, making vcad embeddable in any web application without server infrastructure.
+
+## Conclusion
+
+Onshape and vcad serve different needs. Onshape is the established choice for teams that value real-time collaboration, PDM, and the maturity of Parasolid. vcad is the choice for engineers who prioritize open source, local-first data ownership, programmatic access, AI integration, and not paying $1,500/year. If you are evaluating both, consider whether your workflow depends more on real-time collaboration (Onshape) or on programmatic control and data sovereignty (vcad).

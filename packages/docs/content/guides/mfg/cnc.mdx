@@ -1,0 +1,89 @@
+---
+title: "CNC Machining Guide"
+description: "Tool library, operations (face, pocket, contour, 3D roughing), G-code generation"
+order: 2
+---
+
+CNC machining removes material from a stock block to produce the final part. vcad's CAM panel generates toolpaths from your BRep geometry, converting faces, pockets, and contours into G-code that CNC mills, routers, and lathes can execute. Because the CAM works from the exact BRep surfaces (not a tessellated mesh), toolpaths follow the true mathematical geometry of your design.
+
+## Opening the CAM Panel
+
+Press **Cmd+K** and choose **CAM**, or click the CNC icon in the toolbar. The CAM panel replaces the property panel. It shows three sections: tool library, operations list, and G-code output settings.
+
+The viewport switches to a CAM view that shows the stock block as a translucent bounding volume around your part. The stock starts as the smallest rectangular prism that fully encloses the part geometry, with a configurable margin on each side (default 2 mm).
+
+## Tool Library
+
+The tool library stores definitions for cutting tools. Each tool has a type, diameter, flute count, material, and cutting parameters. vcad ships with a default library of common tools:
+
+**Flat end mills** are the workhorse tools for facing, pocketing, and contouring. Diameters from 1 mm to 25 mm. The cutting edge is flat on the bottom and straight on the sides.
+
+**Ball nose end mills** are used for 3D finishing passes where the surface curves in all directions. The hemispherical tip follows curved surfaces smoothly, producing better surface finish than a flat end mill on non-planar faces.
+
+**Drill bits** are for holes. The CAM system uses drill cycles (G81, G83 for peck drilling) rather than helical milling when a drill is selected.
+
+**Chamfer mills** cut 45-degree bevels on edges. The V-shaped cutting profile matches the chamfer geometry and produces clean, consistent bevels.
+
+Create custom tools by clicking **New Tool** and entering the parameters. Tool definitions are saved with the document so they travel with the part.
+
+<Callout type="info" title="Feed and speed">
+Each tool has associated cutting parameters: spindle speed (RPM), feed rate (mm/min), and plunge rate (mm/min). These depend on tool material, workpiece material, and machine rigidity. vcad provides conservative defaults for aluminum with carbide tooling. Adjust for your specific material and machine.
+</Callout>
+
+## Operations
+
+Operations are the individual machining steps that transform stock into the finished part. You build up an operations list, each removing material from the stock until the part emerges. The order matters: roughing operations remove bulk material first, then finishing operations produce the final surfaces.
+
+### Facing
+
+Facing cuts the top surface of the stock flat. It is usually the first operation, establishing a reference surface. The toolpath is a series of parallel passes across the stock at a fixed Z height, stepping over by a fraction of the tool diameter on each pass.
+
+Select the top face of the stock, choose **Face** from the operation menu, and set the depth (how much material to remove from the top). The tool moves in straight lines across the full width of the stock.
+
+### Pocketing
+
+Pocketing removes material from enclosed regions -- holes, slots, and recesses. Select one or more faces that define the pocket boundary, choose **Pocket**, and set the target depth. The toolpath spirals inward from the boundary, then steps down by the step-down distance and repeats until the target depth is reached.
+
+For through-holes, set the pocket depth slightly beyond the stock thickness to ensure the tool cuts all the way through. For blind pockets, set the depth to the exact pocket depth.
+
+### Contouring
+
+Contouring follows the outer profile of the part, cutting the stock away from the sides. Select the side faces of the part, choose **Contour**, and the toolpath traces the part boundary at successive depth steps. The tool offsets from the part surface by half its diameter to leave the part at the correct dimension.
+
+Climb milling (tool moves in the same direction as the feed) is the default because it produces better surface finish and less tool deflection. Conventional milling (tool moves against the feed) is available in settings if your machine setup requires it.
+
+### 3D Roughing
+
+3D roughing removes bulk material from complex curved surfaces using a waterline or raster strategy. Waterline roughing cuts horizontal slices through the stock, each at a lower Z level, following the part contour at that height. Raster roughing sweeps the tool back and forth across the part in parallel passes at each Z level.
+
+This operation is used before 3D finishing to remove most of the material quickly with a large flat end mill. Leave a finishing allowance (typically 0.5-1 mm) so the finishing pass has a consistent amount of material to remove.
+
+### 3D Finishing
+
+3D finishing uses a ball nose end mill to produce the final surface on curved geometry. The toolpath follows the surface contour in closely spaced passes (the step-over distance determines the cusp height between passes). Smaller step-over produces smoother surfaces at the cost of longer machining time.
+
+For flat surfaces, a flat end mill finishing pass is more efficient. For curved surfaces that vary in all directions, ball nose finishing is required.
+
+<Callout type="tip" title="Operation order">
+A typical operation sequence: face the top of the stock, 3D rough to remove bulk material, pocket any enclosed features, contour the outer profile, 3D finish curved surfaces, drill any holes. Each step removes material that would otherwise obstruct the next operation.
+</Callout>
+
+## Toolpath Parameters
+
+Each operation has parameters that control the toolpath:
+
+**Step-down** is the depth of cut per pass. Smaller step-downs reduce cutting forces and improve surface finish. For roughing in aluminum with a 10 mm end mill, 2-4 mm step-down is typical. For finishing, 0.2-0.5 mm.
+
+**Step-over** is the lateral distance between adjacent passes, expressed as a percentage of tool diameter. For roughing, 40-60% of tool diameter. For finishing with a ball nose, 5-15% produces smooth surfaces.
+
+**Feed rate** controls how fast the tool moves through the material. Measured in mm/min. Higher feed rates are faster but increase cutting forces. Start conservative and increase as you learn your machine's capabilities.
+
+**Spindle speed** in RPM controls how fast the tool rotates. Optimal speed depends on tool diameter and material. For carbide in aluminum, a common starting point is 10,000 RPM for a 6 mm tool.
+
+## G-code Output
+
+Click **Generate G-code** to produce the output file. The G-code uses standard RS-274 format compatible with LinuxCNC, Mach3, GRBL, and most industrial controllers. The output includes tool change commands (M6), spindle on/off (M3/M5), coolant on/off (M8/M9), and the toolpath itself as G0 (rapid) and G1 (feed) moves.
+
+Preview the toolpath in the viewport before generating. The tool's swept volume is shown as a colored overlay on the stock, so you can verify the operation removes the intended material and does not gouge the part surface.
+
+For 2D profiles suitable for laser cutting and waterjet, continue to the [Laser Cutting with DXF](/guides/mfg/laser) guide.

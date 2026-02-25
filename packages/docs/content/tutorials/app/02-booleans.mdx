@@ -1,0 +1,59 @@
+---
+title: "Boolean Operations"
+description: "Combine shapes with union, difference, and intersection"
+order: 2
+difficulty: Beginner
+time: "10 minutes"
+playground:
+  exampleId: "first-hole"
+---
+
+<Playground exampleId="first-hole" />
+
+The shape above is a plate with a hole through it. It was made from just two primitives -- a flat box and a cylinder -- combined with a single boolean operation. Booleans are the core of solid modeling: you build complex geometry by adding, subtracting, and intersecting simple shapes.
+
+## The Three Boolean Operations
+
+**Union** joins two solids into one. Think of it as gluing shapes together. The result contains all the material from both inputs. Use union to build up complex parts from simpler pieces.
+
+**Difference** subtracts one solid from another. The first shape you select is the body that gets kept; the second shape is the tool that gets cut away. Every hole, pocket, slot, and counterbore in CAD is made with difference.
+
+**Intersection** keeps only the material where two solids overlap. This is less common but useful for trimming shapes to fit within a boundary or creating complex cross-sections.
+
+## Make a Plate with a Hole
+
+Start from a new document. Add a cube using **Cmd+K** and set its dimensions to 60, 40, and 5 -- this is your plate. Then add a cylinder (**Cmd+K** -> **Add Cylinder**) with radius 8 and height 20. The cylinder appears at the origin, poking through the plate.
+
+Now position the cylinder where you want the hole. Select the cylinder in the feature tree, then add a translate transform (**Cmd+K** -> **Translate**). Set the translation to X: 30, Y: 20, Z: -5. This centers the cylinder on the plate and ensures it extends fully through the thickness. The cylinder should be taller than the plate so the cut goes all the way through -- leaving a cylinder flush with the surface often causes problems.
+
+<Callout type="warning" title="Make the tool larger than the body">
+When cutting a hole, always make the cutting tool extend past both sides of the body. If the tool is exactly the same height as the plate, floating-point imprecision can leave a paper-thin skin. A few extra millimeters of length avoids this entirely.
+</Callout>
+
+Select both shapes in the feature tree by clicking the plate, then **Cmd+clicking** the cylinder. Open the command palette with **Cmd+K**, type "difference", and select **Boolean Difference**. The cylinder vanishes and a clean circular hole appears in the plate.
+
+## Selection Order Matters
+
+For difference, the order of selection determines which shape is kept and which is cut away. The **first** shape you select is the body (it stays). The **second** shape is the tool (it gets subtracted). If you accidentally cut the cylinder out of the plate instead of the plate out of the cylinder, undo with **Cmd+Z** and reselect in the correct order.
+
+Union and intersection are commutative -- the order does not matter for those operations.
+
+<Playground exampleId="plate" />
+
+The plate above shows a more complex example with multiple boolean operations applied to the same base shape. Every feature on this part -- the holes, the slots, the cutouts -- was created by positioning a primitive and subtracting it.
+
+## Building Up Complexity
+
+Real parts are built by chaining many boolean operations. A typical workflow looks like this: start with a base shape (often a box or extruded sketch), then add material with unions and remove material with differences. The feature tree records every step, and you can go back and edit any operation's parameters at any time.
+
+<Callout type="tip" title="Keyboard shortcut">
+After selecting two shapes, you can also right-click to access boolean operations from the context menu. The shortcuts **U** (union), **D** (difference), and **I** (intersection) work when shapes are selected.
+</Callout>
+
+## Common Patterns
+
+A counterbore (a stepped hole for a bolt head) is two differences: a small-diameter through-hole, then a larger-diameter shallow hole on one face. A slot is a difference with a stretched cylinder or an extruded rounded rectangle. A boss (a raised pad on a surface) is a union with a cylinder or box placed on a face.
+
+As your models grow, keep the feature tree organized by naming each primitive before combining it. A tree full of "Cube", "Cube (1)", "Cylinder", "Cylinder (1)" is hard to navigate. Names like "bolt hole", "counterbore", and "mounting boss" make the model self-documenting.
+
+Next, learn how to position and replicate geometry efficiently with [transforms and patterns](/tutorials/app/03-transforms).

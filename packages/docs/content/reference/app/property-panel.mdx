@@ -1,0 +1,167 @@
+---
+title: "Property Panel"
+description: "Scrub inputs, parameter editing, and property inspector"
+order: 4
+---
+
+The property panel occupies the right sidebar and displays editable parameters for whatever is currently selected in the feature tree or viewport. It updates in real time as you switch selections, and every change you make is immediately reflected in the 3D view.
+
+## Scrub Inputs
+
+All numeric fields in the property panel are scrub inputs. Click and drag horizontally to smoothly increase or decrease the value, or click once to type an exact number. The scrub sensitivity adapts to the magnitude of the current value -- small values scrub slowly, large values scrub faster -- so a 0.5mm fillet radius and a 200mm cube dimension both feel natural to adjust.
+
+Holding `Shift` while scrubbing snaps to round increments (1mm for lengths, 5 degrees for angles). Holding `Alt` switches to fine mode, moving in 0.1mm or 1-degree steps.
+
+<Callout type="tip" title="Keyboard entry">
+After clicking a scrub input, type a value and press `Enter` to commit. Press `Escape` to cancel and restore the previous value. You can also use `Tab` to advance to the next field.
+</Callout>
+
+## Primitive Properties
+
+When a primitive node is selected, the panel shows its defining dimensions.
+
+### Cube
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| Size X | number (mm) | Width along X axis |
+| Size Y | number (mm) | Depth along Y axis |
+| Size Z | number (mm) | Height along Z axis |
+
+### Cylinder
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| Radius | number (mm) | Cross-section radius |
+| Height | number (mm) | Height along Z axis |
+| Segments | integer | Number of circumferential facets |
+
+### Sphere
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| Radius | number (mm) | Sphere radius |
+| Segments | integer | Subdivision level |
+
+### Cone
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| Bottom Radius | number (mm) | Radius at base |
+| Top Radius | number (mm) | Radius at top (0 for pointed cone) |
+| Height | number (mm) | Height along Z axis |
+| Segments | integer | Number of circumferential facets |
+
+## Transform Properties
+
+When a transform node is selected, the panel shows the transform parameters and a toggle to switch between translate, rotate, and scale modes.
+
+### Translate
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| Offset X | number (mm) | Translation along X |
+| Offset Y | number (mm) | Translation along Y |
+| Offset Z | number (mm) | Translation along Z |
+
+### Rotate
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| Angle X | number (deg) | Rotation around X axis |
+| Angle Y | number (deg) | Rotation around Y axis |
+| Angle Z | number (deg) | Rotation around Z axis |
+
+### Scale
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| Factor X | number | Scale along X |
+| Factor Y | number | Scale along Y |
+| Factor Z | number | Scale along Z |
+
+## Boolean Properties
+
+Boolean operation nodes display the operation type as a dropdown with three options: Union, Difference, and Intersection. Changing the type re-evaluates the operation without altering the operand geometry. The panel also shows which nodes are the left and right operands, and you can click either to jump to that node in the feature tree.
+
+## Feature Properties
+
+### Fillet
+
+<Param name="radius" type="number (mm)">
+The blend radius applied to all edges of the child solid.
+</Param>
+
+### Chamfer
+
+<Param name="distance" type="number (mm)">
+The chamfer distance applied uniformly to all edges.
+</Param>
+
+### Shell
+
+<Param name="thickness" type="number (mm)">
+Wall thickness. The part is hollowed inward by this amount.
+</Param>
+
+## Pattern Properties
+
+### Linear Pattern
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| Direction X/Y/Z | number | Unit vector for pattern direction |
+| Count | integer | Number of copies (including the original) |
+| Spacing | number (mm) | Distance between each copy |
+
+### Circular Pattern
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| Axis Origin X/Y/Z | number (mm) | Center point of rotation |
+| Axis Direction X/Y/Z | number | Rotation axis vector |
+| Count | integer | Number of copies |
+| Angle | number (deg) | Total angular spread |
+
+## Material Section
+
+Below the geometry parameters, the property panel shows the material assignment for the selected part. Click the material swatch to open the material selector, which provides a searchable grid of built-in and custom materials grouped by category (metals, plastics, organic, glass, composites). Hovering over a material shows a live preview on the selected part in the viewport.
+
+The material section displays the current material's key properties: color swatch, metallic and roughness values, and density if defined.
+
+## Joint Properties
+
+When a joint node is selected, the panel shows the joint type, parent and child instances, anchor points, and a state slider. The state slider is the primary way to pose assemblies interactively -- drag it to rotate a revolute joint or translate a slider joint, and the viewport updates in real time via forward kinematics.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| Type | dropdown | Fixed, Revolute, Slider, Cylindrical, Ball |
+| Parent Instance | reference | Parent instance (or world if null) |
+| Child Instance | reference | Child instance |
+| Parent Anchor | Vec3 (mm) | Anchor point in parent's local frame |
+| Child Anchor | Vec3 (mm) | Anchor point in child's local frame |
+| Axis | Vec3 | Rotation or slide axis (for revolute, slider, cylindrical) |
+| Limits | [min, max] | Joint limits (degrees for revolute, mm for slider) |
+| State | number | Current joint angle (deg) or position (mm) |
+
+<Callout type="info" title="State clamping">
+If limits are defined, the state slider clamps to the allowed range. Typing a value outside the limits also clamps automatically.
+</Callout>
+
+## Multi-Selection
+
+When multiple nodes are selected, the property panel shows only the properties that are common to all selected nodes. Changing a shared property updates all selected nodes simultaneously. For example, selecting three cylinders and scrubbing the radius changes all three radii by the same delta.
+
+Properties that differ across the selection show a mixed-value indicator (a dash instead of a number). Typing a new value overwrites all selected nodes with that value.
+
+## Computed Properties
+
+The bottom of the property panel shows read-only computed properties for the selected geometry:
+
+| Property | Description |
+|----------|-------------|
+| Volume | Enclosed volume in mm^3 |
+| Surface Area | Total surface area in mm^2 |
+| Bounding Box | Min and max corners (mm) |
+| Triangle Count | Tessellated mesh triangle count |
+| Mass | Part mass in grams (when material has density) |

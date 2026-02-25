@@ -1,0 +1,75 @@
+---
+title: "Schematic Design"
+description: "Component library, wiring, net labels, ERC"
+order: 1
+---
+
+A schematic captures the logical connections between electronic components -- which pins connect to which, what values the components have, and how signals flow through the circuit. It is the blueprint of the electrical design, independent of physical layout. vcad's schematic editor lets you design circuits alongside mechanical geometry, so the enclosure and the PCB live in the same document.
+
+## Adding Components
+
+Press **Cmd+K** and choose **New Schematic** to open the schematic editor. The canvas is a grid-based drawing surface where you place and connect components.
+
+Open the component library with **Cmd+K** then **Add Component** (or press **A**). The library organizes components into categories: passives (resistors, capacitors, inductors), semiconductors (diodes, LEDs, transistors, ICs), connectors (headers, USB, barrel jack), electromechanical (switches, relays), and power (voltage regulators, batteries).
+
+Each component in the library has a symbol (the schematic representation), a value (resistance, capacitance, etc.), and a footprint (the physical PCB land pattern). Select a component, click the canvas to place it, and press **R** to rotate it 90 degrees before or after placement. Place as many instances as your circuit requires.
+
+The component's **reference designator** (R1, C1, U1, etc.) is assigned automatically in order of placement. You can rename it by double-clicking the reference text. The **value** field (10k, 100nF, etc.) is set in the property panel when the component is selected.
+
+<Callout type="info" title="Custom components">
+If the library does not have the component you need, create a custom symbol by pressing **Cmd+K** then **New Symbol**. Draw the symbol shape, add pins with names and types (input, output, passive, power), and assign a footprint. The custom component is saved in your document and available for reuse.
+</Callout>
+
+## Wiring
+
+Connect component pins with wires. Press **W** to enter wire mode, click a pin to start, and click another pin to finish. The wire routes automatically along the grid in horizontal and vertical segments. Click intermediate points to add corners if the automatic routing does not follow your preferred path.
+
+Wires that cross without connecting show as overlapping lines. Wires that connect at a junction show a solid dot at the intersection. To create a junction (a T-connection), start a wire from the middle of an existing wire -- a junction dot appears automatically.
+
+Every wire carries a **net name** that identifies the electrical connection. By default, nets are unnamed (they appear as auto-generated identifiers like N001). You can name a net by placing a **net label** on any wire segment.
+
+## Net Labels
+
+Net labels are the schematic's abstraction tool. Instead of drawing a wire from a voltage regulator's output pin across the entire sheet to every component that needs that voltage, you place a net label "3V3" on the regulator's output and another "3V3" label near each consuming component's power pin. All pins with the same net label are electrically connected without visible wires.
+
+Net labels have three scopes. **Local** labels connect within a single schematic sheet. **Global** labels connect across all sheets in a multi-sheet design. **Hierarchical** labels connect a sub-sheet's ports to the parent sheet, enabling modular schematic organization where a complex circuit is broken into functional blocks.
+
+Place a net label by pressing **L**, typing the name, and clicking the wire. Power symbols (+3V3, +5V, GND, VBUS) are special net labels that come with standard symbols and are always global in scope.
+
+## Component Properties
+
+Select a component to see its properties in the property panel.
+
+**Reference** (R1, C2, U3): unique identifier on the board. Must not be duplicated within a design.
+
+**Value** (10k, 100nF, ATmega328P): the component's electrical value or part number.
+
+**Footprint** (0603, SOIC-8, TO-220): the physical land pattern used during PCB layout. This links the schematic symbol to a PCB component. Every component needs a footprint assigned before layout can begin.
+
+**Datasheet**: an optional URL to the component's datasheet, for reference during design review.
+
+## Electrical Rules Check (ERC)
+
+ERC validates the schematic against common design mistakes. Press **Cmd+K** and choose **Run ERC** to execute the check. The report lists violations with locations.
+
+**Unconnected pins** are component pins that have no wire or net label attached. Every pin should connect to something -- even unused inputs should be tied to a defined logic level or marked as intentionally unconnected.
+
+**Duplicate references** are two components with the same designator (two R1s, for example). Each component must have a unique reference.
+
+**Missing footprints** are components that have no footprint assigned. Layout cannot proceed without footprints because the tool does not know the physical dimensions of the component.
+
+**Conflicting outputs** are two output pins driving the same net. This usually indicates a short circuit or a missing buffer/multiplexer.
+
+**Power pin violations** catch power pins that are unconnected or connected to the wrong type of net (a VCC pin connected to a signal net, for example).
+
+<Callout type="warning" title="ERC is not exhaustive">
+ERC catches structural errors in the schematic -- missing connections, duplicates, and type conflicts. It does not verify that your circuit works correctly (it cannot check that your resistor divider produces the right voltage or that your RC time constant is appropriate). Functional verification requires simulation or manual review.
+</Callout>
+
+## Multi-Sheet Schematics
+
+Large designs benefit from splitting the schematic across multiple sheets. Each sheet handles a functional block: power supply, microcontroller, sensor interface, communication, and so on. Hierarchical labels on each sheet define its interface -- the pins that connect to other sheets. The top-level sheet wires hierarchical labels together, creating the inter-block connections.
+
+This organization mirrors how professional electronics teams work. Each functional block can be designed and reviewed independently, and changes to one block do not affect others as long as the interface (hierarchical labels) stays the same.
+
+For converting your schematic into a physical circuit board, continue to the [PCB Layout](/guides/electronics/pcb) guide.

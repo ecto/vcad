@@ -1,0 +1,82 @@
+---
+title: "vcad vs FreeCAD"
+description: "Open-source parametric 3D modeler vs web-first CAD with BRep kernel"
+order: 4
+---
+
+FreeCAD and vcad are both free, open-source parametric CAD systems. FreeCAD is the established choice with over two decades of development, a mature feature set built on the OpenCascade kernel, and a large community. vcad is a ground-up rewrite with a custom Rust BRep kernel, web-native architecture, and AI integration. They share a philosophy (open-source CAD should exist) but differ substantially in technology and approach.
+
+## At a Glance
+
+| Feature | **vcad** | **FreeCAD** |
+|---------|----------|------------|
+| **Price** | Free (MIT) | Free (LGPL) |
+| **Age** | New | 20+ years (started 2002) |
+| **Geometry kernel** | Custom BRep (Rust) | OpenCascade (OCCT, C++) |
+| **Platform** | Browser + CLI | Desktop (Qt, Win/Mac/Linux) |
+| **Language** | Rust, TypeScript | C++, Python |
+| **Scripting** | Rust crate, TS lib, MCP, CLI | Python console + macros |
+| **UI framework** | React, Three.js, Zustand | Qt (C++ widgets) |
+| **FEM** | Physics (Rapier3D) | FEM workbench (CalculiX, Elmer) |
+| **CAM** | Basic | Path workbench (2.5D, basic 3D) |
+| **Architecture** | BIM (via IFC) | Arch + BIM workbench |
+| **Assembly** | Built-in (joints, kinematics, physics) | Assembly3/Assembly4 (add-ons), A2plus |
+| **Drafting** | 2D projections, GD&T | TechDraw workbench |
+| **File formats** | STEP, STL, GLB, DXF, .vcad | STEP, STL, IGES, OBJ, DXF, IFC, many more |
+| **AI integration** | Native MCP server | None |
+
+## Kernel: OpenCascade vs Custom Rust BRep
+
+FreeCAD builds on OpenCascade Technology (OCCT), a venerable open-source BRep kernel originally developed by Matra Datavision in the 1990s. OCCT is powerful and feature-rich, supporting advanced surfacing, fillet and chamfer operations, BOP (Boolean OPerations), STEP import/export, and mesh generation. Its maturity is both a strength and a weakness: it handles complex industrial geometry but carries decades of C++ code with known robustness issues in certain boolean and fillet edge cases. FreeCAD's "toponaming" problem -- where editing an early feature scrambles references to faces and edges in downstream features -- stems in part from how OCCT manages topological naming.
+
+vcad's kernel is written in Rust using arena-based half-edge topology with `slotmap`. It uses Shewchuk's adaptive-precision exact predicates for geometric decisions, making boolean operations numerically robust. The kernel is smaller and younger than OCCT, meaning it covers fewer edge cases in advanced surfacing, but it avoids the legacy issues that plague OCCT-based tools. Compilation to WebAssembly lets the full kernel run in the browser without a server backend.
+
+<Callout type="info" title="Toponaming">
+FreeCAD's toponaming problem has been partially addressed in recent versions (0.21+) but remains a known limitation. vcad's parametric DAG uses operation-level references rather than topological names, avoiding the problem by design.
+</Callout>
+
+## Platform: Desktop vs Web
+
+FreeCAD is a desktop application built on Qt. It runs on Windows, macOS, and Linux, with the best experience on Linux where packaging and dependency management are most mature. Installation on macOS sometimes has complications with Python dependencies and framework builds. The Qt interface, while functional, has a steeper learning curve than modern web UIs and has been criticized for inconsistent styling across platforms.
+
+vcad runs in any modern browser. The Rust kernel compiles to WebAssembly, and the interface is built with React, Three.js, and Zustand. There is nothing to install -- open the URL and start modeling. The same codebase powers the CLI (Node.js), the Rust library (native), and the MCP server (for AI agents). This architecture means vcad works on Linux, Windows, macOS, ChromeOS, and tablets without platform-specific builds.
+
+## Workbench Ecosystem
+
+FreeCAD's architecture is workbench-based: Part Design for parametric solid modeling, Sketcher for 2D constraint sketching, FEM for finite element analysis, Path for CAM toolpaths, Arch/BIM for architectural modeling, TechDraw for 2D drawings, and dozens more created by the community. This modularity is powerful but can be confusing -- new users must learn which workbench to use for which task, and switching between workbenches sometimes means different UI paradigms and data models.
+
+vcad is a single integrated application. Modeling, sketching, assembly, drafting, and simulation are all accessible from one interface without workbench switching. The tradeoff is that vcad has fewer specialized features than FreeCAD's combined workbench ecosystem -- there is no BIM workbench, no dedicated sheet metal module, and no FEM with mesh generation and custom solver integration.
+
+## Scripting and Automation
+
+FreeCAD has a Python console and macro system. You can script any operation available in the GUI, access geometry through the Part module (which wraps OCCT), and create custom workbenches. Python integration is deep and well-documented. However, FreeCAD's Python API requires the full application to be running -- headless usage (without a GUI) is possible but requires care and is not a primary use case.
+
+vcad provides four programmatic interfaces, all designed for headless use from the start. The Rust crate offers direct kernel access with native performance. The TypeScript library wraps the WASM kernel for Node.js and browser use. The CLI provides shell-level automation (export, import, info queries). The MCP server exposes CAD operations as tools for AI agents. None of these require a GUI, making vcad well-suited for CI/CD pipelines, automated testing, and AI-driven design workflows.
+
+## Simulation
+
+FreeCAD's FEM workbench is a genuine strength. It supports linear and non-linear static analysis, thermal analysis, modal analysis, and coupled simulations using CalculiX and Elmer as solver backends. Mesh generation uses Gmsh and Netgen. For engineers who need to run stress analysis within their CAD tool, FreeCAD's FEM is the most capable open-source option.
+
+vcad takes a different approach. Rather than finite element analysis, vcad integrates Rapier3D for rigid body physics simulation. This is more useful for mechanism testing, robotics, and dynamic analysis of assemblies with joints. You can simulate gravity, motor torques, collisions, and contact forces in real time. For FEA, vcad exports STEP files that import into dedicated tools (CalculiX, SimScale, Ansys).
+
+## Community and Documentation
+
+FreeCAD has a massive community. The FreeCAD forum is one of the most active open-source CAD communities, with thousands of users contributing tutorials, macros, workbenches, and support. The wiki documentation is extensive (if sometimes disorganized). Twenty years of development means most mechanical engineering use cases have been attempted and documented somewhere.
+
+vcad's community is smaller but growing. Documentation is comprehensive and modern, and the codebase is smaller and more approachable for contributors (Rust instead of C++ reduces barriers to entry for new contributors, despite the learning curve).
+
+## Where FreeCAD Wins
+
+FreeCAD wins on maturity, breadth, and community. If you need FEM simulation, architectural BIM modeling, sheet metal design, or any of the dozens of specialized workbenches the community has built, FreeCAD has it. The 20 years of development mean that most edge cases in common mechanical engineering workflows have been encountered and addressed. The Python scripting environment is familiar to engineers. For users who prefer desktop applications and have existing FreeCAD workflows, the switching cost to vcad is nontrivial.
+
+## Where vcad Wins
+
+vcad wins on architecture and developer experience. The web-first platform means zero installation and cross-platform compatibility. The Rust kernel provides memory safety and WebAssembly portability. The modern React interface is more intuitive than FreeCAD's Qt workbenches. AI integration through MCP enables workflows that FreeCAD cannot support. Assembly modeling with joints, kinematics, and physics is built-in rather than requiring community add-ons with varying quality. And the MIT license is more permissive than FreeCAD's LGPL, allowing unrestricted embedding and commercial use.
+
+## Migration Path
+
+FreeCAD and vcad can interoperate through STEP files. Export from FreeCAD using File > Export > STEP, then import into vcad via drag-and-drop or the CLI (`vcad import-step input.step output.vcad`). The BRep geometry transfers cleanly, though parametric history does not (STEP is a geometry format, not a parametric format). For projects that need both FreeCAD's FEM and vcad's AI integration, maintaining STEP as an interchange format works well.
+
+## Conclusion
+
+FreeCAD and vcad represent two generations of open-source CAD. FreeCAD is the mature, established tool with comprehensive features built on OCCT. vcad is the modern alternative with a Rust kernel, web-native platform, and AI integration. If you need the depth and breadth of FreeCAD's workbenches today, FreeCAD is the right choice. If you want a faster, more modern tool with programmatic access and AI capabilities, and you can accept fewer specialized workbenches, vcad offers a compelling alternative that is improving rapidly.

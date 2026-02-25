@@ -1,0 +1,99 @@
+---
+title: "Export Format Guide"
+description: "When to use STL vs GLB vs STEP vs DXF vs URDF. Limitations of each"
+order: 4
+---
+
+vcad exports to five formats, each designed for a different downstream workflow. Choosing the right format determines whether your geometry arrives with full mathematical precision or as an approximation, whether materials travel with it, and whether the receiving tool can edit it further.
+
+## Format Comparison
+
+| Format | Geometry | Materials | Exact Surfaces | Primary Use |
+|--------|----------|-----------|---------------|-------------|
+| STL | Triangle mesh | No | No | 3D printing, CNC |
+| GLB | Triangle mesh | Yes (PBR) | No | Web viewers, AR, rendering |
+| STEP | BRep (exact) | Color only | Yes | CAD exchange, engineering |
+| DXF | 2D vectors | No | Yes (2D) | Laser cutting, CNC 2D |
+| URDF | Links + joints | Mesh refs | No | Robotics simulation |
+
+## STL
+
+STL (Standard Tessellation Language) converts your exact BRep surfaces into a watertight triangle mesh. It is the lingua franca of 3D printing -- every slicer accepts it -- and also the standard import format for CNC CAM packages.
+
+**Strengths.** Universal acceptance. Compact binary format (a typical bracket is a few hundred kilobytes). Simple structure that is easy to validate. Every 3D printing service, slicer, and mesh viewer reads STL without issue.
+
+**Limitations.** No materials, no colors, no assembly structure. The triangle mesh is an approximation of the true surfaces -- curved faces become faceted. There is no way to recover the original mathematical surface from an STL file. The tessellation resolution is fixed at export time; if you need finer resolution, you must re-export.
+
+**When to use.** 3D printing (FDM, SLA, SLS). CNC toolpath generation from mesh. Finite element analysis preprocessing. Any workflow that needs a watertight triangle mesh.
+
+Export with **Cmd+K** then **Export STL**, or via CLI: `vcad export model.vcad output.stl`.
+
+## GLB
+
+GLB (Binary glTF) is the standard format for 3D content on the web, in augmented reality, and in game engines. Unlike STL, GLB carries PBR materials (color, metallic, roughness), scene hierarchy, and optionally animation data.
+
+**Strengths.** Materials travel with the geometry, producing correct visual appearance without manual setup. Widely supported by web viewers (Three.js, model-viewer), AR frameworks (ARKit Quick Look, ARCore Scene Viewer), social media 3D previews, and game engines (Unity, Unreal, Godot). Compact binary format with optional Draco mesh compression.
+
+**Limitations.** Still a triangle mesh, not exact geometry. Cannot be imported into CAD tools for further editing. Materials are PBR-only (no procedural textures or material graphs).
+
+**When to use.** Sharing visual previews on the web. Embedding 3D models in web pages. AR product visualization. Portfolio rendering. Any workflow where appearance matters but geometric precision does not.
+
+Export with **Cmd+K** then **Export GLB**, or via CLI: `vcad export model.vcad output.glb`.
+
+## STEP
+
+STEP AP214 is the universal exchange format for exact BRep geometry. Planes stay planes, cylinders stay cylinders, and NURBS surfaces arrive with full control-point definitions. No information is lost in the translation.
+
+**Strengths.** Exact mathematical surfaces, not approximations. Editable in any CAD tool (Fusion 360, SolidWorks, CATIA, NX, Creo, FreeCAD). Preserves assembly structure, product metadata, and face colors. Industry standard for engineering data exchange. Round-trips faithfully between CAD systems.
+
+**Limitations.** No PBR materials (only basic face colors). Larger file sizes than mesh formats. Parsing is slower than binary mesh formats. Some STEP entity types have limited support across tools.
+
+**When to use.** Sending geometry to another engineer for further editing. Archiving designs in a tool-agnostic format. Procurement (manufacturers expect STEP files). Any workflow where the downstream tool needs to modify or analyze the exact geometry.
+
+Export with **Cmd+K** then **Export STEP**, or via CLI: `vcad export model.vcad output.step`.
+
+<Callout type="tip" title="When in doubt, export STEP">
+STEP preserves the most information. You can always convert STEP to STL or GLB downstream, but you cannot recover exact surfaces from a triangle mesh. If you are unsure which format the recipient needs, STEP is the safest choice.
+</Callout>
+
+## DXF
+
+DXF exports 2D vector profiles from drawing mode. Lines, arcs, circles, and polylines are written as exact 2D entities.
+
+**Strengths.** Universal acceptance by laser cutters, waterjet machines, CNC routers, and 2D CAM packages. Exact 2D geometry (arcs stay arcs, not polyline approximations). Lightweight text-based format. Layer support for separating cut, engrave, and annotation geometry.
+
+**Limitations.** 2D only -- no 3D geometry, no depth information. Must be created from a drawing view (top, front, side) or a flat sketch, not directly from the 3D model. No materials or colors beyond layer assignment.
+
+**When to use.** Laser cutting sheet material. Waterjet cutting. CNC routing flat stock. 2D engraving. Any workflow that operates on flat profiles cut from sheet stock.
+
+Export by creating a drawing view, then **Cmd+K** then **Export DXF**.
+
+## URDF
+
+URDF (Unified Robot Description Format) exports the assembly as a robot description compatible with ROS and robotics simulation tools.
+
+**Strengths.** Preserves kinematic structure (links, joints, joint types, limits, axes). Includes visual and collision meshes. Compatible with ROS, Gazebo, MuJoCo, and other robotics tools. Includes inertial properties when available.
+
+**Limitations.** Specific to robotics -- not useful for general CAD exchange. Mesh geometry is exported as STL (not exact). Assembly must follow a tree structure (no kinematic loops). Joint types are limited to the URDF specification.
+
+**When to use.** Exporting robot assemblies for ROS integration. Transferring robot designs to simulation environments (Gazebo, Isaac Sim). Sharing robot descriptions with robotics teams who work in the ROS ecosystem.
+
+Export via CLI: `vcad export model.vcad output.urdf`.
+
+## Choosing the Right Format
+
+The decision tree is straightforward.
+
+If the file goes to a **3D printer or slicer**: STL (or use the built-in slicer and skip the export entirely).
+
+If the file goes to a **web viewer, AR app, or rendering pipeline**: GLB.
+
+If the file goes to **another CAD engineer** for editing or analysis: STEP.
+
+If the file goes to a **laser cutter, waterjet, or CNC router** for 2D cutting: DXF.
+
+If the file describes a **robot** for simulation or ROS: URDF.
+
+If you need to send the same design to multiple destinations, export multiple formats. STEP for the engineering team, GLB for the marketing team's product page, STL for the prototype shop, and DXF for the sheet-metal panels.
+
+For understanding how the AI panel generates geometry from text descriptions, continue to the [Text-to-CAD](/guides/ai/text-to-cad) guide.

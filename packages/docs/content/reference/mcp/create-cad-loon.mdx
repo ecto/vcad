@@ -1,0 +1,90 @@
+---
+title: "create_cad_loon"
+description: "Create geometry using Loon language syntax"
+order: 3
+---
+
+`create_cad_loon` is an alternative to `create_cad_document` that accepts geometry as Loon source code. Loon is a compact Lisp-like language designed for parametric CAD, and it is often more concise than the JSON format -- especially for models with many chained operations. The tool evaluates the Loon source through the WASM kernel and returns an IR document.
+
+## Input Schema
+
+<Param name="source" type="string" required={true}>
+Loon source code defining the geometry. See [Loon Syntax](/reference/loon/syntax) for the complete language reference.
+</Param>
+
+<Param name="format" type="string" required={false}>
+Output format: `"compact"` (default) or `"json"`. Compact is recommended for MCP workflows.
+</Param>
+
+## Return Value
+
+The tool returns a text response containing the IR document in the requested format. The returned document can be passed to `inspect_cad`, `export_cad`, or `open_in_browser`, just like the output of `create_cad_document`.
+
+If the Loon source has a syntax error or references an undefined variable, the tool returns an error message describing the problem and the line where it occurred.
+
+## Examples
+
+### Simple Plate with Hole
+
+```json
+{
+  "source": "[let plate [cube 50 30 5]]\n[let hole [translate 25 15 0 [cylinder 3 10]]]\n[let result [difference plate hole]]\n[root result \"aluminum\"]"
+}
+```
+
+### Pipe Chaining
+
+```json
+{
+  "source": "[pipe\n  [cube 50 50 30]\n  [fillet 3]\n  [shell 2]\n  [translate -25 -25 0]]\n[root _ \"abs-white\"]"
+}
+```
+
+The `pipe` form passes the result of each expression as the last argument to the next, avoiding deep nesting.
+
+### Flange with Bolt Circle
+
+```json
+{
+  "source": "[let disc [cylinder 25 5]]\n[let holes [circular-pattern 0 0 0 0 0 1 6 360 [cylinder 3 10]]]\n[let flange [difference disc [translate 0 0 -1 holes]]]\n[root flange \"steel\"]"
+}
+```
+
+### Extruded L-Bracket
+
+```json
+{
+  "source": "[let profile [sketch xy [line 0 0 30 0] [line 30 0 30 5] [line 5 5 5 20] [line 5 20 0 20] [line 0 20 0 0] end]]\n[let bracket [extrude 0 0 15 profile]]\n[root bracket \"aluminum\"]"
+}
+```
+
+### Multi-Part Scene
+
+```json
+{
+  "source": "[let base [cube 100 100 10]]\n[let pillar [translate 40 40 10 [cylinder 10 50]]]\n[root base \"steel\"]\n[root pillar \"aluminum\"]"
+}
+```
+
+Multiple `root` directives create a multi-part scene where each root gets its own material assignment.
+
+## When to Use Loon vs. JSON
+
+Loon is a good choice when the model involves heavy operation chaining (the `pipe` form eliminates nesting), when the model is defined by a series of named let-bindings, or when token budget is tight. JSON (`create_cad_document`) is better when you need structured hole placement with the `at` position system, assembly definitions with typed joints, or when generating the input programmatically from code.
+
+Both tools produce the same IR format and can be mixed in a workflow -- use `create_cad_loon` to build geometry, then pass the result to `inspect_cad` or `export_cad`.
+
+## Error Handling
+
+If the Loon source is invalid, the tool returns an error response:
+
+```json
+{
+  "content": [{"type": "text", "text": "Error: Unknown variable 'plat' at line 3 (did you mean 'plate'?)"}],
+  "isError": true
+}
+```
+
+Common errors include undefined variables (typos in `let` binding names), mismatched brackets, wrong argument counts for opcodes, and attempting to boolean a 2D sketch without extruding it first.
+
+For the complete Loon language specification, see [Loon Syntax](/reference/loon/syntax). For a tutorial on using Loon with AI agents, see [Loon for AI](/guides/ai/loon).

@@ -1,0 +1,129 @@
+---
+title: "RL Training with Gym"
+description: "Gym interface, observation/action spaces, reward design, batch envs"
+order: 3
+---
+
+vcad's gym interface connects parametric CAD assemblies to reinforcement learning. You design a robot in vcad, pass the assembly to `create_robot_env`, and get back a standard gym-style environment with `reset`, `step`, and `observe` calls. The entire pipeline -- from CAD geometry to trained control policy -- runs through MCP tools or the JavaScript API.
+
+## Observation Space
+
+Every observation includes three components packed into structured data.
+
+**Joint positions** are an array of current joint state values. Revolute joints report angles in degrees. Prismatic joints report displacement in millimeters. For a 6-DOF robot arm, this is a 6-element array.
+
+**Joint velocities** are an array of current joint rates. Revolute joints report degrees per second. Prismatic joints report millimeters per second. Same dimensionality as positions.
+
+**End-effector poses** are 7-element arrays for each tracked end effector: `[x, y, z, qw, qx, qy, qz]`. The first three values are position in millimeters (Z-up world frame). The last four are orientation as a unit quaternion. If you track two end effectors, you get two 7-element arrays.
+
+The total observation dimension is `num_joints * 2 + num_end_effectors * 7`. For a 6-joint arm with one end effector: 6 + 6 + 7 = 19 dimensions.
+
+```json
+{
+  "joint_positions": [0.0, -45.0, 90.0, 0.0, 30.0, 0.0],
+  "joint_velocities": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+  "end_effector_poses": [[150.0, 0.0, 200.0, 1.0, 0.0, 0.0, 0.0]]
+}
+```
+
+## Action Space
+
+Actions control the joints. Each action is an array with one value per controllable joint. The interpretation depends on the **action type** you specify with each `gym_step` call.
+
+**Torque** applies force directly to joints. Values are in Newton-meters for revolute joints and Newtons for prismatic joints. Torque actions are the most physics-accurate but require the policy to learn the dynamics of the system.
+
+**Position** sets target angles (degrees) or displacements (mm) that built-in PD controllers drive toward. The controller applies torques internally to reach the target position. This simplifies the policy's job because it only needs to output desired positions, not raw forces.
+
+**Velocity** sets target angular velocities (degrees/second) or linear velocities (mm/second). The built-in controller applies torques to achieve the target velocity. Useful for continuous-motion tasks where you care about speed rather than position.
+
+<Callout type="info" title="Mixing action types">
+You can change the action type between steps. Start with position targets to move the arm to a rough configuration, then switch to torque for fine-grained force control. Most training loops use a single action type throughout, but the flexibility is there for hybrid strategies.
+</Callout>
+
+## Reward Design
+
+The `gym_step` tool returns a default reward of 0.0. In practice, you compute rewards from the observation. The reward function encodes what you want the agent to learn.
+
+**Distance-to-target** is the simplest reaching reward. Compute the Euclidean distance from the end effector to the target position and negate it: `reward = -distance(ee_pos, target)`. The agent learns to minimize distance, which means moving the end effector to the target.
+
+**Sparse reward** gives +1 when the end effector is within a threshold of the target and 0 otherwise. Sparse rewards are harder to learn from but define the task more precisely. Combine with a small dense shaping reward for faster convergence.
+
+**Energy penalty** subtracts a cost proportional to the sum of squared actions: `reward = -alpha * sum(action^2)`. This encourages efficient movement -- the agent learns to reach the target with minimal effort, avoiding large oscillating torques.
+
+**Orientation reward** adds a term for end-effector orientation matching. Compare the quaternion components: `reward += -beta * quaternion_distance(ee_quat, target_quat)`. Important for tasks where the tool must approach from a specific direction (pick-and-place, welding, painting).
+
+**Collision penalty** subtracts a large value if the physics engine detects self-collision or collision with obstacles. The observation does not include collision flags by default, but you can check for them by inspecting joint limit violations (a joint stuck at its limit under torque suggests contact).
+
+## Environment Configuration
+
+The `create_robot_env` call accepts parameters that control the simulation.
+
+**dt** is the timestep in seconds. The default (1/240 = 0.00417 s) provides smooth, stable simulation. Increase for faster but less accurate simulation (useful during early training exploration). Decrease for more accurate dynamics (important for sim-to-real transfer).
+
+**substeps** is the number of internal physics iterations per step. Higher values improve accuracy for stiff systems (assemblies with tight joint limits or heavy contact). The default of 4 is adequate for most robots.
+
+**max_steps** is the episode length. After this many steps, `done` becomes true and the episode ends. Set based on the task horizon -- a simple reaching task might need 200 steps (about 0.8 seconds at default dt), while a locomotion task might need 2000 steps (about 8 seconds).
+
+**end_effector_ids** specifies which instances to track in the observation. List the instance names of the parts whose pose you want to observe. For a robot arm, this is typically the gripper or tool.
+
+## Batch Environments
+
+Training RL policies requires thousands of episodes. Running them sequentially is slow. Batch environments run N copies of the simulation in parallel.
+
+```json
+{
+  "document": { "...assembly..." },
+  "n_envs": 32,
+  "end_effector_ids": ["gripper"],
+  "dt": 0.004166,
+  "max_steps": 200
+}
+```
+
+`batch_step` takes a 2D array of actions (one row per environment) and returns parallel observations, rewards, and done flags. `batch_reset` resets all environments (or specific ones) to their initial state.
+
+The parallelism is real -- each environment runs its own Rapier3D world independently. On a machine with 8 cores, 32 environments achieve near-linear speedup for the physics computation. The MCP call overhead is amortized across the batch.
+
+<Callout type="tip" title="Auto-reset">
+When a batch environment's done flag triggers, it automatically resets on the next `batch_step` call. You do not need to call `batch_reset` explicitly for individual environments -- just keep stepping and the batch manages episode boundaries.
+</Callout>
+
+## Integration with RL Frameworks
+
+The gym interface is compatible with standard RL libraries. A thin wrapper converts the MCP tool calls into the `gymnasium.Env` interface:
+
+```python
+import gymnasium as gym
+
+class VcadEnv(gym.Env):
+    def __init__(self, mcp_client, assembly_doc):
+        result = mcp_client.call("create_robot_env", {
+            "document": assembly_doc,
+            "end_effector_ids": ["gripper"]
+        })
+        self.env_id = result["env_id"]
+        self.action_space = gym.spaces.Box(-10, 10, (result["action_dim"],))
+        self.observation_space = gym.spaces.Box(-np.inf, np.inf, (result["observation_dim"],))
+
+    def reset(self, **kwargs):
+        obs = mcp_client.call("gym_reset", {"env_id": self.env_id})
+        return flatten(obs), {}
+
+    def step(self, action):
+        result = mcp_client.call("gym_step", {
+            "env_id": self.env_id,
+            "action_type": "torque",
+            "values": action.tolist()
+        })
+        obs = flatten(result["observation"])
+        reward = compute_reward(result["observation"])
+        return obs, reward, result["done"], False, {}
+```
+
+This wrapper plugs directly into stable-baselines3, CleanRL, or any other library that uses the gymnasium interface. Train with PPO, SAC, TD3, or any algorithm.
+
+## Sim-to-Real Considerations
+
+If you plan to transfer trained policies to a physical robot, several design choices improve transfer success. Use **domain randomization**: vary physical parameters (mass, friction, joint damping) across episodes so the policy learns to be robust to parameter uncertainty. Use **conservative timesteps**: a dt that is too large produces dynamics that diverge from reality. Use **realistic joint limits** from the actual robot's specification. And use **position or velocity actions** rather than raw torque, because PD controllers abstract away some of the dynamics mismatch between simulation and reality.
+
+For generating the training data that fine-tunes the text-to-CAD model, continue to the [Training Data Generation](/guides/ai/training-data) guide.

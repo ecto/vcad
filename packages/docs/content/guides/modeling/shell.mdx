@@ -1,0 +1,71 @@
+---
+title: "Shell & Thin Walls"
+description: "Hollow parts, wall thickness, limitations on non-planar surfaces"
+order: 4
+---
+
+Shell transforms a solid body into a thin-walled part by removing one or more faces and offsetting the remaining surfaces inward. The result is a hollow container with uniform wall thickness -- the fundamental operation behind enclosures, bottles, cups, boxes, and any part that needs to enclose a volume without being solid.
+
+<Playground exampleId="enclosure" />
+
+## How Shell Works
+
+The operation takes two inputs: the solid to shell and the wall thickness. Internally, vcad creates an **offset surface** for every face of the solid. Each surface type has its own offset logic. A plane shifts along its normal by the wall thickness. A cylinder changes its radius (inward for external faces, outward for internal). A sphere changes its radius. A cone shifts its apex along the axis by `thickness / sin(half_angle)`. A torus changes its minor radius.
+
+The offset surfaces are trimmed and sewn together to form an inner shell. The original outer surfaces and new inner surfaces combine into a single solid. One or more faces are removed to create openings.
+
+The enclosure above started as an 80 x 50 x 30 mm box. Shell with 2 mm wall thickness and the top face removed produced a five-sided container with uniform walls. The remaining geometry is a single solid with inner and outer surfaces separated by exactly 2 mm everywhere.
+
+## Choosing the Open Face
+
+When you apply shell in the app, select which face to remove by clicking it. For a box, removing the top face creates an open-top container. Removing a side face creates a tray. Removing two opposite faces creates a tunnel or channel. You can select multiple faces before applying the shell to remove them all in one operation.
+
+If you remove no faces, the result is a fully enclosed hollow body -- a sealed container with no opening. This is useful for flotation devices, pressure vessels, or any geometry that needs to be hollow but closed.
+
+<Callout type="tip" title="Decide before shelling">
+Choose which faces to remove before applying the operation. Shell and face removal happen as a single step. Adding an opening after shelling requires modeling it as a separate boolean subtraction.
+</Callout>
+
+## Wall Thickness Guidelines
+
+The wall thickness must be less than half the smallest dimension of the part. Shelling a 10 mm cube with a 6 mm wall thickness fails because the inner cavity would have negative dimension. In practice, keep wall thickness well below this theoretical limit.
+
+For **3D printing**, minimum printable wall thickness depends on nozzle diameter. A 0.4 mm nozzle reliably prints walls down to about 0.8 mm (two perimeters). Going thinner risks gaps and weak spots.
+
+For **injection molding**, wall thickness should be as uniform as possible across the part. Variations cause sink marks and warping. Typical injection-molded walls range from 1 to 4 mm depending on the material and part size.
+
+For **CNC machining**, wall thickness is constrained by tool deflection. Thin walls flex under cutting forces, producing poor surface finish and dimensional errors. A practical lower bound is 1 mm for aluminum and 2 mm for steel.
+
+## Analytical vs Mesh-Based Shell
+
+vcad uses an **analytical shell** for standard surface types (plane, cylinder, cone, sphere, torus). Each surface is offset exactly using closed-form mathematics. A shelled cylinder has an exact inner cylinder surface, not an approximation.
+
+When the analytical offset fails -- because the offset radius would be negative, the offset surface self-intersects, or the surface is a freeform NURBS shape with no simple offset formula -- vcad falls back to a **mesh-based** approach. The solid is tessellated, vertices are offset along their normals, and the result is converted back to a BRep solid. This fallback handles arbitrary geometry at the cost of some precision.
+
+<Callout type="warning" title="When offset fails">
+A cylinder with radius 5 mm shelled with 6 mm wall thickness fails because the inner radius would be -1 mm. Similarly, faces meeting at very acute angles can produce offset surface intersections that the sewing algorithm cannot resolve. The solver reports the failure and you must reduce wall thickness or simplify geometry.
+</Callout>
+
+## Shell Before or After Fillets?
+
+**Shell first, then fillet** rounds the edges of the thin-walled part. Both inner and outer edges get rounded. This is the standard approach for enclosures, consumer electronics housings, and any part where the exterior should be smooth.
+
+**Fillet first, then shell** hollows out a part that already has rounded edges. The inner corners may not match the outer corners because offsetting a fillet surface is not the same as filleting an offset surface.
+
+For most enclosures and housings, **shell first** is correct. For turned parts where you finalize the external contour with fillets and then bore out the center, **fillet first** may be appropriate.
+
+## Internal Features
+
+Shelled parts often need internal features: mounting bosses for screws, ribs for stiffness, snap-fit clips, and PCB standoffs. Model these as separate bodies and union them with the shelled body.
+
+The workflow is: create and shell the main body, model a boss as a small cylinder at the inner wall, union it with the shelled body, then subtract a smaller cylinder for the screw hole. Ribs are thin walls spanning between internal surfaces for stiffness. Model them as thin cubes or extruded rectangles and union with the shelled body. Rib thickness should match wall thickness to avoid sink marks in injection molding, or be slightly thinner (60-80% of wall thickness) for optimal mold filling.
+
+## Common Pitfalls
+
+**Self-intersecting offsets** happen when wall thickness is large relative to feature size. A box with a small notch may produce inner surfaces that overlap in the notch region. Simplify the geometry before shelling, or model the notch after shelling as a boolean cut.
+
+**Sharp corners** can produce degenerate geometry. If two faces meet at a very acute angle, offset surfaces diverge rapidly and may not intersect cleanly. Adding a fillet to the sharp corner before shelling eliminates this problem.
+
+**Volume computation** on shelled parts can be unreliable if the dual-shell topology confuses the algorithm. Both inner and outer shells contribute surface area, and winding direction determines which side is "inside." For accurate volume, compute the original solid's volume and subtract the volume of a solid offset inward by wall thickness.
+
+For finishing your shelled parts with rounded and beveled edges, continue to the [Fillet & Chamfer Strategy](/guides/modeling/fillet-chamfer) guide.

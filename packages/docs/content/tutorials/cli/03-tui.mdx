@@ -1,0 +1,107 @@
+---
+title: "Terminal UI"
+description: "vcad tui, keyboard navigation, file management"
+order: 3
+difficulty: Beginner
+time: "5 minutes"
+---
+
+The `vcad tui` command launches a full-screen terminal interface with a file browser, feature tree, and ASCII wireframe viewport. It is designed for situations where a browser is not available -- SSH sessions, remote servers, headless machines, or simply working from the terminal without switching contexts.
+
+```bash
+vcad tui
+```
+
+To open a specific file directly:
+
+```bash
+vcad tui bracket.vcad
+```
+
+## Layout
+
+The TUI divides the terminal into three panels. The left panel is the **feature tree**, which lists every operation in the current document from top to bottom. The center panel is the **viewport**, which renders an ASCII wireframe of the model using edge projection. The right panel is the **property inspector**, showing parameters for whichever node is currently selected in the feature tree.
+
+```
+┌─ Feature Tree ──┬──── Viewport ───────────────┬─ Properties ──┐
+│ > Plate          │                              │ Size X: 80    │
+│   Hole 1         │        ┌──────────┐         │ Size Y: 50    │
+│   Hole 2         │       /│          /│         │ Size Z: 5     │
+│   Fillet          │      / │         / │         │               │
+│                  │     ┌──────────┐/  │         │               │
+│                  │     │          │   │         │               │
+│                  │     │          │  /          │               │
+│                  │     │          │ /           │               │
+│                  │     └──────────┘             │               │
+│                  │                              │               │
+└──────────────────┴──────────────────────────────┴───────────────┘
+ [1] Box  [2] Cyl  [3] Sph  [4] Cone  │  [u] Union  [d] Diff  [i] Int
+```
+
+The status bar along the bottom shows available keyboard shortcuts for the current context.
+
+## Navigating the Feature Tree
+
+Use **j** and **k** (or the arrow keys) to move up and down the feature tree. Press **Enter** to select a node for editing -- its parameters appear in the property panel on the right, and the shape is highlighted in the viewport. Press **Escape** to deselect and return focus to the tree.
+
+When a node is selected, you can edit its parameters by pressing **Tab** to move focus to the property panel, then using **j**/**k** to navigate between fields and **Enter** to edit a value. Type the new number and press **Enter** to confirm, or **Escape** to cancel. Changes apply immediately and the viewport redraws.
+
+<Callout type="tip" title="Quick orbit">
+While the viewport has focus (press **v** to switch to viewport mode), use **h**/**l** to rotate the view left and right, and **j**/**k** to tilt up and down. Press **r** to reset to the default isometric view. Press **+** and **-** to zoom in and out.
+</Callout>
+
+## Adding Primitives
+
+The number keys are shortcuts for adding primitives. Press **1** to add a box, **2** for a cylinder, **3** for a sphere, and **4** for a cone. Each primitive is added at the origin with default dimensions, and focus jumps to the property panel so you can immediately type in the values you want.
+
+You can also press **:** to open the command input at the bottom of the screen. This accepts the same commands as the REPL -- `cube 30 20 10`, `translate 5 0 0`, `difference Part1 Part2`, and so on. This is useful when you need a command that does not have a dedicated keyboard shortcut.
+
+## File Management
+
+Press **Ctrl+O** to open a file browser. The browser shows `.vcad` files in the current directory. Navigate with the arrow keys and press **Enter** to open a file. Press **Ctrl+N** to create a new empty document.
+
+Saving works with **Ctrl+S**. If the document has not been saved before, you will be prompted for a filename. The TUI writes `.vcad` files that preserve the full parametric history.
+
+To export the current model, press **Ctrl+E**. A dialog appears where you type the output filename -- the format is inferred from the extension, just like the CLI. Type `output.stl` and press **Enter** to export an STL file.
+
+```
+┌─ Export ──────────────────────┐
+│ Filename: bracket.stl         │
+│                               │
+│ [Enter] Export  [Esc] Cancel  │
+└───────────────────────────────┘
+```
+
+## Boolean Operations
+
+Select two nodes in the feature tree by pressing **Enter** on the first, then **Space** on the second (Space toggles multi-select). With two nodes selected, press **u** for union, **d** for difference, or **i** for intersection. The operation is applied and the result replaces the two inputs in the tree.
+
+<Callout type="info" title="Difference order">
+For difference, the first node you selected is the body and the second is the tool. If you need to reverse the order, press **Escape** to deselect and start again with the tool node selected last.
+</Callout>
+
+## Transforms
+
+With a single node selected, press **t** to open the transform menu. You will see options for translate, rotate, scale, and mirror. Select one, then enter the values in the dialog that appears. The viewport updates as you confirm each value.
+
+## Undo and Redo
+
+Press **Ctrl+Z** to undo the last operation and **Ctrl+Y** (or **Ctrl+Shift+Z**) to redo. The undo stack is unlimited within a session.
+
+## Quitting
+
+Press **q** or **Ctrl+C** to quit. If there are unsaved changes, the TUI asks whether to save, discard, or cancel.
+
+```
+┌─ Unsaved Changes ─────────────────────────┐
+│ Save changes to bracket.vcad before exit?  │
+│                                            │
+│ [y] Save   [n] Discard   [Esc] Cancel     │
+└────────────────────────────────────────────┘
+```
+
+<Callout type="warning" title="Terminal size">
+The TUI requires a terminal at least 80 columns wide and 24 rows tall. If your terminal is smaller, the viewport panel may not render correctly. Resize your terminal or use `vcad repl` as a fallback.
+</Callout>
+
+The TUI gives you keyboard-driven CAD editing anywhere you have a terminal. For more powerful automation and batch workflows, see the [Scripting & Pipelines](/tutorials/cli/scripting) tutorial. For a complete list of CLI commands and flags, see the [CLI Commands reference](/reference/cli/commands).

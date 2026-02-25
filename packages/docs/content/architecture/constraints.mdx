@@ -1,0 +1,99 @@
+---
+title: "Constraint Solver"
+description: "Levenberg-Marquardt, residual functions, convergence"
+order: 4
+---
+
+The sketch constraint solver in `crates/vcad-kernel-constraints/` positions geometry to satisfy a set of geometric and dimensional constraints simultaneously. It uses Levenberg-Marquardt optimization -- a method that blends gradient descent with Gauss-Newton to converge robustly even from poor initial guesses.
+
+## Architecture
+
+The solver is organized across several modules. `entity.rs` defines sketch entities (points, lines, arcs, circles) with parameter indices into a flat parameter vector. `constraint.rs` defines the `Constraint` enum with all supported constraint types. `residual.rs` computes error values for each constraint. `jacobian.rs` builds the Jacobian matrix via central finite differences. `solver.rs` implements the Levenberg-Marquardt iteration loop. `sketch.rs` ties everything together with the `Sketch2D` API, and `export.rs` converts solved sketches into `SketchProfile` values for extrude and revolve operations.
+
+## Parameters and Variables
+
+Each sketch entity contributes variables to a flat `Vec<f64>` parameter vector. A `SketchPoint` stores two parameter indices (`param_x`, `param_y`), so adding a point to the sketch appends two values to the parameter vector and increases the degrees of freedom by 2. A `SketchLine` references two point entities (start and end) but adds no parameters of its own -- it inherits the 4 parameters from its endpoints. A `SketchCircle` references a center point and adds one parameter for the radius (3 DOF total: center x, center y, radius). A `SketchArc` references center, start, and end points.
+
+The `EntityRef` enum lets constraints reference specific parts of multi-point entities: `Point(id)`, `LineStart(id)`, `LineEnd(id)`, `Center(id)`, `ArcStart(id)`, `ArcEnd(id)`.
+
+## Constraint Types
+
+Each constraint is an error function that evaluates to zero when satisfied. The `Constraint` enum in `constraint.rs` splits into two categories.
+
+**Geometric constraints** have no explicit dimension. `Coincident` makes two points overlap: error is `[p1.x - p2.x, p1.y - p2.y]` (2 residuals). `Horizontal` forces a line's endpoints to share the same y-coordinate: error is `end.y - start.y`. `Vertical` does the same for x. `Parallel` uses the normalized cross product of two line directions (zero when parallel). `Perpendicular` uses the normalized dot product (zero when perpendicular). `Tangent` constrains a line to be perpendicular to the radius vector at a tangent point on a circle. `EqualLength` computes the difference of two line lengths. `EqualRadius` computes the difference of two circle radii. `Concentric` makes two circle centers coincide. `Fixed` pins a point to exact coordinates. `PointOnLine` constrains the signed distance from a point to a line to be zero. `PointOnCircle` constrains the distance from a point to a circle's center to equal the radius. `Midpoint` and `Symmetric` each contribute 2 residuals.
+
+**Dimensional constraints** carry explicit target values. `Distance` constrains the distance between two points. `Length` constrains a line's length. `Radius` constrains a circle's radius. `Angle` constrains the angle between two lines using `atan2` of the sine and cosine components, normalized to [-pi, pi]. `PointLineDistance` constrains the perpendicular distance from a point to a line. `HorizontalDistance` and `VerticalDistance` pin a single coordinate. `Diameter` constrains twice the radius.
+
+Each constraint reports its residual count via `num_residuals()` -- most return 1, but Coincident, Fixed, Concentric, Midpoint, and Symmetric return 2.
+
+## Residual Computation
+
+The `compute_constraint_residuals` function in `residual.rs` evaluates a constraint against the current parameter vector and entity definitions. Helper functions `get_point_coords`, `get_line_coords`, `get_circle_center`, and `get_radius` resolve `EntityRef` values into concrete coordinates by looking up entity parameter indices and reading from the parameter vector.
+
+For example, the Perpendicular constraint computes: direction vectors d1 and d2 from each line's start/end coordinates, normalizes them, and returns their dot product. When the lines are perpendicular, this dot product is zero.
+
+## Jacobian Matrix
+
+The Jacobian J is an (m x n) matrix where m is the total number of residuals across all constraints and n is the number of parameters. Entry J[i,j] is the partial derivative of residual i with respect to parameter j. The solver in `jacobian.rs` computes this via **central finite differences**:
+
+```
+J[i,j] = (r_i(p + h*e_j) - r_i(p - h*e_j)) / (2h)
+```
+
+where h = 1e-8. Central differences give O(h^2) accuracy versus O(h) for forward differences, at the cost of two residual evaluations per parameter per column. For a sketch with n parameters and m residuals, the Jacobian costs 2n full residual evaluations.
+
+<Callout type="info" title="Why finite differences?">
+Analytic Jacobians would be faster but require manual derivatives for every constraint type, making the code harder to extend. Since sketch sizes are typically small (tens of parameters), the finite-difference approach is fast enough and eliminates an entire class of derivative bugs.
+</Callout>
+
+## Levenberg-Marquardt Iteration
+
+The solver loop in `solver.rs` operates as follows. Given parameters p, it computes the residual vector r and Jacobian J, then forms the normal equations:
+
+```
+(J'J + lambda*I) * delta = -J'r
+```
+
+The damping parameter lambda controls the step character. When lambda is large, the step approaches gradient descent (small, safe steps). When lambda is small, the step approaches Gauss-Newton (fast convergence near the solution). The solver uses LU decomposition to solve this linear system for the step direction delta.
+
+After computing the step, the solver evaluates the new residual norm. If the new norm is smaller than the old one, the step is **accepted**: parameters are updated and lambda is decreased by `lambda_decrease` (default 0.1, minimum 1e-12). If the new norm is larger, the step is **rejected**: lambda is increased by `lambda_increase` (default 10.0, maximum 1e12). This adaptive damping ensures convergence even when the initial guess is far from the solution.
+
+The `SolverConfig` controls convergence:
+
+```rust
+pub struct SolverConfig {
+    pub max_iterations: usize,    // default 100
+    pub tolerance: f64,           // default 1e-10
+    pub initial_lambda: f64,      // default 1e-3
+    pub lambda_increase: f64,     // default 10.0
+    pub lambda_decrease: f64,     // default 0.1
+    pub min_lambda: f64,          // default 1e-12
+    pub max_lambda: f64,          // default 1e12
+}
+```
+
+Termination conditions are: residual norm below tolerance (converged), max iterations reached, lambda overflow (numerical issues), no constraints to solve, no parameters to optimize, or singular matrix (via LU failure).
+
+## Degrees of Freedom
+
+The `Sketch2D` tracks degrees of freedom as `total_parameters - total_residuals`. Each point adds 2 DOF, each circle adds 1 additional DOF (radius), and each constraint removes DOF equal to its residual count. A fully constrained sketch has DOF = 0. An over-constrained sketch (negative DOF) may still converge if the constraints are consistent, but the solver may produce unexpected results if they conflict.
+
+## Sketch2D API
+
+The `Sketch2D` struct in `sketch.rs` provides the high-level API. Users add entities (`add_point`, `add_line`, `add_circle_by_coords`, `add_arc`), add constraints (`constrain_fixed`, `constrain_horizontal`, `constrain_length`, etc.), and call `solve_default()` to run the solver. After solving, `get_point`, `get_line_endpoints`, `get_radius`, and `get_line_length` read back the solved geometry. The `to_profile()` method exports the solved sketch as a `SketchProfile` that can be passed to `extrude()` or `revolve()` in `vcad-kernel-sketch`.
+
+```rust
+let mut sketch = Sketch2D::new();
+let p0 = sketch.add_point(0.0, 0.0);
+let p1 = sketch.add_point(12.0, 1.0);
+let l0 = sketch.add_line(p0, p1);
+sketch.constrain_fixed(EntityRef::Point(p0), 0.0, 0.0);
+sketch.constrain_horizontal(l0);
+sketch.constrain_length(l0, 10.0);
+let result = sketch.solve_default();
+assert!(result.converged);
+```
+
+## Related Pages
+
+The [BRep Kernel](/architecture/kernel) page covers the topology and geometry that sketches produce. The [System Overview](/architecture/overview) page maps how sketches fit into the full pipeline.

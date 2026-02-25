@@ -1,0 +1,108 @@
+---
+title: "vcad vs OpenSCAD"
+description: "Programmer's solid 3D CAD modeler vs modern BRep-based parametric CAD"
+order: 3
+---
+
+OpenSCAD is the original programmer's CAD tool. Since 2010 it has served the maker community with a simple, text-based approach to 3D modeling: write code, preview geometry, export STL. vcad shares the belief that CAD should be programmable, but takes a fundamentally different approach to geometry representation, language choice, and user interface. Both are free and open source.
+
+## At a Glance
+
+| Feature | **vcad** | **OpenSCAD** |
+|---------|----------|-------------|
+| **Price** | Free (MIT) | Free (GPL) |
+| **License** | MIT (permissive) | GPL v2 (copyleft) |
+| **Geometry** | BRep (exact surfaces) | CSG mesh (CGAL) |
+| **Language** | Rust, TypeScript, Loon | OpenSCAD (custom functional) |
+| **GUI** | React/Three.js web app | Qt desktop preview |
+| **Platform** | Browser, CLI, library | Desktop (Win/Mac/Linux) |
+| **Export** | STEP, STL, GLB, DXF | STL, OFF, AMF, 3MF, DXF |
+| **STEP export** | Yes (exact BRep) | No |
+| **Assembly** | Parts, instances, joints | Not built-in |
+| **Sketch constraints** | Yes (Levenberg-Marquardt solver) | No |
+| **Booleans** | 4-stage BRep pipeline | CGAL Nef polyhedra |
+| **AI integration** | MCP server | None |
+| **Rendering** | Real-time Three.js + BRep ray tracing | OpenGL preview + CGAL render |
+
+## Geometry: BRep vs CSG Mesh
+
+This is the core technical difference. OpenSCAD represents geometry as Constructive Solid Geometry (CSG) trees evaluated into polyhedral meshes using CGAL's Nef polyhedra. Every surface is an approximation -- a cylinder is a polygon with `$fn` facets, a sphere is a geodesic mesh. The resolution is fixed at export time. Increasing `$fn` slows computation exponentially.
+
+vcad uses Boundary Representation (BRep) with exact analytic surfaces. A cylinder is stored as an actual cylindrical surface with a center axis and radius, not a polygon approximation. Spheres are spheres, planes are planes, and NURBS surfaces are mathematical splines. Tessellation (converting to triangles) happens only at the final export or display step, and the tessellation density is independent of the modeling operations.
+
+The practical impact is significant. In OpenSCAD, a fillet on a cylinder requires generating a high-polygon mesh upfront, and boolean operations on dense meshes are slow. In vcad, the fillet creates a toroidal surface analytically, and the boolean operates on the exact BRep. STEP export from vcad preserves exact surfaces; OpenSCAD cannot export STEP at all because it has no exact surface representation.
+
+<Callout type="info" title="Why STEP matters">
+STEP is the standard interchange format for professional CAD, CNC machining, and injection molding. Without STEP export, OpenSCAD models require re-modeling in a BRep tool for any manufacturing process beyond 3D printing.
+</Callout>
+
+## Language
+
+OpenSCAD has its own functional scripting language designed specifically for CSG modeling. It is simple to learn and effective for its purpose:
+
+```openscad
+// OpenSCAD
+difference() {
+    cube([100, 60, 5], center=true);
+    for (x=[-40,40], y=[-20,20])
+        translate([x, y, 0])
+            cylinder(r=3, h=10, center=true, $fn=32);
+}
+```
+
+vcad supports multiple languages. The same part in Rust:
+
+```rust
+// vcad (Rust)
+use vcad::{centered_cube, centered_cylinder};
+
+let plate = centered_cube("plate", 100.0, 60.0, 5.0);
+let hole = centered_cylinder("hole", 3.0, 10.0, 32);
+let holes = hole
+    .linear_pattern(80.0, 0.0, 0.0, 2)
+    .linear_pattern(0.0, 40.0, 0.0, 2)
+    .translate(-40.0, -20.0, 0.0);
+let part = plate - holes;
+```
+
+OpenSCAD's language is purpose-built and has no ecosystem outside of OpenSCAD. vcad's Rust API is a standard Rust crate that integrates with the entire Rust ecosystem: parsing, file I/O, parallelism, web frameworks, testing tools, and more. The TypeScript API provides the same access from JavaScript environments. Loon, vcad's domain-specific language, offers a concise syntax for CAD-specific workflows while still being embeddable in larger programs.
+
+## User Interface
+
+OpenSCAD provides a split-screen editor and preview window. You edit text on the left and press F5 to preview or F6 to render. The preview (OpenCSG) is fast but approximate; the render (CGAL) is exact but can be slow for complex models. There is no direct manipulation, no sketch mode, no feature tree, and no dimension scrubbing.
+
+vcad offers a full web application with a 3D viewport (Three.js with custom shaders), feature tree, property panel with scrub inputs, sketch mode with geometric constraint solving, assembly mode with joints and kinematics, and drawing mode for 2D projections. The app provides both visual interaction and programmatic access -- you can design interactively and export the parametric definition for CI/CD pipelines.
+
+## Performance
+
+OpenSCAD's CGAL backend is single-threaded and performance degrades sharply with complex booleans. A model with hundreds of boolean operations can take minutes to render. The `$fn` parameter directly trades quality for speed -- high-polygon cylinders in boolean operations are a known pain point.
+
+vcad's Rust kernel compiles to native code and uses SIMD-accelerated exact predicates. Boolean operations work on BRep surfaces rather than meshes, so complexity scales with the number of faces, not the tessellation resolution. The WASM build runs in the browser at near-native speed. For batch operations, the native Rust API can evaluate hundreds of parametric configurations per second.
+
+## Assembly and Joints
+
+OpenSCAD has no concept of assemblies, instances, or joints. Multi-part designs are handled by including multiple `.scad` files and manually positioning components with `translate`/`rotate`. There is no kinematic solver and no way to define mechanical relationships between parts.
+
+vcad supports full assemblies with part definitions, instances, joints (revolute, prismatic, cylindrical, ball, fixed), forward kinematics, and physics simulation. You can define a robot arm with revolute joints, set joint angles, solve kinematics to compute end-effector position, and run a Rapier3D physics simulation to test dynamic behavior under gravity and motor torques.
+
+## Community and Maturity
+
+OpenSCAD has been around since 2010 and has a large, active community. Thingiverse and Printables are full of parametric models written in OpenSCAD. The language is well-documented, and there is a rich library of community modules (BOSL2, NopSCADlib, etc.) for common mechanical components.
+
+vcad is a newer project. It has a smaller community but is growing. The advantage of being newer is that vcad could learn from OpenSCAD's limitations and build on modern foundations (Rust, WASM, BRep, web-native) rather than carrying legacy decisions.
+
+## Where OpenSCAD Wins
+
+OpenSCAD excels for quick parametric models that will be 3D printed. Its language is simple enough to learn in an afternoon, the CSG mental model is intuitive (union, difference, intersection), and the community library of reusable modules is extensive. For a maker who writes a few Thingiverse customizers per month, OpenSCAD's simplicity is a genuine advantage. The GPL license also appeals to those who prefer copyleft.
+
+## Where vcad Wins
+
+vcad is the stronger choice when you need exact geometry (STEP export, manufacturing beyond 3D printing), when performance matters (complex booleans, batch operations), when you want a real GUI with direct manipulation and sketch constraints, when you need assemblies with joints and kinematics, when AI integration through MCP is valuable, or when you want to embed a CAD kernel in a web application (MIT license, WASM). The BRep foundation means vcad can handle fillets, chamfers, and surfacing operations that are fundamentally impossible in a mesh-based system.
+
+## Migration Path
+
+If you have existing OpenSCAD models, you can migrate incrementally. Export STL from OpenSCAD and import into vcad for visualization and measurement, then re-model in vcad when you need BRep features (fillets, STEP export, assembly). The modeling concepts transfer directly: `cube` maps to `centered_cube`, `cylinder` to `centered_cylinder`, `difference` to the `-` operator, `union` to `+`, and `intersection` to `&`.
+
+## Conclusion
+
+OpenSCAD and vcad share a commitment to programmable CAD, but their technical foundations serve different needs. OpenSCAD is a quick, simple tool for 3D-printable mesh models. vcad is a full parametric CAD system with exact BRep geometry, a web GUI, assemblies, physics, and AI integration. If your workflow starts and ends at the 3D printer, OpenSCAD may be all you need. If you need manufacturing-quality geometry, assemblies, or programmatic integration with modern tools, vcad offers capabilities that OpenSCAD's mesh-based architecture cannot provide.

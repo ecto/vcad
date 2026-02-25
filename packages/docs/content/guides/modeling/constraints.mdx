@@ -1,0 +1,103 @@
+---
+title: "Sketch Constraints Deep Dive"
+description: "All 12 constraint types. Degrees of freedom, fully constrained vs under/over-constrained"
+order: 1
+---
+
+Every sketch element starts with freedom. A point on a 2D plane has 2 degrees of freedom (DOF) -- it can slide in X and it can slide in Y. A line segment has 4 DOF: two for each endpoint. A circle has 3: two for the center position and one for the radius. Constraints lock these freedoms down, one or two at a time, until the sketch cannot deform at all. That state -- zero remaining DOF -- is a fully constrained sketch, and it is the goal every time you draw.
+
+## The Three States
+
+vcad colors sketch geometry to tell you where you stand. **Blue** means under-constrained: some DOF remain, and the sketch can still deform if you drag a point. **Green** means fully constrained: zero DOF, every point and dimension is locked. **Red** means over-constrained: you have applied contradictory constraints that the solver cannot satisfy simultaneously.
+
+Under-constrained sketches are dangerous because a downstream dimension change can shift unconstrained geometry in unexpected ways. Over-constrained sketches are broken -- the solver rejects them outright. Fully constrained is the sweet spot, and the status bar at the bottom of the sketch editor shows the remaining DOF count so you can track your progress.
+
+## Constraint Types
+
+vcad's solver supports twelve constraint types. Each removes a specific number of DOF from the sketch.
+
+### Coincident (removes 2 DOF)
+
+Forces two points to occupy the same position. This is the most common constraint and often applied automatically when you click near an existing point while drawing. Coincident is the glue that holds a profile together -- without it, segments would float independently.
+
+### Horizontal (removes 1 DOF)
+
+Forces a line segment to be perfectly level (parallel to the sketch X axis). Applies to line segments only. If you apply horizontal to a segment that is nearly horizontal, the solver snaps it to exactly 0 degrees. Keyboard shortcut: **H**.
+
+### Vertical (removes 1 DOF)
+
+Forces a line segment to be perfectly plumb (parallel to the sketch Y axis). The vertical counterpart to horizontal. Keyboard shortcut: **V**.
+
+### Parallel (removes 1 DOF)
+
+Forces two line segments to have the same angle, without requiring a specific angle value. The segments do not need to be collinear or even adjacent -- they just need to point in the same direction. Useful for ensuring opposite edges of a profile remain parallel as you adjust dimensions.
+
+### Perpendicular (removes 1 DOF)
+
+Forces two line segments to meet at exactly 90 degrees. Common at corners of rectangular profiles and at intersections of construction lines with profile edges.
+
+### Tangent (removes 1 DOF)
+
+Forces a line and an arc (or two arcs) to meet smoothly, sharing the same slope at the contact point. Without tangent constraints, transitions between lines and arcs have visible kinks. With them, the profile flows continuously.
+
+### Distance (removes 1 DOF)
+
+Sets the exact spacing between two elements -- two points, a point and a line, or two parallel lines. A dimension annotation appears on the sketch showing the constrained value. This is how you specify absolute sizes. Keyboard shortcut: **D**.
+
+### Length (removes 1 DOF)
+
+Sets the exact length of a single line segment. Equivalent to a distance constraint between the segment's two endpoints, but more intuitive to apply. Select a segment, press **D**, and type the value.
+
+### Radius (removes 1 DOF)
+
+Sets the exact radius of a circle or arc. Select the circle, press **D**, and type the radius value. The dimension annotation shows on the circle.
+
+### Angle (removes 1 DOF)
+
+Sets the exact angle between two line segments, measured in degrees. Select two segments and apply the angle constraint. Unlike parallel (which forces 0 degrees) or perpendicular (which forces 90 degrees), angle lets you specify any value.
+
+### Equal Length (removes 1 DOF)
+
+Forces two line segments to have the same length, without specifying what that length is. Change one and the other follows. This is essential for symmetric profiles -- constrain opposite sides to be equal, then a single dimension controls both.
+
+### Fixed (removes 2 DOF)
+
+Pins a point to an absolute position on the sketch plane. Fixed constraints are the anchors that prevent the entire sketch from sliding around. A common pattern is to fix one point (often the origin) and constrain everything else relative to it.
+
+## DOF Accounting
+
+The systematic way to reach a fully constrained sketch is to count DOF as you go. Start by summing the initial DOF of all elements: each point contributes 2, each line segment contributes 4 (but shared endpoints are already coincident, so subtract 2 for each shared point). Then subtract the DOF removed by each constraint you add. When the total reaches zero, you are done.
+
+Consider a rectangle drawn as four line segments with shared corners. Four segments contribute 4 x 4 = 16 DOF. Four shared corners (coincident constraints, applied automatically) remove 4 x 2 = 8 DOF. Remaining: 8 DOF. To fully constrain this rectangle you need to remove 8 more DOF. One approach: horizontal on the top and bottom edges (2 DOF), vertical on the left and right edges (2 DOF), a distance constraint on the width (1 DOF), a distance constraint on the height (1 DOF), and a fixed constraint on one corner (2 DOF). That removes exactly 8, reaching zero.
+
+<Callout type="tip" title="Let the status bar guide you">
+You do not need to do this arithmetic by hand every time. The sketch editor's status bar shows the current remaining DOF count. As you add constraints, watch the number decrease. When it hits zero and the sketch turns green, you are fully constrained.
+</Callout>
+
+## The Solver
+
+vcad's constraint solver uses the **Levenberg-Marquardt** algorithm, a hybrid between gradient descent and Gauss-Newton optimization. Each constraint is expressed as a residual function -- a measure of how far the current geometry is from satisfying the constraint. The solver minimizes the sum of squared residuals, adjusting point positions until all constraints are satisfied simultaneously.
+
+The solver runs continuously as you add and modify constraints, with **adaptive damping** that lets it handle both well-conditioned systems (where small adjustments suffice) and ill-conditioned ones (where the geometry needs large moves). In practice this means constraints take effect immediately: drag a point and the rest of the sketch adjusts in real time to maintain all existing constraints.
+
+When the solver cannot find a configuration that satisfies all constraints -- because they contradict each other -- it flags the conflicting constraints in red. The most recently added constraint is usually the culprit. Delete it, reconsider your constraint strategy, and try again.
+
+## Constraining Efficiently
+
+Experienced users develop a consistent constraining workflow. One effective pattern is to draw the rough profile first without worrying about precision, then constrain in three passes.
+
+In the first pass, apply **geometric constraints**: horizontal, vertical, parallel, perpendicular, tangent, and equal length. These establish the shape's topology -- which edges are parallel, which corners are square, which arcs flow smoothly into lines. Geometric constraints are easy to apply by selecting elements and pressing a shortcut key.
+
+In the second pass, apply **dimensional constraints**: distance, length, radius, and angle. These lock down the exact sizes. Because the geometric constraints already define the relationships, each dimension you add collapses remaining DOF predictably.
+
+In the third pass, apply a **fixed constraint** to anchor the sketch in space. Often one fixed point at the origin is enough. Without this anchor the sketch is fully defined in shape but can still translate freely, leaving 2 DOF that the status bar will show.
+
+<Callout type="warning" title="Over-constraining traps">
+A common mistake is applying both a length constraint and two endpoint distance constraints that implicitly define the same length. The solver detects this as an over-constraint. Another trap is applying horizontal to all four sides of a rectangle -- the third and fourth horizontal constraints are redundant because the first two, combined with coincident endpoints, already force the remaining sides horizontal.
+</Callout>
+
+## Construction Geometry
+
+Sometimes you need reference lines or points that help you constrain the profile but should not be part of the extruded shape. Toggle any sketch element to **construction mode** by selecting it and pressing **G**. Construction geometry appears as dashed lines and is excluded from the profile when you extrude or revolve. It is especially useful for centerlines (constrain symmetry), reference points (anchor specific positions), and angle guides (constrain features at non-obvious angles).
+
+For a deep look at how sketches become 3D geometry, continue to the [Advanced Extrude](/guides/modeling/extrude) guide which covers twist, taper, and the decision between extrude, sweep, and revolve.

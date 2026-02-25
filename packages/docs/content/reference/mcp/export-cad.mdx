@@ -1,0 +1,102 @@
+---
+title: "export_cad"
+description: "Export to STL, GLB, STEP, DXF formats"
+order: 4
+---
+
+`export_cad` evaluates an IR document through the WASM kernel and writes the result to a file on disk. The output format is determined by the filename extension.
+
+## Input Schema
+
+<Param name="ir" type="Document" required={true}>
+IR document from `create_cad_document` or `create_cad_loon`. Can be provided in JSON or compact format -- the tool parses both.
+</Param>
+
+<Param name="filename" type="string" required={true}>
+Output filename with extension. The extension determines the export format. Supported extensions: `.stl`, `.glb`.
+</Param>
+
+## Supported Formats
+
+### STL (.stl)
+
+Binary STL format, the standard for 3D printing. The tool tessellates the BRep geometry into a triangle mesh and writes a single combined mesh for all scene parts. Binary STL is used exclusively (no ASCII STL option) because binary is smaller and faster, and all modern slicers support it.
+
+STL files do not contain material, color, or unit information. By convention, vcad exports in millimeters.
+
+```json
+{
+  "ir": "# vcad 0.2\nC 50 30 5\nROOT 0 default",
+  "filename": "bracket.stl"
+}
+```
+
+### GLB (.glb)
+
+glTF Binary format for 3D visualization. GLB preserves per-part PBR materials (color, metallic, roughness), making it suitable for rendering in web viewers, game engines, and AR/VR applications. Each scene root becomes a separate mesh with its assigned material.
+
+```json
+{
+  "ir": "# vcad 0.2\nM aluminum 0.9 0.9 0.92 0.95 0.3\nC 50 30 5\nROOT 0 aluminum",
+  "filename": "bracket.glb"
+}
+```
+
+## Return Value
+
+On success, the tool returns a JSON text response with export metadata:
+
+```json
+{
+  "path": "/Users/you/project/bracket.stl",
+  "bytes": 42684,
+  "format": "stl",
+  "parts": 1
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `path` | string | Absolute path to the written file |
+| `bytes` | number | File size in bytes |
+| `format` | string | Export format (matches the extension) |
+| `parts` | number | Number of parts exported |
+
+The file is written to the current working directory of the MCP server process. Use absolute paths in the filename to write to a specific location.
+
+## Error Handling
+
+The tool throws an error in these cases:
+
+**No parts to export.** The document evaluates to zero parts, typically because the `roots` array is empty or all roots reference missing nodes.
+
+**Unsupported format.** The filename extension is not `.stl` or `.glb`. The error message lists the supported extensions.
+
+**Evaluation failure.** The kernel fails to evaluate the IR document, usually due to invalid boolean operations (e.g., non-overlapping operands for intersection) or missing node references.
+
+**I/O failure.** The output path is not writable (permissions, disk full, etc.).
+
+```json
+{
+  "content": [{"type": "text", "text": "Error: Unsupported format: .obj. Use .stl or .glb"}],
+  "isError": true
+}
+```
+
+## Workflow
+
+The recommended MCP workflow is:
+
+1. `create_cad_document` or `create_cad_loon` to build geometry
+2. `inspect_cad` to verify dimensions and volume
+3. `export_cad` to write the final file
+
+The inspect step catches geometry problems (unexpected volume, wrong bounding box) before they reach the export, saving time on iteration.
+
+<Callout type="tip" title="STEP export">
+For STEP format export, use the `export_step` tool from the [STEP I/O](/reference/mcp/step-io) toolset instead of `export_cad`. STEP preserves the exact BRep representation rather than tessellating to triangles.
+</Callout>
+
+<Callout type="info" title="File location">
+The MCP server writes files relative to its current working directory, which is typically the directory where `npx @vcad/mcp` was launched. To control the output location, use an absolute path in the `filename` parameter.
+</Callout>

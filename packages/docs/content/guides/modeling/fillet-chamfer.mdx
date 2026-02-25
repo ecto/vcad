@@ -1,0 +1,71 @@
+---
+title: "Fillet & Chamfer Strategy"
+description: "Supported edge types, ordering, troubleshooting failures"
+order: 5
+---
+
+Fillets and chamfers are the finishing touches that turn a rough geometric model into a production-ready part. A fillet replaces a sharp edge with a smooth, tangent-continuous arc. A chamfer replaces it with a flat bevel. Both serve functional and aesthetic purposes -- fillets reduce stress concentrations and improve feel, chamfers ease assembly and provide weld preparation.
+
+## How Fillets Work
+
+A fillet on an edge creates a blending surface tangent to both adjacent faces. The blend geometry depends on the surface types meeting at the edge. vcad classifies each edge into a **fillet case** and applies the appropriate algorithm.
+
+**PlanePlane** edges (two flat faces meeting) produce a cylindrical blend. This is the simplest and most reliable fillet type. The fillet radius can be up to the distance from the edge to the nearest parallel edge on either face.
+
+**PlaneCylinder** edges (a flat face meeting a cylindrical face) produce a torus blend. This occurs at the top and bottom edges of drilled holes, or where a cylindrical boss meets a flat plate. The torus minor radius equals the fillet radius, and the major radius derives from the cylinder radius.
+
+**CylinderCylinderCoaxial** edges (two cylinders sharing the same axis) produce a torus blend. This occurs where a shaft transitions between two diameters or at the junction of a counterbore and through-hole.
+
+<Callout type="info" title="Unsupported edge types">
+Edges between NURBS surfaces, between cones and arbitrary surfaces, or other complex intersections are classified as **Unsupported** and return an error. As the kernel matures, more edge types will be covered. For now, model unsupported blends manually using a sweep or loft, or simplify the adjacent surfaces.
+</Callout>
+
+## How Chamfers Work
+
+A chamfer removes a triangular strip of material along an edge, creating a flat bevel. The chamfer distance controls how far the bevel extends onto each adjacent face. An equal-distance chamfer at distance D creates a 45-degree bevel extending D millimeters onto each face. An unequal chamfer allows different distances on each face for non-45-degree angles.
+
+Chamfers are geometrically simpler than fillets -- they replace one edge with two new edges and a flat face between them. This makes them more robust and less likely to fail on complex geometry.
+
+## Applying in the App
+
+Select edges in the viewport (edges highlight on hover; **Cmd+click** adds to the selection), press **Cmd+K**, and choose **Fillet** or **Chamfer**. The property panel shows a **Radius** field for fillets or **Distance** for chamfers. The preview updates in real time as you adjust.
+
+You can select multiple edges and fillet them all with the same radius. For edges needing different radii, apply separate fillet operations. Each fillet appears as its own node in the feature tree, so you can revisit individual radii later.
+
+## Ordering Rules
+
+The order of fillets relative to other operations matters significantly.
+
+**Fillets go last.** Apply fillets after all booleans, shells, and geometry-modifying operations. Filleting an edge before a boolean cut can cause the boolean to fail because the fillet changes the surface topology. The standard order is: primitives, booleans, shell, then fillets and chamfers.
+
+**Large fillets before small fillets.** When applying different radii, do the larger ones first. Large fillets create bigger blend surfaces that can interfere with nearby small fillets. Applying them first gives them room.
+
+**Chamfers on holes go last.** A chamfer on a hole's top edge (for bolt clearance or deburring) should be the final operation on that hole. Adding a chamfer then trying to fillet a nearby edge can produce unexpected geometry.
+
+<Callout type="warning" title="The ordering trap">
+The most common fillet failure: apply a fillet, then perform a boolean cut through the filleted region. The boolean encounters the curved fillet surface and may not handle the intersection correctly. Always cut first, fillet last.
+</Callout>
+
+## Troubleshooting Failures
+
+**Radius too large.** The fillet radius exceeds available space. Two parallel faces 8 mm apart cannot accept a 5 mm fillet because the blend would extend beyond both faces. Reduce the radius or increase feature size.
+
+**Adjacent fillets collide.** Two fillets on nearby edges overlap when their radii are too large relative to edge spacing. Reduce one or both radii, or fillet all edges in a single operation so the solver handles intersections simultaneously.
+
+**Unsupported edge type.** The edge connects surfaces the algorithm does not handle. The error message reports the classification. Simplify adjacent surfaces, model the blend manually, or skip the fillet on that edge.
+
+**Topology issues.** Very short edges, degenerate faces, or non-manifold topology from previous operations confuse the algorithm. Rebuild the part with cleaner booleans if a straightforward fillet fails unexpectedly.
+
+## Strategy for Complex Parts
+
+A systematic approach avoids most failures. First, identify all edges needing fillets and group them by radius: large structural fillets (4-8 mm), medium feature fillets (1-3 mm), small cosmetic fillets (0.3-1 mm). Apply groups from largest to smallest radius. If any fillet in a group fails, switch from batch to individual edge selection to isolate the problem. For edges that refuse to fillet, use a chamfer as fallback -- it produces a similar visual effect with more geometric robustness.
+
+## When to Use Fillet vs Chamfer
+
+**Fillets** suit parts people touch (comfort), parts under cyclic loading (30-60% stress reduction vs sharp corners), injection-molded parts (smooth flow), and consumer products (refined appearance).
+
+**Chamfers** suit machined parts (single-pass milling vs ball-nose 3D path), lead-in edges on holes (guide bolts), weld preparation (groove for weld material), and industrial equipment (utilitarian appearance).
+
+Many parts use both: fillets on external edges and chamfers on internal features like holes and counterbores.
+
+For replicating filleted features across your model, continue to the [Working with Patterns](/guides/modeling/patterns) guide.

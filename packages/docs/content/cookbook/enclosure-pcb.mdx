@@ -1,0 +1,279 @@
+---
+title: "Enclosure with PCB"
+description: "Full electronics enclosure with integrated PCB layout"
+difficulty: Advanced
+time: "25 min"
+order: 8
+playground:
+  exampleId: "enclosure"
+---
+
+Building an enclosure that properly houses a PCB requires coordinating multiple dimensions: the box interior must match the board outline, standoff positions must align with mounting holes, and connector cutouts must line up with component positions. This recipe shows how to design both parts together so everything fits on the first print.
+
+## PCB Dimensions First
+
+Start by defining the PCB as the reference geometry. Every enclosure dimension derives from the board:
+
+```rust
+use vcad::{centered_cube, centered_cylinder, Part};
+
+// PCB reference dimensions
+let pcb_width  = 60.0;   // mm
+let pcb_depth  = 40.0;   // mm
+let pcb_thick  = 1.6;    // Standard FR4 thickness
+let pcb_clearance = 1.0; // Gap between board edge and enclosure wall
+
+// Mounting hole positions (relative to PCB center)
+let mount_dx = 25.0;     // ±25mm from center in X
+let mount_dy = 15.0;     // ±15mm from center in Y
+let mount_hole_dia = 3.2; // M3 clearance
+```
+
+These parameters are the single source of truth. The enclosure, standoffs, and cutouts all reference them, so changing a PCB dimension automatically propagates to every dependent feature.
+
+## The Enclosure Shell
+
+Derive the enclosure interior from the PCB dimensions plus clearance:
+
+```rust
+let wall = 2.0;
+let standoff_height = 5.0;  // PCB sits this far above floor
+let headroom = 15.0;        // Space above PCB for components
+
+let interior_w = pcb_width + pcb_clearance * 2.0;
+let interior_d = pcb_depth + pcb_clearance * 2.0;
+let interior_h = standoff_height + pcb_thick + headroom;
+
+let outer_w = interior_w + wall * 2.0;
+let outer_d = interior_d + wall * 2.0;
+let outer_h = interior_h + wall;  // Solid bottom
+
+let outer = centered_cube("outer", outer_w, outer_d, outer_h);
+let inner = centered_cube("inner", interior_w, interior_d, interior_h)
+    .translate(0.0, 0.0, wall);
+
+let shell = outer - inner;
+```
+
+<Playground exampleId="enclosure" />
+
+The enclosure interior is exactly PCB width plus 1mm clearance on each side. The height accounts for three layers: 5mm standoffs below the board, 1.6mm for the board itself, and 15mm of headroom above for components. The solid bottom (wall thickness) is created by offsetting the inner cavity upward.
+
+## Standoffs
+
+The standoff positions match the PCB mounting holes exactly. Each standoff is a cylinder with a screw hole, placed at the PCB mounting coordinates:
+
+```rust
+fn standoff(outer_r: f64, hole_r: f64, height: f64) -> Part {
+    let boss = centered_cylinder("boss", outer_r, height, 24);
+    let hole = centered_cylinder("hole", hole_r, height + 5.0, 16);
+    boss - hole
+}
+
+let post = standoff(3.0, 1.3, standoff_height)  // M2.5 self-tap hole
+    .translate(0.0, 0.0, wall);
+
+// Place at all four mounting positions
+let standoffs = post
+    .translate(mount_dx, mount_dy, 0.0)
+    .linear_pattern(-mount_dx * 2.0, 0.0, 0.0, 2)
+    .linear_pattern(0.0, -mount_dy * 2.0, 0.0, 2);
+
+let box_with_posts = shell + standoffs;
+```
+
+The standoffs are positioned at `(+/-25, +/-15)` from center, matching the PCB mounting holes. Each post is 5mm tall, placing the PCB surface exactly 5mm above the enclosure floor. The screw hole diameter (2.6mm) is sized for M2.5 self-tapping screws in plastic.
+
+<Callout type="tip" title="Self-tap vs heat-set">
+For prototypes, self-tapping screw holes (undersized by 0.2mm) work well in PLA/PETG. For production, use heat-set inserts -- increase the standoff hole to the insert's press-fit diameter (typically 3.5mm for M2.5 inserts).
+</Callout>
+
+## PCB Model
+
+Model the PCB itself for interference checking and visualization. This does not get printed -- it is a reference part for the assembly:
+
+```rust
+// PCB board
+let pcb_board = centered_cube("pcb", pcb_width, pcb_depth, pcb_thick)
+    .translate(0.0, 0.0, wall + standoff_height);
+
+// Mounting holes through PCB
+let pcb_hole = centered_cylinder("pcb_hole", mount_hole_dia / 2.0, pcb_thick + 2.0, 16);
+let pcb_holes = pcb_hole
+    .translate(mount_dx, mount_dy, wall + standoff_height)
+    .linear_pattern(-mount_dx * 2.0, 0.0, 0.0, 2)
+    .linear_pattern(0.0, -mount_dy * 2.0, 0.0, 2);
+
+let pcb = pcb_board - pcb_holes;
+```
+
+### Component volumes
+
+Model key components as simple bounding boxes to verify clearance:
+
+```rust
+let pcb_top = wall + standoff_height + pcb_thick;
+
+// Microcontroller (e.g., ESP32 module)
+let mcu = centered_cube("mcu", 18.0, 25.0, 3.0)
+    .translate(10.0, 5.0, pcb_top);
+
+// USB-C connector (extends to board edge)
+let usb = centered_cube("usb", 9.0, 7.5, 3.5)
+    .translate(0.0, -pcb_depth / 2.0, pcb_top);
+
+// Tallest component (electrolytic cap)
+let cap = centered_cylinder("cap", 4.0, 11.0, 16)
+    .translate(-15.0, 10.0, pcb_top);
+```
+
+These bounding volumes help verify that the headroom is sufficient and that no component interferes with the enclosure walls. The tallest component (11mm capacitor) plus the PCB surface height must be less than the interior height.
+
+## Connector Cutouts
+
+Align cutouts with the actual connector positions on the PCB. The USB connector extends to the board edge, so the cutout goes through the enclosure wall at the matching position:
+
+```rust
+let usb_z = pcb_top + 1.75;  // Center of USB connector
+
+// USB-C cutout with tolerance
+let usb_cutout = centered_cube("usb_cut", 10.0, wall + 2.0, 4.5)
+    .translate(0.0, -outer_d / 2.0, usb_z);
+
+// Power barrel jack on opposite side
+let power_cutout = centered_cylinder("pwr_cut", 4.0, wall + 2.0, 24)
+    .rotate(90.0, 0.0, 0.0)
+    .translate(-20.0, outer_d / 2.0, pcb_top + 2.0);
+
+let with_cutouts = box_with_posts - usb_cutout - power_cutout;
+```
+
+The cutout positions are derived from the PCB coordinate system. The USB connector sits at Y = -pcb_depth/2 (the front edge of the board), so the wall cutout is at Y = -outer_d/2 (the front wall of the enclosure). The Z position centers on the connector's midpoint.
+
+<Callout type="warning" title="Tolerance">
+Add 0.5mm to each side of connector cutouts to account for printing tolerances and slight PCB positioning variation. The code above uses 10mm for a 9mm USB connector and 4.5mm for a 3.5mm tall connector.
+</Callout>
+
+## Ventilation
+
+If the PCB generates heat (voltage regulators, motor drivers), add ventilation slots on the sides:
+
+```rust
+let vent = centered_cube("vent", 2.0, wall + 2.0, 12.0)
+    .translate(0.0, -outer_d / 2.0, outer_h / 2.0);
+
+let vents = vent
+    .linear_pattern(4.0, 0.0, 0.0, 6)
+    .translate(-10.0, 0.0, 0.0);
+
+let all_vents = &vents + &vents.mirror_y();  // Both sides
+
+let ventilated = with_cutouts - all_vents;
+```
+
+## The Lid
+
+The lid matches the enclosure opening with a press-fit lip:
+
+```rust
+let clearance = 0.3;  // Print tolerance for press fit
+let lip_depth = 3.0;
+
+let lid_top = centered_cube("lid", outer_w, outer_d, wall);
+let lid_lip = centered_cube("lip",
+    interior_w - clearance * 2.0,
+    interior_d - clearance * 2.0,
+    lip_depth
+).translate(0.0, 0.0, -(wall + lip_depth) / 2.0);
+
+let lid = lid_top + lid_lip;
+```
+
+The lip is 0.3mm smaller than the interior on each side, giving a snug press fit. For screw-down lids, add counterbored holes in the lid corners that align with bosses on the enclosure walls.
+
+## Complete Code
+
+```rust
+use vcad::{centered_cube, centered_cylinder, Part, Scene};
+use vcad::export::{Materials, export_scene_glb};
+
+fn enclosure_with_pcb(
+    pcb_w: f64, pcb_d: f64, pcb_t: f64,
+    mount_dx: f64, mount_dy: f64,
+    wall: f64, standoff_h: f64, headroom: f64,
+) -> (Part, Part, Part) {
+    let clearance_pcb = 1.0;
+    let clearance_lid = 0.3;
+
+    let int_w = pcb_w + clearance_pcb * 2.0;
+    let int_d = pcb_d + clearance_pcb * 2.0;
+    let int_h = standoff_h + pcb_t + headroom;
+
+    let ext_w = int_w + wall * 2.0;
+    let ext_d = int_d + wall * 2.0;
+    let ext_h = int_h + wall;
+
+    // Shell
+    let outer = centered_cube("outer", ext_w, ext_d, ext_h);
+    let inner = centered_cube("inner", int_w, int_d, int_h)
+        .translate(0.0, 0.0, wall);
+    let shell = outer - inner;
+
+    // Standoffs
+    let post = {
+        let boss = centered_cylinder("boss", 3.0, standoff_h, 24);
+        let hole = centered_cylinder("hole", 1.3, standoff_h + 5.0, 16);
+        (boss - hole).translate(0.0, 0.0, wall)
+    };
+    let posts = post
+        .translate(mount_dx, mount_dy, 0.0)
+        .linear_pattern(-mount_dx * 2.0, 0.0, 0.0, 2)
+        .linear_pattern(0.0, -mount_dy * 2.0, 0.0, 2);
+
+    // USB cutout
+    let pcb_top = wall + standoff_h + pcb_t;
+    let usb_cut = centered_cube("usb", 10.0, wall + 2.0, 4.5)
+        .translate(0.0, -ext_d / 2.0, pcb_top + 1.75);
+
+    // Vents
+    let vent = centered_cube("vent", 2.0, wall + 2.0, 12.0)
+        .translate(0.0, -ext_d / 2.0, ext_h / 2.0);
+    let vents = vent.linear_pattern(4.0, 0.0, 0.0, 6)
+        .translate(-10.0, 0.0, 0.0);
+    let all_vents = &vents + &vents.mirror_y();
+
+    let enclosure = shell + posts - usb_cut - all_vents;
+
+    // Lid
+    let lid_top = centered_cube("lid", ext_w, ext_d, wall);
+    let lid_lip = centered_cube("lip",
+        int_w - clearance_lid * 2.0,
+        int_d - clearance_lid * 2.0,
+        3.0
+    ).translate(0.0, 0.0, -(wall + 3.0) / 2.0);
+    let lid = lid_top + lid_lip;
+
+    // PCB reference
+    let pcb = centered_cube("pcb", pcb_w, pcb_d, pcb_t)
+        .translate(0.0, 0.0, wall + standoff_h);
+
+    (enclosure, lid, pcb)
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let (enclosure, lid, _pcb) = enclosure_with_pcb(
+        60.0, 40.0, 1.6,   // PCB dimensions
+        25.0, 15.0,         // Mounting hole offsets
+        2.0, 5.0, 15.0,    // Wall, standoff height, headroom
+    );
+
+    enclosure.write_stl("enclosure_box.stl")?;
+    lid.write_stl("enclosure_lid.stl")?;
+
+    Ok(())
+}
+```
+
+<Callout type="tip" title="Design for assembly">
+Export the enclosure, lid, and PCB as separate parts in a single GLB scene for visual verification. Rotate the lid above the box so you can see the lip alignment. Check that no component volume intersects the enclosure walls by performing a boolean intersection test.
+</Callout>

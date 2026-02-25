@@ -1,0 +1,75 @@
+---
+title: "Design Rule Checks"
+description: "DRC + ERC. Clearance, trace width, drill size, annular ring violations"
+order: 3
+---
+
+Design Rule Checks validate your PCB layout against the manufacturing constraints of your fabrication house. A board that passes DRC can be fabricated without ambiguity. A board that fails DRC has features that the fab process cannot reproduce, leading to open circuits, short circuits, or outright rejection. Run DRC before generating fabrication files -- always.
+
+## Running DRC
+
+Press **Cmd+K** and choose **Run DRC** in the PCB editor. The checker sweeps through every trace, pad, via, zone, and board edge, testing each against the design rules you configured. Violations appear as markers on the board and as entries in the DRC report panel.
+
+Each violation includes the rule that was broken, the severity (error or warning), the location on the board (click to zoom), and the measured value versus the required value. Errors must be fixed before fabrication. Warnings indicate potential issues that may or may not be problems depending on your specific fab process.
+
+## Clearance Violations
+
+Clearance rules specify the minimum distance between copper features.
+
+**Trace-to-trace** clearance prevents adjacent traces from shorting due to manufacturing tolerance (copper etching is not perfectly precise). A typical minimum is 0.15 mm (6 mil). High-voltage designs may require 0.5 mm or more between nets at different potentials.
+
+**Trace-to-pad** clearance prevents a trace from getting too close to a pad it does not belong to. Usually the same value as trace-to-trace.
+
+**Pad-to-pad** clearance applies to pads on the same layer that belong to different nets. Fine-pitch IC packages (0.5 mm or 0.4 mm pitch) push this constraint to its limit.
+
+**Trace-to-zone** clearance separates signal traces from copper pour zones. Typically matches trace-to-trace clearance.
+
+**Trace-to-edge** clearance keeps copper away from the board boundary. Traces too close to the edge are at risk during routing (the V-cut or tab-route that separates boards from the panel). A minimum of 0.25 mm is common.
+
+When a clearance violation appears, the fix is usually to nudge one of the offending features away from the other. Reroute the trace with a wider berth, move a component slightly, or increase the zone clearance in the zone settings.
+
+## Trace Width Violations
+
+The minimum trace width depends on the fabrication process. Standard PCB services handle 0.15 mm (6 mil); budget services may require 0.2 mm (8 mil); advanced services go down to 0.075 mm (3 mil) or less.
+
+A trace width violation means a trace segment is narrower than the minimum. This can happen when routing through tight spaces between pads, or when a trace narrows automatically to fit between obstacles. Fix it by widening the trace, rerouting through a less congested area, or moving the obstructing components apart.
+
+Power traces have a separate minimum width requirement based on the current they carry. The IPC-2221 standard provides formulas relating trace width to current capacity for a given temperature rise and copper weight. A 1 oz copper trace carrying 1 A needs roughly 0.3 mm width for a 10-degree-C temperature rise. Carrying 3 A needs roughly 1.5 mm.
+
+<Callout type="tip" title="Current capacity">
+Wide traces for power, narrow traces for signals. Set net-specific width rules in the design rules: give VCC and GND nets a wider minimum than signal nets. This prevents the router from accidentally creating a power trace that is too narrow for the current it carries.
+</Callout>
+
+## Drill Size Violations
+
+Every via and through-hole pad has a drill diameter. The minimum drill size depends on the fab house -- 0.2 mm is common for standard services, 0.15 mm for advanced. Drills smaller than the minimum cannot be manufactured.
+
+Drill violations typically occur with vias. If you specified a via drill diameter below the fab's minimum, increase it in the via settings. Remember that a smaller drill allows a smaller via pad, which saves routing space, but only if the fab can actually drill it.
+
+## Annular Ring Violations
+
+The annular ring is the copper pad area surrounding a drilled hole. It must be wide enough to ensure reliable copper-to-hole connectivity after drilling. The minimum annular ring width is the via pad radius minus the drill radius. A typical minimum is 0.125 mm (5 mil).
+
+If the annular ring is too narrow, increase the via pad diameter while keeping the drill size constant, or reduce the drill diameter while keeping the pad size constant. The trade-off is routing space: larger pads take more room but provide more reliable connections.
+
+## Unrouted Connections
+
+DRC reports any ratsnest connections that have not been routed. Every net in the schematic must have a complete copper path on the PCB. An unrouted connection means two pads that should be connected have no trace, via, or zone connection between them.
+
+Sometimes a zone connection can satisfy a net without an explicit trace -- a pad connected to a ground zone is connected to all other ground pads via the zone. DRC recognizes zone connections and does not flag them as unrouted. But if a pad is isolated from its zone by a clearance gap (often caused by thermal relief settings or keepout areas), DRC correctly flags the missing connection.
+
+## Running ERC from the PCB Editor
+
+In addition to layout DRC, you can run the schematic's Electrical Rules Check from within the PCB editor to verify that the netlist is consistent. ERC checks for unconnected schematic pins, conflicting net assignments, and missing footprints. Running both ERC and DRC together ensures that the schematic is correct and the layout faithfully implements it.
+
+<Callout type="warning" title="DRC clean does not mean design correct">
+DRC verifies manufacturability, not functionality. A board can pass DRC perfectly while having a swapped connection, a missing pullup resistor, or an incorrect component value. DRC catches physical constraint violations. Functional correctness requires schematic review, simulation, and prototype testing.
+</Callout>
+
+## Fixing Violations Efficiently
+
+When DRC reports many violations, fix them systematically. Start with clearance violations because they often cascade (one misplaced trace causes clearance errors with multiple neighbors). Then fix trace width violations. Then drill and annular ring. Finally, resolve unrouted connections.
+
+After fixing, run DRC again. Some fixes introduce new violations (rerouting a trace to fix a clearance issue may create a width violation in the new path). Iterate until the report is clean.
+
+For high-speed designs that need controlled impedance traces, continue to the [Impedance & Signal Integrity](/guides/electronics/impedance) guide.

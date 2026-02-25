@@ -9,7 +9,7 @@ import {
   getAllContent,
   getNavigation,
 } from "@/lib/content";
-import { getMdxComponents } from "@/lib/mdx-components";
+import { getMdxComponents, mdxOptions } from "@/lib/mdx-components";
 import { cn } from "@/lib/utils";
 
 interface PageProps {
@@ -87,7 +87,7 @@ export default async function CookbookRecipePage({ params }: PageProps) {
 
       {/* Content */}
       <article className="mb-16">
-        <MDXRemote source={data.content} components={getMdxComponents()} />
+        <MDXRemote source={data.content} components={getMdxComponents()} options={mdxOptions} />
       </article>
 
       {/* Navigation */}

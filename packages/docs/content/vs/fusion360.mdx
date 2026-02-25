@@ -1,0 +1,79 @@
+---
+title: "vcad vs Fusion 360"
+description: "Autodesk integrated CAD/CAM/CAE vs lightweight open-source parametric CAD"
+order: 2
+---
+
+Fusion 360 is Autodesk's integrated design platform that bundles parametric modeling, manufacturing (CAM), simulation (FEA), PCB design (EAGLE integration), and rendering into a single application. vcad is a focused parametric CAD system with a custom BRep kernel, web-first architecture, and native AI integration. Fusion 360 tries to be every engineering tool in one; vcad aims to be the best open-source parametric modeler and let you choose your own toolchain for everything else.
+
+## At a Glance
+
+| Feature | **vcad** | **Fusion 360** |
+|---------|----------|----------------|
+| **Price** | Free (MIT license) | $595/year (Commercial), free for personal use (limited) |
+| **Source** | Open source | Proprietary |
+| **Platform** | Browser + CLI + Rust library | Desktop app (Windows/Mac) + limited web viewer |
+| **Geometry kernel** | Custom BRep (Rust, WASM) | Autodesk ShapeManager (T-Splines, BRep) |
+| **CAM** | Basic toolpath generation | Production-grade 2.5/3/4/5-axis CAM |
+| **Simulation** | Physics (Rapier3D) | FEA (static stress, thermal, modal, buckling) |
+| **Rendering** | Three.js + BRep ray tracing | Autodesk Rendering (cloud ray tracing) |
+| **Electronics** | None | EAGLE PCB integration |
+| **AI integration** | Native MCP server | Autodesk AI (limited, cloud) |
+| **Data storage** | Local files | Autodesk cloud (Fusion Team) |
+| **Offline** | Full | Limited (requires periodic check-in) |
+| **File formats** | STEP, STL, GLB, DXF, .vcad | STEP, STL, IGES, SAT, DWG, 3MF, OBJ, more |
+| **API** | Rust, TypeScript, MCP, CLI | Python scripting (internal) |
+
+## Pricing
+
+Fusion 360's commercial license is $595/year per seat. The free personal use license restricts you to 10 active documents, removes multi-body features, limits CAM to 3-axis, and disables simulation. Autodesk has changed the personal license terms multiple times -- features that were free have been moved to paid tiers without warning. For professional use, a five-person team costs roughly $3,000/year.
+
+vcad is MIT-licensed and free for any purpose, including commercial use. There are no feature restrictions, document limits, or license check-ins. The total cost is zero, permanently.
+
+## CAD/CAM/CAE Integration
+
+Fusion 360's greatest strength is integration. Modeling, manufacturing, and simulation share the same data model, so changing a dimension in the CAD model automatically updates toolpaths and stress analysis results. The CAM module is production-grade, supporting 2D profiling, 3D adaptive clearing, multi-axis simultaneous milling, and turning. The simulation module offers static stress, thermal, modal, and buckling analysis with cloud-based solving.
+
+vcad focuses on parametric modeling and assembly. It includes physics simulation via Rapier3D (useful for mechanism testing and robotics), but does not have FEA or production CAM. For manufacturing, vcad exports STEP files that import cleanly into dedicated CAM software like Fusion 360's manufacturing workspace, Mastercam, or HSMWorks. For simulation, STEP exports work with Ansys, SimScale, or CalculiX.
+
+This is a deliberate design choice: rather than building a mediocre version of every tool, vcad builds an excellent parametric modeler that interoperates well with best-in-class specialized tools through standard file formats.
+
+<Callout type="info" title="STEP as interchange">
+vcad's STEP AP214 export preserves exact BRep geometry (analytic surfaces and NURBS), not tessellated approximations. CAM and FEA tools can recognize features like planar faces, cylindrical bores, and fillets directly from the STEP file, enabling automatic toolpath and mesh generation.
+</Callout>
+
+## Desktop vs Web
+
+Fusion 360 is a desktop application that requires installation on Windows or macOS. It uses Autodesk's cloud services for rendering, simulation solving, and collaboration. A web viewer exists but is read-only.
+
+vcad runs entirely in the browser. The Rust kernel compiles to WebAssembly, so the full modeling engine runs client-side with no server. This means vcad works on any platform with a modern browser -- including Linux, ChromeOS, and tablets -- without installation. The same WASM kernel runs in Node.js for CLI and server-side use.
+
+## Data Ownership
+
+Fusion 360 stores all data in Autodesk's cloud (Fusion Team). While you can export individual files, the full design history, branches, and project metadata are only accessible through Fusion 360. Autodesk's terms of service grant them broad rights to data stored on their platform. If your subscription lapses, you retain read-only access to your files but cannot edit or export them until you renew.
+
+vcad stores documents as local `.vcad` JSON files that you own and control. There are no cloud dependencies, subscription gates, or vendor lock-in. Optional cloud sync is available via Supabase and can be self-hosted.
+
+## Scripting and Automation
+
+Fusion 360 includes a Python API for writing scripts and add-ins. The API is internal to Fusion 360 -- scripts run inside the application and cannot be used headlessly or in CI pipelines without launching the full desktop app. The API covers modeling, manufacturing, and drawing operations.
+
+vcad provides a Rust crate, TypeScript library, CLI, and MCP server. All interfaces work headlessly -- you can run geometry operations in a CI pipeline, a cloud function, or an AI agent without any GUI. The Rust API is particularly fast, enabling generative design workflows that evaluate hundreds of parametric variants per second.
+
+## AI Integration
+
+Fusion 360 has introduced limited AI features through Autodesk's platform (generative design, auto-constrain), but these are cloud-based services with no open API for third-party AI agents.
+
+vcad's MCP server enables any AI assistant (Claude, GPT, local models) to create parametric CAD documents, modify parameters, run boolean operations, export geometry, inspect physical properties, and control physics simulations -- all through a standardized protocol. An AI agent can design a part, run a physics simulation to test it, modify the design based on results, and export the final geometry, entirely programmatically.
+
+## Where Fusion 360 Wins
+
+Fusion 360 is the stronger choice when you need integrated CAM for CNC machining, FEA simulation within the same tool, cloud rendering for photorealistic output, EAGLE PCB design integration, or a large ecosystem of add-ins and community content. The integrated workflow from sketch to toolpath is genuinely powerful for shops that do both design and manufacturing. Fusion 360 also has more comprehensive surfacing tools (T-Splines) for organic shapes.
+
+## Where vcad Wins
+
+vcad is the better choice when cost matters (free vs $595+/year), when you need programmatic access to geometry (Rust/TypeScript/CLI), when AI integration is important (MCP server), when data privacy is non-negotiable (local-first, no cloud dependency), when you work on Linux or need cross-platform browser access, or when you want to embed a CAD kernel in your own application (MIT license, WASM). vcad's physics simulation is also more capable for robotics and mechanism testing than Fusion 360's limited motion study tools.
+
+## Conclusion
+
+Fusion 360 is a comprehensive platform for engineers who need CAD, CAM, and FEA in one place and are willing to pay for Autodesk's ecosystem. vcad is for engineers who want a fast, free, programmable, AI-native parametric modeler that they control completely. Many users will benefit from using both: vcad for rapid parametric modeling and AI-assisted design iteration, with STEP export to Fusion 360 for production CAM and simulation when needed.

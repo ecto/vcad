@@ -1,0 +1,102 @@
+---
+title: "URDF Import"
+description: "Import robot descriptions, joint mapping, visualization"
+order: 5
+---
+
+URDF (Unified Robot Description Format) is the standard XML format for describing robots in the ROS ecosystem. It defines the robot's kinematic structure -- links (rigid bodies) and joints (connections between links) -- along with visual and collision meshes. vcad imports URDF files and converts them into assemblies with part definitions, instances, and joints, so you can visualize, pose, and simulate robots designed for ROS.
+
+## What a URDF Contains
+
+A URDF file describes a robot as a tree of **links** connected by **joints**. Each link has optional visual geometry (what the robot looks like), collision geometry (simplified shapes for physics), and inertial properties (mass, center of mass, inertia tensor). Each joint specifies a type (revolute, prismatic, continuous, fixed), a parent link, a child link, an axis, and optional limits.
+
+```xml
+<robot name="simple_arm">
+  <link name="base">
+    <visual>
+      <geometry><mesh filename="base.stl"/></geometry>
+    </visual>
+  </link>
+  <link name="upper_arm">
+    <visual>
+      <geometry><mesh filename="upper_arm.stl"/></geometry>
+    </visual>
+  </link>
+  <joint name="shoulder" type="revolute">
+    <parent link="base"/>
+    <child link="upper_arm"/>
+    <origin xyz="0 0 0.1" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-1.57" upper="1.57" effort="10" velocity="1.0"/>
+  </joint>
+</robot>
+```
+
+This describes a two-link arm with one revolute joint at the shoulder.
+
+## Importing in the App
+
+Drag a `.urdf` file onto the vcad viewport, or press **Cmd+K** and choose **Import URDF**. vcad parses the XML, loads any referenced mesh files (STL, DAE, OBJ), and creates:
+
+One **part definition** per unique link. If the URDF references external mesh files, vcad loads them as imported geometry. If the meshes are not found (wrong path or missing files), the link is represented as a simple bounding-box primitive.
+
+One **instance** per link, positioned according to the joint origins in the URDF. The first link with no parent joint becomes the ground instance.
+
+One **joint** per URDF joint, mapped to vcad's joint types. The mapping is straightforward: URDF `revolute` becomes vcad revolute, `prismatic` becomes prismatic, `fixed` becomes fixed, and `continuous` (unlimited revolute) becomes revolute with no limits.
+
+<Callout type="info" title="URDF joint types">
+URDF supports six joint types: `revolute`, `continuous`, `prismatic`, `fixed`, `floating`, and `planar`. vcad maps `revolute` and `continuous` to revolute joints, `prismatic` to prismatic, and `fixed` to fixed. `Floating` (6 DOF) and `planar` (3 DOF) are less common and are imported as ball joints with a warning.
+</Callout>
+
+## CLI Import
+
+```bash
+vcad import-urdf robot.urdf output.vcad
+```
+
+The CLI version handles the same parsing and conversion. The output `.vcad` file contains the complete assembly with all links, instances, and joints. It can be opened in the app, passed to MCP tools, or processed further by the CLI.
+
+For robots with mesh files in relative paths, run the command from the directory containing the URDF so that mesh paths resolve correctly. Alternatively, use absolute paths in the URDF file.
+
+## Rust API
+
+```rust
+use vcad_kernel::Part;
+use std::path::Path;
+
+let assembly = Part::from_urdf(Path::new("robot.urdf"))?;
+println!("{} links, {} joints",
+    assembly.part_defs().len(),
+    assembly.joints().len()
+);
+```
+
+The function returns an assembly document with part definitions, instances, and joints. The assembly can be evaluated, inspected, or passed to the physics simulation.
+
+## Mesh Resolution
+
+URDF files reference meshes by file path, typically relative to a ROS package directory. The paths look like `package://my_robot/meshes/base.stl` or `meshes/base.stl`. vcad resolves these paths relative to the URDF file's directory. If using `package://` URIs, vcad strips the package prefix and searches relative to the URDF location.
+
+Supported mesh formats: STL (binary and ASCII), DAE (Collada), and OBJ. STL is most common for simple robots. DAE is used when visual meshes include materials and textures. If a mesh file is not found, vcad substitutes a bounding-box primitive and logs a warning.
+
+<Callout type="tip" title="Missing meshes">
+If meshes fail to load, check that the file paths in the URDF are correct relative to the URDF file's location. Copy all mesh files into the same directory as the URDF for the simplest setup. Alternatively, edit the URDF to use relative paths that match your directory structure.
+</Callout>
+
+## Visualization and Posing
+
+Once imported, the robot appears in the viewport as a fully articulated assembly. Scrub joint sliders in the property panel to pose the robot. The forward kinematics system propagates joint angles through the chain, moving all downstream links.
+
+Joint limits from the URDF (the `lower` and `upper` attributes) are preserved as vcad joint limits. The scrub slider restricts to the specified range.
+
+The visual geometry from the URDF is used for rendering. If the URDF also defines collision geometry (typically simplified shapes), vcad stores it separately for use in physics simulation. The viewport shows the visual geometry by default; toggle collision geometry visibility in the view settings if you need to inspect the physics shapes.
+
+## Physics Simulation
+
+The imported robot assembly works directly with vcad's physics simulation. Pass the assembly document to `create_robot_env` via MCP, and the Rapier3D engine creates rigid bodies from the collision geometry, applies the joint types and limits, and enables gravity. You can then step the simulation, apply torques or position targets to joints, and observe the robot's dynamic behavior.
+
+Inertial properties from the URDF (mass, inertia tensor) are used when present. If the URDF does not specify inertials for a link, vcad estimates them from the collision geometry assuming a default density.
+
+This makes vcad a complete pipeline for robot design: import a URDF, visualize and pose the robot, run physics simulation, and train control policies through the gym interface -- all without leaving the application.
+
+For running physics and training control policies on your imported robot, see the [RL Training with Gym](/guides/ai/gym-training) guide. For general assembly concepts, start with [Assembly Fundamentals](/guides/assembly/fundamentals).

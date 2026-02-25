@@ -1,0 +1,65 @@
+---
+title: "Impedance & Signal Integrity"
+description: "Trace impedance (IPC-2141), microstrip, stripline, differential pairs"
+order: 4
+---
+
+When signals switch faster than a few megahertz, the PCB traces stop behaving like simple wires and start behaving like transmission lines. A signal traveling down a trace reflects off any impedance discontinuity -- a change in trace width, a via transition, a connector -- and the reflection can corrupt data, cause ringing, or radiate electromagnetic interference. Controlling trace impedance eliminates these problems.
+
+## Why Impedance Matters
+
+A digital signal is not just a 0-to-1 voltage step. It is an electromagnetic wave that propagates along the trace at roughly half the speed of light. The wave has an impedance determined by the trace geometry and the surrounding dielectric material. If the trace impedance matches the source and load impedance (typically 50 ohms for single-ended signals, 90 or 100 ohms for differential pairs), the signal arrives cleanly. If there is a mismatch, part of the signal energy reflects back toward the source, creating ringing, overshoot, and timing errors.
+
+For signals under about 50 MHz (rise time > 7 ns on FR-4), the trace length is short enough relative to the wavelength that reflections are negligible. For USB (480 MHz), HDMI (several GHz), PCIe, DDR memory, and Ethernet, impedance control is mandatory.
+
+## Microstrip
+
+A microstrip is a trace on an outer copper layer with a ground plane on the adjacent inner layer. The trace runs along the top surface; the dielectric (FR-4 core or prepreg) separates it from the reference plane below. This is the most common impedance-controlled structure on 2-layer and 4-layer boards.
+
+The characteristic impedance Z0 of a microstrip depends on four parameters: trace width (W), dielectric thickness (H, the distance from trace to reference plane), dielectric constant (Er, typically 4.2-4.6 for FR-4), and copper thickness (T, typically 35 um for 1 oz copper).
+
+vcad's impedance calculator takes these parameters and computes Z0 using the IPC-2141 formulas. Open the calculator with **Cmd+K** then **Impedance Calculator**. Enter the stackup parameters and desired impedance, and the calculator returns the required trace width. For a typical 4-layer board with 0.2 mm dielectric thickness and Er = 4.4, a 50-ohm microstrip needs a trace width of approximately 0.3 mm.
+
+<Callout type="info" title="IPC-2141">
+IPC-2141 (Design Guide for High-Speed Controlled Impedance Circuit Boards) provides the standard formulas for impedance calculation. vcad implements both the simplified closed-form approximations and the more accurate empirical corrections. The calculator shows the computed impedance and the formula used.
+</Callout>
+
+## Stripline
+
+A stripline is a trace on an internal copper layer sandwiched between two reference planes. Both layers above and below act as shields, making stripline traces less susceptible to external interference and less likely to radiate emissions. Striplines are used for sensitive signals on 4-layer and higher boards.
+
+The impedance of a stripline depends on the same parameters as microstrip (width, dielectric thickness, Er, copper thickness) plus the additional constraint that there are reference planes on both sides. The dielectric thickness H is the distance from the trace to the nearest reference plane. For symmetric stripline (trace centered between two planes), use H as the distance to either plane.
+
+Stripline impedances are generally lower than microstrip for the same trace width because the dielectric on both sides increases the effective capacitance per unit length. A trace that achieves 50 ohms as a microstrip might need to be narrower as a stripline to maintain the same impedance.
+
+## Differential Pairs
+
+Differential signaling sends a signal as two complementary traces (P and N) that carry equal and opposite voltages. The receiver reads the voltage difference between them, which rejects common-mode noise that affects both traces equally. USB, HDMI, Ethernet, LVDS, and PCIe all use differential signaling.
+
+A differential pair has two impedance specifications: the single-ended impedance of each trace (typically 45-55 ohms) and the differential impedance (typically 90-100 ohms). The differential impedance depends on the coupling between the two traces -- specifically, the spacing between them. Closer spacing increases coupling and reduces differential impedance.
+
+In vcad's PCB editor, route differential pairs by selecting both traces of the pair and routing them together. The router maintains equal length and consistent spacing between the two traces. The impedance calculator computes the required trace width and spacing for a target differential impedance given your stackup.
+
+<Callout type="tip" title="Length matching">
+Differential pairs must be length-matched so both signals arrive at the receiver simultaneously. The router shows the length difference between P and N traces in real time. Add serpentine tuning (small wiggles) to the shorter trace to equalize lengths. Maximum allowed skew depends on the signaling standard -- USB 2.0 allows 150 mil (3.8 mm) skew, while USB 3.0 allows only 50 mil (1.3 mm).
+</Callout>
+
+## Reference Planes
+
+Every impedance-controlled trace needs a continuous reference plane on the adjacent layer. A gap in the reference plane under a signal trace creates an impedance discontinuity that causes reflections. Avoid routing traces over gaps, splits, or cutouts in the ground plane.
+
+On 4-layer boards, the standard stackup for signal integrity is: signals on layer 1 (referenced to ground on layer 2), ground plane on layer 2, power plane on layer 3, signals on layer 4 (referenced to power/ground on layer 3). This gives every signal trace a solid reference plane directly below or above it.
+
+When a trace changes reference planes (via transition from layer 1 to layer 4), place a ground via near the signal via to provide a return current path between the two reference planes. Without this return via, the return current must find a longer path around the plane gap, creating a loop antenna that radiates emissions.
+
+## Practical Guidelines
+
+**Keep impedance-controlled traces short.** Shorter traces have less loss, less delay, and less opportunity for impedance discontinuities.
+
+**Maintain consistent trace width.** Any width change is an impedance discontinuity. If you must neck down a trace (for example, entering a fine-pitch IC pad), keep the narrow section as short as possible.
+
+**Minimize vias on high-speed signals.** Each via adds parasitic capacitance and inductance that perturb the impedance. One or two vias per trace is acceptable; avoid routing high-speed signals through many via transitions.
+
+**Use the impedance calculator during routing.** If you change the stackup (different dielectric thickness, different Er), recompute trace widths. Do not assume that trace widths from one board apply to another with a different stackup.
+
+For generating the fabrication files that bring your impedance-controlled board to manufacturing, continue to the [Fabrication Export](/guides/electronics/fabrication) guide.

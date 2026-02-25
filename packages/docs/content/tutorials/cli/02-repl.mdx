@@ -1,0 +1,210 @@
+---
+title: "Interactive REPL"
+description: "vcad repl, primitives, booleans, transforms, export in terminal"
+order: 2
+difficulty: Beginner
+time: "10 minutes"
+---
+
+The `vcad repl` command drops you into an interactive session where you build geometry one command at a time. Each command either creates new shapes, modifies existing ones, or queries the current state. The REPL maintains a document in memory, so every command builds on top of what came before.
+
+```bash
+vcad repl
+```
+
+```
+vcad> _
+```
+
+You can also load an existing file as your starting point:
+
+```bash
+vcad repl bracket.vcad
+```
+
+## Creating Primitives
+
+Type a primitive name followed by its parameters to add geometry to the scene. Dimensions are in millimeters, and everything follows the Z-up convention.
+
+```
+vcad> cube 60 40 5
+Added Cube (60 x 40 x 5)
+
+vcad> cylinder 8 20
+Added Cylinder (r=8, h=20)
+```
+
+A `cube 60 40 5` creates a box with its corner at the origin extending 60 mm in X, 40 mm in Y, and 5 mm in Z. A `cylinder 8 20` creates a cylinder with radius 8 and height 20, centered on the Z axis. The other primitives work the same way: `sphere <radius>` and `cone <bottom_radius> <top_radius> <height>`.
+
+Each primitive gets an auto-generated name (Cube, Cylinder, Sphere, and so on). When you add a second cube, it becomes Cube (1). You can rename parts with the `rename` command:
+
+```
+vcad> rename Cylinder "Bolt Hole"
+Renamed 'Cylinder' to 'Bolt Hole'
+```
+
+## Transforms
+
+Transforms operate on the most recently created or selected shape. Use `select <name>` to switch which shape receives transforms.
+
+```
+vcad> select "Bolt Hole"
+Selected: Bolt Hole
+
+vcad> translate 30 20 -5
+Translated 'Bolt Hole' by (30, 20, -5)
+```
+
+The full set of transform commands: `translate <x> <y> <z>` moves the shape, `rotate <rx> <ry> <rz>` rotates it by the given angles in degrees, `scale <factor>` applies uniform scaling, and `mirror <x> <y> <z>` mirrors across a plane defined by the given normal vector.
+
+You can chain transforms naturally. Each one applies on top of the previous state:
+
+```
+vcad> cube 20 20 40
+Added Cube (20 x 20 x 40)
+
+vcad> rotate 0 0 45
+Rotated 'Cube (1)' by (0, 0, 45)
+
+vcad> translate 50 0 0
+Translated 'Cube (1)' by (50, 0, 0)
+```
+
+## Boolean Operations
+
+Booleans combine two named shapes into one. The syntax is `union <a> <b>`, `difference <a> <b>`, or `intersection <a> <b>`. For difference, the first argument is the body and the second is the tool that gets subtracted.
+
+```
+vcad> difference Cube "Bolt Hole"
+Boolean difference: Cube - Bolt Hole -> Difference Result
+```
+
+The two input shapes are replaced by a single result node. You can name the result immediately by appending a name:
+
+```
+vcad> difference Cube "Bolt Hole" as "Plate with Hole"
+Boolean difference: Cube - Bolt Hole -> Plate with Hole
+```
+
+## Inspecting Geometry
+
+At any point you can query the current document. The `info` command prints the full document structure. For specific measurements, use `volume`, `bbox`, or `area`:
+
+```
+vcad> volume "Plate with Hole"
+Volume: 11,850.35 mm^3
+
+vcad> bbox "Plate with Hole"
+Bounding box: (0, 0, 0) to (60, 40, 5)
+
+vcad> area "Plate with Hole"
+Surface area: 5,801.06 mm^2
+```
+
+The `list` command shows all shapes currently in the scene:
+
+```
+vcad> list
+1: Plate with Hole (Difference)
+```
+
+## Building a Plate with Four Holes
+
+Here is a complete session that builds a rectangular plate with a hole near each corner. This is the kind of iterative workflow the REPL is designed for.
+
+```
+vcad> cube 80 50 5
+Added Cube (80 x 50 x 5)
+
+vcad> rename Cube Plate
+Renamed 'Cube' to 'Plate'
+
+vcad> cylinder 4 15
+Added Cylinder (r=4, h=15)
+
+vcad> translate 10 10 -5
+Translated 'Cylinder' by (10, 10, -5)
+
+vcad> difference Plate Cylinder as "Plate 1 Hole"
+Boolean difference: Plate - Cylinder -> Plate 1 Hole
+
+vcad> cylinder 4 15
+Added Cylinder (r=4, h=15)
+
+vcad> translate 70 10 -5
+Translated 'Cylinder' by (70, 10, -5)
+
+vcad> difference "Plate 1 Hole" Cylinder as "Plate 2 Holes"
+Boolean difference: Plate 1 Hole - Cylinder -> Plate 2 Holes
+
+vcad> cylinder 4 15
+Added Cylinder (r=4, h=15)
+
+vcad> translate 10 40 -5
+Translated 'Cylinder' by (10, 40, -5)
+
+vcad> difference "Plate 2 Holes" Cylinder as "Plate 3 Holes"
+Boolean difference: Plate 2 Holes - Cylinder -> Plate 3 Holes
+
+vcad> cylinder 4 15
+Added Cylinder (r=4, h=15)
+
+vcad> translate 70 40 -5
+Translated 'Cylinder' by (70, 40, -5)
+
+vcad> difference "Plate 3 Holes" Cylinder as "Mounting Plate"
+Boolean difference: Plate 3 Holes - Cylinder -> Mounting Plate
+
+vcad> volume "Mounting Plate"
+Volume: 19,194.69 mm^3
+```
+
+Each cylinder is created, positioned, and subtracted in sequence. The intermediate names make it easy to follow the progression, though in practice you would name only the final result and let the intermediates take default names.
+
+## Exporting and Saving
+
+When you are satisfied with the result, export to a mesh format or save the document:
+
+```
+vcad> export result.stl
+Exported STL to result.stl
+
+vcad> export result.step
+Exported STEP to result.step
+
+vcad> save plate.vcad
+Saved document to plate.vcad
+```
+
+The `export` command infers the format from the file extension, just like the CLI `vcad export` subcommand. The `save` command writes a `.vcad` file that preserves the full parametric history, so you can reload it later and continue editing.
+
+<Callout type="tip" title="Tab completion and history">
+The REPL supports tab completion for command names, part names, and file paths. Press the up arrow to cycle through command history. History persists between sessions in `~/.vcad_history`, so your previous commands are available the next time you open the REPL.
+</Callout>
+
+## Undo and Redo
+
+Made a mistake? The `undo` command reverts the last operation, and `redo` brings it back:
+
+```
+vcad> undo
+Undone: Boolean difference
+
+vcad> redo
+Redone: Boolean difference
+```
+
+You can undo multiple steps by running `undo` repeatedly. The entire history is preserved until you exit the session.
+
+## Exiting
+
+Type `exit` or `quit` to leave the REPL. If you have unsaved changes, you will be prompted to save or discard them. You can also press **Ctrl+D** to exit immediately.
+
+```
+vcad> exit
+Unsaved changes. Save before exiting? [y/N] y
+Save to: plate.vcad
+Saved document to plate.vcad
+```
+
+The REPL is a good environment for experimentation -- you can try operations, inspect the results, and undo anything that does not work. For keyboard-driven editing with a visual preview, see the [TUI tutorial](/tutorials/cli/tui). For automating repetitive tasks, see [Scripting & Pipelines](/tutorials/cli/scripting).

@@ -1,0 +1,218 @@
+---
+title: "Bottle (Loft)"
+description: "Multi-section loft with varying profiles"
+difficulty: Intermediate
+time: "15 min"
+order: 4
+---
+
+Lofting interpolates between cross-sectional profiles placed at different heights to create smooth, organic shapes. This recipe builds a bottle by lofting through four circular profiles of varying radius.
+
+## The Profiles
+
+The bottle's silhouette is defined by four circles stacked along Z. Each circle sits at a different height and has a different radius, giving the bottle its characteristic shape -- wide body tapering to a narrow neck.
+
+```rust
+use vcad::{Sketch, Loft, Part};
+
+// Define cross-section profiles at different heights
+let base     = Sketch::circle(30.0).at_z(0.0);    // Flat base
+let body     = Sketch::circle(35.0).at_z(40.0);    // Widest point
+let shoulder = Sketch::circle(15.0).at_z(80.0);    // Taper inward
+let neck     = Sketch::circle(10.0).at_z(100.0);   // Narrow neck
+
+let bottle = Loft::through(&[base, body, shoulder, neck])
+    .segments(64)
+    .build();
+```
+
+The `base` profile (r=30mm) sits at Z=0. Moving upward, the `body` profile (r=35mm) at Z=40 creates a gentle outward swell. The `shoulder` at Z=80 pulls sharply inward to r=15mm, and the `neck` finishes at r=10mm and Z=100mm. The loft engine generates a smooth surface that passes through all four sections.
+
+## Step by Step
+
+### 1. Sketch the cross-sections
+
+Each profile is a simple circle, but you can use any closed sketch shape -- ellipses, rounded rectangles, or freeform curves all work with the loft operation.
+
+```rust
+let base     = Sketch::circle(30.0).at_z(0.0);
+let body     = Sketch::circle(35.0).at_z(40.0);
+let shoulder = Sketch::circle(15.0).at_z(80.0);
+let neck     = Sketch::circle(10.0).at_z(100.0);
+```
+
+The `.at_z()` method positions each sketch plane along the Z axis. Since vcad uses Z-up coordinates, the bottle grows vertically from base to neck.
+
+### 2. Loft between them
+
+```rust
+let bottle = Loft::through(&[base, body, shoulder, neck])
+    .segments(64)
+    .build();
+```
+
+The loft operation generates ruled or smoothly interpolated surfaces between consecutive profile pairs. With 64 circumferential segments, the result is visually smooth and suitable for STL export. The loft respects the profile ordering -- profiles must be listed from bottom to top (ascending Z).
+
+### 3. Hollow the bottle
+
+A real bottle needs a cavity. Shell the solid to create uniform wall thickness, leaving the top face open:
+
+```rust
+let hollow = bottle.shell(2.0, ShellOpen::Top);
+```
+
+This removes material from the interior, leaving 2mm walls everywhere except the top face (the neck opening). If you want the bottom face left open instead, use `ShellOpen::Bottom`.
+
+### 4. Add a lip
+
+The neck needs a rim for a cap or stopper:
+
+```rust
+let lip = centered_cylinder("lip", 12.0, 5.0, 64)
+    .translate(0.0, 0.0, 100.0);
+
+let bottle_with_lip = hollow + lip;
+```
+
+The lip cylinder is slightly larger than the neck radius (12mm vs 10mm), creating a 2mm protruding rim at the top. This provides a sealing surface for a cap.
+
+## Controlling the Loft Shape
+
+### Tangent continuity
+
+By default, loft uses linear interpolation between profiles, which can produce visible creases at profile boundaries. For a smoother surface, enable tangent continuity:
+
+```rust
+let smooth = Loft::through(&[base, body, shoulder, neck])
+    .segments(64)
+    .continuity(LoftContinuity::Tangent)
+    .build();
+```
+
+Tangent continuity ensures the surface normal changes smoothly across profile transitions, eliminating visible seams in the rendered result.
+
+### Adding intermediate profiles
+
+More profiles give you finer control over the shape. Adding a profile between `body` and `shoulder` lets you shape the transition:
+
+```rust
+let mid = Sketch::circle(28.0).at_z(60.0);  // Gradual taper
+
+let refined = Loft::through(&[base, body, mid, shoulder, neck])
+    .segments(64)
+    .build();
+```
+
+### Non-circular profiles
+
+The bottle body can use a rounded rectangle for a flat-sided design:
+
+```rust
+let flat_body = Sketch::rounded_rect(50.0, 40.0, 5.0).at_z(40.0);
+let flat_shoulder = Sketch::rounded_rect(25.0, 20.0, 4.0).at_z(80.0);
+
+let flat_bottle = Loft::through(&[base, flat_body, flat_shoulder, neck])
+    .segments(64)
+    .build();
+```
+
+When lofting between different profile shapes (circle to rounded rectangle), the loft engine morphs the cross-section smoothly. The result is a bottle with flat sides that transitions to a round neck.
+
+<Callout type="info" title="Profile compatibility">
+All profiles in a loft must have the same number of segments or the loft engine will resample them to match. For best results when mixing shapes, use the same segment count for all profiles.
+</Callout>
+
+## Complete Code
+
+```rust
+use vcad::{centered_cylinder, Sketch, Loft, Part, ShellOpen};
+
+fn bottle(
+    base_r: f64,
+    body_r: f64,
+    shoulder_r: f64,
+    neck_r: f64,
+    body_height: f64,
+    shoulder_height: f64,
+    total_height: f64,
+    wall: f64,
+) -> Part {
+    let base     = Sketch::circle(base_r).at_z(0.0);
+    let body     = Sketch::circle(body_r).at_z(body_height);
+    let shoulder = Sketch::circle(shoulder_r).at_z(shoulder_height);
+    let neck     = Sketch::circle(neck_r).at_z(total_height);
+
+    let solid = Loft::through(&[base, body, shoulder, neck])
+        .segments(64)
+        .continuity(LoftContinuity::Tangent)
+        .build();
+
+    // Hollow with open top
+    let hollow = solid.shell(wall, ShellOpen::Top);
+
+    // Add neck lip
+    let lip = centered_cylinder("lip", neck_r + wall, 3.0, 64)
+        .translate(0.0, 0.0, total_height);
+
+    hollow + lip
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let part = bottle(
+        30.0,   // base radius
+        35.0,   // body radius (widest)
+        15.0,   // shoulder radius
+        10.0,   // neck radius
+        40.0,   // body height
+        80.0,   // shoulder height
+        100.0,  // total height
+        2.0,    // wall thickness
+    );
+
+    println!("Volume: {:.0} mm³", part.volume());
+    part.write_stl("bottle.stl")?;
+    part.write_step("bottle.step")?;
+
+    Ok(())
+}
+```
+
+<Callout type="tip" title="Export for manufacturing">
+Export to STEP for CNC or injection mold tooling. The lofted BRep surfaces export as exact geometry (B-spline surfaces), not tessellated approximations. This preserves the smooth curvature data that manufacturing tools need.
+</Callout>
+
+## Variations
+
+### Vase with wavy profile
+
+Alternating wide and narrow profiles creates a decorative wave pattern:
+
+```rust
+let profiles = [
+    Sketch::circle(25.0).at_z(0.0),
+    Sketch::circle(30.0).at_z(20.0),
+    Sketch::circle(22.0).at_z(40.0),
+    Sketch::circle(28.0).at_z(60.0),
+    Sketch::circle(20.0).at_z(80.0),
+];
+
+let vase = Loft::through(&profiles)
+    .segments(64)
+    .build()
+    .shell(2.0, ShellOpen::Top);
+```
+
+### Tapered flask
+
+Two wide profiles in the middle with narrow top and bottom creates a flask shape:
+
+```rust
+let flask = Loft::through(&[
+    Sketch::circle(8.0).at_z(0.0),
+    Sketch::circle(30.0).at_z(15.0),
+    Sketch::circle(30.0).at_z(60.0),
+    Sketch::circle(8.0).at_z(75.0),
+])
+.segments(64)
+.build();
+```

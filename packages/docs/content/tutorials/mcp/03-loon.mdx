@@ -1,0 +1,206 @@
+---
+title: "Loon Language"
+description: "create_cad_loon: Lisp-like syntax, pipe operator, let bindings"
+order: 3
+difficulty: Intermediate
+time: "10 minutes"
+---
+
+Loon is a compact text format for describing vcad geometry, purpose-built to be token-efficient for AI models. Where `create_cad_document` takes a verbose JSON IR structure, the `create_cad_loon` tool accepts Loon source code that expresses the same geometry in roughly one-fifth the tokens. Less tokens means faster inference, lower cost, and more room for the AI to reason about the design itself rather than fighting with JSON brackets.
+
+## Format at a Glance
+
+Every Loon program starts with a version header and consists of one line per geometry node. Each line's position in the file determines its node ID, starting from 0. Nodes reference earlier nodes by their ID number.
+
+```text
+# vcad 0.2
+M aluminum 0.9 0.9 0.92 0.05 0.3 2700
+C 50 30 5 "Base Plate"
+Y 2.75 10 "Hole Tool"
+T 1 10 15 0
+D 0 2 "First Hole"
+Y 2.75 10
+T 4 40 15 0
+D 3 5 "Second Hole"
+ROOT 6 aluminum
+```
+
+That program creates a 50x30x5 mm plate with two M5 through-holes. Node 0 is the cube, node 1 is the first cylinder, node 2 translates it into position, node 3 subtracts it, and so on. The `ROOT` directive marks node 6 as the visible output and assigns it the aluminum material.
+
+<Playground exampleId="plate" />
+
+## Primitives
+
+Loon uses single-letter opcodes for the four basic solids. The arguments are always in millimeters.
+
+```text
+C 50 30 5           # Cube: sx=50, sy=30, sz=5
+Y 10 25             # Cylinder: radius=10, height=25
+S 15                # Sphere: radius=15
+K 10 5 30           # Cone: bottom radius=10, top radius=5, height=30
+```
+
+Each primitive is centered according to vcad's Z-up convention. The cube's corner sits at the origin and extends to (sx, sy, sz). The cylinder's axis runs along Z. An optional quoted string at the end of any line assigns a name to that node, which shows up in the feature tree when you open the document in the app.
+
+## Booleans
+
+Three opcodes combine two nodes into a new shape. Each takes two node IDs as arguments.
+
+```text
+U 0 1               # Union: merge nodes 0 and 1
+D 0 1               # Difference: subtract node 1 from node 0
+I 0 1               # Intersection: keep only the overlap
+```
+
+Booleans are the bread and butter of constructive solid geometry. A mounting plate with holes is a cube with cylinder differences. A bracket is a union of two cubes. An O-ring groove is an intersection of a torus with a revolved profile. The AI chains these freely to build up complex parts.
+
+## Transforms
+
+Transforms reposition or resize an existing node. The first argument is always the node ID being transformed.
+
+```text
+T 0 10 0 0          # Translate node 0 by (dx=10, dy=0, dz=0)
+R 0 0 0 45          # Rotate node 0 by 45 degrees around Z
+X 0 2 2 1           # Scale node 0 by (sx=2, sy=2, sz=1)
+```
+
+Rotation values are in degrees. The rotation order follows Euler angles around X, Y, then Z. Translation values are in millimeters. Scale factors are unitless multipliers.
+
+## Patterns
+
+Patterns replicate a node along a line or around an axis, producing multiple copies combined with a union.
+
+```text
+LP 0 20 0 0 4 20    # Linear pattern: node 0, direction (20,0,0), 4 copies, 20mm spacing
+CP 0 0 0 0 0 0 1 6 60   # Circular pattern: node 0, origin, axis (0,0,1), 6 copies, 60 degrees
+```
+
+Linear patterns (`LP`) take a direction vector, a count, and a spacing. Circular patterns (`CP`) take a center point, an axis vector, a count, and an angle between copies. These are especially useful for bolt patterns and symmetrical features.
+
+## Finishing Operations
+
+Shell, fillet, and chamfer operations modify an existing solid's edges and faces.
+
+```text
+SH 0 2              # Shell node 0 with 2mm wall thickness
+FI 0 1.5            # Fillet all edges of node 0 with 1.5mm radius
+CH 0 0.5            # Chamfer all edges of node 0 by 0.5mm
+```
+
+## Sketches and Extrusions
+
+For profiles that go beyond basic primitives, Loon supports sketch blocks. A sketch defines a 2D profile on a plane, which can then be extruded or revolved into a 3D solid.
+
+```text
+SK 0 0 0  1 0 0  0 1 0 "U-Channel Profile"
+L 0 0 5 0
+L 5 0 5 25
+L 5 25 0 25
+L 0 25 0 0
+END
+E 0 0 0 60 "Channel"
+```
+
+The `SK` line defines the sketch plane with an origin point and two direction vectors (X-axis, Y-axis). Between `SK` and `END`, you place `L` (line segment) and `A` (arc) commands that define 2D geometry. The `E` opcode extrudes the sketch along a direction vector, and `V` revolves it around an axis.
+
+## Materials and Roots
+
+Materials are defined with the `M` opcode at the top of the file, before any geometry. A material has a name, RGB color, metallic value, roughness, and optional density (kg/m3) and friction coefficient.
+
+```text
+M steel 0.7 0.7 0.72 0.95 0.35 7850
+M aluminum 0.9 0.9 0.92 0.05 0.3 2700
+```
+
+The `ROOT` directive at the bottom of the file declares which nodes are visible in the final scene and which material each uses. You can have multiple roots for multi-part documents.
+
+```text
+ROOT 6 aluminum
+ROOT 12 steel
+```
+
+Adding the keyword `hidden` after the material name marks a root as invisible by default, useful for construction geometry that should be kept in the document but not rendered.
+
+## JSON vs Loon: A Comparison
+
+Here is the same mounting plate expressed as JSON IR passed to `create_cad_document`:
+
+```json
+{
+  "nodes": {
+    "0": { "id": 0, "op": { "type": "Cube", "size": [50, 30, 5] }, "name": "Base Plate" },
+    "1": { "id": 1, "op": { "type": "Cylinder", "radius": 2.75, "height": 10 }, "name": "Hole Tool" },
+    "2": { "id": 2, "op": { "type": "Translate", "node": 1, "delta": [10, 15, 0] } },
+    "3": { "id": 3, "op": { "type": "Difference", "left": 0, "right": 2 }, "name": "First Hole" },
+    "4": { "id": 4, "op": { "type": "Cylinder", "radius": 2.75, "height": 10 } },
+    "5": { "id": 5, "op": { "type": "Translate", "node": 4, "delta": [40, 15, 0] } },
+    "6": { "id": 6, "op": { "type": "Difference", "left": 3, "right": 5 }, "name": "Second Hole" }
+  },
+  "roots": [{ "root": 6, "material": "aluminum" }],
+  "materials": {
+    "aluminum": { "name": "aluminum", "color": [0.9, 0.9, 0.92], "metallic": 0.05, "roughness": 0.3 }
+  }
+}
+```
+
+And here is the same thing in Loon:
+
+```text
+# vcad 0.2
+M aluminum 0.9 0.9 0.92 0.05 0.3
+C 50 30 5 "Base Plate"
+Y 2.75 10 "Hole Tool"
+T 1 10 15 0
+D 0 2 "First Hole"
+Y 2.75 10
+T 4 40 15 0
+D 3 5 "Second Hole"
+ROOT 6 aluminum
+```
+
+The JSON version is 623 characters. The Loon version is 178 characters. For a model with dozens of operations, this difference compounds dramatically. AI models have finite context windows and per-token costs, so Loon lets them build more complex geometry within the same budget.
+
+<Callout type="tip" title="When to use which">
+The AI automatically picks the right tool. For simple single-part models described in conversation, `create_cad_document` with its higher-level `parts` interface is often easier. For multi-step constructions where the AI needs precise control over every node, `create_cad_loon` is more efficient and readable. You can also pass `format: "json"` to `create_cad_loon` if you want the output as JSON IR instead of the compact text format.
+</Callout>
+
+## A Complete Example: Flanged Hub
+
+Here is a more involved Loon program that builds a flanged hub with bolt holes arranged in a circular pattern.
+
+```text
+# vcad 0.2
+M steel 0.7 0.7 0.72 0.95 0.35 7850
+Y 30 10 "Flange"
+Y 15 25 "Hub"
+T 1 0 0 0
+U 0 2 "Flange + Hub"
+Y 5 12 "Center Bore"
+T 4 0 0 -1
+D 3 5 "Bored Hub"
+Y 3 12 "Bolt Hole"
+T 7 22 0 -1
+CP 8 0 0 0 0 0 1 6 60 "Bolt Pattern"
+D 6 9 "Finished Hub"
+FI 10 1.0 "Filleted"
+ROOT 11 steel
+```
+
+<Playground exampleId="flanged-hub" />
+
+This program creates a hub with a flange at the base, bores out the center, punches six bolt holes in a circular pattern around the flange, and fillets all edges. Twelve lines, twelve nodes, one part.
+
+## Calling create_cad_loon
+
+The MCP tool accepts a single `source` parameter containing the Loon program as a string. An optional `format` parameter controls the output: `"compact"` (the default) returns the evaluated document in compact IR format, while `"json"` returns the full JSON IR document.
+
+```json
+{
+  "source": "# vcad 0.2\nM aluminum 0.9 0.9 0.92 0.05 0.3\nC 50 30 5\nROOT 0 aluminum",
+  "format": "compact"
+}
+```
+
+The returned document can then be passed to `inspect_cad` for analysis or `export_cad` for file output, just like any other vcad document.
+
+Continue to [Inspect and Iterate](/tutorials/mcp/inspect) to learn how the AI verifies its geometry after creating it, or jump to the [Loon Syntax Reference](/reference/loon/syntax) for the complete opcode table.

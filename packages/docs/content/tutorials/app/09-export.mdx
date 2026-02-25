@@ -1,0 +1,63 @@
+---
+title: "Export for Manufacturing"
+description: "STL, GLB, STEP, DXF export. STEP drag-drop import"
+order: 9
+difficulty: Beginner
+time: "5 minutes"
+---
+
+A CAD model only has value when it reaches the real world -- as a 3D print, a machined part, a rendering in a product listing, or a geometry exchange with a colleague using different software. vcad exports to four formats, each optimized for a different destination.
+
+## STL: Triangle Mesh for 3D Printing and CNC
+
+STL (Standard Tessellation Language) converts your exact BRep surfaces into a watertight triangle mesh. Every 3D printer slicer accepts STL, and most CNC CAM packages import it for toolpath generation.
+
+Press **Cmd+K** and choose **Export STL**. vcad tessellates the current part, writes a binary STL file, and triggers a browser download. Binary STL is compact -- a typical bracket is a few hundred kilobytes. The tessellation resolution is tuned for manufacturing accuracy; you should not need to adjust it for most parts.
+
+<Callout type="tip" title="Check before exporting">
+Open the inspection panel (**Cmd+K** then **Inspect**) before exporting. Verify that the volume is positive, the mesh is manifold (no holes or self-intersections), and the bounding box dimensions match your expectations. Catching errors here saves a failed print or a wasted machining cycle.
+</Callout>
+
+## GLB: 3D Scenes for Viewers and AR
+
+GLB (Binary glTF) is the standard format for 3D content on the web, in augmented reality apps, and in game engines. Unlike STL, GLB includes materials, colors, and scene hierarchy. Your PBR material assignments -- color, metallic, roughness -- travel with the geometry.
+
+Press **Cmd+K** and choose **Export GLB**. The resulting file can be dropped into any glTF viewer, uploaded to Sketchfab, embedded in a web page with Three.js, or opened in AR Quick Look on iOS. If you need to share a visual preview of your design with someone who does not have CAD software, GLB is the right choice.
+
+## STEP: Exact Geometry for CAD Exchange
+
+STEP (AP214) is the universal exchange format for exact BRep geometry. When you send a STEP file to a colleague using Fusion 360, SolidWorks, CATIA, or any other CAD system, they receive the exact mathematical surfaces, not an approximation. Planes stay planes, cylinders stay cylinders, and NURBS surfaces arrive with their full control-point definition.
+
+Press **Cmd+K** and choose **Export STEP**. The export writes every solid, surface, edge, and vertex as STEP entities. Round-tripping is faithful: export from vcad, import into another tool, export from that tool, and import back into vcad -- the geometry comes through intact.
+
+STEP is the right format when the downstream workflow involves further modeling, editing, or engineering analysis. If your part will be modified by someone else, always send STEP.
+
+<Callout type="info" title="STEP AP214">
+vcad uses STEP AP214, the application protocol for automotive and mechanical design. It supports solids, assemblies, colors, and product metadata. This is the most widely implemented STEP variant and has the best compatibility across CAD tools.
+</Callout>
+
+## DXF: 2D Drawings for Laser and CNC
+
+DXF exports come from drawing mode, not from the 3D viewport. Create a 2D drawing with orthographic views and dimensions (see the [drawings tutorial](/tutorials/app/08-drawings)), then export it as DXF. The result is a flat vector file that laser cutters, CNC routers, and waterjet machines read directly.
+
+If you are cutting flat profiles from sheet material, you can also sketch a 2D profile without extruding it and export the sketch as DXF. This is common for laser-cut enclosure panels, gaskets, and brackets made from sheet stock.
+
+## Importing STEP Files
+
+vcad imports STEP files by two methods. The fastest is drag-and-drop: drag a `.step` or `.stp` file from your file manager directly onto the vcad viewport. The importer parses the STEP entities, reconstructs the BRep topology, and adds the geometry to your document as an **ImportedMesh** node in the feature tree.
+
+You can also import through the command palette: press **Cmd+K** and choose **Import STEP**, then select the file from the system dialog.
+
+Imported geometry is fully integrated into the vcad workflow. You can apply booleans to it, fillet its edges, take measurements, and include it in assemblies. If the original STEP file contained multiple bodies, each body appears as a separate solid in the feature tree.
+
+<Callout type="warning" title="Large STEP files">
+Complex assemblies with hundreds of parts can take a few seconds to parse. vcad shows a progress indicator during import. If a STEP file fails to import, it may use entities that vcad does not yet support -- in that case, try simplifying the file in the originating CAD tool before exporting.
+</Callout>
+
+## Choosing the Right Format
+
+The decision comes down to what happens next. If the file goes to a 3D printer or slicer, use STL. If it goes to a web viewer, AR app, or rendering pipeline, use GLB. If it goes to another CAD engineer for further editing, use STEP. If it goes to a laser cutter or CNC machine as a 2D profile, use DXF.
+
+When in doubt, export STEP. It preserves the most information and can always be converted to STL or GLB downstream, but the reverse is not true -- you cannot recover exact surfaces from a triangle mesh.
+
+Next, learn how to take your STL export further with the built-in [3D print workflow](/tutorials/app/10-3d-printing), including slicing, DFM analysis, and sending directly to a printer.

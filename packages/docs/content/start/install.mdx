@@ -1,0 +1,116 @@
+---
+title: "Install & Setup"
+description: "Get vcad running: web app, Rust crate, CLI, or MCP server"
+order: 2
+---
+
+The fastest way to use vcad is the web app -- there is nothing to install. Open [vcad.io](https://vcad.io) in any modern browser and the WASM kernel loads in a few seconds. It works offline after the first visit, keeps your documents in the browser's IndexedDB, and optionally syncs to the cloud if you sign in with Google or GitHub. If you only need the visual editor, you can stop reading here and jump straight to [Core Concepts](/start/concepts).
+
+The sections below cover the three other interfaces: the Rust library, the CLI, and the MCP server for AI agents.
+
+## Rust Library
+
+Add vcad to any Cargo project with a single line.
+
+```bash
+cargo add vcad
+```
+
+This pulls the full kernel: primitives, booleans, transforms, patterns, fillets, sketches, sweeps, STEP import/export, and STL/GLB output. A minimal program that creates a cube and writes it to an STL file looks like this:
+
+```rust
+use vcad::Part;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cube = Part::cube("box", 30.0, 30.0, 30.0);
+    println!("Volume: {:.1} mm³", cube.volume());
+    cube.write_stl("cube.stl")?;
+    Ok(())
+}
+```
+
+Build and run with `cargo run`. The output file is a standard binary STL that any slicer or viewer can open. The crate requires Rust 1.75+ and works on macOS, Linux, and Windows. No system dependencies beyond a C compiler for the WASM target (only needed if you are building `vcad-kernel-wasm` yourself).
+
+<Callout type="tip" title="Workspace crates">
+If you need finer-grained control, you can depend on individual kernel crates directly -- `vcad-kernel-topo` for topology, `vcad-kernel-geom` for surfaces, and so on. The top-level `vcad` crate re-exports everything for convenience.
+</Callout>
+
+## CLI
+
+The command-line tool wraps the kernel in a standalone binary for format conversion, document inspection, and headless scripting.
+
+```bash
+cargo install vcad-cli
+```
+
+After installation, the `vcad` command is available globally. The main subcommands:
+
+```
+vcad export <input.vcad> <output.stl|.glb|.step>
+vcad import-step <input.step> <output.vcad>
+vcad info <input.vcad>
+```
+
+`export` evaluates the parametric document and writes the result to the target format, inferred from the file extension. `import-step` reads a STEP AP214 file and converts it into a `.vcad` document you can open in the web app or manipulate in Rust. `info` prints a summary of the document: part count, operation count, bounding box, and total volume.
+
+The CLI is useful for CI/CD pipelines (convert on commit), batch processing (export a directory of `.vcad` files to STL), and quick inspection without opening the browser.
+
+## MCP Server
+
+The MCP (Model Context Protocol) server lets AI assistants create, inspect, and export CAD geometry through tool calls. It works with any MCP-compatible client, including Claude Desktop and Cursor.
+
+### Claude Desktop
+
+Add this block to your Claude Desktop configuration file (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+
+```json
+{
+  "mcpServers": {
+    "vcad": {
+      "command": "npx",
+      "args": ["@vcad/mcp"]
+    }
+  }
+}
+```
+
+Restart Claude Desktop. You should see vcad tools appear in the tool list. Try asking: *"Create a 50mm cube with a 20mm hole through the center and export it as STL."*
+
+### Cursor
+
+Add the server to your Cursor MCP settings (`.cursor/mcp.json` in your project root, or the global settings file):
+
+```json
+{
+  "mcpServers": {
+    "vcad": {
+      "command": "npx",
+      "args": ["@vcad/mcp"]
+    }
+  }
+}
+```
+
+The MCP server exposes these tools:
+
+| Tool | Purpose |
+|------|---------|
+| `create_cad_document` | Build a part from primitives and operations |
+| `export_cad` | Export to STL or GLB |
+| `inspect_cad` | Get volume, area, bounding box, center of mass |
+| `create_robot_env` | Create a physics simulation from an assembly |
+| `gym_step` | Step the simulation with actions |
+| `gym_reset` | Reset simulation to initial state |
+| `gym_observe` | Read current simulation state |
+
+<Callout type="info" title="Node.js required">
+The MCP server runs on Node.js 18+. The `npx` command downloads and runs the package automatically -- no global install needed. If you prefer a permanent install, run `npm install -g @vcad/mcp`.
+</Callout>
+
+### Other MCP Clients
+
+Any MCP-compatible client can connect to the vcad server. The transport is stdio by default: launch the process with `npx @vcad/mcp` and communicate over stdin/stdout using the MCP JSON protocol. See the [MCP specification](https://modelcontextprotocol.io) for details on building custom integrations.
+
+---
+
+With your environment set up, read [Core Concepts](/start/concepts) to understand the mental model behind vcad: solids, booleans, transforms, and the parametric DAG.

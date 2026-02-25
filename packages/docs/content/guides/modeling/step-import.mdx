@@ -1,0 +1,98 @@
+---
+title: "Importing STEP Files"
+description: "App drag-drop, CLI import, Rust API. Multi-body files, common issues"
+order: 7
+---
+
+STEP (Standard for the Exchange of Product Data) is the universal format for exchanging exact BRep geometry between CAD systems. When you receive a part from a supplier, a colleague using SolidWorks, or a component from McMaster-Carr, it almost certainly arrives as a STEP file. vcad reads STEP AP214, the most widely implemented application protocol, covering solids, surfaces, assemblies, and product metadata.
+
+## Import Methods
+
+### Drag and Drop
+
+The fastest method. Drag a `.step` or `.stp` file from your file manager directly onto the vcad viewport at [vcad.io](https://vcad.io). The importer parses the STEP entities, reconstructs BRep topology, and adds the geometry to your document. A progress indicator shows status for large files.
+
+Imported geometry appears in the feature tree as an **Imported** node. You can rename it, transform it, boolean it, fillet its edges, shell it, or include it in assemblies. It integrates fully into the parametric workflow.
+
+### Command Palette
+
+Press **Cmd+K** and choose **Import STEP**. Select one or more `.step` or `.stp` files from the system dialog. Each file is imported as a separate feature tree node.
+
+### CLI
+
+```bash
+vcad import-step input.step output.vcad
+```
+
+Useful for batch processing, scripting, and CI/CD pipelines. The output `.vcad` file can be opened in the app or processed further.
+
+### Rust API
+
+```rust
+use vcad_kernel::Part;
+use std::path::Path;
+
+let parts = Part::from_step(Path::new("input.step"))?;
+for part in &parts {
+    println!("{} faces, {} edges",
+        part.faces().len(),
+        part.edges().len()
+    );
+}
+```
+
+Returns a `Vec<Part>` because a single STEP file can contain multiple bodies. Each part has complete BRep topology with associated surface geometry.
+
+## Multi-Body STEP Files
+
+Complex assemblies from other CAD systems often contain dozens or hundreds of bodies. vcad imports each body as a separate part, preserving hierarchy when the STEP file encodes it. Assembly structure (instances and transforms) is preserved when the file uses `PRODUCT_DEFINITION` and `REPRESENTATION_RELATIONSHIP` entities.
+
+<Callout type="info" title="Large assemblies">
+STEP files with hundreds of parts can take several seconds to parse. vcad processes bodies in parallel where possible, but very large files (50+ MB, 500+ bodies) may need 10-30 seconds. If you only need a subset, export just those bodies from the source CAD system.
+</Callout>
+
+## Supported STEP Entities
+
+vcad handles the entities most common in mechanical design. The core geometry entities include:
+
+**Surfaces:** `PLANE`, `CYLINDRICAL_SURFACE`, `CONICAL_SURFACE`, `SPHERICAL_SURFACE`, `TOROIDAL_SURFACE`, `B_SPLINE_SURFACE_WITH_KNOTS`, `SURFACE_OF_REVOLUTION`, `SURFACE_OF_LINEAR_EXTRUSION`.
+
+**Curves:** `LINE`, `CIRCLE`, `ELLIPSE`, `B_SPLINE_CURVE_WITH_KNOTS`, `TRIMMED_CURVE`, `SURFACE_CURVE`.
+
+**Topology:** `VERTEX_POINT`, `EDGE_CURVE`, `ORIENTED_EDGE`, `EDGE_LOOP`, `FACE_BOUND`, `ADVANCED_FACE`, `CLOSED_SHELL`, `MANIFOLD_SOLID_BREP`.
+
+**Assembly:** `PRODUCT_DEFINITION`, `REPRESENTATION_RELATIONSHIP`, `AXIS2_PLACEMENT_3D`, `ITEM_DEFINED_TRANSFORMATION`.
+
+Files from Fusion 360, SolidWorks, CATIA, NX, Creo, and FreeCAD import without issue because they use these standard entities.
+
+## Common Issues
+
+### Unsupported Entities
+
+Some files use entities vcad does not yet support: `OFFSET_SURFACE`, certain `PCURVE` types, or proprietary vendor extensions. The importer skips unsupported entities and logs a warning. If an unsupported entity defines a face, that face is omitted, potentially leaving a hole.
+
+Re-exporting from the source CAD with "simplify geometry" or "convert to basic surfaces" options often resolves this. Many tools can convert advanced surfaces to basic NURBS before export.
+
+### Scale Mismatch
+
+STEP uses millimeters by default, matching vcad. However, some systems export in inches or meters. The file's `LENGTH_MEASURE` unit declaration should handle conversion automatically. If a part appears 25.4x too large or 1000x too small, the unit declaration is missing or incorrect. Fix by scaling the imported geometry: select it, **Cmd+K**, **Scale**, enter the correction factor.
+
+### Topology Repair
+
+Some files have small inconsistencies: edges that do not quite meet, tiny face gaps, or non-closed shells. vcad's importer runs a **topology repair** pass that closes gaps under a configurable tolerance (default 0.01 mm), merges nearly-coincident vertices, and sews open edges.
+
+If automatic repair fails, the imported solid may have open edges (highlighted in the viewport). You can still work with the geometry, but boolean operations on non-manifold solids may produce unexpected results.
+
+<Callout type="warning" title="Non-manifold geometry">
+Some STEP files contain edges shared by more than two faces, or self-intersecting shells. vcad imports these as-is but boolean operations require manifold input. If you must boolean a non-manifold import, try tessellating it first (export to STL and re-import as mesh), which can resolve manifold issues at the cost of losing exact surface data.
+</Callout>
+
+## STEP Export Round-Trip
+
+vcad's STEP writer produces AP214 files compatible with all major CAD systems. All kernel surface types are supported, including NURBS written as `B_SPLINE_SURFACE_WITH_KNOTS`. Planes, cylinders, cones, spheres, and tori are written as native STEP entity types for maximum compatibility.
+
+A round-trip (export from vcad, import elsewhere, export from there, re-import into vcad) produces geometry identical within floating-point tolerance. Discrepancies are typically from different tessellation tolerances in the intermediate tool, not geometric fidelity loss.
+
+To combine imported geometry with your own models: import the STEP, position it with a transform, then boolean it (union to add, difference to cut) with your parametric geometry. The imported body participates in the feature tree like any other node.
+
+For understanding which export format to use for different downstream workflows, continue to the [Export Format Guide](/guides/mfg/formats).

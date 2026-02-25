@@ -1,0 +1,88 @@
+---
+title: "open_in_browser"
+description: "Open a .vcad document in the web app"
+order: 7
+---
+
+`open_in_browser` generates a shareable URL that opens an IR document in the vcad.io web app. The document is compressed (gzip + base64url) and embedded directly in the URL fragment, so no server storage is needed and the link works indefinitely.
+
+## Input Schema
+
+<Param name="document" type="string" required={true}>
+IR document as a string. Accepts both JSON format (starts with `{`) and compact IR format (starts with `#`). The tool auto-detects the format and converts to compact internally before compressing, since compact IR produces smaller URLs.
+</Param>
+
+<Param name="name" type="string" required={false}>
+Optional document name. If provided, it appears in the browser tab title and the vcad app's document header.
+</Param>
+
+## Return Value
+
+The tool returns a text response containing the URL and size information:
+
+```
+Open in vcad.io:
+https://vcad.io/#/new?doc=H4sIAAAAAAAA...&name=Bracket
+
+Compact IR size: 156 bytes
+Compressed URL param: 98 bytes
+```
+
+The URL format is `https://vcad.io/#/new?doc=<compressed>&name=<name>`. The `doc` parameter contains the gzip-compressed, base64url-encoded compact IR. The web app decompresses and parses this on load.
+
+## URL Length Limits
+
+Browser URL length limits vary, but most modern browsers support at least 2000 characters. The tool warns when the URL exceeds this threshold:
+
+```
+Warning: URL is 3456 characters. Some browsers may truncate URLs over ~2000 characters.
+Consider exporting to a file instead for larger documents.
+```
+
+For documents that exceed URL limits, use `export_cad` to write to a file and share the file directly, or use the vcad.io cloud sync feature (requires authentication).
+
+### Size Guidelines
+
+| Document complexity | Typical URL length |
+|--------------------|--------------------|
+| Single primitive | ~200 characters |
+| Primitive with 3-5 operations | ~300-500 characters |
+| Multi-part with assembly | ~600-1200 characters |
+| Complex model (20+ nodes) | ~1500-3000 characters |
+
+The compact IR format is already token-efficient. Gzip compression typically reduces it by another 40-60%, making most practical models fit within URL limits.
+
+## Compression Pipeline
+
+The tool processes the document through three stages:
+
+1. **Parse** the input (auto-detect JSON or compact format)
+2. **Convert** to compact IR (smallest text representation)
+3. **Compress** with gzip level 9 and encode as base64url (URL-safe base64 without padding)
+
+Base64url encoding replaces `+` with `-`, `/` with `_`, and strips trailing `=` characters, ensuring the URL is valid without percent-encoding.
+
+## Use Cases
+
+**Visual verification during MCP workflows.** After creating geometry with `create_cad_document` or `create_cad_loon`, generate a URL to visually confirm the model looks correct in the full 3D viewer. This catches issues that numeric inspection might miss, like incorrect orientations or missing features.
+
+**Sharing designs.** The URL encodes the complete document, so anyone with the link can view and interact with the model -- orbit, zoom, inspect properties -- without needing an account or downloading a file.
+
+**Documentation and reports.** Embed vcad.io URLs in design documents, chat messages, or issue trackers. The link renders the model interactively, which is more useful than a static screenshot.
+
+## Example
+
+```json
+{
+  "document": "# vcad 0.2\n\nM aluminum 0.9 0.9 0.92 0.95 0.3 2700\n\nC 50 30 5 \"Bracket\"\nY 2.75 10\nT 1 25 15 0\nD 0 2 \"Drilled\"\nFI 3 1 \"Filleted\"\n\nROOT 4 aluminum",
+  "name": "Bracket"
+}
+```
+
+## Environment Variable
+
+The base URL defaults to `https://vcad.io`. Override it with the `VCAD_APP_URL` environment variable for self-hosted instances:
+
+```bash
+VCAD_APP_URL=https://cad.example.com npx @vcad/mcp
+```

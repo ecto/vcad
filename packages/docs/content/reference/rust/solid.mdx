@@ -1,0 +1,230 @@
+---
+title: "Part & Solid"
+description: "Core types for representing 3D geometry in Rust"
+order: 8
+---
+
+`Part` is the central type in vcad's Rust API. It wraps a solid body (either a CSG mesh or a BRep solid from the kernel) and supports every modeling operation: construction, transforms, booleans, patterns, features, export, and inspection. Every function that creates or modifies geometry returns a `Part`.
+
+## Construction
+
+All primitives are created with static methods or free functions. Dimensions are in millimeters by convention.
+
+```rust
+use vcad::{Part, centered_cube, centered_cylinder};
+
+// Corner at origin, extends to (x, y, z)
+let box1 = Part::cube("plate", 100.0, 60.0, 5.0);
+
+// Centered at origin
+let box2 = centered_cube("block", 30.0, 30.0, 30.0);
+
+// Base center at origin, axis along Z
+let cyl = Part::cylinder("shaft", 10.0, 50.0, 32);
+
+// Centered on all axes
+let cyl2 = centered_cylinder("bushing", 8.0, 20.0, 32);
+
+// Center at origin
+let ball = Part::sphere("ball", 15.0, 32);
+
+// Base center at origin, axis along Z
+let cone = Part::cone("taper", 12.0, 0.0, 25.0, 32);
+
+// No geometry (identity for union)
+let nothing = Part::empty("accumulator");
+```
+
+The `segments` parameter on curved primitives controls tessellation quality. 32 is a good default; use 64 or 128 for visible curves in renders, and 16 for small internal features where performance matters more than smoothness.
+
+| Method | Description |
+|--------|-------------|
+| `Part::cube(name, x, y, z)` | Box with corner at origin |
+| `centered_cube(name, x, y, z)` | Box centered at origin |
+| `Part::cylinder(name, r, h, segs)` | Cylinder, base at origin, Z-up |
+| `centered_cylinder(name, r, h, segs)` | Cylinder centered at origin |
+| `Part::sphere(name, r, segs)` | Sphere centered at origin |
+| `Part::cone(name, r_bot, r_top, h, segs)` | Cone or frustum, base at origin |
+| `Part::empty(name)` | Empty part (no geometry) |
+| `counterbore_hole(d, cb_d, cb_depth, depth, segs)` | Counterbore hole tool |
+| `bolt_pattern(count, bcd, hole_d, depth, segs)` | Circular bolt hole pattern |
+
+## Transforms
+
+Every transform returns a new `Part`, leaving the original unchanged. Transforms can be chained.
+
+```rust
+let positioned = part
+    .translate(50.0, 0.0, 10.0)
+    .rotate(0.0, 0.0, 45.0)
+    .scale(1.0, 1.0, 2.0);
+```
+
+Rotation angles are in degrees. Rotation order is X, then Y, then Z (extrinsic Euler angles). Scale factors of 1.0 leave that axis unchanged; negative values mirror.
+
+| Method | Description |
+|--------|-------------|
+| `.translate(x, y, z)` | Move by offset in mm |
+| `.translate_vec(v)` | Move by `Vector3<f64>` |
+| `.rotate(rx, ry, rz)` | Rotate in degrees (X then Y then Z) |
+| `.scale(sx, sy, sz)` | Non-uniform scale |
+| `.scale_uniform(s)` | Uniform scale |
+| `.mirror_x()` | Mirror across YZ plane |
+| `.mirror_y()` | Mirror across XZ plane |
+| `.mirror_z()` | Mirror across XY plane |
+
+<Callout type="info" title="Transform order matters">
+`.translate(10, 0, 0).rotate(0, 0, 45)` moves the part 10mm along X, then rotates the result around the origin. `.rotate(0, 0, 45).translate(10, 0, 0)` rotates first, then moves 10mm along X. These give different final positions.
+</Callout>
+
+## Boolean Operations
+
+vcad overloads the `+`, `-`, and `&` operators for Part, so boolean operations read naturally.
+
+```rust
+let bracket = vertical_plate + horizontal_plate;
+let with_hole = bracket - cylinder_tool;
+let clipped = part & bounding_box;
+```
+
+Named methods are also available when you have references:
+
+```rust
+let union = part_a.union(&part_b);
+let diff = part_a.difference(&part_b);
+let inter = part_a.intersection(&part_b);
+```
+
+| Operator / Method | Description |
+|-------------------|-------------|
+| `a + b` / `a.union(&b)` | Combine material from both |
+| `a - b` / `a.difference(&b)` | Subtract b from a |
+| `a & b` / `a.intersection(&b)` | Keep only overlapping volume |
+
+For performance, batch small parts together with union before subtracting from a large part. One union of 20 holes followed by one difference is much faster than 20 individual difference operations.
+
+## Patterns
+
+Patterns create multiple copies of a part in a regular arrangement.
+
+```rust
+// 5 copies along X, 120mm total span
+let row = hole.linear_pattern(120.0, 0.0, 0.0, 5);
+
+// 6 copies evenly around Z axis, full 360 degrees
+let ring = hole.translate(30.0, 0.0, 0.0)
+    .circular_pattern(0.0, 6);
+
+// Partial arc: 4 copies across 180 degrees
+let arc = hole.translate(30.0, 0.0, 0.0)
+    .circular_pattern_angle(0.0, 4, 180.0);
+```
+
+For `linear_pattern`, the distance parameters define the **total distance** from first to last copy. The spacing between adjacent copies is `distance / (count - 1)`.
+
+For `circular_pattern`, setting `radius` to 0 rotates copies around the origin. Pre-translate the part to the desired radial position before patterning.
+
+| Method | Description |
+|--------|-------------|
+| `.linear_pattern(dx, dy, dz, count)` | Line of evenly spaced copies |
+| `.circular_pattern(radius, count)` | Full-circle pattern around Z axis |
+| `.circular_pattern_angle(radius, count, angle_deg)` | Partial-circle pattern |
+
+## Features
+
+Features modify existing geometry by adding or removing material based on topology.
+
+```rust
+let rounded = part.fillet(2.0);      // Round all edges with 2mm radius
+let beveled = part.chamfer(1.5);     // 45-degree bevel on all edges
+let hollow = part.shell(2.0);        // Hollow out, keeping 2mm walls
+```
+
+| Method | Description |
+|--------|-------------|
+| `.fillet(radius)` | Round all edges |
+| `.chamfer(distance)` | Bevel all edges |
+| `.shell(thickness)` | Hollow the solid, keeping wall thickness |
+
+<Callout type="tip" title="Fillet order">
+Apply fillets after all boolean operations. Filleting a part and then cutting a hole through a fillet can produce invalid geometry. The safe order is: primitives, booleans, then features.
+</Callout>
+
+## Export
+
+Export writes geometry to a file on disk. The format is determined by the method name.
+
+```rust
+part.write_stl("output.stl")?;     // Binary STL for 3D printing
+part.write_glb("output.glb")?;     // glTF binary for visualization
+part.write_step("output.step")?;   // STEP AP214 for CAD interchange
+```
+
+| Method | Description |
+|--------|-------------|
+| `.write_stl(path)` | Export as binary STL |
+| `.write_glb(path)` | Export as glTF binary |
+| `.write_step(path)` | Export as STEP AP214 |
+
+STL and GLB export the tessellated mesh, so they work with any geometry. STEP export requires BRep data (primitives and imported STEP solids). Boolean results are mesh-only and cannot currently be exported to STEP.
+
+## Inspection
+
+Inspection methods query geometric properties without modifying the part.
+
+```rust
+let vol = part.volume();                    // mm^3
+let area = part.surface_area();             // mm^2
+let (min, max) = part.bounding_box();       // ([f64; 3], [f64; 3])
+let com = part.center_of_mass();            // [f64; 3]
+let tris = part.num_triangles();            // usize
+let empty = part.is_empty();                // bool
+```
+
+Volume is computed from the signed volume of the triangle mesh, which is exact for closed solids. Surface area sums the area of every triangle. Bounding box is axis-aligned (AABB). Center of mass assumes uniform density.
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `.volume()` | `f64` | Enclosed volume in mm^3 |
+| `.surface_area()` | `f64` | Total surface area in mm^2 |
+| `.bounding_box()` | `([f64;3], [f64;3])` | Axis-aligned bounding box (min, max) |
+| `.center_of_mass()` | `[f64; 3]` | Volume-weighted centroid |
+| `.num_triangles()` | `usize` | Mesh triangle count |
+| `.is_empty()` | `bool` | True if part has no geometry |
+
+## Putting It Together
+
+Here is a complete example that creates a mounting plate with a bolt pattern, rounds the edges, and exports it:
+
+```rust
+use vcad::{centered_cube, centered_cylinder, bolt_pattern};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Base plate
+    let plate = centered_cube("plate", 80.0, 60.0, 6.0);
+
+    // Central bore
+    let bore = centered_cylinder("bore", 12.0, 10.0, 64);
+
+    // Four M5 mounting holes on 50mm x 30mm pattern
+    let hole = centered_cylinder("hole", 2.75, 10.0, 32);
+    let holes = hole.translate(25.0, 15.0, 0.0)
+        + hole.translate(-25.0, 15.0, 0.0)
+        + hole.translate(25.0, -15.0, 0.0)
+        + hole.translate(-25.0, -15.0, 0.0);
+
+    // Combine
+    let result = (plate - bore - holes).fillet(1.0);
+
+    // Inspect
+    println!("Volume: {:.0} mm^3", result.volume());
+    println!("Triangles: {}", result.num_triangles());
+
+    // Export
+    result.write_stl("mounting_plate.stl")?;
+
+    Ok(())
+}
+```
+
+For details on individual topics, see [Primitives](/reference/rust/primitives), [Transforms](/reference/rust/transforms), [Booleans](/reference/rust/booleans), and [Patterns](/reference/rust/patterns).

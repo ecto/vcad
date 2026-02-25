@@ -1,0 +1,214 @@
+---
+title: "CAM Panel"
+description: "CNC tool paths, operations, tool library, G-code generation"
+order: 15
+---
+
+The CAM panel generates CNC toolpaths directly from BRep geometry. It covers 2.5D and 3D milling operations, with a built-in tool library and G-code post-processor. Open the CAM panel from the workspace selector in the sidebar after modeling your part.
+
+## Workflow
+
+A typical CAM workflow in vcad follows four steps: define the stock, select tools, create operations, and generate G-code. Each step builds on the previous one, and you can iterate on any step without starting over.
+
+**Define stock.** Specify the raw material dimensions and material type. The stock is displayed as a translucent bounding shape in the viewport so you can see how the part fits within the raw material.
+
+**Select tools.** Pick cutting tools from the built-in library or define custom tools. Each tool has geometry (diameter, flute length, corner radius) and feed/speed recommendations per material.
+
+**Create operations.** Add one or more machining operations. Each operation references a tool and a set of geometry (faces, pockets, contours). The panel computes toolpaths and displays them as colored lines in the viewport.
+
+**Generate G-code.** Post-process the toolpath into machine-specific G-code. Select a post-processor profile for your CNC controller and export.
+
+## Stock Definition
+
+<Param name="type" type="string">
+Stock shape: `box` (rectangular prism) or `cylinder` (round bar). Box stock is aligned to the part bounding box with configurable offsets. Cylinder stock wraps around the part's vertical extent.
+</Param>
+
+<Param name="offset" type="Vec3 (mm)">
+Extra material around the part bounding box on each side. Default 2mm on all sides.
+</Param>
+
+<Param name="material" type="string">
+Stock material for feed/speed recommendations: `aluminum`, `steel`, `stainless`, `brass`, `plastic`, `wood`, `foam`.
+</Param>
+
+## Tool Library
+
+The built-in tool library provides common cutting tools organized by type.
+
+### End Mills
+
+| Name | Diameter | Flutes | Corner Radius | Use |
+|------|----------|--------|---------------|-----|
+| 1/8" Flat | 3.175mm | 2 | 0 | Fine detail, small pockets |
+| 1/4" Flat | 6.35mm | 3 | 0 | General purpose |
+| 3/8" Flat | 9.525mm | 3 | 0 | Roughing, large pockets |
+| 1/2" Flat | 12.7mm | 4 | 0 | Heavy roughing |
+| 1/4" Bull | 6.35mm | 3 | 1mm | Blended floor-wall transitions |
+
+### Ball Nose
+
+| Name | Diameter | Flutes | Use |
+|------|----------|--------|-----|
+| 1/8" Ball | 3.175mm | 2 | Fine 3D finishing |
+| 1/4" Ball | 6.35mm | 2 | 3D surface finishing |
+| 3/8" Ball | 9.525mm | 2 | 3D roughing and finishing |
+
+### Drill Bits
+
+| Name | Diameter | Point Angle | Use |
+|------|----------|-------------|-----|
+| #7 Drill | 5.105mm | 118 deg | 1/4-20 tap drill |
+| #21 Drill | 4.039mm | 118 deg | #10-24 tap drill |
+| 1/4" Drill | 6.35mm | 118 deg | General drilling |
+
+### Custom Tools
+
+Define custom tools with full geometry:
+
+<Param name="name" type="string">
+Tool name for identification.
+</Param>
+
+<Param name="type" type="string">
+Tool type: `flat_endmill`, `ball_endmill`, `bull_endmill`, `drill`, `spot_drill`, `chamfer_mill`.
+</Param>
+
+<Param name="diameter" type="number (mm)">
+Cutting diameter.
+</Param>
+
+<Param name="flute_length" type="number (mm)">
+Maximum depth of cut (length of cutting flutes).
+</Param>
+
+<Param name="corner_radius" type="number (mm)">
+Corner radius for bull endmills. 0 for flat, diameter/2 for ball.
+</Param>
+
+<Param name="flutes" type="integer">
+Number of cutting flutes. Affects chip load calculations.
+</Param>
+
+## Operations
+
+### Face
+
+Faces the top surface of the stock flat. Removes material in parallel passes across the entire stock width.
+
+<Param name="tool" type="string">
+Tool reference. Flat endmills recommended.
+</Param>
+
+<Param name="step_over" type="number (%)">
+Percentage of tool diameter per pass (default 70%).
+</Param>
+
+<Param name="depth_of_cut" type="number (mm)">
+Maximum depth per facing pass.
+</Param>
+
+### Pocket
+
+Clears material from an enclosed region. Supports rectangular, circular, and arbitrary profile pockets.
+
+<Param name="tool" type="string">
+Tool reference. Flat endmills for 2.5D, ball nose for curved-bottom pockets.
+</Param>
+
+<Param name="step_down" type="number (mm)">
+Depth per roughing layer (default: 50% of tool diameter for aluminum).
+</Param>
+
+<Param name="step_over" type="number (%)">
+Lateral step as percentage of tool diameter (default 45%).
+</Param>
+
+<Param name="finishing_pass" type="boolean">
+Add a final light pass at full depth with reduced step-over for surface finish.
+</Param>
+
+### Contour
+
+Traces the outside or inside profile of a shape. Used for cutting parts from stock and profiling edges.
+
+<Param name="side" type="string">
+Cut side: `outside` (profile cut), `inside` (pocket boundary), `on` (center-line).
+</Param>
+
+<Param name="tabs" type="boolean">
+Add holding tabs to prevent the part from moving when cutting free from stock.
+</Param>
+
+<Param name="tab_width" type="number (mm)">
+Width of each holding tab (default 5mm).
+</Param>
+
+<Param name="tab_height" type="number (mm)">
+Height of each holding tab (default 2mm).
+</Param>
+
+### 3D Roughing
+
+Removes bulk material from a 3D surface using waterline (constant-Z) or adaptive strategies.
+
+<Param name="strategy" type="string">
+Roughing strategy: `waterline` (constant-Z layers), `adaptive` (trochoidal engagement control).
+</Param>
+
+<Param name="stock_to_leave" type="number (mm)">
+Material left for the finishing pass (default 0.3mm).
+</Param>
+
+### 3D Finishing
+
+Produces the final surface quality on 3D geometry. Ball nose endmills give the best results on curved surfaces.
+
+<Param name="strategy" type="string">
+Finishing strategy: `raster` (parallel lines), `spiral` (inside-out), `pencil` (follow concave edges).
+</Param>
+
+<Param name="step_over" type="number (mm)">
+Distance between passes. Smaller values produce smoother surfaces but take longer. For ball nose tools, a step-over of 5-10% of the tool diameter gives scallop heights under 0.01mm.
+</Param>
+
+## Feeds and Speeds
+
+The CAM panel calculates recommended feed rates and spindle speeds based on the tool geometry, stock material, and operation type. These are starting recommendations that you can override.
+
+| Material | SFM (Carbide) | Chip Load (1/4" 3-flute) |
+|----------|---------------|--------------------------|
+| Aluminum 6061 | 800-1200 | 0.05-0.08mm |
+| Mild Steel | 300-500 | 0.03-0.06mm |
+| Stainless 304 | 150-250 | 0.02-0.04mm |
+| Brass | 600-900 | 0.05-0.08mm |
+| Plastic (HDPE) | 1000-1500 | 0.08-0.15mm |
+| Hardwood | 600-1000 | 0.05-0.10mm |
+
+Feed rate is calculated as: `feed = RPM * flutes * chip_load`. Plunge rate defaults to 50% of feed rate.
+
+<Callout type="warning" title="Verify on your machine">
+Feed and speed recommendations are starting points. Verify with your machine's capabilities, rigidity, and workholding before running any program. Start conservative and increase from there.
+</Callout>
+
+## Work Coordinate System
+
+The CAM panel uses the part's coordinate system (Z-up) with the WCS origin at a user-selectable point. Common choices are top-center of stock (G54 at the top face center) or bottom-left corner.
+
+<Param name="wcs_origin" type="string">
+Origin location: `top_center`, `top_left`, `bottom_center`, `bottom_left`, `part_origin` (use the vcad origin).
+</Param>
+
+## G-code Export
+
+After computing toolpaths, export G-code for your machine controller.
+
+<Param name="post_processor" type="string">
+Controller profile: `grbl` (GRBL/Arduino), `linuxcnc`, `mach3`, `fanuc`, `haas`. Determines dialect, tool change sequences, and safety blocks.
+</Param>
+
+<Param name="filename" type="string">
+Output filename (.nc or .gcode extension).
+</Param>
+
+The exported G-code includes a header with tool table, operation summary, and estimated run time. Each operation is separated by a tool change block with safe retract, optional spindle warm-up, and approach sequence.

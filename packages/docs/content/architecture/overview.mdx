@@ -1,0 +1,79 @@
+---
+title: "System Overview"
+description: "Crate map, package map, data flow from IR to viewport"
+order: 1
+---
+
+vcad is a parametric CAD system with a Rust BRep kernel, a TypeScript/React web app, and AI-native interfaces. This page maps the full system and traces the data path from user intent to pixels on screen.
+
+## Data Flow
+
+Every piece of geometry in vcad follows the same pipeline, regardless of whether it originates from the app UI, the CLI, an MCP agent, or a Rust program calling the kernel directly.
+
+The user creates an **IR document** -- a JSON DAG describing primitives, transforms, booleans, and sketches. The `@vcad/engine` package evaluates this DAG by calling into the WASM-compiled Rust kernel. The kernel builds **BRep solids** (exact boundary representation with analytic surfaces), then **tessellates** them into triangle meshes. Those meshes are sent to the Three.js viewport for rendering. Optionally, the kernel can **ray-trace** BRep surfaces directly on the GPU, bypassing tessellation entirely for pixel-perfect silhouettes.
+
+```
+User (app / CLI / MCP / Rust)
+  │
+  ▼
+IR Document (JSON DAG)
+  │
+  ▼
+@vcad/engine (TypeScript + WASM)
+  │  calls into ──▶  vcad-kernel-wasm
+  │                      │
+  │                      ▼
+  │                 vcad-kernel (unified API)
+  │                      │
+  │         ┌────────────┼────────────┐
+  │         ▼            ▼            ▼
+  │    primitives    booleans     sweep/loft
+  │         │            │            │
+  │         └────────────┼────────────┘
+  │                      ▼
+  │                 BRep Solid
+  │                  /       \
+  │                 ▼         ▼
+  │          tessellate    ray-trace
+  │              │              │
+  │         TriangleMesh    GPU pixels
+  │              │
+  ▼              ▼
+Three.js viewport (WebGL)
+```
+
+## Crate Dependency Graph
+
+The Rust workspace lives under `crates/`. Dependency flows downward -- lower crates know nothing about their consumers.
+
+**Foundation layer.** `vcad-kernel-math` provides `Point3`, `Vec3`, `Dir3`, `Transform`, and Shewchuk exact predicates (`orient2d`, `orient3d`, `incircle`, `insphere`) via the `robust` crate. Every other kernel crate depends on it.
+
+**Topology and geometry.** `vcad-kernel-topo` defines the half-edge BRep data structure (Vertex, HalfEdge, Edge, Loop, Face, Shell, Solid) using arena-based `slotmap` storage. `vcad-kernel-geom` provides the `Surface` trait and concrete types (Plane, Cylinder, Cone, Sphere, Torus, Bilinear) plus `Curve3d` and `Curve2d` traits. Both crates depend only on math.
+
+**Modeling operations.** `vcad-kernel-primitives` constructs box, cylinder, sphere, and cone BRep solids. `vcad-kernel-booleans` implements the 4-stage boolean pipeline (~5.4K LOC). `vcad-kernel-nurbs` adds B-spline curves and surfaces. `vcad-kernel-fillet` computes fillets and chamfers via rolling-ball blends. `vcad-kernel-sketch` handles 2D sketch geometry. `vcad-kernel-constraints` provides the Levenberg-Marquardt constraint solver. `vcad-kernel-sweep` implements extrude, revolve, sweep, and loft. `vcad-kernel-shell` adds shell (hollow) and pattern (linear, circular) operations. All of these depend on topo, geom, and math, and some depend on each other (booleans depends on primitives and tessellate for point-in-solid testing).
+
+**Output layer.** `vcad-kernel-tessellate` converts BRep faces to triangle meshes with per-surface-type strategies. `vcad-kernel-step` reads and writes STEP AP214 files. `vcad-kernel-drafting` produces 2D orthographic projections with dimensions and GD&T. `vcad-kernel-gpu` runs wgpu compute shaders for vertex normal computation and mesh decimation. `vcad-kernel-raytrace` performs direct BRep ray tracing with analytic intersections and BVH acceleration.
+
+**Simulation.** `vcad-kernel-physics` wraps phyz (Featherstone articulated-body dynamics) for rigid body simulation with a gym-style RL interface. `vcad-kernel-urdf` imports URDF robot descriptions.
+
+**Aggregation.** `vcad-kernel` re-exports the full API. `vcad-kernel-wasm` compiles the kernel to WebAssembly via `wasm-bindgen`.
+
+**IR and CLI.** `vcad-ir` defines the intermediate representation types (Document, Node, CsgOp) with serde serialization. `vcad-cli` provides the command-line tool for export, import, and inspection.
+
+## TypeScript Package Map
+
+The TypeScript workspace lives under `packages/`.
+
+`@vcad/ir` mirrors the Rust IR types in TypeScript, including the Compact IR parser. `@vcad/engine` wraps the WASM kernel module and evaluates IR documents into triangle meshes. `@vcad/core` contains shared Zustand stores and utilities. `@vcad/app` is the React + Three.js web application with viewport, feature tree, property panel, sketch mode, and assembly mode. `@vcad/auth` wraps Supabase for authentication and document sync. `@vcad/mcp` exposes a Model Context Protocol server for AI agents. `@vcad/training` provides the ML training pipeline. `@vcad/cli` is a JavaScript TUI for headless operation. `@vcad/docs` is this documentation site.
+
+## Coordinate System
+
+vcad uses Z-up coordinates everywhere: X right, Y forward, Z up. Units are millimeters (f64). The Three.js renderer applies a -90 degree X rotation at the scene root to convert from Z-up kernel space to Y-up display space. The camera and gizmos operate in standard Three.js Y-up space outside this rotation group.
+
+<Callout type="info" title="Kernel to display mapping">
+A kernel point (x, y, z) appears at display position (x, z, -y) after the rotation group transform. Grid, shadows, and gizmo overlays live outside the rotation group in Three.js native space.
+</Callout>
+
+## Related Pages
+
+The [BRep Kernel](/architecture/kernel) page details the half-edge topology and surface types. The [IR Format](/architecture/ir) page explains the document structure. The [WASM Pipeline](/architecture/wasm) page covers browser evaluation.

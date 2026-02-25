@@ -1,0 +1,67 @@
+---
+title: "Fillets, Chamfers & Shell"
+description: "Round edges, bevel corners, and hollow parts"
+order: 5
+difficulty: Beginner
+time: "10 minutes"
+playground:
+  exampleId: "enclosure"
+---
+
+<Playground exampleId="enclosure" />
+
+The enclosure above started as a simple box. Shell hollowed it out, fillets rounded the outer edges, and the result is a clean, injection-mold-ready housing. These finishing operations are applied after the main shape is built -- they refine geometry without changing the fundamental design.
+
+## Fillets: Rounding Edges
+
+A fillet replaces a sharp edge with a smooth, tangent arc of a given radius. Larger radii produce more rounding; a 1 mm fillet softens an edge subtly, while a 10 mm fillet on the same edge creates a dramatic curve.
+
+To apply a fillet, select one or more edges in the viewport. Edges highlight when you hover over them -- click to select, and **Cmd+click** to add more edges to the selection. With edges selected, press **Cmd+K** and choose **Fillet**. The property panel shows a **Radius** field. Set your desired radius and the preview updates in real time.
+
+You can fillet multiple edges at once with the same radius, or apply separate fillet operations with different radii for different edges. Fillets on all edges of a box top, for example, create a smooth, rounded-rectangle shape.
+
+<Callout type="tip" title="Fillet order">
+Apply fillets after all booleans are complete. Filleting an edge before a boolean cut can cause the boolean to fail because the fillet changes the surface topology. The general rule is: build the shape first, then finish it.
+</Callout>
+
+## Chamfers: Beveling Edges
+
+A chamfer cuts a flat bevel along an edge instead of a round one. The workflow is identical to fillets: select edges, open the command palette, and choose **Chamfer**. The property panel shows a **Distance** field that controls how far the bevel extends from the edge.
+
+Chamfers are used where fillets are not appropriate -- mating surfaces that need a lead-in angle, edges that will be welded, or aesthetic choices where a crisp bevel looks better than a round. A 45-degree chamfer at distance D removes a triangle of material D wide on each face meeting at the edge.
+
+## Choosing Between Fillet and Chamfer
+
+Both operations serve the same purpose of removing sharp edges, but they produce different geometry. Fillets create smooth, continuous curvature which is better for stress distribution, injection-molded parts, and organic shapes. Chamfers create flat cuts which are easier to machine on a mill or lathe and give parts a more industrial look.
+
+Many parts use both: fillets on exterior edges for comfort and aesthetics, chamfers on interior holes for bolt insertion and assembly clearance.
+
+## Shell: Hollowing a Solid
+
+Shell transforms a solid body into a thin-walled container. Select a solid, press **Cmd+K**, and choose **Shell**. The property panel shows two controls: **Wall Thickness** and the face to remove.
+
+Click a face to designate it as the opening -- this face is deleted and the rest of the solid is hollowed out with walls of the specified thickness. For the enclosure above, the top face was removed and the wall thickness set to 2 mm. The result is an open box with uniform wall thickness on all five remaining sides.
+
+<Callout type="warning" title="Shell limitations">
+Shell works best on relatively simple geometry. Very thin walls (under 0.5 mm) or walls on parts with complex internal features can fail. If shell fails, try simplifying the shape or increasing the wall thickness. You can also create a shell manually by scaling down a copy of the body and subtracting it.
+</Callout>
+
+## Shell Before or After Fillets?
+
+This is a common question and the answer depends on the result you want. **Shell first, then fillet** rounds the edges of the thin-walled part -- this is typical for enclosures and housings. **Fillet first, then shell** creates a shelled version of the already-rounded shape, which produces a different wall profile at the filleted edges. For most enclosures, shell first is the right order.
+
+## Practical Example: Electronics Enclosure
+
+Here is a complete workflow for the enclosure in the playground above. Start with a box of 80 x 50 x 30 mm. Apply **Shell** with a wall thickness of 2 mm, removing the top face. This gives you a hollow box open on top. Then select the four long vertical edges and apply a **Fillet** with radius 4 mm. The corners become smooth and rounded.
+
+If you need mounting bosses inside, add cylinders at the inner corners, union them with the shell body, then subtract smaller cylinders for the screw holes. If you need ventilation slots, sketch rectangles on a side face, extrude them through the wall, and subtract.
+
+<Callout type="info" title="Matching lid">
+To make a matching lid, duplicate the shell body, change the removed face to the bottom instead of the top, and set the wall thickness slightly smaller (say 1.8 mm) so it nests inside the base. Add a lip by extruding a thin border on the inner edge.
+</Callout>
+
+## Finishing Checklist
+
+Before exporting a part for manufacturing, review these finishing touches: fillet all exterior edges that a user will touch (even 0.5 mm makes a difference), chamfer all holes that receive fasteners, shell any parts that should be hollow, and double-check wall thicknesses against your manufacturing process requirements. These small operations take seconds to apply but make the difference between a rough prototype and a production-ready design.
+
+With primitives, booleans, transforms, sketches, and finishing operations, you have the full toolkit for modeling parts in vcad. Continue to the [materials tutorial](/tutorials/app/06-materials) to learn how to assign realistic materials and render your parts.

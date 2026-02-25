@@ -1,0 +1,236 @@
+---
+title: "Turned Part (Lathe)"
+description: "Revolved profile for CNC turning"
+difficulty: Intermediate
+time: "15 min"
+order: 6
+---
+
+CNC-turned parts are defined by revolving a 2D cross-section profile around the Z axis. This recipe builds a stepped shaft with grooves and chamfers -- the kind of part you would program on a CNC lathe.
+
+## The Profile
+
+The key to a turned part is its silhouette profile. Every feature -- steps, grooves, chamfers, radii -- is captured in a single 2D outline that gets revolved 360 degrees.
+
+```rust
+use vcad::{Sketch, Revolve, Part};
+
+let profile = Sketch::new()
+    .move_to(0.0, 0.0)
+    .line_to(12.0, 0.0)          // Base diameter (24mm)
+    .line_to(12.0, 15.0)         // First step
+    .line_to(10.0, 16.0)         // 45° chamfer
+    .line_to(10.0, 40.0)         // Second step (20mm dia)
+    .line_to(8.5, 40.0)          // Groove entry
+    .line_to(8.5, 43.0)          // Groove bottom (17mm dia)
+    .line_to(10.0, 43.0)         // Groove exit
+    .line_to(10.0, 55.0)         // Continue shaft
+    .line_to(6.0, 56.0)          // Shoulder chamfer
+    .line_to(6.0, 80.0)          // Neck (12mm dia)
+    .line_to(0.0, 80.0)          // Close to axis
+    .close();
+
+let shaft = Revolve::full(&profile).segments(64).build();
+```
+
+The profile is drawn as a half-silhouette: the left edge (X=0) is the center axis, and each point's X coordinate is the radius at that Z height. When revolved, a point at X=12 becomes a diameter of 24mm.
+
+## Step by Step
+
+### 1. Draw the half-profile
+
+Think of the profile as what you see when you section the part through its center axis. You only need one side -- the revolve creates the other half automatically.
+
+```rust
+let profile = Sketch::new()
+    .move_to(0.0, 0.0)           // Start at axis, bottom face
+    .line_to(12.0, 0.0)          // Bottom face radius
+    .line_to(12.0, 15.0)         // Cylinder wall, first step
+```
+
+Start at the center axis (X=0) and trace outward to the maximum radius (12mm), then upward along the outer wall. Each horizontal segment creates a flat face; each vertical segment creates a cylindrical surface.
+
+### 2. Add a chamfer
+
+```rust
+    .line_to(10.0, 16.0)         // 45° chamfer, 2mm x 1mm
+```
+
+A diagonal line between two radii creates a conical surface when revolved. This 2mm radial drop over 1mm of height produces a chamfer at the step transition. In turning, chamfers prevent sharp edges and ease assembly of mating parts.
+
+### 3. Cut a groove
+
+```rust
+    .line_to(8.5, 40.0)          // Groove entry (step inward)
+    .line_to(8.5, 43.0)          // Groove bottom (3mm wide)
+    .line_to(10.0, 43.0)         // Groove exit (step outward)
+```
+
+The groove is a rectangular notch in the profile -- step inward to a smaller radius, travel along Z, then step back out. This 3mm-wide groove at 17mm diameter is typical for retaining ring (snap ring) grooves. On a CNC lathe this would be a grooving or parting operation.
+
+### 4. Create the shoulder transition
+
+```rust
+    .line_to(6.0, 56.0)          // Taper from r=10 to r=6 over 1mm
+    .line_to(6.0, 80.0)          // Smaller diameter section
+```
+
+The sharp drop from 10mm to 6mm radius with a 1mm chamfer creates a shoulder. The smaller-diameter section beyond it could serve as a bearing journal or a threaded section.
+
+### 5. Close the profile and revolve
+
+```rust
+    .line_to(0.0, 80.0)          // Return to axis
+    .close();                     // Close back to start
+
+let shaft = Revolve::full(&profile).segments(64).build();
+```
+
+The final line returns to the center axis at the top of the part. `.close()` connects back to the starting point, completing the closed profile. `Revolve::full()` rotates it 360 degrees around the Z axis.
+
+<Callout type="info" title="Z-up convention">
+The profile is drawn in the XZ plane with the revolution axis along Z. This means Z is the spindle axis, matching the convention used by most CNC lathe programming (where Z is the axis of rotation).
+</Callout>
+
+## Adding Radii and Fillets
+
+Sharp internal corners cause stress concentrations and are difficult to machine. Add radii using arc segments in the profile:
+
+```rust
+let profile_with_radii = Sketch::new()
+    .move_to(0.0, 0.0)
+    .line_to(12.0, 0.0)
+    .line_to(12.0, 14.0)
+    .arc_to(10.0, 16.0, 2.0)    // R2 fillet at step
+    .line_to(10.0, 40.0)
+    .line_to(8.5, 40.0)
+    .arc_to(8.5, 43.0, 0.5)     // R0.5 at groove bottom
+    .line_to(10.0, 43.0)
+    .line_to(10.0, 55.0)
+    .arc_to(6.0, 57.0, 2.0)     // R2 at shoulder
+    .line_to(6.0, 80.0)
+    .line_to(0.0, 80.0)
+    .close();
+```
+
+The `.arc_to(x, z, radius)` method inserts a tangent arc between the current point and the target, with the specified fillet radius. When revolved, a fillet in the profile becomes a toroidal surface on the 3D part.
+
+## Center Bore
+
+Most turned parts have a center bore for a shaft or fastener. Subtract it after revolving:
+
+```rust
+use vcad::centered_cylinder;
+
+let bore = centered_cylinder("bore", 4.0, 85.0, 32);  // 8mm bore
+let shaft_with_bore = shaft - bore;
+```
+
+Alternatively, include the bore in the profile itself by tracing the inner wall:
+
+```rust
+let profile_with_bore = Sketch::new()
+    .move_to(4.0, 0.0)           // Start at bore radius
+    .line_to(12.0, 0.0)          // Bottom face
+    // ... outer profile ...
+    .line_to(0.0, 80.0)          // Actually return to bore radius
+    .line_to(4.0, 80.0)
+    .line_to(4.0, 0.0)           // Inner bore wall
+    .close();
+```
+
+Both approaches produce the same geometry. The boolean subtraction method is clearer and more flexible (you can add the bore with different depths on each end), while the profile method is more efficient for meshing.
+
+## Partial Revolution
+
+For parts that are not full cylinders, specify the revolution angle:
+
+```rust
+// Half-section for visualization
+let half = Revolve::angle(&profile, 180.0).segments(32).build();
+
+// Quarter section for cutaway view
+let quarter = Revolve::angle(&profile, 90.0).segments(16).build();
+```
+
+Partial revolutions are useful for creating cutaway documentation views or for parts like lever handles that have a cylindrical section on one end.
+
+## Complete Code
+
+```rust
+use vcad::{centered_cylinder, Sketch, Revolve, Part};
+
+fn turned_shaft(
+    base_dia: f64,
+    base_length: f64,
+    mid_dia: f64,
+    mid_length: f64,
+    neck_dia: f64,
+    neck_length: f64,
+    groove_width: f64,
+    groove_depth: f64,
+    bore_dia: f64,
+    chamfer: f64,
+) -> Part {
+    let rb = base_dia / 2.0;   // Base radius
+    let rm = mid_dia / 2.0;    // Mid radius
+    let rn = neck_dia / 2.0;   // Neck radius
+    let rg = rm - groove_depth; // Groove radius
+
+    let z1 = base_length;
+    let z2 = z1 + chamfer;                  // End of chamfer
+    let z3 = z2 + mid_length;               // Start of groove
+    let z4 = z3 + groove_width;             // End of groove
+    let z5 = z4 + mid_length;               // Start of shoulder
+    let z6 = z5 + chamfer;                  // End of shoulder chamfer
+    let z7 = z6 + neck_length;              // Top of part
+
+    let profile = Sketch::new()
+        .move_to(0.0, 0.0)
+        .line_to(rb, 0.0)
+        .line_to(rb, z1)
+        .line_to(rm, z2)          // Chamfer
+        .line_to(rm, z3)
+        .line_to(rg, z3)          // Groove entry
+        .line_to(rg, z4)          // Groove floor
+        .line_to(rm, z4)          // Groove exit
+        .line_to(rm, z5)
+        .line_to(rn, z6)          // Shoulder chamfer
+        .line_to(rn, z7)
+        .line_to(0.0, z7)
+        .close();
+
+    let solid = Revolve::full(&profile).segments(64).build();
+
+    if bore_dia > 0.0 {
+        let bore = centered_cylinder("bore", bore_dia / 2.0, z7 + 5.0, 32);
+        solid - bore
+    } else {
+        solid
+    }
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let part = turned_shaft(
+        24.0,   // base diameter
+        15.0,   // base length
+        20.0,   // mid diameter
+        20.0,   // mid section length
+        12.0,   // neck diameter
+        25.0,   // neck length
+        3.0,    // groove width
+        1.5,    // groove depth
+        8.0,    // bore diameter (0 for solid)
+        1.0,    // chamfer size
+    );
+
+    println!("Volume: {:.0} mm³", part.volume());
+    part.write_stl("turned_shaft.stl")?;
+    part.write_step("turned_shaft.step")?;
+    Ok(())
+}
+```
+
+<Callout type="tip" title="STEP export for CAM">
+Export to STEP for CNC programming. The revolved surfaces export as exact cylinders, cones, and tori rather than tessellated approximations. This lets your CAM software recognize features automatically and generate optimal toolpaths.
+</Callout>

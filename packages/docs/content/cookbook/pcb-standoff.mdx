@@ -1,0 +1,193 @@
+---
+title: "PCB Standoff"
+description: "Threaded standoff for PCB mounting"
+difficulty: Beginner
+time: "5 min"
+order: 9
+---
+
+A PCB standoff is a small post that elevates a circuit board above a surface, providing clearance for bottom-side components and solder joints. This recipe builds a basic round standoff, then shows hex and snap-fit variations.
+
+## Basic Round Standoff
+
+The simplest standoff is a cylinder with a through-hole:
+
+```rust
+use vcad::{centered_cylinder, Part};
+
+let outer = centered_cylinder("body", 3.0, 10.0, 32);   // R=3mm, H=10mm
+let inner = centered_cylinder("hole", 1.5, 12.0, 16);   // R=1.5mm through-hole
+
+let standoff = outer - inner;
+```
+
+The outer cylinder is 6mm in diameter and 10mm tall. The inner cylinder (3mm diameter) is deliberately taller than the outer (12mm vs 10mm) to ensure the boolean subtraction cuts cleanly through both end faces. The resulting through-hole accepts an M3 screw or can be tapped for M3 threads.
+
+## Step by Step
+
+### 1. Outer body
+
+```rust
+let outer = centered_cylinder("body", 3.0, 10.0, 32);
+```
+
+A 6mm diameter is standard for M3 standoffs -- it provides enough material around the 3mm hole for structural integrity. The height of 10mm is typical for giving a PCB adequate clearance above a chassis or another PCB in a stacked configuration. Thirty-two segments produce a smooth cylindrical surface.
+
+### 2. Through-hole
+
+```rust
+let inner = centered_cylinder("hole", 1.5, 12.0, 16);
+```
+
+The 3mm diameter hole matches an M3 clearance bore. For a tighter fit (self-tapping into plastic), use 1.3mm radius (2.6mm diameter) instead. The extra 2mm of height beyond the body ensures the subtraction is reliable -- the hole tool extends past both faces of the body.
+
+### 3. Subtract
+
+```rust
+let standoff = outer - inner;
+```
+
+<Callout type="info" title="Through vs blind holes">
+For a blind hole (threaded only from one end), shorten the inner cylinder so it does not penetrate the far face. A blind hole of 8mm depth in a 10mm standoff leaves a 2mm solid base.
+</Callout>
+
+## Hex Standoff
+
+Hex standoffs are standard in electronics. They can be tightened with a wrench and provide anti-rotation when used with a flat surface. The hexagonal profile is created with a sketch:
+
+```rust
+use vcad::{Sketch, Part, centered_cylinder};
+
+let hex = Sketch::regular_polygon(6, 3.0)  // 6 sides, 3mm circumradius
+    .extrude(10.0);
+
+let hole = centered_cylinder("hole", 1.5, 12.0, 16);
+
+let hex_standoff = hex - hole;
+```
+
+The `regular_polygon(6, 3.0)` creates a hexagon inscribed in a circle of radius 3mm. This gives a 5.2mm across-flats dimension (3.0 x cos(30) x 2), which matches standard M3 hex standoff sizing. Extruding the sketch by 10mm creates the prismatic body.
+
+### M-F hex standoff
+
+A male-female standoff has a threaded stud on one end. Approximate the stud with a smaller cylinder:
+
+```rust
+let stud = centered_cylinder("stud", 1.4, 6.0, 16)
+    .translate(0.0, 0.0, -3.0);  // Below the hex body
+
+let mf_standoff = hex_standoff + stud;
+```
+
+The 2.8mm diameter stud approximates an M3 thread (actual M3 major diameter is 3.0mm; slightly undersized for 3D printing). The stud extends 6mm below the hex body, centered under the through-hole.
+
+## Snap-Fit Standoff
+
+For tool-less assembly, snap-fit standoffs use flexible barbs that deflect during insertion and lock behind the PCB mounting hole:
+
+```rust
+use vcad::{centered_cube, centered_cylinder, Part};
+
+// Base post
+let post = centered_cylinder("post", 2.0, 10.0, 24);
+
+// Snap barbs (4 tabs around the post)
+let barb = centered_cube("barb", 1.5, 4.0, 2.0)
+    .translate(0.0, 2.0, 4.5);   // Positioned at top of post
+let barbs = barb.circular_pattern(0.0, 4);
+
+// Chamfer tip for easy insertion
+let tip = centered_cylinder("tip", 2.5, 1.0, 24)
+    .translate(0.0, 0.0, 5.0);
+
+let snap_standoff = post + barbs - tip;
+```
+
+The four barbs extend outward from the post at 90-degree intervals. They sit near the top of the post so they engage the bottom face of the PCB. The widest point of the barbs (4mm + 4mm diameter post = 8mm across) is larger than the PCB mounting hole (typically 3.2mm), creating the snap lock. The chamfered tip guides the post into the hole during assembly.
+
+<Callout type="warning" title="Material matters">
+Snap-fit features require a flexible material. PLA is too brittle for reliable snap fits; use PETG, nylon, or TPU. Design the barb deflection to be less than 2% of the barb length for repeated use without fatigue failure.
+</Callout>
+
+## Shoulder Standoff
+
+A shoulder standoff has two diameters -- a wider base that sits in a chassis hole and a narrower upper section that the PCB sits on:
+
+```rust
+let base = centered_cylinder("base", 4.0, 3.0, 32);   // Wider base
+let neck = centered_cylinder("neck", 2.5, 7.0, 24)     // Narrower upper
+    .translate(0.0, 0.0, 3.0);
+let hole = centered_cylinder("hole", 1.3, 15.0, 16);   // Through-hole
+
+let shoulder_standoff = base + neck - hole;
+```
+
+The base (8mm diameter) press-fits into a chassis hole, and the PCB sits on the shoulder created by the diameter change at 3mm height.
+
+## Patterning Standoffs
+
+In practice, you need four standoffs at the PCB mounting hole positions. Use linear pattern:
+
+```rust
+let mount_dx = 50.0;  // PCB hole spacing X
+let mount_dy = 30.0;  // PCB hole spacing Y
+
+let all_standoffs = standoff
+    .linear_pattern(mount_dx, 0.0, 0.0, 2)
+    .linear_pattern(0.0, mount_dy, 0.0, 2)
+    .translate(-mount_dx / 2.0, -mount_dy / 2.0, 0.0);
+```
+
+## Complete Code
+
+```rust
+use vcad::{centered_cylinder, Sketch, Part};
+
+enum StandoffStyle {
+    Round,
+    Hex,
+}
+
+fn pcb_standoff(
+    height: f64,
+    outer_r: f64,
+    hole_r: f64,
+    style: StandoffStyle,
+) -> Part {
+    let body = match style {
+        StandoffStyle::Round => {
+            centered_cylinder("body", outer_r, height, 32)
+        }
+        StandoffStyle::Hex => {
+            Sketch::regular_polygon(6, outer_r).extrude(height)
+        }
+    };
+
+    let hole = centered_cylinder("hole", hole_r, height + 5.0, 16);
+    body - hole
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Standard M3 round standoff
+    let round = pcb_standoff(10.0, 3.0, 1.5, StandoffStyle::Round);
+    round.write_stl("standoff_round.stl")?;
+
+    // M3 hex standoff
+    let hex = pcb_standoff(10.0, 3.0, 1.5, StandoffStyle::Hex);
+    hex.write_stl("standoff_hex.stl")?;
+
+    // Array of 4 standoffs
+    let four = round
+        .linear_pattern(50.0, 0.0, 0.0, 2)
+        .linear_pattern(0.0, 30.0, 0.0, 2)
+        .translate(-25.0, -15.0, 0.0);
+
+    four.write_stl("standoff_array.stl")?;
+
+    Ok(())
+}
+```
+
+<Callout type="tip" title="Dimensional reference">
+Common standoff sizes: M2 (4mm OD), M2.5 (5mm OD), M3 (6mm OD), M4 (7mm OD). Heights from 3mm to 25mm in standard increments. For 3D printing, add 0.1-0.2mm to the through-hole radius to compensate for hole shrinkage.
+</Callout>

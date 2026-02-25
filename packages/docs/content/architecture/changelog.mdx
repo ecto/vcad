@@ -1,0 +1,126 @@
+---
+title: "Changelog"
+description: "Entry format, when to add entries, schema validation"
+order: 12
+---
+
+The vcad changelog lives at `/CHANGELOG.json` in the repository root. It uses a structured JSON format rather than markdown, making it machine-readable for the documentation site, release tooling, and the app's "What's New" display.
+
+## Entry Format
+
+Each entry is a JSON object with these fields:
+
+```json
+{
+  "id": "2025-03-15-fillet-chamfer",
+  "version": "0.4.0",
+  "date": "2025-03-15",
+  "category": "feat",
+  "title": "Fillet and chamfer operations",
+  "summary": "Add rolling-ball fillets and chamfers for plane-plane and plane-cylinder edge types.",
+  "features": ["fillet", "chamfer", "modeling"],
+  "mcpTools": []
+}
+```
+
+**id** is a unique slug in `YYYY-MM-DD-short-description` format. It must be globally unique across all entries.
+
+**version** is the current version from `package.json` at the time of the change.
+
+**date** is the ISO 8601 date when the change was made.
+
+**category** is one of five values: `feat` for new user-facing features, `fix` for bug fixes, `breaking` for breaking changes (API, file format, behavior), `perf` for significant performance improvements, and `docs` for major documentation changes.
+
+**title** is a short description, maximum 60 characters. Write it as a noun phrase or imperative statement: "Fillet and chamfer operations", "Fix boolean winding on cylinder caps".
+
+**summary** is a single sentence, maximum 200 characters, providing slightly more context than the title.
+
+**features** is an array of relevant tags for filtering and grouping: `["boolean", "kernel"]`, `["sketch", "constraints"]`, `["physics", "mcp"]`, etc.
+
+**mcpTools** is an array of MCP tool names if the change adds or modifies MCP tools: `["create_cad_document", "export_cad"]`. Empty array if not applicable.
+
+## When to Add Entries
+
+Add a changelog entry when:
+
+- Adding a user-facing feature (new primitive, new operation, new UI component)
+- Fixing a user-facing bug (incorrect rendering, wrong export output, crash)
+- Making a breaking change (IR format change, API signature change, behavior change)
+- Achieving a significant performance improvement (measurable speedup that users will notice)
+
+Skip changelog entries for:
+
+- Internal refactors that don't change behavior
+- Test-only changes
+- Documentation updates (unless they represent a major new section)
+- Dependency bumps
+- Code formatting changes
+
+<Callout type="tip" title="Placement">
+New entries go at the **top** of the `entries` array in `CHANGELOG.json`. The most recent change should always be the first entry. This makes it easy to see what changed last and keeps the file in reverse chronological order.
+</Callout>
+
+## Schema Validation
+
+The file `/changelog.schema.json` in the repository root defines the JSON Schema for the changelog. The schema validates:
+
+- Required fields are present (id, version, date, category, title, summary, features)
+- Category is one of the allowed values
+- Title length does not exceed 60 characters
+- Summary length does not exceed 200 characters
+- Date is in ISO 8601 format
+- Features and mcpTools are arrays of strings
+
+CI can validate the changelog against this schema to catch formatting errors before merge. You can also validate locally with any JSON Schema tool:
+
+```bash
+npx ajv-cli validate -s changelog.schema.json -d CHANGELOG.json
+```
+
+## Example Entries
+
+A feature entry:
+```json
+{
+  "id": "2025-04-01-sketch-constraints",
+  "version": "0.5.0",
+  "date": "2025-04-01",
+  "category": "feat",
+  "title": "2D sketch constraint solver",
+  "summary": "Levenberg-Marquardt solver with 12 constraint types for fully parametric sketches.",
+  "features": ["sketch", "constraints", "parametric"],
+  "mcpTools": []
+}
+```
+
+A bug fix entry:
+```json
+{
+  "id": "2025-04-10-boolean-winding",
+  "version": "0.5.1",
+  "date": "2025-04-10",
+  "category": "fix",
+  "title": "Fix inverted normals after boolean difference",
+  "summary": "Cylinder cap faces at z=max now face outward after boolean subtraction.",
+  "features": ["boolean", "kernel", "tessellation"],
+  "mcpTools": []
+}
+```
+
+A breaking change entry:
+```json
+{
+  "id": "2025-05-01-ir-v2",
+  "version": "0.6.0",
+  "date": "2025-05-01",
+  "category": "breaking",
+  "title": "IR format version 0.2",
+  "summary": "Node IDs are now strings instead of numbers. Existing .vcad files need migration.",
+  "features": ["ir", "format"],
+  "mcpTools": ["create_cad_document"]
+}
+```
+
+## Related Pages
+
+The [Contributing Guide](/architecture/contributing) page covers the full development workflow. The [System Overview](/architecture/overview) page maps the codebase.

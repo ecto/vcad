@@ -1,0 +1,75 @@
+---
+title: "Sketch & Extrude"
+description: "Draw 2D profiles and push them into 3D"
+order: 4
+difficulty: Beginner
+time: "15 minutes"
+playground:
+  exampleId: "bracket"
+---
+
+<Playground exampleId="bracket" />
+
+The bracket above could not be made from primitive boxes and cylinders alone. Its L-shaped cross-section was drawn as a 2D sketch, then extruded into a solid. This sketch-and-extrude workflow is how most real parts are created -- you draw a flat profile and push it into the third dimension.
+
+## Enter Sketch Mode
+
+Press **Cmd+K** and select **New Sketch**, or click the sketch tool in the toolbar. vcad enters sketch mode: the viewport snaps to a top-down view of the XY plane, the grid becomes more prominent, and the toolbar changes to show sketch-specific tools (line, arc, rectangle, circle).
+
+You are now drawing on a flat plane. Everything you draw here is a 2D profile that will become the cross-section of your 3D shape.
+
+<Callout type="info" title="Sketch planes">
+By default, new sketches are placed on the XY plane (the ground). You can also create sketches on other planes or on existing faces. To sketch on a face, select the face first, then create a new sketch -- it will be placed on that face's plane automatically.
+</Callout>
+
+## Draw a Profile
+
+Select the **Line** tool from the sketch toolbar (or press **L**). Click to place the first point, then click to place each subsequent point. Each click adds a line segment connected to the previous one. To close the profile, click back on the starting point -- you will see it highlight when you hover near it.
+
+For the bracket example, draw an L-shape: start at the origin, go right 50 mm, up 5 mm, left 45 mm, up 30 mm, left 5 mm, and back down to the start. The exact coordinates do not matter yet because you will constrain them in the next step.
+
+The **Rectangle** tool (press **R**) draws a closed rectangle in two clicks: one for the corner, one for the opposite corner. The **Circle** tool (press **C**) draws a circle from center and radius. These are shortcuts for common profile shapes.
+
+## Add Constraints
+
+Freehand sketches are imprecise. Constraints lock geometry into exact relationships. Select a line and open the command palette to see available constraints, or use these shortcuts:
+
+**Horizontal** and **Vertical** force a line to be perfectly level or plumb. Select a line segment and press **H** for horizontal or **V** for vertical.
+
+**Distance** sets the exact length of a line or the spacing between two elements. Select a line and press **D**, then type the dimension. A dimension annotation appears on the sketch showing the constrained value.
+
+**Coincident** locks two points together. Drag one point near another and it will snap; or select two points and apply coincident from the command palette.
+
+**Parallel** and **Perpendicular** constrain the angle between two lines. Select two line segments and apply the constraint.
+
+<Callout type="tip" title="Fully constrained sketches">
+A sketch turns from blue to green when it is fully constrained -- every point and line is locked down by dimensions and relationships. Fully constrained sketches are the gold standard because they cannot shift accidentally when you change a single dimension. Aim for green before you extrude.
+</Callout>
+
+The constraint solver runs continuously as you add constraints, adjusting the sketch geometry to satisfy all of them simultaneously. If you add a contradictory constraint (say, setting a line to be both 10 mm and 20 mm), the solver flags it and the conflicting constraints turn red.
+
+## Extrude
+
+Once your profile is closed and constrained, exit sketch mode by clicking **Done** in the toolbar or pressing **Escape**. Your sketch appears as a node in the feature tree.
+
+Select the sketch, press **Cmd+K**, and choose **Extrude**. The property panel shows a **Distance** field -- this is how far the profile will be pushed. Set it to 15 mm for the bracket. The 2D L-shape becomes a solid 3D bracket right before your eyes.
+
+The extrude direction is along the sketch plane's normal. For an XY sketch, that means the extrusion goes along Z (upward). You can flip the direction or extrude in both directions (symmetric) using the direction toggle in the property panel.
+
+## Revolve
+
+Extrude pushes a profile in a straight line. **Revolve** spins a profile around an axis to create round shapes. Select a sketch and choose **Revolve** from the command palette. Pick the revolution axis (a line in the sketch or one of the coordinate axes) and set the angle -- 360 degrees for a full rotation, less for a partial shape.
+
+Revolve is how you create round parts like knobs, pulleys, vases, and turned components. The profile is the shape you would see if you cut the part in half along the axis.
+
+<Callout type="info" title="Sweep and Loft">
+vcad also supports **Sweep** (push a profile along a curved path) and **Loft** (blend between two or more profiles at different positions). These are covered in the modeling guides for when you need more complex shapes.
+</Callout>
+
+## Combining Sketches with Booleans
+
+Sketch-and-extrude creates a single solid, but real parts often need material added and removed. The workflow combines everything you have learned so far: sketch a base profile and extrude it, then sketch additional profiles and use boolean union to add material or boolean difference to cut pockets and slots. Each sketch-and-extrude operation becomes a node in the feature tree, building up the part step by step.
+
+The bracket in the playground, for instance, could be extended by sketching a circle on its top face, extruding it outward as a boss, then sketching a smaller circle in the boss and subtracting it as a bolt hole.
+
+Next, learn how to finish your parts with [fillets, chamfers, and shell](/tutorials/app/05-finishing) for polished, production-ready geometry.

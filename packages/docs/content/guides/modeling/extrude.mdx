@@ -1,0 +1,105 @@
+---
+title: "Advanced Extrude"
+description: "Twist (helix), taper (draft angle), combined. When to use extrude vs sweep"
+order: 2
+---
+
+A basic extrude takes a closed 2D profile and pushes it along a direction vector to create a solid. You set the distance, and the profile sweeps through space in a straight line. That covers most parts, but extrude has two advanced parameters -- twist and taper -- that expand its range dramatically.
+
+```text
+# vcad 0.2
+SK 0 0 0  1 0 0  0 1 0 "Hex Profile"
+L 10 0 8.66 5
+L 8.66 5 0 10
+L 0 10 -8.66 5
+L -8.66 5 -10 0
+L -10 0 -8.66 -5
+L -8.66 -5 0 -10
+L 0 -10 8.66 -5
+L 8.66 -5 10 0
+END
+E 0 0 0 40 "Hex Bar"
+ROOT 1 steel
+```
+
+That produces a plain hexagonal prism 40 mm tall. The interesting geometry comes when you add twist and taper.
+
+## Twist
+
+The `twist_angle` parameter rotates the profile progressively as it extrudes. At the base the profile is at 0 degrees; at the top it has rotated by the specified angle. The rotation is linear along the extrude distance, so each cross-section is rotated proportionally to its height.
+
+A twist of 90 degrees on a hexagonal profile produces a gentle spiral bar. A twist of 360 degrees over a short distance creates a tight helix-like shape. A twist of 720 degrees over 100 mm creates a drill-bit-like form where the cross-section completes two full rotations.
+
+In the app, set the twist angle in the property panel after applying an extrude. The preview updates in real time as you scrub the value. In Loon, the extrude opcode accepts an optional twist parameter:
+
+```text
+E 0 0 0 40 90 "Twisted Hex"
+```
+
+The fifth argument (90) is the twist angle in degrees. The resulting solid has helical edges connecting corresponding profile points at the base and top.
+
+<Callout type="info" title="Twist direction">
+Positive twist angles rotate counterclockwise when viewed from above (looking down the extrude direction). Negative angles rotate clockwise. The rotation follows the right-hand rule around the extrude vector.
+</Callout>
+
+## Taper
+
+The `scale_end` parameter scales the profile at the top of the extrusion relative to the base. A value of 1.0 means no scaling (the default). A value of 0.5 means the top profile is half the size of the base, creating a tapered shape. A value of 0.0 collapses the top to a point, producing a cone or pyramid. A value of 2.0 flares the top to twice the base size.
+
+Taper is specified as a scale factor, not a draft angle, but the two are related. For a straight extrusion of height h with base half-width r, a scale factor s produces a draft angle of `atan((r - r*s) / h)`. If you think in terms of draft angles for injection molding (typically 1-3 degrees), compute the scale factor as `s = 1 - (h * tan(angle)) / r`.
+
+In the app, the taper field appears in the property panel alongside the twist field. In Loon:
+
+```text
+E 0 0 0 40 0 0.5 "Tapered Hex"
+```
+
+The sixth argument (0.5) is the scale factor. The fifth argument (0) is twist -- you must specify twist even if it is zero when you want to set taper.
+
+## Combined Twist and Taper
+
+Applying both twist and taper simultaneously produces compound shapes that would be difficult to achieve any other way. A hexagonal profile with 180 degrees of twist and a scale factor of 0.3 creates a decorative finial shape. A circular profile with 720 degrees of twist and a scale factor of 0.0 creates a tapered drill point.
+
+```text
+# vcad 0.2
+SK 0 0 0  1 0 0  0 1 0 "Star Profile"
+L 10 0 3 5
+L 3 5 0 10
+L 0 10 -3 5
+L -3 5 -10 0
+L -10 0 -3 -5
+L -3 -5 0 -10
+L 0 -10 3 -5
+L 3 -5 10 0
+END
+E 0 0 0 60 360 0.4 "Twisted Star"
+ROOT 1 steel
+```
+
+That star profile, twisted one full revolution while tapering to 40% of its original size, creates a complex sculptural form. The key insight is that each cross-section at height z is the original profile, rotated by `twist_angle * z / height` and scaled by `1 + (scale_end - 1) * z / height`.
+
+## When to Use Extrude vs Sweep vs Revolve
+
+These three operations all turn 2D profiles into 3D solids, but they serve different purposes.
+
+**Extrude** pushes a profile in a straight line. Use it for prismatic shapes: plates, brackets, channels, rails, and anything with a constant (or uniformly twisted/tapered) cross-section. Extrude is the most common operation in mechanical design because most manufactured parts are prismatic.
+
+**Revolve** spins a profile around an axis. Use it for rotationally symmetric shapes: shafts, pulleys, cups, vases, bottles, and turned parts. If you would make the part on a lathe, revolve is the operation to reach for. The profile is the shape you would see if you sliced the part through its center along the axis.
+
+**Sweep** pushes a profile along an arbitrary 3D path. Use it when the cross-section follows a curve: pipes, tubing, handrails, springs, and cable conduits. Sweep is the most general of the three -- extrude is technically a sweep along a straight path, and revolve is a sweep along a circular arc -- but it requires defining a path curve in addition to the profile.
+
+**Loft** interpolates between two or more profiles at different positions. Use it for transition pieces, duct reducers, and any shape where the cross-section changes from one form to another. Loft is the most flexible but also the hardest to control precisely.
+
+<Callout type="tip" title="Decision shortcut">
+If the part has a constant cross-section, extrude. If it is round and symmetric, revolve. If the cross-section follows a curved path, sweep. If the cross-section changes shape along its length, loft.
+</Callout>
+
+## Draft Angles for Manufacturing
+
+Injection molding and die casting require draft angles -- slight tapers on vertical walls so the part can release from the mold. Typical draft angles are 1 to 3 degrees per side. The extrude taper parameter handles this directly.
+
+For a wall 10 mm wide at the base with 2 degrees of draft over 50 mm of height, the top narrows by `50 * tan(2 deg) = 1.745 mm` on each side, so the top width is `10 - 2 * 1.745 = 6.51 mm`. The scale factor is `6.51 / 10 = 0.651`. Apply this as the taper value and the extrusion has the correct manufacturing draft.
+
+If different faces need different draft angles (common in complex molds), you cannot achieve that with a single extrude taper. Instead, model the draft by creating separate sketch profiles for the base and top cross-sections and using a loft to interpolate between them.
+
+For an in-depth look at sweep and loft operations, continue to the [Revolve, Sweep & Loft](/guides/modeling/sweep-loft) guide.

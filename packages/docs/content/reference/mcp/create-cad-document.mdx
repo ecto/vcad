@@ -1,0 +1,407 @@
+---
+title: "create_cad_document"
+description: "Create parts from primitives, sketches, and assemblies"
+order: 2
+---
+
+`create_cad_document` is the primary MCP tool for building 3D geometry. It accepts a structured JSON description of parts and operations and returns an IR document that can be inspected, exported, or opened in the browser.
+
+## Input Schema
+
+```json
+{
+  "parts": [...],
+  "assembly": { ... },
+  "format": "compact" | "json"
+}
+```
+
+<Param name="parts" type="PartInput[]" required={true}>
+Array of part definitions. Each part must have a `name` and a geometry source (one of `primitive`, `extrude`, `revolve`, `sweep`, or `loft`), plus optional `operations` and `material`.
+</Param>
+
+<Param name="assembly" type="AssemblyInput" required={false}>
+Optional assembly definition containing instances and joints. When present, the tool creates part definitions, places instances, and builds the kinematic chain. Scene roots are replaced by the assembly representation.
+</Param>
+
+<Param name="format" type="string" required={false}>
+Output format: `compact` (default, ~5x smaller) or `json` (verbose, human-readable). Compact is recommended for all MCP workflows since it saves tokens.
+</Param>
+
+## Part Definitions
+
+A part is defined by its geometry source plus an optional chain of operations.
+
+### Primitive-Based Part
+
+```json
+{
+  "name": "plate",
+  "primitive": {
+    "type": "cube",
+    "size": { "x": 100, "y": 60, "z": 5 }
+  },
+  "operations": [...],
+  "material": "aluminum"
+}
+```
+
+<Param name="primitive.type" type="string" required={true}>
+Primitive type: `cube`, `cylinder`, `sphere`, or `cone`.
+</Param>
+
+<Param name="primitive.size" type="Vec3" required={false}>
+Cube dimensions in mm. Cube corner sits at origin, extends to (size.x, size.y, size.z).
+</Param>
+
+<Param name="primitive.radius" type="number" required={false}>
+Radius for cylinder, sphere, or cone (bottom radius if `radius_bottom` is not specified).
+</Param>
+
+<Param name="primitive.height" type="number" required={false}>
+Height for cylinder and cone, along +Z axis.
+</Param>
+
+<Param name="primitive.segments" type="number" required={false}>
+Facet count for curved surfaces. Default 32.
+</Param>
+
+<Param name="primitive.radius_bottom" type="number" required={false}>
+Bottom radius for cone. Defaults to `radius`.
+</Param>
+
+<Param name="primitive.radius_top" type="number" required={false}>
+Top radius for cone. 0 for a pointed cone.
+</Param>
+
+### Extrude-Based Part
+
+```json
+{
+  "name": "bracket",
+  "extrude": {
+    "sketch": {
+      "plane": "xy",
+      "shape": { "type": "rectangle", "width": 50, "height": 30, "centered": true }
+    },
+    "height": 10
+  },
+  "material": "steel"
+}
+```
+
+<Param name="extrude.sketch" type="SketchInput" required={true}>
+Sketch profile to extrude. See Sketch Input below.
+</Param>
+
+<Param name="extrude.height" type="number" required={false}>
+Extrusion height in mm. Direction is normal to the sketch plane.
+</Param>
+
+<Param name="extrude.direction" type="Vec3" required={false}>
+Custom extrusion direction vector. Overrides height and default normal direction.
+</Param>
+
+### Revolve-Based Part
+
+```json
+{
+  "name": "bowl",
+  "revolve": {
+    "sketch": {
+      "plane": "xz",
+      "shape": {
+        "type": "polygon",
+        "points": [{"x": 5, "y": 0}, {"x": 15, "y": 0}, {"x": 15, "y": 10}, {"x": 5, "y": 10}]
+      }
+    },
+    "axis": "z",
+    "angle_deg": 360
+  }
+}
+```
+
+<Param name="revolve.axis" type="string | Vec3" required={false}>
+Axis of revolution: `"x"`, `"y"`, `"z"`, or a custom `{x, y, z}` vector. Default `"z"`.
+</Param>
+
+<Param name="revolve.axis_offset" type="number" required={false}>
+Offset of the axis from the origin, perpendicular to the axis direction.
+</Param>
+
+<Param name="revolve.angle_deg" type="number" required={false}>
+Revolution angle in degrees. Default 360 (full revolution).
+</Param>
+
+### Sweep-Based Part
+
+```json
+{
+  "name": "spring",
+  "sweep": {
+    "sketch": {
+      "shape": { "type": "circle", "radius": 2 }
+    },
+    "path": { "type": "helix", "radius": 10, "pitch": 5, "height": 50 }
+  }
+}
+```
+
+<Param name="sweep.path" type="PathInput" required={true}>
+Sweep path. Either a line segment (`{type: "line", start: Vec3, end: Vec3}`) or a helix (`{type: "helix", radius, pitch, height}`).
+</Param>
+
+<Param name="sweep.twist_deg" type="number" required={false}>
+Twist angle applied over the sweep length, in degrees.
+</Param>
+
+<Param name="sweep.scale_start" type="number" required={false}>
+Scale factor at the start of the sweep.
+</Param>
+
+<Param name="sweep.scale_end" type="number" required={false}>
+Scale factor at the end of the sweep. Different from scale_start creates a tapered shape.
+</Param>
+
+### Loft-Based Part
+
+```json
+{
+  "name": "transition",
+  "loft": {
+    "sketches": [
+      { "at": {"x": 0, "y": 0, "z": 0}, "shape": {"type": "rectangle", "width": 20, "height": 20} },
+      { "at": {"x": 0, "y": 0, "z": 30}, "shape": {"type": "circle", "radius": 10} }
+    ]
+  }
+}
+```
+
+<Param name="loft.sketches" type="SketchInput[]" required={true}>
+Two or more sketch profiles at different positions. The loft interpolates between them.
+</Param>
+
+<Param name="loft.closed" type="boolean" required={false}>
+If true, connects the last profile back to the first (for closed-loop lofts).
+</Param>
+
+## Sketch Input
+
+Sketch input defines a 2D profile on a plane.
+
+<Param name="plane" type="string" required={false}>
+Sketch plane: `"xy"` (default), `"xz"`, or `"yz"`.
+</Param>
+
+<Param name="at" type="Vec3" required={false}>
+Sketch plane origin. Default `{x: 0, y: 0, z: 0}`.
+</Param>
+
+<Param name="shape" type="object" required={true}>
+The sketch shape. One of rectangle, circle, or polygon.
+</Param>
+
+### Rectangle Shape
+
+```json
+{ "type": "rectangle", "width": 50, "height": 30, "centered": true }
+```
+
+<Param name="width" type="number" required={true}>Width in mm.</Param>
+<Param name="height" type="number" required={true}>Height in mm.</Param>
+<Param name="centered" type="boolean" required={false}>
+If true, centered at the sketch origin. If false (default), corner at origin.
+</Param>
+
+### Circle Shape
+
+```json
+{ "type": "circle", "radius": 10 }
+```
+
+<Param name="radius" type="number" required={true}>Radius in mm.</Param>
+
+### Polygon Shape
+
+```json
+{ "type": "polygon", "points": [{"x": 0, "y": 0}, {"x": 10, "y": 0}, {"x": 5, "y": 8}], "closed": true }
+```
+
+<Param name="points" type="Vec2[]" required={true}>Array of 2D points defining the polygon vertices.</Param>
+<Param name="closed" type="boolean" required={false}>
+Close the polygon by connecting the last point to the first. Default true.
+</Param>
+
+## Operations
+
+Operations are applied in order to the part's base geometry. Each operation modifies the result of the previous one.
+
+### Boolean Operations
+
+```json
+{ "type": "difference", "primitive": { "type": "cylinder", "radius": 3, "height": 10 }, "at": "center" }
+```
+
+<Param name="type" type="string" required={true}>
+Boolean type: `"union"`, `"difference"`, or `"intersection"`.
+</Param>
+
+<Param name="primitive" type="Primitive" required={true}>
+The tool shape for the boolean operation.
+</Param>
+
+<Param name="at" type="PositionSpec" required={false}>
+Position of the tool shape. See Position Specification below.
+</Param>
+
+### Hole
+
+A convenience operation that creates a cylindrical difference along Z.
+
+```json
+{ "type": "hole", "diameter": 5.5, "at": { "x": 25, "y": 15 } }
+```
+
+<Param name="diameter" type="number" required={true}>
+Hole diameter in mm.
+</Param>
+
+<Param name="depth" type="number" required={false}>
+Hole depth in mm. Omit for a through-hole (auto-sized to extend through the part).
+</Param>
+
+<Param name="at" type="PositionSpec" required={false}>
+Hole center position. Default is `"center"`.
+</Param>
+
+### Transforms
+
+```json
+{ "type": "translate", "offset": { "x": 50, "y": 0, "z": 0 } }
+{ "type": "rotate", "angles": { "x": 0, "y": 0, "z": 45 } }
+{ "type": "scale", "factor": { "x": 2, "y": 2, "z": 1 } }
+```
+
+### Patterns
+
+```json
+{ "type": "linear_pattern", "direction": {"x": 1, "y": 0, "z": 0}, "count": 5, "spacing": 20 }
+{ "type": "circular_pattern", "axis_origin": {"x": 0, "y": 0, "z": 0}, "axis_dir": {"x": 0, "y": 0, "z": 1}, "count": 6, "angle_deg": 360 }
+```
+
+### Features
+
+```json
+{ "type": "fillet", "radius": 2 }
+{ "type": "chamfer", "distance": 1 }
+{ "type": "shell", "thickness": 2 }
+```
+
+<Param name="radius" type="number" required={false}>
+Fillet blend radius in mm. Default 1.
+</Param>
+
+<Param name="distance" type="number" required={false}>
+Chamfer distance in mm. Default 1.
+</Param>
+
+<Param name="thickness" type="number" required={false}>
+Shell wall thickness in mm. Default 2.
+</Param>
+
+## Position Specification
+
+Operations that accept an `at` parameter support three formats:
+
+**Absolute coordinates.** An object with `x`, `y`, `z` fields: `{"x": 25, "y": 15, "z": 0}`.
+
+**Named positions.** A string referencing a computed position on the base primitive's bounding box:
+- `"center"` -- center of the bounding box
+- `"top-center"` -- center of the top face (max Z)
+- `"bottom-center"` -- center of the bottom face (min Z)
+
+**Percentage coordinates.** An object with percentage strings: `{"x": "50%", "y": "50%"}`. Percentages are relative to the base primitive's bounding box, where 0% is the minimum and 100% is the maximum.
+
+## Assembly
+
+The optional assembly block defines a multi-body model with kinematic joints.
+
+### Instances
+
+```json
+{
+  "instances": [
+    { "id": "base-1", "part": "Base", "position": {"x": 0, "y": 0, "z": 0} },
+    { "id": "arm-1", "part": "Arm" }
+  ]
+}
+```
+
+<Param name="id" type="string" required={true}>Unique instance identifier.</Param>
+<Param name="part" type="string" required={true}>Part name (must match a part in the `parts` array).</Param>
+<Param name="name" type="string" required={false}>Display name. Defaults to the instance ID.</Param>
+<Param name="position" type="Vec3" required={false}>Initial position in mm.</Param>
+<Param name="rotation" type="Vec3" required={false}>Initial rotation as Euler angles in degrees.</Param>
+
+### Joints
+
+```json
+{
+  "joints": [
+    {
+      "id": "shoulder",
+      "parent": "base-1",
+      "child": "arm-1",
+      "type": "revolute",
+      "axis": "z",
+      "parent_anchor": {"x": 0, "y": 0, "z": 50},
+      "child_anchor": {"x": 0, "y": 0, "z": 0},
+      "limits": [-90, 90],
+      "state": 0
+    }
+  ]
+}
+```
+
+<Param name="id" type="string" required={true}>Unique joint identifier.</Param>
+<Param name="parent" type="string | null" required={true}>Parent instance ID, or `null` for world-grounded.</Param>
+<Param name="child" type="string" required={true}>Child instance ID.</Param>
+<Param name="type" type="string" required={true}>Joint type: `"fixed"`, `"revolute"`, `"slider"`, `"cylindrical"`, `"ball"`.</Param>
+<Param name="axis" type="string | Vec3" required={false}>Joint axis: `"x"`, `"y"`, `"z"`, or a custom vector. Default `"z"`.</Param>
+<Param name="parent_anchor" type="Vec3" required={false}>Anchor point on parent in local coordinates.</Param>
+<Param name="child_anchor" type="Vec3" required={false}>Anchor point on child in local coordinates.</Param>
+<Param name="limits" type="[number, number]" required={false}>Joint limits (degrees for revolute, mm for slider).</Param>
+<Param name="state" type="number" required={false}>Initial joint state. Default 0.</Param>
+
+### Ground
+
+<Param name="ground" type="string" required={false}>
+Instance ID of the fixed reference part. Required for forward kinematics.
+</Param>
+
+## Return Value
+
+The tool returns a text response containing the IR document in the requested format. For `compact` format (default), the response is the compact IR text. For `json` format, it is a pretty-printed JSON document.
+
+The returned document can be passed directly to `inspect_cad`, `export_cad`, or `open_in_browser`.
+
+## Example
+
+```json
+{
+  "parts": [
+    {
+      "name": "Bracket",
+      "primitive": { "type": "cube", "size": {"x": 50, "y": 30, "z": 5} },
+      "operations": [
+        { "type": "hole", "diameter": 5.5, "at": {"x": 10, "y": 15} },
+        { "type": "hole", "diameter": 5.5, "at": {"x": 40, "y": 15} },
+        { "type": "fillet", "radius": 2 }
+      ],
+      "material": "aluminum"
+    }
+  ]
+}
+```
+
+This creates a 50x30x5mm aluminum bracket with two M5 clearance holes and 2mm fillets on all edges.

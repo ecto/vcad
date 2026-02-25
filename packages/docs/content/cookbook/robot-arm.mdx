@@ -1,0 +1,381 @@
+---
+title: "Robot Arm Assembly"
+description: "Multi-joint robot arm with revolute joints"
+difficulty: Advanced
+time: "30 min"
+order: 10
+---
+
+A robot arm assembly brings together vcad's part definitions, instance placement, revolute joints, forward kinematics, and physics simulation. This recipe builds a 3-DOF articulated arm with a base, upper arm, and forearm, each connected by revolute joints with configurable limits.
+
+## Assembly Overview
+
+The arm consists of three parts connected by two revolute joints:
+
+```
+Base (fixed) ──[Joint 1: shoulder]──> Upper Arm ──[Joint 2: elbow]──> Forearm
+```
+
+Joint 1 (shoulder) rotates around the Z axis at the top of the base. Joint 2 (elbow) rotates around the X axis at the end of the upper arm. A third joint at the wrist adds a final degree of freedom for the gripper.
+
+## Part Definitions
+
+### Base
+
+The base is a heavy, squat cylinder that anchors the arm to a surface:
+
+```rust
+use vcad::{centered_cube, centered_cylinder, Part, Document};
+
+fn base_part() -> Part {
+    let body = centered_cylinder("base", 40.0, 30.0, 64);
+    let top_boss = centered_cylinder("boss", 15.0, 10.0, 32)
+        .translate(0.0, 0.0, 15.0);
+    let bore = centered_cylinder("bore", 5.0, 50.0, 24);
+
+    // Mounting holes in base flange
+    let mount = centered_cylinder("mount", 3.0, 35.0, 16);
+    let mounts = mount
+        .translate(30.0, 0.0, 0.0)
+        .circular_pattern(0.0, 4);
+
+    body + top_boss - bore - mounts
+}
+```
+
+The base is 80mm in diameter and 30mm tall, with a raised boss on top that serves as the pivot point for the shoulder joint. Four mounting holes on a 60mm bolt circle diameter secure it to a table or chassis.
+
+### Upper arm
+
+The upper arm is a rectangular link with pivot bores at each end:
+
+```rust
+fn upper_arm_part() -> Part {
+    let arm = centered_cube("arm", 20.0, 20.0, 120.0);
+
+    // Shoulder pivot bore (bottom)
+    let shoulder_bore = centered_cylinder("sh_bore", 5.0, 25.0, 24)
+        .translate(0.0, 0.0, -55.0);
+
+    // Elbow pivot bore (top)
+    let elbow_bore = centered_cylinder("el_bore", 4.0, 25.0, 24)
+        .rotate(90.0, 0.0, 0.0)
+        .translate(0.0, 0.0, 55.0);
+
+    // Lightening pockets
+    let pocket = centered_cube("pocket", 12.0, 25.0, 40.0)
+        .translate(0.0, 0.0, 0.0);
+
+    arm - shoulder_bore - elbow_bore - pocket
+}
+```
+
+The arm is 120mm long (along Z), with a bore at the bottom for the shoulder pin and a bore at the top for the elbow pin. The shoulder bore is vertical (Z axis) for rotation in the horizontal plane, while the elbow bore is horizontal (Y axis, after the 90-degree rotation) for rotation in the vertical plane. A lightening pocket removes material from the center to reduce weight.
+
+### Forearm and gripper
+
+The forearm is shorter and ends with a simple parallel-jaw gripper:
+
+```rust
+fn forearm_part() -> Part {
+    let arm = centered_cube("forearm", 16.0, 16.0, 80.0);
+
+    // Elbow pivot bore (bottom)
+    let bore = centered_cylinder("bore", 4.0, 20.0, 24)
+        .rotate(90.0, 0.0, 0.0)
+        .translate(0.0, 0.0, -35.0);
+
+    // Gripper jaws (top)
+    let jaw_l = centered_cube("jaw_l", 3.0, 20.0, 25.0)
+        .translate(-8.0, 0.0, 52.0);
+    let jaw_r = centered_cube("jaw_r", 3.0, 20.0, 25.0)
+        .translate(8.0, 0.0, 52.0);
+
+    // Wrist bore
+    let wrist_bore = centered_cylinder("wrist", 3.0, 20.0, 16)
+        .translate(0.0, 0.0, 35.0);
+
+    arm + jaw_l + jaw_r - bore - wrist_bore
+}
+```
+
+## Building the Assembly
+
+With the parts defined, create a document and place instances at their assembled positions:
+
+```rust
+fn robot_arm() -> Document {
+    let mut doc = Document::new("robot_arm");
+
+    // Register parts
+    let base_id = doc.add_part("base", base_part());
+    let upper_id = doc.add_part("upper_arm", upper_arm_part());
+    let forearm_id = doc.add_part("forearm", forearm_part());
+
+    // Place instances
+    let base_inst = doc.add_instance(base_id, "base_inst")
+        .at(0.0, 0.0, 0.0);
+
+    let upper_inst = doc.add_instance(upper_id, "upper_inst")
+        .at(0.0, 0.0, 40.0);   // Sitting on top of base boss
+
+    let forearm_inst = doc.add_instance(forearm_id, "forearm_inst")
+        .at(0.0, 0.0, 160.0);  // At top of upper arm
+
+    doc
+}
+```
+
+Each instance is placed at a position that aligns the pivot bores. The base instance sits at the origin. The upper arm instance sits at Z=40 (top of the base boss), and the forearm at Z=160 (top of the upper arm).
+
+## Adding Joints
+
+Joints constrain how instances can move relative to each other. Revolute joints allow rotation around a single axis:
+
+```rust
+use vcad::{Joint, JointType, JointLimits};
+
+fn robot_arm_with_joints() -> Document {
+    let mut doc = robot_arm();
+
+    // Shoulder joint: rotates upper arm around Z axis
+    doc.add_joint(Joint {
+        name: "shoulder".into(),
+        joint_type: JointType::Revolute,
+        parent: "base_inst".into(),
+        child: "upper_inst".into(),
+        anchor: [0.0, 0.0, 40.0],    // At top of base boss
+        axis: [0.0, 0.0, 1.0],       // Z axis (horizontal rotation)
+        limits: Some(JointLimits {
+            lower: -180.0_f64.to_radians(),
+            upper: 180.0_f64.to_radians(),
+        }),
+    });
+
+    // Elbow joint: rotates forearm around X axis
+    doc.add_joint(Joint {
+        name: "elbow".into(),
+        joint_type: JointType::Revolute,
+        parent: "upper_inst".into(),
+        child: "forearm_inst".into(),
+        anchor: [0.0, 0.0, 160.0],   // At top of upper arm
+        axis: [1.0, 0.0, 0.0],       // X axis (vertical rotation)
+        limits: Some(JointLimits {
+            lower: 0.0_f64.to_radians(),
+            upper: 135.0_f64.to_radians(),
+        }),
+    });
+
+    // Wrist joint: rotates forearm tip around local Z
+    doc.add_joint(Joint {
+        name: "wrist".into(),
+        joint_type: JointType::Revolute,
+        parent: "forearm_inst".into(),
+        child: "forearm_inst".into(),  // Self-joint for wrist
+        anchor: [0.0, 0.0, 195.0],
+        axis: [0.0, 0.0, 1.0],
+        limits: Some(JointLimits {
+            lower: -90.0_f64.to_radians(),
+            upper: 90.0_f64.to_radians(),
+        }),
+    });
+
+    doc
+}
+```
+
+The shoulder joint's axis is `[0, 0, 1]` (Z-up), so the upper arm swings in the horizontal plane. The elbow joint's axis is `[1, 0, 0]` (X), so the forearm swings in the vertical plane. Joint limits prevent the arm from reaching mechanically impossible configurations -- the shoulder can rotate a full 360 degrees, while the elbow is limited to 0-135 degrees.
+
+<Callout type="info" title="Joint conventions">
+Joint angles are in radians. The anchor point is specified in the global coordinate frame at the assembly's home position (all joints at zero angle). The axis vector does not need to be unit length -- vcad normalizes it internally.
+</Callout>
+
+## Forward Kinematics
+
+Set joint angles to pose the arm:
+
+```rust
+fn pose_arm(doc: &mut Document) {
+    // Reach forward and down
+    doc.set_joint_angle("shoulder", 45.0_f64.to_radians());
+    doc.set_joint_angle("elbow", 60.0_f64.to_radians());
+    doc.set_joint_angle("wrist", 0.0);
+
+    // Recompute instance transforms
+    doc.solve_kinematics();
+
+    // Query end-effector position
+    let tip = doc.instance_transform("forearm_inst");
+    println!("Gripper position: ({:.1}, {:.1}, {:.1})",
+        tip.translation.x, tip.translation.y, tip.translation.z);
+}
+```
+
+`solve_kinematics()` propagates joint angles through the kinematic chain, updating each instance's transform. After solving, querying the forearm instance's transform gives you the gripper position in world coordinates.
+
+## Physics Simulation
+
+For dynamic control (gravity, inertia, motor torques), convert the assembly to a physics simulation:
+
+```rust
+use vcad::{PhysicsEnv, ActionType};
+
+fn simulate_arm(doc: &Document) {
+    let mut env = PhysicsEnv::from_document(doc);
+    env.set_gravity([0.0, 0.0, -9810.0]);  // mm/s² (Z-down)
+
+    // Reset to home position
+    let obs = env.reset();
+
+    // Apply torques to joints
+    for step in 0..1000 {
+        let actions = vec![
+            5000.0,    // Shoulder torque (N·mm)
+            -3000.0,   // Elbow torque (N·mm)
+            0.0,       // Wrist torque
+        ];
+
+        let obs = env.step(&actions, ActionType::Torque);
+
+        if step % 100 == 0 {
+            println!("Step {}: shoulder={:.1}° elbow={:.1}°",
+                step,
+                obs.joint_angles[0].to_degrees(),
+                obs.joint_angles[1].to_degrees(),
+            );
+        }
+    }
+}
+```
+
+The physics engine (Rapier3D) simulates rigid body dynamics with gravity and joint motors. Each `step()` call advances the simulation by one timestep (default 1/240s). Actions can be torques (direct force), position targets (PD controller), or velocity targets.
+
+<Callout type="tip" title="MCP for AI control">
+The physics simulation is exposed through vcad's MCP server, letting AI agents control the robot arm via `gym_step`, `gym_reset`, and `gym_observe` tools. This enables reinforcement learning workflows where an LLM or RL policy learns to control the arm to reach target positions.
+</Callout>
+
+## Workspace Visualization
+
+To verify the arm's reachable workspace, sweep through joint angles and plot the gripper positions:
+
+```rust
+fn compute_workspace(doc: &mut Document) -> Vec<[f64; 3]> {
+    let mut points = Vec::new();
+
+    for shoulder_deg in (-180..=180).step_by(15) {
+        for elbow_deg in (0..=135).step_by(10) {
+            doc.set_joint_angle("shoulder", (shoulder_deg as f64).to_radians());
+            doc.set_joint_angle("elbow", (elbow_deg as f64).to_radians());
+            doc.solve_kinematics();
+
+            let tip = doc.instance_transform("forearm_inst");
+            points.push([tip.translation.x, tip.translation.y, tip.translation.z]);
+        }
+    }
+
+    points
+}
+```
+
+## Complete Code
+
+```rust
+use vcad::{
+    centered_cube, centered_cylinder, Part, Document,
+    Joint, JointType, JointLimits,
+};
+
+fn base_part() -> Part {
+    let body = centered_cylinder("base", 40.0, 30.0, 64);
+    let boss = centered_cylinder("boss", 15.0, 10.0, 32)
+        .translate(0.0, 0.0, 15.0);
+    let bore = centered_cylinder("bore", 5.0, 50.0, 24);
+    let mount = centered_cylinder("mount", 3.0, 35.0, 16)
+        .translate(30.0, 0.0, 0.0)
+        .circular_pattern(0.0, 4);
+
+    body + boss - bore - mount
+}
+
+fn upper_arm_part() -> Part {
+    let arm = centered_cube("arm", 20.0, 20.0, 120.0);
+    let sh = centered_cylinder("sh", 5.0, 25.0, 24)
+        .translate(0.0, 0.0, -55.0);
+    let el = centered_cylinder("el", 4.0, 25.0, 24)
+        .rotate(90.0, 0.0, 0.0)
+        .translate(0.0, 0.0, 55.0);
+    let pocket = centered_cube("pocket", 12.0, 25.0, 40.0);
+
+    arm - sh - el - pocket
+}
+
+fn forearm_part() -> Part {
+    let arm = centered_cube("forearm", 16.0, 16.0, 80.0);
+    let bore = centered_cylinder("bore", 4.0, 20.0, 24)
+        .rotate(90.0, 0.0, 0.0)
+        .translate(0.0, 0.0, -35.0);
+    let jaw_l = centered_cube("jl", 3.0, 20.0, 25.0)
+        .translate(-8.0, 0.0, 52.0);
+    let jaw_r = centered_cube("jr", 3.0, 20.0, 25.0)
+        .translate(8.0, 0.0, 52.0);
+
+    arm + jaw_l + jaw_r - bore
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut doc = Document::new("robot_arm");
+
+    // Parts
+    let base_id = doc.add_part("base", base_part());
+    let upper_id = doc.add_part("upper_arm", upper_arm_part());
+    let forearm_id = doc.add_part("forearm", forearm_part());
+
+    // Instances
+    doc.add_instance(base_id, "base_inst").at(0.0, 0.0, 0.0);
+    doc.add_instance(upper_id, "upper_inst").at(0.0, 0.0, 40.0);
+    doc.add_instance(forearm_id, "forearm_inst").at(0.0, 0.0, 160.0);
+
+    // Joints
+    doc.add_joint(Joint {
+        name: "shoulder".into(),
+        joint_type: JointType::Revolute,
+        parent: "base_inst".into(),
+        child: "upper_inst".into(),
+        anchor: [0.0, 0.0, 40.0],
+        axis: [0.0, 0.0, 1.0],
+        limits: Some(JointLimits {
+            lower: -std::f64::consts::PI,
+            upper: std::f64::consts::PI,
+        }),
+    });
+
+    doc.add_joint(Joint {
+        name: "elbow".into(),
+        joint_type: JointType::Revolute,
+        parent: "upper_inst".into(),
+        child: "forearm_inst".into(),
+        anchor: [0.0, 0.0, 160.0],
+        axis: [1.0, 0.0, 0.0],
+        limits: Some(JointLimits {
+            lower: 0.0,
+            upper: 135.0_f64.to_radians(),
+        }),
+    });
+
+    // Pose the arm
+    doc.set_joint_angle("shoulder", 30.0_f64.to_radians());
+    doc.set_joint_angle("elbow", 45.0_f64.to_radians());
+    doc.solve_kinematics();
+
+    // Export
+    doc.write_vcad("robot_arm.vcad")?;
+    doc.export_glb("robot_arm.glb")?;
+
+    println!("Robot arm assembly saved.");
+    Ok(())
+}
+```
+
+<Callout type="tip" title="URDF import">
+If you have an existing robot description in URDF format, vcad can import it directly with `vcad import-urdf robot.urdf out.vcad`. This creates the part definitions, instances, and joints automatically from the URDF kinematic tree.
+</Callout>

@@ -1,0 +1,95 @@
+---
+title: "Fabrication Export"
+description: "Gerber RS-274X, drill files, pick-and-place CSV, BOM"
+order: 5
+---
+
+Fabrication export generates the files that a PCB manufacturer needs to produce your board, and that an assembly house needs to populate it with components. These files are the final output of the electronics design process -- the step where your schematic and layout become a physical circuit board.
+
+## Gerber Files (RS-274X)
+
+Gerber is the standard format for describing each copper, mask, and silkscreen layer of a PCB. Each layer gets its own Gerber file. The file contains geometric primitives (lines, arcs, polygons, pads) that describe the copper pattern on that layer.
+
+Press **Cmd+K** and choose **Export Gerbers** in the PCB editor. vcad generates one file per layer:
+
+**Copper layers.** `F_Cu.gbr` (front copper), `B_Cu.gbr` (back copper), and `In1_Cu.gbr`, `In2_Cu.gbr` for internal layers on 4+ layer boards. These define the trace patterns, pads, and zone fills.
+
+**Solder mask layers.** `F_Mask.gbr` and `B_Mask.gbr`. The solder mask is the colored coating that covers the board except where pads are exposed for soldering. The Gerber defines the mask openings (where solder mask is removed).
+
+**Silkscreen layers.** `F_SilkS.gbr` and `B_SilkS.gbr`. The silkscreen is the text and graphics printed on the board surface -- component references (R1, C2), polarity marks, logo, and version number.
+
+**Paste layers.** `F_Paste.gbr` and `B_Paste.gbr`. These define the solder paste stencil openings for surface-mount assembly. The stencil is a thin metal sheet with cutouts matching the pad shapes; solder paste is applied through the cutouts before components are placed.
+
+**Board outline.** `Edge_Cuts.gbr`. The board perimeter that the fab house routes (cuts) to separate individual boards from the panel.
+
+vcad uses the RS-274X (extended Gerber) format, which is the current industry standard. Every PCB fabrication house worldwide accepts RS-274X.
+
+<Callout type="tip" title="Verify before sending">
+Always open the exported Gerbers in a viewer before submitting to a fab house. Free viewers like gerbv (Linux/Mac), TraceDFM, or the online viewer at your fab house let you visually inspect each layer, check alignment, and catch errors like missing copper, incorrect mask openings, or silkscreen overlapping pads.
+</Callout>
+
+## Drill Files (Excellon)
+
+Drill files specify the location, diameter, and type of every hole in the board -- via holes, through-hole component holes, and mounting holes. The format is Excellon (also called NC Drill), a simple text format that CNC drill machines read directly.
+
+vcad generates two drill files: one for plated holes (vias and through-hole pads that need copper plating inside the hole for electrical connectivity) and one for non-plated holes (mounting holes and mechanical features that should not have copper in the hole).
+
+Each file lists the drill tools (T1, T2, etc.) with their diameters, followed by the XY coordinates of each hole for each tool. The fab house loads these files into the CNC drill and processes them sequentially.
+
+<Callout type="warning" title="Units matter">
+Drill files can specify coordinates in millimeters or inches. vcad exports in millimeters by default. If your fab house expects inches (some older US-based shops do), change the unit setting in the export dialog. Mismatched units cause holes to be placed at the wrong locations -- usually obvious in the Gerber viewer but catastrophic if missed.
+</Callout>
+
+## Bill of Materials (BOM)
+
+The BOM lists every component in the design with its reference designator, value, footprint, and quantity. It is the shopping list for procurement and the instruction sheet for assembly.
+
+Export the BOM with **Cmd+K** then **Export BOM**. vcad generates a CSV file with columns:
+
+| Reference | Value | Footprint | Quantity | Description |
+|-----------|-------|-----------|----------|-------------|
+| R1, R2, R5 | 10k | 0603 | 3 | Resistor |
+| C1, C2, C3, C4 | 100nF | 0402 | 4 | Capacitor |
+| U1 | ATmega328P | TQFP-32 | 1 | Microcontroller |
+
+Components with the same value and footprint are grouped into a single row with combined references and quantity. This makes it easy to count how many of each unique part you need to order.
+
+The BOM can be imported directly into distributor ordering systems (Digi-Key, Mouser, LCSC) that match value and footprint to available stock. For automated assembly, the assembly house uses the BOM to verify that they have all required components before starting the job.
+
+## Pick-and-Place File
+
+The pick-and-place (CPL -- Component Placement List) file tells the SMT assembly machine where to place each component and at what rotation. It is a CSV file with columns for reference, X position, Y position, rotation angle, and board side (top or bottom).
+
+```csv
+Ref,Val,Package,PosX,PosY,Rot,Side
+R1,10k,0603,15.24,22.86,0,top
+R2,10k,0603,18.42,22.86,90,top
+C1,100nF,0402,12.70,25.40,180,top
+U1,ATmega328P,TQFP-32,25.00,30.00,0,top
+```
+
+Positions are the center of the component in millimeters from the board origin. Rotation is in degrees, measured counterclockwise from the component's default orientation in the library.
+
+Export the pick-and-place file with **Cmd+K** then **Export CPL**. Verify that the origin matches what your assembly house expects -- some use the board's lower-left corner, others use a specific fiducial mark.
+
+<Callout type="info" title="Fiducials">
+Fiducial marks are small copper dots (typically 1 mm circles) placed at known positions on the board. The assembly machine's camera locates these fiducials to align the board precisely before placing components. Add at least two fiducials (three is better) at diagonal corners of the board for accurate alignment.
+</Callout>
+
+## Assembly-Ready Package
+
+Most PCB fabrication and assembly houses accept a zip file containing all the above: Gerbers, drill files, BOM, and pick-and-place CSV. vcad's **Export Fabrication Package** command generates this zip with the standard file naming convention that most fabs expect.
+
+The export also includes a readme file summarizing the board specifications: layer count, board dimensions, copper weight, surface finish, solder mask color, and any special requirements (impedance control, gold fingers, castellated edges).
+
+## Ordering Tips
+
+**Surface finish** affects solderability and cost. HASL (Hot Air Solder Leveling) is cheapest but produces uneven pad surfaces. ENIG (Electroless Nickel Immersion Gold) is flat and excellent for fine-pitch components but more expensive. OSP (Organic Solderability Preservative) is a good middle ground.
+
+**Solder mask color** is aesthetic. Green is standard and cheapest. Black, white, blue, red, and yellow are available at slight premium. Matte finishes are also available.
+
+**Board thickness** defaults to 1.6 mm (standard). Thinner boards (0.8 mm, 1.0 mm) are available for space-constrained designs. Thicker boards (2.0 mm, 2.4 mm) provide more rigidity.
+
+**Panelization** arranges multiple copies of your board on a single panel for efficient manufacturing. Most fabs offer panelization as a service -- you send one board design and specify the panel layout and breakaway tabs.
+
+For going back to the 3D side and designing the enclosure that houses your PCB, start with the [Shell & Thin Walls](/guides/modeling/shell) guide for creating enclosures, or the [Assembly Fundamentals](/guides/assembly/fundamentals) guide for mounting the PCB inside a mechanical housing.

@@ -1,0 +1,137 @@
+---
+title: "CLI Quick Start"
+description: "Create, inspect, and export models from the terminal"
+order: 1
+difficulty: Beginner
+time: "5 minutes"
+---
+
+The vcad CLI brings the full parametric kernel to your terminal. You can create documents, inspect geometry, convert between formats, and even launch an interactive TUI editor -- all without opening a browser.
+
+## Installation
+
+Install the CLI from source with Cargo:
+
+```bash
+cargo install vcad-cli
+```
+
+Once installed, running `vcad` with no arguments launches the interactive TUI. Every other operation is a subcommand.
+
+## Create a Document
+
+The `new` command creates a `.vcad` file from a built-in template. Templates give you a starting point so you don't have to write JSON by hand.
+
+```bash
+vcad new box.vcad --template cube
+```
+
+```
+Created box.vcad with template 'cube'
+```
+
+Three templates are available: `empty` (the default, a blank document), `cube` (a single 20mm cube), and `assembly` (a two-part base-and-pillar assembly). If you omit `--template`, you get an empty document.
+
+## Inspect a Document
+
+The `info` command reads a `.vcad` file and prints its structure: how many nodes the parametric DAG contains, what materials are assigned, and what the mesh looks like after evaluation.
+
+```bash
+vcad info box.vcad
+```
+
+```
+vcad document: box.vcad
+  Version: 1.0.0
+  Nodes: 1
+  Materials: 0
+  Scene entries: 1
+
+Scene:
+  1: Cube (material: default)
+
+Mesh stats:
+  Total triangles: 12
+  Total vertices: 8
+```
+
+The node count tells you how complex the parametric history is. Mesh stats come from evaluating the document through the kernel, so they reflect the actual tessellated output.
+
+## Export to STL
+
+The `export` command converts a `.vcad` file to a mesh or CAD interchange format. The output format is inferred from the file extension.
+
+```bash
+vcad export box.vcad box.stl
+```
+
+```
+Exported STL to box.stl
+```
+
+Supported output formats:
+
+| Extension | Format | Typical use |
+|-----------|--------|-------------|
+| `.stl` | Binary STL | 3D printing, CNC |
+| `.step` / `.stp` | STEP AP214 | CAD interchange |
+| `.glb` | glTF Binary | Visualization |
+| `.urdf` | URDF | Robot simulation |
+
+<Callout type="info" title="STEP limitations">
+STEP export currently supports primitive shapes and previously imported STEP files. Boolean operations convert geometry to mesh, which cannot round-trip back to STEP.
+</Callout>
+
+## Import STEP Files
+
+If you have geometry from another CAD tool, import it into vcad with the `import` command:
+
+```bash
+vcad import housing.step housing.vcad
+```
+
+```
+Imported 1 solid(s) from housing.step to housing.vcad
+```
+
+The part name defaults to the filename. Override it with `--name`:
+
+```bash
+vcad import housing.step housing.vcad --name "Motor Housing"
+```
+
+URDF robot descriptions work the same way:
+
+```bash
+vcad import-urdf robot.urdf robot.vcad
+```
+
+## A Typical Workflow
+
+Here is the pattern most CLI users follow. Import an existing STEP file, inspect it to verify the geometry came through correctly, then export to STL for 3D printing:
+
+```bash
+vcad import bracket.step bracket.vcad
+vcad info bracket.vcad
+vcad export bracket.vcad bracket.stl
+```
+
+For batch processing, wrap it in a shell loop:
+
+```bash
+for f in parts/*.step; do
+  vcad import "$f" "converted/$(basename "$f" .step).vcad"
+done
+
+for f in converted/*.vcad; do
+  vcad export "$f" "stl/$(basename "$f" .vcad).stl"
+done
+```
+
+<Callout type="tip" title="CI pipelines">
+The CLI is designed for headless use. It exits with code 0 on success and code 1 on failure, with a descriptive error message on stderr. This makes it straightforward to integrate into GitHub Actions or other CI systems.
+</Callout>
+
+## What's Next
+
+The CLI has more to offer beyond file conversion. The [REPL tutorial](/tutorials/cli/repl) covers the interactive geometry shell where you can build parts command by command, and the [TUI tutorial](/tutorials/cli/tui) walks through the full terminal-based 3D editor with ASCII wireframe viewport. For a complete list of every command and flag, see the [CLI Commands reference](/reference/cli/commands).

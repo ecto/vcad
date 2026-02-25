@@ -1,0 +1,113 @@
+---
+title: "inspect_cad"
+description: "Get volume, area, bbox, center of mass"
+order: 5
+---
+
+`inspect_cad` evaluates an IR document through the kernel and returns geometric properties. It is the primary tool for validating that a design meets dimensional and physical requirements before exporting.
+
+## Input Schema
+
+<Param name="ir" type="Document" required={true}>
+IR document from `create_cad_document` or `create_cad_loon`. Accepts both JSON and compact format.
+</Param>
+
+## Return Value
+
+The tool returns a JSON text response with computed properties:
+
+```json
+{
+  "volume_mm3": 7356.194,
+  "surface_area_mm2": 3812.566,
+  "bounding_box": {
+    "min": { "x": 0, "y": 0, "z": 0 },
+    "max": { "x": 50, "y": 30, "z": 5 }
+  },
+  "center_of_mass": { "x": 25.0, "y": 15.0, "z": 2.5 },
+  "triangles": 1284,
+  "parts": 1,
+  "mass_g": 19.862,
+  "part_masses": [
+    {
+      "name": "Bracket",
+      "volume_mm3": 7356.194,
+      "material": "aluminum",
+      "density_kg_m3": 2700,
+      "mass_g": 19.862
+    }
+  ]
+}
+```
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `volume_mm3` | number | Total enclosed volume in cubic millimeters |
+| `surface_area_mm2` | number | Total surface area in square millimeters |
+| `bounding_box` | object | Axis-aligned bounding box with `min` and `max` corners (Vec3) |
+| `center_of_mass` | object | Volume-weighted centroid as `{x, y, z}` in millimeters |
+| `triangles` | number | Total tessellated mesh triangle count across all parts |
+| `parts` | number | Number of parts in the scene |
+| `mass_g` | number | Total mass in grams (only present when at least one material has density) |
+| `part_masses` | array | Per-part mass breakdown (only present when mass data is available) |
+
+### Per-Part Mass Info
+
+Each entry in `part_masses` contains:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Part name from the IR document |
+| `volume_mm3` | number | Individual part volume |
+| `material` | string | Material key assigned to this part |
+| `density_kg_m3` | number | Material density (present when defined) |
+| `mass_g` | number | Part mass in grams (present when density is defined) |
+
+Mass is computed as `volume_mm3 / 1e9 * density_kg_m3 * 1000` to convert from mm^3 and kg/m^3 to grams.
+
+## Computation Method
+
+Volume is computed using the divergence theorem over the tessellated triangle mesh. For each triangle, the signed volume of the tetrahedron formed with the origin is accumulated, giving the total enclosed volume. Surface area is the sum of individual triangle areas. Center of mass is the volume-weighted centroid, where each tetrahedron's contribution is weighted by its signed volume.
+
+The bounding box is the axis-aligned extent of all mesh vertices across all parts. It represents the physical space occupied by the geometry.
+
+All numeric values are rounded to three decimal places for readability.
+
+<Callout type="info" title="Tessellation accuracy">
+Volume and area are computed from the tessellated mesh, not the exact BRep. For parts with curved surfaces (cylinders, spheres, fillets), the accuracy depends on the segment count. Higher segment counts produce more accurate measurements but use more triangles. The default 32 segments gives accuracy within 1% for most shapes.
+</Callout>
+
+## Validation Patterns
+
+The AI typically calls `inspect_cad` immediately after `create_cad_document` to verify the geometry. Common validation checks:
+
+**Bounding box matches intended dimensions.** If you created a 50x30x5mm plate, the bounding box should span from roughly (0,0,0) to (50,30,5). Significant deviations indicate a transform or boolean error.
+
+**Volume is plausible.** A solid 50x30x5mm plate has a volume of 7500 mm^3. After subtracting holes, the volume should be less. If the volume is 0 or negative, the boolean operations likely failed.
+
+**Part count matches expectations.** If you defined 3 parts, the `parts` field should be 3. A mismatch indicates a missing root or an evaluation error.
+
+**Mass is reasonable.** For a known material and volume, the mass should match engineering expectations. An aluminum bracket (density 2700 kg/m^3) with 7500 mm^3 volume should weigh about 20.25g.
+
+## Error Handling
+
+The tool throws an error if the document has no parts to inspect (empty roots array or evaluation failure). The error message describes the cause.
+
+```json
+{
+  "content": [{"type": "text", "text": "Error: Document has no parts to inspect"}],
+  "isError": true
+}
+```
+
+## Example Workflow
+
+```
+1. create_cad_document → build the bracket
+2. inspect_cad → verify: bbox (0,0,0)-(50,30,5), volume ~7356mm³
+3. export_cad → write bracket.stl
+```
+
+If the inspection reveals unexpected values, adjust the `create_cad_document` parameters and re-inspect before exporting.

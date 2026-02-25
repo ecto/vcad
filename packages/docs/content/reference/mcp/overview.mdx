@@ -1,0 +1,246 @@
+---
+title: "MCP Tools Overview"
+description: "All MCP server tools for AI-assisted CAD"
+order: 1
+---
+
+The vcad MCP server exposes the parametric kernel as a set of tools that AI agents can call through the Model Context Protocol. The server runs locally via `npx @vcad/mcp` and includes the full WASM engine, so geometry evaluation happens on your machine.
+
+This page lists every available tool with its purpose and key parameters. For setup instructions, see [MCP Server Setup](/tutorials/mcp/setup). For detailed usage of the core design tools, see [Creating Models with AI](/tutorials/mcp/create).
+
+## Design Tools
+
+### create_cad_document
+
+The primary tool for building 3D geometry. Takes a structured JSON description of parts and operations, and returns an IR document that can be inspected, exported, or opened in the browser.
+
+Each part can be defined by a `primitive` (cube, cylinder, sphere, cone), or by a sketch-based operation (`extrude`, `revolve`, `sweep`, `loft`). Parts support a chain of `operations` that modify the geometry: boolean operations (union, difference, intersection), transforms (translate, rotate, scale), patterns (linear, circular), features (fillet, chamfer, shell), and holes.
+
+The tool also accepts an optional `assembly` block with instances and joints for multi-body models.
+
+<Param name="parts" type="array">
+Array of part definitions. Each part has a `name`, a geometry source (`primitive`, `extrude`, `revolve`, `sweep`, or `loft`), optional `operations`, and optional `material`.
+</Param>
+
+<Param name="assembly" type="object">
+Optional. Contains `instances` (positioned copies of parts) and `joints` (kinematic connections between instances).
+</Param>
+
+Positions throughout the tool accept three formats: absolute coordinates (`{x: 25, y: 15, z: 0}`), named positions (`"center"`, `"top-center"`, `"bottom-center"`), or percentage values (`{x: "50%", y: "50%"}`).
+
+For complete documentation, see [create_cad_document reference](/reference/mcp/create-cad-document).
+
+### create_cad_loon
+
+An alternative to `create_cad_document` that accepts geometry as Loon source code -- a compact Lisp-like language designed for parametric CAD. Loon is often more concise than the JSON format, especially for models with many chained operations.
+
+<Param name="source" type="string">
+Loon source code defining the geometry.
+</Param>
+
+<Param name="format" type="string" default="compact">
+Output format: `compact` (default) or `json`.
+</Param>
+
+```lisp
+[let plate [cube 50 30 5]]
+[let hole [translate 25 15 0 [cylinder 2.75 10]]]
+[let result [difference hole plate]]
+[root result "aluminum"]
+```
+
+Loon supports `let` bindings, `pipe` for operation chaining, all primitives, booleans, transforms, and features. See [Loon Format](/tutorials/mcp/loon) and the [create_cad_loon reference](/reference/mcp/create-cad-loon) for syntax details.
+
+### open_in_browser
+
+Generates a shareable URL that opens an IR document in the vcad.io web app. The document is compressed (gzip + base64url) and embedded in the URL, so no server storage is needed.
+
+<Param name="ir" type="object">
+IR document from `create_cad_document` or `create_cad_loon`.
+</Param>
+
+Returns a URL like `https://vcad.io/#doc=...`. Note that very large documents may exceed browser URL length limits (roughly 2KB of compressed data).
+
+## Analysis Tools
+
+### inspect_cad
+
+Evaluates an IR document through the kernel and returns geometric properties. This is the main tool for validating that a design meets dimensional and physical requirements.
+
+<Param name="ir" type="object">
+IR document from `create_cad_document` or `create_cad_loon`.
+</Param>
+
+Returns:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `volume_mm3` | `number` | Enclosed volume in cubic millimeters |
+| `surface_area_mm2` | `number` | Total surface area in square millimeters |
+| `bounding_box` | `{min, max}` | Axis-aligned bounding box corners |
+| `center_of_mass` | `{x, y, z}` | Volume-weighted centroid |
+| `triangle_count` | `number` | Tessellated mesh triangle count |
+| `parts` | `array` | Per-part breakdown with name, volume, material, and mass (when density is known) |
+
+The AI typically calls `inspect_cad` immediately after `create_cad_document` to verify the geometry before exporting. If something looks wrong (unexpected volume, bounding box doesn't match intended dimensions), it can adjust the parameters and try again.
+
+For detailed documentation, see [inspect_cad reference](/reference/mcp/inspect-cad).
+
+### export_cad
+
+Exports an IR document to a file on disk. Format is determined by the filename extension.
+
+<Param name="ir" type="object">
+IR document from `create_cad_document` or `create_cad_loon`.
+</Param>
+
+<Param name="filename" type="string">
+Output filename with extension. Supported: `.stl` (binary STL for 3D printing) and `.glb` (glTF binary for visualization).
+</Param>
+
+See [export_cad reference](/reference/mcp/export-cad) for details.
+
+## STEP Tools
+
+### import_step
+
+Reads a STEP file (AP203 or AP214) and returns an IR document with `ImportedMesh` nodes. The IR can then be inspected, exported to other formats, or combined with new geometry.
+
+<Param name="path" type="string">
+Absolute path to the STEP file on disk.
+</Param>
+
+Supports files from common CAD tools: Fusion 360, SolidWorks, Onshape, CATIA, Creo, and others that produce AP203/AP214 STEP.
+
+See [STEP I/O reference](/reference/mcp/step-io) for details.
+
+## Simulation Tools
+
+The simulation tools provide a gym-style reinforcement learning interface built on the Rapier3D physics engine. You create an environment from a vcad assembly (which defines rigid bodies via parts and kinematic constraints via joints), then step the simulation with actions and observe the resulting state.
+
+### create_robot_env
+
+Creates a physics simulation environment from a vcad assembly document. The assembly must contain part instances and joints. Returns an `env_id` string that identifies the environment for subsequent calls.
+
+<Param name="ir" type="object">
+IR document containing an assembly with instances and joints.
+</Param>
+
+<Param name="timestep" type="number" default="0.01">
+Simulation timestep in seconds.
+</Param>
+
+<Param name="gravity" type="object" default="{x:0, y:0, z:-9.81}">
+Gravity vector. Defaults to Earth gravity along -Z.
+</Param>
+
+### gym_step
+
+Advances the simulation by one timestep with the provided action.
+
+<Param name="env_id" type="string">
+Environment ID from `create_robot_env`.
+</Param>
+
+<Param name="action" type="array">
+Array of numbers, one per actuated joint.
+</Param>
+
+<Param name="action_type" type="string" default="torque">
+How to interpret the action values: `torque` (Newton-meters), `position` (degrees or millimeters), or `velocity` (degrees/second or mm/second).
+</Param>
+
+Returns an observation object with joint positions, joint velocities, end effector poses, a reward value, and a `done` flag.
+
+### gym_reset
+
+Resets the simulation to its initial state. Returns the initial observation.
+
+<Param name="env_id" type="string">
+Environment ID from `create_robot_env`.
+</Param>
+
+### gym_observe
+
+Returns the current observation without advancing the simulation. Useful for reading state between steps or after a reset.
+
+<Param name="env_id" type="string">
+Environment ID from `create_robot_env`.
+</Param>
+
+### gym_close
+
+Destroys a simulation environment and frees its resources.
+
+<Param name="env_id" type="string">
+Environment ID from `create_robot_env`.
+</Param>
+
+### Batch Operations
+
+For parallel reinforcement learning, three batch tools create and control multiple environments simultaneously:
+
+**batch_create_envs** creates N copies of the same environment. Returns a `batch_id`.
+
+<Param name="ir" type="object">
+Assembly IR document.
+</Param>
+
+<Param name="count" type="number">
+Number of parallel environments.
+</Param>
+
+**batch_step** steps all environments with per-environment actions. Returns observations, rewards, and done flags for every environment.
+
+**batch_reset** resets all environments in the batch to initial state.
+
+## Electronics Tools
+
+The MCP server also includes tools for electronic design (schematic capture, PCB layout, and fabrication export). These operate on a separate data model embedded in the vcad document.
+
+| Tool | Description |
+|------|-------------|
+| `create_schematic` | Create a schematic from component and wire definitions |
+| `place_components` | Place footprints on a PCB board with stackup |
+| `route_nets` | Route copper traces between pads |
+| `run_drc` | Design Rule Check (clearance, trace width, drill size) |
+| `run_erc` | Electrical Rule Check (duplicate refs, unconnected pins) |
+| `export_gerber` | Export Gerber RS-274X fabrication files, drill file, BOM, pick-and-place |
+| `calc_impedance` | Calculate trace impedance (microstrip, stripline, differential pair) |
+
+## Utility Tools
+
+### get_changelog
+
+Queries the vcad changelog for recent changes, filtered by version, category, feature tag, or MCP tool name. Useful for discovering new capabilities.
+
+<Param name="version" type="string">
+Filter by version string.
+</Param>
+
+<Param name="category" type="string">
+Filter by category: `feat`, `fix`, `breaking`, `perf`, `docs`.
+</Param>
+
+<Param name="feature" type="string">
+Filter by feature tag (e.g., `boolean`, `step`, `physics`).
+</Param>
+
+## Error Handling
+
+When a tool call fails, the server returns an error response that the AI can use to self-correct:
+
+```json
+{
+  "content": [{"type": "text", "text": "Error: Invalid primitive type 'box', use 'cube' instead"}],
+  "isError": true
+}
+```
+
+Common errors include invalid primitive types, missing required fields, and file I/O failures. The error messages are designed to be actionable -- they tell the AI what went wrong and often suggest the fix.
+
+<Callout type="tip" title="Inspect after create">
+The most reliable MCP workflow is: `create_cad_document` to build geometry, `inspect_cad` to verify dimensions and volume, then `export_cad` to produce the final file. The inspect step catches most problems before they reach the export.
+</Callout>
+
+For setup instructions, see [MCP Server Setup](/tutorials/mcp/setup). For a tutorial on the design workflow, see [Creating Models with AI](/tutorials/mcp/create).

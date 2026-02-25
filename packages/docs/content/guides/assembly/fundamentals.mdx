@@ -1,0 +1,65 @@
+---
+title: "Assembly Fundamentals"
+description: "Part definitions, instances, ground instance, feature tree hierarchy"
+order: 1
+---
+
+Single-body modeling gets you surprisingly far, but real products are assemblies -- multiple parts that fit together, move relative to each other, and form a complete mechanism. vcad's assembly system is built on three concepts: part definitions, instances, and joints. Understanding how they interact is essential before you start connecting parts.
+
+## Part Definitions
+
+A **part definition** (PartDef) is a parametric design -- a feature tree that describes how to build one part. It contains primitives, booleans, sketches, extrusions, fillets, and every other modeling operation. A part definition does not exist in the 3D scene by itself; it is a template, a recipe for creating geometry.
+
+You have been creating part definitions throughout the tutorials every time you built a shape. In assembly mode, you give each definition a name ("base plate", "arm", "bolt") and then place copies of it.
+
+Create a new part definition in the app by pressing **Cmd+K** and choosing **New Part Def**. The feature tree shows the new definition as a top-level node. Click it to expand and edit its feature history. You can have as many part definitions as your design requires.
+
+## Instances
+
+An **instance** is a placed copy of a part definition in the assembly scene. Each instance has its own transform (position and orientation) and material override, but its geometry comes from the part definition. Change the definition and every instance updates. Place ten instances of the same bolt, edit the bolt definition once, and all ten bolts change.
+
+Instances are lightweight -- they do not duplicate geometry. The kernel evaluates the part definition once and shares the result across all instances. An assembly with 200 instances of the same bolt is no heavier in memory than an assembly with 2.
+
+Add an instance by pressing **Cmd+K** and choosing **Add Instance**, then selecting which part definition to instantiate. Position it with the transform fields in the property panel or by dragging the gizmo in the viewport.
+
+<Callout type="info" title="Instances vs copies">
+An instance is not an independent copy. It is a reference to a part definition. If you need a part that looks similar but differs in some dimension, create a second part definition rather than trying to make one instance deviate from its definition.
+</Callout>
+
+## The Ground Instance
+
+Every assembly has a **ground instance** -- the fixed reference frame. The first instance you place is grounded by default. It does not move, and all other instances are positioned relative to it (directly or through joint chains). The ground instance is the base of the kinematic tree.
+
+You can change which instance is grounded by right-clicking an instance in the assembly tree and choosing **Set as Ground**. The previous ground instance becomes movable, and the kinematic tree reorganizes around the new ground.
+
+For a robotic arm, the ground instance is the base or pedestal. For a hinge mechanism, it is the fixed frame. For a vehicle suspension, it is the chassis. Choose the part that is rigidly attached to the world.
+
+## Feature Tree Hierarchy
+
+The feature tree in assembly mode shows a different view than single-body mode. At the top level you see two categories.
+
+**Part Definitions** lists every part design in the document. Expand a definition to see its feature history (primitives, booleans, fillets, etc.). Editing happens here -- double-click a definition to enter its modeling context.
+
+**Assembly** lists the instances, organized by their kinematic hierarchy. The ground instance is at the root. Instances connected to ground via joints appear as children. Instances connected to those via further joints appear as grandchildren. The tree follows the kinematic chain, not the order of creation.
+
+Joints appear as connections between parent and child instances. Select a joint in the tree to see its type, anchors, axis, limits, and current state value. The assembly tree is the map of your mechanism's kinematic structure.
+
+## Transforms and Coordinate Spaces
+
+Each instance has a transform that positions it in the assembly's world space. The transform consists of translation (X, Y, Z in millimeters) and rotation (Euler angles in degrees, X then Y then Z). The transform is relative to world space for the ground instance, and relative to the parent instance for jointed instances.
+
+When you set a joint between two instances, the joint anchors override the instance's manual transform. The child instance's position is computed from the parent's position, the joint anchors, and the joint's current state value. You do not need to manually position jointed instances -- the joint defines their relationship.
+
+<Callout type="tip" title="Position before jointing">
+Get instances roughly positioned before adding joints. This makes it easier to place joint anchors at the correct location. Once the joint is created, the kinematic solver takes over positioning.
+</Callout>
+
+## Materials Per Instance
+
+Each instance can override the part definition's material. A bolt definition might default to steel, but one specific instance could be set to brass for a decorative application. Material overrides are set in the property panel when an instance is selected. If no override is set, the instance uses whatever material the part definition specifies.
+
+## Assembly Workflow Summary
+
+The typical workflow is: create part definitions for each unique part, add instances to the assembly and position them roughly, add joints between instances to define their mechanical relationships, then scrub joint values to verify motion. If geometry needs adjustment, switch back to the part definition, edit it, and see all instances update in the assembly.
+
+For a detailed guide to joint types, anchors, axes, and limits, continue to [Joint Types & Selection](/guides/assembly/joints).

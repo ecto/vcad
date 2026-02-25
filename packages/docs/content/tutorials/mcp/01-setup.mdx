@@ -1,0 +1,99 @@
+---
+title: "MCP Server Setup"
+description: "Connect vcad to Claude Desktop, Cursor, or any MCP client"
+order: 1
+difficulty: Beginner
+time: "5 minutes"
+---
+
+vcad ships an MCP (Model Context Protocol) server that lets AI assistants create, inspect, and export 3D models on your behalf. Once configured, you can describe a part in natural language and the AI will call vcad tools directly -- no manual modeling required.
+
+## How It Works
+
+The MCP server runs as a local process that exposes vcad's geometry engine as a set of tools. An MCP client (Claude Desktop, Cursor, or any compatible editor) launches the server automatically when needed and communicates with it over stdio. The AI sees tool descriptions like `create_cad_document` and `inspect_cad`, decides when to call them based on your conversation, and receives structured results back.
+
+The server includes the full WASM kernel, so geometry evaluation happens locally. No data leaves your machine.
+
+## Claude Desktop
+
+Edit the Claude Desktop configuration file. On macOS it lives at `~/Library/Application Support/Claude/claude_desktop_config.json`; on Windows at `%APPDATA%\Claude\claude_desktop_config.json`.
+
+Add the vcad server to the `mcpServers` object:
+
+```json
+{
+  "mcpServers": {
+    "vcad": {
+      "command": "npx",
+      "args": ["@vcad/mcp"]
+    }
+  }
+}
+```
+
+Restart Claude Desktop. You should see a hammer icon in the input area indicating that MCP tools are available. If the icon doesn't appear, check that Node.js (v18+) is installed and that `npx` is on your PATH.
+
+## Cursor
+
+Cursor uses the same configuration format. Open Settings, navigate to the MCP section, and add a new server:
+
+```json
+{
+  "mcpServers": {
+    "vcad": {
+      "command": "npx",
+      "args": ["@vcad/mcp"]
+    }
+  }
+}
+```
+
+After saving, Cursor will launch the vcad server whenever an agent session starts. The tools appear in the agent's tool list alongside file editing and terminal tools.
+
+## Claude Code
+
+If you use Claude Code (the CLI), add the server to your project's `.mcp.json` or your global MCP config:
+
+```json
+{
+  "mcpServers": {
+    "vcad": {
+      "command": "npx",
+      "args": ["@vcad/mcp"]
+    }
+  }
+}
+```
+
+## Verifying the Setup
+
+The quickest test is to ask the AI to create something simple. In Claude Desktop, type:
+
+> Create a 30mm cube in vcad
+
+Claude should call the `create_cad_document` tool with a cube primitive and return a confirmation that includes the IR document. If it also calls `inspect_cad`, you'll see volume (27000 mm3), bounding box, and triangle count in the response.
+
+<Callout type="tip" title="Debugging connection issues">
+If the AI says it doesn't have CAD tools, the server likely failed to start. Run `npx @vcad/mcp` directly in a terminal to check for errors. The most common issue is a missing or outdated Node.js installation.
+</Callout>
+
+## Available Tools
+
+Once connected, the AI has access to the full vcad tool suite. Here is what it can do at a glance:
+
+| Tool | Purpose |
+|------|---------|
+| `create_cad_document` | Build geometry from primitives, sketches, booleans, and assemblies |
+| `create_cad_loon` | Build geometry using the compact Loon text format |
+| `export_cad` | Export to STL or GLB |
+| `inspect_cad` | Query volume, surface area, bounding box, center of mass |
+| `import_step` | Import STEP files into vcad format |
+| `open_in_browser` | Generate a shareable vcad.io URL |
+| `create_robot_env` | Create a physics simulation from an assembly |
+| `gym_step` / `gym_reset` / `gym_observe` / `gym_close` | Control physics simulations |
+
+Each tool is documented in detail in the [MCP Tools reference](/reference/mcp/overview).
+
+## What's Next
+
+Now that the server is connected, move on to [Creating Models with AI](/tutorials/mcp/create) to learn how `create_cad_document` works and see what kinds of geometry an AI agent can produce.

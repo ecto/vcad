@@ -1,0 +1,103 @@
+---
+title: "BRep Kernel"
+description: "Half-edge topology, slotmap arenas, surface types, exact predicates"
+order: 2
+---
+
+The vcad kernel represents solids as Boundary Representations (BRep) where a solid is defined entirely by its boundary surfaces. This is the same mathematical foundation used by CATIA, SolidWorks, and OpenCASCADE, though vcad's implementation is purpose-built in Rust with arena-based storage and exact geometric predicates.
+
+## Half-Edge Data Structure
+
+The topology lives in `crates/vcad-kernel-topo/src/lib.rs`. Every BRep entity is stored in a `SlotMap` arena, giving O(1) lookup by ID and stable handles that survive insertions and deletions. The key types defined via `new_key_type!` are `VertexId`, `HalfEdgeId`, `EdgeId`, `LoopId`, `FaceId`, `ShellId`, and `SolidId`.
+
+A **Vertex** stores a `Point3` position and an optional outgoing `HalfEdgeId` for traversal. A **HalfEdge** is a directed edge segment carrying an `origin` vertex, optional `twin` (the opposite-direction half-edge sharing the same geometric edge), `next` and `prev` pointers forming a ring within a loop, and back-references to its parent `Edge` and `Loop`. An **Edge** pairs two twin half-edges. A **Loop** is a closed ring of half-edges that bounds a face -- every face has one outer loop and zero or more inner loops (holes). A **Face** references its outer loop, inner loops, a `surface_index` into the geometry store, and an `Orientation` (Forward or Reversed) indicating whether the face normal agrees with or opposes the surface normal. A **Shell** is a connected set of faces forming a boundary, tagged as either `Outer` or `Void`. A **Solid** has one outer shell and optional void shells for internal cavities.
+
+```rust
+// The core topology structure -- all arenas in one place
+pub struct Topology {
+    pub vertices:   SlotMap<VertexId, Vertex>,
+    pub half_edges: SlotMap<HalfEdgeId, HalfEdge>,
+    pub edges:      SlotMap<EdgeId, Edge>,
+    pub loops:      SlotMap<LoopId, Loop>,
+    pub faces:      SlotMap<FaceId, Face>,
+    pub shells:     SlotMap<ShellId, Shell>,
+    pub solids:     SlotMap<SolidId, Solid>,
+}
+```
+
+The `Topology` struct provides low-level insertion methods (`add_vertex`, `add_half_edge`, `add_edge`, `add_loop`, `add_face`, `add_shell`, `add_solid`) and Euler operators like `make_vertex_face_shell` (the seed for building topology from scratch) and `make_edge_vertex` (split an edge by inserting a vertex). Adjacency iterators `loop_half_edges` and `vertex_half_edges` traverse the half-edge rings without allocating.
+
+## Geometry Store
+
+The `GeometryStore` in `crates/vcad-kernel-geom/src/lib.rs` holds surfaces, 3D curves, and 2D trim curves as boxed trait objects indexed by position. A face's `surface_index` field points into `GeometryStore.surfaces`. This separation of topology from geometry means the same surface (e.g., a single `Plane`) can be shared by multiple faces, and topological operations can manipulate connectivity without touching geometry.
+
+## The Surface Trait
+
+All surface types implement the `Surface` trait:
+
+```rust
+pub trait Surface: Send + Sync + Debug {
+    fn evaluate(&self, uv: Point2) -> Point3;
+    fn normal(&self, uv: Point2) -> Dir3;
+    fn d_du(&self, uv: Point2) -> Vec3;
+    fn d_dv(&self, uv: Point2) -> Vec3;
+    fn domain(&self) -> ((f64, f64), (f64, f64));
+    fn surface_type(&self) -> SurfaceKind;
+    fn clone_box(&self) -> Box<dyn Surface>;
+    fn as_any(&self) -> &dyn Any;
+    fn transform(&self, t: &Transform) -> Box<dyn Surface>;
+    fn offset(&self, distance: f64) -> Option<Box<dyn Surface>>;
+}
+```
+
+`evaluate` maps (u, v) parameters to a 3D point. `normal` returns the surface normal. `d_du` and `d_dv` give partial derivatives for tangent plane computation. `domain` returns the parameter bounds. `transform` applies an affine transform, returning a new surface. `offset` creates a parallel surface at a signed distance -- this is used by the shell operation and returns `None` when the offset would degenerate (e.g., cylinder offset reducing radius to zero).
+
+## Concrete Surface Types
+
+**Plane** is defined by an origin, x_dir, y_dir, and normal_dir. Parameterization: `P(u,v) = origin + u*x_dir + v*y_dir`. Domain is effectively infinite. The `project` method computes (u,v) from a 3D point. `signed_distance` gives the perpendicular distance.
+
+**CylinderSurface** has a center, axis direction, reference direction, and radius. Parameterization: `P(u,v) = center + radius*(cos(u)*ref_dir + sin(u)*y_dir) + v*axis` where u is the angular parameter in [0, 2pi) and v is the height. Offset changes the radius.
+
+**ConeSurface** has an apex, axis, reference direction, and half-angle. Parameterization uses the apex as origin with v measuring distance along the cone surface from the apex. The `from_frustum` constructor computes apex and half-angle from bottom/top radii and height, returning `None` for degenerate (cylindrical) cases. Offset shifts the apex along the axis by `distance / sin(half_angle)`.
+
+**SphereSurface** has a center, radius, reference direction, and axis. Parameterization uses longitude u in [0, 2pi) and latitude v in [-pi/2, pi/2].
+
+**TorusSurface** has a center, axis, reference direction, major radius (center to tube center), and minor radius (tube radius). Parameterization: `P(u,v) = center + (R + r*cos(v)) * tube_dir(u) + r*sin(v)*axis` where u is the toroidal angle and v is the poloidal angle, both in [0, 2pi).
+
+**BilinearSurface** interpolates four corner points: `P(u,v) = (1-u)(1-v)*p00 + u(1-v)*p10 + (1-u)v*p01 + u*v*p11`. It supports optional corner normals for smooth shading on swept surfaces. The `is_planar` method checks coplanarity of the four corners.
+
+**BSplineSurface** (in `vcad-kernel-nurbs`) implements the Surface trait for NURBS surfaces with full knot vector, control point grid, and weight support.
+
+## Curve Types
+
+The `Curve3d` trait provides `evaluate(t) -> Point3`, `tangent(t) -> Vec3`, and `domain() -> (f64, f64)`. Concrete types are `Line3d` (from two endpoints, t in [0,1]) and `Circle3d` (center, radius, x_dir, y_dir, normal, t in [0, 2pi)). The `Curve2d` trait is the 2D analog for trim curves in surface parameter space, with `Line2d` and `Circle2d` implementations.
+
+## Exact Predicates
+
+The `vcad-kernel-math` crate wraps Shewchuk's adaptive-precision predicates via the `robust` crate. These predicates give exact results (no floating-point error) for fundamental geometric tests: `orient2d` and `orient3d` determine point orientation relative to a line or plane, while `incircle` and `insphere` test containment within circumscribed circles and spheres. The boolean pipeline uses these for face classification and the `point_in_polygon` test in trimming, preventing the misclassifications that plague naive floating-point approaches.
+
+<Callout type="tip" title="Why exact predicates matter">
+Standard floating-point geometry breaks when points are nearly coplanar or collinear. Shewchuk's predicates use multi-precision arithmetic only when needed (adaptive), so they are exact without being slow. This is critical for boolean operations where a misclassified face produces holes or inverted geometry.
+</Callout>
+
+## BRepSolid
+
+The `BRepSolid` struct in `vcad-kernel-primitives` bundles topology, geometry, and a solid ID into a single value:
+
+```rust
+pub struct BRepSolid {
+    pub topology: Topology,
+    pub geometry: GeometryStore,
+    pub solid_id: SolidId,
+}
+```
+
+Primitive constructors (`make_cube`, `make_cylinder`, `make_sphere`, `make_cone`) build complete `BRepSolid` values with correct topology, surfaces, and edge connectivity. These are the starting points for all modeling operations.
+
+## Face Orientation
+
+The `Orientation` enum (`Forward` or `Reversed`) on each face controls how the surface normal relates to the face normal. When `Forward`, the face normal equals the surface normal; when `Reversed`, it opposes it. This mechanism allows boolean operations to flip face normals when subtracting -- the inner faces of a difference operation use `Reversed` orientation so their normals point into the hole, ensuring correct rendering and volume computation.
+
+## Related Pages
+
+The [Boolean Pipeline](/architecture/booleans) page explains how BRep solids are combined. The [Tessellation](/architecture/tessellation) page covers conversion to triangle meshes. The [Constraint Solver](/architecture/constraints) page describes the 2D sketch system built on top of this geometry.

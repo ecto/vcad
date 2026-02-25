@@ -1,0 +1,198 @@
+---
+title: "Parametric Design"
+description: "Write reusable functions that generate geometry from parameters"
+order: 3
+difficulty: Intermediate
+time: "15 minutes"
+playground:
+  exampleId: "flanged-hub"
+---
+
+The whole point of programmatic CAD is that geometry lives in code, not in mouse clicks. When you wrap a part in a function, every dimension becomes a parameter you can change, loop over, or compute from other values. The result is a design that rebuilds itself when requirements change.
+
+<Playground exampleId="flanged-hub" />
+
+## Your first parametric function
+
+In the previous tutorial you built a plate with four mounting holes by hard-coding every coordinate. Here is the same idea expressed as a reusable function:
+
+```rust
+use vcad::{centered_cube, centered_cylinder, Part};
+
+fn mounting_plate(
+    width: f64,
+    height: f64,
+    thickness: f64,
+    hole_dia: f64,
+    inset: f64,
+) -> Part {
+    let plate = centered_cube("plate", width, height, thickness);
+
+    let hole = centered_cylinder("hole", hole_dia / 2.0, thickness + 5.0, 32);
+
+    let holes = hole.translate(-width / 2.0 + inset, -height / 2.0 + inset, 0.0)
+        .union(&hole.translate( width / 2.0 - inset, -height / 2.0 + inset, 0.0))
+        .union(&hole.translate(-width / 2.0 + inset,  height / 2.0 - inset, 0.0))
+        .union(&hole.translate( width / 2.0 - inset,  height / 2.0 - inset, 0.0));
+
+    plate - holes
+}
+```
+
+Calling `mounting_plate(80.0, 50.0, 5.0, 4.4, 8.0)` produces an 80x50mm plate with 4.4mm holes inset 8mm from each corner. Calling it again with different numbers produces a completely different plate -- no editing, no clicking, no undo history to worry about. The hole depth is computed as `thickness + 5.0` so the tool always penetrates cleanly regardless of how thick the plate is.
+
+This is just a Rust function. You get type checking, IDE autocompletion, and compiler errors if you pass the wrong number of arguments. There is no DSL to learn and no scripting language with its own quirks -- it is plain Rust all the way down.
+
+## A more complex example: flanged hub
+
+Mechanical parts often have many interrelated dimensions. A flanged hub -- a cylindrical boss with a mounting flange at its base -- is a good example because nearly every dimension depends on the others:
+
+```rust
+use vcad::{bolt_pattern, centered_cylinder, Part};
+
+fn flanged_hub(
+    hub_radius: f64,
+    hub_height: f64,
+    flange_radius: f64,
+    flange_thickness: f64,
+    bore_dia: f64,
+    bolt_count: usize,
+    bolt_bcd: f64,
+    bolt_dia: f64,
+) -> Part {
+    // The main cylindrical body
+    let hub = centered_cylinder("hub", hub_radius, hub_height, 64);
+
+    // A thin disc at the bottom of the hub
+    let flange = centered_cylinder("flange", flange_radius, flange_thickness, 64)
+        .translate(0.0, 0.0, -hub_height / 2.0);
+
+    // A through-bore along the central axis
+    let bore = centered_cylinder("bore", bore_dia / 2.0, hub_height + 10.0, 32);
+
+    // Bolt holes arranged in a circle on the flange
+    let bolts = bolt_pattern(bolt_count, bolt_bcd, bolt_dia, flange_thickness + 5.0, 32)
+        .translate(0.0, 0.0, -hub_height / 2.0);
+
+    hub + flange - bore - bolts
+}
+
+fn main() {
+    let part = flanged_hub(
+        15.0,   // hub radius
+        20.0,   // hub height
+        30.0,   // flange radius
+        4.0,    // flange thickness
+        10.0,   // bore diameter
+        6,      // 6 bolt holes
+        45.0,   // bolt circle diameter
+        6.0,    // bolt hole diameter
+    );
+
+    part.write_stl("flanged_hub.stl").unwrap();
+}
+```
+
+The `bolt_pattern` helper generates a circle of evenly-spaced holes -- you give it a count, circle diameter, hole diameter, depth, and segment count, and it returns a Part containing all the holes already unioned together. This is itself a parametric function; your parametric functions can compose with other parametric functions to build up complex designs from simple building blocks.
+
+<Callout type="tip" title="Naming conventions">
+Give each sub-shape a descriptive name string (`"hub"`, `"flange"`, `"bore"`). These names appear in the feature tree and in error messages, making it much easier to debug boolean failures or inspect intermediate geometry.
+</Callout>
+
+## Using loops and conditionals
+
+Because this is plain Rust, you can use any language feature to drive geometry. Loops are particularly useful for creating patterns of features:
+
+```rust
+use vcad::{centered_cube, centered_cylinder, Part};
+
+fn ventilated_plate(
+    width: f64,
+    height: f64,
+    thickness: f64,
+    slot_count: usize,
+    slot_width: f64,
+    slot_length: f64,
+) -> Part {
+    let plate = centered_cube("plate", width, height, thickness);
+
+    let slot = centered_cube("slot", slot_length, slot_width, thickness + 5.0);
+    let spacing = height / (slot_count as f64 + 1.0);
+
+    let mut slots = Part::empty("slots");
+    for i in 0..slot_count {
+        let y = -height / 2.0 + spacing * (i as f64 + 1.0);
+        slots = slots + slot.translate(0.0, y, 0.0);
+    }
+
+    plate - slots
+}
+```
+
+Conditionals work the same way. You might add lightening pockets only when a plate exceeds a certain thickness, or switch from round holes to slots when the aspect ratio demands it:
+
+```rust
+fn smart_hole(plate: Part, diameter: f64, thickness: f64) -> Part {
+    let tool = if diameter > 20.0 {
+        // Large holes get a counterbore
+        let through = centered_cylinder("through", diameter / 2.0, thickness + 5.0, 64);
+        let cbore = centered_cylinder("cbore", diameter / 2.0 + 3.0, 2.0, 64)
+            .translate(0.0, 0.0, thickness / 2.0 - 2.0);
+        through + cbore
+    } else {
+        centered_cylinder("hole", diameter / 2.0, thickness + 5.0, 32)
+    };
+
+    plate - tool
+}
+```
+
+<Callout type="info" title="Part::empty">
+`Part::empty("name")` creates a Part with no geometry. It acts as a zero element for union -- you can accumulate shapes into it inside a loop without needing special-case logic for the first iteration.
+</Callout>
+
+## Design tables
+
+One common pattern is generating a family of parts from a table of parameters. Since parameters are just Rust values, you can store them in an array, read them from a file, or compute them from a formula:
+
+```rust
+use vcad::centered_cube;
+
+struct PlateSpec {
+    name: &'static str,
+    width: f64,
+    height: f64,
+    thickness: f64,
+}
+
+fn main() {
+    let specs = [
+        PlateSpec { name: "small",  width: 40.0, height: 30.0, thickness: 3.0 },
+        PlateSpec { name: "medium", width: 80.0, height: 50.0, thickness: 5.0 },
+        PlateSpec { name: "large",  width: 120.0, height: 80.0, thickness: 8.0 },
+    ];
+
+    for spec in &specs {
+        let plate = mounting_plate(
+            spec.width,
+            spec.height,
+            spec.thickness,
+            4.4,
+            8.0,
+        );
+        plate.write_stl(format!("plate_{}.stl", spec.name)).unwrap();
+    }
+}
+```
+
+This generates three STL files in a single run. In a GUI CAD tool, producing a family of variants means manually editing dimensions and re-exporting for each size. In vcad, it is a three-element array and a for loop.
+
+## Why this matters
+
+Parametric code makes your designs **auditable** -- every dimension traces back to a named variable, not a number buried in a feature tree. It makes them **reproducible** -- anyone with the source can rebuild the exact same geometry. And it makes them **composable** -- your `mounting_plate` function can be called by someone else's assembly function, which can be called by an automated test, which can be called by a CI pipeline.
+
+This is the fundamental difference between programmatic CAD and traditional GUI-based modeling. The geometry is not a document you edit; it is the output of a program you run.
+
+## Next steps
+
+You can now create reusable parametric parts from primitives, transforms, and booleans. The next tutorial covers [sketches and sweeps](/tutorials/rust/04-sketches) -- drawing 2D profiles and extruding them into 3D geometry for shapes that go beyond what primitives alone can express.

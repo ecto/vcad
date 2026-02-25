@@ -1,0 +1,183 @@
+---
+title: "Inspection & Queries"
+description: "Volume, surface area, bbox, center of mass. Validate geometry"
+order: 5
+difficulty: Intermediate
+time: "10 minutes"
+---
+
+After building geometry you need to measure it. Does the part fit in the enclosure? How heavy will it be? Did that boolean actually produce a valid solid? vcad provides four query methods that answer these questions without exporting a file or opening a viewer.
+
+## Volume
+
+`.volume()` returns the signed volume of the mesh in cubic millimeters. For a well-formed closed solid, this is always positive.
+
+```rust
+use vcad::Part;
+
+let block = Part::cube("block", 10.0, 20.0, 30.0);
+let vol = block.volume();
+// vol is approximately 6000.0 (10 * 20 * 30)
+```
+
+The volume is computed using the divergence theorem on the tessellated mesh -- it sums signed tetrahedra formed between each triangle and the origin. This works for any closed mesh regardless of shape complexity, including the results of boolean operations.
+
+A common use is computing weight. If you know the material density, multiply it by volume and convert units:
+
+```rust
+use vcad::{centered_cube, centered_cylinder};
+
+let plate = centered_cube("plate", 80.0, 50.0, 5.0);
+let hole = centered_cylinder("hole", 5.0, 10.0, 32);
+let part = plate - hole;
+
+let volume_mm3 = part.volume();
+let volume_cm3 = volume_mm3 / 1000.0;
+
+// Aluminum: 2.7 g/cm^3
+let weight_grams = volume_cm3 * 2.7;
+println!("Part weighs {weight_grams:.1} g");
+```
+
+<Callout type="tip" title="Validating booleans">
+If a boolean difference produces a part with the same volume as the original, the tool did not intersect the target. If it produces zero volume, the tool consumed the entire part. Checking the volume after each boolean is a quick way to catch modeling errors in automated scripts.
+</Callout>
+
+## Surface area
+
+`.surface_area()` returns the total surface area in square millimeters. It sums the area of every triangle in the mesh.
+
+```rust
+use vcad::Part;
+
+let cube = Part::cube("cube", 10.0, 10.0, 10.0);
+let area = cube.surface_area();
+// area is approximately 600.0 (6 faces * 100 mm^2 each)
+```
+
+Surface area is useful for estimating paint coverage, plating cost, or heat dissipation. For cylinders and spheres, the tessellated surface area approximates the true analytic value -- higher segment counts give closer approximations.
+
+## Bounding box
+
+`.bounding_box()` returns the axis-aligned bounding box as a pair of `[f64; 3]` arrays: the minimum corner and the maximum corner. This tells you the smallest rectangular box that fully contains the part.
+
+```rust
+use vcad::{centered_cube, Part};
+
+let part = Part::cube("box", 10.0, 20.0, 30.0);
+let (min, max) = part.bounding_box();
+
+let width  = max[0] - min[0]; // 10.0 (X extent)
+let depth  = max[1] - min[1]; // 20.0 (Y extent)
+let height = max[2] - min[2]; // 30.0 (Z extent)
+```
+
+A practical application is checking whether a part fits within a given envelope -- for example, verifying that a PCB enclosure fits inside a rack unit:
+
+```rust
+use vcad::{centered_cube, centered_cylinder};
+
+fn fits_in_envelope(part: &vcad::Part, max_x: f64, max_y: f64, max_z: f64) -> bool {
+    let (min, max) = part.bounding_box();
+    let dx = max[0] - min[0];
+    let dy = max[1] - min[1];
+    let dz = max[2] - min[2];
+    dx <= max_x && dy <= max_y && dz <= max_z
+}
+
+let enclosure = centered_cube("box", 100.0, 80.0, 40.0);
+assert!(fits_in_envelope(&enclosure, 120.0, 120.0, 50.0));
+```
+
+<Callout type="info" title="Axis-aligned means world-space">
+The bounding box is aligned to the world X, Y, Z axes, not to the part's local axes. A part rotated 45 degrees will have a larger bounding box than the same part axis-aligned, even though the geometry is identical. If you need an oriented bounding box, compute it before applying the rotation.
+</Callout>
+
+## Center of mass
+
+`.center_of_mass()` returns the geometric centroid as `[f64; 3]`, assuming uniform density throughout the part. This is the volume-weighted average position.
+
+```rust
+use vcad::Part;
+
+// Cube at origin extends from (0,0,0) to (10,10,10)
+let cube = Part::cube("cube", 10.0, 10.0, 10.0);
+let com = cube.center_of_mass();
+// com is approximately [5.0, 5.0, 5.0]
+```
+
+The centroid is computed from the tessellated mesh using the same divergence-theorem approach as volume. For symmetric parts, it falls at the geometric center. For asymmetric parts -- an L-bracket, a part with one side pocketed -- it shifts toward the heavier region.
+
+```rust
+use vcad::{centered_cube, centered_cylinder};
+
+// Asymmetric part: plate with one heavy corner
+let plate = centered_cube("plate", 80.0, 50.0, 5.0);
+let boss = Part::cylinder("boss", 10.0, 15.0, 32)
+    .translate(30.0, 15.0, 0.0);
+let part = plate + boss;
+
+let com = part.center_of_mass();
+// Center of mass shifts toward the boss
+println!("CoM: ({:.1}, {:.1}, {:.1})", com[0], com[1], com[2]);
+```
+
+## Triangle count
+
+`.num_triangles()` returns the number of triangles in the tessellated mesh. This is not a geometric property, but it is useful for estimating export file size and rendering performance.
+
+```rust
+use vcad::Part;
+
+let sphere = Part::sphere("ball", 10.0, 32);
+println!("{} triangles", sphere.num_triangles());
+// A 32-segment sphere produces ~1920 triangles
+```
+
+## Checking emptiness
+
+`.is_empty()` returns `true` if the part has no geometry at all. This happens when you create a `Part::empty()` or when a boolean intersection produces no overlap.
+
+```rust
+use vcad::{centered_cube, Part};
+
+// Two cubes that do not overlap
+let a = centered_cube("a", 10.0, 10.0, 10.0);
+let b = centered_cube("b", 10.0, 10.0, 10.0).translate(100.0, 0.0, 0.0);
+let intersection = &a & &b;
+
+assert!(intersection.is_empty());
+```
+
+This is a faster check than computing volume. Use it as a guard in automated pipelines to bail out early when a boolean produces nothing.
+
+## Putting it together: a validation function
+
+Here is a function that runs all the standard checks on a part and prints a summary:
+
+```rust
+use vcad::Part;
+
+fn inspect(part: &Part) {
+    let vol = part.volume();
+    let area = part.surface_area();
+    let (min, max) = part.bounding_box();
+    let com = part.center_of_mass();
+    let tris = part.num_triangles();
+
+    println!("Volume:       {vol:.2} mm^3");
+    println!("Surface area: {area:.2} mm^2");
+    println!("Bbox min:     ({:.2}, {:.2}, {:.2})", min[0], min[1], min[2]);
+    println!("Bbox max:     ({:.2}, {:.2}, {:.2})", max[0], max[1], max[2]);
+    println!("Bbox size:    ({:.2}, {:.2}, {:.2})",
+        max[0] - min[0], max[1] - min[1], max[2] - min[2]);
+    println!("Center of mass: ({:.2}, {:.2}, {:.2})", com[0], com[1], com[2]);
+    println!("Triangles:    {tris}");
+}
+```
+
+Call `inspect(&part)` after each major modeling step to confirm the geometry is what you expect. In production, you might replace the print statements with assertions -- checking that volume is within a tolerance, that the bounding box fits an envelope, or that the center of mass falls within an acceptable region.
+
+## Next steps
+
+You can now measure and validate any part. The next tutorial covers [STEP import and export](/tutorials/rust/06-step) -- exchanging exact B-rep geometry with other CAD systems.

@@ -1,0 +1,128 @@
+---
+title: "Revolve, Sweep & Loft"
+description: "Turned parts, helical sweeps, multi-section lofts. Spring, bottle, duct"
+order: 3
+---
+
+Extrude handles prismatic shapes, but most real products have curved, tapered, or varying cross-sections. Revolve, sweep, and loft cover the rest -- from lathe-turned shafts to helical springs to organic bottle shapes.
+
+## Revolve
+
+Revolve spins a 2D profile around an axis to produce a solid of revolution. The profile defines the cross-section you would see if you sliced the finished part through its center.
+
+```text
+# vcad 0.2
+M glass 0.9 0.95 0.9 0.02 0.1
+SK 0 0 0  1 0 0  0 0 1 "Wine Glass Profile"
+L 0 0 15 0
+A 15 0 12 5 3
+L 12 5 2 5
+L 2 5 2 60
+A 2 60 5 65 5
+L 5 65 20 65
+L 20 65 20 68
+L 20 68 1 68
+L 1 68 1 0
+L 1 0 0 0
+END
+V 0 0 0 0 0 0 1 360 "Wine Glass"
+ROOT 1 glass
+```
+
+The `V` opcode revolves the sketch 360 degrees around the Z axis. Partial revolves (less than 360 degrees) create open sectors -- a 180-degree revolve of a bowl profile produces half a bowl, useful for cutaway views or section models.
+
+The profile must be drawn on one side of the revolution axis. If the profile crosses the axis, the revolve produces self-intersecting geometry that will fail in boolean operations. Keep all profile geometry on the positive side of the axis line.
+
+### Turned Parts
+
+Any part you would machine on a lathe is a candidate for revolve: shafts, pulleys, knobs, bushings, threaded fasteners, and tapered pins. Draw the half-profile as a sketch, constrain it fully, and revolve 360 degrees. The profile can include straight segments and arcs that become the external contours of the turned part.
+
+<Callout type="tip" title="Axis as construction line">
+Draw the revolution axis as a construction line in your sketch. This makes it easy to constrain the profile relative to the axis -- apply coincident constraints between profile endpoints and the axis, and use distance constraints from the axis to set diameters at various heights.
+</Callout>
+
+### Bottles and Containers
+
+Bottles are revolved profiles with internal cavities. The workflow is: sketch the outer profile, revolve it, then apply a shell operation to hollow it out with a uniform wall thickness. Shell removes the top face, creating the opening. If you need a non-uniform wall (thicker at the base, thinner at the neck), model the inner and outer profiles as separate sketches and boolean-difference instead of shelling.
+
+## Sweep
+
+Sweep pushes a 2D profile along a 3D path curve. Where extrude moves the profile in a straight line, sweep can follow any curve -- lines, arcs, helices, or freeform splines.
+
+### Helical Sweep (Springs)
+
+The most common use of sweep is creating helical geometry. A helix path is defined by its axis, radius, pitch (distance per revolution), and number of turns. Sweeping a circular profile along a helix produces a coil spring.
+
+```text
+# vcad 0.2
+M steel 0.7 0.7 0.72 0.95 0.35 7850
+SK 0 0 0  1 0 0  0 1 0 "Wire Section"
+A 0 0 0 1.5 1.5
+END
+SW 0 helix 0 0 0 0 0 1 15 5 10 "Compression Spring"
+ROOT 1 steel
+```
+
+The `SW` opcode sweeps the sketch along a helix: center at origin, axis along Z, radius 15 mm, pitch 5 mm, 10 turns. The result is a compression spring with 1.5 mm wire diameter, 30 mm coil diameter, and 50 mm free height.
+
+For extension springs, increase the pitch so the coils are spaced apart. For torsion springs, add straight legs at each end by sweeping along a compound path that transitions from a line segment into the helix and back to another line segment.
+
+### Pipe and Tube Routing
+
+Sweep a circular or annular profile along a series of connected line and arc segments to model pipes and tubing. The path can have sharp bends (the profile follows each segment and transitions at the joints) or smooth bends (use arc segments at the corners for realistic pipe geometry). For thin-walled tubes, sweep a circular profile and then apply a shell operation, or sweep an annular profile directly.
+
+<Callout type="info" title="Profile orientation">
+During a sweep, the profile stays perpendicular to the path's tangent direction at each point. At sharp path corners, the profile transitions between tangent directions. If the path has extreme curvature (very tight bends relative to the profile size), the swept solid can self-intersect. Increase the bend radius or decrease the profile size to avoid this.
+</Callout>
+
+## Loft
+
+Loft creates a solid by interpolating between two or more cross-section profiles at different positions. The resulting surface blends smoothly from one profile to the next.
+
+### Two-Section Loft
+
+The simplest loft connects two profiles. A circular profile at the base and a square profile at the top creates a transition piece -- a round-to-square duct reducer, for example. The loft surface interpolates between the circle and the square, producing smooth, continuous geometry.
+
+```text
+# vcad 0.2
+M aluminum 0.9 0.9 0.92 0.05 0.3 2700
+SK 0 0 0  1 0 0  0 1 0 "Bottom Circle"
+A 0 0 0 25 25
+END
+SK 0 0 60  1 0 0  0 1 0 "Top Square"
+L -15 -15 15 -15
+L 15 -15 15 15
+L 15 15 -15 15
+L -15 15 -15 -15
+END
+LO 0 1 "Duct Reducer"
+ROOT 2 aluminum
+```
+
+The `LO` opcode lofts between sketch 0 (circle at Z=0) and sketch 1 (square at Z=60). The result is a 60 mm tall transition piece.
+
+### Multi-Section Loft
+
+Lofts can interpolate through three or more profiles. Each additional section gives you more control over the shape's progression. A bottle shape might use four sections: a large circle at the base, a slightly smaller circle at the body, a narrow circle at the neck transition, and a small circle at the mouth. The loft flows through all four, producing a smooth bottle contour that would be difficult with any single operation.
+
+Place profiles where the shape changes most. Regions of rapid curvature change need closely spaced profiles. Regions of gentle change can be spaced further apart.
+
+### Loft Tips
+
+The profiles in a loft do not need to be the same shape. You can loft from a circle to a square, from a hexagon to a triangle, or between any closed profiles. The algorithm pairs corresponding points on each profile and creates surfaces that interpolate between them.
+
+Vertex count matters. If the bottom profile has 4 vertices and the top has 40, the loft must distribute those 4 vertices across 40, which can produce surface pinching. For the smoothest results, give each profile a similar vertex count by adding extra points to the simpler profile.
+
+<Callout type="warning" title="Profile alignment">
+If the second profile is rotated relative to the first, the loft surface will twist. Align your profiles so corresponding edges face the same direction. If you intentionally want a twist, it will be distributed evenly across the loft.
+</Callout>
+
+## Practical Examples
+
+**Duct reducer.** HVAC systems need transitions from round to rectangular duct. Sketch a circle on the XY plane, sketch a rectangle 150 mm above, and loft between them. The transition piece can be exported for sheet-metal fabrication or 3D printing.
+
+**Bottle.** Start with a revolved outer profile for the main body, then shell to hollow it out. Alternatively, loft between circular profiles of varying radii, then shell. The revolve approach is simpler for perfectly round bottles; the loft approach handles oval or non-circular cross-sections.
+
+**Helical spring.** Sweep a circular wire profile along a helix path. Adjust pitch, radius, and turn count for compression, extension, or torsion springs. For a conical spring with varying radius, specify start and end radii in the helix path definition.
+
+For finishing these shapes with rounded or beveled edges, continue to the [Fillet & Chamfer Strategy](/guides/modeling/fillet-chamfer) guide.

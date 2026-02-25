@@ -1,0 +1,127 @@
+---
+title: "get_changelog"
+description: "Retrieve changelog entries via MCP"
+order: 10
+---
+
+`get_changelog` queries the vcad changelog for recent changes, filterable by version, category, feature tag, or MCP tool name. It is useful for AI agents that need to discover new capabilities, check for breaking changes, or report what has changed between versions.
+
+## Input Schema
+
+All parameters are optional. When no filters are provided, the tool returns the 10 most recent entries.
+
+<Param name="version" type="string" required={false}>
+Filter by exact version string (e.g., `"0.8.0"`). Only entries matching this version are returned.
+</Param>
+
+<Param name="since" type="string" required={false}>
+Get entries since a version or date. Accepts version strings (`"0.7.0"`) or ISO date strings (`"2026-01-01"`). Returns all entries with a date or version greater than or equal to the given value.
+</Param>
+
+<Param name="category" type="string" required={false}>
+Filter by entry category: `"feat"` (new features), `"fix"` (bug fixes), `"breaking"` (breaking changes), `"perf"` (performance improvements), `"docs"` (documentation), or `"all"` (no filter). Default behavior when omitted is to return all categories.
+</Param>
+
+<Param name="feature" type="string" required={false}>
+Filter by feature tag. Matches entries whose `features` array contains a tag matching the given string (case-insensitive substring match). Common tags: `physics`, `sketch`, `boolean`, `step`, `assembly`, `export`, `mcp`, `cli`.
+</Param>
+
+<Param name="tool" type="string" required={false}>
+Filter by MCP tool name. Matches entries whose `mcpTools` array contains the given tool name (case-insensitive substring match). Example: `"gym_step"`, `"create_cad"`, `"inspect"`.
+</Param>
+
+<Param name="breaking_only" type="boolean" required={false}>
+When true, only return entries categorized as `"breaking"` or entries that have a `breaking` field describing the change. Useful for migration planning.
+</Param>
+
+<Param name="limit" type="number" required={false}>
+Maximum number of entries to return. Default 10. Set higher to get a longer history.
+</Param>
+
+## Return Value
+
+The tool returns a formatted Markdown text response:
+
+```
+# vcad Changelog
+
+Current version: 0.9.0
+
+## Physics Gym Tools (v0.8.0)
+**FEAT** - 2026-02-01
+
+Added gym-style reinforcement learning interface with create_robot_env, gym_step, gym_reset, gym_observe, and gym_close tools.
+
+**MCP Tools:** `create_robot_env`, `gym_step`, `gym_reset`, `gym_observe`, `gym_close`
+
+**Features:** physics, simulation, robotics
+
+---
+
+## STEP Import Improvements (v0.8.0)
+**FIX** - 2026-01-28
+
+Fixed NURBS surface import for STEP files exported from CATIA with non-standard knot vector formatting.
+
+**Features:** step, import
+```
+
+Each entry includes the title, version, category, date, summary, and optional sections for MCP tools, feature tags, and breaking change details with migration instructions.
+
+When no entries match the filter criteria, the tool returns:
+
+```
+No matching changelog entries found.
+```
+
+## Entry Format
+
+Each changelog entry in the underlying data has this structure:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique entry ID in `YYYY-MM-DD-slug` format |
+| `version` | string | Version this change ships in |
+| `date` | string | ISO date (YYYY-MM-DD) |
+| `category` | string | One of: feat, fix, breaking, perf, docs |
+| `title` | string | Short title (max 60 characters) |
+| `summary` | string | One-sentence description (max 200 characters) |
+| `features` | string[] | Feature tags for filtering |
+| `mcpTools` | string[] | Related MCP tool names |
+| `breaking` | object | Breaking change details: `{description, migration}` |
+
+## Examples
+
+### Recent features
+
+```json
+{ "category": "feat", "limit": 5 }
+```
+
+### Breaking changes since a version
+
+```json
+{ "since": "0.7.0", "breaking_only": true }
+```
+
+### Changes related to physics
+
+```json
+{ "feature": "physics" }
+```
+
+### Changes affecting gym tools
+
+```json
+{ "tool": "gym" }
+```
+
+### Everything in a specific release
+
+```json
+{ "version": "0.8.0", "limit": 50 }
+```
+
+## Data Source
+
+The changelog data is loaded from `/CHANGELOG.json` at the repository root. This file follows the schema defined in `/changelog.schema.json` and is updated when user-facing features, bug fixes, or breaking changes are shipped. Internal refactors, test changes, and dependency bumps are not recorded in the changelog.

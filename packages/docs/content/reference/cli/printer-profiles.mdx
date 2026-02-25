@@ -1,0 +1,208 @@
+---
+title: "Printer Profiles"
+description: "Built-in printer profiles: Bambu, Prusa, Ender, Voron"
+order: 3
+---
+
+Printer profiles store machine-specific settings for the slicer: build volume, nozzle diameter, default temperatures, speed limits, and acceleration constraints. vcad ships with profiles for popular FDM printers and supports custom profiles via JSON files.
+
+## Built-in Profiles
+
+### Bambu Lab X1 Carbon
+
+| Parameter | Value |
+|-----------|-------|
+| Build volume | 256 x 256 x 256 mm |
+| Nozzle diameter | 0.4mm |
+| Max nozzle temp | 300 C |
+| Max bed temp | 110 C |
+| Max speed | 500 mm/s |
+| Max acceleration | 20000 mm/s^2 |
+| Default layer height | 0.2mm |
+| Default print temp | 220 C (PLA) |
+| Default bed temp | 55 C (PLA) |
+
+The X1C profile enables high-speed printing with aggressive acceleration values. It also sets the input shaping frequency for vibration compensation. Use this profile for the X1 Carbon and X1 (non-Carbon) with the standard 0.4mm hardened steel nozzle.
+
+### Bambu Lab P1S
+
+| Parameter | Value |
+|-----------|-------|
+| Build volume | 256 x 256 x 256 mm |
+| Nozzle diameter | 0.4mm |
+| Max nozzle temp | 300 C |
+| Max bed temp | 110 C |
+| Max speed | 500 mm/s |
+| Max acceleration | 20000 mm/s^2 |
+| Default layer height | 0.2mm |
+
+Shares the same core motion system as the X1C. The profile differs primarily in the absence of the lidar first-layer scanner, which affects the start G-code sequence.
+
+### Bambu Lab A1
+
+| Parameter | Value |
+|-----------|-------|
+| Build volume | 256 x 256 x 256 mm |
+| Nozzle diameter | 0.4mm |
+| Max nozzle temp | 300 C |
+| Max bed temp | 100 C |
+| Max speed | 500 mm/s |
+| Max acceleration | 15000 mm/s^2 |
+| Default layer height | 0.2mm |
+
+### Bambu Lab A1 Mini
+
+| Parameter | Value |
+|-----------|-------|
+| Build volume | 180 x 180 x 180 mm |
+| Nozzle diameter | 0.4mm |
+| Max nozzle temp | 300 C |
+| Max bed temp | 80 C |
+| Max speed | 500 mm/s |
+| Max acceleration | 15000 mm/s^2 |
+| Default layer height | 0.2mm |
+
+<Callout type="info" title="Bambu start G-code">
+Bambu profiles include proprietary start sequences for the AMS (Automatic Material System) and bed leveling. The slicer generates these automatically based on the selected profile.
+</Callout>
+
+### Prusa MK4
+
+| Parameter | Value |
+|-----------|-------|
+| Build volume | 250 x 210 x 220 mm |
+| Nozzle diameter | 0.4mm |
+| Max nozzle temp | 290 C |
+| Max bed temp | 120 C |
+| Max speed | 200 mm/s |
+| Max acceleration | 5000 mm/s^2 |
+| Default layer height | 0.2mm |
+| Default print temp | 215 C (PLA) |
+| Default bed temp | 60 C (PLA) |
+
+The MK4 profile supports input shaping and uses Marlin-compatible G-code. It includes start G-code for the load-cell-based first-layer calibration and mesh bed leveling sequence.
+
+### Ender 3 V3
+
+| Parameter | Value |
+|-----------|-------|
+| Build volume | 220 x 220 x 250 mm |
+| Nozzle diameter | 0.4mm |
+| Max nozzle temp | 260 C |
+| Max bed temp | 100 C |
+| Max speed | 250 mm/s |
+| Max acceleration | 2500 mm/s^2 |
+| Default layer height | 0.2mm |
+| Default print temp | 210 C (PLA) |
+| Default bed temp | 55 C (PLA) |
+
+Conservative acceleration and jerk values suit the Ender 3 V3's Bowden extruder and V-slot motion system. If you have upgraded your Ender 3 with a direct-drive extruder and linear rails, consider creating a custom profile with higher limits.
+
+### Voron 2.4
+
+| Parameter | Value |
+|-----------|-------|
+| Build volume | 350 x 350 x 340 mm |
+| Nozzle diameter | 0.4mm |
+| Max nozzle temp | 300 C |
+| Max bed temp | 120 C |
+| Max speed | 500 mm/s |
+| Max acceleration | 10000 mm/s^2 |
+| Default layer height | 0.2mm |
+| Default print temp | 215 C (PLA) |
+| Default bed temp | 60 C (PLA) |
+
+The Voron 2.4 profile targets a 350mm build with Klipper firmware. The profile includes Klipper-compatible start macros (PRINT_START, PRINT_END) instead of raw G-code sequences. Adjust the build volume if your Voron uses a different frame size (250mm or 300mm).
+
+### Generic
+
+| Parameter | Value |
+|-----------|-------|
+| Build volume | 200 x 200 x 200 mm |
+| Nozzle diameter | 0.4mm |
+| Max nozzle temp | 260 C |
+| Max bed temp | 100 C |
+| Max speed | 60 mm/s |
+| Max acceleration | 1500 mm/s^2 |
+| Default layer height | 0.2mm |
+
+The generic profile uses conservative values that work on virtually any FDM printer. Use it as a fallback when your printer is not listed, or as a starting point for a custom profile.
+
+## Custom Profiles
+
+Create a custom printer profile as a JSON file and place it in `~/.vcad/profiles/` (or pass it directly via `--profile path/to/profile.json`).
+
+```json
+{
+  "name": "My Custom Printer",
+  "build_volume": { "x": 300, "y": 300, "z": 350 },
+  "nozzle_diameter": 0.4,
+  "max_nozzle_temp": 300,
+  "max_bed_temp": 120,
+  "max_speed": 300,
+  "max_acceleration": 8000,
+  "max_jerk": 12,
+  "default_layer_height": 0.2,
+  "default_print_temp": 215,
+  "default_bed_temp": 60,
+  "retraction_distance": 0.8,
+  "retraction_speed": 40,
+  "z_hop": 0.3,
+  "firmware": "klipper",
+  "start_gcode": "PRINT_START BED={bed_temp} HOTEND={print_temp}\n",
+  "end_gcode": "PRINT_END\n"
+}
+```
+
+<Param name="name" type="string" required={true}>
+Display name for the profile.
+</Param>
+
+<Param name="build_volume" type="object" required={true}>
+Build volume as `{x, y, z}` in millimeters.
+</Param>
+
+<Param name="nozzle_diameter" type="number (mm)" required={true}>
+Nozzle orifice diameter. Affects minimum feature size and maximum layer height (80% of nozzle diameter).
+</Param>
+
+<Param name="max_speed" type="number (mm/s)" required={true}>
+Maximum print speed. The slicer will not exceed this regardless of other settings.
+</Param>
+
+<Param name="max_acceleration" type="number (mm/s^2)" required={true}>
+Maximum acceleration. Higher values enable faster speed changes but may cause ringing artifacts on less rigid machines.
+</Param>
+
+<Param name="firmware" type="string" required={false}>
+Firmware type for G-code dialect: `marlin` (default), `klipper`, `reprapfirmware`, `grbl`. Affects command formatting and macro usage.
+</Param>
+
+<Param name="start_gcode" type="string" required={false}>
+Start G-code template. Supports variable substitution: `{bed_temp}`, `{print_temp}`, `{layer_height}`, `{first_layer_height}`.
+</Param>
+
+<Param name="end_gcode" type="string" required={false}>
+End G-code template. Typically retracts, raises the nozzle, homes X/Y, disables heaters, and turns off motors.
+</Param>
+
+<Callout type="tip" title="Profile discovery">
+The CLI `vcad slice --list-profiles` command lists all available profiles, including custom ones found in `~/.vcad/profiles/`.
+</Callout>
+
+## Using Profiles
+
+### In the App
+
+Select a printer profile from the dropdown at the top of the slicer panel. All settings update to the profile defaults. Override individual settings as needed -- your overrides take priority.
+
+### In the CLI
+
+```bash
+vcad slice part.vcad -o part.gcode --profile bambu_x1c
+vcad slice part.vcad -o part.gcode --profile ~/my-profiles/custom.json
+```
+
+### In MCP
+
+Printer profiles are not directly referenced in MCP tools. Instead, use the `create_cad_document` tool to build geometry and `export_cad` for mesh export. Slicing is performed via the CLI or the app UI.

@@ -1,0 +1,71 @@
+---
+title: "2D Drawings"
+description: "Drawing mode, orthographic views, linear and angular dimensions"
+order: 8
+difficulty: Intermediate
+time: "10 minutes"
+---
+
+<Playground exampleId="bracket" />
+
+A 3D model tells a CNC machine or 3D printer exactly what shape to make, but a 2D drawing tells a human what the designer intended. Drawings communicate dimensions, tolerances, surface finishes, and critical features in a standardized format that machinists have read for over a century. vcad generates these drawings directly from your parametric model.
+
+## Entering Drawing Mode
+
+Press **Cmd+K** and select **New Drawing**. The viewport switches from the 3D scene to a flat, white sheet with a title block in the lower-right corner. This is your drawing sheet. The toolbar changes to show drawing-specific tools: view placement, dimensioning, and annotation.
+
+The drawing is linked to the currently active part or assembly. Any changes you make to the 3D model are reflected in the drawing automatically -- dimensions update, hidden lines shift, and new features appear. You never have to manually synchronize a drawing with its source geometry.
+
+## Placing Orthographic Views
+
+The first step is to add projection views of your model to the sheet. Click **Add View** in the toolbar, then choose a projection: **Front**, **Top**, **Right**, **Back**, **Bottom**, **Left**, or **Isometric**. Click a point on the sheet to place the view. The projection appears as a precise line drawing of your model from that direction.
+
+A standard engineering drawing typically uses three orthographic views: front, top, and right. Place the front view in the lower-left area of the sheet, the top view directly above it, and the right view directly to its right. This arrangement follows third-angle projection (the standard in North America and much of Asia). European standards use first-angle projection, which reverses the positions of the top and right views.
+
+Each view shows visible edges as solid lines and hidden edges (features behind the visible surface) as dashed lines. This hidden-line rendering reveals internal features like through-holes, pockets, and internal chambers without needing to cut the model open. You can toggle hidden lines on or off per view in the property panel.
+
+<Callout type="tip" title="Isometric for context">
+Add a small isometric view in the upper-right corner of the sheet. It gives the reader a quick 3D mental model of the part and makes the orthographic views easier to interpret. Isometric views are not used for dimensioning but they communicate overall shape at a glance.
+</Callout>
+
+## Adding Dimensions
+
+Dimensions are the heart of a drawing. Select the **Linear Dimension** tool from the toolbar (or press **D**). Click two points or two edges, then click a third point to place the dimension line. vcad reads the actual measurement from the 3D model and displays it on the sheet. If the model changes and the distance changes, the dimension value updates.
+
+**Linear dimensions** measure straight-line distances: the width of a plate, the depth of a pocket, the distance between two holes. Horizontal dimensions are placed above or below features; vertical dimensions are placed to the left or right.
+
+**Angular dimensions** measure the angle between two edges or faces. Select the angular dimension tool, click two non-parallel edges, and place the arc annotation. This is essential for chamfers, tapered features, and angled brackets.
+
+**Radial and diametral dimensions** measure holes and arcs. Click a circular edge to place a radius dimension (showing an R prefix) or a diameter dimension (showing a diameter symbol prefix). Through-holes are conventionally dimensioned with a diameter, while fillets and rounds use a radius.
+
+<Callout type="info" title="Dimension placement">
+Dimension lines should not cross each other, and they should be placed far enough from the geometry to be legible. vcad automatically offsets dimensions, but you can drag them to adjust spacing. Keeping dimensions organized and non-overlapping is a sign of a professional drawing.
+</Callout>
+
+## GD&T Annotations
+
+Geometric Dimensioning and Tolerancing (GD&T) goes beyond simple dimensions. It communicates how features relate to each other in terms of form, orientation, and position. Select the **GD&T** tool from the toolbar to add feature control frames.
+
+A feature control frame specifies a geometric tolerance: flatness of a face, perpendicularity of a hole axis to a datum surface, position tolerance of a bolt pattern relative to datum features. These annotations use standardized symbols defined in ASME Y14.5 and ISO 1101.
+
+For a mounting plate, you might specify flatness on the bottom surface (so it sits flush in an assembly), position tolerance on the bolt holes (so they line up with mating parts), and perpendicularity on a critical edge relative to the mounting surface.
+
+## The Title Block
+
+The title block in the lower-right corner contains metadata about the drawing: part name, material, scale, drawing number, revision, date, and author. Click the title block to edit its fields. This information travels with the drawing when you export it, so anyone who receives the DXF or printed sheet knows what they are looking at.
+
+## Exporting a Drawing
+
+Press **Cmd+K** and choose **Export DXF** to save the drawing as a DXF file. DXF is the standard exchange format for 2D drawings and is understood by every CNC controller, laser cutter, and CAM package. The export includes all views, dimensions, annotations, and the title block.
+
+You can also print the drawing directly from the browser or export it as a PDF through the system print dialog (**Cmd+P**).
+
+<Callout type="warning" title="Parametric link">
+The drawing is part of the vcad document, not a separate file. If you export a DXF and then change the 3D model, the DXF is out of date. Re-export after any geometry changes to keep your drawings current.
+</Callout>
+
+## What You Learned
+
+You created a 2D drawing from a 3D model, placed orthographic projection views, added linear, angular, and radial dimensions, and annotated tolerances with GD&T. Drawings bridge the gap between your digital model and the physical manufacturing floor.
+
+Next, learn how to export your model in formats ready for manufacturing and exchange with other tools in [export for manufacturing](/tutorials/app/09-export).

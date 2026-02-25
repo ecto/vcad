@@ -4,6 +4,7 @@ import {
   Lightbulb,
   Code,
 } from "@phosphor-icons/react/dist/ssr";
+import remarkGfm from "remark-gfm";
 import { cn } from "./utils";
 import { Playground } from "@/components/Playground/MdxPlayground";
 import { Figure } from "@/components/Figure";
@@ -171,6 +172,15 @@ export function Param({ name, type, required = true, children }: ParamProps) {
     </div>
   );
 }
+
+/**
+ * MDX options with remark-gfm for table/strikethrough/autolink support.
+ */
+export const mdxOptions = {
+  mdxOptions: {
+    remarkPlugins: [remarkGfm],
+  },
+};
 
 /**
  * Returns component map for MDXRemote.

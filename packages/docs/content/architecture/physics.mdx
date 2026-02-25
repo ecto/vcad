@@ -1,0 +1,107 @@
+---
+title: "Physics Engine"
+description: "Rapier3D integration, BRep-to-physics, joint mapping, gym interface"
+order: 9
+---
+
+The physics simulation in `crates/vcad-kernel-physics/` converts vcad assemblies into dynamic simulations for robotics and reinforcement learning. It wraps the phyz library (Featherstone articulated-body dynamics with penalty-based contacts) and exposes a gym-style API for training agents.
+
+## Architecture
+
+The crate has five modules. `world.rs` defines `PhysicsWorld`, the central simulation state that holds the phyz model, integrator, motor targets, and mappings from vcad IDs to phyz body/joint indices. `colliders.rs` converts tessellated meshes into collision geometry (convex hulls) and estimates mass from mesh volume and material density. `joints.rs` maps vcad joint types to phyz joint types and handles unit conversion between vcad's degrees/millimeters and physics radians/meters. `gym.rs` provides the `RobotEnv` wrapper with reset/step/observe semantics. `error.rs` defines the `PhysicsError` enum.
+
+## BRep-to-Physics Conversion
+
+`PhysicsWorld::from_document` takes an IR `Document` with assembly data (instances, joints, part definitions, ground instance) and builds a phyz articulated model.
+
+The conversion proceeds in dependency order. The ground instance becomes a fixed root body. For each joint, the parent and child instances become rigid bodies connected by the appropriate joint type. Instances not referenced by any joint become free-floating bodies. For each instance, the corresponding part definition is evaluated to produce a tessellated mesh, then:
+
+1. A convex hull collision geometry is computed from the mesh vertices via `mesh_to_collider`.
+2. Mass is estimated from mesh volume times material density (defaulting to 1000 kg/m^3 if no material is specified).
+3. A phyz `Geometry` is created for contact detection.
+
+```rust
+let eval_instance = |inst: &Instance| -> Result<(TriangleMesh, f64, Geometry)> {
+    let mesh = Self::evaluate_part(doc, part_def.root)?;
+    let density = doc.materials.get(material_key)
+        .and_then(|m| m.density).unwrap_or(1000.0);
+    let mass = estimate_mass(&mesh, density);
+    let geometry = mesh_to_collider(&mesh, ColliderStrategy::ConvexHull, &inst.id)?;
+    Ok((mesh, mass, geometry))
+};
+```
+
+The phyz `ModelBuilder` is configured with gravity `(0, 0, -9.81)` (Z-up) and a default timestep of 1/240 seconds.
+
+## Joint Mapping
+
+The `joints.rs` module converts between vcad and phyz joint representations. vcad defines joints in the IR with types like `Revolute`, `Prismatic`, `Cylindrical`, `Ball`, and `Fixed`. Each maps to the corresponding phyz joint type. The conversion handles:
+
+**Coordinate transform.** vcad joint anchors and axes are defined in assembly space (millimeters, degrees). The converter transforms these into phyz space (meters, radians) and computes the spatial transforms from parent and child body frames to the joint frame.
+
+**Motor control.** Each joint can have a motor target -- a desired position, velocity, or torque. The `MotorTarget` struct tracks the current mode (`Position`, `Velocity`, `Torque`) and target value. Position and velocity modes use PD control: the phyz integrator applies a restoring torque proportional to position error plus velocity-proportional damping.
+
+**State conversion.** `convert_state_to_physics` and `convert_state_from_physics` translate between vcad units (degrees for revolute angles, millimeters for prismatic displacements) and phyz units (radians, meters). Each joint type knows its DOF count via `joint_ndof`.
+
+## PhysicsWorld API
+
+`PhysicsWorld` provides direct joint control for scripted simulations:
+
+```rust
+world.step(dt);                           // advance simulation
+world.set_joint_position("joint1", 45.0); // set target (degrees)
+let state = world.joint_state("joint1");  // read position, velocity, effort
+let ids = world.joint_ids();              // list all joint names
+```
+
+The `step` method runs one phyz integration step: it applies motor targets as generalized forces, steps the articulated-body algorithm, resolves contacts with penalty forces, and updates all body positions and velocities. The `JointState` struct exposes position (degrees or mm), velocity (deg/s or mm/s), and effort (Nm or N) in vcad units.
+
+## Gym Interface
+
+The `RobotEnv` struct in `gym.rs` wraps `PhysicsWorld` with an OpenAI Gym-compatible API for reinforcement learning:
+
+```rust
+pub struct RobotEnv {
+    world: PhysicsWorld,
+    joint_ids: Vec<String>,
+    end_effector_ids: Vec<String>,
+    dt: f32,          // base timestep (default 1/240)
+    substeps: u32,    // physics steps per env step (default 4)
+    max_steps: u32,   // episode length
+    current_step: u32,
+    initial_doc: Document,
+    seed: u64,
+}
+```
+
+**reset()** recreates the `PhysicsWorld` from the initial document, resetting all joint positions and velocities to their initial values. Returns the initial `Observation`.
+
+**step(action)** applies the action, runs `substeps` physics iterations (each of duration `dt`), and returns the new observation. The three action types are:
+
+- `Action::Torque(Vec<f64>)` -- direct torque/force commands in Nm or N.
+- `Action::PositionTarget(Vec<f64>)` -- position targets in degrees or mm. The PD controller generates the appropriate torques.
+- `Action::VelocityTarget(Vec<f64>)` -- velocity targets in deg/s or mm/s.
+
+**observe()** returns the current state without stepping. The `Observation` struct contains:
+
+```rust
+pub struct Observation {
+    pub joint_positions: Vec<f64>,        // radians or meters
+    pub joint_velocities: Vec<f64>,       // rad/s or m/s
+    pub end_effector_poses: Vec<[f64; 7]>, // [x, y, z, qw, qx, qy, qz]
+}
+```
+
+End effector poses are computed via forward kinematics from the current joint state. The quaternion representation avoids gimbal lock issues.
+
+<Callout type="tip" title="Batch environments">
+For parallel RL training, create multiple `RobotEnv` instances. Each maintains independent physics state and can be stepped concurrently across threads. The `seed` field supports reproducible environment randomization.
+</Callout>
+
+## MCP Integration
+
+The MCP server in `packages/mcp/` exposes the gym interface to AI agents via tool calls: `create_robot_env` (create environment from assembly), `gym_step` (step with action), `gym_reset` (reset to initial state), `gym_observe` (get current observation), and `gym_close` (clean up). This lets language model agents learn to control robot assemblies through the same interface used by standard RL training loops.
+
+## Related Pages
+
+The [BRep Kernel](/architecture/kernel) page explains the solid representation that physics converts from. The [System Overview](/architecture/overview) page shows how physics fits into the full system.

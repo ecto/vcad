@@ -53,7 +53,7 @@ export default function DocsHomePage() {
       <section className="px-8 py-16 lg:px-16">
         <div className="max-w-6xl mx-auto">
           <h2 className="text-sm text-text-muted mb-8 tracking-wide">
-            // learning paths
+            // get started
           </h2>
           <LearningPaths />
         </div>

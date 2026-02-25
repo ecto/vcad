@@ -1,0 +1,128 @@
+---
+title: "Building MCP Workflows"
+description: "Composing tools into complete design-inspect-export workflows"
+order: 2
+---
+
+vcad's MCP server exposes CAD operations as tools that AI agents can call in sequence. A single tool call creates a part or exports a file. The power comes from composing multiple calls into workflows that design, verify, iterate, and deliver -- all through conversation.
+
+## The Core Pipeline
+
+The foundational workflow is three steps: **create**, **inspect**, **export**.
+
+```text
+1. create_cad_document  →  generates the IR document
+2. inspect_cad          →  verifies geometry (volume, bbox, mass)
+3. export_cad           →  writes STL, GLB, or STEP file
+```
+
+The AI creates geometry from your description, inspects the result to verify dimensions and properties, and exports the file in the format you need. If inspection reveals a problem (wrong dimensions, zero volume, unexpected mass), the AI goes back to step 1 and regenerates.
+
+This pipeline handles the majority of one-off CAD tasks: "Design a mounting bracket and give me an STL for printing." Three tool calls, one conversation turn.
+
+## Parametric Sweep
+
+When you need to explore a design space -- finding the best wall thickness, optimal fillet radius, or minimum material usage -- the AI runs a parametric sweep.
+
+```text
+for thickness in [1.0, 1.5, 2.0, 2.5, 3.0]:
+    doc = create_cad_document(plate with thickness)
+    result = inspect_cad(doc)
+    record(thickness, result.volume, result.mass)
+
+recommend the thickness that minimizes mass while maintaining minimum wall thickness
+```
+
+The AI creates multiple variants of the same design, inspects each, compares the results, and recommends the best option. This is especially valuable for DFM optimization -- finding the thinnest wall that is still printable, the smallest fillet that still reduces stress, or the lightest design that meets strength requirements.
+
+<Callout type="tip" title="Let the AI decide">
+You do not need to specify the sweep range. Say "find the lightest version of this bracket that has walls at least 1.5 mm thick" and the AI designs the sweep, runs it, and reports the result. It knows how to binary-search or grid-search a parameter space.
+</Callout>
+
+## Design-for-Manufacturing Workflow
+
+Combine geometry creation with DFM analysis for manufacturing-aware design.
+
+```text
+1. create_cad_document  →  initial design
+2. inspect_cad          →  check volume, mass, bbox
+3. analyze DFM          →  check wall thickness, overhangs, feature sizes
+4. modify design        →  fix DFM issues (thicken walls, add draft, remove thin features)
+5. re-inspect           →  verify fixes
+6. export_cad           →  final output
+```
+
+The AI creates a part, analyzes it for manufacturability issues specific to the target process (3D printing, CNC, injection molding), modifies the design to address problems, and exports the manufacturing-ready version. This loop can iterate multiple times until all DFM checks pass.
+
+## Assembly Design Workflow
+
+Multi-part assemblies require coordinating multiple part definitions, instances, and joints.
+
+```text
+1. create_cad_document with parts + assembly:
+   - Part definitions for each unique component
+   - Instances positioned in the assembly
+   - Joints connecting instances
+2. inspect_cad           →  verify each part's geometry
+3. check clashes         →  interference detection across all instances
+4. scrub joints          →  verify range of motion
+5. export_cad            →  STEP for the assembly, STL per part
+```
+
+The AI designs each part, assembles them with appropriate joints, verifies that they do not collide through their range of motion, and exports both the complete assembly (STEP) and individual parts (STL for printing). For mechanisms, the AI can animate the joint motion to verify that the design works kinematically before exporting.
+
+## Physics Simulation Workflow
+
+For designs with moving parts, add physics verification to the pipeline.
+
+```text
+1. create_cad_document   →  assembly with joints
+2. create_robot_env      →  initialize physics simulation
+3. gym_reset             →  set initial state
+4. gym_step (loop)       →  apply forces/torques, observe motion
+5. analyze results       →  check range of motion, stability, collision
+6. modify design         →  adjust geometry or joint limits
+7. gym_close             →  cleanup
+```
+
+This workflow verifies that mechanisms work under real physics: hinges swing freely, sliders travel their full range without binding, four-bar linkages trace the correct path, and robot arms reach their target positions. If the physics reveals a problem, the AI modifies the design and re-simulates.
+
+## Multi-Format Export Workflow
+
+Different stakeholders need different formats from the same design.
+
+```text
+1. create_cad_document   →  design the part
+2. export_cad(step)      →  STEP for the engineering team
+3. export_cad(glb)       →  GLB for the product page
+4. export_cad(stl)       →  STL for the prototype shop
+5. create drawing view   →  orthographic views with dimensions
+6. export DXF            →  2D drawing for documentation
+```
+
+A single design, five deliverables. The AI generates all of them in sequence, each tailored to its destination. The STEP file preserves exact geometry for further CAD work. The GLB carries materials for web rendering. The STL is optimized for slicing. The DXF captures dimensioned drawings for procurement.
+
+## Composing with External Tools
+
+MCP tools compose with non-vcad tools in the AI's toolkit. An agent with access to both vcad MCP tools and a file system can:
+
+```text
+1. Read a specification document (file system)
+2. Create geometry from the specification (vcad)
+3. Inspect the geometry (vcad)
+4. Write a compliance report (file system)
+5. Export the final part (vcad)
+6. Send the files to a review channel (communication tool)
+```
+
+The AI acts as a bridge between the design specification and the CAD output, automating the translation from requirements to verified geometry.
+
+<Callout type="info" title="Loon for complex geometry">
+For multi-step constructions with many operations, the AI often switches from `create_cad_document` (JSON IR) to `create_cad_loon` (compact text format). Loon uses roughly one-fifth the tokens, leaving more context window for reasoning about the design. The output is the same IR document regardless of which tool generated it.
+</Callout>
+
+## Error Handling
+
+MCP workflows fail gracefully. If `create_cad_document` produces invalid geometry (self-intersecting booleans, zero-volume solids), `inspect_cad` catches it and the AI regenerates. If `export_cad` fails because the geometry is not watertight, the AI reports the issue and suggests fixes. The conversation-based interface means every failure is an opportunity for the AI to diagnose, explain, and retry.
+
+For training reinforcement learning agents on vcad's physics simulation, continue to the [RL Training with Gym](/guides/ai/gym-training) guide.

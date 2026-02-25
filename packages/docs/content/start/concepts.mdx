@@ -1,0 +1,147 @@
+---
+title: "Core Concepts"
+description: "Solids, primitives, booleans, transforms -- the mental model for vcad"
+order: 3
+---
+
+## Solids vs. Meshes
+
+Every shape in vcad is a **solid** -- a mathematically exact volume defined by boundary surfaces. A cube is bounded by six infinite planes, trimmed to finite rectangles. A cylinder is bounded by a cylindrical surface and two planar caps. A fillet is a toroidal or spherical blend surface. The kernel stores these exact definitions (planes, cylinders, cones, spheres, tori, NURBS) and can evaluate any point on any surface to arbitrary precision.
+
+This is called **Boundary Representation** (BRep), and it is fundamentally different from a triangle mesh. Think of it like the difference between vector graphics and raster images. A vector circle stays perfectly smooth no matter how far you zoom in; a raster circle eventually shows pixels. In the same way, a BRep cylinder is always a perfect cylinder, while a mesh cylinder is just a polygon approximation.
+
+<Playground exampleId="cube" />
+
+The triangle mesh you see in the viewport is generated on the fly from the exact BRep -- a process called **tessellation**. It exists only for display and export. When you perform a boolean operation, query a volume, or export to STEP, vcad works with the exact geometry, not the display mesh. This is why vcad can produce perfectly sharp edges, exact fillet radii, and manufacturing-ready STEP files.
+
+## Primitives
+
+vcad provides four primitive solids that serve as the building blocks for every model.
+
+**Box** creates a rectangular solid defined by its width (X), depth (Y), and height (Z). It sits with one corner at the origin and extends into positive space, or you can create a centered version that straddles the origin.
+
+```rust
+let plate = Part::cube("plate", 100.0, 60.0, 5.0);          // corner at origin
+let block = Part::centered_cube("block", 40.0, 40.0, 20.0);  // centered on origin
+```
+
+**Cylinder** creates a circular solid along the Z axis with a given radius and height. Like boxes, cylinders start at the origin and extend upward, or you can center them.
+
+```rust
+let pin = Part::cylinder("pin", 5.0, 30.0, 64);
+let rod = Part::centered_cylinder("rod", 3.0, 50.0, 32);
+```
+
+**Sphere** creates a ball centered at the origin with a given radius.
+
+```rust
+let ball = Part::sphere("ball", 15.0, 32);
+```
+
+**Cone** creates a truncated cone along Z, defined by bottom radius, top radius, and height. Set the top radius to zero for a pointed cone.
+
+```rust
+let funnel = Part::cone("funnel", 20.0, 10.0, 30.0, 48);
+let spike = Part::cone("spike", 10.0, 0.0, 25.0, 32);
+```
+
+<Playground exampleId="sphere" />
+
+These four shapes, combined with booleans and transforms, can describe a surprisingly large range of mechanical parts. More complex profiles come from the sketch-and-extrude workflow covered in the tutorials.
+
+## Booleans
+
+Boolean operations combine two solids into a new solid. There are three types, and they are the heart of parametric modeling.
+
+**Union** merges two shapes into one, keeping all material from both. Use it to join parts: a hub plus a flange, a plate plus stiffening ribs, two halves of an enclosure.
+
+**Difference** subtracts one shape from another. The first operand is the body; the second is the tool that cuts into it. This is how you make holes, pockets, slots, and chamfers. Difference is the most common boolean in mechanical CAD -- nearly every feature that removes material is a difference under the hood.
+
+**Intersection** keeps only the volume where two shapes overlap. It is less common in day-to-day modeling but useful for trimming one shape to fit inside another, or for computing interference between parts in an assembly.
+
+```rust
+let combined = plate + rib;          // union
+let with_hole = plate - cylinder;    // difference
+let overlap = body & clipping_box;   // intersection
+```
+
+<Playground exampleId="first-hole" />
+
+The playground above shows a difference operation: a flat plate with a cylinder subtracted from it, producing a clean through-hole. Orbit the view to see that the hole walls are perfectly cylindrical -- the kernel intersected a plane with a cylinder surface and trimmed both, producing exact geometry.
+
+## Transforms
+
+Transforms reposition or resize a solid without changing its shape.
+
+**Translate** moves a solid by an offset in X, Y, and Z. This is how you position holes, place sub-components, and space out pattern instances.
+
+```rust
+let moved = part.translate(50.0, 0.0, 10.0);
+```
+
+**Rotate** spins a solid around the origin by angles in degrees about the X, Y, and Z axes. Rotations apply in XYZ order. A common pattern is rotating a cylinder from vertical (Z) to horizontal (Y or X) before subtracting it as a through-hole.
+
+```rust
+let sideways = pin.rotate(90.0, 0.0, 0.0);  // now lies along Y
+```
+
+**Scale** stretches or shrinks a solid along each axis independently. Non-uniform scaling (different factors per axis) turns a sphere into an ellipsoid or a cube into a rectangular box.
+
+```rust
+let squashed = ball.scale(1.0, 1.0, 0.5);  // half-height
+```
+
+<Playground exampleId="transforms" />
+
+Transforms are non-destructive. The original solid is not modified; a new node is added to the parametric graph that references the original. If you later change the original's dimensions, the transform reapplies automatically.
+
+## Coordinate System
+
+vcad uses a **Z-up** coordinate system with millimeters as the default unit. X points right, Y points forward (into the screen in a standard front view), and Z points up. The grid in the viewport lies in the XY plane, and the vertical axis is Z.
+
+This matches the convention used in most mechanical CAD systems and CNC machines. If you have worked with Fusion 360 or SolidWorks, the axes behave the same way. If you are coming from a game engine or Three.js (which use Y-up), be aware that vcad's renderer automatically converts between the two conventions -- you always work in Z-up, and the viewport handles the rest.
+
+Cylinder and cone axes default to Z, so a `cylinder(r, h)` is already vertical. To create a horizontal hole, rotate it 90 degrees around X.
+
+## Parametric Modeling
+
+Every operation you perform -- creating a primitive, applying a boolean, translating, filleting -- becomes a **node** in a directed acyclic graph (DAG). Nodes reference their inputs by ID, forming a chain from primitives at the bottom to the final result at the top.
+
+When you change a parameter (say, the radius of a hole), vcad re-evaluates only the nodes downstream of that change. The plate does not need recomputing; only the cylinder, the difference, and anything that depends on the difference gets rebuilt. This is what makes the system *parametric*: dimensions are live values, not baked geometry.
+
+In the web app, this DAG appears as the **feature tree** in the left panel. Each entry is a node. Click one to select it and edit its parameters in the property panel. Drag to reorder. The CLI and Rust API work with the same DAG -- it is serialized as JSON inside `.vcad` files.
+
+```json
+{
+  "nodes": {
+    "0": { "op": { "type": "Cube", "size": { "x": 100, "y": 60, "z": 5 } } },
+    "1": { "op": { "type": "Cylinder", "radius": 4, "height": 10 } },
+    "2": { "op": { "type": "Difference", "left": 0, "right": 1 } }
+  },
+  "roots": [{ "root": 2, "material": "aluminum" }]
+}
+```
+
+This is the intermediate representation (IR) that all vcad interfaces share. The web app generates it from UI actions, the Rust API generates it from code, and the MCP server generates it from AI tool calls. The kernel evaluates the same IR regardless of where it came from.
+
+## Materials
+
+Every part has an assigned **material** that controls its visual appearance and physical properties. Materials use the PBR (physically-based rendering) model with three main parameters: **color** (an RGB triplet), **metallic** (0 for plastic/rubber, 1 for metals), and **roughness** (0 for mirror polish, 1 for matte).
+
+```rust
+let mat = Material {
+    name: "Brushed Steel",
+    color: [0.6, 0.6, 0.65],
+    metallic: 0.9,
+    roughness: 0.4,
+    density: 7.8,  // g/cm³, used for mass calculations
+};
+```
+
+vcad ships with presets for common engineering materials: aluminum, steel, copper, brass, ABS, rubber, and wood. These provide realistic viewport appearance and correct density values for mass and center-of-mass calculations. You can create custom materials or modify the presets in the web app's material editor.
+
+<Playground exampleId="plate" />
+
+---
+
+With these concepts in hand, you are ready to build real parts. Start with the [Web App tutorial](/tutorials/app/first-part) to model interactively, or the [Rust tutorial](/tutorials/rust/hello-cube) to work in code.

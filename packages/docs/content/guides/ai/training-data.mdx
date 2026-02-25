@@ -1,0 +1,127 @@
+---
+title: "Training Data Generation"
+description: "Parametric generators, dataset CLI, Modal/Lambda"
+order: 4
+---
+
+The text-to-CAD model learns from (prompt, IR) pairs -- examples where a natural language description is paired with the vcad IR document that implements it. The training pipeline generates these pairs at scale using parametric generators that produce random valid geometry along with corresponding descriptions.
+
+## How Generators Work
+
+A parametric generator is a function that samples random parameters (dimensions, feature counts, positions) within valid ranges and produces both a vcad IR document and a natural language description of what was created. The randomization ensures diversity in the training set.
+
+Consider a simple plate generator. It samples plate width from 20-200 mm, depth from 20-200 mm, thickness from 1-10 mm, and hole count from 0-8. It builds the IR (a cube primitive, cylinder tools for holes, translate and difference operations) and constructs a description: "A 75 x 40 x 3 mm plate with 4 M5 through-holes, two at each end, spaced 55 mm apart."
+
+```typescript
+function generatePlate(): { prompt: string; ir: IrDocument } {
+  const w = randomRange(20, 200);
+  const d = randomRange(20, 200);
+  const t = randomRange(1, 10);
+  const holes = randomInt(0, 8);
+
+  const ir = buildPlateIr(w, d, t, holes);
+  const prompt = describePlate(w, d, t, holes);
+
+  return { prompt, ir };
+}
+```
+
+The description function generates natural language that varies in style and detail level. Some descriptions are terse ("50x30x5 plate, 2 holes"), others are verbose ("Create a rectangular mounting plate measuring 50 millimeters wide by 30 millimeters deep by 5 millimeters thick, with two M5 clearance holes positioned 10 mm from each end"). This variation teaches the model to understand prompts at different levels of specificity.
+
+## The Training Package
+
+The `@vcad/training` package contains generators for common part families:
+
+**Plates.** Rectangular plates with holes, slots, fillets, and chamfers. Parameters: dimensions, hole patterns (grid, linear, circular), fillet radii.
+
+**Brackets.** L-brackets, U-brackets, and T-brackets with mounting holes. Parameters: leg dimensions, thickness, hole patterns, fillet radii.
+
+**Enclosures.** Rectangular boxes with shell, internal bosses, ventilation slots, and lids. Parameters: outer dimensions, wall thickness, number and position of internal features.
+
+**Shafts.** Turned parts with diameter transitions, grooves, and keyways. Parameters: overall length, diameters at each section, groove dimensions.
+
+**Gears.** Spur gears with involute tooth profiles. Parameters: module, tooth count, face width, bore diameter.
+
+**Assemblies.** Multi-part assemblies with joints. Parameters: part count, joint types, kinematic chain structure.
+
+Each generator produces valid geometry that passes `inspect_cad` verification. Invalid configurations (self-intersecting booleans, negative dimensions, impossible geometry) are caught and regenerated.
+
+<Callout type="info" title="Quality over quantity">
+A dataset of 10,000 high-quality, verified pairs trains a better model than 100,000 pairs with errors. Every generated example is validated: the IR is evaluated to ensure it produces a non-empty solid with positive volume, and the prompt is checked for consistency with the actual geometry (described dimensions match the IR dimensions).
+</Callout>
+
+## Dataset CLI
+
+The training package includes a CLI for generating datasets.
+
+```bash
+npx @vcad/training generate \
+  --generators plate,bracket,enclosure,shaft \
+  --count 10000 \
+  --output dataset.jsonl \
+  --validate
+```
+
+The `--generators` flag selects which part families to include. The `--count` flag sets the total number of examples. The `--output` flag specifies the output file in JSONL format (one JSON object per line). The `--validate` flag runs each generated document through the kernel to verify that it produces valid geometry.
+
+The output format is one JSON object per line:
+
+```json
+{"prompt": "A 75x40x3mm plate with 4 M5 holes", "ir": {"nodes": {...}, "roots": [...]}}
+{"prompt": "L-bracket, 50mm tall...", "ir": {"nodes": {...}, "roots": [...]}}
+```
+
+This format is compatible with standard fine-tuning pipelines for language models. The prompt is the input, the IR (serialized as JSON) is the target output.
+
+## Augmentation Strategies
+
+Raw generated data can be augmented to increase effective dataset size and improve model robustness.
+
+**Prompt paraphrasing.** For each (prompt, IR) pair, generate 3-5 alternative phrasings of the prompt using a language model. "A 50x30x5 plate" becomes "50mm by 30mm by 5mm rectangular plate", "plate: width 50, depth 30, height 5", and "Make a flat plate measuring fifty by thirty by five millimeters". The IR stays the same; only the description changes.
+
+**Unit variation.** Express the same dimensions in different styles: "50 mm", "50mm", "50 millimeters", "5 cm". The model learns to parse all common dimension formats.
+
+**Detail level variation.** The same geometry described at different levels of detail. A terse version: "bracket with holes." A medium version: "L-bracket, 40mm legs, M4 mounting holes." A detailed version with every dimension specified. The model learns to infer unspecified dimensions from context.
+
+**Loon format.** Generate both JSON IR and Loon representations of the same geometry. Train the model to output either format, improving its flexibility.
+
+## Cloud Compute
+
+Generating large datasets (100K+ examples) benefits from cloud parallelism. The training package supports deployment on serverless platforms.
+
+**Modal** deployment runs generators as serverless functions that scale to hundreds of parallel instances. A `modal_app.py` stub is included in the training package:
+
+```python
+import modal
+
+app = modal.App("vcad-datagen")
+
+@app.function(cpu=1, memory=512)
+def generate_batch(generator: str, count: int) -> list:
+    # calls @vcad/training generate internally
+    ...
+```
+
+**AWS Lambda** deployment packages each generator as a Lambda function. The included `serverless.yml` configuration deploys the generators and a coordinator function that distributes work across invocations.
+
+Both approaches produce JSONL output that is concatenated into the final dataset. The parallelism reduces wall-clock generation time from hours to minutes for large datasets.
+
+<Callout type="tip" title="Seed control">
+Every generator accepts a random seed for reproducibility. Use sequential seeds across parallel workers to ensure each worker produces unique examples. Record the seed range for each batch so you can regenerate specific examples for debugging.
+</Callout>
+
+## Quality Filtering
+
+After generation, filter the dataset to remove low-quality examples.
+
+**Geometry validation.** Discard examples where the IR produces a solid with zero volume, negative volume, or non-manifold topology.
+
+**Prompt-IR consistency.** Verify that dimensions mentioned in the prompt match the IR. If the prompt says "50mm wide" but the IR creates a 60mm cube, discard the example (this indicates a bug in the description generator).
+
+**Deduplication.** Remove examples where two prompts produce identical IR. The model does not benefit from learning the same geometry twice.
+
+**Complexity distribution.** Ensure the dataset has a balanced distribution of simple (1-5 operations) and complex (10-30 operations) examples. If generators produce mostly simple parts, increase the complexity parameters.
+
+The final dataset is ready for fine-tuning. The standard approach is supervised fine-tuning on a pre-trained language model, where the model learns to map natural language prompts to vcad IR documents.
+
+For understanding the compact Loon language that the AI uses for complex geometry, continue to the [Loon Language Reference](/guides/ai/loon) guide.

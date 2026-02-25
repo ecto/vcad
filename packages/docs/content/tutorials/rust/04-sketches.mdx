@@ -1,0 +1,264 @@
+---
+title: "Sketches & Sweeps"
+description: "SketchProfile, extrude with twist/taper, revolve, sweep, loft"
+order: 4
+difficulty: Intermediate
+time: "15 minutes"
+---
+
+Primitives get you cubes, cylinders, and spheres, but real parts have irregular cross-sections -- L-brackets, T-slots, airfoil profiles. Sketches let you draw an arbitrary 2D outline and then push it into 3D with extrude, revolve, sweep, or loft.
+
+## Defining a profile
+
+A `SketchProfile` is a closed loop of 2D line segments and arcs that lives on a plane in 3D space. You specify the plane with an origin point and two direction vectors (the local X and Y axes), then describe the outline using `SketchSegment` values.
+
+```rust
+use vcad_kernel::Solid;
+use vcad_kernel_sketch::{SketchProfile, SketchSegment};
+use vcad_kernel_math::{Point2, Point3, Vec3};
+
+// An L-shaped bracket profile on the XY plane
+let segments = vec![
+    SketchSegment::Line { start: Point2::new(0.0, 0.0),  end: Point2::new(20.0, 0.0) },
+    SketchSegment::Line { start: Point2::new(20.0, 0.0), end: Point2::new(20.0, 5.0) },
+    SketchSegment::Line { start: Point2::new(20.0, 5.0), end: Point2::new(5.0, 5.0) },
+    SketchSegment::Line { start: Point2::new(5.0, 5.0),  end: Point2::new(5.0, 15.0) },
+    SketchSegment::Line { start: Point2::new(5.0, 15.0), end: Point2::new(0.0, 15.0) },
+    SketchSegment::Line { start: Point2::new(0.0, 15.0), end: Point2::new(0.0, 0.0) },
+];
+
+let profile = SketchProfile::new(
+    Point3::origin(),   // plane origin
+    Vec3::x(),          // local X direction
+    Vec3::y(),          // local Y direction
+    segments,
+).unwrap();
+```
+
+The profile must be closed -- the end of the last segment must coincide with the start of the first. If it is not, `SketchProfile::new` returns an error with the gap distance so you can fix it. Each segment must also be non-degenerate (nonzero length).
+
+For common shapes, convenience constructors save you from spelling out every segment. `SketchProfile::rectangle` takes a width and height, and `SketchProfile::circle` approximates a circle with a given number of arcs:
+
+```rust
+// 10 x 5 mm rectangle on the XY plane
+let rect = SketchProfile::rectangle(Point3::origin(), Vec3::x(), Vec3::y(), 10.0, 5.0);
+
+// Circle of radius 4 mm, approximated by 8 arcs, normal along Z
+let circle = SketchProfile::circle(Point3::origin(), Vec3::z(), 4.0, 8);
+```
+
+<Callout type="info" title="Sketch plane orientation">
+The sketch normal is computed as `x_dir cross y_dir`. For profiles on the XY plane with `x_dir = X` and `y_dir = Y`, the normal points along +Z, and extruding along +Z pushes the profile upward. Changing the direction vectors lets you place sketches on any plane in space.
+</Callout>
+
+## Extruding a profile
+
+Extrusion pushes a 2D profile along a direction vector to create a solid. The length of the vector determines the extrusion distance.
+
+```rust
+use vcad_kernel::Solid;
+use vcad_kernel_sketch::SketchProfile;
+use vcad_kernel_math::{Point3, Vec3};
+
+let profile = SketchProfile::rectangle(Point3::origin(), Vec3::x(), Vec3::y(), 20.0, 10.0);
+
+// Extrude 15mm along Z
+let solid = Solid::extrude(profile, Vec3::new(0.0, 0.0, 15.0)).unwrap();
+```
+
+That creates a 20 x 10 x 15 mm box, but the real power is that you can extrude any closed profile -- the L-bracket from above, a star shape, a gear tooth outline. The result is always a watertight B-rep solid with planar lateral faces for line segments and approximated faces for arcs.
+
+<Playground exampleId="bracket" />
+
+### Twist and taper
+
+`Solid::extrude_with_options` adds two parameters: a twist angle (in radians) that rotates the profile as it extrudes, and a scale factor at the end that tapers it. Both can be combined.
+
+```rust
+use std::f64::consts::PI;
+use vcad_kernel::Solid;
+use vcad_kernel_sketch::SketchProfile;
+use vcad_kernel_math::{Point3, Vec3};
+
+let profile = SketchProfile::rectangle(Point3::origin(), Vec3::x(), Vec3::y(), 10.0, 10.0);
+
+// Extrude 30mm with 90-degree twist
+let twisted = Solid::extrude_with_options(
+    profile.clone(),
+    Vec3::new(0.0, 0.0, 30.0),
+    PI / 2.0,   // twist_angle (radians)
+    1.0,        // scale_end (1.0 = no taper)
+).unwrap();
+
+// Extrude 30mm with taper to half size (pyramid-like)
+let tapered = Solid::extrude_with_options(
+    profile,
+    Vec3::new(0.0, 0.0, 30.0),
+    0.0,        // no twist
+    0.5,        // scale_end (half size at top)
+).unwrap();
+```
+
+When twist is zero and scale is 1.0, this delegates to the fast path -- the standard extrude -- so there is no penalty for using the options variant with default values.
+
+<Callout type="tip" title="Segment count and smoothness">
+Twist extrusions are built from many thin slices (about 12 per 90 degrees of twist). The more twist you apply, the more faces the solid will have. This is automatic -- you do not need to control the segmentation.
+</Callout>
+
+## Revolving a profile
+
+Revolve rotates a profile around an axis to create a solid of revolution. The classic use case is turning a cross-section into a symmetric part: a wine glass, a vase, a bearing race.
+
+```rust
+use std::f64::consts::PI;
+use vcad_kernel::Solid;
+use vcad_kernel_sketch::{SketchProfile, SketchSegment};
+use vcad_kernel_math::{Point2, Point3, Vec3};
+
+// Wine glass cross-section (right half of the profile)
+// The profile must not touch the axis, and must use line segments only
+let segments = vec![
+    SketchSegment::Line { start: Point2::new(1.0, 0.0),  end: Point2::new(25.0, 0.0) },  // base
+    SketchSegment::Line { start: Point2::new(25.0, 0.0), end: Point2::new(25.0, 3.0) },   // rim
+    SketchSegment::Line { start: Point2::new(25.0, 3.0), end: Point2::new(3.0, 3.0) },    // underside
+    SketchSegment::Line { start: Point2::new(3.0, 3.0),  end: Point2::new(3.0, 50.0) },   // stem
+    SketchSegment::Line { start: Point2::new(3.0, 50.0), end: Point2::new(15.0, 50.0) },  // bowl floor
+    SketchSegment::Line { start: Point2::new(15.0, 50.0),end: Point2::new(20.0, 80.0) },  // bowl wall
+    SketchSegment::Line { start: Point2::new(20.0, 80.0),end: Point2::new(20.0, 82.0) },  // lip
+    SketchSegment::Line { start: Point2::new(20.0, 82.0),end: Point2::new(1.0, 82.0) },   // top
+    SketchSegment::Line { start: Point2::new(1.0, 82.0), end: Point2::new(1.0, 0.0) },    // close
+];
+
+let profile = SketchProfile::new(
+    Point3::new(1.0, 0.0, 0.0),  // offset from axis
+    Vec3::x(),
+    Vec3::z(),
+    segments,
+).unwrap();
+
+// Revolve 360 degrees around the Z axis
+let glass = Solid::revolve(profile, Point3::origin(), Vec3::z(), 360.0).unwrap();
+```
+
+The angle parameter is in degrees for the `Solid::revolve` method. A value of 360.0 creates a full revolution; smaller values create a wedge. The profile must be made of line segments only (arc segments would require torus surfaces, which are not yet supported in revolve), and no vertex can lie directly on the revolution axis.
+
+<Callout type="warning" title="Profile offset from axis">
+Every vertex in the profile must be at a nonzero distance from the revolution axis. If a vertex sits on the axis, the revolve operation returns an `AxisIntersection` error. Offset your profile by at least a small amount (even 0.1 mm) to avoid this.
+</Callout>
+
+## Sweeping along a path
+
+Sweep moves a profile along an arbitrary 3D curve, keeping it oriented perpendicular to the path using rotation-minimizing frames. This is how you make pipes, springs, and any part whose cross-section follows a curve.
+
+A straight-line sweep is equivalent to extrude. The interesting cases use curves -- and vcad provides a `Helix` curve for springs:
+
+```rust
+use vcad_kernel::Solid;
+use vcad_kernel_sketch::SketchProfile;
+use vcad_kernel_sweep::{sweep, Helix, SweepOptions};
+use vcad_kernel_math::{Point3, Vec3};
+
+// Circular wire cross-section, radius 1.5mm
+let wire = SketchProfile::circle(Point3::origin(), Vec3::z(), 1.5, 8);
+
+// Helical path: radius 10mm, pitch 8mm, height 40mm, 5 turns
+let helix = Helix::new(10.0, 8.0, 40.0, 5.0);
+
+let spring = Solid::sweep(wire, &helix, SweepOptions::default()).unwrap();
+```
+
+The `Helix` curve is parameterized by radius (distance from center), pitch (height per turn), total height, and number of turns. Sweeping a circular profile along it produces a coil spring with the correct geometry.
+
+`SweepOptions` gives you additional control: `twist_angle` rotates the profile as it travels (useful for drill bits), `scale_start` and `scale_end` taper the cross-section along the path, and `path_segments` overrides the automatic segmentation if you need finer or coarser resolution.
+
+```rust
+use std::f64::consts::PI;
+use vcad_kernel_sweep::SweepOptions;
+
+let options = SweepOptions {
+    twist_angle: PI,         // 180-degree twist along the path
+    scale_start: 1.0,
+    scale_end: 0.5,          // taper to half size
+    path_segments: 64,       // finer segmentation
+    ..Default::default()
+};
+```
+
+## Lofting between profiles
+
+Loft creates a solid by interpolating between two or more profiles placed at different positions. Where extrude and revolve use a single profile, loft transitions smoothly from one cross-section to another.
+
+```rust
+use vcad_kernel::Solid;
+use vcad_kernel_sketch::SketchProfile;
+use vcad_kernel_sweep::LoftOptions;
+use vcad_kernel_math::{Point3, Vec3};
+
+// Bottom: 20x20mm square at Z=0
+let bottom = SketchProfile::rectangle(
+    Point3::new(0.0, 0.0, 0.0),
+    Vec3::x(), Vec3::y(),
+    20.0, 20.0,
+);
+
+// Middle: 15x15mm square at Z=15
+let middle = SketchProfile::rectangle(
+    Point3::new(2.5, 2.5, 15.0),
+    Vec3::x(), Vec3::y(),
+    15.0, 15.0,
+);
+
+// Top: 10x10mm square at Z=30
+let top = SketchProfile::rectangle(
+    Point3::new(5.0, 5.0, 30.0),
+    Vec3::x(), Vec3::y(),
+    10.0, 10.0,
+);
+
+let transition = Solid::loft(
+    &[bottom, middle, top],
+    LoftOptions::default(),
+).unwrap();
+```
+
+All profiles must have the same number of segments. If you want to loft between a square (4 segments) and a circle, approximate the circle with exactly 4 arcs so the segment counts match. The segments are connected in order, so the first segment of profile 1 connects to the first segment of profile 2 -- keep the profiles oriented consistently.
+
+<Callout type="info" title="Closed lofts">
+Setting `LoftOptions { closed: true, ..Default::default() }` connects the last profile back to the first, creating a tube-like shape with no end caps. This is useful for torus-like rings and hollow paths.
+</Callout>
+
+## Combining sketches with booleans
+
+Sketch-based solids are regular `Solid` values, so you can combine them with primitives and booleans just like anything else. Here is a practical example: an L-shaped bracket with a lightening pocket:
+
+```rust
+use vcad_kernel::Solid;
+use vcad_kernel_sketch::{SketchProfile, SketchSegment};
+use vcad_kernel_math::{Point2, Point3, Vec3};
+
+// L-bracket profile
+let bracket_segments = vec![
+    SketchSegment::Line { start: Point2::new(0.0, 0.0),  end: Point2::new(30.0, 0.0) },
+    SketchSegment::Line { start: Point2::new(30.0, 0.0), end: Point2::new(30.0, 5.0) },
+    SketchSegment::Line { start: Point2::new(30.0, 5.0), end: Point2::new(5.0, 5.0) },
+    SketchSegment::Line { start: Point2::new(5.0, 5.0),  end: Point2::new(5.0, 25.0) },
+    SketchSegment::Line { start: Point2::new(5.0, 25.0), end: Point2::new(0.0, 25.0) },
+    SketchSegment::Line { start: Point2::new(0.0, 25.0), end: Point2::new(0.0, 0.0) },
+];
+
+let profile = SketchProfile::new(
+    Point3::origin(), Vec3::x(), Vec3::y(), bracket_segments,
+).unwrap();
+
+let bracket = Solid::extrude(profile, Vec3::new(0.0, 0.0, 10.0)).unwrap();
+
+// Subtract a pocket from the vertical leg
+let pocket = Solid::cube(10.0, 3.0, 2.0).translate(-2.5, 1.0, 4.0);
+let result = bracket.difference(&pocket);
+```
+
+This workflow -- sketch the outline, extrude, then cut features with booleans -- mirrors how parts are modeled in traditional CAD systems. The difference is that every step is a function call you can parameterize, loop over, or compose into larger assemblies.
+
+## Next steps
+
+You can now create geometry from arbitrary 2D profiles. The next tutorial covers [inspection and queries](/tutorials/rust/05-queries) -- measuring volume, surface area, and bounding boxes to validate that your geometry is correct.

@@ -1,0 +1,74 @@
+---
+title: "Text-to-CAD in the App"
+description: "AI panel, browser vs server inference, effective prompts"
+order: 1
+---
+
+The AI panel in vcad.io translates natural language descriptions into parametric 3D geometry. Describe what you want -- a mounting bracket with four bolt holes, a phone case with rounded edges, a gear with 24 teeth -- and the AI generates the corresponding IR document, which the kernel evaluates into a solid model you can edit, measure, and export.
+
+## Opening the AI Panel
+
+Click the AI icon in the toolbar or press **Cmd+J** to open the AI panel. A text input appears at the bottom of the panel. Type your description and press Enter. The AI processes your request, generates geometry, and the result appears in the viewport. The feature tree shows the generated operations, and you can edit any of them just like manually created geometry.
+
+The AI panel maintains conversation context. After generating a part, you can say "make it taller" or "add a slot on the front face" and the AI modifies the existing geometry rather than starting from scratch. This iterative refinement is how most real designs are built -- rough shape first, then adjustments.
+
+## Browser vs Server Inference
+
+vcad offers two inference modes.
+
+**Browser inference** runs a small model directly in your browser using WebGPU. It is fast (sub-second for simple parts), completely private (no data leaves your machine), and works offline. The trade-off is capability: the browser model handles single-part geometry with straightforward features (primitives, booleans, basic patterns) but struggles with complex multi-step constructions, assemblies, or unusual shapes.
+
+**Server inference** sends your prompt to a larger model hosted in the cloud. It handles more complex requests: multi-part assemblies, intricate sweep and loft geometry, parametric relationships, and detailed feature trees. The trade-off is latency (a few seconds) and the requirement for an internet connection. Your prompts are processed on Anthropic's servers.
+
+Toggle between modes with the switch at the top of the AI panel. Browser mode shows a lightning bolt icon; server mode shows a cloud icon. Start with browser inference for quick iterations and switch to server when you need more capability.
+
+<Callout type="info" title="Model selection">
+Browser inference uses a small model optimized for token efficiency and CAD-specific tasks. Server inference uses a larger model with broader reasoning capability. Both produce the same IR format -- the output is a vcad document regardless of which model generated it.
+</Callout>
+
+## Writing Effective Prompts
+
+The quality of the generated geometry depends heavily on how you describe it. Specific, dimensioned descriptions produce accurate parts. Vague descriptions produce generic shapes that need extensive refinement.
+
+**Be specific about dimensions.** "Make a plate" produces a default-sized rectangle. "Make a 100 x 60 x 5 mm plate" produces exactly what you asked for. Always include dimensions in millimeters when you know them.
+
+**Name your features.** "Add holes" is ambiguous -- how many, where, what size? "Add four M5 through-holes at the corners, 8 mm from each edge" is unambiguous. The AI places features precisely when you specify positions.
+
+**Use engineering terminology.** The AI understands CAD vocabulary. "Fillet the top edges with 2 mm radius" works. "Round the top" is vaguer and may not produce the exact result you want. Terms like counterbore, chamfer, pocket, boss, rib, and draft angle are all understood.
+
+**Describe the function.** "This is a motor mount for a NEMA 17 stepper" gives the AI context to choose appropriate bolt pattern spacing (31 mm), center bore diameter (22 mm), and overall dimensions. Functional descriptions help the AI make reasonable design choices for details you did not specify.
+
+**Iterate, do not over-specify.** Start with the basic shape and major features. Refine with follow-up messages. "Add 3 mm fillets to all external edges." "Shell it to 2 mm wall thickness." "Add mounting ears on each side with M4 holes." Each iteration refines the model without restarting from scratch.
+
+## Prompt Examples
+
+**Vague (poor results):**
+> Make a bracket
+
+**Specific (good results):**
+> Make an L-bracket, 40 mm tall and 60 mm wide, 5 mm thick, with two M5 mounting holes in the base spaced 40 mm apart, and a 10 mm slot in the vertical face centered at 20 mm height
+
+**Functional (great results):**
+> Design a DIN-rail mounting bracket for a 50 x 30 mm PCB. The bracket clips onto standard 35 mm DIN rail. Include two M3 standoffs for the PCB, spaced to match a 40 x 20 mm hole pattern. The bracket should be 3D printable in PLA.
+
+The functional prompt gives the AI enough context to choose dimensions, add clearances for DIN rail clips, and design features appropriate for FDM printing (no small overhangs, adequate wall thickness).
+
+<Callout type="tip" title="Materials matter">
+Mention the material when relevant. "Aluminum" tells the AI to use appropriate wall thicknesses and fillet radii for machining. "3D printed PLA" tells it to add draft angles, avoid thin walls, and consider printability. The AI adjusts its design choices based on the manufacturing context.
+</Callout>
+
+## What Happens Under the Hood
+
+When you submit a prompt, the AI model generates either a JSON IR document (via `create_cad_document`) or Loon source code (via `create_cad_loon`). The IR is a directed acyclic graph of operations -- primitives, transforms, booleans, patterns, sketches, extrusions -- that the kernel evaluates into a BRep solid.
+
+The AI typically calls `inspect_cad` after generating geometry to verify the result: checking bounding box dimensions, volume, and surface area against expectations. If something looks wrong (volume is zero, bounding box does not match specified dimensions), the AI adjusts and regenerates.
+
+You can see the generated IR by expanding the AI panel's "Code" tab. This is useful for learning how vcad's IR works and for understanding exactly what the AI built. You can also copy the IR and paste it into the MCP server or CLI for use outside the app.
+
+## Limitations
+
+The AI works best with mechanical parts: plates, brackets, enclosures, shafts, gears, and assemblies of these. It handles organic shapes (bottles, ergonomic grips) less reliably because these require complex loft and sweep operations that are harder to specify precisely in text.
+
+Very complex parts (50+ operations, intricate internal features, tight tolerances) may require manual refinement after AI generation. The AI gets you 80-90% of the way; the last 10-20% is often faster to do by hand in the feature tree.
+
+For composing AI tool calls into complete design workflows, continue to the [Building MCP Workflows](/guides/ai/mcp-workflows) guide.

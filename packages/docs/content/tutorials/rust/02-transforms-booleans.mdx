@@ -1,0 +1,136 @@
+---
+title: "Transforms & Booleans"
+description: "Move, rotate, and combine shapes programmatically"
+order: 2
+difficulty: Beginner
+time: "10 minutes"
+playground:
+  exampleId: "first-hole"
+---
+
+Every useful part involves positioning shapes and combining them. vcad gives you two tools for this: **transforms** change where a shape sits in space, and **booleans** merge or cut shapes together. Together, they let you build complex geometry from simple primitives.
+
+<Playground exampleId="first-hole" />
+
+## Transforms
+
+A transform repositions a Part without changing its fundamental shape. The three core transforms are translate, rotate, and scale, and each returns a new `Part` -- the original is never modified.
+
+```rust
+use vcad::{centered_cube, Part};
+
+let cube = Part::cube("box", 20.0, 20.0, 20.0);
+
+// Move 50mm along X, 10mm up along Z
+let moved = cube.translate(50.0, 0.0, 10.0);
+
+// Rotate 45 degrees around the Z axis (angles are in degrees)
+let rotated = cube.rotate(0.0, 0.0, 45.0);
+
+// Scale: double width, keep depth, halve height
+let stretched = cube.scale(2.0, 1.0, 0.5);
+```
+
+<Callout type="info" title="Coordinate system">
+vcad uses a Z-up coordinate system: X points right, Y points forward, Z points up. The grid lies in the XY plane. When you call `.translate(10.0, 0.0, 5.0)`, you are moving 10mm to the right and 5mm upward.
+</Callout>
+
+Because each method returns a new Part, you can chain transforms into a pipeline:
+
+```rust
+let positioned = Part::cube("box", 10.0, 10.0, 10.0)
+    .translate(-5.0, -5.0, 0.0)   // center on X and Y
+    .rotate(0.0, 0.0, 45.0)        // spin 45 degrees
+    .translate(50.0, 0.0, 0.0);    // slide into final position
+```
+
+<Callout type="warning" title="Order matters">
+Rotating then translating produces different geometry than translating then rotating. Think of transforms as instructions applied one after the other to the current position, not as independent settings.
+</Callout>
+
+## Boolean operations
+
+Booleans are how you combine two parts into one. There are three operations, and vcad overloads Rust's arithmetic operators so they read naturally:
+
+```rust
+let combined = part_a + part_b;   // union — merge into one shape
+let cut      = part_a - part_b;   // difference — subtract b from a
+let common   = part_a & part_b;   // intersection — keep only overlap
+```
+
+Under the hood these call `.union()`, `.difference()`, and `.intersection()`. The operator syntax is a convenience -- you can call the methods directly if you prefer:
+
+```rust
+let cut = plate.difference(&hole);
+```
+
+Difference is by far the most common boolean in mechanical CAD. Nearly every hole, pocket, slot, and chamfer is a cylinder or box subtracted from a larger body.
+
+## Putting it together: a plate with a hole
+
+Here is a complete program that creates a rectangular plate and drills a hole through its center:
+
+```rust
+use vcad::{centered_cube, centered_cylinder};
+
+fn main() {
+    // A 60x40mm plate, 5mm thick, centered at the origin
+    let plate = centered_cube("plate", 60.0, 40.0, 5.0);
+
+    // A through-hole: radius 5mm, taller than the plate so
+    // it cuts cleanly through both faces
+    let hole = centered_cylinder("hole", 5.0, 10.0, 32);
+
+    // Subtract the cylinder from the plate
+    let result = plate - hole;
+
+    result.write_stl("plate_with_hole.stl").unwrap();
+}
+```
+
+The cylinder is 10mm tall while the plate is only 5mm thick. Making the tool body taller than the target is a standard modeling practice -- it guarantees a clean through-cut regardless of minor positioning errors. The `32` parameter controls the number of segments used to approximate the cylinder; 32 is a good default for most holes.
+
+## Adding mounting holes
+
+Real parts usually have multiple holes. You can position copies of the same cylinder at different locations and subtract them all:
+
+```rust
+use vcad::{centered_cube, centered_cylinder};
+
+fn main() {
+    let plate = centered_cube("plate", 80.0, 50.0, 5.0);
+
+    let m4 = centered_cylinder("m4", 2.2, 10.0, 32);
+
+    let holes = m4.translate(-30.0, -15.0, 0.0)
+        .union(&m4.translate( 30.0, -15.0, 0.0))
+        .union(&m4.translate(-30.0,  15.0, 0.0))
+        .union(&m4.translate( 30.0,  15.0, 0.0));
+
+    let result = plate - holes;
+
+    result.write_stl("mounting_plate.stl").unwrap();
+}
+```
+
+<Playground exampleId="plate" />
+
+Each call to `.translate()` creates an independent copy of the M4 hole cylinder at a new position. Unioning them together builds a single "tool" part, which is then subtracted from the plate in one boolean operation. Grouping multiple cuts into a single subtraction is both cleaner to read and more efficient to evaluate.
+
+<Callout type="tip" title="Debugging booleans">
+If a boolean produces unexpected geometry, export both the base part and the tool part as separate STL files and inspect them in the 3D viewer. Most issues come from the tool not fully penetrating the target, or from the two shapes being coplanar (sharing a face). Making the tool slightly oversized in the cutting direction almost always fixes it.
+</Callout>
+
+## Boolean reference
+
+| Operator | Method | Description |
+|----------|--------|-------------|
+| `a + b` | `.union(&b)` | Merge two solids into one |
+| `a - b` | `.difference(&b)` | Remove b's volume from a |
+| `a & b` | `.intersection(&b)` | Keep only the overlapping region |
+
+All three operations work on owned values (`Part + Part`) and on references (`&Part + &Part`), so you can use whichever style fits your code.
+
+## Next steps
+
+You now know how to position and combine shapes. The next tutorial covers [parametric design](/tutorials/rust/03-parametric) -- wrapping geometry in functions so you can rebuild entire parts by changing a few numbers.

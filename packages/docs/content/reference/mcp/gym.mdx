@@ -1,0 +1,238 @@
+---
+title: "Gym Tools"
+description: "create_robot_env, gym_step, gym_reset, gym_observe, gym_close"
+order: 8
+---
+
+The gym tools provide a reinforcement learning interface built on the Rapier3D physics engine. You create a simulation environment from a vcad assembly (which defines rigid bodies via parts and kinematic constraints via joints), then step the simulation with actions and observe the resulting state. The interface follows the OpenAI Gym convention: reset, step, observe, close.
+
+## create_robot_env
+
+Creates a physics simulation environment from a vcad assembly document. The assembly must contain part instances and joints. Returns an `env_id` that identifies the environment for all subsequent calls.
+
+<Param name="document" type="Document" required={true}>
+IR document containing an assembly with part definitions, instances, and joints. The document must have at least one joint and a ground instance.
+</Param>
+
+<Param name="end_effector_ids" type="string[]" required={true}>
+Instance IDs to track as end effectors. The observation includes the 3D pose (position + orientation) of each listed instance at every timestep.
+</Param>
+
+<Param name="dt" type="number" required={false}>
+Simulation timestep in seconds. Default `1/240` (0.00417s). Smaller timesteps increase accuracy but require more steps per second of simulated time.
+</Param>
+
+<Param name="substeps" type="number" required={false}>
+Number of physics substeps per `gym_step` call. Default 4. Higher values improve stability for stiff joints and fast-moving parts at the cost of computation time.
+</Param>
+
+<Param name="max_steps" type="number" required={false}>
+Maximum episode length in steps. After this many steps, the `done` flag is set to true. Default 1000.
+</Param>
+
+### Return Value
+
+```json
+{
+  "env_id": "sim_1",
+  "num_joints": 3,
+  "action_dim": 3,
+  "observation_dim": 18,
+  "end_effector_ids": ["gripper"],
+  "dt": 0.004166666666666667,
+  "substeps": 4,
+  "max_steps": 1000
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `env_id` | string | Environment identifier for subsequent tool calls |
+| `num_joints` | number | Number of actuated joints in the assembly |
+| `action_dim` | number | Number of action values expected per step |
+| `observation_dim` | number | Total dimension of the observation vector |
+| `end_effector_ids` | string[] | Echoed back for confirmation |
+| `dt` | number | Actual timestep used |
+| `substeps` | number | Actual substep count |
+| `max_steps` | number | Episode length limit |
+
+### Physics Setup
+
+The tool converts the vcad assembly into a Rapier3D simulation:
+
+- Each **part instance** becomes a rigid body with a convex collision shape derived from the part's mesh
+- **Fixed joints** create rigid constraints between bodies
+- **Revolute joints** become hinge joints with optional angle limits
+- **Slider joints** become prismatic joints with optional position limits
+- **Cylindrical joints** allow both rotation and translation along the same axis
+- **Ball joints** allow omnidirectional rotation
+- The **ground instance** is set as a fixed (kinematic) body that does not move
+- Gravity defaults to `{x: 0, y: 0, z: -9.81}` (Earth gravity in Z-up)
+
+## gym_step
+
+Advances the simulation by one timestep with the provided action.
+
+<Param name="env_id" type="string" required={true}>
+Environment ID from `create_robot_env`.
+</Param>
+
+<Param name="action_type" type="string" required={true}>
+How to interpret the action values: `"torque"` (Newton-meters applied to joints), `"position"` (target joint angles in degrees or positions in mm), or `"velocity"` (target joint velocities in deg/s or mm/s).
+</Param>
+
+<Param name="values" type="number[]" required={true}>
+Action values, one per actuated joint. The array length must equal `action_dim` from `create_robot_env`.
+</Param>
+
+### Action Types
+
+**Torque.** Applies a raw torque (Nm for revolute joints) or force (N for slider joints) directly to each joint. This is the most physically accurate mode but requires the agent to handle PD control or similar stabilization.
+
+**Position.** Sets target positions for each joint. The physics engine uses an internal PD controller to drive joints toward the targets. Units are degrees for revolute joints and millimeters for slider joints. This is the easiest mode for agents that want to command joint angles directly.
+
+**Velocity.** Sets target velocities for each joint. The engine applies forces to achieve the requested speed. Units are deg/s for revolute joints and mm/s for slider joints.
+
+### Return Value
+
+```json
+{
+  "observation": {
+    "joint_positions": [45.2, -12.8, 0.0],
+    "joint_velocities": [1.2, -0.5, 0.0],
+    "end_effector_poses": [
+      {
+        "instance_id": "gripper",
+        "position": { "x": 120.5, "y": 0.0, "z": 85.3 },
+        "orientation": { "x": 0.0, "y": 0.707, "z": 0.0, "w": 0.707 }
+      }
+    ],
+    "timestep": 42
+  },
+  "reward": 0.0,
+  "done": false
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `observation` | object | Current state of the simulation (see below) |
+| `reward` | number | Reward signal (currently always 0; custom reward computation should be done agent-side) |
+| `done` | boolean | Whether the episode has ended (max_steps reached or simulation diverged) |
+
+### Observation Format
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `joint_positions` | number[] | Current joint angles (deg) or positions (mm), one per actuated joint |
+| `joint_velocities` | number[] | Current joint angular velocities (deg/s) or linear velocities (mm/s) |
+| `end_effector_poses` | array | Position and orientation of each tracked end effector |
+| `timestep` | number | Current simulation step count since last reset |
+
+End effector positions are in world-space millimeters. Orientations are unit quaternions `{x, y, z, w}`.
+
+## gym_reset
+
+Resets the simulation to its initial state. All joint positions, velocities, and body poses return to the values defined in the assembly document. The timestep counter resets to 0.
+
+<Param name="env_id" type="string" required={true}>
+Environment ID from `create_robot_env`.
+</Param>
+
+### Return Value
+
+Returns the initial observation (same format as `gym_step`'s observation field).
+
+## gym_observe
+
+Returns the current observation without advancing the simulation. Useful for reading state between steps, after a reset, or when you need to inspect the environment without consuming a timestep.
+
+<Param name="env_id" type="string" required={true}>
+Environment ID from `create_robot_env`.
+</Param>
+
+### Return Value
+
+Returns the current observation (same format as `gym_step`'s observation field).
+
+## gym_close
+
+Destroys a simulation environment and frees its resources. After closing, the `env_id` is no longer valid and any calls using it will return an error.
+
+<Param name="env_id" type="string" required={true}>
+Environment ID from `create_robot_env`.
+</Param>
+
+### Return Value
+
+```json
+{ "success": true }
+```
+
+## Batch Operations
+
+For parallel reinforcement learning, three batch tools create and control multiple environments simultaneously.
+
+### batch_create_envs
+
+Creates N copies of the same environment for parallel data collection.
+
+<Param name="document" type="Document" required={true}>
+Assembly IR document (same as `create_robot_env`).
+</Param>
+
+<Param name="n_envs" type="number" required={true}>
+Number of parallel environments to create.
+</Param>
+
+<Param name="end_effector_ids" type="string[]" required={true}>
+Instance IDs to track as end effectors.
+</Param>
+
+Returns a `batch_id` string plus action/observation dimensions.
+
+### batch_step
+
+Steps all environments in a batch with per-environment actions.
+
+<Param name="batch_id" type="string" required={true}>
+Batch ID from `batch_create_envs`.
+</Param>
+
+<Param name="action_type" type="string" required={true}>
+Action type: `"torque"`, `"position"`, or `"velocity"`.
+</Param>
+
+<Param name="actions" type="number[][]" required={true}>
+Per-environment actions. The outer array has one entry per environment, and each inner array has one value per joint. Length of the outer array must equal `n_envs`.
+</Param>
+
+Returns observations, rewards, and done flags for every environment.
+
+### batch_reset
+
+Resets all environments in the batch to their initial state.
+
+<Param name="batch_id" type="string" required={true}>
+Batch ID from `batch_create_envs`.
+</Param>
+
+Returns initial observations for all environments.
+
+## Example Workflow
+
+```
+1. create_cad_document with assembly → define robot parts, instances, joints
+2. create_robot_env → initialize physics simulation
+3. gym_reset → get initial observation
+4. Loop:
+   a. gym_step with action → get observation, reward, done
+   b. If done: gym_reset
+5. gym_close → clean up
+```
+
+<Callout type="warning" title="Physics availability">
+The gym tools require the WASM kernel compiled with physics support. If physics is unavailable, `create_robot_env` returns an error message indicating that the WASM module was not built with the `--features physics` flag.
+</Callout>
+
+For a tutorial on training agents with the gym interface, see [Gym Training](/guides/ai/gym-training). For creating assemblies that work with the gym, see the [Assembly & Joints](/reference/format/operations) format reference.

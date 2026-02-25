@@ -1,0 +1,141 @@
+---
+title: "Slicer Panel"
+description: "3D print slicing, layer preview, settings, G-code export"
+order: 14
+---
+
+The slicer panel slices BRep geometry for FDM 3D printing. It operates directly on the kernel's boundary representation, analyzing surfaces, overhangs, and wall thicknesses to recommend print settings and flag manufacturability concerns before you export G-code.
+
+## Opening the Slicer
+
+Open the slicer from the workspace selector in the left sidebar, or press `Ctrl+P` (Cmd+P on macOS). The panel appears on the right and immediately begins analyzing the selected part. If no part is selected, it slices all visible parts as a single print.
+
+## Print Settings
+
+### Layer Height
+
+<Param name="layer_height" type="number (mm)" required={true}>
+Vertical thickness of each printed layer. Typical range is 0.1mm to 0.3mm. Lower values produce smoother surfaces and finer detail but increase print time proportionally. The default is 0.2mm, which balances quality and speed for most parts.
+</Param>
+
+The slicer validates layer height against the nozzle diameter. Layer height should not exceed 80% of the nozzle diameter (so a 0.4mm nozzle supports up to 0.32mm layers). Values outside this range trigger a warning.
+
+### Walls
+
+<Param name="wall_count" type="integer" required={false}>
+Number of perimeter walls. Default is 3 (1.2mm total wall thickness with a 0.4mm nozzle). More walls increase strength and surface quality at the cost of print time. Structural parts typically use 4-5 walls.
+</Param>
+
+### Infill
+
+<Param name="infill_percent" type="integer (0-100)" required={false}>
+Fill density for the part interior. Default is 20%. Common values: 10-15% for decorative parts, 20-30% for general use, 40-60% for structural parts, 100% for maximum strength.
+</Param>
+
+<Param name="infill_pattern" type="string" required={false}>
+Internal fill pattern. Options: `grid` (default, good all-around), `gyroid` (isotropic strength, good for flexible parts), `honeycomb` (high strength-to-weight), `lines` (fast but directional), `triangles` (strong in compression), `cubic` (3D isotropic).
+</Param>
+
+### Top and Bottom Layers
+
+<Param name="top_layers" type="integer" required={false}>
+Number of solid layers on the top surface. Default 4. More layers eliminate pillow artifacts on low-infill parts. Minimum 3 recommended.
+</Param>
+
+<Param name="bottom_layers" type="integer" required={false}>
+Number of solid layers on the bottom surface. Default 4. The first layer is printed slowly with higher extrusion to ensure bed adhesion.
+</Param>
+
+### Support
+
+<Param name="support_type" type="string" required={false}>
+Support generation mode: `none` (no supports), `normal` (supports from build plate and part surfaces), `buildplate_only` (supports only from the build plate). Default is `none`.
+</Param>
+
+<Param name="support_angle" type="number (deg)" required={false}>
+Overhang angle threshold for support generation. Faces steeper than this angle from vertical receive supports. Default 45 degrees. Most FDM printers handle up to 45-50 degrees without support; bridge detection handles short horizontal spans separately.
+</Param>
+
+### Bed Adhesion
+
+<Param name="adhesion_type" type="string" required={false}>
+Bed adhesion helper: `skirt` (outline around the part, does not touch it), `brim` (single-layer extension from the part's base perimeter), `raft` (multi-layer platform under the part). Default is `skirt`.
+</Param>
+
+Skirt is the least intrusive -- it primes the nozzle and lets you verify first-layer height without affecting the part. Brim adds surface area to the first layer, which helps parts with small footprints or sharp corners that tend to warp. Raft provides the strongest adhesion but leaves a rougher bottom surface.
+
+## Printer Profiles
+
+Select a printer profile to load machine-specific defaults for build volume, nozzle diameter, temperatures, speeds, and acceleration limits. See [Printer Profiles](/reference/cli/printer-profiles) for the full list of built-in profiles.
+
+<Param name="profile" type="string" required={false}>
+Printer profile name. Built-in options: `generic`, `bambu_x1c`, `bambu_p1s`, `bambu_a1`, `bambu_a1_mini`, `ender3`, `prusa_mk4`, `voron_24`. Default is `generic`.
+</Param>
+
+### Temperature
+
+<Param name="print_temp" type="integer (C)" required={false}>
+Nozzle temperature. Depends on filament type: PLA 190-220C, PETG 230-250C, ABS 230-260C. Loaded from the printer profile by default.
+</Param>
+
+<Param name="bed_temp" type="integer (C)" required={false}>
+Bed temperature. PLA 50-60C, PETG 70-85C, ABS 90-110C.
+</Param>
+
+## DFM Analysis
+
+The slicer includes a Design for Manufacturing analysis overlay that highlights potential print issues directly on the 3D model. Each issue type is color-coded:
+
+| Color | Issue | Description |
+|-------|-------|-------------|
+| Red | Unsupported overhang | Faces exceeding the support angle with no support enabled |
+| Orange | Thin wall | Walls thinner than the nozzle diameter |
+| Yellow | Bridge | Horizontal spans between supported regions |
+| Blue | Small feature | Features smaller than the nozzle diameter that may not print |
+
+The DFM overlay is visible in the viewport whenever the slicer panel is open. Toggle individual issue categories on and off from the DFM section of the panel.
+
+<Callout type="tip" title="Smart defaults">
+Enable smart defaults with the toggle at the top of the slicer panel. The slicer analyzes the part's BRep geometry -- overhang angles, wall thicknesses, minimum feature sizes -- and recommends layer height, infill, support, and wall count settings. You can override any individual setting after smart analysis runs.
+</Callout>
+
+## Layer Preview
+
+The layer preview slider at the bottom of the slicer panel scrubs through the sliced layers. Drag the slider or type a layer number to jump to a specific height. The viewport switches to a cross-section view showing:
+
+- **Perimeter walls** in the part color
+- **Infill paths** in a lighter shade
+- **Support material** in a contrasting color
+- **Travel moves** as thin dotted lines (toggleable)
+
+The layer preview updates as you change settings, so you can immediately see the effect of increasing wall count or changing infill pattern.
+
+## Export
+
+### G-code
+
+Export sliced toolpaths as G-code for direct printing. The output includes start/end G-code sequences from the printer profile, temperature commands, and the full layer-by-layer toolpath.
+
+<Param name="output" type="string">
+Output filename. Use `.gcode` extension.
+</Param>
+
+### 3MF
+
+Export as 3MF format, which bundles the model geometry, slice settings, and printer profile into a single file. 3MF is the preferred format for Bambu Studio and PrusaSlicer.
+
+<Param name="output" type="string">
+Output filename. Use `.3mf` extension.
+</Param>
+
+## CLI Integration
+
+The slicer is also available via the CLI:
+
+```bash
+vcad slice bracket.vcad -o bracket.gcode --profile bambu_x1c
+vcad slice bracket.vcad -o bracket.gcode --smart --explain
+vcad slice bracket.vcad -o bracket.3mf --layer-height 0.1 --infill 30 --support
+```
+
+The `--smart` flag runs BRep analysis and recommends settings. Add `--explain` to see the reasoning behind each recommendation. CLI flags override smart defaults. See [CLI Commands](/reference/cli/commands) for the full parameter reference.

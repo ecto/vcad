@@ -1,0 +1,69 @@
+---
+title: "AI Generation"
+description: "Natural language to geometry. Browser vs server inference. Prompt tips"
+order: 11
+difficulty: Beginner
+time: "5 minutes"
+---
+
+<Playground exampleId="plate" />
+
+The plate above -- 100 x 60 x 5 mm with four countersunk mounting holes -- was generated from a single sentence. vcad can turn natural language descriptions into parametric 3D geometry using AI models that output vcad IR (intermediate representation), which the engine evaluates into solid bodies. You type what you want; vcad builds it.
+
+## Using the AI Input
+
+At the bottom of the vcad viewport, you will see a text input field with a prompt like "Describe a part...". Click it (or press **/**), type a description of the part you want, and press **Enter**. The model processes your prompt and generates an IR document containing primitives, transforms, booleans, and other operations. The engine evaluates this IR and the resulting geometry appears in the viewport with a full feature tree.
+
+The generated part is fully parametric -- every primitive, boolean, and transform appears as an editable node in the feature tree. You can select any operation, change its parameters, reorder operations, and add new features. AI generation is a starting point, not a black box.
+
+<Callout type="info" title="Not just primitives">
+The AI can generate sketches, extrusions, boolean operations, fillets, patterns, and assemblies. Ask for "a flanged hub with six bolt holes on a circular pattern" and the result includes a sketch-and-extrude base, a cylindrical boss, and a circular pattern of through-holes -- all as separate, editable operations in the feature tree.
+</Callout>
+
+## Browser vs Server Inference
+
+vcad offers two inference modes, selectable in the settings menu.
+
+**Browser inference** runs a small model directly in your browser using WebGPU. It requires no network connection, your prompts never leave your machine, and it responds in a few seconds. The trade-off is that the model is compact and handles straightforward parts well -- boxes, plates, brackets, simple housings -- but may struggle with complex assemblies or unusual geometry.
+
+**Server inference** sends your prompt to a larger model hosted on vcad's servers. This model has more capacity for complex and multi-step designs. It handles compound parts ("a planetary gear set with sun gear, three planet gears, and a ring gear"), detailed specifications ("M6 counterbored holes at 30 mm spacing on a 2 mm fillet-edged plate"), and ambiguous descriptions that require engineering judgment. Server inference takes slightly longer and requires an internet connection.
+
+Both modes produce the same output format -- vcad IR -- so the resulting parts are equally editable regardless of which model generated them.
+
+<Callout type="tip" title="Start in browser, escalate to server">
+Try browser inference first. If the result is not what you expected, switch to server inference and submit the same prompt. You can also edit the prompt to be more specific based on what the browser model got wrong. This workflow keeps most interactions fast and local while reserving the larger model for when you need it.
+</Callout>
+
+## Writing Good Prompts
+
+The AI works best when you describe parts the way an engineer would describe them to a colleague. Specific dimensions, named features, and clear spatial relationships produce better results than vague descriptions.
+
+**Be specific about dimensions.** "A 100 x 60 x 5 mm plate" is better than "a thin rectangular plate". The model can invent reasonable dimensions when you leave them out, but you will almost always need to edit them afterward. Providing dimensions up front saves a round-trip.
+
+**Name the features you want.** "Four M6 through-holes at the corners with 8 mm edge distance" tells the model exactly what to create. "Some mounting holes" leaves too much to interpretation.
+
+**Describe the shape in engineering terms.** Terms like "counterbore", "fillet", "chamfer", "boss", "pocket", "rib", "shell", and "flange" have precise meanings that the model understands. Using them produces more accurate geometry than informal descriptions.
+
+**Mention material if it matters.** "An aluminum bracket" gives the model context about typical wall thicknesses, fillet sizes, and manufacturing constraints associated with aluminum fabrication. It also assigns the correct material in the output.
+
+## Example Prompts
+
+Here are prompts that produce good results, along with what the model generates:
+
+"A 100 x 60 x 5 mm aluminum plate with four M6 mounting holes at the corners, 8 mm from each edge." This generates a box, four cylinders positioned with transforms, four boolean differences, and an aluminum material assignment.
+
+"An L-bracket with 50 mm legs, 5 mm thick, with a 3 mm fillet at the inside corner and two mounting holes in each leg." This generates a sketch-and-extrude L-profile, fillets on the inner edge, and four holes placed symmetrically.
+
+"A cylindrical enclosure, 60 mm diameter, 100 mm tall, 2 mm wall thickness, with a flat bottom and an open top." This generates a cylinder, a shell operation removing the top face, and sets the wall thickness to 2 mm.
+
+"A spur gear with 20 teeth, module 2, 10 mm face width, and a 12 mm center bore." This generates an involute gear profile sketch, extrudes it, and cuts the center hole.
+
+<Callout type="warning" title="Always verify">
+AI-generated geometry is a starting point. Always check dimensions in the property panel, verify the feature tree makes sense, and inspect the part from multiple angles. The AI is good at structure but may not get every dimension exactly right on the first try. Edit the feature tree to correct anything that is off.
+</Callout>
+
+## What You Learned
+
+You generated a 3D part from a text description, understood the difference between browser and server inference, and practiced writing prompts that produce accurate geometry. AI generation is the fastest way to go from an idea to a parametric model, and the result is fully editable just like any part you build by hand.
+
+This is the final tutorial in the app series. From here, explore the [modeling guides](/guides/modeling/constraints) for deeper coverage of sketches, sweeps, and advanced operations, or try the [MCP tutorials](/tutorials/mcp/01-setup) to control vcad from AI agents and scripts.

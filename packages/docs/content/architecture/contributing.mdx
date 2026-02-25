@@ -1,0 +1,116 @@
+---
+title: "Contributing Guide"
+description: "Dev environment, tests, conventions, PR process"
+order: 11
+---
+
+This page covers everything you need to build, test, and contribute to vcad. The project is a Rust + TypeScript monorepo with a WASM bridge between the two worlds.
+
+## Development Environment
+
+**Rust.** Install the latest stable Rust toolchain via [rustup](https://rustup.rs/). The workspace spans all crates under `crates/`. You also need the `wasm32-unknown-unknown` target for WASM compilation: `rustup target add wasm32-unknown-unknown`. Install `wasm-pack` for building the WASM package: `cargo install wasm-pack`.
+
+**Node.js.** Version 20 or newer. The TypeScript workspace spans all packages under `packages/`. Use npm (not yarn or pnpm) as the package manager.
+
+**Optional tools.** `cargo-watch` for auto-rebuilding on file changes. `supabase` CLI for database migrations. `gh` CLI for GitHub operations.
+
+## Building
+
+Rust:
+```bash
+cargo build --workspace
+```
+
+TypeScript (install dependencies first):
+```bash
+npm ci
+npm run build --workspaces
+```
+
+Run the web app locally:
+```bash
+npm run dev -w @vcad/app
+```
+
+## Testing
+
+The test suite must pass before any PR is merged. Run the full suite:
+
+```bash
+# Rust tests
+cargo test --workspace
+
+# Rust linting -- must pass clean with zero warnings
+cargo clippy --workspace -- -D warnings
+
+# Rust formatting check
+cargo fmt --all --check
+
+# TypeScript tests
+npm test --workspaces --if-present
+```
+
+Tests live alongside their code in `#[cfg(test)] mod tests` blocks at the bottom of each Rust file. The boolean tests in `vcad-kernel-booleans` are particularly comprehensive, testing volume computation, bounding box validation, normal orientation, and mesh index validity for various intersection configurations (through-holes, edge intersections, corner intersections, tangent cases, multi-hole patterns).
+
+<Callout type="warning" title="Clippy must be clean">
+The CI enforces `cargo clippy --workspace -- -D warnings`. A single warning will fail the build. Fix all clippy suggestions before pushing. Common issues: unused variables (prefix with `_`), unnecessary clones, and missing documentation on public items.
+</Callout>
+
+## Conventions
+
+**Coordinate system.** Z-up everywhere: X right, Y forward, Z up. This is standard CAD convention and matches the kernel, IR, app, and tests. The Three.js renderer handles the Z-up to Y-up conversion internally.
+
+**Units.** All dimensions are `f64` in millimeters. Angles are in radians internally, though the IR and user-facing APIs accept degrees for joint positions and rotation operations.
+
+**Documentation.** Public items should have doc comments. The workspace enables `#![warn(missing_docs)]` on each crate. Write doc comments that explain what the function does and any non-obvious preconditions.
+
+**Naming.** Follow Rust naming conventions: `snake_case` for functions and variables, `CamelCase` for types and traits, `SCREAMING_SNAKE_CASE` for constants. Module names are lowercase. Crate names use the `vcad-kernel-*` prefix for kernel crates.
+
+**IR types.** All IR types use `#[serde(tag = "type")]` for JSON discrimination, producing `{"type": "Cube", "size": {...}}` rather than `{"Cube": {"size": {...}}}`.
+
+**Tests.** Place tests in `#[cfg(test)] mod tests` at the bottom of each file. Use descriptive test names that state the expected behavior: `test_cube_minus_cylinder_boundary`, `test_constrained_triangle`, `test_torus_evaluate`.
+
+**Error handling.** Prefer `Result<T, E>` over panics. Use descriptive error enums (like `PhysicsError`) rather than stringly-typed errors. Reserve `unwrap()` for tests and cases where failure is logically impossible (with a comment explaining why).
+
+## Adding a New Kernel Feature
+
+1. Implement the feature in the appropriate `vcad-kernel-*` crate. If no existing crate fits, create a new one under `crates/` following the naming pattern.
+2. Expose the feature through the `vcad-kernel` unified API crate.
+3. Add WASM bindings in `vcad-kernel-wasm` so the feature is accessible from TypeScript.
+4. Run the full test and lint suite: `cargo test --workspace && cargo clippy --workspace -- -D warnings`.
+
+## Adding a New App Feature
+
+1. Add state management logic in `packages/app/src/stores/` (Zustand stores).
+2. Add UI components in `packages/app/src/components/`.
+3. Wire up the new component in `App.tsx`.
+4. Build to verify: `npm run build -w @vcad/app`.
+
+## Adding a New IR Operation
+
+1. Add a variant to the `CsgOp` enum in `crates/vcad-ir/src/lib.rs`.
+2. Mirror the variant in `packages/ir/src/index.ts`.
+3. Add evaluation logic in `packages/engine/src/evaluate.ts`.
+
+## Changelog
+
+The changelog lives at `/CHANGELOG.json` (not markdown). Add entries for user-facing features (`feat`), bug fixes (`fix`), breaking changes (`breaking`), and significant performance improvements (`perf`). Skip entries for internal refactors, test-only changes, and dependency bumps. See the [Changelog](/architecture/changelog) page for format details.
+
+## PR Process
+
+Branch from `main` with a descriptive branch name (`feat/fillet-chamfer`, `fix/boolean-edge-case`). Write clear commit messages. Ensure the CI suite passes: all tests green, clippy clean, formatting correct. Keep PRs focused on a single feature or fix. Reviewers will check for correctness, test coverage, documentation, and adherence to project conventions.
+
+## Database Migrations
+
+Cloud sync uses Supabase (Postgres + Auth). Migrations live in `supabase/migrations/`. To add a migration:
+
+1. Create `supabase/migrations/NNN_description.sql`.
+2. Test locally with `supabase db reset` if running local Supabase.
+3. Preview changes with `supabase db push --dry-run`.
+4. Deploy with `supabase db push`.
+
+Never commit Supabase secrets or OAuth configuration -- those are managed in the Supabase dashboard.
+
+## Related Pages
+
+The [System Overview](/architecture/overview) page maps the full codebase. The [Changelog](/architecture/changelog) page explains the entry format.

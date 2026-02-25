@@ -1,0 +1,87 @@
+---
+title: "Tessellation"
+description: "BRep to triangle mesh, per-surface strategies, quality tradeoffs"
+order: 7
+---
+
+Tessellation converts the exact BRep representation into triangle meshes for rendering and export. The tessellator in `crates/vcad-kernel-tessellate/src/lib.rs` dispatches on `SurfaceKind` to choose a strategy tuned to each surface type, producing watertight meshes that faithfully approximate the underlying geometry.
+
+## Output Format
+
+The `TriangleMesh` struct stores geometry in flat arrays suitable for direct GPU upload:
+
+```rust
+pub struct TriangleMesh {
+    pub vertices: Vec<f32>,  // [x0, y0, z0, x1, y1, z1, ...]
+    pub indices: Vec<u32>,   // [i0, i1, i2, ...] (triangle indices)
+    pub normals: Vec<f32>,   // [nx0, ny0, nz0, ...] (per-vertex)
+}
+```
+
+The `merge` method combines two meshes by appending vertices and offsetting indices. This is used to build a solid's mesh from its individual face meshes. Debug assertions validate index bounds at merge time to catch topology errors early.
+
+## Quality Parameters
+
+`TessellationParams` controls mesh density:
+
+```rust
+pub struct TessellationParams {
+    pub circle_segments: u32,     // default 32
+    pub height_segments: u32,     // default 1
+    pub latitude_segments: u32,   // default 16
+}
+```
+
+The `from_segments(n)` constructor derives all parameters from a single hint: `circle_segments = max(n, 3)`, `latitude_segments = max(n/2, 4)`. Higher values produce smoother meshes at the cost of more triangles.
+
+## Tessellation Pipeline
+
+The entry point `tessellate_solid` iterates over the outer shell's faces, tessellates each face independently, and merges the results. The face-level dispatch in `tessellate_face` reads the surface type and calls the appropriate strategy:
+
+```rust
+match surface.surface_type() {
+    SurfaceKind::Plane    => tessellate_planar_face_with_geom(...),
+    SurfaceKind::Cylinder => tessellate_cylindrical_face(...),
+    SurfaceKind::Sphere   => tessellate_spherical_face(...),
+    SurfaceKind::Cone     => tessellate_conical_face(...),
+    SurfaceKind::Bilinear => tessellate_bilinear_face(...),
+    SurfaceKind::Torus    => tessellate_toroidal_face(...),
+    SurfaceKind::BSpline  => tessellate_bspline_face(...),
+}
+```
+
+## Per-Surface Strategies
+
+**Planar faces** use ear-clipping triangulation of the boundary loop projected into the plane's (u,v) parameter space. The tessellator first extracts the loop vertices, projects them onto the plane, and triangulates the resulting 2D polygon. Inner loops (holes) are handled by bridge edges that connect the outer loop to each inner loop, creating a single polygon that ear-clipping can process. A geometry-aware winding detection step compares the loop vertex winding against the expected face normal (surface normal times orientation) and flips the reversed flag when they disagree -- this corrects winding inconsistencies that can arise after boolean face splitting.
+
+**Cylindrical faces** sample the angular parameter u at `circle_segments` intervals and the height parameter v at the face's actual boundary z-values. For each angular strip between adjacent u-samples, two triangles form a quad. The vertex positions come from the cylinder's parametric equation, and normals come from the surface normal at each (u,v). Height segments default to 1 because cylinders have zero curvature along the axis.
+
+**Conical faces** follow a similar strip approach to cylinders, but the radius varies linearly with v. Near the apex where the radius approaches zero, degenerate triangles are avoided by collapsing the apex ring to a single vertex and generating a fan of triangles.
+
+**Spherical faces** use a latitude-longitude grid. The angular parameter u is sampled at `circle_segments` points and the latitude parameter v at `latitude_segments` bands. Polar caps are triangulated as fans from the pole vertex. The interior bands produce quads split into two triangles each.
+
+**Toroidal faces** use a (u,v) grid sampling both the toroidal angle u and poloidal angle v at `circle_segments` intervals each. Each grid cell generates two triangles. Since both parameters are angular, the grid wraps in both directions, producing a closed mesh.
+
+**Bilinear faces** are subdivided when non-planar. If `is_planar()` returns true, the face is triangulated as two triangles. Otherwise, the (u,v) domain [0,1]x[0,1] is subdivided into a grid and each cell is split into two triangles with positions and normals evaluated from the bilinear surface equation.
+
+**B-spline faces** use adaptive subdivision based on curvature. The tessellator evaluates the surface on a (u,v) grid, refining regions where the surface normal changes rapidly between adjacent samples. This produces more triangles in areas of high curvature (tight bends, small radii) and fewer in flat regions.
+
+## Winding and Orientation
+
+Correct triangle winding is essential for rendering -- triangles whose normals point inward appear as holes. The tessellator respects the face's `Orientation` flag: when `Reversed`, it flips the triangle winding order so normals point opposite to the surface normal. After boolean operations, faces from the subtracted solid use `Reversed` orientation, causing their normals to point into the void left by the subtraction. The planar tessellator adds an additional winding check by computing the signed area of the projected loop and comparing it against the expected normal direction, correcting mismatches introduced by face splitting.
+
+<Callout type="warning" title="Boolean edge cases">
+Boolean operations that split faces along intersection curves can produce loops whose vertex winding doesn't match the original face orientation. The tessellator's geometry-aware winding detection handles this, but extremely thin slivers near intersection boundaries may still produce visual artifacts at low segment counts.
+</Callout>
+
+## Watertightness
+
+Adjacent faces in a BRep solid share edges. To produce a watertight mesh, the tessellator must ensure that shared edges generate identical vertex positions on both sides. For analytic surfaces (plane, cylinder, sphere, cone, torus), this is guaranteed because both faces evaluate the same (u,v) point along the shared edge. For B-spline surfaces, floating-point differences can introduce micro-gaps; the tessellator snaps vertices within a tolerance to close these gaps.
+
+## GPU Compute
+
+The `vcad-kernel-gpu` crate accelerates two post-tessellation tasks using wgpu compute shaders. **Vertex normal computation** averages face normals at shared vertices on the GPU, producing smooth shading without CPU-side neighbor traversal. **Mesh decimation** reduces triangle count for LOD (level of detail) by collapsing short edges, guided by a quadric error metric. Both shaders operate on the flat vertex/index arrays from `TriangleMesh`.
+
+## Related Pages
+
+The [BRep Kernel](/architecture/kernel) page explains the topology and surface types that tessellation consumes. The [Ray Tracing](/architecture/ray-tracing) page describes the alternative rendering path that bypasses tessellation entirely.

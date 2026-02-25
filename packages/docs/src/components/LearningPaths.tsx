@@ -1,55 +1,81 @@
 import Link from "next/link";
-import { Rocket, Lightning, Fire } from "@phosphor-icons/react/dist/ssr";
+import {
+  Browser,
+  Code,
+  Terminal,
+  Robot,
+} from "@phosphor-icons/react/dist/ssr";
 import { cn } from "@/lib/utils";
 
 const paths = [
   {
-    level: "beginner",
-    icon: Rocket,
+    id: "app",
+    icon: Browser,
     color: "text-green-500",
     bgColor: "bg-green-500/10",
     borderColor: "border-green-500/20",
+    title: "use the app",
+    href: "/tutorials/app/first-part",
     lessons: [
-      { title: "Open the App", href: "/learn/beginner/hello-cube" },
-      { title: "Your First Part", href: "/learn/beginner/transforms" },
-      { title: "Boolean Operations", href: "/learn/beginner/first-hole" },
-      { title: "Export to STL", href: "/learn/beginner/export" },
+      { title: "Your First Part", href: "/tutorials/app/first-part" },
+      { title: "Combining Shapes", href: "/tutorials/app/booleans" },
+      { title: "Sketch & Extrude", href: "/tutorials/app/sketch-extrude" },
+      { title: "Assemblies", href: "/tutorials/app/assembly" },
     ],
   },
   {
-    level: "intermediate",
-    icon: Lightning,
+    id: "rust",
+    icon: Code,
+    color: "text-blue-500",
+    bgColor: "bg-blue-500/10",
+    borderColor: "border-blue-500/20",
+    title: "write rust",
+    href: "/tutorials/rust/hello-cube",
+    lessons: [
+      { title: "Hello Cube", href: "/tutorials/rust/hello-cube" },
+      { title: "Transforms & Booleans", href: "/tutorials/rust/transforms-booleans" },
+      { title: "Parametric Functions", href: "/tutorials/rust/parametric" },
+      { title: "STEP Import/Export", href: "/tutorials/rust/step" },
+    ],
+  },
+  {
+    id: "cli",
+    icon: Terminal,
     color: "text-yellow-500",
     bgColor: "bg-yellow-500/10",
     borderColor: "border-yellow-500/20",
+    title: "use the cli",
+    href: "/tutorials/cli/quickstart",
     lessons: [
-      { title: "Sketching & Extrude", href: "/learn/intermediate/patterns" },
-      { title: "Assemblies & Joints", href: "/learn/intermediate/assembly" },
-      { title: "Materials & Rendering", href: "/learn/intermediate/materials" },
-      { title: "Rust Library", href: "/learn/intermediate/scenes" },
+      { title: "CLI Quick Start", href: "/tutorials/cli/quickstart" },
+      { title: "Interactive REPL", href: "/tutorials/cli/repl" },
+      { title: "Terminal UI", href: "/tutorials/cli/tui" },
+      { title: "Scripting", href: "/tutorials/cli/scripting" },
     ],
   },
   {
-    level: "advanced",
-    icon: Fire,
-    color: "text-red-500",
-    bgColor: "bg-red-500/10",
-    borderColor: "border-red-500/20",
+    id: "ai",
+    icon: Robot,
+    color: "text-purple-500",
+    bgColor: "bg-purple-500/10",
+    borderColor: "border-purple-500/20",
+    title: "build with ai",
+    href: "/tutorials/mcp/setup",
     lessons: [
-      { title: "MCP for AI Agents", href: "/learn/advanced/parametric" },
-      { title: "STEP Import/Export", href: "/learn/advanced/step" },
-      { title: "Kernel Architecture", href: "/learn/advanced/kernel" },
-      { title: "Contributing", href: "/learn/advanced/contributing" },
+      { title: "MCP Setup", href: "/tutorials/mcp/setup" },
+      { title: "Create Geometry", href: "/tutorials/mcp/create" },
+      { title: "Loon Language", href: "/tutorials/mcp/loon" },
+      { title: "Physics Simulation", href: "/tutorials/mcp/physics" },
     ],
   },
 ];
 
 export function LearningPaths() {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
       {paths.map((path) => (
         <div
-          key={path.level}
+          key={path.id}
           className={cn(
             "rounded-lg border p-5",
             path.borderColor,
@@ -58,7 +84,7 @@ export function LearningPaths() {
         >
           <div className={cn("flex items-center gap-2 mb-4", path.color)}>
             <path.icon size={20} weight="fill" />
-            <h3 className="font-bold">{path.level}</h3>
+            <h3 className="font-bold">{path.title}</h3>
           </div>
           <ul className="space-y-2">
             {path.lessons.map((lesson) => (

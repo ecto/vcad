@@ -1,0 +1,445 @@
+---
+title: "REPL Commands"
+description: "Interactive REPL commands and scripting"
+order: 2
+---
+
+The vcad REPL (Read-Eval-Print Loop) provides an interactive command-line interface for building geometry incrementally. Launch it with `vcad repl` to start with an empty document, or `vcad repl model.vcad` to load an existing file. Each command executes immediately and prints a summary of the result.
+
+## Primitives
+
+These commands create new geometry nodes and add them to the document.
+
+### cube
+
+```
+cube <sx> <sy> <sz> [name]
+```
+
+Creates a box with corner at the origin, extending to (sx, sy, sz). If no name is given, one is generated automatically.
+
+```
+> cube 50 30 5 plate
+Created "plate" (Cube 50x30x5)
+```
+
+### cylinder
+
+```
+cylinder <radius> <height> [segments] [name]
+```
+
+Creates a cylinder along the Z axis with base center at the origin. Segments default to 32.
+
+```
+> cylinder 10 25 shaft
+Created "shaft" (Cylinder r=10 h=25)
+```
+
+### sphere
+
+```
+sphere <radius> [segments] [name]
+```
+
+Creates a sphere centered at the origin.
+
+```
+> sphere 15 ball
+Created "ball" (Sphere r=15)
+```
+
+### cone
+
+```
+cone <r_bottom> <r_top> <height> [segments] [name]
+```
+
+Creates a cone or frustum along the Z axis. Set `r_top` to 0 for a pointed cone.
+
+```
+> cone 15 0 30 funnel
+Created "funnel" (Cone r_bottom=15 r_top=0 h=30)
+```
+
+## Boolean Operations
+
+Boolean commands combine two nodes and replace them with the result.
+
+### union
+
+```
+union <a> <b> [name]
+```
+
+Combines the volumes of nodes `a` and `b`. Operands can be specified by name or by node ID.
+
+```
+> union plate rib reinforced
+Created "reinforced" (Union plate + rib)
+```
+
+### difference
+
+```
+difference <a> <b> [name]
+```
+
+Subtracts node `b` from node `a`.
+
+```
+> difference plate hole drilled
+Created "drilled" (Difference plate - hole)
+```
+
+### intersection
+
+```
+intersection <a> <b> [name]
+```
+
+Keeps only the overlapping volume of `a` and `b`.
+
+```
+> intersection block sphere lens
+Created "lens" (Intersection block & sphere)
+```
+
+## Transforms
+
+Transform commands modify a node in place or create a new transformed copy.
+
+### translate
+
+```
+translate <node> <x> <y> <z>
+```
+
+Moves a node by the given offset in millimeters.
+
+```
+> translate hole 25 15 0
+Translated "hole" by (25, 15, 0)
+```
+
+### rotate
+
+```
+rotate <node> <rx> <ry> <rz>
+```
+
+Rotates a node by the given Euler angles in degrees.
+
+```
+> rotate arm 0 0 45
+Rotated "arm" by (0, 0, 45) degrees
+```
+
+### scale
+
+```
+scale <node> <sx> <sy> <sz>
+```
+
+Scales a node by the given factors. Use the same value for all three to scale uniformly.
+
+```
+> scale part 2 2 2
+Scaled "part" by (2, 2, 2)
+```
+
+### mirror
+
+```
+mirror <node> <axis>
+```
+
+Mirrors a node across the specified plane. Axis is `x`, `y`, or `z` (mirrors across the YZ, XZ, or XY plane respectively).
+
+```
+> mirror bracket x
+Mirrored "bracket" across YZ plane
+```
+
+## Features
+
+### fillet
+
+```
+fillet <node> <radius>
+```
+
+Rounds all edges of a node with the given blend radius.
+
+```
+> fillet plate 2
+Applied 2mm fillet to "plate"
+```
+
+### chamfer
+
+```
+chamfer <node> <distance>
+```
+
+Bevels all edges of a node with the given distance.
+
+```
+> chamfer plate 1
+Applied 1mm chamfer to "plate"
+```
+
+### shell
+
+```
+shell <node> <thickness>
+```
+
+Hollows a solid, leaving walls of the given thickness.
+
+```
+> shell box 2
+Shelled "box" with 2mm wall thickness
+```
+
+## Patterns
+
+### pattern
+
+```
+pattern <node> <dx> <dy> <dz> <count> <spacing>
+```
+
+Creates a linear pattern of copies along the direction vector (dx, dy, dz) with the given count and spacing.
+
+```
+> pattern hole 1 0 0 5 20
+Created linear pattern: 5 copies spaced 20mm along X
+```
+
+### circular_pattern
+
+```
+circular_pattern <node> <ox> <oy> <oz> <ax> <ay> <az> <count> [angle]
+```
+
+Creates copies arranged in a circle around an axis defined by origin (ox, oy, oz) and direction (ax, ay, az). Angle defaults to 360 degrees.
+
+```
+> circular_pattern hole 0 0 0 0 0 1 6 360
+Created circular pattern: 6 copies around Z at origin
+```
+
+## Inspection
+
+### info
+
+```
+info [node]
+```
+
+Prints detailed information about a node (type, parameters, children) or about the entire document if no node is specified.
+
+```
+> info plate
+Node "plate" (id: 0)
+  Type: Cube
+  Size: 50 x 30 x 5 mm
+```
+
+### volume
+
+```
+volume <node>
+```
+
+Computes and prints the enclosed volume in mm^3.
+
+```
+> volume drilled
+Volume: 7356.194 mm^3
+```
+
+### bbox
+
+```
+bbox <node>
+```
+
+Prints the axis-aligned bounding box.
+
+```
+> bbox plate
+Bounding box: (0, 0, 0) to (50, 30, 5)
+```
+
+### area
+
+```
+area <node>
+```
+
+Computes and prints the surface area in mm^2.
+
+```
+> area plate
+Surface area: 3800.000 mm^2
+```
+
+## I/O Commands
+
+### export
+
+```
+export <filename>
+```
+
+Exports the current document to a file. Format is determined by extension: `.stl`, `.glb`, `.step`, `.urdf`.
+
+```
+> export bracket.stl
+Exported to bracket.stl (1284 triangles)
+```
+
+### save
+
+```
+save [filename]
+```
+
+Saves the document as a `.vcad` file. If no filename is given, saves to the file loaded at startup.
+
+```
+> save bracket.vcad
+Saved to bracket.vcad
+```
+
+### load
+
+```
+load <filename>
+```
+
+Loads a `.vcad` file, replacing the current document.
+
+```
+> load bracket.vcad
+Loaded bracket.vcad (5 nodes, 2 materials)
+```
+
+## Editing Commands
+
+### list
+
+```
+list
+```
+
+Prints all nodes in the document with their IDs, names, and types.
+
+```
+> list
+  0: plate (Cube)
+  1: hole (Cylinder)
+  2: hole_translated (Translate)
+  3: drilled (Difference)
+```
+
+### select
+
+```
+select <node>
+```
+
+Sets the active selection to a node (by name or ID). Some commands operate on the current selection when no node argument is given.
+
+```
+> select plate
+Selected "plate" (id: 0)
+```
+
+### rename
+
+```
+rename <node> <new_name>
+```
+
+Changes a node's display name.
+
+```
+> rename 3 bracket
+Renamed node 3 to "bracket"
+```
+
+### delete
+
+```
+delete <node>
+```
+
+Removes a node and any nodes that depend on it from the document.
+
+```
+> delete hole
+Deleted "hole" and 2 dependent nodes
+```
+
+## Undo and Redo
+
+### undo
+
+```
+undo
+```
+
+Reverts the last command. The REPL maintains a full undo stack for the session.
+
+### redo
+
+```
+redo
+```
+
+Re-applies the last undone command.
+
+## Meta Commands
+
+### help
+
+```
+help [command]
+```
+
+Prints a summary of all commands, or detailed help for a specific command.
+
+### quit
+
+```
+quit
+```
+
+Exits the REPL. If the document has unsaved changes, the REPL prompts to save before exiting. Use `quit!` to force exit without saving.
+
+## Scripting
+
+The REPL can execute a sequence of commands from a file:
+
+```bash
+vcad repl --script commands.txt
+```
+
+Each line in the script file is executed as a REPL command. Lines starting with `#` are treated as comments. This is useful for parametric batch processing -- generate a script programmatically, then run it to produce geometry.
+
+```
+# commands.txt
+cube 50 30 5 plate
+cylinder 2.75 10 hole
+translate hole 25 15 0
+difference plate hole bracket
+fillet bracket 1
+export bracket.stl
+```
+
+<Callout type="tip" title="Tab completion">
+The REPL supports tab completion for command names and node names. Type the first few characters and press `Tab` to autocomplete.
+</Callout>

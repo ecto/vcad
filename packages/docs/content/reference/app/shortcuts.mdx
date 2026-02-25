@@ -1,0 +1,113 @@
+---
+title: "Keyboard Shortcuts"
+description: "All keyboard shortcuts in the vcad app"
+order: 11
+---
+
+vcad uses keyboard shortcuts extensively so you can model without reaching for menus. Every shortcut listed here uses `Cmd` for macOS; substitute `Ctrl` on Windows and Linux.
+
+## General
+
+| Shortcut | Action |
+|----------|--------|
+| `Cmd+K` | Open command palette |
+| `Cmd+Z` | Undo |
+| `Cmd+Shift+Z` | Redo |
+| `Cmd+S` | Save document |
+| `Delete` / `Backspace` | Delete selected node |
+
+The command palette (`Cmd+K`) is the fastest way to access any operation. Type a few characters to filter -- "cyl" finds "Add Cylinder", "fil" finds "Fillet", and so on. Every modeling operation is reachable through the palette, so if you forget a specific shortcut, `Cmd+K` is your fallback.
+
+## Viewport Navigation
+
+| Shortcut | Action |
+|----------|--------|
+| Middle mouse drag | Orbit camera |
+| Scroll wheel | Zoom in/out |
+| Shift + Middle mouse drag | Pan camera |
+| `F` | Fit view to selection (or entire scene if nothing selected) |
+| `G` | Toggle grid visibility |
+
+### Standard Views
+
+Numeric keys snap the camera to orthographic views aligned with the principal axes.
+
+| Key | View |
+|-----|------|
+| `1` | Front (looking along -Y) |
+| `2` | Back (looking along +Y) |
+| `3` | Right (looking along -X) |
+| `4` | Left (looking along +X) |
+| `5` | Top (looking along -Z) |
+| `6` | Bottom (looking along +Z) |
+| `7` | Isometric |
+
+These views are especially useful when positioning features precisely or when you need to verify alignment from a specific direction. Pressing the same key again toggles back to the perspective view you were in before.
+
+## Selection
+
+| Shortcut | Action |
+|----------|--------|
+| Click | Select face or node |
+| `Shift+Click` | Add to / remove from selection |
+| `Escape` | Deselect all |
+| `A` | Select all visible nodes |
+
+Selection drives most operations in vcad. When you select a face and then invoke "Fillet", the fillet applies to edges of that face. When you select a planar face and press `S`, a new sketch opens on that face's plane.
+
+## Sketch Mode
+
+| Shortcut | Action |
+|----------|--------|
+| `S` | Enter sketch mode on selected face or standard plane |
+| `Escape` | Exit sketch mode (confirm sketch) |
+| `L` | Line tool |
+| `C` | Circle tool |
+| `R` | Rectangle tool |
+| `H` | Apply horizontal constraint |
+| `V` | Apply vertical constraint |
+| `Enter` | Finish current shape chain |
+
+When sketch mode is active, the viewport switches to a 2D view of the sketch plane and the drawing tools become available. Constraint shortcuts (`H`, `V`) apply to the currently selected sketch entities. See the [Sketch Mode reference](/reference/app/sketch-mode) for the full list of constraint types.
+
+## Feature Tree
+
+| Shortcut | Action |
+|----------|--------|
+| `Up` / `Down` | Navigate nodes in the feature tree |
+| `Enter` | Edit selected node's parameters |
+| `Space` | Toggle node visibility |
+
+The feature tree panel on the left shows the parametric history. Navigating with arrow keys highlights the corresponding geometry in the viewport, which is helpful for finding a specific operation in a complex model.
+
+## Command Palette Operations
+
+While any operation can be triggered through the command palette, here are some of the most commonly used ones for reference:
+
+| Palette search | Operation |
+|---------------|-----------|
+| `cube` | Add Cube primitive |
+| `cylinder` | Add Cylinder primitive |
+| `sphere` | Add Sphere primitive |
+| `cone` | Add Cone primitive |
+| `union` | Boolean Union |
+| `difference` | Boolean Difference |
+| `intersection` | Boolean Intersection |
+| `fillet` | Fillet edges |
+| `chamfer` | Chamfer edges |
+| `shell` | Shell operation |
+| `extrude` | Extrude sketch profile |
+| `revolve` | Revolve sketch profile |
+| `linear pattern` | Linear Pattern |
+| `circular pattern` | Circular Pattern |
+| `export` | Export to file |
+
+<Callout type="tip" title="Fuzzy matching">
+The command palette uses fuzzy matching, so you don't need exact text. Typing "ext" matches both "Extrude" and "Export" -- arrow-key down to pick the one you want.
+</Callout>
+
+## Customization
+
+Keyboard shortcuts are not currently user-configurable. The set listed here is built into the app. If you find yourself repeatedly reaching for a command that doesn't have a shortcut, the command palette is the recommended workflow -- it's typically faster than memorizing rarely-used bindings.
+
+For the complete modeling workflow including sketch constraints, viewport modes, and export options, see the [App reference](/reference/app/viewport).

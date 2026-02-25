@@ -1,0 +1,291 @@
+---
+title: "Electronics via MCP"
+description: "Schematic to component placement to routing to DRC to Gerber export"
+order: 6
+difficulty: Advanced
+time: "20 minutes"
+---
+
+vcad includes ECAD (electronics CAD) tools accessible through MCP, covering the full PCB design pipeline: schematic capture, component placement, trace routing, design rule checking, and Gerber export. An AI agent can design a complete circuit board from a natural language description, and the resulting PCB integrates with the mechanical CAD side -- the board shows up as a 3D part in your assembly, so you can verify that it fits in your enclosure.
+
+## The ECAD Pipeline
+
+PCB design follows a sequential pipeline, and each stage has a corresponding MCP tool.
+
+```text
+create_schematic → place_components → route_nets → run_drc → export_gerbers
+                                                      ↑
+                                              run_erc ─┘
+```
+
+The `create_schematic` tool defines the electrical connectivity: which components exist, how their pins are wired together, and what net names they carry. The `place_components` tool takes that schematic and arranges the physical footprints on a PCB board with defined dimensions and layer stackup. The `route_nets` tool draws copper traces between pads that share a net. The `run_drc` and `run_erc` tools check for physical and electrical rule violations. Finally, `export_gerbers` produces manufacturing files.
+
+## Creating a Schematic
+
+A schematic defines components with reference designators, values, footprints, and pin definitions. Wires connect pins, and labels name the nets. Here is a minimal LED circuit: a 2-pin JST connector providing power, a 330-ohm current-limiting resistor, and a red LED.
+
+```json
+{
+  "title": "LED Circuit",
+  "components": [
+    {
+      "ref": "J1",
+      "value": "Conn_2pin",
+      "footprint": "Connector_JST:JST_XH_B2B-XH-A_1x02_P2.50mm",
+      "x": 10, "y": 30,
+      "pins": [
+        { "number": "1", "name": "VCC", "type": "PowerInput", "x": 5, "y": 0 },
+        { "number": "2", "name": "GND", "type": "PowerInput", "x": 5, "y": 5 }
+      ]
+    },
+    {
+      "ref": "R1",
+      "value": "330",
+      "footprint": "Resistor_SMD:R_0805",
+      "x": 30, "y": 30,
+      "pins": [
+        { "number": "1", "name": "1", "type": "Passive", "x": -2, "y": 0 },
+        { "number": "2", "name": "2", "type": "Passive", "x": 2, "y": 0 }
+      ]
+    },
+    {
+      "ref": "D1",
+      "value": "LED_Red",
+      "footprint": "LED_SMD:LED_0805",
+      "x": 50, "y": 30,
+      "pins": [
+        { "number": "1", "name": "A", "type": "Passive", "x": -2, "y": 0 },
+        { "number": "2", "name": "K", "type": "Passive", "x": 2, "y": 0 }
+      ]
+    }
+  ],
+  "wires": [
+    { "x1": 15, "y1": 30, "x2": 28, "y2": 30 },
+    { "x1": 32, "y1": 30, "x2": 48, "y2": 30 },
+    { "x1": 52, "y1": 30, "x2": 60, "y2": 30 },
+    { "x1": 60, "y1": 30, "x2": 60, "y2": 35 },
+    { "x1": 15, "y1": 35, "x2": 60, "y2": 35 }
+  ],
+  "labels": [
+    { "name": "VCC", "x": 20, "y": 29 },
+    { "name": "GND", "x": 20, "y": 36 },
+    { "name": "LED_A", "x": 40, "y": 29 }
+  ]
+}
+```
+
+Each component has a `ref` (like R1, D1, J1) that uniquely identifies it, a `value` that describes its electrical function, and a `footprint` string that maps to a physical package. The `pins` array defines each pin's number, name, electrical type, and position relative to the component's origin on the schematic sheet. Wires are simple line segments between coordinates, and labels attach net names to wire junctions.
+
+The `create_schematic` tool returns a vcad document containing the schematic data, ready for the next stage.
+
+<Callout type="info" title="Pin types">
+Pin types determine how ERC (electrical rule check) validates connections. **PowerInput** pins must connect to a power source. **Passive** pins connect freely. **Input** and **Output** pins flag potential conflicts when outputs drive other outputs. **NotConnected** pins are explicitly unconnected and do not trigger warnings.
+</Callout>
+
+## Placing Components on the Board
+
+The `place_components` tool takes the schematic document, a board width and height in millimeters, and arranges footprints on the PCB. It creates the full board definition: outline, layer stackup (default 2-layer FR4), design rules, and footprint positions.
+
+```json
+{
+  "document": { "...schematic document..." },
+  "board_width": 25,
+  "board_height": 20,
+  "board_thickness": 1.6
+}
+```
+
+The tool uses a grid-based placement strategy by default, distributing components evenly across the board with configurable margins. The response includes the updated document with a PCB structure containing the board outline (a rectangular polygon), a two-layer stackup with 35-micron copper on FR4 dielectric, default design rules (0.25mm trace width, 0.2mm clearance, 0.8mm via diameter), and positioned footprints with SMD pads.
+
+```json
+{
+  "success": true,
+  "footprints_placed": 3,
+  "board": { "width": 25, "height": 20, "thickness": 1.6 }
+}
+```
+
+The resulting PCB document stores everything needed for routing: net connectivity extracted from the schematic, pad positions on each footprint, and the design rule constraints that the router must respect.
+
+<Callout type="tip" title="Board size">
+For a simple LED circuit with three components, a 25x20mm board is generous. The AI can estimate board size from the number and size of components. A rule of thumb: total component area times 2-3x for routing space. The `inspect_cad` tool can check the final board dimensions if you need to verify it fits in an enclosure.
+</Callout>
+
+## Routing Traces
+
+The `route_nets` tool connects pads that share a net with copper traces. Pass it the document with placed components and optionally specify which nets to route and the trace width.
+
+```json
+{
+  "document": { "...placed PCB document..." },
+  "trace_width": 0.3
+}
+```
+
+The router connects pads sequentially within each net using direct point-to-point traces on the front copper layer. For the LED circuit, this produces three traces: VCC from J1 pin 1 to R1 pin 1, LED_A from R1 pin 2 to D1 anode, and GND from D1 cathode back to J1 pin 2.
+
+```json
+{
+  "success": true,
+  "nets_routed": 3,
+  "traces_added": 3
+}
+```
+
+The trace width defaults to the design rules' `defaultRules.traceWidth` (0.25mm) but can be overridden per call. For power nets that carry more current, the AI can route those nets separately with a wider trace width.
+
+## Design Rule Check
+
+Before manufacturing, run `run_drc` to catch physical violations: traces too narrow, vias too small, copper too close to the board edge, and annular rings below the minimum.
+
+```json
+{
+  "document": { "...routed PCB document..." }
+}
+```
+
+A clean board returns:
+
+```json
+{
+  "success": true,
+  "violations": 0,
+  "errors": 0,
+  "warnings": 0,
+  "details": []
+}
+```
+
+When violations exist, the `details` array describes each one with the rule name, severity, a human-readable message, and the position on the board where it occurred.
+
+```json
+{
+  "violations": 1,
+  "errors": 1,
+  "warnings": 0,
+  "details": [
+    {
+      "rule": "EdgeClearance",
+      "severity": "Error",
+      "message": "Trace too close to board edge (min 0.5mm)",
+      "position": { "x": 0.3, "y": 10.0 }
+    }
+  ]
+}
+```
+
+The AI can read these violations, adjust the component placement or routing, and re-run DRC until the board is clean. This is the same inspect-and-iterate loop from `inspect_cad`, applied to PCB manufacturing constraints.
+
+The DRC checks the following rules: minimum trace width, minimum drill diameter, minimum annular ring, edge clearance for traces, and clearance between traces on the same layer. All thresholds come from the design rules defined during `place_components`.
+
+## Electrical Rule Check
+
+`run_erc` validates the schematic for electrical correctness, independent of the physical layout. It catches duplicate reference designators and unconnected pins.
+
+```json
+{
+  "document": { "...schematic document..." }
+}
+```
+
+```json
+{
+  "success": true,
+  "violations": 2,
+  "errors": 0,
+  "warnings": 2,
+  "details": [
+    {
+      "severity": "Warning",
+      "message": "Unconnected pin: U1 pin 4 (NC)"
+    },
+    {
+      "severity": "Warning",
+      "message": "Unconnected pin: U1 pin 8 (TEST)"
+    }
+  ]
+}
+```
+
+Warnings about unconnected pins are common and often intentional (no-connect pins, test points). Errors about duplicate reference designators or power pins without sources are more serious and should be fixed before proceeding to layout.
+
+## Exporting Gerber Files
+
+Once DRC passes, `export_gerbers` produces the manufacturing files that a PCB fabrication house needs.
+
+```json
+{
+  "document": { "...clean PCB document..." },
+  "output_dir": "/tmp/led-circuit-gerbers"
+}
+```
+
+```json
+{
+  "success": true,
+  "output_dir": "/tmp/led-circuit-gerbers",
+  "files": [
+    "/tmp/led-circuit-gerbers/FCu.gbr",
+    "/tmp/led-circuit-gerbers/BCu.gbr",
+    "/tmp/led-circuit-gerbers/FPaste.gbr",
+    "/tmp/led-circuit-gerbers/FMask.gbr",
+    "/tmp/led-circuit-gerbers/drill.drl",
+    "/tmp/led-circuit-gerbers/pick_place.csv",
+    "/tmp/led-circuit-gerbers/bom.csv"
+  ],
+  "layers": ["FCu", "BCu", "FPaste", "FMask"]
+}
+```
+
+The output includes Gerber files for each copper and mask layer, an Excellon drill file for through-holes and vias, a pick-and-place CSV for automated assembly, and a bill of materials. These files can be uploaded directly to fabrication services like JLCPCB, PCBWay, or OSH Park.
+
+## Impedance Calculator
+
+For high-speed designs, the `calc_impedance` tool computes trace impedance from physical parameters. This is essential for USB, HDMI, and other controlled-impedance interfaces.
+
+```json
+{
+  "trace_width": 0.15,
+  "dielectric_height": 0.2,
+  "dielectric_er": 4.5,
+  "copper_thickness": 0.035,
+  "trace_type": "microstrip"
+}
+```
+
+```json
+{
+  "z0": 89.42,
+  "er_eff": 3.318,
+  "delay_ps_per_mm": 6.076,
+  "trace_type": "microstrip"
+}
+```
+
+The tool supports microstrip, stripline, differential microstrip, and differential stripline geometries. For differential pairs, add the `spacing` parameter and use `trace_type: "diff_microstrip"` to get the differential impedance `z_diff` in the result.
+
+## MCAD Integration
+
+The PCB board created by `place_components` is stored as a node in the vcad document, which means it appears as a 3D part alongside your mechanical geometry. A board with components can be placed into an assembly as an instance, and the AI can verify that it physically fits inside an enclosure by checking bounding boxes with `inspect_cad`.
+
+<Playground exampleId="enclosure" />
+
+This integration closes the loop between electrical and mechanical design. The AI can design a PCB that fits a specific enclosure, position mounting holes to match standoff locations, and verify clearances between the board and the case walls -- all within a single vcad document.
+
+## Full Workflow Example
+
+Here is the complete sequence an AI would execute to design the LED circuit board:
+
+```text
+1. create_schematic(components, wires, labels)     → schematic document
+2. run_erc(document)                               → 0 errors, proceed
+3. place_components(document, 25, 20)              → PCB with footprints
+4. route_nets(document, trace_width=0.3)           → 3 traces routed
+5. run_drc(document)                               → 0 violations
+6. export_gerbers(document, "/tmp/gerbers")         → manufacturing files
+7. inspect_cad(document)                           → board dimensions confirmed
+```
+
+Each step builds on the previous one, and the AI can loop back to fix issues at any stage. A DRC failure at step 5 sends the AI back to step 3 or 4 to adjust placement or routing. An ERC failure at step 2 sends it back to step 1 to fix the schematic.
+
+For the complete tool API including all parameters and optional fields, see the [MCP Tools Reference](/reference/mcp/overview).

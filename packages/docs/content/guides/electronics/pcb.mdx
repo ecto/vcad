@@ -1,0 +1,79 @@
+---
+title: "PCB Layout"
+description: "Board outline, stackup, placement, routing, vias, zones, layers"
+order: 2
+---
+
+PCB layout converts the schematic's logical connections into a physical circuit board. You define the board shape, place components on the surface, route copper traces between pads, pour ground planes, and add vias to connect layers. The result is a set of manufacturing files that a PCB fabrication house turns into a real board.
+
+## Board Outline
+
+The board outline defines the physical boundary of the PCB. In vcad, the board outline can come from two sources: a rectangle with specified dimensions, or the outline of a face on a 3D part (so the PCB fits exactly inside an enclosure you already modeled).
+
+Press **Cmd+K** and choose **New PCB** to create a board. Set the outline dimensions or select a face from the 3D model. The PCB editor opens with the board outline displayed as a yellow boundary. Everything inside this boundary is board area; everything outside is empty space that will be routed away during fabrication.
+
+Corners can be sharp or rounded. For boards that must fit into enclosures, round the corners with a radius that matches the enclosure's internal fillet radius.
+
+## Layer Stackup
+
+The stackup defines how many copper layers the board has and how they are arranged. Common configurations are:
+
+**2-layer** boards have copper on the front (FCu) and back (BCu) with a dielectric core between them. Suitable for simple designs with moderate routing density.
+
+**4-layer** boards add two internal copper layers (In1.Cu, In2.Cu) between the front and back. Typically, the internal layers are used as continuous ground and power planes, which improves signal integrity and simplifies routing. Suitable for designs with microcontrollers, moderate-speed signals, and mixed-signal circuits.
+
+Choose the stackup in the board settings panel. The layer manager shows all available layers: copper layers, silkscreen (FSilkS, BSilkS), solder mask (FMask, BMask), paste (FPaste, BPaste), fabrication (FFab, BFab), and the board edge cut layer (Edge.Cuts).
+
+<Callout type="info" title="Design rules">
+Set design rules before you start routing. Rules define minimum trace width, minimum clearance (trace-to-trace, trace-to-pad, trace-to-zone), minimum via drill diameter, and minimum annular ring width. These constraints depend on your fabrication house's capabilities. Standard PCB services typically support 0.15 mm (6 mil) trace width and 0.15 mm clearance. Check your fab house's specifications and enter them as design rules.
+</Callout>
+
+## Component Placement
+
+After creating the board and importing the netlist from the schematic (this happens automatically -- the schematic and PCB share the same document), all components appear in a pile at the board origin. Your job is to place them inside the board outline.
+
+Drag components to their positions. Press **R** to rotate 90 degrees, **F** to flip from front to back side. The ratsnest (thin lines showing unrouted connections) updates as you move components, giving visual feedback on connection density and routing difficulty.
+
+Placement strategy matters enormously for routing success. Group components by function: place the microcontroller and its decoupling capacitors together, place the power section near the power input connector, place analog components away from digital noise sources. Minimize ratsnest crossings -- fewer crossings means easier routing.
+
+Place bypass (decoupling) capacitors as close as possible to the IC power pins they serve. The traces from capacitor to IC pin should be short and direct. Place high-frequency components (crystals, oscillators) close to the IC pins they connect to, with short traces and a ground plane underneath.
+
+<Callout type="tip" title="Placement is 80% of layout">
+Good placement makes routing straightforward; bad placement makes it impossible. Spend time experimenting with component positions before you start routing. Drag groups around, observe the ratsnest, and iterate until the connections flow naturally without excessive crossing.
+</Callout>
+
+## Routing Traces
+
+Routing connects pads that belong to the same net. Press **X** to enter routing mode. Click a pad to start, and the router guides the trace along the grid toward the target pad, following the shortest path that does not violate design rules.
+
+Traces on the front copper layer (FCu) are typically shown in red. Traces on the back layer (BCu) are shown in blue. Internal layers have their own colors. The trace width defaults to the design rules minimum but can be increased for power traces that carry higher current.
+
+Route critical signals first: clock lines, high-speed data, and analog signals. These benefit from short, direct paths with minimal vias. Route power traces next with wider widths appropriate for the current they carry. Route remaining signals last.
+
+## Vias
+
+A via connects traces on different copper layers. When routing a trace, press **V** to drop a via and switch to another layer. The via is a drilled hole with copper plating that conducts current between layers.
+
+**Through-hole vias** pass through the entire board. They are the default and most common type.
+
+**Blind vias** connect an outer layer to an internal layer without passing all the way through. More expensive to fabricate.
+
+**Buried vias** connect two internal layers without reaching either surface. Most expensive and only available from advanced fab houses.
+
+For standard 2-layer and 4-layer boards, through-hole vias are sufficient. Via diameter is set in the design rules -- a typical minimum is 0.3 mm drill with 0.6 mm pad.
+
+## Copper Zones
+
+A copper zone is a filled area of copper, typically used for ground planes and power planes. Select the zone tool, draw a polygon outline, and assign it to a net (usually GND). The zone fills the enclosed area with copper, connecting to all pads on that net.
+
+Ground zones improve signal integrity by providing a low-impedance return path for signals, shielding sensitive traces from noise, and reducing electromagnetic emissions. For 4-layer boards, dedicate one internal layer entirely to a ground zone.
+
+Zone settings include **thermal relief** (how pads connect to the zone -- direct connection for maximum conductivity or thermal relief spokes for easier soldering) and **clearance** (the gap between the zone copper and non-zone traces/pads).
+
+## Keepout Areas
+
+Keepout areas are zones where routing and copper are prohibited. Use them around mounting holes (to prevent traces from being damaged by screws), under antennas (copper near an antenna detunes it), and at board edges (traces too close to the edge can be damaged during routing/depaneling).
+
+Draw a keepout area by selecting the keepout tool and drawing a polygon. Specify whether it restricts copper, traces, vias, or components.
+
+For validating your layout against manufacturing constraints, continue to the [Design Rule Checks](/guides/electronics/drc) guide.

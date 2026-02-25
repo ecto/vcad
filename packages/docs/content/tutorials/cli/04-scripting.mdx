@@ -1,0 +1,306 @@
+---
+title: "Scripting & Pipelines"
+description: "Shell scripts, batch export, STEP import pipelines, CLI slicing"
+order: 4
+difficulty: Intermediate
+time: "15 minutes"
+---
+
+Every vcad CLI command exits with code 0 on success and code 1 on failure, writes human-readable output to stdout, and sends errors to stderr. This makes the CLI a natural fit for shell scripts, CI pipelines, and automation workflows. The `--json` flag on several commands switches output to machine-readable JSON, so you can pipe results into `jq` or any other tool.
+
+## Batch Export
+
+The most common automation task is exporting a directory of `.vcad` files to mesh formats. The following script converts every `.vcad` file in a directory to STL:
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+INPUT_DIR="./models"
+OUTPUT_DIR="./stl"
+mkdir -p "$OUTPUT_DIR"
+
+for f in "$INPUT_DIR"/*.vcad; do
+  name=$(basename "$f" .vcad)
+  echo "Exporting $name..."
+  vcad export "$f" "$OUTPUT_DIR/$name.stl"
+done
+
+echo "Done. Exported $(ls "$OUTPUT_DIR"/*.stl | wc -l) files."
+```
+
+```
+Exporting bracket...
+Exported STL to stl/bracket.stl
+Exporting housing...
+Exported STL to stl/housing.stl
+Exporting mount...
+Exported STL to stl/mount.stl
+Done. Exported 3 files.
+```
+
+Because the CLI exits non-zero on failure, `set -euo pipefail` will stop the script immediately if any single export fails. For a more forgiving approach -- skip failures and report them at the end -- drop the `set -e` and check exit codes manually:
+
+```bash
+#!/bin/bash
+failures=()
+
+for f in models/*.vcad; do
+  name=$(basename "$f" .vcad)
+  if ! vcad export "$f" "stl/$name.stl" 2>/dev/null; then
+    failures+=("$name")
+  fi
+done
+
+if [ ${#failures[@]} -gt 0 ]; then
+  echo "Failed: ${failures[*]}" >&2
+  exit 1
+fi
+```
+
+## STEP Import Pipelines
+
+Vendor parts often arrive as STEP files that need to be imported, inspected, and sometimes transformed before they can be used. This pipeline imports a batch of STEP files, prints a summary of each, and exports them all to STL:
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+STEP_DIR="./vendor-parts"
+VCAD_DIR="./imported"
+STL_DIR="./meshes"
+mkdir -p "$VCAD_DIR" "$STL_DIR"
+
+for step in "$STEP_DIR"/*.step; do
+  name=$(basename "$step" .step)
+  vcad_file="$VCAD_DIR/$name.vcad"
+  stl_file="$STL_DIR/$name.stl"
+
+  echo "=== $name ==="
+  vcad import "$step" "$vcad_file" --name "$name"
+  vcad info "$vcad_file"
+  vcad export "$vcad_file" "$stl_file"
+  echo ""
+done
+```
+
+```
+=== motor-housing ===
+Imported 1 solid(s) from vendor-parts/motor-housing.step to imported/motor-housing.vcad
+vcad document: imported/motor-housing.vcad
+  Version: 1.0.0
+  Nodes: 1
+  Materials: 0
+  Scene entries: 1
+
+Scene:
+  1: motor-housing (material: default)
+
+Mesh stats:
+  Total triangles: 4832
+  Total vertices: 2416
+Exported STL to meshes/motor-housing.stl
+```
+
+If you need to apply a transform to every imported part -- for example, scaling from inches to millimeters -- add a transform step after import:
+
+```bash
+vcad import "$step" "$vcad_file" --name "$name"
+vcad transform "$vcad_file" "$name" --scale 25.4
+vcad export "$vcad_file" "$stl_file"
+```
+
+## Machine-Readable Output
+
+The `vcad info --json` flag outputs a JSON object instead of the human-readable table. This is the key to integrating vcad with other tools.
+
+```bash
+vcad info bracket.vcad --json
+```
+
+```json
+{
+  "file": "bracket.vcad",
+  "version": "1.0.0",
+  "nodes": 5,
+  "materials": 1,
+  "scene": [
+    {
+      "name": "Bracket",
+      "material": "aluminum"
+    }
+  ],
+  "mesh": {
+    "triangles": 1284,
+    "vertices": 642
+  }
+}
+```
+
+You can combine this with `jq` to extract specific fields. For example, to print the triangle count for every file in a directory:
+
+```bash
+for f in models/*.vcad; do
+  name=$(basename "$f" .vcad)
+  tris=$(vcad info "$f" --json | jq '.mesh.triangles')
+  echo "$name: $tris triangles"
+done
+```
+
+```
+bracket: 1284 triangles
+housing: 4832 triangles
+mount: 876 triangles
+```
+
+This is useful for enforcing mesh budgets in a CI environment -- if a model exceeds a triangle threshold, fail the build.
+
+## CI/CD Integration
+
+Here is a GitHub Actions workflow that validates every `.vcad` file in the repository and exports STL artifacts. The `vcad info` step catches corrupt or malformed files, and the export step ensures every model can be tessellated without errors.
+
+```yaml
+name: Validate CAD Models
+on: [push, pull_request]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install vcad CLI
+        run: cargo install vcad-cli
+
+      - name: Validate documents
+        run: |
+          for f in models/*.vcad; do
+            echo "Checking $f..."
+            vcad info "$f"
+          done
+
+      - name: Export STL artifacts
+        run: |
+          mkdir -p artifacts
+          for f in models/*.vcad; do
+            name=$(basename "$f" .vcad)
+            vcad export "$f" "artifacts/$name.stl"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stl-exports
+          path: artifacts/
+```
+
+<Callout type="info" title="Exit codes in CI">
+A `vcad info` or `vcad export` command that fails returns exit code 1 with a descriptive error on stderr. GitHub Actions treats any non-zero exit as a step failure, so corrupt documents or broken geometry will fail the pipeline automatically without any extra logic.
+</Callout>
+
+## CLI Slicing
+
+The `vcad slice` command takes a `.vcad` file and produces G-code or 3MF output ready for a 3D printer. You can specify print parameters directly on the command line:
+
+```bash
+vcad slice bracket.vcad -o bracket.gcode \
+  --layer-height 0.2 \
+  --infill 20 \
+  --wall-count 3 \
+  --profile bambu_x1c
+```
+
+```
+Slicing bracket.vcad...
+  Profile: bambu_x1c
+  Layer height: 0.20 mm
+  Infill: 20%
+  Walls: 3
+  Layers: 42
+  Estimated time: 1h 12m
+  Estimated filament: 14.3 g
+Written to bracket.gcode
+```
+
+Printer profiles set sensible defaults for temperature, speed, and retraction. The available profiles are `generic`, `bambu_x1c`, `bambu_p1s`, `bambu_a1`, `bambu_a1_mini`, `ender3`, `prusa_mk4`, and `voron_24`. Any parameter you specify on the command line overrides the profile default.
+
+The `--smart` flag analyzes the part's BRep geometry -- overhangs, thin walls, bridging distances, and surface features -- and recommends layer height, infill density, and support settings automatically. Add `--explain` to see the reasoning behind each recommendation:
+
+```bash
+vcad slice bracket.vcad -o bracket.gcode --profile bambu_x1c --smart --explain
+```
+
+```
+Slicing bracket.vcad...
+  Profile: bambu_x1c (smart defaults)
+
+BRep analysis:
+  Min wall thickness: 2.1 mm — adequate for 0.4mm nozzle
+  Max overhang angle: 62° — support recommended for 3 regions
+  Small features: 2 fillets under 1mm radius — 0.12mm layers recommended
+
+Smart defaults:
+  Layer height: 0.12 mm (detail: small fillets detected)
+  Infill: 25% (structural: moderate load paths)
+  Support: enabled (overhang: 3 regions > 55°)
+
+  Layers: 70
+  Estimated time: 2h 05m
+  Estimated filament: 18.7 g
+Written to bracket.gcode
+```
+
+<Callout type="tip" title="Override smart defaults">
+The `--smart` flag sets a baseline. You can override any individual setting with an explicit flag. For example, `--smart --layer-height 0.2` uses smart recommendations for everything except layer height.
+</Callout>
+
+## Batch Slicing
+
+Combine slicing with the batch patterns from earlier to prepare an entire directory for printing:
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+PROFILE="bambu_x1c"
+
+for f in models/*.vcad; do
+  name=$(basename "$f" .vcad)
+  echo "Slicing $name..."
+  vcad slice "$f" -o "gcode/$name.gcode" --profile "$PROFILE" --smart
+done
+```
+
+## Piping to External Tools
+
+The CLI can write mesh data to stdout for piping into other tools. Use `/dev/stdout` as the output path:
+
+```bash
+vcad export bracket.vcad /dev/stdout --format stl | mesh-tool analyze
+```
+
+This avoids writing temporary files to disk, which is useful in CI environments or when chaining vcad with mesh processing tools. The `--format` flag is required when writing to stdout since there is no file extension to infer from.
+
+You can also feed STEP data through a pipe. Import from stdin, transform, and export in a single pipeline:
+
+```bash
+curl -sL https://parts.example.com/bracket.step -o /tmp/part.step \
+  && vcad import /tmp/part.step /tmp/part.vcad \
+  && vcad transform /tmp/part.vcad Part --scale 25.4 \
+  && vcad export /tmp/part.vcad /dev/stdout --format stl \
+  | upload-to-printer --printer shop-floor-01
+```
+
+## Rendering Thumbnails
+
+The `vcad render` command produces PNG or JPEG images, which is useful for generating preview thumbnails in automated pipelines:
+
+```bash
+for f in models/*.vcad; do
+  name=$(basename "$f" .vcad)
+  vcad render "$f" "thumbnails/$name.png" --width 512 --height 512 --background transparent
+done
+```
+
+This pairs well with CI -- generate thumbnails for every model in a PR and attach them as artifacts so reviewers can see what changed without opening the app.
+
+The CLI is designed to be one tool in a larger pipeline. Every command that reads a `.vcad` file uses the same kernel evaluation path as the web app and the MCP server, so results are identical regardless of which interface you use. For the complete list of commands and flags, see the [CLI Commands reference](/reference/cli/commands). For AI-driven workflows, see the [MCP tutorials](/tutorials/mcp/setup).

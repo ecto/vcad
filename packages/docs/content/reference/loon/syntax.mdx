@@ -1,0 +1,431 @@
+---
+title: "Loon Syntax"
+description: "Complete Loon language syntax: primitives, booleans, transforms, pipe, let, scene"
+order: 1
+---
+
+Loon is a Lisp-inspired language for describing parametric CAD geometry. It uses S-expression syntax with square brackets and provides `let` bindings for naming intermediate results and `pipe` for chaining operations. Loon is the primary input format for the `create_cad_loon` MCP tool, offering a more concise alternative to the JSON-based `create_cad_document`.
+
+## Syntax Basics
+
+Loon expressions use square brackets instead of parentheses. The first element after the opening bracket is the operator, and the rest are arguments.
+
+```lisp
+[cube 50 30 5]
+```
+
+Nesting works as expected:
+
+```lisp
+[difference [cube 50 30 5] [translate 25 15 0 [cylinder 3 10]]]
+```
+
+Comments start with `;` and extend to the end of the line:
+
+```lisp
+; A simple plate with a hole
+[difference [cube 50 30 5] [translate 25 15 0 [cylinder 3 10]]]
+```
+
+## Primitives
+
+### cube
+
+```lisp
+[cube <sx> <sy> <sz>]
+```
+
+Creates a box with corner at the origin, extending to (sx, sy, sz). All dimensions in millimeters.
+
+```lisp
+[cube 100 60 5]  ; 100mm wide, 60mm deep, 5mm tall
+```
+
+### cylinder
+
+```lisp
+[cylinder <radius> <height>]
+```
+
+Creates a cylinder along the Z axis with base center at the origin.
+
+```lisp
+[cylinder 10 25]  ; r=10mm, h=25mm
+```
+
+### sphere
+
+```lisp
+[sphere <radius>]
+```
+
+Creates a sphere centered at the origin.
+
+```lisp
+[sphere 15]  ; r=15mm
+```
+
+### cone
+
+```lisp
+[cone <r_bottom> <r_top> <height>]
+```
+
+Creates a cone or frustum along the Z axis. Use 0 for `r_top` for a pointed cone.
+
+```lisp
+[cone 10 0 20]    ; pointed cone
+[cone 15 8 25]    ; frustum
+```
+
+## Boolean Operations
+
+### union
+
+```lisp
+[union <a> <b>]
+```
+
+Combines two shapes into one. Can be nested for multi-body unions.
+
+```lisp
+[union [cube 20 20 10] [translate 10 10 0 [cube 20 20 10]]]
+```
+
+### difference
+
+```lisp
+[difference <a> <b>]
+```
+
+Subtracts shape `b` from shape `a`.
+
+```lisp
+[difference [cube 50 30 5] [translate 25 15 0 [cylinder 3 10]]]
+```
+
+### intersection
+
+```lisp
+[intersection <a> <b>]
+```
+
+Keeps only the overlapping volume.
+
+```lisp
+[intersection [cube 20 20 20] [sphere 15]]
+```
+
+## Transforms
+
+### translate
+
+```lisp
+[translate <x> <y> <z> <child>]
+```
+
+Moves a shape by the given offset. Note that the child comes last, which enables clean piping.
+
+```lisp
+[translate 50 0 10 [cube 20 20 20]]
+```
+
+### rotate
+
+```lisp
+[rotate <rx> <ry> <rz> <child>]
+```
+
+Rotates a shape by Euler angles in degrees.
+
+```lisp
+[rotate 0 0 45 [cube 20 20 20]]
+```
+
+### scale
+
+```lisp
+[scale <sx> <sy> <sz> <child>]
+```
+
+Scales a shape by the given factors.
+
+```lisp
+[scale 2 1 1 [cube 10 10 10]]  ; stretch along X
+```
+
+## Patterns
+
+### linear-pattern
+
+```lisp
+[linear-pattern <dx> <dy> <dz> <count> <spacing> <child>]
+```
+
+Creates `count` copies along the direction vector with the given spacing.
+
+```lisp
+[linear-pattern 1 0 0 5 20 [cylinder 3 10]]
+```
+
+### circular-pattern
+
+```lisp
+[circular-pattern <ox> <oy> <oz> <ax> <ay> <az> <count> <angle> <child>]
+```
+
+Creates copies around an axis defined by origin and direction vector.
+
+```lisp
+[circular-pattern 0 0 0 0 0 1 6 360 [cylinder 3 10]]
+```
+
+## Features
+
+### fillet
+
+```lisp
+[fillet <radius> <child>]
+```
+
+Rounds all edges of a solid with the given blend radius.
+
+```lisp
+[fillet 2 [cube 30 30 10]]
+```
+
+### chamfer
+
+```lisp
+[chamfer <distance> <child>]
+```
+
+Bevels all edges with the given distance.
+
+```lisp
+[chamfer 1 [cube 30 30 10]]
+```
+
+### shell
+
+```lisp
+[shell <thickness> <child>]
+```
+
+Hollows a solid, leaving walls of the given thickness.
+
+```lisp
+[shell 2 [cube 50 50 50]]
+```
+
+## Sketch Operations
+
+### sketch
+
+```lisp
+[sketch <plane> <segments...> end]
+```
+
+Creates a 2D sketch on a standard plane (`xy`, `xz`, or `yz`). Segments are line and arc definitions within the sketch. Close the sketch with `end`.
+
+```lisp
+[sketch xy
+  [line 0 0 10 0]
+  [line 10 0 10 5]
+  [line 10 5 0 5]
+  [line 0 5 0 0]
+end]
+```
+
+### extrude
+
+```lisp
+[extrude <dx> <dy> <dz> <sketch>]
+```
+
+Pushes a sketch profile along the given direction vector.
+
+```lisp
+[extrude 0 0 20
+  [sketch xy
+    [line 0 0 10 0]
+    [line 10 0 10 5]
+    [line 10 5 0 5]
+    [line 0 5 0 0]
+  end]]
+```
+
+### revolve
+
+```lisp
+[revolve <ox> <oy> <oz> <ax> <ay> <az> <angle> <sketch>]
+```
+
+Revolves a sketch around an axis. Angle in degrees.
+
+```lisp
+[revolve 0 0 0 0 0 1 360
+  [sketch xz
+    [line 5 0 10 0]
+    [line 10 0 10 15]
+    [line 10 15 5 15]
+    [line 5 15 5 0]
+  end]]
+```
+
+## let Bindings
+
+The `let` form names an expression so you can reference it later. This is how you avoid deep nesting and build complex models from named pieces.
+
+```lisp
+[let plate [cube 50 30 5]]
+[let hole [translate 25 15 0 [cylinder 3 10]]]
+[let result [difference plate hole]]
+[root result "aluminum"]
+```
+
+Variables are resolved by name. A `let` binding does not create a visible part on its own -- you must use `root` to add it to the scene.
+
+## pipe
+
+The `pipe` form chains operations on a value, passing the result of each step as the last argument to the next. This avoids deeply nested brackets when applying a sequence of transforms or operations.
+
+```lisp
+[pipe
+  [cube 50 30 5]
+  [fillet 1]
+  [translate -25 -15 -2.5]
+  [shell 2]]
+```
+
+This is equivalent to:
+
+```lisp
+[shell 2 [translate -25 -15 -2.5 [fillet 1 [cube 50 30 5]]]]
+```
+
+Each step in the pipe receives the previous result as its last argument. This works because all Loon operations accept the child/operand as the last argument.
+
+## Scene Directives
+
+### root
+
+```lisp
+[root <expr> <material>]
+```
+
+Adds a geometry expression to the scene with the given material. A document can have multiple roots for multi-part scenes.
+
+```lisp
+[let bracket [difference [cube 50 30 5] [translate 25 15 0 [cylinder 3 10]]]]
+[root bracket "aluminum"]
+```
+
+### material
+
+Materials are referenced by name in `root` directives. The standard built-in materials (aluminum, steel, abs-black, etc.) are available automatically. Custom materials can be defined with the `material` directive:
+
+```lisp
+[material "purple-plastic" 0.5 0.2 0.8 0 0.5]
+```
+
+The arguments after the name are: R, G, B, metallic, roughness (all 0-1).
+
+## Assembly Directives
+
+### part-def
+
+```lisp
+[part-def <id> <root-expr> <material>]
+```
+
+Declares a reusable part definition.
+
+### instance
+
+```lisp
+[instance <id> <part-id> <tx> <ty> <tz> <rx> <ry> <rz>]
+```
+
+Places a part instance at the given position and orientation.
+
+### joint
+
+```lisp
+[joint-revolute <id> <parent> <child> <px> <py> <pz> <cx> <cy> <cz> <ax> <ay> <az>]
+[joint-fixed <id> <parent> <child> <px> <py> <pz> <cx> <cy> <cz>]
+[joint-slider <id> <parent> <child> <px> <py> <pz> <cx> <cy> <cz> <ax> <ay> <az>]
+```
+
+Defines kinematic joints between instances. Use `_` for the parent to ground the child to the world.
+
+### ground
+
+```lisp
+[ground <instance-id>]
+```
+
+Designates the fixed instance.
+
+## Complete Examples
+
+### Plate with Holes
+
+```lisp
+; Mounting plate: 100x60x5mm with 4 corner holes
+[let plate [cube 100 60 5]]
+[let hole [cylinder 2.75 10]]
+
+[let h1 [translate 10 10 0 hole]]
+[let h2 [translate 90 10 0 hole]]
+[let h3 [translate 10 50 0 hole]]
+[let h4 [translate 90 50 0 hole]]
+
+[let drilled [difference plate [union h1 [union h2 [union h3 h4]]]]]
+[let result [fillet 2 drilled]]
+[root result "aluminum"]
+```
+
+### Pipe Chaining
+
+```lisp
+; Rounded shell box
+[pipe
+  [cube 50 50 30]
+  [fillet 3]
+  [shell 2]
+  [translate -25 -25 0]]
+[root _ "abs-white"]
+```
+
+### Flange with Bolt Circle
+
+```lisp
+[let disc [cylinder 25 5]]
+[let holes [circular-pattern 0 0 0 0 0 1 6 360 [cylinder 3 10]]]
+[let flange [difference disc [translate 0 0 -1 holes]]]
+[root flange "steel"]
+```
+
+### Swept Spring
+
+```lisp
+[let profile [sketch xy [line -1 -1 1 -1] [line 1 -1 1 1] [line 1 1 -1 1] [line -1 1 -1 -1] end]]
+[let spring [sweep profile [helix 10 5 50]]]
+[root spring "steel"]
+```
+
+## Using Loon with MCP
+
+Pass Loon source to the `create_cad_loon` MCP tool:
+
+```json
+{
+  "source": "[let plate [cube 50 30 5]]\n[let hole [translate 25 15 0 [cylinder 3 10]]]\n[let result [difference plate hole]]\n[root result \"aluminum\"]",
+  "format": "compact"
+}
+```
+
+The tool evaluates the Loon source through the kernel and returns an IR document in the requested format (compact or JSON). The returned document can then be passed to `inspect_cad`, `export_cad`, or `open_in_browser`.
+
+For a workflow-oriented guide to writing Loon, see [Loon for AI Agents](/guides/ai/loon). For the `create_cad_loon` parameter reference, see [create_cad_loon](/reference/mcp/create-cad-loon).

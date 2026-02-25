@@ -1,0 +1,149 @@
+---
+title: "Electronics Workspace"
+description: "Schematic editor, PCB layout, component library, DRC"
+order: 16
+---
+
+The electronics workspace integrates schematic capture and PCB layout into the vcad modeling environment. Designed parts become enclosures and mounting structures for the boards you design, and the PCB itself renders as a 3D part in the viewport with accurate component heights for clearance checking.
+
+## Schematic Editor
+
+The schematic editor is a sheet-based canvas where you place components, draw wires, and assign net labels. Each component has a reference designator (like R1, U3, C5), a value, and a set of pins with electrical types. Wires connect pins to form nets, and net labels name those nets for cross-referencing between the schematic and PCB.
+
+### Components
+
+Components are placed from the built-in library or imported from KiCad-compatible `.kicad_sym` files. Each component has:
+
+| Property | Description |
+|----------|-------------|
+| Reference designator | Unique identifier (R1, U3, etc.) following IEC conventions |
+| Value | Electrical value or part number (10k, ATmega328P) |
+| Footprint | Physical package for PCB layout (R_0805, QFP-32, etc.) |
+| Pins | Electrical connections with type (Input, Output, Passive, PowerInput, etc.) |
+
+Place a component by selecting it from the library panel and clicking on the schematic sheet. Drag to reposition, and use `R` to rotate in 90-degree increments.
+
+### Wires
+
+Draw wires between pins by clicking the start pin and then clicking each bend point along the route. Double-click or click the destination pin to complete the wire. Wires that touch at a point automatically create a junction (shown as a filled dot) to indicate an electrical connection.
+
+### Net Labels
+
+Net labels assign a name to a wire and connect all wires with the same label into a single net, even if they are not physically drawn as connected. This is essential for power distribution (VCC, GND) and signals that span multiple sheets.
+
+| Scope | Description |
+|-------|-------------|
+| Local | Visible only within the current sheet |
+| Global | Visible across all sheets in the project |
+| Hierarchical | Connects through sheet hierarchy |
+
+## PCB Layout
+
+The PCB layout editor takes the netlist from the schematic and presents footprints on a board canvas for placement and routing.
+
+### Board Outline
+
+Define the board shape as a polygon with vertices in millimeters. Rectangular boards are the most common, but arbitrary outlines support rounded corners, cutouts, and non-rectangular form factors.
+
+<Param name="vertices" type="Vec2[]">
+Board outline vertices as an array of 2D points.
+</Param>
+
+<Param name="thickness" type="number (mm)">
+Board thickness. Standard is 1.6mm for 2-layer, 1.2mm or 1.6mm for 4-layer.
+</Param>
+
+### Layer Stackup
+
+The stackup defines the copper and dielectric layers of the PCB.
+
+| Layer | Typical Thickness | Description |
+|-------|-------------------|-------------|
+| F.Cu | 35um (1oz) | Front copper |
+| Dielectric | 1.53mm | FR4 core (Er ~ 4.5) |
+| B.Cu | 35um (1oz) | Back copper |
+
+For 4-layer boards, add inner copper layers (In1.Cu, In2.Cu) with additional dielectric layers. The stackup directly affects impedance calculations and routing constraints.
+
+### Component Placement
+
+Components are placed on the board from the ratsnest (unrouted netlist). The placement tool supports:
+
+**Grid placement** arranges components in a regular grid with configurable spacing. It is fast for initial placement but usually requires manual adjustment afterward.
+
+**Interactive placement** lets you drag components to precise locations. Components snap to the placement grid (default 0.5mm) and can be rotated, mirrored to the back layer, and locked in position.
+
+### Routing
+
+Traces connect pads according to the netlist. The router supports manual routing (click to place trace segments) and simple auto-routing for point-to-point connections.
+
+<Param name="trace_width" type="number (mm)">
+Copper trace width. Default comes from the design rules (typically 0.25mm for signal, wider for power).
+</Param>
+
+<Param name="via_diameter" type="number (mm)">
+Via outer diameter (default 0.8mm).
+</Param>
+
+<Param name="via_drill" type="number (mm)">
+Via drill size (default 0.4mm).
+</Param>
+
+### Zones
+
+Copper zones (pours) fill areas with copper connected to a specific net, typically GND. Zones respect clearance rules and automatically pour around pads and traces.
+
+<Param name="net" type="string">
+Net to connect the zone to (e.g., "GND").
+</Param>
+
+<Param name="layer" type="string">
+Copper layer for the zone (e.g., "FCu" or "BCu").
+</Param>
+
+<Param name="min_width" type="number (mm)">
+Minimum copper width within the zone (default 0.2mm).
+</Param>
+
+## Design Rules
+
+Design rules set manufacturing constraints that DRC enforces.
+
+| Rule | Default | Description |
+|------|---------|-------------|
+| Trace width | 0.25mm | Minimum copper trace width |
+| Clearance | 0.2mm | Minimum spacing between copper features |
+| Via diameter | 0.8mm | Minimum via outer diameter |
+| Via drill | 0.4mm | Minimum via drill size |
+| Edge clearance | 0.5mm | Minimum distance from copper to board edge |
+| Hole-to-hole | 0.5mm | Minimum spacing between drill holes |
+| Annular ring | 0.15mm | Minimum copper ring around drill holes |
+| Min drill | 0.2mm | Smallest drill size the fab supports |
+
+Net class rules let you override defaults for specific nets. A "Power" net class might use 0.5mm trace width and 0.3mm clearance, while a "HighSpeed" class might tighten clearance to 0.15mm for controlled impedance.
+
+## DRC and ERC
+
+### Design Rule Check (DRC)
+
+DRC validates the physical PCB layout against the design rules. It checks trace width minimums, clearance between copper features, drill sizes, annular ring widths, and edge clearance. Violations are listed with severity (error or warning), a description, and the location on the board.
+
+### Electrical Rule Check (ERC)
+
+ERC validates the schematic for electrical correctness. It catches duplicate reference designators, unconnected pins (especially power pins, which are always flagged as errors), and conflicting pin types on the same net.
+
+<Callout type="warning" title="Run both checks">
+Always run DRC and ERC before exporting fabrication files. DRC catches physical manufacturability issues; ERC catches logical wiring errors. A board that passes DRC but fails ERC may be physically correct but electrically wrong.
+</Callout>
+
+## MCAD Integration
+
+The PCB appears as a 3D part in the vcad viewport with accurate board dimensions, component bounding boxes, and connector locations. This lets you design enclosures around the actual board geometry, verify mounting hole alignment, and check clearances for tall components.
+
+The board's 3D representation updates automatically when you change the PCB layout. Mounting holes in the board outline can be referenced by assembly instances and joints in the mechanical model.
+
+## Fabrication Export
+
+Export Gerber RS-274X files, Excellon drill files, BOM, and pick-and-place data for PCB fabrication. The export generates one Gerber file per copper and mask layer, plus a drill file for through-holes and vias. The BOM (bill of materials) and pick-and-place CSV files support automated assembly.
+
+For detailed MCP tool parameters, see [Electronics Tools](/reference/mcp/electronics). For workflow guides, see the [Schematic](/guides/electronics/schematic), [PCB Layout](/guides/electronics/pcb), and [Fabrication](/guides/electronics/fabrication) guides.

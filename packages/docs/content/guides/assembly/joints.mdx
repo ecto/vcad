@@ -1,0 +1,87 @@
+---
+title: "Joint Types & Selection"
+description: "Fixed, revolute, slider, cylindrical, ball. Anchors, axes, limits"
+order: 2
+---
+
+Joints define how assembly instances move relative to each other. Each joint connects a **parent** instance to a **child** instance, constraining their relative motion to specific degrees of freedom. Choosing the right joint type for each connection is the first step in building a working mechanism.
+
+## The Five Joint Types
+
+### Fixed (0 DOF)
+
+A fixed joint welds two instances together. No relative motion is possible -- the child is rigidly attached to the parent at the specified position and orientation. Use fixed joints for bolted connections, welded assemblies, press-fit components, and any pair of parts that should not move.
+
+Fixed joints might seem unnecessary (why not just position the instance?), but they serve an important structural role in the kinematic tree. A fixed joint establishes a parent-child relationship that determines transform propagation. When the parent moves (because it is part of a kinematic chain), the fixed child follows.
+
+### Revolute (1 DOF)
+
+A revolute joint allows rotation around a single axis, like a door hinge. The child instance can spin around the joint axis but cannot translate or rotate in any other direction. The joint state is an angle in degrees.
+
+Revolute joints are the most common type in mechanical design. Door hinges, clock hands, gear shafts, robot arm segments, lever mechanisms, and crank-slider linkages all use revolute joints. If two parts pivot relative to each other, use revolute.
+
+Each revolute joint has an **anchor point** (the pivot location) and an **axis** (the rotation direction). The anchor should be at the physical pivot -- where the hinge pin would be, where the shaft centerline passes. The axis is a unit vector: (0, 0, 1) for rotation in the XY plane, (0, 1, 0) for rotation in the XZ plane.
+
+### Prismatic / Slider (1 DOF)
+
+A prismatic joint allows translation along a single axis, like a drawer on rails. The child instance can slide back and forth along the axis but cannot rotate or translate in any other direction. The joint state is a displacement in millimeters.
+
+Use prismatic joints for linear actuators, drawer slides, telescoping tubes, CNC axes, and any connection where one part slides relative to another in a straight line. The joint axis defines the slide direction.
+
+### Cylindrical (2 DOF)
+
+A cylindrical joint combines revolute and prismatic motion on the same axis. The child can both rotate around and slide along the axis, like a bolt being screwed into a nut or a piston rotating inside a bore. The joint has two state values: angle (degrees) and displacement (millimeters).
+
+Cylindrical joints are less common than revolute or prismatic alone, but they are correct for lead screws, threaded connections, and any situation where rotation and translation are coupled along the same axis.
+
+### Ball (3 DOF)
+
+A ball joint allows rotation around all three axes at a point, like a ball-and-socket joint in a human shoulder or a car steering linkage. The child can orient freely relative to the parent but cannot translate. The joint has three state values: rotation angles around X, Y, and Z.
+
+Ball joints are used for universal joints, steering knuckles, camera gimbals, and robotic wrist joints. They provide maximum rotational freedom at a single point.
+
+<Callout type="info" title="DOF summary">
+Fixed = 0 DOF. Revolute = 1 (rotation). Prismatic = 1 (translation). Cylindrical = 2 (rotation + translation). Ball = 3 (rotation around all axes). The total DOF of a mechanism is the sum of all joint DOF minus the constraints imposed by closed kinematic loops.
+</Callout>
+
+## Anchor Points
+
+Each joint has two anchor points: one on the parent instance and one on the child instance. In the default configuration, both anchors coincide in world space at the joint's pivot location. When the joint state changes (the angle rotates or the slider extends), the child anchor moves relative to the parent anchor according to the joint kinematics.
+
+For revolute joints, place the anchor at the center of the physical pivot. For prismatic joints, the anchor defines the zero-displacement position on each part. For ball joints, the anchor is the center of the socket.
+
+In the app, set anchor coordinates in the property panel or click a vertex or face center in the viewport to snap the anchor there. The anchor fields show X, Y, Z coordinates in the respective instance's local frame.
+
+## Joint Axis
+
+Revolute, prismatic, and cylindrical joints require an axis vector. The axis defines the direction of rotation or translation. It is a unit vector in world space. Common choices:
+
+(0, 0, 1) -- rotation/translation along Z (horizontal pivot, vertical slide in Z-up)
+(0, 1, 0) -- rotation/translation along Y
+(1, 0, 0) -- rotation/translation along X
+
+For axes that do not align with the coordinate axes, specify the vector directly. A joint axis of (0.707, 0, 0.707) creates a pivot tilted 45 degrees between X and Z.
+
+## Joint Limits
+
+Revolute and prismatic joints support optional **min** and **max** limits that constrain the range of motion. A revolute joint with min: -90 and max: 90 can only rotate within a 180-degree arc. A prismatic joint with min: 0 and max: 50 slides from 0 to 50 mm and stops at the boundaries.
+
+Limits are enforced both in the kinematic scrub slider and in physics simulation. In kinematics, the slider clamps to the limit range. In physics, the Rapier3D engine applies hard stops at the limits, preventing the joint from exceeding its range regardless of applied forces.
+
+<Callout type="tip" title="Real-world limits">
+Set joint limits to match physical constraints. A door hinge typically has limits of 0 to 120 degrees. A linear actuator might travel 0 to 100 mm. Limits prevent unrealistic configurations and make the scrub slider more useful by restricting it to the meaningful range.
+</Callout>
+
+## Choosing the Right Joint Type
+
+When deciding which joint to use, think about the physical connection.
+
+If parts are bolted, welded, or glued: **Fixed**.
+If parts pivot around a pin or shaft: **Revolute**.
+If parts slide in a straight line: **Prismatic**.
+If parts both rotate and slide on the same axis: **Cylindrical**.
+If parts swivel freely at a ball-and-socket connection: **Ball**.
+
+When in doubt, start with the simplest joint that captures the motion you need. You can always change the joint type later by selecting it and updating the type in the property panel.
+
+For understanding how joints chain together to create complex mechanisms, continue to the [Forward Kinematics](/guides/assembly/kinematics) guide.

@@ -1,0 +1,338 @@
+---
+title: "Compact IR Format"
+description: "Compact IR format designed for ML training pipelines"
+order: 3
+---
+
+The compact IR format (v0.2) is a token-efficient text representation of vcad documents. It encodes the same parametric DAG as the JSON IR format but uses single-letter opcodes and positional arguments, making it roughly 5x smaller. This matters for ML training where context window budgets are tight, and for URL embedding where size limits are strict.
+
+## Header
+
+Every compact IR document begins with a version header:
+
+```
+# vcad 0.2
+```
+
+Lines starting with `#` are comments and are ignored by the parser. Empty lines are also ignored.
+
+## Materials
+
+Materials are declared before geometry with the `M` opcode.
+
+```
+M <name> <r> <g> <b> <metallic> <roughness> [density] [friction]
+```
+
+<Param name="name" type="string" required={true}>
+Material identifier. Used in `ROOT` lines and assembly references. Quote with double quotes if the name contains spaces.
+</Param>
+
+<Param name="r, g, b" type="number (0-1)" required={true}>
+RGB color components.
+</Param>
+
+<Param name="metallic" type="number (0-1)" required={true}>
+Metallic factor. 0 for dielectric, 1 for metal.
+</Param>
+
+<Param name="roughness" type="number (0-1)" required={true}>
+Surface roughness. 0 for mirror, 1 for matte.
+</Param>
+
+<Param name="density" type="number (kg/m^3)" required={false}>
+Material density for mass calculations. Optional.
+</Param>
+
+<Param name="friction" type="number" required={false}>
+Friction coefficient for physics simulation. Optional, requires density.
+</Param>
+
+```
+M aluminum 0.9 0.9 0.92 0.95 0.3 2700
+M abs-black 0.08 0.08 0.08 0 0.6 1050
+```
+
+## Geometry Opcodes
+
+Each geometry line creates a node. Nodes are numbered sequentially starting from 0 in the order they appear. When a node references another node (e.g., a boolean referencing its operands), it uses the integer index of that node.
+
+### Primitives
+
+| Opcode | Syntax | IR Type | Description |
+|--------|--------|---------|-------------|
+| `C` | `C <sx> <sy> <sz>` | Cube | Box from origin to (sx, sy, sz) |
+| `Y` | `Y <radius> <height>` | Cylinder | Cylinder along Z, base at origin |
+| `S` | `S <radius>` | Sphere | Sphere at origin |
+| `K` | `K <r_bottom> <r_top> <height>` | Cone | Cone/frustum along Z |
+
+```
+C 50 30 5
+Y 10 25
+S 15
+K 10 0 20
+```
+
+### Booleans
+
+| Opcode | Syntax | IR Type | Description |
+|--------|--------|---------|-------------|
+| `U` | `U <left> <right>` | Union | Combine volumes |
+| `D` | `D <left> <right>` | Difference | Subtract right from left |
+| `I` | `I <left> <right>` | Intersection | Keep overlap |
+
+The `left` and `right` arguments are node indices.
+
+```
+C 50 30 5
+Y 3 10
+T 1 25 15 0
+D 0 2
+```
+
+This creates a plate (node 0), a cylinder (node 1), translates the cylinder (node 2), and subtracts it from the plate (node 3).
+
+### Transforms
+
+| Opcode | Syntax | IR Type | Description |
+|--------|--------|---------|-------------|
+| `T` | `T <child> <x> <y> <z>` | Translate | Move by offset |
+| `R` | `R <child> <rx> <ry> <rz>` | Rotate | Rotate by degrees |
+| `X` | `X <child> <sx> <sy> <sz>` | Scale | Scale by factors |
+
+```
+C 10 10 10
+T 0 50 0 0
+R 0 0 0 45
+X 0 2 2 2
+```
+
+### Patterns
+
+| Opcode | Syntax | IR Type |
+|--------|--------|---------|
+| `LP` | `LP <child> <dx> <dy> <dz> <count> <spacing>` | LinearPattern |
+| `CP` | `CP <child> <ox> <oy> <oz> <ax> <ay> <az> <count> <angle>` | CircularPattern |
+
+`LP` creates `count` copies along the direction vector with the given spacing. `CP` creates copies around an axis defined by origin (ox, oy, oz) and direction (ax, ay, az) over the total angle in degrees.
+
+```
+Y 3 10
+CP 0 0 0 0 0 0 1 6 360
+```
+
+This creates 6 cylinders equally spaced around the Z axis.
+
+### Features
+
+| Opcode | Syntax | IR Type | Description |
+|--------|--------|---------|-------------|
+| `SH` | `SH <child> <thickness>` | Shell | Hollow the solid |
+| `FI` | `FI <child> <radius>` | Fillet | Round all edges |
+| `CH` | `CH <child> <distance>` | Chamfer | Bevel all edges |
+
+```
+C 50 50 50
+SH 0 2
+```
+
+### Sketches
+
+Sketches use a multi-line block starting with `SK` and ending with `END`. Within the block, `L` defines line segments and `A` defines arc segments.
+
+```
+SK <ox> <oy> <oz>  <xx> <xy> <xz>  <yx> <yy> <yz>
+L <x1> <y1> <x2> <y2>
+A <x1> <y1> <x2> <y2> <cx> <cy> <ccw>
+...
+END
+```
+
+The `SK` line specifies the sketch plane with an origin point and two direction vectors (X-axis and Y-axis of the sketch coordinate system). Segment coordinates are 2D within this local frame.
+
+For arcs, `cx`/`cy` is the arc center and `ccw` is 1 for counter-clockwise, 0 for clockwise.
+
+```
+SK 0 0 0  1 0 0  0 1 0
+L 0 0 10 0
+L 10 0 10 5
+L 10 5 0 5
+L 0 5 0 0
+END
+```
+
+### Extrude and Revolve
+
+| Opcode | Syntax | IR Type | Description |
+|--------|--------|---------|-------------|
+| `E` | `E <sketch> <dx> <dy> <dz>` | Extrude | Push profile along direction |
+| `V` | `V <sketch> <ox> <oy> <oz> <ax> <ay> <az> <angle>` | Revolve | Spin profile around axis |
+
+The `sketch` argument is the node index of a `SK` block.
+
+```
+SK 0 0 0  1 0 0  0 1 0
+L 0 0 10 0
+L 10 0 10 5
+L 10 5 0 5
+L 0 5 0 0
+END
+E 0 0 0 20
+```
+
+This sketches a rectangle and extrudes it 20mm along Z.
+
+### Node Names
+
+Any geometry opcode can include an optional quoted name as the last argument:
+
+```
+C 50 30 5 "Base Plate"
+Y 3 10 "Hole"
+D 0 2 "Drilled Plate"
+```
+
+Names are preserved through serialization and appear in the feature tree.
+
+## Scene Section
+
+### ROOT
+
+The `ROOT` directive specifies which nodes to render and their materials.
+
+```
+ROOT <node_id> <material> [hidden]
+```
+
+<Param name="node_id" type="integer" required={true}>
+Index of the geometry node to render.
+</Param>
+
+<Param name="material" type="string" required={true}>
+Material name (must match an `M` declaration).
+</Param>
+
+<Param name="hidden" type="flag" required={false}>
+If present, the node is hidden (not rendered but still part of the document).
+</Param>
+
+```
+ROOT 3 aluminum
+ROOT 5 abs-black hidden
+```
+
+If no `ROOT` lines are present, the parser automatically selects the highest-numbered unreferenced node as the root with a default gray material.
+
+## Assembly Section
+
+Assembly opcodes define part definitions, instances, joints, and the ground instance.
+
+### PDEF
+
+```
+PDEF <part_id> <root_node_id> <material>
+```
+
+Declares a reusable part definition. The `root_node_id` references a geometry node, and `material` sets the default material.
+
+### INST
+
+```
+INST <instance_id> <part_id> <tx> <ty> <tz> <rx> <ry> <rz>
+```
+
+Places an instance of a part definition at the given position (translation) and orientation (Euler angles in degrees).
+
+### Joint Opcodes
+
+| Opcode | Syntax |
+|--------|--------|
+| `JFIX` | `JFIX <id> <parent> <child> <px> <py> <pz> <cx> <cy> <cz>` |
+| `JREV` | `JREV <id> <parent> <child> <px> <py> <pz> <cx> <cy> <cz> <ax> <ay> <az> [min max]` |
+| `JSLD` | `JSLD <id> <parent> <child> <px> <py> <pz> <cx> <cy> <cz> <ax> <ay> <az> [min max]` |
+| `JCYL` | `JCYL <id> <parent> <child> <px> <py> <pz> <cx> <cy> <cz> <ax> <ay> <az>` |
+| `JBAL` | `JBAL <id> <parent> <child> <px> <py> <pz> <cx> <cy> <cz>` |
+
+Each joint specifies parent and child instance IDs, anchor points on each (px/py/pz for parent, cx/cy/cz for child), and axis information where applicable. Use `_` for the parent to ground the child to the world frame.
+
+### GROUND
+
+```
+GROUND <instance_id>
+```
+
+Designates which instance is fixed in world space (the root of the kinematic chain).
+
+## Scene Settings
+
+Scene settings control the rendering environment, lighting, and post-processing effects.
+
+| Opcode | Syntax | Description |
+|--------|--------|-------------|
+| `ENV` | `ENV none` or `ENV preset <name>` | Environment map |
+| `BG` | `BG <r> <g> <b>` | Background color |
+| `LDIR` | `LDIR <dx> <dy> <dz> <r> <g> <b> <intensity>` | Directional light |
+| `LPNT` | `LPNT <x> <y> <z> <r> <g> <b> <intensity>` | Point light |
+| `LSPT` | `LSPT <x> <y> <z> <dx> <dy> <dz> <r> <g> <b> <intensity> <angle>` | Spot light |
+| `LAREA` | `LAREA <x> <y> <z> <dx> <dy> <dz> <r> <g> <b> <intensity> <w> <h>` | Area light |
+| `AO` | `AO <radius> <intensity>` | Ambient occlusion |
+| `BLOOM` | `BLOOM <threshold> <intensity>` | Bloom effect |
+| `VIG` | `VIG <intensity>` | Vignette |
+| `TONE` | `TONE <mode>` | Tone mapping (aces, reinhard, linear) |
+| `EXP` | `EXP <value>` | Exposure adjustment |
+| `CAM` | `CAM <x> <y> <z> <tx> <ty> <tz> <fov>` | Camera position, target, FOV |
+
+## Complete Example
+
+```
+# vcad 0.2
+
+# Materials
+M aluminum 0.9 0.9 0.92 0.95 0.3 2700
+M default 0.8 0.8 0.8 0 0.5
+
+# Geometry
+C 100 60 5 "Base Plate"
+Y 3 10 "Hole Tool"
+T 1 25 15 0
+D 0 2 "Left Hole"
+Y 3 10
+T 4 75 15 0
+D 3 5 "Both Holes"
+FI 6 1 "Filleted"
+
+# Scene
+ROOT 7 aluminum
+```
+
+This document creates a 100x60x5mm aluminum plate with two 3mm-radius holes and a 1mm fillet on all edges.
+
+## Parsing and Serialization
+
+### TypeScript
+
+```typescript
+import { fromCompact, toCompact } from "@vcad/ir";
+
+// Parse
+const doc = fromCompact(compactText);
+
+// Serialize
+const compact = toCompact(doc);
+```
+
+### Error Handling
+
+The parser throws `CompactParseError` with the line number and a descriptive message when it encounters invalid syntax, wrong argument counts, or unknown opcodes.
+
+```typescript
+import { CompactParseError } from "@vcad/ir";
+
+try {
+  const doc = fromCompact(text);
+} catch (e) {
+  if (e instanceof CompactParseError) {
+    console.error(`Line ${e.line}: ${e.message}`);
+  }
+}
+```

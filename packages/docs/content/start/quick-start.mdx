@@ -1,0 +1,62 @@
+---
+title: "Quick Start"
+description: "Choose your path into vcad"
+order: 1
+---
+
+vcad is an open-source parametric CAD system built to replace tools like Fusion 360 and Onshape. It runs a custom BRep kernel written in Rust that compiles to WebAssembly for the browser, meaning exact geometry -- planes, cylinders, NURBS surfaces -- lives right in your tab at [vcad.io](https://vcad.io). There is no cloud meshing step, no seat license, and no feature gating. The entire system is MIT-licensed.
+
+The kernel powers four interfaces: a visual web app, a Rust library, a terminal CLI, and an MCP server that lets AI agents like Claude design parts directly. Pick whichever fits your workflow; the underlying geometry engine is the same everywhere.
+
+<Playground exampleId="flanged-hub" />
+
+## Web App
+
+Open [vcad.io](https://vcad.io) and start modeling immediately. The app gives you a viewport with orbit/pan/zoom, a feature tree for parametric history, a property panel for dimensions, and a command palette (`Cmd+K`) for everything else. Sketch on faces, extrude profiles, cut holes, apply fillets, assign materials. Export to STL, GLB, STEP, or DXF when you are done.
+
+No installation, no account required. The WASM kernel runs locally in your browser, so your geometry never leaves your machine unless you choose to enable cloud sync.
+
+Start with the [Web App tutorial](/tutorials/app/first-part) to build your first part in under five minutes.
+
+## Rust
+
+If you prefer code over clicks, `cargo add vcad` gives you the full kernel as a library. Create geometry programmatically, run boolean operations, query volumes and centers of mass, and export to any format -- all from a Rust binary or script.
+
+```rust
+use vcad::{centered_cylinder, centered_cube};
+
+let plate = centered_cube("plate", 100.0, 60.0, 5.0);
+let hole = centered_cylinder("hole", 4.0, 10.0, 32);
+let result = plate - hole;
+
+result.write_stl("plate.stl")?;
+```
+
+This path is ideal for parametric generators, batch exports, CI pipelines, or embedding CAD in a larger Rust application. See [Install & Setup](/start/install) for setup, then follow the [Rust tutorial](/tutorials/rust/hello-cube).
+
+## CLI
+
+The `vcad-cli` tool brings the kernel to your terminal. Convert between formats, inspect documents, and run headless operations without opening a browser or writing Rust code.
+
+```bash
+vcad export bracket.vcad bracket.step
+vcad info bracket.vcad
+vcad import-step housing.step housing.vcad
+```
+
+Install with `cargo install vcad-cli`, then see the [CLI tutorial](/tutorials/cli/quickstart).
+
+## MCP / AI
+
+The MCP server turns vcad into a tool that AI agents can use directly. Configure it in Claude Desktop or Cursor, then describe the part you want in natural language. The agent calls `create_cad_document` to build geometry, `inspect_cad` to check dimensions, and `export_cad` to produce files -- all without you touching the UI.
+
+```
+"Create a 100x60x5mm aluminum plate with four M4 mounting holes
+on a 80x40mm bolt pattern, countersunk from the top."
+```
+
+The MCP server also exposes a physics simulation interface for robotics: create environments from assemblies, step simulations with torque or position actions, and train RL policies against real geometry. See [MCP Setup](/tutorials/mcp/setup) to get started.
+
+---
+
+Whichever path you chose, the next step is [Install & Setup](/start/install) to get your environment ready, followed by [Core Concepts](/start/concepts) for the mental model behind every vcad operation.

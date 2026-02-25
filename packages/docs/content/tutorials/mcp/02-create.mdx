@@ -1,0 +1,186 @@
+---
+title: "Creating Models with AI"
+description: "Use create_cad_document to generate 3D geometry through conversation"
+order: 2
+difficulty: Beginner
+time: "10 minutes"
+---
+
+The `create_cad_document` tool is the primary way an AI agent builds 3D geometry in vcad. You describe what you want in natural language, the AI translates that into structured IR (intermediate representation), and the kernel evaluates it into a solid model.
+
+## A Simple Plate
+
+Start with something concrete. Ask the AI:
+
+> Make a 50x30x5mm mounting plate with two M5 through-holes, one at each end
+
+The AI calls `create_cad_document` with JSON that looks like this:
+
+```json
+{
+  "parts": [{
+    "name": "Mounting Plate",
+    "primitive": {
+      "type": "cube",
+      "size": { "x": 50, "y": 30, "z": 5 }
+    },
+    "operations": [
+      {
+        "type": "hole",
+        "diameter": 5.5,
+        "at": { "x": 10, "y": 15 }
+      },
+      {
+        "type": "hole",
+        "diameter": 5.5,
+        "at": { "x": 40, "y": 15 }
+      }
+    ],
+    "material": "aluminum"
+  }]
+}
+```
+
+<Playground exampleId="plate" />
+
+The tool returns an IR document -- a JSON DAG (directed acyclic graph) where each node represents a primitive, transform, or boolean operation, and nodes reference each other by ID. This document can then be passed to `inspect_cad` for analysis or `export_cad` for file output.
+
+## How the IR Works
+
+Every shape in vcad is a tree of operations. A cube node is a leaf. A `difference` node subtracts one child from another. A `translate` node moves its child. When the kernel evaluates the tree, it walks from leaves to root, building up the final geometry.
+
+Here is what the plate's IR looks like internally:
+
+```
+Node 1: cube (50 x 30 x 5)
+Node 2: cylinder (r=2.75, h=10)          -- hole tool
+Node 3: translate Node 2 to (10, 15, -2.5)
+Node 4: difference (Node 1, Node 3)      -- first hole cut
+Node 5: cylinder (r=2.75, h=10)          -- second hole tool
+Node 6: translate Node 5 to (40, 15, -2.5)
+Node 7: difference (Node 4, Node 6)      -- second hole cut
+```
+
+You don't need to construct this yourself. The AI handles the translation from your description to the node graph. But understanding the structure helps when you want to refine a design: you can ask the AI to move a hole, change a dimension, or add a fillet, and it will modify the relevant nodes.
+
+## A More Complex Example
+
+Ask for something with more features:
+
+> Create an L-bracket, 40mm tall and 30mm wide, 5mm thick, with two mounting holes in the base and a slot in the vertical face
+
+The AI produces a multi-step construction: a cube for the base plate, another for the vertical wall, a union to combine them, cylinder differences for the holes, and a cube difference for the slot. It might also add fillets at the inside corner for strength.
+
+<Playground exampleId="bracket" />
+
+## Sketch-Based Parts
+
+For shapes beyond basic primitives, the AI can use sketch-based operations. Instead of specifying a `primitive`, a part definition can use `extrude`, `revolve`, `sweep`, or `loft`:
+
+```json
+{
+  "parts": [{
+    "name": "Channel",
+    "extrude": {
+      "sketch": {
+        "plane": "xy",
+        "shape": {
+          "type": "polygon",
+          "points": [
+            { "x": 0, "y": 0 },
+            { "x": 40, "y": 0 },
+            { "x": 40, "y": 5 },
+            { "x": 35, "y": 5 },
+            { "x": 35, "y": 25 },
+            { "x": 40, "y": 25 },
+            { "x": 40, "y": 30 },
+            { "x": 0, "y": 30 },
+            { "x": 0, "y": 25 },
+            { "x": 5, "y": 25 },
+            { "x": 5, "y": 5 },
+            { "x": 0, "y": 5 }
+          ]
+        }
+      },
+      "depth": 60
+    }
+  }]
+}
+```
+
+The sketch defines a U-channel cross-section as a polygon, and the extrude pushes it 60mm along the normal. The AI can also use `rectangle` and `circle` shapes when the profile is simpler.
+
+## Position Specifications
+
+When an operation needs a position (like placing a hole), the AI can specify it three ways:
+
+**Absolute coordinates** place the feature at exact millimeter values:
+```json
+{ "at": { "x": 25, "y": 15 } }
+```
+
+**Named positions** reference the parent primitive's bounding box:
+```json
+{ "at": "center" }
+```
+
+Available names: `"center"`, `"top-center"`, `"bottom-center"`.
+
+**Percentage values** calculate position as a fraction of the parent's dimensions:
+```json
+{ "at": { "x": "25%", "y": "50%" } }
+```
+
+This flexibility lets the AI express intent clearly. Asking "put a hole in the center" maps naturally to `"center"`, while "put a hole 10mm from the left edge" uses absolute coordinates.
+
+## The Loon Alternative
+
+For more complex geometry, the AI can use `create_cad_loon` instead. Loon is a compact Lisp-like language that produces the same IR but with less JSON verbosity:
+
+```lisp
+[let plate [cube 50 30 5]]
+[let hole1 [translate 10 15 0 [cylinder 2.75 10]]]
+[let hole2 [translate 40 15 0 [cylinder 2.75 10]]]
+[let result [pipe plate [difference hole1] [difference hole2]]]
+[root result "aluminum"]
+```
+
+The `pipe` operator threads the subject through a chain of operations, reading top to bottom like a feature tree. The AI tends to prefer Loon for parts with many operations because the code is more readable than deeply nested JSON.
+
+<Callout type="tip" title="Iterate with inspect">
+After the AI creates a document, it typically calls `inspect_cad` to verify the geometry. If the volume or bounding box looks wrong, it can adjust the parameters and try again. You can also ask it to check specific properties: "Is the wall thickness at least 2mm everywhere?" or "What's the total mass in aluminum?"
+</Callout>
+
+## Assemblies
+
+The `create_cad_document` tool also supports assemblies with multiple parts, instances, and joints:
+
+```json
+{
+  "parts": [
+    { "name": "Base", "primitive": { "type": "cube", "size": { "x": 40, "y": 40, "z": 10 } } },
+    { "name": "Arm", "primitive": { "type": "cube", "size": { "x": 5, "y": 5, "z": 30 } } }
+  ],
+  "assembly": {
+    "instances": [
+      { "part": "Base", "name": "base" },
+      { "part": "Arm", "name": "arm", "position": { "x": 17.5, "y": 17.5, "z": 10 } }
+    ],
+    "joints": [
+      {
+        "type": "revolute",
+        "parent": "base",
+        "child": "arm",
+        "anchor": { "x": 20, "y": 20, "z": 10 },
+        "axis": { "x": 0, "y": 1, "z": 0 }
+      }
+    ]
+  }
+}
+```
+
+This creates a base plate with a rotating arm attached by a revolute joint. The assembly can then be passed to `create_robot_env` for physics simulation, which is covered in the [Physics tutorial](/tutorials/mcp/physics).
+
+## What's Next
+
+To learn about the compact Loon syntax in depth, continue to [Loon Format](/tutorials/mcp/loon). To explore what `inspect_cad` returns and how to validate geometry, see [Inspecting Models](/tutorials/mcp/inspect). For a full reference of every tool parameter, see the [MCP Tools Overview](/reference/mcp/overview).

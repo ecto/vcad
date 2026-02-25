@@ -1,0 +1,70 @@
+---
+title: "Ray Tracing"
+description: "Analytic ray-surface intersection, BVH/SAH, trimmed surfaces, WebGPU"
+order: 8
+---
+
+The ray tracer in `crates/vcad-kernel-raytrace/` renders BRep geometry at pixel-perfect quality by intersecting rays directly with analytic surfaces. Unlike the tessellation path that approximates curves with triangles, ray tracing produces exact silhouettes at any zoom level -- circles are truly round, cylinder edges are smooth, and torus cross-sections show no faceting.
+
+## Architecture
+
+The crate is organized into modules that follow the ray's journey. `ray.rs` defines the `Ray` struct (origin + direction) and `RayHit` struct (intersection result with parameter t, UV coordinates, face ID, surface normal, and hit point). `intersect/` contains per-surface-type intersection routines. `trim.rs` determines whether a hit point lies within a face's trim loops. `bvh.rs` builds and traverses an acceleration structure to avoid testing every face. `cpu.rs` provides a software renderer. `gpu/` contains the WebGPU compute shader pipeline for real-time performance in the browser.
+
+## Analytic Ray-Surface Intersection
+
+Each surface type in `intersect/` has its own intersection function that returns zero or more `SurfaceHit` values (parameter t and UV coordinates), sorted by increasing t with only positive-t hits retained.
+
+**Ray-Plane** (`intersect/plane.rs`). Given a plane with origin O, normal N, and ray origin P, direction D: compute `t = dot(O - P, N) / dot(D, N)`. This is a simple linear solve. Returns empty if the ray is parallel to the plane (`dot(D, N)` near zero).
+
+**Ray-Cylinder** (`intersect/cylinder.rs`). Project the ray onto the plane perpendicular to the cylinder axis. The projected problem reduces to a 2D ray-circle intersection -- a quadratic equation `a*t^2 + b*t + c = 0` where the coefficients come from the perpendicular components of the ray direction and origin-center vector. Returns up to 2 hits (entry and exit). The discriminant determines whether the ray misses, grazes, or pierces the cylinder.
+
+**Ray-Sphere** (`intersect/sphere.rs`). Also a quadratic: `|P + t*D - C|^2 = r^2` expands to `a*t^2 + b*t + c = 0`. Returns up to 2 hits.
+
+**Ray-Cone** (`intersect/cone.rs`). Similar to cylinder but with the radius varying linearly along the axis. The quadratic coefficients account for the half-angle. Returns up to 2 hits, filtering out hits on the "wrong" nappe (the reflected cone).
+
+**Ray-Torus** (`intersect/torus.rs`). The torus intersection is a quartic (degree 4) polynomial. The equation `(sqrt(x^2 + y^2) - R)^2 + z^2 = r^2`, after substituting the ray parametric equation and squaring to eliminate the square root, yields coefficients c4 through c0. The solver uses Ferrari's method to find up to 4 real roots analytically. This is the most numerically delicate intersection -- the quartic solver must handle near-degenerate cases where roots nearly coincide.
+
+**Ray-BSpline** (`intersect/bspline.rs`). NURBS surfaces have no closed-form ray intersection. The solver uses Newton iteration in (u,v,t) space, starting from initial guesses obtained by ray-marching through the surface's bounding box. Multiple starting points are tried to find all intersections.
+
+## Trimmed Surface Testing
+
+A raw surface intersection only tells you that the ray hit the infinite surface -- it doesn't account for the finite face boundary. The `trim.rs` module performs point-in-face testing: given a hit's UV parameters, it checks whether the point lies within the face's outer trim loop and outside all inner trim loops (holes). The trim loops are discretized into UV-space polygons, and a point-in-polygon test (using winding number with exact predicates from `vcad-kernel-math`) classifies the hit. The face normal at the hit point is computed from the surface normal and the face's orientation flag.
+
+## BVH Acceleration
+
+Testing every face for every pixel would be O(pixels * faces) -- far too slow for interactive rendering. The `bvh.rs` module builds a Bounding Volume Hierarchy using Surface Area Heuristic (SAH) construction.
+
+Each face is enclosed in an axis-aligned bounding box (AABB), computed by `face_aabb` from `vcad-kernel-booleans`. The BVH tree is built recursively: at each node, the algorithm evaluates candidate split planes along all three axes, choosing the split that minimizes the SAH cost function `cost = C_trav + (SA_left * N_left + SA_right * N_right) / SA_parent * C_intersect`. Leaf nodes contain a small set of faces (typically 1-4). The tree structure:
+
+```rust
+pub enum BvhNode {
+    Leaf { aabb: Aabb3, faces: Vec<FaceId> },
+    Internal { aabb: Aabb3, left: Box<BvhNode>, right: Box<BvhNode> },
+}
+```
+
+Ray traversal starts at the root. At each internal node, the ray is tested against the AABB; if it misses, the entire subtree is skipped. At leaf nodes, the ray is tested against each face's surface intersection + trim check. The `Bvh::trace` method returns all hits sorted by t. For primary visibility, only the closest hit is needed, but gathering all hits supports transparency and refraction.
+
+<Callout type="info" title="Flat BVH for GPU">
+The `FlatBvhNode` type provides a flattened representation `(Aabb3, is_leaf, left_or_first, right_or_count)` suitable for GPU buffer upload, where the tree is stored as a contiguous array and child pointers become array indices.
+</Callout>
+
+## CPU Renderer
+
+The `cpu.rs` module provides a software ray tracer that renders a complete image on the CPU. `CpuRenderer` takes a BRep solid, builds a BVH, and traces one ray per pixel through a virtual camera. For each pixel, the closest hit determines the surface color via simple Phong shading (ambient + diffuse + specular). This path is used for headless rendering (CLI export, MCP server) and as a reference implementation.
+
+## GPU Pipeline
+
+The `gpu/` module implements a WebGPU compute shader pipeline for real-time ray tracing in the browser. The pipeline has three stages.
+
+**Buffer upload** (`gpu/buffers.rs`). The BRep geometry is encoded into GPU-side storage buffers: a buffer of surface descriptors (type tag + parameters), a buffer of flat BVH nodes, and a buffer of face-to-surface mappings. The camera projection matrix and viewport dimensions are passed as uniforms.
+
+**Compute dispatch** (`gpu/pipeline.rs`). A compute shader dispatches one invocation per pixel. Each invocation constructs a ray from the camera through the pixel, traverses the flat BVH, tests candidate surfaces, performs trim checks, and writes the shaded color to an output texture. The shader handles all analytic surface types via a switch on the surface type tag.
+
+**Readback**. The output texture is copied back to CPU memory for display or saved as an image.
+
+The app provides a toggle between the standard tessellated rendering path and the ray-traced path. Ray tracing is slower (the compute shader is more expensive per pixel than rasterizing pre-tessellated triangles) but produces perfect edge quality at any resolution.
+
+## Related Pages
+
+The [BRep Kernel](/architecture/kernel) page covers the surface types that the ray tracer intersects. The [Tessellation](/architecture/tessellation) page describes the alternative rendering path. The [System Overview](/architecture/overview) page shows where both paths fit in the full pipeline.

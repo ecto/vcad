@@ -1,0 +1,146 @@
+---
+title: "Inspect & Iterate"
+description: "inspect_cad for volume/area/bbox/COM. Design iteration loop"
+order: 4
+difficulty: Intermediate
+time: "10 minutes"
+---
+
+The `inspect_cad` tool is how an AI verifies what it built. After calling `create_cad_document` or `create_cad_loon`, the AI passes the resulting IR document to `inspect_cad` and gets back precise measurements: volume, surface area, bounding box, center of mass, triangle count, and -- when materials have density defined -- total mass. This feedback loop is what transforms AI-assisted CAD from "generate and hope" into an engineering workflow where every dimension can be checked and corrected.
+
+## What inspect_cad Returns
+
+Pass an IR document to `inspect_cad` and you get a structured result like this:
+
+```json
+{
+  "volume_mm3": 6584.956,
+  "surface_area_mm2": 3412.743,
+  "bounding_box": {
+    "min": { "x": 0, "y": 0, "z": 0 },
+    "max": { "x": 50, "y": 30, "z": 5 }
+  },
+  "center_of_mass": { "x": 25.012, "y": 14.998, "z": 2.5 },
+  "triangles": 1248,
+  "parts": 1,
+  "mass_g": 17.779,
+  "part_masses": [
+    {
+      "name": "Mounting Plate",
+      "volume_mm3": 6584.956,
+      "material": "aluminum",
+      "density_kg_m3": 2700,
+      "mass_g": 17.779
+    }
+  ]
+}
+```
+
+Every field serves a purpose. The **volume** (in cubic millimeters) tells you the total solid volume of the model. For a 50x30x5 mm plate with two 5.5mm holes, that would be the plate volume minus the two cylinder volumes. The **surface area** (in square millimeters) is the total outer surface, useful for estimating coating costs or heat dissipation. The **bounding box** gives you the axis-aligned extents, so you can confirm overall dimensions at a glance. The **center of mass** reveals the balance point, critical for assemblies and mechanisms. The **triangle count** reflects tessellation density and is relevant if you plan to export to STL or GLB.
+
+When materials have a `density` property (in kg/m3), the response includes **mass** data broken down by part. Aluminum at 2700 kg/m3, steel at 7850, brass at 8500, and so on. The AI can use this to answer questions like "What will this weigh?" or "Will the total assembly be under 500 grams?"
+
+<Callout type="info" title="Measurement precision">
+Volume and area are computed from the tessellated mesh using the divergence theorem and triangle area summation. Results are accurate to about 0.1% for typical geometry. Very fine features (thin walls, small fillets) may show slightly more error due to tessellation approximation.
+</Callout>
+
+## The Design Iteration Loop
+
+The real power of `inspect_cad` shows up when the AI uses it as part of an iterative design process. Here is a typical exchange:
+
+**You:** Make a mounting bracket that fits in a 40x40x60 mm envelope, weighs under 50 grams in aluminum, and has at least 2mm wall thickness everywhere.
+
+**The AI's internal process:**
+
+1. Create an initial L-bracket using `create_cad_document` with 5mm walls and conservative dimensions.
+
+2. Call `inspect_cad` on the result.
+
+```json
+{
+  "volume_mm3": 15200.0,
+  "bounding_box": {
+    "min": { "x": 0, "y": 0, "z": 0 },
+    "max": { "x": 40, "y": 30, "z": 60 }
+  },
+  "mass_g": 41.04
+}
+```
+
+3. The bounding box confirms the bracket fits within the 40x40x60 envelope. The mass of 41g is under the 50g limit. But the AI might notice the Y dimension is only 30mm when it could use the full 40mm for a wider base.
+
+4. Modify parameters: increase Y to 40mm, reduce wall thickness to 3mm to keep mass down, add fillets for strength.
+
+5. Call `inspect_cad` again.
+
+```json
+{
+  "volume_mm3": 12850.0,
+  "bounding_box": {
+    "min": { "x": 0, "y": 0, "z": 0 },
+    "max": { "x": 40, "y": 40, "z": 60 }
+  },
+  "mass_g": 34.695
+}
+```
+
+6. All constraints met. The AI returns the final design with confidence.
+
+<Playground exampleId="bracket" />
+
+Without `inspect_cad`, the AI would be guessing at volumes and masses. With it, the AI can solve constrained design problems the same way an engineer would: build, measure, adjust, repeat.
+
+## Verifying Specific Dimensions
+
+The bounding box is particularly useful for dimension checks. If you ask "Is this bracket exactly 50mm tall?", the AI computes `max.z - min.z` from the bounding box and compares it to 50. If you ask "What's the height of the tallest part?", it reads `max.z` directly.
+
+For more nuanced questions like "Is the wall at least 2mm thick everywhere?", the AI can reason about the geometry it created. If it built a shell operation with a 2mm thickness parameter, and inspect confirms the expected volume reduction, it can be confident the wall thickness is correct. For complex boolean constructions, the AI may cross-check by building a test intersection with a thin probe volume to verify minimum thickness.
+
+## Working with Multi-Part Documents
+
+When a document has multiple parts (multiple `ROOT` entries), `inspect_cad` reports aggregate totals and a `part_masses` breakdown. This is essential for assemblies.
+
+```json
+{
+  "volume_mm3": 28400.0,
+  "parts": 3,
+  "mass_g": 156.2,
+  "part_masses": [
+    { "name": "Base", "volume_mm3": 16000.0, "material": "steel", "mass_g": 125.6 },
+    { "name": "Arm", "volume_mm3": 7500.0, "material": "aluminum", "mass_g": 20.25 },
+    { "name": "Pin", "volume_mm3": 4900.0, "material": "steel", "mass_g": 10.35 }
+  ]
+}
+```
+
+The AI can answer "Which part is the heaviest?" or "What percentage of the total mass is the base?" directly from this data. For assemblies with joints, the center of mass tells you about balance and stability, which matters when the assembly transitions into physics simulation.
+
+## Integrating with Export
+
+A common pattern is inspect-then-export. The AI creates a model, inspects it to confirm everything is correct, then calls `export_cad` to produce an STL or GLB file. The inspection step acts as a quality gate: if the volume is zero (the boolean failed), or the bounding box is wildly wrong (a transform is off), the AI catches the error before producing a bad export file.
+
+```text
+create_cad_document → inspect_cad → export_cad
+       ↑                    │
+       └── fix parameters ──┘
+```
+
+This create-inspect-export pipeline is the standard workflow for AI-driven part generation. The AI can also call `open_in_browser` after export to generate a shareable vcad.io link, letting you view the model in 3D without downloading any files.
+
+<Callout type="tip" title="Asking for mass">
+If you want mass estimates, make sure your materials include density. The built-in material presets (aluminum, steel, brass, etc.) all have density values. Custom materials defined in Loon with the `M` opcode can include density as the seventh parameter: `M custom 0.5 0.5 0.5 0.0 0.8 1200` gives a plastic-like material at 1200 kg/m3.
+</Callout>
+
+## Practical Prompts
+
+Here are some prompts that trigger effective inspect-based iteration:
+
+**Constraint-driven:** "Design a phone stand that weighs under 30 grams in PLA and fits phones from 65mm to 80mm wide." The AI will iterate on dimensions and inspect mass at each step.
+
+**Tolerance checking:** "Make a box with a lid. The lid should have 0.2mm clearance on each side." The AI builds both parts, inspects bounding boxes, and verifies the gap.
+
+**Material comparison:** "Show me the same bracket in aluminum vs steel with the mass of each." The AI creates the document with two roots using different materials and reads the per-part mass data.
+
+**Volume targets:** "Create a container with exactly 250 mL internal volume." The AI builds the outer shell, inspects total volume, subtracts wall material volume, and adjusts until the interior hits 250,000 mm3.
+
+Continue to [Physics Simulation](/tutorials/mcp/physics) to learn how assemblies with joints can be simulated in a gym-style environment, or see the [MCP Tools Reference](/reference/mcp/overview) for the full `inspect_cad` parameter documentation.

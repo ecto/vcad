@@ -1,0 +1,105 @@
+---
+title: "Working with Patterns"
+description: "Linear, circular, grid (two linear). Bolt patterns"
+order: 6
+---
+
+Patterns replicate geometry -- features, holes, bosses, or entire bodies -- along a direction or around an axis. Instead of positioning six bolt holes by computing each coordinate, you create one hole and pattern it. Change the count or spacing and every copy updates.
+
+## Linear Pattern
+
+A linear pattern copies a node along a direction vector. You specify the direction, the number of copies, and the spacing between them.
+
+```text
+# vcad 0.2
+M steel 0.7 0.7 0.72 0.95 0.35 7850
+C 50 10 5 "Rail"
+Y 2 8 "Mounting Hole"
+T 1 5 5 -1
+LP 2 1 0 0 5 10 "Hole Row"
+D 0 3 "Drilled Rail"
+ROOT 4 steel
+```
+
+That creates 5 copies of the hole spaced 10 mm apart along the X axis, starting at X=5. The original node is the first instance; the pattern adds 4 more at X=15, X=25, X=35, and X=45.
+
+In the app, select a feature, press **Cmd+K**, choose **Linear Pattern**. The property panel shows fields for direction (X, Y, Z), count, and spacing. Drag the direction arrows in the viewport or type exact values.
+
+<Callout type="tip" title="Centering a pattern">
+Patterns extend from the original position in the positive direction. To center 5 holes at 10 mm spacing on a 50 mm plate, position the first hole at X=5 so the last lands at X=45. Alternatively, translate the patterned result by half the total span in the negative direction.
+</Callout>
+
+## Circular Pattern
+
+A circular pattern copies a node around an axis. You specify the center point, axis direction, number of copies, and angle between copies.
+
+```text
+# vcad 0.2
+M steel 0.7 0.7 0.72 0.95 0.35 7850
+C 80 80 10 "Plate"
+Y 3 12 "Bolt Hole"
+T 1 30 40 -1
+CP 2 40 40 0 0 0 1 6 60 "Bolt Circle"
+D 0 3 "Drilled Plate"
+ROOT 4 steel
+```
+
+<Playground exampleId="circular-pattern" />
+
+Six copies of the bolt hole, evenly spaced at 60-degree intervals around (40, 40, 0) on the Z axis. The angle parameter is the spacing between adjacent copies. For N evenly spaced copies around a full circle, set the angle to `360 / N`. For a partial arc -- 4 holes spanning 90 degrees -- set count to 4 and angle to 30 (90 degrees divided by 3 gaps).
+
+In the app, the circular pattern tool previews all copies as you adjust count and angle. Set the center and axis by clicking a circular edge or face (vcad infers the axis), or type coordinates.
+
+## Grid Pattern
+
+A grid is two linear patterns chained together -- one along X and one along Y.
+
+```text
+# vcad 0.2
+Y 2 10 "Pin"
+T 0 5 5 0
+LP 1 1 0 0 4 10 "Row"
+LP 2 0 1 0 3 10 "Grid"
+ROOT 3 steel
+```
+
+That creates a 4x3 grid of pins spaced 10 mm in both directions. The first linear pattern creates a row of 4; the second copies the entire row 3 times along Y. The order does not matter if both spacings are equal.
+
+## Bolt Patterns
+
+Bolt patterns are the most common application of circular pattern. A bolt circle consists of N equally spaced holes around a center point at a given bolt circle diameter (BCD).
+
+```text
+# vcad 0.2
+M aluminum 0.9 0.9 0.92 0.05 0.3 2700
+Y 60 5 "Flange Disc"
+Y 4.25 8 "M8 Clearance"
+T 1 50 0 -1
+CP 2 0 0 0 0 0 1 6 60 "6-Bolt Pattern"
+D 0 3 "Drilled Flange"
+ROOT 4 aluminum
+```
+
+The clearance hole (M8 = 8.5 mm diameter, radius 4.25) is positioned at X=50 (half the 100 mm BCD), then patterned 6 times at 60-degree intervals.
+
+For counterbored bolt patterns, create a compound tool body: a through-hole cylinder unioned with a larger, shorter counterbore cylinder at the top. Pattern this compound body to stamp all counterbored holes in one step.
+
+<Callout type="info" title="Bolt circle diameter">
+BCD is measured center-to-center across the circle. Position the first hole at BCD/2 from the rotation center. Common BCDs: ANSI 150# 4-bolt (79.4 mm), DIN PN16 DN50 (125 mm), SAE 4-bolt (101.6 mm). Check your flange standard for exact values.
+</Callout>
+
+## Pattern as a Boolean Tool
+
+The typical workflow is: create a tool body (hole, slot, pocket, or boss), position it, pattern it, then boolean the patterned body with the main part. Difference for holes and slots, union for bosses and ribs. Because the pattern produces a single unified body, the boolean cuts or adds all features at once.
+
+## Practical Tips
+
+**Oversized tool bodies.** When creating a hole tool for boolean difference, make the cylinder longer than the part thickness. A cylinder exactly as tall as the plate may produce a zero-thickness face that causes boolean failures. Extend it 1-2 mm past each surface.
+
+**Direction vectors.** vcad normalizes directions internally. (10, 0, 0) is the same as (1, 0, 0). Use whichever values are convenient.
+
+**Count includes the original.** A linear pattern with count 4 produces 4 total instances, including the original. Want 3 additional copies? Set count to 4.
+
+**Nested patterns.** You can pattern a pattern. A circular pattern of a linear pattern creates a sunburst arrangement. A linear pattern of a circular pattern creates multiple bolt circles. The operations compose naturally.
+
+For bringing in external geometry to combine with your patterned features, continue to the [Importing STEP Files](/guides/modeling/step-import) guide.

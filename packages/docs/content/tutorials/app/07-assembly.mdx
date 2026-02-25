@@ -1,0 +1,81 @@
+---
+title: "Assemblies & Joints"
+description: "Two parts, instances, revolute joint, scrub slider, forward kinematics"
+order: 7
+difficulty: Intermediate
+time: "15 minutes"
+---
+
+Up to this point you have been working with individual solid bodies. Assemblies change the game: they let you define multiple part designs, place instances of each part in a shared scene, and connect them with mechanical joints. A simple hinge, a multi-bar linkage, or a full robotic arm -- they all start the same way.
+
+## Part Definitions and Instances
+
+A **part definition** is a parametric design (the feature tree you have been building in previous tutorials). An **instance** is a positioned copy of that definition in the assembly. You can place many instances of the same part definition, each at a different location and orientation. Change the definition and every instance updates.
+
+Open a new document and create your first part. Press **Cmd+K** and choose **New Part Def**. Name it "base". Build a simple box (say 80 x 60 x 10 mm) to act as a base plate. Then create a second part definition (**Cmd+K** then **New Part Def** again), name it "arm", and build a long narrow box (10 x 10 x 80 mm) that will act as a rotating lever.
+
+<Callout type="info" title="Part definitions in the feature tree">
+The feature tree now shows two top-level part definitions, each with its own feature history. Click a part definition to expand it and edit its geometry. The assembly view in the tree shows the instances you have placed and the joints between them.
+</Callout>
+
+## Placing Instances
+
+Switch to assembly mode by clicking the **Assembly** tab at the top of the feature tree, or press **Cmd+K** and choose **Add Instance**. Select the "base" part definition and place it at the origin. Then add an instance of "arm". The arm appears at the origin too, overlapping the base.
+
+To position the arm, select its instance in the assembly tree and use the **Transform** fields in the property panel. Set the translation to X: 40, Y: 30, Z: 10 so the arm sits on top of the base plate, near one edge. You can also click-drag the gizmo arrows in the viewport to position the instance interactively.
+
+You can add as many instances as you need. Multiple instances of the same part definition share geometry but have independent transforms, so you could place four arms around the base plate without modeling the arm four times.
+
+## Adding a Joint
+
+Joints define how instances move relative to each other. Select two instances in the assembly tree -- click the base instance, then **Cmd+click** the arm instance. Press **Cmd+K** and choose **Add Joint**. The property panel shows joint configuration fields.
+
+First, pick the **Joint Type**. vcad supports five types:
+
+**Fixed** locks two instances together rigidly. No relative motion. Use this for bolted or welded connections where parts should not move at all.
+
+**Revolute** allows rotation around a single axis, like a door hinge. You set the rotation axis and the anchor point. This is the most common joint for mechanisms.
+
+**Prismatic** (slider) allows translation along a single axis, like a drawer sliding on rails. You set the slide axis and the anchor point.
+
+**Cylindrical** combines revolute and prismatic -- the instance can both rotate around and slide along the same axis. Think of a piston inside a cylinder bore.
+
+**Ball** allows free rotation in all three axes around a point, like a ball-and-socket joint in a shoulder or steering linkage.
+
+For this tutorial, choose **Revolute**. Set the anchor point to X: 40, Y: 30, Z: 10 (where the arm meets the base) and the axis to Z (so the arm rotates horizontally on top of the base plate).
+
+<Callout type="tip" title="Joint anchors">
+Each joint has two anchor points -- one on each instance. By default they are set to the same world-space position. For revolute joints the two anchors should coincide so the joint pivots cleanly. For prismatic joints the anchors define the start of the slide range on each part.
+</Callout>
+
+## The Scrub Slider
+
+With a revolute joint selected, the property panel shows a **Joint Value** slider (in degrees for revolute, millimeters for prismatic). Drag this slider and watch the arm rotate around the pivot in the viewport. This is forward kinematics in action -- you are directly controlling the joint angle and seeing the resulting position.
+
+The slider range defaults to -180 to +180 degrees for revolute joints. You can set custom limits in the **Min** and **Max** fields to constrain the joint range. A hinge that should only open from 0 to 90 degrees, for example, would have Min: 0 and Max: 90.
+
+Scrubbing is the fastest way to verify that your joint is positioned correctly and the parts move as expected. If the arm swings through the base plate, the anchor point or axis is wrong -- adjust and scrub again.
+
+## Forward Kinematics Chains
+
+Joints can be chained. If you add a second arm and connect it to the first arm with another revolute joint, scrubbing either joint propagates motion through the chain. Move the first joint and the second arm follows along. Move the second joint and only the second arm rotates relative to the first.
+
+This is forward kinematics: each joint angle is an input, and the positions of all downstream instances are computed by walking the chain from base to tip. For a robotic arm with six joints you would scrub six sliders to pose the arm in any reachable configuration.
+
+The assembly tree displays the kinematic chain as a hierarchy: the base is the root, the first arm is a child connected by the first joint, the second arm is a grandchild connected by the second joint, and so on. The tree follows the kinematic structure, not the order in which you created the parts.
+
+## Physics Simulation
+
+Once you have joints configured, you can go beyond kinematic posing and simulate actual dynamics. Press **Cmd+K** and choose **Start Physics**. vcad creates rigid bodies from your BRep geometry, applies gravity, and lets parts move under physical forces. Revolute joints behave like real hinges with inertia, prismatic joints behave like real sliders, and parts collide with each other.
+
+Physics simulation is covered in depth in the MCP tutorials, where AI agents use the gym interface to train control policies. For now, just know that the assembly you build here is the same one that physics acts on -- the joints and instances define the simulation.
+
+<Callout type="info" title="Saving joint states">
+The document format stores the current joint values alongside the assembly structure. When you save and reopen a document, the assembly appears in the same pose you left it in. You can also save named poses for quick recall.
+</Callout>
+
+## What You Built
+
+You created two part definitions, placed instances of each, connected them with a revolute joint, and animated the mechanism with the scrub slider. This is the foundation for every mechanical assembly in vcad, from a simple hinge to a multi-jointed robot.
+
+Next, learn how to create 2D manufacturing drawings from your 3D models with [drawing mode](/tutorials/app/08-drawings).

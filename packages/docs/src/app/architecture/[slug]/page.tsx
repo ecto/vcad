@@ -9,7 +9,7 @@ import {
   getAllContent,
   getNavigation,
 } from "@/lib/content";
-import { getMdxComponents } from "@/lib/mdx-components";
+import { getMdxComponents, mdxOptions } from "@/lib/mdx-components";
 
 interface PageProps {
   params: Promise<{ slug: string }>;
@@ -70,7 +70,7 @@ export default async function ArchitecturePage({ params }: PageProps) {
 
       {/* Content */}
       <article className="mb-16">
-        <MDXRemote source={data.content} components={getMdxComponents()} />
+        <MDXRemote source={data.content} components={getMdxComponents()} options={mdxOptions} />
       </article>
 
       {/* Navigation */}

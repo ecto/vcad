@@ -1,0 +1,72 @@
+---
+title: "Forward Kinematics"
+description: "FK transform propagation, joint chains, posing a robot arm"
+order: 3
+---
+
+Forward kinematics (FK) is the process of computing the position and orientation of each instance in an assembly by walking the joint chain from the ground instance outward. You set joint state values -- angles for revolute joints, displacements for prismatic joints -- and the system computes where every downstream instance ends up. It is the mathematical backbone that turns a static assembly into a poseable mechanism.
+
+## Transform Propagation
+
+Every instance's world transform is computed from its parent's world transform, the joint connecting them, and the joint's current state value. The formula is:
+
+```
+child_world = parent_world * joint_parent_anchor * joint_rotation_or_translation * inverse(joint_child_anchor)
+```
+
+For a revolute joint with the parent at the origin and the joint axis along Z, setting the joint angle to 45 degrees rotates the child instance 45 degrees around the Z axis passing through the anchor point. The child's geometry, and everything attached to the child via further joints, rotates with it.
+
+This propagation is recursive. The ground instance has a fixed world transform. Its direct children compute their transforms from the ground's transform plus their joint states. Their children compute from those transforms plus their own joint states. The computation flows outward through the kinematic tree, from root to leaves.
+
+## Joint Chains
+
+A **joint chain** is a sequence of joints connecting the ground instance to a leaf instance. A simple hinge has a chain of length 1 (ground -> revolute -> arm). A 6-DOF robot arm has a chain of length 6 (ground -> shoulder -> upper_arm -> elbow -> forearm -> wrist_rotate -> wrist_flex -> end_effector, with a joint at each connection).
+
+The total DOF of the chain equals the sum of DOF of each joint in the chain. A chain of 6 revolute joints has 6 DOF, meaning you need 6 angle values to fully specify the pose. A chain with 3 revolute joints and 1 prismatic joint has 4 DOF.
+
+In vcad's feature tree, the kinematic chain appears as a nested hierarchy. The ground instance is the root, its child instances appear as direct descendants, and their children appear below them. The depth of nesting reflects the chain length.
+
+## Scrubbing Joint Values
+
+The property panel shows a **Joint Value** slider for each joint. For revolute joints the value is in degrees; for prismatic joints it is in millimeters. Dragging the slider updates the joint state and immediately recomputes all downstream transforms. The viewport shows the mechanism moving in real time.
+
+This scrub interaction is the primary way to verify that your assembly works correctly. After connecting parts with joints, scrub each joint and observe: Does the motion look right? Do parts collide? Do they separate when they should stay in contact? Does the range of motion match the physical mechanism?
+
+<Callout type="tip" title="Scrub multiple joints">
+Select a joint and scrub its slider, then select another joint and scrub that one. Each joint moves independently, and the combined effect is visible in the viewport. For a robot arm, systematically scrub from the base joint to the tip joint, checking each DOF in isolation and then in combination.
+</Callout>
+
+## Posing a Robot Arm
+
+Consider a 6-DOF robot arm with joints at the base (rotation around Z), shoulder (rotation around Y), elbow (rotation around Y), wrist pitch (rotation around Y), wrist yaw (rotation around Z), and wrist roll (rotation around X). Each joint is revolute.
+
+To pose the arm reaching forward and to the right:
+
+1. Set the base joint to 30 degrees (rotate the whole arm 30 degrees from center).
+2. Set the shoulder joint to -45 degrees (tilt the upper arm forward).
+3. Set the elbow joint to 90 degrees (bend the forearm upward to compensate).
+4. Set wrist pitch to -45 degrees (angle the tool downward).
+5. Set wrist yaw to 0 degrees (no lateral twist).
+6. Set wrist roll to 0 degrees (no rotation of the end effector).
+
+Each joint value affects the position and orientation of every instance downstream in the chain. The base rotation moves everything. The shoulder rotation moves the upper arm, forearm, and end effector. The elbow moves only the forearm and end effector. The wrist joints affect only the end effector.
+
+## Kinematic Trees vs Kinematic Loops
+
+A **kinematic tree** is an assembly where every instance has exactly one parent joint (except the ground, which has none). The joint chain from ground to any instance is unique. This is the standard structure for robot arms, linkages with one grounded link, and most assemblies.
+
+A **kinematic loop** occurs when a joint chain forms a cycle -- an instance connects back to an ancestor in the tree. A four-bar linkage, for example, has four joints forming a closed loop. Kinematic loops add constraints that reduce the effective DOF below the sum of individual joint DOF.
+
+vcad's forward kinematics handles tree structures directly. For closed loops, the system solves the loop closure constraints using the same Levenberg-Marquardt solver used for sketch constraints. You build the loop by adding all joints, and the solver ensures that the loop closes at every joint state configuration.
+
+<Callout type="info" title="Loop constraints">
+In a four-bar linkage with four revolute joints (4 DOF total), the closed loop imposes 3 constraints, leaving 1 effective DOF. Moving one joint determines the positions of all others. vcad's solver computes the correct configuration automatically when you scrub any joint in the loop.
+</Callout>
+
+## From Kinematics to Physics
+
+Forward kinematics is purely geometric -- you specify joint values and the system computes poses. There are no forces, no gravity, no inertia. For dynamic behavior, switch to physics simulation. The assembly you built and posed with FK is the same one that physics acts on. The joints, limits, anchors, and axes transfer directly into the Rapier3D simulation.
+
+Physics simulation adds gravity, contact forces, motor torques, and dynamic response. A joint angle that you set to 45 degrees in FK might swing to -90 degrees under gravity in physics if no motor holds it. FK is for posing and verifying geometry; physics is for verifying dynamic behavior.
+
+For checking whether your posed assembly has parts overlapping where they should not, continue to the [Clash Detection](/guides/assembly/clash) guide.

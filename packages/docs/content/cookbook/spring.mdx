@@ -1,0 +1,208 @@
+---
+title: "Spring (Helix Sweep)"
+description: "Helical spring via swept circle"
+difficulty: Intermediate
+time: "10 min"
+order: 5
+---
+
+A compression spring is the canonical sweep-along-a-helix example. This recipe sweeps a circular wire profile along a helical path to produce a solid spring model suitable for 3D printing or FEA meshing.
+
+## The Sweep
+
+```rust
+use vcad::{Sketch, Sweep, Helix, Part};
+
+let wire    = Sketch::circle(1.0);               // 2mm wire diameter
+let path    = Helix::new(10.0, 5.0, 8);          // r=10, pitch=5, 8 turns
+
+let spring  = Sweep::along(&wire, &path)
+    .segments(32)
+    .build();
+```
+
+<Playground exampleId="transforms" />
+
+Three parameters fully define a compression spring: the wire diameter (the cross-section being swept), the coil diameter (helix radius), and the pitch (vertical distance per revolution). The number of turns sets the free length of the spring, which equals `pitch * turns` -- in this case 40mm.
+
+## Step by Step
+
+### 1. Define the wire cross-section
+
+```rust
+let wire = Sketch::circle(1.0);  // radius = 1mm → 2mm diameter wire
+```
+
+The sweep profile is a circle representing the spring wire. A 2mm wire diameter is typical for a small compression spring. The profile sits at the origin in the XY plane; the sweep operation will replicate it along the helix path.
+
+### 2. Create the helix path
+
+```rust
+let path = Helix::new(10.0, 5.0, 8);
+```
+
+`Helix::new(radius, pitch, turns)` generates a helical curve centered on the Z axis. The radius of 10mm gives a coil diameter of 20mm (the outer diameter will be 22mm once the 2mm wire is swept along it). The pitch of 5mm means each coil advances 5mm upward. Eight complete turns produce a spring 40mm tall.
+
+The relationship between parameters:
+
+| Parameter | Value | Effect |
+|-----------|-------|--------|
+| Coil radius | 10mm | Sets coil diameter (20mm) |
+| Pitch | 5mm | Vertical rise per revolution |
+| Turns | 8 | Total active coils |
+| Free length | 40mm | pitch x turns |
+
+### 3. Sweep the profile along the path
+
+```rust
+let spring = Sweep::along(&wire, &path)
+    .segments(32)
+    .build();
+```
+
+The sweep operation extrudes the circular profile along every point of the helix, maintaining the profile perpendicular to the path tangent (Frenet frame). The `.segments(32)` parameter controls how many cross-sections are placed per revolution -- 32 gives a smooth result without excessive polygon count.
+
+## Flat Ends (Ground Springs)
+
+Real compression springs have flattened ends so they sit flat on surfaces. Add dead coils at top and bottom where the pitch drops to zero:
+
+```rust
+let path = Helix::builder(10.0)
+    .dead_coils_bottom(1.0)    // 1 turn at zero pitch
+    .active_pitch(5.0)         // Normal pitch for middle
+    .active_turns(6)           // 6 active coils
+    .dead_coils_top(1.0)       // 1 turn at zero pitch
+    .build();
+
+let ground_spring = Sweep::along(&wire, &path)
+    .segments(32)
+    .build();
+```
+
+The dead coils sit flat (zero pitch), providing a stable contact surface. The total turn count becomes 8 (1 dead + 6 active + 1 dead), but only the 6 active coils contribute to the spring rate.
+
+## Spring Rate Estimation
+
+While vcad is a geometry tool rather than an FEA solver, you can compute the theoretical spring rate from the geometry parameters for reference:
+
+```rust
+// Spring rate calculation (for reference, not a vcad API)
+let wire_dia = 2.0;          // mm
+let coil_dia = 20.0;         // mm
+let active_turns = 6.0;
+let shear_modulus = 79_300.0; // MPa (steel)
+
+let spring_rate = (shear_modulus * wire_dia.powi(4))
+    / (8.0 * active_turns * coil_dia.powi(3));
+
+println!("Theoretical spring rate: {:.2} N/mm", spring_rate);
+```
+
+<Callout type="info" title="Units">
+vcad uses millimeters by convention. The spring rate formula above uses mm and MPa (N/mm^2), giving the result in N/mm. For a 2mm steel wire, 20mm coil diameter, and 6 active turns, the rate is approximately 1.65 N/mm.
+</Callout>
+
+## Variations
+
+### Extension spring with hooks
+
+An extension spring has hooks at each end instead of flat coils. Add hook geometry after the sweep:
+
+```rust
+// Tightly wound coils (zero pitch for preload)
+let tight_path = Helix::new(10.0, 2.0, 12);
+let coil_body = Sweep::along(&wire, &tight_path)
+    .segments(32)
+    .build();
+
+// Hook at bottom (half-circle bent outward)
+let hook_path = Helix::new(5.0, 0.0, 0.5);  // Half turn, smaller radius
+let hook = Sweep::along(&wire, &hook_path)
+    .segments(32)
+    .build();
+
+let bottom_hook = hook.translate(10.0, 0.0, 0.0);
+let top_hook = hook
+    .rotate(0.0, 0.0, 180.0)
+    .translate(-10.0, 0.0, 24.0);
+
+let extension_spring = coil_body + bottom_hook + top_hook;
+```
+
+### Tapered spring (conical)
+
+A conical spring uses a helix with linearly varying radius:
+
+```rust
+let conical_path = Helix::conical(15.0, 8.0, 5.0, 6);  // r_bottom, r_top, pitch, turns
+
+let conical_spring = Sweep::along(&wire, &conical_path)
+    .segments(32)
+    .build();
+```
+
+The bottom radius of 15mm tapers to 8mm at the top. Conical springs can compress to a flat disc since each coil nests inside the one below it, making them useful where compressed height is constrained.
+
+### Variable-pitch spring
+
+Progressive-rate springs use varying pitch to provide a rising spring rate:
+
+```rust
+let progressive_path = Helix::builder(10.0)
+    .section(3.0, 3)    // 3mm pitch for 3 turns (soft start)
+    .section(5.0, 3)    // 5mm pitch for 3 turns (medium)
+    .section(8.0, 2)    // 8mm pitch for 2 turns (stiff end)
+    .build();
+
+let progressive_spring = Sweep::along(&wire, &progressive_path)
+    .segments(32)
+    .build();
+```
+
+## Complete Code
+
+```rust
+use vcad::{Sketch, Sweep, Helix, Part};
+
+fn compression_spring(
+    wire_dia: f64,
+    coil_dia: f64,
+    pitch: f64,
+    active_turns: usize,
+    dead_coils: f64,
+) -> Part {
+    let wire = Sketch::circle(wire_dia / 2.0);
+
+    let path = Helix::builder(coil_dia / 2.0)
+        .dead_coils_bottom(dead_coils)
+        .active_pitch(pitch)
+        .active_turns(active_turns)
+        .dead_coils_top(dead_coils)
+        .build();
+
+    Sweep::along(&wire, &path)
+        .segments(32)
+        .build()
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let spring = compression_spring(
+        2.0,   // wire diameter
+        20.0,  // coil diameter
+        5.0,   // pitch
+        6,     // active turns
+        1.0,   // dead coils each end
+    );
+
+    let free_length = 5.0 * 6.0 + 2.0 * 1.0 * 0.0;  // active + dead
+    println!("Free length: {:.1} mm", 5.0 * 6.0);
+    println!("Volume: {:.0} mm³", spring.volume());
+
+    spring.write_stl("spring.stl")?;
+    Ok(())
+}
+```
+
+<Callout type="tip" title="Mesh quality for 3D printing">
+For FDM printing, 32 segments per revolution is sufficient. For resin printing or rendering, increase to 64 for smoother wire cross-sections. The helix path resolution is separate from the profile resolution -- both affect the final mesh density.
+</Callout>

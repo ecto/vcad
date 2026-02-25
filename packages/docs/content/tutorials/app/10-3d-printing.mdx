@@ -1,0 +1,83 @@
+---
+title: "3D Print Workflow"
+description: "Slice, layer preview, print settings, DFM analysis, send to printer"
+order: 10
+difficulty: Intermediate
+time: "15 minutes"
+---
+
+<Playground exampleId="enclosure" />
+
+The enclosure above is a good candidate for 3D printing: it has uniform wall thickness, filleted edges that reduce stress risers in layer-based manufacturing, and flat bottom surface for bed adhesion. vcad includes a built-in slicer so you can go from parametric model to print-ready G-code without leaving the app.
+
+## Opening the Slicer
+
+Press **Cmd+K** and choose **Slice**, or click the print icon in the toolbar. The slicer panel opens on the right side of the viewport, replacing the property panel. The viewport switches to a slicing preview that shows your part in its print orientation on a virtual build plate.
+
+The slicer works directly with your BRep geometry, not an exported mesh. This means it can analyze exact surfaces for optimal orientation, detect flat faces for bed contact, and identify overhangs with true surface normals rather than faceted approximations.
+
+## Printer Profile
+
+At the top of the slicer panel, choose a **Printer Profile**. Profiles define the build volume, nozzle diameter, and default settings for a specific machine. vcad ships with generic profiles for common printer types (FDM 0.4mm nozzle, SLA, SLS). You can create custom profiles with your exact machine parameters -- build volume in millimeters, nozzle size, heated bed capability, and maximum travel speed.
+
+The build volume appears as a translucent box in the viewport. If your part extends beyond it, the slicer warns you and suggests scaling or repositioning.
+
+## Print Settings
+
+The slicer panel exposes the settings that most affect print quality and time.
+
+**Layer height** is the thickness of each printed layer. Smaller layers (0.1 mm) produce smoother surfaces and finer detail but take longer to print. Larger layers (0.3 mm) print faster with visible layer lines. For the enclosure, 0.2 mm is a good balance between surface quality and print time.
+
+**Infill percentage** controls how solid the interior of the part is. 0% is completely hollow (just walls), 100% is completely solid. For functional parts that need strength, 20--40% is typical. For display models, 10% is enough to support the shell. The infill pattern (grid, gyroid, honeycomb) is selectable in the advanced settings.
+
+**Wall count** sets the number of perimeter loops on each layer. More walls mean thicker, stronger outer surfaces. Two or three walls is standard for most prints.
+
+**Support** enables automatically generated support structures under overhangs. vcad detects faces angled more than 45 degrees from vertical and flags them as needing support. You can toggle support on or off and adjust the overhang threshold angle.
+
+<Callout type="tip" title="Orientation matters">
+Rotating the part on the build plate changes which surfaces need support, how strong the part is along each axis, and which surfaces have visible layer lines. Use the rotation controls at the bottom of the slicer panel to try different orientations. The BRep analysis suggests an optimal orientation based on flat-bottom detection and overhang minimization.
+</Callout>
+
+## Layer Preview
+
+After configuring settings, click **Preview Layers**. The viewport switches to a layer-by-layer view of the sliced model. A slider on the side lets you scrub through every layer from first to last. Each layer is color-coded: perimeters in one color, infill in another, support in a third.
+
+This preview is essential for catching problems before committing to a multi-hour print. Scan through the layers and look for: layers with no infill connection to the layer below (potential delamination), very thin sections that might not print cleanly, and support structures that will be difficult to remove from internal cavities.
+
+## DFM Analysis
+
+vcad runs a Design for Manufacturability analysis automatically when you open the slicer. The DFM panel highlights potential problems and rates each one by severity.
+
+**Thin walls** are sections where the wall thickness is below the recommended minimum for your nozzle size. A 0.4 mm nozzle cannot reliably print a 0.3 mm wall. The DFM panel highlights thin regions in orange on the model and suggests increasing thickness.
+
+**Overhangs** are surfaces that extend outward with insufficient support from the layer below. Moderate overhangs (45--60 degrees) print with some quality loss; steep overhangs (beyond 60 degrees) sag or fail without support. The analysis marks overhang zones on the model surface.
+
+**Bridging** occurs when the printer must span a gap between two supported regions. Short bridges (under 10 mm for most printers) print acceptably; long bridges droop. The analysis flags bridges and reports their span length.
+
+**Small features** like thin pins, narrow slots, or fine text may be below the printer's resolution. The analysis compares feature sizes against the nozzle diameter and layer height to predict which details will not print faithfully.
+
+<Callout type="warning" title="DFM is advisory">
+DFM warnings do not prevent you from slicing or printing. Many experienced users intentionally push past recommended limits for specific applications. The analysis is a guide, not a gatekeeper -- use your judgment based on your printer's capabilities.
+</Callout>
+
+## Cost Estimation
+
+Below the DFM panel, vcad shows a cost estimate based on material volume, print time, and configurable rates. The estimate reports filament usage in grams and meters, estimated print time in hours and minutes, and material cost at a configurable price per kilogram.
+
+This is useful for quoting parts, comparing design alternatives (a thinner wall uses less material but may need more support), and deciding whether to print in-house or send to a service bureau.
+
+## Sending to a Printer
+
+Once you are satisfied with the settings and preview, click **Send to Printer**. vcad generates G-code and uploads it to your printer via FTPS. You configure the printer's network address and credentials in the printer profile settings.
+
+For printers that are not network-connected, click **Export G-code** to save the file locally. Transfer it to your printer via USB drive or SD card as usual.
+
+<Callout type="info" title="Iterative workflow">
+The slicer is integrated into the parametric workflow. If you spot a DFM issue, close the slicer, edit your model (thicken a wall, add a fillet to a stress point, reposition a feature), and reopen the slicer. The analysis and preview update to reflect your changes instantly. This tight loop between design and manufacturing feedback is one of vcad's core advantages over disconnected slicer applications.
+</Callout>
+
+## What You Learned
+
+You configured print settings, previewed layers, reviewed DFM warnings for thin walls, overhangs, bridging, and small features, estimated material cost, and sent a part to a printer. The integrated slicer keeps the design-to-print loop tight and catches manufacturing issues before they waste time and material.
+
+Next, try generating geometry from a text description with [AI generation](/tutorials/app/11-ai-generate).

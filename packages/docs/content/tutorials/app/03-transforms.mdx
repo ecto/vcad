@@ -1,0 +1,66 @@
+---
+title: "Transforms & Patterns"
+description: "Move, rotate, scale, and pattern your geometry"
+order: 3
+difficulty: Beginner
+time: "10 minutes"
+playground:
+  exampleId: "transforms"
+---
+
+<Playground exampleId="transforms" />
+
+Every shape you create starts at the origin. Transforms move it where it needs to go. The geometry above shows a cube that has been translated, rotated, and scaled -- three distinct operations that each appear as separate nodes in the feature tree.
+
+## Translate, Rotate, Scale
+
+**Translate** moves a shape by a specified offset in X, Y, and Z. Select a shape, press **Cmd+K**, and choose **Translate**. Enter the distance in millimeters for each axis. Positive X goes right, positive Y goes forward, positive Z goes up.
+
+**Rotate** spins a shape around the origin. Angles are in degrees. Rotation around Z spins the shape in the ground plane (like turning a dial on a table). Rotation around X tilts it forward/backward, and rotation around Y tilts it left/right.
+
+**Scale** changes the size. You can scale uniformly (the same factor in all directions) or non-uniformly (stretch in one axis). Select a shape, apply a scale transform, and enter the scale factors. A value of 2.0 doubles the size; 0.5 halves it.
+
+All three operations are non-destructive nodes in the feature tree. You can click any transform node to change its parameters, and the model updates instantly. You can also reorder transforms by dragging them in the feature tree -- order matters because translating then rotating gives a different result than rotating then translating.
+
+<Callout type="info" title="The gizmo">
+When you select a shape, a 3D gizmo appears at its center. Drag the colored arrows to translate along an axis (red for X, green for Y, blue for Z). Drag the colored arcs to rotate. The gizmo provides a visual alternative to typing numbers in the property panel -- useful for rough positioning before dialing in exact values.
+</Callout>
+
+## Mirror
+
+Mirror reflects a shape across a plane. Open the command palette and choose **Mirror**, then select the mirror plane: XY, XZ, or YZ. This creates a mirrored copy of the geometry on the other side of that plane. Mirror is particularly useful for symmetric parts -- model one half, mirror it, and union the two halves together.
+
+## Linear Pattern
+
+A linear pattern creates multiple copies of a shape, evenly spaced along a direction. Select a shape (or a boolean result), open the command palette, and choose **Linear Pattern**. Set the direction (X, Y, or Z), the number of copies, and the spacing between them.
+
+For example, to create a row of four mounting holes spaced 20 mm apart along the X axis: first create one hole using a boolean difference, then apply a linear pattern with direction X, count 4, and spacing 20. The pattern replicates the entire boolean operation, so you get four complete holes -- not four loose cylinders.
+
+## Circular Pattern
+
+<Playground exampleId="circular-pattern" />
+
+A circular pattern distributes copies around an axis. The example above shows holes arranged in a ring -- the kind of bolt pattern you find on flanges, wheels, and covers. Select a feature, open the command palette, and choose **Circular Pattern**. Set the axis of rotation (typically Z for a pattern around a vertical center), the number of copies, and the total angle (360 degrees for a full ring, or less for a partial arc).
+
+<Callout type="tip" title="Patterns and booleans together">
+The most powerful modeling technique is combining patterns with booleans. Create one hole, subtract it from the body, then pattern the result. Each copy includes the boolean operation. This is how you create bolt circles, ventilation grids, and repeating cutouts with a single pattern operation.
+</Callout>
+
+## Practical Example: Bolt Circle
+
+Here is how to make a bolt circle on a circular flange. Start with a cylinder for the flange body. Add a smaller cylinder offset from center for the bolt hole. Subtract the small cylinder from the flange. Now apply a circular pattern to the result: set the axis to Z, count to 6, and angle to 360 degrees. You get six evenly spaced bolt holes in one operation.
+
+If the customer later asks for 8 holes instead of 6, click the pattern node in the feature tree and change the count. Every hole repositions automatically. This is the power of parametric modeling -- changing one number updates the entire design.
+
+## Transform Reference
+
+| Operation | Command Palette | What It Does |
+|-----------|----------------|---------------|
+| Translate | Translate | Move by X, Y, Z offset |
+| Rotate | Rotate | Spin by angles in degrees |
+| Scale | Scale | Resize by factor per axis |
+| Mirror | Mirror | Reflect across XY, XZ, or YZ plane |
+| Linear Pattern | Linear Pattern | Repeat along a line |
+| Circular Pattern | Circular Pattern | Repeat around an axis |
+
+Next, learn how to create custom 2D profiles and push them into 3D with [sketch and extrude](/tutorials/app/04-sketch-extrude).

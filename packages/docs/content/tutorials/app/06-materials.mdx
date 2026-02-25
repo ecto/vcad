@@ -1,0 +1,65 @@
+---
+title: "Materials & Rendering"
+description: "Assign PBR materials, adjust properties, toggle ray-traced mode"
+order: 6
+difficulty: Beginner
+time: "10 minutes"
+---
+
+<Playground exampleId="flanged-hub" />
+
+The flanged hub above is wearing a brushed aluminum material -- notice how light catches the slight roughness on the flat faces and reflects more sharply off the fillet edges. Materials in vcad are not just cosmetic; they carry physical properties like density that feed into mass calculations and engineering analysis. Assigning the right material early means your design reflects real-world behavior from the start.
+
+## Assigning a Material
+
+Select any part in the viewport or feature tree. In the property panel on the right, find the **Material** section. Click the material swatch to open the material picker. vcad ships with a library of common engineering materials: Aluminum, Steel, Stainless Steel, Copper, Brass, Plastic (ABS), Rubber, and Wood. Click one to apply it immediately -- the viewport updates in real time so you can see how each material looks on your geometry.
+
+If nothing is selected, the material panel is empty. Materials are assigned per-part, so in an assembly each part can have a different material.
+
+## PBR Properties
+
+vcad uses Physically Based Rendering (PBR), the same material model used in modern game engines and film. Every material is described by a handful of properties that interact with light in a physically plausible way.
+
+**Color** is the base color of the surface, sometimes called albedo. For metals this controls the tint of reflections (gold, copper, chrome). For non-metals it is the diffuse color you see when light scatters off the surface.
+
+**Metallic** is a 0-to-1 value that describes whether the surface is a dielectric (0) or a metal (1). Dielectrics like plastic and wood reflect light at grazing angles and scatter light from their surface. Metals reflect light at all angles and tint their reflections with their base color. In practice you almost always set this to exactly 0 or exactly 1 -- real materials are either metal or not.
+
+**Roughness** controls how sharp or blurry reflections are. At 0 the surface is a perfect mirror -- every reflection is crisp. At 1 the surface is completely diffuse and you see no reflections at all, just scattered light. Machined aluminum sits around 0.3, sanded wood around 0.7, and polished chrome near 0.05.
+
+<Callout type="tip" title="Quick material tuning">
+Click-drag on the metallic and roughness fields to scrub their values while watching the viewport. This is the fastest way to dial in a realistic look. Small changes in roughness have a bigger visual impact than small changes in metallic.
+</Callout>
+
+## Creating Custom Materials
+
+The built-in library covers common cases, but you can customize any material. Select a library material as a starting point, then adjust its color, metallic, and roughness values in the property panel. Your changes create a custom material stored with the document -- the original library entry is not modified.
+
+For a satin black anodized finish, start with Aluminum, change the color to near-black, keep metallic at 1, and raise roughness to 0.5. For a transparent acrylic look, start with Plastic, lower the color's alpha, and drop roughness to 0.1. The combination of just three properties covers a surprisingly wide range of real-world appearances.
+
+## Density and Mass
+
+Each material also carries a **Density** value in g/cm^3. Aluminum is 2.7, steel is 7.85, ABS plastic is 1.05. vcad uses this density together with the part's volume to compute mass automatically. You can see the computed mass in the inspection panel (**Cmd+K** then **Inspect**), which reports volume, surface area, center of mass, and total mass.
+
+When you change a material's density or change the geometry, the mass updates immediately. This matters for weight budgets, shipping cost estimates, and structural analysis where loading depends on mass distribution.
+
+<Callout type="info" title="Assemblies inherit part materials">
+In assembly mode, each instance displays with the material assigned to its underlying part definition. Changing the material on a part definition updates every instance of that part across the assembly.
+</Callout>
+
+## Standard vs Ray-Traced Rendering
+
+By default vcad renders your model using tessellated triangle meshes fed to a standard Three.js/WebGL pipeline. This is fast and responsive -- good for daily modeling work. But the triangles are an approximation of your exact BRep surfaces, so curved edges can look slightly faceted at close zoom.
+
+vcad also includes a direct BRep ray tracer that renders surfaces analytically at pixel-perfect accuracy. Toggle it with **Cmd+K** then **Toggle Ray Trace**, or click the ray-trace icon in the viewport toolbar. In this mode the renderer casts rays directly against the exact mathematical surfaces of your model: planes, cylinders, spheres, cones, tori, and NURBS. There is no tessellation step and no faceting. Fillets look perfectly smooth. Reflections trace actual surface curvature.
+
+The ray tracer uses WebGPU compute shaders and a BVH acceleration structure, so it runs at interactive frame rates on modern GPUs. On less powerful hardware it may lag on complex models. Switch back to standard mode for fast editing and use ray-traced mode when you want to check visual quality or capture a screenshot.
+
+<Callout type="warning" title="WebGPU required">
+Ray-traced mode requires a browser that supports WebGPU (Chrome 113+, Edge 113+, or Firefox Nightly). If ray tracing is unavailable, the toggle will be grayed out and vcad will stay in standard rendering mode.
+</Callout>
+
+## What You Learned
+
+You assigned materials from the built-in library, tuned PBR properties to match real-world appearances, and toggled between standard and ray-traced rendering. Materials round out the visual and physical description of your parts.
+
+Next, learn how to combine multiple parts into a working mechanism with [assemblies and joints](/tutorials/app/07-assembly).

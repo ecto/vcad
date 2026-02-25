@@ -1,0 +1,362 @@
+---
+title: "CLI Commands"
+description: "Complete reference for the vcad command-line tool"
+order: 1
+---
+
+The `vcad` CLI provides headless access to the full parametric kernel. Install it with `cargo install vcad-cli`. Running `vcad` with no subcommand launches the interactive TUI editor.
+
+## vcad new
+
+Create a new `.vcad` document from a template.
+
+```bash
+vcad new <path> [--template <name>]
+```
+
+<Param name="path" type="path">
+Output file path for the new document.
+</Param>
+
+<Param name="--template" type="string" default="empty">
+Starting template. Options: `empty` (blank document), `cube` (single 20mm cube), `assembly` (two-part base and pillar).
+</Param>
+
+```bash
+vcad new project.vcad
+vcad new starter.vcad --template cube
+vcad new robot.vcad --template assembly
+```
+
+## vcad info
+
+Display document metadata and mesh statistics.
+
+```bash
+vcad info <file>
+```
+
+<Param name="file" type="path">
+Path to a `.vcad` file.
+</Param>
+
+The command reads the document, prints its node count, materials, and scene entries, then evaluates the parametric DAG through the kernel to report tessellation statistics.
+
+```bash
+$ vcad info bracket.vcad
+vcad document: bracket.vcad
+  Version: 1.0.0
+  Nodes: 5
+  Materials: 2
+  Scene entries: 1
+
+Scene:
+  1: Bracket (material: aluminum)
+
+Mesh stats:
+  Total triangles: 1284
+  Total vertices: 642
+```
+
+## vcad export
+
+Export a `.vcad` file to a mesh or CAD interchange format. The output format is determined by the file extension.
+
+```bash
+vcad export <input> <output>
+```
+
+<Param name="input" type="path">
+Input `.vcad` file.
+</Param>
+
+<Param name="output" type="path">
+Output file. Extension determines format: `.stl`, `.step`/`.stp`, `.glb`, `.urdf`.
+</Param>
+
+```bash
+vcad export bracket.vcad bracket.stl
+vcad export bracket.vcad bracket.step
+vcad export robot.vcad robot.urdf
+```
+
+| Extension | Format | Notes |
+|-----------|--------|-------|
+| `.stl` | Binary STL | Combined mesh of all scene entries |
+| `.step` / `.stp` | STEP AP214 | Primitives and imported STEP only; booleans not supported |
+| `.glb` | glTF Binary | Currently prints a notice (not yet fully implemented in CLI) |
+| `.urdf` | URDF | Exports assembly with links and joints |
+
+<Callout type="warning" title="STEP export limitations">
+STEP export works for primitive shapes (cube, cylinder, sphere, cone) and previously imported STEP files. Boolean operations convert geometry to a triangle mesh, which cannot be exported back to STEP. The command will exit with an error explaining this if you try.
+</Callout>
+
+## vcad import
+
+Import a STEP file into vcad format.
+
+```bash
+vcad import <input> <output> [--name <name>]
+```
+
+<Param name="input" type="path">
+Input STEP file (`.step` or `.stp`).
+</Param>
+
+<Param name="output" type="path">
+Output `.vcad` file.
+</Param>
+
+<Param name="--name" type="string">
+Part name. Defaults to the input filename without extension.
+</Param>
+
+```bash
+vcad import housing.step housing.vcad
+vcad import housing.step housing.vcad --name "Motor Housing"
+```
+
+If the STEP file contains multiple solids, each gets its own node with a numbered suffix (e.g., `Housing_0`, `Housing_1`).
+
+## vcad import-urdf
+
+Import a URDF robot description file into vcad format.
+
+```bash
+vcad import-urdf <input> <output>
+```
+
+<Param name="input" type="path">
+Input URDF file (`.urdf` or `.xml`).
+</Param>
+
+<Param name="output" type="path">
+Output `.vcad` file.
+</Param>
+
+```bash
+vcad import-urdf robot.urdf robot.vcad
+```
+
+The importer reads links and joints from the URDF, creating part definitions and assembly data in the vcad document.
+
+## vcad boolean
+
+Apply a boolean operation between two parts in a document.
+
+```bash
+vcad boolean <file> <op> <part_a> <part_b> [-o <output>] [--result-name <name>]
+```
+
+<Param name="file" type="path">
+Input `.vcad` file.
+</Param>
+
+<Param name="op" type="enum">
+Operation: `union`, `difference`, or `intersection`.
+</Param>
+
+<Param name="part_a" type="string">
+First part, by node ID or name.
+</Param>
+
+<Param name="part_b" type="string">
+Second part, by node ID or name.
+</Param>
+
+<Param name="-o / --output" type="path">
+Output file. Defaults to modifying the input file in place.
+</Param>
+
+<Param name="--result-name" type="string">
+Name for the result node. Defaults to "&lt;Op&gt; Result".
+</Param>
+
+```bash
+vcad boolean model.vcad difference Base Hole
+vcad boolean model.vcad union Plate Rib -o combined.vcad --result-name "Reinforced Plate"
+```
+
+The operands are removed from the scene and replaced by the result node.
+
+## vcad transform
+
+Apply a transform to a part in a document.
+
+```bash
+vcad transform <file> <part> [--translate x,y,z] [--rotate rx,ry,rz] [--scale sx,sy,sz] [-o <output>]
+```
+
+<Param name="file" type="path">
+Input `.vcad` file.
+</Param>
+
+<Param name="part" type="string">
+Part to transform, by node ID or name.
+</Param>
+
+<Param name="--translate" type="string">
+Translation offset as `x,y,z` in millimeters.
+</Param>
+
+<Param name="--rotate" type="string">
+Rotation as `rx,ry,rz` in degrees.
+</Param>
+
+<Param name="--scale" type="string">
+Scale factors as `sx,sy,sz` or a single uniform value.
+</Param>
+
+<Param name="-o / --output" type="path">
+Output file. Defaults to modifying the input file in place.
+</Param>
+
+Transforms are applied in order: scale, then rotate, then translate. When multiple flags are given, the chain is: scale the part, rotate the result, then translate.
+
+```bash
+vcad transform model.vcad Bracket --translate 50,0,10
+vcad transform model.vcad Arm --rotate 0,0,45 --translate 100,0,0
+vcad transform model.vcad Part --scale 2 -o scaled.vcad
+```
+
+## vcad render
+
+Render a document to a PNG or JPEG image using software rasterization.
+
+```bash
+vcad render <input> <output> [options]
+```
+
+<Param name="input" type="path">
+Input `.vcad` file.
+</Param>
+
+<Param name="output" type="path">
+Output image file (`.png` or `.jpg`).
+</Param>
+
+<Param name="--width" type="u32" default="1920">
+Image width in pixels.
+</Param>
+
+<Param name="--height" type="u32" default="1080">
+Image height in pixels.
+</Param>
+
+<Param name="--azimuth" type="f64" default="45">
+Camera azimuth angle in degrees.
+</Param>
+
+<Param name="--elevation" type="f64" default="30">
+Camera elevation angle in degrees.
+</Param>
+
+<Param name="--distance" type="f64">
+Camera distance from subject. Auto-calculated if omitted.
+</Param>
+
+<Param name="--background" type="string" default="1a1a2e">
+Background color as a hex string (e.g., `ffffff`) or `transparent`.
+</Param>
+
+```bash
+vcad render bracket.vcad preview.png
+vcad render bracket.vcad hero.png --width 3840 --height 2160 --azimuth 30 --elevation 20
+vcad render bracket.vcad thumb.png --width 512 --height 512 --background transparent
+```
+
+## vcad slice
+
+Slice a document for 3D printing, producing G-code or 3MF output.
+
+```bash
+vcad slice <input> -o <output> [options]
+```
+
+<Param name="input" type="path">
+Input `.vcad` file.
+</Param>
+
+<Param name="-o / --output" type="path">
+Output file (`.gcode` or `.3mf`).
+</Param>
+
+<Param name="--profile" type="string" default="generic">
+Printer profile: `generic`, `bambu_x1c`, `bambu_p1s`, `bambu_a1`, `bambu_a1_mini`, `ender3`, `prusa_mk4`, `voron_24`.
+</Param>
+
+<Param name="--layer-height" type="f64">
+Layer height in mm. Overrides profile default.
+</Param>
+
+<Param name="--wall-count" type="u32">
+Number of perimeter walls.
+</Param>
+
+<Param name="--infill" type="u32">
+Infill density as a percentage (0-100).
+</Param>
+
+<Param name="--support" type="flag">
+Enable support generation.
+</Param>
+
+<Param name="--print-temp" type="u32">
+Nozzle temperature in degrees C.
+</Param>
+
+<Param name="--bed-temp" type="u32">
+Bed temperature in degrees C.
+</Param>
+
+<Param name="--smart" type="flag">
+Use BRep analysis to recommend layer height, infill, and support settings.
+</Param>
+
+<Param name="--explain" type="flag">
+Print reasoning behind smart defaults (requires `--smart`).
+</Param>
+
+```bash
+vcad slice bracket.vcad -o bracket.gcode --profile bambu_x1c
+vcad slice bracket.vcad -o bracket.3mf --smart --explain
+vcad slice bracket.vcad -o bracket.gcode --layer-height 0.1 --infill 30 --support
+```
+
+<Callout type="tip" title="Smart defaults">
+The `--smart` flag analyzes the part's BRep geometry (overhangs, thin walls, surface features) and recommends print settings. Add `--explain` to see the reasoning. You can still override individual settings -- CLI flags take priority over smart recommendations.
+</Callout>
+
+## vcad tui
+
+Launch the interactive terminal UI editor.
+
+```bash
+vcad tui [file]
+```
+
+<Param name="file" type="path">
+Optional `.vcad` file to open. If omitted, starts with an empty document.
+</Param>
+
+The TUI provides an ASCII wireframe 3D viewport, a feature tree you can navigate with `j`/`k`, and keyboard shortcuts for adding primitives (`1` for box, `2` for cylinder, `3` for sphere). See the [TUI tutorial](/tutorials/cli/tui) for a full walkthrough.
+
+## vcad repl
+
+Launch the interactive REPL for building geometry command-by-command.
+
+```bash
+vcad repl [file]
+```
+
+<Param name="file" type="path">
+Optional `.vcad` file to load as the starting state.
+</Param>
+
+The REPL lets you type commands like `cube 30 30 30`, `translate 10 0 0`, and `export out.stl` in an iterative workflow. See the [REPL tutorial](/tutorials/cli/repl) for details.
+
+## Exit Codes
+
+The CLI exits with code 0 on success. On failure it exits with code 1 and prints a descriptive error message. This makes it straightforward to use in scripts and CI pipelines where you need to detect failures.
+
+For tutorials that walk through common workflows, see the [CLI Quick Start](/tutorials/cli/quickstart), [REPL](/tutorials/cli/repl), and [TUI](/tutorials/cli/tui).

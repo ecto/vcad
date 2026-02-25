@@ -1,0 +1,157 @@
+---
+title: "Sketch Mode"
+description: "2D constraint-based sketching for custom profiles"
+order: 6
+---
+
+Sketch mode is where you create 2D profiles that become 3D features via extrude, revolve, sweep, or loft. It combines freeform drawing tools with a geometric constraint solver that locks down dimensions and relationships, producing precise, fully parametric profiles.
+
+## Entering Sketch Mode
+
+There are three ways to start a sketch:
+
+**From a standard plane.** Click one of the plane gizmos in the viewport (XY, XZ, or YZ). The sketch opens on that plane passing through the origin.
+
+**From a face.** Select any planar face on existing geometry, then press `S` or choose "Sketch" from the command palette. The sketch plane inherits the face's position and orientation, which is useful for adding features that sit flush against existing surfaces.
+
+**From a custom plane.** Define a plane by origin point and normal vector through the property panel. This is rarely needed but available when standard planes and face selection don't cover your case.
+
+When sketch mode activates, the camera swings to face the sketch plane head-on, the 3D geometry fades to a translucent guide, and the drawing toolbar appears. You are now working in 2D coordinates local to the sketch plane.
+
+## Drawing Tools
+
+### Line (`L`)
+
+Click to place points; each click extends the chain with a new line segment. Double-click or press `Enter` to finish the chain. To create a closed profile, click on the starting point before finishing.
+
+### Rectangle (`R`)
+
+Click to set one corner, drag to the opposite corner, and release. The rectangle is composed of four constrained line segments (alternating horizontal and vertical), so you can later adjust individual edges without breaking the shape.
+
+### Circle (`C`)
+
+Click to set the center, drag outward to set the radius, and release. Circles are single entities with a center point and radius value.
+
+### Arc
+
+Click three times: start point, end point, then a point on the arc that defines its curvature. The three-point method is the most general way to place arcs, though you can also create arcs by trimming circles (future feature).
+
+## Sketch Planes
+
+| Plane | Normal | Typical use |
+|-------|--------|-------------|
+| XY | +Z (up) | Top/bottom features, floor plans |
+| XZ | +Y (forward) | Front/back features, elevations |
+| YZ | +X (right) | Side profiles |
+
+Standard planes pass through the world origin. When you sketch on a face, the plane origin sits at the face center and the normal matches the face's outward direction. All sketch coordinates are 2D within this local frame.
+
+## Constraints
+
+Constraints define geometric relationships between sketch entities. When you add a constraint, the solver adjusts the geometry to satisfy it while preserving all other constraints. This is what makes sketches parametric: changing a dimension ripples through the entire profile automatically.
+
+### Geometric Constraints
+
+Geometric constraints enforce relationships without specifying a numeric value.
+
+**Coincident** locks two points to the same location. Select two endpoints and apply Coincident to join them. This is essential for closing profiles -- the extrude operation requires a closed loop, and Coincident ensures the last point stays connected to the first even when you adjust other dimensions.
+
+**Horizontal** forces a line segment to be parallel to the sketch X axis. Select a line and apply Horizontal. The solver will rotate the line to be perfectly horizontal while respecting its endpoint positions as best it can.
+
+**Vertical** does the same for the sketch Y axis.
+
+**Parallel** makes two line segments point in the same direction. They don't need to be collinear -- they can be offset from each other. This is useful for symmetric features like the two walls of a channel.
+
+**Perpendicular** forces two lines to meet at exactly 90 degrees. Often applied at corners where you need a precise right angle rather than relying on freehand drawing accuracy.
+
+**Tangent** makes a line meet an arc or circle smoothly, with no curvature discontinuity at the junction. This produces the kind of blended transitions you see in fillets and cam profiles.
+
+**Equal Length** forces two line segments to have the same length. When you change one, the other follows. This is especially handy for symmetric features where several edges should match.
+
+### Dimensional Constraints
+
+Dimensional constraints set explicit numeric values.
+
+**Distance** sets the spacing between two points. Select two points, apply Distance, and enter the value in millimeters. The solver moves geometry to achieve exactly that spacing.
+
+**Length** sets the length of a single line segment. This is the most common way to control sketch dimensions -- draw roughly, then pin down exact sizes with Length constraints.
+
+**Radius** sets the radius of a circle or arc. Select the circle and apply Radius, then type the value.
+
+**Angle** sets the angle between two lines. Select two lines, apply Angle, and enter degrees. This works for any two lines, not just lines that share an endpoint.
+
+**Fixed** pins a point to an absolute position in sketch coordinates. The point cannot move regardless of what other constraints do. Typically you fix one point (often the origin) to anchor the entire sketch, then use dimensions to control everything else relative to that anchor.
+
+### Applying Constraints
+
+Select the required entities (one or two points, lines, or curves depending on the constraint type), then click the constraint button in the toolbar or use the keyboard shortcut. For dimensional constraints, a text input appears where you type the value.
+
+<Callout type="tip" title="Constraint order">
+Apply geometric constraints first (horizontal, vertical, coincident, parallel), then add dimensional constraints. Geometric constraints remove degrees of freedom cheaply, and the solver converges more reliably when the shape's topology is locked before you start assigning dimensions.
+</Callout>
+
+## Constraint Status
+
+The sketch UI color-codes entities to show constraint health:
+
+| Color | Status | Meaning |
+|-------|--------|---------|
+| Yellow | Under-constrained | Some degrees of freedom remain; geometry can still slide or rotate |
+| Green | Fully constrained | Zero degrees of freedom; every point is locked |
+| Red | Over-constrained | Conflicting constraints; the solver cannot satisfy all of them |
+
+A fully constrained sketch (all green) is the goal. Every dimension and relationship is explicitly defined, so the profile behaves predictably when you edit parameters later.
+
+Under-constrained sketches (yellow) can still be extruded, but they may shift unexpectedly if you modify a dimension that interacts with the free degrees of freedom. It's worth adding constraints until the sketch turns green even if the current shape looks correct.
+
+<Callout type="warning" title="Over-constrained sketches">
+Over-constrained sketches (red) cannot be solved. The solver reports which constraints conflict. Remove or relax one of the conflicting constraints until the status returns to green or yellow. Common causes: applying both a Length and a Distance constraint that imply different values for the same edge, or fixing two endpoints of a line and also constraining its length.
+</Callout>
+
+### Degrees of Freedom
+
+Each sketch element carries a certain number of degrees of freedom (DOF). Constraints subtract DOF until the total reaches zero.
+
+| Element | DOF | What moves |
+|---------|-----|------------|
+| Point | 2 | X and Y position |
+| Line | 4 | Two endpoints, 2 DOF each |
+| Circle | 3 | Center X, center Y, radius |
+| Arc | 5 | Center, radius, start angle, end angle |
+
+A Horizontal constraint on a line removes 1 DOF (it locks the Y difference between endpoints to zero). A Length constraint removes 1 DOF. A Fixed constraint on a point removes 2 DOF. The math adds up: a rectangle (4 lines, 16 DOF total) needs 4 Coincident constraints (8 DOF removed), 2 Horizontal + 2 Vertical (4 DOF removed), 1 Fixed on a corner (2 DOF removed), and 2 Length constraints (2 DOF removed) to reach zero.
+
+## Using Sketches with Operations
+
+Once your sketch is complete, exit sketch mode with `Escape`. The sketch node appears in the feature tree. Select it and apply one of four 3D operations:
+
+**Extrude** pushes the profile along the sketch plane's normal to create a solid. You specify the depth in millimeters. Symmetric extrude pushes equally in both directions.
+
+**Revolve** spins the profile around an axis to create rotational geometry. Specify the axis (usually the sketch X or Y axis) and the angle in degrees. 360 degrees gives a full revolution; less gives a partial arc.
+
+**Sweep** moves the profile along a path curve to create prismatic or helical shapes. The path can be a line segment or a helix.
+
+**Loft** interpolates between two or more profiles at different positions to create a blended shape. Each profile is a separate sketch.
+
+## Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `S` | Enter sketch mode |
+| `L` | Line tool |
+| `R` | Rectangle tool |
+| `C` | Circle tool |
+| `H` | Horizontal constraint |
+| `V` | Vertical constraint |
+| `Enter` | Finish current shape |
+| `Escape` | Exit sketch mode |
+
+## Troubleshooting
+
+**Sketch won't solve.** Look for the red (over-constrained) indicator. Remove the most recently added constraint and check if the status returns to green. If not, remove constraints one at a time from newest to oldest until you find the conflict.
+
+**Geometry jumps when adding a constraint.** This happens when the solver finds a valid configuration that is geometrically different from what you drew. It means the sketch was under-constrained and the new constraint pulled it to a new solution. Add more constraints before the problematic one to lock down the shape you intend.
+
+**Extrude fails on the sketch.** The profile must be a single closed loop with no self-intersections. Check that all endpoints are connected with Coincident constraints, and that no line segments cross each other.
+
+For a workflow-oriented walkthrough of sketching, see the [Sketch & Extrude tutorial](/tutorials/app/sketch-extrude).

@@ -1,0 +1,118 @@
+---
+title: "vcad vs CadQuery"
+description: "Python-based parametric CAD scripting vs Rust/TypeScript CAD with web app and AI"
+order: 5
+---
+
+CadQuery and vcad are both programmable parametric CAD systems that appeal to engineers who prefer code over click-and-drag. CadQuery is a Python library built on OpenCascade, designed to be the "jQuery of CAD" -- a fluent, chainable API for building parts. vcad is a Rust-native system with TypeScript bindings, a web application, and AI integration. Both produce BRep geometry with exact surfaces, but their language ecosystems, performance characteristics, and deployment models are very different.
+
+## At a Glance
+
+| Feature | **vcad** | **CadQuery** |
+|---------|----------|-------------|
+| **Price** | Free (MIT) | Free (Apache 2.0) |
+| **Language** | Rust, TypeScript, Loon | Python |
+| **Kernel** | Custom BRep (Rust) | OpenCascade (OCCT, C++) |
+| **GUI** | React/Three.js web app | CQ-editor (Qt), Jupyter, VS Code plugin |
+| **Platform** | Browser, CLI, library | Python environment (any OS) |
+| **Performance** | Native + WASM | Python + OCCT (C++ via bindings) |
+| **Assembly** | Parts, instances, joints, kinematics, physics | Assembly with constraints |
+| **Export** | STEP, STL, GLB, DXF | STEP, STL, AMF, SVG, DXF |
+| **AI integration** | Native MCP server | None (Python scripting possible) |
+| **Physics** | Rapier3D simulation | None |
+| **Rendering** | Three.js + BRep ray tracing | VTK viewer, Jupyter renderer |
+| **WASM** | Yes (full kernel in browser) | No |
+
+## Language and Ecosystem
+
+CadQuery's greatest strength is Python. Engineers already know Python. Data science libraries (NumPy, SciPy, Pandas), visualization tools (Matplotlib, Plotly), optimization libraries (SciPy.optimize, Optuna), and machine learning frameworks (PyTorch, TensorFlow) are all immediately available. A CadQuery script can read a CSV of dimensions, generate 50 parametric variants, and plot a chart of volume vs strength -- all in one Python file.
+
+```python
+# CadQuery
+import cadquery as cq
+
+plate = (cq.Workplane("XY")
+    .box(100, 60, 5)
+    .faces(">Z")
+    .workplane()
+    .rarray(80, 40, 2, 2)
+    .hole(6))
+```
+
+vcad uses Rust as its primary language, with TypeScript for web applications. Rust does not have Python's breadth of scientific libraries, but it offers memory safety, fearless concurrency, and compiled performance. The TypeScript API runs in browsers and Node.js, covering web and server-side use cases.
+
+```rust
+// vcad (Rust)
+use vcad::{centered_cube, centered_cylinder};
+
+let plate = centered_cube("plate", 100.0, 60.0, 5.0);
+let hole = centered_cylinder("hole", 3.0, 10.0, 32);
+let holes = hole
+    .linear_pattern(80.0, 0.0, 0.0, 2)
+    .linear_pattern(0.0, 40.0, 0.0, 2)
+    .translate(-40.0, -20.0, 0.0);
+let part = plate - holes;
+```
+
+For engineers who think in Python and use the scientific Python stack daily, CadQuery has a clear advantage in ergonomics. For engineers building web applications, deploying to production, or needing maximum performance, vcad's Rust/TypeScript stack is more appropriate.
+
+<Callout type="info" title="Python interop">
+vcad's WASM kernel can be called from Python through the `wasmer` or `wasmtime` bindings, enabling Python-based workflows that leverage vcad's kernel for geometry and Python for everything else. This is not as ergonomic as CadQuery's native Python API but provides an integration path.
+</Callout>
+
+## Performance
+
+CadQuery's performance bottleneck is the Python-OCCT bridge. Every geometric operation crosses the Python/C++ boundary, and complex scripts with hundreds of operations can take seconds to minutes. OCCT itself is fast, but the overhead of marshaling data through Python bindings and the GIL limiting parallelism reduce throughput. Generating 100 parametric variants of a moderately complex part might take 30-60 seconds.
+
+vcad's Rust kernel operates on native data structures with zero-cost abstractions and SIMD-accelerated predicates. Boolean operations, tessellation, and STEP export all run at native speed. The same kernel compiles to WASM for browser use, with performance typically within 2-3x of native. Generating 100 parametric variants takes single-digit seconds. For batch processing, generative design, and optimization loops where geometry evaluation is the inner loop, vcad's performance advantage is substantial.
+
+## Kernel: Custom vs OpenCascade
+
+CadQuery wraps OpenCascade, inheriting both its strengths and weaknesses. OCCT provides comprehensive surfacing (Geom_BSplineSurface, Geom_OffsetSurface), advanced fillet algorithms, and the most complete STEP implementation in open source. It also carries known robustness issues: certain boolean operations fail silently or produce invalid topology, fillet operations crash on specific edge configurations, and the C++ codebase is enormous and difficult to debug.
+
+vcad's custom kernel is smaller and more focused. It implements the core operations (primitives, booleans, fillets, chamfers, sweeps, lofts, revolutions, shell, patterns) with exact predicates for numerical robustness. The arena-based topology (slotmap) makes operations memory-safe by construction. The kernel is young and does not cover every edge case that OCCT handles, but it fails explicitly rather than silently, and bugs are fixed in Rust rather than in unfamiliar C++ library internals.
+
+## GUI and Visualization
+
+CadQuery's visualization options are functional but limited. CQ-editor (a Qt desktop app) provides a code editor and 3D viewer. Jupyter notebooks can render CadQuery objects inline using VTK or Three.js widgets. The VS Code plugin (OCP CAD Viewer) adds visualization to the most popular code editor. None of these are full CAD applications -- they are viewers for script output.
+
+vcad includes a complete web application with a 3D viewport, feature tree, property panel with parametric scrub controls, sketch mode with geometric constraints, assembly mode with joint manipulation, drawing mode for 2D projections, and undo/redo. The app provides the visual design workflow that CadQuery lacks, while retaining full programmatic access through the Rust/TypeScript API. For engineers who want both GUI interaction and scripting, vcad provides both in one tool.
+
+## Assembly and Joints
+
+CadQuery's assembly module supports placing parts with constraints (point-to-point, axis-to-axis, plane-to-plane). The constraint solver finds positions that satisfy the relationships. This is adequate for static assemblies but does not support kinematic simulation -- there are no revolute joints, no forward kinematics, and no physics.
+
+vcad's assembly system includes part definitions, instances, and joints (revolute, prismatic, cylindrical, ball, fixed) with limits and kinematic solving. You can set joint angles and solve forward kinematics to compute the transform of every instance. The Rapier3D physics engine simulates dynamic behavior: gravity, motor torques, collisions, and contact forces. The MCP server exposes gym-style interfaces (reset, step, observe) for AI-driven control and reinforcement learning.
+
+## Deployment
+
+CadQuery requires a Python environment with the `cadquery` package and its OCCT dependency. Installing OCCT on different platforms can be challenging (Conda is the recommended approach). CadQuery scripts cannot run in the browser or be embedded in web applications.
+
+vcad compiles to WASM and runs in any modern browser without installation. The same kernel powers the CLI (Node.js), the Rust library (native), and the MCP server. Deploying a vcad-based application means serving static files -- no server-side geometry computation needed. For SaaS products, custom configurators, and web-based engineering tools, vcad's WASM architecture eliminates the server infrastructure that CadQuery would require.
+
+## Where CadQuery Wins
+
+CadQuery is the better choice when Python is your primary language and you want to leverage the scientific Python ecosystem (NumPy, SciPy, Pandas, Matplotlib) alongside CAD operations. If you already have Python-based workflows for data processing, optimization, or machine learning, CadQuery slots in naturally. OpenCascade's mature surfacing operations handle advanced surface modeling that vcad's younger kernel may not cover. CadQuery's fluent chaining API (`workplane().box().faces().hole()`) is also quite ergonomic for sequential feature modeling.
+
+## Where vcad Wins
+
+vcad wins on performance (10-100x for batch operations), platform reach (browser, CLI, native, MCP), AI integration (native MCP server for LLM agents), GUI (full web application vs code-only viewers), assembly capabilities (joints, kinematics, physics), and deployment simplicity (WASM with zero server requirements). The MIT license is more permissive than Apache 2.0 for some use cases (though both are permissive). For web applications, real-time visualization, robotics simulation, and AI-assisted design, vcad provides capabilities that CadQuery's Python + OCCT stack cannot match.
+
+## Migration Path
+
+CadQuery and vcad interoperate through STEP files. Export from CadQuery with `cq.exporters.export(part, "output.step")` and import into vcad with `vcad import-step output.step output.vcad`. The BRep geometry transfers exactly. For scripts that generate parametric families, you can rewrite the generation logic in Rust for faster execution while maintaining the same parametric structure.
+
+The modeling concepts map closely:
+
+| CadQuery | vcad |
+|----------|------|
+| `Workplane().box()` | `centered_cube()` |
+| `.circle().extrude()` | `Sketch::circle().extrude()` |
+| `.hole()` | Boolean subtraction with cylinder |
+| `.fillet()` | `.fillet()` |
+| `.shell()` | `.shell()` |
+| `Assembly()` | `Document::new()` with parts and instances |
+
+## Conclusion
+
+CadQuery and vcad serve overlapping but distinct audiences. CadQuery is for Python engineers who want a fluent scripting API for generating BRep geometry within the Python ecosystem. vcad is for engineers who want a complete parametric CAD system -- with web app, CLI, AI integration, assemblies, physics, and high performance -- accessible from Rust, TypeScript, or the browser. If Python ergonomics are your top priority, CadQuery is excellent. If you need performance, a GUI, AI integration, or browser deployment, vcad is the stronger choice.

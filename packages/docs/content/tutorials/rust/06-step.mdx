@@ -1,0 +1,164 @@
+---
+title: "STEP Import/Export"
+description: "from_step(), to_step(), buffer variants, round-trip, limitations"
+order: 6
+difficulty: Intermediate
+time: "10 minutes"
+---
+
+STEP (ISO 10303 AP214) is the standard exchange format for exact CAD geometry. Unlike STL, which stores a triangle mesh approximation, STEP preserves the mathematical definition of every surface -- planes, cylinders, cones, spheres, tori, and NURBS. When you send a STEP file to a machine shop or import a vendor part, the geometry is exact.
+
+## Exporting to STEP
+
+The `Part` type exposes `.write_step()` for file-based export:
+
+```rust
+use vcad::Part;
+
+let cube = Part::cube("housing", 40.0, 30.0, 20.0);
+cube.write_step("housing.step").unwrap();
+```
+
+This writes an AP214 STEP file with the exact B-rep representation of the cube -- six planar faces, twelve edges, eight vertices. Any CAD tool that reads STEP (SolidWorks, Fusion 360, FreeCAD, Onshape) will import it with full geometric fidelity.
+
+You can also check whether a part supports STEP export before attempting it:
+
+```rust
+if cube.can_export_step() {
+    cube.write_step("housing.step").unwrap();
+} else {
+    // Fall back to STL
+    cube.write_stl("housing.stl").unwrap();
+}
+```
+
+<Callout type="warning" title="Boolean results and STEP export">
+After boolean operations (union, difference, intersection), vcad converts the solid to a mesh representation internally. Mesh-based solids cannot be exported to STEP because the exact surface definitions are lost. If you need STEP output, export each primitive or imported part before combining them, or use the kernel-level API which preserves B-rep data through more operations.
+</Callout>
+
+## Importing from STEP
+
+`Part::from_step()` reads a STEP file and returns a `Part` containing the imported geometry:
+
+```rust
+use vcad::Part;
+
+let bracket = Part::from_step("bracket", "vendor_bracket.step").unwrap();
+
+// Now you can query, transform, and combine it
+let vol = bracket.volume();
+let (min, max) = bracket.bounding_box();
+println!("Imported bracket: {vol:.0} mm^3, bbox {:.0}x{:.0}x{:.0}",
+    max[0] - min[0], max[1] - min[1], max[2] - min[2]);
+
+bracket.write_stl("bracket_preview.stl").unwrap();
+```
+
+The first argument is a name for the part (used in the feature tree and error messages), and the second is the file path. The importer handles the AP214 entity graph -- `ADVANCED_BREP_SHAPE_REPRESENTATION`, `MANIFOLD_SOLID_BREP`, B-spline surfaces, trimmed curves -- and reconstructs a full half-edge topology.
+
+When a STEP file contains multiple solids, `Part::from_step()` returns only the first one. Use `Part::from_step_all()` to get all of them:
+
+```rust
+use vcad::Part;
+
+let parts = Part::from_step_all("assembly", "multi_body.step").unwrap();
+for (i, part) in parts.iter().enumerate() {
+    println!("Part {i}: {:.0} mm^3", part.volume());
+    part.write_stl(format!("body_{i}.stl")).unwrap();
+}
+```
+
+Each solid gets a name like `assembly_0`, `assembly_1`, etc., based on the base name you provide.
+
+## In-memory buffers
+
+When you are processing STEP data in a pipeline -- downloading from a web service, passing between functions, or embedding in a larger format -- file I/O is unnecessary overhead. The kernel-level `Solid` type provides buffer variants that work with byte slices:
+
+```rust
+use vcad_kernel::Solid;
+
+// Export to a byte buffer instead of a file
+let cube = Solid::cube(10.0, 20.0, 30.0);
+let step_bytes: Vec<u8> = cube.to_step_buffer().unwrap();
+
+// Import from a byte buffer
+let reimported = Solid::from_step_buffer(&step_bytes).unwrap();
+```
+
+`from_step_buffer` and `to_step_buffer` are identical to their file-based counterparts except that they operate on `&[u8]` and `Vec<u8>` instead of file paths. There is also `from_step_buffer_all` for multi-solid buffers.
+
+<Callout type="tip" title="STEP as a serialization format">
+Because STEP round-trips exactly, you can use it as a geometry serialization format for caching or inter-process communication. Export to a buffer, store or transmit the bytes, and reimport later with no loss of surface fidelity.
+</Callout>
+
+## Round-trip fidelity
+
+vcad's STEP implementation preserves the exact mathematical definition of all supported surface types through a full export-import cycle. This means a cylinder remains a true cylinder (not a faceted approximation), a sphere remains a true sphere, and NURBS surfaces retain their control points, knots, and degrees.
+
+The supported surface types and their STEP entities are:
+
+| Surface type | STEP entity | Round-trip |
+|-------------|-------------|------------|
+| Plane | `PLANE` | Exact |
+| Cylinder | `CYLINDRICAL_SURFACE` | Exact |
+| Cone | `CONICAL_SURFACE` | Exact |
+| Sphere | `SPHERICAL_SURFACE` | Exact |
+| Torus | `TOROIDAL_SURFACE` | Exact |
+| NURBS | `B_SPLINE_SURFACE_WITH_KNOTS` | Exact |
+
+Topology (edges, faces, shells) is also preserved. After a round-trip, the reimported solid has the same number of faces, edges, and vertices as the original, and each surface has the same analytic definition.
+
+## A practical workflow: vendor part integration
+
+A common task is importing a vendor-supplied part, positioning it alongside custom geometry, and exporting the combination. Here is a complete example:
+
+```rust
+use vcad::{Part, centered_cube, centered_cylinder};
+
+fn main() {
+    // Import a vendor motor from STEP
+    let motor = Part::from_step("motor", "nema17_stepper.step").unwrap();
+
+    // Check its bounding box to figure out placement
+    let (min, max) = motor.bounding_box();
+    let motor_height = max[2] - min[2];
+    println!("Motor height: {motor_height:.1} mm");
+
+    // Create a custom mounting plate
+    let plate = centered_cube("plate", 60.0, 60.0, 5.0);
+
+    // Drill mounting holes matching NEMA 17 pattern (31mm spacing)
+    let hole = centered_cylinder("m3", 1.6, 10.0, 32);
+    let holes = hole.translate(-15.5, -15.5, 0.0)
+        .union(&hole.translate( 15.5, -15.5, 0.0))
+        .union(&hole.translate(-15.5,  15.5, 0.0))
+        .union(&hole.translate( 15.5,  15.5, 0.0));
+
+    // Central bore for the motor shaft
+    let bore = centered_cylinder("bore", 12.0, 10.0, 64);
+
+    let mounting_plate = plate - holes - bore;
+
+    // Export each part separately (STEP export requires B-rep data)
+    motor.write_stl("assembly_motor.stl").unwrap();
+    mounting_plate.write_stl("assembly_plate.stl").unwrap();
+}
+```
+
+The motor retains its exact B-rep geometry from the original STEP file. The mounting plate is built from primitives and booleans. Both can be exported to STL for 3D printing or visualization.
+
+## Current limitations
+
+STEP is a large standard, and vcad's implementation covers the most common subset. There are a few things to be aware of.
+
+STEP export requires B-rep data, which is lost after boolean operations in the high-level `Part` API. If you need to export boolean results to STEP, work with the kernel-level `Solid` type, which preserves B-rep through more operations.
+
+Sketches, constraints, and parametric history are not part of the STEP standard. When you export a part, only the final geometry is written -- the recipe that created it is not included. This is true of all CAD tools, not just vcad.
+
+Assembly structure (instances, joints, transforms) is not yet written to STEP. Each solid is exported as an independent shape. Multi-body STEP files import correctly, but the assembly hierarchy is flattened.
+
+Color and material information in the STEP file's styled-item entities is read during import but not yet mapped to vcad materials. The geometry comes through; the appearance does not.
+
+## Next steps
+
+You can now exchange exact geometry with any STEP-capable tool. The next tutorial covers [patterns and helpers](/tutorials/rust/07-patterns) -- duplicating features efficiently with linear and circular patterns, and using built-in helpers for bolt holes and counterbores.

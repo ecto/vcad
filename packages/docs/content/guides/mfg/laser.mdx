@@ -1,0 +1,86 @@
+---
+title: "Laser Cutting with DXF"
+description: "Export 2D profiles as DXF, drawing mode setup for flat patterns"
+order: 3
+---
+
+Laser cutters, waterjet machines, and CNC routers work from 2D profiles. You give the machine a flat vector drawing -- closed contours for cuts, open paths for engraving -- and it traces them with a laser, water stream, or spinning bit. vcad exports these profiles as DXF files, the standard format that every sheet-cutting machine accepts.
+
+## The Workflow
+
+The path from 3D model to laser-cut part follows a consistent pattern. Start with a 3D part that has a flat profile -- a plate, bracket, gasket, panel, or any shape whose geometry is defined by its top-down outline. Enter drawing mode, create a top-view projection, and export it as DXF. The DXF contains closed polylines that the cutting machine follows.
+
+For parts that are purely 2D (no extrusion needed), you can skip the 3D modeling entirely. Create a sketch, constrain it fully, and export the sketch directly as DXF without ever extruding it. This is common for gaskets, shims, and laser-cut decorative panels.
+
+## Creating a Flat Part
+
+Model the part as a thin extrusion. For a 3 mm acrylic panel, sketch the outline on the XY plane (including any internal cutouts for windows, ventilation slots, or mounting holes), extrude it 3 mm along Z, and the part is ready.
+
+```text
+# vcad 0.2
+M acrylic 0.9 0.9 0.95 0.02 0.5
+C 120 80 3 "Panel"
+Y 15 5 "Window Cutout"
+T 1 60 40 -1
+D 0 2 "Panel with Window"
+Y 2.5 5 "Mount Hole"
+T 4 10 10 -1
+LP 5 1 0 0 2 100 "Hole Row 1"
+T 4 10 70 -1
+LP 7 1 0 0 2 100 "Hole Row 2"
+D 3 6 "Holes Top"
+D 8 9 "Finished Panel"
+ROOT 10 acrylic
+```
+
+The part thickness (3 mm) matches the sheet stock you will cut from. The outline and all internal features (window cutout, mounting holes) are defined in the XY plane.
+
+<Callout type="tip" title="Thickness matters">
+Even though the laser only cuts the 2D profile, modeling the part at the correct thickness is valuable. It lets you check fit in assemblies, verify clearances, and calculate weight. The DXF export ignores the thickness and projects the outline onto the cutting plane.
+</Callout>
+
+## Entering Drawing Mode
+
+Press **Cmd+K** and choose **New Drawing**, or click the drawing icon in the toolbar. Drawing mode creates 2D orthographic projections of your 3D model. Select the **Top** view to look straight down the Z axis. The projection shows the outline of the part and all features as they appear from above.
+
+The drawing view is a true orthographic projection -- no perspective distortion, no foreshortening. Lines are exact representations of edges as seen from the view direction. Hidden lines can be toggled on or off depending on whether you want to see internal features.
+
+## Exporting DXF
+
+With the drawing view created, press **Cmd+K** and choose **Export DXF**. vcad writes all visible lines in the drawing as DXF entities. Closed contours become `LWPOLYLINE` entities. Arcs stay as arcs (not approximated as line segments) for smooth curves. Circles stay as circles.
+
+The DXF file is ready to open in your laser cutter's control software (LightBurn, RDWorks, LaserGRBL) or CAM package (Fusion 360 CAM, VCarve).
+
+## Layer and Color Conventions
+
+Most laser cutters use colors or layers to distinguish between operations. Red lines might mean "cut through," blue might mean "engrave," and green might mean "score" (partial-depth cut). The exact convention varies by machine and software.
+
+vcad assigns DXF layers based on the type of edge. Outer contour edges go on the "CUT" layer. Internal hole edges go on the "CUT-INTERNAL" layer. Construction geometry and dimensions go on the "ANNOTATION" layer. You can reassign layers in your cutting software if your machine uses a different convention.
+
+<Callout type="info" title="Color mapping">
+If your cutter uses color-based operation assignment, set colors in the cutting software after import. vcad exports geometric data only -- the assignment of laser power, speed, and number of passes is done in the cutting software based on your material settings.
+</Callout>
+
+## Accounting for Kerf
+
+The laser beam has a finite width (the kerf), typically 0.1-0.3 mm for CO2 lasers and 0.02-0.05 mm for fiber lasers. Material is removed on both sides of the cut line, so the resulting part is slightly smaller than the drawn profile. For precision parts, offset the cut lines outward by half the kerf width.
+
+vcad does not apply kerf compensation automatically because the kerf depends on your specific laser, material, and settings. Most cutting software has a kerf offset setting -- enter half your measured kerf there. Alternatively, adjust the 2D profile in vcad by increasing outer dimensions and decreasing hole diameters by the full kerf width.
+
+## Nesting for Material Efficiency
+
+When cutting multiple parts from a single sheet, arrange them to minimize waste. This is called nesting. vcad's DXF export produces one file per part. For manual nesting, import multiple DXF files into your cutting software and arrange them on the sheet.
+
+Space parts at least one kerf width apart so the cuts do not overlap. Orient parts to align with the sheet's grain direction if the material is anisotropic (wood, some composites). Place small parts in the gaps between large parts to use material efficiently.
+
+## Common Flat Parts
+
+**Enclosure panels.** Model each panel of an electronics enclosure as a separate flat part with cutouts for connectors, ventilation, and displays. Export each as DXF and cut from sheet acrylic, aluminum, or steel.
+
+**Gaskets.** Sketch the gasket outline (including bolt holes) on the XY plane. Export as DXF. Cut from sheet rubber, cork, or gasket paper.
+
+**Brackets.** L-brackets and U-brackets from bent sheet metal start as flat patterns. Model the flat pattern with bend lines as construction geometry, export as DXF, cut, then bend on a brake.
+
+**Decorative panels.** Complex artistic patterns, signage, and fretwork are natural candidates for laser cutting. Sketch the pattern, export as DXF, cut from wood, acrylic, or metal.
+
+For a complete guide to all export formats and when to use each, continue to the [Export Format Guide](/guides/mfg/formats).

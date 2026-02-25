@@ -1,0 +1,247 @@
+---
+title: "Electronics Tools"
+description: "Schematic, PCB, DRC, and fabrication export tools"
+order: 9
+---
+
+The MCP server includes seven tools for electronic design: schematic capture, PCB layout, validation, fabrication export, and impedance calculation. These operate on electronics data embedded in the vcad document alongside mechanical geometry, enabling integrated MCAD/ECAD workflows.
+
+## create_schematic
+
+Creates a schematic sheet with components, wires, and net labels. This is the starting point for any electronics design -- define your components and their connections, and the tool generates a netlist that drives PCB layout.
+
+<Param name="title" type="string" required={false}>
+Schematic sheet title for display and documentation.
+</Param>
+
+<Param name="components" type="array" required={true}>
+Array of component definitions. Each component has a reference designator, value, footprint ID, position on the sheet, and pin definitions.
+</Param>
+
+<Param name="wires" type="array" required={false}>
+Array of wire segments connecting pins. Each wire has start and end coordinates `{x1, y1, x2, y2}`.
+</Param>
+
+<Param name="labels" type="array" required={false}>
+Array of net labels. Each label has a `name`, position `{x, y}`, and `scope` (Local, Global, or Hierarchical).
+</Param>
+
+### Component Definition
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `ref` | string | yes | Reference designator (R1, U3, C5) |
+| `value` | string | yes | Component value or part number |
+| `footprint` | string | yes | Footprint ID (e.g., "Resistor_SMD:R_0805") |
+| `x` | number | yes | X position on schematic sheet |
+| `y` | number | yes | Y position on schematic sheet |
+| `rotation` | number | no | Rotation in degrees (default 0) |
+| `pins` | array | yes | Pin definitions (see below) |
+
+### Pin Definition
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `number` | string | yes | Pin number (e.g., "1", "2") |
+| `name` | string | yes | Pin name (e.g., "VCC", "GND", "A") |
+| `type` | string | yes | Pin type: Input, Output, Passive, PowerInput, PowerOutput, Bidirectional, NotConnected |
+| `x` | number | no | Pin position relative to component |
+| `y` | number | no | Pin position relative to component |
+
+### Return Value
+
+Returns the document with schematic data attached, plus a summary of components, wires, and labels created.
+
+## place_components
+
+Takes a document with schematic data and creates a PCB with placed footprints, board outline, layer stackup, and design rules.
+
+<Param name="document" type="Document" required={true}>
+IR document with schematic data (from `create_schematic`).
+</Param>
+
+<Param name="board_width" type="number (mm)" required={true}>
+Board width in millimeters.
+</Param>
+
+<Param name="board_height" type="number (mm)" required={true}>
+Board height in millimeters.
+</Param>
+
+<Param name="board_thickness" type="number (mm)" required={false}>
+Board thickness. Default 1.6mm (standard 2-layer FR4).
+</Param>
+
+<Param name="strategy" type="string" required={false}>
+Placement strategy: `"grid"` (default) arranges components in a regular grid with automatic spacing.
+</Param>
+
+The tool generates a 2-layer stackup (F.Cu/B.Cu with 35um copper on 1.53mm FR4 core, Er=4.5) and default design rules (0.25mm trace, 0.2mm clearance, 0.8mm via, 0.4mm drill, 0.5mm edge clearance). Components are placed on the front copper layer with pads created from schematic pin data.
+
+The board also appears as a 3D node in the document, rendered with FR4-green material in the viewport.
+
+## route_nets
+
+Routes copper traces between pads on a PCB based on the netlist.
+
+<Param name="document" type="Document" required={true}>
+IR document with PCB data (from `place_components`).
+</Param>
+
+<Param name="nets" type="string[]" required={false}>
+Specific net IDs to route. If empty or omitted, routes all nets.
+</Param>
+
+<Param name="trace_width" type="number (mm)" required={false}>
+Trace width override. Defaults to the design rules default (0.25mm).
+</Param>
+
+The router uses direct point-to-point connections on the front copper layer. For each net with two or more pads, it creates traces connecting pads sequentially. Returns a summary of nets routed and traces added.
+
+<Callout type="info" title="Router capabilities">
+The current router handles direct connections without obstacle avoidance. For complex boards, manual trace adjustment may be needed after auto-routing. Advanced routing strategies (A* pathfinding, differential pair routing) are planned.
+</Callout>
+
+## run_drc
+
+Runs Design Rule Check on a PCB layout, validating physical manufacturing constraints.
+
+<Param name="document" type="Document" required={true}>
+IR document with PCB data.
+</Param>
+
+### Checks Performed
+
+| Rule | Description |
+|------|-------------|
+| MinTraceWidth | Trace width meets minimum from design rules |
+| MinDrill | Via and pad drill sizes meet minimum |
+| AnnularRing | Via annular ring (copper ring around drill) meets minimum |
+| EdgeClearance | Copper features maintain minimum distance from board edge |
+
+### Return Value
+
+```json
+{
+  "success": true,
+  "violations": 2,
+  "errors": 1,
+  "warnings": 1,
+  "details": [
+    {
+      "rule": "MinTraceWidth",
+      "severity": "Error",
+      "message": "Trace width 0.15mm < minimum 0.25mm",
+      "position": { "x": 12.5, "y": 8.3 }
+    }
+  ]
+}
+```
+
+Each violation includes the rule name, severity (Error or Warning), a descriptive message, and the board position where the violation occurs.
+
+## run_erc
+
+Runs Electrical Rule Check on a schematic, validating logical correctness.
+
+<Param name="document" type="Document" required={true}>
+IR document with schematic data.
+</Param>
+
+### Checks Performed
+
+| Check | Severity | Description |
+|-------|----------|-------------|
+| Duplicate references | Error | Same reference designator used more than once |
+| Unconnected power pins | Error | PowerInput pins with no wire connection |
+| Unconnected signal pins | Warning | Non-power pins with no wire connection |
+
+### Return Value
+
+Same format as `run_drc`: a summary with violation count and detailed error/warning list.
+
+## export_gerber
+
+Exports Gerber RS-274X fabrication files, drill files, BOM, and pick-and-place data for PCB manufacturing.
+
+<Param name="document" type="Document" required={true}>
+IR document with PCB data.
+</Param>
+
+<Param name="output_dir" type="string" required={true}>
+Directory path where fabrication files will be written.
+</Param>
+
+### Output Files
+
+| File | Format | Description |
+|------|--------|-------------|
+| `FCu.gbr` | Gerber RS-274X | Front copper layer |
+| `BCu.gbr` | Gerber RS-274X | Back copper layer |
+| `FMask.gbr` | Gerber RS-274X | Front solder mask |
+| `FPaste.gbr` | Gerber RS-274X | Front solder paste |
+| `drill.drl` | Excellon | Drill file for vias and through-hole pads |
+| `pick_place.csv` | CSV | Component placement data for assembly |
+| `bom.csv` | CSV | Bill of materials |
+
+The tool generates one Gerber file per copper and mask layer found in the design, plus drill and assembly files. Only layers that contain features are exported.
+
+## calc_impedance
+
+Calculates trace impedance for controlled-impedance routing. Supports microstrip, stripline, and differential pair configurations.
+
+<Param name="trace_width" type="number (mm)" required={true}>
+Copper trace width.
+</Param>
+
+<Param name="dielectric_height" type="number (mm)" required={true}>
+Height of the dielectric layer between the trace and reference plane.
+</Param>
+
+<Param name="copper_thickness" type="number (mm)" required={false}>
+Copper thickness. Default 0.035mm (1oz copper).
+</Param>
+
+<Param name="dielectric_er" type="number" required={false}>
+Relative permittivity of the dielectric. Default 4.5 (standard FR4).
+</Param>
+
+<Param name="trace_type" type="string" required={false}>
+Configuration: `"microstrip"` (default, outer layer trace), `"stripline"` (inner layer between two planes), `"diff_microstrip"` (differential pair on outer layer), `"diff_stripline"` (differential pair on inner layer).
+</Param>
+
+<Param name="spacing" type="number (mm)" required={false}>
+Spacing between traces for differential pair calculations.
+</Param>
+
+### Return Value
+
+```json
+{
+  "z0": 50.23,
+  "er_eff": 3.456,
+  "delay_ps_per_mm": 6.198,
+  "trace_type": "microstrip",
+  "inputs": {
+    "trace_width": 0.2,
+    "copper_thickness": 0.035,
+    "dielectric_height": 0.2,
+    "dielectric_er": 4.5
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `z0` | number | Characteristic impedance in ohms |
+| `er_eff` | number | Effective dielectric constant |
+| `delay_ps_per_mm` | number | Signal propagation delay in picoseconds per millimeter |
+| `z_diff` | number | Differential impedance in ohms (only for differential pair types) |
+
+The impedance calculations use closed-form approximations (Hammerstad-Jensen for microstrip, Wheeler for stripline) with copper thickness correction. These are accurate to within 2-3% for typical PCB geometries and are suitable for design-phase estimation.
+
+<Callout type="tip" title="50-ohm traces">
+For a standard 2-layer FR4 board (1.53mm dielectric, Er=4.5, 1oz copper), a 50-ohm microstrip trace is approximately 2.8mm wide. Use `calc_impedance` to find the exact width for your stackup.
+</Callout>
+
+For workflow guides, see the [Schematic](/guides/electronics/schematic), [PCB Layout](/guides/electronics/pcb), [DRC](/guides/electronics/drc), [Impedance](/guides/electronics/impedance), and [Fabrication](/guides/electronics/fabrication) guides.

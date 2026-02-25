@@ -1,0 +1,220 @@
+---
+title: "Patterns & Helpers"
+description: "linear_pattern, circular_pattern, counterbore_hole, bolt_pattern. Build a flange"
+order: 7
+difficulty: Intermediate
+time: "10 minutes"
+playground:
+  exampleId: "flanged-hub"
+---
+
+Mechanical parts are full of repeated features -- rows of ventilation slots, circles of bolt holes, grids of mounting points. Modeling each one individually is tedious and error-prone. Patterns duplicate a shape across a regular spacing in a single call, and helper functions encapsulate common mechanical features like counterbore holes and bolt circles.
+
+<Playground exampleId="flanged-hub" />
+
+## Linear patterns
+
+`.linear_pattern(dx, dy, dz, count)` creates `count` copies of a part, each offset by an additional `(dx, dy, dz)` from the previous one. The first copy sits at the original position; subsequent copies are spaced evenly along the offset vector.
+
+```rust
+use vcad::Part;
+
+let pin = Part::cylinder("pin", 2.0, 10.0, 32);
+
+// 5 pins in a row, spaced 12mm apart along X
+let row = pin.linear_pattern(12.0, 0.0, 0.0, 5);
+```
+
+This produces five pins at X = 0, 12, 24, 36, and 48. The result is a single `Part` containing all five copies unioned together, ready to be combined with other geometry.
+
+For a 2D grid, chain two linear patterns. The first creates a row, the second replicates that row:
+
+```rust
+use vcad::Part;
+
+let hole = Part::cylinder("hole", 1.5, 20.0, 32);
+
+// 4 holes in X, 3 rows in Y
+let grid = hole
+    .linear_pattern(10.0, 0.0, 0.0, 4)
+    .linear_pattern(0.0, 10.0, 0.0, 3);
+```
+
+This creates a 4 x 3 grid of 12 holes. The first pattern makes a row of 4 along X, and the second pattern replicates that entire row 3 times along Y. The offset vector does not need to be axis-aligned -- you can create diagonal patterns by setting multiple components.
+
+<Callout type="tip" title="Subtracting patterns">
+Patterns are most useful as tool bodies for boolean subtraction. Create a pattern of holes, then subtract the whole pattern from a plate in a single operation. This is both cleaner to read and faster to evaluate than subtracting holes one at a time.
+</Callout>
+
+## Circular patterns
+
+`.circular_pattern(radius, count)` arranges `count` copies of a part evenly around the Z axis at the given radius. Each copy is first translated by `radius` along X, then rotated by `360 / count` degrees around Z.
+
+```rust
+use vcad::Part;
+
+let spoke = Part::cube("spoke", 2.0, 40.0, 3.0);
+
+// 6 spokes radiating outward from center
+let spokes = spoke.circular_pattern(0.0, 6);
+```
+
+When `radius` is 0, the copies rotate in place -- useful for features centered on the origin, like spokes or gear teeth. When `radius` is nonzero, each copy is pushed outward before being rotated, placing it on a bolt circle.
+
+A typical use is punching holes on a bolt circle:
+
+```rust
+use vcad::{centered_cube, centered_cylinder, Part};
+
+let flange = centered_cylinder("flange", 30.0, 5.0, 64);
+
+// 8 holes on a 50mm bolt circle diameter
+let hole = centered_cylinder("hole", 3.0, 10.0, 32);
+let holes = hole.circular_pattern(25.0, 8);  // radius = BCD/2
+
+let result = flange - holes;
+```
+
+Each hole is placed 25mm from the center (radius = bolt circle diameter / 2) and the 8 copies are spaced 45 degrees apart.
+
+<Callout type="info" title="Circular pattern axis">
+The circular pattern always rotates around the Z axis. If you need to pattern around a different axis, rotate your part so the desired axis aligns with Z, apply the pattern, then rotate back.
+</Callout>
+
+## Counterbore holes
+
+`counterbore_hole(hole_dia, cb_dia, cb_depth, total_depth, segments)` creates a stepped hole for socket head cap screws. The narrow through-hole extends the full depth, and the wider counterbore recess sits at the top.
+
+```rust
+use vcad::counterbore_hole;
+
+// M5 socket head cap screw: 5.5mm through, 9.5mm counterbore, 5mm deep
+let cbore = counterbore_hole(5.5, 9.5, 5.0, 20.0, 32);
+```
+
+The resulting part is a single solid you can position and subtract from your base geometry. The `total_depth` should be greater than the thickness of the material you are drilling through -- this ensures a clean through-cut, just as with simple holes.
+
+```rust
+use vcad::{centered_cube, counterbore_hole};
+
+let plate = centered_cube("plate", 80.0, 60.0, 10.0);
+
+// Place counterbore holes near each corner
+let m5_cbore = counterbore_hole(5.5, 9.5, 5.0, 15.0, 32);
+let holes = m5_cbore.translate(-30.0, -20.0, -5.0)
+    .union(&m5_cbore.translate( 30.0, -20.0, -5.0))
+    .union(&m5_cbore.translate(-30.0,  20.0, -5.0))
+    .union(&m5_cbore.translate( 30.0,  20.0, -5.0));
+
+let result = plate - holes;
+```
+
+## Bolt patterns
+
+`bolt_pattern(count, bcd, hole_dia, depth, segments)` creates a circle of evenly-spaced through-holes. It is a convenience function that combines a cylinder with a circular arrangement -- equivalent to creating a hole and calling `.circular_pattern()`, but more readable when you are thinking in terms of bolt circles.
+
+```rust
+use vcad::bolt_pattern;
+
+// 6 holes, M6 clearance (6.6mm), on a 45mm bolt circle, 15mm deep
+let bolts = bolt_pattern(6, 45.0, 6.6, 15.0, 32);
+```
+
+The `bcd` parameter is the bolt circle diameter (not the radius). The function places holes at `bcd/2` from the origin, evenly spaced around the circle. The returned part is centered at the origin, so you can translate it to wherever the bolt circle should be on your part.
+
+## Building a flanged hub
+
+Here is a complete example that combines everything from this tutorial -- and from the previous ones -- into a parametric flanged hub. This is a cylindrical boss with a mounting flange at its base, a central bore, and a bolt pattern.
+
+```rust
+use vcad::{bolt_pattern, centered_cylinder, Part};
+
+fn flanged_hub(
+    hub_radius: f64,
+    hub_height: f64,
+    flange_radius: f64,
+    flange_thickness: f64,
+    bore_dia: f64,
+    bolt_count: usize,
+    bolt_bcd: f64,
+    bolt_dia: f64,
+) -> Part {
+    // Main cylindrical body, centered at origin
+    let hub = centered_cylinder("hub", hub_radius, hub_height, 64);
+
+    // Thin disc at the bottom of the hub
+    let flange = centered_cylinder("flange", flange_radius, flange_thickness, 64)
+        .translate(0.0, 0.0, -hub_height / 2.0);
+
+    // Through-bore along the central axis
+    let bore = centered_cylinder("bore", bore_dia / 2.0, hub_height + 10.0, 32);
+
+    // Bolt holes arranged in a circle on the flange
+    let bolts = bolt_pattern(bolt_count, bolt_bcd, bolt_dia, flange_thickness + 5.0, 32)
+        .translate(0.0, 0.0, -hub_height / 2.0);
+
+    hub + flange - bore - bolts
+}
+
+fn main() {
+    let part = flanged_hub(
+        15.0,   // hub radius
+        20.0,   // hub height
+        30.0,   // flange radius
+        4.0,    // flange thickness
+        10.0,   // bore diameter
+        6,      // bolt hole count
+        45.0,   // bolt circle diameter
+        6.0,    // bolt hole diameter
+    );
+
+    // Verify the result
+    let vol = part.volume();
+    let (min, max) = part.bounding_box();
+    println!("Volume: {vol:.0} mm^3");
+    println!("Bbox: {:.0}x{:.0}x{:.0}",
+        max[0] - min[0], max[1] - min[1], max[2] - min[2]);
+
+    part.write_stl("flanged_hub.stl").unwrap();
+}
+```
+
+Every dimension is a parameter. Changing `bolt_count` from 6 to 8 rebuilds the entire part with eight holes instead of six. Changing `flange_radius` enlarges the flange. The bolt pattern depth is computed from `flange_thickness + 5.0` so the holes always penetrate cleanly regardless of how thick the flange is.
+
+The expression `hub + flange - bore - bolts` reads like a description of the part: start with the hub, add the flange, remove the bore, remove the bolt holes. Each `+` and `-` is a boolean operation, and Rust evaluates them left to right.
+
+<Callout type="tip" title="Combining patterns and helpers">
+You can use `counterbore_hole` with `circular_pattern` to create a bolt circle of counterbored holes. Create one counterbore, pattern it, and subtract the result. These building blocks compose freely because they all produce regular `Part` values.
+</Callout>
+
+## Mirror operations
+
+Three mirror methods complement patterns for creating symmetric geometry. `.mirror_x()` reflects across the YZ plane (negates X), `.mirror_y()` reflects across the XZ plane, and `.mirror_z()` reflects across the XY plane.
+
+```rust
+use vcad::Part;
+
+// Create one bracket arm
+let arm = Part::cube("arm", 30.0, 5.0, 10.0).translate(5.0, -2.5, 0.0);
+
+// Mirror to create a symmetric pair
+let both_arms = arm.union(&arm.mirror_x());
+```
+
+Mirroring is implemented as a scale with a negative factor on one axis. The result is a valid solid with the same topology as the original, just reflected.
+
+## Summary of pattern and helper functions
+
+| Function | Purpose |
+|----------|---------|
+| `.linear_pattern(dx, dy, dz, count)` | Row or grid of copies along a vector |
+| `.circular_pattern(radius, count)` | Even copies around the Z axis |
+| `.mirror_x()` / `.mirror_y()` / `.mirror_z()` | Reflect across a coordinate plane |
+| `counterbore_hole(hole, cb, cb_depth, depth, segs)` | Stepped hole for socket head screws |
+| `bolt_pattern(count, bcd, hole_dia, depth, segs)` | Circle of evenly-spaced holes |
+
+These are the tools you reach for most often in mechanical design. Patterns handle repetition, mirrors handle symmetry, and the hole helpers encode standard fastener geometry so you do not have to look up dimensions every time.
+
+## Next steps
+
+With patterns and helpers, you have the full toolkit for modeling mechanical parts in Rust: primitives, transforms, booleans, sketches, sweeps, queries, STEP exchange, and now patterns. From here, explore the [architecture docs](/architecture) to understand how the kernel works under the hood, or jump to the [cookbook](/cookbook) for complete worked examples of real-world parts.

@@ -1,0 +1,299 @@
+---
+title: "Physics Simulation"
+description: "Robot assembly to gym environment. step/observe/reset. RL training basics"
+order: 5
+difficulty: Advanced
+time: "20 minutes"
+---
+
+vcad can simulate physics for assemblies with joints, providing a gym-style interface for reinforcement learning. You define a robot as a vcad assembly -- parts connected by revolute, prismatic, or other joints -- then hand it to `create_robot_env`, which initializes a Rapier3D physics simulation. From there, you step the simulation with actions, observe joint states and end-effector poses, and reset episodes, all through MCP tool calls that an AI agent can invoke directly.
+
+## Building the Assembly
+
+Physics simulation starts with an assembly document. You need part definitions, instances placed in the scene, and joints connecting them. Here is a simple pendulum: a fixed base with a swinging arm attached by a revolute joint.
+
+```json
+{
+  "parts": [
+    {
+      "name": "Base",
+      "primitive": { "type": "cube", "size": { "x": 20, "y": 20, "z": 5 } }
+    },
+    {
+      "name": "Arm",
+      "primitive": { "type": "cube", "size": { "x": 4, "y": 4, "z": 40 } }
+    }
+  ],
+  "assembly": {
+    "instances": [
+      { "part": "Base", "name": "base" },
+      { "part": "Arm", "name": "arm", "position": { "x": 8, "y": 8, "z": 5 } }
+    ],
+    "joints": [
+      {
+        "type": "revolute",
+        "parent": "base",
+        "child": "arm",
+        "anchor": { "x": 10, "y": 10, "z": 5 },
+        "axis": { "x": 0, "y": 1, "z": 0 }
+      }
+    ]
+  }
+}
+```
+
+The base sits on the ground. The arm is positioned so its bottom edge meets the top of the base at the joint anchor. The revolute joint allows rotation around the Y axis, so the arm swings in the XZ plane like a pendulum. The `"base"` instance is implicitly grounded (first instance in the assembly acts as the fixed world frame).
+
+<Callout type="info" title="Joint types">
+vcad supports five joint types for physics: **revolute** (single-axis rotation), **prismatic** (single-axis translation), **cylindrical** (rotation + translation on one axis), **ball** (free rotation, no translation), and **fixed** (rigid connection, no movement). Revolute and prismatic joints can have optional min/max limits.
+</Callout>
+
+## Creating the Environment
+
+Pass the assembly document to `create_robot_env` along with a list of end-effector instance IDs to track.
+
+```json
+{
+  "document": { "...the assembly document from above..." },
+  "end_effector_ids": ["arm"],
+  "dt": 0.004166,
+  "substeps": 4,
+  "max_steps": 1000
+}
+```
+
+The `dt` parameter sets the simulation timestep in seconds. The default of 1/240 (about 4.17 ms) gives smooth, stable simulation for most assemblies. The `substeps` parameter controls how many internal physics iterations run per step -- higher values improve accuracy for stiff systems at the cost of speed. The `max_steps` parameter sets the episode length; after this many steps, the `done` flag triggers automatically.
+
+The tool returns environment metadata:
+
+```json
+{
+  "env_id": "sim_1",
+  "num_joints": 1,
+  "action_dim": 1,
+  "observation_dim": 9,
+  "end_effector_ids": ["arm"],
+  "dt": 0.004166,
+  "substeps": 4,
+  "max_steps": 1000
+}
+```
+
+The `env_id` is your handle for all subsequent gym calls. The `action_dim` equals the number of controllable joints (one revolute joint = one action dimension). The `observation_dim` is the total size of the flattened observation vector: joint positions + joint velocities + end-effector poses.
+
+## The Gym Interface
+
+Four tools control the simulation: `gym_reset`, `gym_step`, `gym_observe`, and `gym_close`. They follow the same pattern as OpenAI Gym environments.
+
+### gym_reset
+
+Resets the environment to its initial state and returns the first observation.
+
+```json
+{ "env_id": "sim_1" }
+```
+
+Returns:
+
+```json
+{
+  "joint_positions": [0.0],
+  "joint_velocities": [0.0],
+  "end_effector_poses": [[10.0, 10.0, 25.0, 1.0, 0.0, 0.0, 0.0]]
+}
+```
+
+Joint positions are in degrees for revolute joints and millimeters for prismatic joints. Joint velocities are in degrees/second or mm/second respectively. End-effector poses are 7-element arrays: `[x, y, z, qw, qx, qy, qz]` where the first three values are position in millimeters and the last four are orientation as a unit quaternion.
+
+### gym_step
+
+Applies an action and advances the simulation by one timestep. Returns the new observation, a reward signal, and a done flag.
+
+```json
+{
+  "env_id": "sim_1",
+  "action_type": "torque",
+  "values": [0.5]
+}
+```
+
+Returns:
+
+```json
+{
+  "observation": {
+    "joint_positions": [0.12],
+    "joint_velocities": [28.6],
+    "end_effector_poses": [[10.042, 10.0, 24.997, 0.999, 0.0, 0.001, 0.0]]
+  },
+  "reward": 0.0,
+  "done": false
+}
+```
+
+The `action_type` determines how the values are interpreted. **Torque** applies a force in Newton-meters directly to each joint. **Position** sets a target angle (degrees) or displacement (mm) that the joint's built-in PD controller drives toward. **Velocity** sets a target angular velocity (degrees/second) or linear velocity (mm/second).
+
+For the pendulum example with one revolute joint, the action is a single number. For a 6-DOF robot arm, it would be an array of six values, one per joint.
+
+### gym_observe
+
+Reads the current state without advancing the simulation. Useful for checking the state between decision steps or after a reset.
+
+```json
+{ "env_id": "sim_1" }
+```
+
+Returns the same observation structure as `gym_reset`.
+
+### gym_close
+
+Cleans up the simulation and frees resources. Always call this when you are done.
+
+```json
+{ "env_id": "sim_1" }
+```
+
+## Walking Through a Pendulum Swing
+
+Here is a concrete sequence showing the pendulum responding to gravity and a torque impulse. After resetting, we apply a brief positive torque to push the arm, then let it swing freely under gravity.
+
+```text
+1. gym_reset(sim_1)
+   → joint_positions: [0.0], joint_velocities: [0.0]
+
+2. gym_step(sim_1, torque, [2.0])     # Push the arm
+   → joint_positions: [0.48], joint_velocities: [115.3]
+
+3. gym_step(sim_1, torque, [0.0])     # Free swing
+   → joint_positions: [1.44], joint_velocities: [228.1]
+
+4. gym_step(sim_1, torque, [0.0])     # Gravity pulls it back
+   → joint_positions: [2.82], joint_velocities: [326.8]
+
+   ...100 steps later...
+
+5. gym_observe(sim_1)
+   → joint_positions: [-14.2], joint_velocities: [-42.8]
+   The pendulum has swung past vertical and is oscillating.
+```
+
+Each step advances the simulation by `dt` seconds (about 4ms). Over many steps, the arm swings under gravity, decelerating, reversing, and oscillating like a real pendulum. The observation at any point gives you the exact joint angle and velocity, plus the 3D position and orientation of the arm's end effector.
+
+## A Two-Joint Robot Arm
+
+A more realistic example uses multiple joints. Here is a planar 2-DOF arm with a shoulder and elbow joint, suitable for reach-target tasks.
+
+```json
+{
+  "parts": [
+    { "name": "Base", "primitive": { "type": "cylinder", "radius": 15, "height": 5 } },
+    { "name": "Upper Arm", "primitive": { "type": "cube", "size": { "x": 4, "y": 4, "z": 30 } } },
+    { "name": "Forearm", "primitive": { "type": "cube", "size": { "x": 3, "y": 3, "z": 25 } } }
+  ],
+  "assembly": {
+    "instances": [
+      { "part": "Base", "name": "base" },
+      { "part": "Upper Arm", "name": "upper", "position": { "x": -2, "y": -2, "z": 5 } },
+      { "part": "Forearm", "name": "forearm", "position": { "x": -1.5, "y": -1.5, "z": 35 } }
+    ],
+    "joints": [
+      {
+        "type": "revolute",
+        "parent": "base",
+        "child": "upper",
+        "anchor": { "x": 0, "y": 0, "z": 5 },
+        "axis": { "x": 0, "y": 1, "z": 0 },
+        "min": -90,
+        "max": 90
+      },
+      {
+        "type": "revolute",
+        "parent": "upper",
+        "child": "forearm",
+        "anchor": { "x": 0, "y": 0, "z": 35 },
+        "axis": { "x": 0, "y": 1, "z": 0 },
+        "min": -120,
+        "max": 0
+      }
+    ]
+  }
+}
+```
+
+Creating the environment with `end_effector_ids: ["forearm"]` gives you an `action_dim` of 2 (one per revolute joint). A reinforcement learning agent would learn a mapping from the current observation (two joint angles, two joint velocities, forearm pose) to two torque values that drive the forearm tip to a target position.
+
+<Callout type="warning" title="Joint limits">
+Revolute and prismatic joints can have optional `min` and `max` parameters. When specified, the physics engine enforces these limits with hard stops. If the AI applies a torque that would push the joint past its limit, the joint simply stops at the boundary. This is important for realistic robot simulation where motors have physical range limits.
+</Callout>
+
+## Batch Environments
+
+Training a reinforcement learning policy typically requires running many environments in parallel. The `batch_create_envs` tool creates N copies of the same assembly, and `batch_step` / `batch_reset` operate on all of them at once.
+
+```json
+{
+  "document": { "...assembly..." },
+  "n_envs": 16,
+  "end_effector_ids": ["forearm"]
+}
+```
+
+Returns:
+
+```json
+{
+  "batch_id": "batch_1",
+  "n_envs": 16,
+  "action_dim": 2,
+  "observation_dim": 11,
+  "num_joints": 2
+}
+```
+
+`batch_step` takes a 2D array of actions (one per environment) and returns parallel observations, rewards, and done flags. This is the standard vectorized environment pattern used by PPO, SAC, and other RL algorithms.
+
+```json
+{
+  "batch_id": "batch_1",
+  "action_type": "torque",
+  "actions": [
+    [0.5, -0.3],
+    [0.1, 0.2],
+    ...
+  ]
+}
+```
+
+The response groups results by environment, making it straightforward to feed into a training loop that collects rollouts across parallel environments.
+
+## Reward Shaping
+
+The default reward from `gym_step` is 0.0. In a real training setup, the AI agent (or a training script wrapping the MCP calls) computes rewards from the observation. Common reward functions for robot control include distance-to-target for reaching tasks, uptime for balancing tasks, and energy penalties to encourage efficient movement.
+
+Because the observations include end-effector positions as 3D coordinates, computing a reaching reward is straightforward: the negative Euclidean distance from the end effector to the target. For the 2-DOF arm, a training loop might look conceptually like this:
+
+```text
+target = [20, 0, 40]  # target position in mm
+
+for episode in range(1000):
+    obs = gym_reset(env_id)
+    for step in range(200):
+        action = policy(obs)
+        result = gym_step(env_id, "torque", action)
+        ee_pos = result.observation.end_effector_poses[0][0:3]
+        reward = -distance(ee_pos, target)
+        policy.update(obs, action, reward, result.observation)
+        obs = result.observation
+        if result.done:
+            break
+```
+
+The AI can run this entire loop through MCP tool calls, or an external training script can use the MCP server programmatically. The `@vcad/mcp` package exports the gym tools as JavaScript functions that can be called directly without going through the MCP protocol.
+
+## When to Use Physics
+
+Physics simulation is most useful when your design includes moving parts and you want to verify that the mechanism works as intended. A hinge that should swing freely, a slider that needs to travel 50mm, a four-bar linkage that should trace a specific path -- all of these can be tested in the physics environment before you manufacture anything.
+
+For reinforcement learning, vcad's physics provides a complete pipeline from parametric CAD design to simulated robot training. You design the robot in vcad, automatically get a physics simulation with accurate collision geometry derived from the BRep model, and train a control policy through the gym interface. Changing the robot's dimensions or joint configuration in the CAD model automatically updates the physics simulation.
+
+Continue to [Electronics via MCP](/tutorials/mcp/electronics) to learn about PCB design through AI tools, or see the [Physics Reference](/reference/mcp/overview) for the complete gym tool API.

@@ -1,0 +1,128 @@
+---
+title: "import_step / export_step"
+description: "STEP AP214 import and export tools"
+order: 6
+---
+
+The STEP I/O tools handle import and export of STEP AP203/AP214 files, the standard CAD interchange format. Import reads a STEP file from disk and produces an IR document with `ImportedMesh` nodes. Export (via the CLI) writes exact BRep geometry to STEP AP214 format.
+
+## import_step
+
+Reads a STEP file and returns an IR document containing the imported geometry as `ImportedMesh` nodes.
+
+### Input Schema
+
+<Param name="filename" type="string" required={true}>
+Path to the STEP file on disk. Accepts `.step` and `.stp` extensions. Relative paths are resolved from the MCP server's working directory.
+</Param>
+
+<Param name="name" type="string" required={false}>
+Part name for the imported geometry. Defaults to the input filename without extension. If the STEP file contains multiple solids, each gets a numbered suffix (e.g., `Housing_1`, `Housing_2`).
+</Param>
+
+<Param name="material" type="string" required={false}>
+Material key to assign to the imported parts. Default is `"steel"`. The tool includes built-in material definitions for `steel`, `aluminum`, and `default`.
+</Param>
+
+### Return Value
+
+The tool returns a JSON response containing the IR document and an import summary:
+
+```json
+{
+  "document": {
+    "version": "0.1",
+    "nodes": {
+      "1": {
+        "id": 1,
+        "name": "Housing",
+        "op": {
+          "type": "ImportedMesh",
+          "positions": [...],
+          "indices": [...],
+          "normals": [...],
+          "source": "housing.step"
+        }
+      }
+    },
+    "materials": {
+      "steel": { "name": "Steel", "color": [0.6, 0.6, 0.65], "metallic": 0.9, "roughness": 0.3, "density": 7850 }
+    },
+    "roots": [{ "root": 1, "material": "steel" }]
+  },
+  "summary": {
+    "bodies": 1,
+    "total_triangles": 4582,
+    "total_vertices": 2346
+  }
+}
+```
+
+| Summary Field | Type | Description |
+|---------------|------|-------------|
+| `bodies` | number | Number of solid bodies found in the STEP file |
+| `total_triangles` | number | Total tessellated triangle count across all bodies |
+| `total_vertices` | number | Total vertex count across all bodies |
+
+### ImportedMesh Nodes
+
+Each body in the STEP file becomes an `ImportedMesh` node in the IR document. The node contains the tessellated triangle mesh (positions, indices, and optionally normals) plus a `source` field referencing the original filename. The tessellation is performed by the BRep kernel during import at a quality level appropriate for visualization and inspection.
+
+The imported document can be passed to `inspect_cad` for volume and area measurement, to `export_cad` for format conversion (STEP to STL or GLB), or to `open_in_browser` for visualization.
+
+### Supported STEP Flavors
+
+The importer handles STEP files produced by common CAD tools:
+
+| Tool | STEP Version | Status |
+|------|-------------|--------|
+| Fusion 360 | AP214 | Fully supported |
+| SolidWorks | AP214 | Fully supported |
+| Onshape | AP203 | Fully supported |
+| CATIA | AP214 | Fully supported |
+| Creo | AP203/AP214 | Fully supported |
+| FreeCAD | AP214 | Fully supported |
+| NX | AP214 | Fully supported |
+
+### Combining Imported Geometry
+
+After importing, you can combine imported geometry with new geometry by creating a document that references both. Use `create_cad_document` to build new parts and booleans, then merge the results.
+
+### Error Handling
+
+The tool throws errors for:
+
+- **File not found:** The specified path does not exist
+- **No geometry:** The STEP file parses successfully but contains no solid bodies
+- **Parse failure:** The STEP file is malformed or uses unsupported entities
+
+## export_step (CLI)
+
+STEP export is available through the CLI rather than the MCP server. It writes exact BRep geometry to STEP AP214 format, preserving analytical surface types (plane, cylinder, cone, sphere, torus) without tessellation.
+
+```bash
+vcad export model.vcad model.step
+```
+
+### Supported Geometry
+
+| Surface Type | STEP Entity | Round-Trip |
+|-------------|-------------|------------|
+| Plane | PLANE | Exact |
+| Cylinder | CYLINDRICAL_SURFACE | Exact |
+| Cone | CONICAL_SURFACE | Exact |
+| Sphere | SPHERICAL_SURFACE | Exact |
+| Torus | TOROIDAL_SURFACE | Exact |
+| NURBS | B_SPLINE_SURFACE_WITH_KNOTS | Exact |
+
+Bilinear planar surfaces export as PLANE entities. Non-planar degree-1 surfaces export as B_SPLINE_SURFACE_WITH_KNOTS. Control point coordinates use full `f64` precision (`{:.15E}` format) to prevent loss during round-trip.
+
+<Callout type="warning" title="Boolean operations">
+STEP export works for primitive shapes and previously imported STEP geometry. Boolean operations convert to mesh internally, and mesh geometry cannot be exported to STEP. The CLI prints an error if you attempt to export a document containing boolean results.
+</Callout>
+
+### Round-Trip Fidelity
+
+For documents containing only primitives and imported STEP geometry (no booleans), the STEP export preserves exact geometry. Importing the exported file produces identical surfaces within floating-point precision. This makes vcad suitable as a STEP format converter or viewer.
+
+For the import/export workflow tutorial, see [STEP Import](/guides/modeling/step-import).

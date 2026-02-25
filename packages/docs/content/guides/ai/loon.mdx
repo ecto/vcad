@@ -1,0 +1,249 @@
+---
+title: "Loon Language Reference"
+description: "Complete syntax: primitives, booleans, transforms, pipe operator, let bindings"
+order: 5
+---
+
+Loon is vcad's compact text format for describing geometry. It is purpose-built for AI models: dense enough that a complex part fits in a few hundred tokens, readable enough that humans can follow and edit it. Every Loon program compiles to the same IR document that `create_cad_document` produces, so the resulting geometry is identical regardless of which path created it.
+
+## Format Header
+
+Every Loon program starts with a version header.
+
+```text
+# vcad 0.2
+```
+
+The version number tells the parser which opcodes and syntax rules to expect. The current version is 0.2. Omitting the header or using an unknown version causes a parse error.
+
+## Node Numbering
+
+Each line after the header (excluding material definitions) creates a node. Nodes are numbered sequentially starting from 0. A node's ID is its line position. Line 0 after the header is node 0. Line 1 is node 1. And so on. Opcodes that reference other nodes use these numeric IDs.
+
+```text
+# vcad 0.2
+C 50 30 5           # node 0: cube
+Y 2.75 10           # node 1: cylinder
+T 1 10 15 0         # node 2: translate node 1
+D 0 2               # node 3: subtract node 2 from node 0
+ROOT 3 aluminum
+```
+
+This strict sequential numbering means you can read a Loon program top-to-bottom and always know which node each ID refers to. There are no forward references -- a node can only reference nodes that appear earlier in the file.
+
+## Named Nodes
+
+Any node can have an optional quoted string at the end of its line. This becomes the node's name in the feature tree when the document is opened in the app.
+
+```text
+C 50 30 5 "Base Plate"
+Y 2.75 10 "Hole Tool"
+```
+
+Names are optional but recommended for the main operations that a user would want to identify in the tree.
+
+## Primitives
+
+Four opcodes create the basic solids. All dimensions are in millimeters.
+
+```text
+C sx sy sz              # Cube: corner at origin, extends to (sx, sy, sz)
+Y radius height         # Cylinder: axis along Z, base at origin
+S radius                # Sphere: centered at origin
+K r_bottom r_top height # Cone: axis along Z, base at origin
+```
+
+The cube's corner sits at the origin (0, 0, 0) and extends in the positive direction to (sx, sy, sz). The cylinder and cone axes run along Z, which is vertical in vcad's Z-up coordinate system. The sphere is centered at the origin.
+
+<Playground exampleId="cube" />
+
+## Booleans
+
+Three opcodes combine two nodes. Each takes two node IDs.
+
+```text
+U left right            # Union: merge two solids
+D left right            # Difference: subtract right from left
+I left right            # Intersection: keep only overlap
+```
+
+The **left** operand is the base geometry. For difference, the **right** operand is subtracted from it. For intersection, only the region where both solids overlap is kept.
+
+Booleans are the core of constructive solid geometry. A plate with holes is a cube with cylinder differences. A bracket is a union of two cubes. An O-ring groove is a difference of a torus from a shaft.
+
+## Transforms
+
+Transforms reposition or resize an existing node. The first argument is always the source node ID.
+
+```text
+T node dx dy dz         # Translate by (dx, dy, dz) in mm
+R node rx ry rz         # Rotate by (rx, ry, rz) in degrees (Euler XYZ)
+X node sx sy sz         # Scale by factors (sx, sy, sz)
+MR node nx ny nz px py pz # Mirror across plane with normal (nx,ny,nz) through point (px,py,pz)
+```
+
+Rotation follows Euler angles: rotate around X first, then Y, then Z. Positive angles rotate counterclockwise when viewed from the positive axis direction (right-hand rule).
+
+## Patterns
+
+Patterns replicate a node along a line or around an axis.
+
+```text
+LP node dx dy dz count spacing
+```
+
+Linear pattern: copies **node** along direction **(dx, dy, dz)** with **count** total instances and **spacing** millimeters between them.
+
+```text
+CP node cx cy cz ax ay az count angle
+```
+
+Circular pattern: copies **node** around center **(cx, cy, cz)** on axis **(ax, ay, az)** with **count** instances spaced **angle** degrees apart.
+
+```text
+# vcad 0.2
+Y 3 12 "Bolt Hole"
+T 0 22 0 -1
+CP 1 0 0 0 0 0 1 6 60 "Bolt Pattern"
+ROOT 2 steel
+```
+
+<Playground exampleId="circular-pattern" />
+
+## Finishing Operations
+
+Shell, fillet, and chamfer modify an existing solid.
+
+```text
+SH node thickness       # Shell: hollow with wall thickness
+FI node radius          # Fillet: round all edges with radius
+CH node distance        # Chamfer: bevel all edges by distance
+```
+
+Shell removes the smallest face by default (typically the top of a box). Fillet and chamfer apply to all edges of the solid. For selective edge filleting, the app UI provides edge selection; Loon applies the operation globally.
+
+## Sketches
+
+Sketches define 2D profiles on a plane. A sketch block begins with `SK` and ends with `END`.
+
+```text
+SK ox oy oz  ux uy uz  vx vy vz "Name"
+L x1 y1 x2 y2         # Line segment
+A cx cy radius start_angle end_angle  # Arc
+END
+```
+
+The `SK` line defines the sketch plane: origin **(ox, oy, oz)**, X-direction **(ux, uy, uz)**, Y-direction **(vx, vy, vz)**. Between `SK` and `END`, `L` commands draw line segments and `A` commands draw arcs. Coordinates are 2D, relative to the sketch plane's origin and axes.
+
+The sketch must form a closed profile (the last point connects back to the first). Open profiles produce errors during extrusion.
+
+## Extrude and Revolve
+
+```text
+E sketch_node dx dy dz distance "Name"
+E sketch_node dx dy dz distance twist_angle "Name"
+E sketch_node dx dy dz distance twist_angle scale_end "Name"
+```
+
+Extrude pushes the sketch profile along direction **(dx, dy, dz)** for **distance** millimeters. Optional **twist_angle** (degrees) rotates the profile as it extrudes. Optional **scale_end** (factor) tapers the profile.
+
+```text
+V sketch_node ax ay az px py pz  axis_x axis_y axis_z angle "Name"
+```
+
+Revolve spins the sketch around an axis defined by point **(px, py, pz)** and direction **(axis_x, axis_y, axis_z)** through **angle** degrees.
+
+## Sweep and Loft
+
+```text
+SW sketch_node helix cx cy cz ax ay az radius pitch turns "Name"
+LO sketch1 sketch2 "Name"
+LO sketch1 sketch2 sketch3 "Name"
+```
+
+Sweep pushes a sketch along a path (currently helix paths). Loft interpolates between two or more sketch profiles.
+
+## Materials
+
+Define materials before any geometry, after the version header.
+
+```text
+M name r g b metallic roughness [density] [friction]
+```
+
+RGB values range from 0 to 1. Metallic and roughness are PBR parameters (0 to 1). Density (kg/m3) and friction coefficient are optional, used for physics simulation and mass computation.
+
+```text
+M steel 0.7 0.7 0.72 0.95 0.35 7850
+M aluminum 0.9 0.9 0.92 0.05 0.3 2700
+M plastic 0.2 0.3 0.8 0.0 0.6 1200
+```
+
+## ROOT Directive
+
+The `ROOT` directive declares which nodes are visible in the final scene.
+
+```text
+ROOT node_id material_name
+ROOT node_id material_name hidden
+```
+
+Multiple `ROOT` lines create multi-part documents. The `hidden` keyword marks a root as invisible by default, useful for construction geometry that should be stored in the document but not rendered.
+
+## Complete Example
+
+A flanged hub with bolt holes:
+
+```text
+# vcad 0.2
+M steel 0.7 0.7 0.72 0.95 0.35 7850
+Y 30 10 "Flange"
+Y 15 25 "Hub"
+T 1 0 0 0
+U 0 2 "Flange + Hub"
+Y 5 12 "Center Bore"
+T 4 0 0 -1
+D 3 5 "Bored Hub"
+Y 3 12 "Bolt Hole"
+T 7 22 0 -1
+CP 8 0 0 0 0 0 1 6 60 "Bolt Pattern"
+D 6 9 "Finished Hub"
+FI 10 1.0 "Filleted"
+ROOT 11 steel
+```
+
+<Playground exampleId="flanged-hub" />
+
+Twelve lines, twelve operations, one production-ready part. The flange and hub are unioned, the center is bored, six bolt holes are punched in a circular pattern, and all edges are filleted. The `ROOT` directive assigns steel material and makes the final node visible.
+
+## Opcode Summary
+
+| Opcode | Operation | Arguments |
+|--------|-----------|-----------|
+| C | Cube | sx sy sz |
+| Y | Cylinder | radius height |
+| S | Sphere | radius |
+| K | Cone | r_bottom r_top height |
+| U | Union | left right |
+| D | Difference | left right |
+| I | Intersection | left right |
+| T | Translate | node dx dy dz |
+| R | Rotate | node rx ry rz |
+| X | Scale | node sx sy sz |
+| MR | Mirror | node nx ny nz px py pz |
+| LP | Linear Pattern | node dx dy dz count spacing |
+| CP | Circular Pattern | node cx cy cz ax ay az count angle |
+| SH | Shell | node thickness |
+| FI | Fillet | node radius |
+| CH | Chamfer | node distance |
+| SK...END | Sketch | origin x-dir y-dir |
+| L | Line (in sketch) | x1 y1 x2 y2 |
+| A | Arc (in sketch) | cx cy radius start end |
+| E | Extrude | sketch dx dy dz dist [twist] [scale] |
+| V | Revolve | sketch ax ay az px py pz axis angle |
+| SW | Sweep | sketch path-type ...params |
+| LO | Loft | sketch1 sketch2 ... |
+| M | Material | name r g b metallic roughness [density] [friction] |
+| ROOT | Root | node material [hidden] |
+
+For the complete MCP tool API that accepts Loon programs, see the [MCP Reference](/reference/mcp/overview). For a comparison of Loon vs JSON IR, see the [Loon tutorial](/tutorials/mcp/03-loon).

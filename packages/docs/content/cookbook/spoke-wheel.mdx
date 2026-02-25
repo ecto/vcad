@@ -1,0 +1,214 @@
+---
+title: "Spoke Wheel"
+description: "Multi-spoke wheel with hub and rim"
+difficulty: Intermediate
+time: "15 min"
+order: 7
+---
+
+A spoke wheel combines three distinct geometries: a central hub, an outer rim, and radial spokes connecting them. This recipe builds a parametric wheel using circular pattern to distribute the spokes evenly.
+
+## The Design
+
+```rust
+use vcad::{centered_cube, centered_cylinder, Part};
+
+// Hub: cylinder with center bore
+let hub_outer = centered_cylinder("hub", 15.0, 20.0, 64);
+let hub_bore  = centered_cylinder("bore", 6.0, 25.0, 32);
+let hub       = hub_outer - hub_bore;
+
+// Rim: hollow cylinder
+let rim_outer = centered_cylinder("rim_out", 60.0, 20.0, 128);
+let rim_inner = centered_cylinder("rim_in", 55.0, 25.0, 128);
+let rim       = rim_outer - rim_inner;
+
+// One spoke, then circular pattern
+let spoke = centered_cube("spoke", 6.0, 40.0, 10.0)
+    .translate(0.0, 35.0, 0.0);
+let spokes = spoke.circular_pattern(0.0, 6);  // 6 spokes
+
+let wheel = hub + rim + spokes;
+```
+
+The hub sits at the center with a 12mm bore for an axle. The rim has an outer radius of 60mm and wall thickness of 5mm. Six rectangular spokes bridge the 40mm gap between hub and rim, evenly distributed by circular pattern.
+
+## Step by Step
+
+### 1. Build the hub
+
+```rust
+let hub_outer = centered_cylinder("hub", 15.0, 20.0, 64);
+let hub_bore  = centered_cylinder("bore", 6.0, 25.0, 32);
+let hub       = hub_outer - hub_bore;
+```
+
+The hub is a hollow cylinder -- 30mm outer diameter, 12mm bore, 20mm wide. The bore cylinder is taller than the hub (25mm vs 20mm) to guarantee a clean boolean subtraction through the full thickness. Sixty-four segments give a smooth circular profile for the hub exterior.
+
+### 2. Build the rim
+
+```rust
+let rim_outer = centered_cylinder("rim_out", 60.0, 20.0, 128);
+let rim_inner = centered_cylinder("rim_in", 55.0, 25.0, 128);
+let rim       = rim_outer - rim_inner;
+```
+
+The rim is another hollow cylinder, but larger. The 5mm wall thickness (60 - 55 = 5mm radius difference) provides structural rigidity. Using 128 segments for the rim ensures the outer circumference appears smooth even at large diameters.
+
+### 3. Create and pattern the spokes
+
+```rust
+let spoke = centered_cube("spoke", 6.0, 40.0, 10.0)
+    .translate(0.0, 35.0, 0.0);
+let spokes = spoke.circular_pattern(0.0, 6);
+```
+
+Each spoke is a 6mm wide, 10mm tall rectangular bar. The 40mm length bridges the gap between the hub outer radius (15mm) and the rim inner radius (55mm). The `.translate(0.0, 35.0, 0.0)` positions the spoke center at Y=35 (midway between 15 and 55), and `.circular_pattern(0.0, 6)` replicates it at 60-degree intervals around the Z axis.
+
+The second argument to `circular_pattern` is the count, and the first is an angular offset in degrees. Passing `0.0` starts the first spoke along the Y axis.
+
+<Callout type="info" title="Spoke overlap">
+The spokes intentionally overlap with both the hub and rim cylinders. The boolean union resolves the intersections cleanly, producing a single watertight solid.
+</Callout>
+
+### 4. Assemble
+
+```rust
+let wheel = hub + rim + spokes;
+```
+
+The union of hub, rim, and spokes creates the complete wheel as a single solid body.
+
+## Variations
+
+### Curved spokes
+
+For a more dynamic appearance, use arced spokes that curve from hub to rim:
+
+```rust
+let curved_spoke = Sketch::new()
+    .move_to(0.0, 15.0)
+    .arc_to(0.0, 55.0, 80.0)  // Large-radius arc
+    .close_with_width(6.0);
+
+let spoke_body = curved_spoke.extrude(10.0);
+let curved_spokes = spoke_body.circular_pattern(0.0, 5);
+```
+
+### Tapered spokes
+
+Spokes that are wider at the hub and narrower at the rim distribute stress more evenly:
+
+```rust
+// Wider at hub (10mm) tapering to rim (4mm)
+let taper_spoke = Sketch::new()
+    .move_to(-5.0, 15.0)
+    .line_to(5.0, 15.0)
+    .line_to(2.0, 55.0)
+    .line_to(-2.0, 55.0)
+    .close();
+
+let tapered = taper_spoke.extrude(10.0);
+let tapered_spokes = tapered.circular_pattern(0.0, 6);
+```
+
+### Lightened hub
+
+Remove material from the hub flange area with pockets:
+
+```rust
+let pocket = centered_cylinder("pocket", 5.0, 25.0, 24)
+    .translate(0.0, 10.0, 0.0);
+let pockets = pocket.circular_pattern(30.0, 6);  // Offset 30° from spokes
+
+let lightened = wheel - pockets;
+```
+
+The pockets are offset 30 degrees from the spokes so they sit between them, removing material where it contributes least to structural strength.
+
+### Keyway in bore
+
+For positive shaft engagement, add a keyway to the bore:
+
+```rust
+let keyway = centered_cube("key", 3.0, 4.0, 25.0)
+    .translate(0.0, 5.0, 0.0);  // At bore surface
+
+let wheel_with_key = wheel - keyway;
+```
+
+## Tire Profile (Bonus)
+
+Add a tire by revolving a cross-section around the wheel center:
+
+```rust
+let tire_profile = Sketch::new()
+    .move_to(55.0, -12.0)
+    .line_to(65.0, -10.0)
+    .arc_to(65.0, 10.0, 5.0)
+    .line_to(55.0, 12.0)
+    .close();
+
+let tire = Revolve::full(&tire_profile).segments(128).build();
+let wheel_with_tire = wheel + tire;
+```
+
+## Complete Parametric Version
+
+```rust
+use vcad::{centered_cube, centered_cylinder, Part};
+
+struct WheelParams {
+    hub_radius: f64,
+    bore_radius: f64,
+    rim_outer_radius: f64,
+    rim_thickness: f64,
+    width: f64,
+    spoke_count: usize,
+    spoke_width: f64,
+    spoke_height: f64,
+}
+
+fn spoke_wheel(p: &WheelParams) -> Part {
+    let rim_inner = p.rim_outer_radius - p.rim_thickness;
+
+    // Hub
+    let hub = centered_cylinder("hub", p.hub_radius, p.width, 64)
+        - centered_cylinder("bore", p.bore_radius, p.width + 5.0, 32);
+
+    // Rim
+    let rim = centered_cylinder("rim_o", p.rim_outer_radius, p.width, 128)
+        - centered_cylinder("rim_i", rim_inner, p.width + 5.0, 128);
+
+    // Spokes
+    let spoke_length = rim_inner - p.hub_radius;
+    let spoke_center = p.hub_radius + spoke_length / 2.0;
+
+    let spoke = centered_cube("spoke", p.spoke_width, spoke_length, p.spoke_height)
+        .translate(0.0, spoke_center, 0.0);
+    let spokes = spoke.circular_pattern(0.0, p.spoke_count);
+
+    hub + rim + spokes
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let wheel = spoke_wheel(&WheelParams {
+        hub_radius: 15.0,
+        bore_radius: 6.0,
+        rim_outer_radius: 60.0,
+        rim_thickness: 5.0,
+        width: 20.0,
+        spoke_count: 6,
+        spoke_width: 6.0,
+        spoke_height: 10.0,
+    });
+
+    println!("Volume: {:.0} mm³", wheel.volume());
+    wheel.write_stl("spoke_wheel.stl")?;
+    Ok(())
+}
+```
+
+<Callout type="tip" title="Print orientation">
+For strongest 3D printed spokes, orient the wheel so the spokes lie in the XY print plane. This puts layer lines along the spoke length rather than across it, maximizing tensile strength in the direction that matters.
+</Callout>
