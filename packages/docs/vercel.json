@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "cd ../.. && npm ci",
+  "installCommand": "cd ../.. && npm ci --ignore-scripts",
   "buildCommand": "cd ../.. && npm run build -w @vcad/docs",
   "outputDirectory": ".next",
   "framework": "nextjs"
