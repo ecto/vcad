@@ -668,10 +668,27 @@ pub fn split_planar_face_by_circle(
     // The outer loop stays the same; we add the circle as an inner loop
     // The inner loop must have OPPOSITE winding to the outer loop in the face's 2D projection
 
-    // Compute the face's 2D coordinate system from the outer loop
+    // Compute the face's 2D coordinate system using the plane surface normal
+    // instead of deriving from vertices, which can produce inconsistent normals
+    // for rotated/non-axis-aligned faces depending on vertex ordering.
+    let face_normal = if let Some(plane) = brep.geometry.surfaces[surface_index]
+        .as_any()
+        .downcast_ref::<vcad_kernel_geom::Plane>()
+    {
+        let n = plane.normal_dir.into_inner();
+        // Account for face orientation: reversed faces flip the normal
+        if orientation == Orientation::Reversed {
+            -n
+        } else {
+            n
+        }
+    } else {
+        // Fallback: derive from vertices (shouldn't happen for planar faces)
+        let e1 = loop_verts[1] - loop_verts[0];
+        let e2 = loop_verts[2] - loop_verts[0];
+        e1.cross(&e2)
+    };
     let e1 = loop_verts[1] - loop_verts[0];
-    let e2 = loop_verts[2] - loop_verts[0];
-    let face_normal = e1.cross(&e2);
     let u_axis = e1.normalize();
     let v_axis = face_normal.cross(&e1).normalize();
     let origin = loop_verts[0];
@@ -805,22 +822,21 @@ fn circle_fully_inside_polygon(polygon: &[Point3], circle: &vcad_kernel_geom::Ci
         return false;
     }
 
-    // Compute plane basis from first 3 vertices
+    // Use the circle's known normal for the projection plane instead of
+    // deriving from the first 3 polygon vertices, which can produce an
+    // inconsistent normal direction for rotated/non-axis-aligned faces.
     let v0 = polygon[0];
-    let v1 = polygon[1];
-    let v2 = polygon[2];
+    let normal = circle.normal.into_inner();
 
-    let e1 = v1 - v0;
-    let e2 = v2 - v0;
-    let normal = e1.cross(&e2);
-    let normal_len = normal.norm();
-    if normal_len < 1e-12 {
+    // Build a 2D coordinate system from the circle's normal
+    let e1 = polygon[1] - v0;
+    let u_axis = e1.normalize();
+    let v_axis = normal.cross(&u_axis);
+    let v_axis_len = v_axis.norm();
+    if v_axis_len < 1e-12 {
         return false;
     }
-
-    // Project all points to 2D
-    let u_axis = e1.normalize();
-    let v_axis = normal.cross(&e1).normalize();
+    let v_axis = v_axis / v_axis_len;
 
     let project = |p: &Point3| -> (f64, f64) {
         let d = p - v0;
@@ -868,22 +884,18 @@ fn circle_inside_polygon(polygon: &[Point3], circle: &vcad_kernel_geom::Circle3d
         return false;
     }
 
-    // Compute plane basis from first 3 vertices
+    // Use the circle's known normal for consistent projection
     let v0 = polygon[0];
-    let v1 = polygon[1];
-    let v2 = polygon[2];
+    let normal = circle.normal.into_inner();
 
-    let e1 = v1 - v0;
-    let e2 = v2 - v0;
-    let normal = e1.cross(&e2);
-    let normal_len = normal.norm();
-    if normal_len < 1e-12 {
+    let e1 = polygon[1] - v0;
+    let u_axis = e1.normalize();
+    let v_axis = normal.cross(&u_axis);
+    let v_axis_len = v_axis.norm();
+    if v_axis_len < 1e-12 {
         return false;
     }
-
-    // Project all points to 2D
-    let u_axis = e1.normalize();
-    let v_axis = normal.cross(&e1).normalize();
+    let v_axis = v_axis / v_axis_len;
 
     let project = |p: &Point3| -> (f64, f64) {
         let d = p - v0;
@@ -1403,19 +1415,11 @@ fn circle_partially_inside_polygon(polygon: &[Point3], circle: &vcad_kernel_geom
         return false;
     }
 
-    // Build 2D coordinate system
+    // Use the circle's known normal for consistent projection
     let v0 = polygon[0];
-    let v1 = polygon[1];
-    let v2 = polygon[2];
+    let normal = circle.normal.into_inner();
 
-    let e1 = v1 - v0;
-    let e2 = v2 - v0;
-    let normal = e1.cross(&e2);
-    let normal_len = normal.norm();
-    if normal_len < 1e-12 {
-        return false;
-    }
-
+    let e1 = polygon[1] - v0;
     let u_axis = e1.normalize();
     let v_axis = normal.cross(&e1).normalize();
 

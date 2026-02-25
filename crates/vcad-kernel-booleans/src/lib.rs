@@ -1421,4 +1421,49 @@ mod tests {
             min[0]
         );
     }
+
+    /// Test boolean difference with a Y-axis aligned (rotated) cylinder subtracted from a box.
+    #[test]
+    fn test_rotated_cylinder_subtract() {
+        use vcad_kernel_primitives::make_cylinder;
+
+        let cube = make_cube(20.0, 20.0, 20.0);
+        let mut cylinder = make_cylinder(5.0, 30.0, 32);
+
+        // Rotate -90 degrees around X: maps Z->-Y, Y->Z
+        let rot = Transform::rotation_x(-std::f64::consts::FRAC_PI_2);
+        for (_, v) in &mut cylinder.topology.vertices {
+            v.point = rot.apply_point(&v.point);
+        }
+        cylinder.geometry.surfaces = cylinder
+            .geometry
+            .surfaces
+            .drain(..)
+            .map(|s| s.transform(&rot))
+            .collect();
+
+        // Translate so cylinder center is at (10, -5, 10)
+        translate_brep(&mut cylinder, 10.0, -5.0, 10.0);
+
+        let result = boolean_op(&cube, &cylinder, BooleanOp::Difference, 32);
+        let mesh = result.to_mesh(32);
+
+        assert!(mesh.num_triangles() > 0, "Result mesh should have triangles");
+        validate_mesh_indices(&mesh);
+
+        // Box: 20^3=8000, Cylinder: pi*25*20=~1570.8, Expected: ~6429.2
+        let volume = compute_mesh_volume(&mesh);
+        let expected = 8000.0 - std::f64::consts::PI * 25.0 * 20.0;
+        assert!(
+            volume > expected * 0.7 && volume < expected * 1.3,
+            "Expected volume ~{:.0}, got {:.0}",
+            expected, volume
+        );
+
+        let (min, max) = compute_mesh_bbox(&mesh);
+        assert!(min[0] >= -0.1 && min[1] >= -0.1 && min[2] >= -0.1,
+            "Min should be ~[0,0,0], got {:?}", min);
+        assert!(max[0] <= 20.1 && max[1] <= 20.1 && max[2] <= 20.1,
+            "Max should be ~[20,20,20], got {:?}", max);
+    }
 }

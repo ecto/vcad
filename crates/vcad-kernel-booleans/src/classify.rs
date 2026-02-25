@@ -393,7 +393,7 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
                 use std::f64::consts::PI;
 
                 let ref_dir = cyl.ref_dir.as_ref();
-                let y_dir = cyl.axis.as_ref().cross(ref_dir);
+                let y_dir = cyl.y_dir();
 
                 // Compute U angles for each boundary vertex
                 let mut u_angles: Vec<f64> = vertices

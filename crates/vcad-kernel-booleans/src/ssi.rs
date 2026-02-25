@@ -321,14 +321,39 @@ fn plane_cylinder(plane: &Plane, cyl: &CylinderSurface) -> IntersectionCurve {
         let p1 = Point3::from(axis_on_plane.coords + lateral * perp);
         let p2 = Point3::from(axis_on_plane.coords - lateral * perp);
 
-        // Return both lines
+        // Sort the two lines deterministically so ordering doesn't depend on
+        // cross-product sign (which flips with cylinder axis orientation).
+        // Use lexicographic comparison on the origin coordinates.
+        let (origin_a, origin_b) = {
+            let cmp = p1
+                .x
+                .partial_cmp(&p2.x)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(
+                    p1.y
+                        .partial_cmp(&p2.y)
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                )
+                .then(
+                    p1.z
+                        .partial_cmp(&p2.z)
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                );
+            if cmp == std::cmp::Ordering::Greater {
+                (p2, p1)
+            } else {
+                (p1, p2)
+            }
+        };
+
+        // Return both lines in deterministic order
         IntersectionCurve::TwoLines(
             Line3d {
-                origin: p1,
+                origin: origin_a,
                 direction: *axis.as_ref(),
             },
             Line3d {
-                origin: p2,
+                origin: origin_b,
                 direction: *axis.as_ref(),
             },
         )
@@ -338,11 +363,20 @@ fn plane_cylinder(plane: &Plane, cyl: &CylinderSurface) -> IntersectionCurve {
             (plane.origin - cyl.center).dot(axis.as_ref()) / axis.as_ref().dot(axis.as_ref());
         let circle_center = cyl.center + dist_along_axis * axis.as_ref();
 
-        IntersectionCurve::Circle(Circle3d::with_normal(
-            circle_center,
-            cyl.radius,
-            *n.as_ref(),
-        ))
+        // Align circle parameterization with the cylinder's ref_dir/y_dir
+        // so that the circle's coordinate frame is consistent regardless of
+        // plane normal orientation. Use the plane normal as the circle normal,
+        // but derive x_dir from the cylinder's ref_dir.
+        let circle_normal = *n.as_ref();
+        let x_dir = cyl.ref_dir;
+        let y_dir = Dir3::new_normalize(cyl.y_dir());
+        IntersectionCurve::Circle(Circle3d {
+            center: circle_center,
+            radius: cyl.radius,
+            x_dir,
+            y_dir,
+            normal: Dir3::new_normalize(circle_normal),
+        })
     } else {
         // General case — ellipse
         // Sample the intersection curve
