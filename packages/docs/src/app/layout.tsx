@@ -11,6 +11,7 @@ import { ThemeProvider } from "@/components/ThemeProvider";
 import { SearchProvider } from "@/components/Search/SearchProvider";
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://docs.vcad.io"),
   title: {
     default: "vcad",
     template: "%s | vcad",
