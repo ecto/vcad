@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { examples } from "@/lib/examples";
 import { cn } from "@/lib/utils";
@@ -32,8 +33,12 @@ const ParametricSliders = dynamic(
 );
 
 export function FullPlayground() {
-  const [selectedExample, setSelectedExample] = useState(examples[0]!);
-  const [code, setCode] = useState(selectedExample.code);
+  const searchParams = useSearchParams();
+  const initialId = searchParams.get("example");
+  const initialExample = (initialId && examples.find(e => e.id === initialId)) || examples[0]!;
+
+  const [selectedExample, setSelectedExample] = useState(initialExample);
+  const [code, setCode] = useState(initialExample.code);
   const [splitRatio, setSplitRatio] = useState(50);
   const [isDragging, setIsDragging] = useState(false);
 
