@@ -8,8 +8,12 @@
     "type": "git",
     "url": "https://github.com/ecto/vcad"
   },
+  "scripts": {
+    "build": "wasm-pack build ../../crates/vcad-kernel-wasm --target web --out-dir ../../packages/kernel-wasm/pkg && cp pkg/vcad_kernel_wasm* ."
+  },
   "files": [
     "vcad_kernel_wasm_bg.wasm",
+    "vcad_kernel_wasm_bg.wasm.d.ts",
     "vcad_kernel_wasm.js",
     "vcad_kernel_wasm.d.ts"
   ],
