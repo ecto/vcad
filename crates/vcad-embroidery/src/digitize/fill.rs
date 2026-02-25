@@ -35,11 +35,10 @@ fn rotate(x: f64, y: f64, cos_a: f64, sin_a: f64) -> (f64, f64) {
     (x * cos_a - y * sin_a, x * sin_a + y * cos_a)
 }
 
-/// Find x-coordinates where horizontal line `y = scan_y` intersects the
-/// polygon edges. Returns a sorted list of intersection x-values.
-fn scan_intersections(rotated: &[(f64, f64)], scan_y: f64) -> Vec<f64> {
+/// Append x-coordinates where horizontal line `y = scan_y` intersects the
+/// polygon edges to the given output vector.
+fn scan_intersections_into(rotated: &[(f64, f64)], scan_y: f64, xs: &mut Vec<f64>) {
     let n = rotated.len();
-    let mut xs = Vec::new();
     for i in 0..n {
         let (x0, y0) = rotated[i];
         let (x1, y1) = rotated[(i + 1) % n];
@@ -60,8 +59,6 @@ fn scan_intersections(rotated: &[(f64, f64)], scan_y: f64) -> Vec<f64> {
         let ix = x0 + t * (x1 - x0);
         xs.push(ix);
     }
-    xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    xs
 }
 
 /// Generate tatami fill stitches inside a closed polygon.
@@ -72,8 +69,21 @@ fn scan_intersections(rotated: &[(f64, f64)], scan_y: f64) -> Vec<f64> {
 ///
 /// Returns an empty list if the region is not closed or has fewer than 3 points.
 pub fn fill_stitch(region: &Path2D, params: &FillParams) -> Vec<StitchCommand> {
-    let pts = &region.points;
-    if !region.closed || pts.len() < 3 {
+    fill_stitch_multi(std::slice::from_ref(region), params)
+}
+
+/// Generate tatami fill stitches across multiple contours using even-odd rule.
+///
+/// All contours are scan-line intersected together so that inner contours
+/// (holes) are automatically subtracted from outer contours. This is
+/// essential for glyphs like "e", "o", "d" that have holes.
+pub fn fill_stitch_multi(regions: &[Path2D], params: &FillParams) -> Vec<StitchCommand> {
+    // Collect all closed contours with >= 3 points.
+    let contours: Vec<&Path2D> = regions
+        .iter()
+        .filter(|r| r.closed && r.points.len() >= 3)
+        .collect();
+    if contours.is_empty() {
         return vec![];
     }
 
@@ -81,16 +91,24 @@ pub fn fill_stitch(region: &Path2D, params: &FillParams) -> Vec<StitchCommand> {
     let cos_neg = angle_rad.cos();
     let sin_neg = -angle_rad.sin();
 
-    // Rotate all polygon points by -angle.
-    let rotated: Vec<(f64, f64)> = pts.iter().map(|&(x, y)| rotate(x, y, cos_neg, sin_neg)).collect();
+    // Rotate all contour points by -angle.
+    let rotated_contours: Vec<Vec<(f64, f64)>> = contours
+        .iter()
+        .map(|c| {
+            c.points
+                .iter()
+                .map(|&(x, y)| rotate(x, y, cos_neg, sin_neg))
+                .collect()
+        })
+        .collect();
 
-    // Bounding box.
-    let (mut min_x, mut min_y, mut max_x, mut max_y) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
-    for &(x, y) in &rotated {
-        if x < min_x { min_x = x; }
-        if y < min_y { min_y = y; }
-        if x > max_x { max_x = x; }
-        if y > max_y { max_y = y; }
+    // Global bounding box.
+    let (mut min_y, mut max_y) = (f64::MAX, f64::MIN);
+    for contour in &rotated_contours {
+        for &(_x, y) in contour {
+            if y < min_y { min_y = y; }
+            if y > max_y { max_y = y; }
+        }
     }
 
     let cos_pos = angle_rad.cos();
@@ -101,9 +119,14 @@ pub fn fill_stitch(region: &Path2D, params: &FillParams) -> Vec<StitchCommand> {
     let mut scan_y = min_y + params.row_spacing / 2.0;
 
     while scan_y < max_y {
-        let xs = scan_intersections(&rotated, scan_y);
+        // Collect intersections from ALL contours.
+        let mut xs = Vec::new();
+        for contour in &rotated_contours {
+            scan_intersections_into(contour, scan_y, &mut xs);
+        }
+        xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
-        // Process pairs (entry, exit).
+        // Process pairs (even-odd rule: entry at even index, exit at odd).
         let mut pair_idx = 0;
         while pair_idx + 1 < xs.len() {
             let x_enter = xs[pair_idx];

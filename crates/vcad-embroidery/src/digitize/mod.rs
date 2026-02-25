@@ -8,7 +8,7 @@ pub mod running;
 pub mod satin;
 pub mod underlay;
 
-pub use fill::{fill_stitch, FillParams};
+pub use fill::{fill_stitch, fill_stitch_multi, FillParams};
 pub use running::{running_stitch, RunningStitchParams};
 pub use satin::{satin_stitch, SatinParams};
 pub use underlay::{underlay_stitch, UnderlayParams};

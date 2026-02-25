@@ -37,8 +37,8 @@ pub mod stitch;
 pub mod thread;
 
 pub use digitize::{
-    fill_stitch, running_stitch, satin_stitch, underlay_stitch, FillParams, Path2D,
-    RunningStitchParams, SatinParams, UnderlayParams,
+    fill_stitch, fill_stitch_multi, running_stitch, satin_stitch, underlay_stitch, FillParams,
+    Path2D, RunningStitchParams, SatinParams, UnderlayParams,
 };
 pub use error::{EmbroideryError, Result};
 pub use hoop::{brother_pe800, brother_se1900, Hoop, MachineProfile};

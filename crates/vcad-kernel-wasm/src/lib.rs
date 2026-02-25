@@ -4257,7 +4257,8 @@ mod embroidery_wasm {
     use serde::{Deserialize, Serialize};
     use vcad_embroidery::{
         EmbPattern, FillParams, Path2D, PatternMetadata, RunningStitchParams, SatinParams,
-        StitchCommand, StitchGroup, Thread, fill_stitch, running_stitch, satin_stitch,
+        StitchCommand, StitchGroup, Thread, fill_stitch, fill_stitch_multi, running_stitch,
+        satin_stitch,
     };
     use wasm_bindgen::prelude::*;
 
@@ -4438,44 +4439,51 @@ mod embroidery_wasm {
 
         let mut all_commands: Vec<StitchCommand> = Vec::new();
 
-        for profile in &profiles {
-            let path = sketch_profile_to_path2d(profile);
-            if path.points.len() < 2 {
-                continue;
-            }
+        // Convert all profiles to paths up front.
+        let paths: Vec<Path2D> = profiles
+            .iter()
+            .map(sketch_profile_to_path2d)
+            .filter(|p| p.points.len() >= 2)
+            .collect();
 
-            let cmds = match opts.stitch_type.as_str() {
-                "satin" => satin_stitch(
-                    &path,
-                    &SatinParams {
-                        width: opts.satin_width,
-                        density: opts.density,
-                        pull_compensation: 0.0,
-                    },
-                ),
-                "fill" => fill_stitch(
-                    &path,
-                    &FillParams {
-                        angle: opts.fill_angle,
-                        row_spacing: 1.0 / opts.density.max(0.1),
-                        stitch_length: opts.stitch_length,
-                        stagger: 0.25,
-                    },
-                ),
-                _ => running_stitch(
-                    &path,
-                    &RunningStitchParams {
-                        stitch_length: opts.stitch_length,
-                    },
-                ),
-            };
+        if opts.stitch_type == "fill" {
+            // Fill uses all contours together so even-odd rule subtracts holes.
+            let cmds = fill_stitch_multi(
+                &paths,
+                &FillParams {
+                    angle: opts.fill_angle,
+                    row_spacing: 1.0 / opts.density.max(0.1),
+                    stitch_length: opts.stitch_length,
+                    stagger: 0.25,
+                },
+            );
+            all_commands.extend(cmds);
+        } else {
+            // Running/satin: process each contour independently.
+            for path in &paths {
+                let cmds = match opts.stitch_type.as_str() {
+                    "satin" => satin_stitch(
+                        path,
+                        &SatinParams {
+                            width: opts.satin_width,
+                            density: opts.density,
+                            pull_compensation: 0.0,
+                        },
+                    ),
+                    _ => running_stitch(
+                        path,
+                        &RunningStitchParams {
+                            stitch_length: opts.stitch_length,
+                        },
+                    ),
+                };
 
-            if !cmds.is_empty() {
-                // Add a trim between contours to separate paths
-                if !all_commands.is_empty() {
-                    all_commands.push(StitchCommand::Trim);
+                if !cmds.is_empty() {
+                    if !all_commands.is_empty() {
+                        all_commands.push(StitchCommand::Trim);
+                    }
+                    all_commands.extend(cmds);
                 }
-                all_commands.extend(cmds);
             }
         }
 
