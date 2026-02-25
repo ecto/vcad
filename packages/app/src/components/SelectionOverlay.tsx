@@ -4,8 +4,8 @@ import { Line } from "@react-three/drei";
 import { useUiStore, useDocumentStore, useEngineStore } from "@vcad/core";
 import { useTheme } from "@/hooks/useTheme";
 
-const ACCENT_DARK = "#00d4ff";
-const ACCENT_LIGHT = "#0891b2"; // darker cyan for light mode contrast
+const ACCENT_DARK = "#6b8fa3";
+const ACCENT_LIGHT = "#4a7080";
 
 function BoundingBoxLines({ box, color }: { box: THREE.Box3; color: string }) {
   const min = box.min;
@@ -75,10 +75,10 @@ function BoundingBoxLines({ box, color }: { box: THREE.Box3; color: string }) {
           color={color}
           lineWidth={1}
           dashed
-          dashSize={2}
-          gapSize={1}
+          dashSize={1}
+          gapSize={0.8}
           transparent
-          opacity={0.8}
+          opacity={0.5}
         />
       ))}
     </>
@@ -144,15 +144,6 @@ export function SelectionOverlay() {
       {/* Dashed wireframe bounding box */}
       <BoundingBoxLines box={box} color={accentColor} />
 
-      {/* Corner handles (small spheres) */}
-      <mesh position={[box.min.x, box.min.y, box.min.z]}>
-        <sphereGeometry args={[0.5, 8, 8]} />
-        <meshBasicMaterial color={accentColor} transparent opacity={0.6} />
-      </mesh>
-      <mesh position={[box.max.x, box.max.y, box.max.z]}>
-        <sphereGeometry args={[0.5, 8, 8]} />
-        <meshBasicMaterial color={accentColor} transparent opacity={0.6} />
-      </mesh>
     </>
   );
 }

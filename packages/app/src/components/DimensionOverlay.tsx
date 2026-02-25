@@ -96,7 +96,7 @@ function EditableDimensionLabel({ value, paramKey, partId, primitiveNodeId }: Ed
   if (isEditing) {
     return (
       <div
-        className="bg-surface border border-accent px-1 py-0.5 text-[10px] text-text whitespace-nowrap flex items-center"
+        className="bg-surface border border-accent px-1 py-0.5 text-[10px] text-text whitespace-nowrap flex items-center rounded"
         onClick={(e) => e.stopPropagation()}
         onPointerDown={(e) => e.stopPropagation()}
       >
@@ -119,7 +119,7 @@ function EditableDimensionLabel({ value, paramKey, partId, primitiveNodeId }: Ed
 
   return (
     <div
-      className="bg-surface border border-border px-1 py-0.5 text-[10px] text-text-muted whitespace-nowrap cursor-pointer hover:border-accent hover:text-text transition-colors"
+      className="bg-surface border border-border px-1 py-0.5 text-[10px] text-text-muted whitespace-nowrap cursor-pointer hover:border-accent hover:text-text transition-colors rounded"
       onClick={(e) => {
         e.stopPropagation();
         setIsEditing(true);
@@ -181,7 +181,7 @@ function DimensionLine({
         color={DIM_COLOR}
         lineWidth={1}
         transparent
-        opacity={0.7}
+        opacity={0.5}
       />
       {/* Start tick */}
       <Line
@@ -189,7 +189,7 @@ function DimensionLine({
         color={DIM_COLOR}
         lineWidth={1}
         transparent
-        opacity={0.7}
+        opacity={0.5}
       />
       {/* End tick */}
       <Line
@@ -197,7 +197,7 @@ function DimensionLine({
         color={DIM_COLOR}
         lineWidth={1}
         transparent
-        opacity={0.7}
+        opacity={0.5}
       />
       {/* Label */}
       <Html position={mid} center style={{ pointerEvents: showEditable ? "auto" : "none", zIndex: 10 }}>
@@ -209,7 +209,7 @@ function DimensionLine({
             primitiveNodeId={primitiveNodeId}
           />
         ) : (
-          <div className="bg-surface border border-border px-1 py-0.5 text-[10px] text-text-muted whitespace-nowrap">
+          <div className="bg-surface border border-border px-1 py-0.5 text-[10px] text-text-muted whitespace-nowrap rounded">
             {label}
           </div>
         )}

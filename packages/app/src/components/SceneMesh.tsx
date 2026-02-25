@@ -669,7 +669,7 @@ export const SceneMesh = memo(function SceneMesh({
       )}
       {selected && !faceSelectionMode && (
         <Html position={labelPosition} center style={{ pointerEvents: "auto" }}>
-          <div className="px-2 py-1 text-xs font-medium text-text whitespace-nowrap">
+          <div className="px-2 py-1 text-xs font-medium text-text whitespace-nowrap bg-surface/90 backdrop-blur-sm border border-border rounded-md shadow-sm">
             {isRenaming ? (
               <input
                 ref={nameInputRef}

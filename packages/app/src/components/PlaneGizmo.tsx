@@ -4,9 +4,9 @@ import * as THREE from "three";
 import { useSketchStore } from "@vcad/core";
 import type { AxisAlignedPlane } from "@vcad/core";
 
-const GIZMO_SIZE = 8;
-const GIZMO_OPACITY = 0.3;
-const GIZMO_HOVER_OPACITY = 0.6;
+const GIZMO_SIZE = 5;
+const GIZMO_OPACITY = 0.15;
+const GIZMO_HOVER_OPACITY = 0.35;
 
 // Colors matching the axis colors from GizmoViewport
 const PLANE_COLORS: Record<AxisAlignedPlane, string> = {

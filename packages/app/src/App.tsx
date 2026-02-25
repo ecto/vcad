@@ -110,8 +110,6 @@ function ErrorScreen({ message }: { message: string }) {
 
 /** Wrapper that conditionally shows FeatureTree and PropertyPanel */
 function FeatureTreeWithPropertyPanel({ sketchActive }: { sketchActive: boolean }) {
-  const featureTreeOpen = useUiStore((s) => s.featureTreeOpen);
-
   if (sketchActive) return null;
 
   return (
