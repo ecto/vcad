@@ -117,8 +117,7 @@ function FeatureTreeWithPropertyPanel({ sketchActive }: { sketchActive: boolean 
   return (
     <>
       <FeatureTree />
-      {/* Only show PropertyPanel when feature tree is closed (fallback for mobile/minimal mode) */}
-      {!featureTreeOpen && <Suspense fallback={null}><PropertyPanel /></Suspense>}
+      <Suspense fallback={null}><PropertyPanel /></Suspense>
     </>
   );
 }

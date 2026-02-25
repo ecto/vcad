@@ -47,12 +47,12 @@ import { Scissors } from "@phosphor-icons/react/dist/ssr/Scissors";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ContextMenu } from "@/components/ContextMenu";
-import { useDocumentStore, useUiStore, isBooleanPart, isPrimitivePart, isSweepPart, isEmbroideryPatternPart } from "@vcad/core";
-import type { PrimitiveKind, PartInfo, BooleanPartInfo, PrimitivePartInfo, SweepPartInfo } from "@vcad/core";
+import { useDocumentStore, useUiStore, isBooleanPart, isPrimitivePart, isSweepPart, isExtrudePart, isRevolvePart, isFilletPart, isChamferPart, isShellPart, isEmbroideryPatternPart } from "@vcad/core";
+import type { PrimitiveKind, PartInfo, BooleanPartInfo, PrimitivePartInfo, SweepPartInfo, ExtrudePartInfo, RevolvePartInfo, FilletPartInfo, ChamferPartInfo, ShellPartInfo } from "@vcad/core";
 import type { PartInstance, Joint, JointKind } from "@vcad/ir";
 import { cn } from "@/lib/utils";
 import { getPartSummary } from "./tree/part-summary";
-import { InlineCubeDimensions, InlineCylinderDimensions, InlineSphereDimensions, InlineSweepProperties } from "./tree/InlineDimensions";
+import { InlineCubeDimensions, InlineCylinderDimensions, InlineSphereDimensions, InlineExtrudeDimensions, InlineRevolveDimensions, InlineFilletDimensions, InlineChamferDimensions, InlineShellDimensions, InlineSweepProperties } from "./tree/InlineDimensions";
 import { InlinePositionSection, InlineRotationSection } from "./tree/InlineTransform";
 import { InlineMaterial } from "./tree/InlineMaterial";
 import { EmbroideryProperties } from "./embroidery/EmbroideryProperties";
@@ -231,6 +231,21 @@ function TreeNode({
         case "sphere":
           return <InlineSphereDimensions part={primPart} />;
       }
+    }
+    if (isExtrudePart(part)) {
+      return <InlineExtrudeDimensions part={part as ExtrudePartInfo} />;
+    }
+    if (isRevolvePart(part)) {
+      return <InlineRevolveDimensions part={part as RevolvePartInfo} />;
+    }
+    if (isFilletPart(part)) {
+      return <InlineFilletDimensions part={part as FilletPartInfo} />;
+    }
+    if (isChamferPart(part)) {
+      return <InlineChamferDimensions part={part as ChamferPartInfo} />;
+    }
+    if (isShellPart(part)) {
+      return <InlineShellDimensions part={part as ShellPartInfo} />;
     }
     if (isSweepPart(part)) {
       return <InlineSweepProperties part={part as SweepPartInfo} />;

@@ -1,6 +1,6 @@
 import { ScrubInput } from "@/components/ui/scrub-input";
 import { useDocumentStore } from "@vcad/core";
-import type { PrimitivePartInfo, SweepPartInfo } from "@vcad/core";
+import type { PrimitivePartInfo, SweepPartInfo, ExtrudePartInfo, RevolvePartInfo, FilletPartInfo, ChamferPartInfo, ShellPartInfo } from "@vcad/core";
 
 interface InlineCubeDimensionsProps {
   part: PrimitivePartInfo;
@@ -121,6 +121,165 @@ export function InlineSphereDimensions({ part }: InlineSphereDimensionsProps) {
 
 interface InlineSweepPropertiesProps {
   part: SweepPartInfo;
+}
+
+interface InlineExtrudeDimensionsProps {
+  part: ExtrudePartInfo;
+}
+
+export function InlineExtrudeDimensions({ part }: InlineExtrudeDimensionsProps) {
+  const document = useDocumentStore((s) => s.document);
+  const updateOperation = useDocumentStore((s) => s.updateOperation);
+
+  const node = document.nodes[String(part.extrudeNodeId)];
+  if (!node || node.op.type !== "Extrude") return null;
+
+  const dir = node.op.direction;
+  const depth = Math.sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+  const unitDir = depth > 0 ? { x: dir.x / depth, y: dir.y / depth, z: dir.z / depth } : { x: 0, y: 0, z: 1 };
+
+  return (
+    <div className="space-y-1 px-2 pb-1">
+      <div className="grid grid-cols-3 gap-1">
+        <ScrubInput
+          label="D"
+          tooltip="Depth"
+          value={depth}
+          min={0.01}
+          onChange={(v) => updateOperation(part.extrudeNodeId, { direction: { x: unitDir.x * v, y: unitDir.y * v, z: unitDir.z * v } })}
+          unit="mm"
+          compact
+        />
+        <ScrubInput
+          label="T"
+          tooltip="Twist"
+          value={(node.op.twist_angle ?? 0) * (180 / Math.PI)}
+          step={5}
+          onChange={(v) => updateOperation(part.extrudeNodeId, { twist_angle: v * (Math.PI / 180) })}
+          unit="°"
+          compact
+        />
+        <ScrubInput
+          label="S"
+          tooltip="Taper scale"
+          value={node.op.scale_end ?? 1}
+          min={0.01}
+          step={0.1}
+          onChange={(v) => updateOperation(part.extrudeNodeId, { scale_end: v })}
+          compact
+        />
+      </div>
+    </div>
+  );
+}
+
+interface InlineRevolveDimensionsProps {
+  part: RevolvePartInfo;
+}
+
+export function InlineRevolveDimensions({ part }: InlineRevolveDimensionsProps) {
+  const document = useDocumentStore((s) => s.document);
+  const updateOperation = useDocumentStore((s) => s.updateOperation);
+
+  const node = document.nodes[String(part.revolveNodeId)];
+  if (!node || node.op.type !== "Revolve") return null;
+
+  return (
+    <div className="grid grid-cols-1 gap-1 px-2 pb-1 max-w-[100px]">
+      <ScrubInput
+        label="A"
+        tooltip="Angle"
+        value={node.op.angle_deg}
+        min={0.1}
+        max={360}
+        step={5}
+        onChange={(v) => updateOperation(part.revolveNodeId, { angle_deg: v })}
+        unit="°"
+        compact
+      />
+    </div>
+  );
+}
+
+interface InlineFilletDimensionsProps {
+  part: FilletPartInfo;
+}
+
+export function InlineFilletDimensions({ part }: InlineFilletDimensionsProps) {
+  const document = useDocumentStore((s) => s.document);
+  const updateOperation = useDocumentStore((s) => s.updateOperation);
+
+  const node = document.nodes[String(part.filletNodeId)];
+  if (!node || node.op.type !== "Fillet") return null;
+
+  return (
+    <div className="grid grid-cols-1 gap-1 px-2 pb-1 max-w-[100px]">
+      <ScrubInput
+        label="R"
+        tooltip="Radius"
+        value={node.op.radius}
+        min={0.1}
+        step={0.5}
+        onChange={(v) => updateOperation(part.filletNodeId, { radius: v })}
+        unit="mm"
+        compact
+      />
+    </div>
+  );
+}
+
+interface InlineChamferDimensionsProps {
+  part: ChamferPartInfo;
+}
+
+export function InlineChamferDimensions({ part }: InlineChamferDimensionsProps) {
+  const document = useDocumentStore((s) => s.document);
+  const updateOperation = useDocumentStore((s) => s.updateOperation);
+
+  const node = document.nodes[String(part.chamferNodeId)];
+  if (!node || node.op.type !== "Chamfer") return null;
+
+  return (
+    <div className="grid grid-cols-1 gap-1 px-2 pb-1 max-w-[100px]">
+      <ScrubInput
+        label="D"
+        tooltip="Distance"
+        value={node.op.distance}
+        min={0.1}
+        step={0.5}
+        onChange={(v) => updateOperation(part.chamferNodeId, { distance: v })}
+        unit="mm"
+        compact
+      />
+    </div>
+  );
+}
+
+interface InlineShellDimensionsProps {
+  part: ShellPartInfo;
+}
+
+export function InlineShellDimensions({ part }: InlineShellDimensionsProps) {
+  const document = useDocumentStore((s) => s.document);
+  const updateOperation = useDocumentStore((s) => s.updateOperation);
+
+  const node = document.nodes[String(part.shellNodeId)];
+  if (!node || node.op.type !== "Shell") return null;
+
+  return (
+    <div className="grid grid-cols-1 gap-1 px-2 pb-1 max-w-[100px]">
+      <ScrubInput
+        label="T"
+        tooltip="Thickness"
+        value={node.op.thickness}
+        min={0.1}
+        step={0.5}
+        onChange={(v) => updateOperation(part.shellNodeId, { thickness: v })}
+        unit="mm"
+        compact
+      />
+    </div>
+  );
 }
 
 export function InlineSweepProperties({ part }: InlineSweepPropertiesProps) {

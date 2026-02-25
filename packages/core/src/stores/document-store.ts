@@ -132,7 +132,17 @@ export interface DocumentState {
     updates: Partial<SweepOp>,
     skipUndo?: boolean,
   ) => void;
+  updateOperation: (
+    nodeId: NodeId,
+    updates: Partial<CsgOp>,
+    skipUndo?: boolean,
+  ) => void;
   renamePart: (partId: string, name: string) => void;
+  updateBooleanType: (
+    partId: string,
+    newType: BooleanType,
+    skipUndo?: boolean,
+  ) => void;
   applyBoolean: (
     type: BooleanType,
     partIdA: string,
@@ -698,6 +708,67 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       document: newDoc,
       isDirty: true,
       dirtyNodeIds: markNodeDirty(state, part.sweepNodeId),
+      ...undoState,
+    });
+  },
+
+  updateOperation: (nodeId, updates, skipUndo) => {
+    const state = get();
+    const newDoc = structuredClone(state.document);
+    const node = newDoc.nodes[String(nodeId)];
+    if (!node) return;
+
+    // Merge updates into op, preserving the type discriminant
+    node.op = { ...node.op, ...updates, type: node.op.type } as CsgOp;
+
+    const undoState = skipUndo ? {} : pushUndo(state, "Edit Operation");
+    set({
+      document: newDoc,
+      isDirty: true,
+      dirtyNodeIds: markNodeDirty(state, nodeId),
+      ...undoState,
+    });
+  },
+
+  updateBooleanType: (partId, newType, skipUndo) => {
+    const state = get();
+    const part = state.partIndex.get(partId);
+    if (!part || !isBooleanPart(part)) return;
+
+    const BOOL_OPS: Record<BooleanType, "Union" | "Difference" | "Intersection"> = {
+      union: "Union",
+      difference: "Difference",
+      intersection: "Intersection",
+    };
+
+    const newDoc = structuredClone(state.document);
+    const node = newDoc.nodes[String(part.booleanNodeId)];
+    if (!node) return;
+
+    // Replace op type while preserving left/right children
+    node.op = { ...node.op, type: BOOL_OPS[newType] } as CsgOp;
+
+    // Update part info with new boolean type
+    const BOOL_LABELS: Record<BooleanType, string> = {
+      union: "Union",
+      difference: "Difference",
+      intersection: "Intersection",
+    };
+    const updatedPart: BooleanPartInfo = {
+      ...part,
+      booleanType: newType,
+    };
+    const newParts = state.parts.map((p) =>
+      p.id === partId ? updatedPart : p,
+    );
+
+    const undoState = skipUndo ? {} : pushUndo(state, `Change to ${BOOL_LABELS[newType]}`);
+    set({
+      document: newDoc,
+      parts: newParts,
+      partIndex: buildPartIndex(newParts),
+      isDirty: true,
+      dirtyNodeIds: markNodeDirty(state, part.booleanNodeId),
       ...undoState,
     });
   },

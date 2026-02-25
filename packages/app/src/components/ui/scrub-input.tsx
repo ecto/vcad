@@ -20,6 +20,10 @@ interface ScrubInputProps {
   compact?: boolean;
   /** Tooltip text shown on hover over the label */
   tooltip?: string;
+  /** Called when scrub drag begins */
+  onScrubStart?: () => void;
+  /** Called when scrub drag ends */
+  onScrubEnd?: () => void;
 }
 
 export function ScrubInput({
@@ -33,6 +37,8 @@ export function ScrubInput({
   className,
   compact = false,
   tooltip,
+  onScrubStart,
+  onScrubEnd,
 }: ScrubInputProps) {
   const [text, setText] = useState(String(round(value)));
   const [isEditing, setIsEditing] = useState(false);
@@ -68,8 +74,9 @@ export function ScrubInput({
       setIsScrubbing(true);
       scrubStartX.current = e.clientX;
       scrubStartValue.current = value;
+      onScrubStart?.();
     },
-    [isEditing, value],
+    [isEditing, value, onScrubStart],
   );
 
   const handlePointerMove = useCallback(
@@ -97,7 +104,8 @@ export function ScrubInput({
   const handlePointerUp = useCallback(() => {
     if (!isScrubbing) return;
     setIsScrubbing(false);
-  }, [isScrubbing]);
+    onScrubEnd?.();
+  }, [isScrubbing, onScrubEnd]);
 
   // Global event listeners for scrubbing
   useEffect(() => {
