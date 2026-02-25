@@ -32,7 +32,7 @@ export function Footer() {
               crates.io
             </a>
             <a
-              href="https://www.npmjs.com/org/vcad"
+              href="https://www.npmjs.com/search?q=%40vcad"
               className="hover:text-text transition-colors"
               target="_blank"
               rel="noopener noreferrer"

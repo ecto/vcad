@@ -369,16 +369,17 @@ export function Navigation() {
           ))}
         </nav>
 
-        {/* Stats card */}
-        <div className="mt-auto mx-3 mb-3 rounded-lg border border-border-subtle bg-bg p-3">
-          <div className="text-xs font-mono text-text-muted leading-relaxed">
-            <span>155+ pages</span>
-            <span className="mx-1.5 opacity-40">·</span>
-            <span>12 topics</span>
-          </div>
-          <div className="mt-1.5 text-xs font-mono text-text-muted/60 leading-relaxed">
-            brep kernel · web app · rust cli · mcp server
-          </div>
+        {/* CTA */}
+        <div className="mt-auto mx-3 mb-3">
+          <a
+            href="https://vcad.io"
+            className="flex items-center justify-center gap-2 text-sm font-mono bg-accent text-white px-4 py-2.5 rounded-lg hover:bg-accent-hover transition-colors"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            open vcad.io
+            <span className="text-white/60">→</span>
+          </a>
         </div>
 
         {/* Footer */}
@@ -397,11 +398,11 @@ export function Navigation() {
               <GithubLogo size={16} />
             </a>
             <a
-              href="https://www.npmjs.com/org/vcad"
+              href="https://crates.io/crates/vcad"
               className="p-2 text-text-muted hover:text-text rounded-md transition-colors"
               target="_blank"
               rel="noopener noreferrer"
-              aria-label="npm"
+              aria-label="crates.io"
             >
               <Package size={16} />
             </a>

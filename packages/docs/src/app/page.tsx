@@ -102,7 +102,7 @@ export default function DocsHomePage() {
             <a href="https://github.com/ecto/vcad" className="hover:text-text">github</a>
             <a href="https://vcad.io" className="hover:text-text">vcad.io</a>
             <a href="https://crates.io/crates/vcad" className="hover:text-text">crates.io</a>
-            <a href="https://www.npmjs.com/org/vcad" className="hover:text-text">npm</a>
+            <a href="https://www.npmjs.com/search?q=%40vcad" className="hover:text-text">npm</a>
           </div>
         </div>
       </footer>
