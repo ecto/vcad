@@ -500,6 +500,121 @@ pub fn split_planar_face_by_circle(
         .collect();
 
     if loop_verts.len() < 3 {
+        // Degenerate outer loop (1-2 vertices) — circular cap face (e.g. cylinder cap).
+        // Check analytically if the intersection circle is inside this cap's boundary.
+        // If so, create an inner disk face and add the circle as a hole on the cap.
+        // Keep the degenerate outer loop as-is (tessellation handles it).
+        if let Some(plane) = brep.geometry.surfaces[surface_index]
+            .as_any()
+            .downcast_ref::<vcad_kernel_geom::Plane>()
+        {
+            if let Some(&first_pt) = loop_verts.first() {
+                let center = plane.origin;
+                let to_v = first_pt - center;
+                let normal = plane.normal_dir.into_inner();
+                let on_plane = to_v - to_v.dot(&normal) * normal;
+                let cap_radius = on_plane.norm();
+
+                // Check: is the intersection circle coplanar and fully inside?
+                let circle_to_plane = (circle.center - center).dot(&normal).abs();
+                let circle_center_offset = {
+                    let d = circle.center - center;
+                    (d - d.dot(&normal) * normal).norm()
+                };
+                let circle_inside = circle_to_plane < 1e-6
+                    && circle_center_offset + circle.radius + 1e-6 < cap_radius;
+
+                if circle_inside && cap_radius > 1e-12 {
+                    let tolerance = 1e-6;
+
+                    // Generate circle vertices for the inner disk face
+                    let circle_verts: Vec<Point3> = (0..segments)
+                        .map(|i| {
+                            let theta = 2.0 * std::f64::consts::PI * (i as f64)
+                                / (segments as f64);
+                            let (sin_t, cos_t) = theta.sin_cos();
+                            circle.center
+                                + circle.radius
+                                    * (cos_t * circle.x_dir.into_inner()
+                                        + sin_t * circle.y_dir.into_inner())
+                        })
+                        .collect();
+
+                    // Create inner disk face (will be classified as "inside" and removed)
+                    let inner_verts: Vec<_> = circle_verts
+                        .iter()
+                        .map(|p| find_or_create_vertex(brep, p, tolerance))
+                        .collect();
+                    let inner_hes: Vec<_> = inner_verts
+                        .iter()
+                        .map(|&v| brep.topology.add_half_edge(v))
+                        .collect();
+                    let inner_loop = brep.topology.add_loop(&inner_hes);
+                    let inner_face =
+                        brep.topology
+                            .add_face(inner_loop, surface_index, orientation);
+
+                    // Add the circle as an inner loop (hole) on the original cap face.
+                    // Determine correct winding: inner loop should be opposite to outer.
+                    // For a degenerate outer loop we use the plane normal to decide:
+                    // outer is CCW from above → inner should be CW from above.
+                    let cap_x_dir = on_plane.normalize();
+                    let cap_y_dir = normal.cross(&cap_x_dir);
+                    let circle_signed_area = {
+                        let project = |p: &Point3| -> (f64, f64) {
+                            let d = *p - center;
+                            (d.dot(&cap_x_dir), d.dot(&cap_y_dir))
+                        };
+                        let pts_2d: Vec<_> = circle_verts.iter().map(project).collect();
+                        let mut a = 0.0;
+                        for i in 0..pts_2d.len() {
+                            let j = (i + 1) % pts_2d.len();
+                            a += pts_2d[i].0 * pts_2d[j].1 - pts_2d[j].0 * pts_2d[i].1;
+                        }
+                        a / 2.0
+                    };
+
+                    // Inner loop winding should be CW (negative area in face-normal space)
+                    let hole_verts: Vec<Point3> = if circle_signed_area > 0.0 {
+                        circle_verts.iter().rev().cloned().collect()
+                    } else {
+                        circle_verts.clone()
+                    };
+
+                    let hole_vert_ids: Vec<_> = hole_verts
+                        .iter()
+                        .map(|p| find_or_create_vertex(brep, p, tolerance))
+                        .collect();
+                    let hole_hes: Vec<_> = hole_vert_ids
+                        .iter()
+                        .map(|&v| brep.topology.add_half_edge(v))
+                        .collect();
+                    let hole_loop = brep.topology.add_loop(&hole_hes);
+                    brep.topology.faces[face_id].inner_loops.push(hole_loop);
+
+                    // Add twin edges between inner disk and hole
+                    for i in 0..segments as usize {
+                        let inner_he = inner_hes[i];
+                        let outer_he =
+                            hole_hes[(segments as usize - 1 - i) % segments as usize];
+                        brep.topology.add_edge(inner_he, outer_he);
+                    }
+
+                    // Add faces to shell
+                    if let Some(shell_id) = brep.topology.faces[face_id].shell {
+                        brep.topology.shells[shell_id].faces.push(inner_face);
+                        brep.topology.faces[inner_face].shell = Some(shell_id);
+                    }
+
+                    brep.geometry.add_curve_3d(Box::new(circle.clone()));
+
+                    return SplitResult {
+                        sub_faces: vec![inner_face, face_id],
+                    };
+                }
+            }
+        }
+
         return SplitResult {
             sub_faces: vec![face_id],
         };

@@ -925,14 +925,40 @@ fn triangulate_polygon_with_holes(
         mesh.vertices.push(v.z as f32);
     }
 
-    // Build a merged polygon by bridging outer to each inner loop
+    // Build a merged polygon by bridging outer to each inner loop.
+    // Sort holes by the angle of their centroid relative to the outer polygon
+    // centroid. This prevents bridges from crossing when holes are spread
+    // around a circle (e.g., bolt patterns on cylinder caps).
+    let outer_centroid = {
+        let n = refined_outer_2d.len() as f64;
+        let (sx, sy) = refined_outer_2d.iter().fold((0.0, 0.0), |(sx, sy), &(x, y)| (sx + x, sy + y));
+        (sx / n, sy / n)
+    };
+    let mut hole_order: Vec<usize> = (0..inner_starts.len()).collect();
+    hole_order.sort_by(|&a, &b| {
+        let ca = {
+            let n = inner_2d[a].len() as f64;
+            let (sx, sy) = inner_2d[a].iter().fold((0.0, 0.0), |(sx, sy), &(x, y)| (sx + x, sy + y));
+            (sx / n, sy / n)
+        };
+        let cb = {
+            let n = inner_2d[b].len() as f64;
+            let (sx, sy) = inner_2d[b].iter().fold((0.0, 0.0), |(sx, sy), &(x, y)| (sx + x, sy + y));
+            (sx / n, sy / n)
+        };
+        let angle_a = (ca.1 - outer_centroid.1).atan2(ca.0 - outer_centroid.0);
+        let angle_b = (cb.1 - outer_centroid.1).atan2(cb.0 - outer_centroid.0);
+        angle_a.partial_cmp(&angle_b).unwrap_or(std::cmp::Ordering::Equal)
+    });
+
     let mut poly_indices: Vec<usize> = (0..refined_outer_2d.len()).collect();
 
     // Track which vertices have been used as bridge endpoints
     let mut used_bridge_vertices: std::collections::HashSet<usize> =
         std::collections::HashSet::new();
 
-    for (hole_idx, inner_start) in inner_starts.iter().enumerate() {
+    for &hole_idx in &hole_order {
+        let inner_start = inner_starts[hole_idx];
         let inner_len = inner_2d[hole_idx].len();
 
         // Find the pair of (outer vertex, inner vertex) with minimum distance
@@ -975,7 +1001,7 @@ fn triangulate_polygon_with_holes(
         let rightmost_inner = best_inner;
 
         // Insert bridge: outer -> hole -> back to outer
-        let inner_global_start = *inner_start;
+        let inner_global_start = inner_start;
         let hole_indices: Vec<usize> = (0..inner_len)
             .map(|i| inner_global_start + ((rightmost_inner + i) % inner_len))
             .collect();
@@ -1140,6 +1166,316 @@ fn segments_intersect(
     // Proper intersection: both parameters strictly in (0, 1)
     let eps = 1e-8;
     t > eps && t < 1.0 - eps && u > eps && u < 1.0 - eps
+}
+
+/// Point-in-polygon test using ray casting (winding number).
+fn point_in_polygon_2d(px: f64, py: f64, polygon: &[(f64, f64)]) -> bool {
+    let n = polygon.len();
+    if n < 3 {
+        return false;
+    }
+    let mut crossings = 0;
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let (ax, ay) = polygon[i];
+        let (bx, by) = polygon[j];
+        // Check if the horizontal ray from (px, py) going right crosses edge (a, b)
+        if (ay <= py && by > py) || (by <= py && ay > py) {
+            let t = (py - ay) / (by - ay);
+            let x_intersect = ax + t * (bx - ax);
+            if px < x_intersect {
+                crossings += 1;
+            }
+        }
+    }
+    crossings % 2 == 1
+}
+
+/// Triangulate a planar polygon with holes using Delaunay triangulation
+/// Bowyer-Watson incremental Delaunay triangulation.
+/// Returns triangle indices into the input point array.
+fn bowyer_watson_2d(points: &[(f64, f64)]) -> Vec<(usize, usize, usize)> {
+    if points.len() < 3 {
+        return Vec::new();
+    }
+
+    // Compute bounding box
+    let mut min_x = f64::INFINITY;
+    let mut min_y = f64::INFINITY;
+    let mut max_x = f64::NEG_INFINITY;
+    let mut max_y = f64::NEG_INFINITY;
+    for &(x, y) in points {
+        min_x = min_x.min(x);
+        min_y = min_y.min(y);
+        max_x = max_x.max(x);
+        max_y = max_y.max(y);
+    }
+    let dx = max_x - min_x;
+    let dy = max_y - min_y;
+    let d = dx.max(dy).max(1e-6);
+    let cx = (min_x + max_x) / 2.0;
+    let cy = (min_y + max_y) / 2.0;
+
+    // Super-triangle vertices (indices: n, n+1, n+2)
+    let n = points.len();
+    let margin = 10.0 * d;
+    let super_verts = [
+        (cx - margin, cy - margin),
+        (cx + margin, cy - margin),
+        (cx, cy + margin),
+    ];
+
+    // All vertices: original points + super-triangle
+    let mut all_pts: Vec<(f64, f64)> = points.to_vec();
+    all_pts.extend_from_slice(&super_verts);
+
+    // Start with the super-triangle
+    let mut tris: Vec<(usize, usize, usize)> = vec![(n, n + 1, n + 2)];
+
+    // Insert each point
+    for pi in 0..n {
+        let (px, py) = all_pts[pi];
+
+        // Find triangles whose circumcircle contains this point
+        let mut bad_tris: Vec<usize> = Vec::new();
+        for (ti, &(a, b, c)) in tris.iter().enumerate() {
+            if in_circumcircle(px, py, all_pts[a], all_pts[b], all_pts[c]) {
+                bad_tris.push(ti);
+            }
+        }
+
+        // Find boundary edges of the hole (edges not shared between bad triangles)
+        let mut edge_count: std::collections::HashMap<(usize, usize), usize> =
+            std::collections::HashMap::new();
+        for &ti in &bad_tris {
+            let (a, b, c) = tris[ti];
+            for &(e1, e2) in &[(a, b), (b, c), (c, a)] {
+                let key = if e1 < e2 { (e1, e2) } else { (e2, e1) };
+                *edge_count.entry(key).or_insert(0) += 1;
+            }
+        }
+        let boundary_edges: Vec<(usize, usize)> = edge_count
+            .into_iter()
+            .filter(|&(_, count)| count == 1)
+            .map(|(edge, _)| edge)
+            .collect();
+
+        // Remove bad triangles (in reverse order to preserve indices)
+        bad_tris.sort_unstable();
+        for &ti in bad_tris.iter().rev() {
+            tris.swap_remove(ti);
+        }
+
+        // Create new triangles connecting the point to boundary edges
+        for &(e1, e2) in &boundary_edges {
+            tris.push((pi, e1, e2));
+        }
+    }
+
+    // Remove triangles that reference super-triangle vertices
+    tris.retain(|&(a, b, c)| a < n && b < n && c < n);
+
+    // Ensure consistent winding (CCW)
+    tris.iter_mut().for_each(|(a, b, c)| {
+        let (ax, ay) = all_pts[*a];
+        let (bx, by) = all_pts[*b];
+        let (cx, cy) = all_pts[*c];
+        let cross = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+        if cross < 0.0 {
+            std::mem::swap(b, c);
+        }
+    });
+
+    tris
+}
+
+/// Check if point (px, py) is inside the circumcircle of triangle (a, b, c).
+fn in_circumcircle(px: f64, py: f64, a: (f64, f64), b: (f64, f64), c: (f64, f64)) -> bool {
+    // Using the determinant method
+    let ax = a.0 - px;
+    let ay = a.1 - py;
+    let bx = b.0 - px;
+    let by = b.1 - py;
+    let cx = c.0 - px;
+    let cy = c.1 - py;
+
+    let det = ax * (by * (cx * cx + cy * cy) - cy * (bx * bx + by * by))
+        - bx * (ay * (cx * cx + cy * cy) - cy * (ax * ax + ay * ay))
+        + cx * (ay * (bx * bx + by * by) - by * (ax * ax + ay * ay));
+
+    // For CCW triangle, det > 0 means inside circumcircle
+    // Ensure the triangle is CCW first
+    let tri_cross = (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0);
+    if tri_cross > 0.0 {
+        det > 0.0
+    } else {
+        det < 0.0
+    }
+}
+
+/// Specialized triangulation for circular caps with holes.
+/// Uses concentric ring Steiner points + Delaunay + post-filtering.
+/// This avoids the co-circular degeneracy of pure boundary-point Delaunay
+/// and the large-triangle problem of bridge+ear-clip.
+#[allow(clippy::too_many_arguments)]
+fn triangulate_circular_cap_with_holes(
+    center: Point3,
+    radius: f64,
+    x_dir: Vec3,
+    y_dir: Vec3,
+    outer_2d: &[(f64, f64)],
+    inner_2d: &[Vec<(f64, f64)>],
+    outer_3d: &[Point3],
+    inner_3d: &[Vec<Point3>],
+    reversed: bool,
+) -> TriangleMesh {
+    let mut all_2d: Vec<(f64, f64)> = outer_2d.to_vec();
+    let mut all_3d: Vec<Point3> = outer_3d.to_vec();
+
+    // Add inner loop points
+    for (loop_2d, loop_3d) in inner_2d.iter().zip(inner_3d.iter()) {
+        all_2d.extend_from_slice(loop_2d);
+        all_3d.extend_from_slice(loop_3d);
+    }
+
+    // Add concentric ring Steiner points to break up large triangles.
+    // These interior points give Delaunay proper non-co-circular vertices.
+    let num_rings = 3;
+    let pts_per_ring = 16;
+    for ring in 1..=num_rings {
+        let r_frac = ring as f64 / (num_rings + 1) as f64;
+        let ring_r = radius * r_frac;
+        for j in 0..pts_per_ring {
+            let theta = 2.0 * PI * (j as f64 + 0.5 * ring as f64) / pts_per_ring as f64;
+            let (sin_t, cos_t) = theta.sin_cos();
+            let pt_2d = (ring_r * cos_t, ring_r * sin_t);
+
+            // Skip if inside any hole
+            let mut in_hole = false;
+            for hole in inner_2d {
+                if point_in_polygon_2d(pt_2d.0, pt_2d.1, hole) {
+                    in_hole = true;
+                    break;
+                }
+            }
+            // Also skip if too close to any hole boundary (to avoid near-degenerate tris)
+            if !in_hole {
+                for hole in inner_2d {
+                    for &(hx, hy) in hole {
+                        let dist = ((pt_2d.0 - hx).powi(2) + (pt_2d.1 - hy).powi(2)).sqrt();
+                        if dist < radius * 0.02 {
+                            in_hole = true;
+                            break;
+                        }
+                    }
+                    if in_hole {
+                        break;
+                    }
+                }
+            }
+
+            if !in_hole {
+                all_2d.push(pt_2d);
+                let pt_3d = center + pt_2d.0 * x_dir + pt_2d.1 * y_dir;
+                all_3d.push(pt_3d);
+            }
+        }
+    }
+
+    // Also add center point
+    let center_2d = (0.0, 0.0);
+    let mut center_in_hole = false;
+    for hole in inner_2d {
+        if point_in_polygon_2d(0.0, 0.0, hole) {
+            center_in_hole = true;
+            break;
+        }
+    }
+    if !center_in_hole {
+        all_2d.push(center_2d);
+        all_3d.push(center);
+    }
+
+    // Perturb points slightly for Delaunay robustness
+    let perturbed: Vec<(f64, f64)> = all_2d
+        .iter()
+        .enumerate()
+        .map(|(i, &(x, y))| {
+            let eps = 1e-8;
+            let angle = i as f64 * 2.654_435_769;
+            (x + eps * angle.sin(), y + eps * angle.cos())
+        })
+        .collect();
+
+    let triangles = bowyer_watson_2d(&perturbed);
+
+    // Build mesh
+    let mut mesh = TriangleMesh::new();
+    for v in &all_3d {
+        mesh.vertices.push(v.x as f32);
+        mesh.vertices.push(v.y as f32);
+        mesh.vertices.push(v.z as f32);
+    }
+
+    // Collect constrained edges (hole boundaries)
+    let mut constrained_edges: Vec<((f64, f64), (f64, f64))> = Vec::new();
+    for hole in inner_2d {
+        for i in 0..hole.len() {
+            let j = (i + 1) % hole.len();
+            constrained_edges.push((hole[i], hole[j]));
+        }
+    }
+
+    // Filter triangles
+    for &(i, j, k) in &triangles {
+        let (a, b, c) = (all_2d[i], all_2d[j], all_2d[k]);
+        let cx = (a.0 + b.0 + c.0) / 3.0;
+        let cy = (a.1 + b.1 + c.1) / 3.0;
+
+        // Must be inside outer polygon
+        if !point_in_polygon_2d(cx, cy, outer_2d) {
+            continue;
+        }
+
+        // Must not be inside any hole
+        let mut in_hole = false;
+        for hole in inner_2d {
+            if point_in_polygon_2d(cx, cy, hole) {
+                in_hole = true;
+                break;
+            }
+        }
+        if in_hole {
+            continue;
+        }
+
+        // Check no edge crosses a hole boundary
+        let tri_edges = [(a, b), (b, c), (c, a)];
+        let mut crosses = false;
+        'check: for &(e1, e2) in &tri_edges {
+            for &(h1, h2) in &constrained_edges {
+                if segments_intersect(e1, e2, h1, h2) {
+                    crosses = true;
+                    break 'check;
+                }
+            }
+        }
+        if crosses {
+            continue;
+        }
+
+        if reversed {
+            mesh.indices.push(i as u32);
+            mesh.indices.push(k as u32);
+            mesh.indices.push(j as u32);
+        } else {
+            mesh.indices.push(i as u32);
+            mesh.indices.push(j as u32);
+            mesh.indices.push(k as u32);
+        }
+    }
+
+    mesh
 }
 
 /// Simple fan triangulation for a convex polygon.
@@ -2368,13 +2704,9 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
 
         match surface.surface_type() {
             SurfaceKind::Plane => {
-                if loop_len <= 1 && face.inner_loops.is_empty() {
-                    // Degenerate cap face with ≤1 vertex and no holes — single
-                    // degenerate edge forming a full circle.
-                    // Tessellate as a disk using surface origin as center.
-                    // Note: loop_len==2 faces are NOT safe to treat as disks —
-                    // the 2 vertices may be far from the plane origin (e.g. two
-                    // arcs forming a non-circular boundary).
+                if loop_len <= 1 {
+                    // Degenerate cap face with ≤1 vertex — single degenerate edge
+                    // forming a full circle. Sample the circle into a proper polygon.
                     let verts: Vec<_> = brep
                         .topology
                         .loop_half_edges(face.outer_loop)
@@ -2392,15 +2724,93 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
                         let normal = plane.normal(Point2::origin());
                         let y_dir = normal.as_ref().cross(&x_dir);
 
-                        let disk = tessellate_disk_general(
-                            center,
-                            r,
-                            x_dir,
-                            y_dir,
-                            params.circle_segments,
-                            reversed,
-                        );
-                        mesh.merge(&disk);
+                        if face.inner_loops.is_empty() {
+                            let disk = tessellate_disk_general(
+                                center,
+                                r,
+                                x_dir,
+                                y_dir,
+                                params.circle_segments,
+                                reversed,
+                            );
+                            mesh.merge(&disk);
+                        } else {
+                            // Degenerate outer loop WITH inner loops (holes) —
+                            // e.g. a cylinder cap after boolean subtraction.
+                            // Sample the outer circle into a polygon and use
+                            // hole-aware CDT tessellation.
+                            let n = params.circle_segments as usize;
+                            let mut outer_3d = Vec::with_capacity(n);
+                            for i in 0..n {
+                                let theta = 2.0 * PI * (i as f64) / (n as f64);
+                                let p = center + r * (theta.cos() * x_dir + theta.sin() * y_dir);
+                                outer_3d.push(p);
+                            }
+
+                            let u_axis = x_dir;
+                            let v_axis = y_dir;
+                            let project = |p: &Point3| -> (f64, f64) {
+                                let d = *p - center;
+                                (d.dot(&u_axis), d.dot(&v_axis))
+                            };
+
+                            let outer_2d: Vec<(f64, f64)> = outer_3d.iter().map(&project).collect();
+
+                            let mut inner_loops_3d: Vec<Vec<Point3>> = Vec::new();
+                            let mut inner_loops_2d: Vec<Vec<(f64, f64)>> = Vec::new();
+                            for &inner_loop in &face.inner_loops {
+                                let iv: Vec<Point3> = brep.topology
+                                    .loop_half_edges(inner_loop)
+                                    .map(|he| brep.topology.vertices[brep.topology.half_edges[he].origin].point)
+                                    .collect();
+                                if iv.len() >= 3 {
+                                    let iv_2d: Vec<(f64, f64)> = iv.iter().map(&project).collect();
+                                    inner_loops_3d.push(iv);
+                                    inner_loops_2d.push(iv_2d);
+                                }
+                            }
+
+                            // Normalize winding: outer CCW, inner CW
+                            let outer_area = polygon_area_2d(&outer_2d);
+                            let (outer_2d, outer_3d) = if outer_area < 0.0 {
+                                let mut o2 = outer_2d;
+                                let mut o3 = outer_3d;
+                                o2.reverse();
+                                o3.reverse();
+                                (o2, o3)
+                            } else {
+                                (outer_2d, outer_3d)
+                            };
+                            for (i, hole_2d) in inner_loops_2d.iter_mut().enumerate() {
+                                let hole_area = polygon_area_2d(hole_2d);
+                                if hole_area > 0.0 {
+                                    inner_loops_3d[i].reverse();
+                                    hole_2d.reverse();
+                                }
+                            }
+
+                            merge_overlapping_holes(&mut inner_loops_2d, &mut inner_loops_3d);
+
+                            let mut face_mesh = triangulate_circular_cap_with_holes(
+                                center, r, x_dir, y_dir,
+                                &outer_2d, &inner_loops_2d,
+                                &outer_3d, &inner_loops_3d,
+                                reversed,
+                            );
+
+                            // Add planar normals
+                            let face_normal = if reversed { -normal } else { normal };
+                            let (nx, ny, nz) = (
+                                face_normal.x as f32,
+                                face_normal.y as f32,
+                                face_normal.z as f32,
+                            );
+                            for _ in 0..face_mesh.num_vertices() {
+                                face_mesh.normals.extend_from_slice(&[nx, ny, nz]);
+                            }
+
+                            mesh.merge(&face_mesh);
+                        }
                     }
                 } else {
                     // Use winding-aware tessellation to handle faces with mismatched loop winding
@@ -2472,9 +2882,10 @@ mod tests {
         let brep = make_cylinder(5.0, 10.0, 32);
         let mesh = tessellate_brep(&brep, 32);
         // Cylinder: lateral (32 quads = 64 tris) + 2 caps (32 tris each) = ~128
+        // Use 120 as threshold to ensure caps are actually present
         assert!(
-            mesh.num_triangles() >= 64,
-            "expected >= 64 triangles, got {}",
+            mesh.num_triangles() >= 120,
+            "expected >= 120 triangles (lateral + 2 caps), got {}",
             mesh.num_triangles()
         );
     }
@@ -2587,6 +2998,73 @@ mod tests {
             area += (cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]).sqrt() / 2.0;
         }
         area
+    }
+
+    /// Regression test: degenerate cap face (1 half-edge outer loop) with an
+    /// inner loop (hole from boolean subtraction) must still produce triangles.
+    /// Previously, the code routed this to `tessellate_planar_face_with_geom()`
+    /// which returned an empty mesh because outer_verts.len() < 3.
+    #[test]
+    fn test_degenerate_cap_with_inner_loop() {
+        use vcad_kernel_geom::{GeometryStore, Plane};
+        use vcad_kernel_math::{Point3, Vec3};
+        use vcad_kernel_topo::{Orientation, ShellType, Topology};
+
+        let mut topo = Topology::new();
+        let mut geom = GeometryStore::new();
+
+        // Outer circle: radius 10, degenerate 1-vertex loop (full circle)
+        let v_outer = topo.add_vertex(Point3::new(10.0, 0.0, 0.0));
+        let he_outer = topo.add_half_edge(v_outer);
+        let outer_loop = topo.add_loop(&[he_outer]);
+
+        // Inner circle: radius 3, centered at origin, 8 vertices (a hole)
+        let n = 8;
+        let mut inner_he_ids = Vec::new();
+        for i in 0..n {
+            let theta = 2.0 * PI * (i as f64) / (n as f64);
+            let v = topo.add_vertex(Point3::new(3.0 * theta.cos(), 3.0 * theta.sin(), 0.0));
+            inner_he_ids.push(topo.add_half_edge(v));
+        }
+        // Link inner half-edges into a chain
+        for i in 0..n {
+            let next = (i + 1) % n;
+            topo.half_edges[inner_he_ids[i]].next = Some(inner_he_ids[next]);
+        }
+        let inner_loop = topo.add_loop(&inner_he_ids);
+
+        // Plane at z=0, normal +Z
+        let plane = Plane::new(
+            Point3::origin(),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        );
+        let surf_idx = geom.add_surface(Box::new(plane));
+
+        let face_id = topo.add_face(outer_loop, surf_idx, Orientation::Forward);
+        topo.faces[face_id].inner_loops.push(inner_loop);
+
+        let shell = topo.add_shell(vec![face_id], ShellType::Outer);
+        let solid_id = topo.add_solid(shell);
+
+        let brep = BRepSolid {
+            topology: topo,
+            geometry: geom,
+            solid_id,
+        };
+
+        let mesh = tessellate_brep(&brep, 32);
+        assert!(
+            mesh.num_triangles() > 0,
+            "degenerate cap with inner loop must produce triangles, got 0"
+        );
+        // The annular region area = π(10² - 3²) ≈ 285.88
+        let area = compute_mesh_surface_area(&mesh);
+        let expected = PI * (100.0 - 9.0);
+        assert!(
+            (area - expected).abs() < expected * 0.1,
+            "expected area ~{expected:.1}, got {area:.1}"
+        );
     }
 
     #[test]

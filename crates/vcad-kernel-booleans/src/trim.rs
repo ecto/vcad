@@ -165,11 +165,56 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> bo
                 let center_to_seam = seam_vert - plane.origin;
                 let radius = center_to_seam.norm();
 
-                // Check if point is within the circle
+                // Check if point is within the outer circle
                 let center_to_point = point_3d - plane.origin;
                 let dist_from_center = (center_to_point - dist_along_normal * plane.normal_dir.into_inner()).norm();
 
-                return dist_from_center <= radius + 1e-6;
+                if dist_from_center > radius + 1e-6 {
+                    return false;
+                }
+
+                // Also check inner loops — point must not be inside any hole.
+                // Each inner loop is also a circle (from boolean operations).
+                for &inner_loop in &face.inner_loops {
+                    let inner_verts: Vec<Point3> = topo
+                        .loop_half_edges(inner_loop)
+                        .map(|he_id| topo.vertices[topo.half_edges[he_id].origin].point)
+                        .collect();
+                    if inner_verts.len() == 1 {
+                        // Degenerate circular inner loop
+                        let iv = inner_verts[0];
+                        let inner_r = (iv - plane.origin).norm();
+                        if dist_from_center <= inner_r - 1e-6 {
+                            return false; // inside a hole
+                        }
+                    } else if inner_verts.len() >= 3 {
+                        // Polygonal inner loop — project to 2D and check containment
+                        let normal = plane.normal_dir.into_inner();
+                        let x_axis = if radius > 1e-12 {
+                            center_to_seam.normalize()
+                        } else {
+                            *plane.x_dir.as_ref()
+                        };
+                        let y_axis = normal.cross(&x_axis);
+                        let pt_2d = Point2::new(
+                            center_to_point.dot(&x_axis),
+                            center_to_point.dot(&y_axis),
+                        );
+                        let poly_2d: Vec<Point2> = inner_verts
+                            .iter()
+                            .map(|v| {
+                                let d = v - plane.origin;
+                                Point2::new(d.dot(&x_axis), d.dot(&y_axis))
+                            })
+                            .collect();
+                        // Ray-casting point-in-polygon
+                        if point_in_polygon(&pt_2d, &poly_2d) {
+                            return false; // inside a hole
+                        }
+                    }
+                }
+
+                return true;
             }
         }
         // If we can't determine the circle, conservatively return true

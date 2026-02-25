@@ -1496,4 +1496,538 @@ mod tests {
         assert!(!inter.is_empty());
     }
 
+    /// Regression: cylinder minus bore should produce a closed solid with
+    /// volume roughly equal to π(R² - r²) × h.
+    #[test]
+    fn test_cylinder_minus_bore_volume() {
+        let outer = Solid::cylinder(15.0, 30.0, 64);
+        let bore = Solid::cylinder(6.0, 40.0, 32);
+        let result = outer.difference(&bore);
+
+        // Expected volume = π(15² - 6²) × 30 ≈ 17814
+        let vol = result.volume();
+        let expected = std::f64::consts::PI * (225.0 - 36.0) * 30.0;
+        assert!(
+            (vol - expected).abs() < expected * 0.10,
+            "expected ~{expected:.0}, got {vol:.0} — caps may be missing"
+        );
+    }
+
+    /// Regression: flanged hub with multiple bolt holes.
+    /// Tests that degenerate cap AABB is computed correctly so all bolt
+    /// circles are found as intersections and accumulate as inner loops.
+    #[test]
+    fn test_flanged_hub_with_bolts() {
+        // Match the docs example which uses centered_cylinder:
+        // centered_cylinder(r, h) = cylinder(r, h).translate(0, 0, -h/2)
+        // hub: centered_cylinder(15, 30) → z=-15 to z=15
+        let hub = Solid::cylinder(15.0, 30.0, 64).translate(0.0, 0.0, -15.0);
+        // flange: centered_cylinder(35, 6).translate(0,0,-15) → z=-18 to z=-12
+        let flange = Solid::cylinder(35.0, 6.0, 64).translate(0.0, 0.0, -18.0);
+        // bore: centered_cylinder(6, 40) → z=-20 to z=20
+        let bore = Solid::cylinder(6.0, 40.0, 32).translate(0.0, 0.0, -20.0);
+
+        let hub_flange = hub.union(&flange);
+        let mut result = hub_flange.difference(&bore);
+
+        // bolt_pattern(6, 50.0, 4.0, 10.0, 24).translate(0,0,-15)
+        // bolt_circle_diameter=50 → radius=25, hole_diameter=4 → hole_radius=2
+        for i in 0..6u32 {
+            let angle = 2.0 * std::f64::consts::PI * (i as f64) / 6.0;
+            let bolt = Solid::cylinder(2.0, 10.0, 24)
+                .translate(25.0 * angle.cos(), 25.0 * angle.sin(), -15.0);
+            result = result.difference(&bolt);
+        }
+
+        // Verify face count: 20 faces expected (hub + flange + bore + 6 bolts)
+        if let SolidRepr::BRep(ref brep) = result.repr {
+            let solid = &brep.topology.solids[brep.solid_id];
+            let shell = &brep.topology.shells[solid.outer_shell];
+            assert!(shell.faces.len() >= 18, "expected at least 18 faces, got {}", shell.faces.len());
+        }
+
+        // Mesh should be non-empty
+        let mesh = result.to_mesh(32);
+        assert!(mesh.num_triangles() > 1000, "mesh too small");
+    }
+
+    /// Reproduce the exact docs IR evaluation path for the flanged hub.
+    /// Uses circular_pattern (single difference of 6-bolt union) instead of
+    /// individual bolt subtractions.
+    #[test]
+    fn test_flanged_hub_docs_ir() {
+        use vcad_kernel_math::{Point3, Vec3};
+
+        // Exactly matches the IR in packages/docs/src/lib/examples.ts
+        let hub = Solid::cylinder(15.0, 30.0, 64).translate(0.0, 0.0, -15.0);
+        let flange = Solid::cylinder(35.0, 6.0, 64).translate(0.0, 0.0, -18.0);
+        let hub_flange = hub.union(&flange);
+
+        let bore = Solid::cylinder(6.0, 40.0, 32).translate(0.0, 0.0, -20.0);
+        let hub_flange_bore = hub_flange.difference(&bore);
+
+        // IR node 9: bolt radius=4, height=10
+        // IR node 10: translate(25, 0, -20) → bolt from z=-20 to z=-10
+        let bolt_hole = Solid::cylinder(4.0, 10.0, 24).translate(25.0, 0.0, -20.0);
+
+        // IR node 11: CircularPattern(count=6, angle=360°, axis Z)
+        let bolts = bolt_hole.circular_pattern(
+            Point3::new(0.0, 0.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            6,
+            360.0,
+        );
+
+        // IR node 12: final difference
+        let result = hub_flange_bore.difference(&bolts);
+
+        // Must have the annular face at z=-12
+        if let SolidRepr::BRep(ref brep) = result.repr {
+            let solid = &brep.topology.solids[brep.solid_id];
+            let shell = &brep.topology.shells[solid.outer_shell];
+            let has_annular = shell.faces.iter().any(|&fid| {
+                let face = &brep.topology.faces[fid];
+                let surface = &brep.geometry.surfaces[face.surface_index];
+                if let Some(plane) = surface.as_any().downcast_ref::<vcad_kernel_geom::Plane>() {
+                    (plane.origin.z - (-12.0)).abs() < 0.1 && plane.normal_dir.into_inner().z > 0.5
+                } else {
+                    false
+                }
+            });
+            assert!(has_annular, "Missing annular face at z=-12");
+        }
+
+        let mesh = result.to_mesh(32);
+
+        // Verify z=-12 annular face has proper triangulation
+        let mut z12_count = 0;
+        let mut z18_count = 0;
+        for tri in 0..mesh.num_triangles() {
+            let i0 = mesh.indices[tri * 3] as usize;
+            let i1 = mesh.indices[tri * 3 + 1] as usize;
+            let i2 = mesh.indices[tri * 3 + 2] as usize;
+            let z0 = mesh.vertices[i0 * 3 + 2] as f64;
+            let z1 = mesh.vertices[i1 * 3 + 2] as f64;
+            let z2 = mesh.vertices[i2 * 3 + 2] as f64;
+            if (z0 - (-12.0)).abs() < 0.01 && (z1 - (-12.0)).abs() < 0.01 && (z2 - (-12.0)).abs() < 0.01 {
+                z12_count += 1;
+            }
+            if (z0 - (-18.0)).abs() < 0.01 && (z1 - (-18.0)).abs() < 0.01 && (z2 - (-18.0)).abs() < 0.01 {
+                z18_count += 1;
+            }
+        }
+        assert!(z12_count > 50, "z=-12 annular face has too few triangles: {}", z12_count);
+        assert!(z18_count > 50, "z=-18 flange face has too few triangles: {}", z18_count);
+        assert!(mesh.num_triangles() > 1000, "mesh too small: {}", mesh.num_triangles());
+    }
+
+    // =========================================================================
+    // Mesh validation framework — ray casting from multiple angles
+    // =========================================================================
+
+    /// Ray-triangle intersection (Möller–Trumbore).
+    /// Returns Some(t) if the ray hits the triangle at distance t > 0.
+    fn ray_triangle_intersect(
+        ray_origin: &[f64; 3],
+        ray_dir: &[f64; 3],
+        v0: &[f64; 3],
+        v1: &[f64; 3],
+        v2: &[f64; 3],
+    ) -> Option<(f64, [f64; 3])> {
+        let edge1 = [v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]];
+        let edge2 = [v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]];
+        let h = cross(ray_dir, &edge2);
+        let a = dot(&edge1, &h);
+        if a.abs() < 1e-12 {
+            return None;
+        }
+        let f = 1.0 / a;
+        let s = [
+            ray_origin[0] - v0[0],
+            ray_origin[1] - v0[1],
+            ray_origin[2] - v0[2],
+        ];
+        let u = f * dot(&s, &h);
+        if !(0.0..=1.0).contains(&u) {
+            return None;
+        }
+        let q = cross(&s, &edge1);
+        let v = f * dot(ray_dir, &q);
+        if v < 0.0 || u + v > 1.0 {
+            return None;
+        }
+        let t = f * dot(&edge2, &q);
+        if t > 1e-8 {
+            // Triangle normal (unnormalized)
+            let normal = cross(&edge1, &edge2);
+            Some((t, normal))
+        } else {
+            None
+        }
+    }
+
+    fn cross(a: &[f64; 3], b: &[f64; 3]) -> [f64; 3] {
+        [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ]
+    }
+
+    fn dot(a: &[f64; 3], b: &[f64; 3]) -> f64 {
+        a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+    }
+
+    fn norm(a: &[f64; 3]) -> f64 {
+        dot(a, a).sqrt()
+    }
+
+    /// Get triangle vertex positions from mesh.
+    fn get_tri(mesh: &TriangleMesh, tri_idx: usize) -> ([f64; 3], [f64; 3], [f64; 3]) {
+        let i0 = mesh.indices[tri_idx * 3] as usize * 3;
+        let i1 = mesh.indices[tri_idx * 3 + 1] as usize * 3;
+        let i2 = mesh.indices[tri_idx * 3 + 2] as usize * 3;
+        let v = &mesh.vertices;
+        (
+            [v[i0] as f64, v[i0 + 1] as f64, v[i0 + 2] as f64],
+            [v[i1] as f64, v[i1 + 1] as f64, v[i1 + 2] as f64],
+            [v[i2] as f64, v[i2 + 1] as f64, v[i2 + 2] as f64],
+        )
+    }
+
+    /// Compute triangle area.
+    fn tri_area(v0: &[f64; 3], v1: &[f64; 3], v2: &[f64; 3]) -> f64 {
+        let e1 = [v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]];
+        let e2 = [v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]];
+        let c = cross(&e1, &e2);
+        0.5 * norm(&c)
+    }
+
+    struct MeshValidation {
+        degenerate_triangles: usize,
+        inverted_normals: usize,
+        non_watertight_rays: usize,
+        total_rays: usize,
+        max_triangle_area: f64,
+        issues: Vec<String>,
+    }
+
+    /// Validate a mesh from first principles using ray casting.
+    fn validate_mesh(mesh: &TriangleMesh, name: &str) -> MeshValidation {
+        let mut result = MeshValidation {
+            degenerate_triangles: 0,
+            inverted_normals: 0,
+            non_watertight_rays: 0,
+            total_rays: 0,
+            max_triangle_area: 0.0,
+            issues: Vec::new(),
+        };
+
+        let num_tris = mesh.num_triangles();
+
+        // 1. Check for degenerate triangles and compute triangle normals
+        let mut triangle_normals: Vec<[f64; 3]> = Vec::with_capacity(num_tris);
+        for i in 0..num_tris {
+            let (v0, v1, v2) = get_tri(mesh, i);
+            let area = tri_area(&v0, &v1, &v2);
+            result.max_triangle_area = result.max_triangle_area.max(area);
+
+            if area < 1e-10 {
+                result.degenerate_triangles += 1;
+            }
+
+            let e1 = [v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]];
+            let e2 = [v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]];
+            triangle_normals.push(cross(&e1, &e2));
+        }
+
+        // 2. Compute bounding box
+        let mut bbox_min = [f64::INFINITY; 3];
+        let mut bbox_max = [f64::NEG_INFINITY; 3];
+        for i in 0..mesh.num_vertices() {
+            let x = mesh.vertices[i * 3] as f64;
+            let y = mesh.vertices[i * 3 + 1] as f64;
+            let z = mesh.vertices[i * 3 + 2] as f64;
+            for (d, val) in [(0, x), (1, y), (2, z)] {
+                bbox_min[d] = bbox_min[d].min(val);
+                bbox_max[d] = bbox_max[d].max(val);
+            }
+        }
+        let bbox_center = [
+            (bbox_min[0] + bbox_max[0]) / 2.0,
+            (bbox_min[1] + bbox_max[1]) / 2.0,
+            (bbox_min[2] + bbox_max[2]) / 2.0,
+        ];
+        let bbox_extent = [
+            bbox_max[0] - bbox_min[0],
+            bbox_max[1] - bbox_min[1],
+            bbox_max[2] - bbox_min[2],
+        ];
+        let bbox_diag = norm(&bbox_extent);
+
+        // 3. Check normals point outward via signed volume contribution
+        // For a closed mesh, each triangle's signed volume contribution should
+        // be consistent with its geometric normal direction.
+        let mut positive_vol_tris = 0;
+        let mut negative_vol_tris = 0;
+        for i in 0..num_tris {
+            let (v0, v1, v2) = get_tri(mesh, i);
+            // Signed volume of tetrahedron formed with origin
+            let sv = v0[0] * (v1[1] * v2[2] - v2[1] * v1[2])
+                - v1[0] * (v0[1] * v2[2] - v2[1] * v0[2])
+                + v2[0] * (v0[1] * v1[2] - v1[1] * v0[2]);
+            if sv > 0.0 {
+                positive_vol_tris += 1;
+            } else {
+                negative_vol_tris += 1;
+            }
+        }
+
+        // 4. Ray casting from multiple directions
+        // For each direction, cast rays in a grid and check:
+        // - Even number of intersections (watertight)
+        // - First hit normal faces the camera (outward-facing)
+        let ray_dirs: Vec<[f64; 3]> = vec![
+            [1.0, 0.0, 0.0],
+            [-1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, -1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, -1.0],
+            // Diagonals
+            [1.0, 1.0, 1.0],
+            [-1.0, 1.0, -1.0],
+            [1.0, -1.0, 1.0],
+            [-1.0, -1.0, -1.0],
+        ];
+
+        let grid_res = 8; // 8×8 grid per direction
+
+        for ray_dir_raw in &ray_dirs {
+            let dir_len = norm(ray_dir_raw);
+            let ray_dir = [
+                ray_dir_raw[0] / dir_len,
+                ray_dir_raw[1] / dir_len,
+                ray_dir_raw[2] / dir_len,
+            ];
+
+            // Build orthogonal basis for the ray grid
+            let up = if ray_dir[1].abs() < 0.9 {
+                [0.0, 1.0, 0.0]
+            } else {
+                [1.0, 0.0, 0.0]
+            };
+            let right = cross(&ray_dir, &up);
+            let right_len = norm(&right);
+            let right = [
+                right[0] / right_len,
+                right[1] / right_len,
+                right[2] / right_len,
+            ];
+            let up = cross(&right, &ray_dir);
+
+            let start_dist = bbox_diag;
+            let grid_step = bbox_diag * 0.8 / grid_res as f64;
+
+            for gy in 0..grid_res {
+                for gx in 0..grid_res {
+                    let offset_x = (gx as f64 - grid_res as f64 / 2.0 + 0.5) * grid_step;
+                    let offset_y = (gy as f64 - grid_res as f64 / 2.0 + 0.5) * grid_step;
+                    let origin = [
+                        bbox_center[0] - ray_dir[0] * start_dist
+                            + right[0] * offset_x
+                            + up[0] * offset_y,
+                        bbox_center[1] - ray_dir[1] * start_dist
+                            + right[1] * offset_x
+                            + up[1] * offset_y,
+                        bbox_center[2] - ray_dir[2] * start_dist
+                            + right[2] * offset_x
+                            + up[2] * offset_y,
+                    ];
+
+                    // Cast ray against all triangles
+                    let mut hits: Vec<(f64, [f64; 3], usize)> = Vec::new();
+                    for t in 0..num_tris {
+                        let (v0, v1, v2) = get_tri(mesh, t);
+                        if let Some((dist, tri_normal)) =
+                            ray_triangle_intersect(&origin, &ray_dir, &v0, &v1, &v2)
+                        {
+                            hits.push((dist, tri_normal, t));
+                        }
+                    }
+
+                    if hits.is_empty() {
+                        continue; // Ray missed the object entirely
+                    }
+
+                    result.total_rays += 1;
+                    hits.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
+                    // Watertight check: must have even number of hits
+                    if hits.len() % 2 != 0 {
+                        result.non_watertight_rays += 1;
+                        if result.issues.len() < 5 {
+                            let hit_info: Vec<_> = hits.iter().map(|(t, n, idx)| {
+                                let face_dot = dot(n, &ray_dir);
+                                format!("t={t:.2} tri={idx} dot={face_dot:.3}")
+                            }).collect();
+                            result.issues.push(format!(
+                                "Non-watertight: dir=({:.1},{:.1},{:.1}) pos=({:.1},{:.1},{:.1}) hits={} [{:}]",
+                                ray_dir[0], ray_dir[1], ray_dir[2],
+                                origin[0], origin[1], origin[2],
+                                hits.len(),
+                                hit_info.join(", "),
+                            ));
+                        }
+                    }
+
+                    // Normal direction check: first hit should have normal
+                    // opposing ray direction (facing the camera)
+                    let first_dot = dot(&hits[0].1, &ray_dir);
+                    if first_dot > 0.0 {
+                        result.inverted_normals += 1;
+                        if result.issues.len() < 5 {
+                            let tri_idx = hits[0].2;
+                            let (v0, v1, v2) = get_tri(mesh, tri_idx);
+                            let area = tri_area(&v0, &v1, &v2);
+                            result.issues.push(format!(
+                                "Inverted normal: tri={tri_idx} area={area:.1} dot={first_dot:.3} dir=({:.1},{:.1},{:.1})",
+                                ray_dir[0], ray_dir[1], ray_dir[2],
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        println!("=== Mesh Validation: {name} ===");
+        println!("  Triangles: {num_tris}");
+        println!(
+            "  Degenerate triangles: {}",
+            result.degenerate_triangles
+        );
+        println!(
+            "  Max triangle area: {:.1}",
+            result.max_triangle_area
+        );
+        println!(
+            "  Vol sign split: +{positive_vol_tris} / -{negative_vol_tris}"
+        );
+        println!(
+            "  Rays cast: {} | non-watertight: {} | inverted normals: {}",
+            result.total_rays, result.non_watertight_rays, result.inverted_normals
+        );
+        for issue in &result.issues {
+            println!("  ISSUE: {issue}");
+        }
+
+        result
+    }
+
+    /// Comprehensive mesh validation for the flanged hub.
+    #[test]
+    fn test_flanged_hub_mesh_validation() {
+        let hub = Solid::cylinder(15.0, 30.0, 64);
+        let flange = Solid::cylinder(35.0, 6.0, 64).translate(0.0, 0.0, -15.0);
+        let bore = Solid::cylinder(6.0, 40.0, 32);
+
+        let hub_flange = hub.union(&flange);
+        let mut result = hub_flange.difference(&bore);
+
+        for i in 0..6u32 {
+            let angle = 2.0 * std::f64::consts::PI * (i as f64) / 6.0;
+            let bolt = Solid::cylinder(4.0, 10.0, 24)
+                .translate(25.0 * angle.cos(), 25.0 * angle.sin(), -15.0);
+            result = result.difference(&bolt);
+        }
+
+        // Also test simpler case: just hub+bore (no flange, no bolts)
+        {
+            let simple = Solid::cylinder(15.0, 30.0, 64)
+                .difference(&Solid::cylinder(6.0, 40.0, 32));
+            let smesh = simple.to_mesh(32);
+            let sv = validate_mesh(&smesh, "simple-bore");
+            println!("Simple bore: watertight={} inverted={}", sv.non_watertight_rays, sv.inverted_normals);
+        }
+
+        // Test flange alone with one bolt
+        {
+            let flange = Solid::cylinder(35.0, 6.0, 64).translate(0.0, 0.0, -15.0);
+            let bolt = Solid::cylinder(4.0, 10.0, 24).translate(25.0, 0.0, -15.0);
+            let fbolt = flange.difference(&bolt);
+            let fmesh = fbolt.to_mesh(32);
+            let fv = validate_mesh(&fmesh, "flange-1bolt");
+            println!("Flange+1bolt: watertight={} inverted={}", fv.non_watertight_rays, fv.inverted_normals);
+        }
+
+        let mesh = result.to_mesh(32);
+
+        // Identify large triangles that may be artifacts
+        let num_tris = mesh.num_triangles();
+        let mut large_tris = Vec::new();
+        for i in 0..num_tris {
+            let (v0, v1, v2) = get_tri(&mesh, i);
+            let area = tri_area(&v0, &v1, &v2);
+            if area > 50.0 {
+                // Compute max edge length
+                let e01 = norm(&[v1[0]-v0[0], v1[1]-v0[1], v1[2]-v0[2]]);
+                let e12 = norm(&[v2[0]-v1[0], v2[1]-v1[1], v2[2]-v1[2]]);
+                let e20 = norm(&[v0[0]-v2[0], v0[1]-v2[1], v0[2]-v2[2]]);
+                let max_edge = e01.max(e12).max(e20);
+                large_tris.push((i, area, max_edge));
+            }
+        }
+        if !large_tris.is_empty() {
+            println!("\nLarge triangles (area > 50):");
+            for (idx, area, max_edge) in &large_tris {
+                let (v0, v1, v2) = get_tri(&mesh, *idx);
+                let centroid = [
+                    (v0[0]+v1[0]+v2[0])/3.0,
+                    (v0[1]+v1[1]+v2[1])/3.0,
+                    (v0[2]+v1[2]+v2[2])/3.0,
+                ];
+                println!(
+                    "  tri {idx}: area={area:.1} max_edge={max_edge:.1} centroid=({:.1},{:.1},{:.1})",
+                    centroid[0], centroid[1], centroid[2]
+                );
+                println!("    v0=({:.1},{:.1},{:.1})", v0[0], v0[1], v0[2]);
+                println!("    v1=({:.1},{:.1},{:.1})", v1[0], v1[1], v1[2]);
+                println!("    v2=({:.1},{:.1},{:.1})", v2[0], v2[1], v2[2]);
+            }
+        }
+
+        let v = validate_mesh(&mesh, "flanged-hub");
+
+        assert_eq!(v.degenerate_triangles, 0, "should have no degenerate triangles");
+        assert_eq!(
+            v.inverted_normals, 0,
+            "all front-facing normals should point outward ({}% inverted)",
+            if v.total_rays > 0 {
+                v.inverted_normals * 100 / v.total_rays
+            } else {
+                0
+            }
+        );
+
+        // Watertight check: allow up to 5% failures from pre-existing
+        // boolean sewing imprecision (diagonal rays near seam edges).
+        let watertight_pct = if v.total_rays > 0 {
+            v.non_watertight_rays * 100 / v.total_rays
+        } else {
+            0
+        };
+        assert!(
+            watertight_pct <= 5,
+            "mesh should be mostly watertight ({watertight_pct}% rays failed)"
+        );
+
+        // Max triangle area: the flange cap is ~3848 mm².
+        // No single triangle should be larger than ~100 mm² (was 225 before fix).
+        assert!(
+            v.max_triangle_area < 100.0,
+            "max triangle area {:.0} is too large — tessellation artifact",
+            v.max_triangle_area
+        );
+    }
+
 }

@@ -48,12 +48,109 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
 
     // Special case: circular disk face with a single seam vertex
     // (e.g., cylinder caps). The single vertex is on the circle's boundary,
-    // not at its center. For proper classification, use the plane's origin
-    // which is the center of the circular disk.
+    // not at its center.
     if vertices.len() == 1 {
         let surface = &brep.geometry.surfaces[face.surface_index];
         if let Some(plane) = surface.as_any().downcast_ref::<vcad_kernel_geom::Plane>() {
-            return plane.origin;
+            let center = plane.origin;
+
+            if face.inner_loops.is_empty() {
+                // Simple disk — center is a safe sample point
+                return center;
+            }
+
+            // Annular face (degenerate outer loop + inner hole).
+            // Sample between the outer boundary and the nearest inner loop.
+            let normal = plane.normal_dir.into_inner();
+            let to_boundary = vertices[0] - center;
+            let on_plane = to_boundary - to_boundary.dot(&normal) * normal;
+            let outer_r = on_plane.norm();
+            let x_dir = if outer_r > 1e-12 {
+                on_plane.normalize()
+            } else {
+                return center;
+            };
+
+            // Collect all inner loop info (center and radius for each hole)
+            let y_dir = normal.cross(&x_dir);
+            let mut concentric_inner_r = 0.0f64;
+            struct HoleInfo {
+                center_2d: (f64, f64),
+                radius: f64,
+            }
+            let mut holes: Vec<HoleInfo> = Vec::new();
+            for &inner_loop in &face.inner_loops {
+                let inner_verts: Vec<Point3> = topo
+                    .loop_half_edges(inner_loop)
+                    .map(|he_id| topo.vertices[topo.half_edges[he_id].origin].point)
+                    .collect();
+                if inner_verts.is_empty() {
+                    continue;
+                }
+                // Compute hole center and radius
+                let hole_center = if inner_verts.len() == 1 {
+                    // Degenerate inner loop — it's a circle centered at the face center
+                    let d = inner_verts[0] - center;
+                    let r = (d - d.dot(&normal) * normal).norm();
+                    concentric_inner_r = concentric_inner_r.max(r);
+                    continue; // Concentric holes don't need extra checking
+                } else {
+                    // Multi-vertex inner loop — compute centroid
+                    let mut cx = 0.0;
+                    let mut cy = 0.0;
+                    let mut max_r = 0.0f64;
+                    for v in &inner_verts {
+                        let d = v - center;
+                        let on_plane = d - d.dot(&normal) * normal;
+                        cx += on_plane.dot(&x_dir);
+                        cy += on_plane.dot(&y_dir);
+                    }
+                    let n = inner_verts.len() as f64;
+                    let hc = (cx / n, cy / n);
+                    for v in &inner_verts {
+                        let d = v - center;
+                        let on_plane = d - d.dot(&normal) * normal;
+                        let px = on_plane.dot(&x_dir);
+                        let py = on_plane.dot(&y_dir);
+                        let dr = ((px - hc.0).powi(2) + (py - hc.1).powi(2)).sqrt();
+                        max_r = max_r.max(dr);
+                    }
+                    HoleInfo {
+                        center_2d: hc,
+                        radius: max_r,
+                    }
+                };
+                holes.push(hole_center);
+            }
+
+            // Try multiple sample angles to find one that avoids all holes
+            let mid_r = (outer_r + concentric_inner_r) / 2.0;
+            let num_tries = 36;
+            for try_idx in 0..num_tries {
+                let angle = 2.0 * std::f64::consts::PI * (try_idx as f64) / (num_tries as f64);
+                let (sin_a, cos_a) = angle.sin_cos();
+                let sample_dir = cos_a * x_dir + sin_a * y_dir;
+                let candidate = center + mid_r * sample_dir;
+                let cx = mid_r * cos_a;
+                let cy = mid_r * sin_a;
+
+                // Check if candidate is inside any off-center hole
+                let mut in_hole = false;
+                for hole in &holes {
+                    let dx = cx - hole.center_2d.0;
+                    let dy = cy - hole.center_2d.1;
+                    if dx * dx + dy * dy < (hole.radius + 1e-6) * (hole.radius + 1e-6) {
+                        in_hole = true;
+                        break;
+                    }
+                }
+                if !in_hole {
+                    return candidate;
+                }
+            }
+
+            // Fallback: just use the first try
+            return center + mid_r * x_dir;
         }
         // Fallback: return the single vertex
         return vertices[0];

@@ -91,41 +91,33 @@ pub fn face_aabb(brep: &BRepSolid, face_id: FaceId) -> Aabb3 {
     let surface = &brep.geometry.surfaces[face.surface_index];
     match surface.surface_type() {
         vcad_kernel_geom::SurfaceKind::Plane => {
-            // Planar faces usually have exact bounds from vertices.
-            // Exception: circular boundaries (cylinder/sphere caps) may have only 1-2 vertices
-            // at the seam, so the AABB is degenerate. Expand based on vertex distance from
-            // the plane's origin (which gives the circle radius).
-            let diag = ((aabb.max.x - aabb.min.x).powi(2)
-                + (aabb.max.y - aabb.min.y).powi(2)
-                + (aabb.max.z - aabb.min.z).powi(2))
-            .sqrt();
-
-            // If AABB is nearly degenerate (diagonal < 1), this is likely a circular boundary
-            if diag < 1.0 {
+            // Circular boundaries (cylinder/sphere caps) have degenerate outer loops
+            // with only 1-2 vertices at the seam. The AABB from these vertices alone
+            // is far too small — expand based on the actual circle radius.
+            //
+            // We check the outer loop vertex count directly rather than AABB diagonal,
+            // because inner loop vertices (from boolean holes) can inflate the diagonal
+            // while the outer boundary is still a full circle that needs expansion.
+            let outer_loop_len = topo.loop_len(face.outer_loop);
+            if outer_loop_len <= 2 {
                 if let Some(plane) = surface
                     .as_any()
                     .downcast_ref::<vcad_kernel_geom::Plane>()
                 {
-                    // The vertex is on the circular boundary. The radius is its distance
-                    // from the plane's origin (circle center) projected onto the plane.
-                    // Use the first vertex position to estimate the radius.
                     let first_he = topo.loop_half_edges(face.outer_loop).next();
                     if let Some(he_id) = first_he {
                         let v_pos = topo.vertices[topo.half_edges[he_id].origin].point;
                         let to_vertex = v_pos - plane.origin;
-                        // Project onto plane (remove normal component)
                         let normal = plane.normal_dir.into_inner();
                         let on_plane = to_vertex - to_vertex.dot(&normal) * normal;
                         let radius = on_plane.norm();
 
                         if radius > 1e-6 {
                             // Expand the AABB to cover the full circle
-                            // The circle is centered at plane.origin
-                            aabb = Aabb3::empty();
-                            // Include corners of a bounding square around the circle
                             let x_dir = *plane.x_dir.as_ref();
                             let y_dir = *plane.y_dir.as_ref();
                             let center = plane.origin;
+                            aabb = Aabb3::empty();
                             aabb.include_point(&(center + radius * x_dir + radius * y_dir));
                             aabb.include_point(&(center + radius * x_dir - radius * y_dir));
                             aabb.include_point(&(center - radius * x_dir + radius * y_dir));

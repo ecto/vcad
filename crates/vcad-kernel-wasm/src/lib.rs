@@ -17,7 +17,7 @@ use wasmosis::module;
 use ts_rs::TS;
 
 /// Version string for verifying correct WASM build is loaded in browser.
-const KERNEL_VERSION: &str = "2025-02-21-step-facebound-fix";
+const KERNEL_VERSION: &str = "2026-02-25-boolean-cap-fix";
 
 /// Get the kernel version string.
 /// Use this in browser console to verify the correct WASM build is loaded:

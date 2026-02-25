@@ -336,10 +336,41 @@ pub(crate) fn brep_boolean(
             let mut results_a = Vec::new();
             let mut results_b = Vec::new();
 
-            // For circle curves on planar faces, we don't need to trim
+            // For circle curves (from plane-cylinder intersection), skip trimming —
+            // the circle is already the intersection. Add split instructions to
+            // BOTH the planar face (gets an inner loop) and the cylindrical face
+            // (gets a new edge splitting the cylinder).
+            // Note: face_a and face_b can be from either solid, so check both.
+            // Also verify the circle center is in the face's material region to
+            // avoid creating nested inner loops (e.g. bore circle inside hub hole).
             if let ssi::IntersectionCurve::Circle(circle) = &curve {
+                // Sample a point on the circle (not center — center might not be in face for cylindrical)
+                let sample_pt = circle.center + circle.radius * circle.x_dir.into_inner();
                 if split::is_planar_face(&a, face_a) {
+                    // Only check point_in_face for degenerate cap faces (single-vertex outer loop)
+                    // to avoid creating nested inner loops. Regular polygon faces don't need this
+                    // guard — their trimming handles containment correctly.
+                    let outer_len = a.topology.loop_len(a.topology.faces[face_a].outer_loop);
+                    if outer_len <= 1 {
+                        if trim::point_in_face(&a, face_a, &sample_pt) {
+                            results_a.push((curve.clone(), circle.center, circle.center));
+                        }
+                    } else {
+                        results_a.push((curve.clone(), circle.center, circle.center));
+                    }
+                }
+                if split::is_cylindrical_face(&a, face_a) {
                     results_a.push((curve.clone(), circle.center, circle.center));
+                }
+                if split::is_planar_face(&b, face_b) {
+                    let outer_len = b.topology.loop_len(b.topology.faces[face_b].outer_loop);
+                    if outer_len <= 1 {
+                        if trim::point_in_face(&b, face_b, &sample_pt) {
+                            results_b.push((curve.clone(), circle.center, circle.center));
+                        }
+                    } else {
+                        results_b.push((curve.clone(), circle.center, circle.center));
+                    }
                 }
                 if split::is_cylindrical_face(&b, face_b) {
                     results_b.push((curve.clone(), circle.center, circle.center));
