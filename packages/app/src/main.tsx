@@ -88,6 +88,10 @@ createRoot(document.getElementById("root")!).render(
   </StrictMode>,
 );
 
+// Vercel Analytics + Speed Insights
+import("@vercel/analytics").then(({ inject }) => inject());
+import("@vercel/speed-insights").then(({ injectSpeedInsights }) => injectSpeedInsights());
+
 // Defer analytics until after first paint
 const initAnalytics = () => {
   const posthogKey = import.meta.env.VITE_POSTHOG_KEY;
