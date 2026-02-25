@@ -221,6 +221,57 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> bo
         return true;
     }
 
+    // Special case: sphere faces with degenerate pole loops (2 vertices: north + south poles).
+    // The outer loop has only 2 unique positions (poles), which don't form a polygon.
+    // Check if the point is on the sphere surface using 3D distance to center.
+    if surface.surface_type() == vcad_kernel_geom::SurfaceKind::Sphere && outer_verts_3d.len() <= 2
+    {
+        if let Some(sph) = surface
+            .as_any()
+            .downcast_ref::<vcad_kernel_geom::SphereSurface>()
+        {
+            let dist = (*point_3d - sph.center).norm();
+            // Point must be on the sphere surface (within tolerance)
+            if (dist - sph.radius).abs() > 1e-4 {
+                return false;
+            }
+
+            // Check inner loops — point must not be inside any hole.
+            // Inner loops on sphere faces are circles from boolean intersections.
+            for &inner_loop in &face.inner_loops {
+                let inner_verts: Vec<Point3> = topo
+                    .loop_half_edges(inner_loop)
+                    .map(|he_id| topo.vertices[topo.half_edges[he_id].origin].point)
+                    .collect();
+                if inner_verts.len() >= 3 {
+                    // Polygonal inner loop (circle approximated with segments).
+                    // Compute the hole's centroid and max radius as exclusion zone.
+                    let n = inner_verts.len() as f64;
+                    let hole_center = Point3::new(
+                        inner_verts.iter().map(|v| v.x).sum::<f64>() / n,
+                        inner_verts.iter().map(|v| v.y).sum::<f64>() / n,
+                        inner_verts.iter().map(|v| v.z).sum::<f64>() / n,
+                    );
+                    let hole_radius = inner_verts
+                        .iter()
+                        .map(|v| (*v - hole_center).norm())
+                        .fold(0.0f64, f64::max);
+                    // Use angular distance on the sphere for containment:
+                    // compute the angle subtended from center between point and hole center
+                    let to_point = (*point_3d - sph.center).normalize();
+                    let to_hole = (hole_center - sph.center).normalize();
+                    let angle = to_point.dot(&to_hole).clamp(-1.0, 1.0).acos();
+                    let hole_angle = (hole_radius / sph.radius).clamp(0.0, 1.0).asin();
+                    if angle < hole_angle - 1e-6 {
+                        return false; // inside a hole
+                    }
+                }
+            }
+
+            return true;
+        }
+    }
+
     // Project the test point to UV
     let test_uv = project_point_to_uv(surface.as_ref(), point_3d);
 

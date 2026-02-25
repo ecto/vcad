@@ -1354,4 +1354,71 @@ mod tests {
             bad.len()
         );
     }
+
+    #[test]
+    fn test_sphere_boolean_subtract() {
+        use vcad_kernel_primitives::make_sphere;
+
+        // Large sphere at origin, radius 10
+        let big_sphere = make_sphere(10.0, 32);
+
+        // Small sphere offset along X, radius 5
+        let mut small_sphere = make_sphere(5.0, 32);
+        translate_brep(&mut small_sphere, 8.0, 0.0, 0.0);
+
+        // Subtract small sphere from big sphere
+        let result = boolean_op(
+            &big_sphere,
+            &small_sphere,
+            BooleanOp::Difference,
+            32,
+        );
+        let mesh = result.to_mesh(32);
+
+        // The result should have some triangles (not empty)
+        assert!(
+            !mesh.indices.is_empty(),
+            "Sphere-sphere difference should produce a non-empty mesh"
+        );
+
+        let volume = compute_mesh_volume(&mesh);
+        let big_vol = 4.0 / 3.0 * std::f64::consts::PI * 10.0_f64.powi(3);
+        eprintln!(
+            "Sphere difference: result volume = {:.1}, big sphere volume = {:.1}",
+            volume, big_vol
+        );
+
+        // Result volume should be less than the big sphere
+        assert!(
+            volume < big_vol * 1.05,
+            "Result volume ({:.1}) should be less than big sphere ({:.1})",
+            volume,
+            big_vol
+        );
+
+        // Result volume should be greater than big sphere minus small sphere's full volume
+        // (since only a partial intersection is removed)
+        let small_vol = 4.0 / 3.0 * std::f64::consts::PI * 5.0_f64.powi(3);
+        assert!(
+            volume > big_vol - small_vol - 100.0,
+            "Result volume ({:.1}) should be reasonable (big={:.1}, small={:.1})",
+            volume,
+            big_vol,
+            small_vol
+        );
+
+        // Check the bounding box: should extend close to -10 on X (big sphere)
+        // and should NOT extend to +13 (big sphere + small sphere fully)
+        let (min, max) = compute_mesh_bbox(&mesh);
+        eprintln!(
+            "Sphere diff bbox: min=({:.1},{:.1},{:.1}), max=({:.1},{:.1},{:.1})",
+            min[0], min[1], min[2], max[0], max[1], max[2]
+        );
+
+        assert!(
+            min[0] < -9.0,
+            "Result should extend to x~=-10, but min_x={:.1}",
+            min[0]
+        );
+    }
 }

@@ -192,12 +192,21 @@ pub fn face_aabb(brep: &BRepSolid, face_id: FaceId) -> Aabb3 {
             }
         }
         vcad_kernel_geom::SurfaceKind::Sphere => {
-            // For spheres, expand by the radius in all directions
+            // Compute AABB directly from center ± radius instead of expanding vertex box.
+            // Sphere faces have degenerate pole loops (2 vertices at poles + seam point),
+            // so the vertex AABB is too narrow — it doesn't account for the equatorial bulge.
             if let Some(sph) = surface
                 .as_any()
                 .downcast_ref::<vcad_kernel_geom::SphereSurface>()
             {
-                aabb.expand(sph.radius);
+                let c = sph.center;
+                let r = sph.radius;
+                aabb.min.x = aabb.min.x.min(c.x - r);
+                aabb.min.y = aabb.min.y.min(c.y - r);
+                aabb.min.z = aabb.min.z.min(c.z - r);
+                aabb.max.x = aabb.max.x.max(c.x + r);
+                aabb.max.y = aabb.max.y.max(c.y + r);
+                aabb.max.z = aabb.max.z.max(c.z + r);
             }
         }
         vcad_kernel_geom::SurfaceKind::Cone => {

@@ -159,6 +159,37 @@ fn apply_splits_to_solid(
                         continue;
                     }
 
+                    // Check if this is a spherical face with a circle curve.
+                    // Sphere-plane and sphere-sphere intersections produce circles.
+                    // Add the circle as an inner loop (hole) on the sphere face,
+                    // and create an inner disk face for classification.
+                    if split::is_spherical_face(solid, fid) {
+                        if let ssi::IntersectionCurve::Circle(_circle) = &curve {
+                            debug_bool!(
+                                "  Split {} spherical face {:?} by Circle at ({:.2},{:.2},{:.2}) r={:.2}",
+                                solid_name,
+                                fid,
+                                _circle.center.x, _circle.center.y, _circle.center.z, _circle.radius
+                            );
+                            let result =
+                                split::split_spherical_face_by_circle(solid, fid, _circle, segments);
+                            debug_bool!(
+                                "    -> Sphere split result: {} sub-faces {:?}",
+                                result.sub_faces.len(),
+                                result.sub_faces
+                            );
+                            if result.sub_faces.len() >= 2 {
+                                new_faces.extend(result.sub_faces);
+                            } else {
+                                new_faces.push(fid);
+                            }
+                            continue;
+                        }
+                        // Non-circle curves on sphere faces: keep unchanged
+                        new_faces.push(fid);
+                        continue;
+                    }
+
                     // Check if this is a circular disk face (cylinder cap) with a line curve
                     if split::is_circular_disk_face(solid, fid) {
                         if let ssi::IntersectionCurve::Line(_line) = &curve {
@@ -362,6 +393,9 @@ pub(crate) fn brep_boolean(
                 if split::is_cylindrical_face(&a, face_a) {
                     results_a.push((curve.clone(), circle.center, circle.center));
                 }
+                if split::is_spherical_face(&a, face_a) {
+                    results_a.push((curve.clone(), circle.center, circle.center));
+                }
                 if split::is_planar_face(&b, face_b) {
                     let outer_len = b.topology.loop_len(b.topology.faces[face_b].outer_loop);
                     if outer_len <= 1 {
@@ -373,6 +407,9 @@ pub(crate) fn brep_boolean(
                     }
                 }
                 if split::is_cylindrical_face(&b, face_b) {
+                    results_b.push((curve.clone(), circle.center, circle.center));
+                }
+                if split::is_spherical_face(&b, face_b) {
                     results_b.push((curve.clone(), circle.center, circle.center));
                 }
                 return Some((face_a, results_a, face_b, results_b));

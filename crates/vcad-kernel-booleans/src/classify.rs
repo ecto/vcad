@@ -437,6 +437,84 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
             }
             centroid
         }
+        SurfaceKind::Sphere => {
+            // For spherical faces, the centroid of boundary vertices (poles) is at
+            // the sphere center, not on the surface. We must compute a point that
+            // actually lies ON the sphere surface.
+            if let Some(sph) = surface
+                .as_any()
+                .downcast_ref::<vcad_kernel_geom::SphereSurface>()
+            {
+                use std::f64::consts::PI;
+
+                let ref_dir = sph.ref_dir.as_ref();
+                let y_dir = sph.axis.as_ref().cross(ref_dir);
+
+                // For a full sphere face (degenerate outer loop with <=2 vertices),
+                // pick a point on the equator away from poles.
+                if vertices.len() <= 2 {
+                    // Try multiple directions to find one not inside any inner loop hole
+                    let num_tries = 36;
+                    for try_idx in 0..num_tries {
+                        let u = 2.0 * PI * (try_idx as f64) / (num_tries as f64);
+                        let (sin_u, cos_u) = u.sin_cos();
+                        // Sample at equator (v=0)
+                        let candidate = sph.center
+                            + sph.radius * (cos_u * ref_dir + sin_u * y_dir);
+
+                        // Check if candidate is inside any inner loop hole
+                        let mut in_hole = false;
+                        for &inner_loop in &face.inner_loops {
+                            let inner_verts: Vec<Point3> = topo
+                                .loop_half_edges(inner_loop)
+                                .map(|he_id| {
+                                    topo.vertices[topo.half_edges[he_id].origin].point
+                                })
+                                .collect();
+                            if inner_verts.len() >= 3 {
+                                let n_iv = inner_verts.len() as f64;
+                                let hole_center = Point3::new(
+                                    inner_verts.iter().map(|v| v.x).sum::<f64>() / n_iv,
+                                    inner_verts.iter().map(|v| v.y).sum::<f64>() / n_iv,
+                                    inner_verts.iter().map(|v| v.z).sum::<f64>() / n_iv,
+                                );
+                                let hole_radius = inner_verts
+                                    .iter()
+                                    .map(|v| (*v - hole_center).norm())
+                                    .fold(0.0f64, f64::max);
+                                let to_pt = (candidate - sph.center).normalize();
+                                let to_hole = (hole_center - sph.center).normalize();
+                                let angle =
+                                    to_pt.dot(&to_hole).clamp(-1.0, 1.0).acos();
+                                let hole_angle =
+                                    (hole_radius / sph.radius).clamp(0.0, 1.0).asin();
+                                if angle < hole_angle + 1e-6 {
+                                    in_hole = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if !in_hole {
+                            return candidate;
+                        }
+                    }
+                    // Fallback: equator at u=0
+                    return sph.center + sph.radius * ref_dir;
+                }
+
+                // For partial sphere faces with enough vertices, project centroid
+                // onto the sphere surface
+                let dir = centroid - sph.center;
+                let dir_len = dir.norm();
+                if dir_len > 1e-12 {
+                    return sph.center + sph.radius * dir / dir_len;
+                }
+                // Fallback: equator point
+                sph.center + sph.radius * ref_dir
+            } else {
+                centroid
+            }
+        }
         _ => {
             // For other curved surfaces, the centroid of boundary vertices may not
             // lie on the surface. We use it as-is for classification since

@@ -1505,11 +1505,171 @@ pub fn split_planar_face(
 // Cylindrical Face Splitting
 // =============================================================================
 
+/// Split a spherical face by a circle intersection curve.
+///
+/// When a plane or another sphere intersects a sphere, the result is a circle
+/// on the sphere's surface. This function:
+/// 1. Adds the circle as an inner loop (hole) on the sphere face
+/// 2. Creates a planar disk face bounded by the circle (for classification)
+///
+/// The sphere face retains its degenerate pole loop as the outer boundary.
+/// The circle becomes an inner loop, similar to how cylinder cap splits work.
+pub fn split_spherical_face_by_circle(
+    brep: &mut BRepSolid,
+    face_id: FaceId,
+    circle: &vcad_kernel_geom::Circle3d,
+    segments: u32,
+) -> SplitResult {
+    let face = &brep.topology.faces[face_id];
+    let surface_index = face.surface_index;
+    let orientation = face.orientation;
+    let surface = &brep.geometry.surfaces[surface_index];
+
+    // Verify this is a sphere surface
+    let sph = match surface
+        .as_any()
+        .downcast_ref::<vcad_kernel_geom::SphereSurface>()
+    {
+        Some(s) => s.clone(),
+        None => {
+            return SplitResult {
+                sub_faces: vec![face_id],
+            };
+        }
+    };
+
+    // Verify the circle lies on the sphere: distance from center to circle center
+    // plus Pythagorean check should satisfy r_circle^2 + d^2 ≈ R^2
+    let d = (circle.center - sph.center).norm();
+    let expected_r = (sph.radius * sph.radius - d * d).max(0.0).sqrt();
+    if (expected_r - circle.radius).abs() > 1e-4 {
+        // Circle doesn't lie on this sphere — skip
+        return SplitResult {
+            sub_faces: vec![face_id],
+        };
+    }
+
+    let tolerance = 1e-6;
+
+    // Generate circle vertices
+    let circle_verts: Vec<Point3> = (0..segments)
+        .map(|i| {
+            let theta = 2.0 * std::f64::consts::PI * (i as f64) / (segments as f64);
+            let (sin_t, cos_t) = theta.sin_cos();
+            circle.center
+                + circle.radius
+                    * (cos_t * circle.x_dir.into_inner() + sin_t * circle.y_dir.into_inner())
+        })
+        .collect();
+
+    // Create inner disk face on the plane of the circle.
+    // This face will be classified as inside/outside the other solid.
+    // First, find or create the planar surface for the disk.
+    let circle_normal = circle.x_dir.into_inner().cross(&circle.y_dir.into_inner());
+    let disk_plane = vcad_kernel_geom::Plane::new(
+        circle.center,
+        circle.x_dir.into_inner(),
+        circle.y_dir.into_inner(),
+    );
+    let disk_surf_idx = brep.geometry.add_surface(Box::new(disk_plane));
+
+    let inner_verts: Vec<_> = circle_verts
+        .iter()
+        .map(|p| find_or_create_vertex(brep, p, tolerance))
+        .collect();
+    let inner_hes: Vec<_> = inner_verts
+        .iter()
+        .map(|&v| brep.topology.add_half_edge(v))
+        .collect();
+    let inner_loop = brep.topology.add_loop(&inner_hes);
+    let inner_face = brep
+        .topology
+        .add_face(inner_loop, disk_surf_idx, orientation);
+
+    // Add the circle as an inner loop (hole) on the sphere face.
+    // The hole winding must be opposite to the inner disk face's winding
+    // when viewed from outside the sphere.
+    // Determine winding: compute signed area of circle_verts projected along circle normal
+    let circle_signed_area = {
+        // Use the circle's own coordinate system
+        let pts_2d: Vec<(f64, f64)> = circle_verts
+            .iter()
+            .map(|p| {
+                let d = *p - circle.center;
+                (
+                    d.dot(&circle.x_dir.into_inner()),
+                    d.dot(&circle.y_dir.into_inner()),
+                )
+            })
+            .collect();
+        let mut a = 0.0;
+        for i in 0..pts_2d.len() {
+            let j = (i + 1) % pts_2d.len();
+            a += pts_2d[i].0 * pts_2d[j].1 - pts_2d[j].0 * pts_2d[i].1;
+        }
+        a / 2.0
+    };
+
+    // The sphere's outward direction at the circle center
+    let sphere_outward = (circle.center - sph.center).normalize();
+    // If circle_normal aligns with sphere_outward, the CCW vertices (as seen from outside)
+    // should be reversed for the hole
+    let normals_aligned = circle_normal.dot(&sphere_outward) > 0.0;
+
+    // Inner loop on sphere should be CW when viewed from outside the sphere
+    // If circle area is positive and normals are aligned, the vertices are CCW from outside → reverse
+    let need_reverse = (circle_signed_area > 0.0) == normals_aligned;
+
+    let hole_verts: Vec<Point3> = if need_reverse {
+        circle_verts.iter().rev().cloned().collect()
+    } else {
+        circle_verts.clone()
+    };
+
+    let hole_vert_ids: Vec<_> = hole_verts
+        .iter()
+        .map(|p| find_or_create_vertex(brep, p, tolerance))
+        .collect();
+    let hole_hes: Vec<_> = hole_vert_ids
+        .iter()
+        .map(|&v| brep.topology.add_half_edge(v))
+        .collect();
+    let hole_loop = brep.topology.add_loop(&hole_hes);
+    brep.topology.faces[face_id].inner_loops.push(hole_loop);
+
+    // Add twin edges between inner disk and hole on sphere
+    for i in 0..segments as usize {
+        let inner_he = inner_hes[i];
+        let outer_he = hole_hes[(segments as usize - 1 - i) % segments as usize];
+        brep.topology.add_edge(inner_he, outer_he);
+    }
+
+    // Add faces to shell
+    if let Some(shell_id) = brep.topology.faces[face_id].shell {
+        brep.topology.shells[shell_id].faces.push(inner_face);
+        brep.topology.faces[inner_face].shell = Some(shell_id);
+    }
+
+    // Add 3D curve
+    brep.geometry.add_curve_3d(Box::new(circle.clone()));
+
+    SplitResult {
+        sub_faces: vec![inner_face, face_id],
+    }
+}
+
 /// Check if a face's underlying surface is a cylinder.
 pub fn is_cylindrical_face(brep: &BRepSolid, face_id: FaceId) -> bool {
     let face = &brep.topology.faces[face_id];
     let surface = &brep.geometry.surfaces[face.surface_index];
     surface.surface_type() == vcad_kernel_geom::SurfaceKind::Cylinder
+}
+
+/// Check if a face's underlying surface is a sphere.
+pub fn is_spherical_face(brep: &BRepSolid, face_id: FaceId) -> bool {
+    let face = &brep.topology.faces[face_id];
+    let surface = &brep.geometry.surfaces[face.surface_index];
+    surface.surface_type() == vcad_kernel_geom::SurfaceKind::Sphere
 }
 
 /// Split a cylindrical face along a circle intersection curve.
