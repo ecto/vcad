@@ -3,6 +3,8 @@ import { Inter } from "next/font/google";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 import Script from "next/script";
+import { Analytics } from "@vercel/analytics/react";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import "./globals.css";
 import { Navigation } from "@/components/Navigation";
 import { ThemeProvider } from "@/components/ThemeProvider";
@@ -52,6 +54,8 @@ export default function RootLayout({
             </div>
           </SearchProvider>
         </ThemeProvider>
+        <Analytics />
+        <SpeedInsights />
         {/* PostHog Analytics */}
         <Script id="posthog" strategy="afterInteractive">
           {`
