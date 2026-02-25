@@ -378,11 +378,21 @@ pub(crate) fn brep_boolean(
                 // Sample a point on the circle (not center — center might not be in face for cylindrical)
                 let sample_pt = circle.center + circle.radius * circle.x_dir.into_inner();
                 if split::is_planar_face(&a, face_a) {
-                    // Only check point_in_face for degenerate cap faces (single-vertex outer loop)
-                    // to avoid creating nested inner loops. Regular polygon faces don't need this
-                    // guard — their trimming handles containment correctly.
+                    // Check point_in_face to avoid creating inner loops inside existing holes.
+                    // For degenerate cap faces (single-vertex outer loop), always check.
+                    // For regular polygon faces, only check if they already have inner loops
+                    // (existing holes from prior boolean ops). Without existing holes, the
+                    // circle intersection is always valid and split_planar_face handles
+                    // partial containment correctly.
                     let outer_len = a.topology.loop_len(a.topology.faces[face_a].outer_loop);
+                    let has_inner_loops = !a.topology.faces[face_a].inner_loops.is_empty();
                     if outer_len <= 1 {
+                        if trim::point_in_face(&a, face_a, &sample_pt) {
+                            results_a.push((curve.clone(), circle.center, circle.center));
+                        }
+                    } else if has_inner_loops {
+                        // Regular polygon face with existing holes: check that the circle
+                        // is inside the face material (not inside an existing hole)
                         if trim::point_in_face(&a, face_a, &sample_pt) {
                             results_a.push((curve.clone(), circle.center, circle.center));
                         }
@@ -398,7 +408,14 @@ pub(crate) fn brep_boolean(
                 }
                 if split::is_planar_face(&b, face_b) {
                     let outer_len = b.topology.loop_len(b.topology.faces[face_b].outer_loop);
+                    let has_inner_loops = !b.topology.faces[face_b].inner_loops.is_empty();
                     if outer_len <= 1 {
+                        if trim::point_in_face(&b, face_b, &sample_pt) {
+                            results_b.push((curve.clone(), circle.center, circle.center));
+                        }
+                    } else if has_inner_loops {
+                        // Regular polygon face with existing holes: check that the circle
+                        // is inside the face material (not inside an existing hole)
                         if trim::point_in_face(&b, face_b, &sample_pt) {
                             results_b.push((curve.clone(), circle.center, circle.center));
                         }

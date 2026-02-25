@@ -754,15 +754,42 @@ pub fn split_planar_face_by_circle(
     let hole_loop = brep.topology.add_loop(&hole_hes);
     brep.topology.faces[outer_face].inner_loops.push(hole_loop);
 
-    // Copy existing inner loops from the original face to preserve previous holes
+    // Copy existing inner loops from the original face, routing each to the correct
+    // sub-face: if a loop is inside the new circle it belongs to the inner face (disk),
+    // otherwise it belongs to the outer face (polygon with hole).
     let existing_inner_loops = brep.topology.faces[face_id].inner_loops.clone();
     for existing_loop in existing_inner_loops {
-        // Re-create the inner loop with new half-edges for the new face
+        // Re-create the inner loop with new half-edges for the target face
         let loop_verts_existing: Vec<Point3> = brep
             .topology
             .loop_half_edges(existing_loop)
             .map(|he| brep.topology.vertices[brep.topology.half_edges[he].origin].point)
             .collect();
+
+        // Determine which face this inner loop belongs to by checking if its
+        // representative vertex is inside the new circle
+        let target_face = if !loop_verts_existing.is_empty() {
+            // Use the centroid of the inner loop vertices (or just the first vertex
+            // for degenerate single-vertex loops) as the test point
+            let test_pt = if loop_verts_existing.len() == 1 {
+                loop_verts_existing[0]
+            } else {
+                let n = loop_verts_existing.len() as f64;
+                let cx = loop_verts_existing.iter().map(|v| v.x).sum::<f64>() / n;
+                let cy = loop_verts_existing.iter().map(|v| v.y).sum::<f64>() / n;
+                let cz = loop_verts_existing.iter().map(|v| v.z).sum::<f64>() / n;
+                Point3::new(cx, cy, cz)
+            };
+            let d = test_pt - circle.center;
+            let dist = d.norm();
+            if dist < circle.radius - tolerance {
+                inner_face // Loop is inside the circle → belongs to inner (disk) face
+            } else {
+                outer_face // Loop is outside the circle → belongs to outer face
+            }
+        } else {
+            outer_face // Empty loop, default to outer
+        };
 
         let new_verts: Vec<_> = loop_verts_existing
             .iter()
@@ -775,7 +802,7 @@ pub fn split_planar_face_by_circle(
             .collect();
 
         let new_loop = brep.topology.add_loop(&new_hes);
-        brep.topology.faces[outer_face].inner_loops.push(new_loop);
+        brep.topology.faces[target_face].inner_loops.push(new_loop);
     }
 
     // Add twin edges between inner face circle and outer face hole

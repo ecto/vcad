@@ -184,8 +184,8 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> bo
                         // Degenerate circular inner loop
                         let iv = inner_verts[0];
                         let inner_r = (iv - plane.origin).norm();
-                        if dist_from_center <= inner_r - 1e-6 {
-                            return false; // inside a hole
+                        if dist_from_center < inner_r - 1e-6 {
+                            return false; // strictly inside a hole
                         }
                     } else if inner_verts.len() >= 3 {
                         // Polygonal inner loop — project to 2D and check containment
@@ -305,10 +305,44 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> bo
                 // For a full cylinder, just check V is in range
                 let in_v_range = test_v >= v_min - 1e-6 && test_v <= v_max + 1e-6;
 
-                // Check inner loops (holes)
+                // Check inner loops (holes) on cylindrical faces
                 if in_v_range && !face.inner_loops.is_empty() {
-                    // TODO: Handle inner loops on cylindrical faces
-                    // For now, assume no holes
+                    let ref_dir = cyl.ref_dir.as_ref();
+                    let y_dir = cyl.axis.as_ref().cross(ref_dir);
+                    for &inner_loop_id in &face.inner_loops {
+                        let inner_verts: Vec<Point3> = topo
+                            .loop_half_edges(inner_loop_id)
+                            .map(|he_id| topo.vertices[topo.half_edges[he_id].origin].point)
+                            .collect();
+                        if inner_verts.is_empty() {
+                            continue;
+                        }
+                        // Project inner loop vertices to UV
+                        let inner_uv: Vec<Point2> = inner_verts
+                            .iter()
+                            .map(|v| {
+                                let d = v - cyl.center;
+                                let u = d.dot(&y_dir).atan2(d.dot(ref_dir));
+                                let u = if u < 0.0 {
+                                    u + 2.0 * std::f64::consts::PI
+                                } else {
+                                    u
+                                };
+                                let v_coord = d.dot(cyl.axis.as_ref());
+                                Point2::new(u, v_coord)
+                            })
+                            .collect();
+                        if inner_uv.len() >= 3 {
+                            // Unwrap U coordinates to avoid seam issues
+                            let (inner_unwrapped, seam_cut) =
+                                unwrap_cylindrical_loop(&inner_uv);
+                            let test_unwrapped =
+                                unwrap_cylindrical_uv(&test_uv, seam_cut);
+                            if point_in_polygon(&test_unwrapped, &inner_unwrapped) {
+                                return false; // inside a hole
+                            }
+                        }
+                    }
                 }
 
                 return in_v_range;

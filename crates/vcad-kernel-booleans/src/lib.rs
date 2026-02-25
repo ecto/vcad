@@ -1466,4 +1466,51 @@ mod tests {
         assert!(max[0] <= 20.1 && max[1] <= 20.1 && max[2] <= 20.1,
             "Max should be ~[20,20,20], got {:?}", max);
     }
+
+    /// Test counterbore / nested concentric holes.
+    #[test]
+    fn test_counterbore_nested_holes() {
+        use vcad_kernel_primitives::make_cylinder;
+
+        let plate = make_cube(40.0, 40.0, 10.0);
+
+        let mut large_hole = make_cylinder(8.0, 20.0, 32);
+        translate_brep(&mut large_hole, 20.0, 20.0, -5.0);
+
+        let step1 = boolean_op(&plate, &large_hole, BooleanOp::Difference, 32);
+        let mesh1 = step1.to_mesh(32);
+        validate_mesh_indices(&mesh1);
+
+        let vol1 = compute_mesh_volume(&mesh1);
+        let expected_vol1 = 40.0 * 40.0 * 10.0 - std::f64::consts::PI * 8.0 * 8.0 * 10.0;
+        assert!(
+            (vol1 - expected_vol1).abs() < expected_vol1 * 0.15,
+            "Step 1 volume {:.1} too far from expected {:.1}", vol1, expected_vol1
+        );
+
+        let mut small_hole = make_cylinder(4.0, 20.0, 32);
+        translate_brep(&mut small_hole, 20.0, 20.0, -5.0);
+
+        let step1_brep = match &step1 {
+            BooleanResult::BRep(brep) => brep.as_ref().clone(),
+            BooleanResult::Mesh(_) => panic!("Expected BRep result from step 1"),
+        };
+
+        let step2 = boolean_op(&step1_brep, &small_hole, BooleanOp::Difference, 32);
+        let mesh2 = step2.to_mesh(32);
+        validate_mesh_indices(&mesh2);
+
+        let vol2 = compute_mesh_volume(&mesh2);
+        assert!(
+            (vol2 - vol1).abs() < vol1 * 0.15,
+            "Step 2 volume {:.1} should be close to step 1 volume {:.1}", vol2, vol1
+        );
+        assert!(mesh2.num_triangles() > 0, "Result mesh should have triangles");
+
+        let (min, max) = compute_mesh_bbox(&mesh2);
+        assert!(min[0] >= -0.1 && min[1] >= -0.1 && min[2] >= -0.1,
+            "Min should be ~[0,0,0], got {:?}", min);
+        assert!(max[0] <= 40.1 && max[1] <= 40.1 && max[2] <= 10.1,
+            "Max should be ~[40,40,10], got {:?}", max);
+    }
 }

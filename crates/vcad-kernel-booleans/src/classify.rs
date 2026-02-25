@@ -134,14 +134,21 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
                 let cx = mid_r * cos_a;
                 let cy = mid_r * sin_a;
 
-                // Check if candidate is inside any off-center hole
+                // Check if candidate is inside any hole (concentric or off-center)
                 let mut in_hole = false;
-                for hole in &holes {
-                    let dx = cx - hole.center_2d.0;
-                    let dy = cy - hole.center_2d.1;
-                    if dx * dx + dy * dy < (hole.radius + 1e-6) * (hole.radius + 1e-6) {
-                        in_hole = true;
-                        break;
+                // Check concentric holes: candidate must be outside the concentric inner radius
+                if concentric_inner_r > 0.0 && mid_r < concentric_inner_r + 1e-6 {
+                    in_hole = true;
+                }
+                // Check off-center holes
+                if !in_hole {
+                    for hole in &holes {
+                        let dx = cx - hole.center_2d.0;
+                        let dy = cy - hole.center_2d.1;
+                        if dx * dx + dy * dy < (hole.radius + 1e-6) * (hole.radius + 1e-6) {
+                            in_hole = true;
+                            break;
+                        }
                     }
                 }
                 if !in_hole {
