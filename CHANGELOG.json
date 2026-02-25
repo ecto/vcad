@@ -2,6 +2,15 @@
   "$schema": "./changelog.schema.json",
   "entries": [
     {
+      "id": "2026-02-25-boolean-cap-fix",
+      "version": "0.8.0",
+      "date": "2026-02-25",
+      "category": "fix",
+      "title": "Fix missing faces on cylinder cap booleans",
+      "summary": "Four fixes to the boolean pipeline that restore missing annular faces on flanged hubs, bolt patterns, and similar cylinder cap operations.",
+      "features": ["booleans", "tessellation", "cylinder"]
+    },
+    {
       "id": "2026-02-19-pcb-ecad-support",
       "version": "0.8.0",
       "date": "2026-02-19",
