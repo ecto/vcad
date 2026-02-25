@@ -139,14 +139,16 @@ code {
 }
 
 /* Links */
-a {
-  color: var(--color-accent);
-  text-decoration: none;
-  transition: color 0.15s;
-}
+@layer base {
+  a {
+    color: var(--color-accent);
+    text-decoration: none;
+    transition: color 0.15s;
+  }
 
-a:hover {
-  color: var(--color-accent-hover);
+  a:hover {
+    color: var(--color-accent-hover);
+  }
 }
 
 /* Headings */
