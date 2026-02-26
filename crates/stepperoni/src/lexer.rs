@@ -135,20 +135,11 @@ impl<'a> Lexer<'a> {
             b'#' => self.read_entity_ref()?,
             b'\'' => self.read_string()?,
             b'.' => self.read_enum()?,
-            b'-' | b'+' => {
-                // Check if this is a number (followed by digit) or start of keyword
-                if self.pos + 1 < self.input.len() && self.input[self.pos + 1].is_ascii_digit() {
-                    self.read_number()?
-                } else {
-                    // It's a hyphen in a keyword like END-ISO-10303-21
-                    // Return as a separate token that will be handled by the parser
-                    // Actually, this shouldn't happen as keywords include hyphens
-                    return Err(StepError::lexer(
-                        self.line,
-                        self.col,
-                        format!("unexpected character: '{}'", ch as char),
-                    ));
-                }
+            b'-' | b'+'
+                if self.pos + 1 < self.input.len()
+                    && self.input[self.pos + 1].is_ascii_digit() =>
+            {
+                self.read_number()?
             }
             b'0'..=b'9' => self.read_number()?,
             b'A'..=b'Z' | b'a'..=b'z' | b'_' => self.read_keyword()?,
