@@ -16,6 +16,9 @@ import { useElectronicsStore } from "@/stores/electronics-store";
 const ElectronicsWorkspace = lazy(() =>
   import("./electronics").then((m) => ({ default: m.ElectronicsWorkspace })),
 );
+const Pcb3dPreview = lazy(() =>
+  import("./electronics/Pcb3dPreview").then((m) => ({ default: m.Pcb3dPreview })),
+);
 
 // Monokai Soda from tmTheme
 const BG_DARK = "#222222";
@@ -194,6 +197,8 @@ export function Viewport() {
   const viewMode = useDrawingStore((s) => s.viewMode);
   const electronicsActive = useElectronicsStore((s) => s.active);
 
+  const show3dPreview = useElectronicsStore((s) => s.show3dPreview);
+
   // Render Electronics Workspace
   if (electronicsActive) {
     return (
@@ -204,6 +209,11 @@ export function Viewport() {
         <Suspense fallback={null}>
           <ElectronicsWorkspace />
         </Suspense>
+        {show3dPreview && (
+          <Suspense fallback={null}>
+            <Pcb3dPreview />
+          </Suspense>
+        )}
       </div>
     );
   }

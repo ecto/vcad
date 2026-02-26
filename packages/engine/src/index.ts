@@ -49,6 +49,7 @@ export {
   generateNetlist,
   routeNet,
   fillZones,
+  parseKicadPcb,
 } from "./ecad.js";
 export type {
   DrcViolationResult,

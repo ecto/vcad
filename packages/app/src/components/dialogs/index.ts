@@ -6,3 +6,4 @@ export { PatternDialog } from "./PatternDialog";
 export { MirrorDialog } from "./MirrorDialog";
 export { TextDialog } from "./TextDialog";
 export { StitchDialog } from "./StitchDialog";
+export { NewPcbDialog } from "./NewPcbDialog";

@@ -61,7 +61,7 @@ export {
 
 // Stores
 export { useDocumentStore, getUndoActionName, getRedoActionName, getNodePcb, getPcbNodeIds, getNodeEmbroideryDesign } from "./stores/document-store.js";
-export type { VcadFile, DocumentState } from "./stores/document-store.js";
+export type { VcadFile, DocumentState, PcbCreateOptions } from "./stores/document-store.js";
 
 export { useUiStore } from "./stores/ui-store.js";
 export type { UiState, MaterialPreview, RenderMode, RaytraceQuality, RaytraceDebugMode, ToolbarTab } from "./stores/ui-store.js";

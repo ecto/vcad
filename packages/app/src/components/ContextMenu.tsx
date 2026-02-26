@@ -5,7 +5,8 @@ import { PencilSimple } from "@phosphor-icons/react/dist/ssr/PencilSimple";
 import { Unite } from "@phosphor-icons/react/dist/ssr/Unite";
 import { Subtract } from "@phosphor-icons/react/dist/ssr/Subtract";
 import { Intersect } from "@phosphor-icons/react/dist/ssr/Intersect";
-import { useDocumentStore, useUiStore } from "@vcad/core";
+import { Circuitry } from "@phosphor-icons/react/dist/ssr/Circuitry";
+import { useDocumentStore, useUiStore, useEngineStore } from "@vcad/core";
 import type { ReactNode } from "react";
 
 function MenuItem({
@@ -118,6 +119,45 @@ export function ContextMenu({ children }: { children: ReactNode }) {
             shortcut="Ctrl+Shift+I"
             disabled={!hasTwoSelected}
             onClick={() => handleBoolean("intersection")}
+          />
+
+          <RadixContextMenu.Separator className="my-1 h-px bg-border" />
+
+          <MenuItem
+            icon={Circuitry}
+            label="Add PCB Board"
+            onClick={() => {
+              window.dispatchEvent(new CustomEvent("vcad:open-pcb-dialog"));
+            }}
+          />
+          <MenuItem
+            icon={Circuitry}
+            label="Design PCB to fit"
+            disabled={selectedPartIds.size !== 1}
+            onClick={() => {
+              const partId = Array.from(selectedPartIds)[0]!;
+              const scene = useEngineStore.getState().scene;
+              const parts = useDocumentStore.getState().parts;
+              const partIdx = parts.findIndex((p) => p.id === partId);
+              const evalPart = partIdx >= 0 ? scene?.parts?.[partIdx] : null;
+              if (evalPart?.mesh?.positions && evalPart.mesh.positions.length >= 3) {
+                const pos = evalPart.mesh.positions;
+                let minX = Infinity, maxX = -Infinity;
+                let minY = Infinity, maxY = -Infinity;
+                for (let i = 0; i < pos.length; i += 3) {
+                  const x = pos[i]!, y = pos[i + 1]!;
+                  if (x < minX) minX = x;
+                  if (x > maxX) maxX = x;
+                  if (y < minY) minY = y;
+                  if (y > maxY) maxY = y;
+                }
+                const w = Math.ceil((maxX - minX) * 10) / 10;
+                const h = Math.ceil((maxY - minY) * 10) / 10;
+                window.dispatchEvent(new CustomEvent("vcad:fit-pcb-dialog", { detail: { width: w, height: h } }));
+              } else {
+                window.dispatchEvent(new CustomEvent("vcad:open-pcb-dialog"));
+              }
+            }}
           />
         </RadixContextMenu.Content>
       </RadixContextMenu.Portal>

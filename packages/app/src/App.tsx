@@ -63,6 +63,7 @@ import {
   generateDocumentName,
 } from "@/lib/storage";
 import { loadDocumentFromUrl } from "@/lib/url-document";
+import { isTauri } from "@/lib/tauri";
 import {
   mergeMeshes,
 } from "@vcad/engine";
@@ -134,6 +135,7 @@ export function App() {
   const [loonEditorOpen, setLoonEditorOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const desktopMode = isTauri();
   const engineReady = useEngineStore((s) => s.engineReady);
   const error = useEngineStore((s) => s.error);
   const sketchActive = useSketchStore((s) => s.active);
@@ -234,6 +236,26 @@ export function App() {
       } catch (err) {
         console.error("Failed to import STEP:", err);
         useNotificationStore.getState().addToast("Failed to import STEP file", "error");
+      }
+      return;
+    }
+
+    // Handle KiCad PCB files
+    if (ext === "kicad_pcb") {
+      try {
+        const text = await file.text();
+        const { parseKicadPcb } = await import("@vcad/engine");
+        const pcb = await parseKicadPcb(text);
+        if (pcb) {
+          useDocumentStore.getState().importPcb(pcb, file.name);
+          useElectronicsStore.getState().enter();
+          useNotificationStore.getState().addToast(`Imported ${file.name}`, "success");
+        } else {
+          useNotificationStore.getState().addToast("Failed to parse KiCad PCB file", "error");
+        }
+      } catch (err) {
+        console.error("Failed to import KiCad PCB:", err);
+        useNotificationStore.getState().addToast("Failed to import KiCad PCB file", "error");
       }
       return;
     }
@@ -661,11 +683,13 @@ export function App() {
           )}
         </AppShell>
 
-        {/* Offline indicator */}
-        <Suspense fallback={null}>
-          <OfflineIndicator />
-          <UpdateNotification />
-        </Suspense>
+        {/* Offline indicator (browser only — Tauri doesn't use PWA) */}
+        {!desktopMode && (
+          <Suspense fallback={null}>
+            <OfflineIndicator />
+            <UpdateNotification />
+          </Suspense>
+        )}
 
         {/* Modals */}
         <Suspense fallback={null}>
@@ -678,7 +702,7 @@ export function App() {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".vcad,.loon,.json,.step,.stp,.stl,.pes,.dst"
+          accept=".vcad,.loon,.json,.step,.stp,.stl,.pes,.dst,.kicad_pcb"
           className="hidden"
           onChange={handleFileChange}
         />

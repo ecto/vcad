@@ -10,6 +10,8 @@ import { useCallback, useRef, Suspense, lazy } from "react";
 import { useElectronicsStore } from "@/stores/electronics-store";
 import { useElectronicsSync } from "@/hooks/useElectronicsSync";
 import { useTheme } from "@/hooks/useTheme";
+import { useCoreElectronicsStore, useDocumentStore } from "@vcad/core";
+import { ElectronicsEmptyState } from "./ElectronicsEmptyState";
 
 const SchematicCanvas = lazy(() =>
   import("./SchematicCanvas").then((m) => ({ default: m.SchematicCanvas })),
@@ -31,6 +33,9 @@ const LengthTunePanel = lazy(() =>
 export function ElectronicsWorkspace() {
   useElectronicsSync();
   const { isDark } = useTheme();
+
+  const activeBoardNodeId = useCoreElectronicsStore((s) => s.activeBoardNodeId);
+  const hasSchematic = useDocumentStore((s) => !!s.document.schematic);
 
   const layout = useElectronicsStore((s) => s.layout);
   const splitRatio = useElectronicsStore((s) => s.splitRatio);
@@ -67,6 +72,17 @@ export function ElectronicsWorkspace() {
   const showPcb = layout === "split" || layout === "pcb-only";
 
   const bgColor = isDark ? "#0a0a0a" : "#ffffff";
+
+  if (activeBoardNodeId == null && !hasSchematic) {
+    return (
+      <div
+        className="flex flex-col h-full w-full select-none"
+        style={{ backgroundColor: bgColor }}
+      >
+        <ElectronicsEmptyState />
+      </div>
+    );
+  }
 
   return (
     <div

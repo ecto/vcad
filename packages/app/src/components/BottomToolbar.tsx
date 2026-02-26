@@ -69,7 +69,7 @@ import {
   type Command as CommandType,
 } from "@vcad/core";
 import type { PrimitiveKind, BooleanType } from "@vcad/core";
-import { isStitchEligible } from "@vcad/core";
+import { isStitchEligible, getPcbNodeIds } from "@vcad/core";
 import { downloadBlob } from "@/lib/download";
 import { useNotificationStore } from "@/stores/notification-store";
 import { generateCADServer, rateGeneration } from "@/lib/server-inference";
@@ -87,6 +87,7 @@ import {
   MirrorDialog,
   TextDialog,
   StitchDialog,
+  NewPcbDialog,
 } from "@/components/dialogs";
 import { useOnboardingStore, type GuidedFlowStep } from "@/stores/onboarding-store";
 import { useDrawingStore } from "@/stores/drawing-store";
@@ -822,6 +823,9 @@ export function BottomToolbar() {
   const [mirrorDialogOpen, setMirrorDialogOpen] = useState(false);
   const [textDialogOpen, setTextDialogOpen] = useState(false);
   const [stitchDialogOpen, setStitchDialogOpen] = useState(false);
+  const [pcbDialogOpen, setPcbDialogOpen] = useState(false);
+  const [pcbFitWidth, setPcbFitWidth] = useState<number | undefined>();
+  const [pcbFitHeight, setPcbFitHeight] = useState<number | undefined>();
 
   // Responsive toolbar - track how many tabs fit
   const [visibleTabCount, setVisibleTabCount] = useState(ALL_TABS.length);
@@ -850,6 +854,27 @@ export function BottomToolbar() {
     calculateVisibleTabs();
     window.addEventListener("resize", calculateVisibleTabs);
     return () => window.removeEventListener("resize", calculateVisibleTabs);
+  }, []);
+
+  // Listen for custom events to open PCB dialog
+  useEffect(() => {
+    const onOpenPcb = () => {
+      setPcbFitWidth(undefined);
+      setPcbFitHeight(undefined);
+      setPcbDialogOpen(true);
+    };
+    const onFitPcb = (e: Event) => {
+      const detail = (e as CustomEvent<{ width: number; height: number }>).detail;
+      setPcbFitWidth(detail.width);
+      setPcbFitHeight(detail.height);
+      setPcbDialogOpen(true);
+    };
+    window.addEventListener("vcad:open-pcb-dialog", onOpenPcb);
+    window.addEventListener("vcad:fit-pcb-dialog", onFitPcb);
+    return () => {
+      window.removeEventListener("vcad:open-pcb-dialog", onOpenPcb);
+      window.removeEventListener("vcad:fit-pcb-dialog", onFitPcb);
+    };
   }, []);
 
   // Split tabs into visible and overflow
@@ -1162,6 +1187,20 @@ export function BottomToolbar() {
               iconColor={color}
             >
               <TextT size={20} />
+            </ToolbarButton>
+            <ToolbarButton
+              tooltip="Add PCB Board"
+              disabled={sketchActive}
+              onClick={() => {
+                setPcbFitWidth(undefined);
+                setPcbFitHeight(undefined);
+                setPcbDialogOpen(true);
+              }}
+              expanded={toolbarExpanded}
+              label="PCB"
+              iconColor={color}
+            >
+              <Circuitry size={20} />
             </ToolbarButton>
           </>
         );
@@ -1521,7 +1560,15 @@ export function BottomToolbar() {
               tooltip="Open Electronics Workspace"
               disabled={sketchActive}
               onClick={() => {
-                useElectronicsStore.getState().enter();
+                const doc = useDocumentStore.getState().document;
+                const boardIds = getPcbNodeIds(doc);
+                if (boardIds.length > 0) {
+                  useElectronicsStore.getState().enter();
+                } else {
+                  setPcbFitWidth(undefined);
+                  setPcbFitHeight(undefined);
+                  setPcbDialogOpen(true);
+                }
               }}
               expanded={toolbarExpanded}
               label="ECAD"
@@ -1557,6 +1604,12 @@ export function BottomToolbar() {
       />
       <AddJointDialog open={jointDialogOpen} onOpenChange={setJointDialogOpen} />
       <TextDialog open={textDialogOpen} onOpenChange={setTextDialogOpen} />
+      <NewPcbDialog
+        open={pcbDialogOpen}
+        onOpenChange={setPcbDialogOpen}
+        initialWidth={pcbFitWidth}
+        initialHeight={pcbFitHeight}
+      />
       {selectedPartId && (
         <>
           <FilletChamferDialog

@@ -168,6 +168,18 @@ export async function routeNet(
   }
 }
 
+/** Parse a KiCad .kicad_pcb file into a Pcb struct. */
+export async function parseKicadPcb(content: string): Promise<Pcb | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) return null;
+  try {
+    return wasm.parseKicadPcb(content) as Pcb;
+  } catch (e) {
+    console.warn("[ECAD] KiCad PCB parse failed:", e);
+    return null;
+  }
+}
+
 /** Fill copper pour zones on the PCB. */
 export async function fillZones(pcb: Pcb): Promise<FilledZoneResult[]> {
   const wasm = await loadEcadWasm();

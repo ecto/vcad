@@ -375,7 +375,17 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
 
   nextRef: (prefix) => {
     const s = get();
-    const count = (s.schRefCounters[prefix] ?? 0) + 1;
+    const schematic = useDocumentStore.getState().document.schematic;
+    let maxNum = s.schRefCounters[prefix] ?? 0;
+    if (schematic) {
+      for (const comp of schematic.components) {
+        if (comp.ref.startsWith(prefix)) {
+          const num = parseInt(comp.ref.slice(prefix.length), 10);
+          if (!isNaN(num) && num > maxNum) maxNum = num;
+        }
+      }
+    }
+    const count = maxNum + 1;
     set({ schRefCounters: { ...s.schRefCounters, [prefix]: count } });
     return `${prefix}${count}`;
   },
