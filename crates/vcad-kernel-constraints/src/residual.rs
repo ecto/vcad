@@ -3,6 +3,11 @@
 //! Each constraint contributes one or more residual values that should be
 //! zero when the constraint is satisfied. The solver minimizes the sum of
 //! squared residuals.
+//!
+//! Note: the solver now uses symbolic residuals via [`crate::symbolic::CompiledSystem`].
+//! These functions are retained as a reference implementation for tests.
+
+#![allow(dead_code)]
 
 use crate::constraint::{Constraint, EntityRef};
 use crate::entity::{EntityId, SketchEntity};

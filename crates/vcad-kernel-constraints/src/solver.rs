@@ -5,7 +5,7 @@
 
 use crate::constraint::Constraint;
 use crate::entity::{EntityId, SketchEntity};
-use crate::jacobian::{compute_all_residuals, compute_jacobian, residual_norm_squared};
+use crate::symbolic::CompiledSystem;
 use slotmap::SlotMap;
 use tang_la::{DMat, DVec};
 
@@ -103,17 +103,22 @@ pub fn solve(
     }
 
     if params.is_empty() {
+        let system = CompiledSystem::build(constraints, entities, 0);
         return SolveResult {
             parameters: vec![],
-            residual_norm: residual_norm_squared(constraints, params, entities).sqrt(),
+            residual_norm: system.residual_norm_squared(params).sqrt(),
             iterations: 0,
             converged: false,
             status: SolveStatus::NoParameters,
         };
     }
 
+    // Build symbolic system once — differentiates and compiles to closures.
+    // Reused across all iterations (only depends on constraint topology).
+    let system = CompiledSystem::build(constraints, entities, params.len());
+
     let mut lambda = config.initial_lambda;
-    let mut current_norm_sq = residual_norm_squared(constraints, params, entities);
+    let mut current_norm_sq = system.residual_norm_squared(params);
 
     for iteration in 0..config.max_iterations {
         // Check convergence
@@ -127,9 +132,9 @@ pub fn solve(
             };
         }
 
-        // Compute Jacobian and residuals
-        let j = compute_jacobian(constraints, params, entities);
-        let r = DVec::from_vec(compute_all_residuals(constraints, params, entities));
+        // Evaluate Jacobian and residuals via compiled closures
+        let j = system.eval_jacobian(params);
+        let r = DVec::from_vec(system.eval_residuals(params));
 
         // Compute J'J and J'r
         let jt = j.transpose();
@@ -137,7 +142,7 @@ pub fn solve(
         let jtr = &jt * &r;
 
         // Try to take a step with current lambda
-        let step_result = try_step(params, &jtj, &jtr, lambda, constraints, entities);
+        let step_result = try_step(params, &jtj, &jtr, lambda, &system);
 
         match step_result {
             StepResult::Accepted {
@@ -203,8 +208,7 @@ fn try_step(
     jtj: &DMat<f64>,
     jtr: &DVec<f64>,
     lambda: f64,
-    constraints: &[Constraint],
-    entities: &SlotMap<EntityId, SketchEntity>,
+    system: &CompiledSystem,
 ) -> StepResult {
     let n = jtj.nrows();
 
@@ -229,8 +233,8 @@ fn try_step(
         .collect();
 
     // Evaluate new residual norm
-    let new_norm_sq = residual_norm_squared(constraints, &new_params, entities);
-    let old_norm_sq = residual_norm_squared(constraints, params, entities);
+    let new_norm_sq = system.residual_norm_squared(&new_params);
+    let old_norm_sq = system.residual_norm_squared(params);
 
     // Accept if the new norm is smaller
     if new_norm_sq < old_norm_sq {

@@ -3,6 +3,11 @@
 //! The Jacobian matrix J has dimensions (num_residuals × num_parameters),
 //! where J[i,j] = ∂r_i/∂p_j is the partial derivative of the i-th residual
 //! with respect to the j-th parameter.
+//!
+//! Note: the solver now uses symbolic Jacobians via [`crate::symbolic::CompiledSystem`].
+//! These functions are retained as a reference implementation for tests.
+
+#![allow(dead_code)]
 
 use crate::constraint::Constraint;
 use crate::entity::{EntityId, SketchEntity};
