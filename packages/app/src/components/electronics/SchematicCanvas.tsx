@@ -45,6 +45,46 @@ function snapToGrid(v: number, grid: number): number {
   return Math.round(v / grid) * grid;
 }
 
+/** Snap to nearest component pin if within threshold, otherwise grid-snap. */
+function snapToGridOrPin(
+  pos: { x: number; y: number },
+  components: SchematicComponent[],
+  grid: number,
+  threshold: number = 12,
+): { x: number; y: number; isPin: boolean } {
+  let bestDist = threshold;
+  let bestPos = { x: snapToGrid(pos.x, grid), y: snapToGrid(pos.y, grid), isPin: false };
+  for (const comp of components) {
+    for (const pin of comp.pins) {
+      const px = comp.position.x + pin.position.x;
+      const py = comp.position.y + pin.position.y;
+      const d = Math.hypot(pos.x - px, pos.y - py);
+      if (d < bestDist) {
+        bestDist = d;
+        bestPos = { x: px, y: py, isPin: true };
+      }
+    }
+  }
+  return bestPos;
+}
+
+/** Check if point p lies on segment (a,b) — excluding endpoints — within tolerance. */
+function pointOnSegment(
+  p: { x: number; y: number },
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  tol: number = 2,
+): boolean {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq < 0.01) return false;
+  const t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq;
+  if (t < 0.01 || t > 0.99) return false;
+  const proj = { x: a.x + t * dx, y: a.y + t * dy };
+  return Math.hypot(p.x - proj.x, p.y - proj.y) < tol;
+}
+
 /** Determine which net a component pin belongs to (from netlist). */
 function getNetForPin(
   ref: string,
@@ -93,7 +133,7 @@ function getNetForWire(
       const py = comp.position.y + pin.position.y;
       const d1 = Math.hypot(wire.start.x - px, wire.start.y - py);
       const d2 = Math.hypot(wire.end.x - px, wire.end.y - py);
-      if (d1 < 1 || d2 < 1) {
+      if (d1 < 2 || d2 < 2) {
         const net = getNetForPin(comp.ref, pin.number, netlist);
         if (net) return net;
       }
@@ -202,12 +242,16 @@ export function SchematicCanvas() {
   const addSchematicLabel = useDocumentStore((s) => s.addSchematicLabel);
   const removeSchematicLabel = useDocumentStore((s) => s.removeSchematicLabel);
   const moveSchematicComponent = useDocumentStore((s) => s.moveSchematicComponent);
+  const moveSchematicComponentWithWires = useDocumentStore((s) => s.moveSchematicComponentWithWires);
+  const addSchematicJunction = useDocumentStore((s) => s.addSchematicJunction);
   const initSchematic = useDocumentStore((s) => s.initSchematic);
   const initPcb = useDocumentStore((s) => s.initPcb);
 
   const [dragging, setDragging] = useState(false);
   const [ghostPos, setGhostPos] = useState<{ x: number; y: number } | null>(null);
   const [moveDrag, setMoveDrag] = useState<{ compIdx: number; offset: { x: number; y: number } } | null>(null);
+  const [moveConnections, setMoveConnections] = useState<{ wireIdx: number; endpoint: "start" | "end"; pinOffset: { x: number; y: number } }[]>([]);
+  const [snapTarget, setSnapTarget] = useState<{ x: number; y: number; isPin: boolean } | null>(null);
   const dragStart = useRef<{ x: number; y: number } | null>(null);
 
   // Active net from selection
@@ -231,6 +275,39 @@ export function SchematicCanvas() {
 
   const isNetActive = (net: string | null) =>
     net !== null && (net === activeNet || net === hoveredNet || activeComponentNets.has(net));
+
+  // Connection dots: where wire endpoints meet component pins
+  const connectionDots = useMemo(() => {
+    if (!schematic) return [];
+    const dots = new Map<string, { x: number; y: number }>();
+    for (const wire of schematic.wires) {
+      for (const comp of schematic.components) {
+        for (const pin of comp.pins) {
+          const px = comp.position.x + pin.position.x;
+          const py = comp.position.y + pin.position.y;
+          for (const ep of [wire.start, wire.end]) {
+            if (Math.hypot(ep.x - px, ep.y - py) < 2) {
+              dots.set(`${px},${py}`, { x: px, y: py });
+            }
+          }
+        }
+      }
+    }
+    return [...dots.values()];
+  }, [schematic]);
+
+  // Wire overrides during component move drag (rubber-banding)
+  const wireOverrides = useMemo(() => {
+    const map = new Map<number, { start?: { x: number; y: number }; end?: { x: number; y: number } }>();
+    if (!moveDrag || !ghostPos || moveConnections.length === 0) return map;
+    for (const conn of moveConnections) {
+      const newPos = { x: ghostPos.x + conn.pinOffset.x, y: ghostPos.y + conn.pinOffset.y };
+      const existing = map.get(conn.wireIdx) ?? {};
+      existing[conn.endpoint] = newPos;
+      map.set(conn.wireIdx, existing);
+    }
+    return map;
+  }, [moveDrag, ghostPos, moveConnections]);
 
   // Scroll zoom / pan
   const onWheel = useCallback(
@@ -281,6 +358,23 @@ export function SchematicCanvas() {
           const h = sym ? Math.max(30, c.pins.length * 14 + 10) : Math.max(COMPONENT_HEIGHT, c.pins.length * 8);
           if (pos.x >= c.position.x - 10 && pos.x <= c.position.x + w + 10 &&
               pos.y >= c.position.y - 10 && pos.y <= c.position.y + h + 10) {
+            // Find connected wire endpoints for rubber-banding
+            const wires = schematic?.wires ?? [];
+            const conns: { wireIdx: number; endpoint: "start" | "end"; pinOffset: { x: number; y: number } }[] = [];
+            for (const pin of c.pins) {
+              const px = c.position.x + pin.position.x;
+              const py = c.position.y + pin.position.y;
+              for (let wi = 0; wi < wires.length; wi++) {
+                const wire = wires[wi]!;
+                if (Math.hypot(wire.start.x - px, wire.start.y - py) < 2) {
+                  conns.push({ wireIdx: wi, endpoint: "start", pinOffset: pin.position });
+                }
+                if (Math.hypot(wire.end.x - px, wire.end.y - py) < 2) {
+                  conns.push({ wireIdx: wi, endpoint: "end", pinOffset: pin.position });
+                }
+              }
+            }
+            setMoveConnections(conns);
             setMoveDrag({
               compIdx: ci,
               offset: { x: pos.x - c.position.x, y: pos.y - c.position.y },
@@ -307,7 +401,17 @@ export function SchematicCanvas() {
 
       if (!svgRef.current) return;
       const pos = screenToSvg(e, svgRef.current, zoom, pan);
-      const snapped = { x: snapToGrid(pos.x, SCH_GRID), y: snapToGrid(pos.y, SCH_GRID) };
+      const components = schematic?.components ?? [];
+      const snapped = schTool === "wire"
+        ? snapToGridOrPin(pos, components, SCH_GRID)
+        : { x: snapToGrid(pos.x, SCH_GRID), y: snapToGrid(pos.y, SCH_GRID) };
+
+      // Update snap target indicator for wire mode
+      if (schTool === "wire") {
+        setSnapTarget(snapped as { x: number; y: number; isPin: boolean });
+      } else {
+        setSnapTarget(null);
+      }
 
       // Move drag
       if (moveDrag) {
@@ -329,7 +433,7 @@ export function SchematicCanvas() {
         updateSchWirePreview(snapped);
       }
     },
-    [dragging, zoom, adjustPan, pan, schTool, wireStart, updateSchWirePreview, moveDrag],
+    [dragging, zoom, adjustPan, pan, schTool, wireStart, updateSchWirePreview, moveDrag, schematic],
   );
 
   const onPointerUp = useCallback(
@@ -341,22 +445,35 @@ export function SchematicCanvas() {
         return;
       }
 
-      // Finish move drag
+      // Finish move drag with rubber-banding
       if (moveDrag && ghostPos) {
-        moveSchematicComponent(moveDrag.compIdx, { x: ghostPos.x, y: ghostPos.y, z: 0 });
+        if (moveConnections.length > 0) {
+          const wireUpdates = moveConnections.map((conn) => ({
+            wireIdx: conn.wireIdx,
+            endpoint: conn.endpoint,
+            pos: { x: ghostPos.x + conn.pinOffset.x, y: ghostPos.y + conn.pinOffset.y },
+          }));
+          moveSchematicComponentWithWires(moveDrag.compIdx, { x: ghostPos.x, y: ghostPos.y, z: 0 }, wireUpdates);
+        } else {
+          moveSchematicComponent(moveDrag.compIdx, { x: ghostPos.x, y: ghostPos.y, z: 0 });
+        }
         setMoveDrag(null);
         setGhostPos(null);
+        setMoveConnections([]);
         return;
       }
     },
-    [dragging, moveDrag, ghostPos, moveSchematicComponent],
+    [dragging, moveDrag, ghostPos, moveConnections, moveSchematicComponent, moveSchematicComponentWithWires],
   );
 
   const onSvgClick = useCallback(
     (e: React.MouseEvent) => {
       if (!svgRef.current || dragging || moveDrag) return;
       const pos = screenToSvg(e, svgRef.current, zoom, pan);
-      const snapped = { x: snapToGrid(pos.x, SCH_GRID), y: snapToGrid(pos.y, SCH_GRID) };
+      const components = schematic?.components ?? [];
+      const snapped = schTool === "wire"
+        ? snapToGridOrPin(pos, components, SCH_GRID)
+        : { x: snapToGrid(pos.x, SCH_GRID), y: snapToGrid(pos.y, SCH_GRID) };
 
       // Place tool
       if (schTool === "place" && placingSymbol) {
@@ -386,8 +503,41 @@ export function SchematicCanvas() {
         if (!wireStart) {
           startSchWire(snapped);
         } else {
-          // Commit wire segment
-          addSchematicWire({ start: wireStart, end: snapped });
+          // Commit orthogonal wire segments (H then V) matching preview
+          const mid = { x: snapped.x, y: wireStart.y };
+          const newSegments: { start: { x: number; y: number }; end: { x: number; y: number } }[] = [];
+          if (mid.x !== wireStart.x || mid.y !== wireStart.y) {
+            addSchematicWire({ start: wireStart, end: mid });
+            newSegments.push({ start: wireStart, end: mid });
+          }
+          if (snapped.x !== mid.x || snapped.y !== mid.y) {
+            addSchematicWire({ start: mid, end: snapped });
+            newSegments.push({ start: mid, end: snapped });
+          }
+          // Auto-junction detection
+          const wires = schematic?.wires ?? [];
+          const junctions = schematic?.junctions ?? [];
+          const hasJunction = (p: { x: number; y: number }) =>
+            junctions.some((j) => Math.hypot(j.position.x - p.x, j.position.y - p.y) < 1);
+          const tryJunction = (p: { x: number; y: number }, segs: { start: { x: number; y: number }; end: { x: number; y: number } }[]) => {
+            if (hasJunction(p)) return;
+            for (const s of segs) {
+              if (pointOnSegment(p, s.start, s.end)) {
+                addSchematicJunction({ position: p });
+                return;
+              }
+            }
+          };
+          // Check new wire endpoints against existing wires
+          for (const seg of newSegments) {
+            tryJunction(seg.start, wires);
+            tryJunction(seg.end, wires);
+          }
+          // Check existing wire endpoints against new segments
+          for (const w of wires) {
+            tryJunction(w.start, newSegments);
+            tryJunction(w.end, newSegments);
+          }
           // Chain: new start = old end
           startSchWire(snapped);
         }
@@ -412,9 +562,45 @@ export function SchematicCanvas() {
     },
     [
       zoom, pan, schTool, placingSymbol, placingRotation, wireStart,
-      addSchematicComponent, addSchematicWire, addSchematicLabel,
-      startSchWire, nextRef, select, dragging, moveDrag,
+      addSchematicComponent, addSchematicWire, addSchematicLabel, addSchematicJunction,
+      startSchWire, nextRef, select, dragging, moveDrag, schematic,
     ],
+  );
+
+  const onDblClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (!svgRef.current || schTool !== "wire" || !wireStart) return;
+      const pos = screenToSvg(e, svgRef.current, zoom, pan);
+      const components = schematic?.components ?? [];
+      const snapped = snapToGridOrPin(pos, components, SCH_GRID);
+      // Commit segments
+      const mid = { x: snapped.x, y: wireStart.y };
+      const newSegments: { start: { x: number; y: number }; end: { x: number; y: number } }[] = [];
+      if (mid.x !== wireStart.x || mid.y !== wireStart.y) {
+        addSchematicWire({ start: wireStart, end: mid });
+        newSegments.push({ start: wireStart, end: mid });
+      }
+      if (snapped.x !== mid.x || snapped.y !== mid.y) {
+        addSchematicWire({ start: mid, end: snapped });
+        newSegments.push({ start: mid, end: snapped });
+      }
+      // Auto-junction detection
+      const wires = schematic?.wires ?? [];
+      const junctions = schematic?.junctions ?? [];
+      const hasJunction = (p: { x: number; y: number }) =>
+        junctions.some((j) => Math.hypot(j.position.x - p.x, j.position.y - p.y) < 1);
+      const tryJunction = (p: { x: number; y: number }, segs: { start: { x: number; y: number }; end: { x: number; y: number } }[]) => {
+        if (hasJunction(p)) return;
+        for (const s of segs) {
+          if (pointOnSegment(p, s.start, s.end)) { addSchematicJunction({ position: p }); return; }
+        }
+      };
+      for (const seg of newSegments) { tryJunction(seg.start, wires); tryJunction(seg.end, wires); }
+      for (const w of wires) { tryJunction(w.start, newSegments); tryJunction(w.end, newSegments); }
+      // End chain (don't start a new one)
+      useElectronicsStore.getState().cancelSchWire();
+    },
+    [zoom, pan, schTool, wireStart, addSchematicWire, addSchematicJunction, schematic],
   );
 
   const onComponentClick = useCallback(
@@ -507,6 +693,13 @@ export function SchematicCanvas() {
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onClick={onSvgClick}
+      onDoubleClick={onDblClick}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        if (wireStart) {
+          useElectronicsStore.getState().cancelSchWire();
+        }
+      }}
     >
       <g transform={`translate(${pan.x * zoom + 200}, ${pan.y * zoom + 200}) scale(${zoom})`}>
         {/* Grid */}
@@ -514,6 +707,13 @@ export function SchematicCanvas() {
           <pattern id="sch-grid" width={SCH_GRID} height={SCH_GRID} patternUnits="userSpaceOnUse">
             <circle cx={SCH_GRID / 2} cy={SCH_GRID / 2} r={0.5} fill={isDark ? "#222" : "#ddd"} />
           </pattern>
+          <style>{`
+            @keyframes pin-pulse {
+              0%, 100% { r: 7; opacity: 0.3; }
+              50% { r: 10; opacity: 0.15; }
+            }
+            .sch-pin-glow { animation: pin-pulse 1.2s ease-in-out infinite; }
+          `}</style>
         </defs>
         <rect x={-1000} y={-1000} width={2000} height={2000} fill="url(#sch-grid)" />
 
@@ -521,15 +721,19 @@ export function SchematicCanvas() {
         {schematic.wires.map((wire, i) => {
           const net = getNetForWire(wire, netlist, schematic.components);
           const highlight = isNetActive(net);
+          const overrides = wireOverrides.get(i);
+          const s = overrides?.start ?? wire.start;
+          const en = overrides?.end ?? wire.end;
           return (
             <line
               key={`w-${i}`}
-              x1={wire.start.x}
-              y1={wire.start.y}
-              x2={wire.end.x}
-              y2={wire.end.y}
+              x1={s.x}
+              y1={s.y}
+              x2={en.x}
+              y2={en.y}
               stroke={highlight ? colors.accent : colors.wire}
-              strokeWidth={highlight ? 2.5 : 2}
+              strokeWidth={highlight ? 2 : 1.5}
+              strokeLinecap="round"
               style={highlight ? { filter: `drop-shadow(0 0 4px ${colors.accentGlow})` } : undefined}
               className="cursor-pointer"
               onClick={(e) => onWireClick(e, i, net)}
@@ -548,6 +752,11 @@ export function SchematicCanvas() {
             r={3}
             fill={colors.junction}
           />
+        ))}
+
+        {/* Wire-pin connection dots */}
+        {connectionDots.map((d, i) => (
+          <circle key={`cd-${i}`} cx={d.x} cy={d.y} r={3} fill={colors.wire} />
         ))}
 
         {/* Labels */}
@@ -764,30 +973,65 @@ export function SchematicCanvas() {
         )}
 
         {/* Wire preview */}
-        {schTool === "wire" && wireStart && wirePreview && (
+        {schTool === "wire" && wireStart && wirePreview && (() => {
+          const dx = Math.abs(wirePreview.x - wireStart.x);
+          const dy = Math.abs(wirePreview.y - wireStart.y);
+          const cornerX = wirePreview.x;
+          const cornerY = wireStart.y;
+          const r = Math.min(4, dx, dy);
+          // Build path: H segment → rounded Q corner → V segment
+          let d: string;
+          if (dx < 0.5 || dy < 0.5) {
+            // Straight line (pure H or V)
+            d = `M${wireStart.x},${wireStart.y} L${wirePreview.x},${wirePreview.y}`;
+          } else {
+            const sx = wirePreview.x > wireStart.x ? 1 : -1;
+            const sy = wirePreview.y > wireStart.y ? 1 : -1;
+            d = `M${wireStart.x},${wireStart.y} L${cornerX - r * sx},${cornerY} Q${cornerX},${cornerY} ${cornerX},${cornerY + r * sy} L${wirePreview.x},${wirePreview.y}`;
+          }
+          return (
+            <g pointerEvents="none">
+              <path
+                d={d}
+                fill="none"
+                stroke={colors.accent}
+                strokeWidth={2}
+                strokeLinecap="round"
+                opacity={0.6}
+                strokeDasharray="4 2"
+              />
+              <circle cx={wireStart.x} cy={wireStart.y} r={3} fill={colors.accent} opacity={0.8} />
+              <circle cx={wirePreview.x} cy={wirePreview.y} r={3} fill={colors.accent} opacity={0.8} />
+            </g>
+          );
+        })()}
+
+        {/* Pin dots during wire mode — show all available targets */}
+        {schTool === "wire" && schematic.components.map((comp, ci) =>
+          comp.pins.map((pin, pi) => (
+            <circle
+              key={`pd-${ci}-${pi}`}
+              cx={comp.position.x + pin.position.x}
+              cy={comp.position.y + pin.position.y}
+              r={2}
+              fill={colors.accent}
+              opacity={0.3}
+              pointerEvents="none"
+            />
+          ))
+        )}
+
+        {/* Snap target indicator */}
+        {schTool === "wire" && snapTarget && (
           <g pointerEvents="none">
-            {/* Orthogonal routing: horizontal then vertical */}
-            <line
-              x1={wireStart.x}
-              y1={wireStart.y}
-              x2={wirePreview.x}
-              y2={wireStart.y}
-              stroke={colors.accent}
-              strokeWidth={2}
-              opacity={0.6}
-              strokeDasharray="4 2"
-            />
-            <line
-              x1={wirePreview.x}
-              y1={wireStart.y}
-              x2={wirePreview.x}
-              y2={wirePreview.y}
-              stroke={colors.accent}
-              strokeWidth={2}
-              opacity={0.6}
-              strokeDasharray="4 2"
-            />
-            <circle cx={wireStart.x} cy={wireStart.y} r={3} fill={colors.accent} opacity={0.8} />
+            {snapTarget.isPin ? (
+              <>
+                <circle cx={snapTarget.x} cy={snapTarget.y} r={8} fill="none" stroke={colors.accent} strokeWidth={1.5} className="sch-pin-glow" />
+                <circle cx={snapTarget.x} cy={snapTarget.y} r={4} fill={colors.accent} opacity={0.6} />
+              </>
+            ) : (
+              <circle cx={snapTarget.x} cy={snapTarget.y} r={2.5} fill="none" stroke={colors.accent} strokeWidth={1} opacity={0.4} />
+            )}
           </g>
         )}
 

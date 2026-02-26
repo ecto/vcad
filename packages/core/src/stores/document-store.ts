@@ -93,6 +93,16 @@ export interface VcadFile {
   loonSource?: string | null;
 }
 
+export interface PcbCreateOptions {
+  width?: number;        // mm, default 50
+  height?: number;       // mm, default 30
+  layers?: 2 | 4 | 6;   // default 2
+  thickness?: number;    // mm, default 1.6
+  traceWidth?: number;   // mm, default 0.15
+  clearance?: number;    // mm, default 0.15
+  name?: string;         // default "PCB Board"
+}
+
 export interface DocumentState {
   document: Document;
   parts: PartInfo[];
@@ -303,8 +313,11 @@ export interface DocumentState {
 
   // Electronics (ECAD) mutations
   initSchematic: (title?: string) => void;
-  initPcb: () => NodeId;
+  initPcb: (options?: PcbCreateOptions) => NodeId;
+  importPcb: (pcb: Pcb, name?: string) => NodeId;
+  syncSchematicToPcb: (boardNodeId: NodeId) => void;
   moveSchematicComponent: (idx: number, position: Vec3) => void;
+  moveSchematicComponentWithWires: (idx: number, position: Vec3, wireUpdates: { wireIdx: number; endpoint: "start" | "end"; pos: { x: number; y: number } }[]) => void;
   moveFootprint: (nodeId: NodeId, idx: number, position: Vec3) => void;
   rotateFootprint: (nodeId: NodeId, idx: number, angleDeg: number) => void;
   flipFootprint: (nodeId: NodeId, idx: number) => void;
@@ -375,6 +388,86 @@ export function getPcbNodeIds(doc: Document): NodeId[] {
     if (node.op.type === "PcbBoard") ids.push(node.id);
   }
   return ids;
+}
+
+/** Shared logic for adding a Pcb board to the document (used by initPcb and importPcb). */
+function addPcbToDocument(
+  get: () => DocumentState,
+  set: (s: Partial<DocumentState>) => void,
+  pcbBoard: Pcb,
+  boardName: string,
+): NodeId {
+  const state = get();
+  const undoState = pushUndo(state, "Create PCB");
+  const newDoc = structuredClone(state.document);
+  const nid = state.nextNodeId;
+
+  const boardNodeId = nid;
+  const scaleId = nid + 1;
+  const rotateId = nid + 2;
+  const translateId = nid + 3;
+
+  newDoc.nodes[String(boardNodeId)] = {
+    id: boardNodeId,
+    name: null,
+    op: { type: "PcbBoard", board: pcbBoard } as CsgOp,
+  };
+  newDoc.nodes[String(scaleId)] = {
+    id: scaleId,
+    name: null,
+    op: { type: "Scale", child: boardNodeId, factor: { x: 1, y: 1, z: 1 } } as CsgOp,
+  };
+  newDoc.nodes[String(rotateId)] = {
+    id: rotateId,
+    name: null,
+    op: { type: "Rotate", child: scaleId, angles: { x: 0, y: 0, z: 0 } } as CsgOp,
+  };
+  newDoc.nodes[String(translateId)] = {
+    id: translateId,
+    name: boardName,
+    op: { type: "Translate", child: rotateId, offset: { x: 0, y: 0, z: 0 } } as CsgOp,
+  };
+  newDoc.roots.push({ root: translateId, material: "__pcb_fr4__" });
+  if (!newDoc.materials["__pcb_fr4__"]) {
+    newDoc.materials["__pcb_fr4__"] = {
+      name: "__pcb_fr4__",
+      color: [0.05, 0.35, 0.15],
+      metallic: 0,
+      roughness: 0.8,
+    };
+  }
+  if (!newDoc.materials["__pcb_copper__"]) {
+    newDoc.materials["__pcb_copper__"] = {
+      name: "__pcb_copper__",
+      color: [0.84, 0.68, 0.37],
+      metallic: 0.95,
+      roughness: 0.15,
+    };
+  }
+
+  const newParts = [...state.parts, {
+    id: `pcb-board-${boardNodeId}`,
+    name: boardName,
+    kind: "pcb-board" as const,
+    boardNodeId,
+    scaleNodeId: scaleId,
+    rotateNodeId: rotateId,
+    translateNodeId: translateId,
+  } satisfies PcbBoardPartInfo];
+
+  const dirtyNodeIds = new Set(state.dirtyNodeIds);
+  dirtyNodeIds.add(boardNodeId);
+
+  set({
+    document: newDoc,
+    parts: newParts,
+    partIndex: buildPartIndex(newParts),
+    nextNodeId: nid + 4,
+    isDirty: true,
+    dirtyNodeIds,
+    ...undoState,
+  });
+  return boardNodeId;
 }
 
 function snapshot(state: DocumentState, actionName: string): Snapshot {
@@ -3232,34 +3325,57 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   // Principle 6: Smart defaults
-  initPcb: () => {
-    const state = get();
-    const undoState = pushUndo(state, "Create PCB");
-    const newDoc = structuredClone(state.document);
-    const nid = state.nextNodeId;
+  initPcb: (options) => {
+    const w = options?.width ?? 50;
+    const h = options?.height ?? 30;
+    const layerCount = options?.layers ?? 2;
+    const thickness = options?.thickness ?? 1.6;
+    const traceWidth = options?.traceWidth ?? 0.15;
+    const clearance = options?.clearance ?? 0.15;
+    const boardName = options?.name ?? "PCB Board";
+
+    // Build stackup dynamically based on layer count
+    const stackupLayers: Pcb["stackup"]["layers"] = [];
+    stackupLayers.push({ layer: "FCu" as const, copperThickness: 0.035 });
+    if (layerCount >= 4) {
+      const innerCount = layerCount - 2;
+      const innerLayerNames = ["In1Cu", "In2Cu", "In3Cu", "In4Cu"] as const;
+      const dielectricPerLayer = thickness / (layerCount - 1);
+      for (let i = 0; i < innerCount; i++) {
+        stackupLayers.push({
+          layer: innerLayerNames[i]!,
+          copperThickness: 0.035,
+          dielectricThickness: dielectricPerLayer,
+          dielectricEr: 4.5,
+          material: "FR4",
+        });
+      }
+    }
+    stackupLayers.push({
+      layer: "BCu" as const,
+      copperThickness: 0.035,
+      dielectricThickness: layerCount >= 4 ? thickness / (layerCount - 1) : thickness,
+      dielectricEr: 4.5,
+      material: "FR4",
+    });
 
     const pcbBoard: Pcb = {
       outline: {
         vertices: [
           { x: 0, y: 0 },
-          { x: 50, y: 0 },
-          { x: 50, y: 30 },
-          { x: 0, y: 30 },
+          { x: w, y: 0 },
+          { x: w, y: h },
+          { x: 0, y: h },
         ],
-        thickness: 1.6,
+        thickness,
       },
-      stackup: {
-        layers: [
-          { layer: "FCu" as const, copperThickness: 0.035 },
-          { layer: "BCu" as const, copperThickness: 0.035, dielectricThickness: 1.6, dielectricEr: 4.5, material: "FR4" },
-        ],
-      },
+      stackup: { layers: stackupLayers },
       nets: [],
       rules: {
         defaultRules: {
           name: "Default",
-          traceWidth: 0.15,
-          clearance: 0.15,
+          traceWidth,
+          clearance,
           viaDiameter: 0.6,
           viaDrill: 0.3,
         },
@@ -3274,72 +3390,52 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       zones: [],
     };
 
-    const boardNodeId = nid;
-    const scaleId = nid + 1;
-    const rotateId = nid + 2;
-    const translateId = nid + 3;
+    return addPcbToDocument(get, set, pcbBoard, boardName);
+  },
 
-    newDoc.nodes[String(boardNodeId)] = {
-      id: boardNodeId,
-      name: null,
-      op: { type: "PcbBoard", board: pcbBoard } as CsgOp,
-    };
-    newDoc.nodes[String(scaleId)] = {
-      id: scaleId,
-      name: null,
-      op: { type: "Scale", child: boardNodeId, factor: { x: 1, y: 1, z: 1 } } as CsgOp,
-    };
-    newDoc.nodes[String(rotateId)] = {
-      id: rotateId,
-      name: null,
-      op: { type: "Rotate", child: scaleId, angles: { x: 0, y: 0, z: 0 } } as CsgOp,
-    };
-    newDoc.nodes[String(translateId)] = {
-      id: translateId,
-      name: "PCB Board",
-      op: { type: "Translate", child: rotateId, offset: { x: 0, y: 0, z: 0 } } as CsgOp,
-    };
-    newDoc.roots.push({ root: translateId, material: "__pcb_fr4__" });
-    if (!newDoc.materials["__pcb_fr4__"]) {
-      newDoc.materials["__pcb_fr4__"] = {
-        name: "__pcb_fr4__",
-        color: [0.05, 0.35, 0.15],
-        metallic: 0,
-        roughness: 0.8,
-      };
+  importPcb: (pcb, name) => {
+    return addPcbToDocument(get, set, pcb, name ?? "Imported PCB");
+  },
+
+  syncSchematicToPcb: (boardNodeId) => {
+    const state = get();
+    const undoState = pushUndo(state, "Sync Schematic to PCB");
+    const newDoc = structuredClone(state.document);
+    const pcb = getNodePcb(newDoc, boardNodeId);
+    if (!pcb || !newDoc.schematic) return;
+
+    const existingRefs = new Set(pcb.footprints.map((fp) => fp.ref));
+    let added = 0;
+    for (const comp of newDoc.schematic.components) {
+      if (existingRefs.has(comp.ref)) continue;
+      // Create footprint from template if available
+      let pads: Footprint["pads"] = [];
+      let graphics: Footprint["graphics"] = [];
+      if (comp.properties?.footprintTemplate) {
+        try {
+          const template = JSON.parse(comp.properties.footprintTemplate);
+          pads = template.pads ?? [];
+          graphics = template.graphics ?? [];
+        } catch { /* skip template parse failure */ }
+      }
+      const fpCount = pcb.footprints.length;
+      const staggerX = 10 + ((fpCount + added) % 5) * 10;
+      const staggerY = 10 + Math.floor((fpCount + added) / 5) * 10;
+      pcb.footprints.push({
+        ref: comp.ref,
+        value: comp.value,
+        footprintName: comp.footprintId ?? comp.ref,
+        position: { x: staggerX, y: staggerY },
+        pads,
+        graphics,
+      });
+      added++;
     }
-    if (!newDoc.materials["__pcb_copper__"]) {
-      newDoc.materials["__pcb_copper__"] = {
-        name: "__pcb_copper__",
-        color: [0.84, 0.68, 0.37],
-        metallic: 0.95,
-        roughness: 0.15,
-      };
-    }
 
-    const newParts = [...state.parts, {
-      id: `pcb-board-${boardNodeId}`,
-      name: "PCB Board",
-      kind: "pcb-board" as const,
-      boardNodeId,
-      scaleNodeId: scaleId,
-      rotateNodeId: rotateId,
-      translateNodeId: translateId,
-    } satisfies PcbBoardPartInfo];
-
+    if (added === 0) return;
     const dirtyNodeIds = new Set(state.dirtyNodeIds);
     dirtyNodeIds.add(boardNodeId);
-
-    set({
-      document: newDoc,
-      parts: newParts,
-      partIndex: buildPartIndex(newParts),
-      nextNodeId: nid + 4,
-      isDirty: true,
-      dirtyNodeIds,
-      ...undoState,
-    });
-    return boardNodeId;
+    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
   },
 
   moveSchematicComponent: (idx, position) => {
@@ -3348,6 +3444,24 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const newDoc = structuredClone(state.document);
     if (newDoc.schematic && newDoc.schematic.components[idx]) {
       newDoc.schematic.components[idx]!.position = { x: position.x, y: position.y };
+    }
+    set({ document: newDoc, isDirty: true, ...undoState });
+  },
+
+  moveSchematicComponentWithWires: (idx, position, wireUpdates) => {
+    const state = get();
+    const undoState = pushUndo(state, "Move Component");
+    const newDoc = structuredClone(state.document);
+    if (newDoc.schematic) {
+      if (newDoc.schematic.components[idx]) {
+        newDoc.schematic.components[idx]!.position = { x: position.x, y: position.y };
+      }
+      for (const wu of wireUpdates) {
+        const wire = newDoc.schematic.wires[wu.wireIdx];
+        if (wire) {
+          wire[wu.endpoint] = { x: wu.pos.x, y: wu.pos.y };
+        }
+      }
     }
     set({ document: newDoc, isDirty: true, ...undoState });
   },
