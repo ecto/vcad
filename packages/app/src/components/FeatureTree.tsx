@@ -47,7 +47,9 @@ import { Scissors } from "@phosphor-icons/react/dist/ssr/Scissors";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ContextMenu } from "@/components/ContextMenu";
-import { useDocumentStore, useUiStore, isBooleanPart, isPrimitivePart, isSweepPart, isExtrudePart, isRevolvePart, isFilletPart, isChamferPart, isShellPart, isEmbroideryPatternPart } from "@vcad/core";
+import { useDocumentStore, useUiStore, isBooleanPart, isPrimitivePart, isSweepPart, isExtrudePart, isRevolvePart, isFilletPart, isChamferPart, isShellPart, isEmbroideryPatternPart, isStitchPart, isPcbBoardPart } from "@vcad/core";
+import { useElectronicsStore } from "@/stores/electronics-store";
+import { useEmbroideryStore } from "@/stores/embroidery-store";
 import type { PrimitiveKind, PartInfo, BooleanPartInfo, PrimitivePartInfo, SweepPartInfo, ExtrudePartInfo, RevolvePartInfo, FilletPartInfo, ChamferPartInfo, ShellPartInfo } from "@vcad/core";
 import type { PartInstance, Joint, JointKind } from "@vcad/ir";
 import { cn } from "@/lib/utils";
@@ -277,7 +279,17 @@ function TreeNode({
             select(part.id);
           }
         }}
-        onDoubleClick={() => depth === 0 && setRenamingId(part.id)}
+        onDoubleClick={() => {
+          if (depth !== 0) return;
+          if (isPcbBoardPart(part)) {
+            useElectronicsStore.getState().enter();
+          } else if (isStitchPart(part) || isEmbroideryPatternPart(part)) {
+            select(part.id);
+            useEmbroideryStore.getState().openPanel();
+          } else {
+            setRenamingId(part.id);
+          }
+        }}
         onMouseEnter={() => setHoveredPartId(part.id)}
         onMouseLeave={() => setHoveredPartId(null)}
         {...(depth === 0 ? dragListeners : {})}
@@ -322,6 +334,29 @@ function TreeNode({
         )}
         {depth === 0 && (
           <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100">
+            {/* Quick-edit workspace button */}
+            {isPcbBoardPart(part) && (
+              <Tooltip content="Edit Circuit">
+                <Button variant="ghost" size="icon-sm" className="h-5 w-5"
+                  onClick={(e) => { e.stopPropagation(); useElectronicsStore.getState().enter(); }}
+                >
+                  <PencilSimple size={12} />
+                </Button>
+              </Tooltip>
+            )}
+            {(isStitchPart(part) || isEmbroideryPatternPart(part)) && (
+              <Tooltip content="Edit Embroidery">
+                <Button variant="ghost" size="icon-sm" className="h-5 w-5"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    select(part.id);
+                    useEmbroideryStore.getState().openPanel();
+                  }}
+                >
+                  <PencilSimple size={12} />
+                </Button>
+              </Tooltip>
+            )}
             {/* Visibility toggle */}
             <Tooltip content={isVisible ? "Hide" : "Show"}>
               <Button

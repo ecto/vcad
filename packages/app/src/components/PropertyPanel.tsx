@@ -3,7 +3,9 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { X } from "@phosphor-icons/react/dist/ssr/X";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ScrubInput } from "@/components/ui/scrub-input";
-import { useDocumentStore, useUiStore, isPrimitivePart, isBooleanPart, isSweepPart, isEmbroideryPatternPart, isStitchPart, isExtrudePart, isRevolvePart, isFilletPart, isChamferPart, isShellPart, isLinearPatternPart, isCircularPatternPart, isLoftPart, isTextPart, isMirrorPart } from "@vcad/core";
+import { useDocumentStore, useUiStore, isPrimitivePart, isBooleanPart, isSweepPart, isEmbroideryPatternPart, isStitchPart, isPcbBoardPart, isExtrudePart, isRevolvePart, isFilletPart, isChamferPart, isShellPart, isLinearPatternPart, isCircularPatternPart, isLoftPart, isTextPart, isMirrorPart } from "@vcad/core";
+import { useElectronicsStore } from "@/stores/electronics-store";
+import { useEmbroideryStore } from "@/stores/embroidery-store";
 import type { PartInfo, PrimitivePartInfo, BooleanPartInfo, BooleanType, SweepPartInfo, ExtrudePartInfo, RevolvePartInfo, FilletPartInfo, ChamferPartInfo, ShellPartInfo, LinearPatternPartInfo, CircularPatternPartInfo, LoftPartInfo, TextPartInfo, MirrorPartInfo } from "@vcad/core";
 import type { Vec3, PartInstance, Joint, JointKind } from "@vcad/ir";
 import { identityTransform } from "@vcad/ir";
@@ -1506,9 +1508,34 @@ export function PropertyPanel() {
           </>
         )}
 
+        {/* PCB Board workspace entry */}
+        {isPcbBoardPart(part) && (
+          <>
+            <button
+              type="button"
+              onClick={() => useElectronicsStore.getState().enter()}
+              className="w-full mt-2 px-3 py-2 text-xs font-medium rounded
+                bg-accent/10 text-accent border border-accent/30
+                hover:bg-accent/20 transition-colors"
+            >
+              Edit Circuit
+            </button>
+            <Divider />
+          </>
+        )}
+
         {/* Embroidery properties */}
         {(isEmbroideryPatternPart(part) || isStitchPart(part)) && (
           <Suspense fallback={null}>
+            <button
+              type="button"
+              onClick={() => useEmbroideryStore.getState().openPanel()}
+              className="w-full mt-2 px-3 py-2 text-xs font-medium rounded
+                bg-accent/10 text-accent border border-accent/30
+                hover:bg-accent/20 transition-colors"
+            >
+              Open Embroidery Panel
+            </button>
             <EmbroideryProperties part={part} />
             <Divider />
           </Suspense>

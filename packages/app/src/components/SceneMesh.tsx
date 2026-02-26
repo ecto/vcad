@@ -3,7 +3,9 @@ import * as THREE from "three";
 import { toCreasedNormals } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { Edges, Html } from "@react-three/drei";
 import type { TriangleMesh, PartInfo, FaceInfo } from "@vcad/core";
-import { useUiStore, useDocumentStore, useSketchStore } from "@vcad/core";
+import { useUiStore, useDocumentStore, useSketchStore, isPcbBoardPart, isStitchPart, isEmbroideryPatternPart } from "@vcad/core";
+import { useElectronicsStore } from "@/stores/electronics-store";
+import { useEmbroideryStore } from "@/stores/embroidery-store";
 import type { ThreeEvent } from "@react-three/fiber";
 import type { Transform3D } from "@vcad/ir";
 import { getMaterialByKey } from "@/data/materials";
@@ -669,7 +671,7 @@ export const SceneMesh = memo(function SceneMesh({
       )}
       {selected && !faceSelectionMode && (
         <Html position={labelPosition} center style={{ pointerEvents: "auto" }}>
-          <div className="px-2 py-1 text-xs font-medium text-text whitespace-nowrap bg-surface/90 backdrop-blur-sm border border-border rounded-md shadow-sm">
+          <div className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-text whitespace-nowrap bg-surface/90 backdrop-blur-sm border border-border rounded-md shadow-sm">
             {isRenaming ? (
               <input
                 ref={nameInputRef}
@@ -696,6 +698,27 @@ export const SceneMesh = memo(function SceneMesh({
                 className="text-text"
               >
                 {partInfo.name}
+              </button>
+            )}
+            {!isRenaming && isPcbBoardPart(partInfo) && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); useElectronicsStore.getState().enter(); }}
+                className="px-1.5 py-0.5 text-[10px] rounded bg-accent/15 text-accent hover:bg-accent/25 transition-colors"
+              >
+                Edit
+              </button>
+            )}
+            {!isRenaming && (isStitchPart(partInfo) || isEmbroideryPatternPart(partInfo)) && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  useEmbroideryStore.getState().openPanel();
+                }}
+                className="px-1.5 py-0.5 text-[10px] rounded bg-accent/15 text-accent hover:bg-accent/25 transition-colors"
+              >
+                Edit
               </button>
             )}
           </div>
