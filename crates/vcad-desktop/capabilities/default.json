@@ -1,0 +1,15 @@
+{
+  "identifier": "default",
+  "description": "Default capabilities for vcad desktop",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:window:allow-close",
+    "core:window:allow-set-title",
+    "core:window:allow-maximize",
+    "core:window:allow-minimize",
+    "core:window:allow-set-size",
+    "core:window:allow-toggle-maximize"
+  ]
+}
