@@ -88,37 +88,33 @@ impl Camera {
         let up = [0.0, 1.0, 0.0];
 
         // Forward (z-axis pointing from target to eye)
-        let fwd = [
-            eye[0] - target[0],
-            eye[1] - target[1],
-            eye[2] - target[2],
-        ];
-        let fwd_len = (fwd[0]*fwd[0] + fwd[1]*fwd[1] + fwd[2]*fwd[2]).sqrt();
-        let z = [fwd[0]/fwd_len, fwd[1]/fwd_len, fwd[2]/fwd_len];
+        let fwd = [eye[0] - target[0], eye[1] - target[1], eye[2] - target[2]];
+        let fwd_len = (fwd[0] * fwd[0] + fwd[1] * fwd[1] + fwd[2] * fwd[2]).sqrt();
+        let z = [fwd[0] / fwd_len, fwd[1] / fwd_len, fwd[2] / fwd_len];
 
         // Right (x-axis)
-        let rx = up[1]*z[2] - up[2]*z[1];
-        let ry = up[2]*z[0] - up[0]*z[2];
-        let rz = up[0]*z[1] - up[1]*z[0];
-        let r_len = (rx*rx + ry*ry + rz*rz).sqrt();
-        let x = [rx/r_len, ry/r_len, rz/r_len];
+        let rx = up[1] * z[2] - up[2] * z[1];
+        let ry = up[2] * z[0] - up[0] * z[2];
+        let rz = up[0] * z[1] - up[1] * z[0];
+        let r_len = (rx * rx + ry * ry + rz * rz).sqrt();
+        let x = [rx / r_len, ry / r_len, rz / r_len];
 
         // True up (y-axis)
         let y = [
-            z[1]*x[2] - z[2]*x[1],
-            z[2]*x[0] - z[0]*x[2],
-            z[0]*x[1] - z[1]*x[0],
+            z[1] * x[2] - z[2] * x[1],
+            z[2] * x[0] - z[0] * x[2],
+            z[0] * x[1] - z[1] * x[0],
         ];
 
-        let tx = -(x[0]*eye[0] + x[1]*eye[1] + x[2]*eye[2]);
-        let ty = -(y[0]*eye[0] + y[1]*eye[1] + y[2]*eye[2]);
-        let tz = -(z[0]*eye[0] + z[1]*eye[1] + z[2]*eye[2]);
+        let tx = -(x[0] * eye[0] + x[1] * eye[1] + x[2] * eye[2]);
+        let ty = -(y[0] * eye[0] + y[1] * eye[1] + y[2] * eye[2]);
+        let tz = -(z[0] * eye[0] + z[1] * eye[1] + z[2] * eye[2]);
 
         [
             [x[0], y[0], z[0], 0.0],
             [x[1], y[1], z[1], 0.0],
             [x[2], y[2], z[2], 0.0],
-            [tx,   ty,   tz,   1.0],
+            [tx, ty, tz, 1.0],
         ]
     }
 

@@ -131,15 +131,7 @@ impl ToolpathSegment {
     }
 
     /// Create an XY arc.
-    pub fn arc_xy(
-        to_x: f64,
-        to_y: f64,
-        to_z: f64,
-        i: f64,
-        j: f64,
-        dir: ArcDir,
-        feed: f64,
-    ) -> Self {
+    pub fn arc_xy(to_x: f64, to_y: f64, to_z: f64, i: f64, j: f64, dir: ArcDir, feed: f64) -> Self {
         Self::Arc {
             to: [to_x, to_y, to_z],
             center: [i, j, 0.0],

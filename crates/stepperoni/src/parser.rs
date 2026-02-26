@@ -231,9 +231,7 @@ impl Parser {
                             other => {
                                 return Err(StepError::parser(
                                     Some(id),
-                                    format!(
-                                        "expected type name in complex entity, got {other:?}"
-                                    ),
+                                    format!("expected type name in complex entity, got {other:?}"),
                                 ));
                             }
                         };

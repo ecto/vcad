@@ -3,7 +3,9 @@
 use std::net::IpAddr;
 use std::time::Duration;
 
-use rumqttc::{AsyncClient, Event, EventLoop, MqttOptions, Packet, QoS, TlsConfiguration, Transport};
+use rumqttc::{
+    AsyncClient, Event, EventLoop, MqttOptions, Packet, QoS, TlsConfiguration, Transport,
+};
 use tokio::sync::{broadcast, Mutex};
 
 use crate::commands::PrinterCommand;
@@ -149,7 +151,8 @@ impl BambuMqttClient {
             Ok(Ok(Event::Incoming(Packet::Publish(publish)))) => {
                 // Parse status from message
                 if publish.topic.contains("/report") {
-                    if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&publish.payload)
+                    if let Ok(payload) =
+                        serde_json::from_slice::<serde_json::Value>(&publish.payload)
                     {
                         let status = PrinterStatus::from_mqtt_payload(&payload);
                         // Broadcast to subscribers

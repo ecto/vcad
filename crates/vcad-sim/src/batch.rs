@@ -28,8 +28,7 @@ impl BatchSimPipeline {
         let initial_state = model.default_state();
         let nv = model.nv;
 
-        let gpu_sim = GpuBatchSimulator::new(model, n_envs)
-            .map_err(SimError::Gpu)?;
+        let gpu_sim = GpuBatchSimulator::new(model, n_envs).map_err(SimError::Gpu)?;
 
         Ok(Self {
             gpu_sim,
@@ -53,10 +52,7 @@ impl BatchSimPipeline {
         }
 
         // Set controls for each env
-        let ctrls: Vec<Vec<f64>> = actions
-            .chunks(self.nv)
-            .map(|c| c.to_vec())
-            .collect();
+        let ctrls: Vec<Vec<f64>> = actions.chunks(self.nv).map(|c| c.to_vec()).collect();
         self.gpu_sim.set_controls(&ctrls);
 
         // Step GPU simulation
@@ -193,7 +189,9 @@ impl BatchSimPipeline {
             .find(|i| i.id == *ground_id)
             .ok_or(SimError::NoAssembly)?;
         {
-            let part = part_defs.get(&ground_inst.part_def_id).ok_or(SimError::NoAssembly)?;
+            let part = part_defs
+                .get(&ground_inst.part_def_id)
+                .ok_or(SimError::NoAssembly)?;
             let (_, inertia) = compute_inertia(part.root);
             let xform = instance_transform(ground_inst);
             builder = builder.add_fixed_body(&ground_inst.id, -1, xform, inertia);
@@ -229,12 +227,8 @@ impl BatchSimPipeline {
 
                 let phyz_joint = vcad_kernel_physics::joints::vcad_joint_to_phyz(joint)?;
 
-                builder = builder.add_body(
-                    &child_inst.id,
-                    parent_body_idx as i32,
-                    phyz_joint,
-                    inertia,
-                );
+                builder =
+                    builder.add_body(&child_inst.id, parent_body_idx as i32, phyz_joint, inertia);
 
                 instance_to_body.insert(child_inst.id.clone(), body_count);
                 body_count += 1;

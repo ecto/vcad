@@ -97,8 +97,8 @@ impl RobotEnv {
     /// Returns the initial observation.
     pub fn reset(&mut self) -> Observation {
         // Recreate physics world from initial document
-        self.world = PhysicsWorld::from_document(&self.initial_doc)
-            .expect("Failed to reset physics world");
+        self.world =
+            PhysicsWorld::from_document(&self.initial_doc).expect("Failed to reset physics world");
         self.joint_ids = self.world.joint_ids();
         self.current_step = 0;
 
@@ -153,7 +153,8 @@ impl RobotEnv {
         let mut end_effector_poses = Vec::with_capacity(self.end_effector_ids.len());
         for ee_id in &self.end_effector_ids {
             if let Some((pos, quat)) = self.world.get_instance_pose(ee_id) {
-                end_effector_poses.push([pos[0], pos[1], pos[2], quat[0], quat[1], quat[2], quat[3]]);
+                end_effector_poses
+                    .push([pos[0], pos[1], pos[2], quat[0], quat[1], quat[2], quat[3]]);
             } else {
                 end_effector_poses.push([0.0; 7]);
             }
@@ -283,24 +284,33 @@ mod tests {
 
         // Part definitions
         let mut part_defs = HashMap::new();
-        part_defs.insert("base".to_string(), PartDef {
-            id: "base".to_string(),
-            name: Some("Base".to_string()),
-            root: 1,
-            default_material: None,
-        });
-        part_defs.insert("link1".to_string(), PartDef {
-            id: "link1".to_string(),
-            name: Some("Link 1".to_string()),
-            root: 2,
-            default_material: None,
-        });
-        part_defs.insert("link2".to_string(), PartDef {
-            id: "link2".to_string(),
-            name: Some("Link 2".to_string()),
-            root: 3,
-            default_material: None,
-        });
+        part_defs.insert(
+            "base".to_string(),
+            PartDef {
+                id: "base".to_string(),
+                name: Some("Base".to_string()),
+                root: 1,
+                default_material: None,
+            },
+        );
+        part_defs.insert(
+            "link1".to_string(),
+            PartDef {
+                id: "link1".to_string(),
+                name: Some("Link 1".to_string()),
+                root: 2,
+                default_material: None,
+            },
+        );
+        part_defs.insert(
+            "link2".to_string(),
+            PartDef {
+                id: "link2".to_string(),
+                name: Some("Link 2".to_string()),
+                root: 3,
+                default_material: None,
+            },
+        );
         doc.part_defs = Some(part_defs);
 
         // Instances

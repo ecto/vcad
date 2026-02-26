@@ -121,11 +121,7 @@ fn slice_at_z(triangles: &[Triangle], z: f64, index: usize) -> SliceLayer {
     // Chain segments into contours
     let contours = chain_segments(segments);
 
-    SliceLayer {
-        z,
-        index,
-        contours,
-    }
+    SliceLayer { z, index, contours }
 }
 
 /// Intersect a triangle with a horizontal plane at Z.

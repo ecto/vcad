@@ -23,11 +23,7 @@ impl Ray {
     /// The direction will be normalized.
     pub fn new(origin: Point3, direction: Vec3) -> Self {
         let dir = Dir3::new_normalize(direction);
-        let inv = Vec3::new(
-            1.0 / dir.x,
-            1.0 / dir.y,
-            1.0 / dir.z,
-        );
+        let inv = Vec3::new(1.0 / dir.x, 1.0 / dir.y, 1.0 / dir.z);
         let sign = [
             if inv.x < 0.0 { 1 } else { 0 },
             if inv.y < 0.0 { 1 } else { 0 },
@@ -102,7 +98,13 @@ pub struct RayHit {
 impl RayHit {
     /// Create a new ray hit.
     pub fn new(t: f64, point: Point3, normal: Dir3, uv: Point2, face_id: FaceId) -> Self {
-        Self { t, point, normal, uv, face_id }
+        Self {
+            t,
+            point,
+            normal,
+            uv,
+            face_id,
+        }
     }
 }
 
@@ -112,10 +114,7 @@ mod tests {
 
     #[test]
     fn test_ray_at() {
-        let ray = Ray::new(
-            Point3::new(0.0, 0.0, 0.0),
-            Vec3::new(1.0, 0.0, 0.0),
-        );
+        let ray = Ray::new(Point3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0));
         let p = ray.at(5.0);
         assert!((p.x - 5.0).abs() < 1e-12);
         assert!(p.y.abs() < 1e-12);
@@ -124,14 +123,8 @@ mod tests {
 
     #[test]
     fn test_ray_aabb_hit() {
-        let ray = Ray::new(
-            Point3::new(-5.0, 0.5, 0.5),
-            Vec3::new(1.0, 0.0, 0.0),
-        );
-        let aabb = Aabb3::new(
-            Point3::new(0.0, 0.0, 0.0),
-            Point3::new(1.0, 1.0, 1.0),
-        );
+        let ray = Ray::new(Point3::new(-5.0, 0.5, 0.5), Vec3::new(1.0, 0.0, 0.0));
+        let aabb = Aabb3::new(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 1.0, 1.0));
         let result = ray.intersect_aabb(&aabb);
         assert!(result.is_some());
         let (t_min, t_max) = result.unwrap();
@@ -141,14 +134,8 @@ mod tests {
 
     #[test]
     fn test_ray_aabb_miss() {
-        let ray = Ray::new(
-            Point3::new(-5.0, 5.0, 5.0),
-            Vec3::new(1.0, 0.0, 0.0),
-        );
-        let aabb = Aabb3::new(
-            Point3::new(0.0, 0.0, 0.0),
-            Point3::new(1.0, 1.0, 1.0),
-        );
+        let ray = Ray::new(Point3::new(-5.0, 5.0, 5.0), Vec3::new(1.0, 0.0, 0.0));
+        let aabb = Aabb3::new(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 1.0, 1.0));
         let result = ray.intersect_aabb(&aabb);
         assert!(result.is_none());
     }
@@ -156,14 +143,8 @@ mod tests {
     #[test]
     fn test_ray_inside_aabb() {
         // Ray origin inside the box
-        let ray = Ray::new(
-            Point3::new(0.5, 0.5, 0.5),
-            Vec3::new(1.0, 0.0, 0.0),
-        );
-        let aabb = Aabb3::new(
-            Point3::new(0.0, 0.0, 0.0),
-            Point3::new(1.0, 1.0, 1.0),
-        );
+        let ray = Ray::new(Point3::new(0.5, 0.5, 0.5), Vec3::new(1.0, 0.0, 0.0));
+        let aabb = Aabb3::new(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 1.0, 1.0));
         let result = ray.intersect_aabb(&aabb);
         assert!(result.is_some());
         let (t_min, t_max) = result.unwrap();
@@ -173,14 +154,8 @@ mod tests {
 
     #[test]
     fn test_ray_aabb_diagonal() {
-        let ray = Ray::new(
-            Point3::new(-1.0, -1.0, -1.0),
-            Vec3::new(1.0, 1.0, 1.0),
-        );
-        let aabb = Aabb3::new(
-            Point3::new(0.0, 0.0, 0.0),
-            Point3::new(1.0, 1.0, 1.0),
-        );
+        let ray = Ray::new(Point3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0));
+        let aabb = Aabb3::new(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 1.0, 1.0));
         let result = ray.intersect_aabb(&aabb);
         assert!(result.is_some());
     }
@@ -188,14 +163,8 @@ mod tests {
     #[test]
     fn test_ray_aabb_behind() {
         // Ray pointing away from box
-        let ray = Ray::new(
-            Point3::new(-5.0, 0.5, 0.5),
-            Vec3::new(-1.0, 0.0, 0.0),
-        );
-        let aabb = Aabb3::new(
-            Point3::new(0.0, 0.0, 0.0),
-            Point3::new(1.0, 1.0, 1.0),
-        );
+        let ray = Ray::new(Point3::new(-5.0, 0.5, 0.5), Vec3::new(-1.0, 0.0, 0.0));
+        let aabb = Aabb3::new(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 1.0, 1.0));
         let result = ray.intersect_aabb(&aabb);
         assert!(result.is_none());
     }

@@ -37,7 +37,13 @@ pub fn rolling_ball_blend(
     }
 
     // Trace edge curve using alternating projection
-    let edge_points = trace_edge_curve(surface_a, surface_b, edge_start, edge_end, num_samples_along)?;
+    let edge_points = trace_edge_curve(
+        surface_a,
+        surface_b,
+        edge_start,
+        edge_end,
+        num_samples_along,
+    )?;
 
     // Sample points along the traced edge
     let mut blend_points = Vec::new();
@@ -55,9 +61,7 @@ pub fn rolling_ball_blend(
             return None;
         }
 
-        let ball_center = refine_ball_center(
-            surface_a, surface_b, edge_point, &bisector, radius,
-        )?;
+        let ball_center = refine_ball_center(surface_a, surface_b, edge_point, &bisector, radius)?;
 
         // Contact points: closest points on each surface to the ball center
         let uv_ca = closest_point_uv(surface_a, &ball_center, 1e-6)?;
@@ -170,7 +174,8 @@ fn refine_ball_center(
             let d = center - mid_pt;
             // Project error onto bisector direction
             let along_bisector = d.dot(&bisector);
-            let target_along = ((radius * radius - ((pt_a - pt_b).norm() * 0.5).powi(2)).max(0.0)).sqrt();
+            let target_along =
+                ((radius * radius - ((pt_a - pt_b).norm() * 0.5).powi(2)).max(0.0)).sqrt();
             (along_bisector - target_along) * bisector
         } else {
             Vec3::zeros()
@@ -250,7 +255,9 @@ fn interpolate_bspline_surface(
     // Step 2: For each column i, solve for final control points P[i][j]
     let mut control_points = vec![Point3::origin(); n_along * n_across];
     for i in 0..n_along {
-        let col_points: Vec<Point3> = (0..n_across).map(|j| intermediate[i * n_across + j]).collect();
+        let col_points: Vec<Point3> = (0..n_across)
+            .map(|j| intermediate[i * n_across + j])
+            .collect();
         let col_ctrl = solve_1d_interpolation(&col_points, &params_v, &knots_v, degree_v)?;
         for (j, pt) in col_ctrl.into_iter().enumerate() {
             control_points[i * n_across + j] = pt;
@@ -258,7 +265,14 @@ fn interpolate_bspline_surface(
     }
 
     // Apply G1 tangency enforcement at v=0 and v=1 boundaries
-    enforce_g1_tangency(&mut control_points, n_along, n_across, degree_v, &knots_v, points);
+    enforce_g1_tangency(
+        &mut control_points,
+        n_along,
+        n_across,
+        degree_v,
+        &knots_v,
+        points,
+    );
 
     Some(BSplineSurface::new(
         control_points,
@@ -272,7 +286,12 @@ fn interpolate_bspline_surface(
 }
 
 /// Compute chord-length parameters for either rows (along_u=true) or columns (along_u=false).
-fn chord_length_params(points: &[Point3], n_along: usize, n_across: usize, along_u: bool) -> Vec<f64> {
+fn chord_length_params(
+    points: &[Point3],
+    n_along: usize,
+    n_across: usize,
+    along_u: bool,
+) -> Vec<f64> {
     let n = if along_u { n_along } else { n_across };
     let m = if along_u { n_across } else { n_along };
 
@@ -479,7 +498,8 @@ fn enforce_g1_tangency(
     // Delta knot for the first span
     let delta_v0 = knots_v[degree_v + 1] - knots_v[degree_v];
     // Delta knot for the last span
-    let delta_v_last = knots_v[knots_v.len() - degree_v - 1] - knots_v[knots_v.len() - degree_v - 2];
+    let delta_v_last =
+        knots_v[knots_v.len() - degree_v - 1] - knots_v[knots_v.len() - degree_v - 2];
 
     if delta_v0.abs() < 1e-15 || delta_v_last.abs() < 1e-15 {
         return;
@@ -512,4 +532,3 @@ fn enforce_g1_tangency(
         }
     }
 }
-

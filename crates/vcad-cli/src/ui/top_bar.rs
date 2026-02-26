@@ -39,7 +39,14 @@ pub fn draw_top_bar(buf: &mut CellBuffer, sidebar_visible: bool, mode_name: &str
         rcx += 1;
         set_string(buf, rcx, y, "  ", theme::BORDER(), theme::SURFACE());
         rcx += 2;
-        set_char(buf, rcx, y, '\u{2699}', theme::TEXT_MUTED(), theme::SURFACE());
+        set_char(
+            buf,
+            rcx,
+            y,
+            '\u{2699}',
+            theme::TEXT_MUTED(),
+            theme::SURFACE(),
+        );
         rcx += 1;
         set_string(buf, rcx, y, "  ", theme::BORDER(), theme::SURFACE());
         rcx += 2;

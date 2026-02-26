@@ -28,6 +28,7 @@
 //! ```
 
 pub mod kicad_mod;
+pub mod kicad_pcb;
 pub mod kicad_sym;
 
 mod sexpr;
@@ -36,6 +37,7 @@ use serde::{Deserialize, Serialize};
 
 // Re-export public API
 pub use kicad_mod::{parse_footprint_lib, FootprintDef, FootprintLib, GraphicDef, PadDef};
+pub use kicad_pcb::parse_kicad_pcb;
 pub use kicad_sym::{parse_symbol_lib, Symbol, SymbolGraphic, SymbolLib, SymbolPin};
 
 /// A key-value property from a KiCad library element.

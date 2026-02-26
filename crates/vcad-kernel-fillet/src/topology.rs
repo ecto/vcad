@@ -1,10 +1,10 @@
 //! Topology analysis helpers for fillet/chamfer operations.
 
 use std::collections::HashMap;
-use vcad_kernel_math::{Point3, Vec3};
 use vcad_kernel_geom::SurfaceKind;
+use vcad_kernel_math::{Point3, Vec3};
 use vcad_kernel_primitives::BRepSolid;
-use vcad_kernel_topo::{EdgeId, FaceId, HalfEdgeId, VertexId, Topology};
+use vcad_kernel_topo::{EdgeId, FaceId, HalfEdgeId, Topology, VertexId};
 
 /// Information about a face extracted from the B-rep.
 #[derive(Debug, Clone)]

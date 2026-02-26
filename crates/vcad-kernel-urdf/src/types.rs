@@ -156,7 +156,6 @@ impl Origin {
             .map(|s| parse_xyz(s))
             .unwrap_or([0.0, 0.0, 0.0])
     }
-
 }
 
 /// Parse a space-separated XYZ/RPY string into an array.
@@ -238,7 +237,6 @@ pub struct MeshGeom {
     #[serde(rename = "@scale", skip_serializing_if = "Option::is_none")]
     pub scale: Option<String>,
 }
-
 
 /// Material reference or inline definition.
 #[derive(Debug, Clone, Deserialize, Serialize)]

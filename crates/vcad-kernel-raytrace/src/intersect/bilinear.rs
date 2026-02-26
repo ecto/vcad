@@ -1,9 +1,9 @@
 //! Ray-bilinear surface intersection (Newton iteration).
 
+use super::SurfaceHit;
+use crate::Ray;
 use vcad_kernel_geom::{BilinearSurface, Surface};
 use vcad_kernel_math::Point2;
-use crate::Ray;
-use super::SurfaceHit;
 
 /// Maximum Newton iterations.
 const MAX_ITERATIONS: usize = 20;
@@ -67,8 +67,11 @@ fn newton_iteration(ray: &Ray, surface: &BilinearSurface, start: Point2) -> Opti
 
         // Check convergence on residual
         if f.norm() < TOLERANCE {
-            if t >= 0.0 && uv.x >= -TOLERANCE && uv.x <= 1.0 + TOLERANCE
-                && uv.y >= -TOLERANCE && uv.y <= 1.0 + TOLERANCE
+            if t >= 0.0
+                && uv.x >= -TOLERANCE
+                && uv.x <= 1.0 + TOLERANCE
+                && uv.y >= -TOLERANCE
+                && uv.y <= 1.0 + TOLERANCE
             {
                 let final_uv = Point2::new(uv.x.clamp(0.0, 1.0), uv.y.clamp(0.0, 1.0));
                 return Some(SurfaceHit { t, uv: final_uv });
@@ -80,9 +83,8 @@ fn newton_iteration(ray: &Ray, surface: &BilinearSurface, start: Point2) -> Opti
         // Solve: J * [delta_u, delta_v, delta_t]^T = -F
 
         // Using Cramer's rule for 3x3 system
-        let det = du.x * (dv.y * (-d.z) - dv.z * (-d.y))
-                - dv.x * (du.y * (-d.z) - du.z * (-d.y))
-                + (-d.x) * (du.y * dv.z - du.z * dv.y);
+        let det = du.x * (dv.y * (-d.z) - dv.z * (-d.y)) - dv.x * (du.y * (-d.z) - du.z * (-d.y))
+            + (-d.x) * (du.y * dv.z - du.z * dv.y);
 
         if det.abs() < 1e-14 {
             return None; // Singular Jacobian
@@ -92,16 +94,15 @@ fn newton_iteration(ray: &Ray, surface: &BilinearSurface, start: Point2) -> Opti
         let rhs = -f;
 
         let det_u = rhs.x * (dv.y * (-d.z) - dv.z * (-d.y))
-                  - dv.x * (rhs.y * (-d.z) - rhs.z * (-d.y))
-                  + (-d.x) * (rhs.y * dv.z - rhs.z * dv.y);
+            - dv.x * (rhs.y * (-d.z) - rhs.z * (-d.y))
+            + (-d.x) * (rhs.y * dv.z - rhs.z * dv.y);
 
         let det_v = du.x * (rhs.y * (-d.z) - rhs.z * (-d.y))
-                  - rhs.x * (du.y * (-d.z) - du.z * (-d.y))
-                  + (-d.x) * (du.y * rhs.z - du.z * rhs.y);
+            - rhs.x * (du.y * (-d.z) - du.z * (-d.y))
+            + (-d.x) * (du.y * rhs.z - du.z * rhs.y);
 
-        let det_t = du.x * (dv.y * rhs.z - dv.z * rhs.y)
-                  - dv.x * (du.y * rhs.z - du.z * rhs.y)
-                  + rhs.x * (du.y * dv.z - du.z * dv.y);
+        let det_t = du.x * (dv.y * rhs.z - dv.z * rhs.y) - dv.x * (du.y * rhs.z - du.z * rhs.y)
+            + rhs.x * (du.y * dv.z - du.z * dv.y);
 
         let delta_u = det_u / det;
         let delta_v = det_v / det;
@@ -123,9 +124,12 @@ fn newton_iteration(ray: &Ray, surface: &BilinearSurface, start: Point2) -> Opti
     let ray_point = ray.at(t);
     let f = p - ray_point;
 
-    if f.norm() < TOLERANCE * 10.0 && t >= 0.0
-        && uv.x >= -TOLERANCE && uv.x <= 1.0 + TOLERANCE
-        && uv.y >= -TOLERANCE && uv.y <= 1.0 + TOLERANCE
+    if f.norm() < TOLERANCE * 10.0
+        && t >= 0.0
+        && uv.x >= -TOLERANCE
+        && uv.x <= 1.0 + TOLERANCE
+        && uv.y >= -TOLERANCE
+        && uv.y <= 1.0 + TOLERANCE
     {
         let final_uv = Point2::new(uv.x.clamp(0.0, 1.0), uv.y.clamp(0.0, 1.0));
         return Some(SurfaceHit { t, uv: final_uv });
@@ -284,10 +288,7 @@ mod tests {
             Point3::new(1.0, 1.0, 0.0),
         );
 
-        let ray = Ray::new(
-            Point3::new(0.5, 0.5, 5.0),
-            Vec3::new(0.0, 0.0, -1.0),
-        );
+        let ray = Ray::new(Point3::new(0.5, 0.5, 5.0), Vec3::new(0.0, 0.0, -1.0));
 
         let hits = intersect_bilinear(&ray, &surface);
         assert_eq!(hits.len(), 1);
@@ -306,10 +307,7 @@ mod tests {
         );
 
         // Ray misses the quad
-        let ray = Ray::new(
-            Point3::new(5.0, 5.0, 5.0),
-            Vec3::new(0.0, 0.0, -1.0),
-        );
+        let ray = Ray::new(Point3::new(5.0, 5.0, 5.0), Vec3::new(0.0, 0.0, -1.0));
 
         let hits = intersect_bilinear(&ray, &surface);
         assert!(hits.is_empty());
@@ -325,10 +323,7 @@ mod tests {
             Point3::new(1.0, 1.0, 1.0), // Lifted corner
         );
 
-        let ray = Ray::new(
-            Point3::new(0.5, 0.5, 5.0),
-            Vec3::new(0.0, 0.0, -1.0),
-        );
+        let ray = Ray::new(Point3::new(0.5, 0.5, 5.0), Vec3::new(0.0, 0.0, -1.0));
 
         let hits = intersect_bilinear(&ray, &surface);
         assert_eq!(hits.len(), 1);

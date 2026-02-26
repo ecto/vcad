@@ -153,7 +153,12 @@ pub fn extract_glyph_contours(face: &Face<'_>, glyph_id: GlyphId) -> Vec<Contour
 /// Convert a contour to sketch segments.
 ///
 /// Returns segments forming a closed loop.
-pub fn contour_to_segments(contour: &Contour, scale: f64, offset_x: f64, offset_y: f64) -> Vec<SketchSegment> {
+pub fn contour_to_segments(
+    contour: &Contour,
+    scale: f64,
+    offset_x: f64,
+    offset_y: f64,
+) -> Vec<SketchSegment> {
     use vcad_kernel_sketch::SketchSegment as Seg;
 
     if contour.points.len() < 2 {

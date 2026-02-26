@@ -224,9 +224,6 @@ mod tests {
     fn test_pause_command() {
         let cmd = PrinterCommand::PrintPause;
         let json = cmd.to_json();
-        assert_eq!(
-            json["print"]["command"].as_str(),
-            Some("pause")
-        );
+        assert_eq!(json["print"]["command"].as_str(), Some("pause"));
     }
 }

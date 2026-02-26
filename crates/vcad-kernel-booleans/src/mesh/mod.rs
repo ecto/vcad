@@ -26,21 +26,9 @@ pub fn point_in_mesh(point: &Point3, mesh: &TriangleMesh) -> bool {
         let i1 = tri[1] as usize * 3;
         let i2 = tri[2] as usize * 3;
 
-        let v0 = [
-            verts[i0] as f64,
-            verts[i0 + 1] as f64,
-            verts[i0 + 2] as f64,
-        ];
-        let v1 = [
-            verts[i1] as f64,
-            verts[i1 + 1] as f64,
-            verts[i1 + 2] as f64,
-        ];
-        let v2 = [
-            verts[i2] as f64,
-            verts[i2 + 1] as f64,
-            verts[i2 + 2] as f64,
-        ];
+        let v0 = [verts[i0] as f64, verts[i0 + 1] as f64, verts[i0 + 2] as f64];
+        let v1 = [verts[i1] as f64, verts[i1 + 1] as f64, verts[i1 + 2] as f64];
+        let v2 = [verts[i2] as f64, verts[i2 + 1] as f64, verts[i2 + 2] as f64];
 
         // Möller-Trumbore ray-triangle intersection
         let edge1 = [v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]];
@@ -87,11 +75,7 @@ pub fn point_in_mesh(point: &Point3, mesh: &TriangleMesh) -> bool {
         }
 
         let f = 1.0 / a;
-        let s = [
-            point.x - v0[0],
-            point.y - v0[1],
-            point.z - v0[2],
-        ];
+        let s = [point.x - v0[0], point.y - v0[1], point.z - v0[2]];
 
         let u = f * (s[0] * h[0] + s[1] * h[1] + s[2] * h[2]);
         if !(0.0..=1.0).contains(&u) {

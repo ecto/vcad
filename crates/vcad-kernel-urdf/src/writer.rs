@@ -122,10 +122,7 @@ impl<'a> UrdfWriter<'a> {
         })
     }
 
-    fn part_def_to_link(
-        &self,
-        part_def: &vcad_ir::PartDef,
-    ) -> Result<Link, UrdfError> {
+    fn part_def_to_link(&self, part_def: &vcad_ir::PartDef) -> Result<Link, UrdfError> {
         let name = part_def.name.clone().unwrap_or_else(|| part_def.id.clone());
 
         // Get geometry from root node
@@ -155,9 +152,11 @@ impl<'a> UrdfWriter<'a> {
         entry: &vcad_ir::SceneEntry,
         index: usize,
     ) -> Result<Link, UrdfError> {
-        let node = self.doc.nodes.get(&entry.root).ok_or_else(|| {
-            UrdfError::Conversion(format!("Node {} not found", entry.root))
-        })?;
+        let node = self
+            .doc
+            .nodes
+            .get(&entry.root)
+            .ok_or_else(|| UrdfError::Conversion(format!("Node {} not found", entry.root)))?;
 
         let name = node
             .name
@@ -189,9 +188,11 @@ impl<'a> UrdfWriter<'a> {
         &self,
         node_id: vcad_ir::NodeId,
     ) -> Result<(Geometry, Option<Origin>), UrdfError> {
-        let node = self.doc.nodes.get(&node_id).ok_or_else(|| {
-            UrdfError::Conversion(format!("Node {} not found", node_id))
-        })?;
+        let node = self
+            .doc
+            .nodes
+            .get(&node_id)
+            .ok_or_else(|| UrdfError::Conversion(format!("Node {} not found", node_id)))?;
 
         match &node.op {
             CsgOp::Cube { size } => {
@@ -211,9 +212,7 @@ impl<'a> UrdfWriter<'a> {
                 };
                 Ok((geometry, None))
             }
-            CsgOp::Cylinder {
-                radius, height, ..
-            } => {
+            CsgOp::Cylinder { radius, height, .. } => {
                 let geometry = Geometry {
                     box_geom: None,
                     cylinder: Some(CylinderGeom {

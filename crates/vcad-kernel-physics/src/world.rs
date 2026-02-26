@@ -4,14 +4,14 @@ use std::collections::HashMap;
 
 use phyz::phyz_math::{Mat3, Quat, SpatialInertia, SpatialTransform, Vec3};
 use phyz::phyz_model::{Model, ModelBuilder, State};
-use phyz::{ContactMaterial, Simulator, forward_kinematics, Geometry};
+use phyz::{forward_kinematics, ContactMaterial, Geometry, Simulator};
 use vcad_ir::{Document, JointKind};
 
 use crate::colliders::{estimate_mass, mesh_to_collider, ColliderStrategy};
 use crate::error::PhysicsError;
 use crate::joints::{
-    MotorTarget, MotorMode, convert_state_from_physics, convert_state_to_physics,
-    joint_ndof, vcad_joint_to_phyz,
+    convert_state_from_physics, convert_state_to_physics, joint_ndof, vcad_joint_to_phyz,
+    MotorMode, MotorTarget,
 };
 
 /// State of a single joint.
@@ -83,7 +83,10 @@ impl PhysicsWorld {
         let mut body_count = 0usize;
 
         // Helper: evaluate mesh and compute inertia for an instance
-        let eval_instance = |inst: &vcad_ir::Instance| -> Result<(vcad_kernel_tessellate::TriangleMesh, f64, Geometry), PhysicsError> {
+        let eval_instance = |inst: &vcad_ir::Instance| -> Result<
+            (vcad_kernel_tessellate::TriangleMesh, f64, Geometry),
+            PhysicsError,
+        > {
             let part_def = part_defs
                 .get(&inst.part_def_id)
                 .ok_or_else(|| PhysicsError::MissingPartDef(inst.part_def_id.clone()))?;
@@ -99,31 +102,32 @@ impl PhysicsWorld {
         };
 
         // Compute a box inertia from mass and mesh bounding box
-        let compute_inertia = |mesh: &vcad_kernel_tessellate::TriangleMesh, mass: f64| -> SpatialInertia {
-            // Compute bounding box to estimate inertia
-            let mut min = Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
-            let mut max = Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
-            for v in mesh.vertices.chunks(3) {
-                let x = v[0] as f64 / 1000.0;
-                let y = v[1] as f64 / 1000.0;
-                let z = v[2] as f64 / 1000.0;
-                min.x = min.x.min(x);
-                min.y = min.y.min(y);
-                min.z = min.z.min(z);
-                max.x = max.x.max(x);
-                max.y = max.y.max(y);
-                max.z = max.z.max(z);
-            }
-            let dx = max.x - min.x;
-            let dy = max.y - min.y;
-            let dz = max.z - min.z;
-            // Box inertia: I_xx = m/12 * (dy² + dz²), etc.
-            let ixx = mass / 12.0 * (dy * dy + dz * dz);
-            let iyy = mass / 12.0 * (dx * dx + dz * dz);
-            let izz = mass / 12.0 * (dx * dx + dy * dy);
-            let inertia_mat = Mat3::new(ixx, 0.0, 0.0, 0.0, iyy, 0.0, 0.0, 0.0, izz);
-            SpatialInertia::new(mass, Vec3::zeros(), inertia_mat)
-        };
+        let compute_inertia =
+            |mesh: &vcad_kernel_tessellate::TriangleMesh, mass: f64| -> SpatialInertia {
+                // Compute bounding box to estimate inertia
+                let mut min = Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
+                let mut max = Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+                for v in mesh.vertices.chunks(3) {
+                    let x = v[0] as f64 / 1000.0;
+                    let y = v[1] as f64 / 1000.0;
+                    let z = v[2] as f64 / 1000.0;
+                    min.x = min.x.min(x);
+                    min.y = min.y.min(y);
+                    min.z = min.z.min(z);
+                    max.x = max.x.max(x);
+                    max.y = max.y.max(y);
+                    max.z = max.z.max(z);
+                }
+                let dx = max.x - min.x;
+                let dy = max.y - min.y;
+                let dz = max.z - min.z;
+                // Box inertia: I_xx = m/12 * (dy² + dz²), etc.
+                let ixx = mass / 12.0 * (dy * dy + dz * dz);
+                let iyy = mass / 12.0 * (dx * dx + dz * dz);
+                let izz = mass / 12.0 * (dx * dx + dy * dy);
+                let inertia_mat = Mat3::new(ixx, 0.0, 0.0, 0.0, iyy, 0.0, 0.0, 0.0, izz);
+                SpatialInertia::new(mass, Vec3::zeros(), inertia_mat)
+            };
 
         // 1. Add ground body (fixed, attached to world)
         let ground_inst = instances
@@ -157,7 +161,9 @@ impl PhysicsWorld {
                 let child_inst = instances
                     .iter()
                     .find(|i| i.id == joint.child_instance_id)
-                    .ok_or_else(|| PhysicsError::MissingInstance(joint.child_instance_id.clone()))?;
+                    .ok_or_else(|| {
+                        PhysicsError::MissingInstance(joint.child_instance_id.clone())
+                    })?;
 
                 let parent_body_idx = *instance_to_body
                     .get(&parent_id)
@@ -169,12 +175,8 @@ impl PhysicsWorld {
                 // Create phyz joint
                 let phyz_joint = vcad_joint_to_phyz(joint)?;
 
-                builder = builder.add_body(
-                    &child_inst.id,
-                    parent_body_idx as i32,
-                    phyz_joint,
-                    inertia,
-                );
+                builder =
+                    builder.add_body(&child_inst.id, parent_body_idx as i32, phyz_joint, inertia);
 
                 // Store geometry on the body
                 instance_to_body.insert(child_inst.id.clone(), body_count);
@@ -446,18 +448,30 @@ impl PhysicsWorld {
 
         // Create a simple mesh based on the primitive type
         let solid = match &node.op {
-            vcad_ir::CsgOp::Cube { size } => {
-                vcad_kernel::Solid::cube(size.x, size.y, size.z)
-            }
-            vcad_ir::CsgOp::Cylinder { radius, height, segments } => {
-                vcad_kernel::Solid::cylinder(*radius, *height, if *segments == 0 { 32 } else { *segments })
-            }
+            vcad_ir::CsgOp::Cube { size } => vcad_kernel::Solid::cube(size.x, size.y, size.z),
+            vcad_ir::CsgOp::Cylinder {
+                radius,
+                height,
+                segments,
+            } => vcad_kernel::Solid::cylinder(
+                *radius,
+                *height,
+                if *segments == 0 { 32 } else { *segments },
+            ),
             vcad_ir::CsgOp::Sphere { radius, segments } => {
                 vcad_kernel::Solid::sphere(*radius, if *segments == 0 { 32 } else { *segments })
             }
-            vcad_ir::CsgOp::Cone { radius_bottom, radius_top, height, segments } => {
-                vcad_kernel::Solid::cone(*radius_bottom, *radius_top, *height, if *segments == 0 { 32 } else { *segments })
-            }
+            vcad_ir::CsgOp::Cone {
+                radius_bottom,
+                radius_top,
+                height,
+                segments,
+            } => vcad_kernel::Solid::cone(
+                *radius_bottom,
+                *radius_top,
+                *height,
+                if *segments == 0 { 32 } else { *segments },
+            ),
             _ => {
                 // For other operations, create a small placeholder
                 vcad_kernel::Solid::cube(10.0, 10.0, 10.0)

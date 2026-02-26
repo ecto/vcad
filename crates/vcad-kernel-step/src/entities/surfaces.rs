@@ -1,9 +1,14 @@
 //! Surface entities: planes, cylinders, cones, spheres, B-splines.
 
-use super::{parse_any_axis_placement, parse_cartesian_point, write_cartesian_point, AxisPlacement, EntityArgs};
+use super::{
+    parse_any_axis_placement, parse_cartesian_point, write_cartesian_point, AxisPlacement,
+    EntityArgs,
+};
 use crate::error::StepError;
 use stepperoni::{StepFile, StepValue};
-use vcad_kernel_geom::{BilinearSurface, ConeSurface, CylinderSurface, Plane, SphereSurface, Surface, TorusSurface};
+use vcad_kernel_geom::{
+    BilinearSurface, ConeSurface, CylinderSurface, Plane, SphereSurface, Surface, TorusSurface,
+};
 use vcad_kernel_math::Point3;
 use vcad_kernel_nurbs::BSplineSurface;
 
@@ -202,12 +207,19 @@ pub fn parse_bspline_surface(file: &StepFile, id: u64) -> Result<BSplineSurface,
             let v_mults = entity.list(9)?.to_vec();
             let u_knots = entity.list(10)?.to_vec();
             let v_knots = entity.list(11)?.to_vec();
-            (u_degree, v_degree, cp_list, u_mults, v_mults, u_knots, v_knots)
+            (
+                u_degree, v_degree, cp_list, u_mults, v_mults, u_knots, v_knots,
+            )
         } else {
             // Complex entity - look for B_SPLINE_SURFACE and B_SPLINE_SURFACE_WITH_KNOTS in args
             let mut bspline_data: Option<(&Vec<StepValue>, usize, usize)> = None;
             #[allow(clippy::type_complexity)]
-            let mut knots_data: Option<(&Vec<StepValue>, &Vec<StepValue>, &Vec<StepValue>, &Vec<StepValue>)> = None;
+            let mut knots_data: Option<(
+                &Vec<StepValue>,
+                &Vec<StepValue>,
+                &Vec<StepValue>,
+                &Vec<StepValue>,
+            )> = None;
 
             for arg in &entity.args {
                 if let StepValue::Typed { type_name, args } = arg {
@@ -234,9 +246,15 @@ pub fn parse_bspline_surface(file: &StepFile, id: u64) -> Result<BSplineSurface,
             }
 
             match (bspline_data, knots_data) {
-                (Some((cp_list, u_deg, v_deg)), Some((u_mults, v_mults, u_knots, v_knots))) => {
-                    (u_deg, v_deg, cp_list.clone(), u_mults.clone(), v_mults.clone(), u_knots.clone(), v_knots.clone())
-                }
+                (Some((cp_list, u_deg, v_deg)), Some((u_mults, v_mults, u_knots, v_knots))) => (
+                    u_deg,
+                    v_deg,
+                    cp_list.clone(),
+                    u_mults.clone(),
+                    v_mults.clone(),
+                    u_knots.clone(),
+                    v_knots.clone(),
+                ),
                 _ => {
                     // Can't extract B-spline data - treat as unsupported
                     return Err(StepError::UnsupportedEntity(format!(
@@ -313,8 +331,13 @@ pub fn parse_bspline_surface(file: &StepFile, id: u64) -> Result<BSplineSurface,
 fn expand_knots(knots: &[StepValue], mults: &[StepValue]) -> Result<Vec<f64>, StepError> {
     let mut result = Vec::new();
     for (knot, mult) in knots.iter().zip(mults.iter()) {
-        let k = knot.as_real().ok_or_else(|| StepError::parser(None, "invalid knot value"))?;
-        let m = mult.as_integer().ok_or_else(|| StepError::parser(None, "invalid multiplicity"))? as usize;
+        let k = knot
+            .as_real()
+            .ok_or_else(|| StepError::parser(None, "invalid knot value"))?;
+        let m = mult
+            .as_integer()
+            .ok_or_else(|| StepError::parser(None, "invalid multiplicity"))?
+            as usize;
         for _ in 0..m {
             result.push(k);
         }
@@ -590,8 +613,9 @@ mod tests {
         let u_mults = vec![3, 3];
         let v_knots = vec![0.0, 1.0];
         let v_mults = vec![2, 2];
-        let entity =
-            write_bspline_surface_with_knots("", 2, 1, &cp_ids, &u_knots, &u_mults, &v_knots, &v_mults);
+        let entity = write_bspline_surface_with_knots(
+            "", 2, 1, &cp_ids, &u_knots, &u_mults, &v_knots, &v_mults,
+        );
         assert!(entity.contains("B_SPLINE_SURFACE_WITH_KNOTS"));
         assert!(entity.contains("(#1, #2, #3)"));
         assert!(entity.contains("(#4, #5, #6)"));

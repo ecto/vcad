@@ -604,7 +604,13 @@ pub struct DetailViewParams {
 
 impl DetailViewParams {
     /// Create new detail view parameters.
-    pub fn new(center: Point2D, scale: f64, width: f64, height: f64, label: impl Into<String>) -> Self {
+    pub fn new(
+        center: Point2D,
+        scale: f64,
+        width: f64,
+        height: f64,
+        label: impl Into<String>,
+    ) -> Self {
         Self {
             center,
             scale,
@@ -668,12 +674,18 @@ impl DetailView {
 
     /// Number of visible edges.
     pub fn num_visible(&self) -> usize {
-        self.edges.iter().filter(|e| e.visibility == Visibility::Visible).count()
+        self.edges
+            .iter()
+            .filter(|e| e.visibility == Visibility::Visible)
+            .count()
     }
 
     /// Number of hidden edges.
     pub fn num_hidden(&self) -> usize {
-        self.edges.iter().filter(|e| e.visibility == Visibility::Hidden).count()
+        self.edges
+            .iter()
+            .filter(|e| e.visibility == Visibility::Hidden)
+            .count()
     }
 }
 

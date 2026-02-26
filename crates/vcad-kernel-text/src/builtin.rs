@@ -12,7 +12,9 @@
 /// Note: The actual font bytes are included via include_bytes!() at compile time.
 /// The path is relative to this source file.
 #[cfg(not(feature = "no-builtin-font"))]
-pub static OPEN_SANS_REGULAR: &[u8] = include_bytes!("../../../node_modules/next/dist/compiled/@vercel/og/noto-sans-v27-latin-regular.ttf");
+pub static OPEN_SANS_REGULAR: &[u8] = include_bytes!(
+    "../../../node_modules/next/dist/compiled/@vercel/og/noto-sans-v27-latin-regular.ttf"
+);
 
 /// Fallback for when no builtin font is available.
 #[cfg(feature = "no-builtin-font")]

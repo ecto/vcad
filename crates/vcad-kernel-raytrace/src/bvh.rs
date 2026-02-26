@@ -252,15 +252,14 @@ fn get_aabb(node: &BvhNode) -> Aabb3 {
 }
 
 /// Recursively flatten a BVH node into a vector.
-fn flatten_node(
-    node: &BvhNode,
-    nodes: &mut Vec<FlatBvhNode>,
-    faces: &mut Vec<FaceId>,
-) -> usize {
+fn flatten_node(node: &BvhNode, nodes: &mut Vec<FlatBvhNode>, faces: &mut Vec<FaceId>) -> usize {
     let idx = nodes.len();
 
     match node {
-        BvhNode::Leaf { aabb, faces: leaf_faces } => {
+        BvhNode::Leaf {
+            aabb,
+            faces: leaf_faces,
+        } => {
             let start = faces.len() as u32;
             let count = leaf_faces.len() as u32;
             faces.extend(leaf_faces.iter().copied());
@@ -484,10 +483,7 @@ mod tests {
         let bvh = Bvh::build(&cube);
 
         // Ray from outside, hitting two faces (entry and exit)
-        let ray = Ray::new(
-            Point3::new(5.0, 5.0, -5.0),
-            Vec3::new(0.0, 0.0, 1.0),
-        );
+        let ray = Ray::new(Point3::new(5.0, 5.0, -5.0), Vec3::new(0.0, 0.0, 1.0));
 
         let hits = bvh.trace(&ray);
         assert_eq!(hits.len(), 2);
@@ -504,10 +500,7 @@ mod tests {
         let bvh = Bvh::build(&cube);
 
         // Ray missing the cube
-        let ray = Ray::new(
-            Point3::new(50.0, 50.0, -5.0),
-            Vec3::new(0.0, 0.0, 1.0),
-        );
+        let ray = Ray::new(Point3::new(50.0, 50.0, -5.0), Vec3::new(0.0, 0.0, 1.0));
 
         let hits = bvh.trace(&ray);
         assert!(hits.is_empty());
@@ -518,10 +511,7 @@ mod tests {
         let cube = make_cube(10.0, 10.0, 10.0);
         let bvh = Bvh::build(&cube);
 
-        let ray = Ray::new(
-            Point3::new(5.0, 5.0, -5.0),
-            Vec3::new(0.0, 0.0, 1.0),
-        );
+        let ray = Ray::new(Point3::new(5.0, 5.0, -5.0), Vec3::new(0.0, 0.0, 1.0));
 
         let closest = bvh.trace_closest(&ray);
         assert!(closest.is_some());
@@ -534,10 +524,7 @@ mod tests {
         let bvh = Bvh::build(&cube);
 
         // Diagonal ray through cube corner
-        let ray = Ray::new(
-            Point3::new(-5.0, -5.0, -5.0),
-            Vec3::new(1.0, 1.0, 1.0),
-        );
+        let ray = Ray::new(Point3::new(-5.0, -5.0, -5.0), Vec3::new(1.0, 1.0, 1.0));
 
         let hits = bvh.trace(&ray);
         // Should hit at least 2 faces (entry and exit)

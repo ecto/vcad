@@ -58,10 +58,7 @@ pub trait PostProcessor {
         output.push_str(&self.header(job_name, settings));
 
         // Spindle on
-        output.push_str(&format!(
-            "M3 S{:.0}\n",
-            settings.spindle_rpm
-        ));
+        output.push_str(&format!("M3 S{:.0}\n", settings.spindle_rpm));
         state.spindle_on = true;
         state.spindle_rpm = settings.spindle_rpm;
 

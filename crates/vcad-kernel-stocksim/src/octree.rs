@@ -134,9 +134,18 @@ impl Stock {
             || z > self.bounds[5]
         {
             // Distance to nearest boundary
-            let dx = (x - self.bounds[0]).min(0.0).abs().max((x - self.bounds[3]).max(0.0));
-            let dy = (y - self.bounds[1]).min(0.0).abs().max((y - self.bounds[4]).max(0.0));
-            let dz = (z - self.bounds[2]).min(0.0).abs().max((z - self.bounds[5]).max(0.0));
+            let dx = (x - self.bounds[0])
+                .min(0.0)
+                .abs()
+                .max((x - self.bounds[3]).max(0.0));
+            let dy = (y - self.bounds[1])
+                .min(0.0)
+                .abs()
+                .max((y - self.bounds[4]).max(0.0));
+            let dz = (z - self.bounds[2])
+                .min(0.0)
+                .abs()
+                .max((z - self.bounds[5]).max(0.0));
             return (dx * dx + dy * dy + dz * dz).sqrt();
         }
 
@@ -168,8 +177,8 @@ impl Stock {
                 let dy = (y - cy).abs() - hy;
                 let dz = (z - cz).abs() - hz;
 
-                let outside = (dx.max(0.0).powi(2) + dy.max(0.0).powi(2) + dz.max(0.0).powi(2))
-                    .sqrt();
+                let outside =
+                    (dx.max(0.0).powi(2) + dy.max(0.0).powi(2) + dz.max(0.0).powi(2)).sqrt();
                 let inside_dist = dx.max(dy).max(dz).min(0.0);
 
                 let sdf = outside + inside_dist;
@@ -215,7 +224,8 @@ impl Stock {
         let bounds = self.bounds;
         let max_depth = self.max_depth;
         let old_root = std::mem::replace(&mut self.root, OctreeNode::Solid { inside: false });
-        self.root = Self::subtract_sphere_node_impl(old_root, center, radius, &bounds, 0, max_depth);
+        self.root =
+            Self::subtract_sphere_node_impl(old_root, center, radius, &bounds, 0, max_depth);
     }
 
     fn subtract_sphere_node_impl(
@@ -310,7 +320,14 @@ impl Stock {
 
         let new_children: [OctreeNode; 8] = std::array::from_fn(|i| {
             let child_bounds = Self::child_bounds(bounds, i);
-            Self::subtract_sphere_node_impl(children[i].clone(), center, radius, &child_bounds, depth + 1, max_depth)
+            Self::subtract_sphere_node_impl(
+                children[i].clone(),
+                center,
+                radius,
+                &child_bounds,
+                depth + 1,
+                max_depth,
+            )
         });
 
         // Try to collapse if all children are same solid
@@ -344,7 +361,8 @@ impl Stock {
         let bounds = self.bounds;
         let max_depth = self.max_depth;
         let old_root = std::mem::replace(&mut self.root, OctreeNode::Solid { inside: false });
-        self.root = Self::subtract_capsule_node_impl(old_root, from, to, radius, &bounds, 0, max_depth);
+        self.root =
+            Self::subtract_capsule_node_impl(old_root, from, to, radius, &bounds, 0, max_depth);
     }
 
     fn subtract_capsule_node_impl(
@@ -419,7 +437,15 @@ impl Stock {
 
         let new_children: [OctreeNode; 8] = std::array::from_fn(|i| {
             let child_bounds = Self::child_bounds(bounds, i);
-            Self::subtract_capsule_node_impl(children[i].clone(), from, to, radius, &child_bounds, depth + 1, max_depth)
+            Self::subtract_capsule_node_impl(
+                children[i].clone(),
+                from,
+                to,
+                radius,
+                &child_bounds,
+                depth + 1,
+                max_depth,
+            )
         });
 
         if let Some(inside) = Self::can_collapse(&new_children) {
@@ -469,10 +495,9 @@ fn capsule_sdf(p: [f64; 3], a: [f64; 3], b: [f64; 3], r: f64) -> f64 {
     };
 
     let closest = [a[0] + h * ba[0], a[1] + h * ba[1], a[2] + h * ba[2]];
-    let dist = ((p[0] - closest[0]).powi(2)
-        + (p[1] - closest[1]).powi(2)
-        + (p[2] - closest[2]).powi(2))
-    .sqrt();
+    let dist =
+        ((p[0] - closest[0]).powi(2) + (p[1] - closest[1]).powi(2) + (p[2] - closest[2]).powi(2))
+            .sqrt();
 
     dist - r
 }
@@ -509,13 +534,19 @@ mod tests {
 
         // Center of sphere should now be outside (positive SDF)
         let sdf = stock.sdf_at(50.0, 50.0, 25.0);
-        assert!(sdf > 0.0, "After subtracting sphere, center should be outside");
+        assert!(
+            sdf > 0.0,
+            "After subtracting sphere, center should be outside"
+        );
     }
 
     #[test]
     fn test_capsule_sdf() {
         let sdf = capsule_sdf([0.0, 0.0, 0.0], [0.0, 0.0, -10.0], [0.0, 0.0, 10.0], 5.0);
-        assert!((sdf - (-5.0)).abs() < 0.01, "Point on axis should be at -radius");
+        assert!(
+            (sdf - (-5.0)).abs() < 0.01,
+            "Point on axis should be at -radius"
+        );
 
         let sdf = capsule_sdf([5.0, 0.0, 0.0], [0.0, 0.0, -10.0], [0.0, 0.0, 10.0], 5.0);
         assert!(sdf.abs() < 0.01, "Point on surface should be near 0");

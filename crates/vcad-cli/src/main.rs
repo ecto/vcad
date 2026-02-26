@@ -234,7 +234,16 @@ fn main() -> Result<()> {
             distance,
             background,
         }) => {
-            render_to_image(&input, &output, width, height, azimuth, elevation, distance, &background)?;
+            render_to_image(
+                &input,
+                &output,
+                width,
+                height,
+                azimuth,
+                elevation,
+                distance,
+                &background,
+            )?;
         }
         Some(Commands::Boolean {
             file,
@@ -273,8 +282,17 @@ fn main() -> Result<()> {
             explain,
         }) => {
             slice_file(
-                &input, &output, &profile, layer_height, wall_count, infill, support, print_temp,
-                bed_temp, smart, explain,
+                &input,
+                &output,
+                &profile,
+                layer_height,
+                wall_count,
+                infill,
+                support,
+                print_temp,
+                bed_temp,
+                smart,
+                explain,
             )?;
         }
         #[cfg(feature = "print-server")]
@@ -576,12 +594,18 @@ fn export_urdf(doc: &vcad_ir::Document, output: &PathBuf) -> Result<()> {
     vcad_kernel_urdf::write_urdf(doc, output)?;
 
     // Count parts and joints
-    let num_parts = doc.part_defs.as_ref().map(|p| p.len()).unwrap_or(doc.roots.len());
+    let num_parts = doc
+        .part_defs
+        .as_ref()
+        .map(|p| p.len())
+        .unwrap_or(doc.roots.len());
     let num_joints = doc.joints.as_ref().map(|j| j.len()).unwrap_or(0);
 
     println!(
         "Exported URDF with {} links, {} joints to {}",
-        num_parts, num_joints, output.display()
+        num_parts,
+        num_joints,
+        output.display()
     );
     Ok(())
 }
@@ -632,7 +656,7 @@ fn slice_file(
     smart: bool,
     explain: bool,
 ) -> Result<()> {
-    use vcad_slicer::{SliceSettings, SliceResult};
+    use vcad_slicer::{SliceResult, SliceSettings};
     use vcad_slicer_gcode::{GcodeSettings, PrinterProfile};
 
     let json = std::fs::read_to_string(input)?;
@@ -680,14 +704,16 @@ fn slice_file(
             if let Some(brep) = solid.brep() {
                 let volume = solid.volume();
                 let surface_area = solid.surface_area();
-                let analysis = vcad_slicer::analyze::analyze_for_printing(brep, volume, surface_area);
+                let analysis =
+                    vcad_slicer::analyze::analyze_for_printing(brep, volume, surface_area);
                 let params = vcad_slicer::smart_defaults::PrinterParams {
                     nozzle_diameter: printer_profile.nozzle_diameter,
                     bed_x: printer_profile.bed_x,
                     bed_y: printer_profile.bed_y,
                     bed_z: printer_profile.bed_z,
                 };
-                let smart_defaults = vcad_slicer::smart_defaults::recommend_settings(&analysis, &params);
+                let smart_defaults =
+                    vcad_slicer::smart_defaults::recommend_settings(&analysis, &params);
 
                 if explain {
                     println!("\nBRep Analysis:");
@@ -703,10 +729,18 @@ fn slice_file(
 
                 // Allow CLI overrides on top of smart defaults
                 let mut s = smart_defaults.settings;
-                if let Some(lh) = layer_height { s.layer_height = lh; }
-                if let Some(wc) = wall_count { s.wall_count = wc; }
-                if let Some(inf) = infill { s.infill_density = inf as f64 / 100.0; }
-                if support { s.support_enabled = true; }
+                if let Some(lh) = layer_height {
+                    s.layer_height = lh;
+                }
+                if let Some(wc) = wall_count {
+                    s.wall_count = wc;
+                }
+                if let Some(inf) = infill {
+                    s.infill_density = inf as f64 / 100.0;
+                }
+                if support {
+                    s.support_enabled = true;
+                }
                 s
             } else {
                 if explain {
@@ -748,7 +782,11 @@ fn slice_file(
         settings.layer_height,
         settings.wall_count,
         (settings.infill_density * 100.0) as u32,
-        if settings.support_enabled { "on" } else { "off" }
+        if settings.support_enabled {
+            "on"
+        } else {
+            "off"
+        }
     );
 
     let result: SliceResult = vcad_slicer::slice(&mesh, &settings)?;
@@ -781,7 +819,11 @@ fn slice_file(
             let bt = bed_temp.unwrap_or(printer_profile.default_bed_temp);
 
             let mut model = ThreeMfModel::new(
-                input.file_stem().and_then(|s| s.to_str()).unwrap_or("model").to_string(),
+                input
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("model")
+                    .to_string(),
                 mesh.vertices,
                 mesh.indices,
             );
@@ -819,15 +861,30 @@ fn try_build_solid(doc: &vcad_ir::Document) -> Option<vcad_kernel::Solid> {
 
     match &root_node.op {
         vcad_ir::CsgOp::Cube { size } => Some(Solid::cube(size.x, size.y, size.z)),
-        vcad_ir::CsgOp::Cylinder { radius, height, segments } => {
-            Some(Solid::cylinder(*radius, *height, if *segments == 0 { 32 } else { *segments }))
-        }
-        vcad_ir::CsgOp::Sphere { radius, segments } => {
-            Some(Solid::sphere(*radius, if *segments == 0 { 32 } else { *segments }))
-        }
-        vcad_ir::CsgOp::Cone { radius_bottom, radius_top, height, segments } => {
-            Some(Solid::cone(*radius_bottom, *radius_top, *height, if *segments == 0 { 32 } else { *segments }))
-        }
+        vcad_ir::CsgOp::Cylinder {
+            radius,
+            height,
+            segments,
+        } => Some(Solid::cylinder(
+            *radius,
+            *height,
+            if *segments == 0 { 32 } else { *segments },
+        )),
+        vcad_ir::CsgOp::Sphere { radius, segments } => Some(Solid::sphere(
+            *radius,
+            if *segments == 0 { 32 } else { *segments },
+        )),
+        vcad_ir::CsgOp::Cone {
+            radius_bottom,
+            radius_top,
+            height,
+            segments,
+        } => Some(Solid::cone(
+            *radius_bottom,
+            *radius_top,
+            *height,
+            if *segments == 0 { 32 } else { *segments },
+        )),
         _ => None,
     }
 }
@@ -968,9 +1025,21 @@ fn render_to_image(
             }
 
             triangles.push(crate::render::Triangle {
-                v0: [mesh.vertices[i0], mesh.vertices[i0 + 1], mesh.vertices[i0 + 2]],
-                v1: [mesh.vertices[i1], mesh.vertices[i1 + 1], mesh.vertices[i1 + 2]],
-                v2: [mesh.vertices[i2], mesh.vertices[i2 + 1], mesh.vertices[i2 + 2]],
+                v0: [
+                    mesh.vertices[i0],
+                    mesh.vertices[i0 + 1],
+                    mesh.vertices[i0 + 2],
+                ],
+                v1: [
+                    mesh.vertices[i1],
+                    mesh.vertices[i1 + 1],
+                    mesh.vertices[i1 + 2],
+                ],
+                v2: [
+                    mesh.vertices[i2],
+                    mesh.vertices[i2 + 1],
+                    mesh.vertices[i2 + 2],
+                ],
                 color,
                 pick_id: 0,
             });

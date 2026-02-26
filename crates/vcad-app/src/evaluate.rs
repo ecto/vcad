@@ -143,11 +143,7 @@ fn evaluate_node(doc: &Document, node_id: NodeId) -> Result<Option<Solid>> {
             let c = evaluate_node(doc, *child)?;
             c.map(|s| {
                 s.circular_pattern(
-                    vcad_kernel_math::Point3::new(
-                        axis_origin.x,
-                        axis_origin.y,
-                        axis_origin.z,
-                    ),
+                    vcad_kernel_math::Point3::new(axis_origin.x, axis_origin.y, axis_origin.z),
                     vcad_kernel_math::Vec3::new(axis_dir.x, axis_dir.y, axis_dir.z),
                     *count,
                     *angle_deg,

@@ -177,7 +177,10 @@ pub fn parse_edge_loop(file: &StepFile, id: u64) -> Result<StepEdgeLoop, StepErr
         "VERTEX_LOOP" => {
             // Degenerate loop (single vertex) - return empty edge list
             // This is used for cone apexes and similar degenerate boundaries
-            Ok(StepEdgeLoop { id, edge_ids: vec![] })
+            Ok(StepEdgeLoop {
+                id,
+                edge_ids: vec![],
+            })
         }
         other => Err(StepError::type_mismatch("EDGE_LOOP", other)),
     }

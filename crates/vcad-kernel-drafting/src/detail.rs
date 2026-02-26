@@ -208,9 +208,9 @@ mod tests {
         // Create a detail view of the bottom-left corner
         let params = DetailViewParams::new(
             Point2D::new(25.0, 25.0),
-            2.0,   // 2x magnification
-            50.0,  // 50 units wide
-            50.0,  // 50 units tall
+            2.0,  // 2x magnification
+            50.0, // 50 units wide
+            50.0, // 50 units tall
             "A",
         );
 
@@ -271,17 +271,11 @@ mod tests {
 
     #[test]
     fn test_transform_scales_edges() {
-        let params = DetailViewParams::new(
-            Point2D::new(50.0, 50.0),
-            2.0,
-            100.0,
-            100.0,
-            "A",
-        );
+        let params = DetailViewParams::new(Point2D::new(50.0, 50.0), 2.0, 100.0, 100.0, "A");
 
         let edge = ProjectedEdge::new(
-            Point2D::new(50.0, 50.0),  // At center
-            Point2D::new(60.0, 50.0),  // 10 units to the right
+            Point2D::new(50.0, 50.0), // At center
+            Point2D::new(60.0, 50.0), // 10 units to the right
             Visibility::Visible,
             EdgeType::Sharp,
             0.0,

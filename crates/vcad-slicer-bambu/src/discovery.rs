@@ -24,8 +24,8 @@ pub struct PrinterInfo {
 ///
 /// This sends an SSDP M-SEARCH request and waits for responses.
 pub fn discover_printers(timeout: Duration) -> Result<Vec<PrinterInfo>> {
-    let socket = UdpSocket::bind("0.0.0.0:0")
-        .map_err(|e| BambuError::DiscoveryError(e.to_string()))?;
+    let socket =
+        UdpSocket::bind("0.0.0.0:0").map_err(|e| BambuError::DiscoveryError(e.to_string()))?;
 
     socket
         .set_read_timeout(Some(timeout))
@@ -59,7 +59,10 @@ pub fn discover_printers(timeout: Duration) -> Result<Vec<PrinterInfo>> {
                 if let Ok(response) = std::str::from_utf8(&buf[..len]) {
                     if let Some(info) = parse_ssdp_response(response, addr.ip()) {
                         // Avoid duplicates
-                        if !printers.iter().any(|p: &PrinterInfo| p.serial == info.serial) {
+                        if !printers
+                            .iter()
+                            .any(|p: &PrinterInfo| p.serial == info.serial)
+                        {
                             printers.push(info);
                         }
                     }

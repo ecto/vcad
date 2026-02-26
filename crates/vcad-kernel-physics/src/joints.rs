@@ -55,12 +55,8 @@ impl MotorTarget {
     /// Compute the control torque given current position and velocity.
     pub fn compute_torque(&self, position: f64, velocity: f64) -> f64 {
         let torque = match self.mode {
-            MotorMode::Position => {
-                self.kp * (self.target - position) - self.kd * velocity
-            }
-            MotorMode::Velocity => {
-                self.kd * (self.target - velocity)
-            }
+            MotorMode::Position => self.kp * (self.target - position) - self.kd * velocity,
+            MotorMode::Velocity => self.kd * (self.target - velocity),
             MotorMode::Torque => self.target,
         };
         torque.clamp(-self.max_force, self.max_force)
@@ -70,9 +66,7 @@ impl MotorTarget {
 /// Create a phyz joint from a vcad joint definition.
 ///
 /// Returns the phyz Joint and the parent-to-joint spatial transform.
-pub fn vcad_joint_to_phyz(
-    joint: &VcadJoint,
-) -> Result<PhyzJoint, PhysicsError> {
+pub fn vcad_joint_to_phyz(joint: &VcadJoint) -> Result<PhyzJoint, PhysicsError> {
     // Convert parent anchor from mm to meters — this becomes the translation
     // in the parent-to-joint transform.
     let anchor = Vec3::new(

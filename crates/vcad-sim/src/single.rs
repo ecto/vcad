@@ -114,35 +114,51 @@ impl SimPipeline {
 mod tests {
     use super::*;
     use std::collections::HashMap;
-    use vcad_ir::{Instance, Joint, JointKind, Node, CsgOp, PartDef, Vec3};
+    use vcad_ir::{CsgOp, Instance, Joint, JointKind, Node, PartDef, Vec3};
 
     fn test_document() -> Document {
         let mut doc = Document::new();
 
-        doc.nodes.insert(1, Node {
-            id: 1,
-            name: Some("base_geom".into()),
-            op: CsgOp::Cube { size: Vec3::new(100.0, 100.0, 50.0) },
-        });
-        doc.nodes.insert(2, Node {
-            id: 2,
-            name: Some("arm_geom".into()),
-            op: CsgOp::Cube { size: Vec3::new(20.0, 20.0, 100.0) },
-        });
+        doc.nodes.insert(
+            1,
+            Node {
+                id: 1,
+                name: Some("base_geom".into()),
+                op: CsgOp::Cube {
+                    size: Vec3::new(100.0, 100.0, 50.0),
+                },
+            },
+        );
+        doc.nodes.insert(
+            2,
+            Node {
+                id: 2,
+                name: Some("arm_geom".into()),
+                op: CsgOp::Cube {
+                    size: Vec3::new(20.0, 20.0, 100.0),
+                },
+            },
+        );
 
         let mut part_defs = HashMap::new();
-        part_defs.insert("base".into(), PartDef {
-            id: "base".into(),
-            name: Some("Base".into()),
-            root: 1,
-            default_material: None,
-        });
-        part_defs.insert("arm".into(), PartDef {
-            id: "arm".into(),
-            name: Some("Arm".into()),
-            root: 2,
-            default_material: None,
-        });
+        part_defs.insert(
+            "base".into(),
+            PartDef {
+                id: "base".into(),
+                name: Some("Base".into()),
+                root: 1,
+                default_material: None,
+            },
+        );
+        part_defs.insert(
+            "arm".into(),
+            PartDef {
+                id: "arm".into(),
+                name: Some("Arm".into()),
+                root: 2,
+                default_material: None,
+            },
+        );
         doc.part_defs = Some(part_defs);
 
         doc.instances = Some(vec![

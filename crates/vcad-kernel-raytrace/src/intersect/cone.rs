@@ -1,10 +1,10 @@
 //! Ray-cone intersection (quadratic equation).
 
+use super::SurfaceHit;
+use crate::Ray;
+use std::f64::consts::PI;
 use vcad_kernel_geom::ConeSurface;
 use vcad_kernel_math::Point2;
-use crate::Ray;
-use super::SurfaceHit;
-use std::f64::consts::PI;
 
 /// Intersect a ray with a conical surface.
 ///
@@ -126,10 +126,7 @@ mod tests {
         let cone = ConeSurface::new(PI / 4.0);
 
         // Ray along -X axis at z=5, should hit cone at (±5, 0, 5)
-        let ray = Ray::new(
-            Point3::new(-20.0, 0.0, 5.0),
-            Vec3::new(1.0, 0.0, 0.0),
-        );
+        let ray = Ray::new(Point3::new(-20.0, 0.0, 5.0), Vec3::new(1.0, 0.0, 0.0));
         let hits = intersect_cone(&ray, &cone);
 
         // Should have 2 hits
@@ -168,10 +165,7 @@ mod tests {
         let cone = ConeSurface::new(PI / 4.0);
 
         // Ray hitting the opposite nappe (z < 0)
-        let ray = Ray::new(
-            Point3::new(-20.0, 0.0, -5.0),
-            Vec3::new(1.0, 0.0, 0.0),
-        );
+        let ray = Ray::new(Point3::new(-20.0, 0.0, -5.0), Vec3::new(1.0, 0.0, 0.0));
         let hits = intersect_cone(&ray, &cone);
 
         // Opposite nappe should be filtered out

@@ -100,10 +100,7 @@ pub fn face_aabb(brep: &BRepSolid, face_id: FaceId) -> Aabb3 {
             // while the outer boundary is still a full circle that needs expansion.
             let outer_loop_len = topo.loop_len(face.outer_loop);
             if outer_loop_len <= 2 {
-                if let Some(plane) = surface
-                    .as_any()
-                    .downcast_ref::<vcad_kernel_geom::Plane>()
-                {
+                if let Some(plane) = surface.as_any().downcast_ref::<vcad_kernel_geom::Plane>() {
                     let first_he = topo.loop_half_edges(face.outer_loop).next();
                     if let Some(he_id) = first_he {
                         let v_pos = topo.vertices[topo.half_edges[he_id].origin].point;

@@ -593,9 +593,11 @@ mod tests {
         let doc = read_urdf_from_str(urdf).unwrap();
 
         // Find the box node
-        let box_node = doc.nodes.values().find(|n| {
-            matches!(n.op, CsgOp::Cube { .. })
-        }).unwrap();
+        let box_node = doc
+            .nodes
+            .values()
+            .find(|n| matches!(n.op, CsgOp::Cube { .. }))
+            .unwrap();
 
         if let CsgOp::Cube { size } = &box_node.op {
             // 0.1m = 100mm

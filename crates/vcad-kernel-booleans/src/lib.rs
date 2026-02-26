@@ -354,18 +354,30 @@ mod tests {
         let h12345678 = unwrap_brep(boolean_op(&h1234567, &edge3, BooleanOp::Union, 32));
         let holes_all = unwrap_brep(boolean_op(&h12345678, &edge4, BooleanOp::Union, 32));
 
-        eprintln!("After 9-hole union: {} orphan half-edges", count_orphan_half_edges(&holes_all));
+        eprintln!(
+            "After 9-hole union: {} orphan half-edges",
+            count_orphan_half_edges(&holes_all)
+        );
 
         // Check that the unioned holes have no orphan half-edges
         let orphan_count = count_orphan_half_edges(&holes_all);
-        assert_eq!(orphan_count, 0, "Unioned holes should have no orphan half-edges");
+        assert_eq!(
+            orphan_count, 0,
+            "Unioned holes should have no orphan half-edges"
+        );
 
         // Now subtract from plate
         let result = unwrap_brep(boolean_op(&plate, &holes_all, BooleanOp::Difference, 32));
-        eprintln!("After difference: {} orphan half-edges", count_orphan_half_edges(&result));
+        eprintln!(
+            "After difference: {} orphan half-edges",
+            count_orphan_half_edges(&result)
+        );
 
         let final_orphan_count = count_orphan_half_edges(&result);
-        assert_eq!(final_orphan_count, 0, "Final result should have no orphan half-edges");
+        assert_eq!(
+            final_orphan_count, 0,
+            "Final result should have no orphan half-edges"
+        );
     }
 
     /// Test boolean difference with cylinder extending outside cube bounds.
@@ -393,7 +405,10 @@ mod tests {
         // Check bounding box - x should not extend below 0
         let (min, max) = compute_mesh_bbox(&mesh);
 
-        eprintln!("Cube-Cylinder Difference bbox: min={:?}, max={:?}", min, max);
+        eprintln!(
+            "Cube-Cylinder Difference bbox: min={:?}, max={:?}",
+            min, max
+        );
 
         // The key assertion: no geometry should extend to negative x
         assert!(
@@ -447,7 +462,11 @@ mod tests {
             "Centered Cylinder Difference bbox: min={:?}, max={:?}",
             min, max
         );
-        eprintln!("Mesh has {} triangles, {} vertices", mesh.num_triangles(), mesh.num_vertices());
+        eprintln!(
+            "Mesh has {} triangles, {} vertices",
+            mesh.num_triangles(),
+            mesh.num_vertices()
+        );
 
         // The key assertion: no geometry should extend to negative x
         assert!(
@@ -478,10 +497,7 @@ mod tests {
         for (i, &idx) in mesh.indices.iter().enumerate() {
             if idx as usize >= num_verts {
                 invalid_count += 1;
-                eprintln!(
-                    "Invalid index at {}: {} >= {} vertices",
-                    i, idx, num_verts
-                );
+                eprintln!("Invalid index at {}: {} >= {} vertices", i, idx, num_verts);
             }
             if idx > max_idx {
                 max_idx = idx;
@@ -500,7 +516,12 @@ mod tests {
     // =========================================================================
 
     /// Count triangles that have all vertices at a specific coordinate value.
-    fn count_triangles_at_coord(mesh: &TriangleMesh, coord: usize, value: f64, tolerance: f64) -> usize {
+    fn count_triangles_at_coord(
+        mesh: &TriangleMesh,
+        coord: usize,
+        value: f64,
+        tolerance: f64,
+    ) -> usize {
         let verts = &mesh.vertices;
         let indices = &mesh.indices;
         let mut count = 0;
@@ -517,7 +538,12 @@ mod tests {
     }
 
     /// Count triangles with at least one vertex at a coordinate value.
-    fn count_triangles_touching_coord(mesh: &TriangleMesh, coord: usize, value: f64, tolerance: f64) -> usize {
+    fn count_triangles_touching_coord(
+        mesh: &TriangleMesh,
+        coord: usize,
+        value: f64,
+        tolerance: f64,
+    ) -> usize {
         let verts = &mesh.vertices;
         let indices = &mesh.indices;
         let mut count = 0;
@@ -574,8 +600,14 @@ mod tests {
         let y0_tris = count_triangles_at_coord(&mesh, 1, 0.0, 0.01);
         let y20_tris = count_triangles_at_coord(&mesh, 1, 20.0, 0.01);
 
-        assert!(z0_tris > 0, "Bottom face (z=0) should exist with circular hole");
-        assert!(z20_tris > 0, "Top face (z=20) should exist with circular hole");
+        assert!(
+            z0_tris > 0,
+            "Bottom face (z=0) should exist with circular hole"
+        );
+        assert!(
+            z20_tris > 0,
+            "Top face (z=20) should exist with circular hole"
+        );
         assert!(x0_tris > 0, "Left face (x=0) should exist");
         assert!(x20_tris > 0, "Right face (x=20) should exist");
         assert!(y0_tris > 0, "Front face (y=0) should exist");
@@ -613,7 +645,11 @@ mod tests {
         eprintln!("Edge intersection bbox: min={:?}, max={:?}", min, max);
 
         // Verify bounding box
-        assert!(min[0] >= -0.01, "Should not extend to negative x: min_x = {}", min[0]);
+        assert!(
+            min[0] >= -0.01,
+            "Should not extend to negative x: min_x = {}",
+            min[0]
+        );
         assert!(max[0] <= 20.01, "Should not exceed x=20");
         assert!(min[1] >= -0.01, "Should not extend to negative y");
         assert!(max[1] <= 20.01, "Should not exceed y=20");
@@ -667,7 +703,9 @@ mod tests {
                 let surface = &brep.geometry.surfaces[face.surface_index];
                 let surf_type = surface.surface_type();
                 let orientation = face.orientation;
-                let loop_verts: Vec<_> = brep.topology.loop_half_edges(face.outer_loop)
+                let loop_verts: Vec<_> = brep
+                    .topology
+                    .loop_half_edges(face.outer_loop)
                     .map(|he| brep.topology.vertices[brep.topology.half_edges[he].origin].point)
                     .collect();
                 if loop_verts.len() >= 3 {
@@ -678,7 +716,11 @@ mod tests {
                     let e1 = loop_verts[1] - loop_verts[0];
                     let e2 = loop_verts[2] - loop_verts[0];
                     let winding_normal = e1.cross(&e2);
-                    let wn = if winding_normal.norm() > 1e-12 { winding_normal.normalize() } else { winding_normal };
+                    let wn = if winding_normal.norm() > 1e-12 {
+                        winding_normal.normalize()
+                    } else {
+                        winding_normal
+                    };
                     eprintln!("  {:?}: {:?}, {} verts, {} inner_loops, z=[{:.1},{:.1}], orient={:?}, winding_n=({:.2},{:.2},{:.2})",
                         face_id, surf_type, loop_verts.len(), face.inner_loops.len(), z_min, z_max, orientation, wn.x, wn.y, wn.z);
                 }
@@ -695,7 +737,10 @@ mod tests {
         let expected_vol = box_vol - half_cylinder_vol;
         let actual_vol = compute_mesh_volume(&mesh);
 
-        eprintln!("Expected volume: {:.2}, Actual: {:.2}", expected_vol, actual_vol);
+        eprintln!(
+            "Expected volume: {:.2}, Actual: {:.2}",
+            expected_vol, actual_vol
+        );
         let vol_error = ((actual_vol - expected_vol) / expected_vol).abs();
         // TODO: Tighten this to 5% once arc-split geometry is fixed
         assert!(
@@ -826,30 +871,48 @@ mod tests {
         if let Some(brep) = result.as_brep() {
             let solid = &brep.topology.solids[brep.solid_id];
             let shell = &brep.topology.shells[solid.outer_shell];
-            eprintln!("\nShell has {} faces, topology has {} faces", shell.faces.len(), brep.topology.faces.len());
+            eprintln!(
+                "\nShell has {} faces, topology has {} faces",
+                shell.faces.len(),
+                brep.topology.faces.len()
+            );
             eprintln!("Shell face IDs: {:?}", shell.faces);
             eprintln!("\nALL BRep faces ({} total):", brep.topology.faces.len());
             for (face_id, face) in &brep.topology.faces {
-                let loop_verts: Vec<_> = brep.topology.loop_half_edges(face.outer_loop)
+                let loop_verts: Vec<_> = brep
+                    .topology
+                    .loop_half_edges(face.outer_loop)
                     .map(|he| brep.topology.vertices[brep.topology.half_edges[he].origin].point)
                     .collect();
                 if loop_verts.len() < 3 {
                     continue;
                 }
                 let z_min = loop_verts.iter().map(|v| v.z).fold(f64::INFINITY, f64::min);
-                let z_max = loop_verts.iter().map(|v| v.z).fold(f64::NEG_INFINITY, f64::max);
+                let z_max = loop_verts
+                    .iter()
+                    .map(|v| v.z)
+                    .fold(f64::NEG_INFINITY, f64::max);
                 let e1 = loop_verts[1] - loop_verts[0];
                 let e2 = loop_verts[2] - loop_verts[0];
                 let winding_n = e1.cross(&e2);
-                let wn = if winding_n.norm() > 1e-12 { winding_n.normalize() } else { winding_n };
+                let wn = if winding_n.norm() > 1e-12 {
+                    winding_n.normalize()
+                } else {
+                    winding_n
+                };
                 let surface = &brep.geometry.surfaces[face.surface_index];
                 // Compute signed area to get true winding (not just first 3 verts)
                 let mut signed_area_xy = 0.0;
                 for i in 0..loop_verts.len() {
                     let j = (i + 1) % loop_verts.len();
-                    signed_area_xy += loop_verts[i].x * loop_verts[j].y - loop_verts[j].x * loop_verts[i].y;
+                    signed_area_xy +=
+                        loop_verts[i].x * loop_verts[j].y - loop_verts[j].x * loop_verts[i].y;
                 }
-                let _true_winding_z = if signed_area_xy > 0.0 { "CCW (+z)" } else { "CW (-z)" };
+                let _true_winding_z = if signed_area_xy > 0.0 {
+                    "CCW (+z)"
+                } else {
+                    "CW (-z)"
+                };
                 eprintln!(
                     "  {:?}: {:?}, {} verts, z=[{:.1},{:.1}], orient={:?}, winding=({:.2},{:.2},{:.2}), area={:.1}",
                     face_id, surface.surface_type(), loop_verts.len(), z_min, z_max, face.orientation, wn.x, wn.y, wn.z, signed_area_xy
@@ -864,7 +927,10 @@ mod tests {
                     let e1 = loop_verts[1] - loop_verts[0];
                     let e2 = loop_verts[2] - loop_verts[0];
                     let n1 = e1.cross(&e2);
-                    eprintln!("    First triangle (v0,v1,v2) cross: ({:.4}, {:.4}, {:.4})", n1.x, n1.y, n1.z);
+                    eprintln!(
+                        "    First triangle (v0,v1,v2) cross: ({:.4}, {:.4}, {:.4})",
+                        n1.x, n1.y, n1.z
+                    );
                 }
             }
         }
@@ -923,7 +989,10 @@ mod tests {
         let expected_vol = box_vol - quarter_cylinder_vol;
         let actual_vol = compute_mesh_volume(&mesh);
 
-        eprintln!("Expected volume: {:.2}, Actual: {:.2}", expected_vol, actual_vol);
+        eprintln!(
+            "Expected volume: {:.2}, Actual: {:.2}",
+            expected_vol, actual_vol
+        );
         let vol_error = ((actual_vol - expected_vol) / expected_vol).abs();
         // TODO: Tighten this to 5% once arc-split geometry is fixed
         assert!(
@@ -956,7 +1025,10 @@ mod tests {
         let box_vol = 20.0 * 20.0 * 20.0;
         let actual_vol = compute_mesh_volume(&mesh);
 
-        eprintln!("Tangent case - Box vol: {:.2}, Result: {:.2}", box_vol, actual_vol);
+        eprintln!(
+            "Tangent case - Box vol: {:.2}, Result: {:.2}",
+            box_vol, actual_vol
+        );
 
         // The volumes should be very close (tangent contact removes negligible material)
         let vol_error = ((actual_vol - box_vol) / box_vol).abs();
@@ -1036,7 +1108,10 @@ mod tests {
         let z0_tris = count_triangles_at_coord(&mesh, 2, 0.0, 0.01);
         let z20_tris = count_triangles_at_coord(&mesh, 2, 20.0, 0.01);
 
-        eprintln!("Multiple cylinders - z=0: {} tris, z=20: {} tris", z0_tris, z20_tris);
+        eprintln!(
+            "Multiple cylinders - z=0: {} tris, z=20: {} tris",
+            z0_tris, z20_tris
+        );
 
         assert!(z0_tris > 0, "Bottom face should have 3 holes");
         assert!(z20_tris > 0, "Top face should have 3 holes");
@@ -1048,8 +1123,12 @@ mod tests {
         let actual_vol = compute_mesh_volume(&mesh);
 
         let vol_error = ((actual_vol - expected_vol) / expected_vol).abs();
-        eprintln!("Expected vol: {:.2}, Actual: {:.2}, Error: {:.2}%",
-                  expected_vol, actual_vol, vol_error * 100.0);
+        eprintln!(
+            "Expected vol: {:.2}, Actual: {:.2}, Error: {:.2}%",
+            expected_vol,
+            actual_vol,
+            vol_error * 100.0
+        );
         assert!(
             vol_error < 0.05,
             "Volume error {:.1}% exceeds tolerance",
@@ -1065,9 +1144,9 @@ mod tests {
     #[derive(Debug)]
     struct BadTriangle {
         tri_index: usize,
-        face_axis: usize,       // 0=X, 1=Y, 2=Z
-        face_coord: f64,        // coordinate value (e.g., 20.0 for z=20)
-        expected_sign: f32,     // +1.0 or -1.0
+        face_axis: usize,   // 0=X, 1=Y, 2=Z
+        face_coord: f64,    // coordinate value (e.g., 20.0 for z=20)
+        expected_sign: f32, // +1.0 or -1.0
         actual_normal: [f32; 3],
         vertices: [[f32; 3]; 3],
     }
@@ -1112,10 +1191,9 @@ mod tests {
             // Check each face definition
             for &(axis, coord, expected_sign) in faces {
                 // Check if all vertices are on this face
-                let on_face =
-                    (v0[axis] as f64 - coord).abs() < tolerance &&
-                    (v1[axis] as f64 - coord).abs() < tolerance &&
-                    (v2[axis] as f64 - coord).abs() < tolerance;
+                let on_face = (v0[axis] as f64 - coord).abs() < tolerance
+                    && (v1[axis] as f64 - coord).abs() < tolerance
+                    && (v2[axis] as f64 - coord).abs() < tolerance;
 
                 if on_face {
                     let normal = compute_triangle_normal(mesh, tri * 3);
@@ -1150,15 +1228,12 @@ mod tests {
         for bt in bad {
             eprintln!(
                 "BAD TRI #{} on {}={:.1} face:",
-                bt.tri_index,
-                axis_names[bt.face_axis],
-                bt.face_coord
+                bt.tri_index, axis_names[bt.face_axis], bt.face_coord
             );
             let sign_str = if bt.expected_sign > 0.0 { "+" } else { "-" };
             eprintln!(
                 "  Expected normal: {}{}",
-                sign_str,
-                axis_names[bt.face_axis]
+                sign_str, axis_names[bt.face_axis]
             );
             eprintln!(
                 "  Actual normal: ({:.3}, {:.3}, {:.3})",
@@ -1176,34 +1251,59 @@ mod tests {
     fn debug_z0_faces(brep: &BRepSolid, label: &str) {
         eprintln!("\n=== {} z=0 faces ===", label);
         for (face_id, face) in &brep.topology.faces {
-            let loop_verts: Vec<_> = brep.topology.loop_half_edges(face.outer_loop)
+            let loop_verts: Vec<_> = brep
+                .topology
+                .loop_half_edges(face.outer_loop)
                 .map(|he| brep.topology.vertices[brep.topology.half_edges[he].origin].point)
                 .collect();
-            if loop_verts.is_empty() { continue; }
+            if loop_verts.is_empty() {
+                continue;
+            }
             let z_min = loop_verts.iter().map(|v| v.z).fold(f64::INFINITY, f64::min);
-            let z_max = loop_verts.iter().map(|v| v.z).fold(f64::NEG_INFINITY, f64::max);
-            if z_min.abs() > 0.1 || z_max.abs() > 0.1 { continue; } // Skip non-z=0 faces
+            let z_max = loop_verts
+                .iter()
+                .map(|v| v.z)
+                .fold(f64::NEG_INFINITY, f64::max);
+            if z_min.abs() > 0.1 || z_max.abs() > 0.1 {
+                continue;
+            } // Skip non-z=0 faces
 
             let surface = &brep.geometry.surfaces[face.surface_index];
             let surf_type = surface.surface_type();
 
             // Get surface normal at first point
-            let surf_normal = if let Some(plane) = surface.as_any().downcast_ref::<vcad_kernel_geom::Plane>() {
-                format!("({:.2},{:.2},{:.2})", plane.normal_dir.x, plane.normal_dir.y, plane.normal_dir.z)
-            } else {
-                "N/A".to_string()
-            };
+            let surf_normal =
+                if let Some(plane) = surface.as_any().downcast_ref::<vcad_kernel_geom::Plane>() {
+                    format!(
+                        "({:.2},{:.2},{:.2})",
+                        plane.normal_dir.x, plane.normal_dir.y, plane.normal_dir.z
+                    )
+                } else {
+                    "N/A".to_string()
+                };
 
             // Compute loop winding from vertices
             let mut signed_area_xy = 0.0;
             for i in 0..loop_verts.len() {
                 let j = (i + 1) % loop_verts.len();
-                signed_area_xy += loop_verts[i].x * loop_verts[j].y - loop_verts[j].x * loop_verts[i].y;
+                signed_area_xy +=
+                    loop_verts[i].x * loop_verts[j].y - loop_verts[j].x * loop_verts[i].y;
             }
-            let winding = if signed_area_xy > 0.0 { "CCW(+z)" } else { "CW(-z)" };
+            let winding = if signed_area_xy > 0.0 {
+                "CCW(+z)"
+            } else {
+                "CW(-z)"
+            };
 
-            eprintln!("  {:?}: {:?}, {} verts, orient={:?}, surf_n={}, winding={}",
-                face_id, surf_type, loop_verts.len(), face.orientation, surf_normal, winding);
+            eprintln!(
+                "  {:?}: {:?}, {} verts, orient={:?}, surf_n={}, winding={}",
+                face_id,
+                surf_type,
+                loop_verts.len(),
+                face.orientation,
+                surf_normal,
+                winding
+            );
 
             // Print vertices for small faces
             if loop_verts.len() <= 6 {
@@ -1257,25 +1357,43 @@ mod tests {
         // The cylinder caps inside the box are reversed, so they point INTO the hole.
         let face_specs: Vec<(usize, f64, f32)> = vec![
             // Only check faces that are definitely outer box faces
-            (0, 20.0, 1.0),   // x=20 -> +X (box right face)
-            // Note: y=0 and y=20 are partially cut by the cylinder,
-            // but the remaining portions should still face outward
+            (0, 20.0, 1.0), // x=20 -> +X (box right face)
+                            // Note: y=0 and y=20 are partially cut by the cylinder,
+                            // but the remaining portions should still face outward
         ];
 
         let bad = validate_outward_normals(&mesh, &face_specs, 0.1);
 
         if !bad.is_empty() {
-            eprintln!("\n=== DIFFERENCE: {} triangles have wrong normals ===", bad.len());
+            eprintln!(
+                "\n=== DIFFERENCE: {} triangles have wrong normals ===",
+                bad.len()
+            );
             print_bad_triangles(&bad);
         }
 
         // Count triangles per face for context
         eprintln!("\nDifference face triangle counts:");
-        eprintln!("  z=0:  {} tris", count_triangles_at_coord(&mesh, 2, 0.0, 0.1));
-        eprintln!("  z=20: {} tris", count_triangles_at_coord(&mesh, 2, 20.0, 0.1));
-        eprintln!("  x=20: {} tris", count_triangles_at_coord(&mesh, 0, 20.0, 0.1));
-        eprintln!("  y=0:  {} tris", count_triangles_at_coord(&mesh, 1, 0.0, 0.1));
-        eprintln!("  y=20: {} tris", count_triangles_at_coord(&mesh, 1, 20.0, 0.1));
+        eprintln!(
+            "  z=0:  {} tris",
+            count_triangles_at_coord(&mesh, 2, 0.0, 0.1)
+        );
+        eprintln!(
+            "  z=20: {} tris",
+            count_triangles_at_coord(&mesh, 2, 20.0, 0.1)
+        );
+        eprintln!(
+            "  x=20: {} tris",
+            count_triangles_at_coord(&mesh, 0, 20.0, 0.1)
+        );
+        eprintln!(
+            "  y=0:  {} tris",
+            count_triangles_at_coord(&mesh, 1, 0.0, 0.1)
+        );
+        eprintln!(
+            "  y=20: {} tris",
+            count_triangles_at_coord(&mesh, 1, 20.0, 0.1)
+        );
 
         assert!(
             bad.is_empty(),
@@ -1317,27 +1435,45 @@ mod tests {
         // y=20 (back, partial) -> normal +Y
         // The cylinder extends to x=-10, so there's curved surface there
         let face_specs: Vec<(usize, f64, f32)> = vec![
-            (2, 0.0, -1.0),   // z=0 -> -Z
-            (2, 20.0, 1.0),   // z=20 -> +Z
-            (0, 20.0, 1.0),   // x=20 -> +X
-            (1, 0.0, -1.0),   // y=0 -> -Y
-            (1, 20.0, 1.0),   // y=20 -> +Y
+            (2, 0.0, -1.0), // z=0 -> -Z
+            (2, 20.0, 1.0), // z=20 -> +Z
+            (0, 20.0, 1.0), // x=20 -> +X
+            (1, 0.0, -1.0), // y=0 -> -Y
+            (1, 20.0, 1.0), // y=20 -> +Y
         ];
 
         let bad = validate_outward_normals(&mesh, &face_specs, 0.1);
 
         if !bad.is_empty() {
-            eprintln!("\n=== UNION: {} triangles have wrong normals ===", bad.len());
+            eprintln!(
+                "\n=== UNION: {} triangles have wrong normals ===",
+                bad.len()
+            );
             print_bad_triangles(&bad);
         }
 
         // Count triangles per face for context
         eprintln!("\nUnion face triangle counts:");
-        eprintln!("  z=0:  {} tris", count_triangles_at_coord(&mesh, 2, 0.0, 0.1));
-        eprintln!("  z=20: {} tris", count_triangles_at_coord(&mesh, 2, 20.0, 0.1));
-        eprintln!("  x=20: {} tris", count_triangles_at_coord(&mesh, 0, 20.0, 0.1));
-        eprintln!("  y=0:  {} tris", count_triangles_at_coord(&mesh, 1, 0.0, 0.1));
-        eprintln!("  y=20: {} tris", count_triangles_at_coord(&mesh, 1, 20.0, 0.1));
+        eprintln!(
+            "  z=0:  {} tris",
+            count_triangles_at_coord(&mesh, 2, 0.0, 0.1)
+        );
+        eprintln!(
+            "  z=20: {} tris",
+            count_triangles_at_coord(&mesh, 2, 20.0, 0.1)
+        );
+        eprintln!(
+            "  x=20: {} tris",
+            count_triangles_at_coord(&mesh, 0, 20.0, 0.1)
+        );
+        eprintln!(
+            "  y=0:  {} tris",
+            count_triangles_at_coord(&mesh, 1, 0.0, 0.1)
+        );
+        eprintln!(
+            "  y=20: {} tris",
+            count_triangles_at_coord(&mesh, 1, 20.0, 0.1)
+        );
 
         // Check bounding box extends to x=-10 (cylinder protrusion)
         let (min, max) = compute_mesh_bbox(&mesh);
@@ -1367,12 +1503,7 @@ mod tests {
         translate_brep(&mut small_sphere, 8.0, 0.0, 0.0);
 
         // Subtract small sphere from big sphere
-        let result = boolean_op(
-            &big_sphere,
-            &small_sphere,
-            BooleanOp::Difference,
-            32,
-        );
+        let result = boolean_op(&big_sphere, &small_sphere, BooleanOp::Difference, 32);
         let mesh = result.to_mesh(32);
 
         // The result should have some triangles (not empty)
@@ -1448,7 +1579,10 @@ mod tests {
         let result = boolean_op(&cube, &cylinder, BooleanOp::Difference, 32);
         let mesh = result.to_mesh(32);
 
-        assert!(mesh.num_triangles() > 0, "Result mesh should have triangles");
+        assert!(
+            mesh.num_triangles() > 0,
+            "Result mesh should have triangles"
+        );
         validate_mesh_indices(&mesh);
 
         // Box: 20^3=8000, Cylinder: pi*25*20=~1570.8, Expected: ~6429.2
@@ -1457,14 +1591,21 @@ mod tests {
         assert!(
             volume > expected * 0.7 && volume < expected * 1.3,
             "Expected volume ~{:.0}, got {:.0}",
-            expected, volume
+            expected,
+            volume
         );
 
         let (min, max) = compute_mesh_bbox(&mesh);
-        assert!(min[0] >= -0.1 && min[1] >= -0.1 && min[2] >= -0.1,
-            "Min should be ~[0,0,0], got {:?}", min);
-        assert!(max[0] <= 20.1 && max[1] <= 20.1 && max[2] <= 20.1,
-            "Max should be ~[20,20,20], got {:?}", max);
+        assert!(
+            min[0] >= -0.1 && min[1] >= -0.1 && min[2] >= -0.1,
+            "Min should be ~[0,0,0], got {:?}",
+            min
+        );
+        assert!(
+            max[0] <= 20.1 && max[1] <= 20.1 && max[2] <= 20.1,
+            "Max should be ~[20,20,20], got {:?}",
+            max
+        );
     }
 
     /// Test counterbore / nested concentric holes.
@@ -1485,7 +1626,9 @@ mod tests {
         let expected_vol1 = 40.0 * 40.0 * 10.0 - std::f64::consts::PI * 8.0 * 8.0 * 10.0;
         assert!(
             (vol1 - expected_vol1).abs() < expected_vol1 * 0.15,
-            "Step 1 volume {:.1} too far from expected {:.1}", vol1, expected_vol1
+            "Step 1 volume {:.1} too far from expected {:.1}",
+            vol1,
+            expected_vol1
         );
 
         let mut small_hole = make_cylinder(4.0, 20.0, 32);
@@ -1503,15 +1646,26 @@ mod tests {
         let vol2 = compute_mesh_volume(&mesh2);
         assert!(
             (vol2 - vol1).abs() < vol1 * 0.15,
-            "Step 2 volume {:.1} should be close to step 1 volume {:.1}", vol2, vol1
+            "Step 2 volume {:.1} should be close to step 1 volume {:.1}",
+            vol2,
+            vol1
         );
-        assert!(mesh2.num_triangles() > 0, "Result mesh should have triangles");
+        assert!(
+            mesh2.num_triangles() > 0,
+            "Result mesh should have triangles"
+        );
 
         let (min, max) = compute_mesh_bbox(&mesh2);
-        assert!(min[0] >= -0.1 && min[1] >= -0.1 && min[2] >= -0.1,
-            "Min should be ~[0,0,0], got {:?}", min);
-        assert!(max[0] <= 40.1 && max[1] <= 40.1 && max[2] <= 10.1,
-            "Max should be ~[40,40,10], got {:?}", max);
+        assert!(
+            min[0] >= -0.1 && min[1] >= -0.1 && min[2] >= -0.1,
+            "Min should be ~[0,0,0], got {:?}",
+            min
+        );
+        assert!(
+            max[0] <= 40.1 && max[1] <= 40.1 && max[2] <= 10.1,
+            "Max should be ~[40,40,10], got {:?}",
+            max
+        );
     }
 
     fn make_torus(major_radius: f64, minor_radius: f64) -> BRepSolid {
@@ -1540,7 +1694,11 @@ mod tests {
         let shell = topo.add_shell(vec![face], ShellType::Outer);
         let solid_id = topo.add_solid(shell);
 
-        BRepSolid { topology: topo, geometry: geom, solid_id }
+        BRepSolid {
+            topology: topo,
+            geometry: geom,
+            solid_id,
+        }
     }
 
     #[test]
@@ -1552,14 +1710,21 @@ mod tests {
         let result = boolean_op(&big_cube, &torus, BooleanOp::Difference, 32);
         let mesh = result.to_mesh(32);
 
-        assert!(!mesh.indices.is_empty(), "Result mesh should have triangles");
+        assert!(
+            !mesh.indices.is_empty(),
+            "Result mesh should have triangles"
+        );
 
         // Note: full torus subtraction requires torus-plane SSI to produce
         // proper split curves. For now, verify the pipeline doesn't crash
         // and produces a valid mesh.
         let volume = compute_mesh_volume(&mesh);
         assert!(volume > 0.0, "Volume should be positive");
-        assert!(volume <= 27000.0 + 1.0, "Volume {:.1} should not exceed box", volume);
+        assert!(
+            volume <= 27000.0 + 1.0,
+            "Volume {:.1} should not exceed box",
+            volume
+        );
     }
 
     #[test]
@@ -1581,11 +1746,20 @@ mod tests {
         );
 
         let (min, max) = compute_mesh_bbox(&mesh);
-        assert!(min[0] >= -0.1 && min[1] >= -0.1 && min[2] >= -0.1,
-            "Min should be ~[0,0,0], got {:?}", min);
-        assert!(max[0] <= 20.1 && max[1] <= 20.1 && max[2] <= 20.1,
-            "Max should be ~[20,20,20], got {:?}", max);
+        assert!(
+            min[0] >= -0.1 && min[1] >= -0.1 && min[2] >= -0.1,
+            "Min should be ~[0,0,0], got {:?}",
+            min
+        );
+        assert!(
+            max[0] <= 20.1 && max[1] <= 20.1 && max[2] <= 20.1,
+            "Max should be ~[20,20,20], got {:?}",
+            max
+        );
 
-        assert!(mesh.num_triangles() > 0, "Result mesh should have triangles");
+        assert!(
+            mesh.num_triangles() > 0,
+            "Result mesh should have triangles"
+        );
     }
 }

@@ -298,11 +298,7 @@ impl GcodeGenerator {
             );
             self.current_f = feedrate;
         } else {
-            let _ = writeln!(
-                self.output,
-                "G1 X{:.3} Y{:.3} E{:.5}",
-                x, y, self.current_e
-            );
+            let _ = writeln!(self.output, "G1 X{:.3} Y{:.3} E{:.5}", x, y, self.current_e);
         }
 
         self.current_x = x;

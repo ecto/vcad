@@ -257,9 +257,17 @@ impl ToolLibrary {
     /// Create a default library with common tools.
     pub fn default_library() -> Self {
         let mut lib = Self::new();
-        lib.add(ToolEntry::new(1, "6mm Flat Endmill", Tool::default_endmill()));
+        lib.add(ToolEntry::new(
+            1,
+            "6mm Flat Endmill",
+            Tool::default_endmill(),
+        ));
         lib.add(ToolEntry::new(2, "6mm Ball Endmill", Tool::default_ball()));
-        lib.add(ToolEntry::new(3, "6mm Bull Endmill R1", Tool::default_bull()));
+        lib.add(ToolEntry::new(
+            3,
+            "6mm Bull Endmill R1",
+            Tool::default_bull(),
+        ));
         lib.add(ToolEntry::new(4, "3mm Drill", Tool::default_drill()));
         lib.add(ToolEntry::new(
             5,

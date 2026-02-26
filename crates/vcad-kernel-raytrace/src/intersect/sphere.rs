@@ -1,10 +1,10 @@
 //! Ray-sphere intersection (quadratic equation).
 
+use super::SurfaceHit;
+use crate::Ray;
+use std::f64::consts::PI;
 use vcad_kernel_geom::SphereSurface;
 use vcad_kernel_math::Point2;
-use crate::Ray;
-use super::SurfaceHit;
-use std::f64::consts::PI;
 
 /// Intersect a ray with a spherical surface.
 ///
@@ -86,10 +86,7 @@ mod tests {
     fn test_ray_sphere_through_center() {
         let sphere = SphereSurface::new(5.0);
         // Ray from (-10, 0, 0) pointing +x, hitting sphere at x = ±5
-        let ray = Ray::new(
-            Point3::new(-10.0, 0.0, 0.0),
-            Vec3::new(1.0, 0.0, 0.0),
-        );
+        let ray = Ray::new(Point3::new(-10.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0));
         let hits = intersect_sphere(&ray, &sphere);
         assert_eq!(hits.len(), 2);
 
@@ -103,10 +100,7 @@ mod tests {
     fn test_ray_sphere_tangent() {
         let sphere = SphereSurface::new(5.0);
         // Ray tangent to sphere at (5, 0, 0)
-        let ray = Ray::new(
-            Point3::new(5.0, -10.0, 0.0),
-            Vec3::new(0.0, 1.0, 0.0),
-        );
+        let ray = Ray::new(Point3::new(5.0, -10.0, 0.0), Vec3::new(0.0, 1.0, 0.0));
         let hits = intersect_sphere(&ray, &sphere);
         // Tangent ray gives 1 or 2 very close intersections
         assert!(hits.len() <= 2);
@@ -118,10 +112,7 @@ mod tests {
     #[test]
     fn test_ray_sphere_miss() {
         let sphere = SphereSurface::new(5.0);
-        let ray = Ray::new(
-            Point3::new(-10.0, 10.0, 0.0),
-            Vec3::new(1.0, 0.0, 0.0),
-        );
+        let ray = Ray::new(Point3::new(-10.0, 10.0, 0.0), Vec3::new(1.0, 0.0, 0.0));
         let hits = intersect_sphere(&ray, &sphere);
         assert!(hits.is_empty());
     }
@@ -130,10 +121,7 @@ mod tests {
     fn test_ray_sphere_from_inside() {
         let sphere = SphereSurface::new(5.0);
         // Ray from inside the sphere
-        let ray = Ray::new(
-            Point3::new(0.0, 0.0, 0.0),
-            Vec3::new(1.0, 0.0, 0.0),
-        );
+        let ray = Ray::new(Point3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0));
         let hits = intersect_sphere(&ray, &sphere);
         // Only one hit (exit point) since entry is at t < 0
         assert_eq!(hits.len(), 1);

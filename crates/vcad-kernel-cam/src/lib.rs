@@ -60,7 +60,9 @@ mod toolpath;
 
 // Re-exports
 pub use error::CamError;
-pub use operation::{CamOperation, Contour, ContourSegment, Contour2D, Face, Pocket2D, Point2D, Roughing3D, Tab};
+pub use operation::{
+    CamOperation, Contour, Contour2D, ContourSegment, Face, Pocket2D, Point2D, Roughing3D, Tab,
+};
 pub use tool::{Tool, ToolEntry, ToolHolder, ToolLibrary};
 pub use toolpath::{ArcDir, ArcPlane, CoolantMode, SpindleDir, Toolpath, ToolpathSegment};
 

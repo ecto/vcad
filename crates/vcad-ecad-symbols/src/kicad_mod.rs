@@ -199,9 +199,7 @@ fn parse_pad_shape(
     roundrect_rratio: Option<f64>,
 ) -> vcad_ir::ecad::PadShape {
     match shape_str {
-        "circle" => vcad_ir::ecad::PadShape::Circle {
-            diameter: size.0,
-        },
+        "circle" => vcad_ir::ecad::PadShape::Circle { diameter: size.0 },
         "rect" => vcad_ir::ecad::PadShape::Rect {
             width: size.0,
             height: size.1,
@@ -233,11 +231,7 @@ fn parse_drill(node: &SExpr<'_>) -> Option<vcad_ir::ecad::DrillSpec> {
     let has_oval = children.iter().any(|c| c.as_str() == Some("oval"));
 
     // Collect numeric values (skip "drill" keyword and "oval" keyword)
-    let nums: Vec<f64> = children
-        .iter()
-        .skip(1)
-        .filter_map(|c| c.as_f64())
-        .collect();
+    let nums: Vec<f64> = children.iter().skip(1).filter_map(|c| c.as_f64()).collect();
 
     if nums.is_empty() {
         return None;
@@ -279,17 +273,13 @@ fn parse_pad(node: &SExpr<'_>) -> Option<PadDef> {
     let size = parse_size(size_node)?;
 
     // (roundrect_rratio R)
-    let roundrect_rratio = node
-        .find("roundrect_rratio")
-        .and_then(|n| child_f64(n, 1));
+    let roundrect_rratio = node.find("roundrect_rratio").and_then(|n| child_f64(n, 1));
 
     let shape = parse_pad_shape(shape_str, size, roundrect_rratio);
 
     // (layers ...)
     let layers_node = node.find("layers");
-    let layers = layers_node
-        .map(|n| parse_layers(n))
-        .unwrap_or_default();
+    let layers = layers_node.map(|n| parse_layers(n)).unwrap_or_default();
 
     // (drill ...)
     let drill = node.find("drill").and_then(|n| parse_drill(n));
@@ -431,7 +421,14 @@ fn parse_single_footprint(node: &SExpr<'_>) -> Option<FootprintDef> {
         .filter_map(|n| parse_pad(n))
         .collect();
 
-    let graphic_tags = ["fp_line", "fp_circle", "fp_arc", "fp_rect", "fp_poly", "fp_text"];
+    let graphic_tags = [
+        "fp_line",
+        "fp_circle",
+        "fp_arc",
+        "fp_rect",
+        "fp_poly",
+        "fp_text",
+    ];
     let mut graphics = Vec::new();
     if let Some(children) = node.children() {
         for child in children {
@@ -474,10 +471,8 @@ pub fn parse_footprint_lib(input: &str) -> Result<FootprintLib, ParseError> {
         return Err(ParseError::TrailingInput);
     }
 
-    let footprint =
-        parse_single_footprint(&root).ok_or_else(|| {
-            ParseError::Nom("expected root node 'footprint' or 'module'".to_string())
-        })?;
+    let footprint = parse_single_footprint(&root)
+        .ok_or_else(|| ParseError::Nom("expected root node 'footprint' or 'module'".to_string()))?;
 
     Ok(FootprintLib {
         footprints: vec![footprint],

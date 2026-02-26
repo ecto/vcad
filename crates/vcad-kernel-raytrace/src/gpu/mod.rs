@@ -3,9 +3,11 @@
 //! This module provides WebGPU-based ray tracing that renders BRep surfaces
 //! directly without tessellation.
 
-mod pipeline;
 mod buffers;
+mod pipeline;
 pub mod shaders;
 
+pub use buffers::{
+    GpuBvhNode, GpuCamera, GpuFace, GpuRenderState, GpuScene, GpuSceneError, GpuSurface, GpuVec2,
+};
 pub use pipeline::RayTracePipeline;
-pub use buffers::{GpuScene, GpuSceneError, GpuCamera, GpuRenderState, GpuSurface, GpuFace, GpuBvhNode, GpuVec2};

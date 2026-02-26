@@ -1,7 +1,7 @@
 //! Collision shape generation from vcad geometry.
 
-use phyz::Geometry;
 use phyz::phyz_math::Vec3;
+use phyz::Geometry;
 use vcad_kernel_tessellate::TriangleMesh;
 
 use crate::error::PhysicsError;
@@ -53,7 +53,13 @@ fn create_mesh(mesh: &TriangleMesh, name: &str) -> Result<Geometry, PhysicsError
     let vertices: Vec<Vec3> = mesh
         .vertices
         .chunks(3)
-        .map(|v| Vec3::new(v[0] as f64 / 1000.0, v[1] as f64 / 1000.0, v[2] as f64 / 1000.0))
+        .map(|v| {
+            Vec3::new(
+                v[0] as f64 / 1000.0,
+                v[1] as f64 / 1000.0,
+                v[2] as f64 / 1000.0,
+            )
+        })
         .collect();
 
     if vertices.len() < 4 {

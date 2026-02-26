@@ -3,25 +3,25 @@
 //! Each surface type has a dedicated intersector that computes exact
 //! intersection points and surface parameters.
 
-mod plane;
-mod cylinder;
-mod sphere;
-mod cone;
-mod torus;
 mod bilinear;
 mod bspline;
+mod cone;
+mod cylinder;
+mod plane;
+mod sphere;
+mod torus;
 
-pub use plane::intersect_plane;
-pub use cylinder::intersect_cylinder;
-pub use sphere::intersect_sphere;
-pub use cone::intersect_cone;
-pub use torus::intersect_torus;
 pub use bilinear::intersect_bilinear;
 pub use bspline::intersect_bspline;
+pub use cone::intersect_cone;
+pub use cylinder::intersect_cylinder;
+pub use plane::intersect_plane;
+pub use sphere::intersect_sphere;
+pub use torus::intersect_torus;
 
+use crate::Ray;
 use vcad_kernel_geom::{Surface, SurfaceKind};
 use vcad_kernel_math::Point2;
-use crate::Ray;
 
 /// Result of a ray-surface intersection (before trim testing).
 #[derive(Debug, Clone, Copy)]
@@ -45,35 +45,50 @@ pub fn intersect_surface(ray: &Ray, surface: &dyn Surface) -> Vec<SurfaceHit> {
             }
         }
         SurfaceKind::Cylinder => {
-            if let Some(cyl) = surface.as_any().downcast_ref::<vcad_kernel_geom::CylinderSurface>() {
+            if let Some(cyl) = surface
+                .as_any()
+                .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
+            {
                 intersect_cylinder(ray, cyl)
             } else {
                 Vec::new()
             }
         }
         SurfaceKind::Sphere => {
-            if let Some(sph) = surface.as_any().downcast_ref::<vcad_kernel_geom::SphereSurface>() {
+            if let Some(sph) = surface
+                .as_any()
+                .downcast_ref::<vcad_kernel_geom::SphereSurface>()
+            {
                 intersect_sphere(ray, sph)
             } else {
                 Vec::new()
             }
         }
         SurfaceKind::Cone => {
-            if let Some(cone) = surface.as_any().downcast_ref::<vcad_kernel_geom::ConeSurface>() {
+            if let Some(cone) = surface
+                .as_any()
+                .downcast_ref::<vcad_kernel_geom::ConeSurface>()
+            {
                 intersect_cone(ray, cone)
             } else {
                 Vec::new()
             }
         }
         SurfaceKind::Torus => {
-            if let Some(torus) = surface.as_any().downcast_ref::<vcad_kernel_geom::TorusSurface>() {
+            if let Some(torus) = surface
+                .as_any()
+                .downcast_ref::<vcad_kernel_geom::TorusSurface>()
+            {
                 intersect_torus(ray, torus)
             } else {
                 Vec::new()
             }
         }
         SurfaceKind::Bilinear => {
-            if let Some(bil) = surface.as_any().downcast_ref::<vcad_kernel_geom::BilinearSurface>() {
+            if let Some(bil) = surface
+                .as_any()
+                .downcast_ref::<vcad_kernel_geom::BilinearSurface>()
+            {
                 intersect_bilinear(ray, bil)
             } else {
                 Vec::new()

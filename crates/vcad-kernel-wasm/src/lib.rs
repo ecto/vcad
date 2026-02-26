@@ -223,10 +223,13 @@ impl Solid {
             inner: vcad_kernel::Solid::cube(sx, sy, sz),
         };
         let (min, max) = solid.inner.bounding_box();
-        web_sys::console::log_1(&format!(
-            "[WASM] Created cube({},{},{}): bbox=[{:.2},{:.2},{:.2}]->[{:.2},{:.2},{:.2}]",
-            sx, sy, sz, min[0], min[1], min[2], max[0], max[1], max[2]
-        ).into());
+        web_sys::console::log_1(
+            &format!(
+                "[WASM] Created cube({},{},{}): bbox=[{:.2},{:.2},{:.2}]->[{:.2},{:.2},{:.2}]",
+                sx, sy, sz, min[0], min[1], min[2], max[0], max[1], max[2]
+            )
+            .into(),
+        );
         solid
     }
 
@@ -496,17 +499,30 @@ impl Solid {
 
         let result_tris_before_mesh = result.inner.num_triangles();
         let (result_min, result_max) = result.inner.bounding_box();
-        web_sys::console::log_1(&format!(
-            "[WASM] Difference result: {} tris, bbox=[{:.2},{:.2},{:.2}]->[{:.2},{:.2},{:.2}]",
-            result_tris_before_mesh,
-            result_min[0], result_min[1], result_min[2],
-            result_max[0], result_max[1], result_max[2]
-        ).into());
+        web_sys::console::log_1(
+            &format!(
+                "[WASM] Difference result: {} tris, bbox=[{:.2},{:.2},{:.2}]->[{:.2},{:.2},{:.2}]",
+                result_tris_before_mesh,
+                result_min[0],
+                result_min[1],
+                result_min[2],
+                result_max[0],
+                result_max[1],
+                result_max[2]
+            )
+            .into(),
+        );
 
         let mesh = result.inner.to_mesh(32);
         let tris = mesh.indices.len() / 3;
         let verts = mesh.vertices.len() / 3;
-        web_sys::console::log_1(&format!("[WASM] Difference mesh (32 segs): {} triangles, {} vertices", tris, verts).into());
+        web_sys::console::log_1(
+            &format!(
+                "[WASM] Difference mesh (32 segs): {} triangles, {} vertices",
+                tris, verts
+            )
+            .into(),
+        );
 
         // Analyze the mesh to find any problematic triangles
         // Check for triangles with NEGATIVE x or y coordinates (the "ears")
@@ -519,9 +535,21 @@ impl Solid {
             let i0 = mesh.indices[i] as usize * 3;
             let i1 = mesh.indices[i + 1] as usize * 3;
             let i2 = mesh.indices[i + 2] as usize * 3;
-            let v0 = [mesh.vertices[i0], mesh.vertices[i0 + 1], mesh.vertices[i0 + 2]];
-            let v1 = [mesh.vertices[i1], mesh.vertices[i1 + 1], mesh.vertices[i1 + 2]];
-            let v2 = [mesh.vertices[i2], mesh.vertices[i2 + 1], mesh.vertices[i2 + 2]];
+            let v0 = [
+                mesh.vertices[i0],
+                mesh.vertices[i0 + 1],
+                mesh.vertices[i0 + 2],
+            ];
+            let v1 = [
+                mesh.vertices[i1],
+                mesh.vertices[i1 + 1],
+                mesh.vertices[i1 + 2],
+            ];
+            let v2 = [
+                mesh.vertices[i2],
+                mesh.vertices[i2 + 1],
+                mesh.vertices[i2 + 2],
+            ];
 
             // Check for any vertex with negative x
             if v0[0] < -0.01 || v1[0] < -0.01 || v2[0] < -0.01 {
@@ -548,17 +576,31 @@ impl Solid {
             }
         }
 
-        web_sys::console::log_1(&format!("[WASM] Triangles with NEGATIVE x: {}", negative_x_tris.len()).into());
+        web_sys::console::log_1(
+            &format!(
+                "[WASM] Triangles with NEGATIVE x: {}",
+                negative_x_tris.len()
+            )
+            .into(),
+        );
         for (i, tri) in negative_x_tris.iter().take(10).enumerate() {
             web_sys::console::log_1(&format!("[WASM]   neg_x tri {}: {}", i, tri).into());
         }
 
-        web_sys::console::log_1(&format!("[WASM] Triangles with NEGATIVE y: {}", negative_y_tris.len()).into());
+        web_sys::console::log_1(
+            &format!(
+                "[WASM] Triangles with NEGATIVE y: {}",
+                negative_y_tris.len()
+            )
+            .into(),
+        );
         for (i, tri) in negative_y_tris.iter().take(10).enumerate() {
             web_sys::console::log_1(&format!("[WASM]   neg_y tri {}: {}", i, tri).into());
         }
 
-        web_sys::console::log_1(&format!("[WASM] Triangles on z=0 cap: {}", z0_cap_tris.len()).into());
+        web_sys::console::log_1(
+            &format!("[WASM] Triangles on z=0 cap: {}", z0_cap_tris.len()).into(),
+        );
         for (i, tri) in z0_cap_tris.iter().enumerate() {
             web_sys::console::log_1(&format!("[WASM]   z0_cap tri {}: {}", i, tri).into());
         }
@@ -581,10 +623,13 @@ impl Solid {
             min_z = min_z.min(z);
             max_z = max_z.max(z);
         }
-        web_sys::console::log_1(&format!(
-            "[WASM] Mesh BBox: [{:.2},{:.2},{:.2}] -> [{:.2},{:.2},{:.2}]",
-            min_x, min_y, min_z, max_x, max_y, max_z
-        ).into());
+        web_sys::console::log_1(
+            &format!(
+                "[WASM] Mesh BBox: [{:.2},{:.2},{:.2}] -> [{:.2},{:.2},{:.2}]",
+                min_x, min_y, min_z, max_x, max_y, max_z
+            )
+            .into(),
+        );
 
         result
     }
@@ -747,9 +792,7 @@ impl Solid {
             web_sys::console::error_1(
                 &format!(
                     "[WASM] getMesh: {} invalid indices (max index {} but only {} vertices)",
-                    invalid_count,
-                    max_index,
-                    num_verts
+                    invalid_count, max_index, num_verts
                 )
                 .into(),
             );
@@ -951,7 +994,9 @@ impl Solid {
         use vcad_kernel::vcad_kernel_text::{FontRegistry, TextAlignment};
 
         if origin.len() != 3 || x_dir.len() != 3 || y_dir.len() != 3 || direction.len() != 3 {
-            return Err(JsError::new("origin, x_dir, y_dir, and direction must have 3 components"));
+            return Err(JsError::new(
+                "origin, x_dir, y_dir, and direction must have 3 components",
+            ));
         }
 
         // Parse alignment
@@ -965,7 +1010,10 @@ impl Solid {
         let font_ref = match font.as_deref() {
             Some("sans-serif") | None => FontRegistry::builtin_sans(),
             Some(name) => {
-                return Err(JsError::new(&format!("Unknown font: {}. Use 'sans-serif' or omit for default.", name)));
+                return Err(JsError::new(&format!(
+                    "Unknown font: {}. Use 'sans-serif' or omit for default.",
+                    name
+                )));
             }
         };
 
@@ -974,16 +1022,13 @@ impl Solid {
 
         // Convert text to profiles
         let profiles = vcad_kernel::vcad_kernel_text::text_to_profiles(
-            text,
-            font_ref,
-            height,
-            letter_sp,
-            line_sp,
-            align,
+            text, font_ref, height, letter_sp, line_sp, align,
         );
 
         if profiles.is_empty() {
-            return Ok(Solid { inner: vcad_kernel::Solid::empty() });
+            return Ok(Solid {
+                inner: vcad_kernel::Solid::empty(),
+            });
         }
 
         // Separate profiles into outer contours and holes based on winding order
@@ -1196,7 +1241,15 @@ pub fn op_sweep_line(
     scale_end: Option<f64>,
     orientation: Option<f64>,
 ) -> Result<Solid, JsError> {
-    Solid::sweep_line(profile_json, start, end, twist_angle, scale_start, scale_end, orientation)
+    Solid::sweep_line(
+        profile_json,
+        start,
+        end,
+        twist_angle,
+        scale_start,
+        scale_end,
+        orientation,
+    )
 }
 
 /// Create a solid by sweeping a profile along a helix path.
@@ -1414,11 +1467,8 @@ impl WasmAnnotationLayer {
     #[wasm_bindgen(js_name = addHorizontalDimension)]
     pub fn add_horizontal_dimension(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, offset: f64) {
         use vcad_kernel_drafting::Point2D;
-        self.inner.add_horizontal_dimension(
-            Point2D::new(x1, y1),
-            Point2D::new(x2, y2),
-            offset,
-        );
+        self.inner
+            .add_horizontal_dimension(Point2D::new(x1, y1), Point2D::new(x2, y2), offset);
     }
 
     /// Add a vertical dimension between two points.
@@ -1430,11 +1480,8 @@ impl WasmAnnotationLayer {
     #[wasm_bindgen(js_name = addVerticalDimension)]
     pub fn add_vertical_dimension(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, offset: f64) {
         use vcad_kernel_drafting::Point2D;
-        self.inner.add_vertical_dimension(
-            Point2D::new(x1, y1),
-            Point2D::new(x2, y2),
-            offset,
-        );
+        self.inner
+            .add_vertical_dimension(Point2D::new(x1, y1), Point2D::new(x2, y2), offset);
     }
 
     /// Add an aligned dimension between two points.
@@ -1448,11 +1495,8 @@ impl WasmAnnotationLayer {
     #[wasm_bindgen(js_name = addAlignedDimension)]
     pub fn add_aligned_dimension(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, offset: f64) {
         use vcad_kernel_drafting::Point2D;
-        self.inner.add_aligned_dimension(
-            Point2D::new(x1, y1),
-            Point2D::new(x2, y2),
-            offset,
-        );
+        self.inner
+            .add_aligned_dimension(Point2D::new(x1, y1), Point2D::new(x2, y2), offset);
     }
 
     /// Add a diameter dimension for a circle.
@@ -1766,7 +1810,9 @@ pub fn create_detail_view(
     height: f64,
     label: &str,
 ) -> Result<JsValue, JsError> {
-    use vcad_kernel_drafting::{create_detail_view as create_detail, DetailViewParams, Point2D, ProjectedView};
+    use vcad_kernel_drafting::{
+        create_detail_view as create_detail, DetailViewParams, Point2D, ProjectedView,
+    };
 
     let parent: ProjectedView =
         serde_json::from_str(parent_json).map_err(|e| JsError::new(&e.to_string()))?;
@@ -1801,8 +1847,8 @@ pub fn create_detail_view(
 #[module("step")]
 #[wasm_bindgen(js_name = importStepBuffer)]
 pub fn import_step_buffer(data: &[u8]) -> Result<JsValue, JsError> {
-    let solids = vcad_kernel::Solid::from_step_buffer_all(data)
-        .map_err(|e| JsError::new(&e.to_string()))?;
+    let solids =
+        vcad_kernel::Solid::from_step_buffer_all(data).map_err(|e| JsError::new(&e.to_string()))?;
 
     // Convert each solid to a mesh (use fewer segments for imported files)
     let meshes: Vec<WasmMesh> = solids
@@ -2140,17 +2186,25 @@ impl RayTracer {
     /// * `depth_threshold` - Depth discontinuity threshold (default: 0.1)
     /// * `normal_threshold` - Normal angle threshold in degrees (default: 30.0)
     #[wasm_bindgen(js_name = setEdgeDetection)]
-    pub fn set_edge_detection(&mut self, enabled: bool, depth_threshold: f32, normal_threshold: f32) {
+    pub fn set_edge_detection(
+        &mut self,
+        enabled: bool,
+        depth_threshold: f32,
+        normal_threshold: f32,
+    ) {
         self.enable_edges = enabled;
         self.edge_depth_threshold = depth_threshold;
         self.edge_normal_threshold = normal_threshold;
         // Reset accumulation when edge settings change
         self.frame_index = 0;
         self.accum_buffer = None;
-        web_sys::console::log_1(&format!(
-            "[WASM] Edge detection: enabled={}, depth={:.2}, normal={:.1}°",
-            enabled, depth_threshold, normal_threshold
-        ).into());
+        web_sys::console::log_1(
+            &format!(
+                "[WASM] Edge detection: enabled={}, depth={:.2}, normal={:.1}°",
+                enabled, depth_threshold, normal_threshold
+            )
+            .into(),
+        );
     }
 
     /// Get whether edge detection is enabled.
@@ -2167,7 +2221,9 @@ impl RayTracer {
         use vcad_kernel_raytrace::gpu::GpuScene;
 
         // Get the BRep from the solid
-        let brep = solid.inner.brep()
+        let brep = solid
+            .inner
+            .brep()
             .ok_or_else(|| JsError::new("Solid has no BRep representation (mesh-only)"))?;
 
         // Build GPU scene from BRep
@@ -2212,18 +2268,24 @@ impl RayTracer {
         }
 
         // Log inner_loop_descs buffer size
-        web_sys::console::log_1(&format!(
-            "[WASM] inner_loop_descs buffer: {} entries, trim_verts: {} entries",
-            scene.inner_loop_descs.len(),
-            scene.trim_verts.len()
-        ).into());
+        web_sys::console::log_1(
+            &format!(
+                "[WASM] inner_loop_descs buffer: {} entries, trim_verts: {} entries",
+                scene.inner_loop_descs.len(),
+                scene.trim_verts.len()
+            )
+            .into(),
+        );
 
         self.scene = Some(scene);
 
-        web_sys::console::log_1(&format!(
-            "[WASM] Uploaded solid: {} faces, {} surfaces, {} BVH nodes",
-            num_faces, num_surfaces, num_bvh_nodes
-        ).into());
+        web_sys::console::log_1(
+            &format!(
+                "[WASM] Uploaded solid: {} faces, {} surfaces, {} BVH nodes",
+                num_faces, num_surfaces, num_bvh_nodes
+            )
+            .into(),
+        );
 
         Ok(())
     }
@@ -2235,8 +2297,17 @@ impl RayTracer {
     /// * `metallic` - Metallic factor (0 = dielectric, 1 = metal)
     /// * `roughness` - Roughness factor (0 = smooth/mirror, 1 = rough/diffuse)
     #[wasm_bindgen(js_name = setMaterial)]
-    pub fn set_material(&mut self, r: f32, g: f32, b: f32, metallic: f32, roughness: f32) -> Result<(), JsError> {
-        let scene = self.scene.as_mut()
+    pub fn set_material(
+        &mut self,
+        r: f32,
+        g: f32,
+        b: f32,
+        metallic: f32,
+        roughness: f32,
+    ) -> Result<(), JsError> {
+        let scene = self
+            .scene
+            .as_mut()
             .ok_or_else(|| JsError::new("No solid uploaded. Call uploadSolid() first."))?;
 
         scene.set_material(r, g, b, metallic, roughness);
@@ -2245,10 +2316,13 @@ impl RayTracer {
         self.frame_index = 0;
         self.accum_buffer = None;
 
-        web_sys::console::log_1(&format!(
-            "[WASM] Set material: rgb=({:.2}, {:.2}, {:.2}), metallic={:.2}, roughness={:.2}",
-            r, g, b, metallic, roughness
-        ).into());
+        web_sys::console::log_1(
+            &format!(
+                "[WASM] Set material: rgb=({:.2}, {:.2}, {:.2}), metallic={:.2}, roughness={:.2}",
+                r, g, b, metallic, roughness
+            )
+            .into(),
+        );
 
         Ok(())
     }
@@ -2281,15 +2355,19 @@ impl RayTracer {
         height: u32,
         fov: f32,
     ) -> Result<Vec<u8>, JsError> {
-        use vcad_kernel_raytrace::gpu::GpuCamera;
-        use std::hash::{Hash, Hasher};
         use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        use vcad_kernel_raytrace::gpu::GpuCamera;
 
         if camera.len() != 3 || target.len() != 3 || up.len() != 3 {
-            return Err(JsError::new("camera, target, and up must each have 3 components"));
+            return Err(JsError::new(
+                "camera, target, and up must each have 3 components",
+            ));
         }
 
-        let scene = self.scene.as_ref()
+        let scene = self
+            .scene
+            .as_ref()
             .ok_or_else(|| JsError::new("No solid uploaded. Call uploadSolid() first."))?;
 
         // Compute camera hash to detect changes
@@ -2297,13 +2375,20 @@ impl RayTracer {
         // (e.g., 29.659999999 vs 29.660000001 should hash the same)
         // The React side handles settling detection to avoid spurious renders during damping
         let mut hasher = DefaultHasher::new();
-        for v in &camera { ((v * 100.0).round() as i64).hash(&mut hasher); }
-        for v in &target { ((v * 100.0).round() as i64).hash(&mut hasher); }
+        for v in &camera {
+            ((v * 100.0).round() as i64).hash(&mut hasher);
+        }
+        for v in &target {
+            ((v * 100.0).round() as i64).hash(&mut hasher);
+        }
         ((fov * 100.0).round() as i32).hash(&mut hasher);
         let camera_hash = hasher.finish();
 
         // Reset accumulation if camera changed or dimensions changed
-        if camera_hash != self.last_camera_hash || width != self.last_width || height != self.last_height {
+        if camera_hash != self.last_camera_hash
+            || width != self.last_width
+            || height != self.last_height
+        {
             self.frame_index = 0;
             self.accum_buffer = None;
             self.last_camera_hash = camera_hash;
@@ -2316,12 +2401,15 @@ impl RayTracer {
 
         // Log progress occasionally
         if self.frame_index == 1 || self.frame_index.is_multiple_of(16) {
-            web_sys::console::log_1(&format!(
+            web_sys::console::log_1(
+                &format!(
                 "[WASM] render() frame={} camera=[{:.2},{:.2},{:.2}] target=[{:.2},{:.2},{:.2}]",
                 self.frame_index,
                 camera[0], camera[1], camera[2],
                 target[0], target[1], target[2],
-            ).into());
+            )
+                .into(),
+            );
         }
 
         let gpu_camera = GpuCamera::new(
@@ -2333,22 +2421,24 @@ impl RayTracer {
             height,
         );
 
-        let ctx = vcad_kernel_gpu::GpuContext::get()
-            .ok_or_else(|| JsError::new("GPU context lost"))?;
+        let ctx =
+            vcad_kernel_gpu::GpuContext::get().ok_or_else(|| JsError::new("GPU context lost"))?;
 
-        let (pixels, new_accum) = self.pipeline.render_with_full_settings(
-            ctx,
-            scene,
-            &gpu_camera,
-            width,
-            height,
-            self.frame_index,
-            self.accum_buffer.take(),
-            self.debug_mode,
-            self.enable_edges,
-            self.edge_depth_threshold,
-            self.edge_normal_threshold,
-        )
+        let (pixels, new_accum) = self
+            .pipeline
+            .render_with_full_settings(
+                ctx,
+                scene,
+                &gpu_camera,
+                width,
+                height,
+                self.frame_index,
+                self.accum_buffer.take(),
+                self.debug_mode,
+                self.enable_edges,
+                self.edge_depth_threshold,
+                self.edge_normal_threshold,
+            )
             .await
             .map_err(|e| JsError::new(&format!("Render failed: {}", e)))?;
 
@@ -2379,14 +2469,18 @@ impl RayTracer {
         pixel_x: u32,
         pixel_y: u32,
     ) -> Result<i32, JsError> {
-        use vcad_kernel_raytrace::Ray;
         use vcad_kernel_math::{Point3, Vec3};
+        use vcad_kernel_raytrace::Ray;
 
         if camera.len() != 3 || target.len() != 3 || up.len() != 3 {
-            return Err(JsError::new("camera, target, and up must each have 3 components"));
+            return Err(JsError::new(
+                "camera, target, and up must each have 3 components",
+            ));
         }
 
-        let scene = self.scene.as_ref()
+        let scene = self
+            .scene
+            .as_ref()
             .ok_or_else(|| JsError::new("No solid uploaded. Call uploadSolid() first."))?;
 
         // Compute ray from camera through pixel
@@ -2405,7 +2499,9 @@ impl RayTracer {
         let ndc_x = (pixel_x as f64 + 0.5) / width as f64 * 2.0 - 1.0;
         let ndc_y = 1.0 - (pixel_y as f64 + 0.5) / height as f64 * 2.0;
 
-        let ray_dir = (forward + right * ndc_x * fov_tan * aspect + up_normalized * ndc_y * fov_tan).normalize();
+        let ray_dir =
+            (forward + right * ndc_x * fov_tan * aspect + up_normalized * ndc_y * fov_tan)
+                .normalize();
 
         let ray = Ray::new(cam_pos, ray_dir);
 
@@ -2445,7 +2541,9 @@ impl RayTracer {
     /// Returns an error when raytrace feature is not enabled.
     #[wasm_bindgen(js_name = create)]
     pub fn create() -> Result<RayTracer, JsError> {
-        Err(JsError::new("Ray tracing feature not enabled. Compile with --features raytrace"))
+        Err(JsError::new(
+            "Ray tracing feature not enabled. Compile with --features raytrace",
+        ))
     }
 }
 
@@ -2520,7 +2618,9 @@ pub fn evaluate_compact_ir(compact_ir: &str) -> Result<Solid, JsError> {
         .map_err(|e| JsError::new(&format!("Parse error: {}", e)))?;
 
     // Find the root node
-    let root_id = doc.roots.first()
+    let root_id = doc
+        .roots
+        .first()
         .ok_or_else(|| JsError::new("Document has no root nodes"))?
         .root;
 
@@ -2565,10 +2665,9 @@ impl PhysicsSim {
         let env = vcad_kernel_physics::RobotEnv::new(doc, end_effector_ids, dt, substeps)
             .map_err(|e| JsError::new(&format!("Failed to create physics env: {}", e)))?;
 
-        web_sys::console::log_1(&format!(
-            "[WASM] PhysicsSim created with {} joints",
-            env.num_joints()
-        ).into());
+        web_sys::console::log_1(
+            &format!("[WASM] PhysicsSim created with {} joints", env.num_joints()).into(),
+        );
 
         Ok(PhysicsSim { env })
     }
@@ -2701,7 +2800,9 @@ impl PhysicsSim {
         _dt: Option<f32>,
         _substeps: Option<u32>,
     ) -> Result<PhysicsSim, JsError> {
-        Err(JsError::new("Physics feature not enabled. Compile with --features physics"))
+        Err(JsError::new(
+            "Physics feature not enabled. Compile with --features physics",
+        ))
     }
 }
 
@@ -2718,24 +2819,47 @@ pub fn is_physics_available() -> bool {
 
 /// Recursively evaluate a node in the IR DAG.
 fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<Solid, JsError> {
-    let node = doc.nodes.get(&node_id)
+    let node = doc
+        .nodes
+        .get(&node_id)
         .ok_or_else(|| JsError::new(&format!("Node {} not found", node_id)))?;
 
     match &node.op {
         vcad_ir::CsgOp::Cube { size } => Ok(Solid::cube(size.x, size.y, size.z)),
 
-        vcad_ir::CsgOp::Cylinder { radius, height, segments } => {
-            let segs = if *segments == 0 { None } else { Some(*segments) };
+        vcad_ir::CsgOp::Cylinder {
+            radius,
+            height,
+            segments,
+        } => {
+            let segs = if *segments == 0 {
+                None
+            } else {
+                Some(*segments)
+            };
             Ok(Solid::cylinder(*radius, *height, segs))
         }
 
         vcad_ir::CsgOp::Sphere { radius, segments } => {
-            let segs = if *segments == 0 { None } else { Some(*segments) };
+            let segs = if *segments == 0 {
+                None
+            } else {
+                Some(*segments)
+            };
             Ok(Solid::sphere(*radius, segs))
         }
 
-        vcad_ir::CsgOp::Cone { radius_bottom, radius_top, height, segments } => {
-            let segs = if *segments == 0 { None } else { Some(*segments) };
+        vcad_ir::CsgOp::Cone {
+            radius_bottom,
+            radius_top,
+            height,
+            segments,
+        } => {
+            let segs = if *segments == 0 {
+                None
+            } else {
+                Some(*segments)
+            };
             Ok(Solid::cone(*radius_bottom, *radius_top, *height, segs))
         }
 
@@ -2774,17 +2898,33 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
             Ok(c.scale(factor.x, factor.y, factor.z))
         }
 
-        vcad_ir::CsgOp::LinearPattern { child, direction, count, spacing } => {
+        vcad_ir::CsgOp::LinearPattern {
+            child,
+            direction,
+            count,
+            spacing,
+        } => {
             let c = evaluate_node(doc, *child)?;
             Ok(c.linear_pattern(direction.x, direction.y, direction.z, *count, *spacing))
         }
 
-        vcad_ir::CsgOp::CircularPattern { child, axis_origin, axis_dir, count, angle_deg } => {
+        vcad_ir::CsgOp::CircularPattern {
+            child,
+            axis_origin,
+            axis_dir,
+            count,
+            angle_deg,
+        } => {
             let c = evaluate_node(doc, *child)?;
             Ok(c.circular_pattern(
-                axis_origin.x, axis_origin.y, axis_origin.z,
-                axis_dir.x, axis_dir.y, axis_dir.z,
-                *count, *angle_deg
+                axis_origin.x,
+                axis_origin.y,
+                axis_origin.z,
+                axis_dir.x,
+                axis_dir.y,
+                axis_dir.z,
+                *count,
+                *angle_deg,
             ))
         }
 
@@ -2805,34 +2945,52 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
 
         vcad_ir::CsgOp::Sketch2D { .. } => {
             // Sketch2D nodes cannot be evaluated directly - they must be used with Extrude/Revolve
-            Err(JsError::new("Sketch2D cannot be evaluated directly - use Extrude or Revolve"))
+            Err(JsError::new(
+                "Sketch2D cannot be evaluated directly - use Extrude or Revolve",
+            ))
         }
 
-        vcad_ir::CsgOp::Extrude { sketch, direction, twist_angle, scale_end } => {
+        vcad_ir::CsgOp::Extrude {
+            sketch,
+            direction,
+            twist_angle,
+            scale_end,
+        } => {
             // Get the sketch node
-            let sketch_node = doc.nodes.get(sketch)
+            let sketch_node = doc
+                .nodes
+                .get(sketch)
                 .ok_or_else(|| JsError::new(&format!("Sketch node {} not found", sketch)))?;
 
             match &sketch_node.op {
-                vcad_ir::CsgOp::Sketch2D { origin, x_dir, y_dir, segments } => {
-                    let wasm_segments: Vec<WasmSketchSegment> = segments.iter().map(|seg| {
-                        match seg {
+                vcad_ir::CsgOp::Sketch2D {
+                    origin,
+                    x_dir,
+                    y_dir,
+                    segments,
+                } => {
+                    let wasm_segments: Vec<WasmSketchSegment> = segments
+                        .iter()
+                        .map(|seg| match seg {
                             vcad_ir::SketchSegment2D::Line { start, end } => {
                                 WasmSketchSegment::Line {
                                     start: [start.x, start.y],
                                     end: [end.x, end.y],
                                 }
                             }
-                            vcad_ir::SketchSegment2D::Arc { start, end, center, ccw } => {
-                                WasmSketchSegment::Arc {
-                                    start: [start.x, start.y],
-                                    end: [end.x, end.y],
-                                    center: [center.x, center.y],
-                                    ccw: *ccw,
-                                }
-                            }
-                        }
-                    }).collect();
+                            vcad_ir::SketchSegment2D::Arc {
+                                start,
+                                end,
+                                center,
+                                ccw,
+                            } => WasmSketchSegment::Arc {
+                                start: [start.x, start.y],
+                                end: [end.x, end.y],
+                                center: [center.x, center.y],
+                                ccw: *ccw,
+                            },
+                        })
+                        .collect();
 
                     let profile = WasmSketchProfile {
                         origin: [origin.x, origin.y, origin.z],
@@ -2841,8 +2999,9 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
                         segments: wasm_segments,
                     };
 
-                    let profile_json = serde_json::to_string(&profile)
-                        .map_err(|e| JsError::new(&format!("Profile serialization failed: {}", e)))?;
+                    let profile_json = serde_json::to_string(&profile).map_err(|e| {
+                        JsError::new(&format!("Profile serialization failed: {}", e))
+                    })?;
 
                     // Use extrudeWithOptions if twist or scale is specified
                     let has_twist = twist_angle.is_some_and(|t| t.abs() > 1e-12);
@@ -2858,34 +3017,50 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
                         Solid::extrude(profile_json, vec![direction.x, direction.y, direction.z])
                     }
                 }
-                _ => Err(JsError::new("Extrude requires a Sketch2D node"))
+                _ => Err(JsError::new("Extrude requires a Sketch2D node")),
             }
         }
 
-        vcad_ir::CsgOp::Revolve { sketch, axis_origin, axis_dir, angle_deg } => {
-            let sketch_node = doc.nodes.get(sketch)
+        vcad_ir::CsgOp::Revolve {
+            sketch,
+            axis_origin,
+            axis_dir,
+            angle_deg,
+        } => {
+            let sketch_node = doc
+                .nodes
+                .get(sketch)
                 .ok_or_else(|| JsError::new(&format!("Sketch node {} not found", sketch)))?;
 
             match &sketch_node.op {
-                vcad_ir::CsgOp::Sketch2D { origin, x_dir, y_dir, segments } => {
-                    let wasm_segments: Vec<WasmSketchSegment> = segments.iter().map(|seg| {
-                        match seg {
+                vcad_ir::CsgOp::Sketch2D {
+                    origin,
+                    x_dir,
+                    y_dir,
+                    segments,
+                } => {
+                    let wasm_segments: Vec<WasmSketchSegment> = segments
+                        .iter()
+                        .map(|seg| match seg {
                             vcad_ir::SketchSegment2D::Line { start, end } => {
                                 WasmSketchSegment::Line {
                                     start: [start.x, start.y],
                                     end: [end.x, end.y],
                                 }
                             }
-                            vcad_ir::SketchSegment2D::Arc { start, end, center, ccw } => {
-                                WasmSketchSegment::Arc {
-                                    start: [start.x, start.y],
-                                    end: [end.x, end.y],
-                                    center: [center.x, center.y],
-                                    ccw: *ccw,
-                                }
-                            }
-                        }
-                    }).collect();
+                            vcad_ir::SketchSegment2D::Arc {
+                                start,
+                                end,
+                                center,
+                                ccw,
+                            } => WasmSketchSegment::Arc {
+                                start: [start.x, start.y],
+                                end: [end.x, end.y],
+                                center: [center.x, center.y],
+                                ccw: *ccw,
+                            },
+                        })
+                        .collect();
 
                     let profile = WasmSketchProfile {
                         origin: [origin.x, origin.y, origin.z],
@@ -2894,8 +3069,9 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
                         segments: wasm_segments,
                     };
 
-                    let profile_json = serde_json::to_string(&profile)
-                        .map_err(|e| JsError::new(&format!("Profile serialization failed: {}", e)))?;
+                    let profile_json = serde_json::to_string(&profile).map_err(|e| {
+                        JsError::new(&format!("Profile serialization failed: {}", e))
+                    })?;
 
                     Solid::revolve(
                         profile_json,
@@ -2904,13 +3080,13 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
                         *angle_deg,
                     )
                 }
-                _ => Err(JsError::new("Revolve requires a Sketch2D node"))
+                _ => Err(JsError::new("Revolve requires a Sketch2D node")),
             }
         }
 
-        vcad_ir::CsgOp::StepImport { .. } => {
-            Err(JsError::new("STEP import not supported in compact IR evaluation"))
-        }
+        vcad_ir::CsgOp::StepImport { .. } => Err(JsError::new(
+            "STEP import not supported in compact IR evaluation",
+        )),
 
         vcad_ir::CsgOp::Text2D { .. } => {
             // Text2D doesn't produce geometry by itself - it needs to be extruded.
@@ -2921,28 +3097,30 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
             // 1. Create a Text2D node
             // 2. Use it as the sketch input to an Extrude operation
             // The TypeScript evaluate.ts handles converting Text2D inside Extrude
-            Err(JsError::new("Text2D cannot be evaluated directly - use Extrude to convert to solid"))
+            Err(JsError::new(
+                "Text2D cannot be evaluated directly - use Extrude to convert to solid",
+            ))
         }
 
-        vcad_ir::CsgOp::Sweep { .. } => {
-            Err(JsError::new("Sweep not supported in compact IR evaluation - use evaluateDocument"))
-        }
+        vcad_ir::CsgOp::Sweep { .. } => Err(JsError::new(
+            "Sweep not supported in compact IR evaluation - use evaluateDocument",
+        )),
 
-        vcad_ir::CsgOp::Loft { .. } => {
-            Err(JsError::new("Loft not supported in compact IR evaluation - use evaluateDocument"))
-        }
+        vcad_ir::CsgOp::Loft { .. } => Err(JsError::new(
+            "Loft not supported in compact IR evaluation - use evaluateDocument",
+        )),
 
-        vcad_ir::CsgOp::ImportedMesh { .. } => {
-            Err(JsError::new("ImportedMesh not supported in compact IR evaluation - use evaluateDocument"))
-        }
+        vcad_ir::CsgOp::ImportedMesh { .. } => Err(JsError::new(
+            "ImportedMesh not supported in compact IR evaluation - use evaluateDocument",
+        )),
 
-        vcad_ir::CsgOp::PcbBoard { .. } => {
-            Err(JsError::new("PcbBoard not supported in compact IR evaluation - use evaluateDocument"))
-        }
+        vcad_ir::CsgOp::PcbBoard { .. } => Err(JsError::new(
+            "PcbBoard not supported in compact IR evaluation - use evaluateDocument",
+        )),
 
-        vcad_ir::CsgOp::EmbroideryPattern { .. } => {
-            Err(JsError::new("EmbroideryPattern not supported in compact IR evaluation - use evaluateDocument"))
-        }
+        vcad_ir::CsgOp::EmbroideryPattern { .. } => Err(JsError::new(
+            "EmbroideryPattern not supported in compact IR evaluation - use evaluateDocument",
+        )),
     }
 }
 
@@ -3273,10 +3451,7 @@ mod slicer_wasm {
     ///
     /// Returns warnings with face indices for viewport highlighting.
     #[wasm_bindgen(js_name = checkPrintability)]
-    pub fn check_printability(
-        solid: &Solid,
-        printer_profile: &str,
-    ) -> Result<JsValue, JsError> {
+    pub fn check_printability(solid: &Solid, printer_profile: &str) -> Result<JsValue, JsError> {
         let brep = solid
             .inner
             .brep()
@@ -3321,7 +3496,11 @@ mod slicer_wasm {
         };
 
         let estimate = vcad_slicer::cost::estimate_cost_from_volume(
-            volume_mm3, infill_density, wall_count, line_width, &material,
+            volume_mm3,
+            infill_density,
+            wall_count,
+            line_width,
+            &material,
         );
         serde_wasm_bindgen::to_value(&estimate).map_err(|e| JsError::new(&e.to_string()))
     }
@@ -3367,9 +3546,7 @@ mod slicer_wasm {
             }
         }
 
-        model
-            .to_bytes()
-            .map_err(|e| JsError::new(&e.to_string()))
+        model.to_bytes().map_err(|e| JsError::new(&e.to_string()))
     }
 }
 
@@ -3921,11 +4098,9 @@ mod ecad_wasm {
     /// Array of DRC violations as JsValue.
     #[wasm_bindgen(js_name = ecadCheckDrc)]
     pub fn ecad_check_drc(pcb_json: &str) -> Result<JsValue, JsError> {
-        let pcb: Pcb =
-            serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let pcb: Pcb = serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
         let violations = vcad_ecad_pcb::drc::check_drc(&pcb);
-        serde_wasm_bindgen::to_value(&violations)
-            .map_err(|e| JsError::new(&e.to_string()))
+        serde_wasm_bindgen::to_value(&violations).map_err(|e| JsError::new(&e.to_string()))
     }
 
     /// Run Electrical Rule Check on a schematic sheet.
@@ -3940,8 +4115,7 @@ mod ecad_wasm {
         let sheet: SchematicSheet =
             serde_json::from_str(sch_json).map_err(|e| JsError::new(&e.to_string()))?;
         let violations = vcad_ecad_schematic::erc::check_erc(&sheet);
-        serde_wasm_bindgen::to_value(&violations)
-            .map_err(|e| JsError::new(&e.to_string()))
+        serde_wasm_bindgen::to_value(&violations).map_err(|e| JsError::new(&e.to_string()))
     }
 
     /// Generate a netlist from a schematic sheet.
@@ -3956,8 +4130,7 @@ mod ecad_wasm {
         let sheet: SchematicSheet =
             serde_json::from_str(sch_json).map_err(|e| JsError::new(&e.to_string()))?;
         let netlist = vcad_ecad_schematic::generate_netlist(&sheet);
-        serde_wasm_bindgen::to_value(&netlist)
-            .map_err(|e| JsError::new(&e.to_string()))
+        serde_wasm_bindgen::to_value(&netlist).map_err(|e| JsError::new(&e.to_string()))
     }
 
     /// Route a net between two points on the PCB using the grid router.
@@ -3981,8 +4154,7 @@ mod ecad_wasm {
         end_y: f64,
         width: f64,
     ) -> Result<JsValue, JsError> {
-        let pcb: Pcb =
-            serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let pcb: Pcb = serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
 
         // Determine board extents from outline
         let (mut min_x, mut min_y) = (f64::MAX, f64::MAX);
@@ -3998,8 +4170,7 @@ mod ecad_wasm {
 
         // Resolution based on trace width (half width for decent grid)
         let resolution = (width * 0.5).max(0.1);
-        let mut router =
-            vcad_ecad_pcb::router::grid::GridRouter::new(board_w, board_h, resolution);
+        let mut router = vcad_ecad_pcb::router::grid::GridRouter::new(board_w, board_h, resolution);
 
         // Add existing traces as obstacles
         for trace in &pcb.traces {
@@ -4010,8 +4181,14 @@ mod ecad_wasm {
                 let tx_max = trace.start.x.max(trace.end.x) + hw - min_x;
                 let ty_max = trace.start.y.max(trace.end.y) + hw - min_y;
                 router.add_obstacle(
-                    vcad_ir::Vec2 { x: tx_min, y: ty_min },
-                    vcad_ir::Vec2 { x: tx_max, y: ty_max },
+                    vcad_ir::Vec2 {
+                        x: tx_min,
+                        y: ty_min,
+                    },
+                    vcad_ir::Vec2 {
+                        x: tx_max,
+                        y: ty_max,
+                    },
                 );
             }
         }
@@ -4025,8 +4202,7 @@ mod ecad_wasm {
             y: end_y - min_y,
         };
         let result = router.route_net(net, start, end);
-        serde_wasm_bindgen::to_value(&result)
-            .map_err(|e| JsError::new(&e.to_string()))
+        serde_wasm_bindgen::to_value(&result).map_err(|e| JsError::new(&e.to_string()))
     }
 
     /// Fill copper pour zones on the PCB.
@@ -4038,11 +4214,23 @@ mod ecad_wasm {
     /// Array of filled zone polygons.
     #[wasm_bindgen(js_name = ecadFillZones)]
     pub fn ecad_fill_zones(pcb_json: &str) -> Result<JsValue, JsError> {
-        let pcb: Pcb =
-            serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let pcb: Pcb = serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
         let filled = vcad_ecad_pcb::copper_pour::fill_zones(&pcb);
-        serde_wasm_bindgen::to_value(&filled)
-            .map_err(|e| JsError::new(&e.to_string()))
+        serde_wasm_bindgen::to_value(&filled).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Parse a KiCad `.kicad_pcb` file content into a JSON-serialized `Pcb`.
+    ///
+    /// # Arguments
+    /// * `content` - The `.kicad_pcb` file content as a string
+    ///
+    /// # Returns
+    /// JSON-serialized `Pcb` struct as JsValue, or error.
+    #[wasm_bindgen(js_name = parseKicadPcb)]
+    pub fn parse_kicad_pcb(content: &str) -> Result<JsValue, JsError> {
+        let pcb = vcad_ecad_symbols::parse_kicad_pcb(content)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        serde_wasm_bindgen::to_value(&pcb).map_err(|e| JsError::new(&e.to_string()))
     }
 }
 
@@ -4177,11 +4365,8 @@ fn scene_to_js(scene: &vcad_eval::EvaluatedScene) -> JsValue {
                 let _ = js_sys::Reflect::set(&inst_obj, &"name".into(), &name.clone().into());
             }
             let _ = js_sys::Reflect::set(&inst_obj, &"mesh".into(), &mesh_to_js(&inst.mesh));
-            let _ = js_sys::Reflect::set(
-                &inst_obj,
-                &"material".into(),
-                &inst.material.clone().into(),
-            );
+            let _ =
+                js_sys::Reflect::set(&inst_obj, &"material".into(), &inst.material.clone().into());
             if let Some(ref transform) = inst.transform {
                 // Serialize transform via serde (small object, fast)
                 if let Ok(t) = serde_wasm_bindgen::to_value(transform) {
@@ -4240,13 +4425,11 @@ fn mesh_to_js(mesh: &vcad_eval::EvaluatedMesh) -> JsValue {
 /// must be self-contained or use the bundled vcad library.
 #[wasm_bindgen(js_name = evalVcadSource)]
 pub fn eval_vcad_source(source: &str) -> Result<JsValue, JsError> {
-    let doc = vcad_loon::eval_vcad(source, None)
-        .map_err(|e| JsError::new(&e))?;
+    let doc = vcad_loon::eval_vcad(source, None).map_err(|e| JsError::new(&e))?;
     let json = serde_json::to_string(&doc)
         .map_err(|e| JsError::new(&format!("Serialization error: {}", e)))?;
     Ok(JsValue::from_str(&json))
 }
-
 
 // =============================================================================
 // Embroidery module (feature-gated)
@@ -4256,9 +4439,9 @@ pub fn eval_vcad_source(source: &str) -> Result<JsValue, JsError> {
 mod embroidery_wasm {
     use serde::{Deserialize, Serialize};
     use vcad_embroidery::{
-        EmbPattern, FillParams, Path2D, PatternMetadata, RunningStitchParams, SatinParams,
-        StitchCommand, StitchGroup, Thread, fill_stitch, fill_stitch_multi, running_stitch,
-        satin_stitch,
+        fill_stitch, fill_stitch_multi, running_stitch, satin_stitch, EmbPattern, FillParams,
+        Path2D, PatternMetadata, RunningStitchParams, SatinParams, StitchCommand, StitchGroup,
+        Thread,
     };
     use wasm_bindgen::prelude::*;
 
@@ -4273,16 +4456,16 @@ mod embroidery_wasm {
     /// Returns `{ threads, stitchPaths, stats }` as a JSON string.
     #[wasm_bindgen(js_name = readEmbroideryPes)]
     pub fn read_embroidery_pes(data: &[u8]) -> Result<String, JsError> {
-        let pattern = vcad_embroidery_pes::read_pes(data)
-            .map_err(|e| JsError::new(&e.to_string()))?;
+        let pattern =
+            vcad_embroidery_pes::read_pes(data).map_err(|e| JsError::new(&e.to_string()))?;
         serialize_pattern(&pattern).map_err(|e| JsError::new(&e.to_string()))
     }
 
     /// Read a DST file and return embroidery data as JSON.
     #[wasm_bindgen(js_name = readEmbroideryDst)]
     pub fn read_embroidery_dst(data: &[u8]) -> Result<String, JsError> {
-        let pattern = vcad_embroidery_dst::read_dst(data)
-            .map_err(|e| JsError::new(&e.to_string()))?;
+        let pattern =
+            vcad_embroidery_dst::read_dst(data).map_err(|e| JsError::new(&e.to_string()))?;
         serialize_pattern(&pattern).map_err(|e| JsError::new(&e.to_string()))
     }
 
@@ -4291,8 +4474,7 @@ mod embroidery_wasm {
     pub fn write_embroidery_pes(json: &str) -> Result<Vec<u8>, JsError> {
         let pattern: EmbPattern =
             serde_json::from_str(json).map_err(|e| JsError::new(&e.to_string()))?;
-        vcad_embroidery_pes::write_pes(&pattern)
-            .map_err(|e| JsError::new(&e.to_string()))
+        vcad_embroidery_pes::write_pes(&pattern).map_err(|e| JsError::new(&e.to_string()))
     }
 
     /// Write a DST file from an embroidery pattern JSON string.
@@ -4300,8 +4482,7 @@ mod embroidery_wasm {
     pub fn write_embroidery_dst(json: &str) -> Result<Vec<u8>, JsError> {
         let pattern: EmbPattern =
             serde_json::from_str(json).map_err(|e| JsError::new(&e.to_string()))?;
-        vcad_embroidery_dst::write_dst(&pattern)
-            .map_err(|e| JsError::new(&e.to_string()))
+        vcad_embroidery_dst::write_dst(&pattern).map_err(|e| JsError::new(&e.to_string()))
     }
 
     /// Options for text digitization.
@@ -4327,14 +4508,30 @@ mod embroidery_wasm {
         alignment: String,
     }
 
-    fn default_stitch_type() -> String { "running".into() }
-    fn default_thread_color() -> [u8; 3] { [255, 255, 255] }
-    fn default_stitch_length() -> f64 { 2.5 }
-    fn default_density() -> f64 { 4.0 }
-    fn default_satin_width() -> f64 { 3.0 }
-    fn default_letter_spacing() -> f64 { 1.0 }
-    fn default_line_spacing() -> f64 { 1.2 }
-    fn default_alignment() -> String { "left".into() }
+    fn default_stitch_type() -> String {
+        "running".into()
+    }
+    fn default_thread_color() -> [u8; 3] {
+        [255, 255, 255]
+    }
+    fn default_stitch_length() -> f64 {
+        2.5
+    }
+    fn default_density() -> f64 {
+        4.0
+    }
+    fn default_satin_width() -> f64 {
+        3.0
+    }
+    fn default_letter_spacing() -> f64 {
+        1.0
+    }
+    fn default_line_spacing() -> f64 {
+        1.2
+    }
+    fn default_alignment() -> String {
+        "left".into()
+    }
 
     /// Convert a `SketchProfile` from text_to_profiles into a `Path2D`.
     ///
@@ -4404,11 +4601,7 @@ mod embroidery_wasm {
     /// stitch algorithm (running, satin, or fill) to produce an `EmbPattern`.
     /// Returns the same JSON shape as `readEmbroideryPes`.
     #[wasm_bindgen(js_name = digitizeText)]
-    pub fn digitize_text(
-        text: &str,
-        height: f64,
-        options_json: &str,
-    ) -> Result<String, JsError> {
+    pub fn digitize_text(text: &str, height: f64, options_json: &str) -> Result<String, JsError> {
         use vcad_kernel::vcad_kernel_text::{FontRegistry, TextAlignment};
 
         let opts: DigitizeTextOptions =
@@ -4574,8 +4767,7 @@ mod embroidery_wasm {
                     } else if !ccw && sweep > 0.0 {
                         sweep -= 2.0 * std::f64::consts::PI;
                     }
-                    let n_segs =
-                        ((sweep.abs() / (10.0_f64.to_radians())).ceil() as usize).max(2);
+                    let n_segs = ((sweep.abs() / (10.0_f64.to_radians())).ceil() as usize).max(2);
                     for i in 1..=n_segs {
                         let t = i as f64 / n_segs as f64;
                         let angle = start_angle + sweep * t;
@@ -4598,10 +4790,7 @@ mod embroidery_wasm {
     /// Takes a JSON array of `SketchSegment2D` (from a Sketch2D node) plus
     /// stitch options, and returns an `EmbPattern` JSON string.
     #[wasm_bindgen(js_name = digitizeSketch)]
-    pub fn digitize_sketch(
-        segments_json: &str,
-        options_json: &str,
-    ) -> Result<String, JsError> {
+    pub fn digitize_sketch(segments_json: &str, options_json: &str) -> Result<String, JsError> {
         let segments: Vec<vcad_ir::SketchSegment2D> =
             serde_json::from_str(segments_json).map_err(|e| JsError::new(&e.to_string()))?;
 
@@ -4765,8 +4954,7 @@ mod embroidery_wasm {
             }
         }
 
-        let pattern_json =
-            serde_json::to_string(pattern).map_err(|e| e.to_string())?;
+        let pattern_json = serde_json::to_string(pattern).map_err(|e| e.to_string())?;
 
         let result = EmbroideryResult {
             threads,

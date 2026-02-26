@@ -103,22 +103,58 @@ pub fn write_header(header: &DstHeader) -> Vec<u8> {
     offset += write_field(&mut buf, offset, "LA:", &header.label, 20);
 
     // ST:nnnnnnn\r (11 bytes)
-    offset += write_field(&mut buf, offset, "ST:", &format!("{:7}", header.stitch_count), 11);
+    offset += write_field(
+        &mut buf,
+        offset,
+        "ST:",
+        &format!("{:7}", header.stitch_count),
+        11,
+    );
 
     // CO:nnn\r (7 bytes)
-    offset += write_field(&mut buf, offset, "CO:", &format!("{:3}", header.color_changes), 7);
+    offset += write_field(
+        &mut buf,
+        offset,
+        "CO:",
+        &format!("{:3}", header.color_changes),
+        7,
+    );
 
     // +X:nnnnn\r (9 bytes)
-    offset += write_field(&mut buf, offset, "+X:", &format!("{:5}", header.positive_x), 9);
+    offset += write_field(
+        &mut buf,
+        offset,
+        "+X:",
+        &format!("{:5}", header.positive_x),
+        9,
+    );
 
     // -X:nnnnn\r (9 bytes)
-    offset += write_field(&mut buf, offset, "-X:", &format!("{:5}", header.negative_x), 9);
+    offset += write_field(
+        &mut buf,
+        offset,
+        "-X:",
+        &format!("{:5}", header.negative_x),
+        9,
+    );
 
     // +Y:nnnnn\r (9 bytes)
-    offset += write_field(&mut buf, offset, "+Y:", &format!("{:5}", header.positive_y), 9);
+    offset += write_field(
+        &mut buf,
+        offset,
+        "+Y:",
+        &format!("{:5}", header.positive_y),
+        9,
+    );
 
     // -Y:nnnnn\r (9 bytes)
-    let _ = write_field(&mut buf, offset, "-Y:", &format!("{:5}", header.negative_y), 9);
+    let _ = write_field(
+        &mut buf,
+        offset,
+        "-Y:",
+        &format!("{:5}", header.negative_y),
+        9,
+    );
 
     // Final byte is 0x1A (SUB / end-of-file marker)
     buf[HEADER_SIZE - 1] = 0x1A;
@@ -127,7 +163,13 @@ pub fn write_header(header: &DstHeader) -> Vec<u8> {
 }
 
 /// Write a single header field into the buffer. Returns the total field width consumed.
-fn write_field(buf: &mut [u8], offset: usize, prefix: &str, value: &str, total_width: usize) -> usize {
+fn write_field(
+    buf: &mut [u8],
+    offset: usize,
+    prefix: &str,
+    value: &str,
+    total_width: usize,
+) -> usize {
     let prefix_bytes = prefix.as_bytes();
     let value_bytes = value.as_bytes();
 

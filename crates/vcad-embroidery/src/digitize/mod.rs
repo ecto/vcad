@@ -79,8 +79,14 @@ mod tests {
             .collect();
 
         // Should have stitches on both sides of the centerline (y=0).
-        assert!(ys.iter().any(|&y| y > 0.5), "expected stitches above centerline");
-        assert!(ys.iter().any(|&y| y < -0.5), "expected stitches below centerline");
+        assert!(
+            ys.iter().any(|&y| y > 0.5),
+            "expected stitches above centerline"
+        );
+        assert!(
+            ys.iter().any(|&y| y < -0.5),
+            "expected stitches below centerline"
+        );
 
         // Adjacent stitches should alternate sides.
         for pair in ys.windows(2) {
@@ -95,12 +101,7 @@ mod tests {
     fn test_fill_stitch_square() {
         // 10x10mm square fill.
         let region = Path2D {
-            points: vec![
-                (0.0, 0.0),
-                (10.0, 0.0),
-                (10.0, 10.0),
-                (0.0, 10.0),
-            ],
+            points: vec![(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)],
             closed: true,
         };
         let params = FillParams::default();
@@ -131,12 +132,7 @@ mod tests {
     fn test_fill_stitch_rotated() {
         // 10x10mm square with 45-degree fill angle. All stitches still inside bounds.
         let region = Path2D {
-            points: vec![
-                (0.0, 0.0),
-                (10.0, 0.0),
-                (10.0, 10.0),
-                (0.0, 10.0),
-            ],
+            points: vec![(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)],
             closed: true,
         };
         let params = FillParams {
@@ -166,12 +162,7 @@ mod tests {
     #[test]
     fn test_underlay_looser_than_fill() {
         let region = Path2D {
-            points: vec![
-                (0.0, 0.0),
-                (10.0, 0.0),
-                (10.0, 10.0),
-                (0.0, 10.0),
-            ],
+            points: vec![(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)],
             closed: true,
         };
 

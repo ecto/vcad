@@ -207,7 +207,8 @@ impl ThreeMfModel {
                 "name": self.name,
                 "extruder": 1
             }]
-        }).to_string()
+        })
+        .to_string()
     }
 
     fn model_settings_xml(&self) -> String {

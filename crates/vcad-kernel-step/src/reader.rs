@@ -41,7 +41,10 @@ fn loop_area_3d(topo: &Topology, loop_id: LoopId) -> f64 {
 }
 
 /// Compute the angle parameter of a point on a circle.
-fn point_angle_on_circle(circle: &vcad_kernel_geom::Circle3d, pt: &vcad_kernel_math::Point3) -> f64 {
+fn point_angle_on_circle(
+    circle: &vcad_kernel_geom::Circle3d,
+    pt: &vcad_kernel_math::Point3,
+) -> f64 {
     let d = *pt - circle.center;
     let x = d.dot(circle.x_dir.as_ref());
     let y = d.dot(circle.y_dir.as_ref());
@@ -215,8 +218,12 @@ impl<'a> StepReader<'a> {
                     if is_circle {
                         // Subdivide this circle arc into multiple segments
                         self.subdivide_circle_edge(
-                            &mut topo, &edge, &oe, &curve.unwrap(),
-                            start_v, end_v,
+                            &mut topo,
+                            &edge,
+                            &oe,
+                            &curve.unwrap(),
+                            start_v,
+                            end_v,
                         );
                     } else {
                         // Simple edge: single half-edge per direction
@@ -226,7 +233,8 @@ impl<'a> StepReader<'a> {
 
                         let twin_start = self.vertex_map[&end_v];
                         let twin_he_id = topo.add_half_edge(twin_start);
-                        self.half_edge_map.insert((edge.id, !oe.orientation), twin_he_id);
+                        self.half_edge_map
+                            .insert((edge.id, !oe.orientation), twin_he_id);
 
                         use std::collections::hash_map::Entry;
                         if let Entry::Vacant(e) = self.edge_map.entry(edge.id) {

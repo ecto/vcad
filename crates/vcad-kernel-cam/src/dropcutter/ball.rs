@@ -49,12 +49,7 @@ pub fn drop_cutter_ball(accel: &MeshAccel, radius: f64, x: f64, y: f64) -> f64 {
 }
 
 /// Compute sphere center Z for face contact.
-fn face_contact_ball(
-    x: f64,
-    y: f64,
-    radius: f64,
-    tri: &super::mesh_accel::Triangle,
-) -> f64 {
+fn face_contact_ball(x: f64, y: f64, radius: f64, tri: &super::mesh_accel::Triangle) -> f64 {
     // For a sphere touching a plane, the center is at: z_surface + r / cos(theta)
     // where theta is the angle between the surface normal and vertical
     let nz = tri.normal[2];
@@ -144,22 +139,14 @@ mod tests {
 
     fn make_flat_mesh() -> MeshAccel {
         // Flat triangle in XY plane at z=0
-        let vertices = [
-            [0.0, 0.0, 0.0],
-            [20.0, 0.0, 0.0],
-            [10.0, 20.0, 0.0],
-        ];
+        let vertices = [[0.0, 0.0, 0.0], [20.0, 0.0, 0.0], [10.0, 20.0, 0.0]];
         let indices = [0, 1, 2];
         MeshAccel::new(&vertices, &indices, 10.0)
     }
 
     fn make_sloped_mesh() -> MeshAccel {
         // Triangle sloped 45 degrees
-        let vertices = [
-            [0.0, 0.0, 0.0],
-            [10.0, 0.0, 0.0],
-            [5.0, 10.0, 10.0],
-        ];
+        let vertices = [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [5.0, 10.0, 10.0]];
         let indices = [0, 1, 2];
         MeshAccel::new(&vertices, &indices, 5.0)
     }
@@ -192,7 +179,11 @@ mod tests {
         // Distance from (1,1) to (0,0) is sqrt(2) ≈ 1.414
         // z = 0 + sqrt(4 - 2) = sqrt(2) ≈ 1.414
         // But on a flat surface, face contact dominates: z = radius = 2.0
-        assert!(z >= 1.0 && z <= 3.5, "Expected z between 1.0 and 3.5, got {}", z);
+        assert!(
+            z >= 1.0 && z <= 3.5,
+            "Expected z between 1.0 and 3.5, got {}",
+            z
+        );
     }
 
     #[test]

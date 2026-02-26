@@ -167,7 +167,10 @@ pub fn sweep(
     let n_lateral = n_path_segments * n_profile_verts;
     let mut all_faces = Vec::with_capacity(n_lateral + 2);
     let mut he_map: FxHashMap<([i64; 3], [i64; 3]), HalfEdgeId> =
-        FxHashMap::with_capacity_and_hasher(n_lateral * 4 + n_profile_verts * 2, Default::default());
+        FxHashMap::with_capacity_and_hasher(
+            n_lateral * 4 + n_profile_verts * 2,
+            Default::default(),
+        );
 
     // Radial normal helper (hoisted out of hot loop)
     let radial_normal = |pt: Point3, c: Point3| -> Dir3 {

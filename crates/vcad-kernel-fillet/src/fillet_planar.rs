@@ -6,7 +6,10 @@ use vcad_kernel_math::{Dir3, Point3};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_topo::{FaceId, HalfEdgeId, Orientation, ShellType, Topology, VertexId};
 
-use crate::topology::{compute_centroid, extract_edges, extract_faces, pair_twin_half_edges, quantize, EdgeInfo, FaceInfo};
+use crate::topology::{
+    compute_centroid, extract_edges, extract_faces, pair_twin_half_edges, quantize, EdgeInfo,
+    FaceInfo,
+};
 use crate::trim::{build_vertex_faces, compute_trim_vertices, TrimKey};
 
 /// Fillet all edges of a B-rep solid with a constant radius.
@@ -119,8 +122,9 @@ pub fn fillet_all_edges(brep: &BRepSolid, radius: f64) -> BRepSolid {
             let surf_idx = new_geom.add_surface(Box::new(cyl_surface));
 
             let solid_center = compute_centroid(&faces);
-            let chamfer_center =
-                Point3::from((pa_s.to_vec() + pa_e.to_vec() + pb_e.to_vec() + pb_s.to_vec()) * 0.25);
+            let chamfer_center = Point3::from(
+                (pa_s.to_vec() + pa_e.to_vec() + pb_e.to_vec() + pb_s.to_vec()) * 0.25,
+            );
             let outward = chamfer_center - solid_center;
 
             let e1 = pa_e - pa_s;
@@ -238,13 +242,11 @@ pub(crate) fn build_plane_plane_blend(
         vec![pa_s, pb_s, pb_e, pa_e]
     };
 
-    let get_or_create = |cache: &mut HashMap<[i64; 3], VertexId>,
-                         topo: &mut Topology,
-                         pos: Point3|
-     -> VertexId {
-        let key = quantize(pos);
-        *cache.entry(key).or_insert_with(|| topo.add_vertex(pos))
-    };
+    let get_or_create =
+        |cache: &mut HashMap<[i64; 3], VertexId>, topo: &mut Topology, pos: Point3| -> VertexId {
+            let key = quantize(pos);
+            *cache.entry(key).or_insert_with(|| topo.add_vertex(pos))
+        };
 
     let verts: Vec<VertexId> = positions
         .iter()

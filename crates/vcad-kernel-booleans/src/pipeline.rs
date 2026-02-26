@@ -172,8 +172,14 @@ fn apply_splits_to_solid(
                             solid_name,
                             fid,
                             match &curve {
-                                ssi::IntersectionCurve::Line(l) => format!("Line at ({:.2},{:.2},{:.2})", l.origin.x, l.origin.y, l.origin.z),
-                                ssi::IntersectionCurve::Circle(c) => format!("Circle at ({:.2},{:.2},{:.2}) r={:.2}", c.center.x, c.center.y, c.center.z, c.radius),
+                                ssi::IntersectionCurve::Line(l) => format!(
+                                    "Line at ({:.2},{:.2},{:.2})",
+                                    l.origin.x, l.origin.y, l.origin.z
+                                ),
+                                ssi::IntersectionCurve::Circle(c) => format!(
+                                    "Circle at ({:.2},{:.2},{:.2}) r={:.2}",
+                                    c.center.x, c.center.y, c.center.z, c.radius
+                                ),
                                 _ => format!("{:?}", curve),
                             }
                         );
@@ -203,8 +209,9 @@ fn apply_splits_to_solid(
                                 fid,
                                 _circle.center.x, _circle.center.y, _circle.center.z, _circle.radius
                             );
-                            let result =
-                                split::split_spherical_face_by_circle(solid, fid, _circle, segments);
+                            let result = split::split_spherical_face_by_circle(
+                                solid, fid, _circle, segments,
+                            );
                             debug_bool!(
                                 "    -> Sphere split result: {} sub-faces {:?}",
                                 result.sub_faces.len(),
@@ -268,7 +275,9 @@ fn apply_splits_to_solid(
                                 "  Split {} circular disk face {:?} by Line at ({:.2},{:.2},{:.2})",
                                 solid_name,
                                 fid,
-                                _line.origin.x, _line.origin.y, _line.origin.z
+                                _line.origin.x,
+                                _line.origin.y,
+                                _line.origin.z
                             );
                             let result =
                                 split::split_circular_disk_face(solid, fid, &curve, segments);
@@ -423,183 +432,183 @@ pub(crate) fn brep_boolean(
 
     // 2. For each face pair, compute SSI and collect splits for both A and B
     let compute_ssi = |&(face_a, face_b): &(FaceId, FaceId)| -> Option<SsiPairResult> {
-            // Get face data with bounds checking to avoid panics
-            let face_data_a = a.topology.faces.get(face_a)?;
-            let face_data_b = b.topology.faces.get(face_b)?;
-            let surf_a = a.geometry.surfaces.get(face_data_a.surface_index)?;
-            let surf_b = b.geometry.surfaces.get(face_data_b.surface_index)?;
+        // Get face data with bounds checking to avoid panics
+        let face_data_a = a.topology.faces.get(face_a)?;
+        let face_data_b = b.topology.faces.get(face_b)?;
+        let surf_a = a.geometry.surfaces.get(face_data_a.surface_index)?;
+        let surf_b = b.geometry.surfaces.get(face_data_b.surface_index)?;
 
-            let curve = ssi::intersect_surfaces(surf_a.as_ref(), surf_b.as_ref());
+        let curve = ssi::intersect_surfaces(surf_a.as_ref(), surf_b.as_ref());
 
-            if matches!(curve, ssi::IntersectionCurve::Empty) {
-                return None;
-            }
+        if matches!(curve, ssi::IntersectionCurve::Empty) {
+            return None;
+        }
 
-            let mut results_a = Vec::new();
-            let mut results_b = Vec::new();
+        let mut results_a = Vec::new();
+        let mut results_b = Vec::new();
 
-            // For circle curves (from plane-cylinder intersection), skip trimming —
-            // the circle is already the intersection. Add split instructions to
-            // BOTH the planar face (gets an inner loop) and the cylindrical face
-            // (gets a new edge splitting the cylinder).
-            // Note: face_a and face_b can be from either solid, so check both.
-            // Also verify the circle center is in the face's material region to
-            // avoid creating nested inner loops (e.g. bore circle inside hub hole).
-            if let ssi::IntersectionCurve::Circle(circle) = &curve {
-                // Sample a point on the circle (not center — center might not be in face for cylindrical)
-                let sample_pt = circle.center + circle.radius * circle.x_dir.into_inner();
-                if split::is_planar_face(&a, face_a) {
-                    // Check point_in_face to avoid creating inner loops inside existing holes.
-                    // For degenerate cap faces (single-vertex outer loop), always check.
-                    // For regular polygon faces, only check if they already have inner loops
-                    // (existing holes from prior boolean ops). Without existing holes, the
-                    // circle intersection is always valid and split_planar_face handles
-                    // partial containment correctly.
-                    let outer_len = a.topology.loop_len(a.topology.faces[face_a].outer_loop);
-                    let has_inner_loops = !a.topology.faces[face_a].inner_loops.is_empty();
-                    if outer_len <= 1 {
-                        if trim::point_in_face(&a, face_a, &sample_pt) {
-                            results_a.push((curve.clone(), circle.center, circle.center));
-                        }
-                    } else if has_inner_loops {
-                        // Regular polygon face with existing holes: check that the circle
-                        // is inside the face material (not inside an existing hole)
-                        if trim::point_in_face(&a, face_a, &sample_pt) {
-                            results_a.push((curve.clone(), circle.center, circle.center));
-                        }
-                    } else {
+        // For circle curves (from plane-cylinder intersection), skip trimming —
+        // the circle is already the intersection. Add split instructions to
+        // BOTH the planar face (gets an inner loop) and the cylindrical face
+        // (gets a new edge splitting the cylinder).
+        // Note: face_a and face_b can be from either solid, so check both.
+        // Also verify the circle center is in the face's material region to
+        // avoid creating nested inner loops (e.g. bore circle inside hub hole).
+        if let ssi::IntersectionCurve::Circle(circle) = &curve {
+            // Sample a point on the circle (not center — center might not be in face for cylindrical)
+            let sample_pt = circle.center + circle.radius * circle.x_dir.into_inner();
+            if split::is_planar_face(&a, face_a) {
+                // Check point_in_face to avoid creating inner loops inside existing holes.
+                // For degenerate cap faces (single-vertex outer loop), always check.
+                // For regular polygon faces, only check if they already have inner loops
+                // (existing holes from prior boolean ops). Without existing holes, the
+                // circle intersection is always valid and split_planar_face handles
+                // partial containment correctly.
+                let outer_len = a.topology.loop_len(a.topology.faces[face_a].outer_loop);
+                let has_inner_loops = !a.topology.faces[face_a].inner_loops.is_empty();
+                if outer_len <= 1 {
+                    if trim::point_in_face(&a, face_a, &sample_pt) {
                         results_a.push((curve.clone(), circle.center, circle.center));
                     }
-                }
-                if split::is_cylindrical_face(&a, face_a) {
+                } else if has_inner_loops {
+                    // Regular polygon face with existing holes: check that the circle
+                    // is inside the face material (not inside an existing hole)
+                    if trim::point_in_face(&a, face_a, &sample_pt) {
+                        results_a.push((curve.clone(), circle.center, circle.center));
+                    }
+                } else {
                     results_a.push((curve.clone(), circle.center, circle.center));
                 }
-                if split::is_spherical_face(&a, face_a) {
-                    results_a.push((curve.clone(), circle.center, circle.center));
-                }
-                if split::is_conical_face(&a, face_a) {
-                    results_a.push((curve.clone(), circle.center, circle.center));
-                }
-                if split::is_planar_face(&b, face_b) {
-                    let outer_len = b.topology.loop_len(b.topology.faces[face_b].outer_loop);
-                    let has_inner_loops = !b.topology.faces[face_b].inner_loops.is_empty();
-                    if outer_len <= 1 {
-                        if trim::point_in_face(&b, face_b, &sample_pt) {
-                            results_b.push((curve.clone(), circle.center, circle.center));
-                        }
-                    } else if has_inner_loops {
-                        // Regular polygon face with existing holes: check that the circle
-                        // is inside the face material (not inside an existing hole)
-                        if trim::point_in_face(&b, face_b, &sample_pt) {
-                            results_b.push((curve.clone(), circle.center, circle.center));
-                        }
-                    } else {
+            }
+            if split::is_cylindrical_face(&a, face_a) {
+                results_a.push((curve.clone(), circle.center, circle.center));
+            }
+            if split::is_spherical_face(&a, face_a) {
+                results_a.push((curve.clone(), circle.center, circle.center));
+            }
+            if split::is_conical_face(&a, face_a) {
+                results_a.push((curve.clone(), circle.center, circle.center));
+            }
+            if split::is_planar_face(&b, face_b) {
+                let outer_len = b.topology.loop_len(b.topology.faces[face_b].outer_loop);
+                let has_inner_loops = !b.topology.faces[face_b].inner_loops.is_empty();
+                if outer_len <= 1 {
+                    if trim::point_in_face(&b, face_b, &sample_pt) {
                         results_b.push((curve.clone(), circle.center, circle.center));
                     }
-                }
-                if split::is_cylindrical_face(&b, face_b) {
+                } else if has_inner_loops {
+                    // Regular polygon face with existing holes: check that the circle
+                    // is inside the face material (not inside an existing hole)
+                    if trim::point_in_face(&b, face_b, &sample_pt) {
+                        results_b.push((curve.clone(), circle.center, circle.center));
+                    }
+                } else {
                     results_b.push((curve.clone(), circle.center, circle.center));
                 }
-                if split::is_spherical_face(&b, face_b) {
-                    results_b.push((curve.clone(), circle.center, circle.center));
-                }
-                if split::is_conical_face(&b, face_b) {
-                    results_b.push((curve.clone(), circle.center, circle.center));
-                }
-                return Some((face_a, results_a, face_b, results_b));
             }
+            if split::is_cylindrical_face(&b, face_b) {
+                results_b.push((curve.clone(), circle.center, circle.center));
+            }
+            if split::is_spherical_face(&b, face_b) {
+                results_b.push((curve.clone(), circle.center, circle.center));
+            }
+            if split::is_conical_face(&b, face_b) {
+                results_b.push((curve.clone(), circle.center, circle.center));
+            }
+            return Some((face_a, results_a, face_b, results_b));
+        }
 
-            // Expand TwoLines into individual Line curves for processing
-            let curves_to_process: Vec<ssi::IntersectionCurve> = match &curve {
-                ssi::IntersectionCurve::TwoLines(line1, line2) => {
-                    debug_bool!(
-                        "  TwoLines: {:?}({:?}) x {:?}({:?})",
-                        face_a,
-                        surf_a.surface_type(),
-                        face_b,
-                        surf_b.surface_type()
-                    );
-                    debug_bool!(
-                        "    Line1: origin=({:.2},{:.2},{:.2}) dir=({:.2},{:.2},{:.2})",
-                        line1.origin.x,
-                        line1.origin.y,
-                        line1.origin.z,
-                        line1.direction.x,
-                        line1.direction.y,
-                        line1.direction.z
-                    );
-                    debug_bool!(
-                        "    Line2: origin=({:.2},{:.2},{:.2}) dir=({:.2},{:.2},{:.2})",
-                        line2.origin.x,
-                        line2.origin.y,
-                        line2.origin.z,
-                        line2.direction.x,
-                        line2.direction.y,
-                        line2.direction.z
-                    );
-                    vec![
-                        ssi::IntersectionCurve::Line(line1.clone()),
-                        ssi::IntersectionCurve::Line(line2.clone()),
-                    ]
-                }
-                _ => vec![curve.clone()],
-            };
-
-            for single_curve in &curves_to_process {
-                // Trim curve to A's face boundary (for non-circle curves)
-                let segs_a = trim::trim_curve_to_face(single_curve, face_a, &a, 64);
+        // Expand TwoLines into individual Line curves for processing
+        let curves_to_process: Vec<ssi::IntersectionCurve> = match &curve {
+            ssi::IntersectionCurve::TwoLines(line1, line2) => {
                 debug_bool!(
-                    "    Trim to face A ({:?}): {} segments",
+                    "  TwoLines: {:?}({:?}) x {:?}({:?})",
                     face_a,
-                    segs_a.len()
-                );
-                for seg in &segs_a {
-                    let entry = evaluate_curve(single_curve, seg.t_start);
-                    let exit = evaluate_curve(single_curve, seg.t_end);
-                    let len = (exit - entry).norm();
-                    debug_bool!(
-                        "      Segment: entry=({:.2},{:.2},{:.2}) exit=({:.2},{:.2},{:.2}) len={:.4}",
-                        entry.x,
-                        entry.y,
-                        entry.z,
-                        exit.x,
-                        exit.y,
-                        exit.z,
-                        len
-                    );
-                    if len > 1e-6 {
-                        results_a.push((single_curve.clone(), entry, exit));
-                    }
-                }
-
-                // Trim curve to B's face boundary (for non-circle curves)
-                let segs_b = trim::trim_curve_to_face(single_curve, face_b, &b, 64);
-                debug_bool!(
-                    "    Trim to face B ({:?}): {} segments",
+                    surf_a.surface_type(),
                     face_b,
-                    segs_b.len()
+                    surf_b.surface_type()
                 );
-                for seg in &segs_b {
-                    let entry = evaluate_curve(single_curve, seg.t_start);
-                    let exit = evaluate_curve(single_curve, seg.t_end);
-                    let len = (exit - entry).norm();
-                    debug_bool!(
-                        "      Segment: entry=({:.2},{:.2},{:.2}) exit=({:.2},{:.2},{:.2}) len={:.4}",
-                        entry.x,
-                        entry.y,
-                        entry.z,
-                        exit.x,
-                        exit.y,
-                        exit.z,
-                        len
-                    );
-                    if len > 1e-6 {
-                        results_b.push((single_curve.clone(), entry, exit));
-                    }
+                debug_bool!(
+                    "    Line1: origin=({:.2},{:.2},{:.2}) dir=({:.2},{:.2},{:.2})",
+                    line1.origin.x,
+                    line1.origin.y,
+                    line1.origin.z,
+                    line1.direction.x,
+                    line1.direction.y,
+                    line1.direction.z
+                );
+                debug_bool!(
+                    "    Line2: origin=({:.2},{:.2},{:.2}) dir=({:.2},{:.2},{:.2})",
+                    line2.origin.x,
+                    line2.origin.y,
+                    line2.origin.z,
+                    line2.direction.x,
+                    line2.direction.y,
+                    line2.direction.z
+                );
+                vec![
+                    ssi::IntersectionCurve::Line(line1.clone()),
+                    ssi::IntersectionCurve::Line(line2.clone()),
+                ]
+            }
+            _ => vec![curve.clone()],
+        };
+
+        for single_curve in &curves_to_process {
+            // Trim curve to A's face boundary (for non-circle curves)
+            let segs_a = trim::trim_curve_to_face(single_curve, face_a, &a, 64);
+            debug_bool!(
+                "    Trim to face A ({:?}): {} segments",
+                face_a,
+                segs_a.len()
+            );
+            for seg in &segs_a {
+                let entry = evaluate_curve(single_curve, seg.t_start);
+                let exit = evaluate_curve(single_curve, seg.t_end);
+                let len = (exit - entry).norm();
+                debug_bool!(
+                    "      Segment: entry=({:.2},{:.2},{:.2}) exit=({:.2},{:.2},{:.2}) len={:.4}",
+                    entry.x,
+                    entry.y,
+                    entry.z,
+                    exit.x,
+                    exit.y,
+                    exit.z,
+                    len
+                );
+                if len > 1e-6 {
+                    results_a.push((single_curve.clone(), entry, exit));
                 }
             }
 
-            Some((face_a, results_a, face_b, results_b))
+            // Trim curve to B's face boundary (for non-circle curves)
+            let segs_b = trim::trim_curve_to_face(single_curve, face_b, &b, 64);
+            debug_bool!(
+                "    Trim to face B ({:?}): {} segments",
+                face_b,
+                segs_b.len()
+            );
+            for seg in &segs_b {
+                let entry = evaluate_curve(single_curve, seg.t_start);
+                let exit = evaluate_curve(single_curve, seg.t_end);
+                let len = (exit - entry).norm();
+                debug_bool!(
+                    "      Segment: entry=({:.2},{:.2},{:.2}) exit=({:.2},{:.2},{:.2}) len={:.4}",
+                    entry.x,
+                    entry.y,
+                    entry.z,
+                    exit.x,
+                    exit.y,
+                    exit.z,
+                    len
+                );
+                if len > 1e-6 {
+                    results_b.push((single_curve.clone(), entry, exit));
+                }
+            }
+        }
+
+        Some((face_a, results_a, face_b, results_b))
     };
 
     // Use Rayon parallelism only when there are enough pairs to amortize thread overhead

@@ -125,18 +125,16 @@ pub fn shell_brep_analytical(
             Orientation::Reversed => thickness,
         };
 
-        let offset_surface = surface
-            .offset(offset_dist)
-            .ok_or_else(|| {
-                ShellError::SurfaceCollapse(
-                    face_id,
-                    format!(
-                        "{:?} surface collapsed at offset {:.4}",
-                        surface.surface_type(),
-                        offset_dist
-                    ),
-                )
-            })?;
+        let offset_surface = surface.offset(offset_dist).ok_or_else(|| {
+            ShellError::SurfaceCollapse(
+                face_id,
+                format!(
+                    "{:?} surface collapsed at offset {:.4}",
+                    surface.surface_type(),
+                    offset_dist
+                ),
+            )
+        })?;
 
         offset_surfaces.insert(face_id, offset_surface);
     }
@@ -175,10 +173,7 @@ pub fn shell_brep_analytical(
         let surf_idx = new_geom.add_surface(surface.clone_box());
 
         let old_verts = topo.loop_vertices(face.outer_loop);
-        let new_verts: Vec<VertexId> = old_verts
-            .iter()
-            .map(|v| outer_vertex_map[v])
-            .collect();
+        let new_verts: Vec<VertexId> = old_verts.iter().map(|v| outer_vertex_map[v]).collect();
 
         let mut hes = Vec::new();
         for (j, &nv) in new_verts.iter().enumerate() {

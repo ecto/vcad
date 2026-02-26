@@ -615,9 +615,7 @@ pub enum CsgOp {
     },
     /// PCB board — evaluates the board's outline + components to 3D geometry.
     /// The `board` field contains the full PCB design data (same ecad::Pcb type).
-    PcbBoard {
-        board: Box<crate::ecad::Pcb>,
-    },
+    PcbBoard { board: Box<crate::ecad::Pcb> },
     /// Embroidery pattern — a 2D stitch design.
     EmbroideryPattern {
         /// The embroidery design data.

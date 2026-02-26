@@ -14,9 +14,7 @@ pub struct RunningStitchParams {
 
 impl Default for RunningStitchParams {
     fn default() -> Self {
-        Self {
-            stitch_length: 2.5,
-        }
+        Self { stitch_length: 2.5 }
     }
 }
 

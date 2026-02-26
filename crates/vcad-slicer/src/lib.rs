@@ -167,8 +167,7 @@ pub fn slice(mesh: &TriangleMesh, settings: &SliceSettings) -> Result<SliceResul
     settings.validate()?;
 
     // Get mesh bounds
-    let (bounds_min, bounds_max) =
-        mesh_bounds(mesh).ok_or(SlicerError::EmptyMesh)?;
+    let (bounds_min, bounds_max) = mesh_bounds(mesh).ok_or(SlicerError::EmptyMesh)?;
 
     // Generate layer heights
     let layer_heights = generate_layer_heights(
@@ -294,16 +293,12 @@ mod tests {
     fn make_cube_mesh() -> TriangleMesh {
         let size = 10.0f32;
         let vertices = vec![
-            0.0, 0.0, 0.0, size, 0.0, 0.0, size, size, 0.0, 0.0, size, 0.0,
-            0.0, 0.0, size, size, 0.0, size, size, size, size, 0.0, size, size,
+            0.0, 0.0, 0.0, size, 0.0, 0.0, size, size, 0.0, 0.0, size, 0.0, 0.0, 0.0, size, size,
+            0.0, size, size, size, size, 0.0, size, size,
         ];
         let indices = vec![
-            0, 2, 1, 0, 3, 2,
-            4, 5, 6, 4, 6, 7,
-            0, 1, 5, 0, 5, 4,
-            2, 3, 7, 2, 7, 6,
-            0, 4, 7, 0, 7, 3,
-            1, 2, 6, 1, 6, 5,
+            0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 2, 3, 7, 2, 7, 6, 0, 4, 7, 0, 7,
+            3, 1, 2, 6, 1, 6, 5,
         ];
         TriangleMesh {
             vertices,
@@ -319,7 +314,7 @@ mod tests {
             layer_height: 0.5, // Large layers for fast test
             first_layer_height: 0.5,
             infill_density: 0.05, // Low density for fast test
-            wall_count: 1, // Minimal walls
+            wall_count: 1,        // Minimal walls
             ..Default::default()
         };
         let result = slice(&mesh, &settings).unwrap();

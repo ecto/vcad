@@ -25,154 +25,162 @@ pub struct RayTracePipeline {
 impl RayTracePipeline {
     /// Create a new ray trace pipeline.
     pub fn new(ctx: &GpuContext) -> Result<Self, GpuError> {
-        let shader_module = ctx.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Ray Trace Shader"),
-            source: wgpu::ShaderSource::Wgsl(super::shaders::RAYTRACE_SHADER.into()),
-        });
+        let shader_module = ctx
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Ray Trace Shader"),
+                source: wgpu::ShaderSource::Wgsl(super::shaders::RAYTRACE_SHADER.into()),
+            });
 
-        let bind_group_layout = ctx.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Ray Trace Bind Group Layout"),
-            entries: &[
-                // Camera uniform
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // Surfaces storage
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // Faces storage
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // BVH nodes storage
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // Trim vertices storage
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // Inner loop descriptors (vertex counts for each inner loop)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // Output texture
-                wgpu::BindGroupLayoutEntry {
-                    binding: 6,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture {
-                        access: wgpu::StorageTextureAccess::WriteOnly,
-                        format: wgpu::TextureFormat::Rgba8Unorm,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                    },
-                    count: None,
-                },
-                // Render state uniform (for progressive rendering)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 7,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // Accumulation buffer (for progressive rendering)
-                // Using storage buffer instead of ReadWrite texture for WebGPU compatibility
-                wgpu::BindGroupLayoutEntry {
-                    binding: 8,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // Materials storage
-                wgpu::BindGroupLayoutEntry {
-                    binding: 9,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // Depth/normal buffer (for edge detection)
-                // Using storage buffer instead of ReadWrite texture for WebGPU compatibility
-                wgpu::BindGroupLayoutEntry {
-                    binding: 10,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
+        let bind_group_layout =
+            ctx.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("Ray Trace Bind Group Layout"),
+                    entries: &[
+                        // Camera uniform
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        // Surfaces storage
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        // Faces storage
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        // BVH nodes storage
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 3,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        // Trim vertices storage
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 4,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        // Inner loop descriptors (vertex counts for each inner loop)
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 5,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        // Output texture
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 6,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::StorageTexture {
+                                access: wgpu::StorageTextureAccess::WriteOnly,
+                                format: wgpu::TextureFormat::Rgba8Unorm,
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                            },
+                            count: None,
+                        },
+                        // Render state uniform (for progressive rendering)
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 7,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        // Accumulation buffer (for progressive rendering)
+                        // Using storage buffer instead of ReadWrite texture for WebGPU compatibility
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 8,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        // Materials storage
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 9,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        // Depth/normal buffer (for edge detection)
+                        // Using storage buffer instead of ReadWrite texture for WebGPU compatibility
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 10,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                    ],
+                });
 
-        let pipeline_layout = ctx.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Ray Trace Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let pipeline_layout = ctx
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Ray Trace Pipeline Layout"),
+                bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
-        let pipeline = ctx.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Ray Trace Pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader_module,
-            entry_point: Some("main"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let pipeline = ctx
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Ray Trace Pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &shader_module,
+                entry_point: Some("main"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
 
         Ok(Self {
             pipeline,
@@ -208,7 +216,17 @@ impl RayTracePipeline {
         frame_index: u32,
         accum_buffer: Option<wgpu::Buffer>,
     ) -> Result<(Vec<u8>, wgpu::Buffer), GpuError> {
-        self.render_progressive_with_debug(ctx, scene, camera, width, height, frame_index, accum_buffer, 0).await
+        self.render_progressive_with_debug(
+            ctx,
+            scene,
+            camera,
+            width,
+            height,
+            frame_index,
+            accum_buffer,
+            0,
+        )
+        .await
     }
 
     /// Render a scene with debug visualization mode.
@@ -230,9 +248,19 @@ impl RayTracePipeline {
     ) -> Result<(Vec<u8>, wgpu::Buffer), GpuError> {
         // Delegate to full settings with default edge parameters
         self.render_with_full_settings(
-            ctx, scene, camera, width, height, frame_index, accum_buffer,
-            debug_mode, true, 0.1, 30.0
-        ).await
+            ctx,
+            scene,
+            camera,
+            width,
+            height,
+            frame_index,
+            accum_buffer,
+            debug_mode,
+            true,
+            0.1,
+            30.0,
+        )
+        .await
     }
 
     /// Render a scene with full control over all settings.
@@ -260,21 +288,29 @@ impl RayTracePipeline {
         use wgpu::util::DeviceExt;
 
         // Create camera buffer
-        let camera_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Camera Buffer"),
-            contents: bytemuck::bytes_of(camera),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+        let camera_buffer = ctx
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Camera Buffer"),
+                contents: bytemuck::bytes_of(camera),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
 
         // Create render state buffer
         let render_state = GpuRenderState::with_edge_settings(
-            frame_index, debug_mode, enable_edges, edge_depth_threshold, edge_normal_threshold
+            frame_index,
+            debug_mode,
+            enable_edges,
+            edge_depth_threshold,
+            edge_normal_threshold,
         );
-        let render_state_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Render State Buffer"),
-            contents: bytemuck::bytes_of(&render_state),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+        let render_state_buffer =
+            ctx.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Render State Buffer"),
+                    contents: bytemuck::bytes_of(&render_state),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
 
         // Create scene buffers (with at least 1 element to avoid zero-size buffers)
         let surfaces = if scene.surfaces.is_empty() {
@@ -282,66 +318,78 @@ impl RayTracePipeline {
         } else {
             scene.surfaces.clone()
         };
-        let surfaces_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Surfaces Buffer"),
-            contents: bytemuck::cast_slice(&surfaces),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        let surfaces_buffer = ctx
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Surfaces Buffer"),
+                contents: bytemuck::cast_slice(&surfaces),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
 
         let faces = if scene.faces.is_empty() {
             vec![super::buffers::GpuFace::zeroed()]
         } else {
             scene.faces.clone()
         };
-        let faces_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Faces Buffer"),
-            contents: bytemuck::cast_slice(&faces),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        let faces_buffer = ctx
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Faces Buffer"),
+                contents: bytemuck::cast_slice(&faces),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
 
         let bvh_nodes = if scene.bvh_nodes.is_empty() {
             vec![super::buffers::GpuBvhNode::zeroed()]
         } else {
             scene.bvh_nodes.clone()
         };
-        let bvh_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("BVH Buffer"),
-            contents: bytemuck::cast_slice(&bvh_nodes),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        let bvh_buffer = ctx
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("BVH Buffer"),
+                contents: bytemuck::cast_slice(&bvh_nodes),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
 
         let trim_verts = if scene.trim_verts.is_empty() {
             vec![super::buffers::GpuVec2 { x: 0.0, y: 0.0 }]
         } else {
             scene.trim_verts.clone()
         };
-        let trim_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Trim Buffer"),
-            contents: bytemuck::cast_slice(&trim_verts),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        let trim_buffer = ctx
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Trim Buffer"),
+                contents: bytemuck::cast_slice(&trim_verts),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
 
         let inner_loop_descs = if scene.inner_loop_descs.is_empty() {
             vec![0u32]
         } else {
             scene.inner_loop_descs.clone()
         };
-        let inner_loop_descs_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Inner Loop Descs Buffer"),
-            contents: bytemuck::cast_slice(&inner_loop_descs),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        let inner_loop_descs_buffer =
+            ctx.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Inner Loop Descs Buffer"),
+                    contents: bytemuck::cast_slice(&inner_loop_descs),
+                    usage: wgpu::BufferUsages::STORAGE,
+                });
 
         let materials = if scene.materials.is_empty() {
             vec![super::buffers::GpuMaterial::default()]
         } else {
             scene.materials.clone()
         };
-        let materials_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Materials Buffer"),
-            contents: bytemuck::cast_slice(&materials),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        let materials_buffer = ctx
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Materials Buffer"),
+                contents: bytemuck::cast_slice(&materials),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
 
         // Create output texture
         let output_texture = ctx.device.create_texture(&wgpu::TextureDescriptor {
@@ -442,9 +490,11 @@ impl RayTracePipeline {
         });
 
         // Dispatch compute shader
-        let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Ray Trace Encoder"),
-        });
+        let mut encoder = ctx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Ray Trace Encoder"),
+            });
 
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -480,10 +530,15 @@ impl RayTracePipeline {
         );
 
         #[cfg(target_arch = "wasm32")]
-        web_sys::console::log_1(&format!(
-            "[RT] Submitting GPU work: {}x{} = {} pixels",
-            width, height, width * height
-        ).into());
+        web_sys::console::log_1(
+            &format!(
+                "[RT] Submitting GPU work: {}x{} = {} pixels",
+                width,
+                height,
+                width * height
+            )
+            .into(),
+        );
 
         ctx.queue.submit(Some(encoder.finish()));
 
@@ -502,8 +557,10 @@ impl RayTracePipeline {
 
             // Create a Promise that resolves when map_async callback fires
             let (promise, resolve, reject) = {
-                let resolve_ref = std::rc::Rc::new(std::cell::RefCell::new(None::<js_sys::Function>));
-                let reject_ref = std::rc::Rc::new(std::cell::RefCell::new(None::<js_sys::Function>));
+                let resolve_ref =
+                    std::rc::Rc::new(std::cell::RefCell::new(None::<js_sys::Function>));
+                let reject_ref =
+                    std::rc::Rc::new(std::cell::RefCell::new(None::<js_sys::Function>));
                 let resolve_clone = resolve_ref.clone();
                 let reject_clone = reject_ref.clone();
 
@@ -518,13 +575,18 @@ impl RayTracePipeline {
             };
 
             buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-                web_sys::console::log_1(&format!("[RT] map_async callback: {:?}", result.is_ok()).into());
+                web_sys::console::log_1(
+                    &format!("[RT] map_async callback: {:?}", result.is_ok()).into(),
+                );
                 match result {
                     Ok(()) => {
                         let _ = resolve.call0(&JsValue::undefined());
                     }
                     Err(_) => {
-                        let _ = reject.call1(&JsValue::undefined(), &JsValue::from_str("Buffer mapping failed"));
+                        let _ = reject.call1(
+                            &JsValue::undefined(),
+                            &JsValue::from_str("Buffer mapping failed"),
+                        );
                     }
                 }
             });
@@ -540,7 +602,7 @@ impl RayTracePipeline {
                     web_sys::console::log_1(&"[RT] Buffer mapping complete".into());
                     Ok(())
                 }
-                Err(_) => Err(GpuError::BufferMapping)
+                Err(_) => Err(GpuError::BufferMapping),
             }
         };
 

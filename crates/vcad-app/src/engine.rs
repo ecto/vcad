@@ -23,9 +23,8 @@ impl DocumentEngine {
     /// Create a new engine with an empty document.
     pub fn new() -> Self {
         let doc = Document::new();
-        let scene = evaluate_document(&doc).unwrap_or_else(|_| EvaluatedScene {
-            meshes: Vec::new(),
-        });
+        let scene =
+            evaluate_document(&doc).unwrap_or_else(|_| EvaluatedScene { meshes: Vec::new() });
         Self {
             document: doc,
             selection: Selection::new(),
@@ -221,14 +220,23 @@ impl DocumentEngine {
         self.push_undo();
 
         for selected_id in &selected_ids {
-            if let Some(idx) = self.document.roots.iter().position(|e| e.root == *selected_id) {
+            if let Some(idx) = self
+                .document
+                .roots
+                .iter()
+                .position(|e| e.root == *selected_id)
+            {
                 let old_root = self.document.roots[idx].root;
                 let new_id = self.alloc_node_id();
                 self.document.nodes.insert(
                     new_id,
                     Node {
                         id: new_id,
-                        name: self.document.nodes.get(&old_root).and_then(|n| n.name.clone()),
+                        name: self
+                            .document
+                            .nodes
+                            .get(&old_root)
+                            .and_then(|n| n.name.clone()),
                         op: CsgOp::Translate {
                             child: old_root,
                             offset: Vec3::new(dx, dy, dz),

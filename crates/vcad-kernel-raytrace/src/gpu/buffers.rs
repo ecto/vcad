@@ -62,7 +62,10 @@ impl GpuSurface {
                 0
             }
             SurfaceKind::Cylinder => {
-                if let Some(cyl) = surface.as_any().downcast_ref::<vcad_kernel_geom::CylinderSurface>() {
+                if let Some(cyl) = surface
+                    .as_any()
+                    .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
+                {
                     // center (3), axis (3), ref_dir (3), radius (1)
                     params[0] = cyl.center.x as f32;
                     params[1] = cyl.center.y as f32;
@@ -78,7 +81,10 @@ impl GpuSurface {
                 1
             }
             SurfaceKind::Sphere => {
-                if let Some(sph) = surface.as_any().downcast_ref::<vcad_kernel_geom::SphereSurface>() {
+                if let Some(sph) = surface
+                    .as_any()
+                    .downcast_ref::<vcad_kernel_geom::SphereSurface>()
+                {
                     // center (3), radius (1), ref_dir (3), axis (3)
                     params[0] = sph.center.x as f32;
                     params[1] = sph.center.y as f32;
@@ -94,7 +100,10 @@ impl GpuSurface {
                 2
             }
             SurfaceKind::Cone => {
-                if let Some(cone) = surface.as_any().downcast_ref::<vcad_kernel_geom::ConeSurface>() {
+                if let Some(cone) = surface
+                    .as_any()
+                    .downcast_ref::<vcad_kernel_geom::ConeSurface>()
+                {
                     // apex (3), axis (3), ref_dir (3), half_angle (1)
                     params[0] = cone.apex.x as f32;
                     params[1] = cone.apex.y as f32;
@@ -110,7 +119,10 @@ impl GpuSurface {
                 3
             }
             SurfaceKind::Torus => {
-                if let Some(torus) = surface.as_any().downcast_ref::<vcad_kernel_geom::TorusSurface>() {
+                if let Some(torus) = surface
+                    .as_any()
+                    .downcast_ref::<vcad_kernel_geom::TorusSurface>()
+                {
                     // center (3), axis (3), ref_dir (3), major_radius (1), minor_radius (1)
                     params[0] = torus.center.x as f32;
                     params[1] = torus.center.y as f32;
@@ -127,7 +139,10 @@ impl GpuSurface {
                 4
             }
             SurfaceKind::Bilinear => {
-                if let Some(bil) = surface.as_any().downcast_ref::<vcad_kernel_geom::BilinearSurface>() {
+                if let Some(bil) = surface
+                    .as_any()
+                    .downcast_ref::<vcad_kernel_geom::BilinearSurface>()
+                {
                     // p00 (3), p10 (3), p01 (3), p11 (3)
                     params[0] = bil.p00.x as f32;
                     params[1] = bil.p00.y as f32;
@@ -324,7 +339,7 @@ impl GpuRenderState {
             enable_edges: 1, // Enabled by default
             edge_depth_threshold: 0.1,
             edge_normal_threshold: 30.0, // degrees
-            debug_mode: 0, // Normal rendering by default
+            debug_mode: 0,               // Normal rendering by default
             _pad: 0.0,
         }
     }
@@ -446,10 +461,16 @@ pub enum GpuSceneError {
 impl std::fmt::Display for GpuSceneError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::TooManySurfaces(n) => write!(f, "too many surfaces: {} (max {})", n, MAX_SURFACES),
+            Self::TooManySurfaces(n) => {
+                write!(f, "too many surfaces: {} (max {})", n, MAX_SURFACES)
+            }
             Self::TooManyFaces(n) => write!(f, "too many faces: {} (max {})", n, MAX_FACES),
-            Self::TooManyBvhNodes(n) => write!(f, "too many BVH nodes: {} (max {})", n, MAX_BVH_NODES),
-            Self::TooManyTrimVerts(n) => write!(f, "too many trim vertices: {} (max {})", n, MAX_TRIM_VERTS),
+            Self::TooManyBvhNodes(n) => {
+                write!(f, "too many BVH nodes: {} (max {})", n, MAX_BVH_NODES)
+            }
+            Self::TooManyTrimVerts(n) => {
+                write!(f, "too many trim vertices: {} (max {})", n, MAX_TRIM_VERTS)
+            }
         }
     }
 }
@@ -491,9 +512,13 @@ impl GpuScene {
                     web_sys::console::log_1(
                         &format!(
                             "[RT] Surface {}: type={} origin=({:.2}, {:.2}, {:.2})",
-                            idx, type_name,
-                            gpu_surface.params[0], gpu_surface.params[1], gpu_surface.params[2]
-                        ).into(),
+                            idx,
+                            type_name,
+                            gpu_surface.params[0],
+                            gpu_surface.params[1],
+                            gpu_surface.params[2]
+                        )
+                        .into(),
                     );
                 }
             }
@@ -531,7 +556,9 @@ impl GpuScene {
                 web_sys::console::log_1(
                     &format!(
                         "[RT] Face {} (id {:?}) outer loop: {} vertices",
-                        gpu_idx, face_id, uvs.len()
+                        gpu_idx,
+                        face_id,
+                        uvs.len()
                     )
                     .into(),
                 );
@@ -543,7 +570,10 @@ impl GpuScene {
                 }
             }
             for uv in &uvs {
-                trim_verts.push(GpuVec2 { x: uv.x as f32, y: uv.y as f32 });
+                trim_verts.push(GpuVec2 {
+                    x: uv.x as f32,
+                    y: uv.y as f32,
+                });
                 trim_count += 1;
             }
 
@@ -559,15 +589,20 @@ impl GpuScene {
                 web_sys::console::log_1(
                     &format!(
                         "[RT] Face {} inner loop {}: {} vertices",
-                        gpu_idx, loop_idx, inner_uvs.len()
+                        gpu_idx,
+                        loop_idx,
+                        inner_uvs.len()
                     )
                     .into(),
                 );
                 let _ = loop_idx; // Silence unused warning in non-WASM builds
-                // Store the vertex count for this inner loop
+                                  // Store the vertex count for this inner loop
                 inner_loop_descs.push(inner_uvs.len() as u32);
                 for uv in inner_uvs {
-                    trim_verts.push(GpuVec2 { x: uv.x as f32, y: uv.y as f32 });
+                    trim_verts.push(GpuVec2 {
+                        x: uv.x as f32,
+                        y: uv.y as f32,
+                    });
                     inner_count += 1;
                 }
             }

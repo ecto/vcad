@@ -265,8 +265,7 @@ fn parse_symbol(node: &SExpr<'_>) -> Option<Symbol> {
                                     pins.push(pin);
                                 }
                             }
-                            Some("polyline") | Some("rectangle") | Some("circle")
-                            | Some("arc") => {
+                            Some("polyline") | Some("rectangle") | Some("circle") | Some("arc") => {
                                 if let Some(g) = parse_graphic(sub_child) {
                                     graphics.push(g);
                                 }

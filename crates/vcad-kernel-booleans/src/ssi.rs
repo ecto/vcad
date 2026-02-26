@@ -5,8 +5,8 @@
 //! intersections have known closed-form solutions.
 
 use vcad_kernel_geom::{
-    BilinearSurface, Circle3d, ConeSurface, CylinderSurface, Line3d, Plane, SphereSurface,
-    Surface, SurfaceKind, TorusSurface,
+    BilinearSurface, Circle3d, ConeSurface, CylinderSurface, Line3d, Plane, SphereSurface, Surface,
+    SurfaceKind, TorusSurface,
 };
 use vcad_kernel_math::{Dir3, Point2, Point3};
 
@@ -345,20 +345,11 @@ fn plane_cylinder(plane: &Plane, cyl: &CylinderSurface) -> IntersectionCurve {
         // cross-product sign (which flips with cylinder axis orientation).
         // Use lexicographic comparison on the origin coordinates.
         let (origin_a, origin_b) = {
-            let cmp = p1
-                .x
-                .partial_cmp(&p2.x)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then(
-                    p1.y
-                        .partial_cmp(&p2.y)
-                        .unwrap_or(std::cmp::Ordering::Equal),
-                )
-                .then(
-                    p1.z
-                        .partial_cmp(&p2.z)
-                        .unwrap_or(std::cmp::Ordering::Equal),
-                );
+            let cmp =
+                p1.x.partial_cmp(&p2.x)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then(p1.y.partial_cmp(&p2.y).unwrap_or(std::cmp::Ordering::Equal))
+                    .then(p1.z.partial_cmp(&p2.z).unwrap_or(std::cmp::Ordering::Equal));
             if cmp == std::cmp::Ordering::Greater {
                 (p2, p1)
             } else {

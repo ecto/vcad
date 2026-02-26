@@ -198,9 +198,16 @@ pub async fn decimate_mesh(
             push_constant_ranges: &[],
         });
 
-    let init_pipeline = create_compute_pipeline(&ctx.device, &pipeline_layout, &shader, "init_quadrics");
-    let accumulate_pipeline = create_compute_pipeline(&ctx.device, &pipeline_layout, &shader, "accumulate_quadrics");
-    let cost_pipeline = create_compute_pipeline(&ctx.device, &pipeline_layout, &shader, "compute_edge_costs");
+    let init_pipeline =
+        create_compute_pipeline(&ctx.device, &pipeline_layout, &shader, "init_quadrics");
+    let accumulate_pipeline = create_compute_pipeline(
+        &ctx.device,
+        &pipeline_layout,
+        &shader,
+        "accumulate_quadrics",
+    );
+    let cost_pipeline =
+        create_compute_pipeline(&ctx.device, &pipeline_layout, &shader, "compute_edge_costs");
 
     // Run GPU compute passes
     let mut encoder = ctx
@@ -210,13 +217,31 @@ pub async fn decimate_mesh(
         });
 
     // Phase 1: Init quadrics
-    dispatch_compute(&mut encoder, &init_pipeline, &bind_group, vertex_count, "Init Quadrics");
+    dispatch_compute(
+        &mut encoder,
+        &init_pipeline,
+        &bind_group,
+        vertex_count,
+        "Init Quadrics",
+    );
 
     // Phase 2: Accumulate quadrics from faces
-    dispatch_compute(&mut encoder, &accumulate_pipeline, &bind_group, triangle_count, "Accumulate Quadrics");
+    dispatch_compute(
+        &mut encoder,
+        &accumulate_pipeline,
+        &bind_group,
+        triangle_count,
+        "Accumulate Quadrics",
+    );
 
     // Phase 3: Compute edge costs
-    dispatch_compute(&mut encoder, &cost_pipeline, &bind_group, edge_count, "Compute Edge Costs");
+    dispatch_compute(
+        &mut encoder,
+        &cost_pipeline,
+        &bind_group,
+        edge_count,
+        "Compute Edge Costs",
+    );
 
     // Read back edge costs
     let cost_staging = ctx.device.create_buffer(&wgpu::BufferDescriptor {
@@ -382,7 +407,10 @@ fn cpu_decimate(
     impl Ord for EdgeEntry {
         fn cmp(&self, other: &Self) -> std::cmp::Ordering {
             // Reverse order for min-heap
-            other.cost.partial_cmp(&self.cost).unwrap_or(std::cmp::Ordering::Equal)
+            other
+                .cost
+                .partial_cmp(&self.cost)
+                .unwrap_or(std::cmp::Ordering::Equal)
         }
     }
 

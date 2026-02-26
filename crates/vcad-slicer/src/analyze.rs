@@ -71,7 +71,11 @@ pub struct BridgeSpan {
 ///
 /// Extracts wall thicknesses, overhang angles, hole sizes, and other
 /// geometry-aware information that mesh-based slicers cannot determine.
-pub fn analyze_for_printing(brep: &BRepSolid, mesh_volume: f64, mesh_surface_area: f64) -> PrintAnalysis {
+pub fn analyze_for_printing(
+    brep: &BRepSolid,
+    mesh_volume: f64,
+    mesh_surface_area: f64,
+) -> PrintAnalysis {
     let z_up = Vec3::new(0.0, 0.0, 1.0);
     let support_threshold_deg = 45.0;
 
@@ -100,7 +104,11 @@ pub fn analyze_for_printing(brep: &BRepSolid, mesh_volume: f64, mesh_surface_are
         let u_mid = (u_min + u_max) / 2.0;
         let v_mid = (v_min + v_max) / 2.0;
         let normal_dir = surface.normal(Point2::new(u_mid, v_mid));
-        let normal = Vec3::new(normal_dir.as_ref().x, normal_dir.as_ref().y, normal_dir.as_ref().z);
+        let normal = Vec3::new(
+            normal_dir.as_ref().x,
+            normal_dir.as_ref().y,
+            normal_dir.as_ref().z,
+        );
 
         // Flip normal if face orientation is reversed
         let face_normal = if face.orientation == vcad_kernel_topo::Orientation::Reversed {
@@ -187,7 +195,9 @@ pub fn analyze_for_printing(brep: &BRepSolid, mesh_volume: f64, mesh_surface_are
                         (vj_min + vj_max) / 2.0,
                     ));
 
-                    let dist = ((pi.x - pj.x).powi(2) + (pi.y - pj.y).powi(2) + (pi.z - pj.z).powi(2)).sqrt();
+                    let dist =
+                        ((pi.x - pj.x).powi(2) + (pi.y - pj.y).powi(2) + (pi.z - pj.z).powi(2))
+                            .sqrt();
                     if dist > 0.01 && dist < 50.0 {
                         thicknesses.push(dist);
                     }
@@ -209,7 +219,10 @@ pub fn analyze_for_printing(brep: &BRepSolid, mesh_volume: f64, mesh_surface_are
     // Generate notes
     if let Some(mwt) = min_wall_thickness {
         if mwt < 0.8 {
-            notes.push(format!("Thin wall detected: {:.2}mm (min printable ~0.8mm)", mwt));
+            notes.push(format!(
+                "Thin wall detected: {:.2}mm (min printable ~0.8mm)",
+                mwt
+            ));
         } else {
             notes.push(format!("Min wall thickness: {:.2}mm", mwt));
         }
@@ -224,7 +237,10 @@ pub fn analyze_for_printing(brep: &BRepSolid, mesh_volume: f64, mesh_surface_are
     if !holes.is_empty() {
         let min_hole = holes.iter().map(|h| h.diameter).fold(f64::MAX, f64::min);
         if min_hole < 2.0 {
-            notes.push(format!("Small hole detected: {:.2}mm diameter (may not print cleanly)", min_hole));
+            notes.push(format!(
+                "Small hole detected: {:.2}mm diameter (may not print cleanly)",
+                min_hole
+            ));
         }
     }
     for bridge in &bridges {
@@ -233,9 +249,8 @@ pub fn analyze_for_printing(brep: &BRepSolid, mesh_volume: f64, mesh_surface_are
         }
     }
 
-    let min_feature_size = min_wall_thickness.map(|t| t.min(
-        holes.iter().map(|h| h.diameter).fold(f64::MAX, f64::min)
-    ));
+    let min_feature_size = min_wall_thickness
+        .map(|t| t.min(holes.iter().map(|h| h.diameter).fold(f64::MAX, f64::min)));
 
     PrintAnalysis {
         min_wall_thickness,
@@ -318,7 +333,10 @@ fn find_face_normal_for_loop(
 ) -> Option<Vec3> {
     for (face_idx, (_face_id, face)) in brep.topology.faces.iter().enumerate() {
         if face.outer_loop == loop_id || face.inner_loops.contains(&loop_id) {
-            return face_normals.iter().find(|(i, _)| *i == face_idx).map(|(_, n)| *n);
+            return face_normals
+                .iter()
+                .find(|(i, _)| *i == face_idx)
+                .map(|(_, n)| *n);
         }
     }
     None

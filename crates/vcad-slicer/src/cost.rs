@@ -103,10 +103,7 @@ pub fn estimate_cost_from_volume(
 }
 
 /// Estimate cost from actual filament usage (post-slice, more accurate).
-pub fn estimate_cost_from_filament(
-    filament_grams: f64,
-    material: &Material,
-) -> CostEstimate {
+pub fn estimate_cost_from_filament(filament_grams: f64, material: &Material) -> CostEstimate {
     let cost_usd = filament_grams * material.price_per_kg / 1000.0;
 
     CostEstimate {

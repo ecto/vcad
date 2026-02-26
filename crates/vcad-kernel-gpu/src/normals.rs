@@ -299,7 +299,8 @@ mod tests {
         ];
         let indices = vec![0, 1, 2];
 
-        let normals = compute_creased_normals_blocking(&positions, &indices, std::f32::consts::PI / 6.0);
+        let normals =
+            compute_creased_normals_blocking(&positions, &indices, std::f32::consts::PI / 6.0);
         assert!(normals.is_ok());
         let normals = normals.unwrap();
         assert_eq!(normals.len(), positions.len());

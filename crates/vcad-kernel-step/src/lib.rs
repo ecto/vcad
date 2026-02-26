@@ -27,4 +27,6 @@ pub use reader::{read_step, read_step_from_buffer};
 pub use writer::{write_step, write_step_to_buffer};
 
 // Re-export stepperoni types for downstream consumers
-pub use stepperoni::{parse, tokenize, Lexer, Parser, Position, SpannedToken, StepEntity, StepFile, StepValue, Token};
+pub use stepperoni::{
+    parse, tokenize, Lexer, Parser, Position, SpannedToken, StepEntity, StepFile, StepValue, Token,
+};

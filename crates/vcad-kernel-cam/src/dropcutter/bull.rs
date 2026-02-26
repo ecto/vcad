@@ -26,13 +26,7 @@ use super::mesh_accel::{MeshAccel, Triangle};
 ///
 /// The minimum Z height at which the tool can be positioned without collision.
 /// This is the Z of the tool tip (bottom of flat portion).
-pub fn drop_cutter_bull(
-    accel: &MeshAccel,
-    radius: f64,
-    corner_radius: f64,
-    x: f64,
-    y: f64,
-) -> f64 {
+pub fn drop_cutter_bull(accel: &MeshAccel, radius: f64, corner_radius: f64, x: f64, y: f64) -> f64 {
     // Clamp corner radius to valid range
     let corner_radius = corner_radius.min(radius);
     let flat_radius = radius - corner_radius; // Radius of the flat bottom
@@ -133,13 +127,7 @@ fn flat_edge_contact(x: f64, y: f64, radius: f64, v0: [f64; 3], v1: [f64; 3]) ->
 /// Torus face contact.
 /// The torus is centered at radius (radius - corner_radius) from tool center,
 /// with tube radius = corner_radius.
-fn torus_face_contact(
-    x: f64,
-    y: f64,
-    radius: f64,
-    corner_radius: f64,
-    tri: &Triangle,
-) -> f64 {
+fn torus_face_contact(x: f64, y: f64, radius: f64, corner_radius: f64, tri: &Triangle) -> f64 {
     let nz = tri.normal[2];
 
     // Skip nearly vertical or downward-facing triangles
@@ -239,20 +227,15 @@ fn torus_edge_contact(
     }
 
     // Height offset from edge point to torus center
-    let height_offset = (corner_radius * corner_radius - dist_to_torus_center * dist_to_torus_center).sqrt();
+    let height_offset =
+        (corner_radius * corner_radius - dist_to_torus_center * dist_to_torus_center).sqrt();
 
     // Tool tip is corner_radius below torus center
     pz + height_offset - corner_radius + corner_radius
 }
 
 /// Torus vertex contact.
-fn torus_vertex_contact(
-    x: f64,
-    y: f64,
-    radius: f64,
-    corner_radius: f64,
-    v: [f64; 3],
-) -> f64 {
+fn torus_vertex_contact(x: f64, y: f64, radius: f64, corner_radius: f64, v: [f64; 3]) -> f64 {
     let torus_major = radius - corner_radius;
 
     // Distance from tool center to vertex in XY
@@ -277,11 +260,7 @@ mod tests {
     use super::*;
 
     fn make_flat_mesh() -> MeshAccel {
-        let vertices = [
-            [0.0, 0.0, 0.0],
-            [20.0, 0.0, 0.0],
-            [10.0, 20.0, 0.0],
-        ];
+        let vertices = [[0.0, 0.0, 0.0], [20.0, 0.0, 0.0], [10.0, 20.0, 0.0]];
         let indices = [0, 1, 2];
         MeshAccel::new(&vertices, &indices, 10.0)
     }

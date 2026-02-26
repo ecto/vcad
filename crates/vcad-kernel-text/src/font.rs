@@ -35,8 +35,7 @@ pub struct Font {
 impl Font {
     /// Create a font from raw TTF/OTF data.
     pub fn from_data(name: &str, data: &[u8]) -> Result<Self, FontError> {
-        let face =
-            Face::parse(data, 0).map_err(|e| FontError::ParseError(format!("{:?}", e)))?;
+        let face = Face::parse(data, 0).map_err(|e| FontError::ParseError(format!("{:?}", e)))?;
 
         let units_per_em = face.units_per_em() as f64;
         let ascender = face.ascender() as f64;
@@ -126,9 +125,7 @@ impl FontRegistry {
 
     /// Get a font by name, falling back to built-in sans-serif.
     pub fn get_or_builtin(&self, name: &str) -> &Font {
-        self.fonts
-            .get(name)
-            .unwrap_or_else(|| Self::builtin_sans())
+        self.fonts.get(name).unwrap_or_else(|| Self::builtin_sans())
     }
 }
 

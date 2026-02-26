@@ -166,11 +166,8 @@ async fn print(
         .as_ref()
         .ok_or((StatusCode::BAD_REQUEST, "No printer connected".into()))?;
 
-    let data = base64::Engine::decode(
-        &base64::engine::general_purpose::STANDARD,
-        &req.data_base64,
-    )
-    .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid base64: {}", e)))?;
+    let data = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &req.data_base64)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid base64: {}", e)))?;
 
     let filename = req.filename.unwrap_or_else(|| "vcad_print.3mf".to_string());
 
@@ -203,7 +200,12 @@ async fn control(
         "pause" => printer.pause().await,
         "resume" => printer.resume().await,
         "stop" => printer.stop().await,
-        _ => return Err((StatusCode::BAD_REQUEST, format!("Unknown action: {}", req.action))),
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("Unknown action: {}", req.action),
+            ))
+        }
     }
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 

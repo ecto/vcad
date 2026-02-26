@@ -322,12 +322,9 @@ impl Repl {
 
             // === Patterns ===
             "linear" | "lpattern" => {
-                let target: u64 = parts
-                    .get(1)
-                    .and_then(|s| s.parse().ok())
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("Usage: linear <id> <dx> <dy> <dz> <count> <spacing>")
-                    })?;
+                let target: u64 = parts.get(1).and_then(|s| s.parse().ok()).ok_or_else(|| {
+                    anyhow::anyhow!("Usage: linear <id> <dx> <dy> <dz> <count> <spacing>")
+                })?;
                 let dx = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(1.0);
                 let dy = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(0.0);
                 let dz = parts.get(4).and_then(|s| s.parse().ok()).unwrap_or(0.0);
@@ -448,7 +445,10 @@ impl Repl {
 
             // === File operations ===
             "save" => {
-                let path = parts.get(1).map(PathBuf::from).or_else(|| self.file_path.clone());
+                let path = parts
+                    .get(1)
+                    .map(PathBuf::from)
+                    .or_else(|| self.file_path.clone());
                 if let Some(path) = path {
                     let json = self.doc.to_json()?;
                     std::fs::write(&path, json)?;
@@ -541,14 +541,7 @@ impl Repl {
         let id = self.next_id;
         self.next_id += 1;
 
-        self.doc.nodes.insert(
-            id,
-            Node {
-                id,
-                name,
-                op,
-            },
-        );
+        self.doc.nodes.insert(id, Node { id, name, op });
 
         // Auto-add to scene (only for primitives)
         self.doc.roots.push(SceneEntry {

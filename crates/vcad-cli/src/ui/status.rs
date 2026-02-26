@@ -50,7 +50,14 @@ pub fn draw_status_bar(
 
     // Separator
     if metrics_start > cx + 2 {
-        set_char(buf, cx + 1, bar_y, '\u{2502}', theme::BORDER(), theme::SURFACE());
+        set_char(
+            buf,
+            cx + 1,
+            bar_y,
+            '\u{2502}',
+            theme::BORDER(),
+            theme::SURFACE(),
+        );
     }
 
     // Metrics

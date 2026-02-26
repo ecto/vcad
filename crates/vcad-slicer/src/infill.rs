@@ -22,7 +22,6 @@ pub enum InfillPattern {
     Gyroid,
 }
 
-
 /// Settings for infill generation.
 #[derive(Debug, Clone, Copy)]
 pub struct InfillSettings {
@@ -85,7 +84,11 @@ pub fn generate_infill(boundaries: &[Polygon], settings: &InfillSettings) -> Inf
 /// Generate grid infill (rectilinear).
 fn generate_grid_infill(boundaries: &[Polygon], settings: &InfillSettings) -> InfillResult {
     let spacing = settings.line_width / settings.density;
-    let angle = if settings.layer_index.is_multiple_of(2) { 0.0_f64 } else { 90.0_f64 };
+    let angle = if settings.layer_index.is_multiple_of(2) {
+        0.0_f64
+    } else {
+        90.0_f64
+    };
 
     generate_parallel_lines(boundaries, spacing, angle.to_radians())
 }
@@ -93,7 +96,11 @@ fn generate_grid_infill(boundaries: &[Polygon], settings: &InfillSettings) -> In
 /// Generate lines infill (45°/-45° alternating).
 fn generate_lines_infill(boundaries: &[Polygon], settings: &InfillSettings) -> InfillResult {
     let spacing = settings.line_width / settings.density;
-    let angle = if settings.layer_index.is_multiple_of(2) { 45.0_f64 } else { -45.0_f64 };
+    let angle = if settings.layer_index.is_multiple_of(2) {
+        45.0_f64
+    } else {
+        -45.0_f64
+    };
 
     generate_parallel_lines(boundaries, spacing, angle.to_radians())
 }
@@ -117,7 +124,11 @@ fn generate_triangle_infill(boundaries: &[Polygon], settings: &InfillSettings) -
 fn generate_honeycomb_infill(boundaries: &[Polygon], settings: &InfillSettings) -> InfillResult {
     // Honeycomb approximated as alternating angled lines
     let spacing = settings.line_width / settings.density * 1.5;
-    let angle = if settings.layer_index.is_multiple_of(2) { 30.0_f64 } else { -30.0_f64 };
+    let angle = if settings.layer_index.is_multiple_of(2) {
+        30.0_f64
+    } else {
+        -30.0_f64
+    };
 
     generate_parallel_lines(boundaries, spacing, angle.to_radians())
 }

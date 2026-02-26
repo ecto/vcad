@@ -5,11 +5,11 @@
 
 use std::collections::HashMap;
 
+use vcad_ir::ecad::{Footprint, Pad, PadShape, Pcb, PcbLayer, Trace, Via, Zone};
 use vcad_ir::{CsgOp, Document, NodeId, PathCurve};
 use vcad_kernel::Solid;
 use vcad_kernel_geom::Line3d;
 use vcad_kernel_math::{Transform, Vec3};
-use vcad_ir::ecad::{Footprint, Pad, PadShape, Pcb, PcbLayer, Trace, Via, Zone};
 use vcad_kernel_sweep::{Helix, LoftOptions, SweepOptions};
 use vcad_kernel_tessellate::TriangleMesh;
 use vcad_kernel_text::{FontRegistry, TextAlignment};
@@ -54,13 +54,8 @@ pub fn evaluate_document(
             continue;
         }
 
-        let solid = evaluate_node_timed(
-            entry.root,
-            &doc.nodes,
-            &mut cache,
-            clock,
-            &mut node_timings,
-        )?;
+        let solid =
+            evaluate_node_timed(entry.root, &doc.nodes, &mut cache, clock, &mut node_timings)?;
         match solid {
             Some(ref s) => {
                 let t_mesh = clock.map(|c| c.now_ms());
@@ -578,8 +573,7 @@ fn evaluate_op_timed(
                 .map_err(EvalError::Sketch)?;
 
             let dir = Vec3::new(0.0, 0.0, board.outline.thickness);
-            let mut board_solid =
-                Solid::extrude(profile, dir).map_err(EvalError::Sketch)?;
+            let mut board_solid = Solid::extrude(profile, dir).map_err(EvalError::Sketch)?;
 
             // Subtract cutout holes
             for cutout in &board.outline.cutouts {
@@ -594,9 +588,7 @@ fn evaluate_op_timed(
                         end: cutout[next],
                     });
                 }
-                if let Ok(cut_profile) =
-                    ir_sketch_to_profile(&origin, &x_dir, &y_dir, &cut_segs)
-                {
+                if let Ok(cut_profile) = ir_sketch_to_profile(&origin, &x_dir, &y_dir, &cut_segs) {
                     // Extrude slightly taller to ensure clean boolean
                     let cut_dir = Vec3::new(0.0, 0.0, board.outline.thickness * 1.1);
                     if let Ok(cut_solid) = Solid::extrude(cut_profile, cut_dir) {
@@ -633,8 +625,7 @@ fn evaluate_op_timed(
                 } else {
                     -comp_h
                 };
-                let placed =
-                    comp_box.apply_transform(&Transform::translation(cx, cy, z_off));
+                let placed = comp_box.apply_transform(&Transform::translation(cx, cy, z_off));
                 board_solid = board_solid.union(&placed);
             }
 
@@ -738,7 +729,10 @@ fn collect_transform_chain(
 }
 
 fn is_transform_op(op: &CsgOp) -> bool {
-    matches!(op, CsgOp::Translate { .. } | CsgOp::Rotate { .. } | CsgOp::Scale { .. })
+    matches!(
+        op,
+        CsgOp::Translate { .. } | CsgOp::Rotate { .. } | CsgOp::Scale { .. }
+    )
 }
 
 /// Extract sketch fields from a CsgOp, returning error if not a Sketch2D.
@@ -1188,8 +1182,16 @@ fn via_to_mesh(via: &Via, pcb: &Pcb, n_seg: usize) -> RawMesh {
     // Inner cylinder side faces (reversed winding — faces inward)
     for i in 0..n {
         let next = (i + 1) % n;
-        tris.push([inner_top_start + i, inner_bot_start + next, inner_top_start + next]);
-        tris.push([inner_top_start + i, inner_bot_start + i, inner_bot_start + next]);
+        tris.push([
+            inner_top_start + i,
+            inner_bot_start + next,
+            inner_top_start + next,
+        ]);
+        tris.push([
+            inner_top_start + i,
+            inner_bot_start + i,
+            inner_bot_start + next,
+        ]);
     }
 
     // Top annular ring: connects outer top ring to inner top ring
@@ -1222,7 +1224,11 @@ fn pad_to_mesh(pad: &Pad, fp: &Footprint, pcb: &Pcb) -> RawMesh {
         .iter()
         .find(|l| l.is_copper())
         .copied()
-        .unwrap_or(if fp.front { PcbLayer::FCu } else { PcbLayer::BCu });
+        .unwrap_or(if fp.front {
+            PcbLayer::FCu
+        } else {
+            PcbLayer::BCu
+        });
 
     let z_top = layer_z_top(pcb, layer);
     let ct = copper_thickness(pcb, layer);
@@ -1248,12 +1254,7 @@ fn pad_to_mesh(pad: &Pad, fp: &Footprint, pcb: &Pcb) -> RawMesh {
     let sp = pad_rot.sin();
 
     // 4 corners of the pad rectangle, rotated
-    let corners = [
-        (-hw, -hh),
-        (hw, -hh),
-        (hw, hh),
-        (-hw, hh),
-    ];
+    let corners = [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)];
 
     let mut verts = Vec::with_capacity(8);
     for &(lx, ly) in &corners {
@@ -1268,12 +1269,18 @@ fn pad_to_mesh(pad: &Pad, fp: &Footprint, pcb: &Pcb) -> RawMesh {
     }
 
     let tris = vec![
-        [0, 1, 2], [0, 2, 3],       // top
-        [4, 6, 5], [4, 7, 6],       // bottom
-        [0, 5, 1], [0, 4, 5],       // front
-        [2, 7, 3], [2, 6, 7],       // back
-        [0, 3, 7], [0, 7, 4],       // left
-        [1, 5, 6], [1, 6, 2],       // right
+        [0, 1, 2],
+        [0, 2, 3], // top
+        [4, 6, 5],
+        [4, 7, 6], // bottom
+        [0, 5, 1],
+        [0, 4, 5], // front
+        [2, 7, 3],
+        [2, 6, 7], // back
+        [0, 3, 7],
+        [0, 7, 4], // left
+        [1, 5, 6],
+        [1, 6, 2], // right
     ];
 
     (verts, tris)

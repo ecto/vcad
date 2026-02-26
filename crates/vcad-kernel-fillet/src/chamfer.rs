@@ -6,7 +6,9 @@ use vcad_kernel_math::Point3;
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_topo::{HalfEdgeId, Orientation, ShellType, Topology, VertexId};
 
-use crate::topology::{compute_centroid, extract_edges, extract_faces, pair_twin_half_edges, quantize};
+use crate::topology::{
+    compute_centroid, extract_edges, extract_faces, pair_twin_half_edges, quantize,
+};
 use crate::trim::{build_vertex_faces, compute_trim_vertices};
 
 /// Chamfer all edges of a B-rep solid by the given distance.
@@ -94,8 +96,9 @@ pub fn chamfer_all_edges(brep: &BRepSolid, distance: f64) -> BRepSolid {
         let pb_e = trims.get(&(edge_info.v_end, edge_info.face_b));
 
         if let (Some(&pa_s), Some(&pa_e), Some(&pb_s), Some(&pb_e)) = (pa_s, pa_e, pb_s, pb_e) {
-            let chamfer_center =
-                Point3::from((pa_s.to_vec() + pa_e.to_vec() + pb_e.to_vec() + pb_s.to_vec()) * 0.25);
+            let chamfer_center = Point3::from(
+                (pa_s.to_vec() + pa_e.to_vec() + pb_e.to_vec() + pb_s.to_vec()) * 0.25,
+            );
             let solid_center = compute_centroid(&faces);
             let outward_dir = chamfer_center - solid_center;
 

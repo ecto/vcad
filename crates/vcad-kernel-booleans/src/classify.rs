@@ -408,7 +408,11 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
                     .map(|v| {
                         let d = *v - cyl.center;
                         let u = d.dot(&y_dir).atan2(d.dot(ref_dir));
-                        if u < 0.0 { u + 2.0 * PI } else { u }
+                        if u < 0.0 {
+                            u + 2.0 * PI
+                        } else {
+                            u
+                        }
                     })
                     .collect();
                 u_angles.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
@@ -425,7 +429,11 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
                     let u_mid = if wrap_span < direct_span {
                         // Face wraps around: use midpoint of the wrap region
                         let mid = (u_max + u_min + 2.0 * PI) / 2.0;
-                        if mid >= 2.0 * PI { mid - 2.0 * PI } else { mid }
+                        if mid >= 2.0 * PI {
+                            mid - 2.0 * PI
+                        } else {
+                            mid
+                        }
                     } else {
                         // Normal face: use midpoint of direct span
                         (u_min + u_max) / 2.0
@@ -466,17 +474,14 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
                         let u = 2.0 * PI * (try_idx as f64) / (num_tries as f64);
                         let (sin_u, cos_u) = u.sin_cos();
                         // Sample at equator (v=0)
-                        let candidate = sph.center
-                            + sph.radius * (cos_u * ref_dir + sin_u * y_dir);
+                        let candidate = sph.center + sph.radius * (cos_u * ref_dir + sin_u * y_dir);
 
                         // Check if candidate is inside any inner loop hole
                         let mut in_hole = false;
                         for &inner_loop in &face.inner_loops {
                             let inner_verts: Vec<Point3> = topo
                                 .loop_half_edges(inner_loop)
-                                .map(|he_id| {
-                                    topo.vertices[topo.half_edges[he_id].origin].point
-                                })
+                                .map(|he_id| topo.vertices[topo.half_edges[he_id].origin].point)
                                 .collect();
                             if inner_verts.len() >= 3 {
                                 let n_iv = inner_verts.len() as f64;
@@ -491,10 +496,8 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
                                     .fold(0.0f64, f64::max);
                                 let to_pt = (candidate - sph.center).normalize();
                                 let to_hole = (hole_center - sph.center).normalize();
-                                let angle =
-                                    to_pt.dot(&to_hole).clamp(-1.0, 1.0).acos();
-                                let hole_angle =
-                                    (hole_radius / sph.radius).clamp(0.0, 1.0).asin();
+                                let angle = to_pt.dot(&to_hole).clamp(-1.0, 1.0).acos();
+                                let hole_angle = (hole_radius / sph.radius).clamp(0.0, 1.0).asin();
                                 if angle < hole_angle + 1e-6 {
                                     in_hole = true;
                                     break;
@@ -546,7 +549,11 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
                         }
                         let d_plane_norm = d_plane / d_plane_len;
                         let u = d_plane_norm.dot(&y_dir).atan2(d_plane_norm.dot(ref_dir));
-                        if u < 0.0 { u + 2.0 * PI } else { u }
+                        if u < 0.0 {
+                            u + 2.0 * PI
+                        } else {
+                            u
+                        }
                     })
                     .collect();
                 u_angles.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
@@ -561,7 +568,11 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
                         let d_plane_len = d_plane.norm();
                         let radial = d_plane_len - torus.major_radius;
                         let v = d_axis.atan2(radial);
-                        if v < 0.0 { v + 2.0 * PI } else { v }
+                        if v < 0.0 {
+                            v + 2.0 * PI
+                        } else {
+                            v
+                        }
                     })
                     .collect();
                 v_angles.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
@@ -574,7 +585,11 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
                     let wrap_u = 2.0 * PI - direct_u;
                     let u_mid = if wrap_u < direct_u {
                         let mid = (u_max + u_min + 2.0 * PI) / 2.0;
-                        if mid >= 2.0 * PI { mid - 2.0 * PI } else { mid }
+                        if mid >= 2.0 * PI {
+                            mid - 2.0 * PI
+                        } else {
+                            mid
+                        }
                     } else {
                         (u_min + u_max) / 2.0
                     };
@@ -585,7 +600,11 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
                     let wrap_v = 2.0 * PI - direct_v;
                     let v_mid = if wrap_v < direct_v {
                         let mid = (v_max + v_min + 2.0 * PI) / 2.0;
-                        if mid >= 2.0 * PI { mid - 2.0 * PI } else { mid }
+                        if mid >= 2.0 * PI {
+                            mid - 2.0 * PI
+                        } else {
+                            mid
+                        }
                     } else {
                         (v_min + v_max) / 2.0
                     };

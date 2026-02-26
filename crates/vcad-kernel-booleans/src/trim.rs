@@ -167,7 +167,8 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> bo
 
                 // Check if point is within the outer circle
                 let center_to_point = point_3d - plane.origin;
-                let dist_from_center = (center_to_point - dist_along_normal * plane.normal_dir.into_inner()).norm();
+                let dist_from_center =
+                    (center_to_point - dist_along_normal * plane.normal_dir.into_inner()).norm();
 
                 if dist_from_center > radius + 1e-6 {
                     return false;
@@ -196,10 +197,8 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> bo
                             *plane.x_dir.as_ref()
                         };
                         let y_axis = normal.cross(&x_axis);
-                        let pt_2d = Point2::new(
-                            center_to_point.dot(&x_axis),
-                            center_to_point.dot(&y_axis),
-                        );
+                        let pt_2d =
+                            Point2::new(center_to_point.dot(&x_axis), center_to_point.dot(&y_axis));
                         let poly_2d: Vec<Point2> = inner_verts
                             .iter()
                             .map(|v| {
@@ -334,10 +333,8 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> bo
                             .collect();
                         if inner_uv.len() >= 3 {
                             // Unwrap U coordinates to avoid seam issues
-                            let (inner_unwrapped, seam_cut) =
-                                unwrap_cylindrical_loop(&inner_uv);
-                            let test_unwrapped =
-                                unwrap_cylindrical_uv(&test_uv, seam_cut);
+                            let (inner_unwrapped, seam_cut) = unwrap_cylindrical_loop(&inner_uv);
+                            let test_unwrapped = unwrap_cylindrical_uv(&test_uv, seam_cut);
                             if point_in_polygon(&test_unwrapped, &inner_unwrapped) {
                                 return false; // inside a hole
                             }
@@ -884,7 +881,12 @@ pub fn trim_curve_to_face(
         IntersectionCurve::TwoLines(line1, _line2) => {
             // TwoLines should be expanded before calling this function.
             // If we get here, just process the first line.
-            trim_curve_to_face(&IntersectionCurve::Line(line1.clone()), face_id, brep, n_samples)
+            trim_curve_to_face(
+                &IntersectionCurve::Line(line1.clone()),
+                face_id,
+                brep,
+                n_samples,
+            )
         }
     }
 }
@@ -998,7 +1000,11 @@ fn merge_segments(
         return segments.to_vec();
     }
     let mut sorted = segments.to_vec();
-    sorted.sort_by(|a, b| a.t_start.partial_cmp(&b.t_start).unwrap_or(std::cmp::Ordering::Equal));
+    sorted.sort_by(|a, b| {
+        a.t_start
+            .partial_cmp(&b.t_start)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let mut merged = Vec::new();
     let mut current = sorted[0].clone();
     for next in sorted.into_iter().skip(1) {

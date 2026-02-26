@@ -66,22 +66,34 @@ fn project_to_surface_uv(surface: &dyn Surface, point: &vcad_kernel_math::Point3
             }
         }
         SurfaceKind::Cylinder => {
-            if let Some(cyl) = surface.as_any().downcast_ref::<vcad_kernel_geom::CylinderSurface>() {
+            if let Some(cyl) = surface
+                .as_any()
+                .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
+            {
                 return project_to_cylinder(cyl, point);
             }
         }
         SurfaceKind::Sphere => {
-            if let Some(sph) = surface.as_any().downcast_ref::<vcad_kernel_geom::SphereSurface>() {
+            if let Some(sph) = surface
+                .as_any()
+                .downcast_ref::<vcad_kernel_geom::SphereSurface>()
+            {
                 return project_to_sphere(sph, point);
             }
         }
         SurfaceKind::Cone => {
-            if let Some(cone) = surface.as_any().downcast_ref::<vcad_kernel_geom::ConeSurface>() {
+            if let Some(cone) = surface
+                .as_any()
+                .downcast_ref::<vcad_kernel_geom::ConeSurface>()
+            {
                 return project_to_cone(cone, point);
             }
         }
         SurfaceKind::Torus => {
-            if let Some(torus) = surface.as_any().downcast_ref::<vcad_kernel_geom::TorusSurface>() {
+            if let Some(torus) = surface
+                .as_any()
+                .downcast_ref::<vcad_kernel_geom::TorusSurface>()
+            {
                 return project_to_torus(torus, point);
             }
         }
@@ -92,7 +104,10 @@ fn project_to_surface_uv(surface: &dyn Surface, point: &vcad_kernel_math::Point3
     project_newton(surface, point)
 }
 
-fn project_to_cylinder(cyl: &vcad_kernel_geom::CylinderSurface, point: &vcad_kernel_math::Point3) -> Point2 {
+fn project_to_cylinder(
+    cyl: &vcad_kernel_geom::CylinderSurface,
+    point: &vcad_kernel_math::Point3,
+) -> Point2 {
     use std::f64::consts::PI;
 
     let axis = cyl.axis.as_ref();
@@ -112,7 +127,10 @@ fn project_to_cylinder(cyl: &vcad_kernel_geom::CylinderSurface, point: &vcad_ker
     Point2::new(u, v)
 }
 
-fn project_to_sphere(sph: &vcad_kernel_geom::SphereSurface, point: &vcad_kernel_math::Point3) -> Point2 {
+fn project_to_sphere(
+    sph: &vcad_kernel_geom::SphereSurface,
+    point: &vcad_kernel_math::Point3,
+) -> Point2 {
     use std::f64::consts::PI;
 
     let axis = sph.axis.as_ref();
@@ -130,7 +148,11 @@ fn project_to_sphere(sph: &vcad_kernel_geom::SphereSurface, point: &vcad_kernel_
         let x = proj.dot(ref_dir) / proj_len;
         let y = proj.dot(&y_dir) / proj_len;
         let angle = y.atan2(x);
-        if angle < 0.0 { angle + 2.0 * PI } else { angle }
+        if angle < 0.0 {
+            angle + 2.0 * PI
+        } else {
+            angle
+        }
     } else {
         0.0
     };
@@ -138,7 +160,10 @@ fn project_to_sphere(sph: &vcad_kernel_geom::SphereSurface, point: &vcad_kernel_
     Point2::new(u, v)
 }
 
-fn project_to_cone(cone: &vcad_kernel_geom::ConeSurface, point: &vcad_kernel_math::Point3) -> Point2 {
+fn project_to_cone(
+    cone: &vcad_kernel_geom::ConeSurface,
+    point: &vcad_kernel_math::Point3,
+) -> Point2 {
     use std::f64::consts::PI;
 
     let axis = cone.axis.as_ref();
@@ -157,7 +182,11 @@ fn project_to_cone(cone: &vcad_kernel_geom::ConeSurface, point: &vcad_kernel_mat
         let x = proj.dot(ref_dir) / proj_len;
         let y = proj.dot(&y_dir) / proj_len;
         let angle = y.atan2(x);
-        if angle < 0.0 { angle + 2.0 * PI } else { angle }
+        if angle < 0.0 {
+            angle + 2.0 * PI
+        } else {
+            angle
+        }
     } else {
         0.0
     };
@@ -165,7 +194,10 @@ fn project_to_cone(cone: &vcad_kernel_geom::ConeSurface, point: &vcad_kernel_mat
     Point2::new(u, v)
 }
 
-fn project_to_torus(torus: &vcad_kernel_geom::TorusSurface, point: &vcad_kernel_math::Point3) -> Point2 {
+fn project_to_torus(
+    torus: &vcad_kernel_geom::TorusSurface,
+    point: &vcad_kernel_math::Point3,
+) -> Point2 {
     use std::f64::consts::PI;
 
     let axis = torus.axis.as_ref();
@@ -182,7 +214,11 @@ fn project_to_torus(torus: &vcad_kernel_geom::TorusSurface, point: &vcad_kernel_
         let x = proj.dot(ref_dir);
         let y = proj.dot(&y_dir);
         let angle = y.atan2(x);
-        if angle < 0.0 { angle + 2.0 * PI } else { angle }
+        if angle < 0.0 {
+            angle + 2.0 * PI
+        } else {
+            angle
+        }
     } else {
         0.0
     };

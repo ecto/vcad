@@ -96,12 +96,9 @@ pub fn text_to_profiles(
                 // Need at least 3 segments for a closed profile
                 if segments.len() >= 3 {
                     // Try to create the profile - skip if invalid
-                    if let Ok(profile) = SketchProfile::new(
-                        Point3::origin(),
-                        Vec3::x(),
-                        Vec3::y(),
-                        segments,
-                    ) {
+                    if let Ok(profile) =
+                        SketchProfile::new(Point3::origin(), Vec3::x(), Vec3::y(), segments)
+                    {
                         profiles.push(profile);
                     }
                 }

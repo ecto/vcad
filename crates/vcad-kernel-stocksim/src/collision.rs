@@ -186,7 +186,8 @@ impl Stock {
         holder: Option<&ToolHolder>,
         position: [f64; 3],
     ) -> bool {
-        self.check_collision(tool, holder, position, position).collides
+        self.check_collision(tool, holder, position, position)
+            .collides
     }
 }
 

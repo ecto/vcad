@@ -62,10 +62,7 @@ impl PlaneEq {
     /// Create a plane equation from a point and normal.
     fn from_point_normal(point: &Point3, normal: &Vec3) -> Self {
         let d = normal.x * point.x + normal.y * point.y + normal.z * point.z;
-        Self {
-            normal: *normal,
-            d,
-        }
+        Self { normal: *normal, d }
     }
 
     /// Check if another plane is coplanar with this one (same plane, possibly opposite normal).
@@ -132,9 +129,7 @@ pub fn sew_faces(
                 }
 
                 // Get a point on the face and its normal
-                let plane = surface
-                    .as_any()
-                    .downcast_ref::<vcad_kernel_geom::Plane>()?;
+                let plane = surface.as_any().downcast_ref::<vcad_kernel_geom::Plane>()?;
                 let normal = plane.normal_dir.as_ref();
                 // Account for face orientation
                 let effective_normal = match face.orientation {
@@ -155,10 +150,7 @@ pub fn sew_faces(
             let surface = &b.geometry.surfaces[face.surface_index];
 
             if surface.surface_type() == SurfaceKind::Plane {
-                if let Some(plane) = surface
-                    .as_any()
-                    .downcast_ref::<vcad_kernel_geom::Plane>()
-                {
+                if let Some(plane) = surface.as_any().downcast_ref::<vcad_kernel_geom::Plane>() {
                     let b_normal = plane.normal_dir.as_ref();
                     let effective_normal = match face.orientation {
                         Orientation::Forward => *b_normal,
@@ -579,15 +571,25 @@ mod tests {
         let faces_a: Vec<FaceId> = a.topology.faces.keys().collect();
         let faces_b: Vec<FaceId> = b.topology.faces.keys().collect();
 
-        eprintln!("Cylinder A: {} faces, {} half-edges", a.topology.faces.len(), a.topology.half_edges.len());
-        eprintln!("Cylinder B: {} faces, {} half-edges", b.topology.faces.len(), b.topology.half_edges.len());
+        eprintln!(
+            "Cylinder A: {} faces, {} half-edges",
+            a.topology.faces.len(),
+            a.topology.half_edges.len()
+        );
+        eprintln!(
+            "Cylinder B: {} faces, {} half-edges",
+            b.topology.faces.len(),
+            b.topology.half_edges.len()
+        );
 
         let result = sew_faces(&a, &faces_a, &b, &faces_b, false, 1e-6);
 
-        eprintln!("Result: {} faces, {} half-edges, {} edges",
+        eprintln!(
+            "Result: {} faces, {} half-edges, {} edges",
             result.topology.faces.len(),
             result.topology.half_edges.len(),
-            result.topology.edges.len());
+            result.topology.edges.len()
+        );
 
         // Count half-edges without parent edges
         let mut orphan_count = 0;

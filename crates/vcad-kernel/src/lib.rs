@@ -1534,8 +1534,11 @@ mod tests {
         // bolt_circle_diameter=50 → radius=25, hole_diameter=4 → hole_radius=2
         for i in 0..6u32 {
             let angle = 2.0 * std::f64::consts::PI * (i as f64) / 6.0;
-            let bolt = Solid::cylinder(2.0, 10.0, 24)
-                .translate(25.0 * angle.cos(), 25.0 * angle.sin(), -15.0);
+            let bolt = Solid::cylinder(2.0, 10.0, 24).translate(
+                25.0 * angle.cos(),
+                25.0 * angle.sin(),
+                -15.0,
+            );
             result = result.difference(&bolt);
         }
 
@@ -1543,7 +1546,11 @@ mod tests {
         if let SolidRepr::BRep(ref brep) = result.repr {
             let solid = &brep.topology.solids[brep.solid_id];
             let shell = &brep.topology.shells[solid.outer_shell];
-            assert!(shell.faces.len() >= 18, "expected at least 18 faces, got {}", shell.faces.len());
+            assert!(
+                shell.faces.len() >= 18,
+                "expected at least 18 faces, got {}",
+                shell.faces.len()
+            );
         }
 
         // Mesh should be non-empty
@@ -1609,16 +1616,34 @@ mod tests {
             let z0 = mesh.vertices[i0 * 3 + 2] as f64;
             let z1 = mesh.vertices[i1 * 3 + 2] as f64;
             let z2 = mesh.vertices[i2 * 3 + 2] as f64;
-            if (z0 - (-12.0)).abs() < 0.01 && (z1 - (-12.0)).abs() < 0.01 && (z2 - (-12.0)).abs() < 0.01 {
+            if (z0 - (-12.0)).abs() < 0.01
+                && (z1 - (-12.0)).abs() < 0.01
+                && (z2 - (-12.0)).abs() < 0.01
+            {
                 z12_count += 1;
             }
-            if (z0 - (-18.0)).abs() < 0.01 && (z1 - (-18.0)).abs() < 0.01 && (z2 - (-18.0)).abs() < 0.01 {
+            if (z0 - (-18.0)).abs() < 0.01
+                && (z1 - (-18.0)).abs() < 0.01
+                && (z2 - (-18.0)).abs() < 0.01
+            {
                 z18_count += 1;
             }
         }
-        assert!(z12_count > 50, "z=-12 annular face has too few triangles: {}", z12_count);
-        assert!(z18_count > 50, "z=-18 flange face has too few triangles: {}", z18_count);
-        assert!(mesh.num_triangles() > 1000, "mesh too small: {}", mesh.num_triangles());
+        assert!(
+            z12_count > 50,
+            "z=-12 annular face has too few triangles: {}",
+            z12_count
+        );
+        assert!(
+            z18_count > 50,
+            "z=-18 flange face has too few triangles: {}",
+            z18_count
+        );
+        assert!(
+            mesh.num_triangles() > 1000,
+            "mesh too small: {}",
+            mesh.num_triangles()
+        );
     }
 
     // =========================================================================
@@ -1867,10 +1892,13 @@ mod tests {
                     if hits.len() % 2 != 0 {
                         result.non_watertight_rays += 1;
                         if result.issues.len() < 5 {
-                            let hit_info: Vec<_> = hits.iter().map(|(t, n, idx)| {
-                                let face_dot = dot(n, &ray_dir);
-                                format!("t={t:.2} tri={idx} dot={face_dot:.3}")
-                            }).collect();
+                            let hit_info: Vec<_> = hits
+                                .iter()
+                                .map(|(t, n, idx)| {
+                                    let face_dot = dot(n, &ray_dir);
+                                    format!("t={t:.2} tri={idx} dot={face_dot:.3}")
+                                })
+                                .collect();
                             result.issues.push(format!(
                                 "Non-watertight: dir=({:.1},{:.1},{:.1}) pos=({:.1},{:.1},{:.1}) hits={} [{:}]",
                                 ray_dir[0], ray_dir[1], ray_dir[2],
@@ -1902,17 +1930,9 @@ mod tests {
 
         println!("=== Mesh Validation: {name} ===");
         println!("  Triangles: {num_tris}");
-        println!(
-            "  Degenerate triangles: {}",
-            result.degenerate_triangles
-        );
-        println!(
-            "  Max triangle area: {:.1}",
-            result.max_triangle_area
-        );
-        println!(
-            "  Vol sign split: +{positive_vol_tris} / -{negative_vol_tris}"
-        );
+        println!("  Degenerate triangles: {}", result.degenerate_triangles);
+        println!("  Max triangle area: {:.1}", result.max_triangle_area);
+        println!("  Vol sign split: +{positive_vol_tris} / -{negative_vol_tris}");
         println!(
             "  Rays cast: {} | non-watertight: {} | inverted normals: {}",
             result.total_rays, result.non_watertight_rays, result.inverted_normals
@@ -1936,18 +1956,24 @@ mod tests {
 
         for i in 0..6u32 {
             let angle = 2.0 * std::f64::consts::PI * (i as f64) / 6.0;
-            let bolt = Solid::cylinder(4.0, 10.0, 24)
-                .translate(25.0 * angle.cos(), 25.0 * angle.sin(), -15.0);
+            let bolt = Solid::cylinder(4.0, 10.0, 24).translate(
+                25.0 * angle.cos(),
+                25.0 * angle.sin(),
+                -15.0,
+            );
             result = result.difference(&bolt);
         }
 
         // Also test simpler case: just hub+bore (no flange, no bolts)
         {
-            let simple = Solid::cylinder(15.0, 30.0, 64)
-                .difference(&Solid::cylinder(6.0, 40.0, 32));
+            let simple =
+                Solid::cylinder(15.0, 30.0, 64).difference(&Solid::cylinder(6.0, 40.0, 32));
             let smesh = simple.to_mesh(32);
             let sv = validate_mesh(&smesh, "simple-bore");
-            println!("Simple bore: watertight={} inverted={}", sv.non_watertight_rays, sv.inverted_normals);
+            println!(
+                "Simple bore: watertight={} inverted={}",
+                sv.non_watertight_rays, sv.inverted_normals
+            );
         }
 
         // Test flange alone with one bolt
@@ -1957,7 +1983,10 @@ mod tests {
             let fbolt = flange.difference(&bolt);
             let fmesh = fbolt.to_mesh(32);
             let fv = validate_mesh(&fmesh, "flange-1bolt");
-            println!("Flange+1bolt: watertight={} inverted={}", fv.non_watertight_rays, fv.inverted_normals);
+            println!(
+                "Flange+1bolt: watertight={} inverted={}",
+                fv.non_watertight_rays, fv.inverted_normals
+            );
         }
 
         let mesh = result.to_mesh(32);
@@ -1970,9 +1999,9 @@ mod tests {
             let area = tri_area(&v0, &v1, &v2);
             if area > 50.0 {
                 // Compute max edge length
-                let e01 = norm(&[v1[0]-v0[0], v1[1]-v0[1], v1[2]-v0[2]]);
-                let e12 = norm(&[v2[0]-v1[0], v2[1]-v1[1], v2[2]-v1[2]]);
-                let e20 = norm(&[v0[0]-v2[0], v0[1]-v2[1], v0[2]-v2[2]]);
+                let e01 = norm(&[v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]]);
+                let e12 = norm(&[v2[0] - v1[0], v2[1] - v1[1], v2[2] - v1[2]]);
+                let e20 = norm(&[v0[0] - v2[0], v0[1] - v2[1], v0[2] - v2[2]]);
                 let max_edge = e01.max(e12).max(e20);
                 large_tris.push((i, area, max_edge));
             }
@@ -1982,9 +2011,9 @@ mod tests {
             for (idx, area, max_edge) in &large_tris {
                 let (v0, v1, v2) = get_tri(&mesh, *idx);
                 let centroid = [
-                    (v0[0]+v1[0]+v2[0])/3.0,
-                    (v0[1]+v1[1]+v2[1])/3.0,
-                    (v0[2]+v1[2]+v2[2])/3.0,
+                    (v0[0] + v1[0] + v2[0]) / 3.0,
+                    (v0[1] + v1[1] + v2[1]) / 3.0,
+                    (v0[2] + v1[2] + v2[2]) / 3.0,
                 ];
                 println!(
                     "  tri {idx}: area={area:.1} max_edge={max_edge:.1} centroid=({:.1},{:.1},{:.1})",
@@ -1998,9 +2027,13 @@ mod tests {
 
         let v = validate_mesh(&mesh, "flanged-hub");
 
-        assert_eq!(v.degenerate_triangles, 0, "should have no degenerate triangles");
         assert_eq!(
-            v.inverted_normals, 0,
+            v.degenerate_triangles, 0,
+            "should have no degenerate triangles"
+        );
+        assert_eq!(
+            v.inverted_normals,
+            0,
             "all front-facing normals should point outward ({}% inverted)",
             if v.total_rays > 0 {
                 v.inverted_normals * 100 / v.total_rays
@@ -2029,5 +2062,4 @@ mod tests {
             v.max_triangle_area
         );
     }
-
 }

@@ -31,15 +31,15 @@
 //! let hits = bvh.trace(&ray);
 //! ```
 
-mod ray;
-pub mod intersect;
-pub mod trim;
 pub mod bvh;
 pub mod cpu;
+pub mod intersect;
+mod ray;
+pub mod trim;
 
 #[cfg(feature = "gpu")]
 pub mod gpu;
 
-pub use ray::{Ray, RayHit};
 pub use bvh::Bvh;
-pub use cpu::{CpuRenderer, render_scene};
+pub use cpu::{render_scene, CpuRenderer};
+pub use ray::{Ray, RayHit};

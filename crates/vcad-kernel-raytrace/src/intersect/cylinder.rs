@@ -1,9 +1,9 @@
 //! Ray-cylinder intersection (quadratic equation).
 
+use super::SurfaceHit;
+use crate::Ray;
 use vcad_kernel_geom::CylinderSurface;
 use vcad_kernel_math::Point2;
-use crate::Ray;
-use super::SurfaceHit;
 
 /// Intersect a ray with an infinite cylindrical surface.
 ///
@@ -74,7 +74,11 @@ fn compute_cylinder_uv(cylinder: &CylinderSurface, point: &vcad_kernel_math::Poi
     // u = angle from ref_dir
     let u = y.atan2(x);
     // Normalize to [0, 2π)
-    let u = if u < 0.0 { u + 2.0 * std::f64::consts::PI } else { u };
+    let u = if u < 0.0 {
+        u + 2.0 * std::f64::consts::PI
+    } else {
+        u
+    };
 
     Point2::new(u, v)
 }
@@ -82,17 +86,14 @@ fn compute_cylinder_uv(cylinder: &CylinderSurface, point: &vcad_kernel_math::Poi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vcad_kernel_math::{Point3, Vec3};
     use std::f64::consts::PI;
+    use vcad_kernel_math::{Point3, Vec3};
 
     #[test]
     fn test_ray_cylinder_perpendicular() {
         let cyl = CylinderSurface::new(5.0);
         // Ray from (-10, 0, 0) pointing +x, hitting cylinder at x = ±5
-        let ray = Ray::new(
-            Point3::new(-10.0, 0.0, 0.0),
-            Vec3::new(1.0, 0.0, 0.0),
-        );
+        let ray = Ray::new(Point3::new(-10.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0));
         let hits = intersect_cylinder(&ray, &cyl);
         assert_eq!(hits.len(), 2);
 
@@ -106,10 +107,7 @@ mod tests {
     fn test_ray_cylinder_tangent() {
         let cyl = CylinderSurface::new(5.0);
         // Ray tangent to cylinder at (5, 0, 0), going in +y direction
-        let ray = Ray::new(
-            Point3::new(5.0, -10.0, 0.0),
-            Vec3::new(0.0, 1.0, 0.0),
-        );
+        let ray = Ray::new(Point3::new(5.0, -10.0, 0.0), Vec3::new(0.0, 1.0, 0.0));
         let hits = intersect_cylinder(&ray, &cyl);
         // Tangent ray should give exactly 1 intersection (or 2 very close ones due to floating point)
         assert!(hits.len() <= 2);
@@ -122,10 +120,7 @@ mod tests {
     fn test_ray_cylinder_miss() {
         let cyl = CylinderSurface::new(5.0);
         // Ray missing the cylinder
-        let ray = Ray::new(
-            Point3::new(-10.0, 10.0, 0.0),
-            Vec3::new(1.0, 0.0, 0.0),
-        );
+        let ray = Ray::new(Point3::new(-10.0, 10.0, 0.0), Vec3::new(1.0, 0.0, 0.0));
         let hits = intersect_cylinder(&ray, &cyl);
         assert!(hits.is_empty());
     }
@@ -134,10 +129,7 @@ mod tests {
     fn test_ray_cylinder_parallel_axis() {
         let cyl = CylinderSurface::new(5.0);
         // Ray parallel to axis, inside cylinder
-        let ray = Ray::new(
-            Point3::new(2.0, 0.0, -10.0),
-            Vec3::new(0.0, 0.0, 1.0),
-        );
+        let ray = Ray::new(Point3::new(2.0, 0.0, -10.0), Vec3::new(0.0, 0.0, 1.0));
         let hits = intersect_cylinder(&ray, &cyl);
         // Infinite cylinder has no hits for parallel rays
         assert!(hits.is_empty());

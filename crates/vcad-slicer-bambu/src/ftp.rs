@@ -18,12 +18,7 @@ use crate::error::{BambuError, Result};
 ///
 /// The file is uploaded to the printer's SD card at the root directory.
 /// After upload, use MQTT to send a PrintStart command referencing the filename.
-pub async fn upload_3mf(
-    ip: IpAddr,
-    access_code: &str,
-    filename: &str,
-    data: &[u8],
-) -> Result<()> {
+pub async fn upload_3mf(ip: IpAddr, access_code: &str, filename: &str, data: &[u8]) -> Result<()> {
     let access_code = access_code.to_string();
     let filename = filename.to_string();
     let data = data.to_vec();

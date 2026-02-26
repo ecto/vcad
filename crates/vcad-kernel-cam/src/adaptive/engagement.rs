@@ -90,7 +90,8 @@ pub fn compute_engagement(
 
     // Direction of engagement (center of material contact arc)
     let arc_center = max_arc_start + arc_samples / 2;
-    let engagement_dir = (arc_center % n_samples) as f64 * 2.0 * std::f64::consts::PI / n_samples as f64;
+    let engagement_dir =
+        (arc_center % n_samples) as f64 * 2.0 * std::f64::consts::PI / n_samples as f64;
 
     EngagementResult {
         angle: engagement_angle,

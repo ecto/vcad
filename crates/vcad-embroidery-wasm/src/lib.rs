@@ -134,8 +134,7 @@ struct StitchPathInfo {
 /// Read a PES file and return a WasmEmbPattern.
 #[wasm_bindgen(js_name = readPes)]
 pub fn read_pes(data: &[u8]) -> Result<WasmEmbPattern, JsError> {
-    let inner =
-        vcad_embroidery_pes::read_pes(data).map_err(|e| JsError::new(&e.to_string()))?;
+    let inner = vcad_embroidery_pes::read_pes(data).map_err(|e| JsError::new(&e.to_string()))?;
     Ok(WasmEmbPattern { inner })
 }
 

@@ -1,9 +1,9 @@
 //! Ray-BSpline surface intersection (Newton iteration with subdivision fallback).
 
+use super::SurfaceHit;
+use crate::Ray;
 use vcad_kernel_geom::Surface;
 use vcad_kernel_math::Point2;
-use crate::Ray;
-use super::SurfaceHit;
 
 /// Maximum Newton iterations.
 const MAX_ITERATIONS: usize = 30;
@@ -21,14 +21,7 @@ pub fn intersect_bspline(ray: &Ray, surface: &dyn Surface) -> Vec<SurfaceHit> {
 
     // Use subdivision to find initial guesses, then refine with Newton
     let mut hits = Vec::new();
-    subdivide_and_intersect(
-        ray,
-        surface,
-        u_min, u_max,
-        v_min, v_max,
-        0,
-        &mut hits,
-    );
+    subdivide_and_intersect(ray, surface, u_min, u_max, v_min, v_max, 0, &mut hits);
 
     // Remove duplicates
     hits.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
@@ -42,8 +35,10 @@ pub fn intersect_bspline(ray: &Ray, surface: &dyn Surface) -> Vec<SurfaceHit> {
 fn subdivide_and_intersect(
     ray: &Ray,
     surface: &dyn Surface,
-    u_min: f64, u_max: f64,
-    v_min: f64, v_max: f64,
+    u_min: f64,
+    u_max: f64,
+    v_min: f64,
+    v_max: f64,
     depth: usize,
     hits: &mut Vec<SurfaceHit>,
 ) {
@@ -98,8 +93,10 @@ fn subdivide_and_intersect(
 
     if let Some(hit) = newton_iteration_generic(ray, surface, Point2::new(u_mid, v_mid)) {
         // Verify the hit is within this patch
-        if hit.uv.x >= u_min - TOLERANCE && hit.uv.x <= u_max + TOLERANCE
-            && hit.uv.y >= v_min - TOLERANCE && hit.uv.y <= v_max + TOLERANCE
+        if hit.uv.x >= u_min - TOLERANCE
+            && hit.uv.x <= u_max + TOLERANCE
+            && hit.uv.y >= v_min - TOLERANCE
+            && hit.uv.y <= v_max + TOLERANCE
         {
             // Check if this hit is already found
             let is_duplicate = hits.iter().any(|h| (h.t - hit.t).abs() < 1e-8);
@@ -146,13 +143,13 @@ fn newton_iteration_generic(ray: &Ray, surface: &dyn Surface, start: Point2) -> 
 
         // Check convergence on residual
         if f.norm() < TOLERANCE {
-            if t >= 0.0 && uv.x >= u_min - TOLERANCE && uv.x <= u_max + TOLERANCE
-                && uv.y >= v_min - TOLERANCE && uv.y <= v_max + TOLERANCE
+            if t >= 0.0
+                && uv.x >= u_min - TOLERANCE
+                && uv.x <= u_max + TOLERANCE
+                && uv.y >= v_min - TOLERANCE
+                && uv.y <= v_max + TOLERANCE
             {
-                let final_uv = Point2::new(
-                    uv.x.clamp(u_min, u_max),
-                    uv.y.clamp(v_min, v_max),
-                );
+                let final_uv = Point2::new(uv.x.clamp(u_min, u_max), uv.y.clamp(v_min, v_max));
                 return Some(SurfaceHit { t, uv: final_uv });
             }
             return None;
@@ -161,9 +158,8 @@ fn newton_iteration_generic(ray: &Ray, surface: &dyn Surface, start: Point2) -> 
         // Jacobian: [du, dv, -d]
         // Solve: J * [delta_u, delta_v, delta_t]^T = -F
 
-        let det = du.x * (dv.y * (-d.z) - dv.z * (-d.y))
-                - dv.x * (du.y * (-d.z) - du.z * (-d.y))
-                + (-d.x) * (du.y * dv.z - du.z * dv.y);
+        let det = du.x * (dv.y * (-d.z) - dv.z * (-d.y)) - dv.x * (du.y * (-d.z) - du.z * (-d.y))
+            + (-d.x) * (du.y * dv.z - du.z * dv.y);
 
         if det.abs() < 1e-14 {
             return None;
@@ -172,16 +168,15 @@ fn newton_iteration_generic(ray: &Ray, surface: &dyn Surface, start: Point2) -> 
         let rhs = -f;
 
         let det_u = rhs.x * (dv.y * (-d.z) - dv.z * (-d.y))
-                  - dv.x * (rhs.y * (-d.z) - rhs.z * (-d.y))
-                  + (-d.x) * (rhs.y * dv.z - rhs.z * dv.y);
+            - dv.x * (rhs.y * (-d.z) - rhs.z * (-d.y))
+            + (-d.x) * (rhs.y * dv.z - rhs.z * dv.y);
 
         let det_v = du.x * (rhs.y * (-d.z) - rhs.z * (-d.y))
-                  - rhs.x * (du.y * (-d.z) - du.z * (-d.y))
-                  + (-d.x) * (du.y * rhs.z - du.z * rhs.y);
+            - rhs.x * (du.y * (-d.z) - du.z * (-d.y))
+            + (-d.x) * (du.y * rhs.z - du.z * rhs.y);
 
-        let det_t = du.x * (dv.y * rhs.z - dv.z * rhs.y)
-                  - dv.x * (du.y * rhs.z - du.z * rhs.y)
-                  + rhs.x * (du.y * dv.z - du.z * dv.y);
+        let det_t = du.x * (dv.y * rhs.z - dv.z * rhs.y) - dv.x * (du.y * rhs.z - du.z * rhs.y)
+            + rhs.x * (du.y * dv.z - du.z * dv.y);
 
         let delta_u = det_u / det;
         let delta_v = det_v / det;
@@ -195,8 +190,10 @@ fn newton_iteration_generic(ray: &Ray, surface: &dyn Surface, start: Point2) -> 
         // Early termination if way outside domain
         let u_range = (u_max - u_min).max(1.0);
         let v_range = (v_max - v_min).max(1.0);
-        if uv.x < u_min - u_range || uv.x > u_max + u_range
-            || uv.y < v_min - v_range || uv.y > v_max + v_range
+        if uv.x < u_min - u_range
+            || uv.x > u_max + u_range
+            || uv.y < v_min - v_range
+            || uv.y > v_max + v_range
         {
             return None;
         }
@@ -207,14 +204,14 @@ fn newton_iteration_generic(ray: &Ray, surface: &dyn Surface, start: Point2) -> 
     let ray_point = ray.at(t);
     let f = p - ray_point;
 
-    if f.norm() < TOLERANCE * 10.0 && t >= 0.0
-        && uv.x >= u_min - TOLERANCE && uv.x <= u_max + TOLERANCE
-        && uv.y >= v_min - TOLERANCE && uv.y <= v_max + TOLERANCE
+    if f.norm() < TOLERANCE * 10.0
+        && t >= 0.0
+        && uv.x >= u_min - TOLERANCE
+        && uv.x <= u_max + TOLERANCE
+        && uv.y >= v_min - TOLERANCE
+        && uv.y <= v_max + TOLERANCE
     {
-        let final_uv = Point2::new(
-            uv.x.clamp(u_min, u_max),
-            uv.y.clamp(v_min, v_max),
-        );
+        let final_uv = Point2::new(uv.x.clamp(u_min, u_max), uv.y.clamp(v_min, v_max));
         return Some(SurfaceHit { t, uv: final_uv });
     }
 
@@ -231,10 +228,7 @@ mod tests {
     fn test_bspline_on_plane() {
         // Test generic intersector on a plane (which also implements Surface)
         let plane = Plane::xy();
-        let ray = Ray::new(
-            Point3::new(0.5, 0.5, 5.0),
-            Vec3::new(0.0, 0.0, -1.0),
-        );
+        let ray = Ray::new(Point3::new(0.5, 0.5, 5.0), Vec3::new(0.0, 0.0, -1.0));
 
         let hits = intersect_bspline(&ray, &plane);
         assert_eq!(hits.len(), 1);
@@ -244,10 +238,7 @@ mod tests {
     #[test]
     fn test_newton_convergence() {
         let plane = Plane::xy();
-        let ray = Ray::new(
-            Point3::new(3.0, 4.0, 10.0),
-            Vec3::new(0.0, 0.0, -1.0),
-        );
+        let ray = Ray::new(Point3::new(3.0, 4.0, 10.0), Vec3::new(0.0, 0.0, -1.0));
 
         let hit = newton_iteration_generic(&ray, &plane, Point2::new(0.0, 0.0));
         assert!(hit.is_some());

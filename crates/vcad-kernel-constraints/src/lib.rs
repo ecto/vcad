@@ -90,8 +90,10 @@ mod constraint;
 mod entity;
 mod export;
 pub mod gpu;
-mod jacobian;
-mod residual;
+/// Finite-difference Jacobian computation (reference implementation for benchmarks).
+pub mod jacobian;
+/// Residual computation (reference implementation for benchmarks).
+pub mod residual;
 mod sketch;
 mod solver;
 pub mod symbolic;

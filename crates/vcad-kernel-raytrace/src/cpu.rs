@@ -287,10 +287,9 @@ fn transform_brep(solid: &BRepSolid, matrix: &[f64]) -> BRepSolid {
     // (input is row-major but we want the transpose)
     let t = Transform {
         matrix: tang::Mat4::new(
-            matrix[0], matrix[4], matrix[8], matrix[12],
-            matrix[1], matrix[5], matrix[9], matrix[13],
-            matrix[2], matrix[6], matrix[10], matrix[14],
-            matrix[3], matrix[7], matrix[11], matrix[15],
+            matrix[0], matrix[4], matrix[8], matrix[12], matrix[1], matrix[5], matrix[9],
+            matrix[13], matrix[2], matrix[6], matrix[10], matrix[14], matrix[3], matrix[7],
+            matrix[11], matrix[15],
         ),
     };
 
@@ -359,10 +358,7 @@ mod tests {
             .filter(|p| p[0] == 30 && p[1] == 32 && p[2] == 40)
             .count();
 
-        assert!(
-            bg_count < 32 * 32,
-            "Should have some non-background pixels"
-        );
+        assert!(bg_count < 32 * 32, "Should have some non-background pixels");
     }
 
     #[test]
@@ -381,7 +377,9 @@ mod tests {
         );
 
         // Should be all background
-        let all_bg = pixels.chunks(4).all(|p| p[0] == 30 && p[1] == 32 && p[2] == 40);
+        let all_bg = pixels
+            .chunks(4)
+            .all(|p| p[0] == 30 && p[1] == 32 && p[2] == 40);
         assert!(all_bg, "Camera looking away should see only background");
     }
 
@@ -430,7 +428,9 @@ mod tests {
         );
 
         // Should be all background
-        let all_bg = pixels.chunks(4).all(|p| p[0] == 30 && p[1] == 32 && p[2] == 40);
+        let all_bg = pixels
+            .chunks(4)
+            .all(|p| p[0] == 30 && p[1] == 32 && p[2] == 40);
         assert!(all_bg, "Empty scene should be all background");
     }
 
@@ -441,7 +441,7 @@ mod tests {
 
         let pixels = render_scene(
             &solids,
-            &[], // No transform
+            &[],              // No transform
             &[0.8, 0.2, 0.2], // Red
             Point3::new(20.0, 20.0, 20.0),
             Point3::new(5.0, 5.0, 5.0),

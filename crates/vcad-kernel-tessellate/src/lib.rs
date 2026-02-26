@@ -392,8 +392,8 @@ fn find_best_fan_center(verts: &[Point3]) -> Option<usize> {
             let v1 = &verts[v1_idx];
             let v2 = &verts[v2_idx];
             // Compute signed area of triangle (center, v1, v2)
-            let tri_area = (v1.x - center.x) * (v2.y - center.y)
-                - (v2.x - center.x) * (v1.y - center.y);
+            let tri_area =
+                (v1.x - center.x) * (v2.y - center.y) - (v2.x - center.x) * (v1.y - center.y);
             // Triangle should have same sign as polygon (both positive or both negative)
             // Use a small tolerance to avoid issues with degenerate triangles
             if tri_area.abs() > 1e-10 && (tri_area > 0.0) != (polygon_signed_area > 0.0) {
@@ -605,21 +605,12 @@ fn tessellate_planar_face_with_holes(
     // After merging overlapping arcs, use bridge+ear-clip directly.
     // The merged holes are well-shaped (no more overlapping semicircles),
     // so bridge construction works reliably.
-    triangulate_polygon_with_holes(
-        &outer_2d,
-        &inner_2d,
-        &outer_verts,
-        &inner_loops,
-        reversed,
-    )
+    triangulate_polygon_with_holes(&outer_2d, &inner_2d, &outer_verts, &inner_loops, reversed)
 }
 
 /// Merge inner loops that overlap (e.g., two semicircular arcs forming a full circle).
 /// Loops are merged when their centroids are closer than the sum of their average radii.
-fn merge_overlapping_holes(
-    inner_2d: &mut Vec<Vec<(f64, f64)>>,
-    inner_3d: &mut Vec<Vec<Point3>>,
-) {
+fn merge_overlapping_holes(inner_2d: &mut Vec<Vec<(f64, f64)>>, inner_3d: &mut Vec<Vec<Point3>>) {
     loop {
         let mut merge_pair = None;
         'search: for i in 0..inner_2d.len() {
@@ -705,7 +696,8 @@ fn merge_overlapping_holes(
 
 fn centroid_2d(pts: &[(f64, f64)]) -> (f64, f64) {
     let n = pts.len() as f64;
-    pts.iter().fold((0.0, 0.0), |a, p| (a.0 + p.0 / n, a.1 + p.1 / n))
+    pts.iter()
+        .fold((0.0, 0.0), |a, p| (a.0 + p.0 / n, a.1 + p.1 / n))
 }
 
 fn avg_radius_2d(pts: &[(f64, f64)], c: (f64, f64)) -> f64 {
@@ -931,24 +923,32 @@ fn triangulate_polygon_with_holes(
     // around a circle (e.g., bolt patterns on cylinder caps).
     let outer_centroid = {
         let n = refined_outer_2d.len() as f64;
-        let (sx, sy) = refined_outer_2d.iter().fold((0.0, 0.0), |(sx, sy), &(x, y)| (sx + x, sy + y));
+        let (sx, sy) = refined_outer_2d
+            .iter()
+            .fold((0.0, 0.0), |(sx, sy), &(x, y)| (sx + x, sy + y));
         (sx / n, sy / n)
     };
     let mut hole_order: Vec<usize> = (0..inner_starts.len()).collect();
     hole_order.sort_by(|&a, &b| {
         let ca = {
             let n = inner_2d[a].len() as f64;
-            let (sx, sy) = inner_2d[a].iter().fold((0.0, 0.0), |(sx, sy), &(x, y)| (sx + x, sy + y));
+            let (sx, sy) = inner_2d[a]
+                .iter()
+                .fold((0.0, 0.0), |(sx, sy), &(x, y)| (sx + x, sy + y));
             (sx / n, sy / n)
         };
         let cb = {
             let n = inner_2d[b].len() as f64;
-            let (sx, sy) = inner_2d[b].iter().fold((0.0, 0.0), |(sx, sy), &(x, y)| (sx + x, sy + y));
+            let (sx, sy) = inner_2d[b]
+                .iter()
+                .fold((0.0, 0.0), |(sx, sy), &(x, y)| (sx + x, sy + y));
             (sx / n, sy / n)
         };
         let angle_a = (ca.1 - outer_centroid.1).atan2(ca.0 - outer_centroid.0);
         let angle_b = (cb.1 - outer_centroid.1).atan2(cb.0 - outer_centroid.0);
-        angle_a.partial_cmp(&angle_b).unwrap_or(std::cmp::Ordering::Equal)
+        angle_a
+            .partial_cmp(&angle_b)
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
 
     let mut poly_indices: Vec<usize> = (0..refined_outer_2d.len()).collect();
@@ -1148,12 +1148,7 @@ fn point_in_triangle_2d(p: (f64, f64), a: (f64, f64), b: (f64, f64), c: (f64, f6
 
 /// Check if two line segments (a1→a2) and (b1→b2) properly intersect.
 /// Returns true only for proper crossings (not shared endpoints or collinear overlap).
-fn segments_intersect(
-    a1: (f64, f64),
-    a2: (f64, f64),
-    b1: (f64, f64),
-    b2: (f64, f64),
-) -> bool {
+fn segments_intersect(a1: (f64, f64), a2: (f64, f64), b1: (f64, f64), b2: (f64, f64)) -> bool {
     let d1 = (a2.0 - a1.0, a2.1 - a1.1);
     let d2 = (b2.0 - b1.0, b2.1 - b1.1);
     let denom = d1.0 * d2.1 - d1.1 * d2.0;
@@ -1516,14 +1511,12 @@ fn tessellate_cylindrical_face(
     let n_circ = params.circle_segments.max(3) as usize;
     let mut n_height = params.height_segments.max(1) as usize;
 
-
     // Determine the v (height) parameter range by projecting seam vertices
     // onto the cylinder axis. This works correctly after any transform.
     let verts: Vec<_> = topo
         .loop_half_edges(face.outer_loop)
         .map(|he| topo.vertices[topo.half_edges[he].origin].point)
         .collect();
-
 
     let mut radius = None;
     let mut u_min = 0.0;
@@ -1575,7 +1568,6 @@ fn tessellate_cylindrical_face(
             }
         }
 
-
         // Sort unique angles and check if they cover the full circle
         unique_angles.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
@@ -1593,8 +1585,7 @@ fn tessellate_cylindrical_face(
                 max_gap = max_gap.max(gap);
             }
             // Wrap-around gap from last angle back to first + 2π
-            let wrap_gap =
-                2.0 * PI - (unique_angles[unique_angles.len() - 1] - unique_angles[0]);
+            let wrap_gap = 2.0 * PI - (unique_angles[unique_angles.len() - 1] - unique_angles[0]);
             max_gap = max_gap.max(wrap_gap);
             max_gap < PI / 2.0
         };
@@ -1918,7 +1909,11 @@ fn tessellate_small_spherical_cap(
     // Helper to compute sphere normal at a point
     let sphere_normal = |pt: Point3| -> Vec3 {
         let n = (pt - center).normalize();
-        if reversed { -n } else { n }
+        if reversed {
+            -n
+        } else {
+            n
+        }
     };
 
     // Cap pole (point on sphere in cap direction)
@@ -1927,7 +1922,8 @@ fn tessellate_small_spherical_cap(
     mesh.vertices.push(pole.y as f32);
     mesh.vertices.push(pole.z as f32);
     let n = sphere_normal(pole);
-    mesh.normals.extend_from_slice(&[n.x as f32, n.y as f32, n.z as f32]);
+    mesh.normals
+        .extend_from_slice(&[n.x as f32, n.y as f32, n.z as f32]);
 
     // Add boundary vertices
     for p in loop_verts {
@@ -1935,7 +1931,8 @@ fn tessellate_small_spherical_cap(
         mesh.vertices.push(p.y as f32);
         mesh.vertices.push(p.z as f32);
         let n = sphere_normal(*p);
-        mesh.normals.extend_from_slice(&[n.x as f32, n.y as f32, n.z as f32]);
+        mesh.normals
+            .extend_from_slice(&[n.x as f32, n.y as f32, n.z as f32]);
     }
 
     // Fan triangulation from pole to boundary
@@ -1968,7 +1965,11 @@ fn tessellate_large_spherical_cap(
     // Helper to compute sphere normal at a point
     let sphere_normal = |pt: Point3| -> vcad_kernel_math::Vec3 {
         let n = (pt - center).normalize();
-        if reversed { -n } else { n }
+        if reversed {
+            -n
+        } else {
+            n
+        }
     };
 
     // Antipodal pole (opposite to cap center)
@@ -1977,7 +1978,8 @@ fn tessellate_large_spherical_cap(
     mesh.vertices.push(anti_pole.y as f32);
     mesh.vertices.push(anti_pole.z as f32);
     let n = sphere_normal(anti_pole);
-    mesh.normals.extend_from_slice(&[n.x as f32, n.y as f32, n.z as f32]);
+    mesh.normals
+        .extend_from_slice(&[n.x as f32, n.y as f32, n.z as f32]);
 
     // Create local coordinate system for longitude
     let up = cap_dir;
@@ -2016,7 +2018,8 @@ fn tessellate_large_spherical_cap(
             mesh.vertices.push(pt.y as f32);
             mesh.vertices.push(pt.z as f32);
             let n = sphere_normal(pt);
-            mesh.normals.extend_from_slice(&[n.x as f32, n.y as f32, n.z as f32]);
+            mesh.normals
+                .extend_from_slice(&[n.x as f32, n.y as f32, n.z as f32]);
         }
     }
 
@@ -2027,7 +2030,8 @@ fn tessellate_large_spherical_cap(
         mesh.vertices.push(p.y as f32);
         mesh.vertices.push(p.z as f32);
         let n = sphere_normal(*p);
-        mesh.normals.extend_from_slice(&[n.x as f32, n.y as f32, n.z as f32]);
+        mesh.normals
+            .extend_from_slice(&[n.x as f32, n.y as f32, n.z as f32]);
     }
 
     let pole_idx = 0u32;
@@ -2221,18 +2225,23 @@ fn tessellate_conical_face(
     let mut rows: Vec<Vec<u32>> = Vec::new();
 
     // Helper to push normal for cone surface
-    let push_cone_normal =
-        |mesh: &mut TriangleMesh, u: f64, ref_dir: Vec3, y_dir: Vec3, axis: Vec3, half_angle: f64, reversed: bool| {
-            // Cone outward normal: radial direction rotated by (π/2 - half_angle) toward axis
-            let radial = u.cos() * ref_dir + u.sin() * y_dir;
-            let normal = half_angle.cos() * radial - half_angle.sin() * axis;
-            let (nx, ny, nz) = if reversed {
-                (-normal.x as f32, -normal.y as f32, -normal.z as f32)
-            } else {
-                (normal.x as f32, normal.y as f32, normal.z as f32)
-            };
-            mesh.normals.extend_from_slice(&[nx, ny, nz]);
+    let push_cone_normal = |mesh: &mut TriangleMesh,
+                            u: f64,
+                            ref_dir: Vec3,
+                            y_dir: Vec3,
+                            axis: Vec3,
+                            half_angle: f64,
+                            reversed: bool| {
+        // Cone outward normal: radial direction rotated by (π/2 - half_angle) toward axis
+        let radial = u.cos() * ref_dir + u.sin() * y_dir;
+        let normal = half_angle.cos() * radial - half_angle.sin() * axis;
+        let (nx, ny, nz) = if reversed {
+            (-normal.x as f32, -normal.y as f32, -normal.z as f32)
+        } else {
+            (normal.x as f32, normal.y as f32, normal.z as f32)
         };
+        mesh.normals.extend_from_slice(&[nx, ny, nz]);
+    };
 
     for j in 0..=n_height {
         let t = j as f64 / n_height as f64;
@@ -2636,7 +2645,12 @@ pub fn tessellate(brep: &BRepSolid, segments: u32) -> TriangleMesh {
         match surface.surface_type() {
             SurfaceKind::Plane => {
                 // Use winding-aware tessellation to handle faces with mismatched loop winding
-                let face_mesh = tessellate_planar_face_with_geom(&brep.topology, &brep.geometry, face_id, reversed);
+                let face_mesh = tessellate_planar_face_with_geom(
+                    &brep.topology,
+                    &brep.geometry,
+                    face_id,
+                    reversed,
+                );
                 mesh.merge(&face_mesh);
             }
             SurfaceKind::Cylinder => {
@@ -2676,7 +2690,12 @@ pub fn tessellate(brep: &BRepSolid, segments: u32) -> TriangleMesh {
             }
             _ => {
                 // Fallback for tessellate(): use winding-aware tessellation
-                let face_mesh = tessellate_planar_face_with_geom(&brep.topology, &brep.geometry, face_id, reversed);
+                let face_mesh = tessellate_planar_face_with_geom(
+                    &brep.topology,
+                    &brep.geometry,
+                    face_id,
+                    reversed,
+                );
                 mesh.merge(&face_mesh);
             }
         }
@@ -2759,9 +2778,13 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
                             let mut inner_loops_3d: Vec<Vec<Point3>> = Vec::new();
                             let mut inner_loops_2d: Vec<Vec<(f64, f64)>> = Vec::new();
                             for &inner_loop in &face.inner_loops {
-                                let iv: Vec<Point3> = brep.topology
+                                let iv: Vec<Point3> = brep
+                                    .topology
                                     .loop_half_edges(inner_loop)
-                                    .map(|he| brep.topology.vertices[brep.topology.half_edges[he].origin].point)
+                                    .map(|he| {
+                                        brep.topology.vertices[brep.topology.half_edges[he].origin]
+                                            .point
+                                    })
                                     .collect();
                                 if iv.len() >= 3 {
                                     let iv_2d: Vec<(f64, f64)> = iv.iter().map(&project).collect();
@@ -2792,9 +2815,14 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
                             merge_overlapping_holes(&mut inner_loops_2d, &mut inner_loops_3d);
 
                             let mut face_mesh = triangulate_circular_cap_with_holes(
-                                center, r, x_dir, y_dir,
-                                &outer_2d, &inner_loops_2d,
-                                &outer_3d, &inner_loops_3d,
+                                center,
+                                r,
+                                x_dir,
+                                y_dir,
+                                &outer_2d,
+                                &inner_loops_2d,
+                                &outer_3d,
+                                &inner_loops_3d,
                                 reversed,
                             );
 
@@ -2814,7 +2842,12 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
                     }
                 } else {
                     // Use winding-aware tessellation to handle faces with mismatched loop winding
-                    let face_mesh = tessellate_planar_face_with_geom(&brep.topology, &brep.geometry, face_id, reversed);
+                    let face_mesh = tessellate_planar_face_with_geom(
+                        &brep.topology,
+                        &brep.geometry,
+                        face_id,
+                        reversed,
+                    );
                     mesh.merge(&face_mesh);
                 }
             }
@@ -2850,7 +2883,12 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
             }
             _ => {
                 // Fallback for tessellate_brep(): use winding-aware tessellation
-                let face_mesh = tessellate_planar_face_with_geom(&brep.topology, &brep.geometry, face_id, reversed);
+                let face_mesh = tessellate_planar_face_with_geom(
+                    &brep.topology,
+                    &brep.geometry,
+                    face_id,
+                    reversed,
+                );
                 mesh.merge(&face_mesh);
             }
         }
@@ -3125,5 +3163,4 @@ mod tests {
             area
         );
     }
-
 }

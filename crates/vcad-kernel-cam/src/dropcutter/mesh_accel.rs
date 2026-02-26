@@ -179,10 +179,7 @@ impl MeshAccel {
 
     /// Create from flat vertex array (interleaved x, y, z).
     pub fn from_flat_vertices(vertices: &[f64], indices: &[u32], cell_size: f64) -> Self {
-        let verts: Vec<[f64; 3]> = vertices
-            .chunks(3)
-            .map(|c| [c[0], c[1], c[2]])
-            .collect();
+        let verts: Vec<[f64; 3]> = vertices.chunks(3).map(|c| [c[0], c[1], c[2]]).collect();
         Self::new(&verts, indices, cell_size)
     }
 

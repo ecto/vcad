@@ -101,11 +101,7 @@ mod tests {
 
     fn make_test_mesh() -> MeshAccel {
         // Sloped triangle from z=0 to z=10
-        let vertices = [
-            [0.0, 0.0, 0.0],
-            [10.0, 0.0, 0.0],
-            [5.0, 10.0, 10.0],
-        ];
+        let vertices = [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [5.0, 10.0, 10.0]];
         let indices = [0, 1, 2];
         MeshAccel::new(&vertices, &indices, 5.0)
     }

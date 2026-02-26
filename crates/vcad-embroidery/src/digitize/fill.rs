@@ -106,8 +106,12 @@ pub fn fill_stitch_multi(regions: &[Path2D], params: &FillParams) -> Vec<StitchC
     let (mut min_y, mut max_y) = (f64::MAX, f64::MIN);
     for contour in &rotated_contours {
         for &(_x, y) in contour {
-            if y < min_y { min_y = y; }
-            if y > max_y { max_y = y; }
+            if y < min_y {
+                min_y = y;
+            }
+            if y > max_y {
+                max_y = y;
+            }
         }
     }
 

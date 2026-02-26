@@ -110,8 +110,8 @@ impl Roughing3D {
         z_levels.push(self.target_z);
 
         // For each Z level, generate raster passes
-        let is_along_x = (self.direction.abs() % 180.0) < 45.0
-            || (self.direction.abs() % 180.0) > 135.0;
+        let is_along_x =
+            (self.direction.abs() % 180.0) < 45.0 || (self.direction.abs() % 180.0) > 135.0;
 
         for (level_idx, &z_level) in z_levels.iter().enumerate() {
             let passes = self.generate_level_passes(
@@ -399,11 +399,7 @@ mod tests {
         assert_eq!(simplified.len(), 2);
 
         // Pass with varying Z should keep intermediate points
-        let pass = vec![
-            [0.0, 0.0, 0.0],
-            [10.0, 0.0, 5.0],
-            [20.0, 0.0, 0.0],
-        ];
+        let pass = vec![[0.0, 0.0, 0.0], [10.0, 0.0, 5.0], [20.0, 0.0, 0.0]];
         let simplified = simplify_pass(&pass, 0.01);
         assert_eq!(simplified.len(), 3);
     }

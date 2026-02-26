@@ -1,8 +1,8 @@
 //! Ray-plane intersection (closed-form).
 
-use vcad_kernel_geom::Plane;
-use crate::Ray;
 use super::SurfaceHit;
+use crate::Ray;
+use vcad_kernel_geom::Plane;
 
 /// Intersect a ray with a plane.
 ///
@@ -39,10 +39,7 @@ mod tests {
     #[test]
     fn test_ray_plane_perpendicular() {
         let plane = Plane::xy();
-        let ray = Ray::new(
-            Point3::new(0.0, 0.0, 5.0),
-            Vec3::new(0.0, 0.0, -1.0),
-        );
+        let ray = Ray::new(Point3::new(0.0, 0.0, 5.0), Vec3::new(0.0, 0.0, -1.0));
         let hit = intersect_plane(&ray, &plane);
         assert!(hit.is_some());
         let hit = hit.unwrap();
@@ -54,10 +51,7 @@ mod tests {
     #[test]
     fn test_ray_plane_offset() {
         let plane = Plane::xy();
-        let ray = Ray::new(
-            Point3::new(3.0, 4.0, 10.0),
-            Vec3::new(0.0, 0.0, -1.0),
-        );
+        let ray = Ray::new(Point3::new(3.0, 4.0, 10.0), Vec3::new(0.0, 0.0, -1.0));
         let hit = intersect_plane(&ray, &plane);
         assert!(hit.is_some());
         let hit = hit.unwrap();
@@ -69,10 +63,7 @@ mod tests {
     #[test]
     fn test_ray_plane_parallel() {
         let plane = Plane::xy();
-        let ray = Ray::new(
-            Point3::new(0.0, 0.0, 5.0),
-            Vec3::new(1.0, 0.0, 0.0),
-        );
+        let ray = Ray::new(Point3::new(0.0, 0.0, 5.0), Vec3::new(1.0, 0.0, 0.0));
         let hit = intersect_plane(&ray, &plane);
         assert!(hit.is_none());
     }
@@ -80,10 +71,7 @@ mod tests {
     #[test]
     fn test_ray_plane_behind() {
         let plane = Plane::xy();
-        let ray = Ray::new(
-            Point3::new(0.0, 0.0, -5.0),
-            Vec3::new(0.0, 0.0, -1.0),
-        );
+        let ray = Ray::new(Point3::new(0.0, 0.0, -5.0), Vec3::new(0.0, 0.0, -1.0));
         let hit = intersect_plane(&ray, &plane);
         assert!(hit.is_none());
     }
@@ -91,10 +79,7 @@ mod tests {
     #[test]
     fn test_ray_plane_angled() {
         let plane = Plane::xy();
-        let ray = Ray::new(
-            Point3::new(0.0, 0.0, 10.0),
-            Vec3::new(1.0, 0.0, -1.0),
-        );
+        let ray = Ray::new(Point3::new(0.0, 0.0, 10.0), Vec3::new(1.0, 0.0, -1.0));
         let hit = intersect_plane(&ray, &plane);
         assert!(hit.is_some());
         let hit = hit.unwrap();

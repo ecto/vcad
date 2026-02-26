@@ -57,10 +57,38 @@ fn render_sidebar(
     let left = area.x;
     let right = area.x + area.width - 1;
 
-    set_char(buf, left, top, '\u{250C}', theme::BORDER(), theme::SURFACE());
-    set_char(buf, right, top, '\u{2510}', theme::BORDER(), theme::SURFACE());
-    set_char(buf, left, bot, '\u{2514}', theme::BORDER(), theme::SURFACE());
-    set_char(buf, right, bot, '\u{2518}', theme::BORDER(), theme::SURFACE());
+    set_char(
+        buf,
+        left,
+        top,
+        '\u{250C}',
+        theme::BORDER(),
+        theme::SURFACE(),
+    );
+    set_char(
+        buf,
+        right,
+        top,
+        '\u{2510}',
+        theme::BORDER(),
+        theme::SURFACE(),
+    );
+    set_char(
+        buf,
+        left,
+        bot,
+        '\u{2514}',
+        theme::BORDER(),
+        theme::SURFACE(),
+    );
+    set_char(
+        buf,
+        right,
+        bot,
+        '\u{2518}',
+        theme::BORDER(),
+        theme::SURFACE(),
+    );
 
     for x in (left + 1)..right {
         set_char(buf, x, top, '\u{2500}', theme::BORDER(), theme::SURFACE());

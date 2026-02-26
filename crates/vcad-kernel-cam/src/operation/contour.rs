@@ -159,7 +159,12 @@ impl Contour2D {
             // Move to start
             let start = &points[0];
             toolpath.push(ToolpathSegment::rapid(start.x, start.y, settings.safe_z));
-            toolpath.push(ToolpathSegment::linear(start.x, start.y, z, settings.plunge_rate));
+            toolpath.push(ToolpathSegment::linear(
+                start.x,
+                start.y,
+                z,
+                settings.plunge_rate,
+            ));
 
             // Follow contour with tab handling on final pass
             if is_final_pass && !self.tabs.is_empty() {
@@ -175,7 +180,12 @@ impl Contour2D {
             } else {
                 // Regular contour following
                 for point in points.iter().skip(1) {
-                    toolpath.push(ToolpathSegment::linear(point.x, point.y, z, settings.feed_rate));
+                    toolpath.push(ToolpathSegment::linear(
+                        point.x,
+                        point.y,
+                        z,
+                        settings.feed_rate,
+                    ));
                 }
                 // Close the contour
                 toolpath.push(ToolpathSegment::linear(

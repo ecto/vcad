@@ -121,7 +121,11 @@ impl Face {
         }
 
         // Final retract
-        toolpath.push(ToolpathSegment::rapid(self.min_x, self.min_y, settings.safe_z));
+        toolpath.push(ToolpathSegment::rapid(
+            self.min_x,
+            self.min_y,
+            settings.safe_z,
+        ));
 
         Ok(toolpath)
     }
@@ -153,11 +157,7 @@ mod tests {
         assert!(!toolpath.is_empty());
 
         // Check that we have cutting moves
-        let cutting_moves = toolpath
-            .segments
-            .iter()
-            .filter(|s| s.is_cutting())
-            .count();
+        let cutting_moves = toolpath.segments.iter().filter(|s| s.is_cutting()).count();
         assert!(cutting_moves > 0);
 
         // Check Z depth is correct

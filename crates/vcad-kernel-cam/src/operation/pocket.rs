@@ -111,21 +111,41 @@ impl Pocket2D {
                     // First ring: plunge at center
                     let start = &points[0];
                     toolpath.push(ToolpathSegment::rapid(start.x, start.y, settings.safe_z));
-                    toolpath.push(ToolpathSegment::linear(start.x, start.y, z, settings.plunge_rate));
+                    toolpath.push(ToolpathSegment::linear(
+                        start.x,
+                        start.y,
+                        z,
+                        settings.plunge_rate,
+                    ));
                 } else {
                     // Move to start of this ring
                     let start = &points[0];
-                    toolpath.push(ToolpathSegment::linear(start.x, start.y, z, settings.feed_rate));
+                    toolpath.push(ToolpathSegment::linear(
+                        start.x,
+                        start.y,
+                        z,
+                        settings.feed_rate,
+                    ));
                 }
 
                 // Follow the ring
                 for point in points.iter().skip(1) {
-                    toolpath.push(ToolpathSegment::linear(point.x, point.y, z, settings.feed_rate));
+                    toolpath.push(ToolpathSegment::linear(
+                        point.x,
+                        point.y,
+                        z,
+                        settings.feed_rate,
+                    ));
                 }
 
                 // Close the ring
                 let first = &points[0];
-                toolpath.push(ToolpathSegment::linear(first.x, first.y, z, settings.feed_rate));
+                toolpath.push(ToolpathSegment::linear(
+                    first.x,
+                    first.y,
+                    z,
+                    settings.feed_rate,
+                ));
             }
 
             // Retract between Z levels
@@ -193,12 +213,10 @@ impl Pocket2D {
         // If we have no rings but we should, start from center
         if rings.is_empty() {
             if let Some(centroid) = polygon.centroid() {
-                let center_ring = geo::LineString::from(vec![
-                    geo::Coord {
-                        x: centroid.x(),
-                        y: centroid.y(),
-                    },
-                ]);
+                let center_ring = geo::LineString::from(vec![geo::Coord {
+                    x: centroid.x(),
+                    y: centroid.y(),
+                }]);
                 rings.push(center_ring);
             }
         }

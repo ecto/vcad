@@ -105,42 +105,74 @@ pub fn is_dark() -> bool {
 pub fn toggle() -> &'static str {
     let was_dark = DARK_MODE.load(Ordering::Relaxed);
     DARK_MODE.store(!was_dark, Ordering::Relaxed);
-    if was_dark { "light" } else { "dark" }
+    if was_dark {
+        "light"
+    } else {
+        "dark"
+    }
 }
 
 // ── Convenience accessors (keep call sites concise) ──
 // Named in UPPER_CASE to mirror the old constants they replaced.
 
 #[allow(non_snake_case)]
-pub fn BG() -> Color { active().bg }
+pub fn BG() -> Color {
+    active().bg
+}
 #[allow(non_snake_case)]
-pub fn SURFACE() -> Color { active().surface }
+pub fn SURFACE() -> Color {
+    active().surface
+}
 #[allow(non_snake_case)]
-pub fn CARD() -> Color { active().card }
+pub fn CARD() -> Color {
+    active().card
+}
 #[allow(non_snake_case)]
-pub fn BORDER() -> Color { active().border }
+pub fn BORDER() -> Color {
+    active().border
+}
 #[allow(non_snake_case)]
-pub fn TEXT() -> Color { active().text }
+pub fn TEXT() -> Color {
+    active().text
+}
 #[allow(non_snake_case)]
-pub fn TEXT_MUTED() -> Color { active().text_muted }
+pub fn TEXT_MUTED() -> Color {
+    active().text_muted
+}
 #[allow(non_snake_case)]
-pub fn ACCENT() -> Color { active().accent }
+pub fn ACCENT() -> Color {
+    active().accent
+}
 #[allow(non_snake_case)]
-pub fn GREEN() -> Color { active().green }
+pub fn GREEN() -> Color {
+    active().green
+}
 #[allow(non_snake_case)]
-pub fn YELLOW() -> Color { active().yellow }
+pub fn YELLOW() -> Color {
+    active().yellow
+}
 #[allow(non_snake_case)]
-pub fn ORANGE() -> Color { active().orange }
+pub fn ORANGE() -> Color {
+    active().orange
+}
 #[allow(non_snake_case)]
-pub fn PURPLE() -> Color { active().purple }
+pub fn PURPLE() -> Color {
+    active().purple
+}
 #[allow(non_snake_case)]
-pub fn CYAN() -> Color { active().cyan }
+pub fn CYAN() -> Color {
+    active().cyan
+}
 #[allow(non_snake_case)]
-pub fn SELECTION_BG() -> Color { active().selection_bg }
+pub fn SELECTION_BG() -> Color {
+    active().selection_bg
+}
 
 /// Background clear color as RGB tuple for the rasterizer.
 #[allow(non_snake_case)]
-pub fn BG_RGB() -> (u8, u8, u8) { active().viewport_bg }
+pub fn BG_RGB() -> (u8, u8, u8) {
+    active().viewport_bg
+}
 
 // Tab colors — these stay the same across themes (vibrant on both).
 pub const TAB_CHAT: Color = Color::rgb(0xF9, 0x26, 0x72);
@@ -169,11 +201,11 @@ pub fn tab_color(index: usize) -> Color {
 
 /// Tab metadata: (icon, label, color).
 pub const TABS: &[(&str, &str, Color)] = &[
-    ("\u{2726}", "Chat", TAB_CHAT),       // ✦
-    ("+", "Create", TAB_CREATE),           // +
-    ("\u{2194}", "Xform", TAB_TRANSFORM),  // ↔
-    ("\u{2295}", "Combine", TAB_COMBINE),  // ⊕
-    ("\u{270E}", "Modify", TAB_MODIFY),    // ✎
+    ("\u{2726}", "Chat", TAB_CHAT),         // ✦
+    ("+", "Create", TAB_CREATE),            // +
+    ("\u{2194}", "Xform", TAB_TRANSFORM),   // ↔
+    ("\u{2295}", "Combine", TAB_COMBINE),   // ⊕
+    ("\u{270E}", "Modify", TAB_MODIFY),     // ✎
     ("\u{2699}", "Assembly", TAB_ASSEMBLY), // ⚙
     ("\u{25B6}", "Simulate", TAB_SIMULATE), // ▶
     ("\u{2197}", "Export", TAB_EXPORT),     // ↗

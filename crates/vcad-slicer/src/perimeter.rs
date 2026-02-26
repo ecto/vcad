@@ -101,7 +101,11 @@ pub fn generate_perimeters(layer: &SliceLayer, settings: &PerimeterSettings) -> 
 
         // If only one wall, the inner edge of outer perimeter is the infill boundary
         if settings.wall_count == 1 {
-            if let Some(infill) = result.outer.last().and_then(|p| p.offset(settings.line_width / 2.0)) {
+            if let Some(infill) = result
+                .outer
+                .last()
+                .and_then(|p| p.offset(settings.line_width / 2.0))
+            {
                 result.infill_boundary.push(infill);
             }
         }

@@ -52,9 +52,7 @@ impl<'a> SExpr<'a> {
 
     /// Find a child list whose first atom equals `name`.
     pub fn find(&self, name: &str) -> Option<&SExpr<'a>> {
-        self.children()?
-            .iter()
-            .find(|c| c.tag_name() == Some(name))
+        self.children()?.iter().find(|c| c.tag_name() == Some(name))
     }
 
     /// Find all child lists whose first atom equals `name`.

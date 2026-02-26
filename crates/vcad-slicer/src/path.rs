@@ -84,11 +84,13 @@ impl Polygon {
         if self.points.is_empty() {
             return Point2::origin();
         }
-        let sum: Point2 = self
-            .points
-            .iter()
-            .fold(Point2::origin(), |acc, p| Point2::new(acc.x + p.x, acc.y + p.y));
-        Point2::new(sum.x / self.points.len() as f64, sum.y / self.points.len() as f64)
+        let sum: Point2 = self.points.iter().fold(Point2::origin(), |acc, p| {
+            Point2::new(acc.x + p.x, acc.y + p.y)
+        });
+        Point2::new(
+            sum.x / self.points.len() as f64,
+            sum.y / self.points.len() as f64,
+        )
     }
 
     /// Offset the polygon inward (shrink) or outward (expand) by distance.
@@ -178,10 +180,7 @@ impl Polyline {
         if self.points.len() < 2 {
             return 0.0;
         }
-        self.points
-            .windows(2)
-            .map(|w| (w[1] - w[0]).norm())
-            .sum()
+        self.points.windows(2).map(|w| (w[1] - w[0]).norm()).sum()
     }
 
     /// Starting point.
@@ -222,7 +221,9 @@ pub fn optimize_polygon_order(polygons: &mut [Polygon]) {
                 } else {
                     f64::MAX
                 };
-                dist_a.partial_cmp(&dist_b).unwrap_or(std::cmp::Ordering::Equal)
+                dist_a
+                    .partial_cmp(&dist_b)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             })
             .unwrap();
 
@@ -263,7 +264,9 @@ pub fn optimize_polyline_order(polylines: &mut [Polyline]) {
                 } else {
                     f64::MAX
                 };
-                dist_a.partial_cmp(&dist_b).unwrap_or(std::cmp::Ordering::Equal)
+                dist_a
+                    .partial_cmp(&dist_b)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             })
             .unwrap();
 

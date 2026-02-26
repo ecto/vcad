@@ -366,12 +366,18 @@ mod tests {
         let mut state = PostState::default();
 
         // CW spindle
-        let out = post.segment(&ToolpathSegment::spindle_on(12000.0, SpindleDir::Cw), &mut state);
+        let out = post.segment(
+            &ToolpathSegment::spindle_on(12000.0, SpindleDir::Cw),
+            &mut state,
+        );
         assert!(out.contains("M3"));
         assert!(out.contains("S12000"));
 
         // CCW spindle
-        let out = post.segment(&ToolpathSegment::spindle_on(10000.0, SpindleDir::Ccw), &mut state);
+        let out = post.segment(
+            &ToolpathSegment::spindle_on(10000.0, SpindleDir::Ccw),
+            &mut state,
+        );
         assert!(out.contains("M4"));
 
         // Spindle off
@@ -409,7 +415,10 @@ mod tests {
         let post = GrblPost::default().with_precision(2);
         let mut state = PostState::default();
 
-        let out = post.segment(&ToolpathSegment::rapid(10.123456, 20.987654, 5.555), &mut state);
+        let out = post.segment(
+            &ToolpathSegment::rapid(10.123456, 20.987654, 5.555),
+            &mut state,
+        );
 
         // Should have 2 decimal places
         assert!(out.contains("X10.12"));

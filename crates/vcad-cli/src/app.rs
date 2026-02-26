@@ -5,7 +5,9 @@ use crossterm::{
     cursor,
     event::{self, DisableMouseCapture, EnableMouseCapture, Event},
     execute,
-    terminal::{self, disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{
+        self, disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    },
 };
 use std::{
     collections::HashSet,
@@ -420,7 +422,12 @@ impl App {
         self.push_undo();
 
         for &selected_id in &self.selected.clone() {
-            if let Some(idx) = self.document.roots.iter().position(|e| e.root == selected_id) {
+            if let Some(idx) = self
+                .document
+                .roots
+                .iter()
+                .position(|e| e.root == selected_id)
+            {
                 let new_id = self.alloc_node_id();
                 self.document.nodes.insert(
                     new_id,
@@ -453,7 +460,12 @@ impl App {
         self.push_undo();
 
         for &selected_id in &self.selected.clone() {
-            if let Some(idx) = self.document.roots.iter().position(|e| e.root == selected_id) {
+            if let Some(idx) = self
+                .document
+                .roots
+                .iter()
+                .position(|e| e.root == selected_id)
+            {
                 let new_id = self.alloc_node_id();
                 self.document.nodes.insert(
                     new_id,
@@ -486,7 +498,12 @@ impl App {
         self.push_undo();
 
         for &selected_id in &self.selected.clone() {
-            if let Some(idx) = self.document.roots.iter().position(|e| e.root == selected_id) {
+            if let Some(idx) = self
+                .document
+                .roots
+                .iter()
+                .position(|e| e.root == selected_id)
+            {
                 let new_id = self.alloc_node_id();
                 self.document.nodes.insert(
                     new_id,
@@ -519,7 +536,12 @@ impl App {
         self.push_undo();
 
         for &selected_id in &self.selected.clone() {
-            if let Some(idx) = self.document.roots.iter().position(|e| e.root == selected_id) {
+            if let Some(idx) = self
+                .document
+                .roots
+                .iter()
+                .position(|e| e.root == selected_id)
+            {
                 let new_id = self.alloc_node_id();
                 self.document.nodes.insert(
                     new_id,
@@ -554,7 +576,12 @@ impl App {
         self.push_undo();
 
         for &selected_id in &self.selected.clone() {
-            if let Some(idx) = self.document.roots.iter().position(|e| e.root == selected_id) {
+            if let Some(idx) = self
+                .document
+                .roots
+                .iter()
+                .position(|e| e.root == selected_id)
+            {
                 let new_id = self.alloc_node_id();
                 self.document.nodes.insert(
                     new_id,
@@ -586,7 +613,12 @@ impl App {
         self.push_undo();
 
         for &selected_id in &self.selected.clone() {
-            if let Some(idx) = self.document.roots.iter().position(|e| e.root == selected_id) {
+            if let Some(idx) = self
+                .document
+                .roots
+                .iter()
+                .position(|e| e.root == selected_id)
+            {
                 let new_id = self.alloc_node_id();
                 self.document.nodes.insert(
                     new_id,
@@ -622,7 +654,12 @@ impl App {
         self.push_undo();
 
         for &selected_id in &self.selected.clone() {
-            if let Some(idx) = self.document.roots.iter().position(|e| e.root == selected_id) {
+            if let Some(idx) = self
+                .document
+                .roots
+                .iter()
+                .position(|e| e.root == selected_id)
+            {
                 let new_id = self.alloc_node_id();
                 self.document.nodes.insert(
                     new_id,
@@ -943,8 +980,8 @@ impl App {
                 self.running = false;
             }
             "help" | "?" => {
-                self.status =
-                    "Commands: cube, cylinder, sphere, delete, move, save, export, quit".to_string();
+                self.status = "Commands: cube, cylinder, sphere, delete, move, save, export, quit"
+                    .to_string();
             }
             _ => {
                 self.set_status(format!("Unknown command: {}", parts[0]));
@@ -961,8 +998,7 @@ pub fn evaluate_document(doc: &Document) -> Result<Vec<EvaluatedMesh>> {
         skip_clash_detection: true,
         ..Default::default()
     };
-    let scene = vcad_eval::evaluate_document(doc, &opts)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let scene = vcad_eval::evaluate_document(doc, &opts).map_err(|e| anyhow::anyhow!("{}", e))?;
 
     Ok(scene
         .parts
@@ -979,7 +1015,12 @@ pub fn run_tui(file: Option<PathBuf>) -> Result<()> {
     crate::ui::theme::init();
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture, cursor::Hide)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        cursor::Hide
+    )?;
 
     let mut app = App::new(file)?;
 
@@ -1030,12 +1071,8 @@ fn run_loop(stdout: &mut Stdout, app: &mut App) -> Result<()> {
                 let h = area.height as u32 * caps.cell_height;
                 (w, h)
             }
-            GraphicsProtocol::HalfBlock => {
-                (area.width as u32, (area.height as u32) * 2)
-            }
-            GraphicsProtocol::Braille => {
-                ((area.width as u32) * 2, (area.height as u32) * 4)
-            }
+            GraphicsProtocol::HalfBlock => (area.width as u32, (area.height as u32) * 2),
+            GraphicsProtocol::Braille => ((area.width as u32) * 2, (area.height as u32) * 4),
         };
 
         if render_buffer.width != viewport_width || render_buffer.height != viewport_height {
@@ -1099,13 +1136,7 @@ fn run_loop(stdout: &mut Stdout, app: &mut App) -> Result<()> {
                         }
                         _ => None,
                     };
-                    crate::input::handle_mouse(
-                        app,
-                        mouse,
-                        area,
-                        &render_buffer,
-                        cell_dims,
-                    )?;
+                    crate::input::handle_mouse(app, mouse, area, &render_buffer, cell_dims)?;
                 }
                 Event::Resize(_, _) => {
                     // Terminal resized — will be handled on next loop iteration
@@ -1129,7 +1160,9 @@ fn render_raytrace(app: &App, buffer: &mut RenderBuffer) {
 
     for entry in &app.document.roots {
         let mut cache = std::collections::HashMap::new();
-        if let Ok(Some(solid)) = vcad_eval::evaluate_node(entry.root, &app.document.nodes, &mut cache) {
+        if let Ok(Some(solid)) =
+            vcad_eval::evaluate_node(entry.root, &app.document.nodes, &mut cache)
+        {
             if let Some(brep) = solid.brep() {
                 solids.push(Arc::new(brep.clone()));
                 let pick_id = entry.root as u32;
@@ -1170,8 +1203,7 @@ fn render_raytrace(app: &App, buffer: &mut RenderBuffer) {
         .iter()
         .flat_map(|_| {
             [
-                1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0,
-                1.0,
+                1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
             ]
         })
         .collect();
@@ -1223,17 +1255,34 @@ mod tests {
             // Build triangles
             let mut triangles = Vec::new();
             for tri in mesh.indices.chunks(3) {
-                if tri.len() < 3 { continue; }
+                if tri.len() < 3 {
+                    continue;
+                }
                 let i0 = tri[0] as usize * 3;
                 let i1 = tri[1] as usize * 3;
                 let i2 = tri[2] as usize * 3;
-                if i0+2 >= mesh.vertices.len() || i1+2 >= mesh.vertices.len() || i2+2 >= mesh.vertices.len() {
+                if i0 + 2 >= mesh.vertices.len()
+                    || i1 + 2 >= mesh.vertices.len()
+                    || i2 + 2 >= mesh.vertices.len()
+                {
                     continue;
                 }
                 triangles.push(Triangle {
-                    v0: [mesh.vertices[i0], mesh.vertices[i0+1], mesh.vertices[i0+2]],
-                    v1: [mesh.vertices[i1], mesh.vertices[i1+1], mesh.vertices[i1+2]],
-                    v2: [mesh.vertices[i2], mesh.vertices[i2+1], mesh.vertices[i2+2]],
+                    v0: [
+                        mesh.vertices[i0],
+                        mesh.vertices[i0 + 1],
+                        mesh.vertices[i0 + 2],
+                    ],
+                    v1: [
+                        mesh.vertices[i1],
+                        mesh.vertices[i1 + 1],
+                        mesh.vertices[i1 + 2],
+                    ],
+                    v2: [
+                        mesh.vertices[i2],
+                        mesh.vertices[i2 + 1],
+                        mesh.vertices[i2 + 2],
+                    ],
                     color: [180, 180, 190],
                     pick_id: 1,
                 });

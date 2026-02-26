@@ -74,43 +74,89 @@ fn encode_record(dx: i32, dy: i32, rec_type: RecordType) -> [u8; 3] {
     // Decompose dx into balanced ternary: [d1, d3, d9, d27, d81]
     let xd = balanced_ternary(dx);
     // d1  -> b[0] bit 0 (+1) / bit 1 (-1)
-    if xd[0] > 0 { b[0] |= 0x01; }
-    if xd[0] < 0 { b[0] |= 0x02; }
+    if xd[0] > 0 {
+        b[0] |= 0x01;
+    }
+    if xd[0] < 0 {
+        b[0] |= 0x02;
+    }
     // d3  -> b[1] bit 0 (+3) / bit 1 (-3)
-    if xd[1] > 0 { b[1] |= 0x01; }
-    if xd[1] < 0 { b[1] |= 0x02; }
+    if xd[1] > 0 {
+        b[1] |= 0x01;
+    }
+    if xd[1] < 0 {
+        b[1] |= 0x02;
+    }
     // d9  -> b[0] bit 2 (+9) / bit 3 (-9)
-    if xd[2] > 0 { b[0] |= 0x04; }
-    if xd[2] < 0 { b[0] |= 0x08; }
+    if xd[2] > 0 {
+        b[0] |= 0x04;
+    }
+    if xd[2] < 0 {
+        b[0] |= 0x08;
+    }
     // d27 -> b[1] bit 2 (+27) / bit 3 (-27)
-    if xd[3] > 0 { b[1] |= 0x04; }
-    if xd[3] < 0 { b[1] |= 0x08; }
+    if xd[3] > 0 {
+        b[1] |= 0x04;
+    }
+    if xd[3] < 0 {
+        b[1] |= 0x08;
+    }
     // d81 -> b[2] bit 2 (+81) / bit 3 (-81)
-    if xd[4] > 0 { b[2] |= 0x04; }
-    if xd[4] < 0 { b[2] |= 0x08; }
+    if xd[4] > 0 {
+        b[2] |= 0x04;
+    }
+    if xd[4] < 0 {
+        b[2] |= 0x08;
+    }
 
     // Decompose dy into balanced ternary: [d1, d3, d9, d27, d81]
     let yd = balanced_ternary(dy);
     // d1  -> b[0] bit 7 (+1) / bit 6 (-1)
-    if yd[0] > 0 { b[0] |= 0x80; }
-    if yd[0] < 0 { b[0] |= 0x40; }
+    if yd[0] > 0 {
+        b[0] |= 0x80;
+    }
+    if yd[0] < 0 {
+        b[0] |= 0x40;
+    }
     // d3  -> b[1] bit 7 (+3) / bit 6 (-3)
-    if yd[1] > 0 { b[1] |= 0x80; }
-    if yd[1] < 0 { b[1] |= 0x40; }
+    if yd[1] > 0 {
+        b[1] |= 0x80;
+    }
+    if yd[1] < 0 {
+        b[1] |= 0x40;
+    }
     // d9  -> b[0] bit 5 (+9) / bit 4 (-9)
-    if yd[2] > 0 { b[0] |= 0x20; }
-    if yd[2] < 0 { b[0] |= 0x10; }
+    if yd[2] > 0 {
+        b[0] |= 0x20;
+    }
+    if yd[2] < 0 {
+        b[0] |= 0x10;
+    }
     // d27 -> b[1] bit 5 (+27) / bit 4 (-27)
-    if yd[3] > 0 { b[1] |= 0x20; }
-    if yd[3] < 0 { b[1] |= 0x10; }
+    if yd[3] > 0 {
+        b[1] |= 0x20;
+    }
+    if yd[3] < 0 {
+        b[1] |= 0x10;
+    }
     // d81 -> b[2] bit 5 (+81) / bit 4 (-81)
-    if yd[4] > 0 { b[2] |= 0x20; }
-    if yd[4] < 0 { b[2] |= 0x10; }
+    if yd[4] > 0 {
+        b[2] |= 0x20;
+    }
+    if yd[4] < 0 {
+        b[2] |= 0x10;
+    }
 
     match rec_type {
-        RecordType::Stitch => { b[2] |= 0x03; }
-        RecordType::Jump => { b[2] |= 0x83; }
-        RecordType::ColorChange => { b[2] |= 0xC3; }
+        RecordType::Stitch => {
+            b[2] |= 0x03;
+        }
+        RecordType::Jump => {
+            b[2] |= 0x83;
+        }
+        RecordType::ColorChange => {
+            b[2] |= 0xC3;
+        }
         RecordType::End => unreachable!(),
     }
 
@@ -248,8 +294,16 @@ fn update_extents(
     x: i32,
     y: i32,
 ) {
-    if x < *min_x { *min_x = x; }
-    if x > *max_x { *max_x = x; }
-    if y < *min_y { *min_y = y; }
-    if y > *max_y { *max_y = y; }
+    if x < *min_x {
+        *min_x = x;
+    }
+    if x > *max_x {
+        *max_x = x;
+    }
+    if y < *min_y {
+        *min_y = y;
+    }
+    if y > *max_y {
+        *max_y = y;
+    }
 }

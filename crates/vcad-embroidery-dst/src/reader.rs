@@ -33,28 +33,68 @@ fn decode_record(b: [u8; 3]) -> (i32, i32, RecordType) {
     let mut dy: i32 = 0;
 
     // Decode dx from bits
-    if b[0] & 0x01 != 0 { dx += 1; }
-    if b[0] & 0x02 != 0 { dx -= 1; }
-    if b[0] & 0x04 != 0 { dx += 9; }
-    if b[0] & 0x08 != 0 { dx -= 9; }
-    if b[1] & 0x01 != 0 { dx += 3; }
-    if b[1] & 0x02 != 0 { dx -= 3; }
-    if b[1] & 0x04 != 0 { dx += 27; }
-    if b[1] & 0x08 != 0 { dx -= 27; }
-    if b[2] & 0x04 != 0 { dx += 81; }
-    if b[2] & 0x08 != 0 { dx -= 81; }
+    if b[0] & 0x01 != 0 {
+        dx += 1;
+    }
+    if b[0] & 0x02 != 0 {
+        dx -= 1;
+    }
+    if b[0] & 0x04 != 0 {
+        dx += 9;
+    }
+    if b[0] & 0x08 != 0 {
+        dx -= 9;
+    }
+    if b[1] & 0x01 != 0 {
+        dx += 3;
+    }
+    if b[1] & 0x02 != 0 {
+        dx -= 3;
+    }
+    if b[1] & 0x04 != 0 {
+        dx += 27;
+    }
+    if b[1] & 0x08 != 0 {
+        dx -= 27;
+    }
+    if b[2] & 0x04 != 0 {
+        dx += 81;
+    }
+    if b[2] & 0x08 != 0 {
+        dx -= 81;
+    }
 
     // Decode dy from bits
-    if b[0] & 0x80 != 0 { dy += 1; }
-    if b[0] & 0x40 != 0 { dy -= 1; }
-    if b[0] & 0x20 != 0 { dy += 9; }
-    if b[0] & 0x10 != 0 { dy -= 9; }
-    if b[1] & 0x80 != 0 { dy += 3; }
-    if b[1] & 0x40 != 0 { dy -= 3; }
-    if b[1] & 0x20 != 0 { dy += 27; }
-    if b[1] & 0x10 != 0 { dy -= 27; }
-    if b[2] & 0x20 != 0 { dy += 81; }
-    if b[2] & 0x10 != 0 { dy -= 81; }
+    if b[0] & 0x80 != 0 {
+        dy += 1;
+    }
+    if b[0] & 0x40 != 0 {
+        dy -= 1;
+    }
+    if b[0] & 0x20 != 0 {
+        dy += 9;
+    }
+    if b[0] & 0x10 != 0 {
+        dy -= 9;
+    }
+    if b[1] & 0x80 != 0 {
+        dy += 3;
+    }
+    if b[1] & 0x40 != 0 {
+        dy -= 3;
+    }
+    if b[1] & 0x20 != 0 {
+        dy += 27;
+    }
+    if b[1] & 0x10 != 0 {
+        dy -= 27;
+    }
+    if b[2] & 0x20 != 0 {
+        dy += 81;
+    }
+    if b[2] & 0x10 != 0 {
+        dy -= 81;
+    }
 
     let rec_type = if b[0] == 0x00 && b[1] == 0x00 && b[2] == 0xF3 {
         RecordType::End
@@ -105,7 +145,11 @@ pub fn read_dst(data: &[u8]) -> Result<EmbPattern> {
 
     let mut offset = 0;
     while offset + 3 <= stitch_data.len() {
-        let b = [stitch_data[offset], stitch_data[offset + 1], stitch_data[offset + 2]];
+        let b = [
+            stitch_data[offset],
+            stitch_data[offset + 1],
+            stitch_data[offset + 2],
+        ];
         let (dx, dy, rec_type) = decode_record(b);
 
         record_count += 1;

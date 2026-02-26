@@ -73,9 +73,8 @@ pub enum FilletResult {
 pub fn classify_fillet_case(surface_a: &dyn Surface, surface_b: &dyn Surface) -> FilletCase {
     match (surface_a.surface_type(), surface_b.surface_type()) {
         (SurfaceKind::Plane, SurfaceKind::Plane) => FilletCase::PlanePlane,
-        (SurfaceKind::Plane, SurfaceKind::Cylinder) | (SurfaceKind::Cylinder, SurfaceKind::Plane) => {
-            FilletCase::PlaneCylinder
-        }
+        (SurfaceKind::Plane, SurfaceKind::Cylinder)
+        | (SurfaceKind::Cylinder, SurfaceKind::Plane) => FilletCase::PlaneCylinder,
         (SurfaceKind::Cylinder, SurfaceKind::Cylinder) => {
             let cyl_a = surface_a.as_any().downcast_ref::<CylinderSurface>();
             let cyl_b = surface_b.as_any().downcast_ref::<CylinderSurface>();
@@ -278,9 +277,17 @@ mod tests {
         // Should converge to u~0 (x-positive side), not u~PI (x-negative side)
         let evaluated = cyl.evaluate(uv);
         let dist = (evaluated - pt).norm();
-        assert!(dist < 2.5, "should be close to the near side, dist={}", dist);
+        assert!(
+            dist < 2.5,
+            "should be close to the near side, dist={}",
+            dist
+        );
         // The closest point on the x-positive side is at (5,0,3)
-        assert!((evaluated.x - 5.0).abs() < 0.1, "should be at x~5, got {}", evaluated.x);
+        assert!(
+            (evaluated.x - 5.0).abs() < 0.1,
+            "should be at x~5, got {}",
+            evaluated.x
+        );
     }
 
     #[test]

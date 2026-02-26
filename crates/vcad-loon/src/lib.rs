@@ -33,8 +33,7 @@ pub fn eval_vcad_to_value(source: &str, base_dir: Option<&Path>) -> Result<Value
 
     let exprs = loon_lang::parser::parse(&full_source).map_err(|e| e.message.clone())?;
 
-    loon_lang::interp::eval_program_with_base_dir(&exprs, base_dir)
-        .map_err(|e| format!("{e}"))
+    loon_lang::interp::eval_program_with_base_dir(&exprs, base_dir).map_err(|e| format!("{e}"))
 }
 
 /// Evaluate a `.vcad` file from disk and produce a Document.

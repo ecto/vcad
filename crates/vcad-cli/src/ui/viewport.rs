@@ -1,6 +1,6 @@
 //! 3D viewport rendering — HalfBlock (true-color) and Braille (fallback).
 
-use super::buffer::{Color, CellBuffer, Rect};
+use super::buffer::{CellBuffer, Color, Rect};
 use super::theme;
 use crate::render::RenderBuffer;
 

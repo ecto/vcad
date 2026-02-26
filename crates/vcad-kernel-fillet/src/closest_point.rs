@@ -19,12 +19,16 @@ pub fn closest_point_uv(surface: &dyn Surface, point: &Point3, tolerance: f64) -
             let d = *point - cyl.center;
             let v = d.dot(cyl.axis.as_ref());
             let radial = d - v * cyl.axis.as_ref();
-            let u = radial.dot(&cyl.y_dir()).atan2(radial.dot(cyl.ref_dir.as_ref()));
+            let u = radial
+                .dot(&cyl.y_dir())
+                .atan2(radial.dot(cyl.ref_dir.as_ref()));
             let u = if u < 0.0 { u + 2.0 * PI } else { u };
             Some(Point2::new(u, v))
         }
         SurfaceKind::Sphere => {
-            let sphere = surface.as_any().downcast_ref::<vcad_kernel_geom::SphereSurface>()?;
+            let sphere = surface
+                .as_any()
+                .downcast_ref::<vcad_kernel_geom::SphereSurface>()?;
             let d = *point - sphere.center;
             let len = d.norm();
             if len < 1e-15 {
@@ -70,7 +74,11 @@ pub fn closest_point_uv(surface: &dyn Surface, point: &Point3, tolerance: f64) -
 /// Scans a 4x4 grid over the UV domain, picks the 3 best starting points
 /// by 3D distance, and runs Newton from each. Returns the result with
 /// smallest final distance.
-fn closest_point_uv_multistart(surface: &dyn Surface, point: &Point3, tolerance: f64) -> Option<Point2> {
+fn closest_point_uv_multistart(
+    surface: &dyn Surface,
+    point: &Point3,
+    tolerance: f64,
+) -> Option<Point2> {
     let ((u_min, u_max), (v_min, v_max)) = surface.domain();
 
     // Clamp infinite domains to a reasonable range for grid search

@@ -2,11 +2,11 @@
 //!
 //! Uses Ferrari's method to solve the quartic polynomial analytically.
 
+use super::SurfaceHit;
+use crate::Ray;
+use std::f64::consts::PI;
 use vcad_kernel_geom::TorusSurface;
 use vcad_kernel_math::Point2;
-use crate::Ray;
-use super::SurfaceHit;
-use std::f64::consts::PI;
 
 /// Intersect a ray with a toroidal surface.
 ///
@@ -80,11 +80,7 @@ fn compute_torus_uv(torus: &TorusSurface, point: &vcad_kernel_math::Point3) -> P
     // u = toroidal angle (around the main axis)
     let x = proj.dot(ref_dir);
     let y = proj.dot(&y_dir);
-    let u = if proj_len > 1e-12 {
-        y.atan2(x)
-    } else {
-        0.0
-    };
+    let u = if proj_len > 1e-12 { y.atan2(x) } else { 0.0 };
     let u = if u < 0.0 { u + 2.0 * PI } else { u };
 
     // v = poloidal angle (around the tube)
@@ -123,18 +119,10 @@ fn solve_quartic(a: f64, b: f64, c: f64, d: f64, e: f64) -> Vec<f64> {
 
     // Resolvent cubic: u^3 + (a2/2)*u^2 + ((a2^2 - 4*a0)/16)*u - a1^2/64 = 0
     // Or use the standard form: 8u^3 + 8*a2*u^2 + (2*a2^2 - 8*a0)*u - a1^2 = 0
-    let cubic_roots = solve_cubic(
-        8.0,
-        8.0 * a2,
-        2.0 * a2 * a2 - 8.0 * a0,
-        -a1 * a1,
-    );
+    let cubic_roots = solve_cubic(8.0, 8.0 * a2, 2.0 * a2 * a2 - 8.0 * a0, -a1 * a1);
 
     // Find a positive root of the resolvent cubic
-    let u = cubic_roots
-        .into_iter()
-        .find(|&u| u > 1e-12)
-        .unwrap_or(0.0);
+    let u = cubic_roots.into_iter().find(|&u| u > 1e-12).unwrap_or(0.0);
 
     let sqrt_2u = (2.0 * u).max(0.0).sqrt();
 
@@ -258,10 +246,7 @@ fn solve_quadratic(a: f64, b: f64, c: f64) -> Vec<f64> {
     }
 
     let sqrt_disc = disc.sqrt();
-    vec![
-        (-b - sqrt_disc) / (2.0 * a),
-        (-b + sqrt_disc) / (2.0 * a),
-    ]
+    vec![(-b - sqrt_disc) / (2.0 * a), (-b + sqrt_disc) / (2.0 * a)]
 }
 
 /// Cube root that handles negative numbers.
@@ -283,10 +268,7 @@ mod tests {
         let torus = TorusSurface::new(10.0, 3.0); // R=10, r=3
 
         // Ray from outside, through the center of the torus ring
-        let ray = Ray::new(
-            Point3::new(-20.0, 0.0, 0.0),
-            Vec3::new(1.0, 0.0, 0.0),
-        );
+        let ray = Ray::new(Point3::new(-20.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0));
         let hits = intersect_torus(&ray, &torus);
 
         // Should hit 4 times: outer, inner, inner, outer
@@ -294,11 +276,11 @@ mod tests {
 
         // First hit at x = -13 (outer)
         assert!((hits[0].t - 7.0).abs() < 1e-8); // 20 - 13 = 7
-        // Second hit at x = -7 (inner)
+                                                 // Second hit at x = -7 (inner)
         assert!((hits[1].t - 13.0).abs() < 1e-8); // 20 - 7 = 13
-        // Third hit at x = 7 (inner)
+                                                  // Third hit at x = 7 (inner)
         assert!((hits[2].t - 27.0).abs() < 1e-8); // 20 + 7 = 27
-        // Fourth hit at x = 13 (outer)
+                                                  // Fourth hit at x = 13 (outer)
         assert!((hits[3].t - 33.0).abs() < 1e-8); // 20 + 13 = 33
     }
 
@@ -307,10 +289,7 @@ mod tests {
         let torus = TorusSurface::new(10.0, 3.0);
 
         // Ray above the torus
-        let ray = Ray::new(
-            Point3::new(-20.0, 0.0, 10.0),
-            Vec3::new(1.0, 0.0, 0.0),
-        );
+        let ray = Ray::new(Point3::new(-20.0, 0.0, 10.0), Vec3::new(1.0, 0.0, 0.0));
         let hits = intersect_torus(&ray, &torus);
 
         assert!(hits.is_empty());
@@ -321,10 +300,7 @@ mod tests {
         let torus = TorusSurface::new(10.0, 3.0);
 
         // Ray hitting only the outer part (through the hole)
-        let ray = Ray::new(
-            Point3::new(-20.0, 0.0, 2.0),
-            Vec3::new(1.0, 0.0, 0.0),
-        );
+        let ray = Ray::new(Point3::new(-20.0, 0.0, 2.0), Vec3::new(1.0, 0.0, 0.0));
         let hits = intersect_torus(&ray, &torus);
 
         // Should hit 2 or 4 times depending on whether it clips the inner tube
@@ -366,9 +342,7 @@ mod tests {
         assert_eq!(roots.len(), 3);
         roots.iter().for_each(|r| {
             assert!(
-                (*r - 1.0).abs() < 1e-10 ||
-                (*r - 2.0).abs() < 1e-10 ||
-                (*r - 3.0).abs() < 1e-10
+                (*r - 1.0).abs() < 1e-10 || (*r - 2.0).abs() < 1e-10 || (*r - 3.0).abs() < 1e-10
             );
         });
     }

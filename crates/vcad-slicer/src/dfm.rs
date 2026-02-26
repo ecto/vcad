@@ -66,8 +66,7 @@ pub fn check_printability(brep: &BRepSolid, params: &PrinterParams) -> DfmResult
             kind: "exceeds_build_volume".into(),
             message: format!(
                 "Part ({:.1} x {:.1} x {:.1}mm) exceeds build volume ({:.0} x {:.0} x {:.0}mm)",
-                size[0], size[1], size[2],
-                params.bed_x, params.bed_y, params.bed_z
+                size[0], size[1], size[2], params.bed_x, params.bed_y, params.bed_z
             ),
             face_indices: Vec::new(),
             suggestion: Some("Scale down or choose a larger printer".into()),
@@ -88,10 +87,7 @@ pub fn check_printability(brep: &BRepSolid, params: &PrinterParams) -> DfmResult
 
         // Sample normal
         let ((u_min, u_max), (v_min, v_max)) = surface.domain();
-        let normal_dir = surface.normal(Point2::new(
-            (u_min + u_max) / 2.0,
-            (v_min + v_max) / 2.0,
-        ));
+        let normal_dir = surface.normal(Point2::new((u_min + u_max) / 2.0, (v_min + v_max) / 2.0));
         let normal = vcad_kernel_math::Vec3::new(
             normal_dir.as_ref().x,
             normal_dir.as_ref().y,
@@ -133,20 +129,41 @@ pub fn check_printability(brep: &BRepSolid, params: &PrinterParams) -> DfmResult
             let ((ui_min, ui_max), (vi_min, vi_max)) = si.domain();
             let ((uj_min, uj_max), (vj_min, vj_max)) = sj.domain();
 
-            let ni = si.normal(Point2::new((ui_min + ui_max) / 2.0, (vi_min + vi_max) / 2.0));
-            let nj = sj.normal(Point2::new((uj_min + uj_max) / 2.0, (vj_min + vj_max) / 2.0));
+            let ni = si.normal(Point2::new(
+                (ui_min + ui_max) / 2.0,
+                (vi_min + vi_max) / 2.0,
+            ));
+            let nj = sj.normal(Point2::new(
+                (uj_min + uj_max) / 2.0,
+                (vj_min + vj_max) / 2.0,
+            ));
 
             let ni_vec = vcad_kernel_math::Vec3::new(ni.as_ref().x, ni.as_ref().y, ni.as_ref().z);
             let nj_vec = vcad_kernel_math::Vec3::new(nj.as_ref().x, nj.as_ref().y, nj.as_ref().z);
 
             // Account for face orientation
-            let ni_oriented = if fi.orientation == vcad_kernel_topo::Orientation::Reversed { -ni_vec } else { ni_vec };
-            let nj_oriented = if fj.orientation == vcad_kernel_topo::Orientation::Reversed { -nj_vec } else { nj_vec };
+            let ni_oriented = if fi.orientation == vcad_kernel_topo::Orientation::Reversed {
+                -ni_vec
+            } else {
+                ni_vec
+            };
+            let nj_oriented = if fj.orientation == vcad_kernel_topo::Orientation::Reversed {
+                -nj_vec
+            } else {
+                nj_vec
+            };
 
             if ni_oriented.dot(&nj_oriented) < -0.95 {
-                let pi = si.evaluate(Point2::new((ui_min + ui_max) / 2.0, (vi_min + vi_max) / 2.0));
-                let pj = sj.evaluate(Point2::new((uj_min + uj_max) / 2.0, (vj_min + vj_max) / 2.0));
-                let dist = ((pi.x - pj.x).powi(2) + (pi.y - pj.y).powi(2) + (pi.z - pj.z).powi(2)).sqrt();
+                let pi = si.evaluate(Point2::new(
+                    (ui_min + ui_max) / 2.0,
+                    (vi_min + vi_max) / 2.0,
+                ));
+                let pj = sj.evaluate(Point2::new(
+                    (uj_min + uj_max) / 2.0,
+                    (vj_min + vj_max) / 2.0,
+                ));
+                let dist =
+                    ((pi.x - pj.x).powi(2) + (pi.y - pj.y).powi(2) + (pi.z - pj.z).powi(2)).sqrt();
 
                 if dist > 0.01 && dist < min_line_width {
                     thin_wall_faces.push(i);
@@ -165,10 +182,14 @@ pub fn check_printability(brep: &BRepSolid, params: &PrinterParams) -> DfmResult
             kind: "thin_wall".into(),
             message: format!(
                 "Wall too thin to print ({} face(s) below {:.2}mm min)",
-                thin_wall_faces.len(), min_line_width
+                thin_wall_faces.len(),
+                min_line_width
             ),
             face_indices: thin_wall_faces,
-            suggestion: Some(format!("Increase wall thickness to at least {:.2}mm", min_line_width)),
+            suggestion: Some(format!(
+                "Increase wall thickness to at least {:.2}mm",
+                min_line_width
+            )),
         });
     }
 
@@ -196,8 +217,14 @@ pub fn check_printability(brep: &BRepSolid, params: &PrinterParams) -> DfmResult
     }
 
     // Compute score
-    let error_count = warnings.iter().filter(|w| w.severity == DfmSeverity::Error).count();
-    let warning_count = warnings.iter().filter(|w| w.severity == DfmSeverity::Warning).count();
+    let error_count = warnings
+        .iter()
+        .filter(|w| w.severity == DfmSeverity::Error)
+        .count();
+    let warning_count = warnings
+        .iter()
+        .filter(|w| w.severity == DfmSeverity::Warning)
+        .count();
     let score = 100u32.saturating_sub((error_count * 30 + warning_count * 10) as u32);
 
     DfmResult { warnings, score }
@@ -236,7 +263,11 @@ mod tests {
         let brep = make_cube(20.0, 20.0, 10.0);
         let result = check_printability(&brep, &a1_mini_params());
 
-        let errors: Vec<_> = result.warnings.iter().filter(|w| w.severity == DfmSeverity::Error).collect();
+        let errors: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.severity == DfmSeverity::Error)
+            .collect();
         assert!(errors.is_empty());
         assert!(result.score >= 70);
     }
@@ -246,7 +277,9 @@ mod tests {
         let brep = make_cube(200.0, 200.0, 200.0);
         let result = check_printability(&brep, &a1_mini_params());
 
-        let volume_errors: Vec<_> = result.warnings.iter()
+        let volume_errors: Vec<_> = result
+            .warnings
+            .iter()
             .filter(|w| w.kind == "exceeds_build_volume")
             .collect();
         assert!(!volume_errors.is_empty());

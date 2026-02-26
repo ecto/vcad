@@ -1,9 +1,9 @@
 //! TUI widgets and layout — full-bleed viewport with floating overlays.
 
 pub mod buffer;
+pub mod chat;
 pub mod command;
 pub mod status;
-pub mod chat;
 pub mod theme;
 pub mod toolbar;
 pub mod top_bar;
@@ -89,7 +89,13 @@ fn draw_overlays_with_area(buf: &mut CellBuffer, app: &App, area: Rect) {
     // Command palette (when in command mode)
     if app.command_mode() {
         let items = command::build_command_items(&app.command_input);
-        command::draw_command_palette(buf, &app.command_input, &items, app.command_selected_index, area);
+        command::draw_command_palette(
+            buf,
+            &app.command_input,
+            &items,
+            app.command_selected_index,
+            area,
+        );
     }
 
     // Chat panel (when open)

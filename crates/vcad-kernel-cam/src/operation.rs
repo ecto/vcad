@@ -249,8 +249,8 @@ impl Contour {
                 ContourSegment::Arc { to, center, ccw } => {
                     // Linearize arc into segments
                     let current = coords.last().unwrap();
-                    let r = ((center.x - current.x).powi(2) + (center.y - current.y).powi(2))
-                        .sqrt();
+                    let r =
+                        ((center.x - current.x).powi(2) + (center.y - current.y).powi(2)).sqrt();
                     let start_angle = (current.y - center.y).atan2(current.x - center.x);
                     let end_angle = (to.y - center.y).atan2(to.x - center.x);
 

@@ -289,10 +289,7 @@ fn point_to_segment_dist(p: &Point3, a: &Point3, b: &Point3) -> f64 {
 /// in order along the line direction.
 ///
 /// Uses exact orient2d predicates for robust line-segment intersection detection.
-fn find_line_polygon_crossings(
-    polygon: &[Point3],
-    line: &vcad_kernel_geom::Line3d,
-) -> Vec<Point3> {
+fn find_line_polygon_crossings(polygon: &[Point3], line: &vcad_kernel_geom::Line3d) -> Vec<Point3> {
     use vcad_kernel_math::predicates::{orient2d, Sign};
 
     let n = polygon.len();
@@ -392,7 +389,9 @@ fn find_line_polygon_crossings(
         let intersection = snap_point(line.origin + t * line.direction);
 
         // Avoid duplicate crossings at vertices
-        let is_duplicate = crossings.iter().any(|c: &Point3| (*c - intersection).norm() < 0.01);
+        let is_duplicate = crossings
+            .iter()
+            .any(|c: &Point3| (*c - intersection).norm() < 0.01);
         if !is_duplicate {
             crossings.push(intersection);
         }
@@ -530,8 +529,7 @@ pub fn split_planar_face_by_circle(
                     // Generate circle vertices for the inner disk face
                     let circle_verts: Vec<Point3> = (0..segments)
                         .map(|i| {
-                            let theta = 2.0 * std::f64::consts::PI * (i as f64)
-                                / (segments as f64);
+                            let theta = 2.0 * std::f64::consts::PI * (i as f64) / (segments as f64);
                             let (sin_t, cos_t) = theta.sin_cos();
                             circle.center
                                 + circle.radius
@@ -550,9 +548,9 @@ pub fn split_planar_face_by_circle(
                         .map(|&v| brep.topology.add_half_edge(v))
                         .collect();
                     let inner_loop = brep.topology.add_loop(&inner_hes);
-                    let inner_face =
-                        brep.topology
-                            .add_face(inner_loop, surface_index, orientation);
+                    let inner_face = brep
+                        .topology
+                        .add_face(inner_loop, surface_index, orientation);
 
                     // Add the circle as an inner loop (hole) on the original cap face.
                     // Determine correct winding: inner loop should be opposite to outer.
@@ -595,8 +593,7 @@ pub fn split_planar_face_by_circle(
                     // Add twin edges between inner disk and hole
                     for i in 0..segments as usize {
                         let inner_he = inner_hes[i];
-                        let outer_he =
-                            hole_hes[(segments as usize - 1 - i) % segments as usize];
+                        let outer_he = hole_hes[(segments as usize - 1 - i) % segments as usize];
                         brep.topology.add_edge(inner_he, outer_he);
                     }
 
@@ -991,7 +988,14 @@ fn point_in_polygon_2d(px: f64, py: f64, polygon: &[(f64, f64)]) -> bool {
 }
 
 /// Distance from point to line segment (2D).
-pub(crate) fn point_to_segment_dist_2d(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
+pub(crate) fn point_to_segment_dist_2d(
+    px: f64,
+    py: f64,
+    x1: f64,
+    y1: f64,
+    x2: f64,
+    y2: f64,
+) -> f64 {
     let dx = x2 - x1;
     let dy = y2 - y1;
     let len2 = dx * dx + dy * dy;
@@ -1124,11 +1128,13 @@ fn find_circle_polygon_intersections(
             let point_3d = origin_3d + px * u_axis + py * v_axis;
 
             // Avoid duplicate intersections (at corners)
-            let is_duplicate = intersections.iter().any(|other: &CirclePolygonIntersection| {
-                let dist_2d =
-                    ((px - other.point_2d.0).powi(2) + (py - other.point_2d.1).powi(2)).sqrt();
-                dist_2d < 0.01
-            });
+            let is_duplicate = intersections
+                .iter()
+                .any(|other: &CirclePolygonIntersection| {
+                    let dist_2d =
+                        ((px - other.point_2d.0).powi(2) + (py - other.point_2d.1).powi(2)).sqrt();
+                    dist_2d < 0.01
+                });
 
             if !is_duplicate {
                 intersections.push(CirclePolygonIntersection {
@@ -1334,7 +1340,11 @@ pub fn split_planar_face_by_arc(
     // Add arc points (from inside_start to inside_end, forward direction)
     // arc_points_3d goes from inside_start to inside_end, so iterate forward
     // This completes the loop: ... → inside_start → arc → (closes to inside_end)
-    for pt in arc_points_3d.iter().skip(1).take(arc_points_3d.len().saturating_sub(2)) {
+    for pt in arc_points_3d
+        .iter()
+        .skip(1)
+        .take(arc_points_3d.len().saturating_sub(2))
+    {
         face1_points.push(*pt);
     }
 
@@ -1437,7 +1447,10 @@ pub fn split_planar_face_by_arc(
 ///
 /// Returns true if the circle crosses the polygon boundary at exactly 2 points,
 /// meaning it's only partially inside and needs arc-based splitting.
-fn circle_partially_inside_polygon(polygon: &[Point3], circle: &vcad_kernel_geom::Circle3d) -> bool {
+fn circle_partially_inside_polygon(
+    polygon: &[Point3],
+    circle: &vcad_kernel_geom::Circle3d,
+) -> bool {
     if polygon.len() < 3 {
         return false;
     }
@@ -1753,7 +1766,11 @@ fn split_conical_face_by_circle(
         .downcast_ref::<vcad_kernel_geom::ConeSurface>()
     {
         Some(c) => c.clone(),
-        None => return SplitResult { sub_faces: vec![face_id] },
+        None => {
+            return SplitResult {
+                sub_faces: vec![face_id],
+            }
+        }
     };
 
     let ca = cone.half_angle.cos();
@@ -1761,7 +1778,9 @@ fn split_conical_face_by_circle(
 
     let loop_hes: Vec<_> = brep.topology.loop_half_edges(face.outer_loop).collect();
     if loop_hes.is_empty() {
-        return SplitResult { sub_faces: vec![face_id] };
+        return SplitResult {
+            sub_faces: vec![face_id],
+        };
     }
 
     let mut v_min = f64::INFINITY;
@@ -1777,12 +1796,14 @@ fn split_conical_face_by_circle(
 
     let v_split = apex_to_circle / ca;
     if v_split <= v_min + 1e-9 || v_split >= v_max - 1e-9 {
-        return SplitResult { sub_faces: vec![face_id] };
+        return SplitResult {
+            sub_faces: vec![face_id],
+        };
     }
 
     let sa = cone.half_angle.sin();
-    let seam_point = cone.apex
-        + v_split * (ca * cone.axis.into_inner() + sa * cone.ref_dir.into_inner());
+    let seam_point =
+        cone.apex + v_split * (ca * cone.axis.into_inner() + sa * cone.ref_dir.into_inner());
     let v_split_seam = brep.topology.add_vertex(seam_point);
 
     let mut v_bottom = None;
@@ -1792,13 +1813,21 @@ fn split_conical_face_by_circle(
         let point = brep.topology.vertices[vid].point;
         let d = point - cone.apex;
         let v = d.dot(cone.axis.as_ref()) / ca;
-        if (v - v_min).abs() < 1e-6 { v_bottom = Some(vid); }
-        if (v - v_max).abs() < 1e-6 { v_top = Some(vid); }
+        if (v - v_min).abs() < 1e-6 {
+            v_bottom = Some(vid);
+        }
+        if (v - v_max).abs() < 1e-6 {
+            v_top = Some(vid);
+        }
     }
 
     let (v_bottom, v_top) = match (v_bottom, v_top) {
         (Some(b), Some(t)) => (b, t),
-        _ => return SplitResult { sub_faces: vec![face_id] },
+        _ => {
+            return SplitResult {
+                sub_faces: vec![face_id],
+            }
+        }
     };
 
     // Lower face: v_min to v_split
@@ -1807,9 +1836,14 @@ fn split_conical_face_by_circle(
     let he_lower_split = brep.topology.add_half_edge(v_split_seam);
     let he_lower_seam_down = brep.topology.add_half_edge(v_split_seam);
     let lower_loop = brep.topology.add_loop(&[
-        he_lower_bot, he_lower_seam_up, he_lower_split, he_lower_seam_down,
+        he_lower_bot,
+        he_lower_seam_up,
+        he_lower_split,
+        he_lower_seam_down,
     ]);
-    let lower_face = brep.topology.add_face(lower_loop, surface_index, orientation);
+    let lower_face = brep
+        .topology
+        .add_face(lower_loop, surface_index, orientation);
 
     // Upper face: v_split to v_max
     let he_upper_split = brep.topology.add_half_edge(v_split_seam);
@@ -1817,9 +1851,14 @@ fn split_conical_face_by_circle(
     let he_upper_top = brep.topology.add_half_edge(v_top);
     let he_upper_seam_down = brep.topology.add_half_edge(v_top);
     let upper_loop = brep.topology.add_loop(&[
-        he_upper_split, he_upper_seam_up, he_upper_top, he_upper_seam_down,
+        he_upper_split,
+        he_upper_seam_up,
+        he_upper_top,
+        he_upper_seam_down,
     ]);
-    let upper_face = brep.topology.add_face(upper_loop, surface_index, orientation);
+    let upper_face = brep
+        .topology
+        .add_face(upper_loop, surface_index, orientation);
 
     brep.topology.add_edge(he_lower_seam_up, he_lower_seam_down);
     brep.topology.add_edge(he_upper_seam_up, he_upper_seam_down);
@@ -1830,7 +1869,9 @@ fn split_conical_face_by_circle(
         brep.topology.shells[shell_id].faces.push(upper_face);
         brep.topology.faces[lower_face].shell = Some(shell_id);
         brep.topology.faces[upper_face].shell = Some(shell_id);
-        brep.topology.shells[shell_id].faces.retain(|&f| f != face_id);
+        brep.topology.shells[shell_id]
+            .faces
+            .retain(|&f| f != face_id);
     }
 
     brep.topology.faces.remove(face_id);
@@ -2041,7 +2082,11 @@ fn compute_cylinder_u(point: &Point3, cyl: &vcad_kernel_geom::CylinderSurface) -
     let ref_dir = cyl.ref_dir.as_ref();
     let y_dir = cyl.axis.as_ref().cross(ref_dir);
     let u = d.dot(&y_dir).atan2(d.dot(ref_dir));
-    if u < 0.0 { u + 2.0 * std::f64::consts::PI } else { u }
+    if u < 0.0 {
+        u + 2.0 * std::f64::consts::PI
+    } else {
+        u
+    }
 }
 
 /// Check if angle `u` is within the range from `u_start` to `u_end` (CCW direction).
@@ -2141,15 +2186,16 @@ pub fn split_cylindrical_face_by_line(
     }
 
     // Separate into top and bottom vertices
-    let bottom_verts: Vec<_> = all_verts.iter()
+    let bottom_verts: Vec<_> = all_verts
+        .iter()
         .filter(|(_, v, _)| (*v - v_min).abs() < 1e-6)
         .cloned()
         .collect();
-    let top_verts: Vec<_> = all_verts.iter()
+    let top_verts: Vec<_> = all_verts
+        .iter()
         .filter(|(_, v, _)| (*v - v_max).abs() < 1e-6)
         .cloned()
         .collect();
-
 
     // Determine face type and get corner vertices
     let (u_start, u_end, v_start_bot, v_end_bot, v_start_top, v_end_top, is_full_face) =
@@ -2157,10 +2203,15 @@ pub fn split_cylindrical_face_by_line(
             // Full cylindrical face with single seam vertex at each end
             // U spans from 0 (seam) around to 2π (back to seam)
             let seam_u = bottom_verts[0].2;
-            (seam_u, seam_u + 2.0 * std::f64::consts::PI,
-             bottom_verts[0].0, bottom_verts[0].0,
-             top_verts[0].0, top_verts[0].0,
-             true)
+            (
+                seam_u,
+                seam_u + 2.0 * std::f64::consts::PI,
+                bottom_verts[0].0,
+                bottom_verts[0].0,
+                top_verts[0].0,
+                top_verts[0].0,
+                true,
+            )
         } else if bottom_verts.len() == 2 && top_verts.len() == 2 {
             // Partial cylindrical face with 4 corner vertices
             // Use the loop order to determine the U direction (CCW in UV space)
@@ -2223,10 +2274,15 @@ pub fn split_cylindrical_face_by_line(
                 end_bot.2
             };
 
-            (start_bot.2, end_u,
-             start_bot.0, end_bot.0,
-             start_top.0, end_top.0,
-             false)
+            (
+                start_bot.2,
+                end_u,
+                start_bot.0,
+                end_bot.0,
+                start_top.0,
+                end_top.0,
+                false,
+            )
         } else {
             // Unexpected face structure
             return SplitResult {
@@ -2238,8 +2294,8 @@ pub fn split_cylindrical_face_by_line(
     let in_range = if is_full_face {
         // For full face, any u_split is valid (except exactly at the seam)
         let seam_u = u_start;
-        (u_split - seam_u).abs() > 0.01 &&
-        (u_split - seam_u - 2.0 * std::f64::consts::PI).abs() > 0.01
+        (u_split - seam_u).abs() > 0.01
+            && (u_split - seam_u - 2.0 * std::f64::consts::PI).abs() > 0.01
     } else {
         angle_in_range(u_split, u_start, u_end)
     };
@@ -2275,9 +2331,7 @@ pub fn split_cylindrical_face_by_line(
     let loop1 = brep
         .topology
         .add_loop(&[he1_bot, he1_left, he1_top, he1_right]);
-    let face1 = brep
-        .topology
-        .add_face(loop1, surface_index, orientation);
+    let face1 = brep.topology.add_face(loop1, surface_index, orientation);
 
     // Face 2: arc from split to end
     let he2_bot = brep.topology.add_half_edge(v_split_bottom);
@@ -2288,9 +2342,7 @@ pub fn split_cylindrical_face_by_line(
     let loop2 = brep
         .topology
         .add_loop(&[he2_bot, he2_left, he2_top, he2_right]);
-    let face2 = brep
-        .topology
-        .add_face(loop2, surface_index, orientation);
+    let face2 = brep.topology.add_face(loop2, surface_index, orientation);
 
     // Add twin edges for the shared split line
     brep.topology.add_edge(he1_left, he2_right);
@@ -2336,9 +2388,7 @@ pub fn split_cylindrical_face(
         IntersectionCurve::Circle(circle) => {
             split_cylindrical_face_by_circle(brep, face_id, circle)
         }
-        IntersectionCurve::Line(line) => {
-            split_cylindrical_face_by_line(brep, face_id, line)
-        }
+        IntersectionCurve::Line(line) => split_cylindrical_face_by_line(brep, face_id, line),
         IntersectionCurve::Sampled(_points) => {
             // TODO: Implement general oblique split
             SplitResult {
@@ -2388,7 +2438,10 @@ pub fn is_circular_disk_face(brep: &BRepSolid, face_id: FaceId) -> bool {
 /// Get the circle parameters of a circular disk face.
 ///
 /// Returns (center, radius, normal) if the face is a valid circular disk.
-pub fn get_disk_circle_params(brep: &BRepSolid, face_id: FaceId) -> Option<(Point3, f64, vcad_kernel_math::Vec3)> {
+pub fn get_disk_circle_params(
+    brep: &BRepSolid,
+    face_id: FaceId,
+) -> Option<(Point3, f64, vcad_kernel_math::Vec3)> {
     let face = &brep.topology.faces[face_id];
     let surface = &brep.geometry.surfaces[face.surface_index];
 
@@ -2435,7 +2488,11 @@ pub fn split_circular_face_by_line(
     // Get disk parameters
     let (center, radius, normal) = match get_disk_circle_params(brep, face_id) {
         Some(params) => params,
-        None => return SplitResult { sub_faces: vec![face_id] },
+        None => {
+            return SplitResult {
+                sub_faces: vec![face_id],
+            }
+        }
     };
 
     let face = &brep.topology.faces[face_id];
@@ -2452,7 +2509,9 @@ pub fn split_circular_face_by_line(
 
     // Check if line is parallel to the plane normal (no intersection)
     if line_dir.dot(&normal).abs() > 0.999 {
-        return SplitResult { sub_faces: vec![face_id] };
+        return SplitResult {
+            sub_faces: vec![face_id],
+        };
     }
 
     // Project line onto the plane
@@ -2466,7 +2525,9 @@ pub fn split_circular_face_by_line(
 
     // If line doesn't intersect the circle, no split needed
     if dist_to_center > radius - 1e-9 {
-        return SplitResult { sub_faces: vec![face_id] };
+        return SplitResult {
+            sub_faces: vec![face_id],
+        };
     }
 
     // Compute intersection points with circle
@@ -2481,11 +2542,17 @@ pub fn split_circular_face_by_line(
     let surface = &brep.geometry.surfaces[surface_index];
     let plane = match surface.as_any().downcast_ref::<vcad_kernel_geom::Plane>() {
         Some(p) => p,
-        None => return SplitResult { sub_faces: vec![face_id] },
+        None => {
+            return SplitResult {
+                sub_faces: vec![face_id],
+            }
+        }
     };
 
     if plane.signed_distance(&p1).abs() > 0.1 || plane.signed_distance(&p2).abs() > 0.1 {
-        return SplitResult { sub_faces: vec![face_id] };
+        return SplitResult {
+            sub_faces: vec![face_id],
+        };
     }
 
     // Compute angles of intersection points relative to center
@@ -2500,8 +2567,16 @@ pub fn split_circular_face_by_line(
     let angle2 = to_p2.dot(&y_axis).atan2(to_p2.dot(&x_axis));
 
     // Normalize angles to [0, 2π)
-    let angle1 = if angle1 < 0.0 { angle1 + 2.0 * std::f64::consts::PI } else { angle1 };
-    let angle2 = if angle2 < 0.0 { angle2 + 2.0 * std::f64::consts::PI } else { angle2 };
+    let angle1 = if angle1 < 0.0 {
+        angle1 + 2.0 * std::f64::consts::PI
+    } else {
+        angle1
+    };
+    let angle2 = if angle2 < 0.0 {
+        angle2 + 2.0 * std::f64::consts::PI
+    } else {
+        angle2
+    };
 
     // Order angles so we know which arc is which
     let (start_angle, end_angle, start_pt, end_pt) = if angle1 < angle2 {
@@ -2560,7 +2635,10 @@ pub fn split_circular_face_by_line(
     face1_verts.push(v_end);
 
     // Create half-edges and loop for face 1
-    let hes1: Vec<_> = face1_verts.iter().map(|&v| brep.topology.add_half_edge(v)).collect();
+    let hes1: Vec<_> = face1_verts
+        .iter()
+        .map(|&v| brep.topology.add_half_edge(v))
+        .collect();
     let loop1 = brep.topology.add_loop(&hes1);
     let face1 = brep.topology.add_face(loop1, surface_index, orientation);
 
@@ -2573,7 +2651,10 @@ pub fn split_circular_face_by_line(
     face2_verts.push(v_start);
 
     // Create half-edges and loop for face 2
-    let hes2: Vec<_> = face2_verts.iter().map(|&v| brep.topology.add_half_edge(v)).collect();
+    let hes2: Vec<_> = face2_verts
+        .iter()
+        .map(|&v| brep.topology.add_half_edge(v))
+        .collect();
     let loop2 = brep.topology.add_loop(&hes2);
     let face2 = brep.topology.add_face(loop2, surface_index, orientation);
 
@@ -2594,14 +2675,19 @@ pub fn split_circular_face_by_line(
         brep.topology.faces[face2].shell = Some(shell_id);
 
         // Remove original face from shell
-        brep.topology.shells[shell_id].faces.retain(|&f| f != face_id);
+        brep.topology.shells[shell_id]
+            .faces
+            .retain(|&f| f != face_id);
     }
 
     // Remove the original face
     brep.topology.faces.remove(face_id);
 
     // Add 3D curve for the split line (chord)
-    brep.geometry.add_curve_3d(Box::new(vcad_kernel_geom::Line3d::from_points(start_pt, end_pt)));
+    brep.geometry
+        .add_curve_3d(Box::new(vcad_kernel_geom::Line3d::from_points(
+            start_pt, end_pt,
+        )));
 
     SplitResult {
         sub_faces: vec![face1, face2],
@@ -2621,9 +2707,7 @@ pub fn split_circular_disk_face(
     segments: u32,
 ) -> SplitResult {
     match curve {
-        IntersectionCurve::Line(line) => {
-            split_circular_face_by_line(brep, face_id, line, segments)
-        }
+        IntersectionCurve::Line(line) => split_circular_face_by_line(brep, face_id, line, segments),
         IntersectionCurve::TwoLines(line1, line2) => {
             // Split by the first line, then by the second
             let result1 = split_circular_face_by_line(brep, face_id, line1, segments);
@@ -2653,11 +2737,15 @@ pub fn split_circular_disk_face(
                     all_faces.extend(result2.sub_faces);
                 }
             }
-            SplitResult { sub_faces: all_faces }
+            SplitResult {
+                sub_faces: all_faces,
+            }
         }
         _ => {
             // No split for other curve types on circular faces
-            SplitResult { sub_faces: vec![face_id] }
+            SplitResult {
+                sub_faces: vec![face_id],
+            }
         }
     }
 }
@@ -2797,8 +2885,10 @@ mod tests {
             10.0,
             vcad_kernel_math::Vec3::new(0.0, 0.0, 1.0),
         );
-        println!("Circle: center=({:.1},{:.1},{:.1}), r={:.1}",
-            circle.center.x, circle.center.y, circle.center.z, circle.radius);
+        println!(
+            "Circle: center=({:.1},{:.1},{:.1}), r={:.1}",
+            circle.center.x, circle.center.y, circle.center.z, circle.radius
+        );
 
         // Check if circle is partially inside
         let is_partial = circle_partially_inside_polygon(&verts, &circle);
@@ -2808,7 +2898,11 @@ mod tests {
         let initial_faces = brep.topology.faces.len();
         let result = split_planar_face_by_circle(&mut brep, z0_face_id, &circle, 32);
         println!("Split result: {} sub-faces", result.sub_faces.len());
-        println!("Total faces after: {} (was {})", brep.topology.faces.len(), initial_faces);
+        println!(
+            "Total faces after: {} (was {})",
+            brep.topology.faces.len(),
+            initial_faces
+        );
 
         // Print result face info
         for &fid in &result.sub_faces {
@@ -2825,8 +2919,15 @@ mod tests {
                 let min_y = vs.iter().map(|v| v.y).fold(f64::INFINITY, f64::min);
                 let max_y = vs.iter().map(|v| v.y).fold(f64::NEG_INFINITY, f64::max);
 
-                println!("  {:?}: {} verts, x=[{:.1},{:.1}], y=[{:.1},{:.1}]",
-                    fid, vs.len(), min_x, max_x, min_y, max_y);
+                println!(
+                    "  {:?}: {} verts, x=[{:.1},{:.1}], y=[{:.1},{:.1}]",
+                    fid,
+                    vs.len(),
+                    min_x,
+                    max_x,
+                    min_y,
+                    max_y
+                );
             }
         }
 

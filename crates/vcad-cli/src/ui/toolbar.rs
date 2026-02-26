@@ -91,8 +91,7 @@ impl ToolInput {
     /// Format the final command string.
     pub fn format_command(&self) -> String {
         if self.text_mode {
-            self.command_template
-                .replace("{}", &self.edit_buf)
+            self.command_template.replace("{}", &self.edit_buf)
         } else {
             let val = if self.editing {
                 self.edit_buf.parse::<f64>().unwrap_or(self.value)
@@ -111,49 +110,199 @@ pub fn sub_tools(tab: usize) -> &'static [SubTool] {
         0 => &[],
         // Create
         1 => &[
-            SubTool { icon: "\u{25A1}", label: "Box", command: "cube", shortcut: None, needs_selection: false },
-            SubTool { icon: "\u{25CB}", label: "Cyl", command: "cylinder", shortcut: None, needs_selection: false },
-            SubTool { icon: "\u{25CF}", label: "Sph", command: "sphere", shortcut: None, needs_selection: false },
-            SubTool { icon: "\u{25B3}", label: "Cone", command: "cone", shortcut: None, needs_selection: false },
-            SubTool { icon: "\u{270E}", label: "Sketch", command: "sketch", shortcut: Some("S"), needs_selection: false },
+            SubTool {
+                icon: "\u{25A1}",
+                label: "Box",
+                command: "cube",
+                shortcut: None,
+                needs_selection: false,
+            },
+            SubTool {
+                icon: "\u{25CB}",
+                label: "Cyl",
+                command: "cylinder",
+                shortcut: None,
+                needs_selection: false,
+            },
+            SubTool {
+                icon: "\u{25CF}",
+                label: "Sph",
+                command: "sphere",
+                shortcut: None,
+                needs_selection: false,
+            },
+            SubTool {
+                icon: "\u{25B3}",
+                label: "Cone",
+                command: "cone",
+                shortcut: None,
+                needs_selection: false,
+            },
+            SubTool {
+                icon: "\u{270E}",
+                label: "Sketch",
+                command: "sketch",
+                shortcut: Some("S"),
+                needs_selection: false,
+            },
         ],
         // Transform
         2 => &[
-            SubTool { icon: "\u{2195}", label: "Move", command: "move", shortcut: Some("wasd"), needs_selection: true },
-            SubTool { icon: "\u{21BB}", label: "Rotate", command: "rotate", shortcut: None, needs_selection: true },
-            SubTool { icon: "\u{2922}", label: "Scale", command: "scale", shortcut: None, needs_selection: true },
+            SubTool {
+                icon: "\u{2195}",
+                label: "Move",
+                command: "move",
+                shortcut: Some("wasd"),
+                needs_selection: true,
+            },
+            SubTool {
+                icon: "\u{21BB}",
+                label: "Rotate",
+                command: "rotate",
+                shortcut: None,
+                needs_selection: true,
+            },
+            SubTool {
+                icon: "\u{2922}",
+                label: "Scale",
+                command: "scale",
+                shortcut: None,
+                needs_selection: true,
+            },
         ],
         // Combine
         3 => &[
-            SubTool { icon: "\u{222A}", label: "Union", command: "union", shortcut: None, needs_selection: true },
-            SubTool { icon: "\u{2216}", label: "Diff", command: "difference", shortcut: None, needs_selection: true },
-            SubTool { icon: "\u{2229}", label: "Isect", command: "intersection", shortcut: None, needs_selection: true },
+            SubTool {
+                icon: "\u{222A}",
+                label: "Union",
+                command: "union",
+                shortcut: None,
+                needs_selection: true,
+            },
+            SubTool {
+                icon: "\u{2216}",
+                label: "Diff",
+                command: "difference",
+                shortcut: None,
+                needs_selection: true,
+            },
+            SubTool {
+                icon: "\u{2229}",
+                label: "Isect",
+                command: "intersection",
+                shortcut: None,
+                needs_selection: true,
+            },
         ],
         // Modify
         4 => &[
-            SubTool { icon: "\u{25E0}", label: "Fillet", command: "fillet", shortcut: None, needs_selection: true },
-            SubTool { icon: "\u{2B1F}", label: "Chamfer", command: "chamfer", shortcut: None, needs_selection: true },
-            SubTool { icon: "\u{25A3}", label: "Shell", command: "shell", shortcut: None, needs_selection: true },
-            SubTool { icon: "\u{2237}", label: "Pattern", command: "pattern", shortcut: None, needs_selection: true },
-            SubTool { icon: "\u{2194}", label: "Mirror", command: "mirror", shortcut: None, needs_selection: true },
+            SubTool {
+                icon: "\u{25E0}",
+                label: "Fillet",
+                command: "fillet",
+                shortcut: None,
+                needs_selection: true,
+            },
+            SubTool {
+                icon: "\u{2B1F}",
+                label: "Chamfer",
+                command: "chamfer",
+                shortcut: None,
+                needs_selection: true,
+            },
+            SubTool {
+                icon: "\u{25A3}",
+                label: "Shell",
+                command: "shell",
+                shortcut: None,
+                needs_selection: true,
+            },
+            SubTool {
+                icon: "\u{2237}",
+                label: "Pattern",
+                command: "pattern",
+                shortcut: None,
+                needs_selection: true,
+            },
+            SubTool {
+                icon: "\u{2194}",
+                label: "Mirror",
+                command: "mirror",
+                shortcut: None,
+                needs_selection: true,
+            },
         ],
         // Assembly — placeholder sub-tools
         5 => &[
-            SubTool { icon: "\u{2B12}", label: "Part", command: "__assembly_stub", shortcut: None, needs_selection: false },
-            SubTool { icon: "\u{229E}", label: "Instance", command: "__assembly_stub", shortcut: None, needs_selection: false },
-            SubTool { icon: "\u{2699}", label: "Joint", command: "__assembly_stub", shortcut: None, needs_selection: false },
+            SubTool {
+                icon: "\u{2B12}",
+                label: "Part",
+                command: "__assembly_stub",
+                shortcut: None,
+                needs_selection: false,
+            },
+            SubTool {
+                icon: "\u{229E}",
+                label: "Instance",
+                command: "__assembly_stub",
+                shortcut: None,
+                needs_selection: false,
+            },
+            SubTool {
+                icon: "\u{2699}",
+                label: "Joint",
+                command: "__assembly_stub",
+                shortcut: None,
+                needs_selection: false,
+            },
         ],
         // Simulate — placeholder sub-tools
         6 => &[
-            SubTool { icon: "\u{25B6}", label: "Play", command: "__simulate_stub", shortcut: None, needs_selection: false },
-            SubTool { icon: "\u{23F8}", label: "Pause", command: "__simulate_stub", shortcut: None, needs_selection: false },
-            SubTool { icon: "\u{23ED}", label: "Step", command: "__simulate_stub", shortcut: None, needs_selection: false },
+            SubTool {
+                icon: "\u{25B6}",
+                label: "Play",
+                command: "__simulate_stub",
+                shortcut: None,
+                needs_selection: false,
+            },
+            SubTool {
+                icon: "\u{23F8}",
+                label: "Pause",
+                command: "__simulate_stub",
+                shortcut: None,
+                needs_selection: false,
+            },
+            SubTool {
+                icon: "\u{23ED}",
+                label: "Step",
+                command: "__simulate_stub",
+                shortcut: None,
+                needs_selection: false,
+            },
         ],
         // Export
         7 => &[
-            SubTool { icon: "\u{2B07}", label: "STL", command: "export_stl", shortcut: None, needs_selection: false },
-            SubTool { icon: "\u{2B07}", label: "STEP", command: "export_step", shortcut: None, needs_selection: false },
-            SubTool { icon: "\u{1F4BE}", label: "Save", command: "save", shortcut: Some("C-s"), needs_selection: false },
+            SubTool {
+                icon: "\u{2B07}",
+                label: "STL",
+                command: "export_stl",
+                shortcut: None,
+                needs_selection: false,
+            },
+            SubTool {
+                icon: "\u{2B07}",
+                label: "STEP",
+                command: "export_step",
+                shortcut: None,
+                needs_selection: false,
+            },
+            SubTool {
+                icon: "\u{1F4BE}",
+                label: "Save",
+                command: "save",
+                shortcut: Some("C-s"),
+                needs_selection: false,
+            },
         ],
         _ => &[],
     }
@@ -251,7 +400,14 @@ fn render_toolbar(
         if i > 0 && cx + 2 < area.x + area.width {
             set_char(buf, cx, tab_row, ' ', theme::SURFACE(), theme::SURFACE());
             cx += 1;
-            set_char(buf, cx, tab_row, '\u{2502}', theme::BORDER(), theme::SURFACE());
+            set_char(
+                buf,
+                cx,
+                tab_row,
+                '\u{2502}',
+                theme::BORDER(),
+                theme::SURFACE(),
+            );
             cx += 1;
             set_char(buf, cx, tab_row, ' ', theme::SURFACE(), theme::SURFACE());
             cx += 1;
@@ -293,8 +449,22 @@ fn render_toolbar(
     if has_sub_row {
         // Separator line between tabs and sub-tools
         let sep_y = area.y + 2;
-        set_char(buf, left, sep_y, '\u{251C}', theme::BORDER(), theme::SURFACE());
-        set_char(buf, right, sep_y, '\u{2524}', theme::BORDER(), theme::SURFACE());
+        set_char(
+            buf,
+            left,
+            sep_y,
+            '\u{251C}',
+            theme::BORDER(),
+            theme::SURFACE(),
+        );
+        set_char(
+            buf,
+            right,
+            sep_y,
+            '\u{2524}',
+            theme::BORDER(),
+            theme::SURFACE(),
+        );
         for x in (left + 1)..right {
             set_char(buf, x, sep_y, '\u{2500}', theme::BORDER(), theme::SURFACE());
         }
@@ -305,7 +475,17 @@ fn render_toolbar(
         if let Some(ti) = tool_input {
             render_tool_input(buf, ti, area, sub_row, bot, active_tab);
         } else {
-            render_sub_tools(buf, tools, area, sub_row, bot, active_tab, mouse_col, mouse_row, selected_count);
+            render_sub_tools(
+                buf,
+                tools,
+                area,
+                sub_row,
+                bot,
+                active_tab,
+                mouse_col,
+                mouse_row,
+                selected_count,
+            );
         }
     }
 }
@@ -377,7 +557,14 @@ fn render_tool_input(
         "\u{2190}\u{2192}:scrub  Enter:apply  Esc:cancel"
     };
     let hint_x = area.x + (area.width.saturating_sub(hints.len() as u16)) / 2;
-    set_string(buf, hint_x, bot, hints, theme::TEXT_MUTED(), theme::SURFACE());
+    set_string(
+        buf,
+        hint_x,
+        bot,
+        hints,
+        theme::TEXT_MUTED(),
+        theme::SURFACE(),
+    );
 }
 
 /// Render the normal sub-tool buttons.
@@ -404,8 +591,8 @@ fn render_sub_tools(
             icon_w + 1 + t.label.len() as u16
         })
         .collect();
-    let tools_total: u16 = tool_widths.iter().sum::<u16>()
-        + (tools.len().saturating_sub(1) as u16) * 3; // 3 chars between tools
+    let tools_total: u16 =
+        tool_widths.iter().sum::<u16>() + (tools.len().saturating_sub(1) as u16) * 3; // 3 chars between tools
     let tools_start = area.x + (area.width.saturating_sub(tools_total)) / 2;
 
     let mut tx = tools_start;
@@ -413,7 +600,14 @@ fn render_sub_tools(
         if i > 0 {
             set_char(buf, tx, sub_row, ' ', theme::SURFACE(), theme::SURFACE());
             tx += 1;
-            set_char(buf, tx, sub_row, '\u{00B7}', theme::BORDER(), theme::SURFACE());
+            set_char(
+                buf,
+                tx,
+                sub_row,
+                '\u{00B7}',
+                theme::BORDER(),
+                theme::SURFACE(),
+            );
             tx += 1;
             set_char(buf, tx, sub_row, ' ', theme::SURFACE(), theme::SURFACE());
             tx += 1;
@@ -471,7 +665,14 @@ fn render_sub_tools(
     }
     if !hints.is_empty() {
         let hint_x = area.x + (area.width.saturating_sub(hints.len() as u16)) / 2;
-        set_string(buf, hint_x, bot, &hints, theme::TEXT_MUTED(), theme::SURFACE());
+        set_string(
+            buf,
+            hint_x,
+            bot,
+            &hints,
+            theme::TEXT_MUTED(),
+            theme::SURFACE(),
+        );
     }
 }
 

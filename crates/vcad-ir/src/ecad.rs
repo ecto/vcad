@@ -243,7 +243,10 @@ pub struct StackupLayer {
     #[serde(rename = "copperThickness", skip_serializing_if = "Option::is_none")]
     pub copper_thickness: Option<f64>,
     /// Dielectric thickness in mm (distance to next copper layer).
-    #[serde(rename = "dielectricThickness", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "dielectricThickness",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub dielectric_thickness: Option<f64>,
     /// Dielectric constant (relative permittivity).
     #[serde(rename = "dielectricEr", skip_serializing_if = "Option::is_none")]

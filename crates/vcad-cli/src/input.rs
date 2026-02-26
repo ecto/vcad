@@ -15,8 +15,14 @@ use crate::tui::TuiMode;
 pub enum DragState {
     #[default]
     None,
-    Orbit { start_x: u16, start_y: u16 },
-    Pan { start_x: u16, start_y: u16 },
+    Orbit {
+        start_x: u16,
+        start_y: u16,
+    },
+    Pan {
+        start_x: u16,
+        start_y: u16,
+    },
 }
 
 /// Tracks double-click detection.
@@ -55,9 +61,9 @@ pub enum HitRegion {
     Viewport,
     TopBar,
     SidebarToggle,
-    Sidebar(usize),     // part index
-    Toolbar(usize),     // tab index
-    SubTool(usize),     // sub-tool index within active tab
+    Sidebar(usize),        // part index
+    Toolbar(usize),        // tab index
+    SubTool(usize),        // sub-tool index within active tab
     CommandPalette(usize), // item index
     Terminal,
     StatusBar,
@@ -167,7 +173,12 @@ fn handle_sub_tool_click(app: &mut App, tool_idx: usize) -> anyhow::Result<bool>
         // Transform tools — open ToolInput
         "move" => {
             let mut ti = ToolInput::numeric(
-                "Move", 5.0, -1000.0, 1000.0, 1.0, "mm",
+                "Move",
+                5.0,
+                -1000.0,
+                1000.0,
+                1.0,
+                "mm",
                 "move {} 0 0".to_string(),
             );
             ti.axis = Some("X");
@@ -175,7 +186,12 @@ fn handle_sub_tool_click(app: &mut App, tool_idx: usize) -> anyhow::Result<bool>
         }
         "rotate" => {
             let mut ti = ToolInput::numeric(
-                "Rotate", 15.0, -360.0, 360.0, 15.0, "\u{00B0}",
+                "Rotate",
+                15.0,
+                -360.0,
+                360.0,
+                15.0,
+                "\u{00B0}",
                 "rotate 0 {} 0".to_string(),
             );
             ti.axis = Some("Y");
@@ -183,7 +199,12 @@ fn handle_sub_tool_click(app: &mut App, tool_idx: usize) -> anyhow::Result<bool>
         }
         "scale" => {
             app.tool_input = Some(ToolInput::numeric(
-                "Scale", 2.0, 0.01, 100.0, 0.1, "\u{00D7}",
+                "Scale",
+                2.0,
+                0.01,
+                100.0,
+                0.1,
+                "\u{00D7}",
                 "scale {}".to_string(),
             ));
         }
@@ -191,25 +212,45 @@ fn handle_sub_tool_click(app: &mut App, tool_idx: usize) -> anyhow::Result<bool>
         // Modify tools — some need ToolInput, some execute directly
         "fillet" => {
             app.tool_input = Some(ToolInput::numeric(
-                "Fillet Radius", 2.0, 0.1, 50.0, 0.5, "mm",
+                "Fillet Radius",
+                2.0,
+                0.1,
+                50.0,
+                0.5,
+                "mm",
                 "fillet {}".to_string(),
             ));
         }
         "chamfer" => {
             app.tool_input = Some(ToolInput::numeric(
-                "Chamfer Dist", 2.0, 0.1, 50.0, 0.5, "mm",
+                "Chamfer Dist",
+                2.0,
+                0.1,
+                50.0,
+                0.5,
+                "mm",
                 "chamfer {}".to_string(),
             ));
         }
         "shell" => {
             app.tool_input = Some(ToolInput::numeric(
-                "Shell Thickness", 1.0, 0.1, 20.0, 0.5, "mm",
+                "Shell Thickness",
+                1.0,
+                0.1,
+                20.0,
+                0.5,
+                "mm",
                 "shell {}".to_string(),
             ));
         }
         "pattern" => {
             app.tool_input = Some(ToolInput::numeric(
-                "Pattern Count", 3.0, 2.0, 20.0, 1.0, "",
+                "Pattern Count",
+                3.0,
+                2.0,
+                20.0,
+                1.0,
+                "",
                 "pattern {}".to_string(),
             ));
         }
@@ -221,13 +262,15 @@ fn handle_sub_tool_click(app: &mut App, tool_idx: usize) -> anyhow::Result<bool>
         // Export tools — text input for filename
         "export_stl" => {
             app.tool_input = Some(ToolInput::text(
-                "Export STL", "output.stl",
+                "Export STL",
+                "output.stl",
                 "export {}".to_string(),
             ));
         }
         "export_step" => {
             app.tool_input = Some(ToolInput::text(
-                "Export STEP", "output.step",
+                "Export STEP",
+                "output.step",
                 "export {}".to_string(),
             ));
         }
@@ -691,8 +734,9 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
             KeyCode::Char('u') => {
                 app.undo()?;
             }
-            KeyCode::Char('r') if !key.modifiers.contains(KeyModifiers::CONTROL)
-                && !key.modifiers.contains(KeyModifiers::SHIFT) =>
+            KeyCode::Char('r')
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::SHIFT) =>
             {
                 app.redo()?;
             }

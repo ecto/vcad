@@ -57,10 +57,7 @@ pub struct SmartDefaults {
 /// Recommend print settings based on BRep analysis and printer parameters.
 ///
 /// Returns settings + human-readable explanations for each choice.
-pub fn recommend_settings(
-    analysis: &PrintAnalysis,
-    params: &PrinterParams,
-) -> SmartDefaults {
+pub fn recommend_settings(analysis: &PrintAnalysis, params: &PrinterParams) -> SmartDefaults {
     let nozzle = params.nozzle_diameter;
     let line_width = nozzle * 1.125; // Standard 112.5% of nozzle
     let mut recommendations = Vec::new();
@@ -178,8 +175,12 @@ pub fn recommend_settings(
             value: "warning".into(),
             reason: format!(
                 "Part ({:.0}x{:.0}x{:.0}mm) exceeds build volume ({:.0}x{:.0}x{:.0}mm)",
-                analysis.bbox_size[0], analysis.bbox_size[1], analysis.bbox_size[2],
-                params.bed_x, params.bed_y, params.bed_z
+                analysis.bbox_size[0],
+                analysis.bbox_size[1],
+                analysis.bbox_size[2],
+                params.bed_x,
+                params.bed_y,
+                params.bed_z
             ),
         });
     }

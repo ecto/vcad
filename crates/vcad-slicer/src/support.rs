@@ -136,7 +136,8 @@ pub fn detect_overhangs(
             for &(tri_idx, z_min, z_max) in &overhang_triangles {
                 if layer.z >= z_min - settings.z_distance && layer.z <= z_max {
                     // Project triangle to XY and add to support region
-                    if let Some(poly) = project_triangle_to_xy(mesh, tri_idx, settings.xy_distance) {
+                    if let Some(poly) = project_triangle_to_xy(mesh, tri_idx, settings.xy_distance)
+                    {
                         support.regions.push(poly);
                     }
                 }
@@ -155,11 +156,7 @@ pub fn detect_overhangs(
 }
 
 /// Project a triangle to XY plane with offset.
-fn project_triangle_to_xy(
-    mesh: &TriangleMesh,
-    tri_idx: usize,
-    offset: f64,
-) -> Option<Polygon> {
+fn project_triangle_to_xy(mesh: &TriangleMesh, tri_idx: usize, offset: f64) -> Option<Polygon> {
     let i0 = mesh.indices[tri_idx * 3] as usize;
     let i1 = mesh.indices[tri_idx * 3 + 1] as usize;
     let i2 = mesh.indices[tri_idx * 3 + 2] as usize;

@@ -6,10 +6,13 @@ use vcad_kernel_math::Point3;
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_topo::{EdgeId, FaceId, HalfEdgeId, Orientation, ShellType, Topology, VertexId};
 
-use crate::rolling_ball::rolling_ball_blend;
-use crate::topology::{compute_centroid, compute_face_normal, extract_edges, extract_faces, pair_twin_half_edges, quantize, CurvedFaceInfo, EdgeInfo, FaceInfo};
-use crate::trim::{build_vertex_faces, compute_trim_vertices, TrimKey};
 use crate::fillet_planar::build_plane_plane_blend;
+use crate::rolling_ball::rolling_ball_blend;
+use crate::topology::{
+    compute_centroid, compute_face_normal, extract_edges, extract_faces, pair_twin_half_edges,
+    quantize, CurvedFaceInfo, EdgeInfo, FaceInfo,
+};
+use crate::trim::{build_vertex_faces, compute_trim_vertices, TrimKey};
 use crate::{classify_fillet_case, FilletCase, FilletResult};
 
 /// Fillet specific edges of a B-rep solid, supporting curved faces.
@@ -134,8 +137,17 @@ pub fn fillet_edges_detailed(
                 let fb = face_map.get(&edge_info.face_b);
                 if let (Some(fa), Some(fb)) = (fa, fb) {
                     if build_plane_plane_blend(
-                        edge_info, fa, fb, &trims, &faces, radius, brep,
-                        &mut vertex_cache, &mut new_topo, &mut new_geom, &mut all_faces,
+                        edge_info,
+                        fa,
+                        fb,
+                        &trims,
+                        &faces,
+                        radius,
+                        brep,
+                        &mut vertex_cache,
+                        &mut new_topo,
+                        &mut new_geom,
+                        &mut all_faces,
                     ) {
                         results.push(FilletResult::Success);
                     } else {
@@ -160,8 +172,14 @@ pub fn fillet_edges_detailed(
                     radius,
                 ) {
                     if let Some(()) = build_blend_quad(
-                        edge_info, &trims, &faces, torus,
-                        &mut vertex_cache, &mut new_topo, &mut new_geom, &mut all_faces,
+                        edge_info,
+                        &trims,
+                        &faces,
+                        torus,
+                        &mut vertex_cache,
+                        &mut new_topo,
+                        &mut new_geom,
+                        &mut all_faces,
                     ) {
                         results.push(FilletResult::Success);
                     } else {
@@ -177,14 +195,18 @@ pub fn fillet_edges_detailed(
                 }
             }
             FilletCase::CylinderCylinderCoaxial => {
-                if let Some(torus) = build_coaxial_cylinder_torus(
-                    surface_a.as_ref(),
-                    surface_b.as_ref(),
-                    radius,
-                ) {
+                if let Some(torus) =
+                    build_coaxial_cylinder_torus(surface_a.as_ref(), surface_b.as_ref(), radius)
+                {
                     if let Some(()) = build_blend_quad(
-                        edge_info, &trims, &faces, torus,
-                        &mut vertex_cache, &mut new_topo, &mut new_geom, &mut all_faces,
+                        edge_info,
+                        &trims,
+                        &faces,
+                        torus,
+                        &mut vertex_cache,
+                        &mut new_topo,
+                        &mut new_geom,
+                        &mut all_faces,
                     ) {
                         results.push(FilletResult::Success);
                     } else {
@@ -214,8 +236,14 @@ pub fn fillet_edges_detailed(
                 ) {
                     Some(bspline) => {
                         if let Some(()) = build_blend_quad_surface(
-                            edge_info, &trims, &faces, Box::new(bspline),
-                            &mut vertex_cache, &mut new_topo, &mut new_geom, &mut all_faces,
+                            edge_info,
+                            &trims,
+                            &faces,
+                            Box::new(bspline),
+                            &mut vertex_cache,
+                            &mut new_topo,
+                            &mut new_geom,
+                            &mut all_faces,
                         ) {
                             results.push(FilletResult::Success);
                         } else {
@@ -227,10 +255,7 @@ pub fn fillet_edges_detailed(
                     None => {
                         results.push(FilletResult::Unsupported {
                             edge_id: edge_info.edge_id,
-                            reason: format!(
-                                "rolling ball blend failed for {:?} edge",
-                                case
-                            ),
+                            reason: format!("rolling ball blend failed for {:?} edge", case),
                         });
                     }
                 }
@@ -296,7 +321,16 @@ fn build_blend_quad(
     new_geom: &mut GeometryStore,
     all_faces: &mut Vec<FaceId>,
 ) -> Option<()> {
-    build_blend_quad_surface(edge_info, trims, faces, Box::new(torus), vertex_cache, new_topo, new_geom, all_faces)
+    build_blend_quad_surface(
+        edge_info,
+        trims,
+        faces,
+        Box::new(torus),
+        vertex_cache,
+        new_topo,
+        new_geom,
+        all_faces,
+    )
 }
 
 /// Build a blend face quad with any surface.
@@ -318,9 +352,8 @@ fn build_blend_quad_surface(
 
     let surf_idx = new_geom.add_surface(surface);
     let solid_center = compute_centroid(faces);
-    let chamfer_center = Point3::from(
-        (pa_s.to_vec() + pa_e.to_vec() + pb_e.to_vec() + pb_s.to_vec()) * 0.25,
-    );
+    let chamfer_center =
+        Point3::from((pa_s.to_vec() + pa_e.to_vec() + pb_e.to_vec() + pb_s.to_vec()) * 0.25);
     let outward = chamfer_center - solid_center;
     let e1 = *pa_e - *pa_s;
     let e2 = *pb_s - *pa_s;
@@ -332,13 +365,11 @@ fn build_blend_quad_surface(
         vec![*pa_s, *pb_s, *pb_e, *pa_e]
     };
 
-    let get_or_create = |cache: &mut HashMap<[i64; 3], VertexId>,
-                         topo: &mut Topology,
-                         pos: Point3|
-     -> VertexId {
-        let key = quantize(pos);
-        *cache.entry(key).or_insert_with(|| topo.add_vertex(pos))
-    };
+    let get_or_create =
+        |cache: &mut HashMap<[i64; 3], VertexId>, topo: &mut Topology, pos: Point3| -> VertexId {
+            let key = quantize(pos);
+            *cache.entry(key).or_insert_with(|| topo.add_vertex(pos))
+        };
 
     let verts: Vec<VertexId> = positions
         .iter()

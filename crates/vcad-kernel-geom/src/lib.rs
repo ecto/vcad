@@ -718,7 +718,8 @@ impl Surface for TorusSurface {
         let tube_center_dir = cos_u * self.ref_dir.as_ref() + sin_u * self.y_dir();
 
         // d/dv: -r·sin(v)·tube_center_dir + r·cos(v)·axis
-        -self.minor_radius * sin_v * tube_center_dir + self.minor_radius * cos_v * self.axis.as_ref()
+        -self.minor_radius * sin_v * tube_center_dir
+            + self.minor_radius * cos_v * self.axis.as_ref()
     }
 
     fn domain(&self) -> ((f64, f64), (f64, f64)) {
@@ -1379,7 +1380,7 @@ mod tests {
     #[test]
     fn test_torus_evaluate() {
         let torus = TorusSurface::new(10.0, 3.0); // R=10, r=3
-        // u=0, v=0: outer equator, at (R+r, 0, 0) = (13, 0, 0)
+                                                  // u=0, v=0: outer equator, at (R+r, 0, 0) = (13, 0, 0)
         let pt = torus.evaluate(Point2::new(0.0, 0.0));
         assert!((pt.x - 13.0).abs() < 1e-10);
         assert!(pt.y.abs() < 1e-10);

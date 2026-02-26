@@ -444,8 +444,10 @@ impl SketchProfile {
         let (other_min, other_max) = other.bounding_box_2d();
 
         // If self's bbox is not inside other's bbox, it can't be contained
-        if self_min.x < other_min.x || self_max.x > other_max.x
-            || self_min.y < other_min.y || self_max.y > other_max.y
+        if self_min.x < other_min.x
+            || self_max.x > other_max.x
+            || self_min.y < other_min.y
+            || self_max.y > other_max.y
         {
             return false;
         }

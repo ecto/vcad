@@ -99,11 +99,8 @@ impl MarchingCubes {
                             let y1 = bounds[1] + cy1 as f64 * resolution;
                             let z1 = bounds[2] + cz1 as f64 * resolution;
 
-                            edge_verts[edge] = [
-                                x0 + t * (x1 - x0),
-                                y0 + t * (y1 - y0),
-                                z0 + t * (z1 - z0),
-                            ];
+                            edge_verts[edge] =
+                                [x0 + t * (x1 - x0), y0 + t * (y1 - y0), z0 + t * (z1 - z0)];
                         }
                     }
 

@@ -16,8 +16,7 @@ use crate::entities::{
 use crate::error::StepError;
 
 use vcad_kernel_geom::{
-    BilinearSurface, ConeSurface, CylinderSurface, Plane, SphereSurface, SurfaceKind,
-    TorusSurface,
+    BilinearSurface, ConeSurface, CylinderSurface, Plane, SphereSurface, SurfaceKind, TorusSurface,
 };
 use vcad_kernel_math::{Dir3, Vec3};
 use vcad_kernel_nurbs::BSplineSurface;
@@ -206,9 +205,12 @@ impl<'a> StepWriter<'a> {
                     )
                 }
                 SurfaceKind::Cone => {
-                    let cone = surface.as_any().downcast_ref::<ConeSurface>().ok_or_else(|| {
-                        StepError::InvalidGeometry("failed to downcast Cone surface".into())
-                    })?;
+                    let cone = surface
+                        .as_any()
+                        .downcast_ref::<ConeSurface>()
+                        .ok_or_else(|| {
+                            StepError::InvalidGeometry("failed to downcast Cone surface".into())
+                        })?;
                     let placement = AxisPlacement {
                         location: cone.apex,
                         axis: Some(cone.axis),
@@ -223,16 +225,24 @@ impl<'a> StepWriter<'a> {
                     )
                 }
                 SurfaceKind::Torus => {
-                    let torus = surface
-                        .as_any()
-                        .downcast_ref::<TorusSurface>()
-                        .ok_or_else(|| {
-                            StepError::InvalidGeometry("failed to downcast Torus surface".into())
-                        })?;
+                    let torus =
+                        surface
+                            .as_any()
+                            .downcast_ref::<TorusSurface>()
+                            .ok_or_else(|| {
+                                StepError::InvalidGeometry(
+                                    "failed to downcast Torus surface".into(),
+                                )
+                            })?;
                     let placement_id = self.write_axis_placement(&torus_to_placement(torus))?;
                     (
                         placement_id,
-                        write_toroidal_surface(torus.major_radius, torus.minor_radius, "", placement_id),
+                        write_toroidal_surface(
+                            torus.major_radius,
+                            torus.minor_radius,
+                            "",
+                            placement_id,
+                        ),
                     )
                 }
                 SurfaceKind::BSpline => {
@@ -240,9 +250,7 @@ impl<'a> StepWriter<'a> {
                         .as_any()
                         .downcast_ref::<BSplineSurface>()
                         .ok_or_else(|| {
-                            StepError::InvalidGeometry(
-                                "failed to downcast BSpline surface".into(),
-                            )
+                            StepError::InvalidGeometry("failed to downcast BSpline surface".into())
                         })?;
                     let entity = self.write_bspline_surface_entity(bspline);
                     self.emit(surf_id, &entity);
@@ -254,9 +262,7 @@ impl<'a> StepWriter<'a> {
                         .as_any()
                         .downcast_ref::<BilinearSurface>()
                         .ok_or_else(|| {
-                            StepError::InvalidGeometry(
-                                "failed to downcast Bilinear surface".into(),
-                            )
+                            StepError::InvalidGeometry("failed to downcast Bilinear surface".into())
                         })?;
                     if bilinear.is_planar() {
                         let placement_id =
@@ -573,10 +579,7 @@ mod tests {
     }
 
     /// Helper: build a minimal BRepSolid with a single face using the given surface.
-    fn make_single_face_solid(
-        surface: Box<dyn Surface>,
-        corners: [Point3; 4],
-    ) -> BRepSolid {
+    fn make_single_face_solid(surface: Box<dyn Surface>, corners: [Point3; 4]) -> BRepSolid {
         let mut topo = Topology::new();
         let mut geom = GeometryStore::new();
 
@@ -630,12 +633,7 @@ mod tests {
             }
         }
         let knots = vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
-        let bspline = BSplineSurface::new(
-            control_points,
-            4, 4,
-            knots.clone(), knots,
-            3, 3,
-        );
+        let bspline = BSplineSurface::new(control_points, 4, 4, knots.clone(), knots, 3, 3);
 
         let corners = [
             bspline.eval(0.0, 0.0),
@@ -733,16 +731,23 @@ mod tests {
                 control_points.push(Point3::new(
                     u as f64 * 10.0,
                     v as f64 * 10.0,
-                    if (u == 1 || u == 2) && (v == 1 || v == 2) { 5.0 } else { 0.0 },
+                    if (u == 1 || u == 2) && (v == 1 || v == 2) {
+                        5.0
+                    } else {
+                        0.0
+                    },
                 ));
             }
         }
         let knots = vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
         let bspline = BSplineSurface::new(
             control_points.clone(),
-            4, 4,
-            knots.clone(), knots.clone(),
-            3, 3,
+            4,
+            4,
+            knots.clone(),
+            knots.clone(),
+            3,
+            3,
         );
 
         let corners = [
@@ -781,7 +786,10 @@ mod tests {
         assert_eq!(imported_bspline.degree_v, 3);
         assert_eq!(imported_bspline.control_points.len(), 16);
 
-        for (orig, imported) in control_points.iter().zip(imported_bspline.control_points.iter()) {
+        for (orig, imported) in control_points
+            .iter()
+            .zip(imported_bspline.control_points.iter())
+        {
             assert!(
                 (orig.x - imported.x).abs() < 1e-6
                     && (orig.y - imported.y).abs() < 1e-6
@@ -796,12 +804,8 @@ mod tests {
         for &(u, v) in &[(0.0, 0.0), (0.5, 0.5), (1.0, 1.0), (0.25, 0.75)] {
             let orig_pt = {
                 let knots = vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
-                let orig = BSplineSurface::new(
-                    control_points.clone(),
-                    4, 4,
-                    knots.clone(), knots,
-                    3, 3,
-                );
+                let orig =
+                    BSplineSurface::new(control_points.clone(), 4, 4, knots.clone(), knots, 3, 3);
                 orig.eval(u, v)
             };
             let imported_pt = imported_bspline.eval(u, v);
@@ -810,7 +814,10 @@ mod tests {
                     && (orig_pt.y - imported_pt.y).abs() < 1e-6
                     && (orig_pt.z - imported_pt.z).abs() < 1e-6,
                 "Surface eval mismatch at ({}, {}): {:?} vs {:?}",
-                u, v, orig_pt, imported_pt
+                u,
+                v,
+                orig_pt,
+                imported_pt
             );
         }
     }
