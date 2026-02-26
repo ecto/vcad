@@ -7,7 +7,7 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use vcad_kernel_constraints::jacobian::{compute_all_residuals, compute_jacobian};
 use vcad_kernel_constraints::symbolic::CompiledSystem;
-use vcad_kernel_constraints::{Constraint, EntityRef, Sketch2D};
+use vcad_kernel_constraints::{EntityRef, Sketch2D};
 
 // =============================================================================
 // Sketch builders
@@ -117,9 +117,9 @@ fn make_large_sketch() -> Sketch2D {
 
     // Create horizontal lines and constrain them
     let mut h_lines = Vec::new();
-    for r in 0..rows {
-        for c in 0..(cols - 1) {
-            let l = s.add_line(pts[r][c], pts[r][c + 1]);
+    for row in &pts {
+        for pair in row.windows(2) {
+            let l = s.add_line(pair[0], pair[1]);
             h_lines.push(l);
             s.constrain_horizontal(l);
             s.constrain_length(l, 10.0);
@@ -128,9 +128,9 @@ fn make_large_sketch() -> Sketch2D {
 
     // Create vertical lines and constrain them
     let mut v_lines = Vec::new();
-    for r in 0..(rows - 1) {
-        for c in 0..cols {
-            let l = s.add_line(pts[r][c], pts[r + 1][c]);
+    for row_pair in pts.windows(2) {
+        for (p_top, p_bot) in row_pair[0].iter().zip(row_pair[1].iter()) {
+            let l = s.add_line(*p_top, *p_bot);
             v_lines.push(l);
             s.constrain_vertical(l);
             s.constrain_length(l, 8.0);

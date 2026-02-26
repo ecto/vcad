@@ -6109,6 +6109,7 @@ version = "0.8.0"
 dependencies = [
  "approx",
  "bytemuck",
+ "criterion",
  "pollster",
  "slotmap",
  "tang",

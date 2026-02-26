@@ -26,6 +26,11 @@ pollster = { version = "0.4", optional = true }
 
 [dev-dependencies]
 approx = "0.5"
+criterion = { version = "0.5", features = ["html_reports"] }
 wgpu = { version = "23", features = ["webgpu", "webgl"] }
 bytemuck = { version = "1.14", features = ["derive"] }
 pollster = "0.4"
+
+[[bench]]
+name = "jacobian"
+harness = false
