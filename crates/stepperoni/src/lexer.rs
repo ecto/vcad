@@ -136,8 +136,7 @@ impl<'a> Lexer<'a> {
             b'\'' => self.read_string()?,
             b'.' => self.read_enum()?,
             b'-' | b'+'
-                if self.pos + 1 < self.input.len()
-                    && self.input[self.pos + 1].is_ascii_digit() =>
+                if self.pos + 1 < self.input.len() && self.input[self.pos + 1].is_ascii_digit() =>
             {
                 self.read_number()?
             }
