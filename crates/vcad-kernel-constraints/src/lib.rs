@@ -89,6 +89,7 @@
 mod constraint;
 mod entity;
 mod export;
+pub mod gpu;
 mod jacobian;
 mod residual;
 mod sketch;

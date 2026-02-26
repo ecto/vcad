@@ -6,6 +6,10 @@ license.workspace = true
 repository.workspace = true
 description = "2D sketch constraint solver for vcad kernel using Levenberg-Marquardt optimization"
 
+[features]
+default = []
+gpu = ["wgpu", "bytemuck", "pollster"]
+
 [dependencies]
 vcad-kernel-math = { workspace = true }
 vcad-kernel-sketch = { workspace = true }
@@ -15,5 +19,13 @@ tang-expr = { workspace = true }
 slotmap = { workspace = true }
 thiserror = { workspace = true }
 
+# GPU dependencies (optional)
+wgpu = { version = "23", features = ["webgpu", "webgl"], optional = true }
+bytemuck = { version = "1.14", features = ["derive"], optional = true }
+pollster = { version = "0.4", optional = true }
+
 [dev-dependencies]
 approx = "0.5"
+wgpu = { version = "23", features = ["webgpu", "webgl"] }
+bytemuck = { version = "1.14", features = ["derive"] }
+pollster = "0.4"
