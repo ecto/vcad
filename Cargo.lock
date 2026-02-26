@@ -2792,6 +2792,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tang-expr"
+version = "0.1.0"
+dependencies = [
+ "tang",
+]
+
+[[package]]
 name = "tang-la"
 version = "0.1.0"
 dependencies = [
@@ -3348,6 +3355,8 @@ version = "0.8.0"
 dependencies = [
  "approx",
  "slotmap",
+ "tang",
+ "tang-expr",
  "tang-la",
  "thiserror 2.0.18",
  "vcad-kernel-math",

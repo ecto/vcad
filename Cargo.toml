@@ -62,6 +62,7 @@ serde_json = "1"
 thiserror = "2"
 tang = { path = "../tang/crates/tang" }
 tang-la = { path = "../tang/crates/tang-la" }
+tang-expr = { path = "../tang/crates/tang-expr" }
 slotmap = "1"
 anyhow = "1"
 toml = "0.8"

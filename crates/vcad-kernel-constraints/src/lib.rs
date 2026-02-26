@@ -93,6 +93,7 @@ mod jacobian;
 mod residual;
 mod sketch;
 mod solver;
+pub mod symbolic;
 
 pub use constraint::{Constraint, EntityRef};
 pub use entity::{EntityId, SketchArc, SketchCircle, SketchEntity, SketchLine, SketchPoint};

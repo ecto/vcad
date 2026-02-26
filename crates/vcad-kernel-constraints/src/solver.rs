@@ -6,8 +6,8 @@
 use crate::constraint::Constraint;
 use crate::entity::{EntityId, SketchEntity};
 use crate::jacobian::{compute_all_residuals, compute_jacobian, residual_norm_squared};
-use tang_la::{DMat, DVec};
 use slotmap::SlotMap;
+use tang_la::{DMat, DVec};
 
 /// Configuration for the Levenberg-Marquardt solver.
 #[derive(Debug, Clone)]

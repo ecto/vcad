@@ -7,8 +7,8 @@
 use crate::constraint::Constraint;
 use crate::entity::{EntityId, SketchEntity};
 use crate::residual::compute_constraint_residuals;
-use tang_la::DMat;
 use slotmap::SlotMap;
+use tang_la::DMat;
 
 /// Step size for finite difference computation.
 const EPSILON: f64 = 1e-8;
