@@ -132,14 +132,9 @@ pub fn solve(
             };
         }
 
-        // Evaluate Jacobian and residuals via compiled closures
-        let j = system.eval_jacobian(params);
-        let r = DVec::from_vec(system.eval_residuals(params));
-
-        // Compute J'J and J'r
-        let jt = j.transpose();
-        let jtj = &jt * &j;
-        let jtr = &jt * &r;
+        // Evaluate J'J and J'r using sparse Jacobian — skips known-zero entries
+        let (jtj, jtr_vec) = system.eval_jtj_jtr(params);
+        let jtr = DVec::from_vec(jtr_vec);
 
         // Try to take a step with current lambda
         let step_result = try_step(params, &jtj, &jtr, lambda, &system);
