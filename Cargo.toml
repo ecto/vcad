@@ -48,7 +48,6 @@ members = [
     "crates/vcad-embroidery-pes",
     "crates/vcad-embroidery-dst",
     "crates/vcad-embroidery-wasm",
-    "crates/vcad-desktop",
 ]
 
 [workspace.package]
