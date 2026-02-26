@@ -1513,4 +1513,52 @@ mod tests {
         assert!(max[0] <= 40.1 && max[1] <= 40.1 && max[2] <= 10.1,
             "Max should be ~[40,40,10], got {:?}", max);
     }
+
+    fn make_torus(major_radius: f64, minor_radius: f64) -> BRepSolid {
+        use vcad_kernel_geom::{GeometryStore, TorusSurface};
+        use vcad_kernel_topo::{Orientation, ShellType, Topology};
+
+        let mut topo = Topology::new();
+        let mut geom = GeometryStore::new();
+
+        let torus_surf = TorusSurface::new(major_radius, minor_radius);
+        let torus_idx = geom.add_surface(Box::new(torus_surf));
+
+        let v_seam = topo.add_vertex(Point3::new(major_radius + minor_radius, 0.0, 0.0));
+
+        let he_u_fwd = topo.add_half_edge(v_seam);
+        let he_v_fwd = topo.add_half_edge(v_seam);
+        let he_u_rev = topo.add_half_edge(v_seam);
+        let he_v_rev = topo.add_half_edge(v_seam);
+
+        let face_loop = topo.add_loop(&[he_u_fwd, he_v_fwd, he_u_rev, he_v_rev]);
+        let face = topo.add_face(face_loop, torus_idx, Orientation::Forward);
+
+        topo.add_edge(he_u_fwd, he_u_rev);
+        topo.add_edge(he_v_fwd, he_v_rev);
+
+        let shell = topo.add_shell(vec![face], ShellType::Outer);
+        let solid_id = topo.add_solid(shell);
+
+        BRepSolid { topology: topo, geometry: geom, solid_id }
+    }
+
+    #[test]
+    fn test_torus_boolean_subtract() {
+        let big_cube = make_cube(30.0, 30.0, 30.0);
+        let mut torus = make_torus(5.0, 2.0);
+        translate_brep(&mut torus, 15.0, 15.0, 5.0);
+
+        let result = boolean_op(&big_cube, &torus, BooleanOp::Difference, 32);
+        let mesh = result.to_mesh(32);
+
+        assert!(!mesh.indices.is_empty(), "Result mesh should have triangles");
+
+        // Note: full torus subtraction requires torus-plane SSI to produce
+        // proper split curves. For now, verify the pipeline doesn't crash
+        // and produces a valid mesh.
+        let volume = compute_mesh_volume(&mesh);
+        assert!(volume > 0.0, "Volume should be positive");
+        assert!(volume <= 27000.0 + 1.0, "Volume {:.1} should not exceed box", volume);
+    }
 }

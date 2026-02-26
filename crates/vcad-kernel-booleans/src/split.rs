@@ -1703,6 +1703,13 @@ pub fn is_spherical_face(brep: &BRepSolid, face_id: FaceId) -> bool {
     surface.surface_type() == vcad_kernel_geom::SurfaceKind::Sphere
 }
 
+/// Check if a face's underlying surface is a torus.
+pub fn is_toroidal_face(brep: &BRepSolid, face_id: FaceId) -> bool {
+    let face = &brep.topology.faces[face_id];
+    let surface = &brep.geometry.surfaces[face.surface_index];
+    surface.surface_type() == vcad_kernel_geom::SurfaceKind::Torus
+}
+
 /// Split a cylindrical face along a circle intersection curve.
 ///
 /// When a plane perpendicular to the cylinder axis intersects the cylinder,

@@ -522,6 +522,79 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
                 centroid
             }
         }
+        SurfaceKind::Torus => {
+            // For toroidal faces, compute a point ON the surface at the midpoint
+            // of the face's U and V ranges.
+            if let Some(torus) = surface
+                .as_any()
+                .downcast_ref::<vcad_kernel_geom::TorusSurface>()
+            {
+                use std::f64::consts::PI;
+
+                let ref_dir = torus.ref_dir.as_ref();
+                let y_dir = torus.axis.as_ref().cross(ref_dir);
+
+                let mut u_angles: Vec<f64> = vertices
+                    .iter()
+                    .map(|v| {
+                        let d = *v - torus.center;
+                        let d_axis = d.dot(torus.axis.as_ref());
+                        let d_plane = d - d_axis * torus.axis.into_inner();
+                        let d_plane_len = d_plane.norm();
+                        if d_plane_len < 1e-12 {
+                            return 0.0;
+                        }
+                        let d_plane_norm = d_plane / d_plane_len;
+                        let u = d_plane_norm.dot(&y_dir).atan2(d_plane_norm.dot(ref_dir));
+                        if u < 0.0 { u + 2.0 * PI } else { u }
+                    })
+                    .collect();
+                u_angles.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                u_angles.dedup_by(|a, b| (*a - *b).abs() < 0.01);
+
+                let mut v_angles: Vec<f64> = vertices
+                    .iter()
+                    .map(|v| {
+                        let d = *v - torus.center;
+                        let d_axis = d.dot(torus.axis.as_ref());
+                        let d_plane = d - d_axis * torus.axis.into_inner();
+                        let d_plane_len = d_plane.norm();
+                        let radial = d_plane_len - torus.major_radius;
+                        let v = d_axis.atan2(radial);
+                        if v < 0.0 { v + 2.0 * PI } else { v }
+                    })
+                    .collect();
+                v_angles.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                v_angles.dedup_by(|a, b| (*a - *b).abs() < 0.01);
+
+                if u_angles.len() >= 2 && v_angles.len() >= 2 {
+                    let u_min = u_angles[0];
+                    let u_max = u_angles[u_angles.len() - 1];
+                    let direct_u = u_max - u_min;
+                    let wrap_u = 2.0 * PI - direct_u;
+                    let u_mid = if wrap_u < direct_u {
+                        let mid = (u_max + u_min + 2.0 * PI) / 2.0;
+                        if mid >= 2.0 * PI { mid - 2.0 * PI } else { mid }
+                    } else {
+                        (u_min + u_max) / 2.0
+                    };
+
+                    let v_min = v_angles[0];
+                    let v_max = v_angles[v_angles.len() - 1];
+                    let direct_v = v_max - v_min;
+                    let wrap_v = 2.0 * PI - direct_v;
+                    let v_mid = if wrap_v < direct_v {
+                        let mid = (v_max + v_min + 2.0 * PI) / 2.0;
+                        if mid >= 2.0 * PI { mid - 2.0 * PI } else { mid }
+                    } else {
+                        (v_min + v_max) / 2.0
+                    };
+
+                    return surface.evaluate(vcad_kernel_math::Point2::new(u_mid, v_mid));
+                }
+            }
+            centroid
+        }
         _ => {
             // For other curved surfaces, the centroid of boundary vertices may not
             // lie on the surface. We use it as-is for classification since

@@ -190,6 +190,45 @@ fn apply_splits_to_solid(
                         continue;
                     }
 
+                    // Check if this is a toroidal face - use general trim+split path
+                    // Torus faces have periodic UV in both u and v. The SSI
+                    // (plane-torus or sampled) already produces appropriate curves.
+                    // We route through the general re-trim path which now handles
+                    // toroidal UV wrapping in point_in_face.
+                    if split::is_toroidal_face(solid, fid) {
+                        let segs = trim::trim_curve_to_face(&curve, fid, solid, 64);
+                        debug_bool!(
+                            "  Split {} toroidal face {:?}: re-trim got {} segs",
+                            solid_name,
+                            fid,
+                            segs.len()
+                        );
+                        if segs.is_empty() {
+                            new_faces.push(fid);
+                            continue;
+                        }
+                        let seg = &segs[0];
+                        let entry = evaluate_curve(&curve, seg.t_start);
+                        let exit = evaluate_curve(&curve, seg.t_end);
+                        let len = (exit - entry).norm();
+                        if len < 1e-6 {
+                            new_faces.push(fid);
+                            continue;
+                        }
+                        let result = split::split_face_by_curve(solid, fid, &curve, &entry, &exit);
+                        debug_bool!(
+                            "    -> Toroidal split result: {} sub-faces {:?}",
+                            result.sub_faces.len(),
+                            result.sub_faces
+                        );
+                        if result.sub_faces.len() >= 2 {
+                            new_faces.extend(result.sub_faces);
+                        } else {
+                            new_faces.push(fid);
+                        }
+                        continue;
+                    }
+
                     // Check if this is a circular disk face (cylinder cap) with a line curve
                     if split::is_circular_disk_face(solid, fid) {
                         if let ssi::IntersectionCurve::Line(_line) = &curve {

@@ -377,7 +377,67 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> bo
         return true;
     }
 
-    // Non-cylindrical surfaces: standard UV polygon test
+    // Special handling for toroidal surfaces (both u and v wrap at 2pi)
+    if surface.surface_type() == vcad_kernel_geom::SurfaceKind::Torus {
+        let outer_uv = project_points_to_uv(surface.as_ref(), &outer_verts_3d);
+        // Unwrap U dimension (same as cylinder)
+        let (outer_uv, u_seam_cut) = unwrap_cylindrical_loop(&outer_uv);
+
+        // Unwrap V dimension: find best seam cut for V coordinates
+        let v_values: Vec<f64> = outer_uv.iter().map(|p| p.y).collect();
+        let v_seam_cut = find_seam_cut_for_values(&v_values);
+        let outer_uv: Vec<Point2> = outer_uv
+            .iter()
+            .map(|p| {
+                let mut v = p.y;
+                if v < v_seam_cut {
+                    v += 2.0 * std::f64::consts::PI;
+                }
+                Point2::new(p.x, v)
+            })
+            .collect();
+
+        let inner_uv: Vec<Vec<Point2>> = face
+            .inner_loops
+            .iter()
+            .map(|&inner_loop_id| {
+                let inner_verts: Vec<Point3> = topo
+                    .loop_half_edges(inner_loop_id)
+                    .map(|he_id| topo.vertices[topo.half_edges[he_id].origin].point)
+                    .collect();
+                let inner_uv = project_points_to_uv(surface.as_ref(), &inner_verts);
+                let inner_uv = unwrap_cylindrical_loop_with_cut(&inner_uv, u_seam_cut);
+                inner_uv
+                    .iter()
+                    .map(|p| {
+                        let mut v = p.y;
+                        if v < v_seam_cut {
+                            v += 2.0 * std::f64::consts::PI;
+                        }
+                        Point2::new(p.x, v)
+                    })
+                    .collect()
+            })
+            .collect();
+
+        // Unwrap test point with same cuts
+        let mut test_uv = unwrap_cylindrical_uv(&test_uv, u_seam_cut);
+        if test_uv.y < v_seam_cut {
+            test_uv = Point2::new(test_uv.x, test_uv.y + 2.0 * std::f64::consts::PI);
+        }
+
+        if !point_in_polygon(&test_uv, &outer_uv) {
+            return false;
+        }
+        for inner in &inner_uv {
+            if point_in_polygon(&test_uv, inner) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Non-cylindrical, non-toroidal surfaces: standard UV polygon test
     let outer_uv = project_points_to_uv(surface.as_ref(), &outer_verts_3d);
     let inner_uv: Vec<Vec<Point2>> = face
         .inner_loops
@@ -511,6 +571,12 @@ pub fn project_point_to_uv(surface: &dyn Surface, point: &Point3) -> Point2 {
                 let axial_dist = d_axis; // distance from tube center in axis direction
 
                 let v = axial_dist.atan2(radial_dist);
+                // Wrap v to [0, 2pi) to match torus domain convention
+                let v = if v < 0.0 {
+                    v + 2.0 * std::f64::consts::PI
+                } else {
+                    v
+                };
 
                 Point2::new(u, v)
             } else {
@@ -898,20 +964,32 @@ fn find_seam_cut(loop_uv: &[Point2]) -> f64 {
     if loop_uv.is_empty() {
         return 0.0;
     }
-    let mut u_values: Vec<f64> = loop_uv.iter().map(|p| p.x).collect();
-    u_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let u_values: Vec<f64> = loop_uv.iter().map(|p| p.x).collect();
+    find_seam_cut_for_values(&u_values)
+}
+
+/// Find the optimal seam cut angle for a set of periodic values in [0, 2pi).
+///
+/// Returns the cut angle such that all values, when unwrapped past the cut,
+/// span the smallest angular range. Used for both U and V on periodic surfaces.
+fn find_seam_cut_for_values(values: &[f64]) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    let mut sorted: Vec<f64> = values.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let mut best_gap = -1.0;
-    let mut cut = u_values[0];
-    for w in u_values.windows(2) {
+    let mut cut = sorted[0];
+    for w in sorted.windows(2) {
         let gap = w[1] - w[0];
         if gap > best_gap {
             best_gap = gap;
             cut = w[1];
         }
     }
-    let wrap_gap = u_values[0] + 2.0 * std::f64::consts::PI - u_values[u_values.len() - 1];
+    let wrap_gap = sorted[0] + 2.0 * std::f64::consts::PI - sorted[sorted.len() - 1];
     if wrap_gap > best_gap {
-        cut = u_values[0];
+        cut = sorted[0];
     }
     cut
 }
