@@ -14,3 +14,7 @@ packages/app/dev-dist/
 .env*.local
 .DS_Store
 *.tsbuildinfo
+.claude/worktrees/
+.ralph-tui/
+tasks/
+*.patch
