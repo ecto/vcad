@@ -8,7 +8,6 @@ repository.workspace = true
 
 [dependencies]
 vcad-kernel-math = { path = "../vcad-kernel-math" }
-nalgebra = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

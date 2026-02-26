@@ -11,7 +11,6 @@ vcad-ir = { workspace = true }
 vcad-kernel = { workspace = true }
 vcad-kernel-tessellate = { workspace = true }
 phyz = { path = "../../../phyz/crates/phyz" }
-nalgebra = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 

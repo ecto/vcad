@@ -3,7 +3,7 @@
 //! Generates binary STL files suitable for 3D printing and CNC.
 
 use crate::{CadError, Part};
-use nalgebra::Vector3;
+type Vec3 = tang::Vec3<f64>;
 use std::io::Write;
 use std::path::Path;
 
@@ -42,17 +42,17 @@ pub fn to_stl_bytes(part: &Part) -> Result<Vec<u8>, CadError> {
         let i1 = tri[1] as usize * 3;
         let i2 = tri[2] as usize * 3;
 
-        let v0 = Vector3::new(
+        let v0 = Vec3::new(
             vertices[i0] as f64,
             vertices[i0 + 1] as f64,
             vertices[i0 + 2] as f64,
         );
-        let v1 = Vector3::new(
+        let v1 = Vec3::new(
             vertices[i1] as f64,
             vertices[i1 + 1] as f64,
             vertices[i1 + 2] as f64,
         );
-        let v2 = Vector3::new(
+        let v2 = Vec3::new(
             vertices[i2] as f64,
             vertices[i2 + 1] as f64,
             vertices[i2 + 2] as f64,

@@ -119,10 +119,10 @@ impl Polygon {
             let n2 = Point2::new(-e2.y * sign, e2.x * sign);
 
             // Bisector direction (average of normals)
-            let bisector = (n1.coords + n2.coords).normalize();
+            let bisector = (n1.to_vec() + n2.to_vec()).normalize();
 
             // Offset distance along bisector (adjusted for corner angle)
-            let dot = n1.coords.dot(&bisector);
+            let dot = n1.to_vec().dot(&bisector);
             let offset_dist = if dot.abs() > 0.001 {
                 distance / dot
             } else {

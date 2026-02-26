@@ -60,7 +60,8 @@ repository = "https://github.com/ecto/vcad"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-nalgebra = "0.33"
+tang = { path = "../tang/crates/tang" }
+tang-la = { path = "../tang/crates/tang-la" }
 slotmap = "1"
 anyhow = "1"
 toml = "0.8"

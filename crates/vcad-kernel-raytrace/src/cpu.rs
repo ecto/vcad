@@ -4,7 +4,6 @@
 //! to produce pixel-perfect images without GPU dependencies.
 
 use std::sync::Arc;
-use nalgebra::Matrix4;
 use vcad_kernel_math::{Dir3, Point3, Transform, Vec3};
 use vcad_kernel_primitives::BRepSolid;
 
@@ -79,8 +78,8 @@ impl CpuRenderer {
         // Compute camera basis vectors
         let forward_vec = target - camera;
         let forward = Dir3::new_normalize(Vec3::new(forward_vec.x, forward_vec.y, forward_vec.z));
-        let right = Dir3::new_normalize(forward.cross(up.as_ref()));
-        let cam_up = Dir3::new_normalize(right.cross(forward.as_ref()));
+        let right = Dir3::new_normalize(forward.cross(up));
+        let cam_up = Dir3::new_normalize(right.cross(forward));
 
         // Compute image plane dimensions
         let fov_rad = fov.to_radians();
@@ -137,7 +136,7 @@ impl CpuRenderer {
 
         // Compute dot product for diffuse lighting
         // Handle both sides of the surface
-        let ndotl = hit.normal.dot(light_dir.as_ref());
+        let ndotl = hit.normal.dot(light_dir);
         let ndotl = ndotl.abs(); // Two-sided lighting
 
         // Ambient + diffuse lighting
@@ -203,8 +202,8 @@ pub fn render_scene(
     // Compute camera basis vectors
     let forward_vec = target - camera;
     let forward = Dir3::new_normalize(Vec3::new(forward_vec.x, forward_vec.y, forward_vec.z));
-    let right = Dir3::new_normalize(forward.cross(up.as_ref()));
-    let cam_up = Dir3::new_normalize(right.cross(forward.as_ref()));
+    let right = Dir3::new_normalize(forward.cross(up));
+    let cam_up = Dir3::new_normalize(right.cross(forward));
 
     let fov_rad = fov.to_radians();
     let half_height = (fov_rad / 2.0).tan();
@@ -264,7 +263,7 @@ pub fn render_scene(
 
                         // Shade
                         let light_dir = Dir3::new_normalize(-ray.direction.into_inner());
-                        let ndotl = hit.normal.dot(light_dir.as_ref()).abs();
+                        let ndotl = hit.normal.dot(light_dir).abs();
                         let intensity = (0.2 + 0.8 * ndotl).min(1.0) as f32;
 
                         let idx = pixel_idx * 4;
@@ -284,9 +283,10 @@ pub fn render_scene(
 /// Apply a 4x4 transform matrix to a BRep solid.
 fn transform_brep(solid: &BRepSolid, matrix: &[f64]) -> BRepSolid {
     // Build transform from row-major 4x4 matrix
-    // nalgebra::Matrix4::new takes column-major order, so we transpose
+    // tang::Mat4::new takes row-major args, so we transpose the input
+    // (input is row-major but we want the transpose)
     let t = Transform {
-        matrix: Matrix4::new(
+        matrix: tang::Mat4::new(
             matrix[0], matrix[4], matrix[8], matrix[12],
             matrix[1], matrix[5], matrix[9], matrix[13],
             matrix[2], matrix[6], matrix[10], matrix[14],

@@ -120,7 +120,7 @@ pub fn fillet_all_edges(brep: &BRepSolid, radius: f64) -> BRepSolid {
 
             let solid_center = compute_centroid(&faces);
             let chamfer_center =
-                Point3::from((pa_s.coords + pa_e.coords + pb_e.coords + pb_s.coords) * 0.25);
+                Point3::from((pa_s.to_vec() + pa_e.to_vec() + pb_e.to_vec() + pb_s.to_vec()) * 0.25);
             let outward = chamfer_center - solid_center;
 
             let e1 = pa_e - pa_s;
@@ -225,7 +225,7 @@ pub(crate) fn build_plane_plane_blend(
 
     let solid_center = compute_centroid(faces);
     let chamfer_center =
-        Point3::from((pa_s.coords + pa_e.coords + pb_e.coords + pb_s.coords) * 0.25);
+        Point3::from((pa_s.to_vec() + pa_e.to_vec() + pb_e.to_vec() + pb_s.to_vec()) * 0.25);
     let outward = chamfer_center - solid_center;
 
     let e1 = pa_e - pa_s;

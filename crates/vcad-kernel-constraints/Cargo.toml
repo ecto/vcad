@@ -9,7 +9,7 @@ description = "2D sketch constraint solver for vcad kernel using Levenberg-Marqu
 [dependencies]
 vcad-kernel-math = { workspace = true }
 vcad-kernel-sketch = { workspace = true }
-nalgebra = { workspace = true }
+tang-la = { workspace = true }
 slotmap = { workspace = true }
 thiserror = { workspace = true }
 

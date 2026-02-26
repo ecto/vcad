@@ -132,7 +132,7 @@ pub(crate) fn compute_centroid(faces: &[FaceInfo]) -> Point3 {
     let mut count = 0;
     for face in faces {
         for p in &face.positions {
-            sum += p.coords;
+            sum += p.to_vec();
             count += 1;
         }
     }

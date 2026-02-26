@@ -198,8 +198,8 @@ fn plane_plane(a: &Plane, b: &Plane) -> IntersectionCurve {
     // Solve the system: n1 · p = d1, n2 · p = d2
     // We pick the point closest to the origin by solving in the plane
     // perpendicular to dir.
-    let d1 = n1.as_ref().dot(&a.origin.coords);
-    let d2 = n2.as_ref().dot(&b.origin.coords);
+    let d1 = n1.as_ref().dot(&a.origin.to_vec());
+    let d2 = n2.as_ref().dot(&b.origin.to_vec());
 
     let n1n1 = n1.as_ref().dot(n1.as_ref());
     let n1n2 = n1.as_ref().dot(n2.as_ref());
@@ -318,8 +318,8 @@ fn plane_cylinder(plane: &Plane, cyl: &CylinderSurface) -> IntersectionCurve {
 
         let lateral = (cyl.radius * cyl.radius - dist * dist).sqrt();
 
-        let p1 = Point3::from(axis_on_plane.coords + lateral * perp);
-        let p2 = Point3::from(axis_on_plane.coords - lateral * perp);
+        let p1 = Point3::from(axis_on_plane.to_vec() + lateral * perp);
+        let p2 = Point3::from(axis_on_plane.to_vec() - lateral * perp);
 
         // Sort the two lines deterministically so ordering doesn't depend on
         // cross-product sign (which flips with cylinder axis orientation).

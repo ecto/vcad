@@ -73,7 +73,7 @@ pub(crate) fn compute_trim_vertices(faces: &[FaceInfo], distance: f64) -> HashMa
             let t1 = -cross_delta.dot(&normal) / denom;
 
             let p1 = v_pos + distance * perp_enter;
-            let trim_point = Point3::from(p1.coords + t1 * d_enter);
+            let trim_point = Point3::from(p1.to_vec() + t1 * d_enter);
             trims.insert((v_id, face.face_id), trim_point);
         }
     }
@@ -132,7 +132,7 @@ pub(crate) fn build_vertex_faces(
 
         let center = vertex_face_points
             .iter()
-            .fold(Vec3::zeros(), |acc, p| acc + p.coords)
+            .fold(Vec3::zeros(), |acc, p| acc + p.to_vec())
             / vertex_face_points.len() as f64;
         let center = Point3::from(center);
 

@@ -15,7 +15,7 @@
 //! result.write_stl("block_with_hole.stl").unwrap();
 //! ```
 
-use nalgebra::Vector3;
+type Vec3 = tang::Vec3<f64>;
 use std::collections::HashMap;
 use std::f64::consts::PI;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -300,7 +300,7 @@ impl Part {
     }
 
     /// Translate by vector.
-    pub fn translate_vec(&self, v: Vector3<f64>) -> Self {
+    pub fn translate_vec(&self, v: Vec3) -> Self {
         self.translate(v.x, v.y, v.z)
     }
 
@@ -639,9 +639,9 @@ impl Part {
                 tri[1] as usize * 3,
                 tri[2] as usize * 3,
             );
-            let v0 = Vector3::new(verts[i0] as f64, verts[i0 + 1] as f64, verts[i0 + 2] as f64);
-            let v1 = Vector3::new(verts[i1] as f64, verts[i1 + 1] as f64, verts[i1 + 2] as f64);
-            let v2 = Vector3::new(verts[i2] as f64, verts[i2 + 1] as f64, verts[i2 + 2] as f64);
+            let v0 = Vec3::new(verts[i0] as f64, verts[i0 + 1] as f64, verts[i0 + 2] as f64);
+            let v1 = Vec3::new(verts[i1] as f64, verts[i1 + 1] as f64, verts[i1 + 2] as f64);
+            let v2 = Vec3::new(verts[i2] as f64, verts[i2 + 1] as f64, verts[i2 + 2] as f64);
             area += (v1 - v0).cross(&(v2 - v0)).norm() / 2.0;
         }
         area

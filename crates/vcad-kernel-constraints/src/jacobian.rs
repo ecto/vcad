@@ -7,7 +7,7 @@
 use crate::constraint::Constraint;
 use crate::entity::{EntityId, SketchEntity};
 use crate::residual::compute_constraint_residuals;
-use nalgebra::DMatrix;
+use tang_la::DMat;
 use slotmap::SlotMap;
 
 /// Step size for finite difference computation.
@@ -31,16 +31,16 @@ pub fn compute_jacobian(
     constraints: &[Constraint],
     params: &[f64],
     entities: &SlotMap<EntityId, SketchEntity>,
-) -> DMatrix<f64> {
+) -> DMat<f64> {
     // Count total residuals
     let num_residuals: usize = constraints.iter().map(|c| c.num_residuals()).sum();
     let num_params = params.len();
 
     if num_residuals == 0 || num_params == 0 {
-        return DMatrix::zeros(num_residuals.max(1), num_params.max(1));
+        return DMat::zeros(num_residuals.max(1), num_params.max(1));
     }
 
-    let mut jacobian = DMatrix::zeros(num_residuals, num_params);
+    let mut jacobian = DMat::zeros(num_residuals, num_params);
 
     // For each parameter, compute partial derivatives using central differences
     for j in 0..num_params {

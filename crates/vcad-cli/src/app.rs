@@ -1161,8 +1161,8 @@ fn render_raytrace(app: &App, buffer: &mut RenderBuffer) {
         cam.target.z as f64,
     );
     let up = vcad_kernel::vcad_kernel_math::Vec3::new(0.0, 1.0, 0.0)
-        .try_normalize(1e-10)
-        .unwrap_or(vcad_kernel::vcad_kernel_math::Vec3::y_axis().into_inner());
+        .try_normalize()
+        .unwrap_or(vcad_kernel::vcad_kernel_math::Vec3::y());
     let up_dir = vcad_kernel::vcad_kernel_math::Dir3::new_normalize(up);
 
     // Identity transforms for all solids

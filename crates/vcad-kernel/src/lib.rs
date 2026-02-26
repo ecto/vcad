@@ -543,7 +543,7 @@ impl Solid {
                     *surface = surface.transform(transform);
                 }
                 // If negative determinant (mirror), flip face orientations
-                let det = transform.matrix.fixed_view::<3, 3>(0, 0).determinant();
+                let det = transform.matrix.upper_left_3x3().determinant();
                 if det < 0.0 {
                     for (_id, face) in &mut new_brep.topology.faces {
                         face.orientation = match face.orientation {
@@ -572,7 +572,7 @@ impl Solid {
                     chunk[2] = tp.z as f32;
                 }
                 // If any scale factor is negative, flip triangle winding
-                let det = transform.matrix.fixed_view::<3, 3>(0, 0).determinant();
+                let det = transform.matrix.upper_left_3x3().determinant();
                 if det < 0.0 {
                     for tri in new_mesh.indices.chunks_mut(3) {
                         tri.swap(1, 2);

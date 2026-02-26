@@ -95,7 +95,7 @@ pub fn chamfer_all_edges(brep: &BRepSolid, distance: f64) -> BRepSolid {
 
         if let (Some(&pa_s), Some(&pa_e), Some(&pb_s), Some(&pb_e)) = (pa_s, pa_e, pb_s, pb_e) {
             let chamfer_center =
-                Point3::from((pa_s.coords + pa_e.coords + pb_e.coords + pb_s.coords) * 0.25);
+                Point3::from((pa_s.to_vec() + pa_e.to_vec() + pb_e.to_vec() + pb_s.to_vec()) * 0.25);
             let solid_center = compute_centroid(&faces);
             let outward_dir = chamfer_center - solid_center;
 

@@ -2,7 +2,7 @@
 
 //! Math types for the vcad B-rep kernel.
 //!
-//! Thin wrappers around nalgebra providing domain-specific types
+//! Thin wrappers around tang providing domain-specific types
 //! for 3D CAD geometry: points, vectors, directions, transforms,
 //! and tolerance constants.
 //!
@@ -12,107 +12,78 @@
 
 pub mod predicates;
 
-use nalgebra::{Matrix4, Unit, Vector2, Vector3, Vector4};
-
 /// A point in 3D space.
-pub type Point3 = nalgebra::Point3<f64>;
+pub type Point3 = tang::Point3<f64>;
 
 /// A vector in 3D space.
-pub type Vec3 = Vector3<f64>;
+pub type Vec3 = tang::Vec3<f64>;
 
 /// A unit (normalized) direction vector in 3D space.
-pub type Dir3 = Unit<Vector3<f64>>;
+pub type Dir3 = tang::Dir3<f64>;
 
 /// A point in 2D parameter space.
-pub type Point2 = nalgebra::Point2<f64>;
+pub type Point2 = tang::Point2<f64>;
 
 /// A vector in 2D space.
-pub type Vec2 = Vector2<f64>;
+pub type Vec2 = tang::Vec2<f64>;
 
 /// A 4x4 affine transformation matrix.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Transform {
     /// The underlying 4x4 matrix.
-    pub matrix: Matrix4<f64>,
+    pub matrix: tang::Mat4<f64>,
 }
 
 impl Transform {
     /// Identity transform.
     pub fn identity() -> Self {
         Self {
-            matrix: Matrix4::identity(),
+            matrix: tang::Mat4::identity(),
         }
     }
 
     /// Translation by `(dx, dy, dz)`.
     pub fn translation(dx: f64, dy: f64, dz: f64) -> Self {
-        let mut m = Matrix4::identity();
-        m[(0, 3)] = dx;
-        m[(1, 3)] = dy;
-        m[(2, 3)] = dz;
-        Self { matrix: m }
+        Self {
+            matrix: tang::Mat4::translation(dx, dy, dz),
+        }
     }
 
     /// Non-uniform scale by `(sx, sy, sz)`.
     pub fn scale(sx: f64, sy: f64, sz: f64) -> Self {
-        let mut m = Matrix4::identity();
-        m[(0, 0)] = sx;
-        m[(1, 1)] = sy;
-        m[(2, 2)] = sz;
-        Self { matrix: m }
+        Self {
+            matrix: tang::Mat4::scale(sx, sy, sz),
+        }
     }
 
     /// Rotation about the X axis by `angle` radians.
     pub fn rotation_x(angle: f64) -> Self {
-        let (s, c) = angle.sin_cos();
-        let mut m = Matrix4::identity();
-        m[(1, 1)] = c;
-        m[(1, 2)] = -s;
-        m[(2, 1)] = s;
-        m[(2, 2)] = c;
-        Self { matrix: m }
+        Self {
+            matrix: tang::Mat4::rotation_x(angle),
+        }
     }
 
     /// Rotation about the Y axis by `angle` radians.
     pub fn rotation_y(angle: f64) -> Self {
-        let (s, c) = angle.sin_cos();
-        let mut m = Matrix4::identity();
-        m[(0, 0)] = c;
-        m[(0, 2)] = s;
-        m[(2, 0)] = -s;
-        m[(2, 2)] = c;
-        Self { matrix: m }
+        Self {
+            matrix: tang::Mat4::rotation_y(angle),
+        }
     }
 
     /// Rotation about the Z axis by `angle` radians.
     pub fn rotation_z(angle: f64) -> Self {
-        let (s, c) = angle.sin_cos();
-        let mut m = Matrix4::identity();
-        m[(0, 0)] = c;
-        m[(0, 1)] = -s;
-        m[(1, 0)] = s;
-        m[(1, 1)] = c;
-        Self { matrix: m }
+        Self {
+            matrix: tang::Mat4::rotation_z(angle),
+        }
     }
 
     /// Rotation about an arbitrary axis through the origin by `angle` radians.
     ///
     /// Uses Rodrigues' rotation formula.
     pub fn rotation_about_axis(axis: &Dir3, angle: f64) -> Self {
-        let (s, c) = angle.sin_cos();
-        let t = 1.0 - c;
-        let (x, y, z) = (axis.as_ref().x, axis.as_ref().y, axis.as_ref().z);
-        let mut m = Matrix4::identity();
-        m[(0, 0)] = t * x * x + c;
-        m[(0, 1)] = t * x * y - s * z;
-        m[(0, 2)] = t * x * z + s * y;
-        m[(1, 0)] = t * x * y + s * z;
-        m[(1, 1)] = t * y * y + c;
-        m[(1, 2)] = t * y * z - s * x;
-        m[(2, 0)] = t * x * z - s * y;
-        m[(2, 1)] = t * y * z + s * x;
-        m[(2, 2)] = t * z * z + c;
-        Self { matrix: m }
+        Self {
+            matrix: tang::Mat4::rotation_axis(axis.into_inner(), angle),
+        }
     }
 
     /// Compose: `self` then `other` (self * other).
@@ -124,25 +95,17 @@ impl Transform {
 
     /// Transform a point.
     pub fn apply_point(&self, p: &Point3) -> Point3 {
-        let v = self.matrix * Vector4::new(p.x, p.y, p.z, 1.0);
-        Point3::new(v.x, v.y, v.z)
+        self.matrix.transform_point(*p)
     }
 
     /// Transform a direction vector (ignores translation, applies rotation/scale).
     pub fn apply_vec(&self, v: &Vec3) -> Vec3 {
-        let r = self.matrix * Vector4::new(v.x, v.y, v.z, 0.0);
-        Vec3::new(r.x, r.y, r.z)
+        self.matrix.transform_vec(*v)
     }
 
     /// Transform a normal vector (uses inverse transpose of upper-left 3x3).
     pub fn apply_normal(&self, n: &Vec3) -> Vec3 {
-        let m3 = self.matrix.fixed_view::<3, 3>(0, 0);
-        if let Some(inv) = m3.try_inverse() {
-            inv.transpose() * n
-        } else {
-            // Degenerate transform — return input unchanged
-            *n
-        }
+        self.matrix.transform_normal(*n)
     }
 
     /// Inverse of this transform, if it exists.
@@ -175,7 +138,7 @@ impl Tolerance {
 
     /// Check if two points are coincident within tolerance.
     pub fn points_equal(&self, a: &Point3, b: &Point3) -> bool {
-        (a - b).norm() < self.linear
+        (*a - *b).norm() < self.linear
     }
 
     /// Check if a scalar distance is effectively zero.
@@ -241,19 +204,7 @@ mod tests {
     fn test_compose() {
         let t1 = Transform::translation(1.0, 0.0, 0.0);
         let t2 = Transform::scale(2.0, 2.0, 2.0);
-        // translate first, then scale: point (0,0,0) -> (1,0,0) -> (2,0,0)
         let composed = t2.then(&t1);
-        // t2 * t1 means apply t1 first, then t2
-        // Actually: composed.apply = t2(t1(p))
-        // Wait — then() is self * other, so composed = scale * translate
-        // apply(p) = scale(translate(p))
-        // But our then semantics: self.then(other) = self * other
-        // So t2.then(t1) = t2 * t1 — which applies t1 first
-        // Actually that's wrong. Matrix multiplication: (A*B)*x = A*(B*x)
-        // So t2.then(&t1).apply(p) = t2.matrix * t1.matrix * p = t2(t1(p))
-        // No wait — then is self.matrix * other.matrix
-        // So t2.then(&t1) has matrix = t2 * t1, and applying to p: (t2*t1)*p = t2*(t1*p)
-        // So it's: first apply t1, then t2. That is: translate then scale.
         let p = Point3::origin();
         let result = composed.apply_point(&p);
         assert!((result.x - 2.0).abs() < 1e-12);

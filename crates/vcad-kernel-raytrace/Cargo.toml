@@ -16,7 +16,7 @@ vcad-kernel-gpu = { path = "../vcad-kernel-gpu", optional = true }
 wgpu = { version = "23", features = ["webgpu", "wgsl"], optional = true }
 bytemuck = { version = "1.14", features = ["derive"] }
 thiserror.workspace = true
-nalgebra = { workspace = true }
+tang = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"

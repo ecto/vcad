@@ -5,8 +5,7 @@ use vcad_kernel_math::{Point3, Vec3};
 
 /// A 2D point for serializable drafting output.
 ///
-/// We use a custom type instead of nalgebra::Point2 to enable serde serialization
-/// without requiring nalgebra's serde feature.
+/// A simple serializable 2D point for drafting output.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Point2D {
     /// X coordinate.

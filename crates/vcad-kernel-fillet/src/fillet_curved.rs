@@ -319,7 +319,7 @@ fn build_blend_quad_surface(
     let surf_idx = new_geom.add_surface(surface);
     let solid_center = compute_centroid(faces);
     let chamfer_center = Point3::from(
-        (pa_s.coords + pa_e.coords + pb_e.coords + pb_s.coords) * 0.25,
+        (pa_s.to_vec() + pa_e.to_vec() + pb_e.to_vec() + pb_s.to_vec()) * 0.25,
     );
     let outward = chamfer_center - solid_center;
     let e1 = *pa_e - *pa_s;

@@ -6,7 +6,7 @@
 use crate::constraint::Constraint;
 use crate::entity::{EntityId, SketchEntity};
 use crate::jacobian::{compute_all_residuals, compute_jacobian, residual_norm_squared};
-use nalgebra::{DMatrix, DVector};
+use tang_la::{DMat, DVec};
 use slotmap::SlotMap;
 
 /// Configuration for the Levenberg-Marquardt solver.
@@ -129,7 +129,7 @@ pub fn solve(
 
         // Compute Jacobian and residuals
         let j = compute_jacobian(constraints, params, entities);
-        let r = DVector::from_vec(compute_all_residuals(constraints, params, entities));
+        let r = DVec::from_vec(compute_all_residuals(constraints, params, entities));
 
         // Compute J'J and J'r
         let jt = j.transpose();
@@ -200,8 +200,8 @@ enum StepResult {
 /// Try taking a step with the given damping factor.
 fn try_step(
     params: &[f64],
-    jtj: &DMatrix<f64>,
-    jtr: &DVector<f64>,
+    jtj: &DMat<f64>,
+    jtr: &DVec<f64>,
     lambda: f64,
     constraints: &[Constraint],
     entities: &SlotMap<EntityId, SketchEntity>,

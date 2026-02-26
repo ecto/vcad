@@ -504,11 +504,11 @@ mod tests {
 
         // Local (0, 0) should map to origin (10, 0, 0)
         let p0 = profile.to_3d(Point2::new(0.0, 0.0));
-        assert!((p0.coords - Point3::new(10.0, 0.0, 0.0).coords).norm() < 1e-12);
+        assert!((p0.to_vec() - Point3::new(10.0, 0.0, 0.0).to_vec()).norm() < 1e-12);
 
         // Local (5, 3) should map to (10, 5, 3) since x_dir=Y, y_dir=Z
         let p1 = profile.to_3d(Point2::new(5.0, 3.0));
-        assert!((p1.coords - Point3::new(10.0, 5.0, 3.0).coords).norm() < 1e-12);
+        assert!((p1.to_vec() - Point3::new(10.0, 5.0, 3.0).to_vec()).norm() < 1e-12);
     }
 
     #[test]
@@ -551,10 +551,10 @@ mod tests {
         let profile = SketchProfile::rectangle(Point3::origin(), Vec3::x(), Vec3::y(), 10.0, 5.0);
         let verts = profile.vertices_3d();
         assert_eq!(verts.len(), 4);
-        assert!((verts[0].coords - Point3::new(0.0, 0.0, 0.0).coords).norm() < 1e-12);
-        assert!((verts[1].coords - Point3::new(10.0, 0.0, 0.0).coords).norm() < 1e-12);
-        assert!((verts[2].coords - Point3::new(10.0, 5.0, 0.0).coords).norm() < 1e-12);
-        assert!((verts[3].coords - Point3::new(0.0, 5.0, 0.0).coords).norm() < 1e-12);
+        assert!((verts[0].to_vec() - Point3::new(0.0, 0.0, 0.0).to_vec()).norm() < 1e-12);
+        assert!((verts[1].to_vec() - Point3::new(10.0, 0.0, 0.0).to_vec()).norm() < 1e-12);
+        assert!((verts[2].to_vec() - Point3::new(10.0, 5.0, 0.0).to_vec()).norm() < 1e-12);
+        assert!((verts[3].to_vec() - Point3::new(0.0, 5.0, 0.0).to_vec()).norm() < 1e-12);
     }
 
     #[test]

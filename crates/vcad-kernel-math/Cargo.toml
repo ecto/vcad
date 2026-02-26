@@ -7,5 +7,5 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-nalgebra = { workspace = true }
+tang = { workspace = true }
 robust = "1.1"

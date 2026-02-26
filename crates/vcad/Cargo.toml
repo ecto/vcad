@@ -21,7 +21,7 @@ drafting = ["dep:vcad-kernel-drafting"]
 vcad-ir = { workspace = true }
 vcad-kernel = { workspace = true }
 vcad-kernel-drafting = { workspace = true, optional = true }
-nalgebra = { workspace = true }
+tang = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 toml = { workspace = true }

@@ -107,7 +107,7 @@ fn trace_edge_curve(
             let uv_b = closest_point_uv(surface_b, &pt_a, 1e-8)?;
             let pt_b = surface_b.evaluate(uv_b);
 
-            let midpoint = Point3::from((pt_a.coords + pt_b.coords) * 0.5);
+            let midpoint = Point3::from((pt_a.to_vec() + pt_b.to_vec()) * 0.5);
 
             // Check convergence: both projections are close
             let dist = (pt_a - pt_b).norm();
@@ -166,7 +166,7 @@ fn refine_ball_center(
         // Bisector plane constraint: center should lie on the bisector of the two normals
         let bisector = (n_a + n_b).normalize();
         let bisector_err = if bisector.norm() > 1e-12 {
-            let mid_pt = Point3::from((pt_a.coords + pt_b.coords) * 0.5);
+            let mid_pt = Point3::from((pt_a.to_vec() + pt_b.to_vec()) * 0.5);
             let d = center - mid_pt;
             // Project error onto bisector direction
             let along_bisector = d.dot(&bisector);
