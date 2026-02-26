@@ -28,10 +28,10 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --exclude vcad-desktop -- -D warnings
-      - run: cargo test --workspace --exclude vcad-desktop
-      - run: cargo build --workspace --exclude vcad-desktop --examples
-      - run: cargo doc --workspace --exclude vcad-desktop --no-deps
+      - run: cargo clippy --workspace --exclude vcad-desktop --features vcad-kernel-text/no-builtin-font -- -D warnings
+      - run: cargo test --workspace --exclude vcad-desktop --features vcad-kernel-text/no-builtin-font
+      - run: cargo build --workspace --exclude vcad-desktop --examples --features vcad-kernel-text/no-builtin-font
+      - run: cargo doc --workspace --exclude vcad-desktop --no-deps --features vcad-kernel-text/no-builtin-font
 
   typescript:
     name: TypeScript
