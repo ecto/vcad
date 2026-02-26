@@ -377,6 +377,65 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> bo
         return true;
     }
 
+    // Special handling for conical surfaces (similar to cylinder but with v-dependent radius)
+    if surface.surface_type() == vcad_kernel_geom::SurfaceKind::Cone {
+        let mut unique_verts: Vec<Point3> = Vec::new();
+        for v in &outer_verts_3d {
+            let is_dup = unique_verts.iter().any(|u| (*u - *v).norm() < 1e-6);
+            if !is_dup {
+                unique_verts.push(*v);
+            }
+        }
+
+        // Full cone lateral face with ≤2 unique vertices: check V range only
+        if unique_verts.len() <= 2 {
+            if let Some(cone) = surface
+                .as_any()
+                .downcast_ref::<vcad_kernel_geom::ConeSurface>()
+            {
+                let ca = cone.half_angle.cos();
+                let v_values: Vec<f64> = unique_verts
+                    .iter()
+                    .map(|p| {
+                        let d = *p - cone.apex;
+                        d.dot(cone.axis.as_ref()) / ca
+                    })
+                    .collect();
+                let v_min = v_values.iter().cloned().fold(f64::INFINITY, f64::min);
+                let v_max = v_values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                let test_v = test_uv.y;
+                return test_v >= v_min - 1e-6 && test_v <= v_max + 1e-6;
+            }
+        }
+
+        // Fall through to UV polygon test for partial cone faces
+        let outer_uv = project_points_to_uv(surface.as_ref(), &outer_verts_3d);
+        let (outer_uv, seam_cut) = unwrap_cylindrical_loop(&outer_uv);
+        let inner_uv: Vec<Vec<Point2>> = face
+            .inner_loops
+            .iter()
+            .map(|&inner_loop_id| {
+                let inner_verts: Vec<Point3> = topo
+                    .loop_half_edges(inner_loop_id)
+                    .map(|he_id| topo.vertices[topo.half_edges[he_id].origin].point)
+                    .collect();
+                let inner_uv = project_points_to_uv(surface.as_ref(), &inner_verts);
+                unwrap_cylindrical_loop_with_cut(&inner_uv, seam_cut)
+            })
+            .collect();
+        let test_uv = unwrap_cylindrical_uv(&test_uv, seam_cut);
+
+        if !point_in_polygon(&test_uv, &outer_uv) {
+            return false;
+        }
+        for inner_uv in &inner_uv {
+            if point_in_polygon(&test_uv, inner_uv) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     // Special handling for toroidal surfaces (both u and v wrap at 2pi)
     if surface.surface_type() == vcad_kernel_geom::SurfaceKind::Torus {
         let outer_uv = project_points_to_uv(surface.as_ref(), &outer_verts_3d);
@@ -530,7 +589,38 @@ pub fn project_point_to_uv(surface: &dyn Surface, point: &Point3) -> Point2 {
                 approx_project_to_uv(surface, point)
             }
         }
-        SurfaceKind::Cone => approx_project_to_uv(surface, point),
+        SurfaceKind::Cone => {
+            if let Some(cone) = surface
+                .as_any()
+                .downcast_ref::<vcad_kernel_geom::ConeSurface>()
+            {
+                let d = point - cone.apex;
+                let ref_dir = cone.ref_dir.as_ref();
+                let y_dir = cone.y_dir();
+                let ca = cone.half_angle.cos();
+
+                let d_axis = d.dot(cone.axis.as_ref());
+                let d_perp = d - d_axis * cone.axis.into_inner();
+                let d_perp_len = d_perp.norm();
+
+                let u = if d_perp_len < 1e-12 {
+                    0.0
+                } else {
+                    let d_perp_norm = d_perp / d_perp_len;
+                    let u = d_perp_norm.dot(&y_dir).atan2(d_perp_norm.dot(ref_dir));
+                    if u < 0.0 {
+                        u + 2.0 * std::f64::consts::PI
+                    } else {
+                        u
+                    }
+                };
+
+                let v = d_axis / ca;
+                Point2::new(u, v)
+            } else {
+                approx_project_to_uv(surface, point)
+            }
+        }
         SurfaceKind::Torus => {
             if let Some(torus) = surface
                 .as_any()

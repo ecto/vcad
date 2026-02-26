@@ -399,7 +399,8 @@ impl ConeSurface {
         })
     }
 
-    fn y_dir(&self) -> Vec3 {
+    /// Compute the Y direction (perpendicular to both axis and ref_dir).
+    pub fn y_dir(&self) -> Vec3 {
         self.axis.as_ref().cross(self.ref_dir.as_ref())
     }
 }

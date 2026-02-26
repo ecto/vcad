@@ -133,6 +133,38 @@ fn apply_splits_to_solid(
             let mut new_faces = Vec::new();
             for &fid in &current_faces {
                 if solid.topology.faces.contains_key(fid) {
+                    // Check if this is a conical face - route to appropriate splitting
+                    if split::is_conical_face(solid, fid) {
+                        debug_bool!(
+                            "  Split {} conical face {:?} by {:?}",
+                            solid_name,
+                            fid,
+                            match &curve {
+                                ssi::IntersectionCurve::Line(l) => format!(
+                                    "Line at ({:.2},{:.2},{:.2})",
+                                    l.origin.x, l.origin.y, l.origin.z
+                                ),
+                                ssi::IntersectionCurve::Circle(c) => format!(
+                                    "Circle at ({:.2},{:.2},{:.2}) r={:.2}",
+                                    c.center.x, c.center.y, c.center.z, c.radius
+                                ),
+                                _ => format!("{:?}", curve),
+                            }
+                        );
+                        let result = split::split_conical_face(solid, fid, &curve);
+                        debug_bool!(
+                            "    -> Conical split result: {} sub-faces {:?}",
+                            result.sub_faces.len(),
+                            result.sub_faces
+                        );
+                        if result.sub_faces.len() >= 2 {
+                            new_faces.extend(result.sub_faces);
+                        } else {
+                            new_faces.push(fid);
+                        }
+                        continue;
+                    }
+
                     // Check if this is a cylindrical face - use specialized split
                     if split::is_cylindrical_face(solid, fid) {
                         debug_bool!(
@@ -445,6 +477,9 @@ pub(crate) fn brep_boolean(
                 if split::is_spherical_face(&a, face_a) {
                     results_a.push((curve.clone(), circle.center, circle.center));
                 }
+                if split::is_conical_face(&a, face_a) {
+                    results_a.push((curve.clone(), circle.center, circle.center));
+                }
                 if split::is_planar_face(&b, face_b) {
                     let outer_len = b.topology.loop_len(b.topology.faces[face_b].outer_loop);
                     let has_inner_loops = !b.topology.faces[face_b].inner_loops.is_empty();
@@ -466,6 +501,9 @@ pub(crate) fn brep_boolean(
                     results_b.push((curve.clone(), circle.center, circle.center));
                 }
                 if split::is_spherical_face(&b, face_b) {
+                    results_b.push((curve.clone(), circle.center, circle.center));
+                }
+                if split::is_conical_face(&b, face_b) {
                     results_b.push((curve.clone(), circle.center, circle.center));
                 }
                 return Some((face_a, results_a, face_b, results_b));

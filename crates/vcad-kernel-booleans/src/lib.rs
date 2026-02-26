@@ -1561,4 +1561,31 @@ mod tests {
         assert!(volume > 0.0, "Volume should be positive");
         assert!(volume <= 27000.0 + 1.0, "Volume {:.1} should not exceed box", volume);
     }
+
+    #[test]
+    fn test_cone_boolean_subtract() {
+        use vcad_kernel_primitives::make_cone;
+
+        let cube = make_cube(20.0, 20.0, 20.0);
+        let mut cone = make_cone(8.0, 0.0, 15.0, 32);
+        translate_brep(&mut cone, 10.0, 10.0, 0.0);
+
+        let result = boolean_op(&cube, &cone, BooleanOp::Difference, 32);
+        let mesh = result.to_mesh(32);
+
+        let volume = compute_mesh_volume(&mesh);
+        assert!(
+            volume > 4000.0 && volume < 10000.0,
+            "Expected volume in [4000, 10000] for cube minus cone, got {:.1}",
+            volume
+        );
+
+        let (min, max) = compute_mesh_bbox(&mesh);
+        assert!(min[0] >= -0.1 && min[1] >= -0.1 && min[2] >= -0.1,
+            "Min should be ~[0,0,0], got {:?}", min);
+        assert!(max[0] <= 20.1 && max[1] <= 20.1 && max[2] <= 20.1,
+            "Max should be ~[20,20,20], got {:?}", max);
+
+        assert!(mesh.num_triangles() > 0, "Result mesh should have triangles");
+    }
 }

@@ -595,6 +595,80 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
             }
             centroid
         }
+        SurfaceKind::Cone => {
+            // For conical faces, compute a point ON the surface at the angular
+            // midpoint of boundary vertices and midway along the V range.
+            // The centroid of boundary vertices is inside the cone, not on its surface.
+            if let Some(cone) = surface
+                .as_any()
+                .downcast_ref::<vcad_kernel_geom::ConeSurface>()
+            {
+                use std::f64::consts::PI;
+
+                let ref_dir = cone.ref_dir.as_ref();
+                let y_dir = cone.y_dir();
+                let ca = cone.half_angle.cos();
+                let sa = cone.half_angle.sin();
+
+                // Compute U angles for each boundary vertex
+                let mut u_angles: Vec<f64> = vertices
+                    .iter()
+                    .filter_map(|v| {
+                        let d = *v - cone.apex;
+                        // Project onto the plane perpendicular to axis
+                        let d_perp = d - d.dot(cone.axis.as_ref()) * cone.axis.into_inner();
+                        let d_perp_len = d_perp.norm();
+                        if d_perp_len < 1e-12 {
+                            return None; // apex vertex, skip
+                        }
+                        let u = d_perp.dot(&y_dir).atan2(d_perp.dot(ref_dir));
+                        Some(if u < 0.0 { u + 2.0 * PI } else { u })
+                    })
+                    .collect();
+                u_angles.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                u_angles.dedup_by(|a, b| (*a - *b).abs() < 0.01);
+
+                // Compute V range from boundary vertices
+                let v_values: Vec<f64> = vertices
+                    .iter()
+                    .map(|v| {
+                        let d = *v - cone.apex;
+                        // V = distance along cone generator direction
+                        d.dot(cone.axis.as_ref()) / ca
+                    })
+                    .collect();
+
+                let v_min = v_values.iter().cloned().fold(f64::INFINITY, f64::min);
+                let v_max = v_values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                let v_mid = (v_min + v_max) / 2.0;
+
+                let u_mid = if u_angles.len() >= 2 {
+                    let u_lo = u_angles[0];
+                    let u_hi = u_angles[u_angles.len() - 1];
+                    let direct_span = u_hi - u_lo;
+                    let wrap_span = 2.0 * PI - direct_span;
+                    if wrap_span < direct_span {
+                        let mid = (u_hi + u_lo + 2.0 * PI) / 2.0;
+                        if mid >= 2.0 * PI {
+                            mid - 2.0 * PI
+                        } else {
+                            mid
+                        }
+                    } else {
+                        (u_lo + u_hi) / 2.0
+                    }
+                } else {
+                    0.0
+                };
+
+                // Evaluate cone surface at (u_mid, v_mid)
+                let (sin_u, cos_u) = u_mid.sin_cos();
+                let dir_u = ca * cone.axis.into_inner() + sa * (cos_u * ref_dir + sin_u * y_dir);
+                let sample = cone.apex + v_mid * dir_u;
+                return sample;
+            }
+            centroid
+        }
         _ => {
             // For other curved surfaces, the centroid of boundary vertices may not
             // lie on the surface. We use it as-is for classification since

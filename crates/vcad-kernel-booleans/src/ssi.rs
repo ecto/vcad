@@ -5,8 +5,8 @@
 //! intersections have known closed-form solutions.
 
 use vcad_kernel_geom::{
-    BilinearSurface, Circle3d, CylinderSurface, Line3d, Plane, SphereSurface, Surface,
-    SurfaceKind, TorusSurface,
+    BilinearSurface, Circle3d, ConeSurface, CylinderSurface, Line3d, Plane, SphereSurface,
+    Surface, SurfaceKind, TorusSurface,
 };
 use vcad_kernel_math::{Dir3, Point2, Point3};
 
@@ -69,6 +69,22 @@ pub fn intersect_surfaces(a: &dyn Surface, b: &dyn Surface) -> IntersectionCurve
             let p = downcast_plane(b);
             match (c, p) {
                 (Some(c), Some(p)) => plane_cylinder(p, c),
+                _ => IntersectionCurve::Empty,
+            }
+        }
+        (SurfaceKind::Plane, SurfaceKind::Cone) => {
+            let p = downcast_plane(a);
+            let c = downcast_cone(b);
+            match (p, c) {
+                (Some(p), Some(c)) => plane_cone(p, c),
+                _ => IntersectionCurve::Empty,
+            }
+        }
+        (SurfaceKind::Cone, SurfaceKind::Plane) => {
+            let c = downcast_cone(a);
+            let p = downcast_plane(b);
+            match (c, p) {
+                (Some(c), Some(p)) => plane_cone(p, c),
                 _ => IntersectionCurve::Empty,
             }
         }
@@ -143,6 +159,10 @@ fn downcast_sphere(s: &dyn Surface) -> Option<&SphereSurface> {
 
 fn downcast_cylinder(s: &dyn Surface) -> Option<&CylinderSurface> {
     s.as_any().downcast_ref::<CylinderSurface>()
+}
+
+fn downcast_cone(s: &dyn Surface) -> Option<&ConeSurface> {
+    s.as_any().downcast_ref::<ConeSurface>()
 }
 
 fn downcast_torus(s: &dyn Surface) -> Option<&TorusSurface> {
@@ -410,6 +430,108 @@ fn plane_cylinder(plane: &Plane, cyl: &CylinderSurface) -> IntersectionCurve {
         } else {
             IntersectionCurve::Sampled(points)
         }
+    }
+}
+
+// =============================================================================
+// Plane-Cone intersection
+// =============================================================================
+
+/// Intersection of a plane and a cone.
+///
+/// Three cases:
+/// - Plane perpendicular to cone axis → Circle (common case for cone base caps)
+/// - Plane parallel to cone axis → Two lines (tangent-like case)
+/// - General angle → Conic section (ellipse, parabola, hyperbola) — use sampling
+fn plane_cone(plane: &Plane, cone: &ConeSurface) -> IntersectionCurve {
+    let n = plane.normal_dir;
+    let axis = cone.axis;
+
+    let cos_angle = n.as_ref().dot(axis.as_ref()).abs();
+
+    if (cos_angle - 1.0).abs() < 1e-12 {
+        // Plane is perpendicular to cone axis → Circle
+        // Distance along axis from apex to plane
+        let apex_to_plane = (plane.origin - cone.apex).dot(axis.as_ref());
+
+        // The cone parameterization: P(u,v) = apex + v * dir(u)
+        // v > 0 is the physical cone surface; v < 0 is the phantom extension.
+        // apex_to_plane tells the signed distance along the axis.
+        // For the V parameter, v_param = apex_to_plane / cos(half_angle).
+        // Only intersections where v_param > 0 are on the physical cone.
+        let ca = cone.half_angle.cos();
+        let v_param = apex_to_plane / ca;
+
+        if v_param.abs() < 1e-12 {
+            // Plane passes through the apex → Point
+            return IntersectionCurve::Point(cone.apex);
+        }
+
+        if v_param < 0.0 {
+            // Plane is on the phantom side of the cone (behind apex)
+            return IntersectionCurve::Empty;
+        }
+
+        // Radius at this height
+        let radius = apex_to_plane.abs() * cone.half_angle.tan();
+
+        // Circle center is the projection of apex onto the plane along the axis
+        let circle_center = cone.apex + apex_to_plane * axis.into_inner();
+
+        IntersectionCurve::Circle(Circle3d::with_normal(circle_center, radius, *n.as_ref()))
+    } else if cos_angle < 1e-12 {
+        // Plane is parallel to cone axis
+        // Use sampling for this case since computing the exact lines is complex.
+        marching_ssi_cone_plane(plane, cone, 64)
+    } else {
+        // General case → conic section (ellipse, parabola, or hyperbola)
+        // Use sampling with higher density for accuracy
+        marching_ssi_cone_plane(plane, cone, 64)
+    }
+}
+
+/// Sample-based SSI for plane-cone using parameter sweep.
+fn marching_ssi_cone_plane(
+    plane: &Plane,
+    cone: &ConeSurface,
+    n_samples: usize,
+) -> IntersectionCurve {
+    let mut points = Vec::new();
+
+    // Sweep through U parameter (around the cone axis)
+    for i in 0..n_samples {
+        let u = 2.0 * std::f64::consts::PI * i as f64 / n_samples as f64;
+
+        // For each U, find V where the cone intersects the plane.
+        // P(u, v) = apex + v * (cos(α) * axis + sin(α) * (cos(u) * ref_dir + sin(u) * y_dir))
+        // We need: plane.normal · (P(u,v) - plane.origin) = 0
+        // plane.normal · (apex - plane.origin) + v * plane.normal · dir(u) = 0
+        let (sin_u, cos_u) = u.sin_cos();
+        let ca = cone.half_angle.cos();
+        let sa = cone.half_angle.sin();
+        let y_dir = cone.y_dir();
+        let dir_u =
+            ca * cone.axis.into_inner() + sa * (cos_u * cone.ref_dir.into_inner() + sin_u * y_dir);
+
+        let denom = plane.normal_dir.as_ref().dot(&dir_u);
+        if denom.abs() < 1e-15 {
+            continue;
+        }
+
+        let numer = (plane.origin - cone.apex).dot(plane.normal_dir.as_ref());
+        let v = numer / denom;
+
+        // Only consider points on the positive-v side of the cone
+        if v > 1e-12 {
+            let pt = cone.apex + v * dir_u;
+            points.push(pt);
+        }
+    }
+
+    if points.is_empty() {
+        IntersectionCurve::Empty
+    } else {
+        IntersectionCurve::Sampled(points)
     }
 }
 

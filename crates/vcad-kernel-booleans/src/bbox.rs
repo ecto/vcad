@@ -210,12 +210,55 @@ pub fn face_aabb(brep: &BRepSolid, face_id: FaceId) -> Aabb3 {
             }
         }
         vcad_kernel_geom::SurfaceKind::Cone => {
-            // For cones, use a conservative estimate based on the vertex positions
-            let diag = ((aabb.max.x - aabb.min.x).powi(2)
-                + (aabb.max.y - aabb.min.y).powi(2)
-                + (aabb.max.z - aabb.min.z).powi(2))
-            .sqrt();
-            aabb.expand(diag * 0.5);
+            // For cones, compute tight bounds from apex and base circle.
+            if let Some(cone) = surface
+                .as_any()
+                .downcast_ref::<vcad_kernel_geom::ConeSurface>()
+            {
+                // Compute V range from boundary vertices to find the height range
+                let ca = cone.half_angle.cos();
+                let mut v_min = f64::INFINITY;
+                let mut v_max = f64::NEG_INFINITY;
+                for he_id in topo.loop_half_edges(face.outer_loop) {
+                    let v_id = topo.half_edges[he_id].origin;
+                    let p = topo.vertices[v_id].point;
+                    let d = p - cone.apex;
+                    let v = d.dot(cone.axis.as_ref()) / ca;
+                    v_min = v_min.min(v);
+                    v_max = v_max.max(v);
+                }
+                for &inner_loop in &face.inner_loops {
+                    for he_id in topo.loop_half_edges(inner_loop) {
+                        let v_id = topo.half_edges[he_id].origin;
+                        let p = topo.vertices[v_id].point;
+                        let d = p - cone.apex;
+                        let v = d.dot(cone.axis.as_ref()) / ca;
+                        v_min = v_min.min(v);
+                        v_max = v_max.max(v);
+                    }
+                }
+
+                // The maximum radius occurs at the V value farthest from apex
+                let sa = cone.half_angle.sin();
+                let max_radius = v_max.abs().max(v_min.abs()) * sa;
+
+                // Rebuild AABB from apex and the circle at maximum extent
+                let center_min = cone.apex + (v_min * ca) * cone.axis.into_inner();
+                let center_max = cone.apex + (v_max * ca) * cone.axis.into_inner();
+
+                aabb = Aabb3::empty();
+                aabb.include_point(&cone.apex);
+                aabb.include_point(&center_min);
+                aabb.include_point(&center_max);
+                aabb.expand(max_radius);
+            } else {
+                // Fallback: conservative expansion
+                let diag = ((aabb.max.x - aabb.min.x).powi(2)
+                    + (aabb.max.y - aabb.min.y).powi(2)
+                    + (aabb.max.z - aabb.min.z).powi(2))
+                .sqrt();
+                aabb.expand(diag * 0.5);
+            }
         }
         vcad_kernel_geom::SurfaceKind::Bilinear => {
             // Bilinear surfaces: vertices are exact bounds (surface is defined by corners)

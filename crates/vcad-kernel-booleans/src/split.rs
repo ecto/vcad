@@ -1710,6 +1710,137 @@ pub fn is_toroidal_face(brep: &BRepSolid, face_id: FaceId) -> bool {
     surface.surface_type() == vcad_kernel_geom::SurfaceKind::Torus
 }
 
+/// Check if a face's underlying surface is a cone.
+pub fn is_conical_face(brep: &BRepSolid, face_id: FaceId) -> bool {
+    let face = &brep.topology.faces[face_id];
+    let surface = &brep.geometry.surfaces[face.surface_index];
+    surface.surface_type() == vcad_kernel_geom::SurfaceKind::Cone
+}
+
+/// Split a conical face along an intersection curve.
+pub fn split_conical_face(
+    brep: &mut BRepSolid,
+    face_id: FaceId,
+    curve: &IntersectionCurve,
+) -> SplitResult {
+    match curve {
+        IntersectionCurve::Circle(circle) => split_conical_face_by_circle(brep, face_id, circle),
+        IntersectionCurve::Sampled(_) | IntersectionCurve::Line(_) => SplitResult {
+            sub_faces: vec![face_id],
+        },
+        IntersectionCurve::Empty | IntersectionCurve::Point(_) => SplitResult {
+            sub_faces: vec![face_id],
+        },
+        IntersectionCurve::TwoLines(line1, _line2) => {
+            split_conical_face(brep, face_id, &IntersectionCurve::Line(line1.clone()))
+        }
+    }
+}
+
+/// Split a conical face along a circle intersection curve.
+fn split_conical_face_by_circle(
+    brep: &mut BRepSolid,
+    face_id: FaceId,
+    circle: &vcad_kernel_geom::Circle3d,
+) -> SplitResult {
+    let face = &brep.topology.faces[face_id];
+    let surface_index = face.surface_index;
+    let orientation = face.orientation;
+    let surface = &brep.geometry.surfaces[surface_index];
+
+    let cone = match surface
+        .as_any()
+        .downcast_ref::<vcad_kernel_geom::ConeSurface>()
+    {
+        Some(c) => c.clone(),
+        None => return SplitResult { sub_faces: vec![face_id] },
+    };
+
+    let ca = cone.half_angle.cos();
+    let apex_to_circle = (circle.center - cone.apex).dot(cone.axis.as_ref());
+
+    let loop_hes: Vec<_> = brep.topology.loop_half_edges(face.outer_loop).collect();
+    if loop_hes.is_empty() {
+        return SplitResult { sub_faces: vec![face_id] };
+    }
+
+    let mut v_min = f64::INFINITY;
+    let mut v_max = f64::NEG_INFINITY;
+    for &he_id in &loop_hes {
+        let v_id = brep.topology.half_edges[he_id].origin;
+        let point = brep.topology.vertices[v_id].point;
+        let d = point - cone.apex;
+        let v = d.dot(cone.axis.as_ref()) / ca;
+        v_min = v_min.min(v);
+        v_max = v_max.max(v);
+    }
+
+    let v_split = apex_to_circle / ca;
+    if v_split <= v_min + 1e-9 || v_split >= v_max - 1e-9 {
+        return SplitResult { sub_faces: vec![face_id] };
+    }
+
+    let sa = cone.half_angle.sin();
+    let seam_point = cone.apex
+        + v_split * (ca * cone.axis.into_inner() + sa * cone.ref_dir.into_inner());
+    let v_split_seam = brep.topology.add_vertex(seam_point);
+
+    let mut v_bottom = None;
+    let mut v_top = None;
+    for &he_id in &loop_hes {
+        let vid = brep.topology.half_edges[he_id].origin;
+        let point = brep.topology.vertices[vid].point;
+        let d = point - cone.apex;
+        let v = d.dot(cone.axis.as_ref()) / ca;
+        if (v - v_min).abs() < 1e-6 { v_bottom = Some(vid); }
+        if (v - v_max).abs() < 1e-6 { v_top = Some(vid); }
+    }
+
+    let (v_bottom, v_top) = match (v_bottom, v_top) {
+        (Some(b), Some(t)) => (b, t),
+        _ => return SplitResult { sub_faces: vec![face_id] },
+    };
+
+    // Lower face: v_min to v_split
+    let he_lower_bot = brep.topology.add_half_edge(v_bottom);
+    let he_lower_seam_up = brep.topology.add_half_edge(v_bottom);
+    let he_lower_split = brep.topology.add_half_edge(v_split_seam);
+    let he_lower_seam_down = brep.topology.add_half_edge(v_split_seam);
+    let lower_loop = brep.topology.add_loop(&[
+        he_lower_bot, he_lower_seam_up, he_lower_split, he_lower_seam_down,
+    ]);
+    let lower_face = brep.topology.add_face(lower_loop, surface_index, orientation);
+
+    // Upper face: v_split to v_max
+    let he_upper_split = brep.topology.add_half_edge(v_split_seam);
+    let he_upper_seam_up = brep.topology.add_half_edge(v_split_seam);
+    let he_upper_top = brep.topology.add_half_edge(v_top);
+    let he_upper_seam_down = brep.topology.add_half_edge(v_top);
+    let upper_loop = brep.topology.add_loop(&[
+        he_upper_split, he_upper_seam_up, he_upper_top, he_upper_seam_down,
+    ]);
+    let upper_face = brep.topology.add_face(upper_loop, surface_index, orientation);
+
+    brep.topology.add_edge(he_lower_seam_up, he_lower_seam_down);
+    brep.topology.add_edge(he_upper_seam_up, he_upper_seam_down);
+    brep.topology.add_edge(he_lower_split, he_upper_split);
+
+    if let Some(shell_id) = brep.topology.faces[face_id].shell {
+        brep.topology.shells[shell_id].faces.push(lower_face);
+        brep.topology.shells[shell_id].faces.push(upper_face);
+        brep.topology.faces[lower_face].shell = Some(shell_id);
+        brep.topology.faces[upper_face].shell = Some(shell_id);
+        brep.topology.shells[shell_id].faces.retain(|&f| f != face_id);
+    }
+
+    brep.topology.faces.remove(face_id);
+    brep.geometry.add_curve_3d(Box::new(circle.clone()));
+
+    SplitResult {
+        sub_faces: vec![lower_face, upper_face],
+    }
+}
+
 /// Split a cylindrical face along a circle intersection curve.
 ///
 /// When a plane perpendicular to the cylinder axis intersects the cylinder,
