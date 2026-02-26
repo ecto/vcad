@@ -111,7 +111,7 @@ export function PcbCanvas() {
 
   const select = useElectronicsStore((s) => s.select);
   const setHoveredNet = useElectronicsStore((s) => s.setHoveredNet);
-  const adjustZoom = useElectronicsStore((s) => s.adjustPcbZoom);
+  const zoomAt = useElectronicsStore((s) => s.zoomPcbAt);
   const adjustPan = useElectronicsStore((s) => s.adjustPcbPan);
   const startRouteFromRatsnest = useElectronicsStore((s) => s.startRouteFromRatsnest);
   const updateRoutePreview = useElectronicsStore((s) => s.updateRoutePreview);
@@ -153,9 +153,24 @@ export function PcbCanvas() {
   const onWheel = useCallback(
     (e: React.WheelEvent) => {
       e.preventDefault();
-      adjustZoom(e.deltaY > 0 ? -0.1 : 0.1);
+      if (!svgRef.current) return;
+      const rect = svgRef.current.getBoundingClientRect();
+      const cx = e.clientX - rect.left - 200;
+      const cy = e.clientY - rect.top - 200;
+
+      if (e.ctrlKey || e.metaKey) {
+        // Pinch-to-zoom (trackpad) or Ctrl+scroll — zoom toward cursor
+        const delta = -e.deltaY * 0.01;
+        zoomAt(delta, cx, cy);
+      } else if (e.deltaMode === 1) {
+        // Mouse wheel (line-based) — zoom toward cursor
+        zoomAt(e.deltaY > 0 ? -0.1 : 0.1, cx, cy);
+      } else {
+        // Trackpad two-finger scroll — pan
+        adjustPan(-e.deltaX / zoom, -e.deltaY / zoom);
+      }
     },
-    [adjustZoom],
+    [zoom, zoomAt, adjustPan],
   );
 
   /** Convert screen coords to PCB coords */

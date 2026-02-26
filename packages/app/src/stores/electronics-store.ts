@@ -62,6 +62,9 @@ export interface ElectronicsState {
   splitRatio: number;
   focusedPane: "schematic" | "pcb";
 
+  // 3D preview
+  show3dPreview: boolean;
+
   // Net-centric selection (Principle 2)
   selection: ElectronicsSelection;
   hoveredNet: string | null;
@@ -122,9 +125,11 @@ export interface ElectronicsState {
   setSchTool: (t: SchTool) => void;
   setPcbActiveLayer: (l: PcbLayer) => void;
   inferLayerFromPad: (layers: PcbLayer[]) => void;
-  adjustPcbZoom: (delta: number) => void;
+  /** Zoom PCB canvas toward a screen point (relative to SVG top-left minus center offset). */
+  zoomPcbAt: (delta: number, cx: number, cy: number) => void;
   adjustPcbPan: (dx: number, dy: number) => void;
-  adjustSchZoom: (delta: number) => void;
+  /** Zoom schematic canvas toward a screen point (relative to SVG top-left minus center offset). */
+  zoomSchAt: (delta: number, cx: number, cy: number) => void;
   adjustSchPan: (dx: number, dy: number) => void;
   setPcbGridSize: (size: number) => void;
   setPcbSnapToGrid: (snap: boolean) => void;
@@ -150,6 +155,9 @@ export interface ElectronicsState {
   setSchLabelName: (name: string) => void;
   nextRef: (prefix: string) => string;
 
+  // 3D preview actions
+  toggleShow3dPreview: () => void;
+
   // Length tuning actions
   setLengthTuneParams: (params: Partial<LengthTuneParams>) => void;
   startLengthTune: (net: string) => void;
@@ -165,6 +173,7 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
   layout: "split",
   splitRatio: 0.5,
   focusedPane: "schematic",
+  show3dPreview: false,
 
   selection: { type: "none" },
   hoveredNet: null,
@@ -257,16 +266,34 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
     if (copper) set({ pcbActiveLayer: copper });
   },
 
-  adjustPcbZoom: (delta) =>
-    set((s) => ({
-      pcbZoom: Math.max(0.1, Math.min(50, s.pcbZoom * (1 + delta))),
-    })),
+  zoomPcbAt: (delta, cx, cy) =>
+    set((s) => {
+      const oldZoom = s.pcbZoom;
+      const newZoom = Math.max(0.1, Math.min(50, oldZoom * (1 + delta)));
+      if (newZoom === oldZoom) return {};
+      return {
+        pcbZoom: newZoom,
+        pcbPan: {
+          x: s.pcbPan.x + cx * (1 / newZoom - 1 / oldZoom),
+          y: s.pcbPan.y + cy * (1 / newZoom - 1 / oldZoom),
+        },
+      };
+    }),
   adjustPcbPan: (dx, dy) =>
     set((s) => ({ pcbPan: { x: s.pcbPan.x + dx, y: s.pcbPan.y + dy } })),
-  adjustSchZoom: (delta) =>
-    set((s) => ({
-      schZoom: Math.max(0.1, Math.min(50, s.schZoom * (1 + delta))),
-    })),
+  zoomSchAt: (delta, cx, cy) =>
+    set((s) => {
+      const oldZoom = s.schZoom;
+      const newZoom = Math.max(0.1, Math.min(50, oldZoom * (1 + delta)));
+      if (newZoom === oldZoom) return {};
+      return {
+        schZoom: newZoom,
+        schPan: {
+          x: s.schPan.x + cx * (1 / newZoom - 1 / oldZoom),
+          y: s.schPan.y + cy * (1 / newZoom - 1 / oldZoom),
+        },
+      };
+    }),
   adjustSchPan: (dx, dy) =>
     set((s) => ({ schPan: { x: s.schPan.x + dx, y: s.schPan.y + dy } })),
   setPcbGridSize: (pcbGridSize) => set({ pcbGridSize }),
@@ -370,6 +397,9 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
       lengthTuneNet: null,
       pcbTool: "select",
     }),
+
+  // 3D preview
+  toggleShow3dPreview: () => set((s) => ({ show3dPreview: !s.show3dPreview })),
 
   // PCB drag
   startPcbDrag: (fpIdx, startPos) =>

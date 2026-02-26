@@ -189,7 +189,7 @@ export function SchematicCanvas() {
 
   const select = useElectronicsStore((s) => s.select);
   const setHoveredNet = useElectronicsStore((s) => s.setHoveredNet);
-  const adjustZoom = useElectronicsStore((s) => s.adjustSchZoom);
+  const zoomAt = useElectronicsStore((s) => s.zoomSchAt);
   const adjustPan = useElectronicsStore((s) => s.adjustSchPan);
   const startSchWire = useElectronicsStore((s) => s.startSchWire);
   const updateSchWirePreview = useElectronicsStore((s) => s.updateSchWirePreview);
@@ -232,13 +232,28 @@ export function SchematicCanvas() {
   const isNetActive = (net: string | null) =>
     net !== null && (net === activeNet || net === hoveredNet || activeComponentNets.has(net));
 
-  // Scroll zoom
+  // Scroll zoom / pan
   const onWheel = useCallback(
     (e: React.WheelEvent) => {
       e.preventDefault();
-      adjustZoom(e.deltaY > 0 ? -0.1 : 0.1);
+      if (!svgRef.current) return;
+      const rect = svgRef.current.getBoundingClientRect();
+      const cx = e.clientX - rect.left - 200;
+      const cy = e.clientY - rect.top - 200;
+
+      if (e.ctrlKey || e.metaKey) {
+        // Pinch-to-zoom (trackpad) or Ctrl+scroll — zoom toward cursor
+        const delta = -e.deltaY * 0.01;
+        zoomAt(delta, cx, cy);
+      } else if (e.deltaMode === 1) {
+        // Mouse wheel (line-based) — zoom toward cursor
+        zoomAt(e.deltaY > 0 ? -0.1 : 0.1, cx, cy);
+      } else {
+        // Trackpad two-finger scroll — pan
+        adjustPan(-e.deltaX / zoom, -e.deltaY / zoom);
+      }
     },
-    [adjustZoom],
+    [zoom, zoomAt, adjustPan],
   );
 
   // Pointer events
