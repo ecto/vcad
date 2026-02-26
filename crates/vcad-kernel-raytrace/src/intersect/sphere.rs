@@ -17,7 +17,7 @@ pub fn intersect_sphere(ray: &Ray, sphere: &SphereSurface) -> Vec<SurfaceHit> {
     // Quadratic: |oc + t*d|^2 = r^2
     let a = d.dot(d); // Always 1 for unit direction, but explicit for clarity
     let b = 2.0 * oc.dot(d);
-    let c = oc.dot(&oc) - sphere.radius * sphere.radius;
+    let c = oc.dot(oc) - sphere.radius * sphere.radius;
 
     let discriminant = b * b - 4.0 * a * c;
     if discriminant < 0.0 {
@@ -68,7 +68,7 @@ fn compute_sphere_uv(sphere: &SphereSurface, point: &vcad_kernel_math::Point3) -
     }
 
     let x = proj.dot(ref_dir) / proj_len;
-    let y = proj.dot(&y_dir) / proj_len;
+    let y = proj.dot(y_dir) / proj_len;
 
     // u = longitude
     let u = y.atan2(x);

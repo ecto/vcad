@@ -132,7 +132,7 @@ pub fn split_face_by_curve(
         for i in 1..points.len() - 1 {
             let e1 = points[i] - p0;
             let e2 = points[i + 1] - p0;
-            total += e1.cross(&e2);
+            total += e1.cross(e2);
         }
         0.5 * total.norm()
     }
@@ -277,7 +277,7 @@ fn point_to_segment_dist(p: &Point3, a: &Point3, b: &Point3) -> f64 {
     if len2 < 1e-20 {
         return ap.norm();
     }
-    let t = ap.dot(&ab) / len2;
+    let t = ap.dot(ab) / len2;
     let t = t.clamp(0.0, 1.0);
     let proj = a + t * ab;
     (p - proj).norm()
@@ -300,7 +300,7 @@ fn find_line_polygon_crossings(polygon: &[Point3], line: &vcad_kernel_geom::Line
     // Compute the polygon's plane normal from the first 3 vertices
     let e1 = polygon[1] - polygon[0];
     let e2 = polygon[2] - polygon[0];
-    let plane_normal = e1.cross(&e2);
+    let plane_normal = e1.cross(e2);
     let plane_normal_len = plane_normal.norm();
     if plane_normal_len < 1e-12 {
         return Vec::new(); // Degenerate polygon
@@ -309,20 +309,20 @@ fn find_line_polygon_crossings(polygon: &[Point3], line: &vcad_kernel_geom::Line
 
     // Build a 2D coordinate system on the plane
     let x_axis = e1.normalize();
-    let y_axis = plane_normal.cross(&x_axis);
+    let y_axis = plane_normal.cross(x_axis);
 
     // Project polygon vertices and line to 2D
     let project_to_2d = |p: &Point3| -> Point2 {
         let d = *p - polygon[0];
-        Point2::new(d.dot(&x_axis), d.dot(&y_axis))
+        Point2::new(d.dot(x_axis), d.dot(y_axis))
     };
 
     let poly_2d: Vec<Point2> = polygon.iter().map(&project_to_2d).collect();
 
     // Project line origin and direction
     let line_origin_2d = project_to_2d(&line.origin);
-    let dx = line.direction.dot(&x_axis);
-    let dy = line.direction.dot(&y_axis);
+    let dx = line.direction.dot(x_axis);
+    let dy = line.direction.dot(y_axis);
     let dir_2d_len = (dx * dx + dy * dy).sqrt();
 
     if dir_2d_len < 1e-12 {
@@ -400,8 +400,8 @@ fn find_line_polygon_crossings(polygon: &[Point3], line: &vcad_kernel_geom::Line
     // Sort crossings by their parameter along the line
     let line_dir = line.direction.normalize();
     crossings.sort_by(|a, b| {
-        let ta = (*a - line.origin).dot(&line_dir);
-        let tb = (*b - line.origin).dot(&line_dir);
+        let ta = (*a - line.origin).dot(line_dir);
+        let tb = (*b - line.origin).dot(line_dir);
         ta.partial_cmp(&tb).unwrap_or(std::cmp::Ordering::Equal)
     });
 
@@ -511,14 +511,14 @@ pub fn split_planar_face_by_circle(
                 let center = plane.origin;
                 let to_v = first_pt - center;
                 let normal = plane.normal_dir.into_inner();
-                let on_plane = to_v - to_v.dot(&normal) * normal;
+                let on_plane = to_v - to_v.dot(normal) * normal;
                 let cap_radius = on_plane.norm();
 
                 // Check: is the intersection circle coplanar and fully inside?
-                let circle_to_plane = (circle.center - center).dot(&normal).abs();
+                let circle_to_plane = (circle.center - center).dot(normal).abs();
                 let circle_center_offset = {
                     let d = circle.center - center;
-                    (d - d.dot(&normal) * normal).norm()
+                    (d - d.dot(normal) * normal).norm()
                 };
                 let circle_inside = circle_to_plane < 1e-6
                     && circle_center_offset + circle.radius + 1e-6 < cap_radius;
@@ -557,11 +557,11 @@ pub fn split_planar_face_by_circle(
                     // For a degenerate outer loop we use the plane normal to decide:
                     // outer is CCW from above → inner should be CW from above.
                     let cap_x_dir = on_plane.normalize();
-                    let cap_y_dir = normal.cross(&cap_x_dir);
+                    let cap_y_dir = normal.cross(cap_x_dir);
                     let circle_signed_area = {
                         let project = |p: &Point3| -> (f64, f64) {
                             let d = *p - center;
-                            (d.dot(&cap_x_dir), d.dot(&cap_y_dir))
+                            (d.dot(cap_x_dir), d.dot(cap_y_dir))
                         };
                         let pts_2d: Vec<_> = circle_verts.iter().map(project).collect();
                         let mut a = 0.0;
@@ -683,17 +683,17 @@ pub fn split_planar_face_by_circle(
         // Fallback: derive from vertices (shouldn't happen for planar faces)
         let e1 = loop_verts[1] - loop_verts[0];
         let e2 = loop_verts[2] - loop_verts[0];
-        e1.cross(&e2)
+        e1.cross(e2)
     };
     let e1 = loop_verts[1] - loop_verts[0];
     let u_axis = e1.normalize();
-    let v_axis = face_normal.cross(&e1).normalize();
+    let v_axis = face_normal.cross(e1).normalize();
     let origin = loop_verts[0];
 
     // Project to 2D
     let project = |p: &Point3| -> (f64, f64) {
         let d = *p - origin;
-        (d.dot(&u_axis), d.dot(&v_axis))
+        (d.dot(u_axis), d.dot(v_axis))
     };
 
     // Compute signed area to determine winding direction
@@ -855,7 +855,7 @@ fn circle_fully_inside_polygon(polygon: &[Point3], circle: &vcad_kernel_geom::Ci
     // Build a 2D coordinate system from the circle's normal
     let e1 = polygon[1] - v0;
     let u_axis = e1.normalize();
-    let v_axis = normal.cross(&u_axis);
+    let v_axis = normal.cross(u_axis);
     let v_axis_len = v_axis.norm();
     if v_axis_len < 1e-12 {
         return false;
@@ -864,7 +864,7 @@ fn circle_fully_inside_polygon(polygon: &[Point3], circle: &vcad_kernel_geom::Ci
 
     let project = |p: &Point3| -> (f64, f64) {
         let d = p - v0;
-        (d.dot(&u_axis), d.dot(&v_axis))
+        (d.dot(u_axis), d.dot(v_axis))
     };
 
     // Project circle center
@@ -914,7 +914,7 @@ fn circle_inside_polygon(polygon: &[Point3], circle: &vcad_kernel_geom::Circle3d
 
     let e1 = polygon[1] - v0;
     let u_axis = e1.normalize();
-    let v_axis = normal.cross(&u_axis);
+    let v_axis = normal.cross(u_axis);
     let v_axis_len = v_axis.norm();
     if v_axis_len < 1e-12 {
         return false;
@@ -923,7 +923,7 @@ fn circle_inside_polygon(polygon: &[Point3], circle: &vcad_kernel_geom::Circle3d
 
     let project = |p: &Point3| -> (f64, f64) {
         let d = p - v0;
-        (d.dot(&u_axis), d.dot(&v_axis))
+        (d.dot(u_axis), d.dot(v_axis))
     };
 
     // Project circle center
@@ -1201,7 +1201,7 @@ pub fn split_planar_face_by_arc(
 
     let e1 = v1 - v0;
     let e2 = v2 - v0;
-    let normal = e1.cross(&e2);
+    let normal = e1.cross(e2);
     let normal_len = normal.norm();
     if normal_len < 1e-12 {
         return SplitResult {
@@ -1210,13 +1210,13 @@ pub fn split_planar_face_by_arc(
     }
 
     let u_axis = e1.normalize();
-    let v_axis = normal.cross(&e1).normalize();
+    let v_axis = normal.cross(e1).normalize();
     let origin = v0;
 
     // Project polygon vertices to 2D
     let project = |p: &Point3| -> (f64, f64) {
         let d = *p - origin;
-        (d.dot(&u_axis), d.dot(&v_axis))
+        (d.dot(u_axis), d.dot(v_axis))
     };
 
     let poly_2d: Vec<(f64, f64)> = loop_verts.iter().map(&project).collect();
@@ -1461,11 +1461,11 @@ fn circle_partially_inside_polygon(
 
     let e1 = polygon[1] - v0;
     let u_axis = e1.normalize();
-    let v_axis = normal.cross(&e1).normalize();
+    let v_axis = normal.cross(e1).normalize();
 
     let project = |p: &Point3| -> (f64, f64) {
         let d = *p - v0;
-        (d.dot(&u_axis), d.dot(&v_axis))
+        (d.dot(u_axis), d.dot(v_axis))
     };
 
     let poly_2d: Vec<(f64, f64)> = polygon.iter().map(&project).collect();
@@ -1609,7 +1609,7 @@ pub fn split_spherical_face_by_circle(
     // Create inner disk face on the plane of the circle.
     // This face will be classified as inside/outside the other solid.
     // First, find or create the planar surface for the disk.
-    let circle_normal = circle.x_dir.into_inner().cross(&circle.y_dir.into_inner());
+    let circle_normal = circle.x_dir.into_inner().cross(circle.y_dir.into_inner());
     let disk_plane = vcad_kernel_geom::Plane::new(
         circle.center,
         circle.x_dir.into_inner(),
@@ -1641,8 +1641,8 @@ pub fn split_spherical_face_by_circle(
             .map(|p| {
                 let d = *p - circle.center;
                 (
-                    d.dot(&circle.x_dir.into_inner()),
-                    d.dot(&circle.y_dir.into_inner()),
+                    d.dot(circle.x_dir.into_inner()),
+                    d.dot(circle.y_dir.into_inner()),
                 )
             })
             .collect();
@@ -1658,7 +1658,7 @@ pub fn split_spherical_face_by_circle(
     let sphere_outward = (circle.center - sph.center).normalize();
     // If circle_normal aligns with sphere_outward, the CCW vertices (as seen from outside)
     // should be reversed for the hole
-    let normals_aligned = circle_normal.dot(&sphere_outward) > 0.0;
+    let normals_aligned = circle_normal.dot(sphere_outward) > 0.0;
 
     // Inner loop on sphere should be CW when viewed from outside the sphere
     // If circle area is positive and normals are aligned, the vertices are CCW from outside → reverse
@@ -2081,7 +2081,7 @@ fn compute_cylinder_u(point: &Point3, cyl: &vcad_kernel_geom::CylinderSurface) -
     let d = *point - cyl.center;
     let ref_dir = cyl.ref_dir.as_ref();
     let y_dir = cyl.axis.as_ref().cross(ref_dir);
-    let u = d.dot(&y_dir).atan2(d.dot(ref_dir));
+    let u = d.dot(y_dir).atan2(d.dot(ref_dir));
     if u < 0.0 {
         u + 2.0 * std::f64::consts::PI
     } else {
@@ -2151,7 +2151,7 @@ pub fn split_cylindrical_face_by_line(
 
     // Find the U parameter of the split line
     let d = line.origin - cyl.center;
-    let u_split = d.dot(&y_dir).atan2(d.dot(ref_dir));
+    let u_split = d.dot(y_dir).atan2(d.dot(ref_dir));
     let u_split = if u_split < 0.0 {
         u_split + 2.0 * std::f64::consts::PI
     } else {
@@ -2508,7 +2508,7 @@ pub fn split_circular_face_by_line(
     let line_dir = line.direction.normalize();
 
     // Check if line is parallel to the plane normal (no intersection)
-    if line_dir.dot(&normal).abs() > 0.999 {
+    if line_dir.dot(normal).abs() > 0.999 {
         return SplitResult {
             sub_faces: vec![face_id],
         };
@@ -2517,7 +2517,7 @@ pub fn split_circular_face_by_line(
     // Project line onto the plane
     // Find the closest point on the line to the circle center
     let to_center = center - line.origin;
-    let t_closest = to_center.dot(&line_dir);
+    let t_closest = to_center.dot(line_dir);
     let closest_point = line.origin + t_closest * line_dir;
 
     // Distance from line to center
@@ -2563,8 +2563,8 @@ pub fn split_circular_face_by_line(
     let to_p1 = p1 - center;
     let to_p2 = p2 - center;
 
-    let angle1 = to_p1.dot(&y_axis).atan2(to_p1.dot(&x_axis));
-    let angle2 = to_p2.dot(&y_axis).atan2(to_p2.dot(&x_axis));
+    let angle1 = to_p1.dot(y_axis).atan2(to_p1.dot(x_axis));
+    let angle2 = to_p2.dot(y_axis).atan2(to_p2.dot(x_axis));
 
     // Normalize angles to [0, 2π)
     let angle1 = if angle1 < 0.0 {

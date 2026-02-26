@@ -452,7 +452,7 @@ fn compute_vertex_normals(mesh: &TriangleMesh) -> Vec<f64> {
 
         let e1 = v1 - v0;
         let e2 = v2 - v0;
-        let face_normal = e1.cross(&e2);
+        let face_normal = e1.cross(e2);
 
         // Add to each vertex's normal
         for &idx in &[i0, i1, i2] {

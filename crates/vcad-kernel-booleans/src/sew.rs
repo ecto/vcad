@@ -69,7 +69,7 @@ impl PlaneEq {
     /// Returns Some(true) if same normal direction, Some(false) if opposite, None if not coplanar.
     fn coplanar_with(&self, other: &PlaneEq, tol: f64) -> Option<bool> {
         // Check if normals are parallel (same or opposite direction)
-        let dot = self.normal.dot(&other.normal);
+        let dot = self.normal.dot(other.normal);
         let same_dir = dot > 1.0 - tol;
         let opp_dir = dot < -1.0 + tol;
 

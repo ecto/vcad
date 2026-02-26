@@ -158,11 +158,11 @@ fn point_in_triangle_2d(p: Point2, a: Point2, b: Point2, c: Point2) -> bool {
     let v1 = Vec3::new(b.x - a.x, b.y - a.y, 0.0);
     let v2 = Vec3::new(p.x - a.x, p.y - a.y, 0.0);
 
-    let dot00 = v0.dot(&v0);
-    let dot01 = v0.dot(&v1);
-    let dot02 = v0.dot(&v2);
-    let dot11 = v1.dot(&v1);
-    let dot12 = v1.dot(&v2);
+    let dot00 = v0.dot(v0);
+    let dot01 = v0.dot(v1);
+    let dot02 = v0.dot(v2);
+    let dot11 = v1.dot(v1);
+    let dot12 = v1.dot(v2);
 
     let inv_denom = 1.0 / (dot00 * dot11 - dot01 * dot01);
     let u = (dot11 * dot02 - dot01 * dot12) * inv_denom;
@@ -187,11 +187,11 @@ fn interpolate_depth_at_point(
     let v1 = Vec3::new(b.x - a.x, b.y - a.y, 0.0);
     let v2 = Vec3::new(p.x - a.x, p.y - a.y, 0.0);
 
-    let dot00 = v0.dot(&v0);
-    let dot01 = v0.dot(&v1);
-    let dot02 = v0.dot(&v2);
-    let dot11 = v1.dot(&v1);
-    let dot12 = v1.dot(&v2);
+    let dot00 = v0.dot(v0);
+    let dot01 = v0.dot(v1);
+    let dot02 = v0.dot(v2);
+    let dot11 = v1.dot(v1);
+    let dot12 = v1.dot(v2);
 
     let denom = dot00 * dot11 - dot01 * dot01;
     if denom.abs() < 1e-12 {

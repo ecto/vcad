@@ -169,7 +169,7 @@ pub fn estimate_mass(mesh: &TriangleMesh, density: f64) -> f64 {
         );
 
         // Signed volume of tetrahedron with origin
-        volume += v0.dot(&v1.cross(&v2)) / 6.0;
+        volume += v0.dot(v1.cross(v2)) / 6.0;
     }
 
     (volume.abs() * density).max(0.001) // Minimum mass of 1 gram

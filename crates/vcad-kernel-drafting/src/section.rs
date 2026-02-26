@@ -31,9 +31,9 @@ fn intersect_triangle_with_plane(
     plane_normal: &Vec3,
 ) -> Vec<Point3> {
     // Compute signed distances from each vertex to the plane
-    let d0 = plane_normal.dot(&(v0 - plane_origin));
-    let d1 = plane_normal.dot(&(v1 - plane_origin));
-    let d2 = plane_normal.dot(&(v2 - plane_origin));
+    let d0 = plane_normal.dot(v0 - plane_origin);
+    let d1 = plane_normal.dot(v1 - plane_origin);
+    let d2 = plane_normal.dot(v2 - plane_origin);
 
     let tol = DEFAULT_TOLERANCE;
 
@@ -283,13 +283,13 @@ pub fn project_to_section_plane(
     let origin = plane.origin_point();
 
     // right = up × normal (to get a right-handed coordinate system)
-    let right = up.cross(&normal).normalize();
+    let right = up.cross(normal).normalize();
     // Recompute actual_up to ensure orthogonality
-    let actual_up = normal.cross(&right);
+    let actual_up = normal.cross(right);
 
     let project = |p: &Point3| -> Point2D {
         let d = *p - origin;
-        Point2D::new(d.dot(&right), d.dot(&actual_up))
+        Point2D::new(d.dot(right), d.dot(actual_up))
     };
 
     polylines

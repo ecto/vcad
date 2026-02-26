@@ -410,8 +410,8 @@ impl PhysicsWorld {
         // Actually phyz FK returns world_to_body transforms (Plücker convention).
         // To get the world-frame position, we need the inverse.
         let inv = xform.inverse();
-        let pos = inv.translation_vector();
-        let rot = inv.rotation_matrix();
+        let pos = inv.pos;
+        let rot = inv.rot;
         let quat = Quat::from_matrix(&rot);
 
         Some((

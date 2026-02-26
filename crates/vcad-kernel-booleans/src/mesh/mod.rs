@@ -113,7 +113,7 @@ fn point_in_triangle_coplanar(p: &Point3, v0: &Point3, v1: &Point3, v2: &Point3)
     // Compute triangle normal
     let e1 = v1 - v0;
     let e2 = v2 - v0;
-    let normal = e1.cross(&e2);
+    let normal = e1.cross(e2);
     let normal_len = normal.norm();
     if normal_len < 1e-15 {
         return false; // Degenerate triangle

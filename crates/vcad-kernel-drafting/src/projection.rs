@@ -30,20 +30,20 @@ impl ViewMatrix {
         let world_up = dir.up_vector();
 
         // Compute right vector (X axis in view space)
-        let right = world_up.cross(&forward);
+        let right = world_up.cross(forward);
         let right_len = right.norm();
 
         // Handle degenerate case where view direction is parallel to up
         let right = if right_len < 1e-10 {
             // Fall back to using world X as reference
             let alt_up = Vec3::new(1.0, 0.0, 0.0);
-            alt_up.cross(&forward).normalize()
+            alt_up.cross(forward).normalize()
         } else {
             right / right_len
         };
 
         // Recompute up to ensure orthogonality
-        let up = forward.cross(&right).normalize();
+        let up = forward.cross(right).normalize();
 
         Self { right, up, forward }
     }
@@ -54,27 +54,27 @@ impl ViewMatrix {
     /// is the distance along the view direction (used for hidden line removal).
     pub fn project(&self, p: Point3) -> (Point2, f64) {
         let v = Vec3::new(p.x, p.y, p.z);
-        let x = v.dot(&self.right);
-        let y = v.dot(&self.up);
-        let depth = v.dot(&self.forward);
+        let x = v.dot(self.right);
+        let y = v.dot(self.up);
+        let depth = v.dot(self.forward);
         (Point2::new(x, y), depth)
     }
 
     /// Project a 3D point to 2D, returning only the 2D coordinates.
     pub fn project_point(&self, p: Point3) -> Point2 {
         let v = Vec3::new(p.x, p.y, p.z);
-        Point2::new(v.dot(&self.right), v.dot(&self.up))
+        Point2::new(v.dot(self.right), v.dot(self.up))
     }
 
     /// Get the depth (distance along view direction) for a 3D point.
     pub fn depth(&self, p: Point3) -> f64 {
         let v = Vec3::new(p.x, p.y, p.z);
-        v.dot(&self.forward)
+        v.dot(self.forward)
     }
 
     /// Transform a 3D vector to view space (ignoring translation).
     pub fn transform_vector(&self, v: Vec3) -> Vec3 {
-        Vec3::new(v.dot(&self.right), v.dot(&self.up), v.dot(&self.forward))
+        Vec3::new(v.dot(self.right), v.dot(self.up), v.dot(self.forward))
     }
 }
 

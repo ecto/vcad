@@ -173,7 +173,7 @@ fn refine_ball_center(
             let mid_pt = Point3::from((pt_a.to_vec() + pt_b.to_vec()) * 0.5);
             let d = center - mid_pt;
             // Project error onto bisector direction
-            let along_bisector = d.dot(&bisector);
+            let along_bisector = d.dot(bisector);
             let target_along =
                 ((radius * radius - ((pt_a - pt_b).norm() * 0.5).powi(2)).max(0.0)).sqrt();
             (along_bisector - target_along) * bisector

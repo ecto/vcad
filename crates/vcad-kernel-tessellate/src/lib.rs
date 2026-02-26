@@ -230,7 +230,7 @@ fn tessellate_planar_face_with_geom(
     }
 
     // Check if geometric winding matches expected face normal
-    let dot = geom_normal.dot(&expected_normal);
+    let dot = geom_normal.dot(expected_normal);
     let winding_matches = dot > 0.0;
 
     // If winding doesn't match, flip the reversed flag
@@ -316,13 +316,13 @@ fn tessellate_concave_polygon(verts: &[Point3], reversed: bool) -> TriangleMesh 
     // Compute the face plane from first 3 non-collinear vertices.
     let e1 = verts[1] - verts[0];
     let e2 = verts[2] - verts[0];
-    let mut face_normal = e1.cross(&e2);
+    let mut face_normal = e1.cross(e2);
     for i in 3..n {
         if face_normal.norm() > 1e-12 {
             break;
         }
         let ei = verts[i] - verts[0];
-        face_normal = e1.cross(&ei);
+        face_normal = e1.cross(ei);
     }
 
     if face_normal.norm() < 1e-12 {
@@ -331,7 +331,7 @@ fn tessellate_concave_polygon(verts: &[Point3], reversed: bool) -> TriangleMesh 
     }
 
     let u_axis = e1.normalize();
-    let v_axis = face_normal.cross(&e1).normalize();
+    let v_axis = face_normal.cross(e1).normalize();
     let origin = verts[0];
 
     // Project 3D points to 2D
@@ -339,7 +339,7 @@ fn tessellate_concave_polygon(verts: &[Point3], reversed: bool) -> TriangleMesh 
         .iter()
         .map(|p| {
             let d = *p - origin;
-            (d.dot(&u_axis), d.dot(&v_axis))
+            (d.dot(u_axis), d.dot(v_axis))
         })
         .collect();
 
@@ -423,7 +423,7 @@ fn find_best_fan_center(verts: &[Point3]) -> Option<usize> {
         }
 
         // Compute angle using dot product
-        let cos_angle = to_prev.dot(&to_next) / (len_prev * len_next);
+        let cos_angle = to_prev.dot(to_next) / (len_prev * len_next);
         let angle = cos_angle.clamp(-1.0, 1.0).acos();
 
         // Also consider edge lengths - prefer vertices adjacent to longer edges
@@ -558,19 +558,19 @@ fn tessellate_planar_face_with_holes(
     // Compute the face plane from first 3 vertices
     let e1 = outer_verts[1] - outer_verts[0];
     let e2 = outer_verts[2] - outer_verts[0];
-    let face_normal = e1.cross(&e2);
+    let face_normal = e1.cross(e2);
     if face_normal.norm() < 1e-12 {
         return TriangleMesh::new();
     }
 
     let u_axis = e1.normalize();
-    let v_axis = face_normal.cross(&e1).normalize();
+    let v_axis = face_normal.cross(e1).normalize();
     let origin = outer_verts[0];
 
     // Project 3D points to 2D
     let project = |p: &Point3| -> (f64, f64) {
         let d = *p - origin;
-        (d.dot(&u_axis), d.dot(&v_axis))
+        (d.dot(u_axis), d.dot(v_axis))
     };
 
     // Project outer loop
@@ -1542,7 +1542,7 @@ fn tessellate_cylindrical_face(
             vmax = vmax.max(v);
 
             // Compute angle for this vertex
-            let dot_y = d.dot(&y_dir);
+            let dot_y = d.dot(y_dir);
             let dot_ref = d.dot(ref_dir);
             let u = dot_y.atan2(dot_ref);
             // Normalize to [0, 2π). Use a small epsilon to handle -0.0 and tiny negative values
@@ -1876,7 +1876,7 @@ fn tessellate_spherical_cap(
         .iter()
         .map(|p| {
             let v = (*p - center).normalize();
-            v.dot(&cap_dir).clamp(-1.0, 1.0).acos()
+            v.dot(cap_dir).clamp(-1.0, 1.0).acos()
         })
         .collect();
 
@@ -1985,14 +1985,14 @@ fn tessellate_large_spherical_cap(
     let up = cap_dir;
     let right = if up.x.abs() < 0.9 {
         vcad_kernel_math::Vec3::new(1.0, 0.0, 0.0)
-            .cross(&up)
+            .cross(up)
             .normalize()
     } else {
         vcad_kernel_math::Vec3::new(0.0, 1.0, 0.0)
-            .cross(&up)
+            .cross(up)
             .normalize()
     };
-    let forward = up.cross(&right);
+    let forward = up.cross(right);
 
     // Number of rings between pole and boundary
     let n_rings = 8;
@@ -2081,8 +2081,8 @@ fn tessellate_large_spherical_cap(
         .iter()
         .map(|p| {
             let v = (*p - center).normalize();
-            let x = v.dot(&right);
-            let y = v.dot(&forward);
+            let x = v.dot(right);
+            let y = v.dot(forward);
             y.atan2(x).rem_euclid(2.0 * PI)
         })
         .collect();
@@ -2214,13 +2214,13 @@ fn tessellate_conical_face(
     let mut v_max = f64::MIN;
     for pt in &verts {
         let d = pt - apex;
-        let v = d.dot(&axis) / half_angle.cos();
+        let v = d.dot(axis) / half_angle.cos();
         v_min = v_min.min(v);
         v_max = v_max.max(v);
     }
 
     // Generate mesh using surface.evaluate()
-    let y_dir = axis.cross(&ref_dir);
+    let y_dir = axis.cross(ref_dir);
     let mut mesh = TriangleMesh::new();
     let mut rows: Vec<Vec<u32>> = Vec::new();
 
@@ -2741,7 +2741,7 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
                             plane.d_du(Point2::origin()).normalize()
                         };
                         let normal = plane.normal(Point2::origin());
-                        let y_dir = normal.as_ref().cross(&x_dir);
+                        let y_dir = normal.as_ref().cross(x_dir);
 
                         if face.inner_loops.is_empty() {
                             let disk = tessellate_disk_general(
@@ -2770,7 +2770,7 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
                             let v_axis = y_dir;
                             let project = |p: &Point3| -> (f64, f64) {
                                 let d = *p - center;
-                                (d.dot(&u_axis), d.dot(&v_axis))
+                                (d.dot(u_axis), d.dot(v_axis))
                             };
 
                             let outer_2d: Vec<(f64, f64)> = outer_3d.iter().map(&project).collect();

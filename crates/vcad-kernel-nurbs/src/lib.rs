@@ -405,7 +405,7 @@ impl vcad_kernel_geom::Surface for BSplineSurface {
     fn normal(&self, uv: Point2) -> Dir3 {
         let du = self.deriv_u(uv.x, uv.y);
         let dv = self.deriv_v(uv.x, uv.y);
-        let n = du.cross(&dv);
+        let n = du.cross(dv);
         if n.norm() < 1e-15 {
             Dir3::new_normalize(Vec3::z())
         } else {
@@ -781,7 +781,7 @@ impl vcad_kernel_geom::Surface for NurbsSurface {
 
         let du_vec = (pu - p0) / du;
         let dv_vec = (pv - p0) / dv;
-        let n = du_vec.cross(&dv_vec);
+        let n = du_vec.cross(dv_vec);
         if n.norm() < 1e-15 {
             Dir3::new_normalize(Vec3::z())
         } else {

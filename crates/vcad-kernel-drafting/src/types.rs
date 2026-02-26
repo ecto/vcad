@@ -355,7 +355,7 @@ impl Triangle3D {
     pub fn new(v0: Point3, v1: Point3, v2: Point3) -> Self {
         let e1 = v1 - v0;
         let e2 = v2 - v0;
-        let normal = e1.cross(&e2).normalize();
+        let normal = e1.cross(e2).normalize();
         Self { v0, v1, v2, normal }
     }
 

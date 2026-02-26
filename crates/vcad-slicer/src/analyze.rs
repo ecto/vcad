@@ -120,7 +120,7 @@ pub fn analyze_for_printing(
 
         // Overhang analysis: angle between face normal and -Z (gravity)
         // A face pointing downward (normal has negative Z) needs support
-        let dot = face_normal.dot(&z_up);
+        let dot = face_normal.dot(z_up);
         // angle from Z-up: 0° = pointing up, 90° = horizontal, 180° = pointing down
         let angle_from_up = dot.clamp(-1.0, 1.0).acos().to_degrees();
         // Overhang angle from vertical: 0° = vertical, 45° = 45° overhang
@@ -300,8 +300,8 @@ fn detect_bridges(brep: &BRepSolid, face_normals: &[(usize, Vec3)]) -> Vec<Bridg
         let face_b_normal = find_face_normal_for_loop(brep, loop_b, face_normals);
 
         if let (Some(n_a), Some(n_b)) = (face_a_normal, face_b_normal) {
-            let dot_a = n_a.dot(&z_up);
-            let dot_b = n_b.dot(&z_up);
+            let dot_a = n_a.dot(z_up);
+            let dot_b = n_b.dot(z_up);
 
             // Both faces overhang and edge connects them = bridge
             if dot_a < -0.3 && dot_b < -0.3 {

@@ -2489,8 +2489,8 @@ impl RayTracer {
         let up_vec = Vec3::new(up[0], up[1], up[2]);
 
         let forward = (tgt - cam_pos).normalize();
-        let right = forward.cross(&up_vec).normalize();
-        let up_normalized = right.cross(&forward);
+        let right = forward.cross(up_vec).normalize();
+        let up_normalized = right.cross(forward);
 
         let aspect = width as f64 / height as f64;
         let fov_tan = (fov as f64 * 0.5).tan();

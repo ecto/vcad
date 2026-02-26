@@ -30,8 +30,8 @@ pub fn intersect_cone(ray: &Ray, cone: &ConeSurface) -> Vec<SurfaceHit> {
 
     // Quadratic coefficients
     let a = d_dot_a * d_dot_a - cos2;
-    let b = 2.0 * (d_dot_a * co_dot_a - cos2 * d.dot(&co));
-    let c = co_dot_a * co_dot_a - cos2 * co.dot(&co);
+    let b = 2.0 * (d_dot_a * co_dot_a - cos2 * d.dot(co));
+    let c = co_dot_a * co_dot_a - cos2 * co.dot(co);
 
     let mut hits = Vec::new();
 
@@ -107,7 +107,7 @@ fn compute_cone_uv(cone: &ConeSurface, point: &vcad_kernel_math::Point3) -> Poin
     }
 
     let x = proj.dot(ref_dir) / proj_len;
-    let y = proj.dot(&y_dir) / proj_len;
+    let y = proj.dot(y_dir) / proj_len;
 
     let u = y.atan2(x);
     let u = if u < 0.0 { u + 2.0 * PI } else { u };

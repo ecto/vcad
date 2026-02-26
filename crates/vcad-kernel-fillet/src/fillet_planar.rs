@@ -107,7 +107,7 @@ pub fn fillet_all_edges(brep: &BRepSolid, radius: f64) -> BRepSolid {
             let center_start = v_start_pos + center_offset;
 
             let to_tangent_a = pa_s - center_start;
-            let ref_dir = to_tangent_a - to_tangent_a.dot(&edge_unit) * edge_unit;
+            let ref_dir = to_tangent_a - to_tangent_a.dot(edge_unit) * edge_unit;
             let ref_len = ref_dir.norm();
             if ref_len < 1e-12 {
                 continue;
@@ -129,9 +129,9 @@ pub fn fillet_all_edges(brep: &BRepSolid, radius: f64) -> BRepSolid {
 
             let e1 = pa_e - pa_s;
             let e2 = pb_s - pa_s;
-            let n = e1.cross(&e2);
+            let n = e1.cross(e2);
 
-            let positions = if n.dot(&outward) > 0.0 {
+            let positions = if n.dot(outward) > 0.0 {
                 vec![pa_s, pa_e, pb_e, pb_s]
             } else {
                 vec![pa_s, pb_s, pb_e, pa_e]
@@ -213,7 +213,7 @@ pub(crate) fn build_plane_plane_blend(
     let center_start = v_start_pos + center_offset;
 
     let to_tangent_a = pa_s - center_start;
-    let ref_dir = to_tangent_a - to_tangent_a.dot(&edge_unit) * edge_unit;
+    let ref_dir = to_tangent_a - to_tangent_a.dot(edge_unit) * edge_unit;
     let ref_len = ref_dir.norm();
     if ref_len < 1e-12 {
         return false;
@@ -234,9 +234,9 @@ pub(crate) fn build_plane_plane_blend(
 
     let e1 = pa_e - pa_s;
     let e2 = pb_s - pa_s;
-    let n = e1.cross(&e2);
+    let n = e1.cross(e2);
 
-    let positions = if n.dot(&outward) > 0.0 {
+    let positions = if n.dot(outward) > 0.0 {
         vec![pa_s, pa_e, pb_e, pb_s]
     } else {
         vec![pa_s, pb_s, pb_e, pa_e]

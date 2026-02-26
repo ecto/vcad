@@ -108,7 +108,7 @@ fn classify_edge(
             let n1 = triangles[tri1_idx as usize].normal;
 
             // Compute angle between normals
-            let dot = n0.dot(&n1).clamp(-1.0, 1.0);
+            let dot = n0.dot(n1).clamp(-1.0, 1.0);
             let angle = dot.acos();
 
             if angle > sharp_threshold {
@@ -159,7 +159,7 @@ pub fn extract_sharp_edges(mesh: &TriangleMesh, sharp_threshold: f64) -> Vec<Mes
             Some(tri1_idx) => {
                 let n0 = triangles[data.tri0 as usize].normal;
                 let n1 = triangles[tri1_idx as usize].normal;
-                let dot = n0.dot(&n1).clamp(-1.0, 1.0);
+                let dot = n0.dot(n1).clamp(-1.0, 1.0);
                 let angle = dot.acos();
                 angle > sharp_threshold
             }
@@ -298,7 +298,7 @@ pub fn extract_drawing_edges(
                 let is_silhouette = front0 != front1;
 
                 // Check if sharp
-                let dot = t0.normal.dot(&t1.normal).clamp(-1.0, 1.0);
+                let dot = t0.normal.dot(t1.normal).clamp(-1.0, 1.0);
                 let angle = dot.acos();
                 let is_sharp = angle > sharp_threshold;
 

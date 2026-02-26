@@ -124,7 +124,7 @@ impl Polygon {
             let bisector = (n1.to_vec() + n2.to_vec()).normalize();
 
             // Offset distance along bisector (adjusted for corner angle)
-            let dot = n1.to_vec().dot(&bisector);
+            let dot = n1.to_vec().dot(bisector);
             let offset_dist = if dot.abs() > 0.001 {
                 distance / dot
             } else {

@@ -642,7 +642,7 @@ impl Part {
             let v0 = Vec3::new(verts[i0] as f64, verts[i0 + 1] as f64, verts[i0 + 2] as f64);
             let v1 = Vec3::new(verts[i1] as f64, verts[i1 + 1] as f64, verts[i1 + 2] as f64);
             let v2 = Vec3::new(verts[i2] as f64, verts[i2 + 1] as f64, verts[i2 + 2] as f64);
-            area += (v1 - v0).cross(&(v2 - v0)).norm() / 2.0;
+            area += (v1 - v0).cross(v2 - v0).norm() / 2.0;
         }
         area
     }

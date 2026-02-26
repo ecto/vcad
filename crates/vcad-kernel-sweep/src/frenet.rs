@@ -209,7 +209,7 @@ pub fn rotation_minimizing_frames(curve: &dyn Curve3d, n_samples: usize) -> Vec<
 
         // Vector from previous to current position
         let v1 = xi - xi_prev;
-        let c1 = v1.dot(&v1);
+        let c1 = v1.dot(v1);
 
         if c1 < 1e-24 {
             // Coincident points - copy previous frame
@@ -237,12 +237,12 @@ pub fn rotation_minimizing_frames(curve: &dyn Curve3d, n_samples: usize) -> Vec<
 
         // Second reflection to align with actual tangent
         let v2 = ti.as_ref() - ti_l;
-        let c2 = v2.dot(&v2);
+        let c2 = v2.dot(v2);
 
         let ri = if c2 < 1e-24 {
             ri_l
         } else {
-            ri_l - (2.0 / c2) * v2.dot(&ri_l) * v2
+            ri_l - (2.0 / c2) * v2.dot(ri_l) * v2
         };
 
         let normal = Dir3::new_normalize(ri);

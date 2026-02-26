@@ -167,7 +167,7 @@ impl SketchProfile {
 
         let x = Dir3::new_normalize(x_dir);
         let y = Dir3::new_normalize(y_dir);
-        let n = Dir3::new_normalize(x_dir.cross(&y_dir));
+        let n = Dir3::new_normalize(x_dir.cross(y_dir));
 
         Ok(Self {
             origin,
@@ -212,7 +212,7 @@ impl SketchProfile {
             Vec3::y()
         };
         let x_dir = arbitrary.cross(n.as_ref());
-        let y_dir = n.as_ref().cross(&x_dir);
+        let y_dir = n.as_ref().cross(x_dir);
 
         let center = Point2::origin();
         let n = n_arcs.max(2) as usize;
@@ -475,7 +475,7 @@ impl SketchProfile {
             origin: new_origin,
             x_dir: Dir3::new_normalize(new_x_dir),
             y_dir: Dir3::new_normalize(new_y_dir),
-            normal: Dir3::new_normalize(new_x_dir.cross(&new_y_dir)),
+            normal: Dir3::new_normalize(new_x_dir.cross(new_y_dir)),
             segments: self.segments.clone(),
         }
     }

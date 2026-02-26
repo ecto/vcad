@@ -20,7 +20,7 @@ pub fn closest_point_uv(surface: &dyn Surface, point: &Point3, tolerance: f64) -
             let v = d.dot(cyl.axis.as_ref());
             let radial = d - v * cyl.axis.as_ref();
             let u = radial
-                .dot(&cyl.y_dir())
+                .dot(cyl.y_dir())
                 .atan2(radial.dot(cyl.ref_dir.as_ref()));
             let u = if u < 0.0 { u + 2.0 * PI } else { u };
             Some(Point2::new(u, v))
@@ -41,7 +41,7 @@ pub fn closest_point_uv(surface: &dyn Surface, point: &Point3, tolerance: f64) -
                 return Some(Point2::new(0.0, v));
             }
             let x_comp = d_norm.dot(sphere.ref_dir.as_ref()) / cos_v;
-            let y_comp = d_norm.dot(&sphere.y_dir()) / cos_v;
+            let y_comp = d_norm.dot(sphere.y_dir()) / cos_v;
             let u = y_comp.atan2(x_comp);
             let u = if u < 0.0 { u + 2.0 * PI } else { u };
             Some(Point2::new(u, v))
@@ -58,7 +58,7 @@ pub fn closest_point_uv(surface: &dyn Surface, point: &Point3, tolerance: f64) -
             // Radial component perpendicular to axis
             let radial = d - v * cone.axis.as_ref();
             let y_dir: Vec3 = cone.axis.as_ref().cross(cone.ref_dir.as_ref());
-            let u = radial.dot(&y_dir).atan2(radial.dot(cone.ref_dir.as_ref()));
+            let u = radial.dot(y_dir).atan2(radial.dot(cone.ref_dir.as_ref()));
             let u = if u < 0.0 { u + 2.0 * PI } else { u };
             Some(Point2::new(u, v))
         }
@@ -144,11 +144,11 @@ fn newton_from(
         let du = surface.d_du(uv);
         let dv = surface.d_dv(uv);
 
-        let a11 = du.dot(&du);
-        let a12 = du.dot(&dv);
-        let a22 = dv.dot(&dv);
-        let b1 = -diff.dot(&du);
-        let b2 = -diff.dot(&dv);
+        let a11 = du.dot(du);
+        let a12 = du.dot(dv);
+        let a22 = dv.dot(dv);
+        let b1 = -diff.dot(du);
+        let b2 = -diff.dot(dv);
 
         let det = a11 * a22 - a12 * a12;
         if det.abs() < 1e-30 {

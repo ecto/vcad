@@ -46,9 +46,9 @@ pub(crate) fn compute_trim_vertices(faces: &[FaceInfo], distance: f64) -> HashMa
             let d_enter = d_enter / d_enter_len;
             let d_leave = d_leave / d_leave_len;
 
-            let perp_enter = normal.cross(&d_enter);
+            let perp_enter = normal.cross(d_enter);
             let pe_len = perp_enter.norm();
-            let perp_leave = normal.cross(&d_leave);
+            let perp_leave = normal.cross(d_leave);
             let pl_len = perp_leave.norm();
 
             if pe_len < 1e-15 || pl_len < 1e-15 {
@@ -60,8 +60,8 @@ pub(crate) fn compute_trim_vertices(faces: &[FaceInfo], distance: f64) -> HashMa
             let perp_leave = perp_leave / pl_len;
 
             let delta = distance * (perp_enter - perp_leave);
-            let cross_dirs = d_enter.cross(&d_leave);
-            let denom = cross_dirs.dot(&normal);
+            let cross_dirs = d_enter.cross(d_leave);
+            let denom = cross_dirs.dot(normal);
 
             if denom.abs() < 1e-15 {
                 let p = v_pos + distance * 0.5 * (perp_enter + perp_leave);
@@ -69,8 +69,8 @@ pub(crate) fn compute_trim_vertices(faces: &[FaceInfo], distance: f64) -> HashMa
                 continue;
             }
 
-            let cross_delta = delta.cross(&d_leave);
-            let t1 = -cross_delta.dot(&normal) / denom;
+            let cross_delta = delta.cross(d_leave);
+            let t1 = -cross_delta.dot(normal) / denom;
 
             let p1 = v_pos + distance * perp_enter;
             let trim_point = Point3::from(p1.to_vec() + t1 * d_enter);
@@ -127,8 +127,8 @@ pub(crate) fn build_vertex_faces(
         } else {
             Vec3::y()
         };
-        let u_dir = axis.cross(&arbitrary).normalize();
-        let v_dir = axis.cross(&u_dir);
+        let u_dir = axis.cross(arbitrary).normalize();
+        let v_dir = axis.cross(u_dir);
 
         let center = vertex_face_points
             .iter()
@@ -141,7 +141,7 @@ pub(crate) fn build_vertex_faces(
             .enumerate()
             .map(|(i, p)| {
                 let d = *p - center;
-                (i, d.dot(&v_dir).atan2(d.dot(&u_dir)))
+                (i, d.dot(v_dir).atan2(d.dot(u_dir)))
             })
             .collect();
         indexed.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -154,10 +154,10 @@ pub(crate) fn build_vertex_faces(
         if sorted_positions.len() >= 3 {
             let e1 = sorted_positions[1] - sorted_positions[0];
             let e2 = sorted_positions[2] - sorted_positions[0];
-            let n = e1.cross(&e2);
+            let n = e1.cross(e2);
             let outward = center - solid_center;
 
-            let final_positions = if n.dot(&outward) > 0.0 {
+            let final_positions = if n.dot(outward) > 0.0 {
                 sorted_positions
             } else {
                 let mut rev = sorted_positions;

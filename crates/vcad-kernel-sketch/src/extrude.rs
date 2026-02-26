@@ -445,7 +445,7 @@ where
     let surf_idx = if n >= 3 {
         let x_dir = positions[1] - origin;
         let y_dir = positions[n - 1] - origin;
-        if x_dir.norm() > 1e-12 && y_dir.norm() > 1e-12 && x_dir.cross(&y_dir).norm() > 1e-12 {
+        if x_dir.norm() > 1e-12 && y_dir.norm() > 1e-12 && x_dir.cross(y_dir).norm() > 1e-12 {
             geom.add_surface(Box::new(Plane::new(origin, x_dir, y_dir)))
         } else {
             geom.add_surface(Box::new(Plane::from_normal(origin, normal)))
@@ -593,7 +593,7 @@ where
     let surf_idx = if n >= 3 {
         let x_dir = positions[1] - origin;
         let y_dir = positions[n - 1] - origin;
-        if x_dir.norm() > 1e-12 && y_dir.norm() > 1e-12 && x_dir.cross(&y_dir).norm() > 1e-12 {
+        if x_dir.norm() > 1e-12 && y_dir.norm() > 1e-12 && x_dir.cross(y_dir).norm() > 1e-12 {
             geom.add_surface(Box::new(Plane::new(origin, x_dir, y_dir)))
         } else {
             geom.add_surface(Box::new(Plane::from_normal(origin, *normal)))

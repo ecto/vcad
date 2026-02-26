@@ -104,9 +104,9 @@ pub fn chamfer_all_edges(brep: &BRepSolid, distance: f64) -> BRepSolid {
 
             let e1 = pa_e - pa_s;
             let e2 = pb_s - pa_s;
-            let n = e1.cross(&e2);
+            let n = e1.cross(e2);
 
-            let positions = if n.dot(&outward_dir) > 0.0 {
+            let positions = if n.dot(outward_dir) > 0.0 {
                 vec![pa_s, pa_e, pb_e, pb_s]
             } else {
                 vec![pa_s, pb_s, pb_e, pa_e]

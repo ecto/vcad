@@ -357,9 +357,9 @@ fn build_blend_quad_surface(
     let outward = chamfer_center - solid_center;
     let e1 = *pa_e - *pa_s;
     let e2 = *pb_s - *pa_s;
-    let n = e1.cross(&e2);
+    let n = e1.cross(e2);
 
-    let positions = if n.dot(&outward) > 0.0 {
+    let positions = if n.dot(outward) > 0.0 {
         vec![*pa_s, *pa_e, *pb_e, *pb_s]
     } else {
         vec![*pa_s, *pb_s, *pb_e, *pa_e]

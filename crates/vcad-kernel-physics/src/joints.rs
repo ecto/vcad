@@ -125,7 +125,7 @@ pub fn vcad_joint_to_phyz(joint: &VcadJoint) -> Result<PhyzJoint, PhysicsError> 
 /// Compute a rotation matrix that maps the Z unit vector to the given axis.
 fn rotation_aligning_z_to(target: Vec3) -> Mat3 {
     let z = Vec3::new(0.0, 0.0, 1.0);
-    let dot = z.dot(&target);
+    let dot = z.dot(target);
 
     if dot > 0.9999 {
         return Mat3::identity();
@@ -135,7 +135,7 @@ fn rotation_aligning_z_to(target: Vec3) -> Mat3 {
         return Mat3::new(1.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, -1.0);
     }
 
-    let cross = z.cross(&target);
+    let cross = z.cross(target);
     let s = cross.norm();
     let c = dot;
     let vx = phyz::phyz_math::skew(&cross.normalize());

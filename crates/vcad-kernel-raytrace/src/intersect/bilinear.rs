@@ -143,7 +143,7 @@ fn intersect_planar_quad(ray: &Ray, surface: &BilinearSurface) -> Vec<SurfaceHit
     // Compute plane from first three corners
     let e1 = surface.p10 - surface.p00;
     let e2 = surface.p01 - surface.p00;
-    let normal = e1.cross(&e2);
+    let normal = e1.cross(e2);
     let n_len = normal.norm();
 
     if n_len < 1e-12 {
@@ -152,13 +152,13 @@ fn intersect_planar_quad(ray: &Ray, surface: &BilinearSurface) -> Vec<SurfaceHit
 
     let n = normal / n_len;
     let d = ray.direction.as_ref();
-    let denom = d.dot(&n);
+    let denom = d.dot(n);
 
     if denom.abs() < 1e-12 {
         return Vec::new(); // Parallel to plane
     }
 
-    let t = (surface.p00 - ray.origin).dot(&n) / denom;
+    let t = (surface.p00 - ray.origin).dot(n) / denom;
     if t < 0.0 {
         return Vec::new();
     }

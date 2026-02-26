@@ -24,7 +24,7 @@ pub fn intersect_torus(ray: &Ray, torus: &TorusSurface) -> Vec<SurfaceHit> {
 
     // Project ray origin and direction into torus coordinate system
     let od = o.dot(d);
-    let oo = o.dot(&o);
+    let oo = o.dot(o);
     let dd = d.dot(d); // Should be 1 for unit direction
 
     // Height along axis
@@ -79,7 +79,7 @@ fn compute_torus_uv(torus: &TorusSurface, point: &vcad_kernel_math::Point3) -> P
 
     // u = toroidal angle (around the main axis)
     let x = proj.dot(ref_dir);
-    let y = proj.dot(&y_dir);
+    let y = proj.dot(y_dir);
     let u = if proj_len > 1e-12 { y.atan2(x) } else { 0.0 };
     let u = if u < 0.0 { u + 2.0 * PI } else { u };
 

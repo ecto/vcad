@@ -196,14 +196,14 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> bo
                         } else {
                             *plane.x_dir.as_ref()
                         };
-                        let y_axis = normal.cross(&x_axis);
+                        let y_axis = normal.cross(x_axis);
                         let pt_2d =
-                            Point2::new(center_to_point.dot(&x_axis), center_to_point.dot(&y_axis));
+                            Point2::new(center_to_point.dot(x_axis), center_to_point.dot(y_axis));
                         let poly_2d: Vec<Point2> = inner_verts
                             .iter()
                             .map(|v| {
                                 let d = v - plane.origin;
-                                Point2::new(d.dot(&x_axis), d.dot(&y_axis))
+                                Point2::new(d.dot(x_axis), d.dot(y_axis))
                             })
                             .collect();
                         // Ray-casting point-in-polygon
@@ -259,7 +259,7 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> bo
                     // compute the angle subtended from center between point and hole center
                     let to_point = (*point_3d - sph.center).normalize();
                     let to_hole = (hole_center - sph.center).normalize();
-                    let angle = to_point.dot(&to_hole).clamp(-1.0, 1.0).acos();
+                    let angle = to_point.dot(to_hole).clamp(-1.0, 1.0).acos();
                     let hole_angle = (hole_radius / sph.radius).clamp(0.0, 1.0).asin();
                     if angle < hole_angle - 1e-6 {
                         return false; // inside a hole
@@ -321,7 +321,7 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> bo
                             .iter()
                             .map(|v| {
                                 let d = v - cyl.center;
-                                let u = d.dot(&y_dir).atan2(d.dot(ref_dir));
+                                let u = d.dot(y_dir).atan2(d.dot(ref_dir));
                                 let u = if u < 0.0 {
                                     u + 2.0 * std::f64::consts::PI
                                 } else {
@@ -547,7 +547,7 @@ pub fn project_point_to_uv(surface: &dyn Surface, point: &Point3) -> Point2 {
                 let d = point - cyl.center;
                 let ref_dir = cyl.ref_dir.as_ref();
                 let y_dir = cyl.axis.as_ref().cross(ref_dir);
-                let u = d.dot(&y_dir).atan2(d.dot(ref_dir));
+                let u = d.dot(y_dir).atan2(d.dot(ref_dir));
                 let u = if u < 0.0 {
                     u + 2.0 * std::f64::consts::PI
                 } else {
@@ -573,7 +573,7 @@ pub fn project_point_to_uv(surface: &dyn Surface, point: &Point3) -> Point2 {
                     0.0 // at pole
                 } else {
                     let dx = d.dot(ref_dir) / cos_v;
-                    let dy = d.dot(&y_dir) / cos_v;
+                    let dy = d.dot(y_dir) / cos_v;
                     let u = dy.atan2(dx);
                     if u < 0.0 {
                         u + 2.0 * std::f64::consts::PI
@@ -604,7 +604,7 @@ pub fn project_point_to_uv(surface: &dyn Surface, point: &Point3) -> Point2 {
                     0.0
                 } else {
                     let d_perp_norm = d_perp / d_perp_len;
-                    let u = d_perp_norm.dot(&y_dir).atan2(d_perp_norm.dot(ref_dir));
+                    let u = d_perp_norm.dot(y_dir).atan2(d_perp_norm.dot(ref_dir));
                     if u < 0.0 {
                         u + 2.0 * std::f64::consts::PI
                     } else {
@@ -643,7 +643,7 @@ pub fn project_point_to_uv(surface: &dyn Surface, point: &Point3) -> Point2 {
                     0.0 // degenerate case: point on axis
                 } else {
                     let d_plane_norm = d_plane / d_plane_len;
-                    let u = d_plane_norm.dot(&y_dir).atan2(d_plane_norm.dot(ref_dir));
+                    let u = d_plane_norm.dot(y_dir).atan2(d_plane_norm.dot(ref_dir));
                     if u < 0.0 {
                         u + 2.0 * std::f64::consts::PI
                     } else {

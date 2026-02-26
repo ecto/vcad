@@ -61,7 +61,7 @@ pub fn to_stl_bytes(part: &Part) -> Result<Vec<u8>, CadError> {
         // Calculate normal
         let edge1 = v1 - v0;
         let edge2 = v2 - v0;
-        let normal = edge1.cross(&edge2).normalize();
+        let normal = edge1.cross(edge2).normalize();
 
         // Write normal
         buffer.extend_from_slice(&(normal.x as f32).to_le_bytes());

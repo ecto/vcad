@@ -106,7 +106,7 @@ pub fn face_aabb(brep: &BRepSolid, face_id: FaceId) -> Aabb3 {
                         let v_pos = topo.vertices[topo.half_edges[he_id].origin].point;
                         let to_vertex = v_pos - plane.origin;
                         let normal = plane.normal_dir.into_inner();
-                        let on_plane = to_vertex - to_vertex.dot(&normal) * normal;
+                        let on_plane = to_vertex - to_vertex.dot(normal) * normal;
                         let radius = on_plane.norm();
 
                         if radius > 1e-6 {

@@ -63,7 +63,7 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
             // Sample between the outer boundary and the nearest inner loop.
             let normal = plane.normal_dir.into_inner();
             let to_boundary = vertices[0] - center;
-            let on_plane = to_boundary - to_boundary.dot(&normal) * normal;
+            let on_plane = to_boundary - to_boundary.dot(normal) * normal;
             let outer_r = on_plane.norm();
             let x_dir = if outer_r > 1e-12 {
                 on_plane.normalize()
@@ -72,7 +72,7 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
             };
 
             // Collect all inner loop info (center and radius for each hole)
-            let y_dir = normal.cross(&x_dir);
+            let y_dir = normal.cross(x_dir);
             let mut concentric_inner_r = 0.0f64;
             struct HoleInfo {
                 center_2d: (f64, f64),
@@ -91,7 +91,7 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
                 let hole_center = if inner_verts.len() == 1 {
                     // Degenerate inner loop — it's a circle centered at the face center
                     let d = inner_verts[0] - center;
-                    let r = (d - d.dot(&normal) * normal).norm();
+                    let r = (d - d.dot(normal) * normal).norm();
                     concentric_inner_r = concentric_inner_r.max(r);
                     continue; // Concentric holes don't need extra checking
                 } else {
@@ -101,17 +101,17 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
                     let mut max_r = 0.0f64;
                     for v in &inner_verts {
                         let d = v - center;
-                        let on_plane = d - d.dot(&normal) * normal;
-                        cx += on_plane.dot(&x_dir);
-                        cy += on_plane.dot(&y_dir);
+                        let on_plane = d - d.dot(normal) * normal;
+                        cx += on_plane.dot(x_dir);
+                        cy += on_plane.dot(y_dir);
                     }
                     let n = inner_verts.len() as f64;
                     let hc = (cx / n, cy / n);
                     for v in &inner_verts {
                         let d = v - center;
-                        let on_plane = d - d.dot(&normal) * normal;
-                        let px = on_plane.dot(&x_dir);
-                        let py = on_plane.dot(&y_dir);
+                        let on_plane = d - d.dot(normal) * normal;
+                        let px = on_plane.dot(x_dir);
+                        let py = on_plane.dot(y_dir);
                         let dr = ((px - hc.0).powi(2) + (py - hc.1).powi(2)).sqrt();
                         max_r = max_r.max(dr);
                     }
@@ -177,17 +177,17 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
             let v2 = vertices[2];
             let e1 = v1 - v0;
             let e2 = v2 - v0;
-            let normal = e1.cross(&e2);
+            let normal = e1.cross(e2);
             let normal_len = normal.norm();
 
             if normal_len > 1e-12 {
                 let u_axis = e1.normalize();
-                let v_axis = normal.cross(&e1).normalize();
+                let v_axis = normal.cross(e1).normalize();
 
                 // Project outer loop to 2D
                 let project_2d = |p: &Point3| -> (f64, f64) {
                     let d = *p - v0;
-                    (d.dot(&u_axis), d.dot(&v_axis))
+                    (d.dot(u_axis), d.dot(v_axis))
                 };
 
                 let outer_2d: Vec<(f64, f64)> = vertices.iter().map(&project_2d).collect();
@@ -298,17 +298,17 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
         let v2 = vertices[2];
         let e1 = v1 - v0;
         let e2 = v2 - v0;
-        let normal = e1.cross(&e2);
+        let normal = e1.cross(e2);
         let normal_len = normal.norm();
 
         if normal_len > 1e-12 {
             let u_axis = e1.normalize();
-            let v_axis = normal.cross(&e1).normalize();
+            let v_axis = normal.cross(e1).normalize();
 
             // Project vertices to 2D
             let project_2d = |p: &Point3| -> (f64, f64) {
                 let d = *p - v0;
-                (d.dot(&u_axis), d.dot(&v_axis))
+                (d.dot(u_axis), d.dot(v_axis))
             };
 
             let verts_2d: Vec<(f64, f64)> = vertices.iter().map(&project_2d).collect();
@@ -407,7 +407,7 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
                     .iter()
                     .map(|v| {
                         let d = *v - cyl.center;
-                        let u = d.dot(&y_dir).atan2(d.dot(ref_dir));
+                        let u = d.dot(y_dir).atan2(d.dot(ref_dir));
                         if u < 0.0 {
                             u + 2.0 * PI
                         } else {
@@ -496,7 +496,7 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
                                     .fold(0.0f64, f64::max);
                                 let to_pt = (candidate - sph.center).normalize();
                                 let to_hole = (hole_center - sph.center).normalize();
-                                let angle = to_pt.dot(&to_hole).clamp(-1.0, 1.0).acos();
+                                let angle = to_pt.dot(to_hole).clamp(-1.0, 1.0).acos();
                                 let hole_angle = (hole_radius / sph.radius).clamp(0.0, 1.0).asin();
                                 if angle < hole_angle + 1e-6 {
                                     in_hole = true;
@@ -548,7 +548,7 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
                             return 0.0;
                         }
                         let d_plane_norm = d_plane / d_plane_len;
-                        let u = d_plane_norm.dot(&y_dir).atan2(d_plane_norm.dot(ref_dir));
+                        let u = d_plane_norm.dot(y_dir).atan2(d_plane_norm.dot(ref_dir));
                         if u < 0.0 {
                             u + 2.0 * PI
                         } else {
@@ -640,7 +640,7 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
                         if d_perp_len < 1e-12 {
                             return None; // apex vertex, skip
                         }
-                        let u = d_perp.dot(&y_dir).atan2(d_perp.dot(ref_dir));
+                        let u = d_perp.dot(y_dir).atan2(d_perp.dot(ref_dir));
                         Some(if u < 0.0 { u + 2.0 * PI } else { u })
                     })
                     .collect();
@@ -726,7 +726,7 @@ pub fn classify_face(
     let oriented_normal = if outer_verts.len() >= 3 {
         let e1 = outer_verts[1] - outer_verts[0];
         let e2 = outer_verts[2] - outer_verts[0];
-        let n = e1.cross(&e2);
+        let n = e1.cross(e2);
         if n.norm() > 1e-15 {
             n.normalize()
         } else {

@@ -119,7 +119,7 @@ fn project_to_cylinder(
 
     let proj = to_point - v * axis;
     let x = proj.dot(ref_dir);
-    let y = proj.dot(&y_dir);
+    let y = proj.dot(y_dir);
 
     let u = y.atan2(x);
     let u = if u < 0.0 { u + 2.0 * PI } else { u };
@@ -146,7 +146,7 @@ fn project_to_sphere(
 
     let u = if proj_len > 1e-12 {
         let x = proj.dot(ref_dir) / proj_len;
-        let y = proj.dot(&y_dir) / proj_len;
+        let y = proj.dot(y_dir) / proj_len;
         let angle = y.atan2(x);
         if angle < 0.0 {
             angle + 2.0 * PI
@@ -180,7 +180,7 @@ fn project_to_cone(
 
     let u = if proj_len > 1e-12 {
         let x = proj.dot(ref_dir) / proj_len;
-        let y = proj.dot(&y_dir) / proj_len;
+        let y = proj.dot(y_dir) / proj_len;
         let angle = y.atan2(x);
         if angle < 0.0 {
             angle + 2.0 * PI
@@ -212,7 +212,7 @@ fn project_to_torus(
 
     let u = if proj_len > 1e-12 {
         let x = proj.dot(ref_dir);
-        let y = proj.dot(&y_dir);
+        let y = proj.dot(y_dir);
         let angle = y.atan2(x);
         if angle < 0.0 {
             angle + 2.0 * PI
@@ -244,11 +244,11 @@ fn project_newton(surface: &dyn Surface, point: &vcad_kernel_math::Point3) -> Po
 
         // Solve 2x2 system: [du, dv]^T * [delta_u, delta_v]^T = residual
         // Using least squares: (J^T J) * delta = J^T * residual
-        let a11 = du.dot(&du);
-        let a12 = du.dot(&dv);
-        let a22 = dv.dot(&dv);
-        let b1 = du.dot(&residual);
-        let b2 = dv.dot(&residual);
+        let a11 = du.dot(du);
+        let a12 = du.dot(dv);
+        let a22 = dv.dot(dv);
+        let b1 = du.dot(residual);
+        let b2 = dv.dot(residual);
 
         let det = a11 * a22 - a12 * a12;
         if det.abs() < 1e-14 {

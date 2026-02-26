@@ -21,9 +21,9 @@ pub fn intersect_cylinder(ray: &Ray, cylinder: &CylinderSurface) -> Vec<SurfaceH
     // Quadratic coefficients: |P_perp(t)|^2 = r^2
     // where P(t) = origin + t*direction
     // |oc_perp + t*d_perp|^2 = r^2
-    let a = d_perp.dot(&d_perp);
-    let b = 2.0 * oc_perp.dot(&d_perp);
-    let c = oc_perp.dot(&oc_perp) - cylinder.radius * cylinder.radius;
+    let a = d_perp.dot(d_perp);
+    let b = 2.0 * oc_perp.dot(d_perp);
+    let c = oc_perp.dot(oc_perp) - cylinder.radius * cylinder.radius;
 
     // Ray is parallel to axis
     if a.abs() < 1e-12 {
@@ -69,7 +69,7 @@ fn compute_cylinder_uv(cylinder: &CylinderSurface, point: &vcad_kernel_math::Poi
     // Project onto plane perpendicular to axis to get angle
     let proj = to_point - v * axis;
     let x = proj.dot(ref_dir);
-    let y = proj.dot(&y_dir);
+    let y = proj.dot(y_dir);
 
     // u = angle from ref_dir
     let u = y.atan2(x);

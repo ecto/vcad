@@ -100,7 +100,7 @@ pub fn check_printability(brep: &BRepSolid, params: &PrinterParams) -> DfmResult
         };
 
         // Steep overhang check (>60° from vertical is problematic even with support)
-        let dot = face_normal.dot(&z_up);
+        let dot = face_normal.dot(z_up);
         let angle_from_up = dot.clamp(-1.0, 1.0).acos().to_degrees();
         if angle_from_up > 150.0 {
             // Nearly flat bottom face — needs support
@@ -153,7 +153,7 @@ pub fn check_printability(brep: &BRepSolid, params: &PrinterParams) -> DfmResult
                 nj_vec
             };
 
-            if ni_oriented.dot(&nj_oriented) < -0.95 {
+            if ni_oriented.dot(nj_oriented) < -0.95 {
                 let pi = si.evaluate(Point2::new(
                     (ui_min + ui_max) / 2.0,
                     (vi_min + vi_max) / 2.0,
