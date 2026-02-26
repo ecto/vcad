@@ -17,7 +17,11 @@ jobs:
         toolchain: [stable, nightly]
     steps:
       - uses: actions/checkout@v4
-      - run: git clone --depth 1 https://github.com/ecto/tang.git ../tang
+      - name: Clone sibling repos
+        run: |
+          git clone --depth 1 https://github.com/ecto/tang.git ../tang
+          git clone --depth 1 https://github.com/ecto/phyz.git ../phyz
+          git clone --depth 1 https://github.com/ecto/loon.git ../loon
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.toolchain }}
