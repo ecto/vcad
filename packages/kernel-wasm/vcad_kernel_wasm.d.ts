@@ -664,6 +664,13 @@ export class WasmDocumentEngine {
      */
     can_undo(): boolean;
     /**
+     * Compute a FractionalIndex position between two neighbor feature IDs.
+     *
+     * Pass `before_id_json` and `after_id_json` as feature ID strings (or empty/"" for boundaries).
+     * Returns the FractionalIndex as a JSON string.
+     */
+    compute_position_between(before_id_json: string, after_id_json: string): string;
+    /**
      * Create a feature with the given kind and params (JSON string).
      *
      * Returns `{ document, parts, createdFeatureId }` as a JsValue.
@@ -673,6 +680,10 @@ export class WasmDocumentEngine {
      * Delete a feature by ID (JSON string).
      */
     delete_feature(feature_id_json: string): any;
+    /**
+     * Load a legacy v1 JSON document and migrate to CRDT.
+     */
+    static from_v1_json(json: string): WasmDocumentEngine;
     /**
      * Get the materialized document as JSON.
      */
@@ -694,7 +705,17 @@ export class WasmDocumentEngine {
      */
     get_sync_clock(): string;
     /**
+     * Import IR JSON into the current document (e.g. AI-generated geometry).
+     *
+     * Parses the IR, migrates it to CRDT features, and merges the ops into
+     * this document. Returns the standard mutation result.
+     */
+    import_ir(ir_json: string): any;
+    /**
      * Load a document from bytes.
+     *
+     * Auto-detects format: if CRDT (v2), loads directly; if legacy JSON (v1),
+     * migrates to CRDT first.
      */
     static load(bytes: Uint8Array): WasmDocumentEngine;
     /**
@@ -899,6 +920,14 @@ export function checkPrintability(solid: Solid, printer_profile: string): any;
 export function computeCreasedNormalsGpu(positions: Float32Array, indices: Uint32Array, crease_angle: number): Promise<Float32Array>;
 
 /**
+ * Compute volume of a closed triangle mesh using the divergence theorem.
+ *
+ * Positions are `[x, y, z, ...]` (flat f32), indices are `[i0, i1, i2, ...]`.
+ * Returns volume in mm³ (same units as positions).
+ */
+export function computeMeshVolume(positions: Float32Array, indices: Uint32Array): number;
+
+/**
  * Create a detail view from a projected view.
  *
  * A detail view is a magnified region of a parent view, useful for showing
@@ -932,6 +961,13 @@ export function createDetailView(parent_json: string, center_x: number, center_y
 export function decimateMeshGpu(positions: Float32Array, indices: Uint32Array, target_ratio: number): Promise<any>;
 
 /**
+ * Derive parts from a Document (as JSON).
+ *
+ * Returns a JSON-serialized Vec<PartInfo>.
+ */
+export function deriveParts(doc_json: string): any;
+
+/**
  * Digitize sketch segments into embroidery stitches.
  *
  * Takes a JSON array of `SketchSegment2D` (from a Sketch2D node) plus
@@ -947,6 +983,19 @@ export function digitizeSketch(segments_json: string, options_json: string): str
  * Returns the same JSON shape as `readEmbroideryPes`.
  */
 export function digitizeText(text: string, height: number, options_json: string): string;
+
+/**
+ * Convert a Document (as JSON) back to loon source code.
+ */
+export function documentToLoon(doc_json: string): string;
+
+/**
+ * Return all builtin symbol definitions.
+ *
+ * # Returns
+ * Array of `SymbolDef` as JsValue.
+ */
+export function ecadBuiltinSymbols(): any;
 
 /**
  * Run Design Rule Check on a PCB layout.
@@ -971,6 +1020,29 @@ export function ecadCheckDrc(pcb_json: string): any;
 export function ecadCheckErc(sch_json: string): any;
 
 /**
+ * Generate 3D component body meshes for all footprints on a PCB.
+ *
+ * # Arguments
+ * * `pcb_json` - JSON-serialized `Pcb` struct
+ *
+ * # Returns
+ * Array of component meshes as JsValue.
+ */
+export function ecadComponentMeshes(pcb_json: string): any;
+
+/**
+ * Compute ratsnest lines for unrouted net connections.
+ *
+ * # Arguments
+ * * `pcb_json` - JSON-serialized `Pcb` struct
+ * * `netlist_json` - JSON-serialized netlist
+ *
+ * # Returns
+ * Array of ratsnest lines as JsValue.
+ */
+export function ecadComputeRatsnest(pcb_json: string, netlist_json: string): any;
+
+/**
  * Fill copper pour zones on the PCB.
  *
  * # Arguments
@@ -993,6 +1065,40 @@ export function ecadFillZones(pcb_json: string): any;
 export function ecadGenerateNetlist(sch_json: string): any;
 
 /**
+ * Look up a single builtin symbol by ID.
+ *
+ * # Arguments
+ * * `id` - Symbol identifier (e.g. "resistor", "capacitor", "npn")
+ *
+ * # Returns
+ * `SymbolDef` as JsValue, or null if not found.
+ */
+export function ecadGetSymbol(id: string): any;
+
+/**
+ * Compute Z offset for a PCB layer.
+ *
+ * # Arguments
+ * * `layer` - Layer name (e.g. "FCu", "BCu")
+ * * `thickness` - Board thickness in mm
+ * * `explosion` - Explosion factor (0 = normal, >0 = exploded)
+ */
+export function ecadLayerZ(layer: string, thickness: number, explosion: number): number;
+
+/**
+ * Get the net for a wire based on endpoint proximity to component pins.
+ *
+ * # Arguments
+ * * `wire_json` - JSON-serialized `SchematicWire`
+ * * `netlist_json` - JSON-serialized `Netlist`
+ * * `components_json` - JSON-serialized `SchematicComponent[]`
+ *
+ * # Returns
+ * Net name as string, or null.
+ */
+export function ecadNetForWire(wire_json: string, netlist_json: string, components_json: string): any;
+
+/**
  * Route a net between two points on the PCB using the grid router.
  *
  * # Arguments
@@ -1006,6 +1112,20 @@ export function ecadGenerateNetlist(sch_json: string): any;
  * Route result with segments and vias.
  */
 export function ecadRouteNet(pcb_json: string, net: string, start_x: number, start_y: number, end_x: number, end_y: number, width: number): any;
+
+/**
+ * Snap a position to the nearest component pin or grid point.
+ *
+ * # Arguments
+ * * `x`, `y` - Cursor position
+ * * `components_json` - JSON-serialized `SchematicComponent[]`
+ * * `grid` - Grid spacing
+ * * `threshold` - Max distance to snap to a pin
+ *
+ * # Returns
+ * `{ position: { x, y }, is_pin: bool }` as JsValue.
+ */
+export function ecadSnapToGridOrPin(x: number, y: number, components_json: string, grid: number, threshold: number): any;
 
 /**
  * Estimate print cost from volume (instant, pre-slice).
@@ -1243,6 +1363,13 @@ export function parseCompactIR(compact_ir: string): string;
 export function parseKicadPcb(content: string): any;
 
 /**
+ * Parse a .vcad file (JSON v0.1, compact v0.2, or loon v0.3).
+ *
+ * Returns a JSON-serialized VcadFile with document, parts, and metadata.
+ */
+export function parseVcadFile(content: string): any;
+
+/**
  * Process geometry with GPU acceleration.
  *
  * Computes creased normals and optionally generates LOD meshes.
@@ -1315,6 +1442,19 @@ export function sliceMesh(vertices: Float32Array, indices: Uint32Array, settings
 export function sliceSolid(solid: Solid, settings: SlicerSettings, segments?: number | null): SliceResult;
 
 /**
+ * Solve forward kinematics for an assembly document.
+ *
+ * # Arguments
+ *
+ * * `doc_json` - A JSON string representing a vcad Document
+ *
+ * # Returns
+ *
+ * A JsValue containing a Map of instance_id -> Transform3D.
+ */
+export function solveForwardKinematics(doc_json: string): any;
+
+/**
  * Get the bounding box of rendered text.
  *
  * Returns the width and height of the text in mm without creating geometry.
@@ -1366,8 +1506,11 @@ export interface InitOutput {
     readonly __wbg_solid_free: (a: number, b: number) => void;
     readonly __wbg_wasmannotationlayer_free: (a: number, b: number) => void;
     readonly computeCreasedNormalsGpu: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly computeMeshVolume: (a: number, b: number, c: number, d: number) => number;
     readonly createDetailView: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
     readonly decimateMeshGpu: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly deriveParts: (a: number, b: number) => [number, number, number];
+    readonly documentToLoon: (a: number, b: number) => [number, number, number, number];
     readonly evalVcadSource: (a: number, b: number) => [number, number, number];
     readonly evaluateCompactIR: (a: number, b: number) => [number, number, number];
     readonly evaluateDocument: (a: number, b: number, c: number) => [number, number, number];
@@ -1388,6 +1531,7 @@ export interface InitOutput {
     readonly op_sweep_helix: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number) => [number, number, number];
     readonly op_sweep_line: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => [number, number, number];
     readonly parseCompactIR: (a: number, b: number) => [number, number, number, number];
+    readonly parseVcadFile: (a: number, b: number) => [number, number, number];
     readonly physicssim_actionDim: (a: number) => number;
     readonly physicssim_new: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly physicssim_observationDim: (a: number) => number;
@@ -1442,6 +1586,7 @@ export interface InitOutput {
     readonly solid_translate: (a: number, b: number, c: number, d: number) => number;
     readonly solid_union: (a: number, b: number) => number;
     readonly solid_volume: (a: number) => number;
+    readonly solveForwardKinematics: (a: number, b: number) => [number, number, number];
     readonly textBounds: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
     readonly toCompactIR: (a: number, b: number) => [number, number, number, number];
     readonly wasmannotationlayer_addAlignedDimension: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
@@ -1463,34 +1608,6 @@ export interface InitOutput {
     readonly solid_fillet: (a: number, b: number) => number;
     readonly solid_shell: (a: number, b: number) => number;
     readonly solid_circularPattern: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
-    readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_safe_z: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_spindle_rpm: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_stepdown: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_stepover: (a: number) => number;
-    readonly __wbg_set_wasmcamsettings_feed_rate: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_plunge_rate: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_retract_z: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_safe_z: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_spindle_rpm: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_stepdown: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_stepover: (a: number, b: number) => void;
-    readonly __wbg_wasmcamsettings_free: (a: number, b: number) => void;
-    readonly camDropCutter: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
-    readonly camExportGcode: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
-    readonly camExportLinuxCnc: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly camGenerateCircularPocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
-    readonly camGenerateContour: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number, number, number];
-    readonly camGenerateFace: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly camGeneratePocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly camGenerateRoughing3d: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
-    readonly camGetDefaultTools: () => [number, number, number, number];
-    readonly camToolpathStats: (a: number, b: number) => [number, number, number];
-    readonly isCamAvailable: () => number;
-    readonly wasmcamsettings_fromJson: (a: number, b: number) => [number, number, number];
-    readonly wasmcamsettings_new: () => number;
     readonly __wbg_get_slicersettings_first_layer_height: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_density: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_pattern: (a: number) => number;
@@ -1529,30 +1646,33 @@ export interface InitOutput {
     readonly sliceresult_statsJson: (a: number) => [number, number, number, number];
     readonly slicersettings_fromJson: (a: number, b: number) => [number, number, number];
     readonly slicersettings_new: () => number;
-    readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly __wbg_wasmdocumentengine_free: (a: number, b: number) => void;
+    readonly ecadBuiltinSymbols: () => [number, number, number];
     readonly ecadCheckDrc: (a: number, b: number) => [number, number, number];
     readonly ecadCheckErc: (a: number, b: number) => [number, number, number];
+    readonly ecadComponentMeshes: (a: number, b: number) => [number, number, number];
+    readonly ecadComputeRatsnest: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly ecadFillZones: (a: number, b: number) => [number, number, number];
     readonly ecadGenerateNetlist: (a: number, b: number) => [number, number, number];
+    readonly ecadGetSymbol: (a: number, b: number) => [number, number, number];
+    readonly ecadLayerZ: (a: number, b: number, c: number, d: number) => number;
+    readonly ecadNetForWire: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly ecadRouteNet: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
+    readonly ecadSnapToGridOrPin: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly isEcadAvailable: () => number;
     readonly parseKicadPcb: (a: number, b: number) => [number, number, number];
-    readonly readEmbroideryDst: (a: number, b: number) => [number, number, number, number];
-    readonly readEmbroideryPes: (a: number, b: number) => [number, number, number, number];
-    readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
-    readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
-    readonly isEmbroideryAvailable: () => number;
-    readonly __wbg_wasmdocumentengine_free: (a: number, b: number) => void;
     readonly wasmdocumentengine_can_redo: (a: number) => number;
     readonly wasmdocumentengine_can_undo: (a: number) => number;
+    readonly wasmdocumentengine_compute_position_between: (a: number, b: number, c: number, d: number, e: number) => [number, number];
     readonly wasmdocumentengine_create_feature: (a: number, b: number, c: number, d: number, e: number) => any;
     readonly wasmdocumentengine_delete_feature: (a: number, b: number, c: number) => any;
+    readonly wasmdocumentengine_from_v1_json: (a: number, b: number) => [number, number, number];
     readonly wasmdocumentengine_get_document_json: (a: number) => [number, number];
     readonly wasmdocumentengine_get_ops_since: (a: number, b: number, c: number) => [number, number];
     readonly wasmdocumentengine_get_ordered_features_json: (a: number) => [number, number];
     readonly wasmdocumentengine_get_parts_json: (a: number) => [number, number];
     readonly wasmdocumentengine_get_sync_clock: (a: number) => [number, number];
+    readonly wasmdocumentengine_import_ir: (a: number, b: number, c: number) => any;
     readonly wasmdocumentengine_load: (a: number, b: number) => [number, number, number];
     readonly wasmdocumentengine_merge_remote: (a: number, b: number, c: number) => any;
     readonly wasmdocumentengine_move_feature: (a: number, b: number, c: number, d: number, e: number) => any;
@@ -1561,6 +1681,41 @@ export interface InitOutput {
     readonly wasmdocumentengine_save: (a: number) => [number, number];
     readonly wasmdocumentengine_set_param: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
     readonly wasmdocumentengine_undo: (a: number) => any;
+    readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_safe_z: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_spindle_rpm: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_stepdown: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_stepover: (a: number) => number;
+    readonly __wbg_set_wasmcamsettings_feed_rate: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_plunge_rate: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_retract_z: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_safe_z: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_spindle_rpm: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_stepdown: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_stepover: (a: number, b: number) => void;
+    readonly __wbg_wasmcamsettings_free: (a: number, b: number) => void;
+    readonly camDropCutter: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
+    readonly camExportGcode: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+    readonly camExportLinuxCnc: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly camGenerateCircularPocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+    readonly camGenerateContour: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number, number, number];
+    readonly camGenerateFace: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly camGeneratePocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly camGenerateRoughing3d: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
+    readonly camGetDefaultTools: () => [number, number, number, number];
+    readonly camToolpathStats: (a: number, b: number) => [number, number, number];
+    readonly isCamAvailable: () => number;
+    readonly wasmcamsettings_fromJson: (a: number, b: number) => [number, number, number];
+    readonly wasmcamsettings_new: () => number;
+    readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly isEmbroideryAvailable: () => number;
+    readonly readEmbroideryDst: (a: number, b: number) => [number, number, number, number];
+    readonly readEmbroideryPes: (a: number, b: number) => [number, number, number, number];
+    readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
+    readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
     readonly wasm_bindgen__closure__destroy__hb866a658679f7c90: (a: number, b: number) => void;
     readonly wasm_bindgen__closure__destroy__ha3f46f4f424453fe: (a: number, b: number) => void;
     readonly wasm_bindgen__convert__closures_____invoke__h7fe4e9d895e0bfbd: (a: number, b: number, c: any, d: any) => void;

@@ -1556,6 +1556,31 @@ export class WasmDocumentEngine {
         return ret !== 0;
     }
     /**
+     * Compute a FractionalIndex position between two neighbor feature IDs.
+     *
+     * Pass `before_id_json` and `after_id_json` as feature ID strings (or empty/"" for boundaries).
+     * Returns the FractionalIndex as a JSON string.
+     * @param {string} before_id_json
+     * @param {string} after_id_json
+     * @returns {string}
+     */
+    compute_position_between(before_id_json, after_id_json) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(before_id_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(after_id_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len1 = WASM_VECTOR_LEN;
+            const ret = wasm.wasmdocumentengine_compute_position_between(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+            deferred3_0 = ret[0];
+            deferred3_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    /**
      * Create a feature with the given kind and params (JSON string).
      *
      * Returns `{ document, parts, createdFeatureId }` as a JsValue.
@@ -1581,6 +1606,20 @@ export class WasmDocumentEngine {
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.wasmdocumentengine_delete_feature(this.__wbg_ptr, ptr0, len0);
         return ret;
+    }
+    /**
+     * Load a legacy v1 JSON document and migrate to CRDT.
+     * @param {string} json
+     * @returns {WasmDocumentEngine}
+     */
+    static from_v1_json(json) {
+        const ptr0 = passStringToWasm0(json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmdocumentengine_from_v1_json(ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return WasmDocumentEngine.__wrap(ret[0]);
     }
     /**
      * Get the materialized document as JSON.
@@ -1666,7 +1705,24 @@ export class WasmDocumentEngine {
         }
     }
     /**
+     * Import IR JSON into the current document (e.g. AI-generated geometry).
+     *
+     * Parses the IR, migrates it to CRDT features, and merges the ops into
+     * this document. Returns the standard mutation result.
+     * @param {string} ir_json
+     * @returns {any}
+     */
+    import_ir(ir_json) {
+        const ptr0 = passStringToWasm0(ir_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmdocumentengine_import_ir(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
      * Load a document from bytes.
+     *
+     * Auto-detects format: if CRDT (v2), loads directly; if legacy JSON (v1),
+     * migrates to CRDT first.
      * @param {Uint8Array} bytes
      * @returns {WasmDocumentEngine}
      */
@@ -2226,6 +2282,24 @@ export function computeCreasedNormalsGpu(positions, indices, crease_angle) {
 }
 
 /**
+ * Compute volume of a closed triangle mesh using the divergence theorem.
+ *
+ * Positions are `[x, y, z, ...]` (flat f32), indices are `[i0, i1, i2, ...]`.
+ * Returns volume in mm³ (same units as positions).
+ * @param {Float32Array} positions
+ * @param {Uint32Array} indices
+ * @returns {number}
+ */
+export function computeMeshVolume(positions, indices) {
+    const ptr0 = passArrayF32ToWasm0(positions, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray32ToWasm0(indices, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.computeMeshVolume(ptr0, len0, ptr1, len1);
+    return ret;
+}
+
+/**
  * Create a detail view from a projected view.
  *
  * A detail view is a magnified region of a parent view, useful for showing
@@ -2285,6 +2359,23 @@ export function decimateMeshGpu(positions, indices, target_ratio) {
     const len1 = WASM_VECTOR_LEN;
     const ret = wasm.decimateMeshGpu(ptr0, len0, ptr1, len1, target_ratio);
     return ret;
+}
+
+/**
+ * Derive parts from a Document (as JSON).
+ *
+ * Returns a JSON-serialized Vec<PartInfo>.
+ * @param {string} doc_json
+ * @returns {any}
+ */
+export function deriveParts(doc_json) {
+    const ptr0 = passStringToWasm0(doc_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.deriveParts(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
 }
 
 /**
@@ -2354,6 +2445,47 @@ export function digitizeText(text, height, options_json) {
 }
 
 /**
+ * Convert a Document (as JSON) back to loon source code.
+ * @param {string} doc_json
+ * @returns {string}
+ */
+export function documentToLoon(doc_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(doc_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.documentToLoon(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Return all builtin symbol definitions.
+ *
+ * # Returns
+ * Array of `SymbolDef` as JsValue.
+ * @returns {any}
+ */
+export function ecadBuiltinSymbols() {
+    const ret = wasm.ecadBuiltinSymbols();
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Run Design Rule Check on a PCB layout.
  *
  * # Arguments
@@ -2389,6 +2521,52 @@ export function ecadCheckErc(sch_json) {
     const ptr0 = passStringToWasm0(sch_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.ecadCheckErc(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Generate 3D component body meshes for all footprints on a PCB.
+ *
+ * # Arguments
+ * * `pcb_json` - JSON-serialized `Pcb` struct
+ *
+ * # Returns
+ * Array of component meshes as JsValue.
+ * @param {string} pcb_json
+ * @returns {any}
+ */
+export function ecadComponentMeshes(pcb_json) {
+    const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadComponentMeshes(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Compute ratsnest lines for unrouted net connections.
+ *
+ * # Arguments
+ * * `pcb_json` - JSON-serialized `Pcb` struct
+ * * `netlist_json` - JSON-serialized netlist
+ *
+ * # Returns
+ * Array of ratsnest lines as JsValue.
+ * @param {string} pcb_json
+ * @param {string} netlist_json
+ * @returns {any}
+ */
+export function ecadComputeRatsnest(pcb_json, netlist_json) {
+    const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(netlist_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadComputeRatsnest(ptr0, len0, ptr1, len1);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -2438,6 +2616,75 @@ export function ecadGenerateNetlist(sch_json) {
 }
 
 /**
+ * Look up a single builtin symbol by ID.
+ *
+ * # Arguments
+ * * `id` - Symbol identifier (e.g. "resistor", "capacitor", "npn")
+ *
+ * # Returns
+ * `SymbolDef` as JsValue, or null if not found.
+ * @param {string} id
+ * @returns {any}
+ */
+export function ecadGetSymbol(id) {
+    const ptr0 = passStringToWasm0(id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadGetSymbol(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Compute Z offset for a PCB layer.
+ *
+ * # Arguments
+ * * `layer` - Layer name (e.g. "FCu", "BCu")
+ * * `thickness` - Board thickness in mm
+ * * `explosion` - Explosion factor (0 = normal, >0 = exploded)
+ * @param {string} layer
+ * @param {number} thickness
+ * @param {number} explosion
+ * @returns {number}
+ */
+export function ecadLayerZ(layer, thickness, explosion) {
+    const ptr0 = passStringToWasm0(layer, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadLayerZ(ptr0, len0, thickness, explosion);
+    return ret;
+}
+
+/**
+ * Get the net for a wire based on endpoint proximity to component pins.
+ *
+ * # Arguments
+ * * `wire_json` - JSON-serialized `SchematicWire`
+ * * `netlist_json` - JSON-serialized `Netlist`
+ * * `components_json` - JSON-serialized `SchematicComponent[]`
+ *
+ * # Returns
+ * Net name as string, or null.
+ * @param {string} wire_json
+ * @param {string} netlist_json
+ * @param {string} components_json
+ * @returns {any}
+ */
+export function ecadNetForWire(wire_json, netlist_json, components_json) {
+    const ptr0 = passStringToWasm0(wire_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(netlist_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(components_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadNetForWire(ptr0, len0, ptr1, len1, ptr2, len2);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Route a net between two points on the PCB using the grid router.
  *
  * # Arguments
@@ -2464,6 +2711,34 @@ export function ecadRouteNet(pcb_json, net, start_x, start_y, end_x, end_y, widt
     const ptr1 = passStringToWasm0(net, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len1 = WASM_VECTOR_LEN;
     const ret = wasm.ecadRouteNet(ptr0, len0, ptr1, len1, start_x, start_y, end_x, end_y, width);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Snap a position to the nearest component pin or grid point.
+ *
+ * # Arguments
+ * * `x`, `y` - Cursor position
+ * * `components_json` - JSON-serialized `SchematicComponent[]`
+ * * `grid` - Grid spacing
+ * * `threshold` - Max distance to snap to a pin
+ *
+ * # Returns
+ * `{ position: { x, y }, is_pin: bool }` as JsValue.
+ * @param {number} x
+ * @param {number} y
+ * @param {string} components_json
+ * @param {number} grid
+ * @param {number} threshold
+ * @returns {any}
+ */
+export function ecadSnapToGridOrPin(x, y, components_json, grid, threshold) {
+    const ptr0 = passStringToWasm0(components_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadSnapToGridOrPin(x, y, ptr0, len0, grid, threshold);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -2741,7 +3016,7 @@ export function isEcadAvailable() {
  * @returns {boolean}
  */
 export function isEmbroideryAvailable() {
-    const ret = wasm.isEcadAvailable();
+    const ret = wasm.isEmbroideryAvailable();
     return ret !== 0;
 }
 
@@ -3013,6 +3288,23 @@ export function parseKicadPcb(content) {
 }
 
 /**
+ * Parse a .vcad file (JSON v0.1, compact v0.2, or loon v0.3).
+ *
+ * Returns a JSON-serialized VcadFile with document, parts, and metadata.
+ * @param {string} content
+ * @returns {any}
+ */
+export function parseVcadFile(content) {
+    const ptr0 = passStringToWasm0(content, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.parseVcadFile(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Process geometry with GPU acceleration.
  *
  * Computes creased normals and optionally generates LOD meshes.
@@ -3195,6 +3487,29 @@ export function sliceSolid(solid, settings, segments) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return SliceResult.__wrap(ret[0]);
+}
+
+/**
+ * Solve forward kinematics for an assembly document.
+ *
+ * # Arguments
+ *
+ * * `doc_json` - A JSON string representing a vcad Document
+ *
+ * # Returns
+ *
+ * A JsValue containing a Map of instance_id -> Transform3D.
+ * @param {string} doc_json
+ * @returns {any}
+ */
+export function solveForwardKinematics(doc_json) {
+    const ptr0 = passStringToWasm0(doc_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.solveForwardKinematics(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
 }
 
 /**
@@ -5090,12 +5405,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 1059, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1060, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 1069, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1070, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hb866a658679f7c90, wasm_bindgen__convert__closures_____invoke__hd3174526aa1241bc);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 1802, function: Function { arguments: [Externref], shim_idx: 1803, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 1812, function: Function { arguments: [Externref], shim_idx: 1813, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__ha3f46f4f424453fe, wasm_bindgen__convert__closures_____invoke__h3b7e8ca02e296028);
             return ret;
         },

@@ -82,6 +82,20 @@ export function useEngine() {
         useEngineStore.getState().setEngineReady(true);
         useEngineStore.getState().setLoading(false);
 
+        // Initialize CRDT document engine (best-effort, non-blocking)
+        import("@vcad/kernel-wasm")
+          .then((wasmModule) => {
+            const EngineClass = (wasmModule as Record<string, unknown>)
+              .WasmDocumentEngine as (new () => unknown) | undefined;
+            if (EngineClass) {
+              useDocumentStore.getState()._initCrdt(EngineClass as never);
+              logger.info("wasm", "CRDT document engine initialized");
+            }
+          })
+          .catch((e) => {
+            logger.warn("wasm", `Failed to initialize CRDT engine: ${e}`);
+          });
+
         // Initialize GPU for accelerated geometry processing (non-blocking)
         initializeGpu()
           .then((gpuAvailable) => {

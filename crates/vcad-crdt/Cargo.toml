@@ -10,4 +10,7 @@ description = "CRDT document model for vcad — conflict-free replicated data ty
 serde.workspace = true
 serde_json.workspace = true
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3"
+
 [dev-dependencies]

@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use vcad_app::materializer::materialize;
 use vcad_app::migrate::{detect_format, migrate_v1, FileFormat};
 use vcad_crdt::{CrdtDocument, FeatureId, FractionalIndex, ReplicaId, Value};
+use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 /// CRDT-backed document engine for WASM.
@@ -271,7 +272,8 @@ impl WasmDocumentEngine {
                 serde_json::Value::String(format!("{}:{}", fid.0 .0, fid.1));
         }
 
-        serde_wasm_bindgen::to_value(&obj).unwrap_or(JsValue::NULL)
+        let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+        obj.serialize(&serializer).unwrap_or(JsValue::NULL)
     }
 }
 

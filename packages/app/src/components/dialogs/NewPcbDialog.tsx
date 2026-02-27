@@ -83,8 +83,8 @@ export function NewPcbDialog({ open, onOpenChange, initialWidth, initialHeight }
     };
 
     const boardNodeId = useDocumentStore.getState().initPcb(options);
-    if (boardNodeId == null) {
-      addToast("Failed to create PCB", "error");
+    if (!boardNodeId) {
+      addToast("Failed to create PCB — engine not ready, try again", "error");
       onOpenChange(false);
       return;
     }
@@ -128,71 +128,71 @@ export function NewPcbDialog({ open, onOpenChange, initialWidth, initialHeight }
           </div>
 
           {/* Dimensions */}
-          <div className="flex gap-3">
-            <div className="flex-1 flex flex-col gap-1.5">
+          <div className="grid grid-cols-2 gap-2">
+            <div className="flex flex-col gap-1.5">
               <label className="text-xs text-text-muted">Width</label>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 <input
                   type="number"
                   value={width}
                   onChange={(e) => handleDimensionChange(setWidth, Math.max(1, parseFloat(e.target.value) || 1))}
                   min={1}
                   step={0.1}
-                  className="flex-1 rounded border border-border bg-card px-3 py-1.5 text-sm text-text outline-none focus:border-accent"
+                  className="min-w-0 flex-1 rounded border border-border bg-card px-3 py-1.5 text-sm text-text outline-none focus:border-accent"
                 />
-                <span className="text-xs text-text-muted">mm</span>
+                <span className="shrink-0 text-xs text-text-muted">mm</span>
               </div>
             </div>
-            <div className="flex-1 flex flex-col gap-1.5">
+            <div className="flex flex-col gap-1.5">
               <label className="text-xs text-text-muted">Height</label>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 <input
                   type="number"
                   value={height}
                   onChange={(e) => handleDimensionChange(setHeight, Math.max(1, parseFloat(e.target.value) || 1))}
                   min={1}
                   step={0.1}
-                  className="flex-1 rounded border border-border bg-card px-3 py-1.5 text-sm text-text outline-none focus:border-accent"
+                  className="min-w-0 flex-1 rounded border border-border bg-card px-3 py-1.5 text-sm text-text outline-none focus:border-accent"
                 />
-                <span className="text-xs text-text-muted">mm</span>
+                <span className="shrink-0 text-xs text-text-muted">mm</span>
               </div>
             </div>
           </div>
 
-          {/* Layers */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs text-text-muted">Layers</label>
-            <div className="flex gap-1">
-              {([2, 4, 6] as const).map((n) => (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => setLayers(n)}
-                  className={`flex-1 px-3 py-1.5 text-xs rounded border transition-colors ${
-                    layers === n
-                      ? "border-accent bg-accent/10 text-accent"
-                      : "border-border text-text-muted hover:border-text-muted"
-                  }`}
-                >
-                  {n}-layer
-                </button>
-              ))}
+          {/* Layers + Thickness */}
+          <div className="grid grid-cols-2 gap-2">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs text-text-muted">Layers</label>
+              <div className="grid grid-cols-3 gap-1">
+                {([2, 4, 6] as const).map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setLayers(n)}
+                    className={`px-2 py-1.5 text-xs rounded border transition-colors ${
+                      layers === n
+                        ? "border-accent bg-accent/10 text-accent"
+                        : "border-border text-text-muted hover:border-text-muted"
+                    }`}
+                  >
+                    {n}-layer
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-
-          {/* Thickness */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs text-text-muted">Thickness</label>
-            <div className="flex items-center gap-2">
-              <input
-                type="number"
-                value={thickness}
-                onChange={(e) => setThickness(Math.max(0.2, parseFloat(e.target.value) || 0.2))}
-                min={0.2}
-                step={0.1}
-                className="flex-1 rounded border border-border bg-card px-3 py-1.5 text-sm text-text outline-none focus:border-accent"
-              />
-              <span className="text-xs text-text-muted">mm</span>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs text-text-muted">Thickness</label>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="number"
+                  value={thickness}
+                  onChange={(e) => setThickness(Math.max(0.2, parseFloat(e.target.value) || 0.2))}
+                  min={0.2}
+                  step={0.1}
+                  className="min-w-0 flex-1 rounded border border-border bg-card px-3 py-1.5 text-sm text-text outline-none focus:border-accent"
+                />
+                <span className="shrink-0 text-xs text-text-muted">mm</span>
+              </div>
             </div>
           </div>
 
@@ -206,33 +206,33 @@ export function NewPcbDialog({ open, onOpenChange, initialWidth, initialHeight }
             Design Rules
           </button>
           {showAdvanced && (
-            <div className="flex gap-3 pl-3">
-              <div className="flex-1 flex flex-col gap-1.5">
+            <div className="grid grid-cols-2 gap-2 pl-3">
+              <div className="flex flex-col gap-1.5">
                 <label className="text-xs text-text-muted">Trace Width</label>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   <input
                     type="number"
                     value={traceWidth}
                     onChange={(e) => setTraceWidth(Math.max(0.05, parseFloat(e.target.value) || 0.05))}
                     min={0.05}
                     step={0.01}
-                    className="flex-1 rounded border border-border bg-card px-3 py-1.5 text-sm text-text outline-none focus:border-accent"
+                    className="min-w-0 flex-1 rounded border border-border bg-card px-3 py-1.5 text-sm text-text outline-none focus:border-accent"
                   />
-                  <span className="text-xs text-text-muted">mm</span>
+                  <span className="shrink-0 text-xs text-text-muted">mm</span>
                 </div>
               </div>
-              <div className="flex-1 flex flex-col gap-1.5">
+              <div className="flex flex-col gap-1.5">
                 <label className="text-xs text-text-muted">Clearance</label>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   <input
                     type="number"
                     value={clearance}
                     onChange={(e) => setClearance(Math.max(0.05, parseFloat(e.target.value) || 0.05))}
                     min={0.05}
                     step={0.01}
-                    className="flex-1 rounded border border-border bg-card px-3 py-1.5 text-sm text-text outline-none focus:border-accent"
+                    className="min-w-0 flex-1 rounded border border-border bg-card px-3 py-1.5 text-sm text-text outline-none focus:border-accent"
                   />
-                  <span className="text-xs text-text-muted">mm</span>
+                  <span className="shrink-0 text-xs text-text-muted">mm</span>
                 </div>
               </div>
             </div>

@@ -525,7 +525,11 @@ function addPcbToDocument(
   boardName: string,
 ): NodeId {
   const state = get();
-  const engine = state._crdtEngine!;
+  const engine = state._crdtEngine;
+  if (!engine) {
+    console.error("[PCB] Cannot create board: CRDT engine not initialized");
+    return 0;
+  }
   const params: Record<string, CrdtValue> = {
     name: crdtStr(boardName),
     board: crdtStr(JSON.stringify(pcbBoard)),
