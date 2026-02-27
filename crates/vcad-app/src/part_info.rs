@@ -15,7 +15,7 @@ use vcad_ir::NodeId;
 #[serde(tag = "kind")]
 pub enum PartInfo {
     /// A primitive shape (cube, cylinder, sphere, cone).
-    #[serde(rename = "cube")]
+    #[serde(rename = "cube", rename_all = "camelCase")]
     Cube {
         /// Part identifier (serialized FeatureId).
         id: String,
@@ -31,7 +31,7 @@ pub enum PartInfo {
         translate_node_id: NodeId,
     },
     /// Cylinder primitive.
-    #[serde(rename = "cylinder")]
+    #[serde(rename = "cylinder", rename_all = "camelCase")]
     Cylinder {
         /// Part identifier.
         id: String,
@@ -47,7 +47,7 @@ pub enum PartInfo {
         translate_node_id: NodeId,
     },
     /// Sphere primitive.
-    #[serde(rename = "sphere")]
+    #[serde(rename = "sphere", rename_all = "camelCase")]
     Sphere {
         /// Part identifier.
         id: String,
@@ -63,7 +63,7 @@ pub enum PartInfo {
         translate_node_id: NodeId,
     },
     /// Cone primitive.
-    #[serde(rename = "cone")]
+    #[serde(rename = "cone", rename_all = "camelCase")]
     Cone {
         /// Part identifier.
         id: String,
@@ -79,7 +79,7 @@ pub enum PartInfo {
         translate_node_id: NodeId,
     },
     /// Boolean operation (union, difference, intersection).
-    #[serde(rename = "boolean")]
+    #[serde(rename = "boolean", rename_all = "camelCase")]
     Boolean {
         /// Part identifier.
         id: String,
@@ -99,7 +99,7 @@ pub enum PartInfo {
         source_part_ids: [String; 2],
     },
     /// Extrude from sketch.
-    #[serde(rename = "extrude")]
+    #[serde(rename = "extrude", rename_all = "camelCase")]
     Extrude {
         /// Part identifier.
         id: String,
@@ -117,7 +117,7 @@ pub enum PartInfo {
         translate_node_id: NodeId,
     },
     /// Revolve from sketch.
-    #[serde(rename = "revolve")]
+    #[serde(rename = "revolve", rename_all = "camelCase")]
     Revolve {
         /// Part identifier.
         id: String,
@@ -135,7 +135,7 @@ pub enum PartInfo {
         translate_node_id: NodeId,
     },
     /// Sweep from sketch along path.
-    #[serde(rename = "sweep")]
+    #[serde(rename = "sweep", rename_all = "camelCase")]
     Sweep {
         /// Part identifier.
         id: String,
@@ -153,7 +153,7 @@ pub enum PartInfo {
         translate_node_id: NodeId,
     },
     /// Loft between sketches.
-    #[serde(rename = "loft")]
+    #[serde(rename = "loft", rename_all = "camelCase")]
     Loft {
         /// Part identifier.
         id: String,
@@ -171,7 +171,7 @@ pub enum PartInfo {
         translate_node_id: NodeId,
     },
     /// Fillet (rounded edges).
-    #[serde(rename = "fillet")]
+    #[serde(rename = "fillet", rename_all = "camelCase")]
     Fillet {
         /// Part identifier.
         id: String,
@@ -189,7 +189,7 @@ pub enum PartInfo {
         translate_node_id: NodeId,
     },
     /// Chamfer (beveled edges).
-    #[serde(rename = "chamfer")]
+    #[serde(rename = "chamfer", rename_all = "camelCase")]
     Chamfer {
         /// Part identifier.
         id: String,
@@ -207,7 +207,7 @@ pub enum PartInfo {
         translate_node_id: NodeId,
     },
     /// Shell (hollowed solid).
-    #[serde(rename = "shell")]
+    #[serde(rename = "shell", rename_all = "camelCase")]
     Shell {
         /// Part identifier.
         id: String,
@@ -225,7 +225,7 @@ pub enum PartInfo {
         translate_node_id: NodeId,
     },
     /// Linear pattern.
-    #[serde(rename = "linear-pattern")]
+    #[serde(rename = "linear-pattern", rename_all = "camelCase")]
     LinearPattern {
         /// Part identifier.
         id: String,
@@ -243,7 +243,7 @@ pub enum PartInfo {
         translate_node_id: NodeId,
     },
     /// Circular pattern.
-    #[serde(rename = "circular-pattern")]
+    #[serde(rename = "circular-pattern", rename_all = "camelCase")]
     CircularPattern {
         /// Part identifier.
         id: String,
@@ -261,7 +261,7 @@ pub enum PartInfo {
         translate_node_id: NodeId,
     },
     /// Mirror.
-    #[serde(rename = "mirror")]
+    #[serde(rename = "mirror", rename_all = "camelCase")]
     Mirror {
         /// Part identifier.
         id: String,
@@ -279,7 +279,7 @@ pub enum PartInfo {
         translate_node_id: NodeId,
     },
     /// Text (2D text extruded to 3D).
-    #[serde(rename = "text")]
+    #[serde(rename = "text", rename_all = "camelCase")]
     Text {
         /// Part identifier.
         id: String,
@@ -297,7 +297,7 @@ pub enum PartInfo {
         translate_node_id: NodeId,
     },
     /// Imported mesh.
-    #[serde(rename = "imported-mesh")]
+    #[serde(rename = "imported-mesh", rename_all = "camelCase")]
     ImportedMesh {
         /// Part identifier.
         id: String,
@@ -315,7 +315,7 @@ pub enum PartInfo {
         source: Option<String>,
     },
     /// PCB board.
-    #[serde(rename = "pcb-board")]
+    #[serde(rename = "pcb-board", rename_all = "camelCase")]
     PcbBoard {
         /// Part identifier.
         id: String,
@@ -331,7 +331,7 @@ pub enum PartInfo {
         translate_node_id: NodeId,
     },
     /// Embroidery pattern.
-    #[serde(rename = "embroidery-pattern")]
+    #[serde(rename = "embroidery-pattern", rename_all = "camelCase")]
     EmbroideryPattern {
         /// Part identifier.
         id: String,
@@ -437,5 +437,83 @@ impl PartInfo {
                 translate_node_id, ..
             } => *translate_node_id,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_serde_camel_case_roundtrip() {
+        let part = PartInfo::Cube {
+            id: "1:0".to_string(),
+            name: "Box 1".to_string(),
+            primitive_node_id: 1,
+            scale_node_id: 2,
+            rotate_node_id: 3,
+            translate_node_id: 4,
+        };
+
+        let json = serde_json::to_string(&part).unwrap();
+
+        // Verify camelCase field names
+        assert!(json.contains("\"primitiveNodeId\""), "expected camelCase: {json}");
+        assert!(json.contains("\"scaleNodeId\""), "expected camelCase: {json}");
+        assert!(json.contains("\"rotateNodeId\""), "expected camelCase: {json}");
+        assert!(json.contains("\"translateNodeId\""), "expected camelCase: {json}");
+
+        // Verify variant name still uses explicit rename
+        assert!(json.contains("\"kind\":\"cube\""), "expected kind=cube: {json}");
+
+        // Verify snake_case is NOT in output
+        assert!(!json.contains("primitive_node_id"), "unexpected snake_case: {json}");
+
+        // Roundtrip
+        let deserialized: PartInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.id(), "1:0");
+        assert_eq!(deserialized.root_node_id(), 4);
+    }
+
+    #[test]
+    fn test_serde_boolean_camel_case() {
+        let part = PartInfo::Boolean {
+            id: "1:1".to_string(),
+            name: "Union 1".to_string(),
+            boolean_type: "union".to_string(),
+            boolean_node_id: 5,
+            scale_node_id: 6,
+            rotate_node_id: 7,
+            translate_node_id: 8,
+            source_part_ids: ["1:0".to_string(), "1:2".to_string()],
+        };
+
+        let json = serde_json::to_string(&part).unwrap();
+        assert!(json.contains("\"booleanType\""), "expected camelCase: {json}");
+        assert!(json.contains("\"booleanNodeId\""), "expected camelCase: {json}");
+        assert!(json.contains("\"sourcePartIds\""), "expected camelCase: {json}");
+
+        let deserialized: PartInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.id(), "1:1");
+    }
+
+    #[test]
+    fn test_serde_loft_camel_case() {
+        let part = PartInfo::Loft {
+            id: "1:3".to_string(),
+            name: "Loft 1".to_string(),
+            sketch_node_ids: vec![1, 2],
+            loft_node_id: 3,
+            scale_node_id: 4,
+            rotate_node_id: 5,
+            translate_node_id: 6,
+        };
+
+        let json = serde_json::to_string(&part).unwrap();
+        assert!(json.contains("\"sketchNodeIds\""), "expected camelCase: {json}");
+        assert!(json.contains("\"loftNodeId\""), "expected camelCase: {json}");
+
+        let deserialized: PartInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.id(), "1:3");
     }
 }

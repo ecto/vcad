@@ -301,7 +301,6 @@ fn materialize_feature(
             ))
         }
         "extrude" => {
-            let sketch_data = get_str(feature, "sketch");
             let depth = get_f64(feature, "depth").unwrap_or(10.0);
             let direction = get_vec3(feature, "direction").unwrap_or([0.0, 0.0, 1.0]);
 
@@ -311,22 +310,7 @@ fn materialize_feature(
             let rotate_id = ctx.alloc();
             let translate_id = ctx.alloc();
 
-            // Default sketch on XY plane
-            let sketch_op = if let Some(data) = sketch_data {
-                serde_json::from_str::<CsgOp>(&data).unwrap_or(CsgOp::Sketch2D {
-                    origin: Vec3::new(0.0, 0.0, 0.0),
-                    x_dir: Vec3::new(1.0, 0.0, 0.0),
-                    y_dir: Vec3::new(0.0, 1.0, 0.0),
-                    segments: Vec::new(),
-                })
-            } else {
-                CsgOp::Sketch2D {
-                    origin: Vec3::new(0.0, 0.0, 0.0),
-                    x_dir: Vec3::new(1.0, 0.0, 0.0),
-                    y_dir: Vec3::new(0.0, 1.0, 0.0),
-                    segments: Vec::new(),
-                }
-            };
+            let sketch_op = parse_sketch(feature);
             insert_node(doc, sketch_id, &format!("{name} Sketch"), sketch_op);
             insert_node(
                 doc,
@@ -356,6 +340,442 @@ fn materialize_feature(
                     scale_node_id: scale_id,
                     rotate_node_id: rotate_id,
                     translate_node_id: translate_id,
+                },
+                translate_id,
+            ))
+        }
+        "revolve" => {
+            let axis_origin = get_vec3(feature, "axis_origin").unwrap_or([0.0, 0.0, 0.0]);
+            let axis_dir = get_vec3(feature, "axis_dir").unwrap_or([0.0, 1.0, 0.0]);
+            let angle_deg = get_f64(feature, "angle_deg").unwrap_or(360.0);
+
+            let sketch_id = ctx.alloc();
+            let revolve_id = ctx.alloc();
+            let scale_id = ctx.alloc();
+            let rotate_id = ctx.alloc();
+            let translate_id = ctx.alloc();
+
+            let sketch_op = parse_sketch(feature);
+            insert_node(doc, sketch_id, &format!("{name} Sketch"), sketch_op);
+            insert_node(
+                doc,
+                revolve_id,
+                &name,
+                CsgOp::Revolve {
+                    sketch: sketch_id,
+                    axis_origin: Vec3::new(axis_origin[0], axis_origin[1], axis_origin[2]),
+                    axis_dir: Vec3::new(axis_dir[0], axis_dir[1], axis_dir[2]),
+                    angle_deg,
+                },
+            );
+            insert_transform_chain(
+                doc, ctx, feature, revolve_id, scale_id, rotate_id, translate_id,
+            );
+
+            Some((
+                PartInfo::Revolve {
+                    id: id_str,
+                    name,
+                    sketch_node_id: sketch_id,
+                    revolve_node_id: revolve_id,
+                    scale_node_id: scale_id,
+                    rotate_node_id: rotate_id,
+                    translate_node_id: translate_id,
+                },
+                translate_id,
+            ))
+        }
+        "sweep" => {
+            let path_data = get_str(feature, "path");
+
+            let sketch_id = ctx.alloc();
+            let sweep_id = ctx.alloc();
+            let scale_id = ctx.alloc();
+            let rotate_id = ctx.alloc();
+            let translate_id = ctx.alloc();
+
+            let sketch_op = parse_sketch(feature);
+            insert_node(doc, sketch_id, &format!("{name} Sketch"), sketch_op);
+
+            let path = path_data
+                .and_then(|d| serde_json::from_str::<vcad_ir::PathCurve>(&d).ok())
+                .unwrap_or(vcad_ir::PathCurve::Line {
+                    start: Vec3::new(0.0, 0.0, 0.0),
+                    end: Vec3::new(0.0, 0.0, 50.0),
+                });
+
+            insert_node(
+                doc,
+                sweep_id,
+                &name,
+                CsgOp::Sweep {
+                    sketch: sketch_id,
+                    path,
+                    twist_angle: get_f64(feature, "twist_angle"),
+                    scale_start: get_f64(feature, "scale_start"),
+                    scale_end: get_f64(feature, "scale_end"),
+                    orientation: None,
+                    path_segments: None,
+                    arc_segments: None,
+                },
+            );
+            insert_transform_chain(
+                doc, ctx, feature, sweep_id, scale_id, rotate_id, translate_id,
+            );
+
+            Some((
+                PartInfo::Sweep {
+                    id: id_str,
+                    name,
+                    sketch_node_id: sketch_id,
+                    sweep_node_id: sweep_id,
+                    scale_node_id: scale_id,
+                    rotate_node_id: rotate_id,
+                    translate_node_id: translate_id,
+                },
+                translate_id,
+            ))
+        }
+        "loft" => {
+            let sketch_count = get_f64(feature, "sketch_count")
+                .map(|v| v as usize)
+                .unwrap_or(0);
+            let closed = get_bool(feature, "closed").unwrap_or(false);
+
+            let mut sketch_node_ids = Vec::new();
+            for i in 0..sketch_count {
+                let key = format!("sketch_{i}");
+                let sketch_id = ctx.alloc();
+                let sketch_op = if let Some(data) = get_str(feature, &key) {
+                    serde_json::from_str::<CsgOp>(&data).unwrap_or_else(|_| default_sketch())
+                } else {
+                    default_sketch()
+                };
+                insert_node(doc, sketch_id, &format!("{name} Sketch {i}"), sketch_op);
+                sketch_node_ids.push(sketch_id);
+            }
+
+            // Need at least 2 sketches for a loft
+            if sketch_node_ids.len() < 2 {
+                return None;
+            }
+
+            let loft_id = ctx.alloc();
+            let scale_id = ctx.alloc();
+            let rotate_id = ctx.alloc();
+            let translate_id = ctx.alloc();
+
+            insert_node(
+                doc,
+                loft_id,
+                &name,
+                CsgOp::Loft {
+                    sketches: sketch_node_ids.clone(),
+                    closed: if closed { Some(true) } else { None },
+                },
+            );
+            insert_transform_chain(
+                doc, ctx, feature, loft_id, scale_id, rotate_id, translate_id,
+            );
+
+            Some((
+                PartInfo::Loft {
+                    id: id_str,
+                    name,
+                    sketch_node_ids,
+                    loft_node_id: loft_id,
+                    scale_node_id: scale_id,
+                    rotate_node_id: rotate_id,
+                    translate_node_id: translate_id,
+                },
+                translate_id,
+            ))
+        }
+        "text" => {
+            let text = get_str(feature, "text").unwrap_or_else(|| "Text".to_string());
+            let height = get_f64(feature, "height").unwrap_or(10.0);
+            let depth = get_f64(feature, "depth").unwrap_or(2.0);
+            let alignment_str = get_str(feature, "alignment").unwrap_or_else(|| "left".to_string());
+
+            let text_id = ctx.alloc();
+            let extrude_id = ctx.alloc();
+            let scale_id = ctx.alloc();
+            let rotate_id = ctx.alloc();
+            let translate_id = ctx.alloc();
+
+            let alignment = match alignment_str.as_str() {
+                "center" => vcad_ir::TextAlignment::Center,
+                "right" => vcad_ir::TextAlignment::Right,
+                _ => vcad_ir::TextAlignment::Left,
+            };
+
+            insert_node(
+                doc,
+                text_id,
+                &format!("{name} Text"),
+                CsgOp::Text2D {
+                    origin: Vec3::new(0.0, 0.0, 0.0),
+                    x_dir: Vec3::new(1.0, 0.0, 0.0),
+                    y_dir: Vec3::new(0.0, 1.0, 0.0),
+                    text,
+                    font: "sans-serif".to_string(),
+                    height,
+                    letter_spacing: get_f64(feature, "letter_spacing"),
+                    line_spacing: get_f64(feature, "line_spacing"),
+                    alignment,
+                },
+            );
+            insert_node(
+                doc,
+                extrude_id,
+                &name,
+                CsgOp::Extrude {
+                    sketch: text_id,
+                    direction: Vec3::new(0.0, 0.0, depth),
+                    twist_angle: None,
+                    scale_end: None,
+                },
+            );
+            insert_transform_chain(
+                doc, ctx, feature, extrude_id, scale_id, rotate_id, translate_id,
+            );
+
+            Some((
+                PartInfo::Text {
+                    id: id_str,
+                    name,
+                    text_node_id: text_id,
+                    extrude_node_id: extrude_id,
+                    scale_node_id: scale_id,
+                    rotate_node_id: rotate_id,
+                    translate_node_id: translate_id,
+                },
+                translate_id,
+            ))
+        }
+        "imported-mesh" => {
+            let positions_json = get_str(feature, "positions_json").unwrap_or_default();
+            let indices_json = get_str(feature, "indices_json").unwrap_or_default();
+            let normals_json = get_str(feature, "normals_json");
+            let source = get_str(feature, "source");
+
+            let positions: Vec<f64> =
+                serde_json::from_str(&positions_json).unwrap_or_default();
+            let indices: Vec<u32> =
+                serde_json::from_str(&indices_json).unwrap_or_default();
+            let normals: Option<Vec<f64>> =
+                normals_json.and_then(|s| serde_json::from_str(&s).ok());
+
+            let mesh_id = ctx.alloc();
+            let scale_id = ctx.alloc();
+            let rotate_id = ctx.alloc();
+            let translate_id = ctx.alloc();
+
+            insert_node(
+                doc,
+                mesh_id,
+                &name,
+                CsgOp::ImportedMesh {
+                    positions,
+                    indices,
+                    normals,
+                    source: source.clone(),
+                },
+            );
+            insert_transform_chain(
+                doc, ctx, feature, mesh_id, scale_id, rotate_id, translate_id,
+            );
+
+            Some((
+                PartInfo::ImportedMesh {
+                    id: id_str,
+                    name,
+                    mesh_node_id: mesh_id,
+                    scale_node_id: scale_id,
+                    rotate_node_id: rotate_id,
+                    translate_node_id: translate_id,
+                    source,
+                },
+                translate_id,
+            ))
+        }
+        "linear-pattern" => {
+            let input = get_str(feature, "input").unwrap_or_default();
+            let direction = get_vec3(feature, "direction").unwrap_or([1.0, 0.0, 0.0]);
+            let count = get_f64(feature, "count").map(|v| v as u32).unwrap_or(3);
+            let spacing = get_f64(feature, "spacing").unwrap_or(20.0);
+
+            let child = ctx.feature_roots.get(&input).copied().unwrap_or(0);
+
+            let pattern_id = ctx.alloc();
+            let scale_id = ctx.alloc();
+            let rotate_id = ctx.alloc();
+            let translate_id = ctx.alloc();
+
+            insert_node(
+                doc,
+                pattern_id,
+                &name,
+                CsgOp::LinearPattern {
+                    child,
+                    direction: Vec3::new(direction[0], direction[1], direction[2]),
+                    count,
+                    spacing,
+                },
+            );
+            insert_transform_chain(
+                doc, ctx, feature, pattern_id, scale_id, rotate_id, translate_id,
+            );
+
+            Some((
+                PartInfo::LinearPattern {
+                    id: id_str,
+                    name,
+                    source_part_id: input,
+                    pattern_node_id: pattern_id,
+                    scale_node_id: scale_id,
+                    rotate_node_id: rotate_id,
+                    translate_node_id: translate_id,
+                },
+                translate_id,
+            ))
+        }
+        "circular-pattern" => {
+            let input = get_str(feature, "input").unwrap_or_default();
+            let axis_origin = get_vec3(feature, "axis_origin").unwrap_or([0.0, 0.0, 0.0]);
+            let axis_dir = get_vec3(feature, "axis_dir").unwrap_or([0.0, 0.0, 1.0]);
+            let count = get_f64(feature, "count").map(|v| v as u32).unwrap_or(4);
+            let angle_deg = get_f64(feature, "angle_deg").unwrap_or(360.0);
+
+            let child = ctx.feature_roots.get(&input).copied().unwrap_or(0);
+
+            let pattern_id = ctx.alloc();
+            let scale_id = ctx.alloc();
+            let rotate_id = ctx.alloc();
+            let translate_id = ctx.alloc();
+
+            insert_node(
+                doc,
+                pattern_id,
+                &name,
+                CsgOp::CircularPattern {
+                    child,
+                    axis_origin: Vec3::new(axis_origin[0], axis_origin[1], axis_origin[2]),
+                    axis_dir: Vec3::new(axis_dir[0], axis_dir[1], axis_dir[2]),
+                    count,
+                    angle_deg,
+                },
+            );
+            insert_transform_chain(
+                doc, ctx, feature, pattern_id, scale_id, rotate_id, translate_id,
+            );
+
+            Some((
+                PartInfo::CircularPattern {
+                    id: id_str,
+                    name,
+                    source_part_id: input,
+                    pattern_node_id: pattern_id,
+                    scale_node_id: scale_id,
+                    rotate_node_id: rotate_id,
+                    translate_node_id: translate_id,
+                },
+                translate_id,
+            ))
+        }
+        "mirror" => {
+            let input = get_str(feature, "input").unwrap_or_default();
+            let plane = get_str(feature, "plane").unwrap_or_else(|| "YZ".to_string());
+
+            let child = ctx.feature_roots.get(&input).copied().unwrap_or(0);
+
+            // Mirror via negative scale on the appropriate axis
+            let mirror_factor = match plane.as_str() {
+                "XY" => Vec3::new(1.0, 1.0, -1.0),
+                "XZ" => Vec3::new(1.0, -1.0, 1.0),
+                _ /* YZ */ => Vec3::new(-1.0, 1.0, 1.0),
+            };
+
+            let mirror_id = ctx.alloc();
+            let scale_id = ctx.alloc();
+            let rotate_id = ctx.alloc();
+            let translate_id = ctx.alloc();
+
+            insert_node(
+                doc,
+                mirror_id,
+                &name,
+                CsgOp::Scale {
+                    child,
+                    factor: mirror_factor,
+                },
+            );
+            insert_transform_chain(
+                doc, ctx, feature, mirror_id, scale_id, rotate_id, translate_id,
+            );
+
+            Some((
+                PartInfo::Mirror {
+                    id: id_str,
+                    name,
+                    source_part_id: input,
+                    mirror_node_id: mirror_id,
+                    scale_node_id: scale_id,
+                    rotate_node_id: rotate_id,
+                    translate_node_id: translate_id,
+                },
+                translate_id,
+            ))
+        }
+        "pcb-board" => {
+            // Stub: PCB boards are complex domain objects. Emit an Empty node
+            // so the transform chain exists for positioning.
+            let board_id = ctx.alloc();
+            let scale_id = ctx.alloc();
+            let rotate_id = ctx.alloc();
+            let translate_id = ctx.alloc();
+
+            insert_node(doc, board_id, &name, CsgOp::Empty);
+            insert_transform_chain(
+                doc, ctx, feature, board_id, scale_id, rotate_id, translate_id,
+            );
+
+            Some((
+                PartInfo::PcbBoard {
+                    id: id_str,
+                    name,
+                    board_node_id: board_id,
+                    scale_node_id: scale_id,
+                    rotate_node_id: rotate_id,
+                    translate_node_id: translate_id,
+                },
+                translate_id,
+            ))
+        }
+        "embroidery-pattern" => {
+            // Stub: Embroidery patterns contain complex stitch data.
+            // Emit an Empty node so the transform chain exists.
+            let pattern_id = ctx.alloc();
+            let scale_id = ctx.alloc();
+            let rotate_id = ctx.alloc();
+            let translate_id = ctx.alloc();
+
+            let source = get_str(feature, "source");
+
+            insert_node(doc, pattern_id, &name, CsgOp::Empty);
+            insert_transform_chain(
+                doc, ctx, feature, pattern_id, scale_id, rotate_id, translate_id,
+            );
+
+            Some((
+                PartInfo::EmbroideryPattern {
+                    id: id_str,
+                    name,
+                    pattern_node_id: pattern_id,
+                    scale_node_id: scale_id,
+                    rotate_node_id: rotate_id,
+                    translate_node_id: translate_id,
+                    source,
                 },
                 translate_id,
             ))
@@ -393,6 +813,32 @@ fn get_vec3(feature: &FeatureState, key: &str) -> Option<[f64; 3]> {
     match &feature.params.get(key)?.0 {
         Value::Vec3(v) => Some(*v),
         _ => None,
+    }
+}
+
+fn get_bool(feature: &FeatureState, key: &str) -> Option<bool> {
+    match &feature.params.get(key)?.0 {
+        Value::Bool(v) => Some(*v),
+        _ => None,
+    }
+}
+
+/// Parse sketch data from the "sketch" param, falling back to an empty XY sketch.
+fn parse_sketch(feature: &FeatureState) -> CsgOp {
+    if let Some(data) = get_str(feature, "sketch") {
+        serde_json::from_str::<CsgOp>(&data).unwrap_or_else(|_| default_sketch())
+    } else {
+        default_sketch()
+    }
+}
+
+/// Default empty sketch on the XY plane.
+fn default_sketch() -> CsgOp {
+    CsgOp::Sketch2D {
+        origin: Vec3::new(0.0, 0.0, 0.0),
+        x_dir: Vec3::new(1.0, 0.0, 0.0),
+        y_dir: Vec3::new(0.0, 1.0, 0.0),
+        segments: Vec::new(),
     }
 }
 
@@ -628,5 +1074,225 @@ mod tests {
         let result = materialize(&crdt);
         assert_eq!(result.parts.len(), 0);
         assert_eq!(result.document.roots.len(), 0);
+    }
+
+    #[test]
+    fn test_materialize_revolve() {
+        let mut crdt = CrdtDocument::new(ReplicaId(1));
+        let sketch_json = serde_json::to_string(&vcad_ir::CsgOp::Sketch2D {
+            origin: Vec3::new(0.0, 0.0, 0.0),
+            x_dir: Vec3::new(1.0, 0.0, 0.0),
+            y_dir: Vec3::new(0.0, 1.0, 0.0),
+            segments: Vec::new(),
+        })
+        .unwrap();
+        crdt.create_feature(
+            "revolve",
+            FractionalIndex::between(None, None),
+            HashMap::from([
+                ("sketch".to_string(), Value::String(sketch_json)),
+                ("axis_origin".to_string(), Value::Vec3([0.0, 0.0, 0.0])),
+                ("axis_dir".to_string(), Value::Vec3([0.0, 1.0, 0.0])),
+                ("angle_deg".to_string(), Value::F64(180.0)),
+            ]),
+        );
+
+        let result = materialize(&crdt);
+        assert_eq!(result.parts.len(), 1);
+        assert!(matches!(&result.parts[0], PartInfo::Revolve { .. }));
+        // sketch + revolve + scale + rotate + translate = 5 nodes
+        assert_eq!(result.document.nodes.len(), 5);
+    }
+
+    #[test]
+    fn test_materialize_sweep() {
+        let mut crdt = CrdtDocument::new(ReplicaId(1));
+        let path_json = serde_json::to_string(&vcad_ir::PathCurve::Line {
+            start: Vec3::new(0.0, 0.0, 0.0),
+            end: Vec3::new(0.0, 0.0, 50.0),
+        })
+        .unwrap();
+        crdt.create_feature(
+            "sweep",
+            FractionalIndex::between(None, None),
+            HashMap::from([("path".to_string(), Value::String(path_json))]),
+        );
+
+        let result = materialize(&crdt);
+        assert_eq!(result.parts.len(), 1);
+        assert!(matches!(&result.parts[0], PartInfo::Sweep { .. }));
+        assert_eq!(result.document.nodes.len(), 5);
+    }
+
+    #[test]
+    fn test_materialize_text() {
+        let mut crdt = CrdtDocument::new(ReplicaId(1));
+        crdt.create_feature(
+            "text",
+            FractionalIndex::between(None, None),
+            HashMap::from([
+                ("text".to_string(), Value::String("Hello".to_string())),
+                ("height".to_string(), Value::F64(12.0)),
+                ("depth".to_string(), Value::F64(3.0)),
+            ]),
+        );
+
+        let result = materialize(&crdt);
+        assert_eq!(result.parts.len(), 1);
+        assert!(matches!(&result.parts[0], PartInfo::Text { .. }));
+        // text2d + extrude + scale + rotate + translate = 5 nodes
+        assert_eq!(result.document.nodes.len(), 5);
+    }
+
+    #[test]
+    fn test_materialize_imported_mesh() {
+        let mut crdt = CrdtDocument::new(ReplicaId(1));
+        crdt.create_feature(
+            "imported-mesh",
+            FractionalIndex::between(None, None),
+            HashMap::from([
+                (
+                    "positions_json".to_string(),
+                    Value::String("[0,0,0, 1,0,0, 0,1,0]".to_string()),
+                ),
+                (
+                    "indices_json".to_string(),
+                    Value::String("[0,1,2]".to_string()),
+                ),
+                ("source".to_string(), Value::String("test.stl".to_string())),
+            ]),
+        );
+
+        let result = materialize(&crdt);
+        assert_eq!(result.parts.len(), 1);
+        match &result.parts[0] {
+            PartInfo::ImportedMesh { source, .. } => {
+                assert_eq!(source.as_deref(), Some("test.stl"));
+            }
+            _ => panic!("expected imported-mesh part"),
+        }
+    }
+
+    #[test]
+    fn test_materialize_linear_pattern() {
+        let mut crdt = CrdtDocument::new(ReplicaId(1));
+        let pos1 = FractionalIndex::between(None, None);
+        let (fid, _) = crdt.create_feature("cube", pos1.clone(), HashMap::new());
+        let id_str = fid_to_string(fid);
+
+        let pos2 = FractionalIndex::between(Some(&pos1), None);
+        crdt.create_feature(
+            "linear-pattern",
+            pos2,
+            HashMap::from([
+                ("input".to_string(), Value::FeatureRef(id_str)),
+                ("direction".to_string(), Value::Vec3([1.0, 0.0, 0.0])),
+                ("count".to_string(), Value::F64(5.0)),
+                ("spacing".to_string(), Value::F64(15.0)),
+            ]),
+        );
+
+        let result = materialize(&crdt);
+        assert_eq!(result.parts.len(), 2);
+        match &result.parts[1] {
+            PartInfo::LinearPattern { .. } => {}
+            _ => panic!("expected linear-pattern part"),
+        }
+    }
+
+    #[test]
+    fn test_materialize_circular_pattern() {
+        let mut crdt = CrdtDocument::new(ReplicaId(1));
+        let pos1 = FractionalIndex::between(None, None);
+        let (fid, _) = crdt.create_feature("cube", pos1.clone(), HashMap::new());
+        let id_str = fid_to_string(fid);
+
+        let pos2 = FractionalIndex::between(Some(&pos1), None);
+        crdt.create_feature(
+            "circular-pattern",
+            pos2,
+            HashMap::from([
+                ("input".to_string(), Value::FeatureRef(id_str)),
+                ("axis_origin".to_string(), Value::Vec3([0.0, 0.0, 0.0])),
+                ("axis_dir".to_string(), Value::Vec3([0.0, 0.0, 1.0])),
+                ("count".to_string(), Value::F64(6.0)),
+                ("angle_deg".to_string(), Value::F64(360.0)),
+            ]),
+        );
+
+        let result = materialize(&crdt);
+        assert_eq!(result.parts.len(), 2);
+        match &result.parts[1] {
+            PartInfo::CircularPattern { .. } => {}
+            _ => panic!("expected circular-pattern part"),
+        }
+    }
+
+    #[test]
+    fn test_materialize_mirror() {
+        let mut crdt = CrdtDocument::new(ReplicaId(1));
+        let pos1 = FractionalIndex::between(None, None);
+        let (fid, _) = crdt.create_feature("cube", pos1.clone(), HashMap::new());
+        let id_str = fid_to_string(fid);
+
+        let pos2 = FractionalIndex::between(Some(&pos1), None);
+        crdt.create_feature(
+            "mirror",
+            pos2,
+            HashMap::from([
+                ("input".to_string(), Value::FeatureRef(id_str)),
+                ("plane".to_string(), Value::String("YZ".to_string())),
+            ]),
+        );
+
+        let result = materialize(&crdt);
+        assert_eq!(result.parts.len(), 2);
+        match &result.parts[1] {
+            PartInfo::Mirror { mirror_node_id, .. } => {
+                let node = result.document.nodes.get(mirror_node_id).unwrap();
+                match &node.op {
+                    CsgOp::Scale { factor, .. } => {
+                        assert_eq!(factor.x, -1.0);
+                        assert_eq!(factor.y, 1.0);
+                        assert_eq!(factor.z, 1.0);
+                    }
+                    _ => panic!("expected Scale op for mirror"),
+                }
+            }
+            _ => panic!("expected mirror part"),
+        }
+    }
+
+    #[test]
+    fn test_materialize_pcb_board_stub() {
+        let mut crdt = CrdtDocument::new(ReplicaId(1));
+        crdt.create_feature(
+            "pcb-board",
+            FractionalIndex::between(None, None),
+            HashMap::new(),
+        );
+
+        let result = materialize(&crdt);
+        assert_eq!(result.parts.len(), 1);
+        assert!(matches!(&result.parts[0], PartInfo::PcbBoard { .. }));
+    }
+
+    #[test]
+    fn test_materialize_embroidery_pattern_stub() {
+        let mut crdt = CrdtDocument::new(ReplicaId(1));
+        crdt.create_feature(
+            "embroidery-pattern",
+            FractionalIndex::between(None, None),
+            HashMap::from([("source".to_string(), Value::String("test.pes".to_string()))]),
+        );
+
+        let result = materialize(&crdt);
+        assert_eq!(result.parts.len(), 1);
+        match &result.parts[0] {
+            PartInfo::EmbroideryPattern { source, .. } => {
+                assert_eq!(source.as_deref(), Some("test.pes"));
+            }
+            _ => panic!("expected embroidery-pattern part"),
+        }
     }
 }

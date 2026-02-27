@@ -1,12 +1,15 @@
 import { Engine } from "@vcad/engine";
 import { useEngineStore } from "./stores/engine-store.js";
 import { useDocumentStore } from "./stores/document-store.js";
+import type { WasmDocumentEngineConstructor } from "./stores/document-store.js";
 
 export interface EngineLifecycleOptions {
   /** Called after the engine is initialized and the first evaluation completes. */
   onReady?: () => void;
   /** Return false to skip evaluation (e.g. empty document). Default: evaluates when roots exist. */
   shouldEvaluate?: (doc: { roots: { root: number }[] }) => boolean;
+  /** Skip CRDT engine initialization (useful for tests). */
+  skipCrdt?: boolean;
 }
 
 /**
@@ -28,6 +31,21 @@ export async function initEngineLifecycle(
     const engine = await Engine.init();
     setEngineReady(true);
     setLoading(false);
+
+    // Initialize CRDT document engine (best-effort, non-blocking)
+    if (!options?.skipCrdt) {
+      try {
+        const wasmModule = await import("@vcad/kernel-wasm");
+        const EngineClass = (wasmModule as Record<string, unknown>)
+          .WasmDocumentEngine as WasmDocumentEngineConstructor | undefined;
+        if (EngineClass) {
+          useDocumentStore.getState()._initCrdt(EngineClass);
+        }
+      } catch (e) {
+        // CRDT engine is optional — log and continue
+        console.warn("[CRDT] Failed to initialize document engine:", e);
+      }
+    }
 
     // Evaluate initial document
     const doc = useDocumentStore.getState().document;

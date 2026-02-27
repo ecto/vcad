@@ -74,6 +74,68 @@ import {
 
 const MAX_UNDO = 50;
 
+// ---------------------------------------------------------------------------
+// CRDT bridge types
+// ---------------------------------------------------------------------------
+
+/** Result from a WasmDocumentEngine mutation */
+interface CrdtMutationResult {
+  document: Document;
+  parts: PartInfo[];
+  createdFeatureId?: string;
+}
+
+/** Minimal interface for WasmDocumentEngine (matches WASM exports) */
+export interface WasmDocumentEngine {
+  create_feature(kind: string, params_json: string): CrdtMutationResult;
+  delete_feature(feature_id_json: string): CrdtMutationResult;
+  set_param(
+    feature_id_json: string,
+    key: string,
+    value_json: string,
+  ): CrdtMutationResult;
+  move_feature(
+    feature_id_json: string,
+    position_json: string,
+  ): CrdtMutationResult;
+  undo(): CrdtMutationResult;
+  redo(): CrdtMutationResult;
+  can_undo(): boolean;
+  can_redo(): boolean;
+  save(): Uint8Array;
+  free(): void;
+}
+
+/** Constructor for WasmDocumentEngine */
+export interface WasmDocumentEngineConstructor {
+  new (): WasmDocumentEngine;
+  load(bytes: Uint8Array): WasmDocumentEngine;
+}
+
+/**
+ * CRDT value type — mirrors Rust vcad_crdt::Value.
+ * Serialized as JSON for `set_param` / `create_feature`.
+ */
+type CrdtValue =
+  | { F64: number }
+  | { Vec3: [number, number, number] }
+  | { Bool: boolean }
+  | { String: string }
+  | { FeatureRef: string };
+
+function crdtF64(v: number): CrdtValue {
+  return { F64: v };
+}
+function crdtVec3(v: Vec3): CrdtValue {
+  return { Vec3: [v.x, v.y, v.z] };
+}
+function crdtStr(v: string): CrdtValue {
+  return { String: v };
+}
+function crdtRef(v: string): CrdtValue {
+  return { FeatureRef: v };
+}
+
 interface Snapshot {
   document: string; // JSON-serialized Document
   parts: PartInfo[];
@@ -129,6 +191,23 @@ export interface DocumentState {
   // undo/redo
   undoStack: Snapshot[];
   redoStack: Snapshot[];
+
+  // --------------- CRDT bridge ---------------
+  /** The CRDT engine instance, or null if not yet initialized. */
+  _crdtEngine: WasmDocumentEngine | null;
+  /** Map from legacy part IDs ("part-3") to CRDT feature IDs ("123:0"). */
+  _partIdToCrdtId: Map<string, string>;
+  /** Map from CRDT feature IDs ("123:0") to legacy part IDs ("part-3"). */
+  _crdtIdToPartId: Map<string, string>;
+  /** Initialize the CRDT engine. Called once after WASM loads. */
+  _initCrdt: (EngineClass: WasmDocumentEngineConstructor) => void;
+  /** Save CRDT document to bytes (returns null if engine not initialized). */
+  saveCrdt: () => Uint8Array | null;
+  /** Load CRDT document from bytes. */
+  loadCrdt: (
+    bytes: Uint8Array,
+    EngineClass: WasmDocumentEngineConstructor,
+  ) => void;
 
   // mutations
   addPrimitive: (kind: PrimitiveKind) => string;
@@ -524,6 +603,100 @@ const KIND_LABELS: Record<PrimitiveKind, string> = {
   sphere: "Sphere",
 };
 
+// ---------------------------------------------------------------------------
+// CRDT bridge helpers (module-level, not in store)
+// ---------------------------------------------------------------------------
+
+/**
+ * Apply a CRDT mutation result to the store, rewriting CRDT IDs to legacy
+ * format and computing consumedParts.
+ */
+function applyCrdtResult(
+  result: CrdtMutationResult,
+  state: DocumentState,
+  createdFeatureId?: string,
+): Partial<DocumentState> {
+  const parts = result.parts;
+  const crdtIdToPartId = new Map(state._crdtIdToPartId);
+  const partIdToCrdtId = new Map(state._partIdToCrdtId);
+  let nextPartNum = state.nextPartNum;
+
+  // Assign stable legacy IDs to CRDT parts
+  for (const part of parts) {
+    const crdtId = part.id;
+    if (!crdtIdToPartId.has(crdtId)) {
+      const legacyId = `part-${nextPartNum}`;
+      crdtIdToPartId.set(crdtId, legacyId);
+      partIdToCrdtId.set(legacyId, crdtId);
+      nextPartNum++;
+    }
+  }
+
+  // Rewrite part IDs from CRDT format to legacy format
+  const rewrittenParts: PartInfo[] = parts.map((p) => {
+    const legacyId = crdtIdToPartId.get(p.id) ?? p.id;
+    const rewritten = { ...p, id: legacyId };
+
+    // Rewrite source references in boolean/fillet/chamfer/shell/pattern parts
+    if ("sourcePartIds" in rewritten && Array.isArray(rewritten.sourcePartIds)) {
+      rewritten.sourcePartIds = (rewritten.sourcePartIds as string[]).map(
+        (ref_id) => crdtIdToPartId.get(ref_id) ?? ref_id,
+      ) as [string, string];
+    }
+    if ("sourcePartId" in rewritten && typeof rewritten.sourcePartId === "string") {
+      (rewritten as Record<string, unknown>).sourcePartId =
+        crdtIdToPartId.get(rewritten.sourcePartId as string) ?? rewritten.sourcePartId;
+    }
+    return rewritten;
+  });
+
+  // Compute consumedParts: any part referenced as input by another
+  const consumedParts: Record<string, PartInfo> = {};
+  const partMap = buildPartIndex(rewrittenParts);
+  for (const part of rewrittenParts) {
+    if ("sourcePartIds" in part && Array.isArray(part.sourcePartIds)) {
+      for (const refId of part.sourcePartIds as string[]) {
+        const consumed = partMap.get(refId);
+        if (consumed) consumedParts[refId] = consumed;
+      }
+    }
+    if ("sourcePartId" in part && typeof part.sourcePartId === "string") {
+      const consumed = partMap.get(part.sourcePartId as string);
+      if (consumed) consumedParts[part.sourcePartId as string] = consumed;
+    }
+  }
+
+  // Compute which created legacy ID to return
+  let createdLegacyId: string | undefined;
+  if (createdFeatureId) {
+    createdLegacyId = crdtIdToPartId.get(createdFeatureId);
+  }
+
+  // Find max node ID from the document
+  let maxNodeId = 0;
+  for (const nodeIdStr of Object.keys(result.document.nodes)) {
+    const nid = Number(nodeIdStr);
+    if (nid > maxNodeId) maxNodeId = nid;
+  }
+
+  return {
+    document: result.document,
+    parts: rewrittenParts,
+    partIndex: buildPartIndex(rewrittenParts),
+    consumedParts,
+    nextNodeId: maxNodeId + 1,
+    nextPartNum,
+    isDirty: true,
+    _crdtIdToPartId: crdtIdToPartId,
+    _partIdToCrdtId: partIdToCrdtId,
+    // Store the created legacy ID in a way callers can access
+    _lastCreatedPartId: createdLegacyId,
+  } as Partial<DocumentState>;
+}
+
+/** Temporary holder for the last created part ID (used by bridge mutations) */
+let _lastCreatedPartId: string | undefined;
+
 export const useDocumentStore = create<DocumentState>((set, get) => ({
   document: createDocument(),
   parts: [],
@@ -541,12 +714,73 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   undoStack: [],
   redoStack: [],
 
+  // CRDT bridge state
+  _crdtEngine: null,
+  _partIdToCrdtId: new Map(),
+  _crdtIdToPartId: new Map(),
+
+  _initCrdt: (EngineClass) => {
+    const engine = new EngineClass();
+    set({ _crdtEngine: engine });
+  },
+
+  saveCrdt: () => {
+    const engine = get()._crdtEngine;
+    if (!engine) return null;
+    return engine.save();
+  },
+
+  loadCrdt: (bytes, EngineClass) => {
+    const engine = EngineClass.load(bytes);
+    // Build a mutation result from the loaded state
+    const doc: Document = JSON.parse(
+      (engine as unknown as { get_document_json(): string }).get_document_json(),
+    );
+    const parts: PartInfo[] = JSON.parse(
+      (engine as unknown as { get_parts_json(): string }).get_parts_json(),
+    );
+    const result: CrdtMutationResult = { document: doc, parts };
+    const patch = applyCrdtResult(result, {
+      ...get(),
+      _crdtEngine: engine,
+      _partIdToCrdtId: new Map(),
+      _crdtIdToPartId: new Map(),
+      nextPartNum: 1,
+    });
+    set({
+      ...patch,
+      _crdtEngine: engine,
+      isDirty: false,
+      undoStack: [],
+      redoStack: [],
+    });
+  },
+
   pushUndoSnapshot: () => {
     set((s) => pushUndo(s, "Edit"));
   },
 
   addPrimitive: (kind) => {
     const state = get();
+
+    // CRDT bridge: route through CRDT engine if available
+    if (state._crdtEngine) {
+      const defaults: Record<PrimitiveKind, Record<string, CrdtValue>> = {
+        cube: { size_x: crdtF64(20), size_y: crdtF64(20), size_z: crdtF64(20) },
+        cylinder: { radius: crdtF64(10), height: crdtF64(20), segments: crdtF64(32) },
+        sphere: { radius: crdtF64(10), segments: crdtF64(32) },
+      };
+      const result = state._crdtEngine.create_feature(
+        kind,
+        JSON.stringify(defaults[kind] ?? {}),
+      );
+      const patch = applyCrdtResult(result, state, result.createdFeatureId);
+      set(patch);
+      return (patch as { _lastCreatedPartId?: string })._lastCreatedPartId
+        ?? _lastCreatedPartId
+        ?? `part-${state.nextPartNum}`;
+    }
+
     let nid = state.nextNodeId;
     const partNum = state.nextPartNum;
 
@@ -623,6 +857,17 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   removePart: (partId) => {
     const state = get();
+
+    // CRDT bridge
+    if (state._crdtEngine) {
+      const crdtId = state._partIdToCrdtId.get(partId);
+      if (crdtId) {
+        const result = state._crdtEngine.delete_feature(crdtId);
+        set(applyCrdtResult(result, state));
+      }
+      return;
+    }
+
     const part = state.partIndex.get(partId);
     if (!part) return;
 
@@ -685,6 +930,21 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   setTranslation: (partId, offset, skipUndo) => {
     const state = get();
+
+    // CRDT bridge
+    if (state._crdtEngine) {
+      const crdtId = state._partIdToCrdtId.get(partId);
+      if (crdtId) {
+        const result = state._crdtEngine.set_param(
+          crdtId,
+          "offset",
+          JSON.stringify(crdtVec3(offset)),
+        );
+        set(applyCrdtResult(result, state));
+      }
+      return;
+    }
+
     const part = state.partIndex.get(partId);
     if (!part) return;
 
@@ -712,6 +972,21 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   setRotation: (partId, angles, skipUndo) => {
     const state = get();
+
+    // CRDT bridge
+    if (state._crdtEngine) {
+      const crdtId = state._partIdToCrdtId.get(partId);
+      if (crdtId) {
+        const result = state._crdtEngine.set_param(
+          crdtId,
+          "rotation",
+          JSON.stringify(crdtVec3(angles)),
+        );
+        set(applyCrdtResult(result, state));
+      }
+      return;
+    }
+
     const part = state.partIndex.get(partId);
     if (!part) return;
 
@@ -739,6 +1014,21 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   setScale: (partId, factor, skipUndo) => {
     const state = get();
+
+    // CRDT bridge
+    if (state._crdtEngine) {
+      const crdtId = state._partIdToCrdtId.get(partId);
+      if (crdtId) {
+        const result = state._crdtEngine.set_param(
+          crdtId,
+          "scale",
+          JSON.stringify(crdtVec3(factor)),
+        );
+        set(applyCrdtResult(result, state));
+      }
+      return;
+    }
+
     const part = state.partIndex.get(partId);
     if (!part) return;
 
@@ -766,6 +1056,38 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   updatePrimitiveOp: (partId, op, skipUndo) => {
     const state = get();
+
+    // CRDT bridge: map CsgOp fields to individual set_param calls
+    if (state._crdtEngine) {
+      const crdtId = state._partIdToCrdtId.get(partId);
+      if (crdtId) {
+        let lastResult: CrdtMutationResult | undefined;
+        if (op.type === "Cube" && "size" in op) {
+          const size = op.size as Vec3;
+          state._crdtEngine.set_param(crdtId, "size_x", JSON.stringify(crdtF64(size.x)));
+          state._crdtEngine.set_param(crdtId, "size_y", JSON.stringify(crdtF64(size.y)));
+          lastResult = state._crdtEngine.set_param(crdtId, "size_z", JSON.stringify(crdtF64(size.z)));
+        } else if (op.type === "Cylinder" && "radius" in op) {
+          state._crdtEngine.set_param(crdtId, "radius", JSON.stringify(crdtF64(op.radius as number)));
+          state._crdtEngine.set_param(crdtId, "height", JSON.stringify(crdtF64(op.height as number)));
+          lastResult = state._crdtEngine.set_param(crdtId, "segments", JSON.stringify(crdtF64(op.segments as number)));
+        } else if (op.type === "Sphere" && "radius" in op) {
+          state._crdtEngine.set_param(crdtId, "radius", JSON.stringify(crdtF64(op.radius as number)));
+          lastResult = state._crdtEngine.set_param(crdtId, "segments", JSON.stringify(crdtF64(op.segments as number)));
+        } else if (op.type === "Cone" && "radius_bottom" in op) {
+          const coneOp = op as unknown as { radius_bottom: number; radius_top: number; height: number; segments: number };
+          state._crdtEngine.set_param(crdtId, "radius_bottom", JSON.stringify(crdtF64(coneOp.radius_bottom)));
+          state._crdtEngine.set_param(crdtId, "radius_top", JSON.stringify(crdtF64(coneOp.radius_top)));
+          state._crdtEngine.set_param(crdtId, "height", JSON.stringify(crdtF64(coneOp.height)));
+          lastResult = state._crdtEngine.set_param(crdtId, "segments", JSON.stringify(crdtF64(coneOp.segments)));
+        }
+        if (lastResult) {
+          set(applyCrdtResult(lastResult, state));
+        }
+      }
+      return;
+    }
+
     const part = state.partIndex.get(partId);
     if (!part || !isPrimitivePart(part)) return;
 
@@ -825,6 +1147,21 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   updateBooleanType: (partId, newType, skipUndo) => {
     const state = get();
+
+    // CRDT bridge
+    if (state._crdtEngine) {
+      const crdtId = state._partIdToCrdtId.get(partId);
+      if (crdtId) {
+        const result = state._crdtEngine.set_param(
+          crdtId,
+          "boolean_type",
+          JSON.stringify(crdtStr(newType)),
+        );
+        set(applyCrdtResult(result, state));
+      }
+      return;
+    }
+
     const part = state.partIndex.get(partId);
     if (!part || !isBooleanPart(part)) return;
 
@@ -868,6 +1205,27 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   applyBoolean: (type, partIdA, partIdB) => {
     const state = get();
+
+    // CRDT bridge
+    if (state._crdtEngine) {
+      const crdtIdA = state._partIdToCrdtId.get(partIdA);
+      const crdtIdB = state._partIdToCrdtId.get(partIdB);
+      if (!crdtIdA || !crdtIdB) return null;
+
+      const params: Record<string, CrdtValue> = {
+        boolean_type: crdtStr(type),
+        input_a: crdtRef(crdtIdA),
+        input_b: crdtRef(crdtIdB),
+      };
+      const result = state._crdtEngine.create_feature(
+        "boolean",
+        JSON.stringify(params),
+      );
+      const patch = applyCrdtResult(result, state, result.createdFeatureId);
+      set(patch);
+      return (patch as { _lastCreatedPartId?: string })._lastCreatedPartId ?? null;
+    }
+
     const partA = state.partIndex.get(partIdA);
     const partB = state.partIndex.get(partIdB);
     if (!partA || !partB) return null;
@@ -2049,6 +2407,21 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   addFillet: (partId, radius) => {
     const state = get();
+
+    // CRDT bridge
+    if (state._crdtEngine) {
+      const crdtId = state._partIdToCrdtId.get(partId);
+      if (!crdtId) return null;
+      const params: Record<string, CrdtValue> = {
+        input: crdtRef(crdtId),
+        radius: crdtF64(radius),
+      };
+      const result = state._crdtEngine.create_feature("fillet", JSON.stringify(params));
+      const patch = applyCrdtResult(result, state, result.createdFeatureId);
+      set(patch);
+      return (patch as { _lastCreatedPartId?: string })._lastCreatedPartId ?? null;
+    }
+
     const sourcePart = state.partIndex.get(partId);
     if (!sourcePart) return null;
 
@@ -2131,6 +2504,21 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   addChamfer: (partId, distance) => {
     const state = get();
+
+    // CRDT bridge
+    if (state._crdtEngine) {
+      const crdtId = state._partIdToCrdtId.get(partId);
+      if (!crdtId) return null;
+      const params: Record<string, CrdtValue> = {
+        input: crdtRef(crdtId),
+        distance: crdtF64(distance),
+      };
+      const result = state._crdtEngine.create_feature("chamfer", JSON.stringify(params));
+      const patch = applyCrdtResult(result, state, result.createdFeatureId);
+      set(patch);
+      return (patch as { _lastCreatedPartId?: string })._lastCreatedPartId ?? null;
+    }
+
     const sourcePart = state.partIndex.get(partId);
     if (!sourcePart) return null;
 
@@ -2211,6 +2599,21 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   addShell: (partId, thickness) => {
     const state = get();
+
+    // CRDT bridge
+    if (state._crdtEngine) {
+      const crdtId = state._partIdToCrdtId.get(partId);
+      if (!crdtId) return null;
+      const params: Record<string, CrdtValue> = {
+        input: crdtRef(crdtId),
+        thickness: crdtF64(thickness),
+      };
+      const result = state._crdtEngine.create_feature("shell", JSON.stringify(params));
+      const patch = applyCrdtResult(result, state, result.createdFeatureId);
+      set(patch);
+      return (patch as { _lastCreatedPartId?: string })._lastCreatedPartId ?? null;
+    }
+
     const sourcePart = state.partIndex.get(partId);
     if (!sourcePart) return null;
 
@@ -2432,6 +2835,23 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   addLinearPattern: (partId, direction, count, spacing) => {
     const state = get();
+
+    // CRDT bridge
+    if (state._crdtEngine) {
+      const crdtId = state._partIdToCrdtId.get(partId);
+      if (!crdtId) return null;
+      const params: Record<string, CrdtValue> = {
+        input: crdtRef(crdtId),
+        direction: crdtVec3(direction),
+        count: crdtF64(count),
+        spacing: crdtF64(spacing),
+      };
+      const result = state._crdtEngine.create_feature("linear-pattern", JSON.stringify(params));
+      const patch = applyCrdtResult(result, state, result.createdFeatureId);
+      set(patch);
+      return (patch as { _lastCreatedPartId?: string })._lastCreatedPartId ?? null;
+    }
+
     const sourcePart = state.partIndex.get(partId);
     if (!sourcePart) return null;
 
@@ -2514,6 +2934,24 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   addCircularPattern: (partId, axisOrigin, axisDir, count, angleDeg) => {
     const state = get();
+
+    // CRDT bridge
+    if (state._crdtEngine) {
+      const crdtId = state._partIdToCrdtId.get(partId);
+      if (!crdtId) return null;
+      const params: Record<string, CrdtValue> = {
+        input: crdtRef(crdtId),
+        axis_origin: crdtVec3(axisOrigin),
+        axis_dir: crdtVec3(axisDir),
+        count: crdtF64(count),
+        angle_deg: crdtF64(angleDeg),
+      };
+      const result = state._crdtEngine.create_feature("circular-pattern", JSON.stringify(params));
+      const patch = applyCrdtResult(result, state, result.createdFeatureId);
+      set(patch);
+      return (patch as { _lastCreatedPartId?: string })._lastCreatedPartId ?? null;
+    }
+
     const sourcePart = state.partIndex.get(partId);
     if (!sourcePart) return null;
 
@@ -2597,6 +3035,21 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   addMirror: (partId, plane) => {
     const state = get();
+
+    // CRDT bridge
+    if (state._crdtEngine) {
+      const crdtId = state._partIdToCrdtId.get(partId);
+      if (!crdtId) return null;
+      const params: Record<string, CrdtValue> = {
+        input: crdtRef(crdtId),
+        plane: crdtStr(plane),
+      };
+      const result = state._crdtEngine.create_feature("mirror", JSON.stringify(params));
+      const patch = applyCrdtResult(result, state, result.createdFeatureId);
+      set(patch);
+      return (patch as { _lastCreatedPartId?: string })._lastCreatedPartId ?? null;
+    }
+
     const sourcePart = state.partIndex.get(partId);
     if (!sourcePart) return null;
 
@@ -2684,6 +3137,22 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (!text.trim()) return null;
 
     const state = get();
+
+    // CRDT bridge
+    if (state._crdtEngine) {
+      const params: Record<string, CrdtValue> = {
+        text: crdtStr(text),
+        height: crdtF64(height),
+        depth: crdtF64(depth),
+      };
+      if (alignment) params.alignment = crdtStr(alignment);
+      if (letterSpacing !== undefined) params.letter_spacing = crdtF64(letterSpacing);
+      if (lineSpacing !== undefined) params.line_spacing = crdtF64(lineSpacing);
+      const result = state._crdtEngine.create_feature("text", JSON.stringify(params));
+      const patch = applyCrdtResult(result, state, result.createdFeatureId);
+      set(patch);
+      return (patch as { _lastCreatedPartId?: string })._lastCreatedPartId ?? null;
+    }
     let nid = state.nextNodeId;
     const partNum = state.nextPartNum;
 
@@ -2801,6 +3270,21 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   renamePart: (partId, name) => {
     const state = get();
+
+    // CRDT bridge
+    if (state._crdtEngine) {
+      const crdtId = state._partIdToCrdtId.get(partId);
+      if (crdtId) {
+        const result = state._crdtEngine.set_param(
+          crdtId,
+          "name",
+          JSON.stringify(crdtStr(name)),
+        );
+        set(applyCrdtResult(result, state));
+      }
+      return;
+    }
+
     const part = state.partIndex.get(partId);
     if (!part) return;
 
@@ -2823,6 +3307,16 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   undo: () => {
     const state = get();
+
+    // CRDT bridge
+    if (state._crdtEngine) {
+      if (state._crdtEngine.can_undo()) {
+        const result = state._crdtEngine.undo();
+        set(applyCrdtResult(result, state));
+      }
+      return;
+    }
+
     if (state.undoStack.length === 0) return;
 
     const prevSnap = state.undoStack[state.undoStack.length - 1]!;
@@ -2845,6 +3339,16 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   redo: () => {
     const state = get();
+
+    // CRDT bridge
+    if (state._crdtEngine) {
+      if (state._crdtEngine.can_redo()) {
+        const result = state._crdtEngine.redo();
+        set(applyCrdtResult(result, state));
+      }
+      return;
+    }
+
     if (state.redoStack.length === 0) return;
 
     const nextSnap = state.redoStack[state.redoStack.length - 1]!;

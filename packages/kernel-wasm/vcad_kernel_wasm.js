@@ -1516,6 +1516,250 @@ export class WasmCamSettings {
 if (Symbol.dispose) WasmCamSettings.prototype[Symbol.dispose] = WasmCamSettings.prototype.free;
 
 /**
+ * CRDT-backed document engine for WASM.
+ *
+ * Wraps a `CrdtDocument` and maintains cached materialized state.
+ * All mutations return the updated document + parts as a JS value.
+ */
+export class WasmDocumentEngine {
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(WasmDocumentEngine.prototype);
+        obj.__wbg_ptr = ptr;
+        WasmDocumentEngineFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmDocumentEngineFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmdocumentengine_free(ptr, 0);
+    }
+    /**
+     * Whether redo is available.
+     * @returns {boolean}
+     */
+    can_redo() {
+        const ret = wasm.wasmdocumentengine_can_redo(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * Whether undo is available.
+     * @returns {boolean}
+     */
+    can_undo() {
+        const ret = wasm.wasmdocumentengine_can_undo(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * Create a feature with the given kind and params (JSON string).
+     *
+     * Returns `{ document, parts, createdFeatureId }` as a JsValue.
+     * @param {string} kind
+     * @param {string} params_json
+     * @returns {any}
+     */
+    create_feature(kind, params_json) {
+        const ptr0 = passStringToWasm0(kind, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmdocumentengine_create_feature(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+    }
+    /**
+     * Delete a feature by ID (JSON string).
+     * @param {string} feature_id_json
+     * @returns {any}
+     */
+    delete_feature(feature_id_json) {
+        const ptr0 = passStringToWasm0(feature_id_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmdocumentengine_delete_feature(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Get the materialized document as JSON.
+     * @returns {string}
+     */
+    get_document_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.wasmdocumentengine_get_document_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * Get operations since a remote clock state (JSON).
+     * @param {string} remote_clock_json
+     * @returns {string}
+     */
+    get_ops_since(remote_clock_json) {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ptr0 = passStringToWasm0(remote_clock_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.wasmdocumentengine_get_ops_since(this.__wbg_ptr, ptr0, len0);
+            deferred2_0 = ret[0];
+            deferred2_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * Get ordered features (for the feature tree) as JSON.
+     * @returns {string}
+     */
+    get_ordered_features_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.wasmdocumentengine_get_ordered_features_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * Get the parts list as JSON.
+     * @returns {string}
+     */
+    get_parts_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.wasmdocumentengine_get_parts_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * Get the sync clock as JSON.
+     * @returns {string}
+     */
+    get_sync_clock() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.wasmdocumentengine_get_sync_clock(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * Load a document from bytes.
+     * @param {Uint8Array} bytes
+     * @returns {WasmDocumentEngine}
+     */
+    static load(bytes) {
+        const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmdocumentengine_load(ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return WasmDocumentEngine.__wrap(ret[0]);
+    }
+    /**
+     * Merge remote operations (JSON array of Op).
+     * @param {string} ops_json
+     * @returns {any}
+     */
+    merge_remote(ops_json) {
+        const ptr0 = passStringToWasm0(ops_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmdocumentengine_merge_remote(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Move a feature to a new position.
+     * @param {string} feature_id_json
+     * @param {string} position_json
+     * @returns {any}
+     */
+    move_feature(feature_id_json, position_json) {
+        const ptr0 = passStringToWasm0(feature_id_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(position_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmdocumentengine_move_feature(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+    }
+    /**
+     * Create a new empty document engine.
+     */
+    constructor() {
+        const ret = wasm.wasmdocumentengine_new();
+        this.__wbg_ptr = ret >>> 0;
+        WasmDocumentEngineFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * Redo the last undone action.
+     * @returns {any}
+     */
+    redo() {
+        const ret = wasm.wasmdocumentengine_redo(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * Save the document to bytes.
+     * @returns {Uint8Array}
+     */
+    save() {
+        const ret = wasm.wasmdocumentengine_save(this.__wbg_ptr);
+        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v1;
+    }
+    /**
+     * Set a parameter on a feature.
+     * @param {string} feature_id_json
+     * @param {string} key
+     * @param {string} value_json
+     * @returns {any}
+     */
+    set_param(feature_id_json, key, value_json) {
+        const ptr0 = passStringToWasm0(feature_id_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(value_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmdocumentengine_set_param(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        return ret;
+    }
+    /**
+     * Undo the last action.
+     * @returns {any}
+     */
+    undo() {
+        const ret = wasm.wasmdocumentengine_undo(this.__wbg_ptr);
+        return ret;
+    }
+}
+if (Symbol.dispose) WasmDocumentEngine.prototype[Symbol.dispose] = WasmDocumentEngine.prototype.free;
+
+/**
  * Analyze a solid for 3D printing characteristics.
  *
  * Returns JSON with wall thicknesses, overhang angles, hole sizes, etc.
@@ -2497,7 +2741,7 @@ export function isEcadAvailable() {
  * @returns {boolean}
  */
 export function isEmbroideryAvailable() {
-    const ret = wasm.isEmbroideryAvailable();
+    const ret = wasm.isEcadAvailable();
     return ret !== 0;
 }
 
@@ -2745,6 +2989,27 @@ export function parseCompactIR(compact_ir) {
     } finally {
         wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
     }
+}
+
+/**
+ * Parse a KiCad `.kicad_pcb` file content into a JSON-serialized `Pcb`.
+ *
+ * # Arguments
+ * * `content` - The `.kicad_pcb` file content as a string
+ *
+ * # Returns
+ * JSON-serialized `Pcb` struct as JsValue, or error.
+ * @param {string} content
+ * @returns {any}
+ */
+export function parseKicadPcb(content) {
+    const ptr0 = passStringToWasm0(content, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.parseKicadPcb(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
 }
 
 /**
@@ -4291,6 +4556,10 @@ function __wbg_get_imports() {
             const ret = arg0.next;
             return ret;
         },
+        __wbg_now_a3af9a2f4bbaa4d1: function() {
+            const ret = Date.now();
+            return ret;
+        },
         __wbg_now_b8bae8295f608868: function() {
             const ret = performance.now();
             return ret;
@@ -4821,12 +5090,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 1041, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1042, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 1059, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1060, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hb866a658679f7c90, wasm_bindgen__convert__closures_____invoke__hd3174526aa1241bc);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 1784, function: Function { arguments: [Externref], shim_idx: 1785, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 1802, function: Function { arguments: [Externref], shim_idx: 1803, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__ha3f46f4f424453fe, wasm_bindgen__convert__closures_____invoke__h3b7e8ca02e296028);
             return ret;
         },
@@ -4962,6 +5231,9 @@ const WasmAnnotationLayerFinalization = (typeof FinalizationRegistry === 'undefi
 const WasmCamSettingsFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmcamsettings_free(ptr >>> 0, 1));
+const WasmDocumentEngineFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmdocumentengine_free(ptr >>> 0, 1));
 
 function addToExternrefTable0(obj) {
     const idx = wasm.__externref_table_alloc();
