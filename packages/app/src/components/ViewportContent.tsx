@@ -48,6 +48,8 @@ import type {
   EnvironmentPreset,
   Light as IrLight,
 } from "@vcad/ir";
+import { PcbScene } from "./electronics/pcb3d/PcbScene";
+import { usePcbCamera } from "./electronics/pcb3d/usePcbCamera";
 
 // Map IR environment presets to drei preset names
 const ENVIRONMENT_PRESET_MAP: Record<EnvironmentPreset, string> = {
@@ -178,10 +180,12 @@ function computeLevelQuaternion(
   return out;
 }
 
-export function ViewportContent() {
+export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
   useCameraControls();
   useInputDeviceDetection();
   usePhysicsSimulation();
+
+  const isPcbMode = mode === "pcb";
 
   // Track camera motion to disable expensive effects during animation/orbit
   const [isCameraMoving, setIsCameraMoving] = useState(false);
@@ -202,6 +206,7 @@ export function ViewportContent() {
   const raytraceAvailable = useUiStore((s) => s.raytraceAvailable);
   const sketchActive = useSketchStore((s) => s.active);
   const orbitRef = useRef<OrbitControlsImpl>(null);
+  usePcbCamera(orbitRef, isPcbMode);
   const { camera, invalidate } = useThree();
   const { isDark } = useTheme();
 
@@ -870,7 +875,7 @@ export function ViewportContent() {
       })}
 
       {/* Contact shadows - soft shadow beneath objects (disabled during camera motion for FPS) */}
-      {!isCameraMoving && (
+      {!isPcbMode && !isCameraMoving && (
         <ContactShadows
           position={[0, -0.01, 0]}
           opacity={isDark ? 0.4 : 0.3}
@@ -882,10 +887,8 @@ export function ViewportContent() {
         />
       )}
 
-      {/* Grid */}
-      <GridPlane />
-
-      {/* Plane gizmo at origin - rendered inside Z-up group so kernel planes display correctly */}
+      {/* Grid (3D mode only — PCB mode has its own grid) */}
+      {!isPcbMode && <GridPlane />}
 
       {/* Controls - mouse buttons configured by control scheme */}
       <OrbitControls
@@ -906,18 +909,19 @@ export function ViewportContent() {
         })()}
       />
 
-      {/* Orientation gizmo - RGB axes, click to snap view */}
-      {/* Gizmo in Three.js space: X→X(red), Y→Z(blue), Z→Y(green) */}
-      <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
-        <GizmoViewport
-          axisColors={["#e06c75", "#61afef", "#98c379"]}
-          labelColor="#abb2bf"
-          labels={["X", "Z", "Y"]}
-        />
-      </GizmoHelper>
+      {/* Orientation gizmo - RGB axes, click to snap view (3D mode only) */}
+      {!isPcbMode && (
+        <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
+          <GizmoViewport
+            axisColors={["#e06c75", "#61afef", "#98c379"]}
+            labelColor="#abb2bf"
+            labels={["X", "Z", "Y"]}
+          />
+        </GizmoHelper>
+      )}
 
-      {/* Subtle loading indicator while engine initializes */}
-      {!engineReady && (
+      {/* Subtle loading indicator while engine initializes (3D mode) */}
+      {!isPcbMode && !engineReady && (
         <Html position={[0, 0, 0]} center>
           <div className="text-xs text-text-muted opacity-50">
             loading engine...
@@ -925,8 +929,8 @@ export function ViewportContent() {
         </Html>
       )}
 
-      {/* Environment lighting - wrapped in Suspense to not block initial render */}
-      {environmentPreset && (
+      {/* Environment lighting (3D mode only) */}
+      {!isPcbMode && environmentPreset && (
         <Suspense fallback={null}>
           <Environment
             preset={environmentPreset as "studio" | "warehouse" | "apartment" | "park" | "city" | "dawn" | "night" | "sunset" | "forest"}
@@ -937,15 +941,26 @@ export function ViewportContent() {
       )}
 
       {/* Custom background (if not using environment) */}
-      {sceneSettings.background.type === "Solid" && (
+      {!isPcbMode && sceneSettings.background.type === "Solid" && (
         <color attach="background" args={[sceneSettings.background.color[0], sceneSettings.background.color[1], sceneSettings.background.color[2]]} />
       )}
-      {sceneSettings.background.type === "Transparent" && (
+      {!isPcbMode && sceneSettings.background.type === "Transparent" && (
         <color attach="background" args={[0, 0, 0]} />
       )}
 
-      {/* Engine-dependent content - renders after engine ready */}
-      {engineReady && (
+      {/* ═══════════════════════════════════════════════════════════════════
+          PCB MODE: Render PcbScene inside the rotation group
+          ═══════════════════════════════════════════════════════════════════ */}
+      {isPcbMode && (
+        <group rotation={[-Math.PI / 2, 0, 0]}>
+          <PcbScene />
+        </group>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          3D MODE: Render standard CAD scene content
+          ═══════════════════════════════════════════════════════════════════ */}
+      {!isPcbMode && engineReady && (
         <>
           {/* Ray-traced viewport sync (camera state for overlay) */}
           {renderMode === "raytrace" && raytraceAvailable && (

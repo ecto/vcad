@@ -55,6 +55,8 @@ const DEFAULT_LAYERS: LayerConfig[] = [
 // Store
 // ---------------------------------------------------------------------------
 
+export type SchematicDocked = "left" | "right" | "hidden";
+
 export interface ElectronicsState {
   // Workspace
   active: boolean;
@@ -62,7 +64,10 @@ export interface ElectronicsState {
   splitRatio: number;
   focusedPane: "schematic" | "pcb";
 
-  // 3D preview
+  // Schematic overlay docking (new 3D canvas mode)
+  schematicDocked: SchematicDocked;
+
+  // 3D preview (legacy — to be removed)
   show3dPreview: boolean;
 
   // Net-centric selection (Principle 2)
@@ -158,6 +163,9 @@ export interface ElectronicsState {
   // 3D preview actions
   toggleShow3dPreview: () => void;
 
+  // Schematic overlay actions
+  setSchematicDocked: (docked: SchematicDocked) => void;
+
   // Length tuning actions
   setLengthTuneParams: (params: Partial<LengthTuneParams>) => void;
   startLengthTune: (net: string) => void;
@@ -173,6 +181,7 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
   layout: "split",
   splitRatio: 0.5,
   focusedPane: "schematic",
+  schematicDocked: "left",
   show3dPreview: false,
 
   selection: { type: "none" },
@@ -410,6 +419,9 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
 
   // 3D preview
   toggleShow3dPreview: () => set((s) => ({ show3dPreview: !s.show3dPreview })),
+
+  // Schematic overlay
+  setSchematicDocked: (schematicDocked) => set({ schematicDocked }),
 
   // PCB drag
   startPcbDrag: (fpIdx, startPos) =>

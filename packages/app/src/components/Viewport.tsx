@@ -12,12 +12,22 @@ import {
 import { useTheme } from "@/hooks/useTheme";
 import { useDrawingStore } from "@/stores/drawing-store";
 import { useElectronicsStore } from "@/stores/electronics-store";
+import { useElectronicsSync } from "@/hooks/useElectronicsSync";
 
-const ElectronicsWorkspace = lazy(() =>
-  import("./electronics").then((m) => ({ default: m.ElectronicsWorkspace })),
+const SchematicOverlayPanel = lazy(() =>
+  import("./electronics/SchematicOverlayPanel").then((m) => ({
+    default: m.SchematicOverlayPanel,
+  })),
 );
-const Pcb3dPreview = lazy(() =>
-  import("./electronics/Pcb3dPreview").then((m) => ({ default: m.Pcb3dPreview })),
+const ElectronicsPropertyPanel = lazy(() =>
+  import("./electronics/ElectronicsPropertyPanel").then((m) => ({
+    default: m.ElectronicsPropertyPanel,
+  })),
+);
+const LengthTunePanel = lazy(() =>
+  import("./electronics/LengthTunePanel").then((m) => ({
+    default: m.LengthTunePanel,
+  })),
 );
 
 // Monokai Soda from tmTheme
@@ -197,26 +207,8 @@ export function Viewport() {
   const viewMode = useDrawingStore((s) => s.viewMode);
   const electronicsActive = useElectronicsStore((s) => s.active);
 
-  const show3dPreview = useElectronicsStore((s) => s.show3dPreview);
-
-  // Render Electronics Workspace
-  if (electronicsActive) {
-    return (
-      <div
-        className="absolute inset-0 overflow-hidden"
-        style={{ backgroundColor: isDark ? "#0a0a0a" : "#ffffff" }}
-      >
-        <Suspense fallback={null}>
-          <ElectronicsWorkspace />
-        </Suspense>
-        {show3dPreview && (
-          <Suspense fallback={null}>
-            <Pcb3dPreview />
-          </Suspense>
-        )}
-      </div>
-    );
-  }
+  // Run electronics sync when in electronics mode
+  useElectronicsSync();
 
   // Render 2D Drawing View
   if (viewMode === "2d") {
@@ -230,13 +222,19 @@ export function Viewport() {
     );
   }
 
-  // Render 3D Canvas
+  // Render 3D Canvas (shared for CAD and PCB modes)
+  const canvasBg = electronicsActive
+    ? (isDark ? "#0a0a0a" : "#f5f5f5")
+    : (isDark ? BG_DARK : BG_LIGHT);
+
   return (
     <div ref={containerRef} className="absolute inset-0">
       <Canvas
         frameloop="demand"
         camera={{ position: [50, 50, 50], fov: 50, near: 0.1, far: 10000 }}
-        onPointerMissed={() => clearSelection()}
+        onPointerMissed={() => {
+          if (!electronicsActive) clearSelection();
+        }}
         onCreated={() => performance.mark("canvas-ready")}
         shadows
         gl={{
@@ -244,15 +242,31 @@ export function Viewport() {
           logarithmicDepthBuffer: true,
           toneMapping: THREE.ACESFilmicToneMapping,
           toneMappingExposure: 1.0,
-          preserveDrawingBuffer: true, // Required for pixel sampling (adaptive UI)
+          preserveDrawingBuffer: true,
         }}
-        style={{ background: isDark ? BG_DARK : BG_LIGHT }}
+        style={{ background: canvasBg }}
       >
-        <ViewportContent />
-        <BoxSelectHandler containerRef={containerRef} />
+        <ViewportContent mode={electronicsActive ? "pcb" : "3d"} />
+        {!electronicsActive && <BoxSelectHandler containerRef={containerRef} />}
       </Canvas>
+
+      {/* Electronics overlay panels (outside Canvas, on top) */}
+      {electronicsActive && (
+        <>
+          <Suspense fallback={null}>
+            <SchematicOverlayPanel />
+          </Suspense>
+          <Suspense fallback={null}>
+            <ElectronicsPropertyPanel />
+          </Suspense>
+          <Suspense fallback={null}>
+            <LengthTunePanel />
+          </Suspense>
+        </>
+      )}
+
       {/* Ray-traced overlay - rendered outside Canvas to avoid R3F reconciler issues */}
-      {renderMode === "raytrace" && raytraceAvailable && (
+      {!electronicsActive && renderMode === "raytrace" && raytraceAvailable && (
         <RayTracedViewportOverlay />
       )}
     </div>
