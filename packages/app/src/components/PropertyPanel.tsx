@@ -3,7 +3,7 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { X } from "@phosphor-icons/react/dist/ssr/X";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ScrubInput } from "@/components/ui/scrub-input";
-import { useDocumentStore, useUiStore, isPrimitivePart, isBooleanPart, isSweepPart, isEmbroideryPatternPart, isStitchPart, isPcbBoardPart, isExtrudePart, isRevolvePart, isFilletPart, isChamferPart, isShellPart, isLinearPatternPart, isCircularPatternPart, isLoftPart, isTextPart, isMirrorPart } from "@vcad/core";
+import { useDocumentStore, useUiStore, isPrimitivePart, isBooleanPart, isSweepPart, isEmbroideryPatternPart, isStitchPart, isPcbBoardPart, isExtrudePart, isRevolvePart, isFilletPart, isChamferPart, isShellPart, isLinearPatternPart, isCircularPatternPart, isLoftPart, isTextPart, isMirrorPart, f64, vec3, bool } from "@vcad/core";
 import { useElectronicsStore } from "@/stores/electronics-store";
 import { useEmbroideryStore } from "@/stores/embroidery-store";
 import type { PartInfo, PrimitivePartInfo, BooleanPartInfo, BooleanType, SweepPartInfo, ExtrudePartInfo, RevolvePartInfo, FilletPartInfo, ChamferPartInfo, ShellPartInfo, LinearPatternPartInfo, CircularPatternPartInfo, LoftPartInfo, TextPartInfo, MirrorPartInfo } from "@vcad/core";
@@ -486,7 +486,7 @@ function BooleanProperties({ part }: { part: BooleanPartInfo }) {
 
 function ExtrudeProperties({ part }: { part: ExtrudePartInfo }) {
   const document = useDocumentStore((s) => s.document);
-  const updateOperation = useDocumentStore((s) => s.updateOperation);
+  const setFeatureParam = useDocumentStore((s) => s.setFeatureParam);
   const scrub = useScrubDragging();
 
   const node = document.nodes[String(part.extrudeNodeId)];
@@ -495,7 +495,6 @@ function ExtrudeProperties({ part }: { part: ExtrudePartInfo }) {
   const op = node.op;
   const dir = op.direction;
   const depth = Math.sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
-  const unitDir = depth > 0 ? { x: dir.x / depth, y: dir.y / depth, z: dir.z / depth } : { x: 0, y: 0, z: 1 };
 
   return (
     <div className="space-y-3">
@@ -505,7 +504,7 @@ function ExtrudeProperties({ part }: { part: ExtrudePartInfo }) {
           label="Depth"
           value={depth}
           min={0.01}
-          onChange={(v) => updateOperation(part.extrudeNodeId, { direction: { x: unitDir.x * v, y: unitDir.y * v, z: unitDir.z * v } })}
+          onChange={(v) => setFeatureParam(part.id, "depth", f64(v))}
           unit="mm"
           {...scrub}
         />
@@ -517,7 +516,7 @@ function ExtrudeProperties({ part }: { part: ExtrudePartInfo }) {
           label="Angle"
           value={(op.twist_angle ?? 0) * (180 / Math.PI)}
           step={5}
-          onChange={(v) => updateOperation(part.extrudeNodeId, { twist_angle: v * (Math.PI / 180) })}
+          onChange={(v) => setFeatureParam(part.id, "twist_angle", f64(v * (Math.PI / 180)))}
           unit="°"
           {...scrub}
         />
@@ -530,7 +529,7 @@ function ExtrudeProperties({ part }: { part: ExtrudePartInfo }) {
           value={op.scale_end ?? 1}
           min={0.01}
           step={0.1}
-          onChange={(v) => updateOperation(part.extrudeNodeId, { scale_end: v })}
+          onChange={(v) => setFeatureParam(part.id, "scale_end", f64(v))}
           {...scrub}
         />
       </div>
@@ -540,7 +539,7 @@ function ExtrudeProperties({ part }: { part: ExtrudePartInfo }) {
 
 function RevolveProperties({ part }: { part: RevolvePartInfo }) {
   const document = useDocumentStore((s) => s.document);
-  const updateOperation = useDocumentStore((s) => s.updateOperation);
+  const setFeatureParam = useDocumentStore((s) => s.setFeatureParam);
   const scrub = useScrubDragging();
 
   const node = document.nodes[String(part.revolveNodeId)];
@@ -558,7 +557,7 @@ function RevolveProperties({ part }: { part: RevolvePartInfo }) {
           min={0.1}
           max={360}
           step={5}
-          onChange={(v) => updateOperation(part.revolveNodeId, { angle_deg: v })}
+          onChange={(v) => setFeatureParam(part.id, "angle_deg", f64(v))}
           unit="°"
           {...scrub}
         />
@@ -578,7 +577,7 @@ function RevolveProperties({ part }: { part: RevolvePartInfo }) {
 
 function FilletProperties({ part }: { part: FilletPartInfo }) {
   const document = useDocumentStore((s) => s.document);
-  const updateOperation = useDocumentStore((s) => s.updateOperation);
+  const setFeatureParam = useDocumentStore((s) => s.setFeatureParam);
   const scrub = useScrubDragging();
 
   const node = document.nodes[String(part.filletNodeId)];
@@ -592,7 +591,7 @@ function FilletProperties({ part }: { part: FilletPartInfo }) {
         value={node.op.radius}
         min={0.1}
         step={0.5}
-        onChange={(v) => updateOperation(part.filletNodeId, { radius: v })}
+        onChange={(v) => setFeatureParam(part.id, "radius", f64(v))}
         unit="mm"
         {...scrub}
       />
@@ -602,7 +601,7 @@ function FilletProperties({ part }: { part: FilletPartInfo }) {
 
 function ChamferProperties({ part }: { part: ChamferPartInfo }) {
   const document = useDocumentStore((s) => s.document);
-  const updateOperation = useDocumentStore((s) => s.updateOperation);
+  const setFeatureParam = useDocumentStore((s) => s.setFeatureParam);
   const scrub = useScrubDragging();
 
   const node = document.nodes[String(part.chamferNodeId)];
@@ -616,7 +615,7 @@ function ChamferProperties({ part }: { part: ChamferPartInfo }) {
         value={node.op.distance}
         min={0.1}
         step={0.5}
-        onChange={(v) => updateOperation(part.chamferNodeId, { distance: v })}
+        onChange={(v) => setFeatureParam(part.id, "distance", f64(v))}
         unit="mm"
         {...scrub}
       />
@@ -626,7 +625,7 @@ function ChamferProperties({ part }: { part: ChamferPartInfo }) {
 
 function ShellProperties({ part }: { part: ShellPartInfo }) {
   const document = useDocumentStore((s) => s.document);
-  const updateOperation = useDocumentStore((s) => s.updateOperation);
+  const setFeatureParam = useDocumentStore((s) => s.setFeatureParam);
   const scrub = useScrubDragging();
 
   const node = document.nodes[String(part.shellNodeId)];
@@ -640,7 +639,7 @@ function ShellProperties({ part }: { part: ShellPartInfo }) {
         value={node.op.thickness}
         min={0.1}
         step={0.5}
-        onChange={(v) => updateOperation(part.shellNodeId, { thickness: v })}
+        onChange={(v) => setFeatureParam(part.id, "thickness", f64(v))}
         unit="mm"
         {...scrub}
       />
@@ -650,7 +649,7 @@ function ShellProperties({ part }: { part: ShellPartInfo }) {
 
 function LinearPatternProperties({ part }: { part: LinearPatternPartInfo }) {
   const document = useDocumentStore((s) => s.document);
-  const updateOperation = useDocumentStore((s) => s.updateOperation);
+  const setFeatureParam = useDocumentStore((s) => s.setFeatureParam);
   const scrub = useScrubDragging();
 
   const node = document.nodes[String(part.patternNodeId)];
@@ -667,21 +666,21 @@ function LinearPatternProperties({ part }: { part: LinearPatternPartInfo }) {
           <ScrubInput
             label="X"
             value={dir.x}
-            onChange={(v) => updateOperation(part.patternNodeId, { direction: { ...dir, x: v } })}
+            onChange={(v) => setFeatureParam(part.id, "direction", vec3(v, dir.y, dir.z))}
             unit="mm"
             {...scrub}
           />
           <ScrubInput
             label="Y"
             value={dir.y}
-            onChange={(v) => updateOperation(part.patternNodeId, { direction: { ...dir, y: v } })}
+            onChange={(v) => setFeatureParam(part.id, "direction", vec3(dir.x, v, dir.z))}
             unit="mm"
             {...scrub}
           />
           <ScrubInput
             label="Z"
             value={dir.z}
-            onChange={(v) => updateOperation(part.patternNodeId, { direction: { ...dir, z: v } })}
+            onChange={(v) => setFeatureParam(part.id, "direction", vec3(dir.x, dir.y, v))}
             unit="mm"
             {...scrub}
           />
@@ -696,7 +695,7 @@ function LinearPatternProperties({ part }: { part: LinearPatternPartInfo }) {
           min={1}
           max={100}
           step={1}
-          onChange={(v) => updateOperation(part.patternNodeId, { count: Math.round(v) })}
+          onChange={(v) => setFeatureParam(part.id, "count", f64(Math.round(v)))}
           {...scrub}
         />
       </div>
@@ -708,7 +707,7 @@ function LinearPatternProperties({ part }: { part: LinearPatternPartInfo }) {
           value={op.spacing}
           min={0.1}
           step={1}
-          onChange={(v) => updateOperation(part.patternNodeId, { spacing: v })}
+          onChange={(v) => setFeatureParam(part.id, "spacing", f64(v))}
           unit="mm"
           {...scrub}
         />
@@ -719,7 +718,7 @@ function LinearPatternProperties({ part }: { part: LinearPatternPartInfo }) {
 
 function CircularPatternProperties({ part }: { part: CircularPatternPartInfo }) {
   const document = useDocumentStore((s) => s.document);
-  const updateOperation = useDocumentStore((s) => s.updateOperation);
+  const setFeatureParam = useDocumentStore((s) => s.setFeatureParam);
   const scrub = useScrubDragging();
 
   const node = document.nodes[String(part.patternNodeId)];
@@ -737,7 +736,7 @@ function CircularPatternProperties({ part }: { part: CircularPatternPartInfo }) 
           min={1}
           max={100}
           step={1}
-          onChange={(v) => updateOperation(part.patternNodeId, { count: Math.round(v) })}
+          onChange={(v) => setFeatureParam(part.id, "count", f64(Math.round(v)))}
           {...scrub}
         />
       </div>
@@ -750,7 +749,7 @@ function CircularPatternProperties({ part }: { part: CircularPatternPartInfo }) 
           min={1}
           max={360}
           step={5}
-          onChange={(v) => updateOperation(part.patternNodeId, { angle_deg: v })}
+          onChange={(v) => setFeatureParam(part.id, "angle_deg", f64(v))}
           unit="°"
           {...scrub}
         />
@@ -762,21 +761,21 @@ function CircularPatternProperties({ part }: { part: CircularPatternPartInfo }) 
           <ScrubInput
             label="X"
             value={op.axis_origin.x}
-            onChange={(v) => updateOperation(part.patternNodeId, { axis_origin: { ...op.axis_origin, x: v } })}
+            onChange={(v) => setFeatureParam(part.id, "axis_origin", vec3(v, op.axis_origin.y, op.axis_origin.z))}
             unit="mm"
             {...scrub}
           />
           <ScrubInput
             label="Y"
             value={op.axis_origin.y}
-            onChange={(v) => updateOperation(part.patternNodeId, { axis_origin: { ...op.axis_origin, y: v } })}
+            onChange={(v) => setFeatureParam(part.id, "axis_origin", vec3(op.axis_origin.x, v, op.axis_origin.z))}
             unit="mm"
             {...scrub}
           />
           <ScrubInput
             label="Z"
             value={op.axis_origin.z}
-            onChange={(v) => updateOperation(part.patternNodeId, { axis_origin: { ...op.axis_origin, z: v } })}
+            onChange={(v) => setFeatureParam(part.id, "axis_origin", vec3(op.axis_origin.x, op.axis_origin.y, v))}
             unit="mm"
             {...scrub}
           />
@@ -789,21 +788,21 @@ function CircularPatternProperties({ part }: { part: CircularPatternPartInfo }) 
           <ScrubInput
             label="X"
             value={op.axis_dir.x}
-            onChange={(v) => updateOperation(part.patternNodeId, { axis_dir: { ...op.axis_dir, x: v } })}
+            onChange={(v) => setFeatureParam(part.id, "axis_dir", vec3(v, op.axis_dir.y, op.axis_dir.z))}
             step={0.1}
             {...scrub}
           />
           <ScrubInput
             label="Y"
             value={op.axis_dir.y}
-            onChange={(v) => updateOperation(part.patternNodeId, { axis_dir: { ...op.axis_dir, y: v } })}
+            onChange={(v) => setFeatureParam(part.id, "axis_dir", vec3(op.axis_dir.x, v, op.axis_dir.z))}
             step={0.1}
             {...scrub}
           />
           <ScrubInput
             label="Z"
             value={op.axis_dir.z}
-            onChange={(v) => updateOperation(part.patternNodeId, { axis_dir: { ...op.axis_dir, z: v } })}
+            onChange={(v) => setFeatureParam(part.id, "axis_dir", vec3(op.axis_dir.x, op.axis_dir.y, v))}
             step={0.1}
             {...scrub}
           />
@@ -815,7 +814,7 @@ function CircularPatternProperties({ part }: { part: CircularPatternPartInfo }) 
 
 function LoftProperties({ part }: { part: LoftPartInfo }) {
   const document = useDocumentStore((s) => s.document);
-  const updateOperation = useDocumentStore((s) => s.updateOperation);
+  const setFeatureParam = useDocumentStore((s) => s.setFeatureParam);
 
   const node = document.nodes[String(part.loftNodeId)];
   if (!node || node.op.type !== "Loft") return null;
@@ -847,7 +846,7 @@ function LoftProperties({ part }: { part: LoftPartInfo }) {
             type="checkbox"
             checked={op.closed ?? false}
             onChange={(e) =>
-              updateOperation(part.loftNodeId, { closed: e.target.checked })
+              setFeatureParam(part.id, "closed", bool(e.target.checked))
             }
             className="accent-accent"
           />
@@ -860,7 +859,7 @@ function LoftProperties({ part }: { part: LoftPartInfo }) {
 
 function TextProperties({ part }: { part: TextPartInfo }) {
   const document = useDocumentStore((s) => s.document);
-  const updateOperation = useDocumentStore((s) => s.updateOperation);
+  const setFeatureParam = useDocumentStore((s) => s.setFeatureParam);
   const scrub = useScrubDragging();
 
   const textNode = document.nodes[String(part.textNodeId)];
@@ -891,7 +890,7 @@ function TextProperties({ part }: { part: TextPartInfo }) {
           value={op.height}
           min={0.5}
           step={1}
-          onChange={(v) => updateOperation(part.textNodeId, { height: v })}
+          onChange={(v) => setFeatureParam(part.id, "height", f64(v))}
           unit="mm"
           {...scrub}
         />
@@ -905,18 +904,7 @@ function TextProperties({ part }: { part: TextPartInfo }) {
             value={depth}
             min={0.1}
             step={0.5}
-            onChange={(v) => {
-              // Scale direction vector to new magnitude
-              const len = depth || 1;
-              const scale = v / len;
-              updateOperation(part.extrudeNodeId, {
-                direction: {
-                  x: extrudeOp.direction.x * scale,
-                  y: extrudeOp.direction.y * scale,
-                  z: extrudeOp.direction.z * scale,
-                },
-              });
-            }}
+            onChange={(v) => setFeatureParam(part.id, "depth", f64(v))}
             unit="mm"
             {...scrub}
           />
@@ -930,7 +918,7 @@ function TextProperties({ part }: { part: TextPartInfo }) {
           value={op.letter_spacing ?? 1}
           min={0.1}
           step={0.1}
-          onChange={(v) => updateOperation(part.textNodeId, { letter_spacing: v })}
+          onChange={(v) => setFeatureParam(part.id, "letter_spacing", f64(v))}
           {...scrub}
         />
       </div>

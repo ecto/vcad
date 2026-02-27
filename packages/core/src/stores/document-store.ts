@@ -2,17 +2,12 @@ import { create } from "zustand";
 import type {
   Document,
   NodeId,
-  CsgOp,
-  Node,
   Vec3,
   SketchSegment2D,
   PathCurve,
   Transform3D,
   SweepOp,
   JointKind,
-  Instance,
-  Joint,
-  PartDef,
   SceneSettings,
   Environment,
   Light,
@@ -30,49 +25,29 @@ import type {
   FillParams,
 } from "@vcad/ir";
 import { DEFAULT_FILL_PARAMS } from "@vcad/ir";
-import { createDocument, identityTransform } from "@vcad/ir";
+import { createDocument } from "@vcad/ir";
 import type {
   PartInfo,
   PrimitiveKind,
   BooleanType,
-  BooleanPartInfo,
   ExtrudePartInfo,
   RevolvePartInfo,
   SweepPartInfo,
   LoftPartInfo,
   ImportedMeshPartInfo,
-  FilletPartInfo,
-  ChamferPartInfo,
-  ShellPartInfo,
-  LinearPatternPartInfo,
-  CircularPatternPartInfo,
-  MirrorPartInfo,
-  TextPartInfo,
-  PcbBoardPartInfo,
   EmbroideryPatternPartInfo,
-  StitchPartInfo,
+  PcbBoardPartInfo,
   SketchPlane,
 } from "../types.js";
 import {
-  isPrimitivePart,
-  isBooleanPart,
   isExtrudePart,
   isRevolvePart,
   isSweepPart,
   isLoftPart,
-  isImportedMeshPart,
-  isFilletPart,
-  isChamferPart,
-  isShellPart,
-  isLinearPatternPart,
-  isCircularPatternPart,
-  isMirrorPart,
   isTextPart,
   isStitchEligible,
   getSketchPlaneDirections,
 } from "../types.js";
-
-const MAX_UNDO = 50;
 
 // ---------------------------------------------------------------------------
 // CRDT bridge types
@@ -104,12 +79,18 @@ export interface WasmDocumentEngine {
   can_redo(): boolean;
   save(): Uint8Array;
   free(): void;
+  get_ordered_features_json(): string;
+  get_document_json(): string;
+  get_parts_json(): string;
+  compute_position_between(before_id_json: string, after_id_json: string): string;
+  import_ir(ir_json: string): CrdtMutationResult;
 }
 
 /** Constructor for WasmDocumentEngine */
 export interface WasmDocumentEngineConstructor {
   new (): WasmDocumentEngine;
   load(bytes: Uint8Array): WasmDocumentEngine;
+  from_v1_json(json: string): WasmDocumentEngine;
 }
 
 /**
@@ -121,7 +102,9 @@ type CrdtValue =
   | { Vec3: [number, number, number] }
   | { Bool: boolean }
   | { String: string }
-  | { FeatureRef: string };
+  | { FeatureRef: string }
+  | { FeatureRefList: string[] }
+  | { Sketch: string };
 
 function crdtF64(v: number): CrdtValue {
   return { F64: v };
@@ -129,21 +112,18 @@ function crdtF64(v: number): CrdtValue {
 function crdtVec3(v: Vec3): CrdtValue {
   return { Vec3: [v.x, v.y, v.z] };
 }
+function crdtBool(v: boolean): CrdtValue {
+  return { Bool: v };
+}
 function crdtStr(v: string): CrdtValue {
   return { String: v };
 }
 function crdtRef(v: string): CrdtValue {
   return { FeatureRef: v };
 }
-
-interface Snapshot {
-  document: string; // JSON-serialized Document
-  parts: PartInfo[];
-  consumedParts: Record<string, PartInfo>;
-  nextNodeId: number;
-  nextPartNum: number;
-  actionName: string; // Describes what action created this snapshot
-  loonSource: string | null;
+function crdtSketch(segments: SketchSegment2D[], plane: SketchPlane, origin: Vec3): CrdtValue {
+  const { x_dir, y_dir } = getSketchPlaneDirections(plane);
+  return { Sketch: JSON.stringify({ type: "Sketch2D", origin, x_dir, y_dir, segments }) };
 }
 
 export interface VcadFile {
@@ -179,22 +159,17 @@ export interface DocumentState {
   documentName: string;
   lastSavedAt: number | null;
 
-  // Incremental evaluation tracking
-  /** Node IDs that have changed since last evaluation */
-  dirtyNodeIds: Set<NodeId>;
   /** Whether a parametric drag is in progress (enables LOD mode) */
   isParameterDragging: boolean;
 
   /** Loon source code — non-null when document was loaded from loon format. */
   loonSource: string | null;
 
-  // undo/redo
-  undoStack: Snapshot[];
-  redoStack: Snapshot[];
-
-  // --------------- CRDT bridge ---------------
+  // --------------- CRDT engine ---------------
   /** The CRDT engine instance, or null if not yet initialized. */
   _crdtEngine: WasmDocumentEngine | null;
+  /** The CRDT engine constructor (stored for creating new engines). */
+  _crdtEngineClass: WasmDocumentEngineConstructor | null;
   /** Map from legacy part IDs ("part-3") to CRDT feature IDs ("123:0"). */
   _partIdToCrdtId: Map<string, string>;
   /** Map from CRDT feature IDs ("123:0") to legacy part IDs ("part-3"). */
@@ -215,15 +190,17 @@ export interface DocumentState {
   setTranslation: (partId: string, offset: Vec3, skipUndo?: boolean) => void;
   setRotation: (partId: string, angles: Vec3, skipUndo?: boolean) => void;
   setScale: (partId: string, factor: Vec3, skipUndo?: boolean) => void;
-  updatePrimitiveOp: (partId: string, op: CsgOp, skipUndo?: boolean) => void;
+  updatePrimitiveOp: (partId: string, op: unknown, skipUndo?: boolean) => void;
   updateSweepOp: (
     partId: string,
     updates: Partial<SweepOp>,
     skipUndo?: boolean,
   ) => void;
-  updateOperation: (
-    nodeId: NodeId,
-    updates: Partial<CsgOp>,
+  /** Set a single CRDT param on a feature by its part ID. */
+  setFeatureParam: (
+    partId: string,
+    key: string,
+    value: CrdtValue,
     skipUndo?: boolean,
   ) => void;
   renamePart: (partId: string, name: string) => void;
@@ -279,6 +256,7 @@ export interface DocumentState {
     options?: { closed?: boolean },
   ) => string | null;
   setPartMaterial: (partId: string, materialKey: string) => void;
+  /** No-op — CRDT undo handles granularity automatically. */
   pushUndoSnapshot: () => void;
   undo: () => void;
   redo: () => void;
@@ -371,7 +349,7 @@ export interface DocumentState {
     letterSpacing?: number;
     lineSpacing?: number;
   }) => string | null;
-  // Incremental evaluation actions
+  // Incremental evaluation actions (no-ops — CRDT replaces document wholesale)
   clearDirtyNodes: () => Set<NodeId>;
   setParameterDragging: (dragging: boolean) => void;
   // Visibility toggle
@@ -433,9 +411,9 @@ export interface DocumentState {
   removeFootprint: (nodeId: NodeId, idx: number) => void;
 }
 
-function makeNode(id: NodeId, name: string | null, op: CsgOp): Node {
-  return { id, name, op };
-}
+// ---------------------------------------------------------------------------
+// Utility functions
+// ---------------------------------------------------------------------------
 
 /** Build a Map index from parts array for O(1) lookups */
 function buildPartIndex(parts: PartInfo[]): Map<string, PartInfo> {
@@ -469,7 +447,77 @@ export function getPcbNodeIds(doc: Document): NodeId[] {
   return ids;
 }
 
-/** Shared logic for adding a Pcb board to the document (used by initPcb and importPcb). */
+// ---------------------------------------------------------------------------
+// CRDT bridge helpers (module-level, not in store)
+// ---------------------------------------------------------------------------
+
+/** Cached singleton feature IDs (lazily created, cleared on engine init). */
+let _sceneSettingsFeatureId: string | null = null;
+let _schematicFeatureId: string | null = null;
+
+function getOrCreateSceneFeature(state: DocumentState): string {
+  const engine = state._crdtEngine!;
+  if (_sceneSettingsFeatureId) return _sceneSettingsFeatureId;
+
+  const featuresJson = engine.get_ordered_features_json();
+  const features: { id: string; kind: string }[] = JSON.parse(featuresJson);
+  const existing = features.find((f) => f.kind === "scene-settings");
+  if (existing) {
+    _sceneSettingsFeatureId = existing.id;
+    return existing.id;
+  }
+
+  const result = engine.create_feature("scene-settings", "{}");
+  if (result.createdFeatureId) {
+    _sceneSettingsFeatureId = result.createdFeatureId;
+    return result.createdFeatureId;
+  }
+  return "";
+}
+
+function getOrCreateSchematicFeature(state: DocumentState): string {
+  const engine = state._crdtEngine!;
+  if (_schematicFeatureId) return _schematicFeatureId;
+
+  const featuresJson = engine.get_ordered_features_json();
+  const features: { id: string; kind: string }[] = JSON.parse(featuresJson);
+  const existing = features.find((f) => f.kind === "schematic");
+  if (existing) {
+    _schematicFeatureId = existing.id;
+    return existing.id;
+  }
+
+  const result = engine.create_feature("schematic", "{}");
+  if (result.createdFeatureId) {
+    _schematicFeatureId = result.createdFeatureId;
+    return result.createdFeatureId;
+  }
+  return "";
+}
+
+function getPcbBoardFeatureId(state: DocumentState): string {
+  const engine = state._crdtEngine!;
+  const featuresJson = engine.get_ordered_features_json();
+  const features: { id: string; kind: string }[] = JSON.parse(featuresJson);
+  const pcb = features.find((f) => f.kind === "pcb-board");
+  return pcb?.id ?? "";
+}
+
+/** Write the entire schematic sheet back to the CRDT feature. */
+function setCrdtSchematic(state: DocumentState, schematic: NonNullable<Document["schematic"]>): void {
+  const schId = getOrCreateSchematicFeature(state);
+  state._crdtEngine!.set_param(schId, "sheet", JSON.stringify(crdtStr(JSON.stringify(schematic))));
+}
+
+/** Write the entire PCB board back to the CRDT pcb-board feature. */
+function setCrdtPcb(state: DocumentState, pcb: Pcb): Partial<DocumentState> {
+  const pcbFid = getPcbBoardFeatureId(state);
+  if (!pcbFid) return {};
+  const result = state._crdtEngine!.set_param(pcbFid, "board", JSON.stringify(crdtStr(JSON.stringify(pcb))));
+  return applyCrdtResult(result, state);
+}
+
+/** Shared logic for adding a Pcb board to the document. */
 function addPcbToDocument(
   get: () => DocumentState,
   set: (s: Partial<DocumentState>) => void,
@@ -477,139 +525,22 @@ function addPcbToDocument(
   boardName: string,
 ): NodeId {
   const state = get();
-  const undoState = pushUndo(state, "Create PCB");
-  const newDoc = structuredClone(state.document);
-  const nid = state.nextNodeId;
-
-  const boardNodeId = nid;
-  const scaleId = nid + 1;
-  const rotateId = nid + 2;
-  const translateId = nid + 3;
-
-  newDoc.nodes[String(boardNodeId)] = {
-    id: boardNodeId,
-    name: null,
-    op: { type: "PcbBoard", board: pcbBoard } as CsgOp,
+  const engine = state._crdtEngine!;
+  const params: Record<string, CrdtValue> = {
+    name: crdtStr(boardName),
+    board: crdtStr(JSON.stringify(pcbBoard)),
+    material: crdtStr("__pcb_fr4__"),
   };
-  newDoc.nodes[String(scaleId)] = {
-    id: scaleId,
-    name: null,
-    op: { type: "Scale", child: boardNodeId, factor: { x: 1, y: 1, z: 1 } } as CsgOp,
-  };
-  newDoc.nodes[String(rotateId)] = {
-    id: rotateId,
-    name: null,
-    op: { type: "Rotate", child: scaleId, angles: { x: 0, y: 0, z: 0 } } as CsgOp,
-  };
-  newDoc.nodes[String(translateId)] = {
-    id: translateId,
-    name: boardName,
-    op: { type: "Translate", child: rotateId, offset: { x: 0, y: 0, z: 0 } } as CsgOp,
-  };
-  newDoc.roots.push({ root: translateId, material: "__pcb_fr4__" });
-  if (!newDoc.materials["__pcb_fr4__"]) {
-    newDoc.materials["__pcb_fr4__"] = {
-      name: "__pcb_fr4__",
-      color: [0.05, 0.35, 0.15],
-      metallic: 0,
-      roughness: 0.8,
-    };
-  }
-  if (!newDoc.materials["__pcb_copper__"]) {
-    newDoc.materials["__pcb_copper__"] = {
-      name: "__pcb_copper__",
-      color: [0.84, 0.68, 0.37],
-      metallic: 0.95,
-      roughness: 0.15,
-    };
-  }
-
-  const newParts = [...state.parts, {
-    id: `pcb-board-${boardNodeId}`,
-    name: boardName,
-    kind: "pcb-board" as const,
-    boardNodeId,
-    scaleNodeId: scaleId,
-    rotateNodeId: rotateId,
-    translateNodeId: translateId,
-  } satisfies PcbBoardPartInfo];
-
-  const dirtyNodeIds = new Set(state.dirtyNodeIds);
-  dirtyNodeIds.add(boardNodeId);
-
-  set({
-    document: newDoc,
-    parts: newParts,
-    partIndex: buildPartIndex(newParts),
-    nextNodeId: nid + 4,
-    isDirty: true,
-    dirtyNodeIds,
-    ...undoState,
-  });
-  return boardNodeId;
+  const result = engine.create_feature("pcb-board", JSON.stringify(params));
+  const patch = applyCrdtResult(result, state, result.createdFeatureId);
+  set({ ...patch, isDirty: true });
+  const pcbPart = (patch.parts ?? []).find((p) => p.kind === "pcb-board");
+  return pcbPart ? (pcbPart as PcbBoardPartInfo).boardNodeId : 0;
 }
-
-function snapshot(state: DocumentState, actionName: string): Snapshot {
-  return {
-    document: JSON.stringify(state.document),
-    parts: state.parts.map((p) => ({ ...p })),
-    consumedParts: { ...state.consumedParts },
-    nextNodeId: state.nextNodeId,
-    nextPartNum: state.nextPartNum,
-    actionName,
-    loonSource: state.loonSource,
-  };
-}
-
-/** Add a node ID to the dirty set (for incremental evaluation) */
-function markNodeDirty(state: DocumentState, nodeId: NodeId): Set<NodeId> {
-  const newDirty = new Set(state.dirtyNodeIds);
-  newDirty.add(nodeId);
-  return newDirty;
-}
-
-function pushUndo(
-  state: DocumentState,
-  actionName: string,
-): Pick<DocumentState, "undoStack" | "redoStack"> {
-  const snap = snapshot(state, actionName);
-  const stack = [...state.undoStack, snap];
-  if (stack.length > MAX_UNDO) stack.shift();
-  return { undoStack: stack, redoStack: [] };
-}
-
-// Selectors for undo/redo action names
-export function getUndoActionName(state: DocumentState): string | null {
-  const stack = state.undoStack;
-  if (stack.length === 0) return null;
-  return stack[stack.length - 1]!.actionName;
-}
-
-export function getRedoActionName(state: DocumentState): string | null {
-  const stack = state.redoStack;
-  if (stack.length === 0) return null;
-  return stack[stack.length - 1]!.actionName;
-}
-
-const DEFAULT_SIZES: Record<PrimitiveKind, CsgOp> = {
-  cube: { type: "Cube", size: { x: 20, y: 20, z: 20 } },
-  cylinder: { type: "Cylinder", radius: 10, height: 20, segments: 32 },
-  sphere: { type: "Sphere", radius: 10, segments: 32 },
-};
-
-const KIND_LABELS: Record<PrimitiveKind, string> = {
-  cube: "Box",
-  cylinder: "Cylinder",
-  sphere: "Sphere",
-};
-
-// ---------------------------------------------------------------------------
-// CRDT bridge helpers (module-level, not in store)
-// ---------------------------------------------------------------------------
 
 /**
- * Apply a CRDT mutation result to the store, rewriting CRDT IDs to legacy
- * format and computing consumedParts.
+ * Apply a CRDT mutation result to the store, rewriting CRDT IDs to stable
+ * legacy format and computing consumedParts.
  */
 function applyCrdtResult(
   result: CrdtMutationResult,
@@ -689,13 +620,18 @@ function applyCrdtResult(
     isDirty: true,
     _crdtIdToPartId: crdtIdToPartId,
     _partIdToCrdtId: partIdToCrdtId,
-    // Store the created legacy ID in a way callers can access
     _lastCreatedPartId: createdLegacyId,
   } as Partial<DocumentState>;
 }
 
-/** Temporary holder for the last created part ID (used by bridge mutations) */
-let _lastCreatedPartId: string | undefined;
+/** Helper to get the created part ID from a patch */
+function getCreatedPartId(patch: Partial<DocumentState>): string | undefined {
+  return (patch as { _lastCreatedPartId?: string })._lastCreatedPartId;
+}
+
+// ---------------------------------------------------------------------------
+// Store
+// ---------------------------------------------------------------------------
 
 export const useDocumentStore = create<DocumentState>((set, get) => ({
   document: createDocument(),
@@ -708,20 +644,20 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   documentId: null,
   documentName: "Untitled",
   lastSavedAt: null,
-  dirtyNodeIds: new Set<NodeId>(),
   isParameterDragging: false,
   loonSource: null,
-  undoStack: [],
-  redoStack: [],
 
   // CRDT bridge state
   _crdtEngine: null,
+  _crdtEngineClass: null,
   _partIdToCrdtId: new Map(),
   _crdtIdToPartId: new Map(),
 
   _initCrdt: (EngineClass) => {
+    _sceneSettingsFeatureId = null;
+    _schematicFeatureId = null;
     const engine = new EngineClass();
-    set({ _crdtEngine: engine });
+    set({ _crdtEngine: engine, _crdtEngineClass: EngineClass });
   },
 
   saveCrdt: () => {
@@ -732,13 +668,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   loadCrdt: (bytes, EngineClass) => {
     const engine = EngineClass.load(bytes);
-    // Build a mutation result from the loaded state
-    const doc: Document = JSON.parse(
-      (engine as unknown as { get_document_json(): string }).get_document_json(),
-    );
-    const parts: PartInfo[] = JSON.parse(
-      (engine as unknown as { get_parts_json(): string }).get_parts_json(),
-    );
+    const doc: Document = JSON.parse(engine.get_document_json());
+    const parts: PartInfo[] = JSON.parse(engine.get_parts_json());
     const result: CrdtMutationResult = { document: doc, parts };
     const patch = applyCrdtResult(result, {
       ...get(),
@@ -750,1528 +681,368 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     set({
       ...patch,
       _crdtEngine: engine,
+      _crdtEngineClass: EngineClass,
       isDirty: false,
-      undoStack: [],
-      redoStack: [],
     });
   },
 
   pushUndoSnapshot: () => {
-    set((s) => pushUndo(s, "Edit"));
+    // No-op — CRDT undo handles granularity automatically.
   },
 
   addPrimitive: (kind) => {
     const state = get();
-
-    // CRDT bridge: route through CRDT engine if available
-    if (state._crdtEngine) {
-      const defaults: Record<PrimitiveKind, Record<string, CrdtValue>> = {
-        cube: { size_x: crdtF64(20), size_y: crdtF64(20), size_z: crdtF64(20) },
-        cylinder: { radius: crdtF64(10), height: crdtF64(20), segments: crdtF64(32) },
-        sphere: { radius: crdtF64(10), segments: crdtF64(32) },
-      };
-      const result = state._crdtEngine.create_feature(
-        kind,
-        JSON.stringify(defaults[kind] ?? {}),
-      );
-      const patch = applyCrdtResult(result, state, result.createdFeatureId);
-      set(patch);
-      return (patch as { _lastCreatedPartId?: string })._lastCreatedPartId
-        ?? _lastCreatedPartId
-        ?? `part-${state.nextPartNum}`;
-    }
-
-    let nid = state.nextNodeId;
-    const partNum = state.nextPartNum;
-
-    const primitiveId = nid++;
-    const scaleId = nid++;
-    const rotateId = nid++;
-    const translateId = nid++;
-
-    const primOp = DEFAULT_SIZES[kind];
-    const scaleOp: CsgOp = {
-      type: "Scale",
-      child: primitiveId,
-      factor: { x: 1, y: 1, z: 1 },
+    const engine = state._crdtEngine!;
+    const defaults: Record<PrimitiveKind, Record<string, CrdtValue>> = {
+      cube: { size_x: crdtF64(20), size_y: crdtF64(20), size_z: crdtF64(20) },
+      cylinder: { radius: crdtF64(10), height: crdtF64(20), segments: crdtF64(32) },
+      sphere: { radius: crdtF64(10), segments: crdtF64(32) },
     };
-    const rotateOp: CsgOp = {
-      type: "Rotate",
-      child: scaleId,
-      angles: { x: 0, y: 0, z: 0 },
-    };
-    const translateOp: CsgOp = {
-      type: "Translate",
-      child: rotateId,
-      offset: { x: 0, y: 0, z: 0 },
-    };
-
-    const partId = `part-${partNum}`;
-    const name = `${KIND_LABELS[kind]} ${partNum}`;
-
-    const newDoc = structuredClone(state.document);
-    newDoc.nodes[String(primitiveId)] = makeNode(primitiveId, null, primOp);
-    newDoc.nodes[String(scaleId)] = makeNode(scaleId, null, scaleOp);
-    newDoc.nodes[String(rotateId)] = makeNode(rotateId, null, rotateOp);
-    newDoc.nodes[String(translateId)] = makeNode(
-      translateId,
-      name,
-      translateOp,
-    );
-    newDoc.roots.push({ root: translateId, material: "default" });
-
-    if (!newDoc.materials["default"]) {
-      newDoc.materials["default"] = {
-        name: "Default",
-        color: [0.55, 0.55, 0.55],
-        metallic: 0.0,
-        roughness: 0.7,
-      };
-    }
-
-    const partInfo: PartInfo = {
-      id: partId,
-      name,
-      kind,
-      primitiveNodeId: primitiveId,
-      scaleNodeId: scaleId,
-      rotateNodeId: rotateId,
-      translateNodeId: translateId,
-    };
-
-    const undoState = pushUndo(state, `Add ${KIND_LABELS[kind]}`);
-    const newParts = [...state.parts, partInfo];
-
-    set({
-      document: newDoc,
-      parts: newParts,
-      partIndex: buildPartIndex(newParts),
-      nextNodeId: nid,
-      nextPartNum: partNum + 1,
-      isDirty: true,
-      ...undoState,
-    });
-
-    return partId;
+    const result = engine.create_feature(kind, JSON.stringify(defaults[kind] ?? {}));
+    const patch = applyCrdtResult(result, state, result.createdFeatureId);
+    set(patch);
+    return getCreatedPartId(patch) ?? `part-${state.nextPartNum}`;
   },
 
   removePart: (partId) => {
     const state = get();
-
-    // CRDT bridge
-    if (state._crdtEngine) {
-      const crdtId = state._partIdToCrdtId.get(partId);
-      if (crdtId) {
-        const result = state._crdtEngine.delete_feature(crdtId);
-        set(applyCrdtResult(result, state));
-      }
-      return;
+    const engine = state._crdtEngine!;
+    const crdtId = state._partIdToCrdtId.get(partId);
+    if (crdtId) {
+      const result = engine.delete_feature(crdtId);
+      set(applyCrdtResult(result, state));
     }
-
-    const part = state.partIndex.get(partId);
-    if (!part) return;
-
-    const undoState = pushUndo(state, `Delete ${part.name}`);
-    const newDoc = structuredClone(state.document);
-
-    // Remove nodes based on part type
-    if (isPrimitivePart(part)) {
-      delete newDoc.nodes[String(part.primitiveNodeId)];
-    } else if (isBooleanPart(part)) {
-      delete newDoc.nodes[String(part.booleanNodeId)];
-    } else if (isExtrudePart(part)) {
-      delete newDoc.nodes[String(part.sketchNodeId)];
-      delete newDoc.nodes[String(part.extrudeNodeId)];
-    } else if (isRevolvePart(part)) {
-      delete newDoc.nodes[String(part.sketchNodeId)];
-      delete newDoc.nodes[String(part.revolveNodeId)];
-    } else if (isSweepPart(part)) {
-      delete newDoc.nodes[String(part.sketchNodeId)];
-      delete newDoc.nodes[String(part.sweepNodeId)];
-    } else if (isLoftPart(part)) {
-      for (const sketchId of part.sketchNodeIds) {
-        delete newDoc.nodes[String(sketchId)];
-      }
-      delete newDoc.nodes[String(part.loftNodeId)];
-    } else if (isImportedMeshPart(part)) {
-      delete newDoc.nodes[String(part.meshNodeId)];
-    } else if (isFilletPart(part)) {
-      delete newDoc.nodes[String(part.filletNodeId)];
-    } else if (isChamferPart(part)) {
-      delete newDoc.nodes[String(part.chamferNodeId)];
-    } else if (isShellPart(part)) {
-      delete newDoc.nodes[String(part.shellNodeId)];
-    } else if (isLinearPatternPart(part)) {
-      delete newDoc.nodes[String(part.patternNodeId)];
-    } else if (isCircularPatternPart(part)) {
-      delete newDoc.nodes[String(part.patternNodeId)];
-    } else if (isMirrorPart(part)) {
-      delete newDoc.nodes[String(part.mirrorNodeId)];
-    } else if (isTextPart(part)) {
-      delete newDoc.nodes[String(part.textNodeId)];
-      delete newDoc.nodes[String(part.extrudeNodeId)];
-    }
-    delete newDoc.nodes[String(part.scaleNodeId)];
-    delete newDoc.nodes[String(part.rotateNodeId)];
-    delete newDoc.nodes[String(part.translateNodeId)];
-
-    // Remove scene root
-    newDoc.roots = newDoc.roots.filter((r) => r.root !== part.translateNodeId);
-    const newParts = state.parts.filter((p) => p.id !== partId);
-
-    set({
-      document: newDoc,
-      parts: newParts,
-      partIndex: buildPartIndex(newParts),
-      isDirty: true,
-      ...undoState,
-    });
   },
 
-  setTranslation: (partId, offset, skipUndo) => {
+  setTranslation: (partId, offset) => {
     const state = get();
-
-    // CRDT bridge
-    if (state._crdtEngine) {
-      const crdtId = state._partIdToCrdtId.get(partId);
-      if (crdtId) {
-        const result = state._crdtEngine.set_param(
-          crdtId,
-          "offset",
-          JSON.stringify(crdtVec3(offset)),
-        );
-        set(applyCrdtResult(result, state));
-      }
-      return;
+    const engine = state._crdtEngine!;
+    const crdtId = state._partIdToCrdtId.get(partId);
+    if (crdtId) {
+      const result = engine.set_param(crdtId, "offset", JSON.stringify(crdtVec3(offset)));
+      set(applyCrdtResult(result, state));
     }
-
-    const part = state.partIndex.get(partId);
-    if (!part) return;
-
-    const undoState = skipUndo ? {} : pushUndo(state, "Transform");
-    const nodeKey = String(part.translateNodeId);
-    const oldNode = state.document.nodes[nodeKey];
-    if (!oldNode || oldNode.op.type !== "Translate") return;
-
-    // Shallow clone: only copy the modified node
-    const newDoc: Document = {
-      ...state.document,
-      nodes: {
-        ...state.document.nodes,
-        [nodeKey]: { ...oldNode, op: { ...oldNode.op, offset } },
-      },
-    };
-
-    set({
-      document: newDoc,
-      isDirty: true,
-      dirtyNodeIds: markNodeDirty(state, part.translateNodeId),
-      ...undoState,
-    });
   },
 
-  setRotation: (partId, angles, skipUndo) => {
+  setRotation: (partId, angles) => {
     const state = get();
-
-    // CRDT bridge
-    if (state._crdtEngine) {
-      const crdtId = state._partIdToCrdtId.get(partId);
-      if (crdtId) {
-        const result = state._crdtEngine.set_param(
-          crdtId,
-          "rotation",
-          JSON.stringify(crdtVec3(angles)),
-        );
-        set(applyCrdtResult(result, state));
-      }
-      return;
+    const engine = state._crdtEngine!;
+    const crdtId = state._partIdToCrdtId.get(partId);
+    if (crdtId) {
+      const result = engine.set_param(crdtId, "rotation", JSON.stringify(crdtVec3(angles)));
+      set(applyCrdtResult(result, state));
     }
-
-    const part = state.partIndex.get(partId);
-    if (!part) return;
-
-    const undoState = skipUndo ? {} : pushUndo(state, "Transform");
-    const nodeKey = String(part.rotateNodeId);
-    const oldNode = state.document.nodes[nodeKey];
-    if (!oldNode || oldNode.op.type !== "Rotate") return;
-
-    // Shallow clone: only copy the modified node
-    const newDoc: Document = {
-      ...state.document,
-      nodes: {
-        ...state.document.nodes,
-        [nodeKey]: { ...oldNode, op: { ...oldNode.op, angles } },
-      },
-    };
-
-    set({
-      document: newDoc,
-      isDirty: true,
-      dirtyNodeIds: markNodeDirty(state, part.rotateNodeId),
-      ...undoState,
-    });
   },
 
-  setScale: (partId, factor, skipUndo) => {
+  setScale: (partId, factor) => {
     const state = get();
-
-    // CRDT bridge
-    if (state._crdtEngine) {
-      const crdtId = state._partIdToCrdtId.get(partId);
-      if (crdtId) {
-        const result = state._crdtEngine.set_param(
-          crdtId,
-          "scale",
-          JSON.stringify(crdtVec3(factor)),
-        );
-        set(applyCrdtResult(result, state));
-      }
-      return;
+    const engine = state._crdtEngine!;
+    const crdtId = state._partIdToCrdtId.get(partId);
+    if (crdtId) {
+      const result = engine.set_param(crdtId, "scale", JSON.stringify(crdtVec3(factor)));
+      set(applyCrdtResult(result, state));
     }
-
-    const part = state.partIndex.get(partId);
-    if (!part) return;
-
-    const undoState = skipUndo ? {} : pushUndo(state, "Transform");
-    const nodeKey = String(part.scaleNodeId);
-    const oldNode = state.document.nodes[nodeKey];
-    if (!oldNode || oldNode.op.type !== "Scale") return;
-
-    // Shallow clone: only copy the modified node
-    const newDoc: Document = {
-      ...state.document,
-      nodes: {
-        ...state.document.nodes,
-        [nodeKey]: { ...oldNode, op: { ...oldNode.op, factor } },
-      },
-    };
-
-    set({
-      document: newDoc,
-      isDirty: true,
-      dirtyNodeIds: markNodeDirty(state, part.scaleNodeId),
-      ...undoState,
-    });
   },
 
-  updatePrimitiveOp: (partId, op, skipUndo) => {
+  updatePrimitiveOp: (partId, op) => {
     const state = get();
+    const engine = state._crdtEngine!;
+    const crdtId = state._partIdToCrdtId.get(partId);
+    if (!crdtId) return;
 
-    // CRDT bridge: map CsgOp fields to individual set_param calls
-    if (state._crdtEngine) {
-      const crdtId = state._partIdToCrdtId.get(partId);
-      if (crdtId) {
-        let lastResult: CrdtMutationResult | undefined;
-        if (op.type === "Cube" && "size" in op) {
-          const size = op.size as Vec3;
-          state._crdtEngine.set_param(crdtId, "size_x", JSON.stringify(crdtF64(size.x)));
-          state._crdtEngine.set_param(crdtId, "size_y", JSON.stringify(crdtF64(size.y)));
-          lastResult = state._crdtEngine.set_param(crdtId, "size_z", JSON.stringify(crdtF64(size.z)));
-        } else if (op.type === "Cylinder" && "radius" in op) {
-          state._crdtEngine.set_param(crdtId, "radius", JSON.stringify(crdtF64(op.radius as number)));
-          state._crdtEngine.set_param(crdtId, "height", JSON.stringify(crdtF64(op.height as number)));
-          lastResult = state._crdtEngine.set_param(crdtId, "segments", JSON.stringify(crdtF64(op.segments as number)));
-        } else if (op.type === "Sphere" && "radius" in op) {
-          state._crdtEngine.set_param(crdtId, "radius", JSON.stringify(crdtF64(op.radius as number)));
-          lastResult = state._crdtEngine.set_param(crdtId, "segments", JSON.stringify(crdtF64(op.segments as number)));
-        } else if (op.type === "Cone" && "radius_bottom" in op) {
-          const coneOp = op as unknown as { radius_bottom: number; radius_top: number; height: number; segments: number };
-          state._crdtEngine.set_param(crdtId, "radius_bottom", JSON.stringify(crdtF64(coneOp.radius_bottom)));
-          state._crdtEngine.set_param(crdtId, "radius_top", JSON.stringify(crdtF64(coneOp.radius_top)));
-          state._crdtEngine.set_param(crdtId, "height", JSON.stringify(crdtF64(coneOp.height)));
-          lastResult = state._crdtEngine.set_param(crdtId, "segments", JSON.stringify(crdtF64(coneOp.segments)));
-        }
-        if (lastResult) {
-          set(applyCrdtResult(lastResult, state));
-        }
-      }
-      return;
+    const o = op as Record<string, unknown>;
+    let lastResult: CrdtMutationResult | undefined;
+    if (o.type === "Cube" && "size" in o) {
+      const size = o.size as Vec3;
+      engine.set_param(crdtId, "size_x", JSON.stringify(crdtF64(size.x)));
+      engine.set_param(crdtId, "size_y", JSON.stringify(crdtF64(size.y)));
+      lastResult = engine.set_param(crdtId, "size_z", JSON.stringify(crdtF64(size.z)));
+    } else if (o.type === "Cylinder" && "radius" in o) {
+      engine.set_param(crdtId, "radius", JSON.stringify(crdtF64(o.radius as number)));
+      engine.set_param(crdtId, "height", JSON.stringify(crdtF64(o.height as number)));
+      lastResult = engine.set_param(crdtId, "segments", JSON.stringify(crdtF64(o.segments as number)));
+    } else if (o.type === "Sphere" && "radius" in o) {
+      engine.set_param(crdtId, "radius", JSON.stringify(crdtF64(o.radius as number)));
+      lastResult = engine.set_param(crdtId, "segments", JSON.stringify(crdtF64(o.segments as number)));
+    } else if (o.type === "Cone" && "radius_bottom" in o) {
+      engine.set_param(crdtId, "radius_bottom", JSON.stringify(crdtF64(o.radius_bottom as number)));
+      engine.set_param(crdtId, "radius_top", JSON.stringify(crdtF64(o.radius_top as number)));
+      engine.set_param(crdtId, "height", JSON.stringify(crdtF64(o.height as number)));
+      lastResult = engine.set_param(crdtId, "segments", JSON.stringify(crdtF64(o.segments as number)));
     }
-
-    const part = state.partIndex.get(partId);
-    if (!part || !isPrimitivePart(part)) return;
-
-    const undoState = skipUndo ? {} : pushUndo(state, "Edit Properties");
-    const newDoc = structuredClone(state.document);
-    const node = newDoc.nodes[String(part.primitiveNodeId)];
-    if (node) {
-      node.op = op;
+    if (lastResult) {
+      set(applyCrdtResult(lastResult, state));
     }
-
-    set({
-      document: newDoc,
-      isDirty: true,
-      dirtyNodeIds: markNodeDirty(state, part.primitiveNodeId),
-      ...undoState,
-    });
   },
 
-  updateSweepOp: (partId, updates, skipUndo) => {
+  updateSweepOp: (partId, updates) => {
     const state = get();
-    const part = state.partIndex.get(partId);
-    if (!part || !isSweepPart(part)) return;
+    const engine = state._crdtEngine!;
+    const crdtId = state._partIdToCrdtId.get(partId);
+    if (!crdtId) return;
 
-    const undoState = skipUndo ? {} : pushUndo(state, "Edit Sweep");
-    const newDoc = structuredClone(state.document);
-    const node = newDoc.nodes[String(part.sweepNodeId)];
-    if (node && node.op.type === "Sweep") {
-      // Merge updates into the existing op
-      node.op = { ...node.op, ...updates };
+    let lastResult: CrdtMutationResult | undefined;
+    if (updates.twist_angle !== undefined) {
+      lastResult = engine.set_param(crdtId, "twist_angle", JSON.stringify(crdtF64(updates.twist_angle)));
     }
-
-    set({
-      document: newDoc,
-      isDirty: true,
-      dirtyNodeIds: markNodeDirty(state, part.sweepNodeId),
-      ...undoState,
-    });
+    if (updates.scale_start !== undefined) {
+      lastResult = engine.set_param(crdtId, "scale_start", JSON.stringify(crdtF64(updates.scale_start)));
+    }
+    if (updates.scale_end !== undefined) {
+      lastResult = engine.set_param(crdtId, "scale_end", JSON.stringify(crdtF64(updates.scale_end)));
+    }
+    if (updates.path !== undefined) {
+      lastResult = engine.set_param(crdtId, "path", JSON.stringify(crdtStr(JSON.stringify(updates.path))));
+    }
+    if (updates.orientation !== undefined) {
+      lastResult = engine.set_param(crdtId, "orientation", JSON.stringify(crdtF64(updates.orientation)));
+    }
+    if (updates.path_segments !== undefined) {
+      lastResult = engine.set_param(crdtId, "path_segments", JSON.stringify(crdtF64(updates.path_segments)));
+    }
+    if (updates.arc_segments !== undefined) {
+      lastResult = engine.set_param(crdtId, "arc_segments", JSON.stringify(crdtF64(updates.arc_segments)));
+    }
+    if (lastResult) {
+      set(applyCrdtResult(lastResult, state));
+    }
   },
 
-  updateOperation: (nodeId, updates, skipUndo) => {
+  setFeatureParam: (partId, key, value) => {
     const state = get();
-    const newDoc = structuredClone(state.document);
-    const node = newDoc.nodes[String(nodeId)];
-    if (!node) return;
-
-    // Merge updates into op, preserving the type discriminant
-    node.op = { ...node.op, ...updates, type: node.op.type } as CsgOp;
-
-    const undoState = skipUndo ? {} : pushUndo(state, "Edit Operation");
-    set({
-      document: newDoc,
-      isDirty: true,
-      dirtyNodeIds: markNodeDirty(state, nodeId),
-      ...undoState,
-    });
+    const engine = state._crdtEngine!;
+    const crdtId = state._partIdToCrdtId.get(partId);
+    if (crdtId) {
+      const result = engine.set_param(crdtId, key, JSON.stringify(value));
+      set(applyCrdtResult(result, state));
+    }
   },
 
-  updateBooleanType: (partId, newType, skipUndo) => {
+  updateBooleanType: (partId, newType) => {
     const state = get();
-
-    // CRDT bridge
-    if (state._crdtEngine) {
-      const crdtId = state._partIdToCrdtId.get(partId);
-      if (crdtId) {
-        const result = state._crdtEngine.set_param(
-          crdtId,
-          "boolean_type",
-          JSON.stringify(crdtStr(newType)),
-        );
-        set(applyCrdtResult(result, state));
-      }
-      return;
+    const engine = state._crdtEngine!;
+    const crdtId = state._partIdToCrdtId.get(partId);
+    if (crdtId) {
+      const result = engine.set_param(crdtId, "boolean_type", JSON.stringify(crdtStr(newType)));
+      set(applyCrdtResult(result, state));
     }
-
-    const part = state.partIndex.get(partId);
-    if (!part || !isBooleanPart(part)) return;
-
-    const BOOL_OPS: Record<BooleanType, "Union" | "Difference" | "Intersection"> = {
-      union: "Union",
-      difference: "Difference",
-      intersection: "Intersection",
-    };
-
-    const newDoc = structuredClone(state.document);
-    const node = newDoc.nodes[String(part.booleanNodeId)];
-    if (!node) return;
-
-    // Replace op type while preserving left/right children
-    node.op = { ...node.op, type: BOOL_OPS[newType] } as CsgOp;
-
-    // Update part info with new boolean type
-    const BOOL_LABELS: Record<BooleanType, string> = {
-      union: "Union",
-      difference: "Difference",
-      intersection: "Intersection",
-    };
-    const updatedPart: BooleanPartInfo = {
-      ...part,
-      booleanType: newType,
-    };
-    const newParts = state.parts.map((p) =>
-      p.id === partId ? updatedPart : p,
-    );
-
-    const undoState = skipUndo ? {} : pushUndo(state, `Change to ${BOOL_LABELS[newType]}`);
-    set({
-      document: newDoc,
-      parts: newParts,
-      partIndex: buildPartIndex(newParts),
-      isDirty: true,
-      dirtyNodeIds: markNodeDirty(state, part.booleanNodeId),
-      ...undoState,
-    });
   },
 
   applyBoolean: (type, partIdA, partIdB) => {
     const state = get();
+    const engine = state._crdtEngine!;
+    const crdtIdA = state._partIdToCrdtId.get(partIdA);
+    const crdtIdB = state._partIdToCrdtId.get(partIdB);
+    if (!crdtIdA || !crdtIdB) return null;
 
-    // CRDT bridge
-    if (state._crdtEngine) {
-      const crdtIdA = state._partIdToCrdtId.get(partIdA);
-      const crdtIdB = state._partIdToCrdtId.get(partIdB);
-      if (!crdtIdA || !crdtIdB) return null;
-
-      const params: Record<string, CrdtValue> = {
-        boolean_type: crdtStr(type),
-        input_a: crdtRef(crdtIdA),
-        input_b: crdtRef(crdtIdB),
-      };
-      const result = state._crdtEngine.create_feature(
-        "boolean",
-        JSON.stringify(params),
-      );
-      const patch = applyCrdtResult(result, state, result.createdFeatureId);
-      set(patch);
-      return (patch as { _lastCreatedPartId?: string })._lastCreatedPartId ?? null;
-    }
-
-    const partA = state.partIndex.get(partIdA);
-    const partB = state.partIndex.get(partIdB);
-    if (!partA || !partB) return null;
-
-    let nid = state.nextNodeId;
-    const partNum = state.nextPartNum;
-
-    const BOOL_OPS: Record<BooleanType, string> = {
-      union: "Union",
-      difference: "Difference",
-      intersection: "Intersection",
+    const params: Record<string, CrdtValue> = {
+      boolean_type: crdtStr(type),
+      input_a: crdtRef(crdtIdA),
+      input_b: crdtRef(crdtIdB),
     };
-
-    const booleanId = nid++;
-    const scaleId = nid++;
-    const rotateId = nid++;
-    const translateId = nid++;
-
-    const boolOp: CsgOp = {
-      type: BOOL_OPS[type] as "Union" | "Difference" | "Intersection",
-      left: partA.translateNodeId,
-      right: partB.translateNodeId,
-    } as CsgOp;
-
-    const scaleOp: CsgOp = {
-      type: "Scale",
-      child: booleanId,
-      factor: { x: 1, y: 1, z: 1 },
-    };
-    const rotateOp: CsgOp = {
-      type: "Rotate",
-      child: scaleId,
-      angles: { x: 0, y: 0, z: 0 },
-    };
-    const translateOp: CsgOp = {
-      type: "Translate",
-      child: rotateId,
-      offset: { x: 0, y: 0, z: 0 },
-    };
-
-    const BOOL_LABELS: Record<BooleanType, string> = {
-      union: "Union",
-      difference: "Difference",
-      intersection: "Intersection",
-    };
-
-    const partId = `part-${partNum}`;
-    const name = `${BOOL_LABELS[type]} ${partNum}`;
-
-    const undoState = pushUndo(state, BOOL_LABELS[type]);
-    const newDoc = structuredClone(state.document);
-
-    newDoc.nodes[String(booleanId)] = makeNode(booleanId, null, boolOp);
-    newDoc.nodes[String(scaleId)] = makeNode(scaleId, null, scaleOp);
-    newDoc.nodes[String(rotateId)] = makeNode(rotateId, null, rotateOp);
-    newDoc.nodes[String(translateId)] = makeNode(
-      translateId,
-      name,
-      translateOp,
-    );
-
-    // Remove source parts from roots (nodes stay for DAG references)
-    newDoc.roots = newDoc.roots.filter(
-      (r) =>
-        r.root !== partA.translateNodeId && r.root !== partB.translateNodeId,
-    );
-    newDoc.roots.push({ root: translateId, material: "default" });
-
-    const boolPartInfo: BooleanPartInfo = {
-      id: partId,
-      name,
-      kind: "boolean",
-      booleanType: type,
-      booleanNodeId: booleanId,
-      scaleNodeId: scaleId,
-      rotateNodeId: rotateId,
-      translateNodeId: translateId,
-      sourcePartIds: [partIdA, partIdB],
-    };
-
-    // Remove source parts from parts list, add boolean result
-    // But preserve them in consumedParts for tree display
-    const newConsumedParts = { ...state.consumedParts };
-    newConsumedParts[partIdA] = partA;
-    newConsumedParts[partIdB] = partB;
-
-    const newParts = state.parts.filter(
-      (p) => p.id !== partIdA && p.id !== partIdB,
-    );
-    newParts.push(boolPartInfo);
-
-    set({
-      document: newDoc,
-      parts: newParts,
-      partIndex: buildPartIndex(newParts),
-      consumedParts: newConsumedParts,
-      nextNodeId: nid,
-      nextPartNum: partNum + 1,
-      isDirty: true,
-      ...undoState,
-    });
-
-    return partId;
+    const result = engine.create_feature("boolean", JSON.stringify(params));
+    const patch = applyCrdtResult(result, state, result.createdFeatureId);
+    set(patch);
+    return getCreatedPartId(patch) ?? null;
   },
 
   duplicateParts: (partIds) => {
     const state = get();
-    const partsToClone = partIds
-      .map((id) => state.partIndex.get(id))
-      .filter((p): p is PartInfo => p !== undefined);
-    if (partsToClone.length === 0) return [];
-
-    let nid = state.nextNodeId;
-    let pnum = state.nextPartNum;
-    const undoState = pushUndo(state, "Duplicate");
-    const newDoc = structuredClone(state.document);
-    const newParts = [...state.parts];
+    const engine = state._crdtEngine!;
+    const featuresJson = engine.get_ordered_features_json();
+    const features: { id: string; kind: string; params: Record<string, unknown> }[] = JSON.parse(featuresJson);
     const newIds: string[] = [];
+    let currentState = state;
 
-    for (const srcPart of partsToClone) {
-      // Build a map of old node IDs to new node IDs for this part's subgraph
-      const idMap = new Map<NodeId, NodeId>();
+    for (const partId of partIds) {
+      const crdtId = currentState._partIdToCrdtId.get(partId);
+      if (!crdtId) continue;
 
-      // Collect all node IDs that belong to this part
-      const nodeIdsToClone: NodeId[] = [];
-      if (isPrimitivePart(srcPart)) {
-        nodeIdsToClone.push(srcPart.primitiveNodeId);
-      } else if (isBooleanPart(srcPart)) {
-        // For boolean parts, we need the boolean node (the source nodes stay shared)
-        nodeIdsToClone.push(srcPart.booleanNodeId);
-      } else if (isExtrudePart(srcPart)) {
-        nodeIdsToClone.push(srcPart.sketchNodeId, srcPart.extrudeNodeId);
-      } else if (isRevolvePart(srcPart)) {
-        nodeIdsToClone.push(srcPart.sketchNodeId, srcPart.revolveNodeId);
-      } else if (isSweepPart(srcPart)) {
-        nodeIdsToClone.push(srcPart.sketchNodeId, srcPart.sweepNodeId);
-      } else if (isLoftPart(srcPart)) {
-        nodeIdsToClone.push(...srcPart.sketchNodeIds, srcPart.loftNodeId);
-      }
-      nodeIdsToClone.push(
-        srcPart.scaleNodeId,
-        srcPart.rotateNodeId,
-        srcPart.translateNodeId,
-      );
+      const feature = features.find((f) => f.id === crdtId);
+      if (!feature) continue;
 
-      // Allocate new IDs
-      for (const oldId of nodeIdsToClone) {
-        idMap.set(oldId, nid++);
-      }
-
-      // Clone nodes with remapped IDs
-      for (const oldId of nodeIdsToClone) {
-        const oldNode = newDoc.nodes[String(oldId)];
-        if (!oldNode) continue;
-
-        const newId = idMap.get(oldId)!;
-        const clonedOp = structuredClone(oldNode.op);
-
-        // Remap child references
-        if ("child" in clonedOp && typeof clonedOp.child === "number") {
-          clonedOp.child = idMap.get(clonedOp.child) ?? clonedOp.child;
-        }
-        if ("left" in clonedOp && typeof clonedOp.left === "number") {
-          clonedOp.left = idMap.get(clonedOp.left) ?? clonedOp.left;
-        }
-        if ("right" in clonedOp && typeof clonedOp.right === "number") {
-          clonedOp.right = idMap.get(clonedOp.right) ?? clonedOp.right;
-        }
-        if ("sketch" in clonedOp && typeof clonedOp.sketch === "number") {
-          clonedOp.sketch = idMap.get(clonedOp.sketch) ?? clonedOp.sketch;
-        }
-        if ("sketches" in clonedOp && Array.isArray(clonedOp.sketches)) {
-          clonedOp.sketches = clonedOp.sketches.map(
-            (id: number) => idMap.get(id) ?? id,
-          );
-        }
-
-        newDoc.nodes[String(newId)] = makeNode(newId, oldNode.name, clonedOp);
-      }
-
-      // Offset the clone by +10mm on X
-      const newTranslateId = idMap.get(srcPart.translateNodeId)!;
-      const newTranslateNode = newDoc.nodes[String(newTranslateId)];
-      if (newTranslateNode?.op.type === "Translate") {
-        newTranslateNode.op.offset = {
-          ...newTranslateNode.op.offset,
-          x: newTranslateNode.op.offset.x + 10,
-        };
-      }
-
-      // Add to roots
-      newDoc.roots.push({ root: newTranslateId, material: "default" });
-
-      // Build new PartInfo
-      const partId = `part-${pnum}`;
-      const partName = `${srcPart.name} copy`;
-
-      if (newTranslateNode) newTranslateNode.name = partName;
-
-      let clonedPartInfo: PartInfo;
-      if (isPrimitivePart(srcPart)) {
-        clonedPartInfo = {
-          id: partId,
-          name: partName,
-          kind: srcPart.kind,
-          primitiveNodeId: idMap.get(srcPart.primitiveNodeId)!,
-          scaleNodeId: idMap.get(srcPart.scaleNodeId)!,
-          rotateNodeId: idMap.get(srcPart.rotateNodeId)!,
-          translateNodeId: newTranslateId,
-        };
-      } else if (isBooleanPart(srcPart)) {
-        clonedPartInfo = {
-          id: partId,
-          name: partName,
-          kind: "boolean",
-          booleanType: srcPart.booleanType,
-          booleanNodeId: idMap.get(srcPart.booleanNodeId)!,
-          scaleNodeId: idMap.get(srcPart.scaleNodeId)!,
-          rotateNodeId: idMap.get(srcPart.rotateNodeId)!,
-          translateNodeId: newTranslateId,
-          sourcePartIds: srcPart.sourcePartIds,
-        };
-      } else if (isExtrudePart(srcPart)) {
-        clonedPartInfo = {
-          id: partId,
-          name: partName,
-          kind: "extrude",
-          sketchNodeId: idMap.get(srcPart.sketchNodeId)!,
-          extrudeNodeId: idMap.get(srcPart.extrudeNodeId)!,
-          scaleNodeId: idMap.get(srcPart.scaleNodeId)!,
-          rotateNodeId: idMap.get(srcPart.rotateNodeId)!,
-          translateNodeId: newTranslateId,
-        };
-      } else if (isRevolvePart(srcPart)) {
-        clonedPartInfo = {
-          id: partId,
-          name: partName,
-          kind: "revolve",
-          sketchNodeId: idMap.get(srcPart.sketchNodeId)!,
-          revolveNodeId: idMap.get(srcPart.revolveNodeId)!,
-          scaleNodeId: idMap.get(srcPart.scaleNodeId)!,
-          rotateNodeId: idMap.get(srcPart.rotateNodeId)!,
-          translateNodeId: newTranslateId,
-        };
-      } else if (isSweepPart(srcPart)) {
-        clonedPartInfo = {
-          id: partId,
-          name: partName,
-          kind: "sweep",
-          sketchNodeId: idMap.get(srcPart.sketchNodeId)!,
-          sweepNodeId: idMap.get(srcPart.sweepNodeId)!,
-          scaleNodeId: idMap.get(srcPart.scaleNodeId)!,
-          rotateNodeId: idMap.get(srcPart.rotateNodeId)!,
-          translateNodeId: newTranslateId,
-        };
+      // Clone params and add +10mm X offset
+      const params = { ...feature.params } as Record<string, CrdtValue>;
+      const existingOffset = params.offset as { Vec3: [number, number, number] } | undefined;
+      if (existingOffset && "Vec3" in existingOffset) {
+        params.offset = { Vec3: [existingOffset.Vec3[0] + 10, existingOffset.Vec3[1], existingOffset.Vec3[2]] };
       } else {
-        // isLoftPart
-        const loftSrc = srcPart as LoftPartInfo;
-        clonedPartInfo = {
-          id: partId,
-          name: partName,
-          kind: "loft",
-          sketchNodeIds: loftSrc.sketchNodeIds.map((id) => idMap.get(id)!),
-          loftNodeId: idMap.get(loftSrc.loftNodeId)!,
-          scaleNodeId: idMap.get(loftSrc.scaleNodeId)!,
-          rotateNodeId: idMap.get(loftSrc.rotateNodeId)!,
-          translateNodeId: newTranslateId,
-        };
+        params.offset = { Vec3: [10, 0, 0] };
       }
 
-      newParts.push(clonedPartInfo);
-      newIds.push(partId);
-      pnum++;
+      // Append " copy" to name if present
+      const existingName = params.name as { String: string } | undefined;
+      if (existingName && "String" in existingName) {
+        params.name = { String: existingName.String + " copy" };
+      }
+
+      const result = engine.create_feature(feature.kind, JSON.stringify(params));
+      const patch = applyCrdtResult(result, currentState, result.createdFeatureId);
+      currentState = { ...currentState, ...patch } as DocumentState;
+
+      const createdId = getCreatedPartId(patch);
+      if (createdId) newIds.push(createdId);
     }
 
-    set({
-      document: newDoc,
-      parts: newParts,
-      partIndex: buildPartIndex(newParts),
-      nextNodeId: nid,
-      nextPartNum: pnum,
-      isDirty: true,
-      ...undoState,
-    });
-
+    set(currentState);
     return newIds;
   },
 
   loadDocument: (file) => {
-    const parts = file.parts ?? [];
-    let nextNodeId = file.nextNodeId ?? 1;
+    const state = get();
 
-    // Migrate legacy Document.pcb → PcbBoard DAG node with transform chain
-    const doc = file.document as Document & { pcb?: Pcb };
-    if (doc.pcb && getPcbNodeIds(doc).length === 0) {
-      const boardNodeId = nextNodeId++;
-      const scaleId = nextNodeId++;
-      const rotateId = nextNodeId++;
-      const translateId = nextNodeId++;
-      doc.nodes[String(boardNodeId)] = {
-        id: boardNodeId,
-        name: null,
-        op: { type: "PcbBoard", board: doc.pcb } as any,
-      };
-      doc.nodes[String(scaleId)] = {
-        id: scaleId,
-        name: null,
-        op: { type: "Scale", child: boardNodeId, factor: { x: 1, y: 1, z: 1 } } as any,
-      };
-      doc.nodes[String(rotateId)] = {
-        id: rotateId,
-        name: null,
-        op: { type: "Rotate", child: scaleId, angles: { x: 0, y: 0, z: 0 } } as any,
-      };
-      doc.nodes[String(translateId)] = {
-        id: translateId,
-        name: "PCB Board",
-        op: { type: "Translate", child: rotateId, offset: { x: 0, y: 0, z: 0 } } as any,
-      };
-      doc.roots.push({ root: translateId, material: "__pcb_fr4__" });
-      if (!doc.materials["__pcb_fr4__"]) {
-        doc.materials["__pcb_fr4__"] = {
-          color: [0.05, 0.35, 0.15],
-          roughness: 0.6,
-          metallic: 0.0,
-        } as any;
+    if (state._crdtEngineClass) {
+      try {
+        const irJson = JSON.stringify(file.document);
+        const engine = state._crdtEngineClass.from_v1_json(irJson);
+        const doc: Document = JSON.parse(engine.get_document_json());
+        const parts: PartInfo[] = JSON.parse(engine.get_parts_json());
+        const result: CrdtMutationResult = { document: doc, parts };
+        const patch = applyCrdtResult(result, {
+          ...state,
+          _crdtEngine: engine,
+          _partIdToCrdtId: new Map(),
+          _crdtIdToPartId: new Map(),
+          nextPartNum: 1,
+        });
+        if (state._crdtEngine) {
+          state._crdtEngine.free();
+        }
+        set({
+          ...patch,
+          _crdtEngine: engine,
+          isDirty: false,
+          loonSource: file.loonSource ?? null,
+        });
+        return;
+      } catch (e) {
+        console.error("Failed to migrate legacy document to CRDT:", e);
       }
-      parts.push({
-        id: `pcb-board-${boardNodeId}`,
-        name: "PCB Board",
-        kind: "pcb-board",
-        boardNodeId,
-        scaleNodeId: scaleId,
-        rotateNodeId: rotateId,
-        translateNodeId: translateId,
-      } as PcbBoardPartInfo);
-      delete doc.pcb;
     }
-
-    set({
-      document: doc,
-      parts,
-      partIndex: buildPartIndex(parts),
-      consumedParts: file.consumedParts ?? {},
-      nextNodeId,
-      nextPartNum: file.nextPartNum ?? 1,
-      isDirty: false,
-      dirtyNodeIds: new Set<NodeId>(),
-      isParameterDragging: false,
-      loonSource: file.loonSource ?? null,
-      undoStack: [],
-      redoStack: [],
-    });
   },
 
   addFromIR: (generatedDoc, name) => {
     const state = get();
+    const engine = state._crdtEngine!;
 
-    // Build ID remapping: generated doc uses 0-based IDs, remap to current nextNodeId
-    const idMap = new Map<NodeId, NodeId>();
-    let nid = state.nextNodeId;
-
-    // First pass: allocate new IDs for all nodes
-    for (const oldId of Object.keys(generatedDoc.nodes)) {
-      idMap.set(Number(oldId), nid++);
+    if (name && generatedDoc.roots.length > 0) {
+      const firstRoot = generatedDoc.roots[0]!;
+      const rootNode = generatedDoc.nodes[String(firstRoot.root)];
+      if (rootNode) {
+        rootNode.name = name;
+      }
     }
-
-    // Clone and remap all nodes
-    const undoState = pushUndo(state, "AI Generate");
-    const newDoc = structuredClone(state.document);
-
-    for (const [oldIdStr, node] of Object.entries(generatedDoc.nodes)) {
-      const oldId = Number(oldIdStr);
-      const newId = idMap.get(oldId)!;
-      const clonedOp = structuredClone(node.op);
-
-      // Remap child references in the operation
-      if ("child" in clonedOp && typeof clonedOp.child === "number") {
-        clonedOp.child = idMap.get(clonedOp.child) ?? clonedOp.child;
-      }
-      if ("left" in clonedOp && typeof clonedOp.left === "number") {
-        clonedOp.left = idMap.get(clonedOp.left) ?? clonedOp.left;
-      }
-      if ("right" in clonedOp && typeof clonedOp.right === "number") {
-        clonedOp.right = idMap.get(clonedOp.right) ?? clonedOp.right;
-      }
-      if ("sketch" in clonedOp && typeof clonedOp.sketch === "number") {
-        clonedOp.sketch = idMap.get(clonedOp.sketch) ?? clonedOp.sketch;
-      }
-      if ("sketches" in clonedOp && Array.isArray(clonedOp.sketches)) {
-        clonedOp.sketches = clonedOp.sketches.map(
-          (id: number) => idMap.get(id) ?? id
-        );
-      }
-
-      newDoc.nodes[String(newId)] = makeNode(newId, node.name, clonedOp);
-    }
-
-    // Add roots from generated document, wrapping each with transform nodes
-    const newParts = [...state.parts];
-    let partNum = state.nextPartNum;
-    let firstPartId: string | null = null;
-
-    for (const rootEntry of generatedDoc.roots) {
-      const remappedRootId = idMap.get(rootEntry.root);
-      if (remappedRootId === undefined) continue;
-
-      // Wrap the generated root with scale/rotate/translate nodes
-      const scaleId = nid++;
-      const rotateId = nid++;
-      const translateId = nid++;
-
-      const scaleOp: CsgOp = {
-        type: "Scale",
-        child: remappedRootId,
-        factor: { x: 1, y: 1, z: 1 },
-      };
-      const rotateOp: CsgOp = {
-        type: "Rotate",
-        child: scaleId,
-        angles: { x: 0, y: 0, z: 0 },
-      };
-      const translateOp: CsgOp = {
-        type: "Translate",
-        child: rotateId,
-        offset: { x: 0, y: 0, z: 0 },
-      };
-
-      const partId = `part-${partNum}`;
-      const partName = name ?? `AI Part ${partNum}`;
-
-      newDoc.nodes[String(scaleId)] = makeNode(scaleId, null, scaleOp);
-      newDoc.nodes[String(rotateId)] = makeNode(rotateId, null, rotateOp);
-      newDoc.nodes[String(translateId)] = makeNode(translateId, partName, translateOp);
-
-      // Add to document roots (the translateId is our new root)
-      newDoc.roots.push({
-        root: translateId,
-        material: rootEntry.material ?? "default",
-      });
-
-      // Create PartInfo - use imported-mesh kind but with proper transform node IDs
-      // This allows transform operations to work while keeping the AI-generated geometry
-      const partInfo: ImportedMeshPartInfo = {
-        id: partId,
-        name: partName,
-        kind: "imported-mesh",
-        meshNodeId: remappedRootId,
-        scaleNodeId: scaleId,
-        rotateNodeId: rotateId,
-        translateNodeId: translateId,
-        source: "ai-generated",
-      };
-
-      newParts.push(partInfo);
-      if (!firstPartId) firstPartId = partId;
-      partNum++;
-    }
-
-    // Ensure default material exists
-    if (!newDoc.materials["default"]) {
-      newDoc.materials["default"] = {
-        name: "Default",
-        color: [0.55, 0.55, 0.55],
-        metallic: 0.0,
-        roughness: 0.7,
-      };
-    }
-
-    set({
-      document: newDoc,
-      parts: newParts,
-      partIndex: buildPartIndex(newParts),
-      nextNodeId: nid,
-      nextPartNum: partNum,
-      isDirty: true,
-      ...undoState,
-    });
-
-    return firstPartId;
+    const irJson = JSON.stringify(generatedDoc);
+    const result = engine.import_ir(irJson);
+    const patch = applyCrdtResult(result, state);
+    set({ ...patch, isDirty: true });
+    return getCreatedPartId(patch) ?? null;
   },
 
   addExtrude: (plane, origin, segments, direction, options) => {
     if (segments.length === 0) return null;
-
     const state = get();
-    let nid = state.nextNodeId;
-    const partNum = state.nextPartNum;
+    const engine = state._crdtEngine!;
 
-    const sketchId = nid++;
-    const extrudeId = nid++;
-    const scaleId = nid++;
-    const rotateId = nid++;
-    const translateId = nid++;
-
-    const { x_dir, y_dir } = getSketchPlaneDirections(plane);
-
-    const sketchOp: CsgOp = {
-      type: "Sketch2D",
-      origin,
-      x_dir,
-      y_dir,
-      segments,
+    const depth = Math.sqrt(direction.x ** 2 + direction.y ** 2 + direction.z ** 2);
+    const dir = depth > 0 ? { x: direction.x / depth, y: direction.y / depth, z: direction.z / depth } : { x: 0, y: 0, z: 1 };
+    const params: Record<string, CrdtValue> = {
+      sketch: crdtSketch(segments, plane, origin),
+      depth: crdtF64(depth),
+      direction: crdtVec3(dir),
     };
-
-    const extrudeOp: CsgOp = {
-      type: "Extrude",
-      sketch: sketchId,
-      direction,
-      twist_angle: options?.twist_angle,
-      scale_end: options?.scale_end,
-    };
-
-    const scaleOp: CsgOp = {
-      type: "Scale",
-      child: extrudeId,
-      factor: { x: 1, y: 1, z: 1 },
-    };
-    const rotateOp: CsgOp = {
-      type: "Rotate",
-      child: scaleId,
-      angles: { x: 0, y: 0, z: 0 },
-    };
-    const translateOp: CsgOp = {
-      type: "Translate",
-      child: rotateId,
-      offset: { x: 0, y: 0, z: 0 },
-    };
-
-    const partId = `part-${partNum}`;
-    const name = `Extrude ${partNum}`;
-
-    const undoState = pushUndo(state, "Extrude");
-    const newDoc = structuredClone(state.document);
-
-    newDoc.nodes[String(sketchId)] = makeNode(sketchId, null, sketchOp);
-    newDoc.nodes[String(extrudeId)] = makeNode(extrudeId, null, extrudeOp);
-    newDoc.nodes[String(scaleId)] = makeNode(scaleId, null, scaleOp);
-    newDoc.nodes[String(rotateId)] = makeNode(rotateId, null, rotateOp);
-    newDoc.nodes[String(translateId)] = makeNode(
-      translateId,
-      name,
-      translateOp,
-    );
-    newDoc.roots.push({ root: translateId, material: "default" });
-
-    if (!newDoc.materials["default"]) {
-      newDoc.materials["default"] = {
-        name: "Default",
-        color: [0.55, 0.55, 0.55],
-        metallic: 0.0,
-        roughness: 0.7,
-      };
-    }
-
-    const partInfo: ExtrudePartInfo = {
-      id: partId,
-      name,
-      kind: "extrude",
-      sketchNodeId: sketchId,
-      extrudeNodeId: extrudeId,
-      scaleNodeId: scaleId,
-      rotateNodeId: rotateId,
-      translateNodeId: translateId,
-    };
-
-    const newParts = [...state.parts, partInfo];
-    set({
-      document: newDoc,
-      parts: newParts,
-      partIndex: buildPartIndex(newParts),
-      nextNodeId: nid,
-      nextPartNum: partNum + 1,
-      isDirty: true,
-      ...undoState,
-    });
-
-    return partId;
+    if (options?.twist_angle != null) params.twist_angle = crdtF64(options.twist_angle);
+    if (options?.scale_end != null) params.scale_end = crdtF64(options.scale_end);
+    const result = engine.create_feature("extrude", JSON.stringify(params));
+    const patch = applyCrdtResult(result, state, result.createdFeatureId);
+    set(patch);
+    return getCreatedPartId(patch) ?? null;
   },
 
   addRevolve: (plane, origin, segments, axisOrigin, axisDir, angleDeg) => {
     if (segments.length === 0) return null;
-
     const state = get();
-    let nid = state.nextNodeId;
-    const partNum = state.nextPartNum;
+    const engine = state._crdtEngine!;
 
-    const sketchId = nid++;
-    const revolveId = nid++;
-    const scaleId = nid++;
-    const rotateId = nid++;
-    const translateId = nid++;
-
-    const { x_dir, y_dir } = getSketchPlaneDirections(plane);
-
-    const sketchOp: CsgOp = {
-      type: "Sketch2D",
-      origin,
-      x_dir,
-      y_dir,
-      segments,
+    const params: Record<string, CrdtValue> = {
+      sketch: crdtSketch(segments, plane, origin),
+      axis_origin: crdtVec3(axisOrigin),
+      axis_dir: crdtVec3(axisDir),
+      angle_deg: crdtF64(angleDeg),
     };
-
-    const revolveOp: CsgOp = {
-      type: "Revolve",
-      sketch: sketchId,
-      axis_origin: axisOrigin,
-      axis_dir: axisDir,
-      angle_deg: angleDeg,
-    };
-
-    const scaleOp: CsgOp = {
-      type: "Scale",
-      child: revolveId,
-      factor: { x: 1, y: 1, z: 1 },
-    };
-    const rotateOp: CsgOp = {
-      type: "Rotate",
-      child: scaleId,
-      angles: { x: 0, y: 0, z: 0 },
-    };
-    const translateOp: CsgOp = {
-      type: "Translate",
-      child: rotateId,
-      offset: { x: 0, y: 0, z: 0 },
-    };
-
-    const partId = `part-${partNum}`;
-    const name = `Revolve ${partNum}`;
-
-    const undoState = pushUndo(state, "Revolve");
-    const newDoc = structuredClone(state.document);
-
-    newDoc.nodes[String(sketchId)] = makeNode(sketchId, null, sketchOp);
-    newDoc.nodes[String(revolveId)] = makeNode(revolveId, null, revolveOp);
-    newDoc.nodes[String(scaleId)] = makeNode(scaleId, null, scaleOp);
-    newDoc.nodes[String(rotateId)] = makeNode(rotateId, null, rotateOp);
-    newDoc.nodes[String(translateId)] = makeNode(
-      translateId,
-      name,
-      translateOp,
-    );
-    newDoc.roots.push({ root: translateId, material: "default" });
-
-    if (!newDoc.materials["default"]) {
-      newDoc.materials["default"] = {
-        name: "Default",
-        color: [0.55, 0.55, 0.55],
-        metallic: 0.0,
-        roughness: 0.7,
-      };
-    }
-
-    const partInfo: RevolvePartInfo = {
-      id: partId,
-      name,
-      kind: "revolve",
-      sketchNodeId: sketchId,
-      revolveNodeId: revolveId,
-      scaleNodeId: scaleId,
-      rotateNodeId: rotateId,
-      translateNodeId: translateId,
-    };
-
-    const newParts = [...state.parts, partInfo];
-    set({
-      document: newDoc,
-      parts: newParts,
-      partIndex: buildPartIndex(newParts),
-      nextNodeId: nid,
-      nextPartNum: partNum + 1,
-      isDirty: true,
-      ...undoState,
-    });
-
-    return partId;
+    const result = engine.create_feature("revolve", JSON.stringify(params));
+    const patch = applyCrdtResult(result, state, result.createdFeatureId);
+    set(patch);
+    return getCreatedPartId(patch) ?? null;
   },
 
   addSweep: (plane, origin, segments, path, options = {}) => {
     if (segments.length === 0) return null;
-
     const state = get();
-    let nid = state.nextNodeId;
-    const partNum = state.nextPartNum;
+    const engine = state._crdtEngine!;
 
-    const sketchId = nid++;
-    const sweepId = nid++;
-    const scaleId = nid++;
-    const rotateId = nid++;
-    const translateId = nid++;
-
-    const { x_dir, y_dir } = getSketchPlaneDirections(plane);
-
-    const sketchOp: CsgOp = {
-      type: "Sketch2D",
-      origin,
-      x_dir,
-      y_dir,
-      segments,
+    const params: Record<string, CrdtValue> = {
+      sketch: crdtSketch(segments, plane, origin),
+      path: crdtStr(JSON.stringify(path)),
     };
-
-    const sweepOp: CsgOp = {
-      type: "Sweep",
-      sketch: sketchId,
-      path,
-      twist_angle: options.twist_angle,
-      scale_start: options.scale_start,
-      scale_end: options.scale_end,
-    };
-
-    const scaleOp: CsgOp = {
-      type: "Scale",
-      child: sweepId,
-      factor: { x: 1, y: 1, z: 1 },
-    };
-    const rotateOp: CsgOp = {
-      type: "Rotate",
-      child: scaleId,
-      angles: { x: 0, y: 0, z: 0 },
-    };
-    const translateOp: CsgOp = {
-      type: "Translate",
-      child: rotateId,
-      offset: { x: 0, y: 0, z: 0 },
-    };
-
-    const partId = `part-${partNum}`;
-    const name = `Sweep ${partNum}`;
-
-    const undoState = pushUndo(state, "Sweep");
-    const newDoc = structuredClone(state.document);
-
-    newDoc.nodes[String(sketchId)] = makeNode(sketchId, null, sketchOp);
-    newDoc.nodes[String(sweepId)] = makeNode(sweepId, null, sweepOp);
-    newDoc.nodes[String(scaleId)] = makeNode(scaleId, null, scaleOp);
-    newDoc.nodes[String(rotateId)] = makeNode(rotateId, null, rotateOp);
-    newDoc.nodes[String(translateId)] = makeNode(
-      translateId,
-      name,
-      translateOp,
-    );
-    newDoc.roots.push({ root: translateId, material: "default" });
-
-    if (!newDoc.materials["default"]) {
-      newDoc.materials["default"] = {
-        name: "Default",
-        color: [0.55, 0.55, 0.55],
-        metallic: 0.0,
-        roughness: 0.7,
-      };
-    }
-
-    const partInfo: SweepPartInfo = {
-      id: partId,
-      name,
-      kind: "sweep",
-      sketchNodeId: sketchId,
-      sweepNodeId: sweepId,
-      scaleNodeId: scaleId,
-      rotateNodeId: rotateId,
-      translateNodeId: translateId,
-    };
-
-    const newParts = [...state.parts, partInfo];
-    set({
-      document: newDoc,
-      parts: newParts,
-      partIndex: buildPartIndex(newParts),
-      nextNodeId: nid,
-      nextPartNum: partNum + 1,
-      isDirty: true,
-      ...undoState,
-    });
-
-    return partId;
+    if (options.twist_angle != null) params.twist_angle = crdtF64(options.twist_angle);
+    if (options.scale_start != null) params.scale_start = crdtF64(options.scale_start);
+    if (options.scale_end != null) params.scale_end = crdtF64(options.scale_end);
+    const result = engine.create_feature("sweep", JSON.stringify(params));
+    const patch = applyCrdtResult(result, state, result.createdFeatureId);
+    set(patch);
+    return getCreatedPartId(patch) ?? null;
   },
 
   addLoft: (profiles, options = {}) => {
     if (profiles.length < 2) return null;
-
     const state = get();
-    let nid = state.nextNodeId;
-    const partNum = state.nextPartNum;
+    const engine = state._crdtEngine!;
 
-    // Create sketch nodes for each profile
-    const sketchIds: number[] = [];
-    const sketchOps: CsgOp[] = [];
-
-    for (const profile of profiles) {
-      const sketchId = nid++;
-      sketchIds.push(sketchId);
-
-      const { x_dir, y_dir } = getSketchPlaneDirections(profile.plane);
-      sketchOps.push({
-        type: "Sketch2D",
-        origin: profile.origin,
-        x_dir,
-        y_dir,
-        segments: profile.segments,
-      });
+    const params: Record<string, CrdtValue> = {
+      sketch_count: crdtF64(profiles.length),
+    };
+    for (let i = 0; i < profiles.length; i++) {
+      const p = profiles[i]!;
+      params[`sketch_${i}`] = crdtSketch(p.segments, p.plane, p.origin);
     }
-
-    const loftId = nid++;
-    const scaleId = nid++;
-    const rotateId = nid++;
-    const translateId = nid++;
-
-    const loftOp: CsgOp = {
-      type: "Loft",
-      sketches: sketchIds,
-      closed: options.closed,
-    };
-
-    const scaleOp: CsgOp = {
-      type: "Scale",
-      child: loftId,
-      factor: { x: 1, y: 1, z: 1 },
-    };
-    const rotateOp: CsgOp = {
-      type: "Rotate",
-      child: scaleId,
-      angles: { x: 0, y: 0, z: 0 },
-    };
-    const translateOp: CsgOp = {
-      type: "Translate",
-      child: rotateId,
-      offset: { x: 0, y: 0, z: 0 },
-    };
-
-    const partId = `part-${partNum}`;
-    const name = `Loft ${partNum}`;
-
-    const undoState = pushUndo(state, "Loft");
-    const newDoc = structuredClone(state.document);
-
-    // Add all sketch nodes
-    for (let i = 0; i < sketchIds.length; i++) {
-      newDoc.nodes[String(sketchIds[i])] = makeNode(
-        sketchIds[i]!,
-        null,
-        sketchOps[i]!,
-      );
-    }
-
-    newDoc.nodes[String(loftId)] = makeNode(loftId, null, loftOp);
-    newDoc.nodes[String(scaleId)] = makeNode(scaleId, null, scaleOp);
-    newDoc.nodes[String(rotateId)] = makeNode(rotateId, null, rotateOp);
-    newDoc.nodes[String(translateId)] = makeNode(
-      translateId,
-      name,
-      translateOp,
-    );
-    newDoc.roots.push({ root: translateId, material: "default" });
-
-    if (!newDoc.materials["default"]) {
-      newDoc.materials["default"] = {
-        name: "Default",
-        color: [0.55, 0.55, 0.55],
-        metallic: 0.0,
-        roughness: 0.7,
-      };
-    }
-
-    const partInfo: LoftPartInfo = {
-      id: partId,
-      name,
-      kind: "loft",
-      sketchNodeIds: sketchIds,
-      loftNodeId: loftId,
-      scaleNodeId: scaleId,
-      rotateNodeId: rotateId,
-      translateNodeId: translateId,
-    };
-
-    const newParts = [...state.parts, partInfo];
-    set({
-      document: newDoc,
-      parts: newParts,
-      partIndex: buildPartIndex(newParts),
-      nextNodeId: nid,
-      nextPartNum: partNum + 1,
-      isDirty: true,
-      ...undoState,
-    });
-
-    return partId;
+    if (options.closed != null) params.closed = crdtBool(options.closed);
+    const result = engine.create_feature("loft", JSON.stringify(params));
+    const patch = applyCrdtResult(result, state, result.createdFeatureId);
+    set(patch);
+    return getCreatedPartId(patch) ?? null;
   },
 
   addImportedMesh: (positions, indices, normals, source) => {
     const state = get();
-    let nid = state.nextNodeId;
-    const partNum = state.nextPartNum;
+    const engine = state._crdtEngine!;
 
-    const meshId = nid++;
-    const scaleId = nid++;
-    const rotateId = nid++;
-    const translateId = nid++;
-
-    const meshOp: CsgOp = {
-      type: "ImportedMesh",
-      positions: Array.from(positions),
-      indices: Array.from(indices),
-      normals: normals ? Array.from(normals) : undefined,
-      source,
+    const params: Record<string, CrdtValue> = {
+      positions_json: crdtStr(JSON.stringify(Array.from(positions))),
+      indices_json: crdtStr(JSON.stringify(Array.from(indices))),
     };
-
-    const scaleOp: CsgOp = {
-      type: "Scale",
-      child: meshId,
-      factor: { x: 1, y: 1, z: 1 },
-    };
-    const rotateOp: CsgOp = {
-      type: "Rotate",
-      child: scaleId,
-      angles: { x: 0, y: 0, z: 0 },
-    };
-    const translateOp: CsgOp = {
-      type: "Translate",
-      child: rotateId,
-      offset: { x: 0, y: 0, z: 0 },
-    };
-
-    // Extract filename from source for display name
-    const filename = source?.split(/[/\\]/).pop()?.replace(/\.(step|stp)$/i, "") ?? "Import";
-    const partId = `part-${partNum}`;
-    const name = `${filename} ${partNum}`;
-
-    const undoState = pushUndo(state, "Import STEP");
-    const newDoc = structuredClone(state.document);
-
-    newDoc.nodes[String(meshId)] = makeNode(meshId, null, meshOp);
-    newDoc.nodes[String(scaleId)] = makeNode(scaleId, null, scaleOp);
-    newDoc.nodes[String(rotateId)] = makeNode(rotateId, null, rotateOp);
-    newDoc.nodes[String(translateId)] = makeNode(translateId, name, translateOp);
-    newDoc.roots.push({ root: translateId, material: "default" });
-
-    if (!newDoc.materials["default"]) {
-      newDoc.materials["default"] = {
-        name: "Default",
-        color: [0.55, 0.55, 0.55],
-        metallic: 0.0,
-        roughness: 0.7,
-      };
-    }
-
-    const partInfo: ImportedMeshPartInfo = {
-      id: partId,
-      name,
-      kind: "imported-mesh",
-      meshNodeId: meshId,
-      scaleNodeId: scaleId,
-      rotateNodeId: rotateId,
-      translateNodeId: translateId,
-      source,
-    };
-
-    const newParts = [...state.parts, partInfo];
-    set({
-      document: newDoc,
-      parts: newParts,
-      partIndex: buildPartIndex(newParts),
-      nextNodeId: nid,
-      nextPartNum: partNum + 1,
-      isDirty: true,
-      ...undoState,
-    });
-
-    return partId;
+    if (normals) params.normals_json = crdtStr(JSON.stringify(Array.from(normals)));
+    if (source) params.source = crdtStr(source);
+    const result = engine.create_feature("imported-mesh", JSON.stringify(params));
+    const patch = applyCrdtResult(result, state, result.createdFeatureId);
+    set(patch);
+    return getCreatedPartId(patch) ?? `part-${state.nextPartNum}`;
   },
 
   addEmbroideryPattern: (design, source) => {
     const state = get();
-    let nid = state.nextNodeId;
-    const partNum = state.nextPartNum;
-
-    const patternId = nid++;
-    const scaleId = nid++;
-    const rotateId = nid++;
-    const translateId = nid++;
-
-    const patternOp: CsgOp = {
-      type: "EmbroideryPattern",
-      design,
-    };
-
-    const scaleOp: CsgOp = {
-      type: "Scale",
-      child: patternId,
-      factor: { x: 1, y: 1, z: 1 },
-    };
-    const rotateOp: CsgOp = {
-      type: "Rotate",
-      child: scaleId,
-      angles: { x: 0, y: 0, z: 0 },
-    };
-    const translateOp: CsgOp = {
-      type: "Translate",
-      child: rotateId,
-      offset: { x: 0, y: 0, z: 0 },
-    };
+    const engine = state._crdtEngine!;
 
     const filename = source?.split(/[/\\]/).pop()?.replace(/\.(pes|dst)$/i, "") ?? "Embroidery";
-    const partId = `part-${partNum}`;
-    const name = `${filename} ${partNum}`;
-
-    const undoState = pushUndo(state, "Import Embroidery");
-    const newDoc = structuredClone(state.document);
-
-    newDoc.nodes[String(patternId)] = makeNode(patternId, null, patternOp);
-    newDoc.nodes[String(scaleId)] = makeNode(scaleId, null, scaleOp);
-    newDoc.nodes[String(rotateId)] = makeNode(rotateId, null, rotateOp);
-    newDoc.nodes[String(translateId)] = makeNode(translateId, name, translateOp);
-    newDoc.roots.push({ root: translateId, material: "default" });
-
-    if (!newDoc.materials["default"]) {
-      newDoc.materials["default"] = {
-        name: "Default",
-        color: [0.55, 0.55, 0.55],
-        metallic: 0.0,
-        roughness: 0.7,
-      };
-    }
-
-    const partInfo: EmbroideryPatternPartInfo = {
-      id: partId,
-      name,
-      kind: "embroidery-pattern",
-      patternNodeId: patternId,
-      scaleNodeId: scaleId,
-      rotateNodeId: rotateId,
-      translateNodeId: translateId,
-      source,
+    const params: Record<string, CrdtValue> = {
+      design: crdtStr(JSON.stringify(design)),
+      name: crdtStr(filename),
     };
-
-    const newParts = [...state.parts, partInfo];
-    set({
-      document: newDoc,
-      parts: newParts,
-      partIndex: buildPartIndex(newParts),
-      nextNodeId: nid,
-      nextPartNum: partNum + 1,
-      isDirty: true,
-      ...undoState,
-    });
-
-    return partId;
+    if (source) params.source = crdtStr(source);
+    const result = engine.create_feature("embroidery-pattern", JSON.stringify(params));
+    const patch = applyCrdtResult(result, state, result.createdFeatureId);
+    set(patch);
+    return getCreatedPartId(patch) ?? `part-${state.nextPartNum}`;
   },
 
   addTextEmbroidery: async (options) => {
@@ -2292,7 +1063,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       const json = wasm.digitizeText(options.text, options.height, optionsJson);
       const result = JSON.parse(json);
 
-      // Build EmbroideryDesign for the IR node (same as PES import)
       const design: EmbroideryDesign = {
         threads: result.threads,
         stitch_groups: result.stitchPaths.map(
@@ -2315,381 +1085,136 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   setThreadColor: (nodeId, threadIdx, color) => {
     const state = get();
-    const undoState = pushUndo(state, "Set Thread Color");
-    const newDoc = structuredClone(state.document);
-    const design = getNodeEmbroideryDesign(newDoc, nodeId);
-    if (design && design.threads[threadIdx]) {
-      design.threads[threadIdx]!.color = color;
-    }
-    const dirtyNodeIds = new Set(state.dirtyNodeIds);
-    dirtyNodeIds.add(nodeId);
-    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
+    const engine = state._crdtEngine!;
+    const part = state.parts.find((p) => p.kind === "embroidery-pattern" && (p as EmbroideryPatternPartInfo).patternNodeId === nodeId);
+    if (!part) return;
+    const crdtId = state._partIdToCrdtId.get(part.id);
+    if (!crdtId) return;
+    const design = getNodeEmbroideryDesign(state.document, nodeId);
+    if (!design) return;
+    const d = structuredClone(design);
+    if (d.threads[threadIdx]) d.threads[threadIdx]!.color = color;
+    const result = engine.set_param(crdtId, "design", JSON.stringify(crdtStr(JSON.stringify(d))));
+    set(applyCrdtResult(result, state));
   },
 
   setThreadName: (nodeId, threadIdx, name) => {
     const state = get();
-    const undoState = pushUndo(state, "Set Thread Name");
-    const newDoc = structuredClone(state.document);
-    const design = getNodeEmbroideryDesign(newDoc, nodeId);
-    if (design && design.threads[threadIdx]) {
-      design.threads[threadIdx]!.name = name;
-    }
-    const dirtyNodeIds = new Set(state.dirtyNodeIds);
-    dirtyNodeIds.add(nodeId);
-    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
+    const engine = state._crdtEngine!;
+    const part = state.parts.find((p) => p.kind === "embroidery-pattern" && (p as EmbroideryPatternPartInfo).patternNodeId === nodeId);
+    if (!part) return;
+    const crdtId = state._partIdToCrdtId.get(part.id);
+    if (!crdtId) return;
+    const design = getNodeEmbroideryDesign(state.document, nodeId);
+    if (!design) return;
+    const d = structuredClone(design);
+    if (d.threads[threadIdx]) d.threads[threadIdx]!.name = name;
+    const result = engine.set_param(crdtId, "design", JSON.stringify(crdtStr(JSON.stringify(d))));
+    set(applyCrdtResult(result, state));
   },
 
   setStitchGroupFillParams: (nodeId, groupIdx, params) => {
     const state = get();
-    const undoState = pushUndo(state, "Set Fill Params");
-    const newDoc = structuredClone(state.document);
-    const design = getNodeEmbroideryDesign(newDoc, nodeId);
-    if (design && design.stitch_groups[groupIdx]) {
-      const group = design.stitch_groups[groupIdx]!;
+    const engine = state._crdtEngine!;
+    const part = state.parts.find((p) => p.kind === "embroidery-pattern" && (p as EmbroideryPatternPartInfo).patternNodeId === nodeId);
+    if (!part) return;
+    const crdtId = state._partIdToCrdtId.get(part.id);
+    if (!crdtId) return;
+    const design = getNodeEmbroideryDesign(state.document, nodeId);
+    if (!design) return;
+    const d = structuredClone(design);
+    if (d.stitch_groups[groupIdx]) {
+      const group = d.stitch_groups[groupIdx]!;
       group.fill_params = { ...(group.fill_params ?? DEFAULT_FILL_PARAMS), ...params };
     }
-    const dirtyNodeIds = new Set(state.dirtyNodeIds);
-    dirtyNodeIds.add(nodeId);
-    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
+    const result = engine.set_param(crdtId, "design", JSON.stringify(crdtStr(JSON.stringify(d))));
+    set(applyCrdtResult(result, state));
   },
 
   optimizeJumpStitches: (nodeId) => {
     const state = get();
-    const undoState = pushUndo(state, "Optimize Jump Stitches");
-    const newDoc = structuredClone(state.document);
-    const design = getNodeEmbroideryDesign(newDoc, nodeId);
-    if (design && design.stitch_groups.length > 1) {
-      // Nearest-neighbor reorder: start from first group, greedily pick closest next group
-      const groups = design.stitch_groups;
-      const used = new Set<number>();
-      const ordered: typeof groups = [];
+    const engine = state._crdtEngine!;
+    const part = state.parts.find((p) => p.kind === "embroidery-pattern" && (p as EmbroideryPatternPartInfo).patternNodeId === nodeId);
+    if (!part) return;
+    const crdtId = state._partIdToCrdtId.get(part.id);
+    if (!crdtId) return;
+    const design = getNodeEmbroideryDesign(state.document, nodeId);
+    if (!design || design.stitch_groups.length <= 1) return;
 
-      // Helper: get last stitch position of a group (or [0,0] if empty)
-      const lastPos = (g: typeof groups[number]) => {
-        const s = g.stitches;
-        return s.length > 0 ? s[s.length - 1]! : [0, 0] as [number, number];
-      };
-      // Helper: get first stitch position of a group
-      const firstPos = (g: typeof groups[number]) => {
-        const s = g.stitches;
-        return s.length > 0 ? s[0]! : [0, 0] as [number, number];
-      };
-
-      // Start with group 0
-      ordered.push(groups[0]!);
-      used.add(0);
-
-      for (let step = 1; step < groups.length; step++) {
-        const [lx, ly] = lastPos(ordered[ordered.length - 1]!);
-        let bestIdx = -1;
-        let bestDist = Infinity;
-        for (let i = 0; i < groups.length; i++) {
-          if (used.has(i)) continue;
-          const [fx, fy] = firstPos(groups[i]!);
-          const d = (fx - lx) ** 2 + (fy - ly) ** 2;
-          if (d < bestDist) {
-            bestDist = d;
-            bestIdx = i;
-          }
-        }
-        if (bestIdx >= 0) {
-          ordered.push(groups[bestIdx]!);
-          used.add(bestIdx);
-        }
+    const d = structuredClone(design);
+    const groups = d.stitch_groups;
+    const used = new Set<number>();
+    const ordered: typeof groups = [];
+    const lastPos = (g: typeof groups[number]) => {
+      const s = g.stitches;
+      return s.length > 0 ? s[s.length - 1]! : [0, 0] as [number, number];
+    };
+    const firstPos = (g: typeof groups[number]) => {
+      const s = g.stitches;
+      return s.length > 0 ? s[0]! : [0, 0] as [number, number];
+    };
+    ordered.push(groups[0]!);
+    used.add(0);
+    for (let step = 1; step < groups.length; step++) {
+      const [lx, ly] = lastPos(ordered[ordered.length - 1]!);
+      let bestIdx = -1;
+      let bestDist = Infinity;
+      for (let i = 0; i < groups.length; i++) {
+        if (used.has(i)) continue;
+        const [fx, fy] = firstPos(groups[i]!);
+        const dd = (fx - lx) ** 2 + (fy - ly) ** 2;
+        if (dd < bestDist) { bestDist = dd; bestIdx = i; }
       }
-
-      design.stitch_groups = ordered;
+      if (bestIdx >= 0) { ordered.push(groups[bestIdx]!); used.add(bestIdx); }
     }
-    const dirtyNodeIds = new Set(state.dirtyNodeIds);
-    dirtyNodeIds.add(nodeId);
-    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
+    d.stitch_groups = ordered;
+    const result = engine.set_param(crdtId, "design", JSON.stringify(crdtStr(JSON.stringify(d))));
+    set(applyCrdtResult(result, state));
   },
 
   addFillet: (partId, radius) => {
     const state = get();
-
-    // CRDT bridge
-    if (state._crdtEngine) {
-      const crdtId = state._partIdToCrdtId.get(partId);
-      if (!crdtId) return null;
-      const params: Record<string, CrdtValue> = {
-        input: crdtRef(crdtId),
-        radius: crdtF64(radius),
-      };
-      const result = state._crdtEngine.create_feature("fillet", JSON.stringify(params));
-      const patch = applyCrdtResult(result, state, result.createdFeatureId);
-      set(patch);
-      return (patch as { _lastCreatedPartId?: string })._lastCreatedPartId ?? null;
-    }
-
-    const sourcePart = state.partIndex.get(partId);
-    if (!sourcePart) return null;
-
-    let nid = state.nextNodeId;
-    const partNum = state.nextPartNum;
-
-    const filletId = nid++;
-    const scaleId = nid++;
-    const rotateId = nid++;
-    const translateId = nid++;
-
-    const filletOp: CsgOp = {
-      type: "Fillet",
-      child: sourcePart.translateNodeId,
-      radius,
+    const engine = state._crdtEngine!;
+    const crdtId = state._partIdToCrdtId.get(partId);
+    if (!crdtId) return null;
+    const params: Record<string, CrdtValue> = {
+      input: crdtRef(crdtId),
+      radius: crdtF64(radius),
     };
-
-    const scaleOp: CsgOp = {
-      type: "Scale",
-      child: filletId,
-      factor: { x: 1, y: 1, z: 1 },
-    };
-    const rotateOp: CsgOp = {
-      type: "Rotate",
-      child: scaleId,
-      angles: { x: 0, y: 0, z: 0 },
-    };
-    const translateOp: CsgOp = {
-      type: "Translate",
-      child: rotateId,
-      offset: { x: 0, y: 0, z: 0 },
-    };
-
-    const newPartId = `part-${partNum}`;
-    const name = `Fillet ${partNum}`;
-
-    const undoState = pushUndo(state, "Fillet");
-    const newDoc = structuredClone(state.document);
-
-    newDoc.nodes[String(filletId)] = makeNode(filletId, null, filletOp);
-    newDoc.nodes[String(scaleId)] = makeNode(scaleId, null, scaleOp);
-    newDoc.nodes[String(rotateId)] = makeNode(rotateId, null, rotateOp);
-    newDoc.nodes[String(translateId)] = makeNode(translateId, name, translateOp);
-
-    // Remove source part from roots, add new part
-    newDoc.roots = newDoc.roots.filter((r) => r.root !== sourcePart.translateNodeId);
-    newDoc.roots.push({ root: translateId, material: "default" });
-
-    const partInfo: FilletPartInfo = {
-      id: newPartId,
-      name,
-      kind: "fillet",
-      sourcePartId: partId,
-      filletNodeId: filletId,
-      scaleNodeId: scaleId,
-      rotateNodeId: rotateId,
-      translateNodeId: translateId,
-    };
-
-    // Track source part as consumed
-    const newConsumedParts = { ...state.consumedParts };
-    newConsumedParts[partId] = sourcePart;
-
-    const newParts = state.parts.filter((p) => p.id !== partId);
-    newParts.push(partInfo);
-
-    set({
-      document: newDoc,
-      parts: newParts,
-      partIndex: buildPartIndex(newParts),
-      consumedParts: newConsumedParts,
-      nextNodeId: nid,
-      nextPartNum: partNum + 1,
-      isDirty: true,
-      ...undoState,
-    });
-
-    return newPartId;
+    const result = engine.create_feature("fillet", JSON.stringify(params));
+    const patch = applyCrdtResult(result, state, result.createdFeatureId);
+    set(patch);
+    return getCreatedPartId(patch) ?? null;
   },
 
   addChamfer: (partId, distance) => {
     const state = get();
-
-    // CRDT bridge
-    if (state._crdtEngine) {
-      const crdtId = state._partIdToCrdtId.get(partId);
-      if (!crdtId) return null;
-      const params: Record<string, CrdtValue> = {
-        input: crdtRef(crdtId),
-        distance: crdtF64(distance),
-      };
-      const result = state._crdtEngine.create_feature("chamfer", JSON.stringify(params));
-      const patch = applyCrdtResult(result, state, result.createdFeatureId);
-      set(patch);
-      return (patch as { _lastCreatedPartId?: string })._lastCreatedPartId ?? null;
-    }
-
-    const sourcePart = state.partIndex.get(partId);
-    if (!sourcePart) return null;
-
-    let nid = state.nextNodeId;
-    const partNum = state.nextPartNum;
-
-    const chamferId = nid++;
-    const scaleId = nid++;
-    const rotateId = nid++;
-    const translateId = nid++;
-
-    const chamferOp: CsgOp = {
-      type: "Chamfer",
-      child: sourcePart.translateNodeId,
-      distance,
+    const engine = state._crdtEngine!;
+    const crdtId = state._partIdToCrdtId.get(partId);
+    if (!crdtId) return null;
+    const params: Record<string, CrdtValue> = {
+      input: crdtRef(crdtId),
+      distance: crdtF64(distance),
     };
-
-    const scaleOp: CsgOp = {
-      type: "Scale",
-      child: chamferId,
-      factor: { x: 1, y: 1, z: 1 },
-    };
-    const rotateOp: CsgOp = {
-      type: "Rotate",
-      child: scaleId,
-      angles: { x: 0, y: 0, z: 0 },
-    };
-    const translateOp: CsgOp = {
-      type: "Translate",
-      child: rotateId,
-      offset: { x: 0, y: 0, z: 0 },
-    };
-
-    const newPartId = `part-${partNum}`;
-    const name = `Chamfer ${partNum}`;
-
-    const undoState = pushUndo(state, "Chamfer");
-    const newDoc = structuredClone(state.document);
-
-    newDoc.nodes[String(chamferId)] = makeNode(chamferId, null, chamferOp);
-    newDoc.nodes[String(scaleId)] = makeNode(scaleId, null, scaleOp);
-    newDoc.nodes[String(rotateId)] = makeNode(rotateId, null, rotateOp);
-    newDoc.nodes[String(translateId)] = makeNode(translateId, name, translateOp);
-
-    newDoc.roots = newDoc.roots.filter((r) => r.root !== sourcePart.translateNodeId);
-    newDoc.roots.push({ root: translateId, material: "default" });
-
-    const partInfo: ChamferPartInfo = {
-      id: newPartId,
-      name,
-      kind: "chamfer",
-      sourcePartId: partId,
-      chamferNodeId: chamferId,
-      scaleNodeId: scaleId,
-      rotateNodeId: rotateId,
-      translateNodeId: translateId,
-    };
-
-    const newConsumedParts = { ...state.consumedParts };
-    newConsumedParts[partId] = sourcePart;
-
-    const newParts = state.parts.filter((p) => p.id !== partId);
-    newParts.push(partInfo);
-
-    set({
-      document: newDoc,
-      parts: newParts,
-      partIndex: buildPartIndex(newParts),
-      consumedParts: newConsumedParts,
-      nextNodeId: nid,
-      nextPartNum: partNum + 1,
-      isDirty: true,
-      ...undoState,
-    });
-
-    return newPartId;
+    const result = engine.create_feature("chamfer", JSON.stringify(params));
+    const patch = applyCrdtResult(result, state, result.createdFeatureId);
+    set(patch);
+    return getCreatedPartId(patch) ?? null;
   },
 
   addShell: (partId, thickness) => {
     const state = get();
-
-    // CRDT bridge
-    if (state._crdtEngine) {
-      const crdtId = state._partIdToCrdtId.get(partId);
-      if (!crdtId) return null;
-      const params: Record<string, CrdtValue> = {
-        input: crdtRef(crdtId),
-        thickness: crdtF64(thickness),
-      };
-      const result = state._crdtEngine.create_feature("shell", JSON.stringify(params));
-      const patch = applyCrdtResult(result, state, result.createdFeatureId);
-      set(patch);
-      return (patch as { _lastCreatedPartId?: string })._lastCreatedPartId ?? null;
-    }
-
-    const sourcePart = state.partIndex.get(partId);
-    if (!sourcePart) return null;
-
-    let nid = state.nextNodeId;
-    const partNum = state.nextPartNum;
-
-    const shellId = nid++;
-    const scaleId = nid++;
-    const rotateId = nid++;
-    const translateId = nid++;
-
-    const shellOp: CsgOp = {
-      type: "Shell",
-      child: sourcePart.translateNodeId,
-      thickness,
+    const engine = state._crdtEngine!;
+    const crdtId = state._partIdToCrdtId.get(partId);
+    if (!crdtId) return null;
+    const params: Record<string, CrdtValue> = {
+      input: crdtRef(crdtId),
+      thickness: crdtF64(thickness),
     };
-
-    const scaleOp: CsgOp = {
-      type: "Scale",
-      child: shellId,
-      factor: { x: 1, y: 1, z: 1 },
-    };
-    const rotateOp: CsgOp = {
-      type: "Rotate",
-      child: scaleId,
-      angles: { x: 0, y: 0, z: 0 },
-    };
-    const translateOp: CsgOp = {
-      type: "Translate",
-      child: rotateId,
-      offset: { x: 0, y: 0, z: 0 },
-    };
-
-    const newPartId = `part-${partNum}`;
-    const name = `Shell ${partNum}`;
-
-    const undoState = pushUndo(state, "Shell");
-    const newDoc = structuredClone(state.document);
-
-    newDoc.nodes[String(shellId)] = makeNode(shellId, null, shellOp);
-    newDoc.nodes[String(scaleId)] = makeNode(scaleId, null, scaleOp);
-    newDoc.nodes[String(rotateId)] = makeNode(rotateId, null, rotateOp);
-    newDoc.nodes[String(translateId)] = makeNode(translateId, name, translateOp);
-
-    newDoc.roots = newDoc.roots.filter((r) => r.root !== sourcePart.translateNodeId);
-    newDoc.roots.push({ root: translateId, material: "default" });
-
-    const partInfo: ShellPartInfo = {
-      id: newPartId,
-      name,
-      kind: "shell",
-      sourcePartId: partId,
-      shellNodeId: shellId,
-      scaleNodeId: scaleId,
-      rotateNodeId: rotateId,
-      translateNodeId: translateId,
-    };
-
-    const newConsumedParts = { ...state.consumedParts };
-    newConsumedParts[partId] = sourcePart;
-
-    const newParts = state.parts.filter((p) => p.id !== partId);
-    newParts.push(partInfo);
-
-    set({
-      document: newDoc,
-      parts: newParts,
-      partIndex: buildPartIndex(newParts),
-      consumedParts: newConsumedParts,
-      nextNodeId: nid,
-      nextPartNum: partNum + 1,
-      isDirty: true,
-      ...undoState,
-    });
-
-    return newPartId;
+    const result = engine.create_feature("shell", JSON.stringify(params));
+    const patch = applyCrdtResult(result, state, result.createdFeatureId);
+    set(patch);
+    return getCreatedPartId(patch) ?? null;
   },
 
   addStitch: async (partId, options) => {
@@ -2703,7 +1228,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       let resultJson: string;
 
       if (isTextPart(sourcePart)) {
-        // Text part: read text properties from the Text2D node, call digitizeText
         const textNode = state.document.nodes[String(sourcePart.textNodeId)];
         if (!textNode || textNode.op.type !== "Text2D") return null;
         const textOp = textNode.op;
@@ -2720,7 +1244,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         });
         resultJson = wasm.digitizeText(textOp.text, textOp.height, optionsJson);
       } else {
-        // Extrude/revolve/sweep/loft: read sketch segments, call digitizeSketch
         let sketchNodeId: number | undefined;
         if (isExtrudePart(sourcePart)) {
           const extNode = state.document.nodes[String(sourcePart.extrudeNodeId)];
@@ -2732,7 +1255,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           const sweepNode = state.document.nodes[String(sourcePart.sweepNodeId)];
           if (sweepNode?.op.type === "Sweep") sketchNodeId = sweepNode.op.sketch;
         } else if (isLoftPart(sourcePart)) {
-          // Use first sketch
           sketchNodeId = sourcePart.sketchNodeIds[0];
         }
 
@@ -2755,7 +1277,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
       const result = JSON.parse(resultJson);
 
-      // Build EmbroideryDesign for the IR node
       const design: EmbroideryDesign = {
         threads: result.threads,
         stitch_groups: result.stitchPaths.map(
@@ -2770,63 +1291,19 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
       // Re-read state (async boundary)
       const state2 = get();
-      let nid = state2.nextNodeId;
-      const partNum = state2.nextPartNum;
-
-      const patternId = nid++;
-      const scaleId = nid++;
-      const rotateId = nid++;
-      const translateId = nid++;
-
-      const patternOp: CsgOp = { type: "EmbroideryPattern", design };
-      const scaleOp: CsgOp = { type: "Scale", child: patternId, factor: { x: 1, y: 1, z: 1 } };
-      const rotateOp: CsgOp = { type: "Rotate", child: scaleId, angles: { x: 0, y: 0, z: 0 } };
-      const translateOp: CsgOp = { type: "Translate", child: rotateId, offset: { x: 0, y: 0, z: 0 } };
-
-      const newPartId = `part-${partNum}`;
-      const name = `Stitch ${partNum}`;
-
-      const undoState = pushUndo(state2, "Stitch");
-      const newDoc = structuredClone(state2.document);
-
-      newDoc.nodes[String(patternId)] = makeNode(patternId, null, patternOp);
-      newDoc.nodes[String(scaleId)] = makeNode(scaleId, null, scaleOp);
-      newDoc.nodes[String(rotateId)] = makeNode(rotateId, null, rotateOp);
-      newDoc.nodes[String(translateId)] = makeNode(translateId, name, translateOp);
-
-      // Remove source part from roots (consume it)
-      newDoc.roots = newDoc.roots.filter((r) => r.root !== sourcePart.translateNodeId);
-      newDoc.roots.push({ root: translateId, material: "default" });
-
-      const partInfo: StitchPartInfo = {
-        id: newPartId,
-        name,
-        kind: "stitch",
-        sourcePartId: partId,
-        patternNodeId: patternId,
-        scaleNodeId: scaleId,
-        rotateNodeId: rotateId,
-        translateNodeId: translateId,
+      const engine2 = state2._crdtEngine!;
+      const crdtSourceId = state2._partIdToCrdtId.get(partId);
+      const params: Record<string, CrdtValue> = {
+        design: crdtStr(JSON.stringify(design)),
+        name: crdtStr(`Stitch ${state2.nextPartNum}`),
       };
-
-      const newConsumedParts = { ...state2.consumedParts };
-      newConsumedParts[partId] = sourcePart;
-
-      const newParts = state2.parts.filter((p) => p.id !== partId);
-      newParts.push(partInfo);
-
-      set({
-        document: newDoc,
-        parts: newParts,
-        partIndex: buildPartIndex(newParts),
-        consumedParts: newConsumedParts,
-        nextNodeId: nid,
-        nextPartNum: partNum + 1,
-        isDirty: true,
-        ...undoState,
-      });
-
-      return newPartId;
+      if (crdtSourceId) params.input = crdtRef(crdtSourceId);
+      const res = engine2.create_feature("embroidery-pattern", JSON.stringify(params));
+      // Delete source feature (consumed)
+      if (crdtSourceId) engine2.delete_feature(crdtSourceId);
+      const patch = applyCrdtResult(res, state2, res.createdFeatureId);
+      set({ ...patch, isDirty: true });
+      return getCreatedPartId(patch) ?? null;
     } catch (err) {
       console.error("Failed to create stitch:", err);
       return null;
@@ -2835,301 +1312,52 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   addLinearPattern: (partId, direction, count, spacing) => {
     const state = get();
-
-    // CRDT bridge
-    if (state._crdtEngine) {
-      const crdtId = state._partIdToCrdtId.get(partId);
-      if (!crdtId) return null;
-      const params: Record<string, CrdtValue> = {
-        input: crdtRef(crdtId),
-        direction: crdtVec3(direction),
-        count: crdtF64(count),
-        spacing: crdtF64(spacing),
-      };
-      const result = state._crdtEngine.create_feature("linear-pattern", JSON.stringify(params));
-      const patch = applyCrdtResult(result, state, result.createdFeatureId);
-      set(patch);
-      return (patch as { _lastCreatedPartId?: string })._lastCreatedPartId ?? null;
-    }
-
-    const sourcePart = state.partIndex.get(partId);
-    if (!sourcePart) return null;
-
-    let nid = state.nextNodeId;
-    const partNum = state.nextPartNum;
-
-    const patternId = nid++;
-    const scaleId = nid++;
-    const rotateId = nid++;
-    const translateId = nid++;
-
-    const patternOp: CsgOp = {
-      type: "LinearPattern",
-      child: sourcePart.translateNodeId,
-      direction,
-      count,
-      spacing,
+    const engine = state._crdtEngine!;
+    const crdtId = state._partIdToCrdtId.get(partId);
+    if (!crdtId) return null;
+    const params: Record<string, CrdtValue> = {
+      input: crdtRef(crdtId),
+      direction: crdtVec3(direction),
+      count: crdtF64(count),
+      spacing: crdtF64(spacing),
     };
-
-    const scaleOp: CsgOp = {
-      type: "Scale",
-      child: patternId,
-      factor: { x: 1, y: 1, z: 1 },
-    };
-    const rotateOp: CsgOp = {
-      type: "Rotate",
-      child: scaleId,
-      angles: { x: 0, y: 0, z: 0 },
-    };
-    const translateOp: CsgOp = {
-      type: "Translate",
-      child: rotateId,
-      offset: { x: 0, y: 0, z: 0 },
-    };
-
-    const newPartId = `part-${partNum}`;
-    const name = `Linear Pattern ${partNum}`;
-
-    const undoState = pushUndo(state, "Linear Pattern");
-    const newDoc = structuredClone(state.document);
-
-    newDoc.nodes[String(patternId)] = makeNode(patternId, null, patternOp);
-    newDoc.nodes[String(scaleId)] = makeNode(scaleId, null, scaleOp);
-    newDoc.nodes[String(rotateId)] = makeNode(rotateId, null, rotateOp);
-    newDoc.nodes[String(translateId)] = makeNode(translateId, name, translateOp);
-
-    newDoc.roots = newDoc.roots.filter((r) => r.root !== sourcePart.translateNodeId);
-    newDoc.roots.push({ root: translateId, material: "default" });
-
-    const partInfo: LinearPatternPartInfo = {
-      id: newPartId,
-      name,
-      kind: "linear-pattern",
-      sourcePartId: partId,
-      patternNodeId: patternId,
-      scaleNodeId: scaleId,
-      rotateNodeId: rotateId,
-      translateNodeId: translateId,
-    };
-
-    const newConsumedParts = { ...state.consumedParts };
-    newConsumedParts[partId] = sourcePart;
-
-    const newParts = state.parts.filter((p) => p.id !== partId);
-    newParts.push(partInfo);
-
-    set({
-      document: newDoc,
-      parts: newParts,
-      partIndex: buildPartIndex(newParts),
-      consumedParts: newConsumedParts,
-      nextNodeId: nid,
-      nextPartNum: partNum + 1,
-      isDirty: true,
-      ...undoState,
-    });
-
-    return newPartId;
+    const result = engine.create_feature("linear-pattern", JSON.stringify(params));
+    const patch = applyCrdtResult(result, state, result.createdFeatureId);
+    set(patch);
+    return getCreatedPartId(patch) ?? null;
   },
 
   addCircularPattern: (partId, axisOrigin, axisDir, count, angleDeg) => {
     const state = get();
-
-    // CRDT bridge
-    if (state._crdtEngine) {
-      const crdtId = state._partIdToCrdtId.get(partId);
-      if (!crdtId) return null;
-      const params: Record<string, CrdtValue> = {
-        input: crdtRef(crdtId),
-        axis_origin: crdtVec3(axisOrigin),
-        axis_dir: crdtVec3(axisDir),
-        count: crdtF64(count),
-        angle_deg: crdtF64(angleDeg),
-      };
-      const result = state._crdtEngine.create_feature("circular-pattern", JSON.stringify(params));
-      const patch = applyCrdtResult(result, state, result.createdFeatureId);
-      set(patch);
-      return (patch as { _lastCreatedPartId?: string })._lastCreatedPartId ?? null;
-    }
-
-    const sourcePart = state.partIndex.get(partId);
-    if (!sourcePart) return null;
-
-    let nid = state.nextNodeId;
-    const partNum = state.nextPartNum;
-
-    const patternId = nid++;
-    const scaleId = nid++;
-    const rotateId = nid++;
-    const translateId = nid++;
-
-    const patternOp: CsgOp = {
-      type: "CircularPattern",
-      child: sourcePart.translateNodeId,
-      axis_origin: axisOrigin,
-      axis_dir: axisDir,
-      count,
-      angle_deg: angleDeg,
+    const engine = state._crdtEngine!;
+    const crdtId = state._partIdToCrdtId.get(partId);
+    if (!crdtId) return null;
+    const params: Record<string, CrdtValue> = {
+      input: crdtRef(crdtId),
+      axis_origin: crdtVec3(axisOrigin),
+      axis_dir: crdtVec3(axisDir),
+      count: crdtF64(count),
+      angle_deg: crdtF64(angleDeg),
     };
-
-    const scaleOp: CsgOp = {
-      type: "Scale",
-      child: patternId,
-      factor: { x: 1, y: 1, z: 1 },
-    };
-    const rotateOp: CsgOp = {
-      type: "Rotate",
-      child: scaleId,
-      angles: { x: 0, y: 0, z: 0 },
-    };
-    const translateOp: CsgOp = {
-      type: "Translate",
-      child: rotateId,
-      offset: { x: 0, y: 0, z: 0 },
-    };
-
-    const newPartId = `part-${partNum}`;
-    const name = `Circular Pattern ${partNum}`;
-
-    const undoState = pushUndo(state, "Circular Pattern");
-    const newDoc = structuredClone(state.document);
-
-    newDoc.nodes[String(patternId)] = makeNode(patternId, null, patternOp);
-    newDoc.nodes[String(scaleId)] = makeNode(scaleId, null, scaleOp);
-    newDoc.nodes[String(rotateId)] = makeNode(rotateId, null, rotateOp);
-    newDoc.nodes[String(translateId)] = makeNode(translateId, name, translateOp);
-
-    newDoc.roots = newDoc.roots.filter((r) => r.root !== sourcePart.translateNodeId);
-    newDoc.roots.push({ root: translateId, material: "default" });
-
-    const partInfo: CircularPatternPartInfo = {
-      id: newPartId,
-      name,
-      kind: "circular-pattern",
-      sourcePartId: partId,
-      patternNodeId: patternId,
-      scaleNodeId: scaleId,
-      rotateNodeId: rotateId,
-      translateNodeId: translateId,
-    };
-
-    const newConsumedParts = { ...state.consumedParts };
-    newConsumedParts[partId] = sourcePart;
-
-    const newParts = state.parts.filter((p) => p.id !== partId);
-    newParts.push(partInfo);
-
-    set({
-      document: newDoc,
-      parts: newParts,
-      partIndex: buildPartIndex(newParts),
-      consumedParts: newConsumedParts,
-      nextNodeId: nid,
-      nextPartNum: partNum + 1,
-      isDirty: true,
-      ...undoState,
-    });
-
-    return newPartId;
+    const result = engine.create_feature("circular-pattern", JSON.stringify(params));
+    const patch = applyCrdtResult(result, state, result.createdFeatureId);
+    set(patch);
+    return getCreatedPartId(patch) ?? null;
   },
 
   addMirror: (partId, plane) => {
     const state = get();
-
-    // CRDT bridge
-    if (state._crdtEngine) {
-      const crdtId = state._partIdToCrdtId.get(partId);
-      if (!crdtId) return null;
-      const params: Record<string, CrdtValue> = {
-        input: crdtRef(crdtId),
-        plane: crdtStr(plane),
-      };
-      const result = state._crdtEngine.create_feature("mirror", JSON.stringify(params));
-      const patch = applyCrdtResult(result, state, result.createdFeatureId);
-      set(patch);
-      return (patch as { _lastCreatedPartId?: string })._lastCreatedPartId ?? null;
-    }
-
-    const sourcePart = state.partIndex.get(partId);
-    if (!sourcePart) return null;
-
-    let nid = state.nextNodeId;
-    const partNum = state.nextPartNum;
-
-    // Mirror is implemented as a Scale with negative factor on one axis
-    const mirrorId = nid++;
-    const scaleId = nid++;
-    const rotateId = nid++;
-    const translateId = nid++;
-
-    // Determine scale factor based on mirror plane
-    const mirrorFactor = {
-      XY: { x: 1, y: 1, z: -1 },
-      XZ: { x: 1, y: -1, z: 1 },
-      YZ: { x: -1, y: 1, z: 1 },
-    }[plane];
-
-    const mirrorOp: CsgOp = {
-      type: "Scale",
-      child: sourcePart.translateNodeId,
-      factor: mirrorFactor,
+    const engine = state._crdtEngine!;
+    const crdtId = state._partIdToCrdtId.get(partId);
+    if (!crdtId) return null;
+    const params: Record<string, CrdtValue> = {
+      input: crdtRef(crdtId),
+      plane: crdtStr(plane),
     };
-
-    const scaleOp: CsgOp = {
-      type: "Scale",
-      child: mirrorId,
-      factor: { x: 1, y: 1, z: 1 },
-    };
-    const rotateOp: CsgOp = {
-      type: "Rotate",
-      child: scaleId,
-      angles: { x: 0, y: 0, z: 0 },
-    };
-    const translateOp: CsgOp = {
-      type: "Translate",
-      child: rotateId,
-      offset: { x: 0, y: 0, z: 0 },
-    };
-
-    const newPartId = `part-${partNum}`;
-    const name = `Mirror ${plane} ${partNum}`;
-
-    const undoState = pushUndo(state, "Mirror");
-    const newDoc = structuredClone(state.document);
-
-    newDoc.nodes[String(mirrorId)] = makeNode(mirrorId, null, mirrorOp);
-    newDoc.nodes[String(scaleId)] = makeNode(scaleId, null, scaleOp);
-    newDoc.nodes[String(rotateId)] = makeNode(rotateId, null, rotateOp);
-    newDoc.nodes[String(translateId)] = makeNode(translateId, name, translateOp);
-
-    // Keep source part in roots, add mirror as additional part
-    newDoc.roots.push({ root: translateId, material: "default" });
-
-    const partInfo: MirrorPartInfo = {
-      id: newPartId,
-      name,
-      kind: "mirror",
-      sourcePartId: partId,
-      mirrorNodeId: mirrorId,
-      scaleNodeId: scaleId,
-      rotateNodeId: rotateId,
-      translateNodeId: translateId,
-    };
-
-    // Mirror keeps source, so don't remove from parts
-    const newParts = [...state.parts, partInfo];
-
-    set({
-      document: newDoc,
-      parts: newParts,
-      partIndex: buildPartIndex(newParts),
-      nextNodeId: nid,
-      nextPartNum: partNum + 1,
-      isDirty: true,
-      ...undoState,
-    });
-
-    return newPartId;
+    const result = engine.create_feature("mirror", JSON.stringify(params));
+    const patch = applyCrdtResult(result, state, result.createdFeatureId);
+    set(patch);
+    return getCreatedPartId(patch) ?? null;
   },
 
   addText: (options) => {
@@ -3137,236 +1365,57 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (!text.trim()) return null;
 
     const state = get();
-
-    // CRDT bridge
-    if (state._crdtEngine) {
-      const params: Record<string, CrdtValue> = {
-        text: crdtStr(text),
-        height: crdtF64(height),
-        depth: crdtF64(depth),
-      };
-      if (alignment) params.alignment = crdtStr(alignment);
-      if (letterSpacing !== undefined) params.letter_spacing = crdtF64(letterSpacing);
-      if (lineSpacing !== undefined) params.line_spacing = crdtF64(lineSpacing);
-      const result = state._crdtEngine.create_feature("text", JSON.stringify(params));
-      const patch = applyCrdtResult(result, state, result.createdFeatureId);
-      set(patch);
-      return (patch as { _lastCreatedPartId?: string })._lastCreatedPartId ?? null;
-    }
-    let nid = state.nextNodeId;
-    const partNum = state.nextPartNum;
-
-    const textId = nid++;
-    const extrudeId = nid++;
-    const scaleId = nid++;
-    const rotateId = nid++;
-    const translateId = nid++;
-
-    // Default to XY plane at origin
-    const origin = { x: 0, y: 0, z: 0 };
-    const x_dir = { x: 1, y: 0, z: 0 };
-    const y_dir = { x: 0, y: 1, z: 0 };
-
-    const textOp: CsgOp = {
-      type: "Text2D",
-      origin,
-      x_dir,
-      y_dir,
-      text,
-      font: "sans-serif",
-      height,
-      letter_spacing: letterSpacing,
-      line_spacing: lineSpacing,
-      alignment: alignment ?? "left",
+    const engine = state._crdtEngine!;
+    const params: Record<string, CrdtValue> = {
+      text: crdtStr(text),
+      height: crdtF64(height),
+      depth: crdtF64(depth),
     };
-
-    const extrudeOp: CsgOp = {
-      type: "Extrude",
-      sketch: textId,
-      direction: { x: 0, y: 0, z: depth },
-    };
-
-    const scaleOp: CsgOp = {
-      type: "Scale",
-      child: extrudeId,
-      factor: { x: 1, y: 1, z: 1 },
-    };
-    const rotateOp: CsgOp = {
-      type: "Rotate",
-      child: scaleId,
-      angles: { x: 0, y: 0, z: 0 },
-    };
-    const translateOp: CsgOp = {
-      type: "Translate",
-      child: rotateId,
-      offset: { x: 0, y: 0, z: 0 },
-    };
-
-    const partId = `part-${partNum}`;
-    // Use first few chars of text as name preview
-    const preview = text.length > 10 ? text.slice(0, 10) + "…" : text;
-    const name = `Text "${preview}"`;
-
-    const undoState = pushUndo(state, "Add Text");
-    const newDoc = structuredClone(state.document);
-
-    newDoc.nodes[String(textId)] = makeNode(textId, null, textOp);
-    newDoc.nodes[String(extrudeId)] = makeNode(extrudeId, null, extrudeOp);
-    newDoc.nodes[String(scaleId)] = makeNode(scaleId, null, scaleOp);
-    newDoc.nodes[String(rotateId)] = makeNode(rotateId, null, rotateOp);
-    newDoc.nodes[String(translateId)] = makeNode(translateId, name, translateOp);
-    newDoc.roots.push({ root: translateId, material: "default" });
-
-    if (!newDoc.materials["default"]) {
-      newDoc.materials["default"] = {
-        name: "Default",
-        color: [0.55, 0.55, 0.55],
-        metallic: 0.0,
-        roughness: 0.7,
-      };
-    }
-
-    const partInfo: TextPartInfo = {
-      id: partId,
-      name,
-      kind: "text",
-      textNodeId: textId,
-      extrudeNodeId: extrudeId,
-      scaleNodeId: scaleId,
-      rotateNodeId: rotateId,
-      translateNodeId: translateId,
-    };
-
-    const newParts = [...state.parts, partInfo];
-    set({
-      document: newDoc,
-      parts: newParts,
-      partIndex: buildPartIndex(newParts),
-      nextNodeId: nid,
-      nextPartNum: partNum + 1,
-      isDirty: true,
-      ...undoState,
-    });
-
-    return partId;
+    if (alignment) params.alignment = crdtStr(alignment);
+    if (letterSpacing !== undefined) params.letter_spacing = crdtF64(letterSpacing);
+    if (lineSpacing !== undefined) params.line_spacing = crdtF64(lineSpacing);
+    const result = engine.create_feature("text", JSON.stringify(params));
+    const patch = applyCrdtResult(result, state, result.createdFeatureId);
+    set(patch);
+    return getCreatedPartId(patch) ?? null;
   },
 
   setPartMaterial: (partId, materialKey) => {
     const state = get();
-    const part = state.partIndex.get(partId);
-    if (!part) return;
-
-    const undoState = pushUndo(state, "Set Material");
-    const newDoc = structuredClone(state.document);
-
-    // Update the root entry's material
-    const rootEntry = newDoc.roots.find((r) => r.root === part.translateNodeId);
-    if (rootEntry) {
-      rootEntry.material = materialKey;
+    const engine = state._crdtEngine!;
+    const crdtId = state._partIdToCrdtId.get(partId);
+    if (crdtId) {
+      const result = engine.set_param(crdtId, "material", JSON.stringify(crdtStr(materialKey)));
+      set(applyCrdtResult(result, state));
     }
-
-    set({ document: newDoc, isDirty: true, ...undoState });
   },
 
   renamePart: (partId, name) => {
     const state = get();
-
-    // CRDT bridge
-    if (state._crdtEngine) {
-      const crdtId = state._partIdToCrdtId.get(partId);
-      if (crdtId) {
-        const result = state._crdtEngine.set_param(
-          crdtId,
-          "name",
-          JSON.stringify(crdtStr(name)),
-        );
-        set(applyCrdtResult(result, state));
-      }
-      return;
+    const engine = state._crdtEngine!;
+    const crdtId = state._partIdToCrdtId.get(partId);
+    if (crdtId) {
+      const result = engine.set_param(crdtId, "name", JSON.stringify(crdtStr(name)));
+      set(applyCrdtResult(result, state));
     }
-
-    const part = state.partIndex.get(partId);
-    if (!part) return;
-
-    const undoState = pushUndo(state, "Rename");
-    const newParts = state.parts.map((p) =>
-      p.id === partId ? { ...p, name } : p,
-    );
-    const newDoc = structuredClone(state.document);
-    const node = newDoc.nodes[String(part.translateNodeId)];
-    if (node) node.name = name;
-
-    set({
-      parts: newParts,
-      partIndex: buildPartIndex(newParts),
-      document: newDoc,
-      isDirty: true,
-      ...undoState,
-    });
   },
 
   undo: () => {
     const state = get();
-
-    // CRDT bridge
-    if (state._crdtEngine) {
-      if (state._crdtEngine.can_undo()) {
-        const result = state._crdtEngine.undo();
-        set(applyCrdtResult(result, state));
-      }
-      return;
+    const engine = state._crdtEngine!;
+    if (engine.can_undo()) {
+      const result = engine.undo();
+      set(applyCrdtResult(result, state));
     }
-
-    if (state.undoStack.length === 0) return;
-
-    const prevSnap = state.undoStack[state.undoStack.length - 1]!;
-    // Create snapshot with the action name we're undoing (for redo stack)
-    const currentSnap = snapshot(state, prevSnap.actionName);
-
-    set({
-      document: JSON.parse(prevSnap.document) as Document,
-      parts: prevSnap.parts,
-      partIndex: buildPartIndex(prevSnap.parts),
-      consumedParts: prevSnap.consumedParts,
-      nextNodeId: prevSnap.nextNodeId,
-      nextPartNum: prevSnap.nextPartNum,
-      loonSource: prevSnap.loonSource,
-      isDirty: true,
-      undoStack: state.undoStack.slice(0, -1),
-      redoStack: [...state.redoStack, currentSnap],
-    });
   },
 
   redo: () => {
     const state = get();
-
-    // CRDT bridge
-    if (state._crdtEngine) {
-      if (state._crdtEngine.can_redo()) {
-        const result = state._crdtEngine.redo();
-        set(applyCrdtResult(result, state));
-      }
-      return;
+    const engine = state._crdtEngine!;
+    if (engine.can_redo()) {
+      const result = engine.redo();
+      set(applyCrdtResult(result, state));
     }
-
-    if (state.redoStack.length === 0) return;
-
-    const nextSnap = state.redoStack[state.redoStack.length - 1]!;
-    // Create snapshot with the action name we're redoing (for undo stack)
-    const currentSnap = snapshot(state, nextSnap.actionName);
-
-    set({
-      document: JSON.parse(nextSnap.document) as Document,
-      parts: nextSnap.parts,
-      partIndex: buildPartIndex(nextSnap.parts),
-      consumedParts: nextSnap.consumedParts,
-      nextNodeId: nextSnap.nextNodeId,
-      nextPartNum: nextSnap.nextPartNum,
-      loonSource: nextSnap.loonSource,
-      isDirty: true,
-      undoStack: [...state.undoStack, currentSnap],
-      redoStack: state.redoStack.slice(0, -1),
-    });
   },
 
   markSaved: () => {
@@ -3374,249 +1423,124 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   // Assembly operations
-  setInstanceTransform: (instanceId, transform, skipUndo) => {
+  setInstanceTransform: (instanceId, transform) => {
     const state = get();
-    if (!state.document.instances) return;
-
-    const idx = state.document.instances.findIndex((i) => i.id === instanceId);
-    if (idx === -1) return;
-
-    const undoState = skipUndo ? {} : pushUndo(state, "Transform Instance");
-    const newDoc = structuredClone(state.document);
-    const instance = newDoc.instances![idx]!;
-    newDoc.instances![idx] = { ...instance, transform };
-
-    set({ document: newDoc, isDirty: true, ...undoState });
+    const engine = state._crdtEngine!;
+    const result = engine.set_param(instanceId, "transform", JSON.stringify(crdtStr(JSON.stringify(transform))));
+    set(applyCrdtResult(result, state));
   },
 
   setInstanceMaterial: (instanceId, materialKey) => {
     const state = get();
-    if (!state.document.instances) return;
-
-    const idx = state.document.instances.findIndex((i) => i.id === instanceId);
-    if (idx === -1) return;
-
-    const undoState = pushUndo(state, "Set Instance Material");
-    const newDoc = structuredClone(state.document);
-    const instance = newDoc.instances![idx]!;
-    newDoc.instances![idx] = { ...instance, material: materialKey };
-
-    set({ document: newDoc, isDirty: true, ...undoState });
+    const engine = state._crdtEngine!;
+    const result = engine.set_param(instanceId, "material", JSON.stringify(crdtStr(materialKey)));
+    set(applyCrdtResult(result, state));
   },
 
-  setJointState: (jointId, newState, skipUndo) => {
+  setJointState: (jointId, jointState) => {
     const state = get();
-    if (!state.document.joints) return;
-
-    const idx = state.document.joints.findIndex((j) => j.id === jointId);
-    if (idx === -1) return;
-
-    // Early return if value unchanged (avoids creating new document reference)
-    const currentJoint = state.document.joints[idx]!;
-    if (currentJoint.state === newState) return;
-
-    const undoState = skipUndo ? {} : pushUndo(state, "Adjust Joint");
-    const newDoc = structuredClone(state.document);
-    const joint = newDoc.joints![idx]!;
-    newDoc.joints![idx] = { ...joint, state: newState };
-
-    set({ document: newDoc, isDirty: true, ...undoState });
+    const engine = state._crdtEngine!;
+    const result = engine.set_param(jointId, "state", JSON.stringify(crdtF64(jointState)));
+    set(applyCrdtResult(result, state));
   },
 
   createPartDef: (partId, name) => {
     const state = get();
-    const part = state.partIndex.get(partId);
-    if (!part) return null;
+    const engine = state._crdtEngine!;
+    const crdtId = state._partIdToCrdtId.get(partId);
+    if (!crdtId) return null;
 
-    const undoState = pushUndo(state, "Create Part Definition");
-    const newDoc = structuredClone(state.document);
-
-    // Initialize partDefs if needed
-    if (!newDoc.partDefs) {
-      newDoc.partDefs = {};
-    }
-
-    // Generate unique ID
-    const existingCount = Object.keys(newDoc.partDefs).length;
-    const partDefId = `partdef-${existingCount + 1}`;
-    const defName = name ?? `${part.name} Def`;
-
-    // Create part definition pointing to this part's root node
-    const partDef: PartDef = {
-      id: partDefId,
-      name: defName,
-      root: part.translateNodeId,
+    const params: Record<string, CrdtValue> = {
+      source_feature: crdtRef(crdtId),
     };
-
-    newDoc.partDefs[partDefId] = partDef;
-
-    // Initialize instances array if needed
-    if (!newDoc.instances) {
-      newDoc.instances = [];
-    }
-
-    // Create first instance of this part definition
-    const instanceId = `instance-${newDoc.instances.length + 1}`;
-    const instance: Instance = {
-      id: instanceId,
-      partDefId,
-      name: part.name,
-      transform: identityTransform(),
-    };
-    newDoc.instances.push(instance);
-
-    // Remove this part from roots (it's now managed via instances)
-    newDoc.roots = newDoc.roots.filter((r) => r.root !== part.translateNodeId);
-
-    // If this is the first instance, make it the ground
-    if (newDoc.instances.length === 1) {
-      newDoc.groundInstanceId = instanceId;
-    }
-
-    // Remove from parts list since it's now a partDef
-    const newParts = state.parts.filter((p) => p.id !== partId);
-
-    set({
-      document: newDoc,
-      parts: newParts,
-      isDirty: true,
-      ...undoState,
-    });
-
-    return partDefId;
+    if (name) params.name = crdtStr(name);
+    const result = engine.create_feature("part-def", JSON.stringify(params));
+    const patch = applyCrdtResult(result, state, result.createdFeatureId);
+    set(patch);
+    return result.createdFeatureId ?? null;
   },
 
   createInstance: (partDefId, name, transform) => {
     const state = get();
-    const undoState = pushUndo(state, "Insert Instance");
-    const newDoc = structuredClone(state.document);
-
-    if (!newDoc.instances) {
-      newDoc.instances = [];
-    }
-
-    const partDef = newDoc.partDefs?.[partDefId];
-    const instanceNum = newDoc.instances.length + 1;
-    const instanceId = `instance-${instanceNum}`;
-
-    // Default transform: offset slightly from origin
-    const defaultTransform = transform ?? {
-      translation: { x: instanceNum * 30, y: 0, z: 0 },
-      rotation: { x: 0, y: 0, z: 0 },
-      scale: { x: 1, y: 1, z: 1 },
+    const engine = state._crdtEngine!;
+    const params: Record<string, CrdtValue> = {
+      part_def: crdtRef(partDefId),
     };
-
-    const instance: Instance = {
-      id: instanceId,
-      partDefId,
-      name: name ?? partDef?.name ?? `Instance ${instanceNum}`,
-      transform: defaultTransform,
-    };
-
-    newDoc.instances.push(instance);
-
-    set({ document: newDoc, isDirty: true, ...undoState });
-    return instanceId;
+    if (name) params.name = crdtStr(name);
+    if (transform) params.transform = crdtStr(JSON.stringify(transform));
+    const result = engine.create_feature("instance", JSON.stringify(params));
+    const patch = applyCrdtResult(result, state, result.createdFeatureId);
+    set(patch);
+    return result.createdFeatureId ?? "";
   },
 
   addJoint: (config) => {
     const state = get();
-    const undoState = pushUndo(state, "Add Joint");
-    const newDoc = structuredClone(state.document);
-
-    if (!newDoc.joints) {
-      newDoc.joints = [];
-    }
-
-    const jointNum = newDoc.joints.length + 1;
-    const jointId = `joint-${jointNum}`;
-
-    const joint: Joint = {
-      id: jointId,
-      name: config.name,
-      parentInstanceId: config.parentInstanceId,
-      childInstanceId: config.childInstanceId,
-      parentAnchor: config.parentAnchor,
-      childAnchor: config.childAnchor,
-      kind: config.kind,
-      state: 0,
+    const engine = state._crdtEngine!;
+    const params: Record<string, CrdtValue> = {
+      kind: crdtStr(typeof config.kind === "string" ? config.kind : config.kind.type),
+      child_instance: crdtRef(config.childInstanceId),
+      anchor_a: crdtVec3(config.parentAnchor),
+      anchor_b: crdtVec3(config.childAnchor),
     };
-
-    newDoc.joints.push(joint);
-
-    set({ document: newDoc, isDirty: true, ...undoState });
-    return jointId;
+    if (config.parentInstanceId) params.parent_instance = crdtRef(config.parentInstanceId);
+    if (config.name) params.name = crdtStr(config.name);
+    // Extract axis from joint kind if present
+    const jk = config.kind as Record<string, unknown>;
+    if (jk.axis) params.axis = crdtVec3(jk.axis as Vec3);
+    const result = engine.create_feature("joint", JSON.stringify(params));
+    const patch = applyCrdtResult(result, state, result.createdFeatureId);
+    set(patch);
+    return result.createdFeatureId ?? "";
   },
 
   deleteInstance: (instanceId) => {
     const state = get();
-    if (!state.document.instances) return;
-
-    const instance = state.document.instances.find((i) => i.id === instanceId);
-    if (!instance) return;
-
-    const undoState = pushUndo(state, "Delete Instance");
-    const newDoc = structuredClone(state.document);
-
-    // Remove the instance
-    newDoc.instances = newDoc.instances!.filter((i) => i.id !== instanceId);
-
-    // Remove any joints that reference this instance
-    if (newDoc.joints) {
-      newDoc.joints = newDoc.joints.filter(
-        (j) =>
-          j.parentInstanceId !== instanceId && j.childInstanceId !== instanceId,
-      );
+    const engine = state._crdtEngine!;
+    // Also delete any joints referencing this instance
+    const featuresJson = engine.get_ordered_features_json();
+    const features: { id: string; kind: string; params: Record<string, unknown> }[] = JSON.parse(featuresJson);
+    for (const f of features) {
+      if (f.kind === "joint") {
+        const pi = f.params.parent_instance as { FeatureRef: string } | undefined;
+        const ci = f.params.child_instance as { FeatureRef: string } | undefined;
+        if ((pi && pi.FeatureRef === instanceId) || (ci && ci.FeatureRef === instanceId)) {
+          engine.delete_feature(f.id);
+        }
+      }
     }
-
-    // If this was the ground instance, clear it or assign to another
-    if (newDoc.groundInstanceId === instanceId) {
-      newDoc.groundInstanceId =
-        newDoc.instances.length > 0 ? newDoc.instances[0]!.id : undefined;
-    }
-
-    set({ document: newDoc, isDirty: true, ...undoState });
+    const result = engine.delete_feature(instanceId);
+    set(applyCrdtResult(result, state));
   },
 
   deleteJoint: (jointId) => {
     const state = get();
-    if (!state.document.joints) return;
-
-    const undoState = pushUndo(state, "Delete Joint");
-    const newDoc = structuredClone(state.document);
-
-    newDoc.joints = newDoc.joints!.filter((j) => j.id !== jointId);
-
-    set({ document: newDoc, isDirty: true, ...undoState });
+    const engine = state._crdtEngine!;
+    const result = engine.delete_feature(jointId);
+    set(applyCrdtResult(result, state));
   },
 
   setGroundInstance: (instanceId) => {
     const state = get();
-    if (!state.document.instances) return;
-
-    const exists = state.document.instances.some((i) => i.id === instanceId);
-    if (!exists) return;
-
-    const undoState = pushUndo(state, "Set Ground");
-    const newDoc = structuredClone(state.document);
-    newDoc.groundInstanceId = instanceId;
-
-    set({ document: newDoc, isDirty: true, ...undoState });
+    const engine = state._crdtEngine!;
+    // Unset previous ground
+    if (state.document.groundInstanceId) {
+      const featuresJson = engine.get_ordered_features_json();
+      const features: { id: string; kind: string }[] = JSON.parse(featuresJson);
+      const oldGround = features.find((f) => f.kind === "instance" && f.id !== instanceId);
+      if (oldGround) {
+        engine.set_param(oldGround.id, "is_ground", JSON.stringify(crdtBool(false)));
+      }
+    }
+    const result = engine.set_param(instanceId, "is_ground", JSON.stringify(crdtBool(true)));
+    set(applyCrdtResult(result, state));
   },
 
   renameInstance: (instanceId, name) => {
     const state = get();
-    if (!state.document.instances) return;
-
-    const idx = state.document.instances.findIndex((i) => i.id === instanceId);
-    if (idx === -1) return;
-
-    const undoState = pushUndo(state, "Rename Instance");
-    const newDoc = structuredClone(state.document);
-    const instance = newDoc.instances![idx]!;
-    newDoc.instances![idx] = { ...instance, name };
-
-    set({ document: newDoc, isDirty: true, ...undoState });
+    const engine = state._crdtEngine!;
+    const result = engine.set_param(instanceId, "name", JSON.stringify(crdtStr(name)));
+    set(applyCrdtResult(result, state));
   },
 
   setDocumentMeta: (id, name) => {
@@ -3628,30 +1552,50 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   newDocument: (id, name) => {
-    set({
-      document: createDocument(),
-      parts: [],
-      partIndex: new Map(),
-      consumedParts: {},
-      nextNodeId: 1,
-      nextPartNum: 1,
-      isDirty: false,
-      documentId: id,
-      documentName: name,
-      lastSavedAt: null,
-      dirtyNodeIds: new Set<NodeId>(),
-      isParameterDragging: false,
-      loonSource: null,
-      undoStack: [],
-      redoStack: [],
-    });
+    const state = get();
+    // Create a fresh CRDT engine if constructor is available
+    if (state._crdtEngineClass) {
+      _sceneSettingsFeatureId = null;
+      _schematicFeatureId = null;
+      const engine = new state._crdtEngineClass();
+      set({
+        document: createDocument(),
+        parts: [],
+        partIndex: new Map(),
+        consumedParts: {},
+        nextNodeId: 1,
+        nextPartNum: 1,
+        isDirty: false,
+        documentId: id,
+        documentName: name,
+        lastSavedAt: null,
+        isParameterDragging: false,
+        loonSource: null,
+        _crdtEngine: engine,
+        _partIdToCrdtId: new Map(),
+        _crdtIdToPartId: new Map(),
+      });
+    } else {
+      set({
+        document: createDocument(),
+        parts: [],
+        partIndex: new Map(),
+        consumedParts: {},
+        nextNodeId: 1,
+        nextPartNum: 1,
+        isDirty: false,
+        documentId: id,
+        documentName: name,
+        lastSavedAt: null,
+        isParameterDragging: false,
+        loonSource: null,
+      });
+    }
   },
 
   clearDirtyNodes: () => {
-    const state = get();
-    const dirty = state.dirtyNodeIds;
-    set({ dirtyNodeIds: new Set<NodeId>() });
-    return dirty;
+    // No-op — CRDT replaces the document wholesale.
+    return new Set<NodeId>();
   },
 
   setParameterDragging: (dragging) => {
@@ -3660,175 +1604,152 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   setPartVisible: (partId, visible) => {
     const state = get();
-    const part = state.partIndex.get(partId);
-    if (!part) return;
-
-    const undoState = pushUndo(state, visible ? "Show Part" : "Hide Part");
-    const newDoc = structuredClone(state.document);
-
-    // Find and update the root entry
-    const rootIdx = newDoc.roots.findIndex((r) => r.root === part.translateNodeId);
-    if (rootIdx !== -1) {
-      const entry = newDoc.roots[rootIdx]!;
-      newDoc.roots[rootIdx] = { ...entry, visible };
+    const engine = state._crdtEngine!;
+    const crdtId = state._partIdToCrdtId.get(partId);
+    if (crdtId) {
+      const result = engine.set_param(crdtId, "visible", JSON.stringify(crdtBool(visible)));
+      set(applyCrdtResult(result, state));
     }
-
-    set({ document: newDoc, isDirty: true, ...undoState });
   },
 
   reorderPart: (partId, newIndex) => {
     const state = get();
+    const engine = state._crdtEngine!;
     const part = state.partIndex.get(partId);
     if (!part) return;
 
     const oldIndex = state.parts.findIndex((p) => p.id === partId);
     if (oldIndex === -1 || oldIndex === newIndex) return;
 
-    const undoState = pushUndo(state, "Reorder");
+    const crdtId = state._partIdToCrdtId.get(partId);
+    if (!crdtId) return;
 
-    // Reorder parts array
-    const newParts = [...state.parts];
-    const [removed] = newParts.splice(oldIndex, 1);
-    if (removed) {
-      newParts.splice(newIndex, 0, removed);
-    }
+    const featuresJson = engine.get_ordered_features_json();
+    const features: { id: string }[] = JSON.parse(featuresJson);
+    const others = features.filter((f) => f.id !== crdtId);
 
-    // Also reorder document.roots to keep in sync
-    const newDoc = structuredClone(state.document);
-    const rootIndex = newDoc.roots.findIndex((r) => r.root === part.translateNodeId);
-    if (rootIndex !== -1) {
-      const [rootEntry] = newDoc.roots.splice(rootIndex, 1);
-      if (rootEntry) {
-        // Find corresponding new position in roots
-        const targetPart = newParts[newIndex];
-        const targetRootIndex = targetPart
-          ? newDoc.roots.findIndex((r) => r.root === targetPart.translateNodeId)
-          : newDoc.roots.length;
-        newDoc.roots.splice(
-          targetRootIndex !== -1 ? targetRootIndex : newDoc.roots.length,
-          0,
-          rootEntry
-        );
-      }
-    }
+    const beforeId = newIndex > 0 ? others[newIndex - 1]?.id ?? "" : "";
+    const afterId = newIndex < others.length ? others[newIndex]?.id ?? "" : "";
 
-    set({
-      parts: newParts,
-      partIndex: buildPartIndex(newParts),
-      document: newDoc,
-      isDirty: true,
-      ...undoState,
-    });
+    const positionJson = engine.compute_position_between(beforeId, afterId);
+    const result = engine.move_feature(crdtId, positionJson);
+    set(applyCrdtResult(result, state));
   },
 
   // Scene settings actions
   setSceneSettings: (settings) => {
     const state = get();
-    const undoState = pushUndo(state, "Update Scene Settings");
-    const newDoc = structuredClone(state.document);
-    newDoc.scene = settings;
-    set({ document: newDoc, isDirty: true, ...undoState });
+    const engine = state._crdtEngine!;
+    const fid = getOrCreateSceneFeature(state);
+    if (settings.environment) engine.set_param(fid, "environment", JSON.stringify(crdtStr(JSON.stringify(settings.environment))));
+    if (settings.lights) engine.set_param(fid, "lights", JSON.stringify(crdtStr(JSON.stringify(settings.lights))));
+    if (settings.background) engine.set_param(fid, "background", JSON.stringify(crdtStr(JSON.stringify(settings.background))));
+    if (settings.postProcessing) engine.set_param(fid, "post_processing", JSON.stringify(crdtStr(JSON.stringify(settings.postProcessing))));
+    if (settings.cameraPresets) engine.set_param(fid, "camera_presets", JSON.stringify(crdtStr(JSON.stringify(settings.cameraPresets))));
+    const doc: Document = JSON.parse(engine.get_document_json());
+    set({ document: doc, isDirty: true });
   },
 
   updateEnvironment: (environment) => {
     const state = get();
-    const undoState = pushUndo(state, "Update Environment");
-    const newDoc = structuredClone(state.document);
-    newDoc.scene = { ...newDoc.scene, environment };
-    set({ document: newDoc, isDirty: true, ...undoState });
+    const engine = state._crdtEngine!;
+    const fid = getOrCreateSceneFeature(state);
+    engine.set_param(fid, "environment", JSON.stringify(crdtStr(JSON.stringify(environment))));
+    const doc: Document = JSON.parse(engine.get_document_json());
+    set({ document: doc, isDirty: true });
   },
 
   updateLights: (lights) => {
     const state = get();
-    const undoState = pushUndo(state, "Update Lights");
-    const newDoc = structuredClone(state.document);
-    newDoc.scene = { ...newDoc.scene, lights };
-    set({ document: newDoc, isDirty: true, ...undoState });
+    const engine = state._crdtEngine!;
+    const fid = getOrCreateSceneFeature(state);
+    engine.set_param(fid, "lights", JSON.stringify(crdtStr(JSON.stringify(lights))));
+    const doc: Document = JSON.parse(engine.get_document_json());
+    set({ document: doc, isDirty: true });
   },
 
   addLight: (light) => {
     const state = get();
-    const undoState = pushUndo(state, "Add Light");
-    const newDoc = structuredClone(state.document);
-    const currentLights = newDoc.scene?.lights ?? [];
-    newDoc.scene = { ...newDoc.scene, lights: [...currentLights, light] };
-    set({ document: newDoc, isDirty: true, ...undoState });
+    const engine = state._crdtEngine!;
+    const lights = [...(state.document.scene?.lights ?? []), light];
+    const fid = getOrCreateSceneFeature(state);
+    engine.set_param(fid, "lights", JSON.stringify(crdtStr(JSON.stringify(lights))));
+    const doc: Document = JSON.parse(engine.get_document_json());
+    set({ document: doc, isDirty: true });
   },
 
   removeLight: (lightId) => {
     const state = get();
-    const undoState = pushUndo(state, "Remove Light");
-    const newDoc = structuredClone(state.document);
-    const currentLights = newDoc.scene?.lights ?? [];
-    newDoc.scene = { ...newDoc.scene, lights: currentLights.filter((l) => l.id !== lightId) };
-    set({ document: newDoc, isDirty: true, ...undoState });
+    const engine = state._crdtEngine!;
+    const lights = (state.document.scene?.lights ?? []).filter((l) => l.id !== lightId);
+    const fid = getOrCreateSceneFeature(state);
+    engine.set_param(fid, "lights", JSON.stringify(crdtStr(JSON.stringify(lights))));
+    const doc: Document = JSON.parse(engine.get_document_json());
+    set({ document: doc, isDirty: true });
   },
 
   updateLight: (lightId, updates) => {
     const state = get();
-    const undoState = pushUndo(state, "Update Light");
-    const newDoc = structuredClone(state.document);
-    const currentLights = newDoc.scene?.lights ?? [];
-    newDoc.scene = {
-      ...newDoc.scene,
-      lights: currentLights.map((l) => (l.id === lightId ? { ...l, ...updates } : l)),
-    };
-    set({ document: newDoc, isDirty: true, ...undoState });
+    const engine = state._crdtEngine!;
+    const lights = (state.document.scene?.lights ?? []).map((l) =>
+      l.id === lightId ? { ...l, ...updates } : l,
+    );
+    const fid = getOrCreateSceneFeature(state);
+    engine.set_param(fid, "lights", JSON.stringify(crdtStr(JSON.stringify(lights))));
+    const doc: Document = JSON.parse(engine.get_document_json());
+    set({ document: doc, isDirty: true });
   },
 
   updateBackground: (background) => {
     const state = get();
-    const undoState = pushUndo(state, "Update Background");
-    const newDoc = structuredClone(state.document);
-    newDoc.scene = { ...newDoc.scene, background };
-    set({ document: newDoc, isDirty: true, ...undoState });
+    const engine = state._crdtEngine!;
+    const fid = getOrCreateSceneFeature(state);
+    engine.set_param(fid, "background", JSON.stringify(crdtStr(JSON.stringify(background))));
+    const doc: Document = JSON.parse(engine.get_document_json());
+    set({ document: doc, isDirty: true });
   },
 
   updatePostProcessing: (postProcessing) => {
     const state = get();
-    const undoState = pushUndo(state, "Update Post-Processing");
-    const newDoc = structuredClone(state.document);
-    newDoc.scene = { ...newDoc.scene, postProcessing };
-    set({ document: newDoc, isDirty: true, ...undoState });
+    const engine = state._crdtEngine!;
+    const fid = getOrCreateSceneFeature(state);
+    engine.set_param(fid, "post_processing", JSON.stringify(crdtStr(JSON.stringify(postProcessing))));
+    const doc: Document = JSON.parse(engine.get_document_json());
+    set({ document: doc, isDirty: true });
   },
 
   addCameraPreset: (preset) => {
     const state = get();
-    const undoState = pushUndo(state, "Add Camera Preset");
-    const newDoc = structuredClone(state.document);
-    const currentPresets = newDoc.scene?.cameraPresets ?? [];
-    newDoc.scene = { ...newDoc.scene, cameraPresets: [...currentPresets, preset] };
-    set({ document: newDoc, isDirty: true, ...undoState });
+    const engine = state._crdtEngine!;
+    const presets = [...(state.document.scene?.cameraPresets ?? []), preset];
+    const fid = getOrCreateSceneFeature(state);
+    engine.set_param(fid, "camera_presets", JSON.stringify(crdtStr(JSON.stringify(presets))));
+    const doc: Document = JSON.parse(engine.get_document_json());
+    set({ document: doc, isDirty: true });
   },
 
   removeCameraPreset: (presetId) => {
     const state = get();
-    const undoState = pushUndo(state, "Remove Camera Preset");
-    const newDoc = structuredClone(state.document);
-    const currentPresets = newDoc.scene?.cameraPresets ?? [];
-    newDoc.scene = { ...newDoc.scene, cameraPresets: currentPresets.filter((p) => p.id !== presetId) };
-    set({ document: newDoc, isDirty: true, ...undoState });
+    const engine = state._crdtEngine!;
+    const presets = (state.document.scene?.cameraPresets ?? []).filter((p) => p.id !== presetId);
+    const fid = getOrCreateSceneFeature(state);
+    engine.set_param(fid, "camera_presets", JSON.stringify(crdtStr(JSON.stringify(presets))));
+    const doc: Document = JSON.parse(engine.get_document_json());
+    set({ document: doc, isDirty: true });
   },
 
   // =========================================================================
-  // Electronics (ECAD) mutations — Principle 1: single undo stack
+  // Electronics (ECAD) mutations
   // =========================================================================
 
   initSchematic: (title) => {
     const state = get();
-    const undoState = pushUndo(state, "Create Schematic");
-    const newDoc = structuredClone(state.document);
-    newDoc.schematic = {
-      title: title ?? "Sheet 1",
-      components: [],
-      wires: [],
-      junctions: [],
-      labels: [],
-    };
-    set({ document: newDoc, isDirty: true, ...undoState });
+    const schId = getOrCreateSchematicFeature(state);
+    const sheet = { title: title ?? "Sheet 1", components: [], wires: [], junctions: [], labels: [] };
+    const result = state._crdtEngine!.set_param(schId, "sheet", JSON.stringify(crdtStr(JSON.stringify(sheet))));
+    set(applyCrdtResult(result, state));
   },
 
-  // Principle 6: Smart defaults
   initPcb: (options) => {
     const w = options?.width ?? 50;
     const h = options?.height ?? 30;
@@ -3838,7 +1759,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const clearance = options?.clearance ?? 0.15;
     const boardName = options?.name ?? "PCB Board";
 
-    // Build stackup dynamically based on layer count
     const stackupLayers: Pcb["stackup"]["layers"] = [];
     stackupLayers.push({ layer: "FCu" as const, copperThickness: 0.035 });
     if (layerCount >= 4) {
@@ -3903,16 +1823,16 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   syncSchematicToPcb: (boardNodeId) => {
     const state = get();
-    const undoState = pushUndo(state, "Sync Schematic to PCB");
-    const newDoc = structuredClone(state.document);
-    const pcb = getNodePcb(newDoc, boardNodeId);
-    if (!pcb || !newDoc.schematic) return;
+    const engine = state._crdtEngine!;
+
+    const pcb = state.document.pcb ? structuredClone(state.document.pcb) : null;
+    const schematic = state.document.schematic;
+    if (!pcb || !schematic) return;
 
     const existingRefs = new Set(pcb.footprints.map((fp) => fp.ref));
     let added = 0;
-    for (const comp of newDoc.schematic.components) {
+    for (const comp of schematic.components) {
       if (existingRefs.has(comp.ref)) continue;
-      // Create footprint from template if available
       let pads: Footprint["pads"] = [];
       let graphics: Footprint["graphics"] = [];
       if (comp.properties?.footprintTemplate) {
@@ -3920,313 +1840,251 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           const template = JSON.parse(comp.properties.footprintTemplate);
           pads = template.pads ?? [];
           graphics = template.graphics ?? [];
-        } catch { /* skip template parse failure */ }
+        } catch { /* skip */ }
       }
       const fpCount = pcb.footprints.length;
       const staggerX = 10 + ((fpCount + added) % 5) * 10;
       const staggerY = 10 + Math.floor((fpCount + added) / 5) * 10;
       pcb.footprints.push({
-        ref: comp.ref,
-        value: comp.value,
+        ref: comp.ref, value: comp.value,
         footprintName: comp.footprintId ?? comp.ref,
-        position: { x: staggerX, y: staggerY },
-        pads,
-        graphics,
+        position: { x: staggerX, y: staggerY }, pads, graphics,
       });
       added++;
     }
-
     if (added === 0) return;
-    const dirtyNodeIds = new Set(state.dirtyNodeIds);
-    dirtyNodeIds.add(boardNodeId);
-    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
+    const patch = setCrdtPcb(state, pcb);
+    set({ ...patch, isDirty: true });
   },
 
   moveSchematicComponent: (idx, position) => {
     const state = get();
-    const undoState = pushUndo(state, "Move Component");
-    const newDoc = structuredClone(state.document);
-    if (newDoc.schematic && newDoc.schematic.components[idx]) {
-      newDoc.schematic.components[idx]!.position = { x: position.x, y: position.y };
+    if (!state.document.schematic) return;
+    const sch = structuredClone(state.document.schematic);
+    if (sch.components[idx]) {
+      sch.components[idx]!.position = { x: position.x, y: position.y };
     }
-    set({ document: newDoc, isDirty: true, ...undoState });
+    setCrdtSchematic(state, sch);
+    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
+    set({ document: doc, isDirty: true });
   },
 
   moveSchematicComponentWithWires: (idx, position, wireUpdates) => {
     const state = get();
-    const undoState = pushUndo(state, "Move Component");
-    const newDoc = structuredClone(state.document);
-    if (newDoc.schematic) {
-      if (newDoc.schematic.components[idx]) {
-        newDoc.schematic.components[idx]!.position = { x: position.x, y: position.y };
-      }
-      for (const wu of wireUpdates) {
-        const wire = newDoc.schematic.wires[wu.wireIdx];
-        if (wire) {
-          wire[wu.endpoint] = { x: wu.pos.x, y: wu.pos.y };
-        }
+    if (!state.document.schematic) return;
+    const sch = structuredClone(state.document.schematic);
+    if (sch.components[idx]) {
+      sch.components[idx]!.position = { x: position.x, y: position.y };
+    }
+    for (const wu of wireUpdates) {
+      const wire = sch.wires[wu.wireIdx];
+      if (wire) {
+        wire[wu.endpoint] = { x: wu.pos.x, y: wu.pos.y };
       }
     }
-    set({ document: newDoc, isDirty: true, ...undoState });
+    setCrdtSchematic(state, sch);
+    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
+    set({ document: doc, isDirty: true });
   },
 
-  moveFootprint: (nodeId, idx, position) => {
+  moveFootprint: (_nodeId, idx, position) => {
     const state = get();
-    const undoState = pushUndo(state, "Move Footprint");
-    const newDoc = structuredClone(state.document);
-    const pcb = getNodePcb(newDoc, nodeId);
-    if (pcb && pcb.footprints[idx]) {
-      pcb.footprints[idx]!.position = { x: position.x, y: position.y };
-    }
-    const dirtyNodeIds = new Set(state.dirtyNodeIds);
-    dirtyNodeIds.add(nodeId);
-    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
+    if (!state.document.pcb) return;
+    const pcb = structuredClone(state.document.pcb);
+    if (pcb.footprints[idx]) pcb.footprints[idx]!.position = { x: position.x, y: position.y };
+    set({ ...setCrdtPcb(state, pcb), isDirty: true });
   },
 
-  rotateFootprint: (nodeId, idx, angleDeg) => {
+  rotateFootprint: (_nodeId, idx, angleDeg) => {
     const state = get();
-    const undoState = pushUndo(state, "Rotate Footprint");
-    const newDoc = structuredClone(state.document);
-    const pcb = getNodePcb(newDoc, nodeId);
-    if (pcb && pcb.footprints[idx]) {
+    if (!state.document.pcb) return;
+    const pcb = structuredClone(state.document.pcb);
+    if (pcb.footprints[idx]) {
       const fp = pcb.footprints[idx]!;
       fp.rotation = ((fp.rotation ?? 0) + angleDeg) % 360;
     }
-    const dirtyNodeIds = new Set(state.dirtyNodeIds);
-    dirtyNodeIds.add(nodeId);
-    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
+    set({ ...setCrdtPcb(state, pcb), isDirty: true });
   },
 
-  flipFootprint: (nodeId, idx) => {
+  flipFootprint: (_nodeId, idx) => {
     const state = get();
-    const undoState = pushUndo(state, "Flip Footprint");
-    const newDoc = structuredClone(state.document);
-    const pcb = getNodePcb(newDoc, nodeId);
-    if (pcb && pcb.footprints[idx]) {
+    if (!state.document.pcb) return;
+    const pcb = structuredClone(state.document.pcb);
+    if (pcb.footprints[idx]) {
       const fp = pcb.footprints[idx]!;
       fp.front = !(fp.front ?? true);
     }
-    const dirtyNodeIds = new Set(state.dirtyNodeIds);
-    dirtyNodeIds.add(nodeId);
-    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
+    set({ ...setCrdtPcb(state, pcb), isDirty: true });
   },
 
-  addTrace: (nodeId, trace) => {
+  addTrace: (_nodeId, trace) => {
     const state = get();
-    const undoState = pushUndo(state, "Add Trace");
-    const newDoc = structuredClone(state.document);
-    const pcb = getNodePcb(newDoc, nodeId);
-    if (pcb) {
-      pcb.traces.push({
-        start: { x: trace.start.x, y: trace.start.y },
-        end: { x: trace.end.x, y: trace.end.y },
-        width: trace.width,
-        layer: trace.layer as any,
-        net: trace.net,
-      });
-    }
-    const dirtyNodeIds = new Set(state.dirtyNodeIds);
-    dirtyNodeIds.add(nodeId);
-    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
+    if (!state.document.pcb) return;
+    const pcb = structuredClone(state.document.pcb);
+    pcb.traces.push({
+      start: { x: trace.start.x, y: trace.start.y },
+      end: { x: trace.end.x, y: trace.end.y },
+      width: trace.width, layer: trace.layer as Pcb["traces"][number]["layer"], net: trace.net,
+    });
+    set({ ...setCrdtPcb(state, pcb), isDirty: true });
   },
 
-  removeTrace: (nodeId, idx) => {
+  removeTrace: (_nodeId, idx) => {
     const state = get();
-    const undoState = pushUndo(state, "Remove Trace");
-    const newDoc = structuredClone(state.document);
-    const pcb = getNodePcb(newDoc, nodeId);
-    if (pcb) {
-      pcb.traces.splice(idx, 1);
-    }
-    const dirtyNodeIds = new Set(state.dirtyNodeIds);
-    dirtyNodeIds.add(nodeId);
-    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
+    if (!state.document.pcb) return;
+    const pcb = structuredClone(state.document.pcb);
+    pcb.traces.splice(idx, 1);
+    set({ ...setCrdtPcb(state, pcb), isDirty: true });
   },
 
-  addVia: (nodeId, via) => {
+  addVia: (_nodeId, via) => {
     const state = get();
-    const undoState = pushUndo(state, "Add Via");
-    const newDoc = structuredClone(state.document);
-    const pcb = getNodePcb(newDoc, nodeId);
-    if (pcb) {
-      pcb.vias.push({
-        position: { x: via.position.x, y: via.position.y },
-        diameter: via.diameter,
-        drill: via.drill,
-        startLayer: via.startLayer as any,
-        endLayer: via.endLayer as any,
-        net: via.net,
-      });
-    }
-    const dirtyNodeIds = new Set(state.dirtyNodeIds);
-    dirtyNodeIds.add(nodeId);
-    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
+    if (!state.document.pcb) return;
+    const pcb = structuredClone(state.document.pcb);
+    pcb.vias.push({
+      position: { x: via.position.x, y: via.position.y },
+      diameter: via.diameter, drill: via.drill,
+      startLayer: via.startLayer as Pcb["vias"][number]["startLayer"],
+      endLayer: via.endLayer as Pcb["vias"][number]["endLayer"],
+      net: via.net,
+    });
+    set({ ...setCrdtPcb(state, pcb), isDirty: true });
   },
 
-  removeVia: (nodeId, idx) => {
+  removeVia: (_nodeId, idx) => {
     const state = get();
-    const undoState = pushUndo(state, "Remove Via");
-    const newDoc = structuredClone(state.document);
-    const pcb = getNodePcb(newDoc, nodeId);
-    if (pcb) {
-      pcb.vias.splice(idx, 1);
-    }
-    const dirtyNodeIds = new Set(state.dirtyNodeIds);
-    dirtyNodeIds.add(nodeId);
-    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
+    if (!state.document.pcb) return;
+    const pcb = structuredClone(state.document.pcb);
+    pcb.vias.splice(idx, 1);
+    set({ ...setCrdtPcb(state, pcb), isDirty: true });
   },
 
-  addSchematicComponent: (comp, boardNodeId) => {
+  addSchematicComponent: (comp, _boardNodeId) => {
     const state = get();
-    const undoState = pushUndo(state, "Add Component");
-    const newDoc = structuredClone(state.document);
-    if (newDoc.schematic) {
-      newDoc.schematic.components.push(structuredClone(comp));
-    }
-    // Auto-add matching footprint to PCB if a board exists and comp has footprint info
-    const pcbNodeId = boardNodeId ?? getPcbNodeIds(newDoc)[0];
-    const pcb = pcbNodeId != null ? getNodePcb(newDoc, pcbNodeId) : null;
-    if (pcb && comp.footprintId && comp.properties?.footprintTemplate) {
+    if (!state.document.schematic) return;
+    const sch = structuredClone(state.document.schematic);
+    sch.components.push(structuredClone(comp));
+    setCrdtSchematic(state, sch);
+    // Auto-add footprint to PCB
+    if (state.document.pcb && comp.footprintId && comp.properties?.footprintTemplate) {
+      const pcb = structuredClone(state.document.pcb);
       try {
         const template = JSON.parse(comp.properties.footprintTemplate);
         const fpCount = pcb.footprints.length;
-        const staggerX = 10 + (fpCount % 5) * 10;
-        const staggerY = 10 + Math.floor(fpCount / 5) * 10;
         pcb.footprints.push({
-          ref: comp.ref,
-          value: comp.value,
-          footprintName: comp.footprintId,
-          position: { x: staggerX, y: staggerY },
-          pads: template.pads ?? [],
-          graphics: template.graphics ?? [],
+          ref: comp.ref, value: comp.value, footprintName: comp.footprintId,
+          position: { x: 10 + (fpCount % 5) * 10, y: 10 + Math.floor(fpCount / 5) * 10 },
+          pads: template.pads ?? [], graphics: template.graphics ?? [],
         });
-      } catch {
-        // No auto-footprint if template parse fails
-      }
-    }
-    const dirtyNodeIds = new Set(state.dirtyNodeIds);
-    if (pcbNodeId != null) dirtyNodeIds.add(pcbNodeId);
-    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
-  },
-
-  removeSchematicComponent: (idx, boardNodeId) => {
-    const state = get();
-    const undoState = pushUndo(state, "Remove Component");
-    const newDoc = structuredClone(state.document);
-    if (newDoc.schematic) {
-      const removed = newDoc.schematic.components.splice(idx, 1);
-      // Also remove matching footprint from PCB board node
-      const pcbNodeId = boardNodeId ?? getPcbNodeIds(newDoc)[0];
-      const pcb = pcbNodeId != null ? getNodePcb(newDoc, pcbNodeId) : null;
-      if (pcb && removed[0]) {
-        const ref = removed[0].ref;
-        pcb.footprints = pcb.footprints.filter((fp) => fp.ref !== ref);
-      }
-      const dirtyNodeIds = new Set(state.dirtyNodeIds);
-      if (pcbNodeId != null) dirtyNodeIds.add(pcbNodeId);
-      set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
+      } catch { /* skip */ }
+      set({ ...setCrdtPcb(state, pcb), isDirty: true });
       return;
     }
-    set({ document: newDoc, isDirty: true, ...undoState });
+    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
+    set({ document: doc, isDirty: true });
   },
 
-  updateSchematicComponent: (idx, updates, boardNodeId) => {
+  removeSchematicComponent: (idx, _boardNodeId) => {
     const state = get();
-    const undoState = pushUndo(state, "Update Component");
-    const newDoc = structuredClone(state.document);
-    if (newDoc.schematic && newDoc.schematic.components[idx]) {
-      Object.assign(newDoc.schematic.components[idx]!, updates);
-      // Sync value to PCB footprint on board node
-      if (updates.value !== undefined) {
-        const pcbNodeId = boardNodeId ?? getPcbNodeIds(newDoc)[0];
-        const pcb = pcbNodeId != null ? getNodePcb(newDoc, pcbNodeId) : null;
-        if (pcb) {
-          const ref = newDoc.schematic.components[idx]!.ref;
-          const fp = pcb.footprints.find((f) => f.ref === ref);
-          if (fp) fp.value = updates.value;
-        }
-        const dirtyNodeIds = new Set(state.dirtyNodeIds);
-        if (pcbNodeId != null) dirtyNodeIds.add(pcbNodeId);
-        set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
-        return;
-      }
+    if (!state.document.schematic) return;
+    const sch = structuredClone(state.document.schematic);
+    const removed = sch.components.splice(idx, 1);
+    setCrdtSchematic(state, sch);
+    if (state.document.pcb && removed[0]) {
+      const pcb = structuredClone(state.document.pcb);
+      pcb.footprints = pcb.footprints.filter((fp) => fp.ref !== removed[0]!.ref);
+      set({ ...setCrdtPcb(state, pcb), isDirty: true });
+      return;
     }
-    set({ document: newDoc, isDirty: true, ...undoState });
+    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
+    set({ document: doc, isDirty: true });
+  },
+
+  updateSchematicComponent: (idx, updates, _boardNodeId) => {
+    const state = get();
+    if (!state.document.schematic) return;
+    const sch = structuredClone(state.document.schematic);
+    if (sch.components[idx]) {
+      Object.assign(sch.components[idx]!, updates);
+    }
+    setCrdtSchematic(state, sch);
+    if (updates.value !== undefined && state.document.pcb) {
+      const pcb = structuredClone(state.document.pcb);
+      const ref = sch.components[idx]?.ref;
+      if (ref) {
+        const fp = pcb.footprints.find((f) => f.ref === ref);
+        if (fp) fp.value = updates.value;
+      }
+      set({ ...setCrdtPcb(state, pcb), isDirty: true });
+      return;
+    }
+    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
+    set({ document: doc, isDirty: true });
   },
 
   addSchematicWire: (wire) => {
     const state = get();
-    const undoState = pushUndo(state, "Add Wire");
-    const newDoc = structuredClone(state.document);
-    if (newDoc.schematic) {
-      newDoc.schematic.wires.push({ start: { ...wire.start }, end: { ...wire.end } });
-    }
-    set({ document: newDoc, isDirty: true, ...undoState });
+    if (!state.document.schematic) return;
+    const sch = structuredClone(state.document.schematic);
+    sch.wires.push({ start: { ...wire.start }, end: { ...wire.end } });
+    setCrdtSchematic(state, sch);
+    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
+    set({ document: doc, isDirty: true });
   },
 
   removeSchematicWire: (idx) => {
     const state = get();
-    const undoState = pushUndo(state, "Remove Wire");
-    const newDoc = structuredClone(state.document);
-    if (newDoc.schematic) {
-      newDoc.schematic.wires.splice(idx, 1);
-    }
-    set({ document: newDoc, isDirty: true, ...undoState });
+    if (!state.document.schematic) return;
+    const sch = structuredClone(state.document.schematic);
+    sch.wires.splice(idx, 1);
+    setCrdtSchematic(state, sch);
+    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
+    set({ document: doc, isDirty: true });
   },
 
   addSchematicLabel: (label) => {
     const state = get();
-    const undoState = pushUndo(state, "Add Label");
-    const newDoc = structuredClone(state.document);
-    if (newDoc.schematic) {
-      newDoc.schematic.labels.push(structuredClone(label));
-    }
-    set({ document: newDoc, isDirty: true, ...undoState });
+    if (!state.document.schematic) return;
+    const sch = structuredClone(state.document.schematic);
+    sch.labels.push(structuredClone(label));
+    setCrdtSchematic(state, sch);
+    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
+    set({ document: doc, isDirty: true });
   },
 
   removeSchematicLabel: (idx) => {
     const state = get();
-    const undoState = pushUndo(state, "Remove Label");
-    const newDoc = structuredClone(state.document);
-    if (newDoc.schematic) {
-      newDoc.schematic.labels.splice(idx, 1);
-    }
-    set({ document: newDoc, isDirty: true, ...undoState });
+    if (!state.document.schematic) return;
+    const sch = structuredClone(state.document.schematic);
+    sch.labels.splice(idx, 1);
+    setCrdtSchematic(state, sch);
+    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
+    set({ document: doc, isDirty: true });
   },
 
   addSchematicJunction: (junction) => {
     const state = get();
-    const undoState = pushUndo(state, "Add Junction");
-    const newDoc = structuredClone(state.document);
-    if (newDoc.schematic) {
-      newDoc.schematic.junctions.push({ position: { ...junction.position } });
-    }
-    set({ document: newDoc, isDirty: true, ...undoState });
+    if (!state.document.schematic) return;
+    const sch = structuredClone(state.document.schematic);
+    sch.junctions.push({ position: { ...junction.position } });
+    setCrdtSchematic(state, sch);
+    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
+    set({ document: doc, isDirty: true });
   },
 
-  addFootprint: (nodeId, fp) => {
+  addFootprint: (_nodeId, fp) => {
     const state = get();
-    const undoState = pushUndo(state, "Add Footprint");
-    const newDoc = structuredClone(state.document);
-    const pcb = getNodePcb(newDoc, nodeId);
-    if (pcb) {
-      pcb.footprints.push(structuredClone(fp));
-    }
-    const dirtyNodeIds = new Set(state.dirtyNodeIds);
-    dirtyNodeIds.add(nodeId);
-    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
+    if (!state.document.pcb) return;
+    const pcb = structuredClone(state.document.pcb);
+    pcb.footprints.push(structuredClone(fp));
+    set({ ...setCrdtPcb(state, pcb), isDirty: true });
   },
 
-  removeFootprint: (nodeId, idx) => {
+  removeFootprint: (_nodeId, idx) => {
     const state = get();
-    const undoState = pushUndo(state, "Remove Footprint");
-    const newDoc = structuredClone(state.document);
-    const pcb = getNodePcb(newDoc, nodeId);
-    if (pcb) {
-      pcb.footprints.splice(idx, 1);
-    }
-    const dirtyNodeIds = new Set(state.dirtyNodeIds);
-    dirtyNodeIds.add(nodeId);
-    set({ document: newDoc, isDirty: true, dirtyNodeIds, ...undoState });
+    if (!state.document.pcb) return;
+    const pcb = structuredClone(state.document.pcb);
+    pcb.footprints.splice(idx, 1);
+    set({ ...setCrdtPcb(state, pcb), isDirty: true });
   },
 }));

@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 
 use vcad_app::materializer::materialize;
+use vcad_app::migrate::{detect_format, migrate_v1, FileFormat};
 use vcad_crdt::{CrdtDocument, FeatureId, FractionalIndex, ReplicaId, Value};
 use wasm_bindgen::prelude::*;
 
@@ -128,6 +129,7 @@ impl WasmDocumentEngine {
                 serde_json::json!({
                     "id": format!("{}:{}", fid.0.0, fid.1),
                     "kind": f.kind,
+                    "position": f.position,
                     "params": f.params.iter().map(|(k, (v, _))| (k.clone(), v.clone())).collect::<HashMap<String, Value>>(),
                 })
             })
@@ -141,9 +143,71 @@ impl WasmDocumentEngine {
     }
 
     /// Load a document from bytes.
+    ///
+    /// Auto-detects format: if CRDT (v2), loads directly; if legacy JSON (v1),
+    /// migrates to CRDT first.
     pub fn load(bytes: &[u8]) -> Result<WasmDocumentEngine, JsError> {
-        let crdt = CrdtDocument::load(bytes).map_err(|e| JsError::new(&e.to_string()))?;
-        Ok(Self { crdt })
+        match detect_format(bytes) {
+            FileFormat::V2Crdt => {
+                let crdt =
+                    CrdtDocument::load(bytes).map_err(|e| JsError::new(&e.to_string()))?;
+                Ok(Self { crdt })
+            }
+            FileFormat::V1Json => Self::from_v1_bytes(bytes),
+            FileFormat::Unknown => Err(JsError::new("Unknown file format")),
+        }
+    }
+
+    /// Load a legacy v1 JSON document and migrate to CRDT.
+    pub fn from_v1_json(json: &str) -> Result<WasmDocumentEngine, JsError> {
+        Self::from_v1_bytes(json.as_bytes())
+    }
+
+    /// Import IR JSON into the current document (e.g. AI-generated geometry).
+    ///
+    /// Parses the IR, migrates it to CRDT features, and merges the ops into
+    /// this document. Returns the standard mutation result.
+    pub fn import_ir(&mut self, ir_json: &str) -> JsValue {
+        let doc: vcad_ir::Document = match serde_json::from_str(ir_json) {
+            Ok(d) => d,
+            Err(_) => return self.build_result(None),
+        };
+        let migrated = migrate_v1(&doc);
+        // Extract all ops from the migrated doc (empty clock = all ops).
+        let ops = migrated.ops_since(&std::collections::BTreeMap::new());
+        self.crdt.merge(ops);
+        self.build_result(None)
+    }
+
+    /// Compute a FractionalIndex position between two neighbor feature IDs.
+    ///
+    /// Pass `before_id_json` and `after_id_json` as feature ID strings (or empty/"" for boundaries).
+    /// Returns the FractionalIndex as a JSON string.
+    pub fn compute_position_between(
+        &self,
+        before_id_json: &str,
+        after_id_json: &str,
+    ) -> String {
+        let ordered = self.crdt.ordered_features();
+
+        let before_pos = if before_id_json.is_empty() {
+            None
+        } else {
+            parse_feature_id(before_id_json)
+                .and_then(|fid| ordered.iter().find(|(id, _)| *id == fid))
+                .map(|(_, f)| &f.position)
+        };
+
+        let after_pos = if after_id_json.is_empty() {
+            None
+        } else {
+            parse_feature_id(after_id_json)
+                .and_then(|fid| ordered.iter().find(|(id, _)| *id == fid))
+                .map(|(_, f)| &f.position)
+        };
+
+        let pos = FractionalIndex::between(before_pos, after_pos);
+        serde_json::to_string(&pos).unwrap_or_else(|_| "[]".to_string())
     }
 
     // -- Sync (for future collaboration) --
@@ -184,6 +248,14 @@ impl WasmDocumentEngine {
 }
 
 impl WasmDocumentEngine {
+    /// Parse legacy v1 bytes and migrate to CRDT.
+    fn from_v1_bytes(bytes: &[u8]) -> Result<WasmDocumentEngine, JsError> {
+        let doc: vcad_ir::Document =
+            serde_json::from_slice(bytes).map_err(|e| JsError::new(&e.to_string()))?;
+        let crdt = migrate_v1(&doc);
+        Ok(Self { crdt })
+    }
+
     /// Build the standard mutation result: { document, parts, createdFeatureId? }
     fn build_result(&self, created_fid: Option<FeatureId>) -> JsValue {
         let result = materialize(&self.crdt);

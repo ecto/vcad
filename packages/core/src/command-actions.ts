@@ -83,7 +83,7 @@ export function createDefaultCommandActions(
     hasTwoSelected: () => uiState().selectedPartIds.size === 2,
     hasSelection: () => uiState().selectedPartIds.size > 0,
     hasParts: () => docState().parts.length > 0,
-    canUndo: () => docState().undoStack.length > 0,
-    canRedo: () => docState().redoStack.length > 0,
+    canUndo: () => docState()._crdtEngine?.can_undo() ?? false,
+    canRedo: () => docState()._crdtEngine?.can_redo() ?? false,
   };
 }

@@ -140,9 +140,16 @@ fn analyze_node_chain(doc: &Document, root_id: NodeId) -> Option<(String, HashMa
                 params.insert("thickness".to_string(), Value::F64(*thickness));
                 return Some(("shell".to_string(), params));
             }
-            CsgOp::Extrude { direction, .. } => {
-                let depth =
-                    (direction.x * direction.x + direction.y * direction.y + direction.z * direction.z).sqrt();
+            CsgOp::Extrude {
+                sketch,
+                direction,
+                twist_angle,
+                scale_end,
+            } => {
+                let depth = (direction.x * direction.x
+                    + direction.y * direction.y
+                    + direction.z * direction.z)
+                    .sqrt();
                 if depth > 0.0 {
                     params.insert("depth".to_string(), Value::F64(depth));
                     params.insert(
@@ -154,7 +161,149 @@ fn analyze_node_chain(doc: &Document, root_id: NodeId) -> Option<(String, HashMa
                         ]),
                     );
                 }
+                // Serialize the sketch node as a Sketch value
+                if let Some(sketch_node) = doc.nodes.get(sketch) {
+                    if let Ok(json) = serde_json::to_string(&sketch_node.op) {
+                        params.insert("sketch".to_string(), Value::Sketch(json));
+                    }
+                }
+                if let Some(ta) = twist_angle {
+                    params.insert("twist_angle".to_string(), Value::F64(*ta));
+                }
+                if let Some(se) = scale_end {
+                    params.insert("scale_end".to_string(), Value::F64(*se));
+                }
                 return Some(("extrude".to_string(), params));
+            }
+            CsgOp::Revolve {
+                sketch,
+                axis_origin,
+                axis_dir,
+                angle_deg,
+            } => {
+                if let Some(sketch_node) = doc.nodes.get(sketch) {
+                    if let Ok(json) = serde_json::to_string(&sketch_node.op) {
+                        params.insert("sketch".to_string(), Value::Sketch(json));
+                    }
+                }
+                params.insert(
+                    "axis_origin".to_string(),
+                    Value::Vec3([axis_origin.x, axis_origin.y, axis_origin.z]),
+                );
+                params.insert(
+                    "axis_dir".to_string(),
+                    Value::Vec3([axis_dir.x, axis_dir.y, axis_dir.z]),
+                );
+                params.insert("angle_deg".to_string(), Value::F64(*angle_deg));
+                return Some(("revolve".to_string(), params));
+            }
+            CsgOp::Sweep {
+                sketch,
+                path,
+                twist_angle,
+                scale_start,
+                scale_end,
+                ..
+            } => {
+                if let Some(sketch_node) = doc.nodes.get(sketch) {
+                    if let Ok(json) = serde_json::to_string(&sketch_node.op) {
+                        params.insert("sketch".to_string(), Value::Sketch(json));
+                    }
+                }
+                if let Ok(path_json) = serde_json::to_string(path) {
+                    params.insert("path".to_string(), Value::String(path_json));
+                }
+                if let Some(ta) = twist_angle {
+                    params.insert("twist_angle".to_string(), Value::F64(*ta));
+                }
+                if let Some(ss) = scale_start {
+                    params.insert("scale_start".to_string(), Value::F64(*ss));
+                }
+                if let Some(se) = scale_end {
+                    params.insert("scale_end".to_string(), Value::F64(*se));
+                }
+                return Some(("sweep".to_string(), params));
+            }
+            CsgOp::Loft { sketches, closed } => {
+                params.insert(
+                    "sketch_count".to_string(),
+                    Value::F64(sketches.len() as f64),
+                );
+                for (i, sketch_id) in sketches.iter().enumerate() {
+                    if let Some(sketch_node) = doc.nodes.get(sketch_id) {
+                        if let Ok(json) = serde_json::to_string(&sketch_node.op) {
+                            params.insert(format!("sketch_{i}"), Value::Sketch(json));
+                        }
+                    }
+                }
+                if let Some(true) = closed {
+                    params.insert("closed".to_string(), Value::Bool(true));
+                }
+                return Some(("loft".to_string(), params));
+            }
+            CsgOp::Text2D {
+                text,
+                height,
+                ..
+            } => {
+                params.insert("text".to_string(), Value::String(text.clone()));
+                params.insert("height".to_string(), Value::F64(*height));
+                return Some(("text".to_string(), params));
+            }
+            CsgOp::LinearPattern {
+                direction,
+                count,
+                spacing,
+                ..
+            } => {
+                params.insert(
+                    "direction".to_string(),
+                    Value::Vec3([direction.x, direction.y, direction.z]),
+                );
+                params.insert("count".to_string(), Value::F64(*count as f64));
+                params.insert("spacing".to_string(), Value::F64(*spacing));
+                return Some(("linear-pattern".to_string(), params));
+            }
+            CsgOp::CircularPattern {
+                axis_origin,
+                axis_dir,
+                count,
+                angle_deg,
+                ..
+            } => {
+                params.insert(
+                    "axis_origin".to_string(),
+                    Value::Vec3([axis_origin.x, axis_origin.y, axis_origin.z]),
+                );
+                params.insert(
+                    "axis_dir".to_string(),
+                    Value::Vec3([axis_dir.x, axis_dir.y, axis_dir.z]),
+                );
+                params.insert("count".to_string(), Value::F64(*count as f64));
+                params.insert("angle_deg".to_string(), Value::F64(*angle_deg));
+                return Some(("circular-pattern".to_string(), params));
+            }
+            CsgOp::ImportedMesh {
+                positions,
+                indices,
+                normals,
+                source,
+            } => {
+                if let Ok(json) = serde_json::to_string(positions) {
+                    params.insert("positions_json".to_string(), Value::String(json));
+                }
+                if let Ok(json) = serde_json::to_string(indices) {
+                    params.insert("indices_json".to_string(), Value::String(json));
+                }
+                if let Some(n) = normals {
+                    if let Ok(json) = serde_json::to_string(n) {
+                        params.insert("normals_json".to_string(), Value::String(json));
+                    }
+                }
+                if let Some(s) = source {
+                    params.insert("source".to_string(), Value::String(s.clone()));
+                }
+                return Some(("imported-mesh".to_string(), params));
             }
             // For other ops, return a generic representation
             _ => {

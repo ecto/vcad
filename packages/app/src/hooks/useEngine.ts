@@ -179,12 +179,11 @@ export function useEngine() {
         const isDragging = state.isParameterDragging;
 
         // Get dirty nodes and clear them
-        const dirtyNodes = state.dirtyNodeIds;
+        const dirtyNodes = state.clearDirtyNodes();
 
         // Invalidate caches for dirty nodes (if any)
         if (dirtyNodes.size > 0) {
           engine.invalidateNodes(dirtyNodes);
-          useDocumentStore.getState().clearDirtyNodes();
         }
 
         // Async evaluation — off main thread when worker is available

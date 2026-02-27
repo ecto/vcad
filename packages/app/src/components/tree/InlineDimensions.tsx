@@ -1,5 +1,5 @@
 import { ScrubInput } from "@/components/ui/scrub-input";
-import { useDocumentStore } from "@vcad/core";
+import { useDocumentStore, f64 } from "@vcad/core";
 import type { PrimitivePartInfo, SweepPartInfo, ExtrudePartInfo, RevolvePartInfo, FilletPartInfo, ChamferPartInfo, ShellPartInfo } from "@vcad/core";
 
 interface InlineCubeDimensionsProps {
@@ -129,14 +129,13 @@ interface InlineExtrudeDimensionsProps {
 
 export function InlineExtrudeDimensions({ part }: InlineExtrudeDimensionsProps) {
   const document = useDocumentStore((s) => s.document);
-  const updateOperation = useDocumentStore((s) => s.updateOperation);
+  const setFeatureParam = useDocumentStore((s) => s.setFeatureParam);
 
   const node = document.nodes[String(part.extrudeNodeId)];
   if (!node || node.op.type !== "Extrude") return null;
 
   const dir = node.op.direction;
   const depth = Math.sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
-  const unitDir = depth > 0 ? { x: dir.x / depth, y: dir.y / depth, z: dir.z / depth } : { x: 0, y: 0, z: 1 };
 
   return (
     <div className="space-y-1 px-2 pb-1">
@@ -146,7 +145,7 @@ export function InlineExtrudeDimensions({ part }: InlineExtrudeDimensionsProps) 
           tooltip="Depth"
           value={depth}
           min={0.01}
-          onChange={(v) => updateOperation(part.extrudeNodeId, { direction: { x: unitDir.x * v, y: unitDir.y * v, z: unitDir.z * v } })}
+          onChange={(v) => setFeatureParam(part.id, "depth", f64(v))}
           unit="mm"
           compact
         />
@@ -155,7 +154,7 @@ export function InlineExtrudeDimensions({ part }: InlineExtrudeDimensionsProps) 
           tooltip="Twist"
           value={(node.op.twist_angle ?? 0) * (180 / Math.PI)}
           step={5}
-          onChange={(v) => updateOperation(part.extrudeNodeId, { twist_angle: v * (Math.PI / 180) })}
+          onChange={(v) => setFeatureParam(part.id, "twist_angle", f64(v * (Math.PI / 180)))}
           unit="°"
           compact
         />
@@ -165,7 +164,7 @@ export function InlineExtrudeDimensions({ part }: InlineExtrudeDimensionsProps) 
           value={node.op.scale_end ?? 1}
           min={0.01}
           step={0.1}
-          onChange={(v) => updateOperation(part.extrudeNodeId, { scale_end: v })}
+          onChange={(v) => setFeatureParam(part.id, "scale_end", f64(v))}
           compact
         />
       </div>
@@ -179,7 +178,7 @@ interface InlineRevolveDimensionsProps {
 
 export function InlineRevolveDimensions({ part }: InlineRevolveDimensionsProps) {
   const document = useDocumentStore((s) => s.document);
-  const updateOperation = useDocumentStore((s) => s.updateOperation);
+  const setFeatureParam = useDocumentStore((s) => s.setFeatureParam);
 
   const node = document.nodes[String(part.revolveNodeId)];
   if (!node || node.op.type !== "Revolve") return null;
@@ -193,7 +192,7 @@ export function InlineRevolveDimensions({ part }: InlineRevolveDimensionsProps) 
         min={0.1}
         max={360}
         step={5}
-        onChange={(v) => updateOperation(part.revolveNodeId, { angle_deg: v })}
+        onChange={(v) => setFeatureParam(part.id, "angle_deg", f64(v))}
         unit="°"
         compact
       />
@@ -207,7 +206,7 @@ interface InlineFilletDimensionsProps {
 
 export function InlineFilletDimensions({ part }: InlineFilletDimensionsProps) {
   const document = useDocumentStore((s) => s.document);
-  const updateOperation = useDocumentStore((s) => s.updateOperation);
+  const setFeatureParam = useDocumentStore((s) => s.setFeatureParam);
 
   const node = document.nodes[String(part.filletNodeId)];
   if (!node || node.op.type !== "Fillet") return null;
@@ -220,7 +219,7 @@ export function InlineFilletDimensions({ part }: InlineFilletDimensionsProps) {
         value={node.op.radius}
         min={0.1}
         step={0.5}
-        onChange={(v) => updateOperation(part.filletNodeId, { radius: v })}
+        onChange={(v) => setFeatureParam(part.id, "radius", f64(v))}
         unit="mm"
         compact
       />
@@ -234,7 +233,7 @@ interface InlineChamferDimensionsProps {
 
 export function InlineChamferDimensions({ part }: InlineChamferDimensionsProps) {
   const document = useDocumentStore((s) => s.document);
-  const updateOperation = useDocumentStore((s) => s.updateOperation);
+  const setFeatureParam = useDocumentStore((s) => s.setFeatureParam);
 
   const node = document.nodes[String(part.chamferNodeId)];
   if (!node || node.op.type !== "Chamfer") return null;
@@ -247,7 +246,7 @@ export function InlineChamferDimensions({ part }: InlineChamferDimensionsProps) 
         value={node.op.distance}
         min={0.1}
         step={0.5}
-        onChange={(v) => updateOperation(part.chamferNodeId, { distance: v })}
+        onChange={(v) => setFeatureParam(part.id, "distance", f64(v))}
         unit="mm"
         compact
       />
@@ -261,7 +260,7 @@ interface InlineShellDimensionsProps {
 
 export function InlineShellDimensions({ part }: InlineShellDimensionsProps) {
   const document = useDocumentStore((s) => s.document);
-  const updateOperation = useDocumentStore((s) => s.updateOperation);
+  const setFeatureParam = useDocumentStore((s) => s.setFeatureParam);
 
   const node = document.nodes[String(part.shellNodeId)];
   if (!node || node.op.type !== "Shell") return null;
@@ -274,7 +273,7 @@ export function InlineShellDimensions({ part }: InlineShellDimensionsProps) {
         value={node.op.thickness}
         min={0.1}
         step={0.5}
-        onChange={(v) => updateOperation(part.shellNodeId, { thickness: v })}
+        onChange={(v) => setFeatureParam(part.id, "thickness", f64(v))}
         unit="mm"
         compact
       />

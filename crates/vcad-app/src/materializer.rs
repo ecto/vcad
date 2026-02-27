@@ -6,7 +6,10 @@
 use std::collections::HashMap;
 
 use vcad_crdt::{CrdtDocument, FeatureId, FeatureState, Value};
-use vcad_ir::{CsgOp, Document, Node, NodeId, SceneEntry, Vec3};
+use vcad_ir::{
+    CsgOp, Document, Instance, Joint, JointKind, JointLimits, Node, NodeId, PartDef,
+    SceneEntry, SceneSettings, Transform3D, Vec3,
+};
 
 use crate::part_info::PartInfo;
 
@@ -47,12 +50,39 @@ pub fn materialize(crdt: &CrdtDocument) -> MaterializeResult {
     let mut ctx = Context::new();
 
     for (fid, feature) in crdt.ordered_features() {
+        // Non-geometry features: assembly metadata, scene settings.
+        match feature.kind.as_str() {
+            "part-def" => {
+                materialize_part_def(&mut doc, &ctx, fid, feature);
+                continue;
+            }
+            "instance" => {
+                materialize_instance(&mut doc, &ctx, fid, feature);
+                continue;
+            }
+            "joint" => {
+                materialize_joint(&mut doc, fid, feature);
+                continue;
+            }
+            "scene-settings" => {
+                materialize_scene_settings(&mut doc, feature);
+                continue;
+            }
+            "schematic" => {
+                materialize_schematic(&mut doc, feature);
+                continue;
+            }
+            _ => {}
+        }
+
         if let Some((part, root_id)) = materialize_feature(&mut doc, &mut ctx, fid, feature, crdt)
         {
+            let material = get_str(feature, "material").unwrap_or_else(|| "default".to_string());
+            let visible = get_bool(feature, "visible");
             doc.roots.push(SceneEntry {
                 root: root_id,
-                material: "default".to_string(),
-                visible: None,
+                material,
+                visible,
             });
             ctx.feature_roots.insert(fid_to_string(fid), root_id);
             parts.push(part);
@@ -323,8 +353,8 @@ fn materialize_feature(
                         direction[1] * depth,
                         direction[2] * depth,
                     ),
-                    twist_angle: None,
-                    scale_end: None,
+                    twist_angle: get_f64(feature, "twist_angle"),
+                    scale_end: get_f64(feature, "scale_end"),
                 },
             );
             insert_transform_chain(
@@ -728,12 +758,16 @@ fn materialize_feature(
             ))
         }
         "pcb-board" => {
-            // Stub: PCB boards are complex domain objects. Emit an Empty node
-            // so the transform chain exists for positioning.
+            // PCB boards: emit an Empty node for the transform chain,
+            // and populate doc.pcb from the "board" JSON param if present.
             let board_id = ctx.alloc();
             let scale_id = ctx.alloc();
             let rotate_id = ctx.alloc();
             let translate_id = ctx.alloc();
+
+            if let Some(json) = get_str(feature, "board") {
+                doc.pcb = serde_json::from_str(&json).ok();
+            }
 
             insert_node(doc, board_id, &name, CsgOp::Empty);
             insert_transform_chain(
@@ -753,8 +787,6 @@ fn materialize_feature(
             ))
         }
         "embroidery-pattern" => {
-            // Stub: Embroidery patterns contain complex stitch data.
-            // Emit an Empty node so the transform chain exists.
             let pattern_id = ctx.alloc();
             let scale_id = ctx.alloc();
             let rotate_id = ctx.alloc();
@@ -762,7 +794,18 @@ fn materialize_feature(
 
             let source = get_str(feature, "source");
 
-            insert_node(doc, pattern_id, &name, CsgOp::Empty);
+            // If design data is present, emit a proper EmbroideryPattern node.
+            let pattern_op = if let Some(design_json) = get_str(feature, "design") {
+                serde_json::from_str::<vcad_ir::EmbroideryDesign>(&design_json)
+                    .map(|d| CsgOp::EmbroideryPattern {
+                        design: Box::new(d),
+                    })
+                    .unwrap_or(CsgOp::Empty)
+            } else {
+                CsgOp::Empty
+            };
+
+            insert_node(doc, pattern_id, &name, pattern_op);
             insert_transform_chain(
                 doc, ctx, feature, pattern_id, scale_id, rotate_id, translate_id,
             );
@@ -786,6 +829,143 @@ fn materialize_feature(
             None
         }
     }
+}
+
+// -- Assembly materialization --
+
+fn materialize_part_def(
+    doc: &mut Document,
+    ctx: &Context,
+    fid: FeatureId,
+    feature: &FeatureState,
+) {
+    let id = fid_to_string(fid);
+    let name = get_str(feature, "name");
+    let default_material = get_str(feature, "default_material");
+
+    // Resolve source_feature ref to a root node ID.
+    let root = get_str(feature, "source_feature")
+        .and_then(|ref_id| ctx.feature_roots.get(&ref_id))
+        .copied()
+        .unwrap_or(0);
+
+    let part_defs = doc.part_defs.get_or_insert_with(HashMap::new);
+    part_defs.insert(
+        id.clone(),
+        PartDef {
+            id,
+            name,
+            root,
+            default_material,
+        },
+    );
+}
+
+fn materialize_instance(
+    doc: &mut Document,
+    ctx: &Context,
+    fid: FeatureId,
+    feature: &FeatureState,
+) {
+    let id = fid_to_string(fid);
+    let name = get_str(feature, "name");
+    let material = get_str(feature, "material");
+
+    // Resolve part_def ref to a CRDT feature ID string.
+    let part_def_id = get_str(feature, "part_def").unwrap_or_default();
+
+    // Parse transform from JSON string if present.
+    let transform = get_str(feature, "transform").and_then(|json| {
+        serde_json::from_str::<Transform3D>(&json).ok()
+    });
+
+    let is_ground = get_bool(feature, "is_ground").unwrap_or(false);
+    if is_ground {
+        doc.ground_instance_id = Some(id.clone());
+    }
+
+    let instances = doc.instances.get_or_insert_with(Vec::new);
+    instances.push(Instance {
+        id,
+        part_def_id,
+        name,
+        transform,
+        material,
+    });
+
+    let _ = ctx; // available for future use
+}
+
+fn materialize_joint(doc: &mut Document, fid: FeatureId, feature: &FeatureState) {
+    let id = fid_to_string(fid);
+    let name = get_str(feature, "name");
+    let parent_instance_id = get_str(feature, "instance_a");
+    let child_instance_id = get_str(feature, "instance_b").unwrap_or_default();
+
+    let parent_anchor = get_vec3(feature, "anchor_a").unwrap_or([0.0; 3]);
+    let child_anchor = get_vec3(feature, "anchor_b").unwrap_or([0.0; 3]);
+    let state = get_f64(feature, "state").unwrap_or(0.0);
+
+    let kind_str = get_str(feature, "kind").unwrap_or_else(|| "Fixed".to_string());
+    let axis = get_vec3(feature, "axis").map(|a| Vec3::new(a[0], a[1], a[2]));
+    let limits = get_str(feature, "limits")
+        .and_then(|json| serde_json::from_str::<JointLimits>(&json).ok());
+
+    let kind = match kind_str.as_str() {
+        "Revolute" => JointKind::Revolute {
+            axis: axis.unwrap_or(Vec3::new(0.0, 0.0, 1.0)),
+            limits,
+        },
+        "Slider" => JointKind::Slider {
+            axis: axis.unwrap_or(Vec3::new(0.0, 0.0, 1.0)),
+            limits,
+        },
+        "Cylindrical" => JointKind::Cylindrical {
+            axis: axis.unwrap_or(Vec3::new(0.0, 0.0, 1.0)),
+        },
+        "Ball" => JointKind::Ball,
+        _ => JointKind::Fixed,
+    };
+
+    let joints = doc.joints.get_or_insert_with(Vec::new);
+    joints.push(Joint {
+        id,
+        name,
+        parent_instance_id,
+        child_instance_id,
+        parent_anchor: Vec3::new(parent_anchor[0], parent_anchor[1], parent_anchor[2]),
+        child_anchor: Vec3::new(child_anchor[0], child_anchor[1], child_anchor[2]),
+        kind,
+        state,
+    });
+}
+
+fn materialize_schematic(doc: &mut Document, feature: &FeatureState) {
+    if let Some(json) = get_str(feature, "sheet") {
+        doc.schematic = serde_json::from_str(&json).ok();
+    }
+}
+
+fn materialize_scene_settings(doc: &mut Document, feature: &FeatureState) {
+    let mut scene = SceneSettings::default();
+
+    if let Some(json) = get_str(feature, "environment") {
+        scene.environment = serde_json::from_str(&json).ok();
+    }
+    if let Some(json) = get_str(feature, "lights") {
+        scene.lights = serde_json::from_str(&json).ok();
+    }
+    if let Some(json) = get_str(feature, "background") {
+        scene.background = serde_json::from_str(&json).ok();
+    }
+    if let Some(json) = get_str(feature, "post_processing") {
+        scene.post_processing = serde_json::from_str(&json).ok();
+    }
+    if let Some(json) = get_str(feature, "camera_presets") {
+        scene.camera_presets = serde_json::from_str(&json).ok();
+    }
+
+    doc.scene = Some(scene);
 }
 
 // -- Helpers --

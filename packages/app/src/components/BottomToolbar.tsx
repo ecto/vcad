@@ -222,8 +222,7 @@ function CommandDropdown() {
   const redo = useDocumentStore((s) => s.redo);
   const removePart = useDocumentStore((s) => s.removePart);
   const duplicateParts = useDocumentStore((s) => s.duplicateParts);
-  const undoStack = useDocumentStore((s) => s.undoStack);
-  const redoStack = useDocumentStore((s) => s.redoStack);
+  const crdtEngine = useDocumentStore((s) => s._crdtEngine);
   const parts = useDocumentStore((s) => s.parts);
   const document = useDocumentStore((s) => s.document);
   const createPartDef = useDocumentStore((s) => s.createPartDef);
@@ -437,8 +436,8 @@ function CommandDropdown() {
       hasTwoSelected: () => selectedPartIds.size === 2,
       hasSelection: () => selectedPartIds.size > 0,
       hasParts: () => parts.length > 0,
-      canUndo: () => undoStack.length > 0,
-      canRedo: () => redoStack.length > 0,
+      canUndo: () => crdtEngine?.can_undo() ?? false,
+      canRedo: () => crdtEngine?.can_redo() ?? false,
       createPartDef: () => {
         const partId = Array.from(selectedPartIds)[0];
         if (partId && parts.some((p) => p.id === partId)) {
@@ -532,7 +531,7 @@ function CommandDropdown() {
     duplicateParts,
     parts,
     redo,
-    redoStack.length,
+    crdtEngine,
     removePart,
     scene,
     select,
@@ -544,7 +543,6 @@ function CommandDropdown() {
     toggleGridSnap,
     toggleWireframe,
     undo,
-    undoStack.length,
   ]);
 
   const filteredCommands = useMemo(() => {
