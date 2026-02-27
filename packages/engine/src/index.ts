@@ -50,6 +50,7 @@ export {
   routeNet,
   fillZones,
   parseKicadPcb,
+  builtinSymbols,
 } from "./ecad.js";
 export type {
   DrcViolationResult,

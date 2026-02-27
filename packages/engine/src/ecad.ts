@@ -191,3 +191,200 @@ export async function fillZones(pcb: Pcb): Promise<FilledZoneResult[]> {
     return [];
   }
 }
+
+// ---------------------------------------------------------------------------
+// Builtin symbol/footprint library
+// ---------------------------------------------------------------------------
+
+export interface SymbolGraphic {
+  type: "Rect" | "Line" | "Circle" | "Polyline";
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  x1?: number;
+  y1?: number;
+  x2?: number;
+  y2?: number;
+  cx?: number;
+  cy?: number;
+  r?: number;
+  points?: Vec2[];
+}
+
+export interface FootprintTemplate {
+  name: string;
+  pads: import("@vcad/ir").Pad[];
+  graphics: import("@vcad/ir").FootprintGraphic[];
+}
+
+export interface SymbolDef {
+  id: string;
+  name: string;
+  prefix: string;
+  defaultValue: string;
+  pins: import("@vcad/ir").SchematicPin[];
+  graphics: SymbolGraphic[];
+  footprintTemplate: FootprintTemplate | null;
+}
+
+/** Get all builtin symbol definitions from the Rust library. */
+export async function builtinSymbols(): Promise<SymbolDef[]> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) return [];
+  try {
+    return wasm.ecadBuiltinSymbols() as SymbolDef[];
+  } catch (e) {
+    console.warn("[ECAD] builtinSymbols failed:", e);
+    return [];
+  }
+}
+
+/** Look up a single builtin symbol by ID. */
+export async function getSymbol(id: string): Promise<SymbolDef | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) return null;
+  try {
+    return (wasm.ecadGetSymbol(id) as SymbolDef) ?? null;
+  } catch (e) {
+    console.warn("[ECAD] getSymbol failed:", e);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Ratsnest + PCB geometry
+// ---------------------------------------------------------------------------
+
+export interface RatsnestLine {
+  net: string;
+  from: Vec2;
+  to: Vec2;
+  fp_ref: string;
+  pad_num: string;
+}
+
+/** Compute ratsnest lines for unrouted net connections. */
+export async function computeRatsnest(
+  pcb: Pcb,
+  netlist: NetlistResult,
+): Promise<RatsnestLine[]> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) return [];
+  try {
+    return wasm.ecadComputeRatsnest(
+      JSON.stringify(pcb),
+      JSON.stringify(netlist),
+    ) as RatsnestLine[];
+  } catch (e) {
+    console.warn("[ECAD] computeRatsnest failed:", e);
+    return [];
+  }
+}
+
+/** Get Z position for a PCB layer. */
+export async function layerZ(
+  layer: PcbLayer,
+  thickness: number,
+  explosion = 0,
+): Promise<number> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) return 0;
+  try {
+    return wasm.ecadLayerZ(layer, thickness, explosion) as number;
+  } catch (e) {
+    return 0;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Component 3D meshes
+// ---------------------------------------------------------------------------
+
+export interface ComponentMesh {
+  footprint_ref: string;
+  positions: number[];
+  indices: number[];
+  normals: number[];
+  color: [number, number, number];
+  metalness: number;
+}
+
+/** Generate 3D component body meshes for all footprints on a PCB. */
+export async function componentMeshes(pcb: Pcb): Promise<ComponentMesh[]> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) return [];
+  try {
+    return wasm.ecadComponentMeshes(JSON.stringify(pcb)) as ComponentMesh[];
+  } catch (e) {
+    console.warn("[ECAD] componentMeshes failed:", e);
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Schematic geometry helpers
+// ---------------------------------------------------------------------------
+
+export interface SnapResult {
+  position: Vec2;
+  is_pin: boolean;
+}
+
+/** Snap a position to the nearest component pin or grid point. */
+export async function snapToGridOrPin(
+  pos: Vec2,
+  components: import("@vcad/ir").SchematicComponent[],
+  grid: number,
+  threshold = 12,
+): Promise<SnapResult> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) {
+    // Fallback: simple grid snap
+    return {
+      position: {
+        x: Math.round(pos.x / grid) * grid,
+        y: Math.round(pos.y / grid) * grid,
+      },
+      is_pin: false,
+    };
+  }
+  try {
+    return wasm.ecadSnapToGridOrPin(
+      pos.x,
+      pos.y,
+      JSON.stringify(components),
+      grid,
+      threshold,
+    ) as SnapResult;
+  } catch (e) {
+    console.warn("[ECAD] snapToGridOrPin failed:", e);
+    return {
+      position: {
+        x: Math.round(pos.x / grid) * grid,
+        y: Math.round(pos.y / grid) * grid,
+      },
+      is_pin: false,
+    };
+  }
+}
+
+/** Get the net for a wire based on endpoint proximity to component pins. */
+export async function netForWire(
+  wire: import("@vcad/ir").SchematicWire,
+  netlist: NetlistResult,
+  components: import("@vcad/ir").SchematicComponent[],
+): Promise<string | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) return null;
+  try {
+    return (wasm.ecadNetForWire(
+      JSON.stringify(wire),
+      JSON.stringify(netlist),
+      JSON.stringify(components),
+    ) as string) ?? null;
+  } catch (e) {
+    console.warn("[ECAD] netForWire failed:", e);
+    return null;
+  }
+}

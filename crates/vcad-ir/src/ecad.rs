@@ -156,6 +156,65 @@ pub struct SchematicSheet {
 }
 
 // ============================================================================
+// Builtin symbol/footprint library types
+// ============================================================================
+
+/// A graphic element in a schematic symbol.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum SymbolGraphic {
+    /// Rectangle.
+    #[serde(rename = "rect")]
+    Rect {
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+    },
+    /// Line segment.
+    #[serde(rename = "line")]
+    Line { x1: f64, y1: f64, x2: f64, y2: f64 },
+    /// Circle.
+    #[serde(rename = "circle")]
+    Circle { cx: f64, cy: f64, r: f64 },
+    /// Polyline (sequence of connected points).
+    #[serde(rename = "polyline")]
+    Polyline { points: Vec<Vec2> },
+}
+
+/// A parametric footprint template (pads + silkscreen graphics).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FootprintTemplate {
+    /// Footprint name (e.g. "0805", "SOIC-8", "DIP-14").
+    pub name: String,
+    /// Pads.
+    pub pads: Vec<Pad>,
+    /// Silkscreen / courtyard graphics.
+    pub graphics: Vec<FootprintGraphic>,
+}
+
+/// A builtin symbol definition for schematic component placement.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SymbolDef {
+    /// Unique identifier (e.g. "resistor", "capacitor", "npn").
+    pub id: String,
+    /// Display name (e.g. "Resistor", "Capacitor").
+    pub name: String,
+    /// Reference designator prefix (e.g. "R", "C", "U").
+    pub prefix: String,
+    /// Default component value (e.g. "10k", "100nF").
+    #[serde(rename = "defaultValue")]
+    pub default_value: String,
+    /// Pin definitions.
+    pub pins: Vec<SchematicPin>,
+    /// Graphics for rendering the symbol.
+    pub graphics: Vec<SymbolGraphic>,
+    /// Associated footprint template (None for power symbols).
+    #[serde(rename = "footprintTemplate")]
+    pub footprint_template: Option<FootprintTemplate>,
+}
+
+// ============================================================================
 // PCB Layer types
 // ============================================================================
 

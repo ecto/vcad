@@ -10,13 +10,14 @@ use vcad_ir::ecad::*;
 use vcad_ir::Vec2;
 
 pub mod erc;
+pub mod geometry;
 
 // ============================================================================
 // Netlist types
 // ============================================================================
 
 /// A connection point in a netlist: a specific pin on a specific component.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct NetConnection {
     /// Reference designator of the component (e.g. "R1", "U3").
     pub component_ref: String,
@@ -25,7 +26,7 @@ pub struct NetConnection {
 }
 
 /// A net in the netlist: a named set of connected pins.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct NetlistNet {
     /// Net name (from a label, or auto-generated as "NET-001" etc.).
     pub name: String,
@@ -34,7 +35,7 @@ pub struct NetlistNet {
 }
 
 /// A complete netlist extracted from a schematic.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Netlist {
     /// All nets in the design.
     pub nets: Vec<NetlistNet>,
@@ -99,7 +100,7 @@ pub(crate) fn points_coincident(a: &Vec2, b: &Vec2) -> bool {
 
 /// Compute the absolute position of a pin given the parent component's
 /// position, rotation (degrees), and mirror state.
-pub(crate) fn pin_world_position(comp: &SchematicComponent, pin: &SchematicPin) -> Vec2 {
+pub fn pin_world_position(comp: &SchematicComponent, pin: &SchematicPin) -> Vec2 {
     let angle_rad = comp.rotation.to_radians();
     let cos = angle_rad.cos();
     let sin = angle_rad.sin();

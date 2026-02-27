@@ -1,9 +1,62 @@
 /**
  * Geometry utilities for volume and mass calculations.
- * Ported from packages/mcp/src/tools/inspect.ts
+ *
+ * Uses Rust WASM for volume computation when available.
  */
 
 import type { TriangleMesh } from "@vcad/engine";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let wasmModule: any = null;
+
+async function loadWasm(): Promise<typeof wasmModule | null> {
+  if (wasmModule) return wasmModule;
+  try {
+    wasmModule = await import("@vcad/kernel-wasm");
+    return wasmModule;
+  } catch {
+    return null;
+  }
+}
+
+// Eagerly start loading
+loadWasm();
+
+/**
+ * Compute volume of a closed triangle mesh using the divergence theorem.
+ * @param mesh - Triangle mesh with positions and indices
+ * @returns Volume in mm³ (assumes mm units)
+ */
+export function computeVolume(mesh: TriangleMesh): number {
+  if (wasmModule?.computeMeshVolume) {
+    try {
+      return wasmModule.computeMeshVolume(mesh.positions, mesh.indices) as number;
+    } catch {
+      // Fall through to TS implementation
+    }
+  }
+  return computeVolumeTS(mesh);
+}
+
+/** TypeScript fallback for volume computation. */
+function computeVolumeTS(mesh: TriangleMesh): number {
+  const numTriangles = mesh.indices.length / 3;
+  let volume = 0;
+
+  for (let t = 0; t < numTriangles; t++) {
+    const i0 = mesh.indices[t * 3]!;
+    const i1 = mesh.indices[t * 3 + 1]!;
+    const i2 = mesh.indices[t * 3 + 2]!;
+
+    const p1 = getVertex(mesh, i0);
+    const p2 = getVertex(mesh, i1);
+    const p3 = getVertex(mesh, i2);
+
+    volume += signedVolumeOfTriangle(p1, p2, p3);
+  }
+
+  return Math.abs(volume);
+}
 
 /** Calculate signed volume of a tetrahedron formed by a triangle and origin. */
 function signedVolumeOfTriangle(
@@ -26,30 +79,6 @@ function getVertex(
 ): [number, number, number] {
   const i = index * 3;
   return [mesh.positions[i]!, mesh.positions[i + 1]!, mesh.positions[i + 2]!];
-}
-
-/**
- * Compute volume of a closed triangle mesh using the divergence theorem.
- * @param mesh - Triangle mesh with positions and indices
- * @returns Volume in mm³ (assumes mm units)
- */
-export function computeVolume(mesh: TriangleMesh): number {
-  const numTriangles = mesh.indices.length / 3;
-  let volume = 0;
-
-  for (let t = 0; t < numTriangles; t++) {
-    const i0 = mesh.indices[t * 3]!;
-    const i1 = mesh.indices[t * 3 + 1]!;
-    const i2 = mesh.indices[t * 3 + 2]!;
-
-    const p1 = getVertex(mesh, i0);
-    const p2 = getVertex(mesh, i1);
-    const p3 = getVertex(mesh, i2);
-
-    volume += signedVolumeOfTriangle(p1, p2, p3);
-  }
-
-  return Math.abs(volume);
 }
 
 /**

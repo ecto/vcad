@@ -4234,6 +4234,129 @@ mod ecad_wasm {
             .map_err(|e| JsError::new(&e.to_string()))?;
         serde_wasm_bindgen::to_value(&pcb).map_err(|e| JsError::new(&e.to_string()))
     }
+
+    /// Return all builtin symbol definitions.
+    ///
+    /// # Returns
+    /// Array of `SymbolDef` as JsValue.
+    #[wasm_bindgen(js_name = ecadBuiltinSymbols)]
+    pub fn ecad_builtin_symbols() -> Result<JsValue, JsError> {
+        let symbols = vcad_ecad_symbols::builtin::builtin_symbols();
+        serde_wasm_bindgen::to_value(&symbols).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Look up a single builtin symbol by ID.
+    ///
+    /// # Arguments
+    /// * `id` - Symbol identifier (e.g. "resistor", "capacitor", "npn")
+    ///
+    /// # Returns
+    /// `SymbolDef` as JsValue, or null if not found.
+    #[wasm_bindgen(js_name = ecadGetSymbol)]
+    pub fn ecad_get_symbol(id: &str) -> Result<JsValue, JsError> {
+        let symbol = vcad_ecad_symbols::builtin::get_symbol(id);
+        serde_wasm_bindgen::to_value(&symbol).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Compute ratsnest lines for unrouted net connections.
+    ///
+    /// # Arguments
+    /// * `pcb_json` - JSON-serialized `Pcb` struct
+    /// * `netlist_json` - JSON-serialized netlist
+    ///
+    /// # Returns
+    /// Array of ratsnest lines as JsValue.
+    #[wasm_bindgen(js_name = ecadComputeRatsnest)]
+    pub fn ecad_compute_ratsnest(
+        pcb_json: &str,
+        netlist_json: &str,
+    ) -> Result<JsValue, JsError> {
+        let pcb: vcad_ir::ecad::Pcb =
+            serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let netlist: vcad_ecad_pcb::ratsnest::Netlist =
+            serde_json::from_str(netlist_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let lines = vcad_ecad_pcb::ratsnest::compute_ratsnest(&pcb, &netlist);
+        serde_wasm_bindgen::to_value(&lines).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Compute Z offset for a PCB layer.
+    ///
+    /// # Arguments
+    /// * `layer` - Layer name (e.g. "FCu", "BCu")
+    /// * `thickness` - Board thickness in mm
+    /// * `explosion` - Explosion factor (0 = normal, >0 = exploded)
+    #[wasm_bindgen(js_name = ecadLayerZ)]
+    pub fn ecad_layer_z(layer: &str, thickness: f64, explosion: f64) -> f64 {
+        let pcb_layer: vcad_ir::ecad::PcbLayer =
+            serde_json::from_str(&format!("\"{layer}\"")).unwrap_or(vcad_ir::ecad::PcbLayer::FCu);
+        vcad_ecad_pcb::geometry::layer_z(pcb_layer, thickness, explosion)
+    }
+
+    /// Generate 3D component body meshes for all footprints on a PCB.
+    ///
+    /// # Arguments
+    /// * `pcb_json` - JSON-serialized `Pcb` struct
+    ///
+    /// # Returns
+    /// Array of component meshes as JsValue.
+    #[wasm_bindgen(js_name = ecadComponentMeshes)]
+    pub fn ecad_component_meshes(pcb_json: &str) -> Result<JsValue, JsError> {
+        let pcb: vcad_ir::ecad::Pcb =
+            serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let meshes = vcad_ecad_pcb::component_mesh::generate_component_meshes(&pcb);
+        serde_wasm_bindgen::to_value(&meshes).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Snap a position to the nearest component pin or grid point.
+    ///
+    /// # Arguments
+    /// * `x`, `y` - Cursor position
+    /// * `components_json` - JSON-serialized `SchematicComponent[]`
+    /// * `grid` - Grid spacing
+    /// * `threshold` - Max distance to snap to a pin
+    ///
+    /// # Returns
+    /// `{ position: { x, y }, is_pin: bool }` as JsValue.
+    #[wasm_bindgen(js_name = ecadSnapToGridOrPin)]
+    pub fn ecad_snap_to_grid_or_pin(
+        x: f64,
+        y: f64,
+        components_json: &str,
+        grid: f64,
+        threshold: f64,
+    ) -> Result<JsValue, JsError> {
+        let components: Vec<vcad_ir::ecad::SchematicComponent> =
+            serde_json::from_str(components_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let pos = vcad_ir::Vec2::new(x, y);
+        let result =
+            vcad_ecad_schematic::geometry::snap_to_grid_or_pin(pos, &components, grid, threshold);
+        serde_wasm_bindgen::to_value(&result).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Get the net for a wire based on endpoint proximity to component pins.
+    ///
+    /// # Arguments
+    /// * `wire_json` - JSON-serialized `SchematicWire`
+    /// * `netlist_json` - JSON-serialized `Netlist`
+    /// * `components_json` - JSON-serialized `SchematicComponent[]`
+    ///
+    /// # Returns
+    /// Net name as string, or null.
+    #[wasm_bindgen(js_name = ecadNetForWire)]
+    pub fn ecad_net_for_wire(
+        wire_json: &str,
+        netlist_json: &str,
+        components_json: &str,
+    ) -> Result<JsValue, JsError> {
+        let wire: vcad_ir::ecad::SchematicWire =
+            serde_json::from_str(wire_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let netlist: vcad_ecad_schematic::Netlist =
+            serde_json::from_str(netlist_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let components: Vec<vcad_ir::ecad::SchematicComponent> =
+            serde_json::from_str(components_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let result = vcad_ecad_schematic::geometry::net_for_wire(&wire, &netlist, &components);
+        serde_wasm_bindgen::to_value(&result).map_err(|e| JsError::new(&e.to_string()))
+    }
 }
 
 #[cfg(feature = "ecad")]
@@ -4316,6 +4439,23 @@ pub fn evaluate_document(doc_json: &str, skip_clash_detection: bool) -> Result<J
     }
 
     Ok(js_val)
+}
+
+/// Solve forward kinematics for an assembly document.
+///
+/// # Arguments
+///
+/// * `doc_json` - A JSON string representing a vcad Document
+///
+/// # Returns
+///
+/// A JsValue containing a Map of instance_id -> Transform3D.
+#[wasm_bindgen(js_name = solveForwardKinematics)]
+pub fn solve_forward_kinematics(doc_json: &str) -> Result<JsValue, JsError> {
+    let doc: vcad_ir::Document = serde_json::from_str(doc_json)
+        .map_err(|e| JsError::new(&format!("Failed to parse document: {}", e)))?;
+    let transforms = vcad_eval::kinematics::solve_forward_kinematics(&doc);
+    serde_wasm_bindgen::to_value(&transforms).map_err(|e| JsError::new(&e.to_string()))
 }
 
 /// Convert an EvaluatedScene to JsValue using typed arrays for mesh data.
@@ -4431,6 +4571,67 @@ pub fn eval_vcad_source(source: &str) -> Result<JsValue, JsError> {
     let json = serde_json::to_string(&doc)
         .map_err(|e| JsError::new(&format!("Serialization error: {}", e)))?;
     Ok(JsValue::from_str(&json))
+}
+
+/// Convert a Document (as JSON) back to loon source code.
+#[wasm_bindgen(js_name = documentToLoon)]
+pub fn document_to_loon(doc_json: &str) -> Result<String, JsError> {
+    let doc: vcad_ir::Document = serde_json::from_str(doc_json)
+        .map_err(|e| JsError::new(&format!("Failed to parse document: {}", e)))?;
+    Ok(vcad_ir::to_loon::document_to_loon(&doc))
+}
+
+/// Parse a .vcad file (JSON v0.1, compact v0.2, or loon v0.3).
+///
+/// Returns a JSON-serialized VcadFile with document, parts, and metadata.
+#[wasm_bindgen(js_name = parseVcadFile)]
+pub fn parse_vcad_file(content: &str) -> Result<JsValue, JsError> {
+    let eval_loon = |source: &str| -> Result<vcad_ir::Document, String> {
+        vcad_loon::eval_vcad(source, None)
+    };
+    let vcad_file = vcad_ir::file_io::parse_vcad_file_with_loon(content, Some(&eval_loon))
+        .map_err(|e| JsError::new(&e))?;
+    serde_wasm_bindgen::to_value(&vcad_file).map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// Derive parts from a Document (as JSON).
+///
+/// Returns a JSON-serialized Vec<PartInfo>.
+#[wasm_bindgen(js_name = deriveParts)]
+pub fn derive_parts(doc_json: &str) -> Result<JsValue, JsError> {
+    let doc: vcad_ir::Document = serde_json::from_str(doc_json)
+        .map_err(|e| JsError::new(&format!("Failed to parse document: {}", e)))?;
+    let parts = vcad_ir::file_io::derive_parts(&doc);
+    serde_wasm_bindgen::to_value(&parts).map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// Compute volume of a closed triangle mesh using the divergence theorem.
+///
+/// Positions are `[x, y, z, ...]` (flat f32), indices are `[i0, i1, i2, ...]`.
+/// Returns volume in mm³ (same units as positions).
+#[wasm_bindgen(js_name = computeMeshVolume)]
+pub fn compute_mesh_volume(positions: &[f32], indices: &[u32]) -> f64 {
+    let mut vol = 0.0_f64;
+    for tri in indices.chunks(3) {
+        if tri.len() < 3 {
+            break;
+        }
+        let (i0, i1, i2) = (
+            tri[0] as usize * 3,
+            tri[1] as usize * 3,
+            tri[2] as usize * 3,
+        );
+        if i2 + 2 >= positions.len() {
+            continue;
+        }
+        let v0 = [positions[i0] as f64, positions[i0 + 1] as f64, positions[i0 + 2] as f64];
+        let v1 = [positions[i1] as f64, positions[i1 + 1] as f64, positions[i1 + 2] as f64];
+        let v2 = [positions[i2] as f64, positions[i2 + 1] as f64, positions[i2 + 2] as f64];
+        vol += v0[0] * (v1[1] * v2[2] - v2[1] * v1[2])
+            - v1[0] * (v0[1] * v2[2] - v2[1] * v0[2])
+            + v2[0] * (v0[1] * v1[2] - v1[1] * v0[2]);
+    }
+    (vol / 6.0).abs()
 }
 
 // =============================================================================

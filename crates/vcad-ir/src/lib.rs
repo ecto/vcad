@@ -11,6 +11,8 @@ use std::collections::HashMap;
 
 pub mod compact;
 pub mod ecad;
+pub mod file_io;
+pub mod to_loon;
 
 // ============================================================================
 // Assembly types (for kinematics)

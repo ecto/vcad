@@ -11,8 +11,11 @@
 //! - [`drc`] -- Design rule checking engine
 //! - [`spatial`] -- R-tree spatial index for copper elements
 
+pub mod component_mesh;
 pub mod copper_pour;
 pub mod drc;
+pub mod geometry;
+pub mod ratsnest;
 pub mod router;
 pub mod spatial;
 

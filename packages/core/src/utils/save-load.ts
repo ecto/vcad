@@ -2,6 +2,22 @@ import type { Document, NodeId, CsgOp, Node } from "@vcad/ir";
 import { toCompact, fromCompact, createDocument } from "@vcad/ir";
 import type { PartInfo, PrimitiveKind } from "../types.js";
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let wasmModule: any = null;
+
+async function loadWasm(): Promise<typeof wasmModule | null> {
+  if (wasmModule) return wasmModule;
+  try {
+    wasmModule = await import("@vcad/kernel-wasm");
+    return wasmModule;
+  } catch {
+    return null;
+  }
+}
+
+// Eagerly start loading
+loadWasm();
+
 export interface VcadFile {
   version: string;
   document: Document;
@@ -30,10 +46,31 @@ export function serializeDocument(state: {
 /**
  * Parse a .vcad file (supports JSON v0.1, compact v0.2, and loon v0.3 formats)
  *
+ * Uses Rust WASM when available (includes built-in loon evaluator).
+ * Falls back to TypeScript implementation.
+ *
  * @param evalLoon - Optional callback to evaluate loon source → JSON Document string.
- *   Required when the content is loon format (starts with `[` or `;`).
+ *   Required for TS fallback when content is loon format.
  */
 export function parseVcadFile(
+  content: string,
+  evalLoon?: (source: string) => string,
+): VcadFile {
+  // Try WASM path — bundles loon evaluator so no callback needed
+  if (wasmModule?.parseVcadFile) {
+    try {
+      const result = wasmModule.parseVcadFile(content) as VcadFile;
+      return result;
+    } catch (e) {
+      console.warn("[CORE] WASM parseVcadFile failed, using TS fallback:", e);
+    }
+  }
+
+  return parseVcadFileTS(content, evalLoon);
+}
+
+/** TypeScript fallback for parseVcadFile. */
+function parseVcadFileTS(
   content: string,
   evalLoon?: (source: string) => string,
 ): VcadFile {
@@ -115,12 +152,20 @@ function parseCompactVcadFile(compact: string): VcadFile {
 /**
  * Derive PartInfo[] from a Document by analyzing the node graph.
  *
- * Strategy:
- * 1. For each scene root, walk backward to find the "core" operation
- * 2. Identify transform chain nodes (translate, rotate, scale)
- * 3. Build appropriate PartInfo based on the core op type
+ * Uses Rust WASM when available, falls back to TypeScript.
  */
 export function deriveParts(document: Document): PartInfo[] {
+  if (wasmModule?.deriveParts) {
+    try {
+      return wasmModule.deriveParts(JSON.stringify(document)) as PartInfo[];
+    } catch (e) {
+      console.warn("[CORE] WASM deriveParts failed, using TS fallback:", e);
+    }
+  }
+  return derivePartsTS(document);
+}
+
+function derivePartsTS(document: Document): PartInfo[] {
   const parts: PartInfo[] = [];
   let partNum = 1;
 

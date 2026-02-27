@@ -1,27 +1,44 @@
 /**
  * Convert a vcad Document back to loon source code.
  *
- * Walks the node graph in topological order (dependencies before dependents)
- * and emits `[let nN ...]` bindings for each node, with `[root ...]` entries
- * for scene roots. Materials are emitted first.
- *
- * Handles all CsgOp types:
- * - Primitives: Cube, Cylinder, Sphere, Cone, Empty
- * - Booleans: Union, Difference, Intersection
- * - Transforms: Translate, Rotate, Scale
- * - Sketch ops: Sketch2D, Extrude, Revolve
- * - Features: Shell, Fillet, Chamfer
- * - Patterns: LinearPattern, CircularPattern
- * - Sweep: SweepLine, SweepHelix (via path type)
- * - Loft: open and closed
- * - Text2D: emitted as comment (not round-trippable)
- * - ImportedMesh: emitted as comment (raw mesh data, not parametric)
+ * Uses the Rust WASM implementation when available, with a TypeScript fallback.
  */
 
 import type { Document, Node, NodeId, CsgOp } from "@vcad/ir";
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let wasmModule: any = null;
+
+async function loadWasm(): Promise<typeof wasmModule | null> {
+  if (wasmModule) return wasmModule;
+  try {
+    wasmModule = await import("@vcad/kernel-wasm");
+    return wasmModule;
+  } catch {
+    return null;
+  }
+}
+
+// Eagerly start loading
+loadWasm();
+
 /** Convert a Document to loon source code. */
 export function documentToLoon(doc: Document): string {
+  if (wasmModule?.documentToLoon) {
+    try {
+      return wasmModule.documentToLoon(JSON.stringify(doc)) as string;
+    } catch (e) {
+      console.warn("[CORE] WASM documentToLoon failed, using TS fallback:", e);
+    }
+  }
+  return documentToLoonTS(doc);
+}
+
+// ============================================================================
+// TypeScript fallback implementation
+// ============================================================================
+
+function documentToLoonTS(doc: Document): string {
   const lines: string[] = [];
   const emitted = new Set<string>();
 

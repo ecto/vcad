@@ -27,6 +27,7 @@
 //! assert_eq!(lib.symbols[0].name, "R");
 //! ```
 
+pub mod builtin;
 pub mod kicad_mod;
 pub mod kicad_pcb;
 pub mod kicad_sym;
