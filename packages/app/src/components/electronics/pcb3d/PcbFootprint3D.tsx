@@ -16,6 +16,7 @@ interface Props {
   layers: LayerConfig[];
   boardThickness: number;
   highlight: boolean;
+  explosion: number;
 }
 
 function graphicToLines(
@@ -24,8 +25,9 @@ function graphicToLines(
   fpY: number,
   fpRot: number,
   boardThickness: number,
+  explosion: number,
 ): { points: THREE.Vector3[]; color: string; layer: PcbLayer } | null {
-  const z = layerZ(graphic.layer, boardThickness);
+  const z = layerZ(graphic.layer, boardThickness, explosion);
   const cos = Math.cos(fpRot);
   const sin = Math.sin(fpRot);
 
@@ -70,17 +72,17 @@ function graphicToLines(
   }
 }
 
-export function PcbFootprint3D({ footprint, layers, boardThickness, highlight }: Props) {
+export function PcbFootprint3D({ footprint, layers, boardThickness, highlight, explosion }: Props) {
   const fpRot = (footprint.rotation ?? 0) * Math.PI / 180;
 
   const lineSegments = useMemo(() => {
     if (!footprint.graphics) return [];
     return footprint.graphics
-      .map((g) => graphicToLines(g, footprint.position.x, footprint.position.y, fpRot, boardThickness))
+      .map((g) => graphicToLines(g, footprint.position.x, footprint.position.y, fpRot, boardThickness, explosion))
       .filter((l): l is NonNullable<typeof l> => l !== null && isLayerVisible(layers, l.layer));
-  }, [footprint, layers, boardThickness, fpRot]);
+  }, [footprint, layers, boardThickness, fpRot, explosion]);
 
-  const refZ = layerZ(footprint.front !== false ? "FSilkS" : "BSilkS", boardThickness);
+  const refZ = layerZ(footprint.front !== false ? "FSilkS" : "BSilkS", boardThickness, explosion);
 
   return (
     <group>

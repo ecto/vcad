@@ -16,13 +16,14 @@ interface Props {
   layers: LayerConfig[];
   activeNet: string | null;
   hoveredNet: string | null;
+  explosion: number;
 }
 
 const ACCENT_COLOR = new THREE.Color("#3b82f6");
 const TEMP_MATRIX = new THREE.Matrix4();
 const TEMP_COLOR = new THREE.Color();
 
-export function PcbTraceMesh({ pcb, layers, activeNet, hoveredNet }: Props) {
+export function PcbTraceMesh({ pcb, layers, activeNet, hoveredNet, explosion }: Props) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
 
   // Filter to visible traces
@@ -41,7 +42,7 @@ export function PcbTraceMesh({ pcb, layers, activeNet, hoveredNet }: Props) {
 
     for (let i = 0; i < count; i++) {
       const trace = visibleTraces[i]!;
-      buildTraceMatrix(trace, thickness, 0, TEMP_MATRIX);
+      buildTraceMatrix(trace, thickness, explosion, TEMP_MATRIX);
       mesh.setMatrixAt(i, TEMP_MATRIX);
 
       const isActive =
@@ -57,7 +58,7 @@ export function PcbTraceMesh({ pcb, layers, activeNet, hoveredNet }: Props) {
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     mesh.count = count;
-  }, [visibleTraces, count, pcb.outline.thickness, layers, activeNet, hoveredNet]);
+  }, [visibleTraces, count, pcb.outline.thickness, layers, activeNet, hoveredNet, explosion]);
 
   if (count === 0) return null;
 

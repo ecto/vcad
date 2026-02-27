@@ -11,11 +11,12 @@ interface Props {
   routePreview: Vec2[];
   boardThickness: number;
   activeLayer: string;
+  explosion: number;
 }
 
 const ACCENT_COLOR = "#3b82f6";
 
-export function PcbRoutePreview3D({ pcb, routeStartPad, routePreview, boardThickness, activeLayer }: Props) {
+export function PcbRoutePreview3D({ pcb, routeStartPad, routePreview, boardThickness, activeLayer, explosion }: Props) {
   if (!routeStartPad || routePreview.length === 0) return null;
 
   // Find start pad position
@@ -28,7 +29,7 @@ export function PcbRoutePreview3D({ pcb, routeStartPad, routePreview, boardThick
     y: fp.position.y + pad.position.y,
   };
   const endPos = routePreview[routePreview.length - 1]!;
-  const z = layerZ(activeLayer as any, boardThickness) + 0.02;
+  const z = layerZ(activeLayer as any, boardThickness, explosion) + 0.02;
   const traceWidth = pcb.rules.defaultRules.traceWidth;
   const clearance = pcb.rules.defaultRules.clearance;
 

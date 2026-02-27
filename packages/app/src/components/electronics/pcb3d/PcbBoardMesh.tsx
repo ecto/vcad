@@ -8,13 +8,22 @@
 import { useMemo } from "react";
 import * as THREE from "three";
 import type { Pcb } from "@vcad/ir";
+import { layerZOffset } from "./pcb-geometry";
 
 interface Props {
   pcb: Pcb;
+  explosion: number;
 }
 
-export function PcbBoardMesh({ pcb }: Props) {
-  const geometry = useMemo(() => {
+/** Dielectric layer definitions between copper layers. */
+const DIELECTRIC_LAYERS = [
+  { name: "Core 1", top: "FCu", bottom: "In1Cu" },
+  { name: "Core 2", top: "In1Cu", bottom: "In2Cu" },
+  { name: "Core 3", top: "In2Cu", bottom: "BCu" },
+] as const;
+
+export function PcbBoardMesh({ pcb, explosion }: Props) {
+  const boardShape = useMemo(() => {
     const verts = pcb.outline.vertices;
     if (verts.length < 3) return null;
 
@@ -39,25 +48,64 @@ export function PcbBoardMesh({ pcb }: Props) {
       }
     }
 
-    const thickness = pcb.outline.thickness;
-    return new THREE.ExtrudeGeometry(shape, {
+    return shape;
+  }, [pcb.outline]);
+
+  const thickness = pcb.outline.thickness;
+
+  const mainGeometry = useMemo(() => {
+    if (!boardShape) return null;
+    return new THREE.ExtrudeGeometry(boardShape, {
       depth: thickness,
       bevelEnabled: false,
     });
-  }, [pcb.outline]);
+  }, [boardShape, thickness]);
 
-  if (!geometry) return null;
+  // Thin slab geometry for dielectric layers when exploded
+  const slabGeometry = useMemo(() => {
+    if (!boardShape || explosion <= 0) return null;
+    return new THREE.ExtrudeGeometry(boardShape, {
+      depth: 0.1,
+      bevelEnabled: false,
+    });
+  }, [boardShape, explosion]);
 
-  // Board is extruded in kernel Z-up space.
-  // Center the extrusion vertically so the board surface is at Z = thickness/2.
+  if (!mainGeometry) return null;
+
   return (
-    <mesh geometry={geometry} position={[0, 0, -pcb.outline.thickness / 2]}>
-      <meshStandardMaterial
-        color="#0d5a2d"
-        roughness={0.8}
-        metalness={0}
-        side={THREE.DoubleSide}
-      />
-    </mesh>
+    <group>
+      {/* Main board slab */}
+      <mesh geometry={mainGeometry} position={[0, 0, -thickness / 2]}>
+        <meshStandardMaterial
+          color="#0d5a2d"
+          roughness={0.8}
+          metalness={0}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+
+      {/* Dielectric slabs between copper layers (visible when exploded) */}
+      {explosion > 0 && slabGeometry && DIELECTRIC_LAYERS.map((dl) => {
+        const topZ = layerZOffset(dl.top as any, explosion);
+        const bottomZ = layerZOffset(dl.bottom as any, explosion);
+        const midZ = (topZ + bottomZ) / 2;
+        return (
+          <mesh
+            key={dl.name}
+            geometry={slabGeometry}
+            position={[0, 0, midZ - 0.05]}
+          >
+            <meshStandardMaterial
+              color="#1a7a3a"
+              roughness={0.9}
+              metalness={0}
+              transparent
+              opacity={0.3}
+              side={THREE.DoubleSide}
+            />
+          </mesh>
+        );
+      })}
+    </group>
   );
 }

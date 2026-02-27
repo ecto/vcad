@@ -16,6 +16,7 @@ interface Props {
   activeNet: string | null;
   hoveredNet: string | null;
   boardThickness: number;
+  explosion: number;
   onStartRoute: (fpRef: string, padNum: string, net: string) => void;
   onHoverNet: (net: string | null) => void;
 }
@@ -29,6 +30,7 @@ export function PcbRatsnest3D({
   activeNet,
   hoveredNet,
   boardThickness,
+  explosion,
   onStartRoute,
   onHoverNet,
 }: Props) {
@@ -37,7 +39,7 @@ export function PcbRatsnest3D({
     [pcb.footprints, netlist, pcb.traces],
   );
 
-  const z = layerZ("FCu", boardThickness) + 0.1;
+  const z = layerZ("FCu", boardThickness, explosion) + 0.1;
 
   if (ratsnest.length === 0) return null;
 

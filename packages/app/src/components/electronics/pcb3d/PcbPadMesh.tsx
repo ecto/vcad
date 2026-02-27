@@ -17,6 +17,7 @@ interface Props {
   layers: LayerConfig[];
   activeNet: string | null;
   hoveredNet: string | null;
+  explosion: number;
 }
 
 interface FlatPad {
@@ -61,7 +62,7 @@ function flattenPads(pcb: Pcb): FlatPad[] {
   return result;
 }
 
-export function PcbPadMesh({ pcb, layers, activeNet, hoveredNet }: Props) {
+export function PcbPadMesh({ pcb, layers, activeNet, hoveredNet, explosion }: Props) {
   const smdMeshRef = useRef<THREE.InstancedMesh>(null);
   const thtMeshRef = useRef<THREE.InstancedMesh>(null);
   const drillMeshRef = useRef<THREE.InstancedMesh>(null);
@@ -88,7 +89,7 @@ export function PcbPadMesh({ pcb, layers, activeNet, hoveredNet }: Props) {
     for (const fp of smdPads) {
       if (!isLayerVisible(layers, fp.layer)) continue;
       const [w, h] = padDimensions(fp.pad.shape);
-      const z = layerZ(fp.layer, thickness);
+      const z = layerZ(fp.layer, thickness, explosion);
 
       TEMP_POS.set(fp.worldX, fp.worldY, z);
       TEMP_SCALE.set(w, h, 0.035);
@@ -105,7 +106,7 @@ export function PcbPadMesh({ pcb, layers, activeNet, hoveredNet }: Props) {
     mesh.count = count;
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-  }, [smdPads, layers, activeNet, hoveredNet, thickness]);
+  }, [smdPads, layers, activeNet, hoveredNet, thickness, explosion]);
 
   // Update THT pad instances
   useEffect(() => {
@@ -117,7 +118,7 @@ export function PcbPadMesh({ pcb, layers, activeNet, hoveredNet }: Props) {
     let drillCount = 0;
     for (const fp of thtPads) {
       const [w, h] = padDimensions(fp.pad.shape);
-      const z = layerZ("FCu", thickness);
+      const z = layerZ("FCu", thickness, explosion);
 
       // Pad
       TEMP_POS.set(fp.worldX, fp.worldY, z);
@@ -153,7 +154,7 @@ export function PcbPadMesh({ pcb, layers, activeNet, hoveredNet }: Props) {
       drillMesh.instanceMatrix.needsUpdate = true;
       if (drillMesh.instanceColor) drillMesh.instanceColor.needsUpdate = true;
     }
-  }, [thtPads, layers, activeNet, hoveredNet, thickness]);
+  }, [thtPads, layers, activeNet, hoveredNet, thickness, explosion]);
 
   return (
     <>

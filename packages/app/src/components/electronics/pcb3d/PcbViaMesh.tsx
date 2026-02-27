@@ -14,6 +14,7 @@ interface Props {
   pcb: Pcb;
   activeNet: string | null;
   hoveredNet: string | null;
+  explosion: number;
 }
 
 const ACCENT_COLOR = new THREE.Color("#3b82f6");
@@ -24,7 +25,7 @@ const TEMP_POS = new THREE.Vector3();
 const TEMP_SCALE = new THREE.Vector3();
 const TEMP_QUAT = new THREE.Quaternion();
 
-export function PcbViaMesh({ pcb, activeNet, hoveredNet }: Props) {
+export function PcbViaMesh({ pcb, activeNet, hoveredNet, explosion }: Props) {
   const outerRef = useRef<THREE.InstancedMesh>(null);
   const drillRef = useRef<THREE.InstancedMesh>(null);
 
@@ -36,7 +37,7 @@ export function PcbViaMesh({ pcb, activeNet, hoveredNet }: Props) {
     const drill = drillRef.current;
     if (!outer || vias.length === 0) return;
 
-    const z = layerZ("FCu", thickness);
+    const z = layerZ("FCu", thickness, explosion);
 
     for (let i = 0; i < vias.length; i++) {
       const via = vias[i]!;
@@ -69,7 +70,7 @@ export function PcbViaMesh({ pcb, activeNet, hoveredNet }: Props) {
       drill.instanceMatrix.needsUpdate = true;
       if (drill.instanceColor) drill.instanceColor.needsUpdate = true;
     }
-  }, [vias, activeNet, hoveredNet, thickness]);
+  }, [vias, activeNet, hoveredNet, thickness, explosion]);
 
   if (vias.length === 0) return null;
 

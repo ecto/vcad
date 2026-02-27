@@ -109,6 +109,10 @@ export interface ElectronicsState {
   drcViolations: DrcViolationResult[];
   ercViolations: ErcViolationResult[];
 
+  // PCB 3D view state (Phase 2: tilt-to-3D + exploded stackup)
+  tiltAngle: number; // degrees, 0 = top-down, >5 = tilted 3D
+  stackupExplosion: number; // 0 = flat, 1 = fully exploded
+
   // Route state (Principle 3: constraint-first)
   routeActive: boolean;
   routeStartPad: { fpRef: string; padNum: string; net: string } | null;
@@ -166,6 +170,11 @@ export interface ElectronicsState {
   // Schematic overlay actions
   setSchematicDocked: (docked: SchematicDocked) => void;
 
+  // PCB 3D view actions
+  setTiltAngle: (angle: number) => void;
+  setStackupExplosion: (explosion: number) => void;
+  toggleStackupExplosion: () => void;
+
   // Length tuning actions
   setLengthTuneParams: (params: Partial<LengthTuneParams>) => void;
   startLengthTune: (net: string) => void;
@@ -215,6 +224,9 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
 
   drcViolations: [],
   ercViolations: [],
+
+  tiltAngle: 0,
+  stackupExplosion: 0,
 
   routeActive: false,
   routeStartPad: null,
@@ -422,6 +434,11 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
 
   // Schematic overlay
   setSchematicDocked: (schematicDocked) => set({ schematicDocked }),
+
+  // PCB 3D view
+  setTiltAngle: (tiltAngle) => set({ tiltAngle: Math.max(0, Math.min(75, tiltAngle)) }),
+  setStackupExplosion: (stackupExplosion) => set({ stackupExplosion: Math.max(0, Math.min(1, stackupExplosion)) }),
+  toggleStackupExplosion: () => set((s) => ({ stackupExplosion: s.stackupExplosion > 0.5 ? 0 : 1 })),
 
   // PCB drag
   startPcbDrag: (fpIdx, startPos) =>

@@ -11,6 +11,7 @@ import type { DrcViolationResult } from "@vcad/engine";
 interface Props {
   violations: DrcViolationResult[];
   boardThickness: number;
+  explosion: number;
 }
 
 function DrcRing({ violation, z }: { violation: DrcViolationResult; z: number }) {
@@ -36,10 +37,10 @@ function DrcRing({ violation, z }: { violation: DrcViolationResult; z: number })
   );
 }
 
-export function PcbDrcMarkers3D({ violations, boardThickness }: Props) {
+export function PcbDrcMarkers3D({ violations, boardThickness, explosion }: Props) {
   if (violations.length === 0) return null;
 
-  const z = layerZ("FCu", boardThickness) + 0.15;
+  const z = layerZ("FCu", boardThickness, explosion) + 0.15;
 
   return (
     <group>

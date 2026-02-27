@@ -44,6 +44,7 @@ export function PcbScene() {
   const routeStartPad = useElectronicsStore((s) => s.routeStartPad);
   const pcbTool = useElectronicsStore((s) => s.pcbTool);
   const pcbDragging = useElectronicsStore((s) => s.pcbDragging);
+  const stackupExplosion = useElectronicsStore((s) => s.stackupExplosion);
 
   const select = useElectronicsStore((s) => s.select);
   const setHoveredNet = useElectronicsStore((s) => s.setHoveredNet);
@@ -268,7 +269,7 @@ export function PcbScene() {
       />
 
       {/* Board outline */}
-      <PcbBoardMesh pcb={pcb} />
+      <PcbBoardMesh pcb={pcb} explosion={stackupExplosion} />
 
       {/* Traces */}
       <PcbTraceMesh
@@ -276,6 +277,7 @@ export function PcbScene() {
         layers={pcbLayers}
         activeNet={activeNet}
         hoveredNet={hoveredNet}
+        explosion={stackupExplosion}
       />
 
       {/* Pads */}
@@ -284,6 +286,7 @@ export function PcbScene() {
         layers={pcbLayers}
         activeNet={activeNet}
         hoveredNet={hoveredNet}
+        explosion={stackupExplosion}
       />
 
       {/* Vias */}
@@ -291,6 +294,7 @@ export function PcbScene() {
         pcb={pcb}
         activeNet={activeNet}
         hoveredNet={hoveredNet}
+        explosion={stackupExplosion}
       />
 
       {/* Footprint graphics (silkscreen, courtyard, ref text) */}
@@ -301,6 +305,7 @@ export function PcbScene() {
           layers={pcbLayers}
           boardThickness={boardThickness}
           highlight={activeFootprintRef === fp.ref}
+          explosion={stackupExplosion}
         />
       ))}
 
@@ -311,6 +316,7 @@ export function PcbScene() {
         activeNet={activeNet}
         hoveredNet={hoveredNet}
         boardThickness={boardThickness}
+        explosion={stackupExplosion}
         onStartRoute={startRouteFromRatsnest}
         onHoverNet={setHoveredNet}
       />
@@ -323,6 +329,7 @@ export function PcbScene() {
           routePreview={routePreview}
           boardThickness={boardThickness}
           activeLayer={pcbActiveLayer}
+          explosion={stackupExplosion}
         />
       )}
 
@@ -330,6 +337,7 @@ export function PcbScene() {
       <PcbDrcMarkers3D
         violations={drcViolations}
         boardThickness={boardThickness}
+        explosion={stackupExplosion}
       />
     </group>
   );
