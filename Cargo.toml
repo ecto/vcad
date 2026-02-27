@@ -33,6 +33,7 @@ members = [
     "crates/vcad-slicer-wasm",
     "crates/vcad-kernel-cam",
     "crates/vcad-kernel-stocksim",
+    "crates/vcad-crdt",
     "crates/vcad-app",
     "crates/vcad-eval",
     "crates/vcad-loon",
@@ -99,6 +100,7 @@ vcad-slicer-wasm = { path = "crates/vcad-slicer-wasm" }
 vcad-kernel-cam = { path = "crates/vcad-kernel-cam" }
 vcad-kernel-stocksim = { path = "crates/vcad-kernel-stocksim" }
 vcad-kernel-text = { path = "crates/vcad-kernel-text" }
+vcad-crdt = { path = "crates/vcad-crdt" }
 vcad-app = { path = "crates/vcad-app" }
 vcad-eval = { path = "crates/vcad-eval" }
 vcad-loon = { path = "crates/vcad-loon" }

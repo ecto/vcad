@@ -86,7 +86,6 @@ vcad/
 │   ├── kernel-wasm/               # Kernel WASM package
 │   ├── mcp/                       # MCP server for AI agents
 │   ├── training/                  # ML training pipeline
-│   ├── cli/                       # JS CLI (TUI)
 │   └── docs/                      # Documentation site
 ├── supabase/                      # Database migrations and config
 │   └── migrations/                # SQL migrations (pushed via `supabase db push`)

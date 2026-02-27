@@ -15,6 +15,7 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
+use vcad_crdt::{CrdtDocument, ReplicaId};
 use vcad_ir::{CsgOp, Document, Node, NodeId, SceneEntry, Vec3};
 
 use crate::input::{ClickTracker, DragState};
@@ -59,6 +60,8 @@ pub struct App {
     next_node_id: NodeId,
     /// File path if opened from file.
     pub file_path: Option<PathBuf>,
+    /// CRDT document for new-style operations.
+    pub crdt: CrdtDocument,
 
     // -- Visual state --
     /// Whether the sidebar is visible.
@@ -117,6 +120,7 @@ impl App {
             redo_stack: Vec::new(),
             next_node_id,
             file_path,
+            crdt: CrdtDocument::new(ReplicaId(1)),
             // Visual state
             sidebar_visible: true,
             is_orbiting: false,

@@ -1,0 +1,13 @@
+[package]
+name = "vcad-crdt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "CRDT document model for vcad — conflict-free replicated data types for collaborative CAD"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]

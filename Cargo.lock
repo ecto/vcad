@@ -5899,6 +5899,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "vcad-crdt",
  "vcad-ir",
  "vcad-kernel",
  "vcad-kernel-math",
@@ -5922,6 +5923,7 @@ dependencies = [
  "tower-http",
  "vcad",
  "vcad-app",
+ "vcad-crdt",
  "vcad-eval",
  "vcad-ir",
  "vcad-kernel",
@@ -5935,6 +5937,14 @@ dependencies = [
  "vcad-slicer",
  "vcad-slicer-bambu",
  "vcad-slicer-gcode",
+]
+
+[[package]]
+name = "vcad-crdt"
+version = "0.8.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -6330,6 +6340,8 @@ dependencies = [
  "serde-wasm-bindgen",
  "serde_json",
  "ts-rs",
+ "vcad-app",
+ "vcad-crdt",
  "vcad-ecad-export",
  "vcad-ecad-pcb",
  "vcad-ecad-schematic",

@@ -8,6 +8,7 @@ description = "Shared application core for vcad — evaluation, undo/redo, camer
 
 [dependencies]
 vcad-ir = { path = "../vcad-ir" }
+vcad-crdt = { path = "../vcad-crdt" }
 vcad-kernel = { path = "../vcad-kernel" }
 vcad-kernel-math = { path = "../vcad-kernel-math" }
 

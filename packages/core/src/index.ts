@@ -63,6 +63,9 @@ export {
 export { useDocumentStore, getUndoActionName, getRedoActionName, getNodePcb, getPcbNodeIds, getNodeEmbroideryDesign } from "./stores/document-store.js";
 export type { VcadFile, DocumentState, PcbCreateOptions } from "./stores/document-store.js";
 
+export { useCrdtDocumentStore, f64, vec3, bool, str, featureRef } from "./stores/crdt-document-store.js";
+export type { CrdtDocumentState, CrdtValue } from "./stores/crdt-document-store.js";
+
 export { useUiStore } from "./stores/ui-store.js";
 export type { UiState, MaterialPreview, RenderMode, RaytraceQuality, RaytraceDebugMode, ToolbarTab } from "./stores/ui-store.js";
 

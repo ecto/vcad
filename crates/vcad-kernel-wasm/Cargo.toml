@@ -14,6 +14,8 @@ vcad-kernel = { workspace = true }
 vcad-kernel-drafting = { workspace = true }
 vcad-kernel-tessellate = { workspace = true }
 vcad-ir = { workspace = true }
+vcad-crdt = { workspace = true }
+vcad-app = { workspace = true }
 vcad-eval = { workspace = true }
 vcad-loon = { workspace = true }
 wasmosis = { workspace = true }

@@ -9,10 +9,15 @@ pub mod camera;
 pub mod commands;
 pub mod engine;
 pub mod evaluate;
+pub mod materializer;
+pub mod migrate;
+pub mod part_info;
 pub mod selection;
 
 pub use camera::Camera;
 pub use commands::{Command, ToolbarTab};
 pub use engine::DocumentEngine;
 pub use evaluate::{EvaluatedMesh, EvaluatedScene};
+pub use materializer::{materialize, MaterializeResult};
+pub use part_info::PartInfo;
 pub use selection::Selection;
