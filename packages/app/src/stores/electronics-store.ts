@@ -67,9 +67,6 @@ export interface ElectronicsState {
   // Schematic overlay docking (new 3D canvas mode)
   schematicDocked: SchematicDocked;
 
-  // 3D preview (legacy — to be removed)
-  show3dPreview: boolean;
-
   // Net-centric selection (Principle 2)
   selection: ElectronicsSelection;
   hoveredNet: string | null;
@@ -164,9 +161,6 @@ export interface ElectronicsState {
   setSchLabelName: (name: string) => void;
   nextRef: (prefix: string) => string;
 
-  // 3D preview actions
-  toggleShow3dPreview: () => void;
-
   // Schematic overlay actions
   setSchematicDocked: (docked: SchematicDocked) => void;
 
@@ -191,7 +185,6 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
   splitRatio: 0.5,
   focusedPane: "schematic",
   schematicDocked: "left",
-  show3dPreview: false,
 
   selection: { type: "none" },
   hoveredNet: null,
@@ -428,9 +421,6 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
       lengthTuneNet: null,
       pcbTool: "select",
     }),
-
-  // 3D preview
-  toggleShow3dPreview: () => set((s) => ({ show3dPreview: !s.show3dPreview })),
 
   // Schematic overlay
   setSchematicDocked: (schematicDocked) => set({ schematicDocked }),

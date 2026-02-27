@@ -1,7 +1,7 @@
 /**
  * Shared ratsnest computation utility.
  *
- * Extracted from PcbCanvas.tsx for reuse across SVG and 3D renderers.
+ * Computes minimum-spanning-tree ratsnest for unrouted net connections.
  */
 
 import type { Footprint, Vec2 } from "@vcad/ir";

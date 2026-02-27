@@ -2,7 +2,7 @@
  * Extruded board outline mesh.
  *
  * FR4 green slab from board outline vertices + cutout holes.
- * Approach reused from Pcb3dPreview.tsx:PcbMesh.
+ * FR4 green material with dielectric slabs when exploded.
  */
 
 import { useMemo } from "react";

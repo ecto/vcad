@@ -23,7 +23,6 @@ import { MagnetStraight } from "@phosphor-icons/react/dist/ssr/MagnetStraight";
 import { Package } from "@phosphor-icons/react/dist/ssr/Package";
 import { Ruler } from "@phosphor-icons/react/dist/ssr/Ruler";
 import { ArrowSquareDown } from "@phosphor-icons/react/dist/ssr/ArrowSquareDown";
-import { Cube } from "@phosphor-icons/react/dist/ssr/Cube";
 import {
   TabDropdown,
   ToolbarButton,
@@ -174,8 +173,6 @@ export function ElectronicsToolbar() {
   const exit = useElectronicsStore((s) => s.exit);
 
   const unplacedComponents = useElectronicsStore((s) => s.unplacedComponents);
-  const show3dPreview = useElectronicsStore((s) => s.show3dPreview);
-  const toggleShow3dPreview = useElectronicsStore((s) => s.toggleShow3dPreview);
   const syncSchematicToPcb = useDocumentStore((s) => s.syncSchematicToPcb);
 
   const removeTrace = useDocumentStore((s) => s.removeTrace);
@@ -590,16 +587,6 @@ export function ElectronicsToolbar() {
           </ToolbarButton>
         ))}
 
-      <div className="w-px h-5 bg-border mx-0.5" />
-
-      <ToolbarButton
-        tooltip="3D Preview"
-        active={show3dPreview}
-        onClick={toggleShow3dPreview}
-        iconColor={ELECTRONICS_TAB_COLORS.view}
-      >
-        <Cube size={20} />
-      </ToolbarButton>
     </>
   );
 
