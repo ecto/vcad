@@ -1,12 +1,12 @@
 /**
  * Multimodal data generation - creates image-IR pairs for vision-language training.
  *
- * Pipeline: Compact IR → fromCompact() → Document → Engine.evaluate() → Mesh → Render → PNG
+ * Pipeline: VCode → fromVCode() → Document → Engine.evaluate() → Mesh → Render → PNG
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fromCompact } from "@vcad/ir";
+import { fromVCode } from "@vcad/ir";
 import type { GeneratedPart } from "./generators/types.js";
 import { Renderer, type ViewPreset, type RenderOptions } from "./render.js";
 
@@ -14,7 +14,7 @@ import { Renderer, type ViewPreset, type RenderOptions } from "./render.js";
 export interface ImageIRPair {
   /** Path to the rendered image file (relative). */
   imagePath: string;
-  /** Compact IR representation. */
+  /** VCode representation. */
   ir: string;
   /** Part family name. */
   family: string;
@@ -95,7 +95,7 @@ export async function generateImageIRPairs(
 
       try {
         // Parse IR and evaluate to mesh
-        const doc = fromCompact(part.compact);
+        const doc = fromVCode(part.vcode);
         const scene = engine.evaluate(doc);
 
         if (!scene.parts || scene.parts.length === 0) {
@@ -125,7 +125,7 @@ export async function generateImageIRPairs(
 
             const pair: ImageIRPair = {
               imagePath: path.relative(outputDir, imagePath),
-              ir: part.compact,
+              ir: part.vcode,
               family: part.family,
               view,
               width,
@@ -174,7 +174,7 @@ export function writeMetadata(
 export interface Base64ImageIRPair {
   /** Base64-encoded PNG image. */
   imageBase64: string;
-  /** Compact IR representation. */
+  /** VCode representation. */
   ir: string;
   /** Part family name. */
   family: string;
@@ -215,7 +215,7 @@ export async function generateBase64ImageIRPairs(
       const part = parts[i];
 
       try {
-        const doc = fromCompact(part.compact);
+        const doc = fromVCode(part.vcode);
         const scene = engine.evaluate(doc);
 
         if (!scene.parts || scene.parts.length === 0) {
@@ -237,7 +237,7 @@ export async function generateBase64ImageIRPairs(
 
             const pair: Base64ImageIRPair = {
               imageBase64: result.image.toString("base64"),
-              ir: part.compact,
+              ir: part.vcode,
               family: part.family,
               view,
             };

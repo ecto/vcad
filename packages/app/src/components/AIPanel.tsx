@@ -8,7 +8,7 @@ import { Lock } from "@phosphor-icons/react/dist/ssr/Lock";
 import { cn } from "@/lib/utils";
 import { useDocumentStore } from "@vcad/core";
 import { useNotificationStore } from "@/stores/notification-store";
-import { fromCompact, type Document } from "@vcad/ir";
+import { fromVCode, type Document } from "@vcad/ir";
 import { useEngineStore } from "@vcad/core";
 import {
   generateCAD,
@@ -18,7 +18,7 @@ import {
 import { generateCADServer, rateGeneration } from "@/lib/server-inference";
 import { useRequireAuth, AuthModal, useAuthStore } from "@vcad/auth";
 
-/** Parse AI output as either loon or compact IR. */
+/** Parse AI output as either loon or VCode. */
 function parseAIOutput(ir: string): Document {
   const trimmed = ir.trim();
   // Detect loon format: starts with [ or ;
@@ -28,9 +28,9 @@ function parseAIOutput(ir: string): Document {
       const doc = engine.evalVcadSource(trimmed);
       if (doc) return doc;
     }
-    // Fall through to compact IR if engine unavailable
+    // Fall through to VCode if engine unavailable
   }
-  return fromCompact(trimmed);
+  return fromVCode(trimmed);
 }
 
 interface AIPanelProps {
@@ -137,7 +137,7 @@ export function AIPanel({ open, onOpenChange }: AIPanelProps) {
         setLoadingStatus("Parsing generated IR...");
         store.updateAIProgress(progressId, 3, 90);
 
-        // Parse the Compact IR to a Document
+        // Parse the VCode to a Document
         try {
           document = parseAIOutput(result.ir);
         } catch (parseError) {
@@ -179,7 +179,7 @@ export function AIPanel({ open, onOpenChange }: AIPanelProps) {
         setLoadingStatus("Parsing generated IR...");
         store.updateAIProgress(progressId, 2, 90);
 
-        // Parse the Compact IR to a Document
+        // Parse the VCode to a Document
         try {
           document = parseAIOutput(result.ir);
         } catch (parseError) {

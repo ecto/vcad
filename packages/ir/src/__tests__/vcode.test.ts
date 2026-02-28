@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { fromCompact, toCompact, CompactParseError, createDocument } from "../index.js";
+import { fromVCode, toVCode, VCodeParseError, createDocument } from "../index.js";
 import type { Node, CsgOp } from "../index.js";
 
-describe("Compact IR", () => {
-  describe("fromCompact", () => {
+describe("VCode", () => {
+  describe("fromVCode", () => {
     it("parses a simple cube", () => {
-      const doc = fromCompact("C 50 30 5");
+      const doc = fromVCode("C 50 30 5");
       expect(Object.keys(doc.nodes)).toHaveLength(1);
       const node = doc.nodes["0"];
       expect(node.op.type).toBe("Cube");
@@ -16,7 +16,7 @@ describe("Compact IR", () => {
 
     it("parses plate with hole example", () => {
       const compact = "C 50 30 5\nY 5 10\nT 1 25 15 0\nD 0 2";
-      const doc = fromCompact(compact);
+      const doc = fromVCode(compact);
       expect(Object.keys(doc.nodes)).toHaveLength(4);
 
       // Node 0: Cube
@@ -52,7 +52,7 @@ describe("Compact IR", () => {
 
     it("parses all primitives", () => {
       const compact = "C 10 20 30\nY 5 15\nS 8\nK 5 2 20";
-      const doc = fromCompact(compact);
+      const doc = fromVCode(compact);
       expect(Object.keys(doc.nodes)).toHaveLength(4);
 
       expect(doc.nodes["0"].op.type).toBe("Cube");
@@ -69,7 +69,7 @@ describe("Compact IR", () => {
 
     it("parses all booleans", () => {
       const compact = "C 10 10 10\nC 5 5 5\nU 0 1\nD 0 1\nI 0 1";
-      const doc = fromCompact(compact);
+      const doc = fromVCode(compact);
 
       expect(doc.nodes["2"].op.type).toBe("Union");
       expect(doc.nodes["3"].op.type).toBe("Difference");
@@ -78,7 +78,7 @@ describe("Compact IR", () => {
 
     it("parses all transforms", () => {
       const compact = "C 10 10 10\nT 0 5 10 15\nR 1 45 0 90\nX 2 2 2 2";
-      const doc = fromCompact(compact);
+      const doc = fromVCode(compact);
 
       if (doc.nodes["1"].op.type === "Translate") {
         expect(doc.nodes["1"].op.offset).toEqual({ x: 5, y: 10, z: 15 });
@@ -93,7 +93,7 @@ describe("Compact IR", () => {
 
     it("parses linear pattern", () => {
       const compact = "C 10 10 5\nLP 0 1 0 0 5 20";
-      const doc = fromCompact(compact);
+      const doc = fromVCode(compact);
 
       expect(doc.nodes["1"].op.type).toBe("LinearPattern");
       if (doc.nodes["1"].op.type === "LinearPattern") {
@@ -106,7 +106,7 @@ describe("Compact IR", () => {
 
     it("parses circular pattern", () => {
       const compact = "Y 3 10\nCP 0 0 0 0 0 0 1 6 360";
-      const doc = fromCompact(compact);
+      const doc = fromVCode(compact);
 
       expect(doc.nodes["1"].op.type).toBe("CircularPattern");
       if (doc.nodes["1"].op.type === "CircularPattern") {
@@ -117,7 +117,7 @@ describe("Compact IR", () => {
 
     it("parses shell", () => {
       const compact = "C 50 50 50\nSH 0 2";
-      const doc = fromCompact(compact);
+      const doc = fromVCode(compact);
 
       expect(doc.nodes["1"].op.type).toBe("Shell");
       if (doc.nodes["1"].op.type === "Shell") {
@@ -128,7 +128,7 @@ describe("Compact IR", () => {
 
     it("parses sketch and extrude", () => {
       const compact = "SK 0 0 0  1 0 0  0 1 0\nL 0 0 10 0\nL 10 0 10 5\nL 10 5 0 5\nL 0 5 0 0\nEND\nE 0 0 0 20";
-      const doc = fromCompact(compact);
+      const doc = fromVCode(compact);
 
       expect(doc.nodes["0"].op.type).toBe("Sketch2D");
       if (doc.nodes["0"].op.type === "Sketch2D") {
@@ -146,7 +146,7 @@ describe("Compact IR", () => {
 
     it("parses sketch with arc", () => {
       const compact = "SK 0 0 0  1 0 0  0 1 0\nL 0 0 10 0\nA 10 0 10 10 10 5 1\nL 10 10 0 10\nL 0 10 0 0\nEND";
-      const doc = fromCompact(compact);
+      const doc = fromVCode(compact);
 
       if (doc.nodes["0"].op.type === "Sketch2D") {
         expect(doc.nodes["0"].op.segments).toHaveLength(4);
@@ -160,14 +160,14 @@ describe("Compact IR", () => {
 
     it("skips comments and empty lines", () => {
       const compact = "# Comment\nC 10 10 10\n\n# Another comment\nY 5 10";
-      const doc = fromCompact(compact);
+      const doc = fromVCode(compact);
       // Nodes are created at line numbers 1 and 4
       expect(Object.keys(doc.nodes)).toHaveLength(2);
     });
 
     it("handles negative numbers", () => {
       const compact = "C 10 10 10\nT 0 -5 -10 -15";
-      const doc = fromCompact(compact);
+      const doc = fromVCode(compact);
 
       if (doc.nodes["1"].op.type === "Translate") {
         expect(doc.nodes["1"].op.offset).toEqual({ x: -5, y: -10, z: -15 });
@@ -176,7 +176,7 @@ describe("Compact IR", () => {
 
     it("handles floating point numbers", () => {
       const compact = "C 10.5 20.25 30.125";
-      const doc = fromCompact(compact);
+      const doc = fromVCode(compact);
 
       if (doc.nodes["0"].op.type === "Cube") {
         expect(doc.nodes["0"].op.size.x).toBe(10.5);
@@ -186,21 +186,21 @@ describe("Compact IR", () => {
     });
 
     it("handles empty input", () => {
-      const doc = fromCompact("");
+      const doc = fromVCode("");
       expect(Object.keys(doc.nodes)).toHaveLength(0);
       expect(doc.roots).toHaveLength(0);
     });
 
     it("throws on invalid opcode", () => {
-      expect(() => fromCompact("Z 10 10 10")).toThrow(CompactParseError);
+      expect(() => fromVCode("Z 10 10 10")).toThrow(VCodeParseError);
     });
 
     it("throws on wrong arg count", () => {
-      expect(() => fromCompact("C 10 10")).toThrow(CompactParseError);
+      expect(() => fromVCode("C 10 10")).toThrow(VCodeParseError);
     });
   });
 
-  describe("toCompact", () => {
+  describe("toVCode", () => {
     it("serializes a simple cube", () => {
       const doc = createDocument();
       doc.nodes["0"] = {
@@ -210,7 +210,7 @@ describe("Compact IR", () => {
       };
       doc.roots.push({ root: 0, material: "default" });
 
-      const compact = toCompact(doc);
+      const compact = toVCode(doc);
       // v0.2 format includes header, geometry section, and scene roots
       expect(compact).toContain("# vcad 0.2");
       expect(compact).toContain("C 50 30 5");
@@ -219,11 +219,11 @@ describe("Compact IR", () => {
 
     it("roundtrips plate with hole", () => {
       const original = "C 50 30 5\nY 5 10\nT 1 25 15 0\nD 0 2";
-      const doc = fromCompact(original);
-      const compact = toCompact(doc);
+      const doc = fromVCode(original);
+      const compact = toVCode(doc);
 
       // Parse again and verify structure
-      const doc2 = fromCompact(compact);
+      const doc2 = fromVCode(compact);
       expect(Object.keys(doc2.nodes)).toHaveLength(4);
       expect(doc2.roots[0].root).toBe(3);
     });
@@ -236,7 +236,7 @@ describe("Compact IR", () => {
       doc.nodes["3"] = { id: 3, name: null, op: { type: "Cone", radius_bottom: 5, radius_top: 2, height: 20, segments: 32 } };
       doc.roots.push({ root: 3, material: "default" });
 
-      const compact = toCompact(doc);
+      const compact = toVCode(doc);
       // v0.2 format includes header and sections, check for content
       expect(compact).toContain("C 10 20 30");
       expect(compact).toContain("Y 5 15");
@@ -246,7 +246,7 @@ describe("Compact IR", () => {
 
     it("handles empty document", () => {
       const doc = createDocument();
-      const compact = toCompact(doc);
+      const compact = toVCode(doc);
       // Empty document still has version header
       expect(compact).toBe("# vcad 0.2");
     });
@@ -260,7 +260,7 @@ T 1 15 0 0
 CP 2 0 0 0 0 0 1 6 360
 D 0 3`;
 
-      const doc = fromCompact(compact);
+      const doc = fromVCode(compact);
       expect(Object.keys(doc.nodes)).toHaveLength(5);
       expect(doc.roots[0].root).toBe(4);
     });

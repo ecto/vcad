@@ -73,7 +73,7 @@ import { isStitchEligible, getPcbNodeIds } from "@vcad/core";
 import { downloadBlob } from "@/lib/download";
 import { useNotificationStore } from "@/stores/notification-store";
 import { generateCADServer, rateGeneration } from "@/lib/server-inference";
-import { fromCompact, type Document } from "@vcad/ir";
+import { fromVCode, type Document } from "@vcad/ir";
 import { useRequireAuth, AuthModal, useAuthStore } from "@vcad/auth";
 import { useOutputStore, estimatePrice } from "@/stores/output-store";
 import type { VcadFile } from "@vcad/core";
@@ -269,7 +269,7 @@ function CommandDropdown() {
       store.updateAIProgress(progressId, 1, 80);
       setAiStatus("Building geometry...");
 
-      const generatedDoc: Document = fromCompact(result.ir);
+      const generatedDoc: Document = fromVCode(result.ir);
 
       store.updateAIProgress(progressId, 2, 95);
 

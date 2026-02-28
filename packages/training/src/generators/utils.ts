@@ -29,7 +29,7 @@ export function randBool(prob = 0.5): boolean {
   return Math.random() < prob;
 }
 
-/** Format a number for compact IR (remove unnecessary decimals). */
+/** Format a number for VCode (remove unnecessary decimals). */
 export function fmt(n: number): string {
   // Round to avoid floating point issues
   const rounded = Math.round(n * 1000) / 1000;

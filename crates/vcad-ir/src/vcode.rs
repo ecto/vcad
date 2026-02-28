@@ -1,4 +1,4 @@
-//! Compact text-based IR format for cad0 model training and inference.
+//! VCode text-based IR format for cad0 model training and inference.
 //!
 //! This format is designed to be:
 //! - Token-efficient (short opcodes, minimal punctuation)
@@ -106,36 +106,36 @@ use crate::{
 use std::collections::HashMap;
 use std::fmt::{self, Write as FmtWrite};
 
-/// Current compact IR format version.
-pub const COMPACT_VERSION: &str = "0.2";
+/// Current VCode format version.
+pub const VCODE_VERSION: &str = "0.2";
 
-/// Error type for compact IR parsing.
+/// Error type for VCode parsing.
 #[derive(Debug, Clone, PartialEq)]
-pub struct CompactParseError {
+pub struct VCodeParseError {
     /// Line number where the error occurred (0-indexed).
     pub line: usize,
     /// Description of the error.
     pub message: String,
 }
 
-impl fmt::Display for CompactParseError {
+impl fmt::Display for VCodeParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "line {}: {}", self.line, self.message)
     }
 }
 
-impl std::error::Error for CompactParseError {}
+impl std::error::Error for VCodeParseError {}
 
-/// Convert a Document to compact IR format.
+/// Convert a Document to VCode format.
 ///
 /// The document must have a simple DAG structure where node IDs can be
 /// mapped to sequential line numbers. Nodes are sorted topologically
 /// so dependencies appear before their dependents.
-pub fn to_compact(doc: &Document) -> Result<String, CompactParseError> {
+pub fn to_vcode(doc: &Document) -> Result<String, VCodeParseError> {
     let mut output = String::new();
 
     // Header
-    writeln!(output, "# vcad {}", COMPACT_VERSION).unwrap();
+    writeln!(output, "# vcad {}", VCODE_VERSION).unwrap();
     writeln!(output).unwrap();
 
     // Materials section
@@ -203,7 +203,7 @@ pub fn to_compact(doc: &Document) -> Result<String, CompactParseError> {
         if !doc.roots.is_empty() {
             writeln!(output, "# Scene").unwrap();
             for entry in &doc.roots {
-                let mapped_id = id_map.get(&entry.root).ok_or_else(|| CompactParseError {
+                let mapped_id = id_map.get(&entry.root).ok_or_else(|| VCodeParseError {
                     line: 0,
                     message: format!("unknown root node {}", entry.root),
                 })?;
@@ -242,7 +242,7 @@ pub fn to_compact(doc: &Document) -> Result<String, CompactParseError> {
             pdef_ids.sort();
             for id in pdef_ids {
                 let pdef = &part_defs[id];
-                let mapped_root = id_map.get(&pdef.root).ok_or_else(|| CompactParseError {
+                let mapped_root = id_map.get(&pdef.root).ok_or_else(|| VCodeParseError {
                     line: 0,
                     message: format!("unknown part def root {}", pdef.root),
                 })?;
@@ -325,7 +325,7 @@ pub fn to_compact(doc: &Document) -> Result<String, CompactParseError> {
     Ok(output)
 }
 
-/// Format a joint to compact format.
+/// Format a joint to VCode format.
 fn format_joint(output: &mut String, joint: &Joint) {
     let parent = joint
         .parent_instance_id
@@ -437,7 +437,7 @@ fn format_joint(output: &mut String, joint: &Joint) {
     }
 }
 
-/// Format scene settings to compact format.
+/// Format scene settings to VCode format.
 fn format_scene_settings(output: &mut String, scene: &SceneSettings) {
     writeln!(output, "# Scene Settings").unwrap();
 
@@ -695,8 +695,8 @@ fn format_quoted_string(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
-/// Parse compact IR format into a Document.
-pub fn from_compact(s: &str) -> Result<Document, CompactParseError> {
+/// Parse VCode format into a Document.
+pub fn from_vcode(s: &str) -> Result<Document, VCodeParseError> {
     let mut doc = Document::new();
     let mut current_line = 0;
     let mut lines = s.lines().peekable();
@@ -752,7 +752,7 @@ pub fn from_compact(s: &str) -> Result<Document, CompactParseError> {
             // Ground instance
             "GROUND" => {
                 if parts.len() != 2 {
-                    return Err(CompactParseError {
+                    return Err(VCodeParseError {
                         line: current_line,
                         message: format!("GROUND requires 1 arg, got {}", parts.len() - 1),
                     });
@@ -928,9 +928,9 @@ fn parse_material(
     doc: &mut Document,
     parts: &[&str],
     line: usize,
-) -> Result<(), CompactParseError> {
+) -> Result<(), VCodeParseError> {
     if parts.len() < 7 {
-        return Err(CompactParseError {
+        return Err(VCodeParseError {
             line,
             message: format!("M requires at least 6 args, got {}", parts.len() - 1),
         });
@@ -963,9 +963,9 @@ fn parse_material(
 }
 
 /// Parse a ROOT entry.
-fn parse_root(doc: &mut Document, parts: &[&str], line: usize) -> Result<(), CompactParseError> {
+fn parse_root(doc: &mut Document, parts: &[&str], line: usize) -> Result<(), VCodeParseError> {
     if parts.len() < 3 {
-        return Err(CompactParseError {
+        return Err(VCodeParseError {
             line,
             message: format!("ROOT requires at least 2 args, got {}", parts.len() - 1),
         });
@@ -993,9 +993,9 @@ fn parse_part_def(
     doc: &mut Document,
     parts: &[&str],
     line: usize,
-) -> Result<(), CompactParseError> {
+) -> Result<(), VCodeParseError> {
     if parts.len() < 4 {
-        return Err(CompactParseError {
+        return Err(VCodeParseError {
             line,
             message: format!("PDEF requires at least 3 args, got {}", parts.len() - 1),
         });
@@ -1025,9 +1025,9 @@ fn parse_instance(
     doc: &mut Document,
     parts: &[&str],
     line: usize,
-) -> Result<(), CompactParseError> {
+) -> Result<(), VCodeParseError> {
     if parts.len() < 13 {
-        return Err(CompactParseError {
+        return Err(VCodeParseError {
             line,
             message: format!("INST requires at least 12 args, got {}", parts.len() - 1),
         });
@@ -1073,13 +1073,13 @@ fn parse_joint(
     opcode: &str,
     parts: &[&str],
     line: usize,
-) -> Result<(), CompactParseError> {
+) -> Result<(), VCodeParseError> {
     let joints = doc.joints.get_or_insert_with(Vec::new);
 
     match opcode {
         "JFIX" => {
             if parts.len() < 10 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line,
                     message: format!("JFIX requires 9 args, got {}", parts.len() - 1),
                 });
@@ -1105,7 +1105,7 @@ fn parse_joint(
         }
         "JREV" => {
             if parts.len() < 13 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line,
                     message: format!("JREV requires at least 12 args, got {}", parts.len() - 1),
                 });
@@ -1143,7 +1143,7 @@ fn parse_joint(
         }
         "JSLD" => {
             if parts.len() < 13 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line,
                     message: format!("JSLD requires at least 12 args, got {}", parts.len() - 1),
                 });
@@ -1181,7 +1181,7 @@ fn parse_joint(
         }
         "JCYL" => {
             if parts.len() < 13 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line,
                     message: format!("JCYL requires 12 args, got {}", parts.len() - 1),
                 });
@@ -1213,7 +1213,7 @@ fn parse_joint(
         }
         "JBAL" => {
             if parts.len() < 10 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line,
                     message: format!("JBAL requires 9 args, got {}", parts.len() - 1),
                 });
@@ -1257,9 +1257,9 @@ fn parse_environment(
     doc: &mut Document,
     parts: &[&str],
     line: usize,
-) -> Result<(), CompactParseError> {
+) -> Result<(), VCodeParseError> {
     if parts.len() < 2 {
-        return Err(CompactParseError {
+        return Err(VCodeParseError {
             line,
             message: format!("ENV requires at least 1 arg, got {}", parts.len() - 1),
         });
@@ -1274,7 +1274,7 @@ fn parse_environment(
     }
 
     if parts.len() < 3 {
-        return Err(CompactParseError {
+        return Err(VCodeParseError {
             line,
             message: format!("ENV requires 2 args, got {}", parts.len() - 1),
         });
@@ -1338,9 +1338,9 @@ fn parse_background(
     doc: &mut Document,
     parts: &[&str],
     line: usize,
-) -> Result<(), CompactParseError> {
+) -> Result<(), VCodeParseError> {
     if parts.len() < 2 {
-        return Err(CompactParseError {
+        return Err(VCodeParseError {
             line,
             message: "BG requires at least 1 arg".to_string(),
         });
@@ -1351,7 +1351,7 @@ fn parse_background(
     let bg = match parts[1] {
         "solid" => {
             if parts.len() < 5 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line,
                     message: "BG solid requires 3 color values".to_string(),
                 });
@@ -1366,7 +1366,7 @@ fn parse_background(
         }
         "gradient" => {
             if parts.len() < 8 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line,
                     message: "BG gradient requires 6 color values".to_string(),
                 });
@@ -1387,7 +1387,7 @@ fn parse_background(
         "env" => Background::Environment,
         "transparent" => Background::Transparent,
         _ => {
-            return Err(CompactParseError {
+            return Err(VCodeParseError {
                 line,
                 message: format!("unknown BG type: {}", parts[1]),
             });
@@ -1404,14 +1404,14 @@ fn parse_light(
     opcode: &str,
     parts: &[&str],
     line: usize,
-) -> Result<(), CompactParseError> {
+) -> Result<(), VCodeParseError> {
     let scene = doc.scene.get_or_insert_with(SceneSettings::default);
     let lights = scene.lights.get_or_insert_with(Vec::new);
 
     match opcode {
         "LDIR" => {
             if parts.len() < 9 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line,
                     message: format!("LDIR requires at least 8 args, got {}", parts.len() - 1),
                 });
@@ -1438,7 +1438,7 @@ fn parse_light(
         }
         "LPNT" => {
             if parts.len() < 9 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line,
                     message: format!("LPNT requires at least 8 args, got {}", parts.len() - 1),
                 });
@@ -1466,7 +1466,7 @@ fn parse_light(
         }
         "LSPT" => {
             if parts.len() < 12 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line,
                     message: format!("LSPT requires at least 11 args, got {}", parts.len() - 1),
                 });
@@ -1501,7 +1501,7 @@ fn parse_light(
         }
         "LAREA" => {
             if parts.len() < 14 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line,
                     message: format!("LAREA requires 13 args, got {}", parts.len() - 1),
                 });
@@ -1539,9 +1539,9 @@ fn parse_light(
 }
 
 /// Parse AO settings.
-fn parse_ao(doc: &mut Document, parts: &[&str], line: usize) -> Result<(), CompactParseError> {
+fn parse_ao(doc: &mut Document, parts: &[&str], line: usize) -> Result<(), VCodeParseError> {
     if parts.len() < 4 {
-        return Err(CompactParseError {
+        return Err(VCodeParseError {
             line,
             message: format!("AO requires 3 args, got {}", parts.len() - 1),
         });
@@ -1562,9 +1562,9 @@ fn parse_ao(doc: &mut Document, parts: &[&str], line: usize) -> Result<(), Compa
 }
 
 /// Parse bloom settings.
-fn parse_bloom(doc: &mut Document, parts: &[&str], line: usize) -> Result<(), CompactParseError> {
+fn parse_bloom(doc: &mut Document, parts: &[&str], line: usize) -> Result<(), VCodeParseError> {
     if parts.len() < 4 {
-        return Err(CompactParseError {
+        return Err(VCodeParseError {
             line,
             message: format!("BLOOM requires 3 args, got {}", parts.len() - 1),
         });
@@ -1589,9 +1589,9 @@ fn parse_vignette(
     doc: &mut Document,
     parts: &[&str],
     line: usize,
-) -> Result<(), CompactParseError> {
+) -> Result<(), VCodeParseError> {
     if parts.len() < 4 {
-        return Err(CompactParseError {
+        return Err(VCodeParseError {
             line,
             message: format!("VIG requires 3 args, got {}", parts.len() - 1),
         });
@@ -1616,9 +1616,9 @@ fn parse_tone_mapping(
     doc: &mut Document,
     parts: &[&str],
     line: usize,
-) -> Result<(), CompactParseError> {
+) -> Result<(), VCodeParseError> {
     if parts.len() < 2 {
-        return Err(CompactParseError {
+        return Err(VCodeParseError {
             line,
             message: "TONE requires 1 arg".to_string(),
         });
@@ -1637,7 +1637,7 @@ fn parse_tone_mapping(
         "agX" => ToneMapping::AgX,
         "neutral" => ToneMapping::Neutral,
         other => {
-            return Err(CompactParseError {
+            return Err(VCodeParseError {
                 line,
                 message: format!("unknown tone mapping: {}", other),
             });
@@ -1652,9 +1652,9 @@ fn parse_exposure(
     doc: &mut Document,
     parts: &[&str],
     line: usize,
-) -> Result<(), CompactParseError> {
+) -> Result<(), VCodeParseError> {
     if parts.len() < 2 {
-        return Err(CompactParseError {
+        return Err(VCodeParseError {
             line,
             message: "EXP requires 1 arg".to_string(),
         });
@@ -1670,9 +1670,9 @@ fn parse_exposure(
 }
 
 /// Parse camera preset.
-fn parse_camera(doc: &mut Document, parts: &[&str], line: usize) -> Result<(), CompactParseError> {
+fn parse_camera(doc: &mut Document, parts: &[&str], line: usize) -> Result<(), VCodeParseError> {
     if parts.len() < 8 {
-        return Err(CompactParseError {
+        return Err(VCodeParseError {
             line,
             message: format!("CAM requires at least 7 args, got {}", parts.len() - 1),
         });
@@ -1709,14 +1709,14 @@ fn parse_geometry_line<'a, I>(
     line_num: usize,
     lines: &mut std::iter::Peekable<I>,
     current_line: &mut usize,
-) -> Result<(CsgOp, Option<String>), CompactParseError>
+) -> Result<(CsgOp, Option<String>), VCodeParseError>
 where
     I: Iterator<Item = &'a str>,
 {
     // Use the quoted-aware split
     let parts = split_line_respecting_quotes(line);
     if parts.is_empty() {
-        return Err(CompactParseError {
+        return Err(VCodeParseError {
             line: line_num,
             message: "empty line".to_string(),
         });
@@ -1752,14 +1752,14 @@ fn parse_geometry_opcode<'a, I>(
     line_num: usize,
     lines: &mut std::iter::Peekable<I>,
     current_line: &mut usize,
-) -> Result<CsgOp, CompactParseError>
+) -> Result<CsgOp, VCodeParseError>
 where
     I: Iterator<Item = &'a str>,
 {
     match opcode {
         "C" => {
             if parts.len() != 4 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line: line_num,
                     message: format!("C requires 3 args, got {}", parts.len() - 1),
                 });
@@ -1775,7 +1775,7 @@ where
 
         "Y" => {
             if parts.len() != 3 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line: line_num,
                     message: format!("Y requires 2 args, got {}", parts.len() - 1),
                 });
@@ -1789,7 +1789,7 @@ where
 
         "S" => {
             if parts.len() != 2 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line: line_num,
                     message: format!("S requires 1 arg, got {}", parts.len() - 1),
                 });
@@ -1802,7 +1802,7 @@ where
 
         "K" => {
             if parts.len() != 4 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line: line_num,
                     message: format!("K requires 3 args, got {}", parts.len() - 1),
                 });
@@ -1817,7 +1817,7 @@ where
 
         "U" => {
             if parts.len() != 3 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line: line_num,
                     message: format!("U requires 2 args, got {}", parts.len() - 1),
                 });
@@ -1830,7 +1830,7 @@ where
 
         "D" => {
             if parts.len() != 3 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line: line_num,
                     message: format!("D requires 2 args, got {}", parts.len() - 1),
                 });
@@ -1843,7 +1843,7 @@ where
 
         "I" => {
             if parts.len() != 3 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line: line_num,
                     message: format!("I requires 2 args, got {}", parts.len() - 1),
                 });
@@ -1856,7 +1856,7 @@ where
 
         "T" => {
             if parts.len() != 5 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line: line_num,
                     message: format!("T requires 4 args, got {}", parts.len() - 1),
                 });
@@ -1873,7 +1873,7 @@ where
 
         "R" => {
             if parts.len() != 5 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line: line_num,
                     message: format!("R requires 4 args, got {}", parts.len() - 1),
                 });
@@ -1890,7 +1890,7 @@ where
 
         "X" => {
             if parts.len() != 5 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line: line_num,
                     message: format!("X requires 4 args, got {}", parts.len() - 1),
                 });
@@ -1907,7 +1907,7 @@ where
 
         "LP" => {
             if parts.len() != 7 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line: line_num,
                     message: format!("LP requires 6 args, got {}", parts.len() - 1),
                 });
@@ -1926,7 +1926,7 @@ where
 
         "CP" => {
             if parts.len() != 10 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line: line_num,
                     message: format!("CP requires 9 args, got {}", parts.len() - 1),
                 });
@@ -1950,7 +1950,7 @@ where
 
         "SH" => {
             if parts.len() != 3 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line: line_num,
                     message: format!("SH requires 2 args, got {}", parts.len() - 1),
                 });
@@ -1963,7 +1963,7 @@ where
 
         "FI" => {
             if parts.len() != 3 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line: line_num,
                     message: format!("FI requires 2 args, got {}", parts.len() - 1),
                 });
@@ -1976,7 +1976,7 @@ where
 
         "CH" => {
             if parts.len() != 3 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line: line_num,
                     message: format!("CH requires 2 args, got {}", parts.len() - 1),
                 });
@@ -1989,7 +1989,7 @@ where
 
         "SK" => {
             if parts.len() != 10 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line: line_num,
                     message: format!("SK requires 9 args, got {}", parts.len() - 1),
                 });
@@ -2016,7 +2016,7 @@ where
             // Parse sketch segments until END
             loop {
                 *current_line += 1;
-                let seg_line = lines.next().ok_or_else(|| CompactParseError {
+                let seg_line = lines.next().ok_or_else(|| VCodeParseError {
                     line: *current_line,
                     message: "unexpected end of sketch block".to_string(),
                 })?;
@@ -2034,7 +2034,7 @@ where
                 match seg_parts[0] {
                     "L" => {
                         if seg_parts.len() != 5 {
-                            return Err(CompactParseError {
+                            return Err(VCodeParseError {
                                 line: *current_line,
                                 message: format!("L requires 4 args, got {}", seg_parts.len() - 1),
                             });
@@ -2052,7 +2052,7 @@ where
                     }
                     "A" => {
                         if seg_parts.len() != 8 {
-                            return Err(CompactParseError {
+                            return Err(VCodeParseError {
                                 line: *current_line,
                                 message: format!("A requires 7 args, got {}", seg_parts.len() - 1),
                             });
@@ -2074,7 +2074,7 @@ where
                         });
                     }
                     _ => {
-                        return Err(CompactParseError {
+                        return Err(VCodeParseError {
                             line: *current_line,
                             message: format!("unknown sketch segment opcode: {}", seg_parts[0]),
                         });
@@ -2092,7 +2092,7 @@ where
 
         "E" => {
             if parts.len() != 5 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line: line_num,
                     message: format!("E requires 4 args, got {}", parts.len() - 1),
                 });
@@ -2111,7 +2111,7 @@ where
 
         "V" => {
             if parts.len() != 9 {
-                return Err(CompactParseError {
+                return Err(VCodeParseError {
                     line: line_num,
                     message: format!("V requires 8 args, got {}", parts.len() - 1),
                 });
@@ -2132,7 +2132,7 @@ where
             })
         }
 
-        _ => Err(CompactParseError {
+        _ => Err(VCodeParseError {
             line: line_num,
             message: format!("unknown opcode: {}", opcode),
         }),
@@ -2162,7 +2162,7 @@ fn get_children(op: &CsgOp) -> Vec<u64> {
 }
 
 /// Topological sort of nodes.
-fn topological_sort(doc: &Document, roots: &[u64]) -> Result<Vec<u64>, CompactParseError> {
+fn topological_sort(doc: &Document, roots: &[u64]) -> Result<Vec<u64>, VCodeParseError> {
     let mut result = Vec::new();
     let mut visited = std::collections::HashSet::new();
     let mut temp_visited = std::collections::HashSet::new();
@@ -2173,12 +2173,12 @@ fn topological_sort(doc: &Document, roots: &[u64]) -> Result<Vec<u64>, CompactPa
         visited: &mut std::collections::HashSet<u64>,
         temp_visited: &mut std::collections::HashSet<u64>,
         result: &mut Vec<u64>,
-    ) -> Result<(), CompactParseError> {
+    ) -> Result<(), VCodeParseError> {
         if visited.contains(&node_id) {
             return Ok(());
         }
         if temp_visited.contains(&node_id) {
-            return Err(CompactParseError {
+            return Err(VCodeParseError {
                 line: 0,
                 message: format!("cycle detected at node {}", node_id),
             });
@@ -2213,12 +2213,12 @@ fn topological_sort(doc: &Document, roots: &[u64]) -> Result<Vec<u64>, CompactPa
     Ok(result)
 }
 
-/// Format a CsgOp as a compact IR line with optional name suffix.
+/// Format a CsgOp as a VCode line with optional name suffix.
 fn format_op(
     op: &CsgOp,
     id_map: &HashMap<u64, usize>,
     name: Option<&str>,
-) -> Result<String, CompactParseError> {
+) -> Result<String, VCodeParseError> {
     let name_suffix = name
         .map(|n| format!(" {}", format_quoted_string(n)))
         .unwrap_or_default();
@@ -2245,11 +2245,11 @@ fn format_op(
         CsgOp::Empty => Ok(format!("C 0 0 0{}", name_suffix)),
 
         CsgOp::Union { left, right } => {
-            let l = id_map.get(left).ok_or_else(|| CompactParseError {
+            let l = id_map.get(left).ok_or_else(|| VCodeParseError {
                 line: 0,
                 message: format!("unknown node {}", left),
             })?;
-            let r = id_map.get(right).ok_or_else(|| CompactParseError {
+            let r = id_map.get(right).ok_or_else(|| VCodeParseError {
                 line: 0,
                 message: format!("unknown node {}", right),
             })?;
@@ -2257,11 +2257,11 @@ fn format_op(
         }
 
         CsgOp::Difference { left, right } => {
-            let l = id_map.get(left).ok_or_else(|| CompactParseError {
+            let l = id_map.get(left).ok_or_else(|| VCodeParseError {
                 line: 0,
                 message: format!("unknown node {}", left),
             })?;
-            let r = id_map.get(right).ok_or_else(|| CompactParseError {
+            let r = id_map.get(right).ok_or_else(|| VCodeParseError {
                 line: 0,
                 message: format!("unknown node {}", right),
             })?;
@@ -2269,11 +2269,11 @@ fn format_op(
         }
 
         CsgOp::Intersection { left, right } => {
-            let l = id_map.get(left).ok_or_else(|| CompactParseError {
+            let l = id_map.get(left).ok_or_else(|| VCodeParseError {
                 line: 0,
                 message: format!("unknown node {}", left),
             })?;
-            let r = id_map.get(right).ok_or_else(|| CompactParseError {
+            let r = id_map.get(right).ok_or_else(|| VCodeParseError {
                 line: 0,
                 message: format!("unknown node {}", right),
             })?;
@@ -2281,7 +2281,7 @@ fn format_op(
         }
 
         CsgOp::Translate { child, offset } => {
-            let c = id_map.get(child).ok_or_else(|| CompactParseError {
+            let c = id_map.get(child).ok_or_else(|| VCodeParseError {
                 line: 0,
                 message: format!("unknown node {}", child),
             })?;
@@ -2292,7 +2292,7 @@ fn format_op(
         }
 
         CsgOp::Rotate { child, angles } => {
-            let c = id_map.get(child).ok_or_else(|| CompactParseError {
+            let c = id_map.get(child).ok_or_else(|| VCodeParseError {
                 line: 0,
                 message: format!("unknown node {}", child),
             })?;
@@ -2303,7 +2303,7 @@ fn format_op(
         }
 
         CsgOp::Scale { child, factor } => {
-            let c = id_map.get(child).ok_or_else(|| CompactParseError {
+            let c = id_map.get(child).ok_or_else(|| VCodeParseError {
                 line: 0,
                 message: format!("unknown node {}", child),
             })?;
@@ -2319,7 +2319,7 @@ fn format_op(
             count,
             spacing,
         } => {
-            let c = id_map.get(child).ok_or_else(|| CompactParseError {
+            let c = id_map.get(child).ok_or_else(|| VCodeParseError {
                 line: 0,
                 message: format!("unknown node {}", child),
             })?;
@@ -2336,7 +2336,7 @@ fn format_op(
             count,
             angle_deg,
         } => {
-            let c = id_map.get(child).ok_or_else(|| CompactParseError {
+            let c = id_map.get(child).ok_or_else(|| VCodeParseError {
                 line: 0,
                 message: format!("unknown node {}", child),
             })?;
@@ -2356,7 +2356,7 @@ fn format_op(
         }
 
         CsgOp::Shell { child, thickness } => {
-            let c = id_map.get(child).ok_or_else(|| CompactParseError {
+            let c = id_map.get(child).ok_or_else(|| VCodeParseError {
                 line: 0,
                 message: format!("unknown node {}", child),
             })?;
@@ -2364,7 +2364,7 @@ fn format_op(
         }
 
         CsgOp::Fillet { child, radius } => {
-            let c = id_map.get(child).ok_or_else(|| CompactParseError {
+            let c = id_map.get(child).ok_or_else(|| VCodeParseError {
                 line: 0,
                 message: format!("unknown node {}", child),
             })?;
@@ -2372,7 +2372,7 @@ fn format_op(
         }
 
         CsgOp::Chamfer { child, distance } => {
-            let c = id_map.get(child).ok_or_else(|| CompactParseError {
+            let c = id_map.get(child).ok_or_else(|| VCodeParseError {
                 line: 0,
                 message: format!("unknown node {}", child),
             })?;
@@ -2431,11 +2431,11 @@ fn format_op(
         CsgOp::Extrude {
             sketch, direction, ..
         } => {
-            let sk = id_map.get(sketch).ok_or_else(|| CompactParseError {
+            let sk = id_map.get(sketch).ok_or_else(|| VCodeParseError {
                 line: 0,
                 message: format!("unknown node {}", sketch),
             })?;
-            // Note: twist_angle and scale_end are not serialized to compact format
+            // Note: twist_angle and scale_end are not serialized to VCode format
             Ok(format!(
                 "E {} {} {} {}{}",
                 sk, direction.x, direction.y, direction.z, name_suffix
@@ -2448,7 +2448,7 @@ fn format_op(
             axis_dir,
             angle_deg,
         } => {
-            let sk = id_map.get(sketch).ok_or_else(|| CompactParseError {
+            let sk = id_map.get(sketch).ok_or_else(|| VCodeParseError {
                 line: 0,
                 message: format!("unknown node {}", sketch),
             })?;
@@ -2466,59 +2466,59 @@ fn format_op(
             ))
         }
 
-        CsgOp::StepImport { .. } => Err(CompactParseError {
+        CsgOp::StepImport { .. } => Err(VCodeParseError {
             line: 0,
-            message: "STEP import not supported in compact format".to_string(),
+            message: "STEP import not supported in VCode format".to_string(),
         }),
 
-        CsgOp::Text2D { .. } => Err(CompactParseError {
+        CsgOp::Text2D { .. } => Err(VCodeParseError {
             line: 0,
-            message: "Text2D not supported in compact format".to_string(),
+            message: "Text2D not supported in VCode format".to_string(),
         }),
 
-        CsgOp::Sweep { .. } => Err(CompactParseError {
+        CsgOp::Sweep { .. } => Err(VCodeParseError {
             line: 0,
-            message: "Sweep not supported in compact format".to_string(),
+            message: "Sweep not supported in VCode format".to_string(),
         }),
 
-        CsgOp::Loft { .. } => Err(CompactParseError {
+        CsgOp::Loft { .. } => Err(VCodeParseError {
             line: 0,
-            message: "Loft not supported in compact format".to_string(),
+            message: "Loft not supported in VCode format".to_string(),
         }),
 
-        CsgOp::ImportedMesh { .. } => Err(CompactParseError {
+        CsgOp::ImportedMesh { .. } => Err(VCodeParseError {
             line: 0,
-            message: "ImportedMesh not supported in compact format".to_string(),
+            message: "ImportedMesh not supported in VCode format".to_string(),
         }),
 
-        CsgOp::PcbBoard { .. } => Err(CompactParseError {
+        CsgOp::PcbBoard { .. } => Err(VCodeParseError {
             line: 0,
-            message: "PcbBoard not supported in compact format".to_string(),
+            message: "PcbBoard not supported in VCode format".to_string(),
         }),
 
-        CsgOp::EmbroideryPattern { .. } => Err(CompactParseError {
+        CsgOp::EmbroideryPattern { .. } => Err(VCodeParseError {
             line: 0,
-            message: "EmbroideryPattern not supported in compact format".to_string(),
+            message: "EmbroideryPattern not supported in VCode format".to_string(),
         }),
     }
 }
 
-fn parse_f64(s: &str, line: usize) -> Result<f64, CompactParseError> {
-    s.parse().map_err(|_| CompactParseError {
+fn parse_f64(s: &str, line: usize) -> Result<f64, VCodeParseError> {
+    s.parse().map_err(|_| VCodeParseError {
         line,
         message: format!("invalid number: {}", s),
     })
 }
 
-fn parse_u64(s: &str, line: usize) -> Result<u64, CompactParseError> {
-    s.parse().map_err(|_| CompactParseError {
+fn parse_u64(s: &str, line: usize) -> Result<u64, VCodeParseError> {
+    s.parse().map_err(|_| VCodeParseError {
         line,
         message: format!("invalid node id: {}", s),
     })
 }
 
-fn parse_u32(s: &str, line: usize) -> Result<u32, CompactParseError> {
-    s.parse().map_err(|_| CompactParseError {
+fn parse_u32(s: &str, line: usize) -> Result<u32, VCodeParseError> {
+    s.parse().map_err(|_| VCodeParseError {
         line,
         message: format!("invalid integer: {}", s),
     })
@@ -2531,7 +2531,7 @@ mod tests {
     #[test]
     fn test_simple_cube() {
         let compact = "C 50 30 5";
-        let doc = from_compact(compact).unwrap();
+        let doc = from_vcode(compact).unwrap();
 
         assert_eq!(doc.nodes.len(), 1);
         let node = &doc.nodes[&0];
@@ -2548,7 +2548,7 @@ mod tests {
     #[test]
     fn test_plate_with_hole() {
         let compact = "C 50 30 5\nY 5 10\nT 1 25 15 0\nD 0 2";
-        let doc = from_compact(compact).unwrap();
+        let doc = from_vcode(compact).unwrap();
 
         assert_eq!(doc.nodes.len(), 4);
 
@@ -2625,12 +2625,12 @@ mod tests {
             visible: None,
         });
 
-        let compact = to_compact(&doc).unwrap();
+        let compact = to_vcode(&doc).unwrap();
         // New format includes header, materials, and scene sections
         assert!(compact.contains("C 10 20 30"));
         assert!(compact.contains("ROOT 0 default"));
 
-        let restored = from_compact(&compact).unwrap();
+        let restored = from_vcode(&compact).unwrap();
         match &restored.nodes[&0].op {
             CsgOp::Cube { size } => {
                 assert_eq!(size.x, 10.0);
@@ -2700,7 +2700,7 @@ mod tests {
             visible: None,
         });
 
-        let compact = to_compact(&doc).unwrap();
+        let compact = to_vcode(&doc).unwrap();
         // Check that geometry section contains expected ops
         assert!(compact.contains("C 50 30 5"));
         assert!(compact.contains("Y 5 10"));
@@ -2711,7 +2711,7 @@ mod tests {
     #[test]
     fn test_all_primitives() {
         let compact = "C 10 20 30\nY 5 15\nS 8\nK 5 2 20";
-        let doc = from_compact(compact).unwrap();
+        let doc = from_vcode(compact).unwrap();
 
         assert_eq!(doc.nodes.len(), 4);
 
@@ -2751,7 +2751,7 @@ mod tests {
     #[test]
     fn test_all_booleans() {
         let compact = "C 10 10 10\nC 5 5 5\nU 0 1\nD 0 1\nI 0 1";
-        let doc = from_compact(compact).unwrap();
+        let doc = from_vcode(compact).unwrap();
 
         match &doc.nodes[&2].op {
             CsgOp::Union { left, right } => {
@@ -2781,7 +2781,7 @@ mod tests {
     #[test]
     fn test_all_transforms() {
         let compact = "C 10 10 10\nT 0 5 10 15\nR 1 45 0 90\nX 2 2 2 2";
-        let doc = from_compact(compact).unwrap();
+        let doc = from_vcode(compact).unwrap();
 
         match &doc.nodes[&1].op {
             CsgOp::Translate { child, offset } => {
@@ -2811,7 +2811,7 @@ mod tests {
     #[test]
     fn test_linear_pattern() {
         let compact = "C 10 10 5\nLP 0 1 0 0 5 20";
-        let doc = from_compact(compact).unwrap();
+        let doc = from_vcode(compact).unwrap();
 
         match &doc.nodes[&1].op {
             CsgOp::LinearPattern {
@@ -2832,7 +2832,7 @@ mod tests {
     #[test]
     fn test_circular_pattern() {
         let compact = "Y 3 10\nCP 0 0 0 0 0 0 1 6 360";
-        let doc = from_compact(compact).unwrap();
+        let doc = from_vcode(compact).unwrap();
 
         match &doc.nodes[&1].op {
             CsgOp::CircularPattern {
@@ -2855,7 +2855,7 @@ mod tests {
     #[test]
     fn test_shell() {
         let compact = "C 50 50 50\nSH 0 2";
-        let doc = from_compact(compact).unwrap();
+        let doc = from_vcode(compact).unwrap();
 
         match &doc.nodes[&1].op {
             CsgOp::Shell { child, thickness } => {
@@ -2869,7 +2869,7 @@ mod tests {
     #[test]
     fn test_sketch_extrude() {
         let compact = "SK 0 0 0  1 0 0  0 1 0\nL 0 0 10 0\nL 10 0 10 5\nL 10 5 0 5\nL 0 5 0 0\nEND\nE 0 0 0 20";
-        let doc = from_compact(compact).unwrap();
+        let doc = from_vcode(compact).unwrap();
 
         // Node IDs are sequential: Sketch is 0, Extrude is 1
         match &doc.nodes[&0].op {
@@ -2903,7 +2903,7 @@ mod tests {
     fn test_sketch_revolve() {
         let compact =
             "SK 0 0 0  1 0 0  0 1 0\nL 5 0 10 0\nL 10 0 10 20\nL 10 20 5 20\nL 5 20 5 0\nEND\nV 0 0 0 0 0 1 0 360";
-        let doc = from_compact(compact).unwrap();
+        let doc = from_vcode(compact).unwrap();
 
         // Revolve is node 1 (sequential)
         match &doc.nodes[&1].op {
@@ -2925,7 +2925,7 @@ mod tests {
     #[test]
     fn test_sketch_with_arc() {
         let compact = "SK 0 0 0  1 0 0  0 1 0\nL 0 0 10 0\nA 10 0 10 10 10 5 1\nL 10 10 0 10\nL 0 10 0 0\nEND";
-        let doc = from_compact(compact).unwrap();
+        let doc = from_vcode(compact).unwrap();
 
         match &doc.nodes[&0].op {
             CsgOp::Sketch2D { segments, .. } => {
@@ -2952,7 +2952,7 @@ mod tests {
     #[test]
     fn test_comments_and_empty_lines() {
         let compact = "# This is a comment\nC 10 10 10\n\n# Another comment\nY 5 10";
-        let doc = from_compact(compact).unwrap();
+        let doc = from_vcode(compact).unwrap();
 
         // Comments and empty lines are skipped
         // Node IDs are assigned sequentially for geometry ops (0, 1, ...)
@@ -2964,7 +2964,7 @@ mod tests {
     #[test]
     fn test_parse_error_invalid_opcode() {
         let compact = "Z 10 10 10";
-        let result = from_compact(compact);
+        let result = from_vcode(compact);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.line, 0);
@@ -2974,7 +2974,7 @@ mod tests {
     #[test]
     fn test_parse_error_wrong_arg_count() {
         let compact = "C 10 10"; // Missing third arg
-        let result = from_compact(compact);
+        let result = from_vcode(compact);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.message.contains("requires 3 args"));
@@ -2983,7 +2983,7 @@ mod tests {
     #[test]
     fn test_parse_error_invalid_number() {
         let compact = "C 10 abc 10";
-        let result = from_compact(compact);
+        let result = from_vcode(compact);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.message.contains("invalid number"));
@@ -2992,7 +2992,7 @@ mod tests {
     #[test]
     fn test_negative_numbers() {
         let compact = "C 10 10 10\nT 0 -5 -10 -15";
-        let doc = from_compact(compact).unwrap();
+        let doc = from_vcode(compact).unwrap();
 
         match &doc.nodes[&1].op {
             CsgOp::Translate { offset, .. } => {
@@ -3007,7 +3007,7 @@ mod tests {
     #[test]
     fn test_floating_point() {
         let compact = "C 10.5 20.25 30.125";
-        let doc = from_compact(compact).unwrap();
+        let doc = from_vcode(compact).unwrap();
 
         match &doc.nodes[&0].op {
             CsgOp::Cube { size } => {
@@ -3022,7 +3022,7 @@ mod tests {
     #[test]
     fn test_empty_input() {
         let compact = "";
-        let doc = from_compact(compact).unwrap();
+        let doc = from_vcode(compact).unwrap();
         assert!(doc.nodes.is_empty());
         assert!(doc.roots.is_empty());
     }
@@ -3036,7 +3036,7 @@ T 1 15 0 0
 CP 2 0 0 0 0 0 1 6 360
 D 0 3"#;
 
-        let doc = from_compact(compact).unwrap();
+        let doc = from_vcode(compact).unwrap();
         assert_eq!(doc.nodes.len(), 5);
 
         // Final difference should be root
@@ -3057,7 +3057,7 @@ C 50 30 5
 # Scene
 ROOT 0 aluminum"#;
 
-        let doc = from_compact(compact).unwrap();
+        let doc = from_vcode(compact).unwrap();
         assert_eq!(doc.materials.len(), 2);
 
         let default = &doc.materials["default"];
@@ -3083,7 +3083,7 @@ Y 5 10 "Hole"
 T 1 25 15 0
 D 0 2 "Plate with Hole""#;
 
-        let doc = from_compact(compact).unwrap();
+        let doc = from_vcode(compact).unwrap();
         assert_eq!(doc.nodes[&0].name, Some("Base Plate".to_string()));
         assert_eq!(doc.nodes[&1].name, Some("Hole".to_string()));
         assert_eq!(doc.nodes[&2].name, None);
@@ -3096,7 +3096,7 @@ D 0 2 "Plate with Hole""#;
 C 50 30 5
 ROOT 0 default hidden"#;
 
-        let doc = from_compact(compact).unwrap();
+        let doc = from_vcode(compact).unwrap();
         assert_eq!(doc.roots[0].visible, Some(false));
     }
 
@@ -3105,7 +3105,7 @@ ROOT 0 default hidden"#;
         let compact = r#"C 50 30 5
 PDEF base "Base Part" 0 aluminum"#;
 
-        let doc = from_compact(compact).unwrap();
+        let doc = from_vcode(compact).unwrap();
         let part_defs = doc.part_defs.as_ref().unwrap();
         let pdef = &part_defs["base"];
         assert_eq!(pdef.id, "base");
@@ -3121,7 +3121,7 @@ PDEF base "Base Part" 0
 INST i1 base "Instance 1" 0 0 0 0 0 0 1 1 1
 INST i2 base "Instance 2" 100 0 0 45 0 0 1 1 1 steel"#;
 
-        let doc = from_compact(compact).unwrap();
+        let doc = from_vcode(compact).unwrap();
         let instances = doc.instances.as_ref().unwrap();
         assert_eq!(instances.len(), 2);
 
@@ -3155,7 +3155,7 @@ JCYL j5 i1 i2 50 0 0 0 0 0 0 0 1
 JBAL j6 i1 i2 50 0 0 0 0 0
 GROUND i1"#;
 
-        let doc = from_compact(compact).unwrap();
+        let doc = from_vcode(compact).unwrap();
         let joints = doc.joints.as_ref().unwrap();
         assert_eq!(joints.len(), 6);
 
@@ -3207,7 +3207,7 @@ GROUND i1"#;
         let compact = r#"C 10 10 10
 ENV studio 1.5"#;
 
-        let doc = from_compact(compact).unwrap();
+        let doc = from_vcode(compact).unwrap();
         let scene = doc.scene.as_ref().unwrap();
         match &scene.environment {
             Some(Environment::Preset { preset, intensity }) => {
@@ -3223,7 +3223,7 @@ ENV studio 1.5"#;
         let compact = r#"C 10 10 10
 BG solid 0.1 0.1 0.1"#;
 
-        let doc = from_compact(compact).unwrap();
+        let doc = from_vcode(compact).unwrap();
         let scene = doc.scene.as_ref().unwrap();
         match &scene.background {
             Some(Background::Solid { color }) => {
@@ -3238,7 +3238,7 @@ BG solid 0.1 0.1 0.1"#;
         let compact = r#"C 10 10 10
 BG gradient 0.1 0.1 0.2 0.9 0.9 1.0"#;
 
-        let doc = from_compact(compact).unwrap();
+        let doc = from_vcode(compact).unwrap();
         let scene = doc.scene.as_ref().unwrap();
         match &scene.background {
             Some(Background::Gradient { top, bottom }) => {
@@ -3256,7 +3256,7 @@ LDIR light1 1 1 1 1.5 0 -1 0 shadow
 LPNT light2 1 0.9 0.8 2.0 10 20 30 100
 LSPT light3 1 1 1 1 0 10 0 0 -1 0 45 0.1"#;
 
-        let doc = from_compact(compact).unwrap();
+        let doc = from_vcode(compact).unwrap();
         let lights = doc.scene.as_ref().unwrap().lights.as_ref().unwrap();
         assert_eq!(lights.len(), 3);
 
@@ -3304,7 +3304,7 @@ VIG 1 0.3 0.5
 TONE acesFilmic
 EXP 0.5"#;
 
-        let doc = from_compact(compact).unwrap();
+        let doc = from_vcode(compact).unwrap();
         let pp = doc
             .scene
             .as_ref()
@@ -3338,7 +3338,7 @@ EXP 0.5"#;
 CAM cam1 100 100 100 0 0 0 60 "Front View"
 CAM cam2 0 100 0 0 0 0"#;
 
-        let doc = from_compact(compact).unwrap();
+        let doc = from_vcode(compact).unwrap();
         let cams = doc.scene.as_ref().unwrap().camera_presets.as_ref().unwrap();
         assert_eq!(cams.len(), 2);
 
@@ -3458,10 +3458,10 @@ CAM cam2 0 100 0 0 0 0"#;
         });
 
         // Serialize
-        let compact = to_compact(&doc).unwrap();
+        let compact = to_vcode(&doc).unwrap();
 
         // Parse back
-        let restored = from_compact(&compact).unwrap();
+        let restored = from_vcode(&compact).unwrap();
 
         // Verify materials
         assert_eq!(restored.materials.len(), 1);

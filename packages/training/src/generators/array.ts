@@ -167,7 +167,7 @@ export class ArrayGenerator implements PartGenerator {
     }
 
     return {
-      compact: lines.join("\n"),
+      vcode: lines.join("\n"),
       params: p,
       family: this.family,
       complexity: this.computeComplexity(p),

@@ -168,7 +168,7 @@ export class FlangeGenerator implements PartGenerator {
     baseIdx = this.addBoltHoles(lines, baseIdx, p);
 
     return {
-      compact: lines.join("\n"),
+      vcode: lines.join("\n"),
       params: p,
       family: this.family,
       complexity: this.computeComplexity(p),

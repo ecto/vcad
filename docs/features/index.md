@@ -162,7 +162,7 @@ Technical debt and infrastructure for major features.
 | Feature | Status | Priority | Effort | Spec |
 |---------|--------|----------|--------|------|
 | [Technical Debt Cleanup](./technical-debt.md) | `shipped` | p0 | s | Safety fixes, module refactoring |
-| [Compact IR Format](./compact-ir.md) | `proposed` | p0 | xs | Terse text format for AI/compression |
+| [VCode Format](./vcode.md) | `proposed` | p0 | xs | Terse text format for AI/compression |
 
 ---
 
@@ -239,7 +239,7 @@ Make vcad's feature tree legendary — better than SolidWorks, Fusion, Onshape.
 
 1. **[WASM Physics Integration](./wasm-physics-integration.md)** — Foundation for browser simulation
 2. **[Zero-Latency Parametric Editing](./zero-latency-parametric-editing.md)** — Core UX differentiator
-3. **[Compact IR Format](./compact-ir.md)** — Parser/serializer for cad0
+3. **[VCode Format](./vcode.md)** — Parser/serializer for cad0
 
 ### Next (P1)
 

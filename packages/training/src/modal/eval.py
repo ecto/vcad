@@ -18,7 +18,7 @@ from tqdm import tqdm
 from transformers import PreTrainedModel, PreTrainedTokenizer
 
 
-# Compact IR syntax patterns
+# VCode syntax patterns
 COMPACT_IR_PATTERNS = {
     "cube": re.compile(r"^C\s+[\d.]+\s+[\d.]+\s+[\d.]+$"),
     "cylinder": re.compile(r"^Y\s+[\d.]+\s+[\d.]+$"),
@@ -60,10 +60,10 @@ class AggregateMetrics:
 
 def validate_syntax(ir: str) -> tuple[bool, Optional[str]]:
     """
-    Validate Compact IR syntax.
+    Validate VCode syntax.
 
     Args:
-        ir: Compact IR string to validate
+        ir: VCode string to validate
 
     Returns:
         Tuple of (is_valid, error_message)
@@ -101,7 +101,7 @@ def validate_references(ir: str) -> tuple[bool, Optional[str]]:
     Validate that node references in operations are valid.
 
     Args:
-        ir: Compact IR string
+        ir: VCode string
 
     Returns:
         Tuple of (is_valid, error_message)
@@ -146,7 +146,7 @@ def generate_completion(
     temperature: float = 0.1,
 ) -> str:
     """Generate IR completion for a prompt."""
-    full_prompt = f"Design: {prompt}\n\nCompact IR:\n"
+    full_prompt = f"Design: {prompt}\n\nVCode:\n"
 
     inputs = tokenizer(full_prompt, return_tensors="pt").to(model.device)
 
@@ -163,8 +163,8 @@ def generate_completion(
     generated = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
     # Extract IR part
-    if "Compact IR:" in generated:
-        ir = generated.split("Compact IR:")[-1].strip()
+    if "VCode:" in generated:
+        ir = generated.split("VCode:")[-1].strip()
         # Stop at any additional sections
         if "\n\n" in ir:
             ir = ir.split("\n\n")[0]
@@ -213,7 +213,7 @@ def evaluate_single(
     geometry_valid = None
     if validate_geometry and syntax_valid and engine is not None:
         try:
-            # Convert compact IR to standard IR and evaluate
+            # Convert VCode to standard IR and evaluate
             # This would require the vcad engine
             geometry_valid = True  # Placeholder - implement with actual engine
         except Exception as e:

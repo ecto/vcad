@@ -121,7 +121,7 @@ export async function createServer(): Promise<Server> {
         name: "open_in_browser",
         description:
           "Generate a shareable URL to open a CAD document in vcad.io. " +
-          "Takes an IR document (JSON or compact format) and returns a URL that opens the document in the browser. " +
+          "Takes an IR document (JSON or VCode format) and returns a URL that opens the document in the browser. " +
           "Documents are compressed (gzip + base64url) for URL embedding. " +
           "Note: Very large documents may exceed URL length limits (~2KB).",
         inputSchema: openInBrowserSchema,

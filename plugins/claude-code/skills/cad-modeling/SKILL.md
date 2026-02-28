@@ -22,7 +22,7 @@ For assembly and physics tools, see the `assembly-physics` skill.
 
 ## Output Format
 
-Use `"format": "compact"` (default) for token-efficient output (~5x smaller). Use `"format": "json"` for human-readable debugging.
+Use `"format": "vcode"` (default) for token-efficient output (~5x smaller). Use `"format": "json"` for human-readable debugging.
 
 ## Part Types
 
@@ -331,4 +331,4 @@ Assign via `"material"` on each part: `"steel"` (density 7850), `"aluminum"` (27
 - `fillet` and `chamfer` apply to all edges — use them as the last operation
 - `shell` hollows the entire part — combine with `difference` to remove specific faces
 - For multi-part designs, define each part in the `parts` array with a unique `name`
-- Use `"format": "compact"` (default) to save tokens in the response
+- Use `"format": "vcode"` (default) to save tokens in the response

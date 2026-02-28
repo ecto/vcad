@@ -245,7 +245,7 @@ pub fn textBounds(
 
 ### Phase 4: Polish (`s`)
 
-- [ ] Add to compact IR format (new `TXT` opcode)
+- [ ] Add to VCode format (new `TXT` opcode)
 - [ ] Update MCP tools to support text operations
 - [ ] Test multi-line text
 - [ ] Test custom font registration in browser

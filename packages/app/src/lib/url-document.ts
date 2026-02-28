@@ -3,7 +3,7 @@
  *
  * URL format: https://vcad.io/#/new?doc=<compressed>&name=<name>
  *
- * The `doc` parameter contains gzip-compressed, base64url-encoded compact IR.
+ * The `doc` parameter contains gzip-compressed, base64url-encoded VCode.
  */
 
 import { parseVcadFile, type VcadFile } from "@vcad/core";
@@ -42,13 +42,13 @@ async function decompressGzip(data: Uint8Array): Promise<string> {
 export interface UrlDocumentParams {
   doc: string;
   name?: string;
-  raw?: boolean; // If true, doc is raw compact IR (not compressed)
+  raw?: boolean; // If true, doc is raw VCode (not compressed)
 }
 
 /**
  * Parse URL hash parameters.
  * Expects format: #/new?doc=<compressed>&name=<name>
- * Also supports: ?ir=<url-encoded-compact-ir> for simple sharing
+ * Also supports: ?ir=<url-encoded-vcode> for simple sharing
  */
 export function parseUrlParams(): UrlDocumentParams | null {
   // Check for simple ?ir= parameter first (uncompressed, URL-encoded)
@@ -99,7 +99,7 @@ export async function loadDocumentFromUrl(): Promise<{
     let compact: string;
 
     if (params.raw) {
-      // Raw compact IR (URL-decoded by URLSearchParams)
+      // Raw VCode (URL-decoded by URLSearchParams)
       compact = params.doc;
     } else {
       // Decode and decompress base64url + gzip
@@ -107,7 +107,7 @@ export async function loadDocumentFromUrl(): Promise<{
       compact = await decompressGzip(compressed);
     }
 
-    // Parse compact IR into VcadFile
+    // Parse VCode into VcadFile
     const file = parseVcadFile(compact);
 
     // Clear the URL to prevent re-loading on refresh

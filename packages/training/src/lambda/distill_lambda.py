@@ -72,7 +72,7 @@ def load_jsonl(path: str) -> list[dict]:
 
 def format_prompt(text: str) -> str:
     """Format input prompt."""
-    return f"Design: {text}\n\nCompact IR:\n"
+    return f"Design: {text}\n\nVCode:\n"
 
 
 def distill(

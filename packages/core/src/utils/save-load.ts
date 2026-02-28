@@ -1,5 +1,5 @@
 import type { Document, NodeId, CsgOp, Node } from "@vcad/ir";
-import { toCompact, fromCompact, createDocument } from "@vcad/ir";
+import { toVCode, fromVCode, createDocument } from "@vcad/ir";
 import type { PartInfo, PrimitiveKind } from "../types.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -29,7 +29,7 @@ export interface VcadFile {
 }
 
 /**
- * Serialize document — uses loon source if available, otherwise compact IR.
+ * Serialize document — uses loon source if available, otherwise VCode.
  */
 export function serializeDocument(state: {
   document: Document;
@@ -40,7 +40,7 @@ export function serializeDocument(state: {
   loonSource?: string | null;
 }): string {
   if (state.loonSource) return state.loonSource;
-  return toCompact(state.document);
+  return toVCode(state.document);
 }
 
 /**
@@ -85,7 +85,7 @@ function parseVcadFileTS(
     return parseLoonVcadFile(trimmed, evalLoon);
   }
 
-  return parseCompactVcadFile(trimmed);
+  return parseVCodeFile(trimmed);
 }
 
 /**
@@ -132,10 +132,10 @@ function parseLoonVcadFile(
 }
 
 /**
- * Parse compact IR format (v0.2)
+ * Parse VCode format (v0.2)
  */
-function parseCompactVcadFile(compact: string): VcadFile {
-  const document = fromCompact(compact);
+function parseVCodeFile(compact: string): VcadFile {
+  const document = fromVCode(compact);
   const parts = deriveParts(document);
   const { nextNodeId, nextPartNum } = computeNextIds(document, parts);
 

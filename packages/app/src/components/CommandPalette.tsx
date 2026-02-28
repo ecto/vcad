@@ -31,7 +31,7 @@ import { Sparkle } from "@phosphor-icons/react/dist/ssr/Sparkle";
 import { SpinnerGap } from "@phosphor-icons/react/dist/ssr/SpinnerGap";
 import { Play } from "@phosphor-icons/react/dist/ssr/Play";
 import { Plus } from "@phosphor-icons/react/dist/ssr/Plus";
-import { fromCompact, type Document } from "@vcad/ir";
+import { fromVCode, type Document } from "@vcad/ir";
 import { generateCADServer } from "@/lib/server-inference";
 import { generateCAD, isWebGPUAvailable } from "@/lib/browser-inference";
 import { useNotificationStore } from "@/stores/notification-store";
@@ -355,8 +355,8 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
       store.updateAIProgress(progressId, 1, 80);
       setAiStatus("Building geometry...");
 
-      // Parse the Compact IR to a Document
-      const generatedDoc: Document = fromCompact(ir);
+      // Parse the VCode to a Document
+      const generatedDoc: Document = fromVCode(ir);
 
       // Stage 3: Validating
       store.updateAIProgress(progressId, 2, 95);

@@ -1,8 +1,8 @@
 /**
- * Validation module - validates generated compact IR using the vcad engine.
+ * Validation module - validates generated VCode using the vcad engine.
  */
 
-import { fromCompact, type Document } from "@vcad/ir";
+import { fromVCode, type Document } from "@vcad/ir";
 import type { TrainingExample, ValidationResult } from "./generators/types.js";
 
 /** Options for validation. */
@@ -24,10 +24,10 @@ export function validateExample(
   example: TrainingExample,
   engine?: { evaluate: (doc: Document) => unknown },
 ): ValidationResult {
-  // 1. Parse compact IR
+  // 1. Parse VCode
   let doc: Document;
   try {
-    doc = fromCompact(example.ir);
+    doc = fromVCode(example.ir);
   } catch (e) {
     return {
       valid: false,

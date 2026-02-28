@@ -98,7 +98,7 @@
       "date": "2026-02-01",
       "category": "feat",
       "title": "URL Sharing",
-      "summary": "Share models instantly via URL. Compact IR encoding fits entire designs in a link.",
+      "summary": "Share models instantly via URL. VCode encoding fits entire designs in a link.",
       "details": "## What's New\n\n- **?ir= parameter** - Entire model encoded in URL\n- **Gzip compression** - Keeps URLs reasonably short\n- **One-click sharing** - Copy link from share menu\n- **No account required** - Recipients can view without signing in",
       "features": [
         "sharing",
@@ -141,7 +141,7 @@
       "category": "feat",
       "title": "MCP Tool Enhancements",
       "summary": "New MCP tools for sketches, assemblies, STEP import, and browser sharing.",
-      "details": "## What's New\n\n- **Sketch operations** - Create sketch-based features via MCP\n- **Assembly support** - Build multi-part assemblies programmatically\n- **STEP import** - Import existing CAD files via MCP\n- **open_in_browser** - Share models directly to vcad.io\n- **Compact IR** - Efficient serialization format option",
+      "details": "## What's New\n\n- **Sketch operations** - Create sketch-based features via MCP\n- **Assembly support** - Build multi-part assemblies programmatically\n- **STEP import** - Import existing CAD files via MCP\n- **open_in_browser** - Share models directly to vcad.io\n- **VCode** - Efficient serialization format option",
       "features": [
         "mcp",
         "api",

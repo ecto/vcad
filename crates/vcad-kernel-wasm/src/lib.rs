@@ -2550,16 +2550,16 @@ impl RayTracer {
 }
 
 // =========================================================================
-// Compact IR (for cad0 model integration)
+// VCode (for cad0 model integration)
 // =========================================================================
 
-/// Parse compact IR text format into a vcad IR Document (JSON).
+/// Parse VCode text format into a vcad IR Document (JSON).
 ///
-/// The compact IR format is a token-efficient text representation designed
-/// for ML model training and inference. See `vcad_ir::compact` for format details.
+/// The VCode format is a token-efficient text representation designed
+/// for ML model training and inference. See `vcad_ir::vcode` for format details.
 ///
 /// # Arguments
-/// * `compact_ir` - The compact IR text to parse
+/// * `vcode` - The VCode text to parse
 ///
 /// # Returns
 /// A JSON string representing the parsed vcad IR Document.
@@ -2567,56 +2567,56 @@ impl RayTracer {
 /// # Example
 /// ```javascript
 /// const ir = "C 50 30 5\nY 5 10\nT 1 25 15 0\nD 0 2";
-/// const doc = parseCompactIR(ir);
+/// const doc = parseVCode(ir);
 /// console.log(doc); // JSON document
 /// ```
 #[module("ml")]
-#[wasm_bindgen(js_name = parseCompactIR)]
-pub fn parse_compact_ir(compact_ir: &str) -> Result<String, JsError> {
-    let doc = vcad_ir::compact::from_compact(compact_ir)
+#[wasm_bindgen(js_name = parseVCode)]
+pub fn parse_vcode(vcode: &str) -> Result<String, JsError> {
+    let doc = vcad_ir::vcode::from_vcode(vcode)
         .map_err(|e| JsError::new(&format!("Parse error: {}", e)))?;
 
     doc.to_json()
         .map_err(|e| JsError::new(&format!("JSON serialization failed: {}", e)))
 }
 
-/// Convert a vcad IR Document (JSON) to compact IR text format.
+/// Convert a vcad IR Document (JSON) to VCode text format.
 ///
 /// # Arguments
 /// * `doc_json` - JSON string representing a vcad IR Document
 ///
 /// # Returns
-/// The compact IR text representation.
+/// The VCode text representation.
 ///
 /// # Example
 /// ```javascript
-/// const compact = toCompactIR(docJson);
+/// const compact = toVCode(docJson);
 /// console.log(compact); // "C 50 30 5\nY 5 10\n..."
 /// ```
 #[module("ml")]
-#[wasm_bindgen(js_name = toCompactIR)]
-pub fn to_compact_ir(doc_json: &str) -> Result<String, JsError> {
+#[wasm_bindgen(js_name = toVCode)]
+pub fn to_vcode(doc_json: &str) -> Result<String, JsError> {
     let doc = vcad_ir::Document::from_json(doc_json)
         .map_err(|e| JsError::new(&format!("Invalid JSON: {}", e)))?;
 
-    vcad_ir::compact::to_compact(&doc)
+    vcad_ir::vcode::to_vcode(&doc)
         .map_err(|e| JsError::new(&format!("Conversion error: {}", e)))
 }
 
-/// Evaluate compact IR and return a Solid for rendering.
+/// Evaluate VCode and return a Solid for rendering.
 ///
-/// This is a convenience function that parses compact IR and evaluates
+/// This is a convenience function that parses VCode and evaluates
 /// the geometry in a single step.
 ///
 /// # Arguments
-/// * `compact_ir` - The compact IR text to evaluate
+/// * `vcode` - The VCode text to evaluate
 ///
 /// # Returns
 /// A Solid object that can be rendered or queried.
 #[module("ml")]
-#[wasm_bindgen(js_name = evaluateCompactIR)]
-pub fn evaluate_compact_ir(compact_ir: &str) -> Result<Solid, JsError> {
-    let doc = vcad_ir::compact::from_compact(compact_ir)
+#[wasm_bindgen(js_name = evaluateVCode)]
+pub fn evaluate_vcode(vcode: &str) -> Result<Solid, JsError> {
+    let doc = vcad_ir::vcode::from_vcode(vcode)
         .map_err(|e| JsError::new(&format!("Parse error: {}", e)))?;
 
     // Find the root node
@@ -3087,7 +3087,7 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
         }
 
         vcad_ir::CsgOp::StepImport { .. } => Err(JsError::new(
-            "STEP import not supported in compact IR evaluation",
+            "STEP import not supported in VCode evaluation",
         )),
 
         vcad_ir::CsgOp::Text2D { .. } => {
@@ -3105,23 +3105,23 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
         }
 
         vcad_ir::CsgOp::Sweep { .. } => Err(JsError::new(
-            "Sweep not supported in compact IR evaluation - use evaluateDocument",
+            "Sweep not supported in VCode evaluation - use evaluateDocument",
         )),
 
         vcad_ir::CsgOp::Loft { .. } => Err(JsError::new(
-            "Loft not supported in compact IR evaluation - use evaluateDocument",
+            "Loft not supported in VCode evaluation - use evaluateDocument",
         )),
 
         vcad_ir::CsgOp::ImportedMesh { .. } => Err(JsError::new(
-            "ImportedMesh not supported in compact IR evaluation - use evaluateDocument",
+            "ImportedMesh not supported in VCode evaluation - use evaluateDocument",
         )),
 
         vcad_ir::CsgOp::PcbBoard { .. } => Err(JsError::new(
-            "PcbBoard not supported in compact IR evaluation - use evaluateDocument",
+            "PcbBoard not supported in VCode evaluation - use evaluateDocument",
         )),
 
         vcad_ir::CsgOp::EmbroideryPattern { .. } => Err(JsError::new(
-            "EmbroideryPattern not supported in compact IR evaluation - use evaluateDocument",
+            "EmbroideryPattern not supported in VCode evaluation - use evaluateDocument",
         )),
     }
 }
@@ -4581,7 +4581,7 @@ pub fn document_to_loon(doc_json: &str) -> Result<String, JsError> {
     Ok(vcad_ir::to_loon::document_to_loon(&doc))
 }
 
-/// Parse a .vcad file (JSON v0.1, compact v0.2, or loon v0.3).
+/// Parse a .vcad file (JSON v0.1, VCode v0.2, or loon v0.3).
 ///
 /// Returns a JSON-serialized VcadFile with document, parts, and metadata.
 #[wasm_bindgen(js_name = parseVcadFile)]

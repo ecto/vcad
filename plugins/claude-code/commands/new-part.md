@@ -19,7 +19,7 @@ Help the user create a 3D CAD part step by step.
    - Export to STL or GLB via `export_cad`
    - Open in the browser via `open_in_browser`
 
-Keep dimensions in millimeters. Default to `"format": "compact"` for efficiency.
+Keep dimensions in millimeters. Default to `"format": "vcode"` for efficiency.
 
 If the user isn't sure what they need, suggest common starting points:
 - Mounting plate with holes

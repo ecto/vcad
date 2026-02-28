@@ -47,7 +47,7 @@ function r3fDisableProfilingPlugin(): any {
 /** Dev-only plugin that handles /api/generate requests */
 function devApiPlugin(env: Record<string, string>): Plugin {
   const SYSTEM_PROMPT =
-    "You are a CAD assistant. Output only Compact IR code (C for box, Y for cylinder, T for translate, U for union, D for difference). No explanations, just the IR code.";
+    "You are a CAD assistant. Output only VCode code (C for box, Y for cylinder, T for translate, U for union, D for difference). No explanations, just the IR code.";
 
   function formatChatPrompt(userPrompt: string): string {
     return `<|im_start|>system\n${SYSTEM_PROMPT}<|im_end|>\n<|im_start|>user\n${userPrompt}<|im_end|>\n<|im_start|>assistant\n`;

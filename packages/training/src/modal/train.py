@@ -289,10 +289,10 @@ def generate_sample(
         temperature: Sampling temperature
 
     Returns:
-        Generated Compact IR
+        Generated VCode
     """
     # Format prompt
-    full_prompt = f"Design: {prompt}\n\nCompact IR:\n"
+    full_prompt = f"Design: {prompt}\n\nVCode:\n"
 
     # Tokenize
     inputs = tokenizer(full_prompt, return_tensors="pt").to(model.device)
@@ -312,8 +312,8 @@ def generate_sample(
     generated = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
     # Extract just the IR part
-    if "Compact IR:" in generated:
-        ir = generated.split("Compact IR:")[-1].strip()
+    if "VCode:" in generated:
+        ir = generated.split("VCode:")[-1].strip()
         return ir
 
     return generated

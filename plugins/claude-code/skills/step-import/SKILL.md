@@ -65,7 +65,7 @@ Returns an IR document with `ImportedMesh` nodes containing triangulated geometr
 1. import_step(filename: "housing.step")
    → Get IR document
 
-2. open_in_browser(document: <compact IR>)
+2. open_in_browser(document: <VCode>)
    → Shareable vcad.io URL
 ```
 

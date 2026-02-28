@@ -3,7 +3,7 @@
  */
 
 import type { Document, Node, NodeId, CsgOp, Vec3, Vec2, SketchSegment2D } from "@vcad/ir";
-import { createDocument, toCompact } from "@vcad/ir";
+import { createDocument, toVCode } from "@vcad/ir";
 
 /** Primitive definition for tool input. */
 interface Primitive {
@@ -247,7 +247,7 @@ interface AssemblyInput {
 interface CreateInput {
   parts: PartInput[];
   assembly?: AssemblyInput;
-  format?: "json" | "compact";
+  format?: "json" | "vcode";
 }
 
 /** Compute bounding box from a primitive definition. */
@@ -497,7 +497,7 @@ export const createCadDocumentSchema = {
   properties: {
     format: {
       type: "string" as const,
-      enum: ["json", "compact"],
+      enum: ["json", "vcode"],
       description: "Output format: 'json' (verbose, human-readable) or 'compact' (token-efficient, ~5x smaller). Default: 'compact'",
     },
     parts: {
@@ -1460,8 +1460,8 @@ export function createCadDocument(
   }
 
   // Format output (default to compact for token efficiency)
-  const { format = "compact" } = input as CreateInput;
-  const text = format === "json" ? JSON.stringify(doc, null, 2) : toCompact(doc);
+  const { format = "vcode" } = input as CreateInput;
+  const text = format === "json" ? JSON.stringify(doc, null, 2) : toVCode(doc);
 
   return {
     content: [

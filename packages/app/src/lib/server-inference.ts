@@ -18,11 +18,11 @@ export interface ServerInferResult {
 }
 
 /**
- * Generate Compact IR from a text prompt using server inference.
+ * Generate VCode from a text prompt using server inference.
  *
  * @param prompt - Text description of the desired CAD part
  * @param options - Generation options (authToken required for Supabase auth)
- * @returns The generated Compact IR
+ * @returns The generated VCode
  */
 export async function generateCADServer(
   prompt: string,

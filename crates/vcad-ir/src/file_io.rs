@@ -3,7 +3,7 @@
 //! Handles format detection, parsing, and part derivation for `.vcad` files.
 //! Supports three formats:
 //! - v0.1 JSON — direct JSON `Document`
-//! - v0.2 compact — token-efficient text format
+//! - v0.2 VCode — token-efficient text format
 //! - v0.3 loon — loon language source code
 
 use std::collections::HashMap;
@@ -20,8 +20,8 @@ type LoonEvaluator<'a> = Option<&'a dyn Fn(&str) -> Result<Document, String>>;
 pub enum VcadFormat {
     /// JSON format (v0.1).
     Json,
-    /// Compact IR format (v0.2).
-    Compact,
+    /// VCode format (v0.2).
+    VCode,
     /// Loon source format (v0.3).
     Loon,
 }
@@ -308,11 +308,11 @@ pub fn detect_format(content: &str) -> VcadFormat {
     } else if trimmed.starts_with('[') || trimmed.starts_with(';') {
         VcadFormat::Loon
     } else {
-        VcadFormat::Compact
+        VcadFormat::VCode
     }
 }
 
-/// Parse a vcad file (JSON or compact format).
+/// Parse a vcad file (JSON or VCode format).
 ///
 /// For loon format, use `parse_vcad_file_with_loon` which accepts a loon
 /// evaluator function.
@@ -331,7 +331,7 @@ pub fn parse_vcad_file_with_loon(
     let trimmed = content.trim();
     match detect_format(trimmed) {
         VcadFormat::Json => parse_json_vcad(trimmed),
-        VcadFormat::Compact => parse_compact_vcad(trimmed),
+        VcadFormat::VCode => parse_vcode_vcad(trimmed),
         VcadFormat::Loon => parse_loon_vcad(trimmed, eval_loon),
     }
 }
@@ -386,10 +386,10 @@ fn parse_json_vcad(json: &str) -> Result<VcadFile, String> {
     })
 }
 
-/// Parse compact IR format (v0.2).
-fn parse_compact_vcad(compact: &str) -> Result<VcadFile, String> {
+/// Parse VCode format (v0.2).
+fn parse_vcode_vcad(compact: &str) -> Result<VcadFile, String> {
     let document =
-        crate::compact::from_compact(compact).map_err(|e| format!("Compact parse error: {}", e))?;
+        crate::vcode::from_vcode(compact).map_err(|e| format!("VCode parse error: {}", e))?;
     let parts = derive_parts(&document);
     let (next_node_id, next_part_num) = compute_next_ids(&document, &parts);
 
@@ -778,8 +778,8 @@ mod tests {
     }
 
     #[test]
-    fn detect_compact_format() {
-        assert_eq!(detect_format("# vcad 0.2\nC 10 20 30"), VcadFormat::Compact);
+    fn detect_vcode_format() {
+        assert_eq!(detect_format("# vcad 0.2\nC 10 20 30"), VcadFormat::VCode);
     }
 
     #[test]

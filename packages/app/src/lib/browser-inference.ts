@@ -15,7 +15,7 @@ const DEFAULT_MODEL_ID = "campedersen/cad0-mini";
 const MODEL_CACHE_KEY = "cad0-model";
 
 /** System prompt for CAD generation. */
-const SYSTEM_PROMPT = `You are a CAD code generator. Generate "Compact IR" - a text representation of 3D geometry.
+const SYSTEM_PROMPT = `You are a CAD code generator. Generate "VCode" - a text representation of 3D geometry.
 
 Format:
 - C x y z = Cube (dimensions in mm)
@@ -212,12 +212,12 @@ export function unloadModel(): void {
 }
 
 /**
- * Generate Compact IR from a text prompt using browser inference.
+ * Generate VCode from a text prompt using browser inference.
  *
  * @param prompt - Text description of the desired CAD part
  * @param onToken - Optional callback for streaming tokens
  * @param onProgress - Optional callback for model loading progress
- * @returns The generated Compact IR
+ * @returns The generated VCode
  */
 export async function generateCAD(
   prompt: string,
@@ -326,10 +326,10 @@ function cleanGeneratedIR(text: string): string {
 }
 
 /**
- * Validate that a Compact IR string is syntactically correct.
+ * Validate that a VCode string is syntactically correct.
  * Returns null if valid, or an error message if invalid.
  */
-export function validateCompactIR(ir: string): string | null {
+export function validateVCode(ir: string): string | null {
   const lines = ir.split("\n").filter((l) => l.trim() && !l.startsWith("#"));
   const validOpcodes = [
     "C", "Y", "S", "K", "T", "R", "X", "U", "D", "I",

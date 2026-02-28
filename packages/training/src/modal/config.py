@@ -96,8 +96,8 @@ class DataConfig:
     test_path: str = "/data/test.jsonl"
 
     # Prompt template
-    prompt_template: str = "Design: {text}\n\nCompact IR:\n{ir}"
-    response_template: str = "\n\nCompact IR:\n"
+    prompt_template: str = "Design: {text}\n\nVCode:\n{ir}"
+    response_template: str = "\n\nVCode:\n"
 
     # Preprocessing
     max_samples: Optional[int] = None  # Limit samples for debugging

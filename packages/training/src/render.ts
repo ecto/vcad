@@ -1,5 +1,5 @@
 /**
- * Headless rendering module for generating synthetic images from Compact IR.
+ * Headless rendering module for generating synthetic images from VCode.
  *
  * Uses puppeteer to render 3D geometry with Three.js in a headless browser.
  * Puppeteer is an optional dependency - install it with: npm install puppeteer

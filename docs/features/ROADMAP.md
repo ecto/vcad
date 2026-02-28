@@ -442,7 +442,7 @@ vcad already incorporates arXiv research:
 **Complete:**
 - `packages/training/` with full ML infrastructure
 - 16+ part generators: plate, spacer, bracket, flange, shaft, enclosure, mount, ball, funnel, clip, scaled, array, radial, hollow, profile, turned
-- Compact IR format for efficient text representation
+- VCode format for efficient text representation
 - Annotation pipeline with multiple backends (Anthropic, Ollama, Vercel Gateway)
 - Validation with optional geometry checking
 - Train/val/test splitting with stratification

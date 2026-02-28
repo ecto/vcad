@@ -216,7 +216,7 @@ def generate(
     max_new_tokens: int = 256,
 ):
     """
-    Generate Compact IR from text prompts.
+    Generate VCode from text prompts.
 
     Args:
         prompts: List of design descriptions
@@ -369,13 +369,13 @@ class Inference:
     @modal.web_endpoint(method="POST")
     def infer(self, request: dict):
         """
-        Generate Compact IR from a text prompt.
+        Generate VCode from a text prompt.
 
         Request body:
             {"prompt": "design description", "temperature": 0.1, "max_tokens": 256}
 
         Returns:
-            {"ir": "generated compact IR", "tokens": 42}
+            {"ir": "generated VCode", "tokens": 42}
         """
         import torch
 
@@ -387,8 +387,8 @@ class Inference:
             return {"error": "prompt required"}, 400
 
         # Format prompt
-        system = "You are a CAD assistant. Generate Compact IR code for the given design."
-        formatted = f"Design: {prompt}\n\nCompact IR:\n"
+        system = "You are a CAD assistant. Generate VCode code for the given design."
+        formatted = f"Design: {prompt}\n\nVCode:\n"
 
         messages = [
             {"role": "system", "content": system},

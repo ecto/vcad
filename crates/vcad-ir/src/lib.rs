@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-pub mod compact;
+pub mod vcode;
 pub mod ecad;
 pub mod file_io;
 pub mod to_loon;

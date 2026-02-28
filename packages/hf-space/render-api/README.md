@@ -10,13 +10,13 @@ pinned: false
 
 # vcad Render API
 
-HTTP API that renders [Compact IR](https://campedersen.com/cad0) to PNG images using the vcad kernel.
+HTTP API that renders [VCode](https://campedersen.com/cad0) to PNG images using the vcad kernel.
 
 ## Endpoints
 
 ### POST /render
 
-Renders Compact IR to a PNG image.
+Renders VCode to a PNG image.
 
 **Request:**
 ```json
@@ -36,7 +36,7 @@ Health check endpoint.
 {"status": "ok"}
 ```
 
-## Compact IR Syntax
+## VCode Syntax
 
 - `C w h d` - Box (cuboid)
 - `Y r h` - Cylinder
@@ -47,5 +47,5 @@ Health check endpoint.
 
 ## Related
 
-- [cad0 model](https://huggingface.co/campedersen/cad0) - Text to Compact IR
+- [cad0 model](https://huggingface.co/campedersen/cad0) - Text to VCode
 - [vcad](https://vcad.io) - Full CAD app

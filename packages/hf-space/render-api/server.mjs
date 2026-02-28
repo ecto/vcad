@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Render API - HTTP server that renders Compact IR to SVG
- * POST /render with body: { ir: "<compact ir>" }
+ * Render API - HTTP server that renders VCode to SVG
+ * POST /render with body: { ir: "<vcode>" }
  * Returns: SVG image
  */
 
@@ -137,10 +137,10 @@ function renderMeshToSVG(mesh, width = 600, height = 600) {
   return svg;
 }
 
-async function renderIR(compactIR) {
+async function renderIR(vcode) {
   const k = await loadKernel();
 
-  const solid = k.evaluateCompactIR(compactIR);
+  const solid = k.evaluateVCode(vcode);
 
   if (solid.isEmpty()) {
     throw new Error('Solid is empty');
@@ -176,7 +176,7 @@ const server = createServer(async (req, res) => {
 <head><title>vcad Render API</title></head>
 <body style="background:#1a1a1a;color:white;font-family:sans-serif;padding:2rem">
 <h1>vcad Render API</h1>
-<p>POST /render with {"ir": "C 50 30 10"} to render Compact IR to SVG</p>
+<p>POST /render with {"ir": "C 50 30 10"} to render VCode to SVG</p>
 <p><a href="/health" style="color:#4ade80">/health</a> - Health check</p>
 </body>
 </html>`);

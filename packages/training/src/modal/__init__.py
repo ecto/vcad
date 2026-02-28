@@ -1,7 +1,7 @@
 """
 Modal training infrastructure for cad0 model.
 
-LoRA fine-tuning of Qwen 2.5-Coder 7B on Compact IR generation.
+LoRA fine-tuning of Qwen 2.5-Coder 7B on VCode generation.
 """
 
 from .config import ModelConfig, TrainingConfig, DataConfig

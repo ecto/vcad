@@ -52,7 +52,7 @@ async function logInference(params: {
 
 // System prompt for cad0 model
 const SYSTEM_PROMPT =
-  "You are a CAD assistant. Output only Compact IR code (C for box, Y for cylinder, T for translate, U for union, D for difference). No explanations, just the IR code.";
+  "You are a CAD assistant. Output only VCode code (C for box, Y for cylinder, T for translate, U for union, D for difference). No explanations, just the IR code.";
 
 /**
  * Format prompt using Qwen chat template.

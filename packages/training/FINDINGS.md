@@ -1,11 +1,11 @@
 # cad0 Training Findings
 
-> Fine-tuning Qwen2.5-Coder-7B for text-to-CAD generation using Compact IR.
+> Fine-tuning Qwen2.5-Coder-7B for text-to-CAD generation using VCode.
 > Training completed: 2026-02-02
 
 ## Executive Summary
 
-We successfully fine-tuned a 7B parameter model to generate CAD geometry from natural language descriptions. The model outputs a custom domain-specific language (Compact IR) that compiles to boundary representation (BRep) solids. Initial evaluation shows strong performance on part families seen during training, with notable limitations on simple primitives and out-of-distribution geometries.
+We successfully fine-tuned a 7B parameter model to generate CAD geometry from natural language descriptions. The model outputs a custom domain-specific language (VCode) that compiles to boundary representation (BRep) solids. Initial evaluation shows strong performance on part families seen during training, with notable limitations on simple primitives and out-of-distribution geometries.
 
 **Key Results:**
 - Eval loss: **0.324** (cross-entropy)
@@ -98,7 +98,7 @@ Training data was generated from procedural part family generators:
 {"text": "10mm diameter 25mm tall standoff", "ir": "Y 5 25"}
 ```
 
-### 2.4 Compact IR Specification
+### 2.4 VCode Specification
 
 The output format is a line-based DSL designed for token efficiency:
 
@@ -272,7 +272,7 @@ D 0 2
 ...
 ```
 
-**Analysis:** ❌ **Incorrect geometry.** Model produces a square plate with hole instead of hexagonal prism. Compact IR lacks a native hex primitive, and the training data likely had few hexagonal parts.
+**Analysis:** ❌ **Incorrect geometry.** Model produces a square plate with hole instead of hexagonal prism. VCode lacks a native hex primitive, and the training data likely had few hexagonal parts.
 
 ---
 
@@ -355,7 +355,7 @@ D 5 7
 
 **Evidence:** "10mm diameter standoff" generates `Y 10 25` (radius=10, actual diameter=20mm).
 
-**Cause:** Training data inconsistency. Compact IR uses radius (`Y r h`) but natural language often specifies diameter.
+**Cause:** Training data inconsistency. VCode uses radius (`Y r h`) but natural language often specifies diameter.
 
 **Mitigation:**
 1. Standardize training data to always convert diameter→radius
@@ -368,10 +368,10 @@ D 5 7
 
 **Evidence:** Hex standoff request produces square plate.
 
-**Cause:** Compact IR has no native hexagonal prism. Training data lacked examples using 6-way boolean patterns to create hex shapes.
+**Cause:** VCode has no native hexagonal prism. Training data lacked examples using 6-way boolean patterns to create hex shapes.
 
 **Mitigation:**
-1. Add hex primitive to Compact IR spec
+1. Add hex primitive to VCode spec
 2. Include hex construction patterns in training data
 3. Expand part family generators to cover more geometries
 
@@ -437,7 +437,7 @@ curl -X POST https://ecto--cad0-training-inference-infer.modal.run \
 
 - [ ] Fix training data bias with balanced primitive examples
 - [ ] Standardize diameter/radius in data generation
-- [ ] Add hex primitive to Compact IR
+- [ ] Add hex primitive to VCode
 - [x] Distill to cad0-mini for browser inference ✅
 
 ### 7.3 Medium-Term (v2.0)
@@ -583,7 +583,7 @@ submit_btn.click(
 ).then(
     fn=None,
     inputs=[ir_hidden],
-    js="(ir) => { if (window.renderCompactIR && ir) window.renderCompactIR(ir); }"
+    js="(ir) => { if (window.renderVCode && ir) window.renderVCode(ir); }"
 )
 ```
 
@@ -627,7 +627,7 @@ huggingface-cli upload campedersen/cad0 . . --repo-type space
 - [Modal Dashboard](https://modal.com/apps/ecto/main/deployed/cad0-training)
 - [HuggingFace: cad0](https://huggingface.co/campedersen/cad0)
 - [HuggingFace Space: cad0 Demo](https://huggingface.co/spaces/campedersen/cad0)
-- [Compact IR Spec](../../docs/features/compact-ir.md)
+- [VCode Spec](../../docs/features/vcode.md)
 - [Qwen2.5-Coder Paper](https://arxiv.org/abs/2409.12186)
 
 ---

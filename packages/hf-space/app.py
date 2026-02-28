@@ -36,10 +36,10 @@ def load_model():
 
 
 def generate(prompt, temperature=0.1):
-    """Generate Compact IR from prompt."""
+    """Generate VCode from prompt."""
     model = load_model()
 
-    system_prompt = "You are a CAD assistant. Output only Compact IR code (C for box, Y for cylinder, T for translate, U for union, D for difference). No explanations, just the IR code."
+    system_prompt = "You are a CAD assistant. Output only VCode code (C for box, Y for cylinder, T for translate, U for union, D for difference). No explanations, just the IR code."
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": prompt}
@@ -63,8 +63,8 @@ def generate(prompt, temperature=0.1):
         if stop in response:
             response = response.split(stop)[0]
 
-    if "Compact IR" in response:
-        response = response.split("Compact IR")[0]
+    if "VCode" in response:
+        response = response.split("VCode")[0]
 
     lines = response.strip().split('\n')
     ir_lines = []
@@ -210,7 +210,7 @@ function renderMesh(ctx, mesh, width, height) {
     return true;
 }
 
-window.renderCompactIR = async function(ir) {
+window.renderVCode = async function(ir) {
     if (!ir || !ir.trim()) return;
 
     const canvas = document.getElementById('render-canvas');
@@ -230,7 +230,7 @@ window.renderCompactIR = async function(ir) {
 
     try {
         if (status) status.textContent = 'Rendering...';
-        const solid = k.evaluateCompactIR(ir);
+        const solid = k.evaluateVCode(ir);
 
         if (solid.isEmpty()) {
             if (placeholder) {
@@ -269,9 +269,9 @@ loadKernel();
 DESCRIPTION = """
 Generate **parametric CAD geometry** from natural language descriptions.
 
-**How it works:** Describe a part → cad0 outputs Compact IR → rendered with vcad WASM kernel
+**How it works:** Describe a part → cad0 outputs VCode → rendered with vcad WASM kernel
 
-**Compact IR:** `C w h d` (box), `Y r h` (cylinder), `T idx x y z` (translate), `U a b` (union), `D a b` (difference)
+**VCode:** `C w h d` (box), `Y r h` (cylinder), `T idx x y z` (translate), `U a b` (union), `D a b` (difference)
 
 [Model](https://huggingface.co/campedersen/cad0) · [Blog](https://campedersen.com/cad0) · [vcad.io](https://vcad.io)
 """
@@ -293,7 +293,7 @@ with gr.Blocks(theme=gr.themes.Base(), title="cad0: Text to CAD") as demo:
             submit_btn = gr.Button("Generate →", variant="primary")
 
         with gr.Column(scale=1):
-            gr.Markdown("### 2. Compact IR")
+            gr.Markdown("### 2. VCode")
             ir_output = gr.Textbox(label="Generated IR", lines=8, show_label=False)
             ir_hidden = gr.Textbox(visible=False)  # Hidden field to trigger JS
 
@@ -309,7 +309,7 @@ with gr.Blocks(theme=gr.themes.Base(), title="cad0: Text to CAD") as demo:
     ).then(
         fn=None,
         inputs=[ir_hidden],
-        js="(ir) => { if (window.renderCompactIR && ir) window.renderCompactIR(ir); }"
+        js="(ir) => { if (window.renderVCode && ir) window.renderVCode(ir); }"
     )
 
     open_btn.click(

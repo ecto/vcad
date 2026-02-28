@@ -21,10 +21,10 @@ export const DEFAULT_OLLAMA_MODEL = "qwen2.5:3b";
 /** Default gateway model - fast and cheap. */
 export const DEFAULT_GATEWAY_MODEL = "anthropic/claude-3-5-haiku-latest";
 
-/** System prompt explaining the Compact IR format. */
+/** System prompt explaining the VCode format. */
 const SYSTEM_PROMPT = `You are describing CAD (Computer-Aided Design) mechanical parts.
 
-The input is in "Compact IR" format - a text representation of 3D geometry:
+The input is in "VCode" format - a text representation of 3D geometry:
 - C x y z = Cube with dimensions x×y×z mm
 - Y r h = Cylinder with radius r mm and height h mm
 - S r = Sphere with radius r mm
@@ -42,7 +42,7 @@ The input is in "Compact IR" format - a text representation of 3D geometry:
 - E n dx dy dz = Extrude sketch along direction
 - V n ox oy oz dx dy dz angle = Revolve sketch around axis
 
-Output ONLY a brief description of the physical part (1-2 sentences max). Do NOT explain the IR format or mention "Compact IR".`;
+Output ONLY a brief description of the physical part (1-2 sentences max). Do NOT explain the IR format or mention "VCode".`;
 
 /** Prompts for generating diverse text descriptions. */
 const ANNOTATION_PROMPTS = [
@@ -166,7 +166,7 @@ export async function annotate(
     const tasks = batch.flatMap((part) =>
       prompts.map((prompt) => ({
         part,
-        prompt: `${prompt}\n\nCompact IR:\n${part.compact}`,
+        prompt: `${prompt}\n\nVCode:\n${part.vcode}`,
       })),
     );
 
@@ -210,7 +210,7 @@ export async function annotate(
       if (text && !error) {
         const example: TrainingExample = {
           text,
-          ir: task.part.compact,
+          ir: task.part.vcode,
           family: task.part.family,
           complexity: task.part.complexity,
         };
@@ -547,7 +547,7 @@ export function generateSyntheticExamples(
 ): TrainingExample[] {
   return parts.map((part) => ({
     text: generateSyntheticDescription(part),
-    ir: part.compact,
+    ir: part.vcode,
     family: part.family,
     complexity: part.complexity,
   }));

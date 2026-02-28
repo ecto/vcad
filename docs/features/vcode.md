@@ -1,4 +1,4 @@
-# Compact IR Format
+# VCode Format
 
 Terse text format for CAD operations that reduces token usage for AI models and file sizes.
 
@@ -54,9 +54,9 @@ Example: A box with a hole requires ~40 lines of JSON:
 
 ## Solution
 
-A line-based compact format where **line number = node ID**. Each line is a single operation with space-separated arguments.
+A line-based VCode format where **line number = node ID**. Each line is a single operation with space-separated arguments.
 
-The same box with hole in compact format:
+The same box with hole in VCode format:
 ```
 C 50 30 5          # Cube 50x30x5
 Y 5 10             # Cylinder r=5, h=10
@@ -156,11 +156,11 @@ U 5 8                          # 9: union rib to bracket
 
 ### For AI Models (MCP)
 
-New compact format reduces prompt tokens by ~90%:
+New VCode format reduces prompt tokens by ~90%:
 
 ```
 User: Create a bracket with two holes
-AI: [uses create_cad_compact tool]
+AI: [uses create_cad_vcode tool]
 
 C 50 30 5
 Y 3 10
@@ -173,7 +173,7 @@ D 3 5
 
 ### For File Storage
 
-`.vcad` files can embed compact IR in a header for compression:
+`.vcad` files can embed VCode in a header for compression:
 
 ```json
 {
@@ -201,20 +201,20 @@ Or standalone `.vcadc` files for maximum compression.
 
 | File | Changes |
 |------|---------|
-| `crates/vcad-ir/src/compact.rs` | New module: `to_compact()`, `from_compact()` |
+| `crates/vcad-ir/src/vcode.rs` | New module: `to_vcode()`, `from_vcode()` |
 | `crates/vcad-ir/src/lib.rs` | Export compact module |
 | `crates/vcad-kernel-wasm/src/lib.rs` | WASM bindings for compact functions |
-| `packages/ir/src/index.ts` | TypeScript `toCompact()`, `fromCompact()` |
-| `packages/ir/src/compact.ts` | TypeScript implementation |
-| `packages/mcp/src/tools/create.ts` | Add `create_cad_compact` tool |
+| `packages/ir/src/index.ts` | TypeScript `toVCode()`, `fromVCode()` |
+| `packages/ir/src/vcode.ts` | TypeScript implementation |
+| `packages/mcp/src/tools/create.ts` | Add `create_cad_vcode` tool |
 
 ### Rust Implementation
 
 ```rust
-// crates/vcad-ir/src/compact.rs
+// crates/vcad-ir/src/vcode.rs
 
-/// Convert a Document to compact format.
-pub fn to_compact(doc: &Document) -> String {
+/// Convert a Document to VCode format.
+pub fn to_vcode(doc: &Document) -> String {
     let mut lines = Vec::new();
 
     // Sort nodes by ID to ensure correct line ordering
@@ -223,7 +223,7 @@ pub fn to_compact(doc: &Document) -> String {
 
     for id in node_ids {
         let node = &doc.nodes[id];
-        let line = op_to_compact(&node.op);
+        let line = op_to_vcode(&node.op);
         if let Some(name) = &node.name {
             lines.push(format!("{} # {}", line, name));
         } else {
@@ -234,8 +234,8 @@ pub fn to_compact(doc: &Document) -> String {
     lines.join("\n")
 }
 
-/// Parse compact format into a Document.
-pub fn from_compact(input: &str) -> Result<Document, CompactParseError> {
+/// Parse VCode format into a Document.
+pub fn from_vcode(input: &str) -> Result<Document, VCodeParseError> {
     let mut doc = Document::new();
     let mut node_id: NodeId = 0;
 
@@ -269,9 +269,9 @@ pub fn from_compact(input: &str) -> Result<Document, CompactParseError> {
 ### TypeScript Implementation
 
 ```typescript
-// packages/ir/src/compact.ts
+// packages/ir/src/vcode.ts
 
-export function toCompact(doc: Document): string {
+export function toVCode(doc: Document): string {
   const lines: string[] = [];
   const sortedIds = Object.keys(doc.nodes)
     .map(Number)
@@ -279,13 +279,13 @@ export function toCompact(doc: Document): string {
 
   for (const id of sortedIds) {
     const node = doc.nodes[id];
-    lines.push(opToCompact(node.op));
+    lines.push(opToVCode(node.op));
   }
 
   return lines.join('\n');
 }
 
-export function fromCompact(input: string): Document {
+export function fromVCode(input: string): Document {
   const doc: Document = { version: '0.1', nodes: {}, materials: {}, roots: [] };
   let nodeId = 0;
 
@@ -312,15 +312,15 @@ export function fromCompact(input: string): Document {
 // crates/vcad-kernel-wasm/src/lib.rs
 
 #[wasm_bindgen]
-pub fn ir_to_compact(json: &str) -> Result<String, JsValue> {
+pub fn ir_to_vcode(json: &str) -> Result<String, JsValue> {
     let doc: Document = serde_json::from_str(json)
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
-    Ok(vcad_ir::compact::to_compact(&doc))
+    Ok(vcad_ir::vcode::to_vcode(&doc))
 }
 
 #[wasm_bindgen]
-pub fn ir_from_compact(compact: &str) -> Result<String, JsValue> {
-    let doc = vcad_ir::compact::from_compact(compact)
+pub fn ir_from_vcode(compact: &str) -> Result<String, JsValue> {
+    let doc = vcad_ir::vcode::from_vcode(compact)
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
     serde_json::to_string(&doc)
         .map_err(|e| JsValue::from_str(&e.to_string()))
@@ -331,24 +331,24 @@ pub fn ir_from_compact(compact: &str) -> Result<String, JsValue> {
 
 ### Phase 1: Core Parser (Rust)
 
-- [ ] Create `crates/vcad-ir/src/compact.rs` module (`xs`)
-- [ ] Implement `to_compact()` for all `CsgOp` variants (`s`)
-- [ ] Implement `from_compact()` parser (`s`)
+- [ ] Create `crates/vcad-ir/src/vcode.rs` module (`xs`)
+- [ ] Implement `to_vcode()` for all `CsgOp` variants (`s`)
+- [ ] Implement `from_vcode()` parser (`s`)
 - [ ] Add sketch block parsing (SK...END) (`xs`)
 - [ ] Add comprehensive unit tests (`xs`)
 - [ ] Export from `lib.rs` (`xs`)
 
 ### Phase 2: WASM & TypeScript
 
-- [ ] Add WASM bindings `ir_to_compact`, `ir_from_compact` (`xs`)
-- [ ] Create `packages/ir/src/compact.ts` (`s`)
+- [ ] Add WASM bindings `ir_to_vcode`, `ir_from_vcode` (`xs`)
+- [ ] Create `packages/ir/src/vcode.ts` (`s`)
 - [ ] Add TypeScript tests (`xs`)
 - [ ] Update `@vcad/ir` exports (`xs`)
 
 ### Phase 3: Integration
 
-- [ ] Add `create_cad_compact` MCP tool (`xs`)
-- [ ] Add compact format to CLI (`vcad compact input.vcad`) (`xs`)
+- [ ] Add `create_cad_vcode` MCP tool (`xs`)
+- [ ] Add VCode format to CLI (`vcad vcode input.vcad`) (`xs`)
 - [ ] Documentation for format spec (`xs`)
 
 ### Phase 4: Validation
@@ -359,8 +359,8 @@ pub fn ir_from_compact(compact: &str) -> Result<String, JsValue> {
 
 ## Acceptance Criteria
 
-- [ ] `to_compact()` produces valid compact format for all `CsgOp` variants
-- [ ] `from_compact()` parses compact format back to equivalent `Document`
+- [ ] `to_vcode()` produces valid VCode format for all `CsgOp` variants
+- [ ] `from_vcode()` parses VCode format back to equivalent `Document`
 - [ ] Round-trip `doc -> compact -> doc` preserves all geometry operations
 - [ ] Sketch blocks (SK...END) parse correctly with nested segments
 - [ ] Error messages include line numbers and descriptive text
@@ -371,7 +371,7 @@ pub fn ir_from_compact(compact: &str) -> Result<String, JsValue> {
 
 ## Future Enhancements
 
-- [ ] Binary compact format for maximum compression
+- [ ] Binary VCode format for maximum compression
 - [ ] Materials header section (`@MAT aluminum 0.91 0.92 0.93 1.0 0.4`)
 - [ ] Named node references (`$hole` instead of line numbers)
 - [ ] Assembly support (instances, joints)

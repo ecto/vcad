@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { fromCompact } from "@vcad/ir";
+import { fromVCode } from "@vcad/ir";
 import {
   PlateGenerator,
   SpacerGenerator,
@@ -36,26 +36,26 @@ describe("PlateGenerator", () => {
   it("generates valid plate without holes", () => {
     const part = gen.generate({ holePattern: "none" });
     expect(part.family).toBe("plate");
-    expect(part.compact).toMatch(/^C \d/); // Starts with cube
+    expect(part.vcode).toMatch(/^C \d/); // Starts with cube
 
     // Parse should succeed
-    const doc = fromCompact(part.compact);
+    const doc = fromVCode(part.vcode);
     expect(Object.keys(doc.nodes).length).toBeGreaterThan(0);
   });
 
   it("generates valid plate with corner holes", () => {
     const part = gen.generate({ holePattern: "corners" });
-    expect(part.compact).toContain("D"); // Should have difference ops
+    expect(part.vcode).toContain("D"); // Should have difference ops
 
-    const doc = fromCompact(part.compact);
+    const doc = fromVCode(part.vcode);
     expect(Object.keys(doc.nodes).length).toBeGreaterThan(4); // Base + 4 holes
   });
 
   it("generates valid plate with grid holes", () => {
     const part = gen.generate({ holePattern: "grid", gridCols: 3, gridRows: 2 });
-    expect(part.compact).toContain("D");
+    expect(part.vcode).toContain("D");
 
-    const doc = fromCompact(part.compact);
+    const doc = fromVCode(part.vcode);
     expect(doc.roots.length).toBe(1);
   });
 
@@ -72,19 +72,19 @@ describe("SpacerGenerator", () => {
 
   it("generates solid spacer", () => {
     const part = gen.generate({ spacerType: "solid" });
-    expect(part.compact).toMatch(/^Y \d/); // Just a cylinder
+    expect(part.vcode).toMatch(/^Y \d/); // Just a cylinder
     expect(part.complexity).toBe(1);
   });
 
   it("generates hollow spacer", () => {
     const part = gen.generate({ spacerType: "hollow" });
-    expect(part.compact).toContain("D"); // Difference for hole
+    expect(part.vcode).toContain("D"); // Difference for hole
   });
 
   it("generates flanged spacer", () => {
     const part = gen.generate({ spacerType: "flanged" });
-    expect(part.compact).toContain("U"); // Union for flange
-    expect(part.compact).toContain("D"); // Difference for center hole
+    expect(part.vcode).toContain("U"); // Union for flange
+    expect(part.vcode).toContain("D"); // Difference for center hole
   });
 });
 
@@ -93,18 +93,18 @@ describe("BracketGenerator", () => {
 
   it("generates simple L-bracket", () => {
     const part = gen.generate({ bracketType: "simple", hasHoles: false });
-    expect(part.compact).toContain("U"); // Union of two legs
+    expect(part.vcode).toContain("U"); // Union of two legs
     expect(part.family).toBe("bracket");
   });
 
   it("generates gusseted bracket", () => {
     const part = gen.generate({ bracketType: "gusseted", hasHoles: false });
-    expect(part.compact.match(/U/g)?.length).toBeGreaterThanOrEqual(2); // Extra union for gusset
+    expect(part.vcode.match(/U/g)?.length).toBeGreaterThanOrEqual(2); // Extra union for gusset
   });
 
   it("generates bracket with holes", () => {
     const part = gen.generate({ bracketType: "simple", hasHoles: true });
-    expect(part.compact).toContain("D"); // Differences for holes
+    expect(part.vcode).toContain("D"); // Differences for holes
   });
 });
 
@@ -113,19 +113,19 @@ describe("FlangeGenerator", () => {
 
   it("generates flat flange", () => {
     const part = gen.generate({ flangeType: "flat" });
-    expect(part.compact).toMatch(/^Y \d/); // Base cylinder
-    expect(part.compact).toContain("D"); // Center hole and bolt holes
+    expect(part.vcode).toMatch(/^Y \d/); // Base cylinder
+    expect(part.vcode).toContain("D"); // Center hole and bolt holes
   });
 
   it("generates hubbed flange", () => {
     const part = gen.generate({ flangeType: "hubbed" });
-    expect(part.compact).toContain("U"); // Hub union
+    expect(part.vcode).toContain("U"); // Hub union
   });
 
   it("has correct bolt pattern", () => {
     const part = gen.generate({ boltCount: 6 });
     // Count cylinder operations (should have base + center hole + 6 bolt holes)
-    const cylCount = (part.compact.match(/^Y /gm) || []).length;
+    const cylCount = (part.vcode.match(/^Y /gm) || []).length;
     expect(cylCount).toBeGreaterThanOrEqual(7);
   });
 });
@@ -135,19 +135,19 @@ describe("ShaftGenerator", () => {
 
   it("generates simple shaft", () => {
     const part = gen.generate({ shaftType: "simple", hasCenterHole: false, hasKeyway: false });
-    expect(part.compact).toMatch(/^Y \d/);
+    expect(part.vcode).toMatch(/^Y \d/);
     expect(part.complexity).toBe(1);
   });
 
   it("generates stepped shaft", () => {
     const part = gen.generate({ shaftType: "stepped2", hasCenterHole: false, hasKeyway: false });
-    expect(part.compact).toContain("U"); // Union of sections
+    expect(part.vcode).toContain("U"); // Union of sections
   });
 
   it("generates shaft with keyway", () => {
     const part = gen.generate({ shaftType: "stepped2", hasKeyway: true, hasCenterHole: false });
-    expect(part.compact).toContain("D"); // Difference for keyway
-    expect(part.compact).toContain("C "); // Cube for keyway slot
+    expect(part.vcode).toContain("D"); // Difference for keyway
+    expect(part.vcode).toContain("C "); // Cube for keyway slot
   });
 });
 
@@ -156,18 +156,18 @@ describe("EnclosureGenerator", () => {
 
   it("generates box enclosure", () => {
     const part = gen.generate({ enclosureType: "box", hasFlange: false });
-    expect(part.compact).toMatch(/^C \d/); // Outer cube
-    expect(part.compact).toContain("D"); // Hollow out
+    expect(part.vcode).toMatch(/^C \d/); // Outer cube
+    expect(part.vcode).toContain("D"); // Hollow out
   });
 
   it("generates lid", () => {
     const part = gen.generate({ enclosureType: "lid" });
-    expect(part.compact).toContain("U"); // Lip union
+    expect(part.vcode).toContain("U"); // Lip union
   });
 
   it("generates box with standoffs", () => {
     const part = gen.generate({ enclosureType: "boxWithStandoffs", hasFlange: false });
-    expect(part.compact).toContain("Y"); // Standoff cylinders
+    expect(part.vcode).toContain("Y"); // Standoff cylinders
     expect(part.complexity).toBe(4);
   });
 });
@@ -178,18 +178,18 @@ describe("MountGenerator", () => {
   it("generates NEMA 17 mount", () => {
     const part = gen.generate({ mountType: "nema17", hasBoss: false });
     // Should have 4 bolt holes in NEMA pattern
-    const diffCount = (part.compact.match(/^D /gm) || []).length;
+    const diffCount = (part.vcode.match(/^D /gm) || []).length;
     expect(diffCount).toBeGreaterThanOrEqual(5); // Center + 4 bolts
   });
 
   it("generates sensor mount", () => {
     const part = gen.generate({ mountType: "sensor" });
-    expect(part.compact).toContain("D"); // Mounting holes
+    expect(part.vcode).toContain("D"); // Mounting holes
   });
 
   it("generates adjustable mount with slots", () => {
     const part = gen.generate({ mountType: "adjustable" });
-    expect(part.compact).toContain("D"); // Slots cut out
+    expect(part.vcode).toContain("D"); // Slots cut out
   });
 });
 
@@ -202,24 +202,24 @@ describe("BallGenerator", () => {
 
   it("generates simple sphere", () => {
     const part = gen.generate({ ballType: "sphere" });
-    expect(part.compact).toMatch(/^S \d/); // Starts with sphere
+    expect(part.vcode).toMatch(/^S \d/); // Starts with sphere
     expect(part.complexity).toBe(1);
   });
 
   it("generates dome with intersection", () => {
     const part = gen.generate({ ballType: "dome" });
-    expect(part.compact).toContain("I"); // Intersection for dome
+    expect(part.vcode).toContain("I"); // Intersection for dome
   });
 
   it("generates drilled ball", () => {
     const part = gen.generate({ ballType: "drilled" });
-    expect(part.compact).toContain("D"); // Difference for hole
-    expect(part.compact).toContain("Y"); // Cylinder for hole
+    expect(part.vcode).toContain("D"); // Difference for hole
+    expect(part.vcode).toContain("Y"); // Cylinder for hole
   });
 
   it("generates handle ball", () => {
     const part = gen.generate({ ballType: "handle" });
-    expect(part.compact).toContain("U"); // Union with stem
+    expect(part.vcode).toContain("U"); // Union with stem
   });
 });
 
@@ -228,23 +228,23 @@ describe("FunnelGenerator", () => {
 
   it("generates simple cone", () => {
     const part = gen.generate({ funnelType: "cone" });
-    expect(part.compact).toMatch(/^K \d/); // Starts with cone
-    expect(part.compact).toContain(" 0 "); // Zero top radius for pointed
+    expect(part.vcode).toMatch(/^K \d/); // Starts with cone
+    expect(part.vcode).toContain(" 0 "); // Zero top radius for pointed
   });
 
   it("generates frustum", () => {
     const part = gen.generate({ funnelType: "frustum", topRadius: 10 });
-    expect(part.compact).toMatch(/^K \d/);
+    expect(part.vcode).toMatch(/^K \d/);
   });
 
   it("generates adapter with union", () => {
     const part = gen.generate({ funnelType: "adapter", topRadius: 10 });
-    expect(part.compact).toContain("U"); // Union with cylinder
+    expect(part.vcode).toContain("U"); // Union with cylinder
   });
 
   it("generates hopper with difference", () => {
     const part = gen.generate({ funnelType: "hopper" });
-    expect(part.compact).toContain("D"); // Hollow cone
+    expect(part.vcode).toContain("D"); // Hollow cone
   });
 });
 
@@ -253,20 +253,20 @@ describe("ClipGenerator", () => {
 
   it("generates saddle with intersection", () => {
     const part = gen.generate({ clipType: "saddle" });
-    expect(part.compact).toContain("I"); // Intersection
+    expect(part.vcode).toContain("I"); // Intersection
   });
 
   it("generates rounded block", () => {
     const part = gen.generate({ clipType: "rounded" });
-    expect(part.compact).toContain("C"); // Cube
-    expect(part.compact).toContain("S"); // Sphere
-    expect(part.compact).toContain("I"); // Intersection
+    expect(part.vcode).toContain("C"); // Cube
+    expect(part.vcode).toContain("S"); // Sphere
+    expect(part.vcode).toContain("I"); // Intersection
   });
 
   it("generates lens shape", () => {
     const part = gen.generate({ clipType: "lens" });
-    expect((part.compact.match(/S \d/g) || []).length).toBe(2); // Two spheres
-    expect(part.compact).toContain("I"); // Intersection
+    expect((part.vcode.match(/S \d/g) || []).length).toBe(2); // Two spheres
+    expect(part.vcode).toContain("I"); // Intersection
   });
 });
 
@@ -275,20 +275,20 @@ describe("ScaledGenerator", () => {
 
   it("generates ellipse with scale", () => {
     const part = gen.generate({ scaledType: "ellipse" });
-    expect(part.compact).toContain("X"); // Scale operation
-    expect(part.compact).toContain("Y"); // Cylinder base
+    expect(part.vcode).toContain("X"); // Scale operation
+    expect(part.vcode).toContain("Y"); // Cylinder base
   });
 
   it("generates ellipsoid", () => {
     const part = gen.generate({ scaledType: "ellipsoid" });
-    expect(part.compact).toContain("S"); // Sphere
-    expect(part.compact).toContain("X"); // Scale
+    expect(part.vcode).toContain("S"); // Sphere
+    expect(part.vcode).toContain("X"); // Scale
   });
 
   it("generates oval tube", () => {
     const part = gen.generate({ scaledType: "oval" });
-    expect(part.compact).toContain("D"); // Hollow
-    expect(part.compact).toContain("X"); // Scale
+    expect(part.vcode).toContain("D"); // Hollow
+    expect(part.vcode).toContain("X"); // Scale
   });
 });
 
@@ -297,20 +297,20 @@ describe("ArrayGenerator", () => {
 
   it("generates rail with linear pattern", () => {
     const part = gen.generate({ arrayType: "rail", count: 5 });
-    expect(part.compact).toContain("LP"); // Linear pattern
-    expect(part.compact).toContain("5 "); // Count
+    expect(part.vcode).toContain("LP"); // Linear pattern
+    expect(part.vcode).toContain("5 "); // Count
   });
 
   it("generates rack with union pattern", () => {
     const part = gen.generate({ arrayType: "rack", count: 6 });
-    expect(part.compact).toContain("LP");
-    expect(part.compact).toContain("U"); // Union teeth with base
+    expect(part.vcode).toContain("LP");
+    expect(part.vcode).toContain("U"); // Union teeth with base
   });
 
   it("generates perforated bar", () => {
     const part = gen.generate({ arrayType: "perforated", count: 4 });
-    expect(part.compact).toContain("LP");
-    expect(part.compact).toContain("D"); // Subtract holes
+    expect(part.vcode).toContain("LP");
+    expect(part.vcode).toContain("D"); // Subtract holes
   });
 });
 
@@ -319,19 +319,19 @@ describe("RadialGenerator", () => {
 
   it("generates bolt circle with circular pattern", () => {
     const part = gen.generate({ radialType: "boltCircle", count: 6 });
-    expect(part.compact).toContain("CP"); // Circular pattern
-    expect(part.compact).toContain("6 "); // Count
+    expect(part.vcode).toContain("CP"); // Circular pattern
+    expect(part.vcode).toContain("6 "); // Count
   });
 
   it("generates spoked wheel", () => {
     const part = gen.generate({ radialType: "spoked", count: 5 });
-    expect(part.compact).toContain("CP");
-    expect(part.compact).toContain("U"); // Hub + spokes + rim
+    expect(part.vcode).toContain("CP");
+    expect(part.vcode).toContain("U"); // Hub + spokes + rim
   });
 
   it("generates star pattern", () => {
     const part = gen.generate({ radialType: "star", count: 5 });
-    expect(part.compact).toContain("CP 2"); // Pattern of points
+    expect(part.vcode).toContain("CP 2"); // Pattern of points
   });
 });
 
@@ -340,21 +340,21 @@ describe("HollowGenerator", () => {
 
   it("generates hollow box with shell", () => {
     const part = gen.generate({ hollowType: "box" });
-    expect(part.compact).toContain("SH"); // Shell operation
-    expect(part.compact).toContain("C"); // Cube base
+    expect(part.vcode).toContain("SH"); // Shell operation
+    expect(part.vcode).toContain("C"); // Cube base
   });
 
   it("generates tube with shell", () => {
     const part = gen.generate({ hollowType: "tube" });
-    expect(part.compact).toContain("SH");
-    expect(part.compact).toContain("Y"); // Cylinder base
+    expect(part.vcode).toContain("SH");
+    expect(part.vcode).toContain("Y"); // Cylinder base
   });
 
   it("generates dome shell", () => {
     const part = gen.generate({ hollowType: "domeShell" });
-    expect(part.compact).toContain("S"); // Sphere
-    expect(part.compact).toContain("I"); // Intersection for hemisphere
-    expect(part.compact).toContain("SH"); // Shell
+    expect(part.vcode).toContain("S"); // Sphere
+    expect(part.vcode).toContain("I"); // Intersection for hemisphere
+    expect(part.vcode).toContain("SH"); // Shell
   });
 });
 
@@ -363,23 +363,23 @@ describe("ProfileGenerator", () => {
 
   it("generates L-channel with sketch and extrude", () => {
     const part = gen.generate({ profileType: "lChannel" });
-    expect(part.compact).toContain("SK"); // Sketch
-    expect(part.compact).toContain("L "); // Line segments
-    expect(part.compact).toContain("END");
-    expect(part.compact).toContain("E "); // Extrude
+    expect(part.vcode).toContain("SK"); // Sketch
+    expect(part.vcode).toContain("L "); // Line segments
+    expect(part.vcode).toContain("END");
+    expect(part.vcode).toContain("E "); // Extrude
   });
 
   it("generates T-slot profile", () => {
     const part = gen.generate({ profileType: "tSlot" });
-    expect(part.compact).toContain("SK");
-    expect(part.compact).toContain("E ");
+    expect(part.vcode).toContain("SK");
+    expect(part.vcode).toContain("E ");
   });
 
   it("generates polygon extrusion", () => {
     const part = gen.generate({ profileType: "polygon", sides: 6 });
-    expect(part.compact).toContain("SK");
+    expect(part.vcode).toContain("SK");
     // Should have 6 line segments
-    const lineCount = (part.compact.match(/^L /gm) || []).length;
+    const lineCount = (part.vcode.match(/^L /gm) || []).length;
     expect(lineCount).toBe(6);
   });
 });
@@ -389,20 +389,20 @@ describe("TurnedGenerator", () => {
 
   it("generates bottle with sketch and revolve", () => {
     const part = gen.generate({ turnedType: "bottle" });
-    expect(part.compact).toContain("SK"); // Sketch
-    expect(part.compact).toContain("V "); // Revolve
+    expect(part.vcode).toContain("SK"); // Sketch
+    expect(part.vcode).toContain("V "); // Revolve
   });
 
   it("generates pulley", () => {
     const part = gen.generate({ turnedType: "pulley" });
-    expect(part.compact).toContain("V ");
-    expect(part.compact).toContain("360"); // Full revolution
+    expect(part.vcode).toContain("V ");
+    expect(part.vcode).toContain("360"); // Full revolution
   });
 
   it("generates bowl", () => {
     const part = gen.generate({ turnedType: "bowl" });
-    expect(part.compact).toContain("SK");
-    expect(part.compact).toContain("V ");
+    expect(part.vcode).toContain("SK");
+    expect(part.vcode).toContain("V ");
   });
 });
 
@@ -439,12 +439,12 @@ describe("Generator Registry", () => {
       const part = generator.generate();
 
       expect(part.family).toBe(family);
-      expect(part.compact.length).toBeGreaterThan(0);
+      expect(part.vcode.length).toBeGreaterThan(0);
       expect(part.complexity).toBeGreaterThanOrEqual(1);
       expect(part.complexity).toBeLessThanOrEqual(5);
 
       // Parse should succeed
-      const doc = fromCompact(part.compact);
+      const doc = fromVCode(part.vcode);
       expect(doc.roots.length).toBe(1);
     }
   });
@@ -452,7 +452,7 @@ describe("Generator Registry", () => {
   it("generateRandomPart works", () => {
     const part = generateRandomPart();
     expect(generatorFamilies).toContain(part.family);
-    expect(part.compact.length).toBeGreaterThan(0);
+    expect(part.vcode.length).toBeGreaterThan(0);
   });
 });
 
@@ -463,7 +463,7 @@ describe("Validation", () => {
 
     const result = validateExample({
       text: "test",
-      ir: part.compact,
+      ir: part.vcode,
       family: part.family,
       complexity: part.complexity,
     });
@@ -523,7 +523,7 @@ describe("Random Generation Consistency", () => {
     const parts = Array.from({ length: 10 }, () => gen.generate());
 
     // Should have some variation
-    const compacts = new Set(parts.map((p) => p.compact));
+    const compacts = new Set(parts.map((p) => p.vcode));
     expect(compacts.size).toBeGreaterThan(1);
   });
 
@@ -534,7 +534,7 @@ describe("Random Generation Consistency", () => {
     expect(part.params.width).toBe(100);
     expect(part.params.depth).toBe(60);
     expect(part.params.thickness).toBe(5);
-    expect(part.compact).toContain("C 100 60 5");
+    expect(part.vcode).toContain("C 100 60 5");
   });
 });
 
@@ -569,7 +569,7 @@ describe("Conversation Generator", () => {
     // Check that assistant responses are valid IR
     for (const turn of conv.conversation) {
       if (turn.role === "assistant") {
-        const doc = fromCompact(turn.content);
+        const doc = fromVCode(turn.content);
         expect(doc.roots.length).toBe(1);
       }
     }

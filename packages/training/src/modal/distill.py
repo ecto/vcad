@@ -211,7 +211,7 @@ def distill(
         return data
 
     def format_prompt(text: str) -> str:
-        return f"Design: {text}\n\nCompact IR:\n"
+        return f"Design: {text}\n\nVCode:\n"
 
     train_data = load_jsonl("/data/train.jsonl")
     if max_samples:

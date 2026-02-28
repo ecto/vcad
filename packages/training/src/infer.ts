@@ -1,5 +1,5 @@
 /**
- * Inference module - generates Compact IR from text prompts.
+ * Inference module - generates VCode from text prompts.
  * Supports multiple backends: HuggingFace, Anthropic, Ollama, Modal.
  */
 
@@ -19,10 +19,10 @@ export const DEFAULT_MODELS = {
   huggingface: "vcad/cad0-0.5b", // Future: our trained model
 } as const;
 
-/** System prompt explaining the Compact IR format for generation. */
-const SYSTEM_PROMPT = `You are a CAD (Computer-Aided Design) code generator. You generate "Compact IR" - a text representation of 3D geometry.
+/** System prompt explaining the VCode format for generation. */
+const SYSTEM_PROMPT = `You are a CAD (Computer-Aided Design) code generator. You generate "VCode" - a text representation of 3D geometry.
 
-Compact IR format:
+VCode format:
 - C x y z = Cube with dimensions x×y×z mm (corner at origin, extends in +X +Y +Z)
 - Y r h = Cylinder with radius r mm and height h mm (base center at origin, +Z up)
 - S r = Sphere with radius r mm (centered at origin)
@@ -67,7 +67,7 @@ D 8 4
 D 9 6
 D 10 8
 
-Output ONLY the Compact IR code. No explanations, no markdown, no comments.`;
+Output ONLY the VCode code. No explanations, no markdown, no comments.`;
 
 /** Options for inference. */
 export interface InferOptions {
@@ -81,7 +81,7 @@ export interface InferOptions {
 
 /** Result of inference. */
 export interface InferResult {
-  /** Generated Compact IR. */
+  /** Generated VCode. */
   ir: string;
   /** Time taken in milliseconds. */
   durationMs: number;
@@ -150,7 +150,7 @@ export function createHuggingFaceInferModel(
 }
 
 /**
- * Generate Compact IR from a text prompt using the specified model.
+ * Generate VCode from a text prompt using the specified model.
  */
 export async function infer(
   model: LanguageModel,
@@ -186,7 +186,7 @@ export async function infer(
 }
 
 /**
- * Generate Compact IR with streaming output.
+ * Generate VCode with streaming output.
  */
 export async function inferStreaming(
   model: LanguageModel,
@@ -230,10 +230,10 @@ export async function inferStreaming(
 }
 
 /**
- * Validate that a Compact IR string is syntactically correct.
+ * Validate that a VCode string is syntactically correct.
  * Returns null if valid, or an error message if invalid.
  */
-export function validateCompactIR(ir: string): string | null {
+export function validateVCode(ir: string): string | null {
   const lines = ir.split("\n").filter((l) => l.trim() && !l.startsWith("#"));
   const validOpcodes = [
     "C",

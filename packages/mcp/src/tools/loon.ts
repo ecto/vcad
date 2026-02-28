@@ -3,7 +3,7 @@
  */
 
 import type { Engine } from "@vcad/engine";
-import { toCompact } from "@vcad/ir";
+import { toVCode } from "@vcad/ir";
 
 /** JSON Schema for create_cad_loon input. */
 export const createCadLoonSchema = {
@@ -15,7 +15,7 @@ export const createCadLoonSchema = {
     },
     format: {
       type: "string" as const,
-      enum: ["compact", "json"],
+      enum: ["vcode", "json"],
       description: "Output format (default: compact)",
     },
   },
@@ -24,7 +24,7 @@ export const createCadLoonSchema = {
 
 interface CreateLoonInput {
   source: string;
-  format?: "compact" | "json";
+  format?: "vcode" | "json";
 }
 
 /** Evaluate loon source and return a CAD document. */
@@ -32,7 +32,7 @@ export function createCadLoon(
   input: unknown,
   engine: Engine,
 ): { content: Array<{ type: "text"; text: string }> } {
-  const { source, format = "compact" } = input as CreateLoonInput;
+  const { source, format = "vcode" } = input as CreateLoonInput;
 
   const doc = engine.evalVcadSource(source);
   if (!doc) {
@@ -41,7 +41,7 @@ export function createCadLoon(
     };
   }
 
-  const text = format === "json" ? JSON.stringify(doc, null, 2) : toCompact(doc);
+  const text = format === "json" ? JSON.stringify(doc, null, 2) : toVCode(doc);
 
   return {
     content: [{ type: "text", text }],

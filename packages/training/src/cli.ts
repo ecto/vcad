@@ -32,7 +32,7 @@ import {
 import {
   infer,
   inferStreaming,
-  validateCompactIR,
+  validateVCode,
   createAnthropicInferModel,
   createOllamaInferModel,
   createGatewayInferModel,
@@ -64,7 +64,7 @@ program
  */
 program
   .command("generate")
-  .description("Generate raw compact IR examples")
+  .description("Generate raw VCode examples")
   .option("-f, --family <family>", "Part family to generate", "all")
   .option("-c, --count <count>", "Number of examples to generate", "100")
   .option("-o, --output <path>", "Output file path", "data/raw/output.jsonl")
@@ -718,11 +718,11 @@ function printSplitStats(name: string, examples: TrainingExample[]): void {
 }
 
 /**
- * Infer command - generate Compact IR from a text prompt.
+ * Infer command - generate VCode from a text prompt.
  */
 program
   .command("infer")
-  .description("Generate Compact IR from a text prompt")
+  .description("Generate VCode from a text prompt")
   .requiredOption("-p, --prompt <prompt>", "Text description of the CAD part")
   .option("--ollama [model]", "Use local Ollama model")
   .option("--gateway [model]", "Use Vercel AI Gateway")
@@ -811,7 +811,7 @@ program
       // Validate if requested
       let validationError: string | null = null;
       if (options.validate) {
-        validationError = validateCompactIR(result.ir);
+        validationError = validateVCode(result.ir);
         if (!options.json) {
           if (validationError) {
             console.log(`Validation: FAILED - ${validationError}`);
@@ -1157,14 +1157,14 @@ program
     }
 
     // Render each part
-    const { fromCompact } = await import("@vcad/ir");
+    const { fromVCode } = await import("@vcad/ir");
     for (let i = 0; i < parts.length; i++) {
       const part = parts[i];
       console.log(`\nRendering ${i + 1}/${count}...`);
-      console.log(`  IR:\n${part.compact.split("\n").map(l => "    " + l).join("\n")}`);
+      console.log(`  IR:\n${part.vcode.split("\n").map(l => "    " + l).join("\n")}`);
 
       try {
-        const doc = fromCompact(part.compact);
+        const doc = fromVCode(part.vcode);
         const scene = engine.evaluate(doc);
 
         if (!scene.parts || scene.parts.length === 0) {

@@ -143,11 +143,11 @@ Here's a complete document for a plate with holes:
 }
 ```
 
-## Compact IR Format
+## VCode Format
 
-For machine learning applications, vcad provides a **Compact IR** format — a token-efficient text representation designed for model training and inference.
+For machine learning applications, vcad provides a **VCode** format — a token-efficient text representation designed for model training and inference.
 
-### Why Compact IR?
+### Why VCode?
 
 - **Token efficiency** — ~5x fewer tokens than JSON for same models
 - **Line-based** — Each line is a node, line number is the node ID
@@ -183,7 +183,7 @@ SH n thickness                # Shell
 
 ### Example
 
-The same plate with hole in Compact IR:
+The same plate with hole in VCode:
 
 ```
 C 100 60 5
@@ -199,26 +199,26 @@ Compare to the 40-line JSON version above — same geometry in 5 lines.
 
 **TypeScript:**
 ```typescript
-import { fromCompact, toCompact } from "@vcad/ir";
+import { fromVCode, toVCode } from "@vcad/ir";
 
-const doc = fromCompact("C 50 30 5\nY 5 10\nT 1 25 15 0\nD 0 2");
-const compact = toCompact(doc);
+const doc = fromVCode("C 50 30 5\nY 5 10\nT 1 25 15 0\nD 0 2");
+const compact = toVCode(doc);
 ```
 
 **Rust:**
 ```rust
-use vcad_ir::compact::{from_compact, to_compact};
+use vcad_ir::vcode::{from_vcode, to_vcode};
 
-let doc = from_compact("C 50 30 5\nY 5 10\nT 1 25 15 0\nD 0 2")?;
-let compact = to_compact(&doc)?;
+let doc = from_vcode("C 50 30 5\nY 5 10\nT 1 25 15 0\nD 0 2")?;
+let compact = to_vcode(&doc)?;
 ```
 
 **WASM:**
 ```typescript
-import { parseCompactIR, evaluateCompactIR } from "@vcad/kernel-wasm";
+import { parseVCode, evaluateVCode } from "@vcad/kernel-wasm";
 
-const json = parseCompactIR("C 50 30 5");
-const solid = evaluateCompactIR("C 50 30 5\nY 5 10\nT 1 25 15 0\nD 0 2");
+const json = parseVCode("C 50 30 5");
+const solid = evaluateVCode("C 50 30 5\nY 5 10\nT 1 25 15 0\nD 0 2");
 ```
 
 ### Sketch Blocks

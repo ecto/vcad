@@ -10,10 +10,10 @@ export interface PartParams {
   [key: string]: ParamValue;
 }
 
-/** A generated part with its compact IR and metadata. */
+/** A generated part with its VCode and metadata. */
 export interface GeneratedPart {
-  /** Compact IR representation. */
-  compact: string;
+  /** VCode representation. */
+  vcode: string;
   /** Loon source equivalent (for training loon-native models). */
   loon?: string;
   /** Parameters used to generate this part. */
@@ -61,11 +61,11 @@ export interface PartGenerator {
   paramDefs(): Record<string, ParamDef>;
 }
 
-/** A training example with text description and compact IR. */
+/** A training example with text description and VCode. */
 export interface TrainingExample {
   /** Natural language description. */
   text: string;
-  /** Compact IR representation. */
+  /** VCode representation. */
   ir: string;
   /** Loon source equivalent (for training loon output). */
   loon?: string;

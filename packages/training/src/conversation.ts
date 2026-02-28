@@ -324,7 +324,7 @@ export function generateConversation(
   turns.push({ role: "user", content: initialRequest });
 
   let part = generator.generate(params);
-  turns.push({ role: "assistant", content: part.compact });
+  turns.push({ role: "assistant", content: part.vcode });
 
   // Subsequent turns: modifications
   for (let i = 1; i < numTurns; i++) {
@@ -340,7 +340,7 @@ export function generateConversation(
     turns.push({ role: "user", content: mod.description });
 
     part = generator.generate(params);
-    turns.push({ role: "assistant", content: part.compact });
+    turns.push({ role: "assistant", content: part.vcode });
   }
 
   return {

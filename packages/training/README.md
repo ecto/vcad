@@ -107,7 +107,7 @@ Training data is JSONL with `text` and `ir` fields:
 | flange | `src/generators/profile.ts` | Bolt circle, blind flange |
 | clip | `src/generators/clip.ts` | Snap clip, spring clip |
 
-## Compact IR Format
+## VCode Format
 
 Output format designed for token efficiency:
 
@@ -185,7 +185,7 @@ cd src/modal
 modal run modal_app.py --action evaluate
 
 # Metrics:
-# - syntax_accuracy: % valid Compact IR syntax
+# - syntax_accuracy: % valid VCode syntax
 # - exact_match_accuracy: % exact match with ground truth
 ```
 
@@ -250,5 +250,5 @@ See [FINDINGS.md](./FINDINGS.md) for detailed evaluation results and known issue
 - [Modal Dashboard](https://modal.com/apps/ecto/main/deployed/cad0-training)
 - [HuggingFace: cad0](https://huggingface.co/campedersen/cad0) (7B, server inference)
 - [HuggingFace: cad0-mini](https://huggingface.co/campedersen/cad0-mini) (0.5B ONNX, browser)
-- [Compact IR Spec](../../docs/features/compact-ir.md)
+- [VCode Spec](../../docs/features/vcode.md)
 - [Text-to-CAD Design Doc](../../docs/features/text-to-cad.md)

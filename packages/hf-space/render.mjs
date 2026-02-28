@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Render Compact IR to PNG using vcad kernel
- * Usage: node render.mjs "<compact ir>" output.png
+ * Render VCode to PNG using vcad kernel
+ * Usage: node render.mjs "<vcode>" output.png
  */
 
 import { createCanvas } from 'canvas';
@@ -121,18 +121,18 @@ function renderMesh(ctx, mesh, width, height) {
 async function main() {
   const args = process.argv.slice(2);
   if (args.length < 2) {
-    console.error('Usage: node render.mjs "<compact ir>" output.png');
+    console.error('Usage: node render.mjs "<vcode>" output.png');
     process.exit(1);
   }
 
-  const compactIR = args[0];
+  const vcode = args[0];
   const outputPath = args[1];
 
   try {
     const kernel = await loadKernel();
 
-    // Evaluate Compact IR
-    const solid = kernel.evaluateCompactIR(compactIR);
+    // Evaluate VCode
+    const solid = kernel.evaluateVCode(vcode);
 
     if (solid.isEmpty()) {
       console.error('Solid is empty');

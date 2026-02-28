@@ -1,14 +1,14 @@
 ---
-title: "Compact IR Format"
-description: "Compact IR format designed for ML training pipelines"
+title: "VCode Format"
+description: "VCode format designed for ML training pipelines"
 order: 3
 ---
 
-The compact IR format (v0.2) is a token-efficient text representation of vcad documents. It encodes the same parametric DAG as the JSON IR format but uses single-letter opcodes and positional arguments, making it roughly 5x smaller. This matters for ML training where context window budgets are tight, and for URL embedding where size limits are strict.
+The VCode format (v0.2) is a token-efficient text representation of vcad documents. It encodes the same parametric DAG as the JSON IR format but uses single-letter opcodes and positional arguments, making it roughly 5x smaller. This matters for ML training where context window budgets are tight, and for URL embedding where size limits are strict.
 
 ## Header
 
-Every compact IR document begins with a version header:
+Every VCode document begins with a version header:
 
 ```
 # vcad 0.2
@@ -312,26 +312,26 @@ This document creates a 100x60x5mm aluminum plate with two 3mm-radius holes and 
 ### TypeScript
 
 ```typescript
-import { fromCompact, toCompact } from "@vcad/ir";
+import { fromVCode, toVCode } from "@vcad/ir";
 
 // Parse
-const doc = fromCompact(compactText);
+const doc = fromVCode(compactText);
 
 // Serialize
-const compact = toCompact(doc);
+const compact = toVCode(doc);
 ```
 
 ### Error Handling
 
-The parser throws `CompactParseError` with the line number and a descriptive message when it encounters invalid syntax, wrong argument counts, or unknown opcodes.
+The parser throws `VCodeParseError` with the line number and a descriptive message when it encounters invalid syntax, wrong argument counts, or unknown opcodes.
 
 ```typescript
-import { CompactParseError } from "@vcad/ir";
+import { VCodeParseError } from "@vcad/ir";
 
 try {
-  const doc = fromCompact(text);
+  const doc = fromVCode(text);
 } catch (e) {
-  if (e instanceof CompactParseError) {
+  if (e instanceof VCodeParseError) {
     console.error(`Line ${e.line}: ${e.message}`);
   }
 }

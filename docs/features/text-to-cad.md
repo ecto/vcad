@@ -31,7 +31,7 @@ AI should understand "design a bracket with 4 mounting holes" and produce valid 
 
 ## Solution
 
-**cad0** — a family of fine-tuned LLMs that output vcad compact IR from natural language.
+**cad0** — a family of fine-tuned LLMs that output vcad VCode from natural language.
 
 ### Model Variants
 
@@ -40,7 +40,7 @@ AI should understand "design a bracket with 4 mounting holes" and produce valid 
 | **cad0** | 7B | Server/CLI inference, highest quality | Rust inference via Candle |
 | **cad0-mini** | 1.5B | Browser offline fallback | WASM + WebGPU |
 
-### Compact IR Format
+### VCode Format
 
 Efficient token representation for model output:
 
@@ -68,7 +68,7 @@ Key properties:
 | OpenSCAD | Imperative, hard to edit |
 | STEP | Not parametric, huge files |
 
-Compact IR is designed specifically for LLM output efficiency.
+VCode is designed specifically for LLM output efficiency.
 
 ## UX Details
 
@@ -86,7 +86,7 @@ Compact IR is designed specifically for LLM output efficiency.
 
 1. User types natural language description
 2. Loading indicator with "Generating CAD model..."
-3. Compact IR appears in side panel (collapsible)
+3. VCode appears in side panel (collapsible)
 4. 3D preview renders as model generates (streaming)
 5. On completion, model is added to document as parametric feature
 
@@ -142,7 +142,7 @@ Procedural generators for common part types:
 Each generator produces:
 - Randomized valid geometry
 - Natural language description (template + variation)
-- Compact IR representation
+- VCode representation
 
 ### Training Data Generation
 
@@ -188,11 +188,11 @@ pub struct Cad0 {
 }
 
 impl Cad0 {
-    pub fn generate(&self, prompt: &str) -> Result<CompactIr> {
+    pub fn generate(&self, prompt: &str) -> Result<VCode> {
         let tokens = self.tokenizer.encode(prompt)?;
         let output = self.model.forward(&tokens)?;
         let ir_text = self.tokenizer.decode(&output)?;
-        CompactIr::parse(&ir_text)
+        VCode::parse(&ir_text)
     }
 }
 ```
@@ -208,7 +208,7 @@ Browser inference via WebGPU:
 
 | Path | Purpose |
 |------|---------|
-| `crates/vcad-ir/src/compact.rs` | Compact IR parser/serializer |
+| `crates/vcad-ir/src/vcode.rs` | VCode parser/serializer |
 | `crates/cad0/` | Inference engine crate |
 | `crates/cad0/src/lib.rs` | Model loading and generation |
 | `crates/cad0/src/tokenizer.rs` | Tokenizer wrapper |
@@ -224,13 +224,13 @@ Browser inference via WebGPU:
 
 | File | Changes |
 |------|---------|
-| `crates/vcad-ir/src/lib.rs` | Add `CompactIr` type |
-| `crates/vcad-kernel-wasm/src/lib.rs` | Expose compact IR parsing |
+| `crates/vcad-ir/src/lib.rs` | Add `VCode` type |
+| `crates/vcad-kernel-wasm/src/lib.rs` | Expose VCode parsing |
 | `packages/core/src/stores/ui-store.ts` | Add text-to-cad panel state |
 | `packages/app/src/App.tsx` | Add TextToCad component |
-| `packages/engine/src/evaluate.ts` | Support compact IR evaluation |
+| `packages/engine/src/evaluate.ts` | Support VCode evaluation |
 
-### Compact IR Grammar
+### VCode Grammar
 
 ```ebnf
 program     = { statement } ;
@@ -267,7 +267,7 @@ identifier  = letter { letter | digit | "_" } ;
 
 Every generated model must pass:
 
-1. **Parse validation** — Compact IR syntax correct
+1. **Parse validation** — VCode syntax correct
 2. **Reference validation** — All @refs resolve
 3. **Geometry validation** — Kernel produces valid solid
 4. **Manifold check** — No self-intersection, watertight
@@ -275,15 +275,15 @@ Every generated model must pass:
 
 ## Tasks
 
-### Phase 1: Compact IR Parser/Serializer (Week 1)
+### Phase 1: VCode Parser/Serializer (Week 1)
 
-- [ ] Define compact IR grammar specification (`m`)
-- [ ] Implement lexer in `crates/vcad-ir/src/compact/lexer.rs` (`s`)
-- [ ] Implement parser in `crates/vcad-ir/src/compact/parser.rs` (`m`)
-- [ ] Implement serializer (IR → compact text) (`s`)
-- [ ] Add compact ↔ JSON IR conversion (`s`)
+- [ ] Define VCode grammar specification (`m`)
+- [ ] Implement lexer in `crates/vcad-ir/src/vcode/lexer.rs` (`s`)
+- [ ] Implement parser in `crates/vcad-ir/src/vcode/parser.rs` (`m`)
+- [ ] Implement serializer (IR → VCode text) (`s`)
+- [ ] Add VCode ↔ JSON IR conversion (`s`)
 - [ ] Write unit tests for all operations (`s`)
-- [ ] WASM bindings for compact IR parsing (`xs`)
+- [ ] WASM bindings for VCode parsing (`xs`)
 
 ### Phase 2: Synthetic Data Generation (Week 2)
 
@@ -357,7 +357,7 @@ Every generated model must pass:
 
 ## Acceptance Criteria
 
-- [ ] Compact IR parser handles all primitive, transform, boolean, and modifier operations
+- [ ] VCode parser handles all primitive, transform, boolean, and modifier operations
 - [ ] cad0 achieves >90% parse rate on evaluation benchmark
 - [ ] cad0 achieves >85% valid geometry rate (kernel produces manifold solid)
 - [ ] Dimensions within 10% of specified values in prompts
@@ -378,7 +378,7 @@ No existing tool offers this:
 | **Offline capable** | cad0-mini runs in browser | Cloud-only |
 | **Open source** | Weights + code released | Proprietary |
 | **Integration** | Native vcad feature | Separate tool/API |
-| **Efficiency** | Compact IR, minimal tokens | Verbose output |
+| **Efficiency** | VCode, minimal tokens | Verbose output |
 
 ### Why This Matters
 

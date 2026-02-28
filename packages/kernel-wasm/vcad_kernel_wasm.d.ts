@@ -1142,18 +1142,18 @@ export function estimatePrintCost(volume_mm3: number, infill_density: number, wa
 export function evalVcadSource(source: string): any;
 
 /**
- * Evaluate compact IR and return a Solid for rendering.
+ * Evaluate VCode and return a Solid for rendering.
  *
- * This is a convenience function that parses compact IR and evaluates
+ * This is a convenience function that parses VCode and evaluates
  * the geometry in a single step.
  *
  * # Arguments
- * * `compact_ir` - The compact IR text to evaluate
+ * * `vcode` - The VCode text to evaluate
  *
  * # Returns
  * A Solid object that can be rendered or queried.
  */
-export function evaluateCompactIR(compact_ir: string): Solid;
+export function evaluateVCode(vcode: string): Solid;
 
 /**
  * Evaluate a full vcad document JSON into a serialized EvaluatedScene.
@@ -1331,13 +1331,13 @@ export function op_sweep_helix(profile_json: string, radius: number, pitch: numb
 export function op_sweep_line(profile_json: string, start: Float64Array, end: Float64Array, twist_angle?: number | null, scale_start?: number | null, scale_end?: number | null, orientation?: number | null): Solid;
 
 /**
- * Parse compact IR text format into a vcad IR Document (JSON).
+ * Parse VCode text format into a vcad IR Document (JSON).
  *
- * The compact IR format is a token-efficient text representation designed
- * for ML model training and inference. See `vcad_ir::compact` for format details.
+ * The VCode format is a token-efficient text representation designed
+ * for ML model training and inference. See `vcad_ir::vcode` for format details.
  *
  * # Arguments
- * * `compact_ir` - The compact IR text to parse
+ * * `vcode` - The VCode text to parse
  *
  * # Returns
  * A JSON string representing the parsed vcad IR Document.
@@ -1345,11 +1345,11 @@ export function op_sweep_line(profile_json: string, start: Float64Array, end: Fl
  * # Example
  * ```javascript
  * const ir = "C 50 30 5\nY 5 10\nT 1 25 15 0\nD 0 2";
- * const doc = parseCompactIR(ir);
+ * const doc = parseVCode(ir);
  * console.log(doc); // JSON document
  * ```
  */
-export function parseCompactIR(compact_ir: string): string;
+export function parseVCode(vcode: string): string;
 
 /**
  * Parse a KiCad `.kicad_pcb` file content into a JSON-serialized `Pcb`.
@@ -1363,7 +1363,7 @@ export function parseCompactIR(compact_ir: string): string;
 export function parseKicadPcb(content: string): any;
 
 /**
- * Parse a .vcad file (JSON v0.1, compact v0.2, or loon v0.3).
+ * Parse a .vcad file (JSON v0.1, VCode v0.2, or loon v0.3).
  *
  * Returns a JSON-serialized VcadFile with document, parts, and metadata.
  */
@@ -1471,21 +1471,21 @@ export function solveForwardKinematics(doc_json: string): any;
 export function textBounds(text: string, height: number, font?: string | null, letter_spacing?: number | null, line_spacing?: number | null): any;
 
 /**
- * Convert a vcad IR Document (JSON) to compact IR text format.
+ * Convert a vcad IR Document (JSON) to VCode text format.
  *
  * # Arguments
  * * `doc_json` - JSON string representing a vcad IR Document
  *
  * # Returns
- * The compact IR text representation.
+ * The VCode text representation.
  *
  * # Example
  * ```javascript
- * const compact = toCompactIR(docJson);
+ * const compact = toVCode(docJson);
  * console.log(compact); // "C 50 30 5\nY 5 10\n..."
  * ```
  */
-export function toCompactIR(doc_json: string): string;
+export function toVCode(doc_json: string): string;
 
 /**
  * Write a DST file from an embroidery pattern JSON string.
@@ -1512,7 +1512,7 @@ export interface InitOutput {
     readonly deriveParts: (a: number, b: number) => [number, number, number];
     readonly documentToLoon: (a: number, b: number) => [number, number, number, number];
     readonly evalVcadSource: (a: number, b: number) => [number, number, number];
-    readonly evaluateCompactIR: (a: number, b: number) => [number, number, number];
+    readonly evaluateVCode: (a: number, b: number) => [number, number, number];
     readonly evaluateDocument: (a: number, b: number, c: number) => [number, number, number];
     readonly exportProjectedViewToDxf: (a: number, b: number) => [number, number, number, number];
     readonly get_kernel_version: () => [number, number];
@@ -1530,7 +1530,7 @@ export interface InitOutput {
     readonly op_shell: (a: number, b: number) => number;
     readonly op_sweep_helix: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number) => [number, number, number];
     readonly op_sweep_line: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => [number, number, number];
-    readonly parseCompactIR: (a: number, b: number) => [number, number, number, number];
+    readonly parseVCode: (a: number, b: number) => [number, number, number, number];
     readonly parseVcadFile: (a: number, b: number) => [number, number, number];
     readonly physicssim_actionDim: (a: number) => number;
     readonly physicssim_new: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
@@ -1588,7 +1588,7 @@ export interface InitOutput {
     readonly solid_volume: (a: number) => number;
     readonly solveForwardKinematics: (a: number, b: number) => [number, number, number];
     readonly textBounds: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
-    readonly toCompactIR: (a: number, b: number) => [number, number, number, number];
+    readonly toVCode: (a: number, b: number) => [number, number, number, number];
     readonly wasmannotationlayer_addAlignedDimension: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly wasmannotationlayer_addAngleDimension: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly wasmannotationlayer_addDiameterDimension: (a: number, b: number, c: number, d: number, e: number) => void;

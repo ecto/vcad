@@ -9,7 +9,7 @@ order: 7
 ## Input Schema
 
 <Param name="document" type="string" required={true}>
-IR document as a string. Accepts both JSON format (starts with `{`) and compact IR format (starts with `#`). The tool auto-detects the format and converts to compact internally before compressing, since compact IR produces smaller URLs.
+IR document as a string. Accepts both JSON format (starts with `{`) and VCode format (starts with `#`). The tool auto-detects the format and converts to compact internally before compressing, since VCode produces smaller URLs.
 </Param>
 
 <Param name="name" type="string" required={false}>
@@ -24,11 +24,11 @@ The tool returns a text response containing the URL and size information:
 Open in vcad.io:
 https://vcad.io/#/new?doc=H4sIAAAAAAAA...&name=Bracket
 
-Compact IR size: 156 bytes
+VCode size: 156 bytes
 Compressed URL param: 98 bytes
 ```
 
-The URL format is `https://vcad.io/#/new?doc=<compressed>&name=<name>`. The `doc` parameter contains the gzip-compressed, base64url-encoded compact IR. The web app decompresses and parses this on load.
+The URL format is `https://vcad.io/#/new?doc=<compressed>&name=<name>`. The `doc` parameter contains the gzip-compressed, base64url-encoded VCode. The web app decompresses and parses this on load.
 
 ## URL Length Limits
 
@@ -50,14 +50,14 @@ For documents that exceed URL limits, use `export_cad` to write to a file and sh
 | Multi-part with assembly | ~600-1200 characters |
 | Complex model (20+ nodes) | ~1500-3000 characters |
 
-The compact IR format is already token-efficient. Gzip compression typically reduces it by another 40-60%, making most practical models fit within URL limits.
+The VCode format is already token-efficient. Gzip compression typically reduces it by another 40-60%, making most practical models fit within URL limits.
 
 ## Compression Pipeline
 
 The tool processes the document through three stages:
 
 1. **Parse** the input (auto-detect JSON or compact format)
-2. **Convert** to compact IR (smallest text representation)
+2. **Convert** to VCode (smallest text representation)
 3. **Compress** with gzip level 9 and encode as base64url (URL-safe base64 without padding)
 
 Base64url encoding replaces `+` with `-`, `/` with `_`, and strips trailing `=` characters, ensuring the URL is valid without percent-encoding.

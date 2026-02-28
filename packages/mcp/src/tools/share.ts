@@ -3,11 +3,11 @@
  */
 
 import type { Document } from "@vcad/ir";
-import { fromCompact, toCompact } from "@vcad/ir";
+import { fromVCode, toVCode } from "@vcad/ir";
 import { gzipSync } from "node:zlib";
 
 interface ShareInput {
-  document: string;  // JSON string or compact IR
+  document: string;  // JSON string or VCode
   name?: string;
 }
 
@@ -16,7 +16,7 @@ export const openInBrowserSchema = {
   properties: {
     document: {
       type: "string" as const,
-      description: "IR document (JSON or compact format)",
+      description: "IR document (JSON or VCode format)",
     },
     name: {
       type: "string" as const,
@@ -38,7 +38,7 @@ function base64urlEncode(data: Buffer): string {
 }
 
 /**
- * Parse a document from JSON or compact format.
+ * Parse a document from JSON or VCode format.
  */
 function parseDocument(input: string): Document {
   const trimmed = input.trim();
@@ -46,13 +46,13 @@ function parseDocument(input: string): Document {
     return JSON.parse(trimmed) as Document;
   }
   if (trimmed.startsWith("#")) {
-    return fromCompact(trimmed);
+    return fromVCode(trimmed);
   }
-  throw new Error("Document must be JSON (starting with '{') or compact IR (starting with '#')");
+  throw new Error("Document must be JSON (starting with '{') or VCode (starting with '#')");
 }
 
 /**
- * Compress a compact IR document for URL embedding.
+ * Compress a VCode document for URL embedding.
  * Format: gzip + base64url
  */
 function compressForUrl(compact: string): string {
@@ -67,10 +67,10 @@ export function openInBrowser(
 
   // Parse and convert to compact (smallest representation)
   const doc = parseDocument(docInput);
-  const compact = toCompact(doc);
+  const vcode = toVCode(doc);
 
   // Compress for URL
-  const encoded = compressForUrl(compact);
+  const encoded = compressForUrl(vcode);
 
   // Build URL
   const baseUrl = process.env.VCAD_APP_URL || "https://vcad.io";
@@ -92,7 +92,7 @@ export function openInBrowser(
     content: [
       {
         type: "text",
-        text: `Open in vcad.io:\n${url}${warning}\n\nCompact IR size: ${compact.length} bytes\nCompressed URL param: ${encoded.length} bytes`,
+        text: `Open in vcad.io:\n${url}${warning}\n\nVCode size: ${compact.length} bytes\nCompressed URL param: ${encoded.length} bytes`,
       },
     ],
   };

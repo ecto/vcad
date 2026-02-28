@@ -1038,28 +1038,28 @@ export function fromJson(json: string): Document {
 }
 
 // ============================================================================
-// Compact IR Format v0.2 (for cad0 model training and inference)
+// VCode Format v0.2 (for cad0 model training and inference)
 // ============================================================================
 
-/** Current compact IR format version. */
-export const COMPACT_VERSION = '0.2';
+/** Current VCode format version. */
+export const VCODE_VERSION = '0.2';
 
 /**
- * Parse compact IR text format into a vcad IR Document.
+ * Parse VCode text format into a vcad IR Document.
  *
- * The compact IR format is a token-efficient text representation designed
+ * The VCode format is a token-efficient text representation designed
  * for ML model training and inference. Supports the full v0.2 format with
  * materials, assembly, joints, scene settings, and node names.
  *
  * @example
  * ```typescript
  * const ir = "# vcad 0.2\nM default 0.8 0.8 0.8 0 0.5\nC 50 30 5\nROOT 0 default";
- * const doc = fromCompact(ir);
+ * const doc = fromVCode(ir);
  * ```
  */
-export function fromCompact(compact: string): Document {
+export function fromVCode(vcode: string): Document {
   const doc = createDocument();
-  const lines = compact.split('\n');
+  const lines = vcode.split('\n');
   let i = 0;
   let geometryNodeCount = 0;
 
@@ -1107,7 +1107,7 @@ export function fromCompact(compact: string): Document {
 
       case 'GROUND':
         if (parts.length !== 2) {
-          throw new CompactParseError(i, `GROUND requires 1 arg, got ${parts.length - 1}`);
+          throw new VCodeParseError(i, `GROUND requires 1 arg, got ${parts.length - 1}`);
         }
         doc.groundInstanceId = parseStringArg(parts[1]);
         break;
@@ -1204,19 +1204,19 @@ export function fromCompact(compact: string): Document {
 }
 
 /**
- * Convert a vcad IR Document to compact IR text format (v0.2).
+ * Convert a vcad IR Document to VCode text format (v0.2).
  *
  * @example
  * ```typescript
- * const compact = toCompact(doc);
+ * const compact = toVCode(doc);
  * console.log(compact); // "# vcad 0.2\n..."
  * ```
  */
-export function toCompact(doc: Document): string {
+export function toVCode(doc: Document): string {
   const lines: string[] = [];
 
   // Header
-  lines.push(`# vcad ${COMPACT_VERSION}`);
+  lines.push(`# vcad ${VCODE_VERSION}`);
   lines.push('');
 
   // Materials section
@@ -1362,7 +1362,7 @@ export function toCompact(doc: Document): string {
 }
 
 // ============================================================================
-// Compact IR Helper Functions
+// VCode Helper Functions
 // ============================================================================
 
 /** Split a line by whitespace, but keep quoted strings together. */
@@ -1499,7 +1499,7 @@ function topologicalSort(doc: Document, roots: number[]): number[] {
   return result;
 }
 
-/** Format a CsgOp as a compact IR line. */
+/** Format a CsgOp as a VCode line. */
 function formatOp(op: CsgOp, idMap: Map<number, number>, name?: string): string {
   const nameSuffix = name ? ` ${formatQuotedString(name)}` : '';
 
@@ -1554,11 +1554,11 @@ function formatOp(op: CsgOp, idMap: Map<number, number>, name?: string): string 
     case 'Revolve':
       return `V ${idMap.get(op.sketch)} ${op.axis_origin.x} ${op.axis_origin.y} ${op.axis_origin.z} ${op.axis_dir.x} ${op.axis_dir.y} ${op.axis_dir.z} ${op.angle_deg}${nameSuffix}`;
     case 'PcbBoard':
-      throw new Error('PcbBoard not supported in compact IR');
+      throw new Error('PcbBoard not supported in VCode');
     case 'EmbroideryPattern':
-      throw new Error('EmbroideryPattern not supported in compact IR');
+      throw new Error('EmbroideryPattern not supported in VCode');
     default:
-      throw new Error(`Unsupported op type for compact IR: ${(op as CsgOp).type}`);
+      throw new Error(`Unsupported op type for VCode: ${(op as CsgOp).type}`);
   }
 }
 
@@ -1692,12 +1692,12 @@ function formatSceneSettings(lines: string[], scene: SceneSettings): void {
 }
 
 // ============================================================================
-// Compact IR Parsing Functions
+// VCode Parsing Functions
 // ============================================================================
 
 function parseMaterial(doc: Document, parts: string[], line: number): void {
   if (parts.length < 7) {
-    throw new CompactParseError(line, `M requires at least 6 args, got ${parts.length - 1}`);
+    throw new VCodeParseError(line, `M requires at least 6 args, got ${parts.length - 1}`);
   }
 
   const name = parseStringArg(parts[1]);
@@ -1712,7 +1712,7 @@ function parseMaterial(doc: Document, parts: string[], line: number): void {
 
 function parseRoot(doc: Document, parts: string[], line: number): void {
   if (parts.length < 3) {
-    throw new CompactParseError(line, `ROOT requires at least 2 args, got ${parts.length - 1}`);
+    throw new VCodeParseError(line, `ROOT requires at least 2 args, got ${parts.length - 1}`);
   }
 
   const root = parseInt(parts[1]);
@@ -1724,7 +1724,7 @@ function parseRoot(doc: Document, parts: string[], line: number): void {
 
 function parsePartDef(doc: Document, parts: string[], line: number): void {
   if (parts.length < 4) {
-    throw new CompactParseError(line, `PDEF requires at least 3 args, got ${parts.length - 1}`);
+    throw new VCodeParseError(line, `PDEF requires at least 3 args, got ${parts.length - 1}`);
   }
 
   const id = parseStringArg(parts[1]);
@@ -1738,7 +1738,7 @@ function parsePartDef(doc: Document, parts: string[], line: number): void {
 
 function parseInstance(doc: Document, parts: string[], line: number): void {
   if (parts.length < 13) {
-    throw new CompactParseError(line, `INST requires at least 12 args, got ${parts.length - 1}`);
+    throw new VCodeParseError(line, `INST requires at least 12 args, got ${parts.length - 1}`);
   }
 
   const id = parseStringArg(parts[1]);
@@ -1763,7 +1763,7 @@ function parseJoint(doc: Document, opcode: string, parts: string[], line: number
   switch (opcode) {
     case 'JFIX': {
       if (parts.length < 10) {
-        throw new CompactParseError(line, `JFIX requires 9 args, got ${parts.length - 1}`);
+        throw new VCodeParseError(line, `JFIX requires 9 args, got ${parts.length - 1}`);
       }
       doc.joints.push({
         id: parseStringArg(parts[1]),
@@ -1778,7 +1778,7 @@ function parseJoint(doc: Document, opcode: string, parts: string[], line: number
     }
     case 'JREV': {
       if (parts.length < 13) {
-        throw new CompactParseError(line, `JREV requires at least 12 args, got ${parts.length - 1}`);
+        throw new VCodeParseError(line, `JREV requires at least 12 args, got ${parts.length - 1}`);
       }
       const limits: [number, number] | undefined = parts.length >= 15
         ? [parseFloat(parts[13]), parseFloat(parts[14])]
@@ -1800,7 +1800,7 @@ function parseJoint(doc: Document, opcode: string, parts: string[], line: number
     }
     case 'JSLD': {
       if (parts.length < 13) {
-        throw new CompactParseError(line, `JSLD requires at least 12 args, got ${parts.length - 1}`);
+        throw new VCodeParseError(line, `JSLD requires at least 12 args, got ${parts.length - 1}`);
       }
       const limits: [number, number] | undefined = parts.length >= 15
         ? [parseFloat(parts[13]), parseFloat(parts[14])]
@@ -1822,7 +1822,7 @@ function parseJoint(doc: Document, opcode: string, parts: string[], line: number
     }
     case 'JCYL': {
       if (parts.length < 13) {
-        throw new CompactParseError(line, `JCYL requires 12 args, got ${parts.length - 1}`);
+        throw new VCodeParseError(line, `JCYL requires 12 args, got ${parts.length - 1}`);
       }
       doc.joints.push({
         id: parseStringArg(parts[1]),
@@ -1840,7 +1840,7 @@ function parseJoint(doc: Document, opcode: string, parts: string[], line: number
     }
     case 'JBAL': {
       if (parts.length < 10) {
-        throw new CompactParseError(line, `JBAL requires 9 args, got ${parts.length - 1}`);
+        throw new VCodeParseError(line, `JBAL requires 9 args, got ${parts.length - 1}`);
       }
       doc.joints.push({
         id: parseStringArg(parts[1]),
@@ -1858,7 +1858,7 @@ function parseJoint(doc: Document, opcode: string, parts: string[], line: number
 
 function parseEnvironment(doc: Document, parts: string[], line: number): void {
   if (parts.length < 2) {
-    throw new CompactParseError(line, `ENV requires at least 1 arg, got ${parts.length - 1}`);
+    throw new VCodeParseError(line, `ENV requires at least 1 arg, got ${parts.length - 1}`);
   }
 
   if (!doc.scene) doc.scene = {};
@@ -1870,7 +1870,7 @@ function parseEnvironment(doc: Document, parts: string[], line: number): void {
   }
 
   if (parts.length < 3) {
-    throw new CompactParseError(line, `ENV requires 2 args, got ${parts.length - 1}`);
+    throw new VCodeParseError(line, `ENV requires 2 args, got ${parts.length - 1}`);
   }
 
   const intensity = parseFloat(parts[2]);
@@ -1885,7 +1885,7 @@ function parseEnvironment(doc: Document, parts: string[], line: number): void {
 
 function parseBackground(doc: Document, parts: string[], line: number): void {
   if (parts.length < 2) {
-    throw new CompactParseError(line, 'BG requires at least 1 arg');
+    throw new VCodeParseError(line, 'BG requires at least 1 arg');
   }
 
   if (!doc.scene) doc.scene = {};
@@ -1893,13 +1893,13 @@ function parseBackground(doc: Document, parts: string[], line: number): void {
   switch (parts[1]) {
     case 'solid':
       if (parts.length < 5) {
-        throw new CompactParseError(line, 'BG solid requires 3 color values');
+        throw new VCodeParseError(line, 'BG solid requires 3 color values');
       }
       doc.scene.background = { type: 'Solid', color: [parseFloat(parts[2]), parseFloat(parts[3]), parseFloat(parts[4])] };
       break;
     case 'gradient':
       if (parts.length < 8) {
-        throw new CompactParseError(line, 'BG gradient requires 6 color values');
+        throw new VCodeParseError(line, 'BG gradient requires 6 color values');
       }
       doc.scene.background = {
         type: 'Gradient',
@@ -1914,7 +1914,7 @@ function parseBackground(doc: Document, parts: string[], line: number): void {
       doc.scene.background = { type: 'Transparent' };
       break;
     default:
-      throw new CompactParseError(line, `Unknown BG type: ${parts[1]}`);
+      throw new VCodeParseError(line, `Unknown BG type: ${parts[1]}`);
   }
 }
 
@@ -1925,7 +1925,7 @@ function parseLight(doc: Document, opcode: string, parts: string[], line: number
   switch (opcode) {
     case 'LDIR': {
       if (parts.length < 9) {
-        throw new CompactParseError(line, `LDIR requires at least 8 args, got ${parts.length - 1}`);
+        throw new VCodeParseError(line, `LDIR requires at least 8 args, got ${parts.length - 1}`);
       }
       const castShadow = parts[9] === 'shadow';
       doc.scene.lights.push({
@@ -1940,7 +1940,7 @@ function parseLight(doc: Document, opcode: string, parts: string[], line: number
     }
     case 'LPNT': {
       if (parts.length < 9) {
-        throw new CompactParseError(line, `LPNT requires at least 8 args, got ${parts.length - 1}`);
+        throw new VCodeParseError(line, `LPNT requires at least 8 args, got ${parts.length - 1}`);
       }
       const distance = parts[9] ? parseFloat(parts[9]) : undefined;
       doc.scene.lights.push({
@@ -1954,7 +1954,7 @@ function parseLight(doc: Document, opcode: string, parts: string[], line: number
     }
     case 'LSPT': {
       if (parts.length < 12) {
-        throw new CompactParseError(line, `LSPT requires at least 11 args, got ${parts.length - 1}`);
+        throw new VCodeParseError(line, `LSPT requires at least 11 args, got ${parts.length - 1}`);
       }
       const angle = parts[12] ? parseFloat(parts[12]) : undefined;
       const penumbra = parts[13] ? parseFloat(parts[13]) : undefined;
@@ -1975,7 +1975,7 @@ function parseLight(doc: Document, opcode: string, parts: string[], line: number
     }
     case 'LAREA': {
       if (parts.length < 14) {
-        throw new CompactParseError(line, `LAREA requires 13 args, got ${parts.length - 1}`);
+        throw new VCodeParseError(line, `LAREA requires 13 args, got ${parts.length - 1}`);
       }
       doc.scene.lights.push({
         id: parseStringArg(parts[1]),
@@ -1997,7 +1997,7 @@ function parseLight(doc: Document, opcode: string, parts: string[], line: number
 
 function parseAO(doc: Document, parts: string[], line: number): void {
   if (parts.length < 4) {
-    throw new CompactParseError(line, `AO requires 3 args, got ${parts.length - 1}`);
+    throw new VCodeParseError(line, `AO requires 3 args, got ${parts.length - 1}`);
   }
 
   if (!doc.scene) doc.scene = {};
@@ -2012,7 +2012,7 @@ function parseAO(doc: Document, parts: string[], line: number): void {
 
 function parseBloom(doc: Document, parts: string[], line: number): void {
   if (parts.length < 4) {
-    throw new CompactParseError(line, `BLOOM requires 3 args, got ${parts.length - 1}`);
+    throw new VCodeParseError(line, `BLOOM requires 3 args, got ${parts.length - 1}`);
   }
 
   if (!doc.scene) doc.scene = {};
@@ -2027,7 +2027,7 @@ function parseBloom(doc: Document, parts: string[], line: number): void {
 
 function parseVignette(doc: Document, parts: string[], line: number): void {
   if (parts.length < 4) {
-    throw new CompactParseError(line, `VIG requires 3 args, got ${parts.length - 1}`);
+    throw new VCodeParseError(line, `VIG requires 3 args, got ${parts.length - 1}`);
   }
 
   if (!doc.scene) doc.scene = {};
@@ -2042,7 +2042,7 @@ function parseVignette(doc: Document, parts: string[], line: number): void {
 
 function parseToneMapping(doc: Document, parts: string[], line: number): void {
   if (parts.length < 2) {
-    throw new CompactParseError(line, 'TONE requires 1 arg');
+    throw new VCodeParseError(line, 'TONE requires 1 arg');
   }
 
   if (!doc.scene) doc.scene = {};
@@ -2050,14 +2050,14 @@ function parseToneMapping(doc: Document, parts: string[], line: number): void {
 
   const validMappings = ['none', 'reinhard', 'cineon', 'acesFilmic', 'agX', 'neutral'];
   if (!validMappings.includes(parts[1])) {
-    throw new CompactParseError(line, `Unknown tone mapping: ${parts[1]}`);
+    throw new VCodeParseError(line, `Unknown tone mapping: ${parts[1]}`);
   }
   doc.scene.postProcessing.toneMapping = parts[1] as ToneMapping;
 }
 
 function parseExposure(doc: Document, parts: string[], line: number): void {
   if (parts.length < 2) {
-    throw new CompactParseError(line, 'EXP requires 1 arg');
+    throw new VCodeParseError(line, 'EXP requires 1 arg');
   }
 
   if (!doc.scene) doc.scene = {};
@@ -2068,7 +2068,7 @@ function parseExposure(doc: Document, parts: string[], line: number): void {
 
 function parseCamera(doc: Document, parts: string[], line: number): void {
   if (parts.length < 8) {
-    throw new CompactParseError(line, `CAM requires at least 7 args, got ${parts.length - 1}`);
+    throw new VCodeParseError(line, `CAM requires at least 7 args, got ${parts.length - 1}`);
   }
 
   if (!doc.scene) doc.scene = {};
@@ -2090,7 +2090,7 @@ function parseCamera(doc: Document, parts: string[], line: number): void {
 function parseGeometryLine(line: string, lineNum: number, lines: string[]): [CsgOp, string | undefined, number] {
   const parts = splitLineRespectingQuotes(line);
   if (parts.length === 0) {
-    throw new CompactParseError(lineNum, 'empty line');
+    throw new VCodeParseError(lineNum, 'empty line');
   }
 
   const opcode = parts[0];
@@ -2124,67 +2124,67 @@ function findSketchEndLine(startLine: number, lines: string[]): number {
 function parseGeometryOpcode(opcode: string, parts: string[], lineNum: number, lines: string[]): CsgOp {
   switch (opcode) {
     case 'C':
-      if (parts.length !== 4) throw new CompactParseError(lineNum, `C requires 3 args, got ${parts.length - 1}`);
+      if (parts.length !== 4) throw new VCodeParseError(lineNum, `C requires 3 args, got ${parts.length - 1}`);
       return { type: 'Cube', size: { x: parseFloat(parts[1]), y: parseFloat(parts[2]), z: parseFloat(parts[3]) } };
 
     case 'Y':
-      if (parts.length !== 3) throw new CompactParseError(lineNum, `Y requires 2 args, got ${parts.length - 1}`);
+      if (parts.length !== 3) throw new VCodeParseError(lineNum, `Y requires 2 args, got ${parts.length - 1}`);
       return { type: 'Cylinder', radius: parseFloat(parts[1]), height: parseFloat(parts[2]), segments: 0 };
 
     case 'S':
-      if (parts.length !== 2) throw new CompactParseError(lineNum, `S requires 1 arg, got ${parts.length - 1}`);
+      if (parts.length !== 2) throw new VCodeParseError(lineNum, `S requires 1 arg, got ${parts.length - 1}`);
       return { type: 'Sphere', radius: parseFloat(parts[1]), segments: 0 };
 
     case 'K':
-      if (parts.length !== 4) throw new CompactParseError(lineNum, `K requires 3 args, got ${parts.length - 1}`);
+      if (parts.length !== 4) throw new VCodeParseError(lineNum, `K requires 3 args, got ${parts.length - 1}`);
       return { type: 'Cone', radius_bottom: parseFloat(parts[1]), radius_top: parseFloat(parts[2]), height: parseFloat(parts[3]), segments: 0 };
 
     case 'U':
-      if (parts.length !== 3) throw new CompactParseError(lineNum, `U requires 2 args, got ${parts.length - 1}`);
+      if (parts.length !== 3) throw new VCodeParseError(lineNum, `U requires 2 args, got ${parts.length - 1}`);
       return { type: 'Union', left: parseInt(parts[1]), right: parseInt(parts[2]) };
 
     case 'D':
-      if (parts.length !== 3) throw new CompactParseError(lineNum, `D requires 2 args, got ${parts.length - 1}`);
+      if (parts.length !== 3) throw new VCodeParseError(lineNum, `D requires 2 args, got ${parts.length - 1}`);
       return { type: 'Difference', left: parseInt(parts[1]), right: parseInt(parts[2]) };
 
     case 'I':
-      if (parts.length !== 3) throw new CompactParseError(lineNum, `I requires 2 args, got ${parts.length - 1}`);
+      if (parts.length !== 3) throw new VCodeParseError(lineNum, `I requires 2 args, got ${parts.length - 1}`);
       return { type: 'Intersection', left: parseInt(parts[1]), right: parseInt(parts[2]) };
 
     case 'T':
-      if (parts.length !== 5) throw new CompactParseError(lineNum, `T requires 4 args, got ${parts.length - 1}`);
+      if (parts.length !== 5) throw new VCodeParseError(lineNum, `T requires 4 args, got ${parts.length - 1}`);
       return { type: 'Translate', child: parseInt(parts[1]), offset: { x: parseFloat(parts[2]), y: parseFloat(parts[3]), z: parseFloat(parts[4]) } };
 
     case 'R':
-      if (parts.length !== 5) throw new CompactParseError(lineNum, `R requires 4 args, got ${parts.length - 1}`);
+      if (parts.length !== 5) throw new VCodeParseError(lineNum, `R requires 4 args, got ${parts.length - 1}`);
       return { type: 'Rotate', child: parseInt(parts[1]), angles: { x: parseFloat(parts[2]), y: parseFloat(parts[3]), z: parseFloat(parts[4]) } };
 
     case 'X':
-      if (parts.length !== 5) throw new CompactParseError(lineNum, `X requires 4 args, got ${parts.length - 1}`);
+      if (parts.length !== 5) throw new VCodeParseError(lineNum, `X requires 4 args, got ${parts.length - 1}`);
       return { type: 'Scale', child: parseInt(parts[1]), factor: { x: parseFloat(parts[2]), y: parseFloat(parts[3]), z: parseFloat(parts[4]) } };
 
     case 'LP':
-      if (parts.length !== 7) throw new CompactParseError(lineNum, `LP requires 6 args, got ${parts.length - 1}`);
+      if (parts.length !== 7) throw new VCodeParseError(lineNum, `LP requires 6 args, got ${parts.length - 1}`);
       return { type: 'LinearPattern', child: parseInt(parts[1]), direction: { x: parseFloat(parts[2]), y: parseFloat(parts[3]), z: parseFloat(parts[4]) }, count: parseInt(parts[5]), spacing: parseFloat(parts[6]) };
 
     case 'CP':
-      if (parts.length !== 10) throw new CompactParseError(lineNum, `CP requires 9 args, got ${parts.length - 1}`);
+      if (parts.length !== 10) throw new VCodeParseError(lineNum, `CP requires 9 args, got ${parts.length - 1}`);
       return { type: 'CircularPattern', child: parseInt(parts[1]), axis_origin: { x: parseFloat(parts[2]), y: parseFloat(parts[3]), z: parseFloat(parts[4]) }, axis_dir: { x: parseFloat(parts[5]), y: parseFloat(parts[6]), z: parseFloat(parts[7]) }, count: parseInt(parts[8]), angle_deg: parseFloat(parts[9]) };
 
     case 'SH':
-      if (parts.length !== 3) throw new CompactParseError(lineNum, `SH requires 2 args, got ${parts.length - 1}`);
+      if (parts.length !== 3) throw new VCodeParseError(lineNum, `SH requires 2 args, got ${parts.length - 1}`);
       return { type: 'Shell', child: parseInt(parts[1]), thickness: parseFloat(parts[2]) };
 
     case 'FI':
-      if (parts.length !== 3) throw new CompactParseError(lineNum, `FI requires 2 args, got ${parts.length - 1}`);
+      if (parts.length !== 3) throw new VCodeParseError(lineNum, `FI requires 2 args, got ${parts.length - 1}`);
       return { type: 'Fillet', child: parseInt(parts[1]), radius: parseFloat(parts[2]) };
 
     case 'CH':
-      if (parts.length !== 3) throw new CompactParseError(lineNum, `CH requires 2 args, got ${parts.length - 1}`);
+      if (parts.length !== 3) throw new VCodeParseError(lineNum, `CH requires 2 args, got ${parts.length - 1}`);
       return { type: 'Chamfer', child: parseInt(parts[1]), distance: parseFloat(parts[2]) };
 
     case 'SK': {
-      if (parts.length !== 10) throw new CompactParseError(lineNum, `SK requires 9 args, got ${parts.length - 1}`);
+      if (parts.length !== 10) throw new VCodeParseError(lineNum, `SK requires 9 args, got ${parts.length - 1}`);
       const origin = { x: parseFloat(parts[1]), y: parseFloat(parts[2]), z: parseFloat(parts[3]) };
       const x_dir = { x: parseFloat(parts[4]), y: parseFloat(parts[5]), z: parseFloat(parts[6]) };
       const y_dir = { x: parseFloat(parts[7]), y: parseFloat(parts[8]), z: parseFloat(parts[9]) };
@@ -2197,14 +2197,14 @@ function parseGeometryOpcode(opcode: string, parts: string[], lineNum: number, l
 
         const segParts = segLine.split(/\s+/);
         if (segParts[0] === 'L') {
-          if (segParts.length !== 5) throw new CompactParseError(idx, `L requires 4 args, got ${segParts.length - 1}`);
+          if (segParts.length !== 5) throw new VCodeParseError(idx, `L requires 4 args, got ${segParts.length - 1}`);
           segments.push({
             type: 'Line',
             start: { x: parseFloat(segParts[1]), y: parseFloat(segParts[2]) },
             end: { x: parseFloat(segParts[3]), y: parseFloat(segParts[4]) },
           });
         } else if (segParts[0] === 'A') {
-          if (segParts.length !== 8) throw new CompactParseError(idx, `A requires 7 args, got ${segParts.length - 1}`);
+          if (segParts.length !== 8) throw new VCodeParseError(idx, `A requires 7 args, got ${segParts.length - 1}`);
           segments.push({
             type: 'Arc',
             start: { x: parseFloat(segParts[1]), y: parseFloat(segParts[2]) },
@@ -2213,7 +2213,7 @@ function parseGeometryOpcode(opcode: string, parts: string[], lineNum: number, l
             ccw: parseInt(segParts[7]) !== 0,
           });
         } else {
-          throw new CompactParseError(idx, `Unknown sketch segment opcode: ${segParts[0]}`);
+          throw new VCodeParseError(idx, `Unknown sketch segment opcode: ${segParts[0]}`);
         }
       }
 
@@ -2221,25 +2221,25 @@ function parseGeometryOpcode(opcode: string, parts: string[], lineNum: number, l
     }
 
     case 'E':
-      if (parts.length !== 5) throw new CompactParseError(lineNum, `E requires 4 args, got ${parts.length - 1}`);
+      if (parts.length !== 5) throw new VCodeParseError(lineNum, `E requires 4 args, got ${parts.length - 1}`);
       return { type: 'Extrude', sketch: parseInt(parts[1]), direction: { x: parseFloat(parts[2]), y: parseFloat(parts[3]), z: parseFloat(parts[4]) } };
 
     case 'V':
-      if (parts.length !== 9) throw new CompactParseError(lineNum, `V requires 8 args, got ${parts.length - 1}`);
+      if (parts.length !== 9) throw new VCodeParseError(lineNum, `V requires 8 args, got ${parts.length - 1}`);
       return { type: 'Revolve', sketch: parseInt(parts[1]), axis_origin: { x: parseFloat(parts[2]), y: parseFloat(parts[3]), z: parseFloat(parts[4]) }, axis_dir: { x: parseFloat(parts[5]), y: parseFloat(parts[6]), z: parseFloat(parts[7]) }, angle_deg: parseFloat(parts[8]) };
 
     default:
-      throw new CompactParseError(lineNum, `Unknown opcode: ${opcode}`);
+      throw new VCodeParseError(lineNum, `Unknown opcode: ${opcode}`);
   }
 }
 
-/** Error thrown when parsing compact IR fails. */
-export class CompactParseError extends Error {
+/** Error thrown when parsing VCode fails. */
+export class VCodeParseError extends Error {
   line: number;
 
   constructor(line: number, message: string) {
     super(`line ${line}: ${message}`);
-    this.name = 'CompactParseError';
+    this.name = 'VCodeParseError';
     this.line = line;
   }
 }

@@ -63,18 +63,18 @@ def format_prompt(text: str) -> str:
     Returns:
         Formatted prompt string
     """
-    return f"Design: {text}\n\nCompact IR:\n"
+    return f"Design: {text}\n\nVCode:\n"
 
 
 def format_for_training(
     example: dict,
-    prompt_template: str = "Design: {text}\n\nCompact IR:\n{ir}",
+    prompt_template: str = "Design: {text}\n\nVCode:\n{ir}",
 ) -> dict:
     """
     Format a single example for training.
 
     The format is completion-style where the model learns to generate
-    the Compact IR given a design description.
+    the VCode given a design description.
 
     Args:
         example: Dictionary with 'text' and 'ir' keys
@@ -103,13 +103,13 @@ def create_formatting_function(prompt_template: str):
 
 def create_data_collator(
     tokenizer: PreTrainedTokenizer,
-    response_template: str = "\n\nCompact IR:\n",
+    response_template: str = "\n\nVCode:\n",
 ):
     """
     Create a data collator that only computes loss on the response tokens.
 
     This uses TRL's DataCollatorForCompletionOnlyLM to mask prompt tokens,
-    so the model only learns to generate the Compact IR output.
+    so the model only learns to generate the VCode output.
 
     Args:
         tokenizer: The tokenizer to use
