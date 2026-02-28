@@ -6157,6 +6157,7 @@ dependencies = [
 name = "vcad-kernel-geom"
 version = "0.8.0"
 dependencies = [
+ "tang",
  "vcad-kernel-math",
 ]
 
@@ -6184,6 +6185,7 @@ dependencies = [
 name = "vcad-kernel-nurbs"
 version = "0.8.0"
 dependencies = [
+ "tang",
  "vcad-kernel-geom",
  "vcad-kernel-math",
 ]

@@ -12,6 +12,8 @@
 
 pub mod predicates;
 
+pub use tang::Scalar;
+
 /// A point in 3D space.
 pub type Point3 = tang::Point3<f64>;
 

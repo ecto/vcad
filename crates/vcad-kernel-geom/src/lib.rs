@@ -8,6 +8,7 @@
 
 use std::any::Any;
 use std::f64::consts::PI;
+use tang::Scalar;
 use vcad_kernel_math::{Dir3, Point2, Point3, Transform, Vec2, Vec3};
 
 // =============================================================================
@@ -86,15 +87,15 @@ impl Clone for Box<dyn Surface> {
 ///
 /// Parameterization: `P(u, v) = origin + u * x_dir + v * y_dir`
 #[derive(Debug, Clone)]
-pub struct Plane {
+pub struct Plane<S = f64> {
     /// Origin point on the plane.
-    pub origin: Point3,
+    pub origin: tang::Point3<S>,
     /// Unit vector along the u direction.
-    pub x_dir: Dir3,
+    pub x_dir: tang::Dir3<S>,
     /// Unit vector along the v direction.
-    pub y_dir: Dir3,
+    pub y_dir: tang::Dir3<S>,
     /// Unit normal (x_dir × y_dir).
-    pub normal_dir: Dir3,
+    pub normal_dir: tang::Dir3<S>,
 }
 
 impl Plane {
@@ -156,23 +157,71 @@ impl Plane {
     pub fn signed_distance(&self, p: &Point3) -> f64 {
         (p - self.origin).dot(self.normal_dir.as_ref())
     }
+
+    /// Promote this plane to a generic scalar type.
+    pub fn lift<T: Scalar>(&self) -> Plane<T> {
+        Plane {
+            origin: tang::Point3::new(
+                T::from_f64(self.origin.x),
+                T::from_f64(self.origin.y),
+                T::from_f64(self.origin.z),
+            ),
+            x_dir: tang::Dir3::new_unchecked(tang::Vec3::new(
+                T::from_f64(self.x_dir.x),
+                T::from_f64(self.x_dir.y),
+                T::from_f64(self.x_dir.z),
+            )),
+            y_dir: tang::Dir3::new_unchecked(tang::Vec3::new(
+                T::from_f64(self.y_dir.x),
+                T::from_f64(self.y_dir.y),
+                T::from_f64(self.y_dir.z),
+            )),
+            normal_dir: tang::Dir3::new_unchecked(tang::Vec3::new(
+                T::from_f64(self.normal_dir.x),
+                T::from_f64(self.normal_dir.y),
+                T::from_f64(self.normal_dir.z),
+            )),
+        }
+    }
+}
+
+impl<S: Scalar> Plane<S> {
+    /// Evaluate the surface at parameter `(u, v)` to get a 3D point.
+    pub fn evaluate(&self, uv: tang::Point2<S>) -> tang::Point3<S> {
+        self.origin + (*self.x_dir.as_ref()) * uv.x + (*self.y_dir.as_ref()) * uv.y
+    }
+
+    /// Surface normal at parameter `(u, v)`.
+    pub fn normal(&self, _uv: tang::Point2<S>) -> tang::Dir3<S> {
+        self.normal_dir
+    }
+
+    /// Partial derivative with respect to u.
+    pub fn d_du(&self, _uv: tang::Point2<S>) -> tang::Vec3<S> {
+        *self.x_dir.as_ref()
+    }
+
+    /// Partial derivative with respect to v.
+    pub fn d_dv(&self, _uv: tang::Point2<S>) -> tang::Vec3<S> {
+        *self.y_dir.as_ref()
+    }
 }
 
 impl Surface for Plane {
     fn evaluate(&self, uv: Point2) -> Point3 {
-        self.origin + uv.x * self.x_dir.as_ref() + uv.y * self.y_dir.as_ref()
+        Plane::evaluate(self, uv)
     }
 
-    fn normal(&self, _uv: Point2) -> Dir3 {
-        self.normal_dir
+    fn normal(&self, uv: Point2) -> Dir3 {
+        Plane::normal(self, uv)
     }
 
-    fn d_du(&self, _uv: Point2) -> Vec3 {
-        *self.x_dir.as_ref()
+    fn d_du(&self, uv: Point2) -> Vec3 {
+        Plane::d_du(self, uv)
     }
 
-    fn d_dv(&self, _uv: Point2) -> Vec3 {
-        *self.y_dir.as_ref()
+    fn d_dv(&self, uv: Point2) -> Vec3 {
+        Plane::d_dv(self, uv)
     }
 
     fn domain(&self) -> ((f64, f64), (f64, f64)) {
@@ -199,9 +248,7 @@ impl Surface for Plane {
     }
 
     fn offset(&self, distance: f64) -> Option<Box<dyn Surface>> {
-        // Offset a plane by shifting origin along its normal.
-        // Planes never degenerate, so this always succeeds.
-        let new_origin = self.origin + distance * self.normal_dir.as_ref();
+        let new_origin = self.origin + (*self.normal_dir.as_ref()) * distance;
         Some(Box::new(Plane {
             origin: new_origin,
             x_dir: self.x_dir,
@@ -221,15 +268,15 @@ impl Surface for Plane {
 ///
 /// Where `u ∈ [0, 2π)` is the angular parameter and `v` is the height along the axis.
 #[derive(Debug, Clone)]
-pub struct CylinderSurface {
+pub struct CylinderSurface<S = f64> {
     /// Center point at the base of the cylinder axis.
-    pub center: Point3,
+    pub center: tang::Point3<S>,
     /// Unit direction along the cylinder axis.
-    pub axis: Dir3,
+    pub axis: tang::Dir3<S>,
     /// Reference direction for u=0 (perpendicular to axis).
-    pub ref_dir: Dir3,
+    pub ref_dir: tang::Dir3<S>,
     /// Radius of the cylinder.
-    pub radius: f64,
+    pub radius: S,
 }
 
 impl CylinderSurface {
@@ -260,32 +307,79 @@ impl CylinderSurface {
         }
     }
 
+    /// Promote this cylinder surface to a generic scalar type.
+    pub fn lift<T: Scalar>(&self) -> CylinderSurface<T> {
+        CylinderSurface {
+            center: tang::Point3::new(
+                T::from_f64(self.center.x),
+                T::from_f64(self.center.y),
+                T::from_f64(self.center.z),
+            ),
+            axis: tang::Dir3::new_unchecked(tang::Vec3::new(
+                T::from_f64(self.axis.x),
+                T::from_f64(self.axis.y),
+                T::from_f64(self.axis.z),
+            )),
+            ref_dir: tang::Dir3::new_unchecked(tang::Vec3::new(
+                T::from_f64(self.ref_dir.x),
+                T::from_f64(self.ref_dir.y),
+                T::from_f64(self.ref_dir.z),
+            )),
+            radius: T::from_f64(self.radius),
+        }
+    }
+}
+
+impl<S: Scalar> CylinderSurface<S> {
     /// Compute the y direction (perpendicular to axis and ref_dir).
-    pub fn y_dir(&self) -> Vec3 {
+    pub fn y_dir(&self) -> tang::Vec3<S> {
         self.axis.as_ref().cross(self.ref_dir.as_ref())
+    }
+
+    /// Evaluate the surface at parameter `(u, v)` to get a 3D point.
+    pub fn evaluate(&self, uv: tang::Point2<S>) -> tang::Point3<S> {
+        let (sin_u, cos_u) = (uv.x.sin(), uv.x.cos());
+        let y = self.y_dir();
+        self.center
+            + ((*self.ref_dir.as_ref()) * cos_u + y * sin_u) * self.radius
+            + (*self.axis.as_ref()) * uv.y
+    }
+
+    /// Surface normal at parameter `(u, v)`.
+    pub fn normal(&self, uv: tang::Point2<S>) -> tang::Dir3<S> {
+        let (sin_u, cos_u) = (uv.x.sin(), uv.x.cos());
+        let y = self.y_dir();
+        tang::Dir3::new_normalize((*self.ref_dir.as_ref()) * cos_u + y * sin_u)
+    }
+
+    /// Partial derivative with respect to u.
+    pub fn d_du(&self, uv: tang::Point2<S>) -> tang::Vec3<S> {
+        let (sin_u, cos_u) = (uv.x.sin(), uv.x.cos());
+        let y = self.y_dir();
+        ((*self.ref_dir.as_ref()) * (-sin_u) + y * cos_u) * self.radius
+    }
+
+    /// Partial derivative with respect to v.
+    pub fn d_dv(&self, _uv: tang::Point2<S>) -> tang::Vec3<S> {
+        *self.axis.as_ref()
     }
 }
 
 impl Surface for CylinderSurface {
     fn evaluate(&self, uv: Point2) -> Point3 {
-        let (sin_u, cos_u) = uv.x.sin_cos();
-        self.center
-            + self.radius * (cos_u * self.ref_dir.as_ref() + sin_u * self.y_dir())
-            + uv.y * self.axis.as_ref()
+        CylinderSurface::evaluate(self, uv)
     }
 
     fn normal(&self, uv: Point2) -> Dir3 {
-        let (sin_u, cos_u) = uv.x.sin_cos();
-        Dir3::new_normalize(cos_u * self.ref_dir.as_ref() + sin_u * self.y_dir())
+        CylinderSurface::normal(self, uv)
     }
 
     fn d_du(&self, uv: Point2) -> Vec3 {
-        let (sin_u, cos_u) = uv.x.sin_cos();
-        self.radius * (-sin_u * self.ref_dir.as_ref() + cos_u * self.y_dir())
+        CylinderSurface::d_du(self, uv)
     }
 
-    fn d_dv(&self, _uv: Point2) -> Vec3 {
-        *self.axis.as_ref()
+    fn d_dv(&self, uv: Point2) -> Vec3 {
+        CylinderSurface::d_dv(self, uv)
     }
 
     fn domain(&self) -> ((f64, f64), (f64, f64)) {
@@ -308,7 +402,6 @@ impl Surface for CylinderSurface {
         let new_center = t.apply_point(&self.center);
         let new_axis = t.apply_vec(self.axis.as_ref());
         let new_ref = t.apply_vec(self.ref_dir.as_ref());
-        // Scale factor affects radius — use the length of the transformed ref_dir
         let scale = new_ref.norm();
         Box::new(CylinderSurface {
             center: new_center,
@@ -319,11 +412,9 @@ impl Surface for CylinderSurface {
     }
 
     fn offset(&self, distance: f64) -> Option<Box<dyn Surface>> {
-        // Offset a cylinder by changing the radius.
-        // Positive distance = offset in normal direction (outward) = increase radius.
         let new_radius = self.radius + distance;
         if new_radius <= 0.0 {
-            return None; // Degenerate: collapsed to a line or inverted
+            return None;
         }
         Some(Box::new(CylinderSurface {
             center: self.center,
@@ -344,15 +435,15 @@ impl Surface for CylinderSurface {
 ///
 /// Where `u ∈ [0, 2π)` is the angular parameter and `v ≥ 0` is the distance from apex along the cone.
 #[derive(Debug, Clone)]
-pub struct ConeSurface {
+pub struct ConeSurface<S = f64> {
     /// Apex (tip) of the cone.
-    pub apex: Point3,
+    pub apex: tang::Point3<S>,
     /// Unit direction along the cone axis (from apex toward base).
-    pub axis: Dir3,
+    pub axis: tang::Dir3<S>,
     /// Reference direction for u=0 (perpendicular to axis).
-    pub ref_dir: Dir3,
+    pub ref_dir: tang::Dir3<S>,
     /// Half-angle of the cone in radians.
-    pub half_angle: f64,
+    pub half_angle: S,
 }
 
 impl ConeSurface {
@@ -399,43 +490,90 @@ impl ConeSurface {
         })
     }
 
+    /// Promote this cone surface to a generic scalar type.
+    pub fn lift<T: Scalar>(&self) -> ConeSurface<T> {
+        ConeSurface {
+            apex: tang::Point3::new(
+                T::from_f64(self.apex.x),
+                T::from_f64(self.apex.y),
+                T::from_f64(self.apex.z),
+            ),
+            axis: tang::Dir3::new_unchecked(tang::Vec3::new(
+                T::from_f64(self.axis.x),
+                T::from_f64(self.axis.y),
+                T::from_f64(self.axis.z),
+            )),
+            ref_dir: tang::Dir3::new_unchecked(tang::Vec3::new(
+                T::from_f64(self.ref_dir.x),
+                T::from_f64(self.ref_dir.y),
+                T::from_f64(self.ref_dir.z),
+            )),
+            half_angle: T::from_f64(self.half_angle),
+        }
+    }
+}
+
+impl<S: Scalar> ConeSurface<S> {
     /// Compute the Y direction (perpendicular to both axis and ref_dir).
-    pub fn y_dir(&self) -> Vec3 {
+    pub fn y_dir(&self) -> tang::Vec3<S> {
         self.axis.as_ref().cross(self.ref_dir.as_ref())
+    }
+
+    /// Evaluate the surface at parameter `(u, v)` to get a 3D point.
+    pub fn evaluate(&self, uv: tang::Point2<S>) -> tang::Point3<S> {
+        let (sin_u, cos_u) = (uv.x.sin(), uv.x.cos());
+        let ca = self.half_angle.cos();
+        let sa = self.half_angle.sin();
+        let y = self.y_dir();
+        self.apex
+            + ((*self.axis.as_ref()) * ca
+                + ((*self.ref_dir.as_ref()) * cos_u + y * sin_u) * sa)
+                * uv.y
+    }
+
+    /// Surface normal at parameter `(u, v)`.
+    pub fn normal(&self, uv: tang::Point2<S>) -> tang::Dir3<S> {
+        let (sin_u, cos_u) = (uv.x.sin(), uv.x.cos());
+        let ca = self.half_angle.cos();
+        let sa = self.half_angle.sin();
+        let y = self.y_dir();
+        let radial = (*self.ref_dir.as_ref()) * cos_u + y * sin_u;
+        tang::Dir3::new_normalize(radial * ca - (*self.axis.as_ref()) * sa)
+    }
+
+    /// Partial derivative with respect to u.
+    pub fn d_du(&self, uv: tang::Point2<S>) -> tang::Vec3<S> {
+        let (sin_u, cos_u) = (uv.x.sin(), uv.x.cos());
+        let sa = self.half_angle.sin();
+        let y = self.y_dir();
+        ((*self.ref_dir.as_ref()) * (-sin_u) + y * cos_u) * (uv.y * sa)
+    }
+
+    /// Partial derivative with respect to v.
+    pub fn d_dv(&self, uv: tang::Point2<S>) -> tang::Vec3<S> {
+        let (sin_u, cos_u) = (uv.x.sin(), uv.x.cos());
+        let ca = self.half_angle.cos();
+        let sa = self.half_angle.sin();
+        let y = self.y_dir();
+        (*self.axis.as_ref()) * ca + ((*self.ref_dir.as_ref()) * cos_u + y * sin_u) * sa
     }
 }
 
 impl Surface for ConeSurface {
     fn evaluate(&self, uv: Point2) -> Point3 {
-        let (sin_u, cos_u) = uv.x.sin_cos();
-        let ca = self.half_angle.cos();
-        let sa = self.half_angle.sin();
-        self.apex
-            + uv.y
-                * (ca * self.axis.as_ref()
-                    + sa * (cos_u * self.ref_dir.as_ref() + sin_u * self.y_dir()))
+        ConeSurface::evaluate(self, uv)
     }
 
     fn normal(&self, uv: Point2) -> Dir3 {
-        let (sin_u, cos_u) = uv.x.sin_cos();
-        let ca = self.half_angle.cos();
-        let sa = self.half_angle.sin();
-        // Normal is perpendicular to the cone surface
-        let radial = cos_u * self.ref_dir.as_ref() + sin_u * self.y_dir();
-        Dir3::new_normalize(ca * radial - sa * self.axis.as_ref())
+        ConeSurface::normal(self, uv)
     }
 
     fn d_du(&self, uv: Point2) -> Vec3 {
-        let (sin_u, cos_u) = uv.x.sin_cos();
-        let sa = self.half_angle.sin();
-        uv.y * sa * (-sin_u * self.ref_dir.as_ref() + cos_u * self.y_dir())
+        ConeSurface::d_du(self, uv)
     }
 
     fn d_dv(&self, uv: Point2) -> Vec3 {
-        let (sin_u, cos_u) = uv.x.sin_cos();
-        let ca = self.half_angle.cos();
-        let sa = self.half_angle.sin();
-        ca * self.axis.as_ref() + sa * (cos_u * self.ref_dir.as_ref() + sin_u * self.y_dir())
+        ConeSurface::d_dv(self, uv)
     }
 
     fn domain(&self) -> ((f64, f64), (f64, f64)) {
@@ -458,8 +596,6 @@ impl Surface for ConeSurface {
         let new_apex = t.apply_point(&self.apex);
         let new_axis = t.apply_vec(self.axis.as_ref());
         let new_ref = t.apply_vec(self.ref_dir.as_ref());
-        // Half-angle is preserved under uniform transforms.
-        // For non-uniform scaling, this is an approximation.
         Box::new(ConeSurface {
             apex: new_apex,
             axis: Dir3::new_normalize(new_axis),
@@ -469,14 +605,12 @@ impl Surface for ConeSurface {
     }
 
     fn offset(&self, distance: f64) -> Option<Box<dyn Surface>> {
-        // Offsetting a cone shifts the apex along the axis.
-        // The offset distance along the axis is d / sin(half_angle).
         let sin_a = self.half_angle.sin();
         if sin_a.abs() < 1e-15 {
-            return None; // Degenerate cone (zero half-angle = line)
+            return None;
         }
         let apex_shift = distance / sin_a;
-        let new_apex = self.apex - apex_shift * self.axis.as_ref();
+        let new_apex = self.apex - (*self.axis.as_ref()) * apex_shift;
         Some(Box::new(ConeSurface {
             apex: new_apex,
             axis: self.axis,
@@ -496,15 +630,15 @@ impl Surface for ConeSurface {
 ///
 /// Where `u ∈ [0, 2π)` is longitude and `v ∈ [-π/2, π/2]` is latitude.
 #[derive(Debug, Clone)]
-pub struct SphereSurface {
+pub struct SphereSurface<S = f64> {
     /// Center of the sphere.
-    pub center: Point3,
+    pub center: tang::Point3<S>,
     /// Radius of the sphere.
-    pub radius: f64,
+    pub radius: S,
     /// Reference direction for u=0 (perpendicular to axis).
-    pub ref_dir: Dir3,
+    pub ref_dir: tang::Dir3<S>,
     /// Axis direction (north pole).
-    pub axis: Dir3,
+    pub axis: tang::Dir3<S>,
 }
 
 impl SphereSurface {
@@ -528,43 +662,91 @@ impl SphereSurface {
         }
     }
 
+    /// Promote this sphere surface to a generic scalar type.
+    pub fn lift<T: Scalar>(&self) -> SphereSurface<T> {
+        SphereSurface {
+            center: tang::Point3::new(
+                T::from_f64(self.center.x),
+                T::from_f64(self.center.y),
+                T::from_f64(self.center.z),
+            ),
+            radius: T::from_f64(self.radius),
+            ref_dir: tang::Dir3::new_unchecked(tang::Vec3::new(
+                T::from_f64(self.ref_dir.x),
+                T::from_f64(self.ref_dir.y),
+                T::from_f64(self.ref_dir.z),
+            )),
+            axis: tang::Dir3::new_unchecked(tang::Vec3::new(
+                T::from_f64(self.axis.x),
+                T::from_f64(self.axis.y),
+                T::from_f64(self.axis.z),
+            )),
+        }
+    }
+}
+
+impl<S: Scalar> SphereSurface<S> {
     /// Compute the y direction (perpendicular to axis and ref_dir).
-    pub fn y_dir(&self) -> Vec3 {
+    pub fn y_dir(&self) -> tang::Vec3<S> {
         self.axis.as_ref().cross(self.ref_dir.as_ref())
+    }
+
+    /// Evaluate the surface at parameter `(u, v)` to get a 3D point.
+    pub fn evaluate(&self, uv: tang::Point2<S>) -> tang::Point3<S> {
+        let (sin_u, cos_u) = (uv.x.sin(), uv.x.cos());
+        let (sin_v, cos_v) = (uv.y.sin(), uv.y.cos());
+        let y = self.y_dir();
+        self.center
+            + (((*self.ref_dir.as_ref()) * cos_u + y * sin_u) * cos_v
+                + (*self.axis.as_ref()) * sin_v)
+                * self.radius
+    }
+
+    /// Surface normal at parameter `(u, v)`.
+    pub fn normal(&self, uv: tang::Point2<S>) -> tang::Dir3<S> {
+        let (sin_u, cos_u) = (uv.x.sin(), uv.x.cos());
+        let (sin_v, cos_v) = (uv.y.sin(), uv.y.cos());
+        let y = self.y_dir();
+        tang::Dir3::new_normalize(
+            ((*self.ref_dir.as_ref()) * cos_u + y * sin_u) * cos_v
+                + (*self.axis.as_ref()) * sin_v,
+        )
+    }
+
+    /// Partial derivative with respect to u.
+    pub fn d_du(&self, uv: tang::Point2<S>) -> tang::Vec3<S> {
+        let (sin_u, cos_u) = (uv.x.sin(), uv.x.cos());
+        let cos_v = uv.y.cos();
+        let y = self.y_dir();
+        ((*self.ref_dir.as_ref()) * (-sin_u) + y * cos_u) * (self.radius * cos_v)
+    }
+
+    /// Partial derivative with respect to v.
+    pub fn d_dv(&self, uv: tang::Point2<S>) -> tang::Vec3<S> {
+        let (sin_u, cos_u) = (uv.x.sin(), uv.x.cos());
+        let (sin_v, cos_v) = (uv.y.sin(), uv.y.cos());
+        let y = self.y_dir();
+        (((*self.ref_dir.as_ref()) * cos_u + y * sin_u) * (-sin_v)
+            + (*self.axis.as_ref()) * cos_v)
+            * self.radius
     }
 }
 
 impl Surface for SphereSurface {
     fn evaluate(&self, uv: Point2) -> Point3 {
-        let (sin_u, cos_u) = uv.x.sin_cos();
-        let (sin_v, cos_v) = uv.y.sin_cos();
-        self.center
-            + self.radius
-                * (cos_v * (cos_u * self.ref_dir.as_ref() + sin_u * self.y_dir())
-                    + sin_v * self.axis.as_ref())
+        SphereSurface::evaluate(self, uv)
     }
 
     fn normal(&self, uv: Point2) -> Dir3 {
-        let (sin_u, cos_u) = uv.x.sin_cos();
-        let (sin_v, cos_v) = uv.y.sin_cos();
-        Dir3::new_normalize(
-            cos_v * (cos_u * self.ref_dir.as_ref() + sin_u * self.y_dir())
-                + sin_v * self.axis.as_ref(),
-        )
+        SphereSurface::normal(self, uv)
     }
 
     fn d_du(&self, uv: Point2) -> Vec3 {
-        let (sin_u, cos_u) = uv.x.sin_cos();
-        let cos_v = uv.y.cos();
-        self.radius * cos_v * (-sin_u * self.ref_dir.as_ref() + cos_u * self.y_dir())
+        SphereSurface::d_du(self, uv)
     }
 
     fn d_dv(&self, uv: Point2) -> Vec3 {
-        let (sin_u, cos_u) = uv.x.sin_cos();
-        let (sin_v, cos_v) = uv.y.sin_cos();
-        self.radius
-            * (-sin_v * (cos_u * self.ref_dir.as_ref() + sin_u * self.y_dir())
-                + cos_v * self.axis.as_ref())
+        SphereSurface::d_dv(self, uv)
     }
 
     fn domain(&self) -> ((f64, f64), (f64, f64)) {
@@ -587,7 +769,6 @@ impl Surface for SphereSurface {
         let new_center = t.apply_point(&self.center);
         let new_ref = t.apply_vec(self.ref_dir.as_ref());
         let new_axis = t.apply_vec(self.axis.as_ref());
-        // Scale factor affects radius — use the length of the transformed ref_dir
         let scale = new_ref.norm();
         Box::new(SphereSurface {
             center: new_center,
@@ -598,10 +779,9 @@ impl Surface for SphereSurface {
     }
 
     fn offset(&self, distance: f64) -> Option<Box<dyn Surface>> {
-        // Offset a sphere by changing the radius.
         let new_radius = self.radius + distance;
         if new_radius <= 0.0 {
-            return None; // Degenerate: collapsed to a point or inverted
+            return None;
         }
         Some(Box::new(SphereSurface {
             center: self.center,
@@ -629,17 +809,17 @@ impl Surface for SphereSurface {
 /// - `u ∈ [0, 2π)` is the toroidal angle (around the main axis)
 /// - `v ∈ [0, 2π)` is the poloidal angle (around the tube)
 #[derive(Debug, Clone)]
-pub struct TorusSurface {
+pub struct TorusSurface<S = f64> {
     /// Center of the torus.
-    pub center: Point3,
+    pub center: tang::Point3<S>,
     /// Unit direction of the torus axis (perpendicular to the plane of the ring).
-    pub axis: Dir3,
+    pub axis: tang::Dir3<S>,
     /// Reference direction for u=0 (perpendicular to axis).
-    pub ref_dir: Dir3,
+    pub ref_dir: tang::Dir3<S>,
     /// Major radius: distance from center to tube center.
-    pub major_radius: f64,
+    pub major_radius: S,
     /// Minor radius: radius of the tube.
-    pub minor_radius: f64,
+    pub minor_radius: S,
 }
 
 impl TorusSurface {
@@ -672,54 +852,91 @@ impl TorusSurface {
         }
     }
 
-    fn y_dir(&self) -> Vec3 {
+    /// Promote this torus surface to a generic scalar type.
+    pub fn lift<T: Scalar>(&self) -> TorusSurface<T> {
+        TorusSurface {
+            center: tang::Point3::new(
+                T::from_f64(self.center.x),
+                T::from_f64(self.center.y),
+                T::from_f64(self.center.z),
+            ),
+            axis: tang::Dir3::new_unchecked(tang::Vec3::new(
+                T::from_f64(self.axis.x),
+                T::from_f64(self.axis.y),
+                T::from_f64(self.axis.z),
+            )),
+            ref_dir: tang::Dir3::new_unchecked(tang::Vec3::new(
+                T::from_f64(self.ref_dir.x),
+                T::from_f64(self.ref_dir.y),
+                T::from_f64(self.ref_dir.z),
+            )),
+            major_radius: T::from_f64(self.major_radius),
+            minor_radius: T::from_f64(self.minor_radius),
+        }
+    }
+}
+
+impl<S: Scalar> TorusSurface<S> {
+    /// Compute the y direction (perpendicular to axis and ref_dir).
+    pub fn y_dir(&self) -> tang::Vec3<S> {
         self.axis.as_ref().cross(self.ref_dir.as_ref())
+    }
+
+    /// Evaluate the surface at parameter `(u, v)` to get a 3D point.
+    pub fn evaluate(&self, uv: tang::Point2<S>) -> tang::Point3<S> {
+        let (sin_u, cos_u) = (uv.x.sin(), uv.x.cos());
+        let (sin_v, cos_v) = (uv.y.sin(), uv.y.cos());
+        let y = self.y_dir();
+        let tube_center_dir = (*self.ref_dir.as_ref()) * cos_u + y * sin_u;
+        self.center
+            + tube_center_dir * (self.major_radius + self.minor_radius * cos_v)
+            + (*self.axis.as_ref()) * (self.minor_radius * sin_v)
+    }
+
+    /// Surface normal at parameter `(u, v)`.
+    pub fn normal(&self, uv: tang::Point2<S>) -> tang::Dir3<S> {
+        let (sin_u, cos_u) = (uv.x.sin(), uv.x.cos());
+        let (sin_v, cos_v) = (uv.y.sin(), uv.y.cos());
+        let y = self.y_dir();
+        let tube_center_dir = (*self.ref_dir.as_ref()) * cos_u + y * sin_u;
+        tang::Dir3::new_normalize(tube_center_dir * cos_v + (*self.axis.as_ref()) * sin_v)
+    }
+
+    /// Partial derivative with respect to u.
+    pub fn d_du(&self, uv: tang::Point2<S>) -> tang::Vec3<S> {
+        let (sin_u, cos_u) = (uv.x.sin(), uv.x.cos());
+        let cos_v = uv.y.cos();
+        let y = self.y_dir();
+        let d_tube_center_dir = (*self.ref_dir.as_ref()) * (-sin_u) + y * cos_u;
+        d_tube_center_dir * (self.major_radius + self.minor_radius * cos_v)
+    }
+
+    /// Partial derivative with respect to v.
+    pub fn d_dv(&self, uv: tang::Point2<S>) -> tang::Vec3<S> {
+        let (sin_u, cos_u) = (uv.x.sin(), uv.x.cos());
+        let (sin_v, cos_v) = (uv.y.sin(), uv.y.cos());
+        let y = self.y_dir();
+        let tube_center_dir = (*self.ref_dir.as_ref()) * cos_u + y * sin_u;
+        tube_center_dir * (-self.minor_radius * sin_v)
+            + (*self.axis.as_ref()) * (self.minor_radius * cos_v)
     }
 }
 
 impl Surface for TorusSurface {
     fn evaluate(&self, uv: Point2) -> Point3 {
-        let (sin_u, cos_u) = uv.x.sin_cos();
-        let (sin_v, cos_v) = uv.y.sin_cos();
-
-        // Point on the tube centerline (at angle u around the main axis)
-        let tube_center_dir = cos_u * self.ref_dir.as_ref() + sin_u * self.y_dir();
-
-        self.center
-            + (self.major_radius + self.minor_radius * cos_v) * tube_center_dir
-            + self.minor_radius * sin_v * self.axis.as_ref()
+        TorusSurface::evaluate(self, uv)
     }
 
     fn normal(&self, uv: Point2) -> Dir3 {
-        let (sin_u, cos_u) = uv.x.sin_cos();
-        let (sin_v, cos_v) = uv.y.sin_cos();
-
-        let tube_center_dir = cos_u * self.ref_dir.as_ref() + sin_u * self.y_dir();
-
-        // Normal points outward from the tube center
-        let n = cos_v * tube_center_dir + sin_v * self.axis.as_ref();
-        Dir3::new_normalize(n)
+        TorusSurface::normal(self, uv)
     }
 
     fn d_du(&self, uv: Point2) -> Vec3 {
-        let (sin_u, cos_u) = uv.x.sin_cos();
-        let cos_v = uv.y.cos();
-
-        // d/du of tube_center_dir = -sin_u * ref_dir + cos_u * y_dir
-        let d_tube_center_dir = -sin_u * self.ref_dir.as_ref() + cos_u * self.y_dir();
-
-        (self.major_radius + self.minor_radius * cos_v) * d_tube_center_dir
+        TorusSurface::d_du(self, uv)
     }
 
     fn d_dv(&self, uv: Point2) -> Vec3 {
-        let (sin_u, cos_u) = uv.x.sin_cos();
-        let (sin_v, cos_v) = uv.y.sin_cos();
-
-        let tube_center_dir = cos_u * self.ref_dir.as_ref() + sin_u * self.y_dir();
-
-        // d/dv: -r·sin(v)·tube_center_dir + r·cos(v)·axis
-        -self.minor_radius * sin_v * tube_center_dir
-            + self.minor_radius * cos_v * self.axis.as_ref()
+        TorusSurface::d_dv(self, uv)
     }
 
     fn domain(&self) -> ((f64, f64), (f64, f64)) {
@@ -742,7 +959,6 @@ impl Surface for TorusSurface {
         let new_center = t.apply_point(&self.center);
         let new_axis = t.apply_vec(self.axis.as_ref());
         let new_ref = t.apply_vec(self.ref_dir.as_ref());
-        // Scale factor affects radii — use the length of the transformed ref_dir
         let scale = new_ref.norm();
         Box::new(TorusSurface {
             center: new_center,
@@ -754,10 +970,9 @@ impl Surface for TorusSurface {
     }
 
     fn offset(&self, distance: f64) -> Option<Box<dyn Surface>> {
-        // Offset a torus by changing the minor radius.
         let new_minor = self.minor_radius + distance;
         if new_minor <= 0.0 {
-            return None; // Degenerate: tube collapsed
+            return None;
         }
         Some(Box::new(TorusSurface {
             center: self.center,
@@ -784,17 +999,17 @@ impl Surface for TorusSurface {
 /// them instead of computing the geometric normal. This enables smooth shading
 /// for swept surfaces where the intended normal differs from the flat quad normal.
 #[derive(Debug, Clone)]
-pub struct BilinearSurface {
+pub struct BilinearSurface<S = f64> {
     /// Corner at (u=0, v=0).
-    pub p00: Point3,
+    pub p00: tang::Point3<S>,
     /// Corner at (u=1, v=0).
-    pub p10: Point3,
+    pub p10: tang::Point3<S>,
     /// Corner at (u=0, v=1).
-    pub p01: Point3,
+    pub p01: tang::Point3<S>,
     /// Corner at (u=1, v=1).
-    pub p11: Point3,
+    pub p11: tang::Point3<S>,
     /// Optional corner normals for smooth shading [n00, n10, n01, n11].
-    pub corner_normals: Option<[Dir3; 4]>,
+    pub corner_normals: Option<[tang::Dir3<S>; 4]>,
 }
 
 impl BilinearSurface {
@@ -858,41 +1073,102 @@ impl BilinearSurface {
             return None;
         }
         let normal = Dir3::new_normalize(n);
-        // Build x_dir from e1, y_dir from normal × x_dir
         let x_dir = e1.normalize();
         let y_dir = normal.as_ref().cross(x_dir);
         Some(Plane::new(centroid, x_dir, y_dir))
     }
+
+    /// Promote this bilinear surface to a generic scalar type.
+    pub fn lift<T: Scalar>(&self) -> BilinearSurface<T> {
+        let lift_p = |p: &Point3| {
+            tang::Point3::new(T::from_f64(p.x), T::from_f64(p.y), T::from_f64(p.z))
+        };
+        let lift_d = |d: &Dir3| {
+            tang::Dir3::new_unchecked(tang::Vec3::new(
+                T::from_f64(d.x),
+                T::from_f64(d.y),
+                T::from_f64(d.z),
+            ))
+        };
+        BilinearSurface {
+            p00: lift_p(&self.p00),
+            p10: lift_p(&self.p10),
+            p01: lift_p(&self.p01),
+            p11: lift_p(&self.p11),
+            corner_normals: self
+                .corner_normals
+                .map(|ns| [lift_d(&ns[0]), lift_d(&ns[1]), lift_d(&ns[2]), lift_d(&ns[3])]),
+        }
+    }
 }
 
-impl Surface for BilinearSurface {
-    fn evaluate(&self, uv: Point2) -> Point3 {
+impl<S: Scalar> BilinearSurface<S> {
+    /// Evaluate the surface at parameter `(u, v)` to get a 3D point.
+    pub fn evaluate(&self, uv: tang::Point2<S>) -> tang::Point3<S> {
         let u = uv.x;
         let v = uv.y;
-        let u1 = 1.0 - u;
-        let v1 = 1.0 - v;
-        Point3::new(
+        let u1 = S::ONE - u;
+        let v1 = S::ONE - v;
+        tang::Point3::new(
             u1 * v1 * self.p00.x + u * v1 * self.p10.x + u1 * v * self.p01.x + u * v * self.p11.x,
             u1 * v1 * self.p00.y + u * v1 * self.p10.y + u1 * v * self.p01.y + u * v * self.p11.y,
             u1 * v1 * self.p00.z + u * v1 * self.p10.z + u1 * v * self.p01.z + u * v * self.p11.z,
         )
     }
 
-    fn normal(&self, uv: Point2) -> Dir3 {
-        // If corner normals provided, bilinearly interpolate them
+    /// Surface normal at parameter `(u, v)`.
+    pub fn normal(&self, uv: tang::Point2<S>) -> tang::Dir3<S> {
         if let Some([n00, n10, n01, n11]) = &self.corner_normals {
             let u = uv.x;
             let v = uv.y;
-            let u1 = 1.0 - u;
-            let v1 = 1.0 - v;
+            let u1 = S::ONE - u;
+            let v1 = S::ONE - v;
             let nx = u1 * v1 * n00.x + u * v1 * n10.x + u1 * v * n01.x + u * v * n11.x;
             let ny = u1 * v1 * n00.y + u * v1 * n10.y + u1 * v * n01.y + u * v * n11.y;
             let nz = u1 * v1 * n00.z + u * v1 * n10.z + u1 * v * n01.z + u * v * n11.z;
-            return Dir3::new_normalize(Vec3::new(nx, ny, nz));
+            return tang::Dir3::new_normalize(tang::Vec3::new(nx, ny, nz));
         }
-        // Otherwise compute from cross product
-        let du = self.d_du(uv);
-        let dv = self.d_dv(uv);
+        let du = BilinearSurface::d_du(self, uv);
+        let dv = BilinearSurface::d_dv(self, uv);
+        let n = du.cross(dv);
+        tang::Dir3::new_normalize(n)
+    }
+
+    /// Partial derivative with respect to u.
+    pub fn d_du(&self, uv: tang::Point2<S>) -> tang::Vec3<S> {
+        let v = uv.y;
+        let v1 = S::ONE - v;
+        tang::Vec3::new(
+            -v1 * self.p00.x + v1 * self.p10.x - v * self.p01.x + v * self.p11.x,
+            -v1 * self.p00.y + v1 * self.p10.y - v * self.p01.y + v * self.p11.y,
+            -v1 * self.p00.z + v1 * self.p10.z - v * self.p01.z + v * self.p11.z,
+        )
+    }
+
+    /// Partial derivative with respect to v.
+    pub fn d_dv(&self, uv: tang::Point2<S>) -> tang::Vec3<S> {
+        let u = uv.x;
+        let u1 = S::ONE - u;
+        tang::Vec3::new(
+            -u1 * self.p00.x - u * self.p10.x + u1 * self.p01.x + u * self.p11.x,
+            -u1 * self.p00.y - u * self.p10.y + u1 * self.p01.y + u * self.p11.y,
+            -u1 * self.p00.z - u * self.p10.z + u1 * self.p01.z + u * self.p11.z,
+        )
+    }
+}
+
+impl Surface for BilinearSurface {
+    fn evaluate(&self, uv: Point2) -> Point3 {
+        BilinearSurface::evaluate(self, uv)
+    }
+
+    fn normal(&self, uv: Point2) -> Dir3 {
+        // The generic normal() doesn't have the degenerate fallback, so handle it here
+        if self.corner_normals.is_some() {
+            return BilinearSurface::normal(self, uv);
+        }
+        let du = BilinearSurface::d_du(self, uv);
+        let dv = BilinearSurface::d_dv(self, uv);
         let n = du.cross(dv);
         if n.norm() < 1e-12 {
             Dir3::new_normalize(Vec3::z())
@@ -902,23 +1178,11 @@ impl Surface for BilinearSurface {
     }
 
     fn d_du(&self, uv: Point2) -> Vec3 {
-        let v = uv.y;
-        let v1 = 1.0 - v;
-        Vec3::new(
-            -v1 * self.p00.x + v1 * self.p10.x - v * self.p01.x + v * self.p11.x,
-            -v1 * self.p00.y + v1 * self.p10.y - v * self.p01.y + v * self.p11.y,
-            -v1 * self.p00.z + v1 * self.p10.z - v * self.p01.z + v * self.p11.z,
-        )
+        BilinearSurface::d_du(self, uv)
     }
 
     fn d_dv(&self, uv: Point2) -> Vec3 {
-        let u = uv.x;
-        let u1 = 1.0 - u;
-        Vec3::new(
-            -u1 * self.p00.x - u * self.p10.x + u1 * self.p01.x + u * self.p11.x,
-            -u1 * self.p00.y - u * self.p10.y + u1 * self.p01.y + u * self.p11.y,
-            -u1 * self.p00.z - u * self.p10.z + u1 * self.p01.z + u * self.p11.z,
-        )
+        BilinearSurface::d_dv(self, uv)
     }
 
     fn domain(&self) -> ((f64, f64), (f64, f64)) {

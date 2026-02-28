@@ -20,6 +20,7 @@
 //! - **Boehm's algorithm** for knot insertion (refinement)
 
 use std::any::Any;
+use tang::Scalar;
 use vcad_kernel_geom::{CurveKind, SurfaceKind};
 use vcad_kernel_math::{Dir3, Point2, Point3, Transform, Vec3};
 
@@ -277,10 +278,11 @@ impl vcad_kernel_geom::Curve3d for BSplineCurve {
 /// A non-rational tensor-product B-spline surface.
 ///
 /// Control points are stored in row-major order: `points[v_idx * n_u + u_idx]`.
+/// Knot vectors remain `f64` (they are parametric positions, not differentiated).
 #[derive(Debug, Clone)]
-pub struct BSplineSurface {
+pub struct BSplineSurface<S = f64> {
     /// Control points in row-major order.
-    pub control_points: Vec<Point3>,
+    pub control_points: Vec<tang::Point3<S>>,
     /// Number of control points in the u direction.
     pub n_u: usize,
     /// Number of control points in the v direction.
@@ -338,13 +340,55 @@ impl BSplineSurface {
         }
     }
 
+    /// Partial derivative with respect to u (finite differences).
+    pub fn deriv_u(&self, u: f64, v: f64) -> Vec3 {
+        let ((u_min, u_max), _) = self.parameter_domain();
+        let du = (u_max - u_min) * 1e-7;
+        let p0 = self.eval((u - du).max(u_min), v);
+        let p1 = self.eval((u + du).min(u_max), v);
+        (p1 - p0) / (2.0 * du)
+    }
+
+    /// Partial derivative with respect to v (finite differences).
+    pub fn deriv_v(&self, u: f64, v: f64) -> Vec3 {
+        let (_, (v_min, v_max)) = self.parameter_domain();
+        let dv = (v_max - v_min) * 1e-7;
+        let p0 = self.eval(u, (v - dv).max(v_min));
+        let p1 = self.eval(u, (v + dv).min(v_max));
+        (p1 - p0) / (2.0 * dv)
+    }
+
+    /// Promote this B-spline surface to a generic scalar type.
+    pub fn lift<T: Scalar>(&self) -> BSplineSurface<T> {
+        BSplineSurface {
+            control_points: self
+                .control_points
+                .iter()
+                .map(|p| {
+                    tang::Point3::new(T::from_f64(p.x), T::from_f64(p.y), T::from_f64(p.z))
+                })
+                .collect(),
+            n_u: self.n_u,
+            n_v: self.n_v,
+            knots_u: self.knots_u.clone(),
+            knots_v: self.knots_v.clone(),
+            degree_u: self.degree_u,
+            degree_v: self.degree_v,
+        }
+    }
+}
+
+impl<S: Scalar> BSplineSurface<S> {
     /// Get a control point at `(u_idx, v_idx)`.
-    fn cp(&self, u_idx: usize, v_idx: usize) -> &Point3 {
+    fn cp(&self, u_idx: usize, v_idx: usize) -> &tang::Point3<S> {
         &self.control_points[v_idx * self.n_u + u_idx]
     }
 
     /// Evaluate the surface at `(u, v)` using tensor-product De Boor.
-    pub fn eval(&self, u: f64, v: f64) -> Point3 {
+    ///
+    /// Basis functions are computed from the f64 knot vectors; the weighted
+    /// sum of control points carries the generic scalar type.
+    pub fn eval(&self, u: f64, v: f64) -> tang::Point3<S> {
         let nu = self.n_u - 1;
         let nv = self.n_v - 1;
         let u = u.clamp(self.knots_u[self.degree_u], self.knots_u[nu + 1]);
@@ -355,37 +399,21 @@ impl BSplineSurface {
         let basis_u = basis_functions(&self.knots_u, span_u, self.degree_u, u);
         let basis_v = basis_functions(&self.knots_v, span_v, self.degree_v, v);
 
-        let mut point = Point3::origin();
+        let mut px = S::ZERO;
+        let mut py = S::ZERO;
+        let mut pz = S::ZERO;
         for (j, &bv) in basis_v.iter().enumerate() {
             let v_idx = span_v - self.degree_v + j;
             for (i, &bu) in basis_u.iter().enumerate() {
                 let u_idx = span_u - self.degree_u + i;
-                let w = bu * bv;
+                let w = S::from_f64(bu * bv);
                 let cp = self.cp(u_idx, v_idx);
-                point.x += w * cp.x;
-                point.y += w * cp.y;
-                point.z += w * cp.z;
+                px += w * cp.x;
+                py += w * cp.y;
+                pz += w * cp.z;
             }
         }
-        point
-    }
-
-    /// Partial derivative with respect to u.
-    pub fn deriv_u(&self, u: f64, v: f64) -> Vec3 {
-        let ((u_min, u_max), _) = self.parameter_domain();
-        let du = (u_max - u_min) * 1e-7;
-        let p0 = self.eval((u - du).max(u_min), v);
-        let p1 = self.eval((u + du).min(u_max), v);
-        (p1 - p0) / (2.0 * du)
-    }
-
-    /// Partial derivative with respect to v.
-    pub fn deriv_v(&self, u: f64, v: f64) -> Vec3 {
-        let (_, (v_min, v_max)) = self.parameter_domain();
-        let dv = (v_max - v_min) * 1e-7;
-        let p0 = self.eval(u, (v - dv).max(v_min));
-        let p1 = self.eval(u, (v + dv).min(v_max));
-        (p1 - p0) / (2.0 * dv)
+        tang::Point3::new(px, py, pz)
     }
 
     /// Parameter domain.

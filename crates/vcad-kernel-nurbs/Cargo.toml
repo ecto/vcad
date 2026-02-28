@@ -9,3 +9,4 @@ repository.workspace = true
 [dependencies]
 vcad-kernel-math = { path = "../vcad-kernel-math" }
 vcad-kernel-geom = { path = "../vcad-kernel-geom" }
+tang = { workspace = true }
