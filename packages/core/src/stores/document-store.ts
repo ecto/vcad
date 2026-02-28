@@ -424,10 +424,14 @@ function buildPartIndex(parts: PartInfo[]): Map<string, PartInfo> {
   return index;
 }
 
-/** Get a PcbBoard node's Pcb data by node ID. */
+/** Get a PcbBoard node's Pcb data by node ID.
+ *  Falls back to `doc.pcb` when the materializer stores PCB data there
+ *  instead of inlining it in the node op (CRDT engine emits Empty nodes). */
 export function getNodePcb(doc: Document, nodeId: NodeId): Pcb | null {
   const node = doc.nodes[String(nodeId)];
   if (node?.op.type === "PcbBoard") return (node.op as { type: "PcbBoard"; board: Pcb }).board;
+  // CRDT materializer stores PCB data in doc.pcb and creates an Empty node
+  if (doc.pcb) return doc.pcb;
   return null;
 }
 

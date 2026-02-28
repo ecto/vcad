@@ -5,7 +5,8 @@ import type {
   ErcViolationResult,
   NetlistResult,
 } from "@vcad/engine";
-import { useCoreElectronicsStore, getPcbNodeIds, useDocumentStore } from "@vcad/core";
+import { useCoreElectronicsStore, getPcbNodeIds, useDocumentStore, isPcbBoardPart } from "@vcad/core";
+import type { PcbBoardPartInfo } from "@vcad/core";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -236,13 +237,20 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
 
   enter: () => {
     // Find first PcbBoard node and enter the core electronics store with it
-    const doc = useDocumentStore.getState().document;
+    const docStore = useDocumentStore.getState();
+    const doc = docStore.document;
     const boardIds = getPcbNodeIds(doc);
-    const boardNodeId = boardIds[0] ?? null;
+    let boardNodeId = boardIds[0] ?? null;
+    // CRDT materializer creates Empty nodes + stores PCB in doc.pcb,
+    // so getPcbNodeIds may miss them. Fall back to parts array.
+    if (boardNodeId == null) {
+      const pcbPart = docStore.parts.find(isPcbBoardPart) as PcbBoardPartInfo | undefined;
+      if (pcbPart) boardNodeId = pcbPart.boardNodeId;
+    }
     if (boardNodeId != null) {
       useCoreElectronicsStore.getState().enter(boardNodeId);
     }
-    set({ active: true });
+    set({ active: true, schematicDocked: "left" });
   },
   exit: () => {
     useCoreElectronicsStore.getState().exit();

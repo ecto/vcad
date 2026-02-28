@@ -14,6 +14,7 @@ import { useThree, useFrame } from "@react-three/fiber";
 import { OrthographicCamera, Vector3, Spherical, MathUtils } from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { useElectronicsStore } from "@/stores/electronics-store";
+import { useCoreElectronicsStore, useDocumentStore, getNodePcb } from "@vcad/core";
 
 const PCB_CAMERA_HEIGHT = 200;
 const MIN_ZOOM = 0.5;
@@ -58,25 +59,49 @@ export function usePcbCamera(
     // Create or reuse ortho camera
     const canvas = gl.domElement;
     const aspect = canvas.clientWidth / canvas.clientHeight;
-    const frustumSize = 60;
 
     let orthoCam = orthoCamRef.current;
     if (!orthoCam) {
-      orthoCam = new OrthographicCamera(
-        -frustumSize * aspect / 2,
-        frustumSize * aspect / 2,
-        frustumSize / 2,
-        -frustumSize / 2,
-        0.1,
-        2000,
-      );
+      orthoCam = new OrthographicCamera(-30, 30, 30, -30, 0.1, 2000);
       orthoCamRef.current = orthoCam;
     }
 
+    // Compute board center + frustum from outline vertices (auto-frame)
+    let centerX = 25;
+    let centerY = 15; // PCB Y
+    let frustumSize = 60;
+
+    const boardNodeId = useCoreElectronicsStore.getState().activeBoardNodeId;
+    const doc = useDocumentStore.getState().document;
+    const pcb = boardNodeId != null ? getNodePcb(doc, boardNodeId) : null;
+    if (pcb && pcb.outline.vertices.length >= 3) {
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      for (const v of pcb.outline.vertices) {
+        if (v.x < minX) minX = v.x;
+        if (v.x > maxX) maxX = v.x;
+        if (v.y < minY) minY = v.y;
+        if (v.y > maxY) maxY = v.y;
+      }
+      centerX = (minX + maxX) / 2;
+      centerY = (minY + maxY) / 2;
+      const boardW = maxX - minX;
+      const boardH = maxY - minY;
+      frustumSize = Math.max(boardW, boardH / aspect) * 1.15;
+      // Ensure a minimum frustum so tiny boards don't over-zoom
+      if (frustumSize < 10) frustumSize = 10;
+    }
+
+    // Update frustum to match board
+    orthoCam.left = -frustumSize * aspect / 2;
+    orthoCam.right = frustumSize * aspect / 2;
+    orthoCam.top = frustumSize / 2;
+    orthoCam.bottom = -frustumSize / 2;
+
     // Position camera above board center, looking down -Y (display space)
-    orthoCam.position.set(25, PCB_CAMERA_HEIGHT, -15);
+    // PCB Y maps to Three.js -Z
+    orthoCam.position.set(centerX, PCB_CAMERA_HEIGHT, -centerY);
     orthoCam.up.set(0, 0, -1);
-    orthoCam.lookAt(25, 0, -15);
+    orthoCam.lookAt(centerX, 0, -centerY);
     orthoCam.zoom = 1;
     orthoCam.updateProjectionMatrix();
 
@@ -91,7 +116,7 @@ export function usePcbCamera(
     const controls = orbitRef.current;
     if (controls) {
       controls.object = orthoCam;
-      controls.target.set(25, 0, -15);
+      controls.target.set(centerX, 0, -centerY);
       controls.enableRotate = false;
       controls.enableZoom = false;
       controls.enablePan = true;
@@ -315,7 +340,7 @@ export function usePcbCamera(
     return () => canvas.removeEventListener("wheel", handleWheel);
   }, [active, gl, invalidate]);
 
-  // Keep ortho frustum in sync with canvas resize
+  // Keep ortho frustum in sync with canvas resize (preserve current frustum height)
   useFrame(() => {
     if (!active) return;
     const orthoCam = orthoCamRef.current;
@@ -323,15 +348,14 @@ export function usePcbCamera(
 
     const canvas = gl.domElement;
     const aspect = canvas.clientWidth / canvas.clientHeight;
-    const frustumSize = 60;
+    // Derive frustumSize from current top/bottom (preserves auto-frame sizing)
+    const currentFrustumSize = orthoCam.top - orthoCam.bottom;
 
-    const newLeft = -frustumSize * aspect / 2;
-    const newRight = frustumSize * aspect / 2;
+    const newLeft = -currentFrustumSize * aspect / 2;
+    const newRight = currentFrustumSize * aspect / 2;
     if (Math.abs(orthoCam.left - newLeft) > 0.01) {
       orthoCam.left = newLeft;
       orthoCam.right = newRight;
-      orthoCam.top = frustumSize / 2;
-      orthoCam.bottom = -frustumSize / 2;
       orthoCam.updateProjectionMatrix();
     }
   });

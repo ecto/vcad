@@ -29,6 +29,11 @@ const LengthTunePanel = lazy(() =>
     default: m.LengthTunePanel,
   })),
 );
+const PcbGettingStarted = lazy(() =>
+  import("./electronics/PcbGettingStarted").then((m) => ({
+    default: m.PcbGettingStarted,
+  })),
+);
 
 // Monokai Soda from tmTheme
 const BG_DARK = "#222222";
@@ -261,6 +266,9 @@ export function Viewport() {
           </Suspense>
           <Suspense fallback={null}>
             <LengthTunePanel />
+          </Suspense>
+          <Suspense fallback={null}>
+            <PcbGettingStarted />
           </Suspense>
         </>
       )}
