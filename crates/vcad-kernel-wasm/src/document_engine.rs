@@ -1,10 +1,15 @@
 //! WASM bindings for the CRDT document engine.
 //!
 //! Exposes `WasmDocumentEngine` for browser/WASM consumers. Each mutation
-//! returns a JSON object with `{ document, parts, changeSet, createdFeatureId? }`.
+//! returns a JSON object with `{ document, parts, consumedPartIds, createdFeatureId? }`.
+//!
+//! Internally uses `DocumentApi` for typed mutations. Legacy low-level CRDT
+//! methods (`create_feature`, `set_param`) are kept for backward compatibility.
 
 use std::collections::HashMap;
 
+use vcad_app::document_api::{ApiResult, DocumentApi};
+use vcad_app::feature::FeatureInput;
 use vcad_app::materializer::materialize;
 use vcad_app::migrate::{detect_format, migrate_v1, FileFormat};
 use vcad_crdt::{CrdtDocument, FeatureId, FractionalIndex, ReplicaId, Value};
@@ -13,11 +18,11 @@ use wasm_bindgen::prelude::*;
 
 /// CRDT-backed document engine for WASM.
 ///
-/// Wraps a `CrdtDocument` and maintains cached materialized state.
-/// All mutations return the updated document + parts as a JS value.
+/// Wraps a `DocumentApi` (which wraps a `CrdtDocument`) and exposes both
+/// typed mutations via `add_feature(json)` and legacy low-level CRDT methods.
 #[wasm_bindgen]
 pub struct WasmDocumentEngine {
-    crdt: CrdtDocument,
+    api: DocumentApi,
 }
 
 #[wasm_bindgen]
@@ -25,12 +30,87 @@ impl WasmDocumentEngine {
     /// Create a new empty document engine.
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
-        // Use timestamp-based replica ID for uniqueness.
         let replica_id = ReplicaId(js_sys::Date::now() as u64);
         Self {
-            crdt: CrdtDocument::new(replica_id),
+            api: DocumentApi::new(replica_id),
         }
     }
+
+    // -- Typed API (new) --
+
+    /// Add a feature from a JSON-serialized `FeatureInput` discriminated union.
+    ///
+    /// Example: `{"type":"Cube","size_x":10,"size_y":20,"size_z":30}`
+    ///
+    /// Returns `{ document, parts, consumedPartIds, createdFeatureId }`.
+    pub fn add_feature(&mut self, input_json: &str) -> JsValue {
+        let input: FeatureInput = match serde_json::from_str(input_json) {
+            Ok(i) => i,
+            Err(_) => return self.serialize_api_result(&self.api.get_state()),
+        };
+        let result = self.api.add_feature(input);
+        self.serialize_api_result(&result)
+    }
+
+    /// Update a feature with new params from a JSON-serialized `FeatureInput`.
+    pub fn update_feature(&mut self, stable_id: &str, input_json: &str) -> JsValue {
+        let input: FeatureInput = match serde_json::from_str(input_json) {
+            Ok(i) => i,
+            Err(_) => return self.serialize_api_result(&self.api.get_state()),
+        };
+        let result = self.api.update_feature(stable_id, input);
+        self.serialize_api_result(&result)
+    }
+
+    /// Delete a feature by stable ID.
+    pub fn delete_feature_by_id(&mut self, stable_id: &str) -> JsValue {
+        let result = self.api.delete_feature(stable_id);
+        self.serialize_api_result(&result)
+    }
+
+    /// Set translation on a feature.
+    pub fn set_translation(&mut self, stable_id: &str, x: f64, y: f64, z: f64) -> JsValue {
+        let result = self.api.set_translation(stable_id, [x, y, z]);
+        self.serialize_api_result(&result)
+    }
+
+    /// Set rotation on a feature.
+    pub fn set_rotation(&mut self, stable_id: &str, x: f64, y: f64, z: f64) -> JsValue {
+        let result = self.api.set_rotation(stable_id, [x, y, z]);
+        self.serialize_api_result(&result)
+    }
+
+    /// Set scale on a feature.
+    pub fn set_scale(&mut self, stable_id: &str, x: f64, y: f64, z: f64) -> JsValue {
+        let result = self.api.set_scale(stable_id, [x, y, z]);
+        self.serialize_api_result(&result)
+    }
+
+    /// Set material on a feature.
+    pub fn set_material(&mut self, stable_id: &str, material: &str) -> JsValue {
+        let result = self.api.set_material(stable_id, material);
+        self.serialize_api_result(&result)
+    }
+
+    /// Set visibility on a feature.
+    pub fn set_visible(&mut self, stable_id: &str, visible: bool) -> JsValue {
+        let result = self.api.set_visible(stable_id, visible);
+        self.serialize_api_result(&result)
+    }
+
+    /// Rename a feature.
+    pub fn rename_feature(&mut self, stable_id: &str, name: &str) -> JsValue {
+        let result = self.api.rename_feature(stable_id, name);
+        self.serialize_api_result(&result)
+    }
+
+    /// Set joint state.
+    pub fn set_joint_state(&mut self, stable_id: &str, state: f64) -> JsValue {
+        let result = self.api.set_joint_state(stable_id, state);
+        self.serialize_api_result(&result)
+    }
+
+    // -- Legacy low-level CRDT methods (backward compatibility) --
 
     /// Create a feature with the given kind and params (JSON string).
     ///
@@ -39,22 +119,21 @@ impl WasmDocumentEngine {
         let params: HashMap<String, Value> =
             serde_json::from_str(params_json).unwrap_or_default();
 
-        // Find position at end of feature list.
-        let ordered = self.crdt.ordered_features();
+        let ordered = self.api.crdt().ordered_features();
         let position = if let Some(last) = ordered.last() {
             FractionalIndex::between(Some(&last.1.position), None)
         } else {
             FractionalIndex::between(None, None)
         };
 
-        let (fid, _cs) = self.crdt.create_feature(kind, position, params);
+        let (fid, _cs) = self.api.crdt_mut().create_feature(kind, position, params);
         self.build_result(Some(fid))
     }
 
     /// Delete a feature by ID (JSON string).
     pub fn delete_feature(&mut self, feature_id_json: &str) -> JsValue {
         if let Some(fid) = parse_feature_id(feature_id_json) {
-            self.crdt.delete_feature(fid);
+            self.api.crdt_mut().delete_feature(fid);
         }
         self.build_result(None)
     }
@@ -70,7 +149,7 @@ impl WasmDocumentEngine {
             parse_feature_id(feature_id_json),
             serde_json::from_str::<Value>(value_json),
         ) {
-            self.crdt.set_param(fid, key, value);
+            self.api.crdt_mut().set_param(fid, key, value);
         }
         self.build_result(None)
     }
@@ -81,49 +160,50 @@ impl WasmDocumentEngine {
             parse_feature_id(feature_id_json),
             serde_json::from_str::<FractionalIndex>(position_json),
         ) {
-            self.crdt.move_feature(fid, pos);
+            self.api.crdt_mut().move_feature(fid, pos);
         }
         self.build_result(None)
     }
 
     /// Undo the last action.
     pub fn undo(&mut self) -> JsValue {
-        self.crdt.undo();
+        self.api.crdt_mut().undo();
         self.build_result(None)
     }
 
     /// Redo the last undone action.
     pub fn redo(&mut self) -> JsValue {
-        self.crdt.redo();
+        self.api.crdt_mut().redo();
         self.build_result(None)
     }
 
     /// Whether undo is available.
     pub fn can_undo(&self) -> bool {
-        self.crdt.can_undo()
+        self.api.crdt().can_undo()
     }
 
     /// Whether redo is available.
     pub fn can_redo(&self) -> bool {
-        self.crdt.can_redo()
+        self.api.crdt().can_redo()
     }
 
     /// Get the materialized document as JSON.
     pub fn get_document_json(&self) -> String {
-        let result = materialize(&self.crdt);
+        let result = materialize(self.api.crdt());
         serde_json::to_string(&result.document).unwrap_or_else(|_| "{}".to_string())
     }
 
     /// Get the parts list as JSON.
     pub fn get_parts_json(&self) -> String {
-        let result = materialize(&self.crdt);
+        let result = materialize(self.api.crdt());
         serde_json::to_string(&result.parts).unwrap_or_else(|_| "[]".to_string())
     }
 
     /// Get ordered features (for the feature tree) as JSON.
     pub fn get_ordered_features_json(&self) -> String {
         let features: Vec<_> = self
-            .crdt
+            .api
+            .crdt()
             .ordered_features()
             .into_iter()
             .map(|(fid, f)| {
@@ -140,7 +220,7 @@ impl WasmDocumentEngine {
 
     /// Save the document to bytes.
     pub fn save(&self) -> Vec<u8> {
-        self.crdt.save()
+        self.api.save()
     }
 
     /// Load a document from bytes.
@@ -152,7 +232,7 @@ impl WasmDocumentEngine {
             FileFormat::V2Crdt => {
                 let crdt =
                     CrdtDocument::load(bytes).map_err(|e| JsError::new(&e.to_string()))?;
-                Ok(Self { crdt })
+                Ok(Self::from_crdt(crdt))
             }
             FileFormat::V1Json => Self::from_v1_bytes(bytes),
             FileFormat::Unknown => Err(JsError::new("Unknown file format")),
@@ -165,31 +245,24 @@ impl WasmDocumentEngine {
     }
 
     /// Import IR JSON into the current document (e.g. AI-generated geometry).
-    ///
-    /// Parses the IR, migrates it to CRDT features, and merges the ops into
-    /// this document. Returns the standard mutation result.
     pub fn import_ir(&mut self, ir_json: &str) -> JsValue {
         let doc: vcad_ir::Document = match serde_json::from_str(ir_json) {
             Ok(d) => d,
             Err(_) => return self.build_result(None),
         };
         let migrated = migrate_v1(&doc);
-        // Extract all ops from the migrated doc (empty clock = all ops).
         let ops = migrated.ops_since(&std::collections::BTreeMap::new());
-        self.crdt.merge(ops);
+        self.api.crdt_mut().merge(ops);
         self.build_result(None)
     }
 
     /// Compute a FractionalIndex position between two neighbor feature IDs.
-    ///
-    /// Pass `before_id_json` and `after_id_json` as feature ID strings (or empty/"" for boundaries).
-    /// Returns the FractionalIndex as a JSON string.
     pub fn compute_position_between(
         &self,
         before_id_json: &str,
         after_id_json: &str,
     ) -> String {
-        let ordered = self.crdt.ordered_features();
+        let ordered = self.api.crdt().ordered_features();
 
         let before_pos = if before_id_json.is_empty() {
             None
@@ -211,12 +284,12 @@ impl WasmDocumentEngine {
         serde_json::to_string(&pos).unwrap_or_else(|_| "[]".to_string())
     }
 
-    // -- Sync (for future collaboration) --
+    // -- Sync --
 
     /// Merge remote operations (JSON array of Op).
     pub fn merge_remote(&mut self, ops_json: &str) -> JsValue {
         if let Ok(ops) = serde_json::from_str(ops_json) {
-            self.crdt.merge(ops);
+            self.api.crdt_mut().merge(ops);
         }
         self.build_result(None)
     }
@@ -224,7 +297,8 @@ impl WasmDocumentEngine {
     /// Get the sync clock as JSON.
     pub fn get_sync_clock(&self) -> String {
         let clock: HashMap<String, u64> = self
-            .crdt
+            .api
+            .crdt()
             .clock()
             .iter()
             .map(|(k, v)| (k.0.to_string(), *v))
@@ -243,23 +317,34 @@ impl WasmDocumentEngine {
         } else {
             std::collections::BTreeMap::new()
         };
-        let ops = self.crdt.ops_since(&remote_clock);
+        let ops = self.api.crdt().ops_since(&remote_clock);
         serde_json::to_string(&ops).unwrap_or_else(|_| "[]".to_string())
     }
 }
 
 impl WasmDocumentEngine {
+    /// Create from an existing CrdtDocument.
+    fn from_crdt(crdt: CrdtDocument) -> Self {
+        let replica_id = ReplicaId(js_sys::Date::now() as u64);
+        let mut api = DocumentApi::new(replica_id);
+        // Replace the fresh CRDT with the loaded one.
+        *api.crdt_mut() = crdt;
+        Self { api }
+    }
+
     /// Parse legacy v1 bytes and migrate to CRDT.
     fn from_v1_bytes(bytes: &[u8]) -> Result<WasmDocumentEngine, JsError> {
         let doc: vcad_ir::Document =
             serde_json::from_slice(bytes).map_err(|e| JsError::new(&e.to_string()))?;
         let crdt = migrate_v1(&doc);
-        Ok(Self { crdt })
+        Ok(Self::from_crdt(crdt))
     }
 
-    /// Build the standard mutation result: { document, parts, createdFeatureId? }
+    /// Build the legacy mutation result: `{ document, parts, createdFeatureId? }`
+    ///
+    /// Used by backward-compatible methods. New typed methods use `serialize_api_result`.
     fn build_result(&self, created_fid: Option<FeatureId>) -> JsValue {
-        let result = materialize(&self.crdt);
+        let result = materialize(self.api.crdt());
         let doc_json = serde_json::to_string(&result.document).unwrap_or_default();
         let parts_json = serde_json::to_string(&result.parts).unwrap_or_default();
 
@@ -270,6 +355,26 @@ impl WasmDocumentEngine {
         if let Some(fid) = created_fid {
             obj["createdFeatureId"] =
                 serde_json::Value::String(format!("{}:{}", fid.0 .0, fid.1));
+        }
+
+        let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+        obj.serialize(&serializer).unwrap_or(JsValue::NULL)
+    }
+
+    /// Serialize an ApiResult to a JsValue.
+    ///
+    /// Returns `{ document, parts, consumedPartIds, createdFeatureId? }`.
+    fn serialize_api_result(&self, result: &ApiResult) -> JsValue {
+        let doc_json = serde_json::to_string(&result.document).unwrap_or_default();
+        let parts_json = serde_json::to_string(&result.parts).unwrap_or_default();
+
+        let mut obj = serde_json::json!({
+            "document": serde_json::from_str::<serde_json::Value>(&doc_json).unwrap_or_default(),
+            "parts": serde_json::from_str::<serde_json::Value>(&parts_json).unwrap_or_default(),
+            "consumedPartIds": result.consumed_part_ids,
+        });
+        if let Some(id) = &result.created_feature_id {
+            obj["createdFeatureId"] = serde_json::Value::String(id.clone());
         }
 
         let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);

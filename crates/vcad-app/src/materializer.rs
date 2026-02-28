@@ -2,6 +2,9 @@
 //!
 //! One declarative function replaces the 85+ imperative mutations in TypeScript.
 //! Each feature kind is a match arm that reads CRDT params and emits IR nodes.
+//!
+//! Param extraction is handled by `FeatureInput::from_crdt_params()` — the
+//! materializer only does IR node allocation and CSG tree construction.
 
 use std::collections::HashMap;
 
@@ -11,6 +14,7 @@ use vcad_ir::{
     SceneEntry, SceneSettings, Transform3D, Vec3,
 };
 
+use crate::feature::{BooleanType, FeatureInput};
 use crate::part_info::PartInfo;
 
 /// Result of materialization: an IR document plus part metadata.
@@ -92,7 +96,10 @@ pub fn materialize(crdt: &CrdtDocument) -> MaterializeResult {
     MaterializeResult { document: doc, parts }
 }
 
-/// Materialize a single feature into IR nodes.
+/// Materialize a single geometry feature into IR nodes.
+///
+/// Uses `FeatureInput::from_crdt_params()` for typed param extraction,
+/// then allocates IR nodes and constructs the CSG tree.
 ///
 /// Returns the PartInfo and the root (outermost translate) node ID, or None
 /// if the feature kind is unknown.
@@ -101,23 +108,31 @@ fn materialize_feature(
     ctx: &mut Context,
     fid: FeatureId,
     feature: &FeatureState,
-    crdt: &CrdtDocument,
+    _crdt: &CrdtDocument,
 ) -> Option<(PartInfo, NodeId)> {
+    let input = FeatureInput::from_crdt_params(&feature.kind, &feature.params)?;
+
+    // Non-geometry variants are handled earlier in materialize(); skip here.
+    match &input {
+        FeatureInput::PartDef { .. }
+        | FeatureInput::Instance { .. }
+        | FeatureInput::Joint { .. }
+        | FeatureInput::SceneSettings { .. }
+        | FeatureInput::Schematic { .. } => return None,
+        _ => {}
+    }
+
     let id_str = fid_to_string(fid);
     let name = get_str(feature, "name").unwrap_or_else(|| feature.kind.clone());
 
-    match feature.kind.as_str() {
-        "cube" => {
-            let sx = get_f64(feature, "size_x").unwrap_or(10.0);
-            let sy = get_f64(feature, "size_y").unwrap_or(10.0);
-            let sz = get_f64(feature, "size_z").unwrap_or(10.0);
-
+    match input {
+        FeatureInput::Cube { size_x, size_y, size_z } => {
             let prim_id = ctx.alloc();
             let scale_id = ctx.alloc();
             let rotate_id = ctx.alloc();
             let translate_id = ctx.alloc();
 
-            insert_node(doc, prim_id, &name, CsgOp::Cube { size: Vec3::new(sx, sy, sz) });
+            insert_node(doc, prim_id, &name, CsgOp::Cube { size: Vec3::new(size_x, size_y, size_z) });
             insert_transform_chain(doc, ctx, feature, prim_id, scale_id, rotate_id, translate_id);
 
             Some((
@@ -132,10 +147,8 @@ fn materialize_feature(
                 translate_id,
             ))
         }
-        "cylinder" => {
-            let radius = get_f64(feature, "radius").unwrap_or(5.0);
-            let height = get_f64(feature, "height").unwrap_or(10.0);
-            let segments = get_f64(feature, "segments").map(|v| v as u32).unwrap_or(32);
+        FeatureInput::Cylinder { radius, height, segments } => {
+            let segments = segments.unwrap_or(32);
 
             let prim_id = ctx.alloc();
             let scale_id = ctx.alloc();
@@ -157,9 +170,8 @@ fn materialize_feature(
                 translate_id,
             ))
         }
-        "sphere" => {
-            let radius = get_f64(feature, "radius").unwrap_or(5.0);
-            let segments = get_f64(feature, "segments").map(|v| v as u32).unwrap_or(32);
+        FeatureInput::Sphere { radius, segments } => {
+            let segments = segments.unwrap_or(32);
 
             let prim_id = ctx.alloc();
             let scale_id = ctx.alloc();
@@ -181,23 +193,15 @@ fn materialize_feature(
                 translate_id,
             ))
         }
-        "cone" => {
-            let radius_bottom = get_f64(feature, "radius_bottom").unwrap_or(5.0);
-            let radius_top = get_f64(feature, "radius_top").unwrap_or(0.0);
-            let height = get_f64(feature, "height").unwrap_or(10.0);
-            let segments = get_f64(feature, "segments").map(|v| v as u32).unwrap_or(32);
+        FeatureInput::Cone { radius_bottom, radius_top, height, segments } => {
+            let segments = segments.unwrap_or(32);
 
             let prim_id = ctx.alloc();
             let scale_id = ctx.alloc();
             let rotate_id = ctx.alloc();
             let translate_id = ctx.alloc();
 
-            insert_node(
-                doc,
-                prim_id,
-                &name,
-                CsgOp::Cone { radius_bottom, radius_top, height, segments },
-            );
+            insert_node(doc, prim_id, &name, CsgOp::Cone { radius_bottom, radius_top, height, segments });
             insert_transform_chain(doc, ctx, feature, prim_id, scale_id, rotate_id, translate_id);
 
             Some((
@@ -212,11 +216,7 @@ fn materialize_feature(
                 translate_id,
             ))
         }
-        "boolean" => {
-            let bool_type = get_str(feature, "boolean_type").unwrap_or_else(|| "union".to_string());
-            let input_a = get_str(feature, "input_a").unwrap_or_default();
-            let input_b = get_str(feature, "input_b").unwrap_or_default();
-
+        FeatureInput::Boolean { boolean_type, input_a, input_b } => {
             let left = ctx.feature_roots.get(&input_a).copied().unwrap_or(0);
             let right = ctx.feature_roots.get(&input_b).copied().unwrap_or(0);
 
@@ -225,10 +225,10 @@ fn materialize_feature(
             let rotate_id = ctx.alloc();
             let translate_id = ctx.alloc();
 
-            let op = match bool_type.as_str() {
-                "difference" => CsgOp::Difference { left, right },
-                "intersection" => CsgOp::Intersection { left, right },
-                _ => CsgOp::Union { left, right },
+            let op = match boolean_type {
+                BooleanType::Difference => CsgOp::Difference { left, right },
+                BooleanType::Intersection => CsgOp::Intersection { left, right },
+                BooleanType::Union => CsgOp::Union { left, right },
             };
             insert_node(doc, bool_id, &name, op);
             insert_transform_chain(doc, ctx, feature, bool_id, scale_id, rotate_id, translate_id);
@@ -237,7 +237,7 @@ fn materialize_feature(
                 PartInfo::Boolean {
                     id: id_str,
                     name,
-                    boolean_type: bool_type,
+                    boolean_type: boolean_type.as_str().to_string(),
                     boolean_node_id: bool_id,
                     scale_node_id: scale_id,
                     rotate_node_id: rotate_id,
@@ -247,10 +247,7 @@ fn materialize_feature(
                 translate_id,
             ))
         }
-        "fillet" => {
-            let input = get_str(feature, "input").unwrap_or_default();
-            let radius = get_f64(feature, "radius").unwrap_or(1.0);
-
+        FeatureInput::Fillet { input, radius } => {
             let child = ctx.feature_roots.get(&input).copied().unwrap_or(0);
 
             let fillet_id = ctx.alloc();
@@ -274,10 +271,7 @@ fn materialize_feature(
                 translate_id,
             ))
         }
-        "chamfer" => {
-            let input = get_str(feature, "input").unwrap_or_default();
-            let distance = get_f64(feature, "distance").unwrap_or(1.0);
-
+        FeatureInput::Chamfer { input, distance } => {
             let child = ctx.feature_roots.get(&input).copied().unwrap_or(0);
 
             let chamfer_id = ctx.alloc();
@@ -286,9 +280,7 @@ fn materialize_feature(
             let translate_id = ctx.alloc();
 
             insert_node(doc, chamfer_id, &name, CsgOp::Chamfer { child, distance });
-            insert_transform_chain(
-                doc, ctx, feature, chamfer_id, scale_id, rotate_id, translate_id,
-            );
+            insert_transform_chain(doc, ctx, feature, chamfer_id, scale_id, rotate_id, translate_id);
 
             Some((
                 PartInfo::Chamfer {
@@ -303,10 +295,7 @@ fn materialize_feature(
                 translate_id,
             ))
         }
-        "shell" => {
-            let input = get_str(feature, "input").unwrap_or_default();
-            let thickness = get_f64(feature, "thickness").unwrap_or(1.0);
-
+        FeatureInput::Shell { input, thickness } => {
             let child = ctx.feature_roots.get(&input).copied().unwrap_or(0);
 
             let shell_id = ctx.alloc();
@@ -330,17 +319,14 @@ fn materialize_feature(
                 translate_id,
             ))
         }
-        "extrude" => {
-            let depth = get_f64(feature, "depth").unwrap_or(10.0);
-            let direction = get_vec3(feature, "direction").unwrap_or([0.0, 0.0, 1.0]);
-
+        FeatureInput::Extrude { sketch, depth, direction, twist_angle, scale_end } => {
             let sketch_id = ctx.alloc();
             let extrude_id = ctx.alloc();
             let scale_id = ctx.alloc();
             let rotate_id = ctx.alloc();
             let translate_id = ctx.alloc();
 
-            let sketch_op = parse_sketch(feature);
+            let sketch_op = parse_sketch_str(&sketch);
             insert_node(doc, sketch_id, &format!("{name} Sketch"), sketch_op);
             insert_node(
                 doc,
@@ -353,13 +339,11 @@ fn materialize_feature(
                         direction[1] * depth,
                         direction[2] * depth,
                     ),
-                    twist_angle: get_f64(feature, "twist_angle"),
-                    scale_end: get_f64(feature, "scale_end"),
+                    twist_angle,
+                    scale_end,
                 },
             );
-            insert_transform_chain(
-                doc, ctx, feature, extrude_id, scale_id, rotate_id, translate_id,
-            );
+            insert_transform_chain(doc, ctx, feature, extrude_id, scale_id, rotate_id, translate_id);
 
             Some((
                 PartInfo::Extrude {
@@ -374,18 +358,14 @@ fn materialize_feature(
                 translate_id,
             ))
         }
-        "revolve" => {
-            let axis_origin = get_vec3(feature, "axis_origin").unwrap_or([0.0, 0.0, 0.0]);
-            let axis_dir = get_vec3(feature, "axis_dir").unwrap_or([0.0, 1.0, 0.0]);
-            let angle_deg = get_f64(feature, "angle_deg").unwrap_or(360.0);
-
+        FeatureInput::Revolve { sketch, axis_origin, axis_dir, angle_deg } => {
             let sketch_id = ctx.alloc();
             let revolve_id = ctx.alloc();
             let scale_id = ctx.alloc();
             let rotate_id = ctx.alloc();
             let translate_id = ctx.alloc();
 
-            let sketch_op = parse_sketch(feature);
+            let sketch_op = parse_sketch_str(&sketch);
             insert_node(doc, sketch_id, &format!("{name} Sketch"), sketch_op);
             insert_node(
                 doc,
@@ -398,9 +378,7 @@ fn materialize_feature(
                     angle_deg,
                 },
             );
-            insert_transform_chain(
-                doc, ctx, feature, revolve_id, scale_id, rotate_id, translate_id,
-            );
+            insert_transform_chain(doc, ctx, feature, revolve_id, scale_id, rotate_id, translate_id);
 
             Some((
                 PartInfo::Revolve {
@@ -415,19 +393,17 @@ fn materialize_feature(
                 translate_id,
             ))
         }
-        "sweep" => {
-            let path_data = get_str(feature, "path");
-
+        FeatureInput::Sweep { sketch, path, twist_angle, scale_start, scale_end } => {
             let sketch_id = ctx.alloc();
             let sweep_id = ctx.alloc();
             let scale_id = ctx.alloc();
             let rotate_id = ctx.alloc();
             let translate_id = ctx.alloc();
 
-            let sketch_op = parse_sketch(feature);
+            let sketch_op = parse_sketch_str(&sketch);
             insert_node(doc, sketch_id, &format!("{name} Sketch"), sketch_op);
 
-            let path = path_data
+            let path_curve = path
                 .and_then(|d| serde_json::from_str::<vcad_ir::PathCurve>(&d).ok())
                 .unwrap_or(vcad_ir::PathCurve::Line {
                     start: Vec3::new(0.0, 0.0, 0.0),
@@ -440,18 +416,16 @@ fn materialize_feature(
                 &name,
                 CsgOp::Sweep {
                     sketch: sketch_id,
-                    path,
-                    twist_angle: get_f64(feature, "twist_angle"),
-                    scale_start: get_f64(feature, "scale_start"),
-                    scale_end: get_f64(feature, "scale_end"),
+                    path: path_curve,
+                    twist_angle,
+                    scale_start,
+                    scale_end,
                     orientation: None,
                     path_segments: None,
                     arc_segments: None,
                 },
             );
-            insert_transform_chain(
-                doc, ctx, feature, sweep_id, scale_id, rotate_id, translate_id,
-            );
+            insert_transform_chain(doc, ctx, feature, sweep_id, scale_id, rotate_id, translate_id);
 
             Some((
                 PartInfo::Sweep {
@@ -466,26 +440,19 @@ fn materialize_feature(
                 translate_id,
             ))
         }
-        "loft" => {
-            let sketch_count = get_f64(feature, "sketch_count")
-                .map(|v| v as usize)
-                .unwrap_or(0);
-            let closed = get_bool(feature, "closed").unwrap_or(false);
-
+        FeatureInput::Loft { profiles, closed } => {
             let mut sketch_node_ids = Vec::new();
-            for i in 0..sketch_count {
-                let key = format!("sketch_{i}");
+            for (i, profile_data) in profiles.iter().enumerate() {
                 let sketch_id = ctx.alloc();
-                let sketch_op = if let Some(data) = get_str(feature, &key) {
-                    serde_json::from_str::<CsgOp>(&data).unwrap_or_else(|_| default_sketch())
-                } else {
+                let sketch_op = if profile_data.is_empty() {
                     default_sketch()
+                } else {
+                    serde_json::from_str::<CsgOp>(profile_data).unwrap_or_else(|_| default_sketch())
                 };
                 insert_node(doc, sketch_id, &format!("{name} Sketch {i}"), sketch_op);
                 sketch_node_ids.push(sketch_id);
             }
 
-            // Need at least 2 sketches for a loft
             if sketch_node_ids.len() < 2 {
                 return None;
             }
@@ -495,18 +462,17 @@ fn materialize_feature(
             let rotate_id = ctx.alloc();
             let translate_id = ctx.alloc();
 
+            let closed_flag = closed.unwrap_or(false);
             insert_node(
                 doc,
                 loft_id,
                 &name,
                 CsgOp::Loft {
                     sketches: sketch_node_ids.clone(),
-                    closed: if closed { Some(true) } else { None },
+                    closed: if closed_flag { Some(true) } else { None },
                 },
             );
-            insert_transform_chain(
-                doc, ctx, feature, loft_id, scale_id, rotate_id, translate_id,
-            );
+            insert_transform_chain(doc, ctx, feature, loft_id, scale_id, rotate_id, translate_id);
 
             Some((
                 PartInfo::Loft {
@@ -521,21 +487,16 @@ fn materialize_feature(
                 translate_id,
             ))
         }
-        "text" => {
-            let text = get_str(feature, "text").unwrap_or_else(|| "Text".to_string());
-            let height = get_f64(feature, "height").unwrap_or(10.0);
-            let depth = get_f64(feature, "depth").unwrap_or(2.0);
-            let alignment_str = get_str(feature, "alignment").unwrap_or_else(|| "left".to_string());
-
+        FeatureInput::Text { text, height, depth, alignment, letter_spacing, line_spacing } => {
             let text_id = ctx.alloc();
             let extrude_id = ctx.alloc();
             let scale_id = ctx.alloc();
             let rotate_id = ctx.alloc();
             let translate_id = ctx.alloc();
 
-            let alignment = match alignment_str.as_str() {
-                "center" => vcad_ir::TextAlignment::Center,
-                "right" => vcad_ir::TextAlignment::Right,
+            let align = match alignment.as_deref() {
+                Some("center") => vcad_ir::TextAlignment::Center,
+                Some("right") => vcad_ir::TextAlignment::Right,
                 _ => vcad_ir::TextAlignment::Left,
             };
 
@@ -550,9 +511,9 @@ fn materialize_feature(
                     text,
                     font: "sans-serif".to_string(),
                     height,
-                    letter_spacing: get_f64(feature, "letter_spacing"),
-                    line_spacing: get_f64(feature, "line_spacing"),
-                    alignment,
+                    letter_spacing,
+                    line_spacing,
+                    alignment: align,
                 },
             );
             insert_node(
@@ -566,9 +527,7 @@ fn materialize_feature(
                     scale_end: None,
                 },
             );
-            insert_transform_chain(
-                doc, ctx, feature, extrude_id, scale_id, rotate_id, translate_id,
-            );
+            insert_transform_chain(doc, ctx, feature, extrude_id, scale_id, rotate_id, translate_id);
 
             Some((
                 PartInfo::Text {
@@ -583,18 +542,10 @@ fn materialize_feature(
                 translate_id,
             ))
         }
-        "imported-mesh" => {
-            let positions_json = get_str(feature, "positions_json").unwrap_or_default();
-            let indices_json = get_str(feature, "indices_json").unwrap_or_default();
-            let normals_json = get_str(feature, "normals_json");
-            let source = get_str(feature, "source");
-
-            let positions: Vec<f64> =
-                serde_json::from_str(&positions_json).unwrap_or_default();
-            let indices: Vec<u32> =
-                serde_json::from_str(&indices_json).unwrap_or_default();
-            let normals: Option<Vec<f64>> =
-                normals_json.and_then(|s| serde_json::from_str(&s).ok());
+        FeatureInput::ImportedMesh { positions_json, indices_json, normals_json, source } => {
+            let positions: Vec<f64> = serde_json::from_str(&positions_json).unwrap_or_default();
+            let indices: Vec<u32> = serde_json::from_str(&indices_json).unwrap_or_default();
+            let normals: Option<Vec<f64>> = normals_json.and_then(|s| serde_json::from_str(&s).ok());
 
             let mesh_id = ctx.alloc();
             let scale_id = ctx.alloc();
@@ -612,9 +563,7 @@ fn materialize_feature(
                     source: source.clone(),
                 },
             );
-            insert_transform_chain(
-                doc, ctx, feature, mesh_id, scale_id, rotate_id, translate_id,
-            );
+            insert_transform_chain(doc, ctx, feature, mesh_id, scale_id, rotate_id, translate_id);
 
             Some((
                 PartInfo::ImportedMesh {
@@ -629,12 +578,7 @@ fn materialize_feature(
                 translate_id,
             ))
         }
-        "linear-pattern" => {
-            let input = get_str(feature, "input").unwrap_or_default();
-            let direction = get_vec3(feature, "direction").unwrap_or([1.0, 0.0, 0.0]);
-            let count = get_f64(feature, "count").map(|v| v as u32).unwrap_or(3);
-            let spacing = get_f64(feature, "spacing").unwrap_or(20.0);
-
+        FeatureInput::LinearPattern { input, direction, count, spacing } => {
             let child = ctx.feature_roots.get(&input).copied().unwrap_or(0);
 
             let pattern_id = ctx.alloc();
@@ -653,9 +597,7 @@ fn materialize_feature(
                     spacing,
                 },
             );
-            insert_transform_chain(
-                doc, ctx, feature, pattern_id, scale_id, rotate_id, translate_id,
-            );
+            insert_transform_chain(doc, ctx, feature, pattern_id, scale_id, rotate_id, translate_id);
 
             Some((
                 PartInfo::LinearPattern {
@@ -670,13 +612,7 @@ fn materialize_feature(
                 translate_id,
             ))
         }
-        "circular-pattern" => {
-            let input = get_str(feature, "input").unwrap_or_default();
-            let axis_origin = get_vec3(feature, "axis_origin").unwrap_or([0.0, 0.0, 0.0]);
-            let axis_dir = get_vec3(feature, "axis_dir").unwrap_or([0.0, 0.0, 1.0]);
-            let count = get_f64(feature, "count").map(|v| v as u32).unwrap_or(4);
-            let angle_deg = get_f64(feature, "angle_deg").unwrap_or(360.0);
-
+        FeatureInput::CircularPattern { input, axis_origin, axis_dir, count, angle_deg } => {
             let child = ctx.feature_roots.get(&input).copied().unwrap_or(0);
 
             let pattern_id = ctx.alloc();
@@ -696,9 +632,7 @@ fn materialize_feature(
                     angle_deg,
                 },
             );
-            insert_transform_chain(
-                doc, ctx, feature, pattern_id, scale_id, rotate_id, translate_id,
-            );
+            insert_transform_chain(doc, ctx, feature, pattern_id, scale_id, rotate_id, translate_id);
 
             Some((
                 PartInfo::CircularPattern {
@@ -713,13 +647,9 @@ fn materialize_feature(
                 translate_id,
             ))
         }
-        "mirror" => {
-            let input = get_str(feature, "input").unwrap_or_default();
-            let plane = get_str(feature, "plane").unwrap_or_else(|| "YZ".to_string());
-
+        FeatureInput::Mirror { input, plane } => {
             let child = ctx.feature_roots.get(&input).copied().unwrap_or(0);
 
-            // Mirror via negative scale on the appropriate axis
             let mirror_factor = match plane.as_str() {
                 "XY" => Vec3::new(1.0, 1.0, -1.0),
                 "XZ" => Vec3::new(1.0, -1.0, 1.0),
@@ -731,18 +661,8 @@ fn materialize_feature(
             let rotate_id = ctx.alloc();
             let translate_id = ctx.alloc();
 
-            insert_node(
-                doc,
-                mirror_id,
-                &name,
-                CsgOp::Scale {
-                    child,
-                    factor: mirror_factor,
-                },
-            );
-            insert_transform_chain(
-                doc, ctx, feature, mirror_id, scale_id, rotate_id, translate_id,
-            );
+            insert_node(doc, mirror_id, &name, CsgOp::Scale { child, factor: mirror_factor });
+            insert_transform_chain(doc, ctx, feature, mirror_id, scale_id, rotate_id, translate_id);
 
             Some((
                 PartInfo::Mirror {
@@ -757,22 +677,18 @@ fn materialize_feature(
                 translate_id,
             ))
         }
-        "pcb-board" => {
-            // PCB boards: emit an Empty node for the transform chain,
-            // and populate doc.pcb from the "board" JSON param if present.
+        FeatureInput::PcbBoard { board } => {
             let board_id = ctx.alloc();
             let scale_id = ctx.alloc();
             let rotate_id = ctx.alloc();
             let translate_id = ctx.alloc();
 
-            if let Some(json) = get_str(feature, "board") {
-                doc.pcb = serde_json::from_str(&json).ok();
+            if let Some(json) = &board {
+                doc.pcb = serde_json::from_str(json).ok();
             }
 
             insert_node(doc, board_id, &name, CsgOp::Empty);
-            insert_transform_chain(
-                doc, ctx, feature, board_id, scale_id, rotate_id, translate_id,
-            );
+            insert_transform_chain(doc, ctx, feature, board_id, scale_id, rotate_id, translate_id);
 
             Some((
                 PartInfo::PcbBoard {
@@ -786,29 +702,22 @@ fn materialize_feature(
                 translate_id,
             ))
         }
-        "embroidery-pattern" => {
+        FeatureInput::EmbroideryPattern { design, source } => {
             let pattern_id = ctx.alloc();
             let scale_id = ctx.alloc();
             let rotate_id = ctx.alloc();
             let translate_id = ctx.alloc();
 
-            let source = get_str(feature, "source");
-
-            // If design data is present, emit a proper EmbroideryPattern node.
-            let pattern_op = if let Some(design_json) = get_str(feature, "design") {
-                serde_json::from_str::<vcad_ir::EmbroideryDesign>(&design_json)
-                    .map(|d| CsgOp::EmbroideryPattern {
-                        design: Box::new(d),
-                    })
+            let pattern_op = if let Some(design_json) = &design {
+                serde_json::from_str::<vcad_ir::EmbroideryDesign>(design_json)
+                    .map(|d| CsgOp::EmbroideryPattern { design: Box::new(d) })
                     .unwrap_or(CsgOp::Empty)
             } else {
                 CsgOp::Empty
             };
 
             insert_node(doc, pattern_id, &name, pattern_op);
-            insert_transform_chain(
-                doc, ctx, feature, pattern_id, scale_id, rotate_id, translate_id,
-            );
+            insert_transform_chain(doc, ctx, feature, pattern_id, scale_id, rotate_id, translate_id);
 
             Some((
                 PartInfo::EmbroideryPattern {
@@ -823,11 +732,8 @@ fn materialize_feature(
                 translate_id,
             ))
         }
-        // Unknown feature kinds are silently skipped.
-        _ => {
-            let _ = crdt; // suppress unused warning
-            None
-        }
+        // Non-geometry variants already filtered above.
+        _ => None,
     }
 }
 
@@ -839,22 +745,23 @@ fn materialize_part_def(
     fid: FeatureId,
     feature: &FeatureState,
 ) {
+    let input = match FeatureInput::from_crdt_params(&feature.kind, &feature.params) {
+        Some(FeatureInput::PartDef { source_feature, name }) => (source_feature, name),
+        _ => return,
+    };
+    let (source_feature, part_name) = input;
+
     let id = fid_to_string(fid);
-    let name = get_str(feature, "name");
     let default_material = get_str(feature, "default_material");
 
-    // Resolve source_feature ref to a root node ID.
-    let root = get_str(feature, "source_feature")
-        .and_then(|ref_id| ctx.feature_roots.get(&ref_id))
-        .copied()
-        .unwrap_or(0);
+    let root = ctx.feature_roots.get(&source_feature).copied().unwrap_or(0);
 
     let part_defs = doc.part_defs.get_or_insert_with(HashMap::new);
     part_defs.insert(
         id.clone(),
         PartDef {
             id,
-            name,
+            name: part_name,
             root,
             default_material,
         },
@@ -867,15 +774,16 @@ fn materialize_instance(
     fid: FeatureId,
     feature: &FeatureState,
 ) {
+    let input = match FeatureInput::from_crdt_params(&feature.kind, &feature.params) {
+        Some(FeatureInput::Instance { part_def, name, transform }) => (part_def, name, transform),
+        _ => return,
+    };
+    let (part_def_id, inst_name, transform_json) = input;
+
     let id = fid_to_string(fid);
-    let name = get_str(feature, "name");
     let material = get_str(feature, "material");
 
-    // Resolve part_def ref to a CRDT feature ID string.
-    let part_def_id = get_str(feature, "part_def").unwrap_or_default();
-
-    // Parse transform from JSON string if present.
-    let transform = get_str(feature, "transform").and_then(|json| {
+    let transform = transform_json.and_then(|json| {
         serde_json::from_str::<Transform3D>(&json).ok()
     });
 
@@ -888,28 +796,28 @@ fn materialize_instance(
     instances.push(Instance {
         id,
         part_def_id,
-        name,
+        name: inst_name,
         transform,
         material,
     });
 
-    let _ = ctx; // available for future use
+    let _ = ctx;
 }
 
 fn materialize_joint(doc: &mut Document, fid: FeatureId, feature: &FeatureState) {
-    let id = fid_to_string(fid);
-    let name = get_str(feature, "name");
-    let parent_instance_id = get_str(feature, "instance_a");
-    let child_instance_id = get_str(feature, "instance_b").unwrap_or_default();
+    let input = match FeatureInput::from_crdt_params(&feature.kind, &feature.params) {
+        Some(FeatureInput::Joint { kind, child_instance, parent_instance, anchor_a, anchor_b, axis, name, limits }) => {
+            (kind, child_instance, parent_instance, anchor_a, anchor_b, axis, name, limits)
+        }
+        _ => return,
+    };
+    let (kind_str, child_instance_id, parent_instance_id, parent_anchor, child_anchor, axis_arr, joint_name, limits_json) = input;
 
-    let parent_anchor = get_vec3(feature, "anchor_a").unwrap_or([0.0; 3]);
-    let child_anchor = get_vec3(feature, "anchor_b").unwrap_or([0.0; 3]);
+    let id = fid_to_string(fid);
     let state = get_f64(feature, "state").unwrap_or(0.0);
 
-    let kind_str = get_str(feature, "kind").unwrap_or_else(|| "Fixed".to_string());
-    let axis = get_vec3(feature, "axis").map(|a| Vec3::new(a[0], a[1], a[2]));
-    let limits = get_str(feature, "limits")
-        .and_then(|json| serde_json::from_str::<JointLimits>(&json).ok());
+    let axis = axis_arr.map(|a| Vec3::new(a[0], a[1], a[2]));
+    let limits = limits_json.and_then(|json| serde_json::from_str::<JointLimits>(&json).ok());
 
     let kind = match kind_str.as_str() {
         "Revolute" => JointKind::Revolute {
@@ -930,7 +838,7 @@ fn materialize_joint(doc: &mut Document, fid: FeatureId, feature: &FeatureState)
     let joints = doc.joints.get_or_insert_with(Vec::new);
     joints.push(Joint {
         id,
-        name,
+        name: joint_name,
         parent_instance_id,
         child_instance_id,
         parent_anchor: Vec3::new(parent_anchor[0], parent_anchor[1], parent_anchor[2]),
@@ -941,30 +849,38 @@ fn materialize_joint(doc: &mut Document, fid: FeatureId, feature: &FeatureState)
 }
 
 fn materialize_schematic(doc: &mut Document, feature: &FeatureState) {
-    if let Some(json) = get_str(feature, "sheet") {
+    if let Some(FeatureInput::Schematic { sheet: Some(json), .. }) =
+        FeatureInput::from_crdt_params(&feature.kind, &feature.params)
+    {
         doc.schematic = serde_json::from_str(&json).ok();
     }
 }
 
 fn materialize_scene_settings(doc: &mut Document, feature: &FeatureState) {
-    let mut scene = SceneSettings::default();
+    let input = match FeatureInput::from_crdt_params(&feature.kind, &feature.params) {
+        Some(FeatureInput::SceneSettings { environment, lights, background, post_processing, camera_presets }) => {
+            (environment, lights, background, post_processing, camera_presets)
+        }
+        _ => return,
+    };
+    let (environment, lights, background, post_processing, camera_presets) = input;
 
-    if let Some(json) = get_str(feature, "environment") {
+    let mut scene = SceneSettings::default();
+    if let Some(json) = environment {
         scene.environment = serde_json::from_str(&json).ok();
     }
-    if let Some(json) = get_str(feature, "lights") {
+    if let Some(json) = lights {
         scene.lights = serde_json::from_str(&json).ok();
     }
-    if let Some(json) = get_str(feature, "background") {
+    if let Some(json) = background {
         scene.background = serde_json::from_str(&json).ok();
     }
-    if let Some(json) = get_str(feature, "post_processing") {
+    if let Some(json) = post_processing {
         scene.post_processing = serde_json::from_str(&json).ok();
     }
-    if let Some(json) = get_str(feature, "camera_presets") {
+    if let Some(json) = camera_presets {
         scene.camera_presets = serde_json::from_str(&json).ok();
     }
-
     doc.scene = Some(scene);
 }
 
@@ -1003,12 +919,12 @@ fn get_bool(feature: &FeatureState, key: &str) -> Option<bool> {
     }
 }
 
-/// Parse sketch data from the "sketch" param, falling back to an empty XY sketch.
-fn parse_sketch(feature: &FeatureState) -> CsgOp {
-    if let Some(data) = get_str(feature, "sketch") {
-        serde_json::from_str::<CsgOp>(&data).unwrap_or_else(|_| default_sketch())
-    } else {
+/// Parse sketch data from a JSON string, falling back to an empty XY sketch.
+fn parse_sketch_str(data: &str) -> CsgOp {
+    if data.is_empty() {
         default_sketch()
+    } else {
+        serde_json::from_str::<CsgOp>(data).unwrap_or_else(|_| default_sketch())
     }
 }
 
