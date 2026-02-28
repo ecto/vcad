@@ -8,7 +8,7 @@ export function saveDocument(state: {
   parts: PartInfo[];
   consumedParts: Record<string, PartInfo>;
   nextNodeId: number;
-  nextPartNum: number;
+  nextPartNum?: number;
 }) {
   const json = serializeDocument(state);
   const blob = new Blob([json], { type: "application/json" });

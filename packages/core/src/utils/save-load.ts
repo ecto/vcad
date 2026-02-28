@@ -24,7 +24,7 @@ export interface VcadFile {
   parts: PartInfo[];
   consumedParts?: Record<string, PartInfo>;
   nextNodeId: number;
-  nextPartNum: number;
+  nextPartNum?: number;
   loonSource?: string | null;
 }
 
@@ -36,7 +36,7 @@ export function serializeDocument(state: {
   parts: PartInfo[];
   consumedParts: Record<string, PartInfo>;
   nextNodeId: number;
-  nextPartNum: number;
+  nextPartNum?: number;
   loonSource?: string | null;
 }): string {
   if (state.loonSource) return state.loonSource;
@@ -98,8 +98,8 @@ function parseJsonVcadFile(json: string): VcadFile {
   if (!data.document || !Array.isArray(data.parts)) {
     throw new Error("Invalid .vcad file: missing document or parts");
   }
-  if (typeof data.nextNodeId !== "number" || typeof data.nextPartNum !== "number") {
-    throw new Error("Invalid .vcad file: missing nextNodeId or nextPartNum");
+  if (typeof data.nextNodeId !== "number") {
+    throw new Error("Invalid .vcad file: missing nextNodeId");
   }
 
   return data;

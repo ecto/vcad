@@ -53,15 +53,36 @@ import {
 // CRDT bridge types
 // ---------------------------------------------------------------------------
 
-/** Result from a WasmDocumentEngine mutation */
+/** Result from legacy WasmDocumentEngine mutation methods */
 interface CrdtMutationResult {
   document: Document;
   parts: PartInfo[];
   createdFeatureId?: string;
 }
 
+/** Result from typed WasmDocumentEngine API methods */
+interface ApiResult {
+  document: Document;
+  parts: PartInfo[];
+  consumedPartIds: string[];
+  createdFeatureId?: string;
+}
+
 /** Minimal interface for WasmDocumentEngine (matches WASM exports) */
 export interface WasmDocumentEngine {
+  // Typed API (new) — returns ApiResult with consumedPartIds
+  add_feature(input_json: string): ApiResult;
+  update_feature(stable_id: string, input_json: string): ApiResult;
+  delete_feature_by_id(stable_id: string): ApiResult;
+  set_translation(stable_id: string, x: number, y: number, z: number): ApiResult;
+  set_rotation(stable_id: string, x: number, y: number, z: number): ApiResult;
+  set_scale(stable_id: string, x: number, y: number, z: number): ApiResult;
+  set_material(stable_id: string, material: string): ApiResult;
+  set_visible(stable_id: string, visible: boolean): ApiResult;
+  rename_feature(stable_id: string, name: string): ApiResult;
+  set_joint_state(stable_id: string, state: number): ApiResult;
+
+  // Legacy low-level CRDT methods (for electronics, scene settings, param updates)
   create_feature(kind: string, params_json: string): CrdtMutationResult;
   delete_feature(feature_id_json: string): CrdtMutationResult;
   set_param(
@@ -95,7 +116,7 @@ export interface WasmDocumentEngineConstructor {
 
 /**
  * CRDT value type — mirrors Rust vcad_crdt::Value.
- * Serialized as JSON for `set_param` / `create_feature`.
+ * Used by `setFeatureParam` and legacy methods that still call `set_param`.
  */
 type CrdtValue =
   | { F64: number }
@@ -106,6 +127,7 @@ type CrdtValue =
   | { FeatureRefList: string[] }
   | { Sketch: string };
 
+// Legacy CRDT value helpers — used by methods still calling set_param/create_feature
 function crdtF64(v: number): CrdtValue {
   return { F64: v };
 }
@@ -121,17 +143,13 @@ function crdtStr(v: string): CrdtValue {
 function crdtRef(v: string): CrdtValue {
   return { FeatureRef: v };
 }
-function crdtSketch(segments: SketchSegment2D[], plane: SketchPlane, origin: Vec3): CrdtValue {
-  const { x_dir, y_dir } = getSketchPlaneDirections(plane);
-  return { Sketch: JSON.stringify({ type: "Sketch2D", origin, x_dir, y_dir, segments }) };
-}
 
 export interface VcadFile {
   document: Document;
   parts: PartInfo[];
   consumedParts?: Record<string, PartInfo>;
   nextNodeId: number;
-  nextPartNum: number;
+  nextPartNum?: number;
   loonSource?: string | null;
 }
 
@@ -151,7 +169,6 @@ export interface DocumentState {
   partIndex: Map<string, PartInfo>; // O(1) lookup by part id
   consumedParts: Record<string, PartInfo>; // Parts consumed by booleans, keyed by id
   nextNodeId: number;
-  nextPartNum: number;
   isDirty: boolean;
 
   // Document persistence metadata
@@ -170,10 +187,6 @@ export interface DocumentState {
   _crdtEngine: WasmDocumentEngine | null;
   /** The CRDT engine constructor (stored for creating new engines). */
   _crdtEngineClass: WasmDocumentEngineConstructor | null;
-  /** Map from legacy part IDs ("part-3") to CRDT feature IDs ("123:0"). */
-  _partIdToCrdtId: Map<string, string>;
-  /** Map from CRDT feature IDs ("123:0") to legacy part IDs ("part-3"). */
-  _crdtIdToPartId: Map<string, string>;
   /** Initialize the CRDT engine. Called once after WASM loads. */
   _initCrdt: (EngineClass: WasmDocumentEngineConstructor) => void;
   /** Save CRDT document to bytes (returns null if engine not initialized). */
@@ -451,8 +464,77 @@ export function getPcbNodeIds(doc: Document): NodeId[] {
   return ids;
 }
 
+/** Encode sketch segments + plane into a JSON string for the typed API. */
+function sketchJson(segments: SketchSegment2D[], plane: SketchPlane, origin: Vec3): string {
+  const { x_dir, y_dir } = getSketchPlaneDirections(plane);
+  return JSON.stringify({ type: "Sketch2D", origin, x_dir, y_dir, segments });
+}
+
 // ---------------------------------------------------------------------------
-// CRDT bridge helpers (module-level, not in store)
+// Result helpers
+// ---------------------------------------------------------------------------
+
+/** Compute max node ID from a document for nextNodeId tracking. */
+function computeNextNodeId(doc: Document): number {
+  let maxNodeId = 0;
+  for (const nodeIdStr of Object.keys(doc.nodes)) {
+    const nid = Number(nodeIdStr);
+    if (nid > maxNodeId) maxNodeId = nid;
+  }
+  return maxNodeId + 1;
+}
+
+/**
+ * Apply a typed API result (has consumedPartIds) to the store.
+ */
+function applyApiResult(result: ApiResult): Partial<DocumentState> {
+  const partIndex = buildPartIndex(result.parts);
+  const consumedParts: Record<string, PartInfo> = {};
+  for (const id of result.consumedPartIds) {
+    const part = partIndex.get(id);
+    if (part) consumedParts[id] = part;
+  }
+  return {
+    document: result.document,
+    parts: result.parts,
+    partIndex,
+    consumedParts,
+    nextNodeId: computeNextNodeId(result.document),
+    isDirty: true,
+  };
+}
+
+/**
+ * Apply a legacy CRDT mutation result (no consumedPartIds) to the store.
+ * Computes consumed parts by scanning sourcePartIds/sourcePartId references.
+ */
+function applyLegacyResult(result: CrdtMutationResult): Partial<DocumentState> {
+  const partIndex = buildPartIndex(result.parts);
+  const consumedParts: Record<string, PartInfo> = {};
+  for (const part of result.parts) {
+    if ("sourcePartIds" in part && Array.isArray(part.sourcePartIds)) {
+      for (const refId of part.sourcePartIds as string[]) {
+        const consumed = partIndex.get(refId);
+        if (consumed) consumedParts[refId] = consumed;
+      }
+    }
+    if ("sourcePartId" in part && typeof part.sourcePartId === "string") {
+      const consumed = partIndex.get(part.sourcePartId as string);
+      if (consumed) consumedParts[part.sourcePartId as string] = consumed;
+    }
+  }
+  return {
+    document: result.document,
+    parts: result.parts,
+    partIndex,
+    consumedParts,
+    nextNodeId: computeNextNodeId(result.document),
+    isDirty: true,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Module-level helpers
 // ---------------------------------------------------------------------------
 
 /** Cached singleton feature IDs (lazily created, cleared on engine init). */
@@ -518,7 +600,7 @@ function setCrdtPcb(state: DocumentState, pcb: Pcb): Partial<DocumentState> {
   const pcbFid = getPcbBoardFeatureId(state);
   if (!pcbFid) return {};
   const result = state._crdtEngine!.set_param(pcbFid, "board", JSON.stringify(crdtStr(JSON.stringify(pcb))));
-  return applyCrdtResult(result, state);
+  return applyLegacyResult(result);
 }
 
 /** Shared logic for adding a Pcb board to the document. */
@@ -528,8 +610,7 @@ function addPcbToDocument(
   pcbBoard: Pcb,
   boardName: string,
 ): NodeId {
-  const state = get();
-  const engine = state._crdtEngine;
+  const engine = get()._crdtEngine;
   if (!engine) {
     console.error("[PCB] Cannot create board: CRDT engine not initialized");
     return 0;
@@ -540,101 +621,9 @@ function addPcbToDocument(
     material: crdtStr("__pcb_fr4__"),
   };
   const result = engine.create_feature("pcb-board", JSON.stringify(params));
-  const patch = applyCrdtResult(result, state, result.createdFeatureId);
-  set({ ...patch, isDirty: true });
-  const pcbPart = (patch.parts ?? []).find((p) => p.kind === "pcb-board");
+  set({ ...applyLegacyResult(result), isDirty: true });
+  const pcbPart = result.parts.find((p) => p.kind === "pcb-board");
   return pcbPart ? (pcbPart as PcbBoardPartInfo).boardNodeId : 0;
-}
-
-/**
- * Apply a CRDT mutation result to the store, rewriting CRDT IDs to stable
- * legacy format and computing consumedParts.
- */
-function applyCrdtResult(
-  result: CrdtMutationResult,
-  state: DocumentState,
-  createdFeatureId?: string,
-): Partial<DocumentState> {
-  const parts = result.parts;
-  const crdtIdToPartId = new Map(state._crdtIdToPartId);
-  const partIdToCrdtId = new Map(state._partIdToCrdtId);
-  let nextPartNum = state.nextPartNum;
-
-  // Assign stable legacy IDs to CRDT parts
-  for (const part of parts) {
-    const crdtId = part.id;
-    if (!crdtIdToPartId.has(crdtId)) {
-      const legacyId = `part-${nextPartNum}`;
-      crdtIdToPartId.set(crdtId, legacyId);
-      partIdToCrdtId.set(legacyId, crdtId);
-      nextPartNum++;
-    }
-  }
-
-  // Rewrite part IDs from CRDT format to legacy format
-  const rewrittenParts: PartInfo[] = parts.map((p) => {
-    const legacyId = crdtIdToPartId.get(p.id) ?? p.id;
-    const rewritten = { ...p, id: legacyId };
-
-    // Rewrite source references in boolean/fillet/chamfer/shell/pattern parts
-    if ("sourcePartIds" in rewritten && Array.isArray(rewritten.sourcePartIds)) {
-      rewritten.sourcePartIds = (rewritten.sourcePartIds as string[]).map(
-        (ref_id) => crdtIdToPartId.get(ref_id) ?? ref_id,
-      ) as [string, string];
-    }
-    if ("sourcePartId" in rewritten && typeof rewritten.sourcePartId === "string") {
-      (rewritten as Record<string, unknown>).sourcePartId =
-        crdtIdToPartId.get(rewritten.sourcePartId as string) ?? rewritten.sourcePartId;
-    }
-    return rewritten;
-  });
-
-  // Compute consumedParts: any part referenced as input by another
-  const consumedParts: Record<string, PartInfo> = {};
-  const partMap = buildPartIndex(rewrittenParts);
-  for (const part of rewrittenParts) {
-    if ("sourcePartIds" in part && Array.isArray(part.sourcePartIds)) {
-      for (const refId of part.sourcePartIds as string[]) {
-        const consumed = partMap.get(refId);
-        if (consumed) consumedParts[refId] = consumed;
-      }
-    }
-    if ("sourcePartId" in part && typeof part.sourcePartId === "string") {
-      const consumed = partMap.get(part.sourcePartId as string);
-      if (consumed) consumedParts[part.sourcePartId as string] = consumed;
-    }
-  }
-
-  // Compute which created legacy ID to return
-  let createdLegacyId: string | undefined;
-  if (createdFeatureId) {
-    createdLegacyId = crdtIdToPartId.get(createdFeatureId);
-  }
-
-  // Find max node ID from the document
-  let maxNodeId = 0;
-  for (const nodeIdStr of Object.keys(result.document.nodes)) {
-    const nid = Number(nodeIdStr);
-    if (nid > maxNodeId) maxNodeId = nid;
-  }
-
-  return {
-    document: result.document,
-    parts: rewrittenParts,
-    partIndex: buildPartIndex(rewrittenParts),
-    consumedParts,
-    nextNodeId: maxNodeId + 1,
-    nextPartNum,
-    isDirty: true,
-    _crdtIdToPartId: crdtIdToPartId,
-    _partIdToCrdtId: partIdToCrdtId,
-    _lastCreatedPartId: createdLegacyId,
-  } as Partial<DocumentState>;
-}
-
-/** Helper to get the created part ID from a patch */
-function getCreatedPartId(patch: Partial<DocumentState>): string | undefined {
-  return (patch as { _lastCreatedPartId?: string })._lastCreatedPartId;
 }
 
 // ---------------------------------------------------------------------------
@@ -647,7 +636,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   partIndex: new Map(),
   consumedParts: {},
   nextNodeId: 1,
-  nextPartNum: 1,
   isDirty: false,
   documentId: null,
   documentName: "Untitled",
@@ -658,8 +646,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   // CRDT bridge state
   _crdtEngine: null,
   _crdtEngineClass: null,
-  _partIdToCrdtId: new Map(),
-  _crdtIdToPartId: new Map(),
 
   _initCrdt: (EngineClass) => {
     _sceneSettingsFeatureId = null;
@@ -678,14 +664,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const engine = EngineClass.load(bytes);
     const doc: Document = JSON.parse(engine.get_document_json());
     const parts: PartInfo[] = JSON.parse(engine.get_parts_json());
-    const result: CrdtMutationResult = { document: doc, parts };
-    const patch = applyCrdtResult(result, {
-      ...get(),
-      _crdtEngine: engine,
-      _partIdToCrdtId: new Map(),
-      _crdtIdToPartId: new Map(),
-      nextPartNum: 1,
-    });
+    const patch = applyLegacyResult({ document: doc, parts });
     set({
       ...patch,
       _crdtEngine: engine,
@@ -699,174 +678,130 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   addPrimitive: (kind) => {
-    const state = get();
-    const engine = state._crdtEngine!;
-    const defaults: Record<PrimitiveKind, Record<string, CrdtValue>> = {
-      cube: { size_x: crdtF64(20), size_y: crdtF64(20), size_z: crdtF64(20) },
-      cylinder: { radius: crdtF64(10), height: crdtF64(20), segments: crdtF64(32) },
-      sphere: { radius: crdtF64(10), segments: crdtF64(32) },
+    const engine = get()._crdtEngine!;
+    const defaults: Record<PrimitiveKind, object> = {
+      cube: { type: "Cube", size_x: 20, size_y: 20, size_z: 20 },
+      cylinder: { type: "Cylinder", radius: 10, height: 20, segments: 32 },
+      sphere: { type: "Sphere", radius: 10, segments: 32 },
     };
-    const result = engine.create_feature(kind, JSON.stringify(defaults[kind] ?? {}));
-    const patch = applyCrdtResult(result, state, result.createdFeatureId);
-    set(patch);
-    return getCreatedPartId(patch) ?? `part-${state.nextPartNum}`;
+    const result = engine.add_feature(JSON.stringify(defaults[kind]));
+    set(applyApiResult(result));
+    return result.createdFeatureId ?? "";
   },
 
   removePart: (partId) => {
-    const state = get();
-    const engine = state._crdtEngine!;
-    const crdtId = state._partIdToCrdtId.get(partId);
-    if (crdtId) {
-      const result = engine.delete_feature(crdtId);
-      set(applyCrdtResult(result, state));
-    }
+    const engine = get()._crdtEngine!;
+    const result = engine.delete_feature_by_id(partId);
+    set(applyApiResult(result));
   },
 
   setTranslation: (partId, offset) => {
-    const state = get();
-    const engine = state._crdtEngine!;
-    const crdtId = state._partIdToCrdtId.get(partId);
-    if (crdtId) {
-      const result = engine.set_param(crdtId, "offset", JSON.stringify(crdtVec3(offset)));
-      set(applyCrdtResult(result, state));
-    }
+    const engine = get()._crdtEngine!;
+    const result = engine.set_translation(partId, offset.x, offset.y, offset.z);
+    set(applyApiResult(result));
   },
 
   setRotation: (partId, angles) => {
-    const state = get();
-    const engine = state._crdtEngine!;
-    const crdtId = state._partIdToCrdtId.get(partId);
-    if (crdtId) {
-      const result = engine.set_param(crdtId, "rotation", JSON.stringify(crdtVec3(angles)));
-      set(applyCrdtResult(result, state));
-    }
+    const engine = get()._crdtEngine!;
+    const result = engine.set_rotation(partId, angles.x, angles.y, angles.z);
+    set(applyApiResult(result));
   },
 
   setScale: (partId, factor) => {
-    const state = get();
-    const engine = state._crdtEngine!;
-    const crdtId = state._partIdToCrdtId.get(partId);
-    if (crdtId) {
-      const result = engine.set_param(crdtId, "scale", JSON.stringify(crdtVec3(factor)));
-      set(applyCrdtResult(result, state));
-    }
+    const engine = get()._crdtEngine!;
+    const result = engine.set_scale(partId, factor.x, factor.y, factor.z);
+    set(applyApiResult(result));
   },
 
   updatePrimitiveOp: (partId, op) => {
-    const state = get();
-    const engine = state._crdtEngine!;
-    const crdtId = state._partIdToCrdtId.get(partId);
-    if (!crdtId) return;
-
+    const engine = get()._crdtEngine!;
     const o = op as Record<string, unknown>;
     let lastResult: CrdtMutationResult | undefined;
     if (o.type === "Cube" && "size" in o) {
       const size = o.size as Vec3;
-      engine.set_param(crdtId, "size_x", JSON.stringify(crdtF64(size.x)));
-      engine.set_param(crdtId, "size_y", JSON.stringify(crdtF64(size.y)));
-      lastResult = engine.set_param(crdtId, "size_z", JSON.stringify(crdtF64(size.z)));
+      engine.set_param(partId, "size_x", JSON.stringify(crdtF64(size.x)));
+      engine.set_param(partId, "size_y", JSON.stringify(crdtF64(size.y)));
+      lastResult = engine.set_param(partId, "size_z", JSON.stringify(crdtF64(size.z)));
     } else if (o.type === "Cylinder" && "radius" in o) {
-      engine.set_param(crdtId, "radius", JSON.stringify(crdtF64(o.radius as number)));
-      engine.set_param(crdtId, "height", JSON.stringify(crdtF64(o.height as number)));
-      lastResult = engine.set_param(crdtId, "segments", JSON.stringify(crdtF64(o.segments as number)));
+      engine.set_param(partId, "radius", JSON.stringify(crdtF64(o.radius as number)));
+      engine.set_param(partId, "height", JSON.stringify(crdtF64(o.height as number)));
+      lastResult = engine.set_param(partId, "segments", JSON.stringify(crdtF64(o.segments as number)));
     } else if (o.type === "Sphere" && "radius" in o) {
-      engine.set_param(crdtId, "radius", JSON.stringify(crdtF64(o.radius as number)));
-      lastResult = engine.set_param(crdtId, "segments", JSON.stringify(crdtF64(o.segments as number)));
+      engine.set_param(partId, "radius", JSON.stringify(crdtF64(o.radius as number)));
+      lastResult = engine.set_param(partId, "segments", JSON.stringify(crdtF64(o.segments as number)));
     } else if (o.type === "Cone" && "radius_bottom" in o) {
-      engine.set_param(crdtId, "radius_bottom", JSON.stringify(crdtF64(o.radius_bottom as number)));
-      engine.set_param(crdtId, "radius_top", JSON.stringify(crdtF64(o.radius_top as number)));
-      engine.set_param(crdtId, "height", JSON.stringify(crdtF64(o.height as number)));
-      lastResult = engine.set_param(crdtId, "segments", JSON.stringify(crdtF64(o.segments as number)));
+      engine.set_param(partId, "radius_bottom", JSON.stringify(crdtF64(o.radius_bottom as number)));
+      engine.set_param(partId, "radius_top", JSON.stringify(crdtF64(o.radius_top as number)));
+      engine.set_param(partId, "height", JSON.stringify(crdtF64(o.height as number)));
+      lastResult = engine.set_param(partId, "segments", JSON.stringify(crdtF64(o.segments as number)));
     }
     if (lastResult) {
-      set(applyCrdtResult(lastResult, state));
+      set(applyLegacyResult(lastResult));
     }
   },
 
   updateSweepOp: (partId, updates) => {
-    const state = get();
-    const engine = state._crdtEngine!;
-    const crdtId = state._partIdToCrdtId.get(partId);
-    if (!crdtId) return;
-
+    const engine = get()._crdtEngine!;
     let lastResult: CrdtMutationResult | undefined;
     if (updates.twist_angle !== undefined) {
-      lastResult = engine.set_param(crdtId, "twist_angle", JSON.stringify(crdtF64(updates.twist_angle)));
+      lastResult = engine.set_param(partId, "twist_angle", JSON.stringify(crdtF64(updates.twist_angle)));
     }
     if (updates.scale_start !== undefined) {
-      lastResult = engine.set_param(crdtId, "scale_start", JSON.stringify(crdtF64(updates.scale_start)));
+      lastResult = engine.set_param(partId, "scale_start", JSON.stringify(crdtF64(updates.scale_start)));
     }
     if (updates.scale_end !== undefined) {
-      lastResult = engine.set_param(crdtId, "scale_end", JSON.stringify(crdtF64(updates.scale_end)));
+      lastResult = engine.set_param(partId, "scale_end", JSON.stringify(crdtF64(updates.scale_end)));
     }
     if (updates.path !== undefined) {
-      lastResult = engine.set_param(crdtId, "path", JSON.stringify(crdtStr(JSON.stringify(updates.path))));
+      lastResult = engine.set_param(partId, "path", JSON.stringify(crdtStr(JSON.stringify(updates.path))));
     }
     if (updates.orientation !== undefined) {
-      lastResult = engine.set_param(crdtId, "orientation", JSON.stringify(crdtF64(updates.orientation)));
+      lastResult = engine.set_param(partId, "orientation", JSON.stringify(crdtF64(updates.orientation)));
     }
     if (updates.path_segments !== undefined) {
-      lastResult = engine.set_param(crdtId, "path_segments", JSON.stringify(crdtF64(updates.path_segments)));
+      lastResult = engine.set_param(partId, "path_segments", JSON.stringify(crdtF64(updates.path_segments)));
     }
     if (updates.arc_segments !== undefined) {
-      lastResult = engine.set_param(crdtId, "arc_segments", JSON.stringify(crdtF64(updates.arc_segments)));
+      lastResult = engine.set_param(partId, "arc_segments", JSON.stringify(crdtF64(updates.arc_segments)));
     }
     if (lastResult) {
-      set(applyCrdtResult(lastResult, state));
+      set(applyLegacyResult(lastResult));
     }
   },
 
   setFeatureParam: (partId, key, value) => {
-    const state = get();
-    const engine = state._crdtEngine!;
-    const crdtId = state._partIdToCrdtId.get(partId);
-    if (crdtId) {
-      const result = engine.set_param(crdtId, key, JSON.stringify(value));
-      set(applyCrdtResult(result, state));
-    }
+    const engine = get()._crdtEngine!;
+    const result = engine.set_param(partId, key, JSON.stringify(value));
+    set(applyLegacyResult(result));
   },
 
   updateBooleanType: (partId, newType) => {
-    const state = get();
-    const engine = state._crdtEngine!;
-    const crdtId = state._partIdToCrdtId.get(partId);
-    if (crdtId) {
-      const result = engine.set_param(crdtId, "boolean_type", JSON.stringify(crdtStr(newType)));
-      set(applyCrdtResult(result, state));
-    }
+    const engine = get()._crdtEngine!;
+    const result = engine.set_param(partId, "boolean_type", JSON.stringify(crdtStr(newType)));
+    set(applyLegacyResult(result));
   },
 
   applyBoolean: (type, partIdA, partIdB) => {
-    const state = get();
-    const engine = state._crdtEngine!;
-    const crdtIdA = state._partIdToCrdtId.get(partIdA);
-    const crdtIdB = state._partIdToCrdtId.get(partIdB);
-    if (!crdtIdA || !crdtIdB) return null;
-
-    const params: Record<string, CrdtValue> = {
-      boolean_type: crdtStr(type),
-      input_a: crdtRef(crdtIdA),
-      input_b: crdtRef(crdtIdB),
-    };
-    const result = engine.create_feature("boolean", JSON.stringify(params));
-    const patch = applyCrdtResult(result, state, result.createdFeatureId);
-    set(patch);
-    return getCreatedPartId(patch) ?? null;
+    const engine = get()._crdtEngine!;
+    const result = engine.add_feature(JSON.stringify({
+      type: "Boolean",
+      boolean_type: type,
+      input_a: partIdA,
+      input_b: partIdB,
+    }));
+    set(applyApiResult(result));
+    return result.createdFeatureId ?? null;
   },
 
   duplicateParts: (partIds) => {
-    const state = get();
-    const engine = state._crdtEngine!;
+    const engine = get()._crdtEngine!;
     const featuresJson = engine.get_ordered_features_json();
     const features: { id: string; kind: string; params: Record<string, unknown> }[] = JSON.parse(featuresJson);
     const newIds: string[] = [];
-    let currentState = state;
+    let lastResult: CrdtMutationResult | undefined;
 
     for (const partId of partIds) {
-      const crdtId = currentState._partIdToCrdtId.get(partId);
-      if (!crdtId) continue;
-
-      const feature = features.find((f) => f.id === crdtId);
+      const feature = features.find((f) => f.id === partId);
       if (!feature) continue;
 
       // Clone params and add +10mm X offset
@@ -884,15 +819,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         params.name = { String: existingName.String + " copy" };
       }
 
-      const result = engine.create_feature(feature.kind, JSON.stringify(params));
-      const patch = applyCrdtResult(result, currentState, result.createdFeatureId);
-      currentState = { ...currentState, ...patch } as DocumentState;
-
-      const createdId = getCreatedPartId(patch);
-      if (createdId) newIds.push(createdId);
+      lastResult = engine.create_feature(feature.kind, JSON.stringify(params));
+      if (lastResult.createdFeatureId) newIds.push(lastResult.createdFeatureId);
     }
 
-    set(currentState);
+    if (lastResult) set(applyLegacyResult(lastResult));
     return newIds;
   },
 
@@ -905,14 +836,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         const engine = state._crdtEngineClass.from_v1_json(irJson);
         const doc: Document = JSON.parse(engine.get_document_json());
         const parts: PartInfo[] = JSON.parse(engine.get_parts_json());
-        const result: CrdtMutationResult = { document: doc, parts };
-        const patch = applyCrdtResult(result, {
-          ...state,
-          _crdtEngine: engine,
-          _partIdToCrdtId: new Map(),
-          _crdtIdToPartId: new Map(),
-          nextPartNum: 1,
-        });
+        const patch = applyLegacyResult({ document: doc, parts });
         if (state._crdtEngine) {
           state._crdtEngine.free();
         }
@@ -930,8 +854,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   addFromIR: (generatedDoc, name) => {
-    const state = get();
-    const engine = state._crdtEngine!;
+    const engine = get()._crdtEngine!;
 
     if (name && generatedDoc.roots.length > 0) {
       const firstRoot = generatedDoc.roots[0]!;
@@ -942,104 +865,93 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
     const irJson = JSON.stringify(generatedDoc);
     const result = engine.import_ir(irJson);
-    const patch = applyCrdtResult(result, state);
-    set({ ...patch, isDirty: true });
-    return getCreatedPartId(patch) ?? null;
+    set({ ...applyLegacyResult(result), isDirty: true });
+    return null;
   },
 
   addExtrude: (plane, origin, segments, direction, options) => {
     if (segments.length === 0) return null;
-    const state = get();
-    const engine = state._crdtEngine!;
+    const engine = get()._crdtEngine!;
 
     const depth = Math.sqrt(direction.x ** 2 + direction.y ** 2 + direction.z ** 2);
     const dir = depth > 0 ? { x: direction.x / depth, y: direction.y / depth, z: direction.z / depth } : { x: 0, y: 0, z: 1 };
-    const params: Record<string, CrdtValue> = {
-      sketch: crdtSketch(segments, plane, origin),
-      depth: crdtF64(depth),
-      direction: crdtVec3(dir),
+    const input: Record<string, unknown> = {
+      type: "Extrude",
+      sketch: sketchJson(segments, plane, origin),
+      depth,
+      direction: [dir.x, dir.y, dir.z],
     };
-    if (options?.twist_angle != null) params.twist_angle = crdtF64(options.twist_angle);
-    if (options?.scale_end != null) params.scale_end = crdtF64(options.scale_end);
-    const result = engine.create_feature("extrude", JSON.stringify(params));
-    const patch = applyCrdtResult(result, state, result.createdFeatureId);
-    set(patch);
-    return getCreatedPartId(patch) ?? null;
+    if (options?.twist_angle != null) input.twist_angle = options.twist_angle;
+    if (options?.scale_end != null) input.scale_end = options.scale_end;
+    const result = engine.add_feature(JSON.stringify(input));
+    set(applyApiResult(result));
+    return result.createdFeatureId ?? null;
   },
 
   addRevolve: (plane, origin, segments, axisOrigin, axisDir, angleDeg) => {
     if (segments.length === 0) return null;
-    const state = get();
-    const engine = state._crdtEngine!;
+    const engine = get()._crdtEngine!;
 
-    const params: Record<string, CrdtValue> = {
-      sketch: crdtSketch(segments, plane, origin),
-      axis_origin: crdtVec3(axisOrigin),
-      axis_dir: crdtVec3(axisDir),
-      angle_deg: crdtF64(angleDeg),
-    };
-    const result = engine.create_feature("revolve", JSON.stringify(params));
-    const patch = applyCrdtResult(result, state, result.createdFeatureId);
-    set(patch);
-    return getCreatedPartId(patch) ?? null;
+    const result = engine.add_feature(JSON.stringify({
+      type: "Revolve",
+      sketch: sketchJson(segments, plane, origin),
+      axis_origin: [axisOrigin.x, axisOrigin.y, axisOrigin.z],
+      axis_dir: [axisDir.x, axisDir.y, axisDir.z],
+      angle_deg: angleDeg,
+    }));
+    set(applyApiResult(result));
+    return result.createdFeatureId ?? null;
   },
 
   addSweep: (plane, origin, segments, path, options = {}) => {
     if (segments.length === 0) return null;
-    const state = get();
-    const engine = state._crdtEngine!;
+    const engine = get()._crdtEngine!;
 
-    const params: Record<string, CrdtValue> = {
-      sketch: crdtSketch(segments, plane, origin),
-      path: crdtStr(JSON.stringify(path)),
+    const input: Record<string, unknown> = {
+      type: "Sweep",
+      sketch: sketchJson(segments, plane, origin),
+      path: JSON.stringify(path),
     };
-    if (options.twist_angle != null) params.twist_angle = crdtF64(options.twist_angle);
-    if (options.scale_start != null) params.scale_start = crdtF64(options.scale_start);
-    if (options.scale_end != null) params.scale_end = crdtF64(options.scale_end);
-    const result = engine.create_feature("sweep", JSON.stringify(params));
-    const patch = applyCrdtResult(result, state, result.createdFeatureId);
-    set(patch);
-    return getCreatedPartId(patch) ?? null;
+    if (options.twist_angle != null) input.twist_angle = options.twist_angle;
+    if (options.scale_start != null) input.scale_start = options.scale_start;
+    if (options.scale_end != null) input.scale_end = options.scale_end;
+    const result = engine.add_feature(JSON.stringify(input));
+    set(applyApiResult(result));
+    return result.createdFeatureId ?? null;
   },
 
   addLoft: (profiles, options = {}) => {
     if (profiles.length < 2) return null;
-    const state = get();
-    const engine = state._crdtEngine!;
+    const engine = get()._crdtEngine!;
 
-    const params: Record<string, CrdtValue> = {
-      sketch_count: crdtF64(profiles.length),
+    const profileStrs = profiles.map((p) => sketchJson(p.segments, p.plane, p.origin));
+    const input: Record<string, unknown> = {
+      type: "Loft",
+      profiles: profileStrs,
     };
-    for (let i = 0; i < profiles.length; i++) {
-      const p = profiles[i]!;
-      params[`sketch_${i}`] = crdtSketch(p.segments, p.plane, p.origin);
-    }
-    if (options.closed != null) params.closed = crdtBool(options.closed);
-    const result = engine.create_feature("loft", JSON.stringify(params));
-    const patch = applyCrdtResult(result, state, result.createdFeatureId);
-    set(patch);
-    return getCreatedPartId(patch) ?? null;
+    if (options.closed != null) input.closed = options.closed;
+    const result = engine.add_feature(JSON.stringify(input));
+    set(applyApiResult(result));
+    return result.createdFeatureId ?? null;
   },
 
   addImportedMesh: (positions, indices, normals, source) => {
-    const state = get();
-    const engine = state._crdtEngine!;
+    const engine = get()._crdtEngine!;
 
-    const params: Record<string, CrdtValue> = {
-      positions_json: crdtStr(JSON.stringify(Array.from(positions))),
-      indices_json: crdtStr(JSON.stringify(Array.from(indices))),
+    const input: Record<string, unknown> = {
+      type: "ImportedMesh",
+      positions_json: JSON.stringify(Array.from(positions)),
+      indices_json: JSON.stringify(Array.from(indices)),
     };
-    if (normals) params.normals_json = crdtStr(JSON.stringify(Array.from(normals)));
-    if (source) params.source = crdtStr(source);
-    const result = engine.create_feature("imported-mesh", JSON.stringify(params));
-    const patch = applyCrdtResult(result, state, result.createdFeatureId);
-    set(patch);
-    return getCreatedPartId(patch) ?? `part-${state.nextPartNum}`;
+    if (normals) input.normals_json = JSON.stringify(Array.from(normals));
+    if (source) input.source = source;
+    const result = engine.add_feature(JSON.stringify(input));
+    set(applyApiResult(result));
+    return result.createdFeatureId ?? "";
   },
 
   addEmbroideryPattern: (design, source) => {
-    const state = get();
-    const engine = state._crdtEngine!;
+    const engine = get()._crdtEngine!;
 
     const filename = source?.split(/[/\\]/).pop()?.replace(/\.(pes|dst)$/i, "") ?? "Embroidery";
     const params: Record<string, CrdtValue> = {
@@ -1048,9 +960,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     };
     if (source) params.source = crdtStr(source);
     const result = engine.create_feature("embroidery-pattern", JSON.stringify(params));
-    const patch = applyCrdtResult(result, state, result.createdFeatureId);
-    set(patch);
-    return getCreatedPartId(patch) ?? `part-${state.nextPartNum}`;
+    set(applyLegacyResult(result));
+    return result.createdFeatureId ?? "";
   },
 
   addTextEmbroidery: async (options) => {
@@ -1096,14 +1007,12 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const engine = state._crdtEngine!;
     const part = state.parts.find((p) => p.kind === "embroidery-pattern" && (p as EmbroideryPatternPartInfo).patternNodeId === nodeId);
     if (!part) return;
-    const crdtId = state._partIdToCrdtId.get(part.id);
-    if (!crdtId) return;
     const design = getNodeEmbroideryDesign(state.document, nodeId);
     if (!design) return;
     const d = structuredClone(design);
     if (d.threads[threadIdx]) d.threads[threadIdx]!.color = color;
-    const result = engine.set_param(crdtId, "design", JSON.stringify(crdtStr(JSON.stringify(d))));
-    set(applyCrdtResult(result, state));
+    const result = engine.set_param(part.id, "design", JSON.stringify(crdtStr(JSON.stringify(d))));
+    set(applyLegacyResult(result));
   },
 
   setThreadName: (nodeId, threadIdx, name) => {
@@ -1111,14 +1020,12 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const engine = state._crdtEngine!;
     const part = state.parts.find((p) => p.kind === "embroidery-pattern" && (p as EmbroideryPatternPartInfo).patternNodeId === nodeId);
     if (!part) return;
-    const crdtId = state._partIdToCrdtId.get(part.id);
-    if (!crdtId) return;
     const design = getNodeEmbroideryDesign(state.document, nodeId);
     if (!design) return;
     const d = structuredClone(design);
     if (d.threads[threadIdx]) d.threads[threadIdx]!.name = name;
-    const result = engine.set_param(crdtId, "design", JSON.stringify(crdtStr(JSON.stringify(d))));
-    set(applyCrdtResult(result, state));
+    const result = engine.set_param(part.id, "design", JSON.stringify(crdtStr(JSON.stringify(d))));
+    set(applyLegacyResult(result));
   },
 
   setStitchGroupFillParams: (nodeId, groupIdx, params) => {
@@ -1126,8 +1033,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const engine = state._crdtEngine!;
     const part = state.parts.find((p) => p.kind === "embroidery-pattern" && (p as EmbroideryPatternPartInfo).patternNodeId === nodeId);
     if (!part) return;
-    const crdtId = state._partIdToCrdtId.get(part.id);
-    if (!crdtId) return;
     const design = getNodeEmbroideryDesign(state.document, nodeId);
     if (!design) return;
     const d = structuredClone(design);
@@ -1135,8 +1040,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       const group = d.stitch_groups[groupIdx]!;
       group.fill_params = { ...(group.fill_params ?? DEFAULT_FILL_PARAMS), ...params };
     }
-    const result = engine.set_param(crdtId, "design", JSON.stringify(crdtStr(JSON.stringify(d))));
-    set(applyCrdtResult(result, state));
+    const result = engine.set_param(part.id, "design", JSON.stringify(crdtStr(JSON.stringify(d))));
+    set(applyLegacyResult(result));
   },
 
   optimizeJumpStitches: (nodeId) => {
@@ -1144,8 +1049,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const engine = state._crdtEngine!;
     const part = state.parts.find((p) => p.kind === "embroidery-pattern" && (p as EmbroideryPatternPartInfo).patternNodeId === nodeId);
     if (!part) return;
-    const crdtId = state._partIdToCrdtId.get(part.id);
-    if (!crdtId) return;
     const design = getNodeEmbroideryDesign(state.document, nodeId);
     if (!design || design.stitch_groups.length <= 1) return;
 
@@ -1176,53 +1079,41 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       if (bestIdx >= 0) { ordered.push(groups[bestIdx]!); used.add(bestIdx); }
     }
     d.stitch_groups = ordered;
-    const result = engine.set_param(crdtId, "design", JSON.stringify(crdtStr(JSON.stringify(d))));
-    set(applyCrdtResult(result, state));
+    const result = engine.set_param(part.id, "design", JSON.stringify(crdtStr(JSON.stringify(d))));
+    set(applyLegacyResult(result));
   },
 
   addFillet: (partId, radius) => {
-    const state = get();
-    const engine = state._crdtEngine!;
-    const crdtId = state._partIdToCrdtId.get(partId);
-    if (!crdtId) return null;
-    const params: Record<string, CrdtValue> = {
-      input: crdtRef(crdtId),
-      radius: crdtF64(radius),
-    };
-    const result = engine.create_feature("fillet", JSON.stringify(params));
-    const patch = applyCrdtResult(result, state, result.createdFeatureId);
-    set(patch);
-    return getCreatedPartId(patch) ?? null;
+    const engine = get()._crdtEngine!;
+    const result = engine.add_feature(JSON.stringify({
+      type: "Fillet",
+      input: partId,
+      radius,
+    }));
+    set(applyApiResult(result));
+    return result.createdFeatureId ?? null;
   },
 
   addChamfer: (partId, distance) => {
-    const state = get();
-    const engine = state._crdtEngine!;
-    const crdtId = state._partIdToCrdtId.get(partId);
-    if (!crdtId) return null;
-    const params: Record<string, CrdtValue> = {
-      input: crdtRef(crdtId),
-      distance: crdtF64(distance),
-    };
-    const result = engine.create_feature("chamfer", JSON.stringify(params));
-    const patch = applyCrdtResult(result, state, result.createdFeatureId);
-    set(patch);
-    return getCreatedPartId(patch) ?? null;
+    const engine = get()._crdtEngine!;
+    const result = engine.add_feature(JSON.stringify({
+      type: "Chamfer",
+      input: partId,
+      distance,
+    }));
+    set(applyApiResult(result));
+    return result.createdFeatureId ?? null;
   },
 
   addShell: (partId, thickness) => {
-    const state = get();
-    const engine = state._crdtEngine!;
-    const crdtId = state._partIdToCrdtId.get(partId);
-    if (!crdtId) return null;
-    const params: Record<string, CrdtValue> = {
-      input: crdtRef(crdtId),
-      thickness: crdtF64(thickness),
-    };
-    const result = engine.create_feature("shell", JSON.stringify(params));
-    const patch = applyCrdtResult(result, state, result.createdFeatureId);
-    set(patch);
-    return getCreatedPartId(patch) ?? null;
+    const engine = get()._crdtEngine!;
+    const result = engine.add_feature(JSON.stringify({
+      type: "Shell",
+      input: partId,
+      thickness,
+    }));
+    set(applyApiResult(result));
+    return result.createdFeatureId ?? null;
   },
 
   addStitch: async (partId, options) => {
@@ -1300,18 +1191,16 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       // Re-read state (async boundary)
       const state2 = get();
       const engine2 = state2._crdtEngine!;
-      const crdtSourceId = state2._partIdToCrdtId.get(partId);
       const params: Record<string, CrdtValue> = {
         design: crdtStr(JSON.stringify(design)),
-        name: crdtStr(`Stitch ${state2.nextPartNum}`),
+        name: crdtStr("Stitch"),
       };
-      if (crdtSourceId) params.input = crdtRef(crdtSourceId);
+      params.input = crdtRef(partId);
       const res = engine2.create_feature("embroidery-pattern", JSON.stringify(params));
       // Delete source feature (consumed)
-      if (crdtSourceId) engine2.delete_feature(crdtSourceId);
-      const patch = applyCrdtResult(res, state2, res.createdFeatureId);
-      set({ ...patch, isDirty: true });
-      return getCreatedPartId(patch) ?? null;
+      engine2.delete_feature(partId);
+      set({ ...applyLegacyResult(res), isDirty: true });
+      return res.createdFeatureId ?? null;
     } catch (err) {
       console.error("Failed to create stitch:", err);
       return null;
@@ -1319,110 +1208,87 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   addLinearPattern: (partId, direction, count, spacing) => {
-    const state = get();
-    const engine = state._crdtEngine!;
-    const crdtId = state._partIdToCrdtId.get(partId);
-    if (!crdtId) return null;
-    const params: Record<string, CrdtValue> = {
-      input: crdtRef(crdtId),
-      direction: crdtVec3(direction),
-      count: crdtF64(count),
-      spacing: crdtF64(spacing),
-    };
-    const result = engine.create_feature("linear-pattern", JSON.stringify(params));
-    const patch = applyCrdtResult(result, state, result.createdFeatureId);
-    set(patch);
-    return getCreatedPartId(patch) ?? null;
+    const engine = get()._crdtEngine!;
+    const result = engine.add_feature(JSON.stringify({
+      type: "LinearPattern",
+      input: partId,
+      direction: [direction.x, direction.y, direction.z],
+      count,
+      spacing,
+    }));
+    set(applyApiResult(result));
+    return result.createdFeatureId ?? null;
   },
 
   addCircularPattern: (partId, axisOrigin, axisDir, count, angleDeg) => {
-    const state = get();
-    const engine = state._crdtEngine!;
-    const crdtId = state._partIdToCrdtId.get(partId);
-    if (!crdtId) return null;
-    const params: Record<string, CrdtValue> = {
-      input: crdtRef(crdtId),
-      axis_origin: crdtVec3(axisOrigin),
-      axis_dir: crdtVec3(axisDir),
-      count: crdtF64(count),
-      angle_deg: crdtF64(angleDeg),
-    };
-    const result = engine.create_feature("circular-pattern", JSON.stringify(params));
-    const patch = applyCrdtResult(result, state, result.createdFeatureId);
-    set(patch);
-    return getCreatedPartId(patch) ?? null;
+    const engine = get()._crdtEngine!;
+    const result = engine.add_feature(JSON.stringify({
+      type: "CircularPattern",
+      input: partId,
+      axis_origin: [axisOrigin.x, axisOrigin.y, axisOrigin.z],
+      axis_dir: [axisDir.x, axisDir.y, axisDir.z],
+      count,
+      angle_deg: angleDeg,
+    }));
+    set(applyApiResult(result));
+    return result.createdFeatureId ?? null;
   },
 
   addMirror: (partId, plane) => {
-    const state = get();
-    const engine = state._crdtEngine!;
-    const crdtId = state._partIdToCrdtId.get(partId);
-    if (!crdtId) return null;
-    const params: Record<string, CrdtValue> = {
-      input: crdtRef(crdtId),
-      plane: crdtStr(plane),
-    };
-    const result = engine.create_feature("mirror", JSON.stringify(params));
-    const patch = applyCrdtResult(result, state, result.createdFeatureId);
-    set(patch);
-    return getCreatedPartId(patch) ?? null;
+    const engine = get()._crdtEngine!;
+    const result = engine.add_feature(JSON.stringify({
+      type: "Mirror",
+      input: partId,
+      plane,
+    }));
+    set(applyApiResult(result));
+    return result.createdFeatureId ?? null;
   },
 
   addText: (options) => {
     const { text, height, depth, alignment, letterSpacing, lineSpacing } = options;
     if (!text.trim()) return null;
 
-    const state = get();
-    const engine = state._crdtEngine!;
-    const params: Record<string, CrdtValue> = {
-      text: crdtStr(text),
-      height: crdtF64(height),
-      depth: crdtF64(depth),
+    const engine = get()._crdtEngine!;
+    const input: Record<string, unknown> = {
+      type: "Text",
+      text,
+      height,
+      depth,
     };
-    if (alignment) params.alignment = crdtStr(alignment);
-    if (letterSpacing !== undefined) params.letter_spacing = crdtF64(letterSpacing);
-    if (lineSpacing !== undefined) params.line_spacing = crdtF64(lineSpacing);
-    const result = engine.create_feature("text", JSON.stringify(params));
-    const patch = applyCrdtResult(result, state, result.createdFeatureId);
-    set(patch);
-    return getCreatedPartId(patch) ?? null;
+    if (alignment) input.alignment = alignment;
+    if (letterSpacing !== undefined) input.letter_spacing = letterSpacing;
+    if (lineSpacing !== undefined) input.line_spacing = lineSpacing;
+    const result = engine.add_feature(JSON.stringify(input));
+    set(applyApiResult(result));
+    return result.createdFeatureId ?? null;
   },
 
   setPartMaterial: (partId, materialKey) => {
-    const state = get();
-    const engine = state._crdtEngine!;
-    const crdtId = state._partIdToCrdtId.get(partId);
-    if (crdtId) {
-      const result = engine.set_param(crdtId, "material", JSON.stringify(crdtStr(materialKey)));
-      set(applyCrdtResult(result, state));
-    }
+    const engine = get()._crdtEngine!;
+    const result = engine.set_material(partId, materialKey);
+    set(applyApiResult(result));
   },
 
   renamePart: (partId, name) => {
-    const state = get();
-    const engine = state._crdtEngine!;
-    const crdtId = state._partIdToCrdtId.get(partId);
-    if (crdtId) {
-      const result = engine.set_param(crdtId, "name", JSON.stringify(crdtStr(name)));
-      set(applyCrdtResult(result, state));
-    }
+    const engine = get()._crdtEngine!;
+    const result = engine.rename_feature(partId, name);
+    set(applyApiResult(result));
   },
 
   undo: () => {
-    const state = get();
-    const engine = state._crdtEngine!;
+    const engine = get()._crdtEngine!;
     if (engine.can_undo()) {
       const result = engine.undo();
-      set(applyCrdtResult(result, state));
+      set(applyLegacyResult(result));
     }
   },
 
   redo: () => {
-    const state = get();
-    const engine = state._crdtEngine!;
+    const engine = get()._crdtEngine!;
     if (engine.can_redo()) {
       const result = engine.redo();
-      set(applyCrdtResult(result, state));
+      set(applyLegacyResult(result));
     }
   },
 
@@ -1432,79 +1298,71 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   // Assembly operations
   setInstanceTransform: (instanceId, transform) => {
-    const state = get();
-    const engine = state._crdtEngine!;
+    const engine = get()._crdtEngine!;
     const result = engine.set_param(instanceId, "transform", JSON.stringify(crdtStr(JSON.stringify(transform))));
-    set(applyCrdtResult(result, state));
+    set(applyLegacyResult(result));
   },
 
   setInstanceMaterial: (instanceId, materialKey) => {
-    const state = get();
-    const engine = state._crdtEngine!;
+    const engine = get()._crdtEngine!;
     const result = engine.set_param(instanceId, "material", JSON.stringify(crdtStr(materialKey)));
-    set(applyCrdtResult(result, state));
+    set(applyLegacyResult(result));
   },
 
   setJointState: (jointId, jointState) => {
-    const state = get();
-    const engine = state._crdtEngine!;
-    const result = engine.set_param(jointId, "state", JSON.stringify(crdtF64(jointState)));
-    set(applyCrdtResult(result, state));
+    const engine = get()._crdtEngine!;
+    const result = engine.set_joint_state(jointId, jointState);
+    set(applyApiResult(result));
   },
 
   createPartDef: (partId, name) => {
-    const state = get();
-    const engine = state._crdtEngine!;
-    const crdtId = state._partIdToCrdtId.get(partId);
-    if (!crdtId) return null;
-
-    const params: Record<string, CrdtValue> = {
-      source_feature: crdtRef(crdtId),
+    const engine = get()._crdtEngine!;
+    const input: Record<string, unknown> = {
+      type: "PartDef",
+      source_feature: partId,
     };
-    if (name) params.name = crdtStr(name);
-    const result = engine.create_feature("part-def", JSON.stringify(params));
-    const patch = applyCrdtResult(result, state, result.createdFeatureId);
-    set(patch);
+    if (name) input.name = name;
+    const result = engine.add_feature(JSON.stringify(input));
+    set(applyApiResult(result));
     return result.createdFeatureId ?? null;
   },
 
   createInstance: (partDefId, name, transform) => {
-    const state = get();
-    const engine = state._crdtEngine!;
-    const params: Record<string, CrdtValue> = {
-      part_def: crdtRef(partDefId),
+    const engine = get()._crdtEngine!;
+    const input: Record<string, unknown> = {
+      type: "Instance",
+      part_def: partDefId,
     };
-    if (name) params.name = crdtStr(name);
-    if (transform) params.transform = crdtStr(JSON.stringify(transform));
-    const result = engine.create_feature("instance", JSON.stringify(params));
-    const patch = applyCrdtResult(result, state, result.createdFeatureId);
-    set(patch);
+    if (name) input.name = name;
+    if (transform) input.transform = JSON.stringify(transform);
+    const result = engine.add_feature(JSON.stringify(input));
+    set(applyApiResult(result));
     return result.createdFeatureId ?? "";
   },
 
   addJoint: (config) => {
-    const state = get();
-    const engine = state._crdtEngine!;
-    const params: Record<string, CrdtValue> = {
-      kind: crdtStr(typeof config.kind === "string" ? config.kind : config.kind.type),
-      child_instance: crdtRef(config.childInstanceId),
-      anchor_a: crdtVec3(config.parentAnchor),
-      anchor_b: crdtVec3(config.childAnchor),
-    };
-    if (config.parentInstanceId) params.parent_instance = crdtRef(config.parentInstanceId);
-    if (config.name) params.name = crdtStr(config.name);
-    // Extract axis from joint kind if present
+    const engine = get()._crdtEngine!;
     const jk = config.kind as Record<string, unknown>;
-    if (jk.axis) params.axis = crdtVec3(jk.axis as Vec3);
-    const result = engine.create_feature("joint", JSON.stringify(params));
-    const patch = applyCrdtResult(result, state, result.createdFeatureId);
-    set(patch);
+    const input: Record<string, unknown> = {
+      type: "Joint",
+      kind: typeof config.kind === "string" ? config.kind : config.kind.type,
+      child_instance: config.childInstanceId,
+      anchor_a: [config.parentAnchor.x, config.parentAnchor.y, config.parentAnchor.z],
+      anchor_b: [config.childAnchor.x, config.childAnchor.y, config.childAnchor.z],
+    };
+    if (config.parentInstanceId) input.parent_instance = config.parentInstanceId;
+    if (config.name) input.name = config.name;
+    if (jk.axis) {
+      const axis = jk.axis as Vec3;
+      input.axis = [axis.x, axis.y, axis.z];
+    }
+    const result = engine.add_feature(JSON.stringify(input));
+    set(applyApiResult(result));
     return result.createdFeatureId ?? "";
   },
 
   deleteInstance: (instanceId) => {
-    const state = get();
-    const engine = state._crdtEngine!;
+    const engine = get()._crdtEngine!;
     // Also delete any joints referencing this instance
     const featuresJson = engine.get_ordered_features_json();
     const features: { id: string; kind: string; params: Record<string, unknown> }[] = JSON.parse(featuresJson);
@@ -1513,19 +1371,18 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         const pi = f.params.parent_instance as { FeatureRef: string } | undefined;
         const ci = f.params.child_instance as { FeatureRef: string } | undefined;
         if ((pi && pi.FeatureRef === instanceId) || (ci && ci.FeatureRef === instanceId)) {
-          engine.delete_feature(f.id);
+          engine.delete_feature_by_id(f.id);
         }
       }
     }
-    const result = engine.delete_feature(instanceId);
-    set(applyCrdtResult(result, state));
+    const result = engine.delete_feature_by_id(instanceId);
+    set(applyApiResult(result));
   },
 
   deleteJoint: (jointId) => {
-    const state = get();
-    const engine = state._crdtEngine!;
-    const result = engine.delete_feature(jointId);
-    set(applyCrdtResult(result, state));
+    const engine = get()._crdtEngine!;
+    const result = engine.delete_feature_by_id(jointId);
+    set(applyApiResult(result));
   },
 
   setGroundInstance: (instanceId) => {
@@ -1541,14 +1398,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       }
     }
     const result = engine.set_param(instanceId, "is_ground", JSON.stringify(crdtBool(true)));
-    set(applyCrdtResult(result, state));
+    set(applyLegacyResult(result));
   },
 
   renameInstance: (instanceId, name) => {
-    const state = get();
-    const engine = state._crdtEngine!;
+    const engine = get()._crdtEngine!;
     const result = engine.set_param(instanceId, "name", JSON.stringify(crdtStr(name)));
-    set(applyCrdtResult(result, state));
+    set(applyLegacyResult(result));
   },
 
   setDocumentMeta: (id, name) => {
@@ -1572,7 +1428,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         partIndex: new Map(),
         consumedParts: {},
         nextNodeId: 1,
-        nextPartNum: 1,
         isDirty: false,
         documentId: id,
         documentName: name,
@@ -1580,8 +1435,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         isParameterDragging: false,
         loonSource: null,
         _crdtEngine: engine,
-        _partIdToCrdtId: new Map(),
-        _crdtIdToPartId: new Map(),
       });
     } else {
       set({
@@ -1590,7 +1443,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         partIndex: new Map(),
         consumedParts: {},
         nextNodeId: 1,
-        nextPartNum: 1,
         isDirty: false,
         documentId: id,
         documentName: name,
@@ -1611,13 +1463,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   setPartVisible: (partId, visible) => {
-    const state = get();
-    const engine = state._crdtEngine!;
-    const crdtId = state._partIdToCrdtId.get(partId);
-    if (crdtId) {
-      const result = engine.set_param(crdtId, "visible", JSON.stringify(crdtBool(visible)));
-      set(applyCrdtResult(result, state));
-    }
+    const engine = get()._crdtEngine!;
+    const result = engine.set_visible(partId, visible);
+    set(applyApiResult(result));
   },
 
   reorderPart: (partId, newIndex) => {
@@ -1629,19 +1477,16 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const oldIndex = state.parts.findIndex((p) => p.id === partId);
     if (oldIndex === -1 || oldIndex === newIndex) return;
 
-    const crdtId = state._partIdToCrdtId.get(partId);
-    if (!crdtId) return;
-
     const featuresJson = engine.get_ordered_features_json();
     const features: { id: string }[] = JSON.parse(featuresJson);
-    const others = features.filter((f) => f.id !== crdtId);
+    const others = features.filter((f) => f.id !== partId);
 
     const beforeId = newIndex > 0 ? others[newIndex - 1]?.id ?? "" : "";
     const afterId = newIndex < others.length ? others[newIndex]?.id ?? "" : "";
 
     const positionJson = engine.compute_position_between(beforeId, afterId);
-    const result = engine.move_feature(crdtId, positionJson);
-    set(applyCrdtResult(result, state));
+    const result = engine.move_feature(partId, positionJson);
+    set(applyLegacyResult(result));
   },
 
   // Scene settings actions
@@ -1755,7 +1600,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const schId = getOrCreateSchematicFeature(state);
     const sheet = { title: title ?? "Sheet 1", components: [], wires: [], junctions: [], labels: [] };
     const result = state._crdtEngine!.set_param(schId, "sheet", JSON.stringify(crdtStr(JSON.stringify(sheet))));
-    set(applyCrdtResult(result, state));
+    set(applyLegacyResult(result));
   },
 
   initPcb: (options) => {

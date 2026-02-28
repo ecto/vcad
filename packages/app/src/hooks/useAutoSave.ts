@@ -54,7 +54,6 @@ export function useAutoSave() {
         parts: state.parts,
         consumedParts: state.consumedParts,
         nextNodeId: state.nextNodeId,
-        nextPartNum: state.nextPartNum,
       };
 
       await saveDocument(documentId, documentName, vcadFile);

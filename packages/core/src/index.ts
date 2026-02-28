@@ -63,6 +63,8 @@ export {
 export { useDocumentStore, getNodePcb, getPcbNodeIds, getNodeEmbroideryDesign } from "./stores/document-store.js";
 export type { VcadFile, DocumentState, PcbCreateOptions } from "./stores/document-store.js";
 
+export type { FeatureInput } from "./stores/feature-input.js";
+
 export { useCrdtDocumentStore, f64, vec3, bool, str, featureRef } from "./stores/crdt-document-store.js";
 export type { CrdtDocumentState, CrdtValue } from "./stores/crdt-document-store.js";
 
