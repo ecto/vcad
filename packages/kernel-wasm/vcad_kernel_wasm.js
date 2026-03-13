@@ -1518,8 +1518,8 @@ if (Symbol.dispose) WasmCamSettings.prototype[Symbol.dispose] = WasmCamSettings.
 /**
  * CRDT-backed document engine for WASM.
  *
- * Wraps a `CrdtDocument` and maintains cached materialized state.
- * All mutations return the updated document + parts as a JS value.
+ * Wraps a `DocumentApi` (which wraps a `CrdtDocument`) and exposes both
+ * typed mutations via `add_feature(json)` and legacy low-level CRDT methods.
  */
 export class WasmDocumentEngine {
     static __wrap(ptr) {
@@ -1540,6 +1540,21 @@ export class WasmDocumentEngine {
         wasm.__wbg_wasmdocumentengine_free(ptr, 0);
     }
     /**
+     * Add a feature from a JSON-serialized `FeatureInput` discriminated union.
+     *
+     * Example: `{"type":"Cube","size_x":10,"size_y":20,"size_z":30}`
+     *
+     * Returns `{ document, parts, consumedPartIds, createdFeatureId }`.
+     * @param {string} input_json
+     * @returns {any}
+     */
+    add_feature(input_json) {
+        const ptr0 = passStringToWasm0(input_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmdocumentengine_add_feature(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
      * Whether redo is available.
      * @returns {boolean}
      */
@@ -1557,9 +1572,6 @@ export class WasmDocumentEngine {
     }
     /**
      * Compute a FractionalIndex position between two neighbor feature IDs.
-     *
-     * Pass `before_id_json` and `after_id_json` as feature ID strings (or empty/"" for boundaries).
-     * Returns the FractionalIndex as a JSON string.
      * @param {string} before_id_json
      * @param {string} after_id_json
      * @returns {string}
@@ -1605,6 +1617,17 @@ export class WasmDocumentEngine {
         const ptr0 = passStringToWasm0(feature_id_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.wasmdocumentengine_delete_feature(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Delete a feature by stable ID.
+     * @param {string} stable_id
+     * @returns {any}
+     */
+    delete_feature_by_id(stable_id) {
+        const ptr0 = passStringToWasm0(stable_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmdocumentengine_delete_feature_by_id(this.__wbg_ptr, ptr0, len0);
         return ret;
     }
     /**
@@ -1706,9 +1729,6 @@ export class WasmDocumentEngine {
     }
     /**
      * Import IR JSON into the current document (e.g. AI-generated geometry).
-     *
-     * Parses the IR, migrates it to CRDT features, and merges the ops into
-     * this document. Returns the standard mutation result.
      * @param {string} ir_json
      * @returns {any}
      */
@@ -1778,6 +1798,20 @@ export class WasmDocumentEngine {
         return ret;
     }
     /**
+     * Rename a feature.
+     * @param {string} stable_id
+     * @param {string} name
+     * @returns {any}
+     */
+    rename_feature(stable_id, name) {
+        const ptr0 = passStringToWasm0(stable_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmdocumentengine_rename_feature(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+    }
+    /**
      * Save the document to bytes.
      * @returns {Uint8Array}
      */
@@ -1786,6 +1820,32 @@ export class WasmDocumentEngine {
         var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
         return v1;
+    }
+    /**
+     * Set joint state.
+     * @param {string} stable_id
+     * @param {number} state
+     * @returns {any}
+     */
+    set_joint_state(stable_id, state) {
+        const ptr0 = passStringToWasm0(stable_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmdocumentengine_set_joint_state(this.__wbg_ptr, ptr0, len0, state);
+        return ret;
+    }
+    /**
+     * Set material on a feature.
+     * @param {string} stable_id
+     * @param {string} material
+     * @returns {any}
+     */
+    set_material(stable_id, material) {
+        const ptr0 = passStringToWasm0(stable_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(material, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmdocumentengine_set_material(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
     }
     /**
      * Set a parameter on a feature.
@@ -1805,11 +1865,79 @@ export class WasmDocumentEngine {
         return ret;
     }
     /**
+     * Set rotation on a feature.
+     * @param {string} stable_id
+     * @param {number} x
+     * @param {number} y
+     * @param {number} z
+     * @returns {any}
+     */
+    set_rotation(stable_id, x, y, z) {
+        const ptr0 = passStringToWasm0(stable_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmdocumentengine_set_rotation(this.__wbg_ptr, ptr0, len0, x, y, z);
+        return ret;
+    }
+    /**
+     * Set scale on a feature.
+     * @param {string} stable_id
+     * @param {number} x
+     * @param {number} y
+     * @param {number} z
+     * @returns {any}
+     */
+    set_scale(stable_id, x, y, z) {
+        const ptr0 = passStringToWasm0(stable_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmdocumentengine_set_scale(this.__wbg_ptr, ptr0, len0, x, y, z);
+        return ret;
+    }
+    /**
+     * Set translation on a feature.
+     * @param {string} stable_id
+     * @param {number} x
+     * @param {number} y
+     * @param {number} z
+     * @returns {any}
+     */
+    set_translation(stable_id, x, y, z) {
+        const ptr0 = passStringToWasm0(stable_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmdocumentengine_set_translation(this.__wbg_ptr, ptr0, len0, x, y, z);
+        return ret;
+    }
+    /**
+     * Set visibility on a feature.
+     * @param {string} stable_id
+     * @param {boolean} visible
+     * @returns {any}
+     */
+    set_visible(stable_id, visible) {
+        const ptr0 = passStringToWasm0(stable_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmdocumentengine_set_visible(this.__wbg_ptr, ptr0, len0, visible);
+        return ret;
+    }
+    /**
      * Undo the last action.
      * @returns {any}
      */
     undo() {
         const ret = wasm.wasmdocumentengine_undo(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * Update a feature with new params from a JSON-serialized `FeatureInput`.
+     * @param {string} stable_id
+     * @param {string} input_json
+     * @returns {any}
+     */
+    update_feature(stable_id, input_json) {
+        const ptr0 = passStringToWasm0(stable_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(input_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmdocumentengine_update_feature(this.__wbg_ptr, ptr0, len0, ptr1, len1);
         return ret;
     }
 }
@@ -2784,30 +2912,6 @@ export function evalVcadSource(source) {
 }
 
 /**
- * Evaluate compact IR and return a Solid for rendering.
- *
- * This is a convenience function that parses compact IR and evaluates
- * the geometry in a single step.
- *
- * # Arguments
- * * `compact_ir` - The compact IR text to evaluate
- *
- * # Returns
- * A Solid object that can be rendered or queried.
- * @param {string} compact_ir
- * @returns {Solid}
- */
-export function evaluateCompactIR(compact_ir) {
-    const ptr0 = passStringToWasm0(compact_ir, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.evaluateCompactIR(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return Solid.__wrap(ret[0]);
-}
-
-/**
  * Evaluate a full vcad document JSON into a serialized EvaluatedScene.
  *
  * This is the canonical Rust-side evaluator that handles all CsgOp variants
@@ -2834,6 +2938,30 @@ export function evaluateDocument(doc_json, skip_clash_detection) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Evaluate VCode and return a Solid for rendering.
+ *
+ * This is a convenience function that parses VCode and evaluates
+ * the geometry in a single step.
+ *
+ * # Arguments
+ * * `vcode` - The VCode text to evaluate
+ *
+ * # Returns
+ * A Solid object that can be rendered or queried.
+ * @param {string} vcode
+ * @returns {Solid}
+ */
+export function evaluateVCode(vcode) {
+    const ptr0 = passStringToWasm0(vcode, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.evaluateVCode(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return Solid.__wrap(ret[0]);
 }
 
 /**
@@ -3016,7 +3144,7 @@ export function isEcadAvailable() {
  * @returns {boolean}
  */
 export function isEmbroideryAvailable() {
-    const ret = wasm.isEmbroideryAvailable();
+    const ret = wasm.isEcadAvailable();
     return ret !== 0;
 }
 
@@ -3225,48 +3353,6 @@ export function op_sweep_line(profile_json, start, end, twist_angle, scale_start
 }
 
 /**
- * Parse compact IR text format into a vcad IR Document (JSON).
- *
- * The compact IR format is a token-efficient text representation designed
- * for ML model training and inference. See `vcad_ir::compact` for format details.
- *
- * # Arguments
- * * `compact_ir` - The compact IR text to parse
- *
- * # Returns
- * A JSON string representing the parsed vcad IR Document.
- *
- * # Example
- * ```javascript
- * const ir = "C 50 30 5\nY 5 10\nT 1 25 15 0\nD 0 2";
- * const doc = parseCompactIR(ir);
- * console.log(doc); // JSON document
- * ```
- * @param {string} compact_ir
- * @returns {string}
- */
-export function parseCompactIR(compact_ir) {
-    let deferred3_0;
-    let deferred3_1;
-    try {
-        const ptr0 = passStringToWasm0(compact_ir, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.parseCompactIR(ptr0, len0);
-        var ptr2 = ret[0];
-        var len2 = ret[1];
-        if (ret[3]) {
-            ptr2 = 0; len2 = 0;
-            throw takeFromExternrefTable0(ret[2]);
-        }
-        deferred3_0 = ptr2;
-        deferred3_1 = len2;
-        return getStringFromWasm0(ptr2, len2);
-    } finally {
-        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
-    }
-}
-
-/**
  * Parse a KiCad `.kicad_pcb` file content into a JSON-serialized `Pcb`.
  *
  * # Arguments
@@ -3288,7 +3374,49 @@ export function parseKicadPcb(content) {
 }
 
 /**
- * Parse a .vcad file (JSON v0.1, compact v0.2, or loon v0.3).
+ * Parse VCode text format into a vcad IR Document (JSON).
+ *
+ * The VCode format is a token-efficient text representation designed
+ * for ML model training and inference. See `vcad_ir::vcode` for format details.
+ *
+ * # Arguments
+ * * `vcode` - The VCode text to parse
+ *
+ * # Returns
+ * A JSON string representing the parsed vcad IR Document.
+ *
+ * # Example
+ * ```javascript
+ * const ir = "C 50 30 5\nY 5 10\nT 1 25 15 0\nD 0 2";
+ * const doc = parseVCode(ir);
+ * console.log(doc); // JSON document
+ * ```
+ * @param {string} vcode
+ * @returns {string}
+ */
+export function parseVCode(vcode) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(vcode, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.parseVCode(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Parse a .vcad file (JSON v0.1, VCode v0.2, or loon v0.3).
  *
  * Returns a JSON-serialized VcadFile with document, parts, and metadata.
  * @param {string} content
@@ -3545,29 +3673,29 @@ export function textBounds(text, height, font, letter_spacing, line_spacing) {
 }
 
 /**
- * Convert a vcad IR Document (JSON) to compact IR text format.
+ * Convert a vcad IR Document (JSON) to VCode text format.
  *
  * # Arguments
  * * `doc_json` - JSON string representing a vcad IR Document
  *
  * # Returns
- * The compact IR text representation.
+ * The VCode text representation.
  *
  * # Example
  * ```javascript
- * const compact = toCompactIR(docJson);
+ * const compact = toVCode(docJson);
  * console.log(compact); // "C 50 30 5\nY 5 10\n..."
  * ```
  * @param {string} doc_json
  * @returns {string}
  */
-export function toCompactIR(doc_json) {
+export function toVCode(doc_json) {
     let deferred3_0;
     let deferred3_1;
     try {
         const ptr0 = passStringToWasm0(doc_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.toCompactIR(ptr0, len0);
+        const ret = wasm.toVCode(ptr0, len0);
         var ptr2 = ret[0];
         var len2 = ret[1];
         if (ret[3]) {
@@ -5405,12 +5533,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 1069, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1070, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 1119, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1120, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hb866a658679f7c90, wasm_bindgen__convert__closures_____invoke__hd3174526aa1241bc);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 1812, function: Function { arguments: [Externref], shim_idx: 1813, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 1862, function: Function { arguments: [Externref], shim_idx: 1863, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__ha3f46f4f424453fe, wasm_bindgen__convert__closures_____invoke__h3b7e8ca02e296028);
             return ret;
         },

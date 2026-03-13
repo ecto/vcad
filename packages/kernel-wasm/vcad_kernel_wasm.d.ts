@@ -649,12 +649,20 @@ export class WasmCamSettings {
 /**
  * CRDT-backed document engine for WASM.
  *
- * Wraps a `CrdtDocument` and maintains cached materialized state.
- * All mutations return the updated document + parts as a JS value.
+ * Wraps a `DocumentApi` (which wraps a `CrdtDocument`) and exposes both
+ * typed mutations via `add_feature(json)` and legacy low-level CRDT methods.
  */
 export class WasmDocumentEngine {
     free(): void;
     [Symbol.dispose](): void;
+    /**
+     * Add a feature from a JSON-serialized `FeatureInput` discriminated union.
+     *
+     * Example: `{"type":"Cube","size_x":10,"size_y":20,"size_z":30}`
+     *
+     * Returns `{ document, parts, consumedPartIds, createdFeatureId }`.
+     */
+    add_feature(input_json: string): any;
     /**
      * Whether redo is available.
      */
@@ -665,9 +673,6 @@ export class WasmDocumentEngine {
     can_undo(): boolean;
     /**
      * Compute a FractionalIndex position between two neighbor feature IDs.
-     *
-     * Pass `before_id_json` and `after_id_json` as feature ID strings (or empty/"" for boundaries).
-     * Returns the FractionalIndex as a JSON string.
      */
     compute_position_between(before_id_json: string, after_id_json: string): string;
     /**
@@ -680,6 +685,10 @@ export class WasmDocumentEngine {
      * Delete a feature by ID (JSON string).
      */
     delete_feature(feature_id_json: string): any;
+    /**
+     * Delete a feature by stable ID.
+     */
+    delete_feature_by_id(stable_id: string): any;
     /**
      * Load a legacy v1 JSON document and migrate to CRDT.
      */
@@ -706,9 +715,6 @@ export class WasmDocumentEngine {
     get_sync_clock(): string;
     /**
      * Import IR JSON into the current document (e.g. AI-generated geometry).
-     *
-     * Parses the IR, migrates it to CRDT features, and merges the ops into
-     * this document. Returns the standard mutation result.
      */
     import_ir(ir_json: string): any;
     /**
@@ -735,17 +741,49 @@ export class WasmDocumentEngine {
      */
     redo(): any;
     /**
+     * Rename a feature.
+     */
+    rename_feature(stable_id: string, name: string): any;
+    /**
      * Save the document to bytes.
      */
     save(): Uint8Array;
+    /**
+     * Set joint state.
+     */
+    set_joint_state(stable_id: string, state: number): any;
+    /**
+     * Set material on a feature.
+     */
+    set_material(stable_id: string, material: string): any;
     /**
      * Set a parameter on a feature.
      */
     set_param(feature_id_json: string, key: string, value_json: string): any;
     /**
+     * Set rotation on a feature.
+     */
+    set_rotation(stable_id: string, x: number, y: number, z: number): any;
+    /**
+     * Set scale on a feature.
+     */
+    set_scale(stable_id: string, x: number, y: number, z: number): any;
+    /**
+     * Set translation on a feature.
+     */
+    set_translation(stable_id: string, x: number, y: number, z: number): any;
+    /**
+     * Set visibility on a feature.
+     */
+    set_visible(stable_id: string, visible: boolean): any;
+    /**
      * Undo the last action.
      */
     undo(): any;
+    /**
+     * Update a feature with new params from a JSON-serialized `FeatureInput`.
+     */
+    update_feature(stable_id: string, input_json: string): any;
 }
 
 /**
@@ -1142,20 +1180,6 @@ export function estimatePrintCost(volume_mm3: number, infill_density: number, wa
 export function evalVcadSource(source: string): any;
 
 /**
- * Evaluate VCode and return a Solid for rendering.
- *
- * This is a convenience function that parses VCode and evaluates
- * the geometry in a single step.
- *
- * # Arguments
- * * `vcode` - The VCode text to evaluate
- *
- * # Returns
- * A Solid object that can be rendered or queried.
- */
-export function evaluateVCode(vcode: string): Solid;
-
-/**
  * Evaluate a full vcad document JSON into a serialized EvaluatedScene.
  *
  * This is the canonical Rust-side evaluator that handles all CsgOp variants
@@ -1172,6 +1196,20 @@ export function evaluateVCode(vcode: string): Solid;
  * A JsValue containing the serialized EvaluatedScene.
  */
 export function evaluateDocument(doc_json: string, skip_clash_detection: boolean): any;
+
+/**
+ * Evaluate VCode and return a Solid for rendering.
+ *
+ * This is a convenience function that parses VCode and evaluates
+ * the geometry in a single step.
+ *
+ * # Arguments
+ * * `vcode` - The VCode text to evaluate
+ *
+ * # Returns
+ * A Solid object that can be rendered or queried.
+ */
+export function evaluateVCode(vcode: string): Solid;
 
 /**
  * Export a projected view to DXF format.
@@ -1331,6 +1369,17 @@ export function op_sweep_helix(profile_json: string, radius: number, pitch: numb
 export function op_sweep_line(profile_json: string, start: Float64Array, end: Float64Array, twist_angle?: number | null, scale_start?: number | null, scale_end?: number | null, orientation?: number | null): Solid;
 
 /**
+ * Parse a KiCad `.kicad_pcb` file content into a JSON-serialized `Pcb`.
+ *
+ * # Arguments
+ * * `content` - The `.kicad_pcb` file content as a string
+ *
+ * # Returns
+ * JSON-serialized `Pcb` struct as JsValue, or error.
+ */
+export function parseKicadPcb(content: string): any;
+
+/**
  * Parse VCode text format into a vcad IR Document (JSON).
  *
  * The VCode format is a token-efficient text representation designed
@@ -1350,17 +1399,6 @@ export function op_sweep_line(profile_json: string, start: Float64Array, end: Fl
  * ```
  */
 export function parseVCode(vcode: string): string;
-
-/**
- * Parse a KiCad `.kicad_pcb` file content into a JSON-serialized `Pcb`.
- *
- * # Arguments
- * * `content` - The `.kicad_pcb` file content as a string
- *
- * # Returns
- * JSON-serialized `Pcb` struct as JsValue, or error.
- */
-export function parseKicadPcb(content: string): any;
 
 /**
  * Parse a .vcad file (JSON v0.1, VCode v0.2, or loon v0.3).
@@ -1512,8 +1550,8 @@ export interface InitOutput {
     readonly deriveParts: (a: number, b: number) => [number, number, number];
     readonly documentToLoon: (a: number, b: number) => [number, number, number, number];
     readonly evalVcadSource: (a: number, b: number) => [number, number, number];
-    readonly evaluateVCode: (a: number, b: number) => [number, number, number];
     readonly evaluateDocument: (a: number, b: number, c: number) => [number, number, number];
+    readonly evaluateVCode: (a: number, b: number) => [number, number, number];
     readonly exportProjectedViewToDxf: (a: number, b: number) => [number, number, number, number];
     readonly get_kernel_version: () => [number, number];
     readonly importStepBuffer: (a: number, b: number) => [number, number, number];
@@ -1608,6 +1646,27 @@ export interface InitOutput {
     readonly solid_fillet: (a: number, b: number) => number;
     readonly solid_shell: (a: number, b: number) => number;
     readonly solid_circularPattern: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
+    readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly ecadBuiltinSymbols: () => [number, number, number];
+    readonly ecadCheckDrc: (a: number, b: number) => [number, number, number];
+    readonly ecadCheckErc: (a: number, b: number) => [number, number, number];
+    readonly ecadComponentMeshes: (a: number, b: number) => [number, number, number];
+    readonly ecadComputeRatsnest: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly ecadFillZones: (a: number, b: number) => [number, number, number];
+    readonly ecadGenerateNetlist: (a: number, b: number) => [number, number, number];
+    readonly ecadGetSymbol: (a: number, b: number) => [number, number, number];
+    readonly ecadLayerZ: (a: number, b: number, c: number, d: number) => number;
+    readonly ecadNetForWire: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly ecadRouteNet: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
+    readonly ecadSnapToGridOrPin: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly isEcadAvailable: () => number;
+    readonly parseKicadPcb: (a: number, b: number) => [number, number, number];
+    readonly readEmbroideryDst: (a: number, b: number) => [number, number, number, number];
+    readonly readEmbroideryPes: (a: number, b: number) => [number, number, number, number];
+    readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
+    readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
+    readonly isEmbroideryAvailable: () => number;
     readonly __wbg_get_slicersettings_first_layer_height: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_density: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_pattern: (a: number) => number;
@@ -1646,41 +1705,6 @@ export interface InitOutput {
     readonly sliceresult_statsJson: (a: number) => [number, number, number, number];
     readonly slicersettings_fromJson: (a: number, b: number) => [number, number, number];
     readonly slicersettings_new: () => number;
-    readonly __wbg_wasmdocumentengine_free: (a: number, b: number) => void;
-    readonly ecadBuiltinSymbols: () => [number, number, number];
-    readonly ecadCheckDrc: (a: number, b: number) => [number, number, number];
-    readonly ecadCheckErc: (a: number, b: number) => [number, number, number];
-    readonly ecadComponentMeshes: (a: number, b: number) => [number, number, number];
-    readonly ecadComputeRatsnest: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly ecadFillZones: (a: number, b: number) => [number, number, number];
-    readonly ecadGenerateNetlist: (a: number, b: number) => [number, number, number];
-    readonly ecadGetSymbol: (a: number, b: number) => [number, number, number];
-    readonly ecadLayerZ: (a: number, b: number, c: number, d: number) => number;
-    readonly ecadNetForWire: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly ecadRouteNet: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
-    readonly ecadSnapToGridOrPin: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly isEcadAvailable: () => number;
-    readonly parseKicadPcb: (a: number, b: number) => [number, number, number];
-    readonly wasmdocumentengine_can_redo: (a: number) => number;
-    readonly wasmdocumentengine_can_undo: (a: number) => number;
-    readonly wasmdocumentengine_compute_position_between: (a: number, b: number, c: number, d: number, e: number) => [number, number];
-    readonly wasmdocumentengine_create_feature: (a: number, b: number, c: number, d: number, e: number) => any;
-    readonly wasmdocumentengine_delete_feature: (a: number, b: number, c: number) => any;
-    readonly wasmdocumentengine_from_v1_json: (a: number, b: number) => [number, number, number];
-    readonly wasmdocumentengine_get_document_json: (a: number) => [number, number];
-    readonly wasmdocumentengine_get_ops_since: (a: number, b: number, c: number) => [number, number];
-    readonly wasmdocumentengine_get_ordered_features_json: (a: number) => [number, number];
-    readonly wasmdocumentengine_get_parts_json: (a: number) => [number, number];
-    readonly wasmdocumentengine_get_sync_clock: (a: number) => [number, number];
-    readonly wasmdocumentengine_import_ir: (a: number, b: number, c: number) => any;
-    readonly wasmdocumentengine_load: (a: number, b: number) => [number, number, number];
-    readonly wasmdocumentengine_merge_remote: (a: number, b: number, c: number) => any;
-    readonly wasmdocumentengine_move_feature: (a: number, b: number, c: number, d: number, e: number) => any;
-    readonly wasmdocumentengine_new: () => number;
-    readonly wasmdocumentengine_redo: (a: number) => any;
-    readonly wasmdocumentengine_save: (a: number) => [number, number];
-    readonly wasmdocumentengine_set_param: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
-    readonly wasmdocumentengine_undo: (a: number) => any;
     readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
     readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
     readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;
@@ -1709,13 +1733,37 @@ export interface InitOutput {
     readonly isCamAvailable: () => number;
     readonly wasmcamsettings_fromJson: (a: number, b: number) => [number, number, number];
     readonly wasmcamsettings_new: () => number;
-    readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
-    readonly isEmbroideryAvailable: () => number;
-    readonly readEmbroideryDst: (a: number, b: number) => [number, number, number, number];
-    readonly readEmbroideryPes: (a: number, b: number) => [number, number, number, number];
-    readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
-    readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
+    readonly __wbg_wasmdocumentengine_free: (a: number, b: number) => void;
+    readonly wasmdocumentengine_add_feature: (a: number, b: number, c: number) => any;
+    readonly wasmdocumentengine_can_redo: (a: number) => number;
+    readonly wasmdocumentengine_can_undo: (a: number) => number;
+    readonly wasmdocumentengine_compute_position_between: (a: number, b: number, c: number, d: number, e: number) => [number, number];
+    readonly wasmdocumentengine_create_feature: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly wasmdocumentengine_delete_feature: (a: number, b: number, c: number) => any;
+    readonly wasmdocumentengine_delete_feature_by_id: (a: number, b: number, c: number) => any;
+    readonly wasmdocumentengine_from_v1_json: (a: number, b: number) => [number, number, number];
+    readonly wasmdocumentengine_get_document_json: (a: number) => [number, number];
+    readonly wasmdocumentengine_get_ops_since: (a: number, b: number, c: number) => [number, number];
+    readonly wasmdocumentengine_get_ordered_features_json: (a: number) => [number, number];
+    readonly wasmdocumentengine_get_parts_json: (a: number) => [number, number];
+    readonly wasmdocumentengine_get_sync_clock: (a: number) => [number, number];
+    readonly wasmdocumentengine_import_ir: (a: number, b: number, c: number) => any;
+    readonly wasmdocumentengine_load: (a: number, b: number) => [number, number, number];
+    readonly wasmdocumentengine_merge_remote: (a: number, b: number, c: number) => any;
+    readonly wasmdocumentengine_move_feature: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly wasmdocumentengine_new: () => number;
+    readonly wasmdocumentengine_redo: (a: number) => any;
+    readonly wasmdocumentengine_rename_feature: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly wasmdocumentengine_save: (a: number) => [number, number];
+    readonly wasmdocumentengine_set_joint_state: (a: number, b: number, c: number, d: number) => any;
+    readonly wasmdocumentengine_set_material: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly wasmdocumentengine_set_param: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+    readonly wasmdocumentengine_set_rotation: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+    readonly wasmdocumentengine_set_scale: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+    readonly wasmdocumentengine_set_translation: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+    readonly wasmdocumentengine_set_visible: (a: number, b: number, c: number, d: number) => any;
+    readonly wasmdocumentengine_undo: (a: number) => any;
+    readonly wasmdocumentengine_update_feature: (a: number, b: number, c: number, d: number, e: number) => any;
     readonly wasm_bindgen__closure__destroy__hb866a658679f7c90: (a: number, b: number) => void;
     readonly wasm_bindgen__closure__destroy__ha3f46f4f424453fe: (a: number, b: number) => void;
     readonly wasm_bindgen__convert__closures_____invoke__h7fe4e9d895e0bfbd: (a: number, b: number, c: any, d: any) => void;
