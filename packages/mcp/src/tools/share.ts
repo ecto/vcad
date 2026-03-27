@@ -92,7 +92,7 @@ export function openInBrowser(
     content: [
       {
         type: "text",
-        text: `Open in vcad.io:\n${url}${warning}\n\nVCode size: ${compact.length} bytes\nCompressed URL param: ${encoded.length} bytes`,
+        text: `Open in vcad.io:\n${url}${warning}\n\nVCode size: ${vcode.length} bytes\nCompressed URL param: ${encoded.length} bytes`,
       },
     ],
   };

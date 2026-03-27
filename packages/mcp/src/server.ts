@@ -6,8 +6,11 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { Engine } from "@vcad/engine";
+import type { Document } from "@vcad/ir";
 import { createCadDocument, createCadDocumentSchema } from "./tools/create.js";
 import { exportCad, exportCadSchema } from "./tools/export.js";
 import { inspectCad, inspectCadSchema } from "./tools/inspect.js";
@@ -49,6 +52,27 @@ import {
   calcImpedanceSchema,
 } from "./tools/ecad.js";
 import { createCadLoon, createCadLoonSchema } from "./tools/loon.js";
+import { appendGlbPreview } from "./tools/preview.js";
+import {
+  getViewerHtml,
+  VIEWER_RESOURCE_URI,
+  VIEWER_CSP,
+  MCP_APP_MIME_TYPE,
+} from "./viewer.js";
+
+/** Tools that produce or modify geometry and should show the 3D viewer. */
+const GEOMETRY_TOOLS = new Set([
+  "create_cad_document",
+  "create_cad_loon",
+  "import_step",
+]);
+
+/** MCP Apps UI metadata for geometry tools. */
+const UI_META = {
+  ui: {
+    resourceUri: VIEWER_RESOURCE_URI,
+  },
+};
 
 export async function createServer(): Promise<Server> {
   // Initialize the WASM engine
@@ -62,6 +86,7 @@ export async function createServer(): Promise<Server> {
     {
       capabilities: {
         tools: {},
+        resources: {},
       },
     },
   );
@@ -84,6 +109,7 @@ export async function createServer(): Promise<Server> {
           "Positioning: absolute {x,y,z}, named ('center', 'top-center'), percentage {x:'50%'}\n\n" +
           "Assembly: Optional 'assembly' block with instances and joints for physics simulation.",
         inputSchema: createCadDocumentSchema,
+        _meta: UI_META,
       },
       {
         name: "create_cad_loon",
@@ -97,6 +123,7 @@ export async function createServer(): Promise<Server> {
           "Let bindings: [let body [cube 50 30 5]]\n" +
           "Scene: [root solid \"material-name\"]",
         inputSchema: createCadLoonSchema,
+        _meta: UI_META,
       },
       {
         name: "export_cad",
@@ -116,6 +143,7 @@ export async function createServer(): Promise<Server> {
           "Import geometry from a STEP file (.step or .stp). Returns an IR document with ImportedMesh nodes. " +
           "Supports AP203/AP214 STEP files commonly exported from Fusion 360, SolidWorks, Onshape, etc.",
         inputSchema: importStepSchema,
+        _meta: UI_META,
       },
       {
         name: "open_in_browser",
@@ -245,77 +273,144 @@ export async function createServer(): Promise<Server> {
     ],
   }));
 
+  // ── MCP Apps: List UI resources ──────────────────────────────
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources: [
+      {
+        uri: VIEWER_RESOURCE_URI,
+        name: "vcad 3D Viewer",
+        description: "Interactive 3D viewport for viewing CAD models",
+        mimeType: MCP_APP_MIME_TYPE,
+        _meta: {
+          ui: {
+            csp: VIEWER_CSP,
+            prefersBorder: false,
+          },
+        },
+      },
+    ],
+  }));
+
+  // ── MCP Apps: Serve UI resource HTML ─────────────────────────
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const { uri } = request.params;
+
+    if (uri === VIEWER_RESOURCE_URI) {
+      return {
+        contents: [
+          {
+            uri: VIEWER_RESOURCE_URI,
+            mimeType: MCP_APP_MIME_TYPE,
+            text: getViewerHtml(),
+            _meta: {
+              ui: {
+                csp: VIEWER_CSP,
+                prefersBorder: false,
+              },
+            },
+          },
+        ],
+      };
+    }
+
+    throw new Error(`Unknown resource: ${uri}`);
+  });
+
   // Handle tool calls
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args = {} } = request.params;
 
     try {
+      let result: { content: Array<{ type: string; text: string; annotations?: unknown }> };
+
       switch (name) {
         case "create_cad_document":
-          return createCadDocument(args);
+          result = createCadDocument(args);
+          break;
 
         case "create_cad_loon":
-          return createCadLoon(args, engine);
+          result = createCadLoon(args, engine);
+          break;
 
         case "export_cad":
-          return exportCad(args, engine);
+          result = exportCad(args, engine);
+          break;
 
         case "inspect_cad":
-          return inspectCad(args, engine);
+          result = inspectCad(args, engine);
+          break;
 
         case "import_step":
-          return importStep(args, engine);
+          result = importStep(args, engine);
+          break;
 
         case "open_in_browser":
-          return openInBrowser(args);
+          result = openInBrowser(args);
+          break;
 
         case "create_robot_env":
-          return await createRobotEnv(args);
+          result = await createRobotEnv(args);
+          break;
 
         case "gym_step":
-          return gymStep(args);
+          result = gymStep(args);
+          break;
 
         case "gym_reset":
-          return gymReset(args);
+          result = gymReset(args);
+          break;
 
         case "gym_observe":
-          return gymObserve(args);
+          result = gymObserve(args);
+          break;
 
         case "gym_close":
-          return gymClose(args);
+          result = gymClose(args);
+          break;
 
         case "batch_create_envs":
-          return await batchCreateEnvs(args);
+          result = await batchCreateEnvs(args);
+          break;
 
         case "batch_step":
-          return batchStep(args);
+          result = batchStep(args);
+          break;
 
         case "batch_reset":
-          return batchReset(args);
+          result = batchReset(args);
+          break;
 
         case "get_changelog":
-          return getChangelog(args);
+          result = getChangelog(args);
+          break;
 
         case "create_schematic":
-          return createSchematic(args);
+          result = createSchematic(args);
+          break;
 
         case "place_components":
-          return placeComponents(args);
+          result = placeComponents(args);
+          break;
 
         case "route_nets":
-          return routeNets(args);
+          result = routeNets(args);
+          break;
 
         case "run_drc":
-          return runDrc(args);
+          result = runDrc(args);
+          break;
 
         case "run_erc":
-          return runErc(args);
+          result = runErc(args);
+          break;
 
         case "export_gerber":
-          return exportGerber(args);
+          result = exportGerber(args);
+          break;
 
         case "calc_impedance":
-          return calcImpedance(args);
+          result = calcImpedance(args);
+          break;
 
         default:
           return {
@@ -323,6 +418,16 @@ export async function createServer(): Promise<Server> {
             isError: true,
           };
       }
+
+      // ── MCP Apps: Append GLB preview for geometry tools ──────
+      if (GEOMETRY_TOOLS.has(name) && result.content.length > 0) {
+        const irDoc = extractIrDocument(name, result, args, engine);
+        if (irDoc) {
+          appendGlbPreview(result, irDoc, engine);
+        }
+      }
+
+      return result;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return {
@@ -333,4 +438,65 @@ export async function createServer(): Promise<Server> {
   });
 
   return server;
+}
+
+/**
+ * Extract an IR Document from a tool result for GLB preview generation.
+ *
+ * Strategy per tool:
+ * - create_cad_document: re-run with format: "json" to get parseable output
+ * - create_cad_loon: re-evaluate loon source via engine
+ * - import_step: parse JSON result to extract the document field
+ */
+function extractIrDocument(
+  toolName: string,
+  result: { content: Array<{ type: string; text: string }> },
+  args: Record<string, unknown>,
+  engine: Engine,
+): Document | null {
+  try {
+    const text = result.content[0]?.text;
+    if (!text) return null;
+
+    // Try parsing the text as JSON first (works for JSON format & import_step)
+    try {
+      const parsed = JSON.parse(text);
+
+      // import_step wraps the document in { document, summary }
+      if (parsed.document && parsed.document.version) {
+        return parsed.document as Document;
+      }
+
+      // Direct IR document (JSON format output)
+      if (parsed.version && parsed.nodes) {
+        return parsed as Document;
+      }
+    } catch {
+      // Not JSON — likely VCode format, handle below
+    }
+
+    // For create_cad_document with VCode output, re-run with JSON format
+    if (toolName === "create_cad_document" && args.parts) {
+      const jsonResult = createCadDocument({ ...args, format: "json" });
+      const jsonText = jsonResult.content[0]?.text;
+      if (jsonText) {
+        const doc = JSON.parse(jsonText);
+        if (doc.version && doc.nodes) return doc as Document;
+      }
+    }
+
+    // For create_cad_loon with VCode output, re-evaluate with JSON format
+    if (toolName === "create_cad_loon" && args.source) {
+      const jsonResult = createCadLoon({ ...args, format: "json" }, engine);
+      const jsonText = jsonResult.content[0]?.text;
+      if (jsonText) {
+        const doc = JSON.parse(jsonText);
+        if (doc.version && doc.nodes) return doc as Document;
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
 }
