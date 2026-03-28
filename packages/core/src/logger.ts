@@ -21,6 +21,7 @@ export const LogSource = {
   GPU: "gpu",
   STEP: "step",
   MESH: "mesh",
+  WASM: "wasm",
 } as const;
 
 export type LogSourceName = (typeof LogSource)[keyof typeof LogSource];
