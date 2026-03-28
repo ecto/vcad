@@ -4,13 +4,8 @@
   "buildCommand": "npm run build -w @vcad/ir && npm run build -w @vcad/engine && npm run build -w @vcad/core && npm run build -w @vcad/mcp && npm run build -w @vcad/app && cp -r dist ../../dist",
   "outputDirectory": "dist",
   "functions": {
-    "packages/api/api/**/*.ts": {
+    "api/**/*.ts": {
       "runtime": "@vercel/node@3"
     }
-  },
-  "routes": [
-    { "src": "/api/(.*)", "dest": "/packages/api/api/$1" },
-    { "handle": "filesystem" },
-    { "src": "/(.*)", "dest": "/index.html" }
-  ]
+  }
 }
