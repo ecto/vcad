@@ -16,6 +16,7 @@ import { resolve } from "node:path";
 describe("create_cad_document", () => {
   it("creates a simple cube", () => {
     const result = createCadDocument({
+      format: "json",
       parts: [
         {
           name: "test_cube",
@@ -35,6 +36,7 @@ describe("create_cad_document", () => {
 
   it("creates a cylinder with difference", () => {
     const result = createCadDocument({
+      format: "json",
       parts: [
         {
           name: "plate_with_hole",
@@ -58,6 +60,7 @@ describe("create_cad_document", () => {
 
   it("supports multiple parts", () => {
     const result = createCadDocument({
+      format: "json",
       parts: [
         {
           name: "part1",
@@ -77,6 +80,7 @@ describe("create_cad_document", () => {
 
   it("creates a hole with 'center' positioning", () => {
     const result = createCadDocument({
+      format: "json",
       parts: [
         {
           name: "plate_with_hole",
@@ -107,6 +111,7 @@ describe("create_cad_document", () => {
 
   it("supports percentage positioning", () => {
     const result = createCadDocument({
+      format: "json",
       parts: [
         {
           name: "plate",
@@ -136,6 +141,7 @@ describe("create_cad_document", () => {
 
   it("creates through-hole with auto-sized depth", () => {
     const result = createCadDocument({
+      format: "json",
       parts: [
         {
           name: "block",
@@ -164,6 +170,7 @@ describe("create_cad_document", () => {
 
   it("creates blind hole with specified depth", () => {
     const result = createCadDocument({
+      format: "json",
       parts: [
         {
           name: "block",
@@ -192,6 +199,7 @@ describe("create_cad_document", () => {
 
   it("supports named position 'top-center'", () => {
     const result = createCadDocument({
+      format: "json",
       parts: [
         {
           name: "block",
@@ -221,6 +229,7 @@ describe("create_cad_document", () => {
 
   it("creates fillet operation", () => {
     const result = createCadDocument({
+      format: "json",
       parts: [
         {
           name: "filleted_cube",
@@ -241,6 +250,7 @@ describe("create_cad_document", () => {
 
   it("creates chamfer operation", () => {
     const result = createCadDocument({
+      format: "json",
       parts: [
         {
           name: "chamfered_cube",
@@ -261,6 +271,7 @@ describe("create_cad_document", () => {
 
   it("creates shell operation", () => {
     const result = createCadDocument({
+      format: "json",
       parts: [
         {
           name: "hollow_box",
@@ -281,6 +292,7 @@ describe("create_cad_document", () => {
 
   it("creates extruded rectangle", () => {
     const result = createCadDocument({
+      format: "json",
       parts: [
         {
           name: "extruded_rect",
@@ -309,6 +321,7 @@ describe("create_cad_document", () => {
 
   it("creates extruded circle", () => {
     const result = createCadDocument({
+      format: "json",
       parts: [
         {
           name: "extruded_circle",
@@ -336,6 +349,7 @@ describe("create_cad_document", () => {
 
   it("creates extruded polygon", () => {
     const result = createCadDocument({
+      format: "json",
       parts: [
         {
           name: "extruded_triangle",
@@ -369,6 +383,7 @@ describe("create_cad_document", () => {
 
   it("creates revolved sketch", () => {
     const result = createCadDocument({
+      format: "json",
       parts: [
         {
           name: "revolved_rect",
@@ -396,6 +411,7 @@ describe("create_cad_document", () => {
 
   it("creates assembly with joints", () => {
     const result = createCadDocument({
+      format: "json",
       parts: [
         {
           name: "base",
@@ -459,6 +475,7 @@ describe("inspect_cad", () => {
 
   it("inspects a cube", () => {
     const createResult = createCadDocument({
+      format: "json",
       parts: [
         {
           name: "test_cube",
@@ -489,6 +506,7 @@ describe("export_cad", () => {
 
   it("exports to STL", () => {
     const createResult = createCadDocument({
+      format: "json",
       parts: [
         {
           name: "test_cube",
@@ -519,6 +537,7 @@ describe("export_cad", () => {
 
   it("exports to GLB", () => {
     const createResult = createCadDocument({
+      format: "json",
       parts: [
         {
           name: "test_cube",
