@@ -40,25 +40,44 @@ export function getViewerHtml(): string {
   #loading {
     position: absolute; inset: 0;
     display: flex; align-items: center; justify-content: center;
-    color: #8888aa; font-family: system-ui, sans-serif; font-size: 14px;
+    color: #ccccdd; font-family: system-ui, sans-serif; font-size: 16px;
+    flex-direction: column; gap: 8px;
   }
   #loading.hidden { display: none; }
+  #error { color: #ff6666; font-size: 12px; white-space: pre-wrap; max-width: 80%; }
+  #open-btn {
+    position: absolute; bottom: 12px; right: 12px;
+    background: rgba(255,255,255,0.12); color: #ddd;
+    border: 1px solid rgba(255,255,255,0.2); border-radius: 6px;
+    padding: 6px 14px; font: 13px system-ui, sans-serif;
+    cursor: pointer; display: none; backdrop-filter: blur(4px);
+    transition: background 0.15s;
+  }
+  #open-btn:hover { background: rgba(255,255,255,0.22); color: #fff; }
 </style>
 </head>
 <body>
-<div id="loading">Loading model...</div>
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
-  }
-}
-</script>
+<div id="loading">
+  <div>vcad 3D Viewer — loading Three.js...</div>
+  <div id="error"></div>
+</div>
+<button id="open-btn">Open in vcad.io</button>
 <script type="module">
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+const CDN = 'https://cdn.jsdelivr.net/npm/three@0.170.0';
+const errEl = document.getElementById('error');
+
+let THREE, OrbitControls, GLTFLoader;
+try {
+  THREE = await import(CDN + '/build/three.module.js');
+  const oc = await import(CDN + '/examples/jsm/controls/OrbitControls.js');
+  OrbitControls = oc.OrbitControls;
+  const gl = await import(CDN + '/examples/jsm/loaders/GLTFLoader.js');
+  GLTFLoader = gl.GLTFLoader;
+  document.querySelector('#loading div').textContent = 'vcad 3D Viewer — waiting for model...';
+} catch (e) {
+  errEl.textContent = 'Three.js load failed: ' + e.message;
+  throw e;
+}
 
 // ── Scene setup ──────────────────────────────────────────────
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -165,6 +184,7 @@ function loadGlb(base64Data) {
     controls.update();
 
     document.getElementById('loading').classList.add('hidden');
+    reportHeight(400);
     renderer.render(scene, camera);
   }, (error) => {
     console.error('GLB parse error:', error);
@@ -179,54 +199,102 @@ function sendToHost(message) {
   window.parent.postMessage(message, '*');
 }
 
+// Report content height to host so iframe is properly sized
+function reportHeight(h) {
+  sendToHost({
+    jsonrpc: '2.0',
+    method: 'ui/notifications/contentHeight',
+    params: { height: h || 400 },
+  });
+}
+
 // Send ui/initialize handshake
 sendToHost({
   jsonrpc: '2.0',
   id: messageId++,
   method: 'ui/initialize',
   params: {
-    capabilities: {},
+    capabilities: { contentHeight: true },
     clientInfo: { name: 'vcad-viewer', version: '1.0.0' },
     protocolVersion: '2026-01-26',
   },
 });
 
-// Listen for host messages
+// Report initial height immediately
+reportHeight(400);
+
+// Listen for ALL host messages and extract GLB data
 window.addEventListener('message', (event) => {
   const data = event.data;
-  if (!data || !data.jsonrpc) return;
+  if (!data || typeof data !== 'object') return;
 
-  // Handle tool result notification
+  // Log all messages for debugging
+  console.log('[vcad-viewer] message:', data.method || (data.result ? 'response' : 'unknown'));
+
+  // Handle tool result notification (method-based)
   if (data.method === 'ui/notifications/tool-result') {
-    handleToolResult(data.params);
+    extractGlb(data.params?.result);
+    extractGlb(data.params);
   }
 
-  // Handle tool input notification (we can also extract from input)
-  if (data.method === 'ui/notifications/tool-input') {
-    // Input notifications arrive before results; nothing to render yet
+  // Handle JSON-RPC response (id-based, like PostHog receives)
+  if (data.result) {
+    extractGlb(data.result);
+  }
+
+  // Handle structuredContent (PostHog-style)
+  if (data.result?.structuredContent) {
+    extractGlb(data.result.structuredContent);
   }
 });
 
-function handleToolResult(params) {
-  // The result content is an array of content blocks
-  const content = params?.result;
-  if (!content) return;
+// ── "Open in vcad.io" deep link ──────────────────────────────
+let vcodeDoc = null;
+const openBtn = document.getElementById('open-btn');
 
-  // Content may be a string or an array of content blocks
+openBtn.addEventListener('click', () => {
+  if (!vcodeDoc) return;
+  // Compress with pako (lightweight gzip) and base64url-encode
+  // For now, use uncompressed base64url as fallback
+  const encoded = btoa(unescape(encodeURIComponent(vcodeDoc)))
+    .replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
+  const url = 'https://vcad.io/#/new?doc=' + encoded;
+  // Use MCP Apps openLinks capability if available, else window.open
+  sendToHost({
+    jsonrpc: '2.0',
+    id: messageId++,
+    method: 'ui/openLink',
+    params: { url },
+  });
+  window.open(url, '_blank');
+});
+
+function extractGlb(obj) {
+  if (!obj) return;
+
+  // Direct _vcad_glb on the object
+  if (obj._vcad_glb) {
+    loadGlb(obj._vcad_glb);
+    return;
+  }
+
+  // Check content array for GLB blocks and VCode text
+  const content = obj.content || obj;
   const blocks = Array.isArray(content) ? content : [];
-
-  // Look for our GLB preview marker in text content blocks
   for (const block of blocks) {
-    if (block.type === 'text' && block.text) {
+    if (block?.type === 'text' && block.text) {
+      // Capture VCode IR for the "Open in vcad.io" button
+      if (block.text.startsWith('# vcad')) {
+        vcodeDoc = block.text;
+        openBtn.style.display = 'block';
+      }
       try {
-        // Try to parse as JSON to find _vcad_glb marker
         const parsed = JSON.parse(block.text);
         if (parsed._vcad_glb) {
           loadGlb(parsed._vcad_glb);
           return;
         }
       } catch {
-        // Not JSON or no marker, check for raw base64 prefix
         if (block.text.startsWith('VCAD_GLB:')) {
           loadGlb(block.text.slice(9));
           return;

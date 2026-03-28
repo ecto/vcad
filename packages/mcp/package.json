@@ -5,7 +5,13 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "vcad-mcp": "dist/index.js"
+    "vcad-mcp": "dist/index.js",
+    "vcad-mcp-http": "dist/http.js"
+  },
+  "exports": {
+    ".": "./dist/index.js",
+    "./server": "./dist/server.js",
+    "./viewer": "./dist/viewer.js"
   },
   "files": [
     "dist"

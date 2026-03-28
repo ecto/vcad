@@ -6,6 +6,11 @@
  * via the Model Context Protocol.
  */
 
+// Redirect console.log to stderr so WASM init messages don't
+// corrupt the JSON-RPC stdio transport (which uses stdout).
+const _origLog = console.log;
+console.log = (...args: unknown[]) => console.error(...args);
+
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createServer } from "./server.js";
 

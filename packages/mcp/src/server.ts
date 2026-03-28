@@ -72,11 +72,13 @@ const UI_META = {
   ui: {
     resourceUri: VIEWER_RESOURCE_URI,
   },
+  // Flat key format also required by Claude Desktop MCP Apps protocol
+  "ui/resourceUri": VIEWER_RESOURCE_URI,
 };
 
-export async function createServer(): Promise<Server> {
-  // Initialize the WASM engine
-  const engine = await Engine.init();
+export async function createServer(existingEngine?: Engine): Promise<Server> {
+  // Initialize the WASM engine (or reuse one provided by the caller)
+  const engine = existingEngine ?? await Engine.init();
 
   const server = new Server(
     {
@@ -87,6 +89,9 @@ export async function createServer(): Promise<Server> {
       capabilities: {
         tools: {},
         resources: {},
+        // Acknowledge MCP Apps UI extension so Claude Desktop renders the viewer iframe.
+        // The extension key is not in the typed ServerCapabilities schema so we spread as object.
+        ...({ extensions: { "io.modelcontextprotocol/ui": { mimeTypes: [MCP_APP_MIME_TYPE] } } } as object),
       },
     },
   );

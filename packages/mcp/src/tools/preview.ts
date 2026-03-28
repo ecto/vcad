@@ -59,6 +59,7 @@ export function appendGlbPreview(
   const glbBase64 = generateGlbPreview(doc, engine);
   if (!glbBase64) return;
 
+  // Add as content block with GLB data for the MCP Apps viewer
   result.content.push({
     type: "text",
     text: JSON.stringify({ _vcad_glb: glbBase64 }),

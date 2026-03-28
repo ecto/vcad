@@ -1354,7 +1354,7 @@ export function createCadDocument(
 
   // Process assembly if provided
   const { assembly } = input as CreateInput;
-  if (assembly) {
+  if (assembly?.instances?.length) {
     // Create partDefs from parts
     doc.partDefs = {};
     for (const [partName, rootId] of partRootMap) {

@@ -7,7 +7,7 @@
 
 // Note: CHANGELOG.json is copied to dist/ during build
 // @ts-expect-error JSON import (path resolves correctly at runtime)
-import changelogData from "../CHANGELOG.json";
+import changelogData from "../CHANGELOG.json" with { type: "json" };
 
 export type ChangelogCategory = "feat" | "fix" | "breaking" | "perf" | "docs";
 
