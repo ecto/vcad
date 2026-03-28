@@ -190,7 +190,7 @@ export default defineConfig(({ mode }) => {
         workbox: {
           globPatterns: ["**/*.{js,css,html,woff,woff2,otf,wasm}"],
           globIgnores: ["**/ort-*.wasm"],
-          maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
+          maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
           runtimeCaching: [
             {
               urlPattern: /\.(woff|woff2|otf|ttf)$/,
