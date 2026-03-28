@@ -12,28 +12,29 @@
 
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-// Lazy imports — these are heavy (WASM engine), so we import dynamically
-// to avoid loading them on every cold start for non-MCP routes.
-let _createServer: typeof import("@vcad/mcp/server").createServer | undefined;
-let _StreamableHTTPServerTransport: typeof import("@modelcontextprotocol/sdk/server/streamableHttp.js").StreamableHTTPServerTransport | undefined;
-let _engine: Awaited<ReturnType<typeof import("@vcad/engine").Engine.init>> | undefined;
+// Lazy-load heavy deps on first request (WASM engine ~8MB).
+// Module-scope caching keeps them warm across Vercel invocations.
+let _deps: {
+  createServer: typeof import("../../mcp/src/server.js").createServer;
+  StreamableHTTPServerTransport: typeof import("@modelcontextprotocol/sdk/server/streamableHttp.js").StreamableHTTPServerTransport;
+  engine: unknown;
+} | undefined;
 
-async function getServerDeps() {
-  if (!_createServer) {
+async function getDeps() {
+  if (!_deps) {
     const [mcpMod, sdkMod, engineMod] = await Promise.all([
-      import("@vcad/mcp/server"),
+      import("../../mcp/src/server.js"),
       import("@modelcontextprotocol/sdk/server/streamableHttp.js"),
       import("@vcad/engine"),
     ]);
-    _createServer = mcpMod.createServer;
-    _StreamableHTTPServerTransport = sdkMod.StreamableHTTPServerTransport;
-    _engine = await engineMod.Engine.init();
+    const engine = await engineMod.Engine.init();
+    _deps = {
+      createServer: mcpMod.createServer,
+      StreamableHTTPServerTransport: sdkMod.StreamableHTTPServerTransport,
+      engine,
+    };
   }
-  return {
-    createServer: _createServer!,
-    StreamableHTTPServerTransport: _StreamableHTTPServerTransport!,
-    engine: _engine!,
-  };
+  return _deps;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -56,7 +57,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const { createServer, StreamableHTTPServerTransport, engine } =
-      await getServerDeps();
+      await getDeps();
 
     const server = await createServer(engine);
     const transport = new StreamableHTTPServerTransport({
