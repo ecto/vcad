@@ -4,37 +4,23 @@
  * Stateless: each request creates a fresh Server + Transport,
  * handles the request, and disposes. The WASM engine is initialized
  * once at module scope and reused across warm invocations.
- *
- * Endpoint: POST /api/mcp (MCP protocol)
- *           GET  /api/mcp (SSE stream, if needed)
- *           DELETE /api/mcp (session close, no-op in stateless mode)
  */
 
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
-// Lazy-load heavy deps on first request (WASM engine ~8MB).
-// Module-scope caching keeps them warm across Vercel invocations.
-let _deps: {
-  createServer: typeof import("../../mcp/src/server.js").createServer;
-  StreamableHTTPServerTransport: typeof import("@modelcontextprotocol/sdk/server/streamableHttp.js").StreamableHTTPServerTransport;
-  engine: unknown;
-} | undefined;
+// Use workspace package imports (Vercel resolves these via node_modules)
+import { createServer } from "@vcad/mcp/server";
+import { Engine } from "@vcad/engine";
 
-async function getDeps() {
-  if (!_deps) {
-    const [mcpMod, sdkMod, engineMod] = await Promise.all([
-      import("../../mcp/src/server.js"),
-      import("@modelcontextprotocol/sdk/server/streamableHttp.js"),
-      import("@vcad/engine"),
-    ]);
-    const engine = await engineMod.Engine.init();
-    _deps = {
-      createServer: mcpMod.createServer,
-      StreamableHTTPServerTransport: sdkMod.StreamableHTTPServerTransport,
-      engine,
-    };
+// Module-scope engine — survives warm invocations
+let _engine: Engine | undefined;
+
+async function getEngine(): Promise<Engine> {
+  if (!_engine) {
+    _engine = await Engine.init();
   }
-  return _deps;
+  return _engine;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -56,9 +42,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { createServer, StreamableHTTPServerTransport, engine } =
-      await getDeps();
-
+    const engine = await getEngine();
     const server = await createServer(engine);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined, // stateless
