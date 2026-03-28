@@ -8,7 +8,9 @@
       "runtime": "@vercel/node@3"
     }
   },
-  "rewrites": [
-    { "source": "/api/:path*", "destination": "/packages/api/api/:path*" }
+  "routes": [
+    { "src": "/api/(.*)", "dest": "/packages/api/api/$1" },
+    { "handle": "filesystem" },
+    { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
