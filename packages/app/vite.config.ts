@@ -216,8 +216,6 @@ export default defineConfig(({ mode }) => {
       plugins: () => [wasm(), topLevelAwait()],
     },
     build: {
-      outDir: resolve(__dirname, "../../dist"),
-      emptyOutDir: true,
       rollupOptions: {
         output: {
           manualChunks: {
