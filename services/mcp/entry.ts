@@ -11,7 +11,7 @@
  * 3. Construct Engine with the bindings from the initialized module
  */
 
-import type { VercelRequest, VercelResponse } from "@vercel/node";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer } from "@vcad/mcp/server";
 import { Engine } from "@vcad/engine";
@@ -62,9 +62,16 @@ async function getEngine(): Promise<Engine> {
   return _engine;
 }
 
+/** Send a JSON response using raw Node.js API (Build Output API
+ *  serves raw ServerResponse, not Vercel's enhanced VercelResponse). */
+function sendJson(res: ServerResponse, status: number, data: unknown): void {
+  res.writeHead(status, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(data));
+}
+
 export default async function handler(
-  req: VercelRequest,
-  res: VercelResponse,
+  req: IncomingMessage,
+  res: ServerResponse,
 ): Promise<void> {
   // CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -79,7 +86,8 @@ export default async function handler(
   );
 
   if (req.method === "OPTIONS") {
-    res.status(204).end();
+    res.writeHead(204);
+    res.end();
     return;
   }
 
@@ -87,13 +95,13 @@ export default async function handler(
   if (req.method === "GET" && req.url === "/health") {
     try {
       const engine = await getEngine();
-      res.status(200).json({
+      sendJson(res, 200, {
         status: "ok",
         engine: !!engine,
         timestamp: new Date().toISOString(),
       });
     } catch (err) {
-      res.status(500).json({
+      sendJson(res, 500, {
         status: "error",
         error: err instanceof Error ? err.message : String(err),
       });
@@ -101,6 +109,7 @@ export default async function handler(
     return;
   }
 
+  // MCP endpoint — parse body for POST, then delegate to transport
   try {
     const engine = await getEngine();
     const server = await createServer(engine);
@@ -111,7 +120,13 @@ export default async function handler(
     await server.connect(transport);
 
     try {
-      await transport.handleRequest(req, res, req.body);
+      if (req.method === "POST") {
+        const body = await readBody(req);
+        const parsed = JSON.parse(body);
+        await transport.handleRequest(req, res, parsed);
+      } else {
+        await transport.handleRequest(req, res);
+      }
     } finally {
       await transport.close();
       await server.close();
@@ -119,7 +134,17 @@ export default async function handler(
   } catch (err) {
     console.error("[vcad-mcp] Error:", err);
     if (!res.headersSent) {
-      res.status(500).json({ error: "Internal server error" });
+      sendJson(res, 500, { error: "Internal server error" });
     }
   }
+}
+
+/** Read request body as string. */
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+    req.on("error", reject);
+  });
 }

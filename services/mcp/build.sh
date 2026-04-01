@@ -30,7 +30,6 @@ npx esbuild@latest entry.ts \
   --target=node20 \
   --format=esm \
   --outfile="$OUT/functions/mcp.func/index.mjs" \
-  --external:@vercel/node \
   --banner:js="import { createRequire } from 'module'; const require = createRequire(import.meta.url);"
 
 # ── 4. Copy WASM binary next to the bundle ───────────────────
@@ -55,6 +54,11 @@ cat > "$OUT/config.json" << 'EOF'
   "version": 3,
   "routes": [
     {
+      "src": "^/$",
+      "status": 308,
+      "headers": { "Location": "https://docs.vcad.io/mcp" }
+    },
+    {
       "src": "/mcp",
       "methods": ["POST", "GET", "DELETE", "OPTIONS"],
       "dest": "/mcp"
@@ -62,11 +66,6 @@ cat > "$OUT/config.json" << 'EOF'
     {
       "src": "/health",
       "methods": ["GET"],
-      "dest": "/mcp"
-    },
-    {
-      "src": "/(.*)",
-      "status": 404,
       "dest": "/mcp"
     }
   ]
