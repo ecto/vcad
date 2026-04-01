@@ -22,7 +22,6 @@ const subcategoryMeta: Record<string, { title: string; badgeClass: string }> = {
   cli: { title: "CLI", badgeClass: "bg-yellow-500/20 text-yellow-500" },
   mcp: { title: "MCP Tools", badgeClass: "bg-purple-500/20 text-purple-500" },
   format: { title: "IR & Format", badgeClass: "bg-orange-500/20 text-orange-500" },
-  loon: { title: "Loon Language", badgeClass: "bg-pink-500/20 text-pink-500" },
 };
 
 export async function generateStaticParams() {

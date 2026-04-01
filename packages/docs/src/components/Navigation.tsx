@@ -36,7 +36,6 @@ import {
   Link as LinkIcon,
   Factory,
   BracketsCurly,
-  Scroll,
   Plugs,
   Brain,
   ArrowsLeftRight,
@@ -124,7 +123,6 @@ const navGroups: NavGroup[] = [
           { label: "CLI", href: "/reference/cli", icon: <Terminal size={14} /> },
           { label: "MCP Tools", href: "/reference/mcp", icon: <Plugs size={14} /> },
           { label: "IR & Format", href: "/reference/format", icon: <BracketsCurly size={14} /> },
-          { label: "Loon Language", href: "/reference/loon", icon: <Scroll size={14} /> },
         ],
       },
       {

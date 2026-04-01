@@ -6,7 +6,6 @@ import {
   Terminal,
   Robot,
   TreeStructure,
-  Translate,
   ArrowRight,
 } from "@phosphor-icons/react/dist/ssr";
 import { getNestedContent } from "@/lib/content";
@@ -51,13 +50,6 @@ const subcategories = [
     description: "Document format, IR operations, and compact format for ML.",
     icon: TreeStructure,
     color: "text-orange-500",
-  },
-  {
-    id: "loon",
-    title: "Loon Language",
-    description: "Lisp-like CAD language with pipe operator and let bindings.",
-    icon: Translate,
-    color: "text-pink-500",
   },
 ];
 
