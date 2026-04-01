@@ -115,18 +115,13 @@ export default async function handler(
     const server = await createServer(engine);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined, // stateless
+      enableJsonResponse: true, // return JSON instead of SSE — Vercel buffers responses and adds Content-Length which breaks SSE streaming
     });
 
     await server.connect(transport);
 
     try {
-      if (req.method === "POST") {
-        const body = await readBody(req);
-        const parsed = JSON.parse(body);
-        await transport.handleRequest(req, res, parsed);
-      } else {
-        await transport.handleRequest(req, res);
-      }
+      await transport.handleRequest(req, res);
     } finally {
       await transport.close();
       await server.close();
@@ -137,14 +132,4 @@ export default async function handler(
       sendJson(res, 500, { error: "Internal server error" });
     }
   }
-}
-
-/** Read request body as string. */
-function readBody(req: IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
-    req.on("error", reject);
-  });
 }
