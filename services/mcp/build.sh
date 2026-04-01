@@ -56,7 +56,7 @@ cat > "$OUT/config.json" << 'EOF'
     {
       "src": "^/$",
       "status": 308,
-      "headers": { "Location": "https://docs.vcad.io/mcp" }
+      "headers": { "Location": "https://docs.vcad.io/reference/mcp/overview" }
     },
     {
       "src": "/mcp",

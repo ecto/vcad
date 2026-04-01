@@ -4,7 +4,30 @@ description: "All MCP server tools for AI-assisted CAD"
 order: 1
 ---
 
-The vcad MCP server exposes the parametric kernel as a set of tools that AI agents can call through the Model Context Protocol. The server runs locally via `npx @vcad/mcp` and includes the full WASM engine, so geometry evaluation happens on your machine.
+The vcad MCP server exposes the parametric kernel as a set of tools that AI agents can call through the Model Context Protocol. Connect to the hosted server or run it locally -- both include the full WASM engine for geometry evaluation.
+
+## Connect
+
+**Remote (Claude.ai, Claude Desktop, any MCP client):**
+
+```
+https://mcp.vcad.io/mcp
+```
+
+Add this URL as a custom connector in your MCP client. In Claude.ai: Settings > Connectors > Add custom connector.
+
+**Local (stdio, for Claude Code or Claude Desktop):**
+
+```json
+{
+  "mcpServers": {
+    "vcad": {
+      "command": "npx",
+      "args": ["-y", "@vcad/mcp"]
+    }
+  }
+}
+```
 
 This page lists every available tool with its purpose and key parameters. For setup instructions, see [MCP Server Setup](/tutorials/mcp/setup). For detailed usage of the core design tools, see [Creating Models with AI](/tutorials/mcp/create).
 
