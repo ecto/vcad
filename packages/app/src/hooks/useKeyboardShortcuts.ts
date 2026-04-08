@@ -178,21 +178,14 @@ export function useKeyboardShortcuts() {
         }
       }
 
-      // Enter sketch mode: S (takes priority when not in sketch)
-      if (e.key === "s" || e.key === "S") {
+      // Command palette: S (no modifiers, not in sketch)
+      if ((e.key === "s" || e.key === "S") && !mod && !e.shiftKey && !e.altKey) {
         const { active, faceSelectionMode } = useSketchStore.getState();
         if (!active && !faceSelectionMode) {
-          const hasParts = useDocumentStore.getState().parts.length > 0;
-          if (hasParts) {
-            // Has parts - enter face selection mode first
-            useSketchStore.getState().enterFaceSelectionMode();
-          } else {
-            // No parts - go directly to XY plane sketch
-            useSketchStore.getState().enterSketchMode("XY");
-          }
+          e.preventDefault();
+          useUiStore.getState().setCommandPaletteOpen(true);
           return;
         }
-        // Fall through to scale mode if already in sketch
       }
 
       // Transform modes
@@ -204,7 +197,7 @@ export function useKeyboardShortcuts() {
         setTransformMode("rotate");
         return;
       }
-      if (e.key === "s" || e.key === "S") {
+      if (e.shiftKey && (e.key === "s" || e.key === "S") && !mod) {
         setTransformMode("scale");
         return;
       }

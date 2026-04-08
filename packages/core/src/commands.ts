@@ -138,7 +138,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       label: "Scale Mode",
       icon: "ArrowsOut",
       keywords: ["scale", "resize", "size", "transform"],
-      shortcut: "S",
+      shortcut: "Shift+S",
       action: () => actions.setTransformMode("scale"),
     },
 
