@@ -20,11 +20,13 @@ import { FolderOpen } from "@phosphor-icons/react/dist/ssr/FolderOpen";
 import { CaretRight } from "@phosphor-icons/react/dist/ssr/CaretRight";
 import { Rocket } from "@phosphor-icons/react/dist/ssr/Rocket";
 import { FloppyDisk } from "@phosphor-icons/react/dist/ssr/FloppyDisk";
+import { ChatDots } from "@phosphor-icons/react/dist/ssr/ChatDots";
 import * as Popover from "@radix-ui/react-popover";
 import { Tooltip } from "@/components/ui/tooltip";
 import {
   useDocumentStore,
   useUiStore,
+  useChatStore,
 } from "@vcad/core";
 import { cn } from "@/lib/utils";
 import { examples } from "@/data/examples";
@@ -616,6 +618,7 @@ export function CornerIcons({ onAboutOpen, onSave, onOpen }: CornerIconsProps) {
   const toggleFeatureTree = useUiStore((s) => s.toggleFeatureTree);
   const featureTreeOpen = useUiStore((s) => s.featureTreeOpen);
   const isOrbiting = useUiStore((s) => s.isOrbiting);
+  const chatOpen = useChatStore((s) => s.open);
 
   // Adaptive text based on background luminance
   const bgLuminance = useBackgroundLuminance();
@@ -653,6 +656,15 @@ export function CornerIcons({ onAboutOpen, onSave, onOpen }: CornerIconsProps) {
         {/* Save - always visible */}
         <IconButton tooltip="Save (Cmd+S)" onClick={onSave}>
           <FloppyDisk size={18} />
+        </IconButton>
+
+        {/* Chat toggle */}
+        <IconButton
+          tooltip="Toggle chat"
+          onClick={() => useChatStore.getState().toggleOpen()}
+          active={chatOpen}
+        >
+          <ChatDots size={18} />
         </IconButton>
 
         {/* Settings menu (includes Open, Theme, Cmd+K, GitHub, Discord) */}

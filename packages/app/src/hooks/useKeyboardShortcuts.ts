@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useUiStore, useDocumentStore, useSketchStore } from "@vcad/core";
+import { useUiStore, useDocumentStore, useSketchStore, useChatStore } from "@vcad/core";
 import { useElectronicsStore } from "../stores/electronics-store";
 import { useNotificationStore } from "../stores/notification-store";
 import { useLogStore } from "../stores/log-store";
@@ -74,6 +74,13 @@ export function useKeyboardShortcuts() {
       if (mod && e.key === "j") {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent("vcad:open-chat"));
+        return;
+      }
+
+      // Toggle chat sidebar: Cmd+Shift+L
+      if (e.key === "l" && (e.metaKey || e.ctrlKey) && e.shiftKey) {
+        e.preventDefault();
+        useChatStore.getState().toggleOpen();
         return;
       }
 
