@@ -33,6 +33,7 @@ const PrintPanel = lazy(() => import("@/components/print").then(m => ({ default:
 const DfmOverlay = lazy(() => import("@/components/print/DfmOverlay").then(m => ({ default: m.DfmOverlay })));
 const CamPanel = lazy(() => import("@/components/cam").then(m => ({ default: m.CamPanel })));
 const AIPanel = lazy(() => import("@/components/AIPanel").then(m => ({ default: m.AIPanel })));
+const ChatSidebar = lazy(() => import("@/components/ChatSidebar").then(m => ({ default: m.ChatSidebar })));
 const LoonEditor = lazy(() => import("@/components/LoonEditor").then(m => ({ default: m.LoonEditor })));
 const DocumentPicker = lazy(() => import("@/components/DocumentPicker").then(m => ({ default: m.DocumentPicker })));
 const OfflineIndicator = lazy(() => import("@/components/OfflineIndicator").then(m => ({ default: m.OfflineIndicator })));
@@ -642,6 +643,11 @@ export function App() {
           {/* AI panel (temp - for testing cad0-mini) */}
           <Suspense fallback={null}>
             <AIPanel open={aiPanelOpen} onOpenChange={setAiPanelOpen} />
+          </Suspense>
+
+          {/* Chat sidebar */}
+          <Suspense fallback={null}>
+            <ChatSidebar />
           </Suspense>
           {!electronicsActive && (
             <>
