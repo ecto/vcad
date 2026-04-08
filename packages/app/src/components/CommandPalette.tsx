@@ -38,7 +38,8 @@ import { useNotificationStore } from "@/stores/notification-store";
 import { useRequireAuth, AuthModal, useAuthStore } from "@vcad/auth";
 import { useOnboardingStore } from "@/stores/onboarding-store";
 import type { Command } from "@vcad/core";
-import { createCommandRegistry, createDefaultCommandActions, useUiStore, useDocumentStore, useEngineStore, exportStlBlob, exportGltfBlob, parseVcadFile } from "@vcad/core";
+import { createCommandRegistry, createDefaultCommandActions, useUiStore, useDocumentStore, useEngineStore, exportStlBlob, exportGltfBlob, parseVcadFile, useChatStore } from "@vcad/core";
+import type { SelectionContext } from "@vcad/core";
 import { downloadBlob } from "@/lib/download";
 import { cn } from "@/lib/utils";
 import { examples, type Example } from "@/data/examples";
@@ -528,9 +529,24 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
           const cmd = filteredCommands[selectedIndex];
           if (cmd) executeCommand(cmd);
         }
-        // Otherwise, if we have a query, generate with AI
+        // Otherwise, escalate to AI chat sidebar
         else if (aiPrompt) {
-          handleAIGenerate(aiPrompt);
+          // Escalate to AI chat sidebar
+          const chatStore = useChatStore.getState();
+          chatStore.setOpen(true);
+          const selContext = Array.from(selectedPartIds).map((id) => {
+            const part = parts.find((p) => p.id === id);
+            return part
+              ? { partId: id, partName: part.name, geometryType: "part" as const }
+              : null;
+          }).filter(Boolean) as SelectionContext[];
+          chatStore.addUserMessage(aiPrompt, selContext);
+          window.dispatchEvent(
+            new CustomEvent("vcad:chat-send", {
+              detail: { content: aiPrompt, context: selContext },
+            }),
+          );
+          onOpenChange(false);
         }
         break;
       case "Escape":
@@ -706,7 +722,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
                 )}
                 <div className="px-3 py-1.5">
                   <span className="text-[10px] font-medium text-text-muted uppercase tracking-wider">
-                    AI Generate
+                    Ask AI
                   </span>
                 </div>
 
