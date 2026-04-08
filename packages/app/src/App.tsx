@@ -57,6 +57,7 @@ import {
 import { useEngine } from "@/hooks/useEngine";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useAutoSave } from "@/hooks/useAutoSave";
+import { useChatHandler } from "@/hooks/useChatHandler";
 import { saveDocument } from "@/lib/save-load";
 import {
   getMostRecentDocument,
@@ -127,6 +128,7 @@ export function App() {
   useKeyboardShortcuts();
   useThemeSync();
   useAutoSave();
+  useChatHandler();
 
   const [aboutOpen, setAboutOpen] = useState(false);
   const [documentPickerOpen, setDocumentPickerOpen] = useState(false);
