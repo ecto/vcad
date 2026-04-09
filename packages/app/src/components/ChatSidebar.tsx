@@ -11,6 +11,9 @@ import {
   useChatStore,
   useUiStore,
   useDocumentStore,
+  useEngineStore,
+  parseVcadFile,
+  documentToLoon,
 } from "@vcad/core";
 import type { SelectionContext, ChatMessage, ToolCallInfo } from "@vcad/core";
 
@@ -155,8 +158,118 @@ function MessageRow({ msg }: { msg: ChatMessage }) {
 }
 
 // ---------------------------------------------------------------------------
+// SourcePanel — live-synced loon source view of the current document
+// ---------------------------------------------------------------------------
+
+function SourcePanel() {
+  const document = useDocumentStore((s) => s.document);
+  const streaming = useChatStore((s) => s.streaming);
+  const isDraggingGizmo = useUiStore((s) => s.isDraggingGizmo);
+  const [localSource, setLocalSource] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [isDirty, setIsDirty] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Sync from the document, but skip while user is editing, AI is streaming, or gizmo is being dragged
+  useEffect(() => {
+    if (isDirty || streaming || isDraggingGizmo) return;
+    // Debounce to avoid re-entrant WASM calls during rapid document updates
+    if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+    syncTimerRef.current = setTimeout(() => {
+      try {
+        setLocalSource(documentToLoon(document));
+        setError(null);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    }, 150);
+    return () => {
+      if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+    };
+  }, [document, isDirty, streaming, isDraggingGizmo]);
+
+  const evalAndLoad = useCallback((source: string) => {
+    const engine = useEngineStore.getState().engine;
+    if (!engine) return;
+    try {
+      const evalLoon = (s: string) => {
+        const doc = engine.evalVcadSource(s);
+        if (!doc) throw new Error("Loon evaluation not supported");
+        return JSON.stringify(doc);
+      };
+      const vcadFile = parseVcadFile(source, evalLoon);
+      useDocumentStore.getState().loadDocument(vcadFile);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
+  const handleChange = useCallback(
+    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+      const value = e.target.value;
+      setLocalSource(value);
+      setIsDirty(true);
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        evalAndLoad(value);
+        setIsDirty(false);
+      }, 300);
+    },
+    [evalAndLoad],
+  );
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        evalAndLoad(localSource);
+      }
+      if (e.key === "Tab") {
+        e.preventDefault();
+        const ta = e.currentTarget;
+        const start = ta.selectionStart;
+        const end = ta.selectionEnd;
+        const val = ta.value;
+        const next = val.substring(0, start) + "  " + val.substring(end);
+        setLocalSource(next);
+        requestAnimationFrame(() => {
+          ta.selectionStart = ta.selectionEnd = start + 2;
+        });
+      }
+    },
+    [localSource, evalAndLoad],
+  );
+
+  return (
+    <div className="flex h-full flex-col">
+      <textarea
+        value={localSource}
+        onChange={handleChange}
+        onKeyDown={handleKeyDown}
+        spellCheck={false}
+        className="flex-1 resize-none bg-bg p-3 font-mono text-[10px] leading-relaxed text-text outline-none"
+        placeholder={"; Write loon source here\n[cube 20.0 20.0 20.0]"}
+      />
+      {error && (
+        <div className="border-t border-danger/30 bg-danger/10 px-3 py-2 text-[10px] text-danger shrink-0">
+          {error}
+        </div>
+      )}
+      <div className="border-t border-border px-3 py-1 text-[9px] text-text-muted shrink-0">
+        {isDirty ? "Editing (will eval on pause)" : "Synced with document"} · ⌘⏎ to eval
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // ChatSidebar
 // ---------------------------------------------------------------------------
+
+type SidebarTab = "chat" | "source";
 
 export function ChatSidebar() {
   const open = useChatStore((s) => s.open);
@@ -165,6 +278,7 @@ export function ChatSidebar() {
   const setOpen = useChatStore((s) => s.setOpen);
   const clearThread = useChatStore((s) => s.clearThread);
 
+  const [activeTab, setActiveTab] = useState<SidebarTab>("chat");
   const [input, setInput] = useState("");
   const [selectionContext, removeContextPart] = useSelectionContext();
 
@@ -220,17 +334,41 @@ export function ChatSidebar() {
         "bg-card border-l border-border"
       )}
     >
-      {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-border shrink-0">
-        <span className="text-[11px] font-semibold text-text flex-1">Chat</span>
+      {/* Header with tabs */}
+      <div className="flex items-center gap-1 px-2 py-1.5 border-b border-border shrink-0">
         <button
-          onClick={clearThread}
-          className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-text-muted hover:text-text hover:bg-hover rounded transition-colors"
-          title="New thread"
+          onClick={() => setActiveTab("chat")}
+          className={cn(
+            "px-2 py-1 text-[10px] font-semibold rounded transition-colors",
+            activeTab === "chat"
+              ? "bg-accent/10 text-accent"
+              : "text-text-muted hover:text-text hover:bg-hover"
+          )}
         >
-          <Plus size={11} />
-          New
+          Chat
         </button>
+        <button
+          onClick={() => setActiveTab("source")}
+          className={cn(
+            "px-2 py-1 text-[10px] font-semibold rounded transition-colors",
+            activeTab === "source"
+              ? "bg-accent/10 text-accent"
+              : "text-text-muted hover:text-text hover:bg-hover"
+          )}
+        >
+          Source
+        </button>
+        <div className="flex-1" />
+        {activeTab === "chat" && (
+          <button
+            onClick={clearThread}
+            className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-text-muted hover:text-text hover:bg-hover rounded transition-colors"
+            title="New thread"
+          >
+            <Plus size={11} />
+            New
+          </button>
+        )}
         <button
           onClick={() => setOpen(false)}
           className="flex h-5 w-5 items-center justify-center text-text-muted hover:text-text hover:bg-hover rounded transition-colors"
@@ -239,6 +377,12 @@ export function ChatSidebar() {
           <X size={13} />
         </button>
       </div>
+
+      {/* Source tab content */}
+      {activeTab === "source" && <SourcePanel />}
+
+      {/* Chat tab content — only rendered when chat tab active */}
+      {activeTab === "chat" && <>
 
       {/* Message thread */}
       <div
@@ -325,6 +469,7 @@ export function ChatSidebar() {
           </button>
         </div>
       </div>
+      </>}
     </div>
   );
 }

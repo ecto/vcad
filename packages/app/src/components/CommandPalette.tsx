@@ -540,7 +540,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
               ? { partId: id, partName: part.name, geometryType: "part" as const }
               : null;
           }).filter(Boolean) as SelectionContext[];
-          chatStore.addUserMessage(aiPrompt, selContext);
+          // Handler adds the user message — don't double-add here
           window.dispatchEvent(
             new CustomEvent("vcad:chat-send", {
               detail: { content: aiPrompt, context: selContext },

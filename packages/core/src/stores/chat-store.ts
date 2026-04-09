@@ -69,9 +69,16 @@ function makeId(): string {
 // Store
 // ---------------------------------------------------------------------------
 
+const WELCOME_MESSAGE: ChatMessage = {
+  id: "welcome",
+  role: "assistant",
+  content: "Hi! I'm your vcad assistant. I can create and modify parts, answer questions about CAD, and help you design. Try asking me to add a shape, or select something in the viewport and ask me about it.",
+  timestamp: Date.now(),
+};
+
 export const useChatStore = create<ChatState>((set) => ({
-  messages: [],
-  open: false,
+  messages: [WELCOME_MESSAGE],
+  open: true,
   streaming: false,
   error: null,
 
@@ -120,7 +127,7 @@ export const useChatStore = create<ChatState>((set) => ({
 
   setError: (error) => set({ error }),
 
-  clearThread: () => set({ messages: [], streaming: false, error: null }),
+  clearThread: () => set({ messages: [{ ...WELCOME_MESSAGE, timestamp: Date.now() }], streaming: false, error: null }),
 
-  reset: () => set({ messages: [], open: false, streaming: false, error: null }),
+  reset: () => set({ messages: [{ ...WELCOME_MESSAGE, timestamp: Date.now() }], open: true, streaming: false, error: null }),
 }));

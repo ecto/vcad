@@ -2,11 +2,18 @@ import type { SelectionContext } from "@vcad/core";
 
 export interface ChatRequestMessage {
   role: "user" | "assistant";
-  content: string;
+  content: string | object[];
+}
+
+export interface ToolCall {
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
 }
 
 export interface ChatStreamCallbacks {
   onText: (text: string) => void;
+  onToolCall: (tool: ToolCall) => void;
   onError: (error: string) => void;
   onFinish: () => void;
 }
@@ -48,13 +55,55 @@ export async function streamChat(
 
     const decoder = new TextDecoder();
     let fullText = "";
+    let buffer = "";
+    let currentToolId = "";
+    let currentToolName = "";
+    let currentToolJson = "";
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      const chunk = decoder.decode(value, { stream: true });
-      fullText += chunk;
-      callbacks.onText(fullText);
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          const event = JSON.parse(line.slice(6));
+          switch (event.type) {
+            case "text":
+              fullText += event.text;
+              callbacks.onText(fullText);
+              break;
+            case "tool_start":
+              currentToolId = event.id;
+              currentToolName = event.name;
+              currentToolJson = "";
+              break;
+            case "tool_delta":
+              currentToolJson += event.json;
+              break;
+            case "block_stop":
+              if (currentToolId && currentToolName) {
+                let args: Record<string, unknown> = {};
+                try { args = JSON.parse(currentToolJson); } catch { /* empty args */ }
+                callbacks.onToolCall({
+                  id: currentToolId,
+                  name: currentToolName,
+                  args,
+                });
+                currentToolId = "";
+                currentToolName = "";
+                currentToolJson = "";
+              }
+              break;
+            case "done":
+              break;
+          }
+        } catch { /* skip parse errors */ }
+      }
     }
 
     callbacks.onFinish();

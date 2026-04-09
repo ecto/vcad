@@ -19,8 +19,9 @@ async function loadWasm(): Promise<typeof wasmModule | null> {
   }
 }
 
-// Eagerly start loading
-loadWasm();
+// Lazy: do NOT eagerly load — let the main engine initialize WASM first.
+// Calling this at module load races with the main engine init and causes
+// double-instantiation of the WASM module, corrupting the CRDT document engine.
 
 /** Convert a Document to loon source code. */
 export function documentToLoon(doc: Document): string {

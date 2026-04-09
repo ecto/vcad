@@ -117,13 +117,122 @@ function devApiPlugin(env: Record<string, string>): Plugin {
         }
 
         // Build system prompt with context
-        let systemPrompt = "You are vcad's AI assistant — a parametric CAD copilot. Coordinate system: Z-up. Units: millimeters. Be concise.";
+        let systemPrompt = `You are vcad's AI assistant — a parametric CAD copilot. Coordinate system: Z-up (X right, Y forward, Z up). Units: millimeters. Be concise.
+
+When asked to create or modify geometry, use the available tools. After a tool call, briefly confirm what you did.
+When the user refers to "this" or "it" without specifics, use the selected geometry context provided.`;
         if (context?.selectedParts?.length) {
           const partList = context.selectedParts
-            .map((p: { partName: string; geometryType: string; partId: string }) => `- ${p.partName} (${p.geometryType})`)
+            .map((p: { partName: string; geometryType: string; partId: string }) => `- ${p.partName} (${p.geometryType}, id: ${p.partId})`)
             .join("\n");
-          systemPrompt += `\n\nSelected geometry:\n${partList}`;
+          systemPrompt += `\n\nCurrently selected geometry:\n${partList}`;
         }
+
+        // Tool definitions for CAD operations
+        const tools = [
+          {
+            name: "add_primitive",
+            description: "Add a primitive shape to the scene. Returns the new part ID.",
+            input_schema: {
+              type: "object" as const,
+              properties: {
+                kind: { type: "string", enum: ["cube", "cylinder", "sphere"], description: "Primitive type" },
+              },
+              required: ["kind"],
+            },
+          },
+          {
+            name: "transform_part",
+            description: "Translate, rotate, or scale a part. Coordinates are in mm, angles in degrees.",
+            input_schema: {
+              type: "object" as const,
+              properties: {
+                partId: { type: "string", description: "Part ID to transform. Use the ID from selected geometry context." },
+                translate: { type: "object", properties: { x: { type: "number" }, y: { type: "number" }, z: { type: "number" } }, description: "Translation offset in mm" },
+                rotate: { type: "object", properties: { x: { type: "number" }, y: { type: "number" }, z: { type: "number" } }, description: "Rotation angles in degrees" },
+                scale: { type: "object", properties: { x: { type: "number" }, y: { type: "number" }, z: { type: "number" } }, description: "Scale factors" },
+              },
+              required: ["partId"],
+            },
+          },
+          {
+            name: "add_fillet",
+            description: "Apply a fillet (rounded edge) to a part.",
+            input_schema: {
+              type: "object" as const,
+              properties: {
+                partId: { type: "string", description: "Part ID to fillet" },
+                radius: { type: "number", description: "Fillet radius in mm" },
+              },
+              required: ["partId", "radius"],
+            },
+          },
+          {
+            name: "add_chamfer",
+            description: "Apply a chamfer (beveled edge) to a part.",
+            input_schema: {
+              type: "object" as const,
+              properties: {
+                partId: { type: "string", description: "Part ID to chamfer" },
+                distance: { type: "number", description: "Chamfer distance in mm" },
+              },
+              required: ["partId", "distance"],
+            },
+          },
+          {
+            name: "add_shell",
+            description: "Hollow out a part, leaving walls of the specified thickness.",
+            input_schema: {
+              type: "object" as const,
+              properties: {
+                partId: { type: "string", description: "Part ID to shell" },
+                thickness: { type: "number", description: "Wall thickness in mm" },
+              },
+              required: ["partId", "thickness"],
+            },
+          },
+          {
+            name: "apply_boolean",
+            description: "Apply a boolean operation between two selected parts. Requires exactly 2 parts selected.",
+            input_schema: {
+              type: "object" as const,
+              properties: {
+                operation: { type: "string", enum: ["union", "difference", "intersection"], description: "Boolean operation type" },
+              },
+              required: ["operation"],
+            },
+          },
+          {
+            name: "delete_part",
+            description: "Delete a part from the scene.",
+            input_schema: {
+              type: "object" as const,
+              properties: {
+                partId: { type: "string", description: "Part ID to delete" },
+              },
+              required: ["partId"],
+            },
+          },
+          {
+            name: "inspect_part",
+            description: "Get information about a part: dimensions, volume, type.",
+            input_schema: {
+              type: "object" as const,
+              properties: {
+                partId: { type: "string", description: "Part ID to inspect" },
+              },
+              required: ["partId"],
+            },
+          },
+          {
+            name: "list_parts",
+            description: "List all parts in the current document with their IDs, names, and types.",
+            input_schema: {
+              type: "object" as const,
+              properties: {},
+            },
+          },
+        ];
 
         try {
           const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
@@ -138,10 +247,10 @@ function devApiPlugin(env: Record<string, string>): Plugin {
               max_tokens: 1024,
               system: systemPrompt,
               stream: true,
-              messages: messages.map((m: { role: string; content: string }) => ({
-                role: m.role,
-                content: m.content,
-              })),
+              tools,
+              // Pass content through as-is: can be string or array of content blocks
+              // (text, tool_use, tool_result) for Anthropic's tool calling protocol
+              messages,
             }),
           });
 
@@ -152,29 +261,40 @@ function devApiPlugin(env: Record<string, string>): Plugin {
             return;
           }
 
-          // Stream SSE response as plain text chunks
-          res.setHeader("Content-Type", "text/plain; charset=utf-8");
+          // Stream as newline-delimited JSON events so client can distinguish text vs tool_use
+          res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
           res.setHeader("Transfer-Encoding", "chunked");
+          res.setHeader("Cache-Control", "no-cache");
 
           const reader = anthropicRes.body?.getReader();
           if (!reader) { res.end(); return; }
 
           const decoder = new TextDecoder();
+          let sseBuffer = "";
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            const text = decoder.decode(value, { stream: true });
-            // Parse Anthropic SSE: extract text deltas
-            for (const line of text.split("\n")) {
+            sseBuffer += decoder.decode(value, { stream: true });
+            const lines = sseBuffer.split("\n");
+            sseBuffer = lines.pop() ?? "";
+            for (const line of lines) {
               if (!line.startsWith("data: ")) continue;
               const data = line.slice(6);
               if (data === "[DONE]") continue;
               try {
                 const event = JSON.parse(data);
-                if (event.type === "content_block_delta" && event.delta?.text) {
-                  res.write(event.delta.text);
+                if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
+                  res.write(`data: ${JSON.stringify({ type: "text", text: event.delta.text })}\n\n`);
+                } else if (event.type === "content_block_start" && event.content_block?.type === "tool_use") {
+                  res.write(`data: ${JSON.stringify({ type: "tool_start", id: event.content_block.id, name: event.content_block.name })}\n\n`);
+                } else if (event.type === "content_block_delta" && event.delta?.type === "input_json_delta") {
+                  res.write(`data: ${JSON.stringify({ type: "tool_delta", json: event.delta.partial_json })}\n\n`);
+                } else if (event.type === "content_block_stop") {
+                  res.write(`data: ${JSON.stringify({ type: "block_stop" })}\n\n`);
+                } else if (event.type === "message_stop") {
+                  res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
                 }
-              } catch { /* skip non-JSON lines */ }
+              } catch { /* skip non-JSON */ }
             }
           }
           res.end();
