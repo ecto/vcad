@@ -83,6 +83,109 @@ function devApiPlugin(env: Record<string, string>): Plugin {
   return {
     name: "dev-api",
     configureServer(server) {
+      // ── /api/chat — AI chat endpoint (dev only) ──────────────
+      server.middlewares.use(async (req, res, next) => {
+        if (req.url !== "/api/chat" || (req.method !== "POST" && req.method !== "OPTIONS")) {
+          return next();
+        }
+
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+        res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+
+        if (req.method === "OPTIONS") {
+          res.statusCode = 200;
+          res.end();
+          return;
+        }
+
+        let body = "";
+        for await (const chunk of req) body += chunk;
+        const { messages, context } = JSON.parse(body);
+
+        if (!messages?.length) {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ error: "messages required" }));
+          return;
+        }
+
+        const apiKey = env.ANTHROPIC_API_KEY;
+        if (!apiKey) {
+          res.statusCode = 503;
+          res.end(JSON.stringify({ error: "Set ANTHROPIC_API_KEY in .env.local for local chat development" }));
+          return;
+        }
+
+        // Build system prompt with context
+        let systemPrompt = "You are vcad's AI assistant — a parametric CAD copilot. Coordinate system: Z-up. Units: millimeters. Be concise.";
+        if (context?.selectedParts?.length) {
+          const partList = context.selectedParts
+            .map((p: { partName: string; geometryType: string; partId: string }) => `- ${p.partName} (${p.geometryType})`)
+            .join("\n");
+          systemPrompt += `\n\nSelected geometry:\n${partList}`;
+        }
+
+        try {
+          const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-api-key": apiKey,
+              "anthropic-version": "2023-06-01",
+            },
+            body: JSON.stringify({
+              model: "claude-sonnet-4-20250514",
+              max_tokens: 1024,
+              system: systemPrompt,
+              stream: true,
+              messages: messages.map((m: { role: string; content: string }) => ({
+                role: m.role,
+                content: m.content,
+              })),
+            }),
+          });
+
+          if (!anthropicRes.ok) {
+            const errText = await anthropicRes.text();
+            res.statusCode = anthropicRes.status;
+            res.end(errText);
+            return;
+          }
+
+          // Stream SSE response as plain text chunks
+          res.setHeader("Content-Type", "text/plain; charset=utf-8");
+          res.setHeader("Transfer-Encoding", "chunked");
+
+          const reader = anthropicRes.body?.getReader();
+          if (!reader) { res.end(); return; }
+
+          const decoder = new TextDecoder();
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const text = decoder.decode(value, { stream: true });
+            // Parse Anthropic SSE: extract text deltas
+            for (const line of text.split("\n")) {
+              if (!line.startsWith("data: ")) continue;
+              const data = line.slice(6);
+              if (data === "[DONE]") continue;
+              try {
+                const event = JSON.parse(data);
+                if (event.type === "content_block_delta" && event.delta?.text) {
+                  res.write(event.delta.text);
+                }
+              } catch { /* skip non-JSON lines */ }
+            }
+          }
+          res.end();
+        } catch (err) {
+          console.error("Chat API error:", err);
+          res.statusCode = 500;
+          res.end(JSON.stringify({ error: "Chat API error" }));
+        }
+      });
+
+      // ── /api/generate — cad0 inference endpoint ──────────────
       server.middlewares.use(async (req, res, next) => {
         if (req.url !== "/api/generate" || req.method !== "POST") {
           return next();
@@ -169,6 +272,9 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, resolve(__dirname, "../.."), "");
 
   return {
+    server: {
+      allowedHosts: ["mew"],
+    },
     envDir: "../../",
     define: {
       __APP_VERSION__: JSON.stringify(process.env.npm_package_version || "0.0.0"),

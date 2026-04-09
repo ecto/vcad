@@ -6,13 +6,18 @@ import { streamChat } from "@/lib/chat-api";
 export function useChatHandler() {
   const handleChatSend = useCallback(
     async (e: CustomEvent<{ content: string; context: SelectionContext[] }>) => {
-      const { context } = e.detail;
+      const { content, context } = e.detail;
       const store = useChatStore.getState();
 
-      const history = store.messages.slice(-20).map((msg) => ({
-        role: msg.role as "user" | "assistant",
-        content: msg.content,
-      }));
+      // Build history from prior messages (exclude empty), then append the new user message
+      const prior = store.messages
+        .filter((msg) => msg.content.trim() !== "")
+        .slice(-19)
+        .map((msg) => ({
+          role: msg.role as "user" | "assistant",
+          content: msg.content,
+        }));
+      const history = [...prior, { role: "user" as const, content }];
 
       store.addAssistantMessage("");
       store.setStreaming(true);
