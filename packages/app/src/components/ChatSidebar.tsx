@@ -138,20 +138,37 @@ function MessageRow({ msg }: { msg: ChatMessage }) {
         </div>
       )}
 
-      {/* Tool calls (assistant messages) */}
-      {!isUser && msg.toolCalls && msg.toolCalls.length > 0 && (
-        <div className="pl-5 mb-1.5">
-          {msg.toolCalls.map((call) => (
-            <ToolCallCard key={call.id} call={call} />
-          ))}
+      {/* Chronological parts (assistant messages with parts) */}
+      {!isUser && msg.parts && msg.parts.length > 0 ? (
+        <div className="pl-5 space-y-1.5">
+          {msg.parts.map((part, i) =>
+            part.type === "text" ? (
+              part.text.trim() ? (
+                <p key={`text-${i}`} className="text-[11px] text-text leading-relaxed whitespace-pre-wrap">
+                  {part.text}
+                </p>
+              ) : null
+            ) : (
+              <ToolCallCard key={part.tool.id} call={part.tool} />
+            )
+          )}
         </div>
-      )}
-
-      {/* Message text */}
-      {msg.content && (
-        <p className="pl-5 text-[11px] text-text leading-relaxed whitespace-pre-wrap">
-          {msg.content}
-        </p>
+      ) : (
+        <>
+          {/* Fallback: legacy tool calls + content for messages without parts */}
+          {!isUser && msg.toolCalls && msg.toolCalls.length > 0 && (
+            <div className="pl-5 mb-1.5">
+              {msg.toolCalls.map((call) => (
+                <ToolCallCard key={call.id} call={call} />
+              ))}
+            </div>
+          )}
+          {msg.content && (
+            <p className="pl-5 text-[11px] text-text leading-relaxed whitespace-pre-wrap">
+              {msg.content}
+            </p>
+          )}
+        </>
       )}
     </div>
   );

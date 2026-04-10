@@ -28,6 +28,8 @@ function getSupabaseCredentials(): { url: string; anonKey: string } | null {
  * Get or create the Supabase client.
  * Returns null if credentials are not configured.
  */
+let _supabaseWarned = false;
+
 export function getSupabase(): SupabaseClient | null {
   if (supabaseClient) {
     return supabaseClient;
@@ -35,9 +37,10 @@ export function getSupabase(): SupabaseClient | null {
 
   const credentials = getSupabaseCredentials();
   if (!credentials) {
-    console.warn(
-      "Supabase credentials not configured - auth features disabled"
-    );
+    if (!_supabaseWarned) {
+      console.warn("Supabase credentials not configured - auth features disabled");
+      _supabaseWarned = true;
+    }
     return null;
   }
 

@@ -1,6 +1,6 @@
 import { useEffect, useCallback } from "react";
 import { useChatStore, useDocumentStore, useUiStore } from "@vcad/core";
-import type { SelectionContext, ToolCallInfo } from "@vcad/core";
+import type { SelectionContext, ToolCallInfo, MessagePart } from "@vcad/core";
 import { streamChat } from "@/lib/chat-api";
 import type { ToolCall, ChatRequestMessage } from "@/lib/chat-api";
 
@@ -166,51 +166,72 @@ export function useChatHandler() {
       store.setError(null);
 
       const accumulatedToolCalls: ToolCallInfo[] = [];
-      let accumulatedText = "";
+      const parts: MessagePart[] = [];
+      let fullText = "";
       const MAX_TOOL_LOOPS = 5;
+
+      const updateUI = () => {
+        useChatStore.getState().updateLastAssistant(fullText, accumulatedToolCalls, [...parts]);
+      };
 
       try {
         for (let loop = 0; loop < MAX_TOOL_LOOPS; loop++) {
-          // Stream a turn — keep previously-accumulated text as a prefix
-          const textPrefix = accumulatedText ? accumulatedText + "\n\n" : "";
+          // Stream a turn — text gets appended to the current text part
           const { text, toolCalls, error } = await runTurn(history, context, (streamedText) => {
-            useChatStore.getState().updateLastAssistant(
-              textPrefix + streamedText,
-              accumulatedToolCalls.length > 0 ? accumulatedToolCalls : undefined,
-            );
+            // Replace the trailing text part with the latest streamed text
+            const lastPart = parts[parts.length - 1];
+            if (lastPart?.type === "text") {
+              lastPart.text = streamedText;
+            } else if (streamedText) {
+              parts.push({ type: "text", text: streamedText });
+            }
+            fullText = parts.filter((p) => p.type === "text").map((p) => (p as { type: "text"; text: string }).text).join("\n\n");
+            updateUI();
           });
-          accumulatedText = textPrefix + text;
+
+          // Finalize this turn's text part
+          if (text.trim()) {
+            const lastPart = parts[parts.length - 1];
+            if (lastPart?.type === "text") {
+              lastPart.text = text;
+            } else {
+              parts.push({ type: "text", text });
+            }
+          }
+          fullText = parts.filter((p) => p.type === "text").map((p) => (p as { type: "text"; text: string }).text).join("\n\n");
 
           if (error) {
+            parts.push({ type: "text", text: `Error: ${error}` });
+            fullText += `\n\nError: ${error}`;
             useChatStore.getState().setError(error);
-            useChatStore.getState().updateLastAssistant(
-              `${accumulatedText}\n\nError: ${error}`,
-              accumulatedToolCalls.length > 0 ? accumulatedToolCalls : undefined,
-            );
+            updateUI();
             break;
           }
 
           // If no tool calls, we're done
           if (toolCalls.length === 0) {
+            updateUI();
             break;
           }
 
-          // Record tool calls as pending, update UI
+          // Add tool calls as pending parts (chronologically after the text)
           for (const tool of toolCalls) {
-            accumulatedToolCalls.push({
+            const info: ToolCallInfo = {
               id: tool.id,
               name: tool.name,
               args: tool.args,
               result: undefined,
               status: "pending",
-            });
+            };
+            accumulatedToolCalls.push(info);
+            parts.push({ type: "tool", tool: info });
           }
-          useChatStore.getState().updateLastAssistant(accumulatedText, accumulatedToolCalls);
+          updateUI();
 
-          // Defer tool execution to next tick to keep WASM calls off the stream callback stack
+          // Defer tool execution to next tick
           await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-          // Execute tools and collect results
+          // Execute tools and update their status in-place
           const toolResults: Array<{ id: string; result: string; status: "success" | "error" }> = [];
           for (const tool of toolCalls) {
             const { result, status } = executeTool(tool);
@@ -221,7 +242,7 @@ export function useChatHandler() {
               entry.status = status;
             }
           }
-          useChatStore.getState().updateLastAssistant(accumulatedText, accumulatedToolCalls);
+          updateUI();
 
           // Append the assistant turn (with text + tool uses) and the user turn (with tool results)
           // to the history for the follow-up request.

@@ -20,12 +20,19 @@ export interface ToolCallInfo {
   status: "pending" | "success" | "error";
 }
 
+/** A chronological chunk in an assistant message — text or a tool call. */
+export type MessagePart =
+  | { type: "text"; text: string }
+  | { type: "tool"; tool: ToolCallInfo };
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
   context?: SelectionContext[];
   toolCalls?: ToolCallInfo[];
+  /** Chronological sequence of text and tool-call chunks. Used for inline rendering. */
+  parts?: MessagePart[];
   timestamp: number;
 }
 
@@ -46,7 +53,7 @@ export interface ChatState {
   // Message actions
   addUserMessage: (content: string, context?: SelectionContext[]) => void;
   addAssistantMessage: (content: string, toolCalls?: ToolCallInfo[]) => void;
-  updateLastAssistant: (content: string, toolCalls?: ToolCallInfo[]) => void;
+  updateLastAssistant: (content: string, toolCalls?: ToolCallInfo[], parts?: MessagePart[]) => void;
 
   // Status
   setStreaming: (streaming: boolean) => void;
@@ -114,12 +121,13 @@ export const useChatStore = create<ChatState>((set) => ({
       ],
     })),
 
-  updateLastAssistant: (content, toolCalls) =>
+  updateLastAssistant: (content, toolCalls, parts) =>
     set((s) => {
       const last = s.messages[s.messages.length - 1];
       if (!last || last.role !== "assistant") return s;
       const updated: ChatMessage = { ...last, content };
       if (toolCalls !== undefined) updated.toolCalls = toolCalls;
+      if (parts !== undefined) updated.parts = parts;
       return { messages: [...s.messages.slice(0, -1), updated] };
     }),
 

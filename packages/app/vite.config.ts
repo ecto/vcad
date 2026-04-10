@@ -435,7 +435,14 @@ export default defineConfig(({ mode }) => {
     resolve: {
       alias: {
         "@": resolve(__dirname, "./src"),
+        // Force a single resolution of kernel-wasm to prevent double-instantiation.
+        // Without this, `@vcad/kernel-wasm` and `vcad-kernel-wasm` (package's internal name)
+        // can resolve to different module instances, each with its own WASM memory,
+        // causing "Out of bounds memory access" when pointers cross instances.
+        "@vcad/kernel-wasm": resolve(__dirname, "../kernel-wasm/vcad_kernel_wasm.js"),
+        "vcad-kernel-wasm": resolve(__dirname, "../kernel-wasm/vcad_kernel_wasm.js"),
       },
+      dedupe: ["@vcad/kernel-wasm", "vcad-kernel-wasm"],
     },
     worker: {
       format: "es",
