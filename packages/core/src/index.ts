@@ -123,6 +123,9 @@ export { parseStl } from "./utils/import-stl.js";
 export { initEngineLifecycle } from "./engine-lifecycle.js";
 export type { EngineLifecycleOptions } from "./engine-lifecycle.js";
 
+// WASM singleton — prevents double-instantiation
+export { getKernelWasm } from "./wasm-singleton.js";
+
 // Re-export engine initialization
 export { Engine } from "@vcad/engine";
 export type {

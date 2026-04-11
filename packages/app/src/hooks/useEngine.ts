@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Engine, useDocumentStore, useEngineStore, useSimulationStore, useUiStore, logger, commandRegistry } from "@vcad/core";
+import { Engine, useDocumentStore, useEngineStore, useSimulationStore, useUiStore, logger, commandRegistry, getKernelWasm } from "@vcad/core";
 import { initializeGpu, initializeRayTracer } from "@vcad/engine";
 import type { Document } from "@vcad/ir";
 
@@ -83,7 +83,7 @@ export function useEngine() {
         useEngineStore.getState().setLoading(false);
 
         // Initialize CRDT document engine (best-effort, non-blocking)
-        import("@vcad/kernel-wasm")
+        getKernelWasm()
           .then((wasmModule) => {
             const EngineClass = (wasmModule as Record<string, unknown>)
               .WasmDocumentEngine as (new () => unknown) | undefined;
