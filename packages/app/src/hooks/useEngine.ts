@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Engine, useDocumentStore, useEngineStore, useSimulationStore, useUiStore, logger } from "@vcad/core";
+import { Engine, useDocumentStore, useEngineStore, useSimulationStore, useUiStore, logger, commandRegistry } from "@vcad/core";
 import { initializeGpu, initializeRayTracer } from "@vcad/engine";
 import type { Document } from "@vcad/ir";
 
@@ -90,6 +90,13 @@ export function useEngine() {
             if (EngineClass) {
               useDocumentStore.getState()._initCrdt(EngineClass as never);
               logger.info("wasm", "CRDT document engine initialized");
+            }
+            // Load tool schemas into the AI command registry
+            const getToolSchemas = (wasmModule as Record<string, unknown>)
+              .get_tool_schemas as (() => string) | undefined;
+            if (getToolSchemas) {
+              commandRegistry.loadSchemas(getToolSchemas());
+              logger.info("wasm", `Loaded ${commandRegistry.getSchemas().length} tool schemas`);
             }
           })
           .catch((e) => {
