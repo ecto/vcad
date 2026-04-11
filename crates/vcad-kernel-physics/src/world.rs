@@ -2,9 +2,10 @@
 
 use std::collections::HashMap;
 
-use phyz::phyz_math::{Mat3, Quat, SpatialInertia, SpatialTransform, Vec3};
-use phyz::phyz_model::{Model, ModelBuilder, State};
-use phyz::{forward_kinematics, ContactMaterial, Geometry, Simulator};
+use phyz::math::{Mat3, Quat, SpatialInertia, SpatialTransform, Vec3};
+use phyz::model::{Model, ModelBuilder, State};
+use phyz::{forward_kinematics, ContactMaterial, Geometry};
+use phyz::aba_with_external_forces;
 use vcad_ir::{Document, JointKind};
 
 use crate::colliders::{estimate_mass, mesh_to_collider, ColliderStrategy};
@@ -30,7 +31,6 @@ pub struct PhysicsWorld {
     // phyz components
     model: Model,
     state: State,
-    simulator: Simulator,
     contact_material: ContactMaterial,
     ground_height: f64,
 
@@ -233,7 +233,6 @@ impl PhysicsWorld {
         let mut world = Self {
             model,
             state,
-            simulator: Simulator::new(),
             contact_material: ContactMaterial::default(),
             ground_height: 0.0,
             motors: HashMap::new(),
@@ -273,13 +272,23 @@ impl PhysicsWorld {
         // Apply PD motor torques to state.ctrl
         self.apply_motor_torques();
 
-        // Step with contact detection
-        self.simulator.step_with_contacts(
-            &self.model,
-            &mut self.state,
-            self.ground_height,
-            &self.contact_material,
-        );
+        // Step: ABA forward dynamics + semi-implicit Euler integration
+        {
+            let qdd = aba_with_external_forces(&self.model, &self.state, None);
+
+            let dt = self.model.dt;
+            let nv = self.state.v.len();
+            for i in 0..nv {
+                self.state.v[i] += qdd[i] * dt;
+            }
+
+            let nq = self.state.q.len();
+            for i in 0..nq {
+                self.state.q[i] += self.state.v[i.min(nv - 1)] * dt;
+            }
+
+            forward_kinematics(&self.model, &mut self.state);
+        }
 
         self.model.dt = original_dt;
     }

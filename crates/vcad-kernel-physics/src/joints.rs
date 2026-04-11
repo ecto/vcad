@@ -1,7 +1,7 @@
 //! Joint conversion from vcad to phyz.
 
-use phyz::phyz_math::{Mat3, SpatialTransform, Vec3};
-use phyz::phyz_model::Joint as PhyzJoint;
+use phyz::math::{Mat3, SpatialTransform, Vec3};
+use phyz::model::Joint as PhyzJoint;
 use vcad_ir::{Joint as VcadJoint, JointKind};
 
 use crate::error::PhysicsError;
@@ -138,7 +138,7 @@ fn rotation_aligning_z_to(target: Vec3) -> Mat3 {
     let cross = z.cross(target);
     let s = cross.norm();
     let c = dot;
-    let vx = phyz::phyz_math::skew(&cross.normalize());
+    let vx = phyz::math::skew(&cross.normalize());
 
     // Rodrigues: R = I + sin(θ) * [v]× + (1 - cos(θ)) * [v]×²
     Mat3::identity() + vx * s + vx * vx * (1.0 - c)

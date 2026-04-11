@@ -1,6 +1,6 @@
 //! Collision shape generation from vcad geometry.
 
-use phyz::phyz_math::Vec3;
+use phyz::math::Vec3;
 use phyz::Geometry;
 use vcad_kernel_tessellate::TriangleMesh;
 
