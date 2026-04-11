@@ -51,7 +51,17 @@ function executeCreate(
       case "sphere": {
         const partId = docStore.addPrimitive(type as "cube" | "cylinder" | "sphere");
         if (params && Object.keys(params).length > 0) {
-          docStore.updatePrimitiveOp(partId, params);
+          // Flatten nested Vec3 params (e.g. size: {x,y,z} → size_x, size_y, size_z)
+          for (const [key, value] of Object.entries(params)) {
+            if (typeof value === "object" && value !== null && "x" in value) {
+              const v = value as { x: number; y: number; z: number };
+              docStore.setFeatureParam(partId, `${key}_x`, { F64: v.x });
+              docStore.setFeatureParam(partId, `${key}_y`, { F64: v.y });
+              docStore.setFeatureParam(partId, `${key}_z`, { F64: v.z });
+            } else if (typeof value === "number") {
+              docStore.setFeatureParam(partId, key, { F64: value });
+            }
+          }
         }
         uiStore.select(partId);
         return { status: "success", result: `Created ${type} with id: ${partId}`, partId };
