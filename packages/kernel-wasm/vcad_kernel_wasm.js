@@ -6136,9 +6136,12 @@ function initSync(module) {
     return __wbg_finalize_init(instance, module);
 }
 
+let _initPromise = null;
+
 async function __wbg_init(module_or_path) {
     _wasmTrace('__wbg_init called. wasm=' + (wasm !== undefined ? 'exists' : 'undefined') +
-               ', globalSingleton=' + (typeof globalThis !== 'undefined' && !!globalThis[_vcadWasmKey]));
+               ', globalSingleton=' + (typeof globalThis !== 'undefined' && !!globalThis[_vcadWasmKey]) +
+               ', initPromise=' + (!!_initPromise));
     _wasmTrace('caller: ' + new Error().stack?.split('\n').slice(1, 4).join(' <- '));
 
     if (wasm !== undefined) {
@@ -6154,8 +6157,18 @@ async function __wbg_init(module_or_path) {
         return wasm;
     }
 
-    _wasmTrace('__wbg_init: no cached instance, will instantiate WASM binary');
+    // PATCH: race guard — if another call is already loading, share its promise
+    if (_initPromise) {
+        _wasmTrace('__wbg_init: load already in progress, sharing promise');
+        return _initPromise;
+    }
 
+    _wasmTrace('__wbg_init: no cached instance, will instantiate WASM binary');
+    _initPromise = __wbg_init_inner(module_or_path);
+    return _initPromise;
+}
+
+async function __wbg_init_inner(module_or_path) {
     if (module_or_path !== undefined) {
         if (Object.getPrototypeOf(module_or_path) === Object.prototype) {
             ({module_or_path} = module_or_path)
