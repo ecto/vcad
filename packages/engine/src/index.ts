@@ -281,7 +281,9 @@ export class Engine {
 
   /** Load the vcad-kernel WASM module and return a ready engine. */
   static async init(): Promise<Engine> {
+    console.debug("[WASM] Engine.init: starting import(@vcad/kernel-wasm)");
     const wasmModule = await import("@vcad/kernel-wasm");
+    console.debug("[WASM] Engine.init: import resolved");
 
     // Check if we're in Node.js environment (for tests)
     const isNode =

@@ -67,7 +67,9 @@ function mapToObject(value: unknown): unknown {
 async function ensureWasmLoaded(): Promise<typeof import("@vcad/kernel-wasm")> {
   if (wasmModule) return wasmModule;
 
+  console.debug("[WASM] physics.ensureWasmLoaded: starting import(@vcad/kernel-wasm)");
   const module = await import("@vcad/kernel-wasm");
+  console.debug("[WASM] physics.ensureWasmLoaded: import resolved");
 
   // Check if we're in Node.js environment
   const isNode =

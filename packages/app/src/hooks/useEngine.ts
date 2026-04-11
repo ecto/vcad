@@ -87,8 +87,10 @@ export function useEngine() {
         // The Vite alias maps @vcad/kernel-wasm to a single file, but only for imports
         // originating from the app. Importing via core creates a separate WASM instance
         // which invalidates pointers from the first instance.
+        logger.debug("wasm", "useEngine: starting CRDT init via import(@vcad/kernel-wasm)");
         import("@vcad/kernel-wasm")
           .then((wasmModule) => {
+            logger.debug("wasm", "useEngine: CRDT import resolved");
             const EngineClass = (wasmModule as Record<string, unknown>)
               .WasmDocumentEngine as (new () => unknown) | undefined;
             if (EngineClass) {

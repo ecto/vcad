@@ -6034,6 +6034,12 @@ let wasmModule, wasm;
 // own `wasm` variable, so the module-level guard in __wbg_init is insufficient.
 // This ensures only ONE WebAssembly instance exists across all module copies.
 const _vcadWasmKey = '__vcad_kernel_wasm_instance';
+const _vcadWasmInitCount = '__vcad_kernel_wasm_init_count';
+
+function _wasmTrace(msg) {
+    // Uses [WASM] prefix so the vcad logger intercepts it at DEBUG level
+    console.debug('[WASM] [wasm-init] ' + msg);
+}
 
 function __wbg_finalize_init(instance, module) {
     wasm = instance.exports;
@@ -6047,6 +6053,17 @@ function __wbg_finalize_init(instance, module) {
     cachedUint16ArrayMemory0 = null;
     cachedUint32ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;
+
+    if (typeof globalThis !== 'undefined') {
+        const count = (globalThis[_vcadWasmInitCount] || 0) + 1;
+        globalThis[_vcadWasmInitCount] = count;
+        _wasmTrace('__wbg_finalize_init called (instantiation #' + count + ')');
+        if (count > 1) {
+            _wasmTrace('WARNING: WASM re-instantiated! Previous pointers are now invalid.');
+            _wasmTrace('Stack: ' + new Error().stack);
+        }
+    }
+
     wasm.__wbindgen_start();
     // Store globally so other module instances can reuse
     if (typeof globalThis !== 'undefined') {
@@ -6091,8 +6108,17 @@ async function __wbg_load(module, imports) {
 }
 
 function initSync(module) {
+    _wasmTrace('initSync called. wasm=' + (wasm !== undefined ? 'exists' : 'undefined'));
+    _wasmTrace('caller: ' + new Error().stack?.split('\n').slice(1, 4).join(' <- '));
     if (wasm !== undefined) return wasm;
 
+    // PATCH: reuse global singleton
+    if (typeof globalThis !== 'undefined' && globalThis[_vcadWasmKey]) {
+        _wasmTrace('initSync: reusing globalThis singleton');
+        wasm = globalThis[_vcadWasmKey].wasm;
+        wasmModule = globalThis[_vcadWasmKey].wasmModule;
+        return wasm;
+    }
 
     if (module !== undefined) {
         if (Object.getPrototypeOf(module) === Object.prototype) {
@@ -6111,14 +6137,24 @@ function initSync(module) {
 }
 
 async function __wbg_init(module_or_path) {
-    if (wasm !== undefined) return wasm;
+    _wasmTrace('__wbg_init called. wasm=' + (wasm !== undefined ? 'exists' : 'undefined') +
+               ', globalSingleton=' + (typeof globalThis !== 'undefined' && !!globalThis[_vcadWasmKey]));
+    _wasmTrace('caller: ' + new Error().stack?.split('\n').slice(1, 4).join(' <- '));
+
+    if (wasm !== undefined) {
+        _wasmTrace('__wbg_init: returning cached module-local wasm');
+        return wasm;
+    }
 
     // PATCH: reuse global singleton if another module instance already initialized
     if (typeof globalThis !== 'undefined' && globalThis[_vcadWasmKey]) {
+        _wasmTrace('__wbg_init: reusing globalThis singleton (avoiding re-instantiation)');
         wasm = globalThis[_vcadWasmKey].wasm;
         wasmModule = globalThis[_vcadWasmKey].wasmModule;
         return wasm;
     }
+
+    _wasmTrace('__wbg_init: no cached instance, will instantiate WASM binary');
 
     if (module_or_path !== undefined) {
         if (Object.getPrototypeOf(module_or_path) === Object.prototype) {
