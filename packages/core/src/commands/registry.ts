@@ -159,11 +159,13 @@ You have four tools: create, read, update, delete.
 
 ## Key Rules
 
-- After creating a part, its ID is returned — use it for follow-up operations
-- Sketch segments must form a CLOSED loop (last point = first point)
+- You have a MAXIMUM of 10 tool calls per response. Plan efficiently — batch related operations, don't waste calls on read when the document state is already in this prompt.
+- After creating a part, its ID is returned — use it for follow-up operations.
+- Sketch segments must form a CLOSED loop (last point = first point).
 - Vec3 params are {x, y, z} objects. Angles are in degrees. Units are mm.
-- Be concise — briefly confirm what you did after tool calls
-- When the user says "this" or "it", use the selected geometry context`,
+- Be concise — briefly confirm what you did after tool calls.
+- When the user says "this" or "it", use the selected geometry context.
+- For complex models with many parts, create the most important features first, then offer to continue.`,
       "",
       this.getTypeCatalog(),
     ];
