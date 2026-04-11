@@ -482,7 +482,7 @@ pub enum CsgOp {
         /// Scale factors per axis.
         factor: Vec3,
     },
-    #[tool(category = "sketch_op", ai_hint = "Define a 2D profile. Use with Extrude/Revolve to make 3D geometry.")]
+    #[tool(category = "sketch_op", ai_hint = "Defines a closed 2D profile. Segments are Line{start,end} or Arc{start,end,center,ccw}. Usually used inline with extrude/revolve — prefer creating extrude directly with inline sketch.")]
     /// A 2D sketch profile on a plane.
     ///
     /// The sketch defines a closed profile in a local 2D coordinate system.
@@ -497,7 +497,7 @@ pub enum CsgOp {
         /// The segments forming the closed profile.
         segments: Vec<SketchSegment2D>,
     },
-    #[tool(category = "sketch_op", ai_hint = "Extrude a sketch profile into 3D. The sketch param can be an inline sketch object or a node ID string.")]
+    #[tool(category = "sketch_op", ai_hint = "PREFERRED for custom shapes. Pass sketch as inline object with origin, x_dir, y_dir, segments. Example: {sketch: {origin:{x:0,y:0,z:0}, x_dir:{x:1,y:0,z:0}, y_dir:{x:0,y:1,z:0}, segments:[{type:'Line',start:{x:0,y:0},end:{x:20,y:0}},{type:'Line',start:{x:20,y:0},end:{x:20,y:15}},{type:'Line',start:{x:20,y:15},end:{x:0,y:15}},{type:'Line',start:{x:0,y:15},end:{x:0,y:0}}]}, direction:{x:0,y:0,z:10}}")]
     /// Extrude a sketch profile along a direction vector.
     Extrude {
         /// The sketch node to extrude.
@@ -549,7 +549,7 @@ pub enum CsgOp {
         /// Total angle span in degrees.
         angle_deg: f64,
     },
-    #[tool(category = "modifier")]
+    #[tool(category = "modifier", ai_hint = "Hollow out a solid. Use parent_part_id. Great for enclosures, cups, containers.")]
     /// Shell — hollow out a solid by offsetting faces.
     Shell {
         /// Child node to shell.
@@ -557,7 +557,7 @@ pub enum CsgOp {
         /// Wall thickness (inward offset).
         thickness: f64,
     },
-    #[tool(category = "modifier")]
+    #[tool(category = "modifier", ai_hint = "Apply after creating geometry. Use parent_part_id to target a part. Typical radius: 1-5mm for small features, 5-20mm for large.")]
     /// Fillet — round edges of a solid.
     Fillet {
         /// Child node to fillet.
@@ -565,7 +565,7 @@ pub enum CsgOp {
         /// Fillet radius.
         radius: f64,
     },
-    #[tool(category = "modifier")]
+    #[tool(category = "modifier", ai_hint = "Bevel edges. Apply after creating geometry. Use parent_part_id to target a part.")]
     /// Chamfer — bevel edges of a solid.
     Chamfer {
         /// Child node to chamfer.

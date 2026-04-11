@@ -72,10 +72,14 @@ fn extract_doc_comment(attrs: &[syn::Attribute]) -> String {
 
 fn to_snake_case(s: &str) -> String {
     let mut result = String::new();
-    for (i, ch) in s.chars().enumerate() {
-        if ch.is_uppercase() && i > 0 {
-            let prev = s.chars().nth(i - 1).unwrap_or('a');
-            if prev.is_lowercase() || prev.is_numeric() {
+    let chars: Vec<char> = s.chars().collect();
+    for (i, &ch) in chars.iter().enumerate() {
+        if i > 0 {
+            let prev = chars[i - 1];
+            // Insert underscore at boundaries: lower→UPPER, letter→digit, digit→letter
+            if ch.is_uppercase() && (prev.is_lowercase() || prev.is_numeric()) {
+                result.push('_');
+            } else if ch.is_numeric() && prev.is_alphabetic() {
                 result.push('_');
             }
         }
