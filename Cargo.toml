@@ -50,6 +50,7 @@ members = [
     "crates/vcad-embroidery-dst",
     "crates/vcad-embroidery-wasm",
     "crates/vcad-desktop",
+    "crates/vcad-tool-derive",
 ]
 
 [workspace.package]
@@ -118,3 +119,4 @@ vcad-embroidery = { path = "crates/vcad-embroidery" }
 vcad-embroidery-pes = { path = "crates/vcad-embroidery-pes" }
 vcad-embroidery-dst = { path = "crates/vcad-embroidery-dst" }
 vcad-embroidery-wasm = { path = "crates/vcad-embroidery-wasm" }
+vcad-tool-derive = { path = "crates/vcad-tool-derive" }
