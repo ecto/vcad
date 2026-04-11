@@ -29,6 +29,13 @@ pub fn get_kernel_version() -> String {
     KERNEL_VERSION.to_string()
 }
 
+/// Get tool schema definitions for all CsgOp variants.
+/// Returns JSON array of ToolSchemaEntry objects.
+#[wasm_bindgen]
+pub fn get_tool_schemas() -> String {
+    serde_json::to_string(&vcad_ir::CsgOp::tool_schemas()).unwrap()
+}
+
 /// Initialize the WASM module (sets up panic hook for better error messages).
 #[wasm_bindgen(start)]
 pub fn init() {
