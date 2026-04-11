@@ -97,10 +97,14 @@ export type {
   ElectronicsSelection,
 } from "./stores/electronics-store.js";
 
-// Commands
+// Commands (palette)
 export { createCommandRegistry } from "./commands.js";
 export type { Command, CommandRegistry, CommandActions } from "./commands.js";
 export { createDefaultCommandActions } from "./command-actions.js";
+
+// AI Tool Registry (CRUD)
+export { commandRegistry, executeCrud } from "./commands/index.js";
+export type { ToolSchemaEntry, ExecutionResult, AnthropicTool } from "./commands/index.js";
 
 // Part labels
 export { PART_GLYPHS, getPartGlyph } from "./part-labels.js";
