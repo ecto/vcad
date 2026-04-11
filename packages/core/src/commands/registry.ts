@@ -1,11 +1,12 @@
 import type { ToolSchemaEntry, AnthropicTool } from "./types.js";
 import type { SelectionContext } from "../stores/chat-store.js";
+import { STATIC_TOOL_SCHEMAS } from "./static-schemas.js";
 
 export class CommandRegistry {
-  private schemas: ToolSchemaEntry[] = [];
+  private schemas: ToolSchemaEntry[] = STATIC_TOOL_SCHEMAS;
   private typeCatalogCache: string | null = null;
 
-  /** Load schemas from WASM JSON string. */
+  /** Load schemas from JSON string (e.g. from WASM). Overrides static schemas. */
   loadSchemas(json: string): void {
     this.schemas = JSON.parse(json) as ToolSchemaEntry[];
     this.typeCatalogCache = null;
@@ -165,7 +166,8 @@ You have four tools: create, read, update, delete.
 - Vec3 params are {x, y, z} objects. Angles are in degrees. Units are mm.
 - Be concise — briefly confirm what you did after tool calls.
 - When the user says "this" or "it", use the selected geometry context.
-- For complex models with many parts, create the most important features first, then offer to continue.`,
+- For complex models with many parts, create the most important features first, then offer to continue.
+- NEVER use emojis unless the user explicitly requests them.`,
       "",
       this.getTypeCatalog(),
     ];
