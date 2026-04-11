@@ -347,7 +347,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     optimizeDeps: {
-      exclude: ["@vcad/kernel-wasm"],
+      exclude: ["@vcad/kernel-wasm", "@vcad/engine"],
       esbuildOptions: {
         plugins: [r3fDisableProfilingPlugin()],
       },

@@ -6028,6 +6028,13 @@ if (!('encodeInto' in cachedTextEncoder)) {
 let WASM_VECTOR_LEN = 0;
 
 let wasmModule, wasm;
+
+// PATCH: window-level singleton to prevent WASM double-instantiation.
+// Multiple Vite module instances (from alias resolution bugs) each get their
+// own `wasm` variable, so the module-level guard in __wbg_init is insufficient.
+// This ensures only ONE WebAssembly instance exists across all module copies.
+const _vcadWasmKey = '__vcad_kernel_wasm_instance';
+
 function __wbg_finalize_init(instance, module) {
     wasm = instance.exports;
     wasmModule = module;
@@ -6041,6 +6048,10 @@ function __wbg_finalize_init(instance, module) {
     cachedUint32ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;
     wasm.__wbindgen_start();
+    // Store globally so other module instances can reuse
+    if (typeof globalThis !== 'undefined') {
+        globalThis[_vcadWasmKey] = { wasm, wasmModule: module };
+    }
     return wasm;
 }
 
@@ -6102,6 +6113,12 @@ function initSync(module) {
 async function __wbg_init(module_or_path) {
     if (wasm !== undefined) return wasm;
 
+    // PATCH: reuse global singleton if another module instance already initialized
+    if (typeof globalThis !== 'undefined' && globalThis[_vcadWasmKey]) {
+        wasm = globalThis[_vcadWasmKey].wasm;
+        wasmModule = globalThis[_vcadWasmKey].wasmModule;
+        return wasm;
+    }
 
     if (module_or_path !== undefined) {
         if (Object.getPrototypeOf(module_or_path) === Object.prototype) {
