@@ -1647,3 +1647,78 @@ mod tests {
         assert!(!json.contains(r#""fill_params":null"#));
     }
 }
+
+#[cfg(test)]
+mod tool_schema_tests {
+    use super::*;
+
+    #[test]
+    fn test_tool_schemas_generated() {
+        let schemas = CsgOp::tool_schemas();
+        assert!(!schemas.is_empty(), "should generate at least one schema");
+
+        // Cube should be present
+        let cube = schemas.iter().find(|s| s.name == "cube").expect("cube schema missing");
+        assert_eq!(cube.category, "primitive");
+        assert!(cube.description.contains("box"), "cube description should mention 'box': got '{}'", cube.description);
+
+        // Check cube has size property
+        let props = cube.input_schema["properties"].as_object().unwrap();
+        assert!(props.contains_key("size"), "cube should have size property");
+
+        // Check required fields
+        let required = cube.input_schema["required"].as_array().unwrap();
+        assert!(required.iter().any(|v| v == "size"), "size should be required");
+    }
+
+    #[test]
+    fn test_hidden_variants_excluded() {
+        let schemas = CsgOp::tool_schemas();
+        let names: Vec<&str> = schemas.iter().map(|s| s.name.as_str()).collect();
+
+        assert!(!names.contains(&"empty"), "Empty should be hidden");
+        assert!(!names.contains(&"imported_mesh"), "ImportedMesh should be hidden");
+        assert!(!names.contains(&"step_import"), "StepImport should be hidden");
+        assert!(!names.contains(&"pcb_board"), "PcbBoard should be hidden");
+        assert!(!names.contains(&"embroidery_pattern"), "EmbroideryPattern should be hidden");
+    }
+
+    #[test]
+    fn test_extrude_schema() {
+        let schemas = CsgOp::tool_schemas();
+        let extrude = schemas.iter().find(|s| s.name == "extrude").expect("extrude schema missing");
+        assert_eq!(extrude.category, "sketch_op");
+
+        let props = extrude.input_schema["properties"].as_object().unwrap();
+        assert!(props.contains_key("sketch"), "extrude should have sketch property");
+        assert!(props.contains_key("direction"), "extrude should have direction property");
+
+        // twist_angle should not be required (it's Option<f64>)
+        let required = extrude.input_schema["required"].as_array().unwrap();
+        assert!(!required.iter().any(|v| v == "twist_angle"), "twist_angle should be optional");
+    }
+
+    #[test]
+    fn test_schema_is_valid_json() {
+        let schemas = CsgOp::tool_schemas();
+        // Serialize to JSON and back — confirms serde_json::Value is well-formed
+        let json = serde_json::to_string(&schemas).unwrap();
+        let _: Vec<ToolSchemaEntry> = serde_json::from_str(&json).unwrap();
+    }
+
+    #[test]
+    fn test_categories_correct() {
+        let schemas = CsgOp::tool_schemas();
+
+        let get = |name: &str| schemas.iter().find(|s| s.name == name).unwrap();
+
+        assert_eq!(get("cube").category, "primitive");
+        assert_eq!(get("cylinder").category, "primitive");
+        assert_eq!(get("sphere").category, "primitive");
+        assert_eq!(get("union").category, "boolean");
+        assert_eq!(get("translate").category, "transform");
+        assert_eq!(get("fillet").category, "modifier");
+        assert_eq!(get("extrude").category, "sketch_op");
+        assert_eq!(get("linear_pattern").category, "pattern");
+    }
+}
