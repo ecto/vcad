@@ -3426,95 +3426,9 @@ dependencies = [
 
 [[package]]
 name = "phyz"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
- "phyz-collision",
- "phyz-compile",
- "phyz-contact",
- "phyz-coupling",
- "phyz-diff",
- "phyz-em",
- "phyz-format",
- "phyz-gpu",
- "phyz-gravity",
- "phyz-guardian",
- "phyz-lbm",
- "phyz-math",
- "phyz-md",
- "phyz-mjcf",
- "phyz-model",
- "phyz-particle",
- "phyz-prob",
- "phyz-qft",
- "phyz-real2sim",
- "phyz-rigid",
- "phyz-world",
- "rand 0.8.5",
- "rand_distr",
-]
-
-[[package]]
-name = "phyz-collision"
-version = "0.1.0"
-dependencies = [
- "phyz-math",
- "phyz-model",
-]
-
-[[package]]
-name = "phyz-compile"
-version = "0.1.0"
-dependencies = [
- "naga",
- "phyz-math",
- "wgpu",
-]
-
-[[package]]
-name = "phyz-contact"
-version = "0.1.0"
-dependencies = [
- "phyz-collision",
- "phyz-math",
- "phyz-model",
-]
-
-[[package]]
-name = "phyz-coupling"
-version = "0.1.0"
-dependencies = [
- "phyz-math",
-]
-
-[[package]]
-name = "phyz-diff"
-version = "0.1.0"
-dependencies = [
- "phyz-math",
- "phyz-model",
- "phyz-rigid",
  "tang",
- "tang-expr",
- "tang-la",
-]
-
-[[package]]
-name = "phyz-em"
-version = "0.1.0"
-dependencies = [
- "phyz-math",
-]
-
-[[package]]
-name = "phyz-format"
-version = "0.1.0"
-dependencies = [
- "phyz-math",
- "phyz-mjcf",
- "phyz-model",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -3531,51 +3445,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "phyz-gravity"
-version = "0.1.0"
-dependencies = [
- "phyz-math",
-]
-
-[[package]]
-name = "phyz-guardian"
-version = "0.1.0"
-dependencies = [
- "phyz-math",
- "phyz-model",
- "phyz-rigid",
-]
-
-[[package]]
-name = "phyz-lbm"
-version = "0.1.0"
-dependencies = [
- "phyz-math",
-]
-
-[[package]]
 name = "phyz-math"
 version = "0.1.0"
 dependencies = [
  "tang",
  "tang-la",
-]
-
-[[package]]
-name = "phyz-md"
-version = "0.1.0"
-dependencies = [
- "phyz-math",
-]
-
-[[package]]
-name = "phyz-mjcf"
-version = "0.1.0"
-dependencies = [
- "phyz-math",
- "phyz-model",
- "quick-xml 0.37.5",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -3586,61 +3460,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "phyz-particle"
-version = "0.1.0"
-dependencies = [
- "phyz-math",
- "phyz-model",
-]
-
-[[package]]
-name = "phyz-prob"
-version = "0.1.0"
-dependencies = [
- "phyz-math",
- "phyz-model",
- "rand 0.8.5",
- "rand_distr",
-]
-
-[[package]]
-name = "phyz-qft"
-version = "0.1.0"
-dependencies = [
- "phyz-math",
- "rand 0.8.5",
-]
-
-[[package]]
-name = "phyz-real2sim"
-version = "0.1.0"
-dependencies = [
- "phyz-diff",
- "phyz-format",
- "phyz-math",
- "phyz-model",
- "phyz-rigid",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "phyz-rigid"
 version = "0.1.0"
 dependencies = [
  "phyz-math",
  "phyz-model",
-]
-
-[[package]]
-name = "phyz-world"
-version = "0.1.0"
-dependencies = [
- "phyz-math",
- "phyz-model",
- "rand 0.8.5",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -3967,16 +3791,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 dependencies = [
  "getrandom 0.2.17",
-]
-
-[[package]]
-name = "rand_distr"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32cb0b9bc82b0a0876c2dd994a7e7a2683d3e7390ca40e6886785ef0c7e3ee31"
-dependencies = [
- "num-traits",
- "rand 0.8.5",
 ]
 
 [[package]]
@@ -4997,7 +4811,7 @@ dependencies = [
 
 [[package]]
 name = "tang"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "paste",
 ]
@@ -6068,6 +5882,7 @@ version = "0.8.0"
 dependencies = [
  "serde",
  "serde_json",
+ "vcad-tool-derive",
 ]
 
 [[package]]
@@ -6460,6 +6275,15 @@ dependencies = [
  "vcad-slicer-gcode",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+]
+
+[[package]]
+name = "vcad-tool-derive"
+version = "0.8.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
 ]
 
 [[package]]
