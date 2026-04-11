@@ -6,6 +6,18 @@ import { vec3Cross, vec3Normalize } from "@vcad/ir";
 type DocStore = ReturnType<typeof useDocumentStore.getState>;
 type UiStore = ReturnType<typeof useUiStore.getState>;
 
+/** Validate that a part ID exists in the document. */
+function validatePartId(partId: string, docStore: DocStore, label: string): ExecutionResult | null {
+  if (!docStore.partIndex.get(partId)) {
+    const available = docStore.parts.map((p) => p.id).slice(0, 10).join(", ");
+    return {
+      status: "error",
+      result: `${label} "${partId}" not found. Available parts: [${available}]${docStore.parts.length > 10 ? ` (+${docStore.parts.length - 10} more)` : ""}`,
+    };
+  }
+  return null;
+}
+
 /** Execute a CRUD tool by name. */
 export function executeCrud(
   tool: string,
@@ -70,13 +82,17 @@ function executeCreate(
         const child = params.child as string;
         const offset = params.offset as { x: number; y: number; z: number };
         if (!child || !offset) return { status: "error", result: "translate requires child and offset" };
+        const err = validatePartId(child, docStore, "translate child");
+        if (err) return err;
         docStore.setTranslation(child, offset);
-        return { status: "success", result: `Translated ${child}`, partId: child };
+        return { status: "success", result: `Translated ${child} by (${offset.x}, ${offset.y}, ${offset.z})`, partId: child };
       }
       case "rotate": {
         const child = params.child as string;
         const angles = params.angles as { x: number; y: number; z: number };
         if (!child || !angles) return { status: "error", result: "rotate requires child and angles" };
+        const err = validatePartId(child, docStore, "rotate child");
+        if (err) return err;
         docStore.setRotation(child, angles);
         return { status: "success", result: `Rotated ${child}`, partId: child };
       }
@@ -84,6 +100,8 @@ function executeCreate(
         const child = params.child as string;
         const factor = params.factor as { x: number; y: number; z: number };
         if (!child || !factor) return { status: "error", result: "scale requires child and factor" };
+        const err = validatePartId(child, docStore, "scale child");
+        if (err) return err;
         docStore.setScale(child, factor);
         return { status: "success", result: `Scaled ${child}`, partId: child };
       }
@@ -91,47 +109,55 @@ function executeCreate(
       case "union":
       case "difference":
       case "intersection": {
-        const left = params.left as string;
-        const right = params.right as string;
+        let left = params.left as string;
+        let right = params.right as string;
         if (!left || !right) {
           const selectedIds = Array.from(uiStore.selectedPartIds);
           if (selectedIds.length !== 2) {
             return { status: "error", result: "Boolean requires left and right part IDs, or exactly 2 parts selected" };
           }
-          const resultId = docStore.applyBoolean(type, selectedIds[0]!, selectedIds[1]!);
-          return resultId
-            ? { status: "success", result: `Applied ${type}`, partId: resultId }
-            : { status: "error", result: `${type} failed` };
+          left = selectedIds[0]!;
+          right = selectedIds[1]!;
         }
+        const lerr = validatePartId(left, docStore, "boolean left");
+        if (lerr) return lerr;
+        const rerr = validatePartId(right, docStore, "boolean right");
+        if (rerr) return rerr;
         const resultId = docStore.applyBoolean(type, left, right);
         return resultId
-          ? { status: "success", result: `Applied ${type}`, partId: resultId }
+          ? { status: "success", result: `Applied ${type} → new part id: ${resultId}`, partId: resultId }
           : { status: "error", result: `${type} failed` };
       }
 
       case "fillet": {
         const target = parentPartId || (params.child as string);
         if (!target) return { status: "error", result: "fillet requires parent_part_id or child" };
+        const err = validatePartId(target, docStore, "fillet target");
+        if (err) return err;
         const id = docStore.addFillet(target, params.radius as number);
         return id
-          ? { status: "success", result: `Applied ${params.radius}mm fillet`, partId: target }
-          : { status: "error", result: "Fillet failed — select a valid solid part" };
+          ? { status: "success", result: `Applied ${params.radius}mm fillet to ${target} → new part id: ${id}`, partId: id }
+          : { status: "error", result: "Fillet failed — target may not be a solid" };
       }
       case "chamfer": {
         const target = parentPartId || (params.child as string);
         if (!target) return { status: "error", result: "chamfer requires parent_part_id or child" };
+        const err = validatePartId(target, docStore, "chamfer target");
+        if (err) return err;
         const id = docStore.addChamfer(target, params.distance as number);
         return id
-          ? { status: "success", result: `Applied ${params.distance}mm chamfer`, partId: target }
-          : { status: "error", result: "Chamfer failed — select a valid solid part" };
+          ? { status: "success", result: `Applied ${params.distance}mm chamfer to ${target} → new part id: ${id}`, partId: id }
+          : { status: "error", result: "Chamfer failed — target may not be a solid" };
       }
       case "shell": {
         const target = parentPartId || (params.child as string);
         if (!target) return { status: "error", result: "shell requires parent_part_id or child" };
+        const err = validatePartId(target, docStore, "shell target");
+        if (err) return err;
         const id = docStore.addShell(target, params.thickness as number);
         return id
-          ? { status: "success", result: `Shelled with ${params.thickness}mm walls`, partId: target }
-          : { status: "error", result: "Shell failed — select a valid solid part" };
+          ? { status: "success", result: `Shelled ${target} with ${params.thickness}mm walls → new part id: ${id}`, partId: id }
+          : { status: "error", result: "Shell failed — target may not be a solid" };
       }
 
       case "extrude": {

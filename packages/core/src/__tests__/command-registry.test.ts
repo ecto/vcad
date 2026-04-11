@@ -205,24 +205,25 @@ describe("CommandRegistry", () => {
     });
   });
 
-  describe("empty registry", () => {
-    it("works with no schemas loaded", () => {
-      const empty = new CommandRegistry();
-      const tools = empty.toAnthropicTools();
+  describe("default static schemas", () => {
+    it("loads static schemas at construction time", () => {
+      const fresh = new CommandRegistry();
+      // Static schemas from CsgOp (21 non-hidden variants)
+      expect(fresh.getSchemas().length).toBeGreaterThan(0);
+      expect(fresh.getTypeEnum()).toContain("cube");
+      expect(fresh.getTypeEnum()).toContain("extrude");
+      expect(fresh.getTypeEnum()).toContain("fillet");
+    });
+
+    it("can be overridden by loadSchemas", () => {
+      const fresh = new CommandRegistry();
+      fresh.loadSchemas("[]");
+      const tools = fresh.toAnthropicTools();
       expect(tools).toHaveLength(4);
-      // create tool has empty type enum
       const create = tools[0]!;
       const typeEnum = (create.input_schema.properties as Record<string, Record<string, unknown>>)
         .type.enum as string[];
       expect(typeEnum).toEqual([]);
-    });
-
-    it("builds system prompt without type catalog content", () => {
-      const empty = new CommandRegistry();
-      const prompt = empty.buildSystemPrompt([]);
-      expect(prompt).toContain("## Type Catalog");
-      // but no type entries
-      expect(prompt).not.toContain("###");
     });
   });
 });
