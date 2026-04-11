@@ -3,8 +3,8 @@ export interface ToolSchemaEntry {
   name: string;
   description: string;
   category: string;
-  aiHint?: string;
-  inputSchema: Record<string, unknown>;
+  ai_hint?: string;
+  input_schema: Record<string, unknown>;
 }
 
 /** Result of executing a CRUD tool. */

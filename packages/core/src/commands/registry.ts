@@ -110,9 +110,9 @@ export class CommandRegistry {
     for (const schema of this.schemas) {
       lines.push(`### ${schema.name} (${schema.category})`);
       lines.push(schema.description);
-      if (schema.aiHint) lines.push(schema.aiHint);
+      if (schema.ai_hint) lines.push(schema.ai_hint);
 
-      const props = (schema.inputSchema as { properties?: Record<string, Record<string, unknown>> }).properties;
+      const props = (schema.input_schema as { properties?: Record<string, Record<string, unknown>> }).properties;
       if (props && Object.keys(props).length > 0) {
         lines.push("Parameters:");
         for (const [key, prop] of Object.entries(props)) {
