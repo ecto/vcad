@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Engine, useDocumentStore, useEngineStore, useSimulationStore, useUiStore, logger, commandRegistry, getKernelWasm } from "@vcad/core";
+import { Engine, useDocumentStore, useEngineStore, useSimulationStore, useUiStore, logger, commandRegistry } from "@vcad/core";
 import { initializeGpu, initializeRayTracer } from "@vcad/engine";
 import type { Document } from "@vcad/ir";
 
@@ -83,7 +83,11 @@ export function useEngine() {
         useEngineStore.getState().setLoading(false);
 
         // Initialize CRDT document engine (best-effort, non-blocking)
-        getKernelWasm()
+        // IMPORTANT: use import() directly here — NOT via @vcad/core's getKernelWasm().
+        // The Vite alias maps @vcad/kernel-wasm to a single file, but only for imports
+        // originating from the app. Importing via core creates a separate WASM instance
+        // which invalidates pointers from the first instance.
+        import("@vcad/kernel-wasm")
           .then((wasmModule) => {
             const EngineClass = (wasmModule as Record<string, unknown>)
               .WasmDocumentEngine as (new () => unknown) | undefined;

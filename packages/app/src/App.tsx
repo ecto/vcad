@@ -50,7 +50,6 @@ import {
   parseVcadFile,
   parseStl,
   logger,
-  getKernelWasm,
   type VcadFile,
 } from "@vcad/core";
 import { useEngine } from "@/hooks/useEngine";
@@ -299,7 +298,7 @@ export function App() {
       try {
         const buffer = await file.arrayBuffer();
         const bytes = new Uint8Array(buffer);
-        const wasm = await getKernelWasm();
+        const wasm = await import("@vcad/kernel-wasm");
         const json = ext === "pes"
           ? wasm.readEmbroideryPes(bytes)
           : wasm.readEmbroideryDst(bytes);
