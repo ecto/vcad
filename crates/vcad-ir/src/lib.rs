@@ -391,14 +391,17 @@ pub struct EmbroideryDesign {
 ///
 /// Each variant is either a leaf primitive or a combining/transform operation
 /// that references child nodes by [`NodeId`].
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToolSchema)]
 #[serde(tag = "type")]
+#[tool(category = "modeling")]
 pub enum CsgOp {
+    #[tool(category = "primitive", ai_hint = "Use for rectangular/box shapes. Size is width(x), depth(y), height(z).")]
     /// Axis-aligned box centered at origin.
     Cube {
         /// Size along each axis.
         size: Vec3,
     },
+    #[tool(category = "primitive", ai_hint = "Axis along Z. Use for round shapes, pins, holes.")]
     /// Cylinder along the Z axis, centered at origin.
     Cylinder {
         /// Radius of the cylinder.
@@ -408,6 +411,7 @@ pub enum CsgOp {
         /// Number of circular segments (0 = auto).
         segments: u32,
     },
+    #[tool(category = "primitive")]
     /// Sphere centered at origin.
     Sphere {
         /// Radius of the sphere.
@@ -415,6 +419,7 @@ pub enum CsgOp {
         /// Number of circular segments (0 = auto).
         segments: u32,
     },
+    #[tool(category = "primitive")]
     /// Cone along the Z axis, centered at origin.
     Cone {
         /// Bottom radius.
@@ -426,8 +431,10 @@ pub enum CsgOp {
         /// Number of circular segments (0 = auto).
         segments: u32,
     },
+    #[tool(hidden)]
     /// Empty geometry (identity for union).
     Empty,
+    #[tool(category = "boolean")]
     /// Boolean union of two geometries.
     Union {
         /// Left operand.
@@ -435,6 +442,7 @@ pub enum CsgOp {
         /// Right operand.
         right: NodeId,
     },
+    #[tool(category = "boolean")]
     /// Boolean difference (left minus right).
     Difference {
         /// Left operand (base).
@@ -442,6 +450,7 @@ pub enum CsgOp {
         /// Right operand (subtracted).
         right: NodeId,
     },
+    #[tool(category = "boolean")]
     /// Boolean intersection of two geometries.
     Intersection {
         /// Left operand.
@@ -449,6 +458,7 @@ pub enum CsgOp {
         /// Right operand.
         right: NodeId,
     },
+    #[tool(category = "transform")]
     /// Translation by an offset vector.
     Translate {
         /// Child node to translate.
@@ -456,6 +466,7 @@ pub enum CsgOp {
         /// Translation offset.
         offset: Vec3,
     },
+    #[tool(category = "transform")]
     /// Rotation by Euler angles in degrees (applied as X, then Y, then Z).
     Rotate {
         /// Child node to rotate.
@@ -463,6 +474,7 @@ pub enum CsgOp {
         /// Rotation angles in degrees.
         angles: Vec3,
     },
+    #[tool(category = "transform")]
     /// Non-uniform scale.
     Scale {
         /// Child node to scale.
@@ -470,6 +482,7 @@ pub enum CsgOp {
         /// Scale factors per axis.
         factor: Vec3,
     },
+    #[tool(category = "sketch_op", ai_hint = "Define a 2D profile. Use with Extrude/Revolve to make 3D geometry.")]
     /// A 2D sketch profile on a plane.
     ///
     /// The sketch defines a closed profile in a local 2D coordinate system.
@@ -484,6 +497,7 @@ pub enum CsgOp {
         /// The segments forming the closed profile.
         segments: Vec<SketchSegment2D>,
     },
+    #[tool(category = "sketch_op", ai_hint = "Extrude a sketch profile into 3D. The sketch param can be an inline sketch object or a node ID string.")]
     /// Extrude a sketch profile along a direction vector.
     Extrude {
         /// The sketch node to extrude.
@@ -497,6 +511,7 @@ pub enum CsgOp {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scale_end: Option<f64>,
     },
+    #[tool(category = "sketch_op")]
     /// Revolve a sketch profile around an axis.
     Revolve {
         /// The sketch node to revolve.
@@ -508,6 +523,7 @@ pub enum CsgOp {
         /// Revolution angle in degrees (360 for full revolution).
         angle_deg: f64,
     },
+    #[tool(category = "pattern")]
     /// Linear pattern — repeat geometry along a direction.
     LinearPattern {
         /// Child node to pattern.
@@ -519,6 +535,7 @@ pub enum CsgOp {
         /// Spacing between copies along direction.
         spacing: f64,
     },
+    #[tool(category = "pattern")]
     /// Circular pattern — repeat geometry around an axis.
     CircularPattern {
         /// Child node to pattern.
@@ -532,6 +549,7 @@ pub enum CsgOp {
         /// Total angle span in degrees.
         angle_deg: f64,
     },
+    #[tool(category = "modifier")]
     /// Shell — hollow out a solid by offsetting faces.
     Shell {
         /// Child node to shell.
@@ -539,6 +557,7 @@ pub enum CsgOp {
         /// Wall thickness (inward offset).
         thickness: f64,
     },
+    #[tool(category = "modifier")]
     /// Fillet — round edges of a solid.
     Fillet {
         /// Child node to fillet.
@@ -546,6 +565,7 @@ pub enum CsgOp {
         /// Fillet radius.
         radius: f64,
     },
+    #[tool(category = "modifier")]
     /// Chamfer — bevel edges of a solid.
     Chamfer {
         /// Child node to chamfer.
@@ -553,6 +573,7 @@ pub enum CsgOp {
         /// Chamfer distance.
         distance: f64,
     },
+    #[tool(category = "sketch_op")]
     /// 2D text that can be extruded into 3D geometry.
     ///
     /// Creates sketch profiles from text glyphs, which can then be
@@ -580,6 +601,7 @@ pub enum CsgOp {
         #[serde(default)]
         alignment: TextAlignment,
     },
+    #[tool(category = "sketch_op")]
     /// Sweep a profile along a path curve.
     Sweep {
         /// The sketch node to sweep.
@@ -605,6 +627,7 @@ pub enum CsgOp {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         arc_segments: Option<u32>,
     },
+    #[tool(category = "sketch_op")]
     /// Loft between multiple profiles.
     Loft {
         /// Array of Sketch2D node references (>= 2).
@@ -613,6 +636,7 @@ pub enum CsgOp {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         closed: Option<bool>,
     },
+    #[tool(hidden)]
     /// Imported pre-tessellated mesh (e.g. from drag-drop STL/GLB).
     ImportedMesh {
         /// Flat array of vertex positions (x, y, z, x, y, z, ...).
@@ -626,15 +650,18 @@ pub enum CsgOp {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         source: Option<String>,
     },
+    #[tool(hidden)]
     /// Imported geometry from a STEP file.
     #[serde(rename = "step_import")]
     StepImport {
         /// Path to the STEP file (relative or absolute).
         path: String,
     },
+    #[tool(hidden)]
     /// PCB board — evaluates the board's outline + components to 3D geometry.
     /// The `board` field contains the full PCB design data (same ecad::Pcb type).
     PcbBoard { board: Box<crate::ecad::Pcb> },
+    #[tool(hidden)]
     /// Embroidery pattern — a 2D stitch design.
     EmbroideryPattern {
         /// The embroidery design data.

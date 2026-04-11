@@ -114,7 +114,7 @@ fn impl_tool_schema(input: &DeriveInput) -> syn::Result<TokenStream2> {
         let schema_expr = build_fields_schema(&variant.fields)?;
 
         variant_entries.push(quote! {
-            vcad_ir::ToolSchemaEntry {
+            crate::ToolSchemaEntry {
                 name: #variant_name.to_string(),
                 description: #description.to_string(),
                 category: #category.to_string(),
@@ -127,7 +127,7 @@ fn impl_tool_schema(input: &DeriveInput) -> syn::Result<TokenStream2> {
     Ok(quote! {
         impl #name {
             /// Returns tool schema entries for all non-hidden variants.
-            pub fn tool_schemas() -> Vec<vcad_ir::ToolSchemaEntry> {
+            pub fn tool_schemas() -> Vec<crate::ToolSchemaEntry> {
                 vec![#(#variant_entries),*]
             }
         }
