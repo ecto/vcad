@@ -1,23 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { streamText } from "ai";
 
-const SYSTEM_PROMPT = `You are vcad's AI assistant — a parametric CAD copilot embedded in a web-based CAD application.
-
-You can both answer questions about CAD design and execute operations on the user's model.
-
-Coordinate system: Z-up (X right, Y forward, Z up). Units: millimeters.
-
-When the user asks you to modify geometry:
-1. Use the available tools to execute the operation
-2. Briefly confirm what you did after the tool call completes
-3. If a tool call fails, explain the error and suggest alternatives
-
-When the user asks questions:
-- Be concise and practical
-- Reference specific parts by name when relevant
-- If you need more context about their model, ask
-
-Context pills in user messages indicate what geometry is currently selected in the viewport. Use this context to understand which parts the user is referring to.`;
+const FALLBACK_SYSTEM_PROMPT = "You are vcad's AI assistant — a parametric CAD copilot. Coordinate system: Z-up (X right, Y forward, Z up). Units: millimeters. Be concise.";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS
@@ -35,9 +19,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  const { messages, context } = req.body as {
-    messages: Array<{ role: "user" | "assistant"; content: string }>;
+  const { messages, context, tools: clientTools, systemPrompt: clientSystemPrompt } = req.body as {
+    messages: Array<{ role: "user" | "assistant"; content: string | object[] }>;
     context?: { selectedParts: Array<{ partId: string; partName: string; geometryType: string }> };
+    tools?: Array<{ name: string; description: string; input_schema: Record<string, unknown> }>;
+    systemPrompt?: string;
   };
 
   if (!messages?.length) {
@@ -45,13 +31,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  let systemPrompt = SYSTEM_PROMPT;
-  if (context?.selectedParts?.length) {
-    const partList = context.selectedParts
-      .map((p) => `- ${p.partName} (${p.geometryType}, id: ${p.partId})`)
-      .join("\n");
-    systemPrompt += `\n\nCurrently selected geometry:\n${partList}`;
-  }
+  const systemPrompt = clientSystemPrompt || FALLBACK_SYSTEM_PROMPT;
 
   try {
     const result = streamText({
