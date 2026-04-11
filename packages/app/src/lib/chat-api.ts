@@ -1,4 +1,4 @@
-import type { SelectionContext } from "@vcad/core";
+import type { SelectionContext, AnthropicTool } from "@vcad/core";
 
 export interface ChatRequestMessage {
   role: "user" | "assistant";
@@ -22,6 +22,10 @@ export async function streamChat(
   messages: ChatRequestMessage[],
   context: SelectionContext[],
   callbacks: ChatStreamCallbacks,
+  options?: {
+    tools?: AnthropicTool[];
+    systemPrompt?: string;
+  },
 ): Promise<void> {
   const selectedParts = context.map((c) => ({
     partId: c.partId,
@@ -36,6 +40,8 @@ export async function streamChat(
       body: JSON.stringify({
         messages,
         context: { selectedParts },
+        tools: options?.tools,
+        systemPrompt: options?.systemPrompt,
       }),
     });
 

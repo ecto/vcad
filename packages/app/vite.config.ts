@@ -101,7 +101,7 @@ function devApiPlugin(env: Record<string, string>): Plugin {
 
         let body = "";
         for await (const chunk of req) body += chunk;
-        const { messages, context } = JSON.parse(body);
+        const { messages, tools: clientTools, systemPrompt: clientSystemPrompt } = JSON.parse(body);
 
         if (!messages?.length) {
           res.statusCode = 400;
@@ -116,123 +116,9 @@ function devApiPlugin(env: Record<string, string>): Plugin {
           return;
         }
 
-        // Build system prompt with context
-        let systemPrompt = `You are vcad's AI assistant — a parametric CAD copilot. Coordinate system: Z-up (X right, Y forward, Z up). Units: millimeters. Be concise.
-
-When asked to create or modify geometry, use the available tools. After a tool call, briefly confirm what you did.
-When the user refers to "this" or "it" without specifics, use the selected geometry context provided.`;
-        if (context?.selectedParts?.length) {
-          const partList = context.selectedParts
-            .map((p: { partName: string; geometryType: string; partId: string }) => `- ${p.partName} (${p.geometryType}, id: ${p.partId})`)
-            .join("\n");
-          systemPrompt += `\n\nCurrently selected geometry:\n${partList}`;
-        }
-
-        // Tool definitions for CAD operations
-        const tools = [
-          {
-            name: "add_primitive",
-            description: "Add a primitive shape to the scene. Returns the new part ID.",
-            input_schema: {
-              type: "object" as const,
-              properties: {
-                kind: { type: "string", enum: ["cube", "cylinder", "sphere"], description: "Primitive type" },
-              },
-              required: ["kind"],
-            },
-          },
-          {
-            name: "transform_part",
-            description: "Translate, rotate, or scale a part. Coordinates are in mm, angles in degrees.",
-            input_schema: {
-              type: "object" as const,
-              properties: {
-                partId: { type: "string", description: "Part ID to transform. Use the ID from selected geometry context." },
-                translate: { type: "object", properties: { x: { type: "number" }, y: { type: "number" }, z: { type: "number" } }, description: "Translation offset in mm" },
-                rotate: { type: "object", properties: { x: { type: "number" }, y: { type: "number" }, z: { type: "number" } }, description: "Rotation angles in degrees" },
-                scale: { type: "object", properties: { x: { type: "number" }, y: { type: "number" }, z: { type: "number" } }, description: "Scale factors" },
-              },
-              required: ["partId"],
-            },
-          },
-          {
-            name: "add_fillet",
-            description: "Apply a fillet (rounded edge) to a part.",
-            input_schema: {
-              type: "object" as const,
-              properties: {
-                partId: { type: "string", description: "Part ID to fillet" },
-                radius: { type: "number", description: "Fillet radius in mm" },
-              },
-              required: ["partId", "radius"],
-            },
-          },
-          {
-            name: "add_chamfer",
-            description: "Apply a chamfer (beveled edge) to a part.",
-            input_schema: {
-              type: "object" as const,
-              properties: {
-                partId: { type: "string", description: "Part ID to chamfer" },
-                distance: { type: "number", description: "Chamfer distance in mm" },
-              },
-              required: ["partId", "distance"],
-            },
-          },
-          {
-            name: "add_shell",
-            description: "Hollow out a part, leaving walls of the specified thickness.",
-            input_schema: {
-              type: "object" as const,
-              properties: {
-                partId: { type: "string", description: "Part ID to shell" },
-                thickness: { type: "number", description: "Wall thickness in mm" },
-              },
-              required: ["partId", "thickness"],
-            },
-          },
-          {
-            name: "apply_boolean",
-            description: "Apply a boolean operation between two selected parts. Requires exactly 2 parts selected.",
-            input_schema: {
-              type: "object" as const,
-              properties: {
-                operation: { type: "string", enum: ["union", "difference", "intersection"], description: "Boolean operation type" },
-              },
-              required: ["operation"],
-            },
-          },
-          {
-            name: "delete_part",
-            description: "Delete a part from the scene.",
-            input_schema: {
-              type: "object" as const,
-              properties: {
-                partId: { type: "string", description: "Part ID to delete" },
-              },
-              required: ["partId"],
-            },
-          },
-          {
-            name: "inspect_part",
-            description: "Get information about a part: dimensions, volume, type.",
-            input_schema: {
-              type: "object" as const,
-              properties: {
-                partId: { type: "string", description: "Part ID to inspect" },
-              },
-              required: ["partId"],
-            },
-          },
-          {
-            name: "list_parts",
-            description: "List all parts in the current document with their IDs, names, and types.",
-            input_schema: {
-              type: "object" as const,
-              properties: {},
-            },
-          },
-        ];
+        // Use client-provided system prompt and tools (built by commandRegistry on the client)
+        const systemPrompt = clientSystemPrompt || "You are vcad's AI assistant — a parametric CAD copilot. Coordinate system: Z-up. Units: millimeters. Be concise.";
+        const tools = clientTools || [];
 
         try {
           const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {

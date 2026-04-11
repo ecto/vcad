@@ -1,113 +1,29 @@
 import { useEffect, useCallback } from "react";
-import { useChatStore, useDocumentStore, useUiStore } from "@vcad/core";
+import { useChatStore, useDocumentStore, useUiStore, commandRegistry, executeCrud } from "@vcad/core";
 import type { SelectionContext, ToolCallInfo, MessagePart } from "@vcad/core";
 import { streamChat } from "@/lib/chat-api";
 import type { ToolCall, ChatRequestMessage } from "@/lib/chat-api";
 
 /**
- * Execute a tool call against the document/UI stores.
+ * Execute a tool call against the document/UI stores via the CRUD registry.
  * Returns a string result for display in the chat.
  */
 function executeTool(tool: ToolCall): { result: string; status: "success" | "error" } {
   const docStore = useDocumentStore.getState();
   const uiStore = useUiStore.getState();
+  return executeCrud(tool.name, tool.args, docStore, uiStore);
+}
 
-  try {
-    switch (tool.name) {
-      case "add_primitive": {
-        const kind = tool.args.kind as "cube" | "cylinder" | "sphere";
-        const partId = docStore.addPrimitive(kind);
-        uiStore.select(partId);
-        uiStore.setTransformMode("translate");
-        return { result: `Added ${kind} with id: ${partId}`, status: "success" };
-      }
-
-      case "transform_part": {
-        const partId = tool.args.partId as string;
-        if (tool.args.translate) {
-          const t = tool.args.translate as { x: number; y: number; z: number };
-          docStore.setTranslation(partId, { x: t.x ?? 0, y: t.y ?? 0, z: t.z ?? 0 });
-        }
-        if (tool.args.rotate) {
-          const r = tool.args.rotate as { x: number; y: number; z: number };
-          docStore.setRotation(partId, { x: r.x ?? 0, y: r.y ?? 0, z: r.z ?? 0 });
-        }
-        if (tool.args.scale) {
-          const s = tool.args.scale as { x: number; y: number; z: number };
-          docStore.setScale(partId, { x: s.x ?? 1, y: s.y ?? 1, z: s.z ?? 1 });
-        }
-        return { result: `Transformed ${partId}`, status: "success" };
-      }
-
-      case "add_fillet": {
-        const id = docStore.addFillet(tool.args.partId as string, tool.args.radius as number);
-        return id
-          ? { result: `Applied ${tool.args.radius}mm fillet`, status: "success" }
-          : { result: "Fillet failed — select a valid solid part", status: "error" };
-      }
-
-      case "add_chamfer": {
-        const id = docStore.addChamfer(tool.args.partId as string, tool.args.distance as number);
-        return id
-          ? { result: `Applied ${tool.args.distance}mm chamfer`, status: "success" }
-          : { result: "Chamfer failed — select a valid solid part", status: "error" };
-      }
-
-      case "add_shell": {
-        const id = docStore.addShell(tool.args.partId as string, tool.args.thickness as number);
-        return id
-          ? { result: `Shelled with ${tool.args.thickness}mm walls`, status: "success" }
-          : { result: "Shell failed — select a valid solid part", status: "error" };
-      }
-
-      case "apply_boolean": {
-        const selectedIds = Array.from(uiStore.selectedPartIds);
-        if (selectedIds.length !== 2) {
-          return { result: "Boolean requires exactly 2 parts selected", status: "error" };
-        }
-        const op = tool.args.operation as "union" | "difference" | "intersection";
-        docStore.applyBoolean(op, selectedIds[0]!, selectedIds[1]!);
-        return { result: `Applied ${op}`, status: "success" };
-      }
-
-      case "delete_part": {
-        docStore.removePart(tool.args.partId as string);
-        uiStore.clearSelection();
-        return { result: `Deleted part`, status: "success" };
-      }
-
-      case "inspect_part": {
-        const partId = tool.args.partId as string;
-        const part = docStore.partIndex.get(partId);
-        if (!part) return { result: `Part ${partId} not found`, status: "error" };
-        return {
-          result: JSON.stringify({
-            id: part.id,
-            name: part.name,
-            kind: part.kind,
-          }),
-          status: "success",
-        };
-      }
-
-      case "list_parts": {
-        const parts = docStore.parts.map((p) => ({
-          id: p.id,
-          name: p.name,
-          kind: p.kind,
-        }));
-        return { result: JSON.stringify(parts), status: "success" };
-      }
-
-      default:
-        return { result: `Unknown tool: ${tool.name}`, status: "error" };
-    }
-  } catch (err) {
-    return {
-      result: err instanceof Error ? err.message : "Tool execution failed",
-      status: "error",
-    };
-  }
+/**
+ * Build a list of document parts for use in the system prompt.
+ */
+function getDocumentParts(): Array<{ id: string; name: string; kind: string }> {
+  const docStore = useDocumentStore.getState();
+  return docStore.parts.map((p) => ({
+    id: p.id,
+    name: p.name,
+    kind: p.kind,
+  }));
 }
 
 /**
@@ -124,21 +40,15 @@ function runTurn(
     const toolCalls: ToolCall[] = [];
     let error: string | null = null;
 
+    const tools = commandRegistry.toAnthropicTools();
+    const systemPrompt = commandRegistry.buildSystemPrompt(getDocumentParts(), context);
+
     streamChat(history, context, {
-      onText: (t) => {
-        text = t;
-        onStreamText(t);
-      },
-      onToolCall: (tool) => {
-        toolCalls.push(tool);
-      },
-      onError: (err) => {
-        error = err;
-      },
-      onFinish: () => {
-        resolve({ text, toolCalls, error });
-      },
-    });
+      onText: (t) => { text = t; onStreamText(t); },
+      onToolCall: (tool) => { toolCalls.push(tool); },
+      onError: (err) => { error = err; },
+      onFinish: () => { resolve({ text, toolCalls, error }); },
+    }, { tools, systemPrompt });
   });
 }
 
