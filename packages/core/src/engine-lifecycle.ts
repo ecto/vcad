@@ -2,6 +2,7 @@ import { Engine } from "@vcad/engine";
 import { useEngineStore } from "./stores/engine-store.js";
 import { useDocumentStore } from "./stores/document-store.js";
 import type { WasmDocumentEngineConstructor } from "./stores/document-store.js";
+import { commandRegistry } from "./commands/index.js";
 
 export interface EngineLifecycleOptions {
   /** Called after the engine is initialized and the first evaluation completes. */
@@ -40,6 +41,12 @@ export async function initEngineLifecycle(
           .WasmDocumentEngine as WasmDocumentEngineConstructor | undefined;
         if (EngineClass) {
           useDocumentStore.getState()._initCrdt(EngineClass);
+        }
+        // Load tool schemas from WASM into the AI command registry
+        const getToolSchemas = (wasmModule as Record<string, unknown>)
+          .get_tool_schemas as (() => string) | undefined;
+        if (getToolSchemas) {
+          commandRegistry.loadSchemas(getToolSchemas());
         }
       } catch (e) {
         // CRDT engine is optional — log and continue
