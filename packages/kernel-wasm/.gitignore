@@ -1,0 +1,4 @@
+# wasm-pack build output — causes WASM double-instantiation if left here
+# because Vite resolves it as a second module instance.
+# The build script copies artifacts to the parent directory.
+pkg/
