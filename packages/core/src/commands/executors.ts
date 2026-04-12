@@ -1,4 +1,4 @@
-import type { ExecutionResult } from "./types.js";
+import type { ExecutionResult, ExecutionDisplay, SummarySegment } from "./types.js";
 import { useDocumentStore } from "../stores/document-store.js";
 import { useUiStore } from "../stores/ui-store.js";
 import { vec3Cross, vec3Normalize } from "@vcad/ir";
@@ -61,8 +61,35 @@ function validateSketch(segments: unknown[]): ExecutionResult | null {
   return null;
 }
 
-/** Execute a CRUD tool by name. */
+/** Render a part ID as a clickable segment, falling back to last 4 chars if unknown. */
+function link(id: string, docStore: DocStore): SummarySegment {
+  const part = docStore.partIndex.get(id);
+  return {
+    type: "partLink",
+    partId: id,
+    name: part?.name ?? id.slice(-4),
+  };
+}
+
+/** Shorthand for a text segment. */
+function text(s: string): SummarySegment {
+  return { type: "text", text: s };
+}
+
+/** Execute a CRUD tool by name, measuring duration. */
 export function executeCrud(
+  tool: string,
+  args: Record<string, unknown>,
+  docStore: DocStore,
+  uiStore: UiStore,
+): ExecutionResult {
+  const t0 = performance.now();
+  const result = executeCrudInner(tool, args, docStore, uiStore);
+  result.duration = performance.now() - t0;
+  return result;
+}
+
+function executeCrudInner(
   tool: string,
   args: Record<string, unknown>,
   docStore: DocStore,
@@ -105,7 +132,20 @@ function executeSetMaterial(
   if (err) return err;
   try {
     docStore.setPartMaterial(partId, materialKey);
-    return { status: "success", result: `Set ${partId} material to ${materialKey}`, partId };
+    return {
+      status: "success",
+      result: `Set ${partId} material to ${materialKey}`,
+      partId,
+      display: {
+        summary: [
+          text("⬤ Material "),
+          link(partId, docStore),
+          text(` = ${materialKey}`),
+        ],
+        fields: [{ label: "material", value: materialKey }],
+        affectedPartIds: [partId],
+      },
+    };
   } catch (e) {
     return { status: "error", result: e instanceof Error ? e.message : "set_material failed" };
   }
@@ -134,7 +174,33 @@ function executeCreate(
           }, 0);
         }
         uiStore.select(partId);
-        return { status: "success", result: `Created ${type} with id: ${partId}`, partId };
+
+        const fields: Array<{ label: string; value: string }> = [];
+        if (type === "cube" && params.size) {
+          const s = params.size as { x: number; y: number; z: number };
+          fields.push({ label: "size", value: `${s.x}×${s.y}×${s.z} mm` });
+        }
+        if (type === "cylinder") {
+          if (params.radius != null) fields.push({ label: "radius", value: `${params.radius} mm` });
+          if (params.height != null) fields.push({ label: "height", value: `${params.height} mm` });
+        }
+        if (type === "sphere" && params.radius != null) {
+          fields.push({ label: "radius", value: `${params.radius} mm` });
+        }
+
+        const sizeSuffix = fields.length > 0 ? ` ${fields.map((f) => f.value).join(", ")}` : "";
+        const capitalized = type.charAt(0).toUpperCase() + type.slice(1);
+
+        return {
+          status: "success",
+          result: `Created ${type} with id: ${partId}`,
+          partId,
+          display: {
+            summary: [text(`+ ${capitalized}${sizeSuffix} `), link(partId, docStore)],
+            fields,
+            affectedPartIds: [partId],
+          },
+        };
       }
 
       case "cone":
@@ -147,7 +213,20 @@ function executeCreate(
         const err = validatePartId(child, docStore, "translate child");
         if (err) return err;
         docStore.setTranslation(child, offset);
-        return { status: "success", result: `Translated ${child} by (${offset.x}, ${offset.y}, ${offset.z})`, partId: child };
+        return {
+          status: "success",
+          result: `Translated ${child} by (${offset.x}, ${offset.y}, ${offset.z})`,
+          partId: child,
+          display: {
+            summary: [
+              text("↦ Translate "),
+              link(child, docStore),
+              text(` by (${offset.x}, ${offset.y}, ${offset.z})`),
+            ],
+            fields: [{ label: "offset", value: `(${offset.x}, ${offset.y}, ${offset.z}) mm` }],
+            affectedPartIds: [child],
+          },
+        };
       }
       case "rotate": {
         const child = params.child as string;
@@ -156,7 +235,20 @@ function executeCreate(
         const err = validatePartId(child, docStore, "rotate child");
         if (err) return err;
         docStore.setRotation(child, angles);
-        return { status: "success", result: `Rotated ${child}`, partId: child };
+        return {
+          status: "success",
+          result: `Rotated ${child}`,
+          partId: child,
+          display: {
+            summary: [
+              text("↻ Rotate "),
+              link(child, docStore),
+              text(` by (${angles.x}°, ${angles.y}°, ${angles.z}°)`),
+            ],
+            fields: [{ label: "angles", value: `(${angles.x}°, ${angles.y}°, ${angles.z}°)` }],
+            affectedPartIds: [child],
+          },
+        };
       }
       case "scale": {
         const child = params.child as string;
@@ -165,7 +257,20 @@ function executeCreate(
         const err = validatePartId(child, docStore, "scale child");
         if (err) return err;
         docStore.setScale(child, factor);
-        return { status: "success", result: `Scaled ${child}`, partId: child };
+        return {
+          status: "success",
+          result: `Scaled ${child}`,
+          partId: child,
+          display: {
+            summary: [
+              text("⇱ Scale "),
+              link(child, docStore),
+              text(` by (${factor.x}, ${factor.y}, ${factor.z})`),
+            ],
+            fields: [{ label: "factor", value: `(${factor.x}, ${factor.y}, ${factor.z})` }],
+            affectedPartIds: [child],
+          },
+        };
       }
 
       case "union":
@@ -186,9 +291,26 @@ function executeCreate(
         const rerr = validatePartId(right, docStore, "boolean right");
         if (rerr) return rerr;
         const resultId = docStore.applyBoolean(type, left, right);
-        return resultId
-          ? { status: "success", result: `Applied ${type} → new part id: ${resultId}`, partId: resultId }
-          : { status: "error", result: `${type} failed` };
+        if (!resultId) return { status: "error", result: `${type} failed` };
+        const verb = type === "union" ? "Join" : type === "difference" ? "Cut" : "Intersect";
+        const icon = type === "union" ? "⊕" : type === "difference" ? "⊖" : "⊗";
+        return {
+          status: "success",
+          result: `Applied ${type} → new part id: ${resultId}`,
+          partId: resultId,
+          display: {
+            summary: [
+              text(`${icon} ${verb} `),
+              link(left, docStore),
+              text(" with "),
+              link(right, docStore),
+              text(" → "),
+              link(resultId, docStore),
+            ],
+            fields: [{ label: "operation", value: type }],
+            affectedPartIds: [left, right, resultId],
+          },
+        };
       }
 
       case "fillet": {
@@ -197,9 +319,22 @@ function executeCreate(
         const err = validatePartId(target, docStore, "fillet target");
         if (err) return err;
         const id = docStore.addFillet(target, params.radius as number);
-        return id
-          ? { status: "success", result: `Applied ${params.radius}mm fillet to ${target} → new part id: ${id}`, partId: id }
-          : { status: "error", result: "Fillet failed — target may not be a solid" };
+        if (!id) return { status: "error", result: "Fillet failed — target may not be a solid" };
+        return {
+          status: "success",
+          result: `Applied ${params.radius}mm fillet to ${target} → new part id: ${id}`,
+          partId: id,
+          display: {
+            summary: [
+              text(`⌒ Fillet `),
+              link(target, docStore),
+              text(` r=${params.radius}mm → `),
+              link(id, docStore),
+            ],
+            fields: [{ label: "radius", value: `${params.radius} mm` }],
+            affectedPartIds: [target, id],
+          },
+        };
       }
       case "chamfer": {
         const target = parentPartId || (params.child as string);
@@ -207,9 +342,22 @@ function executeCreate(
         const err = validatePartId(target, docStore, "chamfer target");
         if (err) return err;
         const id = docStore.addChamfer(target, params.distance as number);
-        return id
-          ? { status: "success", result: `Applied ${params.distance}mm chamfer to ${target} → new part id: ${id}`, partId: id }
-          : { status: "error", result: "Chamfer failed — target may not be a solid" };
+        if (!id) return { status: "error", result: "Chamfer failed — target may not be a solid" };
+        return {
+          status: "success",
+          result: `Applied ${params.distance}mm chamfer to ${target} → new part id: ${id}`,
+          partId: id,
+          display: {
+            summary: [
+              text(`⌐ Chamfer `),
+              link(target, docStore),
+              text(` d=${params.distance}mm → `),
+              link(id, docStore),
+            ],
+            fields: [{ label: "distance", value: `${params.distance} mm` }],
+            affectedPartIds: [target, id],
+          },
+        };
       }
       case "shell": {
         const target = parentPartId || (params.child as string);
@@ -217,9 +365,22 @@ function executeCreate(
         const err = validatePartId(target, docStore, "shell target");
         if (err) return err;
         const id = docStore.addShell(target, params.thickness as number);
-        return id
-          ? { status: "success", result: `Shelled ${target} with ${params.thickness}mm walls → new part id: ${id}`, partId: id }
-          : { status: "error", result: "Shell failed — target may not be a solid" };
+        if (!id) return { status: "error", result: "Shell failed — target may not be a solid" };
+        return {
+          status: "success",
+          result: `Shelled ${target} with ${params.thickness}mm walls → new part id: ${id}`,
+          partId: id,
+          display: {
+            summary: [
+              text(`□ Shell `),
+              link(target, docStore),
+              text(` t=${params.thickness}mm → `),
+              link(id, docStore),
+            ],
+            fields: [{ label: "thickness", value: `${params.thickness} mm` }],
+            affectedPartIds: [target, id],
+          },
+        };
       }
 
       case "extrude": {
@@ -243,9 +404,27 @@ function executeCreate(
             plane, s.origin, s.segments as never[], direction,
             { twist_angle: params.twist_angle as number | undefined, scale_end: params.scale_end as number | undefined },
           );
-          return partId
-            ? { status: "success", result: `Extruded sketch → new part id: ${partId}`, partId }
-            : { status: "error", result: "Extrude failed — check sketch segments form a closed loop" };
+          if (!partId) {
+            return { status: "error", result: "Extrude failed — check sketch segments form a closed loop" };
+          }
+          const depth = Math.sqrt(direction.x ** 2 + direction.y ** 2 + direction.z ** 2);
+          return {
+            status: "success",
+            result: `Extruded sketch → new part id: ${partId}`,
+            partId,
+            display: {
+              summary: [
+                text(`▲ Extrude sketch (${s.segments.length} segs, ${depth.toFixed(1)}mm) → `),
+                link(partId, docStore),
+              ],
+              fields: [
+                { label: "segments", value: `${s.segments.length}` },
+                { label: "depth", value: `${depth.toFixed(2)} mm` },
+                { label: "origin", value: `(${s.origin.x}, ${s.origin.y}, ${s.origin.z})` },
+              ],
+              affectedPartIds: [partId],
+            },
+          };
         }
         return { status: "error", result: "Extrude from existing sketch node not yet supported" };
       }
@@ -435,9 +614,22 @@ function executeDelete(
   uiStore: UiStore,
 ): ExecutionResult {
   try {
+    const part = docStore.partIndex.get(partId);
+    const name = part?.name ?? partId.slice(-4);
     docStore.removePart(partId);
     uiStore.clearSelection();
-    return { status: "success", result: `Deleted part ${partId}` };
+    return {
+      status: "success",
+      result: `Deleted part ${partId}`,
+      display: {
+        summary: [
+          text("✕ Delete "),
+          { type: "partLink", partId, name },
+        ],
+        fields: [{ label: "part id", value: partId }],
+        affectedPartIds: [partId],
+      },
+    };
   } catch (err) {
     return { status: "error", result: err instanceof Error ? err.message : "Delete failed" };
   }
