@@ -78,7 +78,7 @@ export function useChatHandler() {
       const accumulatedToolCalls: ToolCallInfo[] = [];
       const parts: MessagePart[] = [];
       let fullText = "";
-      const MAX_TOOL_LOOPS = 25;
+      const MAX_TOOL_LOOPS = 50;
 
       const updateUI = () => {
         useChatStore.getState().updateLastAssistant(fullText, accumulatedToolCalls, [...parts]);
