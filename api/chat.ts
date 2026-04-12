@@ -382,6 +382,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const ip = getClientIp(req);
   const ipHash = hashIp(ip);
 
+  // Loud warning if Supabase isn't configured. Rate limiting and usage
+  // tracking both depend on the admin client — without it we have no
+  // protection at all. Safe for self-hosted setups, dangerous in production.
+  if (!admin) {
+    console.warn(
+      "[chat] WARNING: Supabase admin client unavailable — rate limiting and usage tracking are DISABLED. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY to enable.",
+    );
+  }
+
   // Rate limit checks — only enforced when Supabase is configured.
   if (admin) {
     if (userId) {

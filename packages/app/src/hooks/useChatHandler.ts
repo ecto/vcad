@@ -88,10 +88,26 @@ export function useChatHandler() {
       const { content, context } = e.detail;
       const store = useChatStore.getState();
 
-      // If the user is signed out and already hit the rate-limit response,
-      // don't even attempt another request — the server will just 429 again.
       const session = useAuthStore.getState().session;
       const isAnon = !session;
+
+      // Defense-in-depth: hard-block anon sends once the local counter hits
+      // the limit. This prevents runaway cost if the server-side rate limit
+      // is misconfigured (e.g. missing SUPABASE_SERVICE_ROLE_KEY in prod).
+      // The server is still the source of truth for the limit, but this
+      // keeps the client honest even when auth isn't configured at all.
+      if (isAnon && store.anonUsage.used >= store.anonUsage.limit) {
+        store.setUsageError({
+          kind: "anon_limit",
+          message: `You've used your ${store.anonUsage.limit} free chat messages. Sign in for more.`,
+          limit: store.anonUsage.limit,
+          usage: store.anonUsage.used,
+        });
+        return;
+      }
+
+      // If a previous request already reported a limit error, don't retry —
+      // the server will just 429 again.
       if (isAnon && store.usageError?.kind === "anon_limit") {
         // The sidebar will handle opening the auth modal for this case.
         return;

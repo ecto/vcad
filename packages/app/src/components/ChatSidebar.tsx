@@ -479,10 +479,10 @@ export function ChatSidebar() {
         </div>
       )}
 
-      {/* Anon free-usage badge (shown when anon and has used >= 1) */}
+      {/* Anon free-usage badge (shown when anon and has used >= 1, capped at limit) */}
       {!user && anonUsage.used > 0 && !usageError && (
         <div className="shrink-0 border-t border-border px-3 py-1 text-[9px] text-text-muted text-center">
-          {anonUsage.used}/{anonUsage.limit} free chat messages used
+          {Math.min(anonUsage.used, anonUsage.limit)}/{anonUsage.limit} free chat messages used
         </div>
       )}
 
