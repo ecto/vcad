@@ -50,7 +50,6 @@ import * as Popover from "@radix-ui/react-popover";
 import { Tooltip } from "@/components/ui/tooltip";
 import {
   ToolbarButton,
-  TabDropdown,
   MoreDropdown,
   TAB_COLORS,
   MOBILE_BREAKPOINT,
@@ -1644,46 +1643,61 @@ export function ToolPalette() {
           />
         </>
       )}
-      {/* Tool palette — horizontal tabbed row (Borland C++ Builder style) */}
+      {/* Tool palette — Borland C++ Builder Component Palette style:       */}
+      {/*   Row 1: tab strip (click a tab to switch)                         */}
+      {/*   Row 2: active tab's button row (rendered inline, not a popover)  */}
       <div
         ref={toolbarRef}
         className={cn(
-          "tool-palette",
-          "flex items-center gap-0.5 px-2 py-1",
+          "tool-palette flex flex-col",
           "bg-surface/95 backdrop-blur-sm",
-          "transition-all duration-200",
           isOrbiting && "opacity-0 pointer-events-none"
         )}
       >
-        {/* Command palette dropdown */}
-        <CommandDropdown />
+        {/* Row 1: tab strip */}
+        <div className="flex h-7 items-stretch border-b border-border/40">
+          <CommandDropdown />
+          <div className="w-px bg-border/50 my-1" />
+          {ALL_TABS.slice(0, visibleTabCount).map(({ id, label, icon: Icon }, index) => {
+            const isActive = displayedTab === id;
+            return (
+              <button
+                key={id}
+                onClick={() => handleTabClick(id)}
+                className={cn(
+                  "flex items-center gap-1.5 px-3 text-[11px] font-medium border-b-2",
+                  "transition-colors",
+                  isActive
+                    ? cn("border-accent text-text bg-hover/30")
+                    : "border-transparent text-text-muted hover:text-text hover:bg-hover/20",
+                )}
+                title={`${index + 1}. ${label}`}
+              >
+                <Icon size={13} className={cn(isActive && TAB_COLORS[id])} />
+                <span>{label}</span>
+                <span className="ml-1 text-[9px] text-text-muted/60 font-mono hidden sm:inline">
+                  {index + 1}
+                </span>
+              </button>
+            );
+          })}
+          {overflowTabs.length > 0 && (
+            <MoreDropdown
+              tabs={overflowTabs}
+              activeTab={toolbarTab}
+              onSelect={handleTabClick}
+              colors={TAB_COLORS}
+            >
+              {(tab) => renderTabContent(tab)}
+            </MoreDropdown>
+          )}
+          <div className="flex-1" />
+        </div>
 
-        {/* Visible tabs as dropdowns */}
-        {visibleTabs.map(({ id, label, icon }, index) => (
-          <TabDropdown
-            key={id}
-            id={id}
-            label={label}
-            icon={icon}
-            index={index}
-            onSelect={() => handleTabClick(id)}
-            colors={TAB_COLORS}
-          >
-            {renderTabContent(id)}
-          </TabDropdown>
-        ))}
-
-        {/* "More" dropdown for overflow tabs */}
-        {overflowTabs.length > 0 && (
-          <MoreDropdown
-            tabs={overflowTabs}
-            activeTab={toolbarTab}
-            onSelect={handleTabClick}
-            colors={TAB_COLORS}
-          >
-            {(tab) => renderTabContent(tab)}
-          </MoreDropdown>
-        )}
+        {/* Row 2: active tab content — rendered inline, not in a popover */}
+        <div className="flex items-center gap-0.5 px-2 py-1 min-h-11">
+          {renderTabContent(displayedTab)}
+        </div>
       </div>
     </>
   );
