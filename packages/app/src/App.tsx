@@ -110,10 +110,19 @@ function ErrorScreen({ message }: { message: string }) {
   );
 }
 
-/** Wrapper that conditionally shows FeatureTree and PropertyPanel */
+/** Left sidebar: feature tree on top, property panel for the current selection underneath. */
 function FeatureTreeSlot({ sketchActive }: { sketchActive: boolean }) {
   if (sketchActive) return null;
-  return <FeatureTree />;
+  return (
+    <div className="flex h-full w-full flex-col min-h-0">
+      <div className="flex-1 min-h-0 overflow-hidden">
+        <FeatureTree />
+      </div>
+      <Suspense fallback={null}>
+        <PropertyPanel />
+      </Suspense>
+    </div>
+  );
 }
 
 export function App() {
@@ -581,9 +590,10 @@ export function App() {
                 onAboutOpen={() => setAboutOpen(true)}
                 onSave={handleSave}
                 onOpen={handleOpen}
-              />
+              >
+                {!sketchActive && <ToolPalette />}
+              </Header>
             )}
-            palette={!electronicsActive && !sketchActive && <ToolPalette />}
             leftSidebar={!electronicsActive && !sketchActive && featureTreeOpen && (
               <FeatureTreeSlot sketchActive={sketchActive} />
             )}
@@ -607,7 +617,6 @@ export function App() {
             <SketchStatusPanel />
             <DrawingToolbar />
             <FaceSelectionOverlay />
-            <PropertyPanel />
           </Suspense>
 
           {/* Electronics toolbar + status (self-gate via electronicsActive) */}

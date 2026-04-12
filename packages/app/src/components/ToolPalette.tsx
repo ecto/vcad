@@ -803,8 +803,6 @@ export function ToolPalette() {
   const toolbarExpanded = useUiStore((s) => s.toolbarExpanded);
   const toolbarTab = useUiStore((s) => s.toolbarTab);
   const setToolbarTab = useUiStore((s) => s.setToolbarTab);
-  const isOrbiting = useUiStore((s) => s.isOrbiting);
-
   const enterSketchMode = useSketchStore((s) => s.enterSketchMode);
   const enterFaceSelectionMode = useSketchStore((s) => s.enterFaceSelectionMode);
   const sketchActive = useSketchStore((s) => s.active);
@@ -1650,8 +1648,7 @@ export function ToolPalette() {
         ref={toolbarRef}
         className={cn(
           "tool-palette flex flex-col",
-          "bg-surface/95 backdrop-blur-sm",
-          isOrbiting && "opacity-0 pointer-events-none"
+          "bg-surface",
         )}
       >
         {/* Row 1: tab strip */}

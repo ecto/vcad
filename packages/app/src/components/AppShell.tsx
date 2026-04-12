@@ -84,7 +84,6 @@ function ResizeHandle({ side, width, onResize }: ResizeHandleProps) {
 
 interface AppShellProps {
   header?: ReactNode;
-  palette?: ReactNode;
   leftSidebar?: ReactNode;
   rightSidebar?: ReactNode;
   /** Bottom status bar (Borland F-key hint row) */
@@ -95,17 +94,14 @@ interface AppShellProps {
 
 /**
  * IDE-style shell with named slots:
- *   Row 1: header       (e.g. logo, doc name, user menu)
- *   Row 2: tool palette (e.g. Borland-style tabbed component palette)
- *   Row 3: body — [leftSidebar] [viewport] [rightSidebar]
+ *   Row 1: header       (menu bar + tool palette as one unified chrome)
+ *   Row 2: body — [leftSidebar] [viewport] [rightSidebar]
+ *   Row 3: footer       (Borland-style F-key hint row)
  *
- * Sidebar widths are drag-resizable and persist to localStorage. Unknown
- * slots collapse to zero height/width so the viewport fills the available
- * space on routes that don't need them.
+ * Sidebar widths are drag-resizable and persist to localStorage.
  */
 export function AppShell({
   header,
-  palette,
   leftSidebar,
   rightSidebar,
   footer,
@@ -122,11 +118,6 @@ export function AppShell({
       {header && (
         <div className="shrink-0 border-b border-border">
           {header}
-        </div>
-      )}
-      {palette && (
-        <div className="shrink-0 border-b border-border">
-          {palette}
         </div>
       )}
       <div className="flex flex-1 min-h-0 flex-row">

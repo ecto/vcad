@@ -1,5 +1,4 @@
 import { useEffect, useRef, useMemo, lazy, Suspense } from "react";
-import { useIsMobile } from "@/hooks/useIsMobile";
 import { X } from "@phosphor-icons/react/dist/ssr/X";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ScrubInput } from "@/components/ui/scrub-input";
@@ -1034,7 +1033,6 @@ function InstanceRotationSection({ instance }: { instance: PartInstance }) {
 function InstancePropertiesPanel({ instance }: { instance: PartInstance }) {
   const document = useDocumentStore((s) => s.document);
   const clearSelection = useUiStore((s) => s.clearSelection);
-  const isMobile = useIsMobile();
 
   const partDef = document.partDefs?.[instance.partDefId];
   const displayName = instance.name ?? partDef?.name ?? instance.partDefId;
@@ -1042,19 +1040,12 @@ function InstancePropertiesPanel({ instance }: { instance: PartInstance }) {
   return (
     <div
       className={cn(
-        // Mobile: bottom sheet
-        "fixed inset-x-0 bottom-0 z-20 w-full",
-        "sm:absolute sm:top-14 sm:right-3 sm:bottom-auto sm:left-auto sm:w-60",
-        "border-t sm:border border-border",
-        "bg-surface",
-        "shadow-lg shadow-black/30",
-        isMobile ? "max-h-[60vh]" : "max-h-[calc(100vh-120px)]",
-        "flex flex-col",
-        "pb-[var(--safe-bottom)]"
+        "w-full flex flex-col bg-surface",
+        "border-t border-border",
+        "shrink-0 max-h-[55%]",
       )}
     >
       {/* Mobile drag handle */}
-      <div className="sm:hidden h-1 w-10 bg-border rounded-full mx-auto my-2 shrink-0" />
 
       {/* Header */}
       <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border px-3">
@@ -1167,7 +1158,6 @@ function JointStateSlider({ joint }: { joint: Joint }) {
 function JointPropertiesPanel({ joint }: { joint: Joint }) {
   const document = useDocumentStore((s) => s.document);
   const clearSelection = useUiStore((s) => s.clearSelection);
-  const isMobile = useIsMobile();
 
   const instancesById = useMemo(
     () => new Map(document.instances?.map((i) => [i.id, i]) ?? []),
@@ -1184,19 +1174,12 @@ function JointPropertiesPanel({ joint }: { joint: Joint }) {
   return (
     <div
       className={cn(
-        // Mobile: bottom sheet
-        "fixed inset-x-0 bottom-0 z-20 w-full",
-        "sm:absolute sm:top-14 sm:right-3 sm:bottom-auto sm:left-auto sm:w-60",
-        "border-t sm:border border-border",
-        "bg-surface",
-        "shadow-lg shadow-black/30",
-        isMobile ? "max-h-[60vh]" : "max-h-[calc(100vh-120px)]",
-        "flex flex-col",
-        "pb-[var(--safe-bottom)]"
+        "w-full flex flex-col bg-surface",
+        "border-t border-border",
+        "shrink-0 max-h-[55%]",
       )}
     >
       {/* Mobile drag handle */}
-      <div className="sm:hidden h-1 w-10 bg-border rounded-full mx-auto my-2 shrink-0" />
 
       {/* Header */}
       <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border px-3">
@@ -1252,7 +1235,6 @@ export function PropertyPanel() {
   const parts = useDocumentStore((s) => s.parts);
   const document = useDocumentStore((s) => s.document);
   const panelRef = useRef<HTMLDivElement>(null);
-  const isMobile = useIsMobile();
 
   // Close panel on Escape
   useEffect(() => {
@@ -1292,18 +1274,13 @@ export function PropertyPanel() {
       <div
         ref={panelRef}
         className={cn(
-          // Mobile: bottom sheet
-          "fixed inset-x-0 bottom-0 z-20 w-full",
-          "sm:absolute sm:top-14 sm:right-3 sm:bottom-auto sm:left-auto sm:w-60",
-          "border-t sm:border border-border",
-          "bg-surface",
-          "shadow-lg shadow-black/30",
-          "pb-[var(--safe-bottom)]"
+          "w-full flex flex-col bg-surface",
+          "border-t border-border",
+          "min-h-0",
         )}
       >
         {/* Mobile drag handle */}
-        <div className="sm:hidden h-1 w-10 bg-border rounded-full mx-auto my-2 shrink-0" />
-        <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border px-3">
+          <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border px-3">
           <span className="text-xs font-medium text-text">
             {selectedPartIds.size} parts selected
           </span>
@@ -1348,19 +1325,12 @@ export function PropertyPanel() {
     <div
       ref={panelRef}
       className={cn(
-        // Mobile: bottom sheet
-        "fixed inset-x-0 bottom-0 z-20 w-full",
-        "sm:absolute sm:top-14 sm:right-3 sm:bottom-auto sm:left-auto sm:w-60",
-        "border-t sm:border border-border",
-        "bg-surface",
-        "shadow-lg shadow-black/30",
-        isMobile ? "max-h-[60vh]" : "max-h-[calc(100vh-120px)]",
-        "flex flex-col",
-        "pb-[var(--safe-bottom)]"
+        "w-full flex flex-col bg-surface",
+        "border-t border-border",
+        "shrink-0 max-h-[55%]",
       )}
     >
       {/* Mobile drag handle */}
-      <div className="sm:hidden h-1 w-10 bg-border rounded-full mx-auto my-2 shrink-0" />
 
       {/* Header */}
       <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border px-3">

@@ -8,7 +8,6 @@ import { List } from "@phosphor-icons/react/dist/ssr/List";
 import { CubeTransparent } from "@phosphor-icons/react/dist/ssr/CubeTransparent";
 import { GridFour } from "@phosphor-icons/react/dist/ssr/GridFour";
 import { Info } from "@phosphor-icons/react/dist/ssr/Info";
-import { Keyboard } from "@phosphor-icons/react/dist/ssr/Keyboard";
 import { BookOpen } from "@phosphor-icons/react/dist/ssr/BookOpen";
 import { Cube } from "@phosphor-icons/react/dist/ssr/Cube";
 import { ArrowsOutCardinal } from "@phosphor-icons/react/dist/ssr/ArrowsOutCardinal";
@@ -21,57 +20,50 @@ import { CaretRight } from "@phosphor-icons/react/dist/ssr/CaretRight";
 import { Rocket } from "@phosphor-icons/react/dist/ssr/Rocket";
 import { FloppyDisk } from "@phosphor-icons/react/dist/ssr/FloppyDisk";
 import { ChatDots } from "@phosphor-icons/react/dist/ssr/ChatDots";
+import { FilePlus } from "@phosphor-icons/react/dist/ssr/FilePlus";
+import { Export } from "@phosphor-icons/react/dist/ssr/Export";
+import { Files } from "@phosphor-icons/react/dist/ssr/Files";
+import { ArrowCounterClockwise } from "@phosphor-icons/react/dist/ssr/ArrowCounterClockwise";
+import { ArrowClockwise } from "@phosphor-icons/react/dist/ssr/ArrowClockwise";
+import { Copy } from "@phosphor-icons/react/dist/ssr/Copy";
+import { ClipboardText } from "@phosphor-icons/react/dist/ssr/ClipboardText";
+import { Trash } from "@phosphor-icons/react/dist/ssr/Trash";
+import { Selection } from "@phosphor-icons/react/dist/ssr/Selection";
+import { Pencil } from "@phosphor-icons/react/dist/ssr/Pencil";
+import { Terminal } from "@phosphor-icons/react/dist/ssr/Terminal";
+import { Printer } from "@phosphor-icons/react/dist/ssr/Printer";
+import { Wrench } from "@phosphor-icons/react/dist/ssr/Wrench";
+import { Keyboard } from "@phosphor-icons/react/dist/ssr/Keyboard";
 import * as Popover from "@radix-ui/react-popover";
-import { Tooltip } from "@/components/ui/tooltip";
 import {
   useDocumentStore,
   useUiStore,
   useChatStore,
+  useEngineStore,
+  useSketchStore,
+  exportStlBlob,
+  exportGltfBlob,
+  exportStepBlob,
 } from "@vcad/core";
 import { cn } from "@/lib/utils";
+import { downloadBlob } from "@/lib/download";
 import { examples } from "@/data/examples";
 import { CameraSettingsPanel } from "./CameraSettingsPanel";
 import { useCameraSettingsStore } from "@/stores/camera-settings-store";
 import { CONTROL_PRESETS } from "@/types/camera-controls";
 import { SignInButton, UserMenu, triggerSync } from "@vcad/auth";
-import { useBackgroundLuminance } from "@/hooks/useBackgroundLuminance";
 import { useChangelogStore } from "@/stores/changelog-store";
+import { useLogStore } from "@/stores/log-store";
+import { useSlicerStore } from "@/stores/slicer-store";
+import { useCamStore } from "@/stores/cam-store";
+import { useNotificationStore } from "@/stores/notification-store";
 
 interface HeaderProps {
   onAboutOpen: () => void;
   onSave: () => void;
   onOpen: () => void;
-}
-
-function IconButton({
-  children,
-  onClick,
-  tooltip,
-  active,
-  className,
-}: {
-  children: React.ReactNode;
-  onClick?: () => void;
-  tooltip: string;
-  active?: boolean;
-  className?: string;
-}) {
-  return (
-    <Tooltip content={tooltip}>
-      <button
-        className={cn(
-          // Mobile: 44px touch targets; Desktop: 32px
-          "flex h-11 w-11 sm:h-8 sm:w-8 items-center justify-center",
-          "text-text-muted/70 hover:text-text hover:bg-hover",
-          active && "text-accent",
-          className,
-        )}
-        onClick={onClick}
-      >
-        {children}
-      </button>
-    </Tooltip>
-  );
+  /** Tool palette (tab strip + icon row) docked directly under the menu bar. */
+  children?: React.ReactNode;
 }
 
 function ViewButton({
@@ -564,7 +556,7 @@ function SettingsMenu({ onAboutOpen, onOpen }: { onAboutOpen: () => void; onOpen
               Shortcuts
             </button>
             <a
-              href="https://docs.rs/vcad"
+              href="https://docs.vcad.io"
               target="_blank"
               rel="noopener noreferrer"
               className="flex flex-1 items-center justify-center gap-1.5 px-2 py-1.5 text-xs text-text hover:bg-hover"
@@ -626,7 +618,7 @@ function MenuBarItem({
   label: string;
   /** First letter to underline, e.g. "F" for "File" */
   accelerator?: string;
-  children: React.ReactNode;
+  children: React.ReactNode | ((close: () => void) => React.ReactNode);
 }) {
   const [open, setOpen] = useState(false);
   const renderedLabel =
@@ -693,43 +685,7 @@ function MenuSeparator() {
   return <div className="my-1 border-t border-border" />;
 }
 
-// ---------------------------------------------------------------------------
-// Borland-style chunky toolbar with grouped icon buttons + dividers
-// ---------------------------------------------------------------------------
-
-function ToolbarDivider() {
-  return <div className="h-5 w-px bg-border/50 mx-1" />;
-}
-
-function ToolbarIconButton({
-  tooltip,
-  onClick,
-  active,
-  children,
-}: {
-  tooltip: string;
-  onClick?: () => void;
-  active?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <Tooltip content={tooltip}>
-      <button
-        onClick={onClick}
-        className={cn(
-          "flex h-7 w-7 items-center justify-center",
-          "border border-transparent",
-          "text-text-muted hover:text-text hover:bg-hover hover:border-border",
-          active && "text-accent bg-accent/10 border-accent/30",
-        )}
-      >
-        {children}
-      </button>
-    </Tooltip>
-  );
-}
-
-export function Header({ onAboutOpen, onSave, onOpen }: HeaderProps) {
+export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
   const isDirty = useDocumentStore((s) => s.isDirty);
   const toggleFeatureTree = useUiStore((s) => s.toggleFeatureTree);
   const featureTreeOpen = useUiStore((s) => s.featureTreeOpen);
@@ -737,19 +693,102 @@ export function Header({ onAboutOpen, onSave, onOpen }: HeaderProps) {
   const theme = useUiStore((s) => s.theme);
   const chatOpen = useChatStore((s) => s.open);
   const toggleWireframe = useUiStore((s) => s.toggleWireframe);
+  const showWireframe = useUiStore((s) => s.showWireframe);
+  const toggleGridSnap = useUiStore((s) => s.toggleGridSnap);
+  const gridSnap = useUiStore((s) => s.gridSnap);
+  const logPanelOpen = useLogStore((s) => s.panelOpen);
+  const unreadChangelog = useChangelogStore((s) => s.getUnreadCount());
 
   const handleOpenChat = () => {
     useChatStore.getState().setOpen(true);
     window.dispatchEvent(new CustomEvent("vcad:open-chat"));
   };
   const handleCommandPalette = () => {
-    window.dispatchEvent(new CustomEvent("vcad:open-chat"));
+    useUiStore.getState().setCommandPaletteOpen(true);
+  };
+
+  const handleExport = (format: "stl" | "glb" | "step") => {
+    const scene = useEngineStore.getState().scene;
+    if (!scene) {
+      useNotificationStore.getState().addToast("Nothing to export", "info");
+      return;
+    }
+    try {
+      const blob =
+        format === "stl" ? exportStlBlob(scene)
+        : format === "glb" ? exportGltfBlob(scene)
+        : exportStepBlob(scene);
+      downloadBlob(blob, `model.${format}`);
+    } catch (err) {
+      useNotificationStore
+        .getState()
+        .addToast(`Export failed: ${(err as Error).message}`, "error");
+    }
+  };
+
+  const handleNew = () => {
+    if (useDocumentStore.getState().isDirty) {
+      if (!window.confirm("Discard unsaved changes and start a new document?")) return;
+    }
+    useDocumentStore.getState().newDocument(crypto.randomUUID(), "Untitled");
+  };
+
+  const handleUndo = () => useDocumentStore.getState().undo();
+  const handleRedo = () => useDocumentStore.getState().redo();
+
+  const handleDelete = () => {
+    const { selectedPartIds, clearSelection } = useUiStore.getState();
+    if (selectedPartIds.size === 0) return;
+    const { removePart } = useDocumentStore.getState();
+    for (const id of selectedPartIds) removePart(id);
+    clearSelection();
+  };
+
+  const handleDuplicate = () => {
+    const { selectedPartIds, selectMultiple } = useUiStore.getState();
+    if (selectedPartIds.size === 0) return;
+    const newIds = useDocumentStore.getState().duplicateParts(Array.from(selectedPartIds));
+    selectMultiple(newIds);
+  };
+
+  const handleCopy = () => {
+    const { selectedPartIds, copyToClipboard } = useUiStore.getState();
+    if (selectedPartIds.size === 0) return;
+    copyToClipboard(Array.from(selectedPartIds));
+    useNotificationStore
+      .getState()
+      .addToast(`Copied ${selectedPartIds.size} part${selectedPartIds.size > 1 ? "s" : ""}`, "success");
+  };
+
+  const handlePaste = () => {
+    const { clipboard, selectMultiple } = useUiStore.getState();
+    if (clipboard.length === 0) return;
+    const newIds = useDocumentStore.getState().duplicateParts(clipboard);
+    selectMultiple(newIds);
+  };
+
+  const handleSelectAll = () => {
+    const parts = useDocumentStore.getState().parts;
+    useUiStore.getState().selectMultiple(parts.map((p) => p.id));
+  };
+
+  const handleLoadExample = (file: unknown) => {
+    window.dispatchEvent(new CustomEvent("vcad:load-example", { detail: { file } }));
+  };
+
+  const handleCameraPreset = (preset: string) => {
+    window.dispatchEvent(new CustomEvent(`vcad:camera-${preset}`));
+  };
+
+  const handleStartSketch = () => {
+    useSketchStore.getState().enterFaceSelectionMode();
+    useNotificationStore.getState().addToast("Select a face to sketch on", "info");
   };
 
   return (
     <div className="flex flex-col bg-surface">
       {/* ─────────────────────────────────────────────────────── */}
-      {/* Row 1: menu bar (logo + File/Edit/View/Help + auth)    */}
+      {/* Row 1: menu bar (logo + File/Edit/View/Tools/Help)     */}
       {/* ─────────────────────────────────────────────────────── */}
       <div className="flex h-6 items-center gap-0 px-2 border-b border-border/30">
         <div className="flex items-center gap-1 pr-3">
@@ -762,11 +801,107 @@ export function Header({ onAboutOpen, onSave, onOpen }: HeaderProps) {
         <MenuBarItem label="File" accelerator="F">
           {(close: () => void) => (
             <>
+              <MenuItem icon={FilePlus} shortcut="⌘N" onClick={() => { handleNew(); close(); }}>
+                New
+              </MenuItem>
               <MenuItem icon={FolderOpen} shortcut="⌘O" onClick={() => { onOpen(); close(); }}>
                 Open…
               </MenuItem>
+              <MenuItem
+                icon={Files}
+                shortcut="⌘⇧O"
+                onClick={() => { window.dispatchEvent(new CustomEvent("vcad:documents")); close(); }}
+              >
+                Open from Cloud…
+              </MenuItem>
+              <MenuSeparator />
               <MenuItem icon={FloppyDisk} shortcut="⌘S" onClick={() => { onSave(); close(); }}>
                 Save
+              </MenuItem>
+              <MenuSeparator />
+              <Popover.Root>
+                <Popover.Trigger asChild>
+                  <button className="flex w-full items-center gap-2 px-3 py-1 text-xs text-text hover:bg-hover">
+                    <Export size={13} className="text-text-muted" />
+                    <span className="flex-1 text-left">Export</span>
+                    <CaretRight size={10} className="text-text-muted" />
+                  </button>
+                </Popover.Trigger>
+                <Popover.Portal>
+                  <Popover.Content
+                    side="right"
+                    sideOffset={0}
+                    align="start"
+                    className="z-50 min-w-[160px] border border-border bg-surface shadow-lg py-1"
+                  >
+                    <MenuItem onClick={() => { handleExport("stl"); close(); }}>STL</MenuItem>
+                    <MenuItem onClick={() => { handleExport("glb"); close(); }}>GLB</MenuItem>
+                    <MenuItem onClick={() => { handleExport("step"); close(); }}>STEP</MenuItem>
+                  </Popover.Content>
+                </Popover.Portal>
+              </Popover.Root>
+              <MenuSeparator />
+              <Popover.Root>
+                <Popover.Trigger asChild>
+                  <button className="flex w-full items-center gap-2 px-3 py-1 text-xs text-text hover:bg-hover">
+                    <BookOpen size={13} className="text-text-muted" />
+                    <span className="flex-1 text-left">Examples</span>
+                    <CaretRight size={10} className="text-text-muted" />
+                  </button>
+                </Popover.Trigger>
+                <Popover.Portal>
+                  <Popover.Content
+                    side="right"
+                    sideOffset={0}
+                    align="start"
+                    className="z-50 min-w-[200px] max-h-[60vh] overflow-y-auto border border-border bg-surface shadow-lg py-1"
+                  >
+                    {examples.map((ex) => (
+                      <MenuItem
+                        key={ex.id}
+                        onClick={() => { handleLoadExample(ex.file); close(); }}
+                      >
+                        {ex.name}
+                      </MenuItem>
+                    ))}
+                  </Popover.Content>
+                </Popover.Portal>
+              </Popover.Root>
+            </>
+          )}
+        </MenuBarItem>
+
+        <MenuBarItem label="Edit" accelerator="E">
+          {(close: () => void) => (
+            <>
+              <MenuItem icon={ArrowCounterClockwise} shortcut="⌘Z" onClick={() => { handleUndo(); close(); }}>
+                Undo
+              </MenuItem>
+              <MenuItem icon={ArrowClockwise} shortcut="⌘⇧Z" onClick={() => { handleRedo(); close(); }}>
+                Redo
+              </MenuItem>
+              <MenuSeparator />
+              <MenuItem icon={Copy} shortcut="⌘C" onClick={() => { handleCopy(); close(); }}>
+                Copy
+              </MenuItem>
+              <MenuItem icon={ClipboardText} shortcut="⌘V" onClick={() => { handlePaste(); close(); }}>
+                Paste
+              </MenuItem>
+              <MenuItem icon={Copy} shortcut="⌘D" onClick={() => { handleDuplicate(); close(); }}>
+                Duplicate
+              </MenuItem>
+              <MenuItem icon={Trash} shortcut="Del" onClick={() => { handleDelete(); close(); }}>
+                Delete
+              </MenuItem>
+              <MenuSeparator />
+              <MenuItem icon={Selection} shortcut="⌘A" onClick={() => { handleSelectAll(); close(); }}>
+                Select All
+              </MenuItem>
+              <MenuItem
+                shortcut="Esc"
+                onClick={() => { useUiStore.getState().clearSelection(); close(); }}
+              >
+                Deselect
               </MenuItem>
             </>
           )}
@@ -777,23 +912,56 @@ export function Header({ onAboutOpen, onSave, onOpen }: HeaderProps) {
             <>
               <MenuItem
                 icon={List}
-                shortcut="`"
                 onClick={() => { toggleFeatureTree(); close(); }}
               >
                 {featureTreeOpen ? "Hide Feature Tree" : "Show Feature Tree"}
               </MenuItem>
               <MenuItem
                 icon={ChatDots}
+                shortcut="F6"
                 onClick={() => { useChatStore.getState().toggleOpen(); close(); }}
               >
                 {chatOpen ? "Hide Chat" : "Show Chat"}
               </MenuItem>
-              <MenuItem icon={CubeTransparent} shortcut="X" onClick={() => { toggleWireframe(); close(); }}>
-                Toggle Wireframe
+              <MenuItem
+                icon={Terminal}
+                shortcut="`"
+                onClick={() => { useLogStore.getState().togglePanel(); close(); }}
+              >
+                {logPanelOpen ? "Hide Log Viewer" : "Show Log Viewer"}
+              </MenuItem>
+              <MenuSeparator />
+              <MenuItem icon={Cube} onClick={() => { handleCameraPreset("isometric"); close(); }}>
+                Isometric
+              </MenuItem>
+              <MenuItem onClick={() => { handleCameraPreset("top"); close(); }}>Top</MenuItem>
+              <MenuItem onClick={() => { handleCameraPreset("front"); close(); }}>Front</MenuItem>
+              <MenuItem onClick={() => { handleCameraPreset("right"); close(); }}>Right</MenuItem>
+              <MenuItem
+                icon={ArrowsOutCardinal}
+                shortcut="F"
+                onClick={() => { handleCameraPreset("fit"); close(); }}
+              >
+                Fit to View
               </MenuItem>
               <MenuSeparator />
               <MenuItem
-                icon={theme === "dark" ? Sun : theme === "light" ? Moon : Desktop}
+                icon={CubeTransparent}
+                shortcut="X"
+                onClick={() => { toggleWireframe(); close(); }}
+              >
+                {showWireframe ? "Hide Wireframe" : "Show Wireframe"}
+              </MenuItem>
+              <MenuItem
+                icon={GridFour}
+                shortcut="G"
+                onClick={() => { toggleGridSnap(); close(); }}
+              >
+                {gridSnap ? "Disable Grid Snap" : "Enable Grid Snap"}
+              </MenuItem>
+              <MenuSeparator />
+              <MenuItem
+                icon={theme === "dark" ? Sun : theme === "light" ? Desktop : Moon}
                 onClick={() => {
                   setTheme(theme === "dark" ? "light" : theme === "light" ? "system" : "dark");
                   close();
@@ -814,6 +982,23 @@ export function Header({ onAboutOpen, onSave, onOpen }: HeaderProps) {
               <MenuItem icon={ChatDots} onClick={() => { handleOpenChat(); close(); }}>
                 AI Chat
               </MenuItem>
+              <MenuSeparator />
+              <MenuItem icon={Pencil} onClick={() => { handleStartSketch(); close(); }}>
+                New Sketch…
+              </MenuItem>
+              <MenuSeparator />
+              <MenuItem
+                icon={Printer}
+                onClick={() => { useSlicerStore.getState().openPrintPanel(); close(); }}
+              >
+                Print (Slicer)…
+              </MenuItem>
+              <MenuItem
+                icon={Wrench}
+                onClick={() => { useCamStore.getState().openCamPanel(); close(); }}
+              >
+                CAM (Toolpath)…
+              </MenuItem>
             </>
           )}
         </MenuBarItem>
@@ -824,10 +1009,28 @@ export function Header({ onAboutOpen, onSave, onOpen }: HeaderProps) {
               <MenuItem icon={Info} onClick={() => { onAboutOpen(); close(); }}>
                 About vcad
               </MenuItem>
-              <MenuItem icon={Keyboard} onClick={() => { handleCommandPalette(); close(); }}>
-                Keyboard Shortcuts
-              </MenuItem>
+              <button
+                onClick={() => {
+                  useChangelogStore.getState().openPanel();
+                  close();
+                }}
+                className="flex w-full items-center gap-2 px-3 py-1 text-xs text-text hover:bg-hover"
+              >
+                <Rocket size={13} className="text-accent" />
+                <span className="flex-1 text-left">What's New</span>
+                {unreadChangelog > 0 && (
+                  <span className="px-1.5 py-0.5 text-[10px] font-bold bg-accent text-white rounded-full min-w-[18px] text-center">
+                    {unreadChangelog}
+                  </span>
+                )}
+              </button>
               <MenuSeparator />
+              <MenuItem
+                icon={BookOpen}
+                onClick={() => { window.open("https://docs.vcad.io", "_blank"); close(); }}
+              >
+                Documentation
+              </MenuItem>
               <MenuItem
                 icon={GithubLogo}
                 onClick={() => { window.open("https://github.com/ecto/vcad", "_blank"); close(); }}
@@ -836,7 +1039,7 @@ export function Header({ onAboutOpen, onSave, onOpen }: HeaderProps) {
               </MenuItem>
               <MenuItem
                 icon={DiscordLogo}
-                onClick={() => { window.open("https://discord.gg/vcad", "_blank"); close(); }}
+                onClick={() => { window.open("https://discord.gg/ZU8QHnFAc2", "_blank"); close(); }}
               >
                 Discord
               </MenuItem>
@@ -846,7 +1049,8 @@ export function Header({ onAboutOpen, onSave, onOpen }: HeaderProps) {
 
         <div className="flex-1" />
 
-        {/* Auth: Sign in button or user menu */}
+        {/* Right cluster: viewport settings + auth */}
+        <SettingsMenu onAboutOpen={onAboutOpen} onOpen={onOpen} />
         <SignInButton
           variant="icon-text"
           className={cn(
@@ -858,47 +1062,9 @@ export function Header({ onAboutOpen, onSave, onOpen }: HeaderProps) {
       </div>
 
       {/* ─────────────────────────────────────────────────────── */}
-      {/* Row 2: Borland-style toolbar — grouped icons + dividers */}
+      {/* Row 2+: tool palette (tab strip + icon row) docked under */}
       {/* ─────────────────────────────────────────────────────── */}
-      <div className="flex h-9 items-center px-2 gap-0.5">
-        {/* File group */}
-        <ToolbarIconButton tooltip="Open (⌘O)" onClick={onOpen}>
-          <FolderOpen size={15} />
-        </ToolbarIconButton>
-        <ToolbarIconButton tooltip="Save (⌘S)" onClick={onSave}>
-          <FloppyDisk size={15} />
-        </ToolbarIconButton>
-
-        <ToolbarDivider />
-
-        {/* View group */}
-        <ToolbarIconButton
-          tooltip="Toggle Feature Tree (`)"
-          onClick={toggleFeatureTree}
-          active={featureTreeOpen}
-        >
-          <List size={15} />
-        </ToolbarIconButton>
-        <ToolbarIconButton
-          tooltip="Toggle Chat"
-          onClick={() => useChatStore.getState().toggleOpen()}
-          active={chatOpen}
-        >
-          <ChatDots size={15} />
-        </ToolbarIconButton>
-
-        <ToolbarDivider />
-
-        {/* Tools group */}
-        <ToolbarIconButton tooltip="Command Palette (⌘K)" onClick={handleCommandPalette}>
-          <Command size={15} />
-        </ToolbarIconButton>
-
-        <div className="flex-1" />
-
-        {/* Catch-all settings/help dropdown on the right */}
-        <SettingsMenu onAboutOpen={onAboutOpen} onOpen={onOpen} />
-      </div>
+      {children}
     </div>
   );
 }
