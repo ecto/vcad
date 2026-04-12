@@ -97,10 +97,11 @@ function executeCrudInner(
 ): ExecutionResult {
   switch (tool) {
     case "create":
-      return executeCreate(
+      return executeCreateWithName(
         args.type as string,
         args.params as Record<string, unknown>,
         args.parent_part_id as string | undefined,
+        args.name as string | undefined,
         docStore,
         uiStore,
       );
@@ -149,6 +150,41 @@ function executeSetMaterial(
   } catch (e) {
     return { status: "error", result: e instanceof Error ? e.message : "set_material failed" };
   }
+}
+
+/** Apply a user-provided name to a freshly created part, if any. */
+function applyName(docStore: DocStore, partId: string | null | undefined, name: string | undefined): void {
+  if (!partId || !name) return;
+  if (typeof docStore.renamePart !== "function") return;
+  try {
+    docStore.renamePart(partId, name);
+  } catch {
+    // non-fatal: rename failures shouldn't break the create call
+  }
+}
+
+/** Wrap executeCreate with an optional post-rename that keeps display segments in sync. */
+function executeCreateWithName(
+  type: string,
+  params: Record<string, unknown>,
+  parentPartId: string | undefined,
+  name: string | undefined,
+  docStore: DocStore,
+  uiStore: UiStore,
+): ExecutionResult {
+  const result = executeCreate(type, params, parentPartId, docStore, uiStore);
+  if (result.status === "success" && name && result.partId) {
+    applyName(docStore, result.partId, name);
+    // Patch any partLink segments in the display that reference the newly named part
+    if (result.display?.summary) {
+      for (const seg of result.display.summary) {
+        if (seg.type === "partLink" && seg.partId === result.partId) {
+          seg.name = name;
+        }
+      }
+    }
+  }
+  return result;
 }
 
 function executeCreate(
