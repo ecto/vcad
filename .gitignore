@@ -16,5 +16,6 @@ packages/app/dev-dist/
 *.tsbuildinfo
 .claude/worktrees/
 .ralph-tui/
+.superpowers/
 tasks/
 *.patch
