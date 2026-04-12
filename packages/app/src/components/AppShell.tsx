@@ -87,6 +87,8 @@ interface AppShellProps {
   palette?: ReactNode;
   leftSidebar?: ReactNode;
   rightSidebar?: ReactNode;
+  /** Bottom status bar (Borland F-key hint row) */
+  footer?: ReactNode;
   /** Main viewport content — takes the remaining flex space in the body row. */
   children: ReactNode;
 }
@@ -106,6 +108,7 @@ export function AppShell({
   palette,
   leftSidebar,
   rightSidebar,
+  footer,
   children,
 }: AppShellProps) {
   const [leftWidth, setLeftWidth] = useState(() => loadWidth(LEFT_KEY, DEFAULT_LEFT));
@@ -153,6 +156,11 @@ export function AppShell({
           </>
         )}
       </div>
+      {footer && (
+        <div className="shrink-0 border-t border-border">
+          {footer}
+        </div>
+      )}
     </div>
   );
 }

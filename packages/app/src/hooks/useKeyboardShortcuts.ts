@@ -48,6 +48,40 @@ export function useKeyboardShortcuts() {
         return;
       }
 
+      // ── Borland-style function key bindings ────────────────────────
+      // (Match the StatusBar hints. All of these are also click-activable
+      // from the F-key hint row at the bottom of the window.)
+      if (e.key === "F1") {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent("vcad:about"));
+        return;
+      }
+      if (e.key === "F2") {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent("vcad:save"));
+        return;
+      }
+      if (e.key === "F3") {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent("vcad:open"));
+        return;
+      }
+      if (e.key === "F5") {
+        e.preventDefault();
+        toggleWireframe();
+        return;
+      }
+      if (e.key === "F6") {
+        e.preventDefault();
+        useChatStore.getState().toggleOpen();
+        return;
+      }
+      if (e.key === "F10") {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent("vcad:open-chat"));
+        return;
+      }
+
 
       // Toggle feature tree: Cmd+1
       if (mod && e.key === "1") {

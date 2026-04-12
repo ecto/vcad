@@ -743,7 +743,7 @@ export function Header({ onAboutOpen, onSave, onOpen }: HeaderProps) {
     window.dispatchEvent(new CustomEvent("vcad:open-chat"));
   };
   const handleCommandPalette = () => {
-    window.dispatchEvent(new CustomEvent("vcad:open-command-palette"));
+    window.dispatchEvent(new CustomEvent("vcad:open-chat"));
   };
 
   return (

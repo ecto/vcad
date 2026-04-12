@@ -12,6 +12,7 @@ import { NotificationContainer, ActivityPanel } from "@/components/ui/notificati
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AppShell } from "@/components/AppShell";
 import { Header } from "@/components/Header";
+import { StatusBar } from "@/components/StatusBar";
 import { ToolPalette } from "@/components/ToolPalette";
 import { Viewport } from "@/components/Viewport";
 import { FeatureTree } from "@/components/FeatureTree";
@@ -590,6 +591,13 @@ export function App() {
               <Suspense fallback={null}>
                 <ChatSidebar />
               </Suspense>
+            )}
+            footer={!electronicsActive && (
+              <StatusBar
+                onSave={handleSave}
+                onOpen={handleOpen}
+                onAboutOpen={() => setAboutOpen(true)}
+              />
             )}
           >
           {/* Full-bleed viewport */}
