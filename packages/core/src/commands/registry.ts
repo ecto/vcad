@@ -160,9 +160,15 @@ You have four tools: create, read, update, delete.
 
 ## Orientation Notes
 
-- **Cylinder**: axis along Z. Height is along Z, circular face is in XY plane. To make a wheel (round face visible from the side), create the cylinder then rotate it 90° around X so the axis lies along the Y axis: use rotate with angles x=90, y=0, z=0.
+- **Cylinder**: axis along Z. Height is along Z, circular face is in XY plane. To make a wheel (round face visible from the side), use extrude with a circular sketch in the XZ plane (set y_dir to (0,0,1)) and direction along Y for thickness — this is more reliable than rotating a cylinder.
 - **Box/Cube**: size.x is width, size.y is depth, size.z is height.
 - The grid lies in the XY plane. Z is up. X is right, Y is forward.
+
+## How translate/rotate/scale work (IMPORTANT)
+
+When you call create with type translate/rotate/scale, it WRAPS the existing part in place. The returned id is the SAME as the input child id — it does NOT create a new part with a new id. So:
+- create(type:translate, params:{child:abc, offset:...}) → part abc still exists, now translated. Use abc for follow-ups.
+- The DAG node behind the part gets a new wrapping node, but you reference parts by their stable part id, not by node id.
 
 ## Key Rules
 
