@@ -103,10 +103,10 @@ describe("CommandRegistry", () => {
   });
 
   describe("toAnthropicTools", () => {
-    it("returns exactly 4 CRUD tools", () => {
+    it("returns CRUD tools plus set_material", () => {
       const tools = registry.toAnthropicTools();
-      expect(tools).toHaveLength(4);
-      expect(tools.map((t) => t.name)).toEqual(["create", "read", "update", "delete"]);
+      expect(tools).toHaveLength(5);
+      expect(tools.map((t) => t.name)).toEqual(["create", "read", "update", "delete", "set_material"]);
     });
 
     it("create tool has type enum from schemas", () => {
@@ -122,6 +122,15 @@ describe("CommandRegistry", () => {
         expect(tool.input_schema.type).toBe("object");
         expect(tool.input_schema.properties).toBeDefined();
       }
+    });
+
+    it("set_material tool has part_id and material params", () => {
+      const tools = registry.toAnthropicTools();
+      const setMaterial = tools.find((t) => t.name === "set_material")!;
+      const props = setMaterial.input_schema.properties as Record<string, unknown>;
+      expect(props.part_id).toBeDefined();
+      expect(props.material).toBeDefined();
+      expect((setMaterial.input_schema.required as string[])).toEqual(["part_id", "material"]);
     });
   });
 
@@ -219,7 +228,7 @@ describe("CommandRegistry", () => {
       const fresh = new CommandRegistry();
       fresh.loadSchemas("[]");
       const tools = fresh.toAnthropicTools();
-      expect(tools).toHaveLength(4);
+      expect(tools).toHaveLength(5);
       const create = tools[0]!;
       const typeEnum = (create.input_schema.properties as Record<string, Record<string, unknown>>)
         .type.enum as string[];

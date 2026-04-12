@@ -77,9 +77,9 @@ fn to_snake_case(s: &str) -> String {
         if i > 0 {
             let prev = chars[i - 1];
             // Insert underscore at boundaries: lower→UPPER, letter→digit, digit→letter
-            if ch.is_uppercase() && (prev.is_lowercase() || prev.is_numeric()) {
-                result.push('_');
-            } else if ch.is_numeric() && prev.is_alphabetic() {
+            let boundary = (ch.is_uppercase() && (prev.is_lowercase() || prev.is_numeric()))
+                || (ch.is_numeric() && prev.is_alphabetic());
+            if boundary {
                 result.push('_');
             }
         }

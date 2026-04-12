@@ -1,6 +1,6 @@
 import type { ToolSchemaEntry } from "./types.js";
 
-/** Static tool schemas generated from CsgOp. Regenerate with: cargo test -p vcad-ir print_schemas_json */
+/** Static tool schemas generated from CsgOp. Regenerate with: cargo test -p vcad-ir dump_schemas_json */
 export const STATIC_TOOL_SCHEMAS: ToolSchemaEntry[] = [
   {
     "name": "cube",

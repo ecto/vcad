@@ -87,8 +87,27 @@ export function executeCrud(
       );
     case "delete":
       return executeDelete(args.part_id as string, docStore, uiStore);
+    case "set_material":
+      return executeSetMaterial(args.part_id as string, args.material as string, docStore);
     default:
       return { status: "error", result: `Unknown tool: ${tool}` };
+  }
+}
+
+function executeSetMaterial(
+  partId: string,
+  materialKey: string,
+  docStore: DocStore,
+): ExecutionResult {
+  if (!partId) return { status: "error", result: "set_material requires part_id" };
+  if (!materialKey) return { status: "error", result: "set_material requires material key" };
+  const err = validatePartId(partId, docStore, "set_material part_id");
+  if (err) return err;
+  try {
+    docStore.setPartMaterial(partId, materialKey);
+    return { status: "success", result: `Set ${partId} material to ${materialKey}`, partId };
+  } catch (e) {
+    return { status: "error", result: e instanceof Error ? e.message : "set_material failed" };
   }
 }
 

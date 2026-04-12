@@ -100,6 +100,24 @@ export class CommandRegistry {
           required: ["part_id"],
         },
       },
+      {
+        name: "set_material",
+        description: "Set the material/color of a part. Use one of the preset material keys listed in the system prompt.",
+        input_schema: {
+          type: "object",
+          properties: {
+            part_id: {
+              type: "string",
+              description: "The part ID to set the material on.",
+            },
+            material: {
+              type: "string",
+              description: "Material preset key (e.g. 'aluminum', 'gold', 'oak', 'abs-red').",
+            },
+          },
+          required: ["part_id", "material"],
+        },
+      },
     ];
   }
 
@@ -158,6 +176,18 @@ You have four tools: create, read, update, delete.
 6. **Repetition:** create linear_pattern or circular_pattern for bolt holes, fins, etc.
 7. **Assemblies:** Create multiple parts, position with translate/rotate
 
+## Available Materials
+
+Use set_material(part_id, material) to color parts. Preset keys:
+- **Metals**: aluminum, steel, brass, copper, titanium, chrome, gold, silver
+- **Plastics**: abs-white, abs-black, abs-red, abs-blue, pla, petg, nylon, resin, acrylic, rubber
+- **Organic**: oak, walnut, leather, cork, bamboo
+- **Glass**: glass, glass-tinted
+- **Composite**: carbon-fiber, fiberglass, kevlar
+- **Other**: concrete, ceramic, foam
+
+For the Sun, use gold. For Mars, copper. For Earth, glass-tinted. For gold/silver metallic parts use gold/silver. There's no pure "color" system — you pick the closest preset.
+
 ## Orientation Notes
 
 - **Cylinder**: axis along Z. Height is along Z, circular face is in XY plane. To make a wheel (round face visible from the side), use extrude with a circular sketch in the XZ plane (set y_dir to (0,0,1)) and direction along Y for thickness — this is more reliable than rotating a cylinder.
@@ -198,6 +228,14 @@ A crescent (smile) as a closed loop with two arcs:
 segments: [
   {type:"Arc", start:{x:-25,y:0}, end:{x:25,y:0}, center:{x:0,y:-30}, ccw:false},
   {type:"Arc", start:{x:25,y:0},  end:{x:-25,y:0}, center:{x:0,y:-20}, ccw:true}
+]
+~~~
+
+A full circle of radius R using two half-arcs:
+~~~
+segments: [
+  {type:"Arc", start:{x:R,y:0},  end:{x:-R,y:0}, center:{x:0,y:0}, ccw:false},
+  {type:"Arc", start:{x:-R,y:0}, end:{x:R,y:0},  center:{x:0,y:0}, ccw:false}
 ]
 ~~~
 
