@@ -1,14 +1,14 @@
 import { useEffect, useCallback } from "react";
 import { useChatStore, useDocumentStore, useUiStore, commandRegistry, executeCrud } from "@vcad/core";
-import type { SelectionContext, ToolCallInfo, MessagePart } from "@vcad/core";
+import type { SelectionContext, ToolCallInfo, MessagePart, ExecutionResult } from "@vcad/core";
 import { streamChat } from "@/lib/chat-api";
 import type { ToolCall, ChatRequestMessage } from "@/lib/chat-api";
 
 /**
  * Execute a tool call against the document/UI stores via the CRUD registry.
- * Returns a string result for display in the chat.
+ * Returns the full ExecutionResult so display payload and duration can be propagated.
  */
-function executeTool(tool: ToolCall): { result: string; status: "success" | "error" } {
+function executeTool(tool: ToolCall): ExecutionResult {
   const docStore = useDocumentStore.getState();
   const uiStore = useUiStore.getState();
   return executeCrud(tool.name, tool.args, docStore, uiStore);
@@ -144,12 +144,14 @@ export function useChatHandler() {
           // Execute tools and update their status in-place
           const toolResults: Array<{ id: string; result: string; status: "success" | "error" }> = [];
           for (const tool of toolCalls) {
-            const { result, status } = executeTool(tool);
-            toolResults.push({ id: tool.id, result, status });
+            const exec = executeTool(tool);
+            toolResults.push({ id: tool.id, result: exec.result, status: exec.status });
             const entry = accumulatedToolCalls.find((t) => t.id === tool.id);
             if (entry) {
-              entry.result = result;
-              entry.status = status;
+              entry.result = exec.result;
+              entry.status = exec.status;
+              entry.display = exec.display;
+              entry.duration = exec.duration;
             }
           }
           updateUI();

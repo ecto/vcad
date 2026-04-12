@@ -3,9 +3,6 @@ import { X } from "@phosphor-icons/react/dist/ssr/X";
 import { PaperPlaneTilt } from "@phosphor-icons/react/dist/ssr/PaperPlaneTilt";
 import { Plus } from "@phosphor-icons/react/dist/ssr/Plus";
 import { SpinnerGap } from "@phosphor-icons/react/dist/ssr/SpinnerGap";
-import { CaretRight } from "@phosphor-icons/react/dist/ssr/CaretRight";
-import { Check } from "@phosphor-icons/react/dist/ssr/Check";
-import { XCircle } from "@phosphor-icons/react/dist/ssr/XCircle";
 import { cn } from "@/lib/utils";
 import {
   useChatStore,
@@ -15,7 +12,8 @@ import {
   parseVcadFile,
   documentToLoon,
 } from "@vcad/core";
-import type { SelectionContext, ChatMessage, ToolCallInfo } from "@vcad/core";
+import type { SelectionContext, ChatMessage, MessagePart } from "@vcad/core";
+import { ToolCallCard } from "@/components/chat/ToolCallCard";
 
 // ---------------------------------------------------------------------------
 // Hook: build SelectionContext[] from current selection
@@ -50,59 +48,72 @@ function useSelectionContext(): [SelectionContext[], (partId: string) => void] {
 }
 
 // ---------------------------------------------------------------------------
-// Tool call card
-// ---------------------------------------------------------------------------
-
-function ToolCallCard({ call }: { call: ToolCallInfo }) {
-  const [expanded, setExpanded] = useState(false);
-
-  const statusIcon =
-    call.status === "success" ? (
-      <Check size={10} className="text-success shrink-0" />
-    ) : call.status === "error" ? (
-      <XCircle size={10} className="text-error shrink-0" />
-    ) : (
-      <SpinnerGap size={10} className="animate-spin text-text-muted shrink-0" />
-    );
-
-  return (
-    <div className="mt-1 border border-border bg-bg rounded text-[10px]">
-      <button
-        onClick={() => setExpanded((e) => !e)}
-        className="flex w-full items-center gap-1.5 px-2 py-1 text-left hover:bg-hover transition-colors"
-      >
-        {statusIcon}
-        <span className="font-mono text-text-muted truncate flex-1">{call.name}</span>
-        <CaretRight
-          size={10}
-          className={cn(
-            "text-text-muted transition-transform shrink-0",
-            expanded && "rotate-90"
-          )}
-        />
-      </button>
-      {expanded && (
-        <div className="px-2 pb-2 border-t border-border">
-          <pre className="mt-1 text-[9px] text-text-muted whitespace-pre-wrap break-all font-mono leading-relaxed">
-            {JSON.stringify(call.args, null, 2)}
-          </pre>
-          {call.result !== undefined && (
-            <>
-              <div className="mt-1 text-[9px] text-text-muted font-medium">Result:</div>
-              <pre className="text-[9px] text-text-muted whitespace-pre-wrap break-all font-mono leading-relaxed">
-                {JSON.stringify(call.result, null, 2)}
-              </pre>
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Message row
 // ---------------------------------------------------------------------------
+
+/**
+ * Tally successful tool parts into a short natural-language summary.
+ * Returns null if there are fewer than 2 successful tool calls.
+ */
+function summarizeToolParts(parts: MessagePart[] | undefined): string | null {
+  if (!parts) return null;
+  const tallies = {
+    created: 0,
+    cut: 0,
+    joined: 0,
+    modified: 0,
+    moved: 0,
+    finished: 0,
+    deleted: 0,
+    colored: 0,
+  };
+  let successToolCount = 0;
+  for (const p of parts) {
+    if (p.type !== "tool") continue;
+    const tool = p.tool;
+    if (tool.status !== "success") continue;
+    successToolCount++;
+    const argType = (tool.args.type as string) ?? "";
+    if (tool.name === "create") {
+      if (
+        [
+          "cube",
+          "cylinder",
+          "sphere",
+          "cone",
+          "extrude",
+          "revolve",
+          "sweep",
+          "loft",
+          "sketch_2d",
+          "text_2d",
+        ].includes(argType)
+      ) {
+        tallies.created++;
+      } else if (argType === "difference") {
+        tallies.cut++;
+      } else if (argType === "union" || argType === "intersection") {
+        tallies.joined++;
+      } else if (["translate", "rotate", "scale"].includes(argType)) {
+        tallies.moved++;
+      } else if (
+        ["fillet", "chamfer", "shell", "linear_pattern", "circular_pattern"].includes(argType)
+      ) {
+        tallies.finished++;
+      }
+    } else if (tool.name === "update") {
+      tallies.modified++;
+    } else if (tool.name === "delete") {
+      tallies.deleted++;
+    } else if (tool.name === "set_material") {
+      tallies.colored++;
+    }
+  }
+  if (successToolCount < 2) return null;
+  const nonZero = Object.entries(tallies).filter(([, v]) => v > 0);
+  if (nonZero.length === 0) return null;
+  return nonZero.map(([k, v]) => `${v} ${k}`).join(" · ");
+}
 
 function MessageRow({ msg }: { msg: ChatMessage }) {
   const isUser = msg.role === "user";
@@ -152,6 +163,12 @@ function MessageRow({ msg }: { msg: ChatMessage }) {
               <ToolCallCard key={part.tool.id} call={part.tool} />
             )
           )}
+          {(() => {
+            const summary = summarizeToolParts(msg.parts);
+            return summary ? (
+              <p className="text-[9px] text-text-muted italic">{summary}</p>
+            ) : null;
+          })()}
         </div>
       ) : (
         <>
