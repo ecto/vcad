@@ -81,12 +81,9 @@ export function AuthModal({ open, onOpenChange, feature }: AuthModalProps) {
           {/* Content */}
           <div className="flex flex-col items-center px-6 py-5">
             {/* Header */}
-            <Dialog.Title className="text-2xl font-bold tracking-tighter text-text mb-0.5">
+            <Dialog.Title className="text-2xl font-bold tracking-tighter text-text mb-5">
               vcad<span className="text-accent">.</span>
             </Dialog.Title>
-            <p className="text-xs text-text-muted mb-5">
-              {feature ? featureMessages[feature] : "sign in to save your work"}
-            </p>
 
             {error && (
               <div className="w-full mb-4 p-2 bg-danger/10 border border-danger/30 text-xs text-danger text-center">
@@ -134,6 +131,11 @@ export function AuthModal({ open, onOpenChange, feature }: AuthModalProps) {
                 </form>
               </div>
             )}
+
+            {/* Feature-context line (sits right above the legal footer) */}
+            <p className="text-[10px] text-text-muted mt-4">
+              {feature ? featureMessages[feature] : "sign in to save your work"}
+            </p>
           </div>
 
           {/* Footer */}

@@ -108,7 +108,31 @@ function devApiPlugin(env: Record<string, string>): Plugin {
         try {
           // Lazy import so the production handler isn't loaded during unrelated dev work.
           const mod = await import(resolve(__dirname, "../../api/chat.ts"));
-          // Shape req/res to look enough like Vercel's request/response that our handler works.
+
+          // The production handler is written for Vercel's VercelRequest/Response
+          // which adds helpers like res.status().json(), req.body auto-parsing,
+          // etc. Node's raw http.ServerResponse doesn't have those, so we shim
+          // a minimal subset onto the Node objects in-place before dispatching.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const resShim = res as any;
+          if (typeof resShim.status !== "function") {
+            resShim.status = (code: number) => {
+              resShim.statusCode = code;
+              return resShim;
+            };
+          }
+          if (typeof resShim.json !== "function") {
+            resShim.json = (payload: unknown) => {
+              resShim.setHeader("Content-Type", "application/json");
+              resShim.end(JSON.stringify(payload));
+              return resShim;
+            };
+          }
+          // VercelRequest exposes headers as a plain object — Node already does
+          // this, so nothing to shim there. req.body is only populated when
+          // Vercel's body parser runs; the handler already falls back to reading
+          // the raw stream, so we leave req.body undefined.
+
           // @ts-expect-error adapting node http to VercelRequest shape
           await mod.default(req, res);
         } catch (err) {
