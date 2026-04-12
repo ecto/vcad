@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { ExecutionDisplay } from "../commands/types.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -18,6 +19,8 @@ export interface ToolCallInfo {
   args: Record<string, unknown>;
   result?: unknown;
   status: "pending" | "success" | "error";
+  display?: ExecutionDisplay;
+  duration?: number;
 }
 
 /** A chronological chunk in an assistant message — text or a tool call. */

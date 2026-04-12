@@ -104,7 +104,7 @@ export { createDefaultCommandActions } from "./command-actions.js";
 
 // AI Tool Registry (CRUD)
 export { commandRegistry, executeCrud } from "./commands/index.js";
-export type { ToolSchemaEntry, ExecutionResult, AnthropicTool } from "./commands/index.js";
+export type { ToolSchemaEntry, ExecutionResult, ExecutionDisplay, SummarySegment, AnthropicTool } from "./commands/index.js";
 
 // Part labels
 export { PART_GLYPHS, getPartGlyph } from "./part-labels.js";
