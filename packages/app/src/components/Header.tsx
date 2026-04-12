@@ -37,7 +37,7 @@ import { SignInButton, UserMenu, triggerSync } from "@vcad/auth";
 import { useBackgroundLuminance } from "@/hooks/useBackgroundLuminance";
 import { useChangelogStore } from "@/stores/changelog-store";
 
-interface CornerIconsProps {
+interface HeaderProps {
   onAboutOpen: () => void;
   onSave: () => void;
   onOpen: () => void;
@@ -613,73 +613,54 @@ function SettingsMenu({ onAboutOpen, onOpen }: { onAboutOpen: () => void; onOpen
   );
 }
 
-export function CornerIcons({ onAboutOpen, onSave, onOpen }: CornerIconsProps) {
+export function Header({ onAboutOpen, onSave, onOpen }: HeaderProps) {
   const isDirty = useDocumentStore((s) => s.isDirty);
   const toggleFeatureTree = useUiStore((s) => s.toggleFeatureTree);
   const featureTreeOpen = useUiStore((s) => s.featureTreeOpen);
-  const isOrbiting = useUiStore((s) => s.isOrbiting);
   const chatOpen = useChatStore((s) => s.open);
 
-  // Adaptive text based on background luminance
-  const bgLuminance = useBackgroundLuminance();
-  const logoColor = bgLuminance === "light" ? "text-gray-900" : "text-white";
-
   return (
-    <>
-      {/* Top-left: hamburger + logo - with safe area padding */}
-      <div className={cn(
-        "absolute z-20 flex items-center gap-2 top-[max(0.75rem,var(--safe-top))] left-[max(0.75rem,var(--safe-left))]",
-        "transition-all duration-300",
-        isOrbiting && "opacity-0 pointer-events-none"
-      )}>
-        <IconButton
-          tooltip="Toggle sidebar (`)"
-          onClick={toggleFeatureTree}
-          active={featureTreeOpen}
-        >
-          <List size={20} />
-        </IconButton>
-        <div className="flex items-center gap-1 pl-1">
-          <span className={cn("text-sm font-bold tracking-tighter transition-colors duration-300", logoColor)}>
-            vcad<span className="text-accent">.</span>
-          </span>
-          {isDirty && <span className="text-accent text-xs">*</span>}
-        </div>
+    <div className="flex h-9 items-center gap-1 px-2 bg-surface">
+      {/* Left cluster: hamburger + logo + dirty indicator */}
+      <IconButton
+        tooltip="Toggle sidebar (`)"
+        onClick={toggleFeatureTree}
+        active={featureTreeOpen}
+      >
+        <List size={18} />
+      </IconButton>
+      <div className="flex items-center gap-1 pl-1">
+        <span className="text-sm font-bold tracking-tighter text-text">
+          vcad<span className="text-accent">.</span>
+        </span>
+        {isDirty && <span className="text-accent text-xs">*</span>}
       </div>
 
-      {/* Top-right: save, settings, auth - with safe area padding */}
-      <div className={cn(
-        "absolute z-20 flex items-center gap-1 top-[max(0.75rem,var(--safe-top))] right-[max(0.75rem,var(--safe-right))]",
-        "transition-opacity duration-200",
-        isOrbiting && "opacity-0 pointer-events-none"
-      )}>
-        {/* Save - always visible */}
-        <IconButton tooltip="Save (Cmd+S)" onClick={onSave}>
-          <FloppyDisk size={18} />
-        </IconButton>
+      <div className="flex-1" />
 
-        {/* Chat toggle */}
-        <IconButton
-          tooltip="Toggle chat"
-          onClick={() => useChatStore.getState().toggleOpen()}
-          active={chatOpen}
-        >
-          <ChatDots size={18} />
-        </IconButton>
+      {/* Right cluster: save, chat, settings, auth */}
+      <IconButton tooltip="Save (Cmd+S)" onClick={onSave}>
+        <FloppyDisk size={16} />
+      </IconButton>
 
-        {/* Settings menu (includes Open, Theme, Cmd+K, GitHub, Discord) */}
-        <SettingsMenu onAboutOpen={onAboutOpen} onOpen={onOpen} />
+      <IconButton
+        tooltip="Toggle chat"
+        onClick={() => useChatStore.getState().toggleOpen()}
+        active={chatOpen}
+      >
+        <ChatDots size={16} />
+      </IconButton>
 
-        {/* Auth: Sign in button or user menu */}
-        <SignInButton
-          variant="icon-text"
-          className={cn(
-            "flex items-center justify-center gap-1.5 h-11 w-11 sm:h-8 sm:w-auto sm:px-2 text-xs font-medium",
-            "text-text-muted hover:text-text hover:bg-hover rounded",
-          )}
-        />
-        <UserMenu onSyncNow={() => triggerSync()} />
-      </div>
-    </>
+      <SettingsMenu onAboutOpen={onAboutOpen} onOpen={onOpen} />
+
+      <SignInButton
+        variant="icon-text"
+        className={cn(
+          "flex items-center justify-center gap-1.5 h-8 sm:w-auto sm:px-2 text-xs font-medium",
+          "text-text-muted hover:text-text hover:bg-hover rounded",
+        )}
+      />
+      <UserMenu onSyncNow={() => triggerSync()} />
+    </div>
   );
 }

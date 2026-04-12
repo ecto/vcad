@@ -15,7 +15,12 @@ packages/app/dev-dist/
 .DS_Store
 *.tsbuildinfo
 .claude/worktrees/
+.claude/skills/
 .ralph-tui/
 .superpowers/
+.agents/
+.factory/
+skills-lock.json
+supabase/.temp/
 tasks/
 *.patch

@@ -774,7 +774,9 @@ export function FeatureTree() {
   const document = useDocumentStore((s) => s.document);
   const reorderPart = useDocumentStore((s) => s.reorderPart);
   const featureTreeOpen = useUiStore((s) => s.featureTreeOpen);
-  const isOrbiting = useUiStore((s) => s.isOrbiting);
+  // isOrbiting was used to fade out the floating overlay; no longer needed now
+  // that the tree lives in a grid slot. Leaving the selector out avoids a
+  // subscribe on every orbit frame.
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [inlineExpandedIds, setInlineExpandedIds] = useState<Set<string>>(new Set());
@@ -864,18 +866,14 @@ export function FeatureTree() {
   return (
     <div
       className={cn(
-        // Floating overlay with background
-        "absolute top-14 left-3 z-10 w-56",
-        "max-h-[calc(100vh-120px)]",
+        // Sidebar pane — fills its grid slot
+        "h-full w-full",
         "flex flex-col",
-        "pointer-events-auto",
-        "bg-surface/95 backdrop-blur-sm",
+        "bg-card",
         "p-2",
-        "transition-all duration-300",
-        isOrbiting && "opacity-0 pointer-events-none",
       )}
     >
-      <div className="overflow-y-auto scrollbar-thin">
+      <div className="overflow-y-auto scrollbar-thin flex-1">
         <ContextMenu>
           <div className="space-y-0.5">
             {/* Scene section - always at top */}

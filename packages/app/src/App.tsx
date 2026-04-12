@@ -11,8 +11,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { NotificationContainer, ActivityPanel } from "@/components/ui/notifications";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AppShell } from "@/components/AppShell";
-import { CornerIcons } from "@/components/CornerIcons";
-import { BottomToolbar } from "@/components/BottomToolbar";
+import { Header } from "@/components/Header";
+import { ToolPalette } from "@/components/ToolPalette";
 import { Viewport } from "@/components/Viewport";
 import { FeatureTree } from "@/components/FeatureTree";
 
@@ -110,15 +110,9 @@ function ErrorScreen({ message }: { message: string }) {
 }
 
 /** Wrapper that conditionally shows FeatureTree and PropertyPanel */
-function FeatureTreeWithPropertyPanel({ sketchActive }: { sketchActive: boolean }) {
+function FeatureTreeSlot({ sketchActive }: { sketchActive: boolean }) {
   if (sketchActive) return null;
-
-  return (
-    <>
-      <FeatureTree />
-      <Suspense fallback={null}><PropertyPanel /></Suspense>
-    </>
-  );
+  return <FeatureTree />;
 }
 
 export function App() {
@@ -579,7 +573,24 @@ export function App() {
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
         >
-          <AppShell>
+          <AppShell
+            header={!electronicsActive && (
+              <Header
+                onAboutOpen={() => setAboutOpen(true)}
+                onSave={handleSave}
+                onOpen={handleOpen}
+              />
+            )}
+            palette={!electronicsActive && !sketchActive && <ToolPalette />}
+            leftSidebar={!electronicsActive && !sketchActive && (
+              <FeatureTreeSlot sketchActive={sketchActive} />
+            )}
+            rightSidebar={!electronicsActive && (
+              <Suspense fallback={null}>
+                <ChatSidebar />
+              </Suspense>
+            )}
+          >
           {/* Full-bleed viewport */}
           <Viewport />
           <Suspense fallback={null}>
@@ -587,6 +598,7 @@ export function App() {
             <SketchStatusPanel />
             <DrawingToolbar />
             <FaceSelectionOverlay />
+            <PropertyPanel />
           </Suspense>
 
           {/* Electronics toolbar + status (self-gate via electronicsActive) */}
@@ -595,19 +607,6 @@ export function App() {
               <ElectronicsToolbar />
               <ElectronicsStatusPanel />
             </Suspense>
-          )}
-
-          {/* Floating UI elements (hidden during electronics workspace) */}
-          {!electronicsActive && (
-            <>
-              <CornerIcons
-                onAboutOpen={() => setAboutOpen(true)}
-                onSave={handleSave}
-                onOpen={handleOpen}
-              />
-              <FeatureTreeWithPropertyPanel sketchActive={sketchActive} />
-              {!sketchActive && <BottomToolbar />}
-            </>
           )}
 
           {/* Onboarding overlays */}
@@ -632,11 +631,6 @@ export function App() {
 
           {/* Embroidery panel — hide when an embroidery part is selected so PropertyPanel shows */}
           {embroideryPanelOpen && !hasSelectedEmbroideryPart && <Suspense fallback={null}><EmbroideryPanel /></Suspense>}
-
-          {/* Chat sidebar — includes chat and loon source tabs */}
-          <Suspense fallback={null}>
-            <ChatSidebar />
-          </Suspense>
 
           {/* Log viewer (Cmd+J to toggle) */}
           <Suspense fallback={null}>

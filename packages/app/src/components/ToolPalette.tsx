@@ -791,7 +791,7 @@ function CommandDropdown() {
   );
 }
 
-export function BottomToolbar() {
+export function ToolPalette() {
   const addPrimitive = useDocumentStore((s) => s.addPrimitive);
   const applyBoolean = useDocumentStore((s) => s.applyBoolean);
   const createPartDef = useDocumentStore((s) => s.createPartDef);
@@ -1644,13 +1644,12 @@ export function BottomToolbar() {
           />
         </>
       )}
-      {/* Bottom toolbar */}
+      {/* Tool palette — horizontal tabbed row (Borland C++ Builder style) */}
       <div
         ref={toolbarRef}
         className={cn(
-          "bottom-toolbar",
-          "fixed bottom-4 left-1/2 -translate-x-1/2 z-50",
-          "flex items-center gap-0.5 pointer-events-auto",
+          "tool-palette",
+          "flex items-center gap-0.5 px-2 py-1",
           "bg-surface/95 backdrop-blur-sm",
           "transition-all duration-200",
           isOrbiting && "opacity-0 pointer-events-none"
