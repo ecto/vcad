@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { getSupabase } from "../client";
 import { useAuthStore } from "../stores/auth-store";
 import { useSyncStore } from "../stores/sync-store";
+import { useUserPreferences } from "../hooks/useUserPreferences";
 
 interface UserMenuProps {
   /** Callback when "Sync now" is clicked */
@@ -14,6 +15,7 @@ interface UserMenuProps {
 export function UserMenu({ onSyncNow }: UserMenuProps) {
   const user = useAuthStore((s) => s.user);
   const { syncStatus, lastSyncAt } = useSyncStore();
+  const { preferences, updatePreferences } = useUserPreferences();
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -151,9 +153,27 @@ export function UserMenu({ onSyncNow }: UserMenuProps) {
             Sync now
           </button>
 
+          {/* Share conversations toggle (SFT opt-out) */}
+          <label className="flex items-start gap-2 px-3 py-2 border-t border-border cursor-pointer hover:bg-border/30">
+            <input
+              type="checkbox"
+              checked={preferences.share_chat_conversations}
+              onChange={(e) =>
+                updatePreferences({ share_chat_conversations: e.target.checked })
+              }
+              className="mt-0.5"
+            />
+            <span className="text-[10px] text-text-muted leading-tight">
+              Share chat conversations to improve vcad AI.
+              <span className="text-text-muted/70 block">
+                Uncheck to keep your prompts private.
+              </span>
+            </span>
+          </label>
+
           <button
             onClick={handleSignOut}
-            className="w-full px-3 py-2 text-left text-xs text-danger hover:bg-border/50"
+            className="w-full px-3 py-2 text-left text-xs text-danger hover:bg-border/50 border-t border-border"
           >
             Sign out
           </button>

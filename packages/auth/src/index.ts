@@ -9,6 +9,7 @@ export { useSignInDelightStore } from "./stores/sign-in-delight-store";
 // Hooks
 export { useAuth } from "./hooks/useAuth";
 export { useRequireAuth, type GatedFeature } from "./hooks/useRequireAuth";
+export { useUserPreferences, type UserPreferences } from "./hooks/useUserPreferences";
 
 // Components
 export { AuthProvider } from "./components/AuthProvider";
