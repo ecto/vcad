@@ -34,6 +34,7 @@ function runTurn(
   history: ChatRequestMessage[],
   context: SelectionContext[],
   onStreamText: (text: string) => void,
+  signal: AbortSignal,
 ): Promise<{ text: string; toolCalls: ToolCall[]; error: string | null }> {
   return new Promise((resolve) => {
     let text = "";
@@ -48,7 +49,7 @@ function runTurn(
       onToolCall: (tool) => { toolCalls.push(tool); },
       onError: (err) => { error = err; },
       onFinish: () => { resolve({ text, toolCalls, error }); },
-    }, { tools, systemPrompt });
+    }, { tools, systemPrompt, signal });
   });
 }
 
@@ -74,18 +75,26 @@ export function useChatHandler() {
       store.addAssistantMessage("");
       store.setStreaming(true);
       store.setError(null);
+      store.clearCancel();
 
       const accumulatedToolCalls: ToolCallInfo[] = [];
       const parts: MessagePart[] = [];
       let fullText = "";
-      const MAX_TOOL_LOOPS = 50;
+      const abortController = new AbortController();
 
       const updateUI = () => {
         useChatStore.getState().updateLastAssistant(fullText, accumulatedToolCalls, [...parts]);
       };
 
       try {
-        for (let loop = 0; loop < MAX_TOOL_LOOPS; loop++) {
+        while (true) {
+          // Check for user cancellation before each turn
+          if (useChatStore.getState().cancelRequested) {
+            abortController.abort();
+            parts.push({ type: "text", text: "_[Stopped by user]_" });
+            updateUI();
+            break;
+          }
           // Stream a turn — text gets appended to the current text part
           const { text, toolCalls, error } = await runTurn(history, context, (streamedText) => {
             // Replace the trailing text part with the latest streamed text
@@ -97,7 +106,7 @@ export function useChatHandler() {
             }
             fullText = parts.filter((p) => p.type === "text").map((p) => (p as { type: "text"; text: string }).text).join("\n\n");
             updateUI();
-          });
+          }, abortController.signal);
 
           // Finalize this turn's text part
           if (text.trim()) {
@@ -184,6 +193,7 @@ export function useChatHandler() {
         }
       } finally {
         useChatStore.getState().setStreaming(false);
+        useChatStore.getState().clearCancel();
       }
     },
     [],

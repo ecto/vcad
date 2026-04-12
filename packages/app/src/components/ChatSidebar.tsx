@@ -3,6 +3,7 @@ import { X } from "@phosphor-icons/react/dist/ssr/X";
 import { PaperPlaneTilt } from "@phosphor-icons/react/dist/ssr/PaperPlaneTilt";
 import { Plus } from "@phosphor-icons/react/dist/ssr/Plus";
 import { SpinnerGap } from "@phosphor-icons/react/dist/ssr/SpinnerGap";
+import { Stop } from "@phosphor-icons/react/dist/ssr/Stop";
 import { cn } from "@/lib/utils";
 import {
   useChatStore,
@@ -488,19 +489,33 @@ export function ChatSidebar() {
             }}
             disabled={streaming}
           />
-          <button
-            onClick={handleSend}
-            disabled={!input.trim() || streaming}
-            className={cn(
-              "flex h-8 w-8 shrink-0 items-center justify-center rounded",
-              "bg-accent text-white",
-              "hover:bg-accent/90 transition-colors",
-              "disabled:opacity-40 disabled:cursor-not-allowed"
-            )}
-            title="Send (Enter)"
-          >
-            <PaperPlaneTilt size={14} />
-          </button>
+          {streaming ? (
+            <button
+              onClick={() => useChatStore.getState().requestCancel()}
+              className={cn(
+                "flex h-8 w-8 shrink-0 items-center justify-center rounded",
+                "bg-danger text-white",
+                "hover:bg-danger/90 transition-colors"
+              )}
+              title="Stop"
+            >
+              <Stop size={14} weight="fill" />
+            </button>
+          ) : (
+            <button
+              onClick={handleSend}
+              disabled={!input.trim()}
+              className={cn(
+                "flex h-8 w-8 shrink-0 items-center justify-center rounded",
+                "bg-accent text-white",
+                "hover:bg-accent/90 transition-colors",
+                "disabled:opacity-40 disabled:cursor-not-allowed"
+              )}
+              title="Send (Enter)"
+            >
+              <PaperPlaneTilt size={14} />
+            </button>
+          )}
         </div>
       </div>
       </>}

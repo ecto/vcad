@@ -48,6 +48,8 @@ export interface ChatState {
   open: boolean;
   streaming: boolean;
   error: string | null;
+  /** True while the user has requested cancellation of the current response. */
+  cancelRequested: boolean;
 
   // Visibility
   setOpen: (open: boolean) => void;
@@ -61,6 +63,10 @@ export interface ChatState {
   // Status
   setStreaming: (streaming: boolean) => void;
   setError: (error: string | null) => void;
+
+  // Cancellation
+  requestCancel: () => void;
+  clearCancel: () => void;
 
   // Thread management
   clearThread: () => void;
@@ -91,6 +97,7 @@ export const useChatStore = create<ChatState>((set) => ({
   open: true,
   streaming: false,
   error: null,
+  cancelRequested: false,
 
   setOpen: (open) => set({ open }),
 
@@ -138,7 +145,10 @@ export const useChatStore = create<ChatState>((set) => ({
 
   setError: (error) => set({ error }),
 
-  clearThread: () => set({ messages: [{ ...WELCOME_MESSAGE, timestamp: Date.now() }], streaming: false, error: null }),
+  requestCancel: () => set({ cancelRequested: true }),
+  clearCancel: () => set({ cancelRequested: false }),
 
-  reset: () => set({ messages: [{ ...WELCOME_MESSAGE, timestamp: Date.now() }], open: true, streaming: false, error: null }),
+  clearThread: () => set({ messages: [{ ...WELCOME_MESSAGE, timestamp: Date.now() }], streaming: false, error: null, cancelRequested: false }),
+
+  reset: () => set({ messages: [{ ...WELCOME_MESSAGE, timestamp: Date.now() }], open: true, streaming: false, error: null, cancelRequested: false }),
 }));

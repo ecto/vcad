@@ -25,6 +25,7 @@ export async function streamChat(
   options?: {
     tools?: AnthropicTool[];
     systemPrompt?: string;
+    signal?: AbortSignal;
   },
 ): Promise<void> {
   const selectedParts = context.map((c) => ({
@@ -43,6 +44,7 @@ export async function streamChat(
         tools: options?.tools,
         systemPrompt: options?.systemPrompt,
       }),
+      signal: options?.signal,
     });
 
     if (!response.ok) {
@@ -67,6 +69,10 @@ export async function streamChat(
     let currentToolJson = "";
 
     while (true) {
+      if (options?.signal?.aborted) {
+        try { reader.cancel(); } catch { /* ignore */ }
+        break;
+      }
       const { done, value } = await reader.read();
       if (done) break;
 
