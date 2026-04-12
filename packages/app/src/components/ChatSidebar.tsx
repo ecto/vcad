@@ -14,6 +14,7 @@ import {
   documentToLoon,
 } from "@vcad/core";
 import type { SelectionContext, ChatMessage, MessagePart } from "@vcad/core";
+import { useAuth, AuthModal } from "@vcad/auth";
 import { ToolCallCard } from "@/components/chat/ToolCallCard";
 
 // ---------------------------------------------------------------------------
@@ -312,10 +313,22 @@ export function ChatSidebar() {
   const streaming = useChatStore((s) => s.streaming);
   const setOpen = useChatStore((s) => s.setOpen);
   const clearThread = useChatStore((s) => s.clearThread);
+  const anonUsage = useChatStore((s) => s.anonUsage);
+  const usageError = useChatStore((s) => s.usageError);
+  const setUsageError = useChatStore((s) => s.setUsageError);
+  const { user } = useAuth();
 
   const [activeTab, setActiveTab] = useState<SidebarTab>("chat");
   const [input, setInput] = useState("");
   const [selectionContext, removeContextPart] = useSelectionContext();
+  const [showAuthModal, setShowAuthModal] = useState(false);
+
+  // When the user hits the anon limit, open the sign-in modal automatically.
+  useEffect(() => {
+    if (usageError?.kind === "anon_limit") {
+      setShowAuthModal(true);
+    }
+  }, [usageError]);
 
   const threadRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -444,6 +457,35 @@ export function ChatSidebar() {
         )}
       </div>
 
+      {/* Usage limit banner — monthly cap for logged-in users */}
+      {usageError?.kind === "monthly_limit" && (
+        <div className="shrink-0 border-t border-border bg-danger/10 px-3 py-2 text-[10px] text-danger">
+          <div className="font-semibold mb-0.5">Monthly chat limit reached</div>
+          <div className="text-text-muted">{usageError.message}</div>
+        </div>
+      )}
+
+      {/* Usage limit banner — anon cap */}
+      {usageError?.kind === "anon_limit" && (
+        <div className="shrink-0 border-t border-border bg-accent/10 px-3 py-2 text-[10px] text-text">
+          <div className="font-semibold mb-0.5 text-accent">Free chat limit reached</div>
+          <div className="text-text-muted">{usageError.message}</div>
+          <button
+            onClick={() => setShowAuthModal(true)}
+            className="mt-1 px-2 py-0.5 bg-accent text-white rounded text-[9px] hover:bg-accent/90"
+          >
+            Sign in to continue
+          </button>
+        </div>
+      )}
+
+      {/* Anon free-usage badge (shown when anon and has used >= 1) */}
+      {!user && anonUsage.used > 0 && !usageError && (
+        <div className="shrink-0 border-t border-border px-3 py-1 text-[9px] text-text-muted text-center">
+          {anonUsage.used}/{anonUsage.limit} free chat messages used
+        </div>
+      )}
+
       {/* Input area */}
       <div className="shrink-0 border-t border-border">
         {/* Context pills */}
@@ -519,6 +561,20 @@ export function ChatSidebar() {
         </div>
       </div>
       </>}
+
+      {/* Auth modal — opens automatically when anon limit is hit, or on demand */}
+      <AuthModal
+        open={showAuthModal}
+        onOpenChange={(v) => {
+          setShowAuthModal(v);
+          // Clear the rate-limit error if the user dismisses the modal so it
+          // doesn't immediately re-open on the next state change.
+          if (!v && usageError?.kind === "anon_limit") {
+            setUsageError(null);
+          }
+        }}
+        feature="ai"
+      />
     </div>
   );
 }

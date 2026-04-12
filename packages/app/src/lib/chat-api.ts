@@ -1,4 +1,12 @@
 import type { SelectionContext, AnthropicTool } from "@vcad/core";
+import { useAuthStore } from "@vcad/auth";
+
+/**
+ * Prefix used to signal a rate-limit error payload to the chat handler.
+ * The handler can detect this and route to the auth modal / banner instead
+ * of showing a generic error.
+ */
+export const LIMIT_ERROR_PREFIX = "LIMIT:";
 
 export interface ChatRequestMessage {
   role: "user" | "assistant";
@@ -35,9 +43,18 @@ export async function streamChat(
   }));
 
   try {
+    // Attach the Supabase access token if the user is signed in, so the
+    // backend can apply the higher monthly-budget rate limit instead of the
+    // anonymous 3-message-per-day cap.
+    const session = useAuthStore.getState().session;
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (session?.access_token) {
+      headers.Authorization = `Bearer ${session.access_token}`;
+    }
+
     const response = await fetch("/api/chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({
         messages,
         context: { selectedParts },
@@ -46,6 +63,15 @@ export async function streamChat(
       }),
       signal: options?.signal,
     });
+
+    if (response.status === 429) {
+      // Rate limit hit — pass the full JSON body through with a prefix so
+      // the chat handler can distinguish this from a normal network error.
+      const bodyText = await response.text();
+      callbacks.onError(`${LIMIT_ERROR_PREFIX}${bodyText}`);
+      callbacks.onFinish();
+      return;
+    }
 
     if (!response.ok) {
       const err = await response.text();

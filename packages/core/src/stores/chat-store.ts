@@ -2,6 +2,42 @@ import { create } from "zustand";
 import type { ExecutionDisplay } from "../commands/types.js";
 
 // ---------------------------------------------------------------------------
+// Anon usage persistence
+// ---------------------------------------------------------------------------
+
+const ANON_USAGE_KEY = "vcad:chat-anon-usage";
+const ANON_FREE_LIMIT = 3;
+
+/** Load anon message counter from localStorage. Resets if 24h have elapsed. */
+function loadAnonUsage(): { used: number; limit: number } {
+  if (typeof localStorage === "undefined") return { used: 0, limit: ANON_FREE_LIMIT };
+  try {
+    const raw = localStorage.getItem(ANON_USAGE_KEY);
+    if (!raw) return { used: 0, limit: ANON_FREE_LIMIT };
+    const parsed = JSON.parse(raw) as { used: number; firstAt: number };
+    const age = Date.now() - (parsed.firstAt ?? 0);
+    if (age > 24 * 60 * 60 * 1000) return { used: 0, limit: ANON_FREE_LIMIT };
+    return { used: parsed.used ?? 0, limit: ANON_FREE_LIMIT };
+  } catch {
+    return { used: 0, limit: ANON_FREE_LIMIT };
+  }
+}
+
+function persistAnonUsage(used: number): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    // Preserve firstAt if it exists so the 24h window is anchored to first usage.
+    const existing = localStorage.getItem(ANON_USAGE_KEY);
+    const firstAt = existing
+      ? ((JSON.parse(existing) as { firstAt?: number }).firstAt ?? Date.now())
+      : Date.now();
+    localStorage.setItem(ANON_USAGE_KEY, JSON.stringify({ used, firstAt }));
+  } catch {
+    /* localStorage quota/privacy — non-fatal */
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -43,6 +79,15 @@ export interface ChatMessage {
 // State shape
 // ---------------------------------------------------------------------------
 
+/** Payload from a 429 rate-limit response. */
+export interface ChatUsageError {
+  kind: "anon_limit" | "monthly_limit";
+  message: string;
+  usage?: number;
+  limit?: number;
+  resetsAt?: string;
+}
+
 export interface ChatState {
   messages: ChatMessage[];
   open: boolean;
@@ -50,6 +95,10 @@ export interface ChatState {
   error: string | null;
   /** True while the user has requested cancellation of the current response. */
   cancelRequested: boolean;
+  /** Anon message count (from localStorage) with rolling 24h window. */
+  anonUsage: { used: number; limit: number };
+  /** Server-rejected rate limit for the most recent send attempt. */
+  usageError: ChatUsageError | null;
 
   // Visibility
   setOpen: (open: boolean) => void;
@@ -67,6 +116,10 @@ export interface ChatState {
   // Cancellation
   requestCancel: () => void;
   clearCancel: () => void;
+
+  // Usage tracking
+  incAnonUsage: () => void;
+  setUsageError: (err: ChatUsageError | null) => void;
 
   // Thread management
   clearThread: () => void;
@@ -98,6 +151,8 @@ export const useChatStore = create<ChatState>((set) => ({
   streaming: false,
   error: null,
   cancelRequested: false,
+  anonUsage: loadAnonUsage(),
+  usageError: null,
 
   setOpen: (open) => set({ open }),
 
@@ -148,7 +203,14 @@ export const useChatStore = create<ChatState>((set) => ({
   requestCancel: () => set({ cancelRequested: true }),
   clearCancel: () => set({ cancelRequested: false }),
 
-  clearThread: () => set({ messages: [{ ...WELCOME_MESSAGE, timestamp: Date.now() }], streaming: false, error: null, cancelRequested: false }),
+  incAnonUsage: () => set((s) => {
+    const used = s.anonUsage.used + 1;
+    persistAnonUsage(used);
+    return { anonUsage: { used, limit: s.anonUsage.limit } };
+  }),
+  setUsageError: (err) => set({ usageError: err }),
 
-  reset: () => set({ messages: [{ ...WELCOME_MESSAGE, timestamp: Date.now() }], open: true, streaming: false, error: null, cancelRequested: false }),
+  clearThread: () => set({ messages: [{ ...WELCOME_MESSAGE, timestamp: Date.now() }], streaming: false, error: null, cancelRequested: false, usageError: null }),
+
+  reset: () => set({ messages: [{ ...WELCOME_MESSAGE, timestamp: Date.now() }], open: true, streaming: false, error: null, cancelRequested: false, usageError: null }),
 }));

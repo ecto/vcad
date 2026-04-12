@@ -172,4 +172,39 @@ describe("useChatStore", () => {
       expect(s.error).toBeNull();
     });
   });
+
+  describe("anonUsage / usageError", () => {
+    it("initial anonUsage is zero with limit 3", () => {
+      const s = useChatStore.getState();
+      expect(s.anonUsage.used).toBe(0);
+      expect(s.anonUsage.limit).toBe(3);
+    });
+
+    it("incAnonUsage bumps the counter", () => {
+      useChatStore.getState().incAnonUsage();
+      expect(useChatStore.getState().anonUsage.used).toBe(1);
+      useChatStore.getState().incAnonUsage();
+      expect(useChatStore.getState().anonUsage.used).toBe(2);
+    });
+
+    it("setUsageError / clear on reset", () => {
+      useChatStore.getState().setUsageError({
+        kind: "anon_limit",
+        message: "hi",
+        limit: 3,
+      });
+      expect(useChatStore.getState().usageError?.kind).toBe("anon_limit");
+      useChatStore.getState().reset();
+      expect(useChatStore.getState().usageError).toBeNull();
+    });
+
+    it("clearThread clears usageError", () => {
+      useChatStore.getState().setUsageError({
+        kind: "monthly_limit",
+        message: "hi",
+      });
+      useChatStore.getState().clearThread();
+      expect(useChatStore.getState().usageError).toBeNull();
+    });
+  });
 });

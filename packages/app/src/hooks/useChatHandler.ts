@@ -1,8 +1,37 @@
 import { useEffect, useCallback } from "react";
 import { useChatStore, useDocumentStore, useUiStore, commandRegistry, executeCrud } from "@vcad/core";
-import type { SelectionContext, ToolCallInfo, MessagePart, ExecutionResult } from "@vcad/core";
-import { streamChat } from "@/lib/chat-api";
+import type { SelectionContext, ToolCallInfo, MessagePart, ExecutionResult, ChatUsageError } from "@vcad/core";
+import { useAuthStore } from "@vcad/auth";
+import { streamChat, LIMIT_ERROR_PREFIX } from "@/lib/chat-api";
 import type { ToolCall, ChatRequestMessage } from "@/lib/chat-api";
+
+/**
+ * Parse a rate-limit error body emitted by streamChat with LIMIT_ERROR_PREFIX.
+ * Returns null if the string isn't a rate-limit error.
+ */
+function parseLimitError(err: string): ChatUsageError | null {
+  if (!err.startsWith(LIMIT_ERROR_PREFIX)) return null;
+  const json = err.slice(LIMIT_ERROR_PREFIX.length);
+  try {
+    const parsed = JSON.parse(json) as {
+      error?: string;
+      message?: string;
+      usage?: number;
+      limit?: number;
+      resets_at?: string;
+    };
+    const kind = parsed.error === "monthly_limit" ? "monthly_limit" : "anon_limit";
+    return {
+      kind,
+      message: parsed.message ?? (kind === "monthly_limit" ? "Monthly limit reached." : "Free limit reached."),
+      usage: parsed.usage,
+      limit: parsed.limit,
+      resetsAt: parsed.resets_at,
+    };
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Execute a tool call against the document/UI stores via the CRUD registry.
@@ -59,6 +88,19 @@ export function useChatHandler() {
       const { content, context } = e.detail;
       const store = useChatStore.getState();
 
+      // If the user is signed out and already hit the rate-limit response,
+      // don't even attempt another request — the server will just 429 again.
+      const session = useAuthStore.getState().session;
+      const isAnon = !session;
+      if (isAnon && store.usageError?.kind === "anon_limit") {
+        // The sidebar will handle opening the auth modal for this case.
+        return;
+      }
+      if (!isAnon && store.usageError?.kind === "monthly_limit") {
+        // Banner is already shown; nothing to do.
+        return;
+      }
+
       // Add the user message to the store
       store.addUserMessage(content, context);
 
@@ -75,7 +117,14 @@ export function useChatHandler() {
       store.addAssistantMessage("");
       store.setStreaming(true);
       store.setError(null);
+      store.setUsageError(null);
       store.clearCancel();
+
+      // Count the send against the local anon badge as soon as it leaves the
+      // client. The server is the source of truth; this is just the UX hint.
+      if (isAnon) {
+        store.incAnonUsage();
+      }
 
       const accumulatedToolCalls: ToolCallInfo[] = [];
       const parts: MessagePart[] = [];
@@ -120,6 +169,16 @@ export function useChatHandler() {
           fullText = parts.filter((p) => p.type === "text").map((p) => (p as { type: "text"; text: string }).text).join("\n\n");
 
           if (error) {
+            // Detect rate-limit errors from the server and route them to the
+            // usageError state (which the sidebar turns into a banner / modal
+            // trigger) instead of showing a generic error message.
+            const limit = parseLimitError(error);
+            if (limit) {
+              useChatStore.getState().setUsageError(limit);
+              // Don't pollute the chat with an Error: line — the banner shows.
+              updateUI();
+              break;
+            }
             parts.push({ type: "text", text: `Error: ${error}` });
             fullText += `\n\nError: ${error}`;
             useChatStore.getState().setError(error);

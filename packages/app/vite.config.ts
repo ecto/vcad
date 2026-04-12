@@ -83,111 +83,42 @@ function devApiPlugin(env: Record<string, string>): Plugin {
   return {
     name: "dev-api",
     configureServer(server) {
-      // ── /api/chat — AI chat endpoint (dev only) ──────────────
+      // ── /api/chat — delegates to the production handler so dev and prod share
+      // rate limiting, auth gating, and usage logging.
       server.middlewares.use(async (req, res, next) => {
         if (req.url !== "/api/chat" || (req.method !== "POST" && req.method !== "OPTIONS")) {
           return next();
         }
 
-        res.setHeader("Access-Control-Allow-Origin", "*");
-        res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-        res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-
-        if (req.method === "OPTIONS") {
-          res.statusCode = 200;
-          res.end();
-          return;
+        // Set process.env from Vite's loaded env so the handler can read it.
+        // (Vercel's runtime already populates process.env; we mirror that in dev.)
+        if (env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
+          process.env.ANTHROPIC_API_KEY = env.ANTHROPIC_API_KEY;
         }
-
-        let body = "";
-        for await (const chunk of req) body += chunk;
-        const { messages, tools: clientTools, systemPrompt: clientSystemPrompt } = JSON.parse(body);
-
-        if (!messages?.length) {
-          res.statusCode = 400;
-          res.end(JSON.stringify({ error: "messages required" }));
-          return;
+        if (env.SUPABASE_URL && !process.env.SUPABASE_URL) {
+          process.env.SUPABASE_URL = env.SUPABASE_URL;
         }
-
-        const apiKey = env.ANTHROPIC_API_KEY;
-        if (!apiKey) {
-          res.statusCode = 503;
-          res.end(JSON.stringify({ error: "Set ANTHROPIC_API_KEY in .env.local for local chat development" }));
-          return;
+        if (env.SUPABASE_SERVICE_ROLE_KEY && !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+          process.env.SUPABASE_SERVICE_ROLE_KEY = env.SUPABASE_SERVICE_ROLE_KEY;
         }
-
-        // Use client-provided system prompt and tools (built by commandRegistry on the client)
-        const systemPrompt = clientSystemPrompt || "You are vcad's AI assistant — a parametric CAD copilot. Coordinate system: Z-up. Units: millimeters. Be concise.";
-        const tools = clientTools || [];
+        if (env.IP_HASH_SALT && !process.env.IP_HASH_SALT) {
+          process.env.IP_HASH_SALT = env.IP_HASH_SALT;
+        }
 
         try {
-          const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-api-key": apiKey,
-              "anthropic-version": "2023-06-01",
-            },
-            body: JSON.stringify({
-              model: "claude-sonnet-4-6",
-              max_tokens: 8192,
-              system: systemPrompt,
-              stream: true,
-              tools,
-              // Pass content through as-is: can be string or array of content blocks
-              // (text, tool_use, tool_result) for Anthropic's tool calling protocol
-              messages,
-            }),
-          });
-
-          if (!anthropicRes.ok) {
-            const errText = await anthropicRes.text();
-            res.statusCode = anthropicRes.status;
-            res.end(errText);
-            return;
-          }
-
-          // Stream as newline-delimited JSON events so client can distinguish text vs tool_use
-          res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-          res.setHeader("Transfer-Encoding", "chunked");
-          res.setHeader("Cache-Control", "no-cache");
-
-          const reader = anthropicRes.body?.getReader();
-          if (!reader) { res.end(); return; }
-
-          const decoder = new TextDecoder();
-          let sseBuffer = "";
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            sseBuffer += decoder.decode(value, { stream: true });
-            const lines = sseBuffer.split("\n");
-            sseBuffer = lines.pop() ?? "";
-            for (const line of lines) {
-              if (!line.startsWith("data: ")) continue;
-              const data = line.slice(6);
-              if (data === "[DONE]") continue;
-              try {
-                const event = JSON.parse(data);
-                if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
-                  res.write(`data: ${JSON.stringify({ type: "text", text: event.delta.text })}\n\n`);
-                } else if (event.type === "content_block_start" && event.content_block?.type === "tool_use") {
-                  res.write(`data: ${JSON.stringify({ type: "tool_start", id: event.content_block.id, name: event.content_block.name })}\n\n`);
-                } else if (event.type === "content_block_delta" && event.delta?.type === "input_json_delta") {
-                  res.write(`data: ${JSON.stringify({ type: "tool_delta", json: event.delta.partial_json })}\n\n`);
-                } else if (event.type === "content_block_stop") {
-                  res.write(`data: ${JSON.stringify({ type: "block_stop" })}\n\n`);
-                } else if (event.type === "message_stop") {
-                  res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
-                }
-              } catch { /* skip non-JSON */ }
-            }
-          }
-          res.end();
+          // Lazy import so the production handler isn't loaded during unrelated dev work.
+          const mod = await import(resolve(__dirname, "../../api/chat.ts"));
+          // Shape req/res to look enough like Vercel's request/response that our handler works.
+          // @ts-expect-error adapting node http to VercelRequest shape
+          await mod.default(req, res);
         } catch (err) {
-          console.error("Chat API error:", err);
-          res.statusCode = 500;
-          res.end(JSON.stringify({ error: "Chat API error" }));
+          console.error("[dev-api] /api/chat delegation error:", err);
+          if (!res.headersSent) {
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: "dev chat delegation failed" }));
+          } else {
+            try { res.end(); } catch { /* noop */ }
+          }
         }
       });
 
