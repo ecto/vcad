@@ -18,6 +18,49 @@ function validatePartId(partId: string, docStore: DocStore, label: string): Exec
   return null;
 }
 
+type Vec2Lite = { x: number; y: number };
+type SketchSegLite = {
+  type: "Line" | "Arc";
+  start: Vec2Lite;
+  end: Vec2Lite;
+  center?: Vec2Lite;
+  ccw?: boolean;
+};
+
+/** Validate a sketch forms a closed loop with matched segment endpoints.
+ *  Returns an error result or null if valid. */
+function validateSketch(segments: unknown[]): ExecutionResult | null {
+  if (!Array.isArray(segments) || segments.length === 0) {
+    return { status: "error", result: "sketch must have at least one segment" };
+  }
+  if (segments.length < 2) {
+    return {
+      status: "error",
+      result: "sketch must have at least 2 segments to form a closed loop. A single arc is not a closed profile — add a line or another arc to close it.",
+    };
+  }
+
+  const segs = segments as SketchSegLite[];
+  const eps = 1e-3; // 1 micron
+  const matches = (a: Vec2Lite, b: Vec2Lite) =>
+    Math.abs(a.x - b.x) < eps && Math.abs(a.y - b.y) < eps;
+
+  for (let i = 0; i < segs.length; i++) {
+    const curr = segs[i]!;
+    const next = segs[(i + 1) % segs.length]!;
+    if (!curr.start || !curr.end || !next.start) {
+      return { status: "error", result: `segment ${i} missing start/end points` };
+    }
+    if (!matches(curr.end, next.start)) {
+      return {
+        status: "error",
+        result: `sketch is not closed: segment ${i} ends at (${curr.end.x}, ${curr.end.y}) but segment ${(i + 1) % segs.length} starts at (${next.start.x}, ${next.start.y}). Each segment's end must match the next segment's start.`,
+      };
+    }
+  }
+  return null;
+}
+
 /** Execute a CRUD tool by name. */
 export function executeCrud(
   tool: string,
@@ -173,6 +216,8 @@ function executeCreate(
             y_dir: { x: number; y: number; z: number };
             segments: unknown[];
           };
+          const sketchErr = validateSketch(s.segments);
+          if (sketchErr) return sketchErr;
           const normal = vec3Normalize(vec3Cross(s.x_dir, s.y_dir));
           const plane = { type: "face" as const, origin: s.origin, xDir: s.x_dir, yDir: s.y_dir, normal };
           const partId = docStore.addExtrude(
@@ -180,8 +225,8 @@ function executeCreate(
             { twist_angle: params.twist_angle as number | undefined, scale_end: params.scale_end as number | undefined },
           );
           return partId
-            ? { status: "success", result: "Extruded sketch", partId }
-            : { status: "error", result: "Extrude failed" };
+            ? { status: "success", result: `Extruded sketch → new part id: ${partId}`, partId }
+            : { status: "error", result: "Extrude failed — check sketch segments form a closed loop" };
         }
         return { status: "error", result: "Extrude from existing sketch node not yet supported" };
       }
@@ -197,12 +242,14 @@ function executeCreate(
         };
         const axisOrigin = params.axis_origin as { x: number; y: number; z: number };
         const axisDir = params.axis_dir as { x: number; y: number; z: number };
+        const sketchErr = validateSketch(s.segments);
+        if (sketchErr) return sketchErr;
         const angleDeg = params.angle_deg as number;
         const normal = vec3Normalize(vec3Cross(s.x_dir, s.y_dir));
         const plane = { type: "face" as const, origin: s.origin, xDir: s.x_dir, yDir: s.y_dir, normal };
         const partId = docStore.addRevolve(plane, s.origin, s.segments as never[], axisOrigin, axisDir, angleDeg);
         return partId
-          ? { status: "success", result: "Revolved sketch", partId }
+          ? { status: "success", result: `Revolved sketch → new part id: ${partId}`, partId }
           : { status: "error", result: "Revolve failed" };
       }
 
@@ -215,6 +262,8 @@ function executeCreate(
           y_dir: { x: number; y: number; z: number };
           segments: unknown[];
         };
+        const sketchErr = validateSketch(s.segments);
+        if (sketchErr) return sketchErr;
         const path = params.path as Record<string, unknown>;
         const normal = vec3Normalize(vec3Cross(s.x_dir, s.y_dir));
         const plane = { type: "face" as const, origin: s.origin, xDir: s.x_dir, yDir: s.y_dir, normal };
@@ -224,7 +273,7 @@ function executeCreate(
           scale_end: params.scale_end as number | undefined,
         });
         return partId
-          ? { status: "success", result: "Swept sketch", partId }
+          ? { status: "success", result: `Swept sketch → new part id: ${partId}`, partId }
           : { status: "error", result: "Sweep failed" };
       }
 

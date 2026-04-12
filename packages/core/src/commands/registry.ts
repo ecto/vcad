@@ -187,7 +187,16 @@ segments: [
   {type:"Arc", start:{x:-25,y:0}, end:{x:25,y:0}, center:{x:0,y:-30}, ccw:false},
   {type:"Arc", start:{x:25,y:0},  end:{x:-25,y:0}, center:{x:0,y:-20}, ccw:true}
 ]
-~~~`,
+~~~
+
+## Sketch rules — READ CAREFULLY
+
+- Sketches MUST have at least 2 segments forming a closed loop.
+- Each segment's end must EXACTLY match the next segment's start.
+- The LAST segment's end must match the FIRST segment's start.
+- **Arcs**: start, end, center and ccw. The radius = distance(start, center) must equal distance(end, center) — if they don't match, the arc is invalid. For a full circle use TWO half-arcs (e.g. start=(r,0), end=(-r,0), center=(0,0), ccw=false, then start=(-r,0), end=(r,0), center=(0,0), ccw=false).
+- To cut a shape OUT of a part, create the shape as a separate extrude, then use difference(left: mainPartId, right: cutPartId).
+- Don't use single arcs — they aren't closed profiles.`,
       "",
       this.getTypeCatalog(),
     ];
