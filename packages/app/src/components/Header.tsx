@@ -613,54 +613,292 @@ function SettingsMenu({ onAboutOpen, onOpen }: { onAboutOpen: () => void; onOpen
   );
 }
 
+// ---------------------------------------------------------------------------
+// Borland C++ Builder / Delphi-style menu bar
+// ---------------------------------------------------------------------------
+
+/** Classic text-style menu item used in the top menu-bar row. */
+function MenuBarItem({
+  label,
+  accelerator,
+  children,
+}: {
+  label: string;
+  /** First letter to underline, e.g. "F" for "File" */
+  accelerator?: string;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const renderedLabel =
+    accelerator && label.startsWith(accelerator) ? (
+      <>
+        <span className="underline">{label[0]}</span>
+        {label.slice(1)}
+      </>
+    ) : (
+      label
+    );
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild>
+        <button
+          className={cn(
+            "h-6 px-2 text-xs text-text hover:bg-hover transition-colors",
+            open && "bg-hover",
+          )}
+        >
+          {renderedLabel}
+        </button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          sideOffset={2}
+          align="start"
+          className="z-50 min-w-[180px] border border-border bg-surface shadow-lg py-1"
+          onCloseAutoFocus={(e) => e.preventDefault()}
+        >
+          {typeof children === "function"
+            ? (children as (close: () => void) => React.ReactNode)(() => setOpen(false))
+            : children}
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
+
+function MenuItem({
+  onClick,
+  children,
+  shortcut,
+  icon: Icon,
+}: {
+  onClick: () => void;
+  children: React.ReactNode;
+  shortcut?: string;
+  icon?: React.ComponentType<{ size?: number; className?: string }>;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex w-full items-center gap-2 px-3 py-1 text-xs text-text hover:bg-hover"
+    >
+      {Icon && <Icon size={13} className="text-text-muted" />}
+      <span className="flex-1 text-left">{children}</span>
+      {shortcut && <span className="text-text-muted text-[10px]">{shortcut}</span>}
+    </button>
+  );
+}
+
+function MenuSeparator() {
+  return <div className="my-1 border-t border-border" />;
+}
+
+// ---------------------------------------------------------------------------
+// Borland-style chunky toolbar with grouped icon buttons + dividers
+// ---------------------------------------------------------------------------
+
+function ToolbarDivider() {
+  return <div className="h-5 w-px bg-border/50 mx-1" />;
+}
+
+function ToolbarIconButton({
+  tooltip,
+  onClick,
+  active,
+  children,
+}: {
+  tooltip: string;
+  onClick?: () => void;
+  active?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <Tooltip content={tooltip}>
+      <button
+        onClick={onClick}
+        className={cn(
+          "flex h-7 w-7 items-center justify-center",
+          "border border-transparent",
+          "text-text-muted hover:text-text hover:bg-hover hover:border-border",
+          active && "text-accent bg-accent/10 border-accent/30",
+        )}
+      >
+        {children}
+      </button>
+    </Tooltip>
+  );
+}
+
 export function Header({ onAboutOpen, onSave, onOpen }: HeaderProps) {
   const isDirty = useDocumentStore((s) => s.isDirty);
   const toggleFeatureTree = useUiStore((s) => s.toggleFeatureTree);
   const featureTreeOpen = useUiStore((s) => s.featureTreeOpen);
+  const setTheme = useUiStore((s) => s.setTheme);
+  const theme = useUiStore((s) => s.theme);
   const chatOpen = useChatStore((s) => s.open);
+  const toggleWireframe = useUiStore((s) => s.toggleWireframe);
+
+  const handleOpenChat = () => {
+    useChatStore.getState().setOpen(true);
+    window.dispatchEvent(new CustomEvent("vcad:open-chat"));
+  };
+  const handleCommandPalette = () => {
+    window.dispatchEvent(new CustomEvent("vcad:open-command-palette"));
+  };
 
   return (
-    <div className="flex h-9 items-center gap-1 px-2 bg-surface">
-      {/* Left cluster: hamburger + logo + dirty indicator */}
-      <IconButton
-        tooltip="Toggle sidebar (`)"
-        onClick={toggleFeatureTree}
-        active={featureTreeOpen}
-      >
-        <List size={18} />
-      </IconButton>
-      <div className="flex items-center gap-1 pl-1">
-        <span className="text-sm font-bold tracking-tighter text-text">
-          vcad<span className="text-accent">.</span>
-        </span>
-        {isDirty && <span className="text-accent text-xs">*</span>}
+    <div className="flex flex-col bg-surface">
+      {/* ─────────────────────────────────────────────────────── */}
+      {/* Row 1: menu bar (logo + File/Edit/View/Help + auth)    */}
+      {/* ─────────────────────────────────────────────────────── */}
+      <div className="flex h-6 items-center gap-0 px-2 border-b border-border/30">
+        <div className="flex items-center gap-1 pr-3">
+          <span className="text-sm font-bold tracking-tighter text-text">
+            vcad<span className="text-accent">.</span>
+          </span>
+          {isDirty && <span className="text-accent text-xs">*</span>}
+        </div>
+
+        <MenuBarItem label="File" accelerator="F">
+          {(close: () => void) => (
+            <>
+              <MenuItem icon={FolderOpen} shortcut="⌘O" onClick={() => { onOpen(); close(); }}>
+                Open…
+              </MenuItem>
+              <MenuItem icon={FloppyDisk} shortcut="⌘S" onClick={() => { onSave(); close(); }}>
+                Save
+              </MenuItem>
+            </>
+          )}
+        </MenuBarItem>
+
+        <MenuBarItem label="View" accelerator="V">
+          {(close: () => void) => (
+            <>
+              <MenuItem
+                icon={List}
+                shortcut="`"
+                onClick={() => { toggleFeatureTree(); close(); }}
+              >
+                {featureTreeOpen ? "Hide Feature Tree" : "Show Feature Tree"}
+              </MenuItem>
+              <MenuItem
+                icon={ChatDots}
+                onClick={() => { useChatStore.getState().toggleOpen(); close(); }}
+              >
+                {chatOpen ? "Hide Chat" : "Show Chat"}
+              </MenuItem>
+              <MenuItem icon={CubeTransparent} shortcut="X" onClick={() => { toggleWireframe(); close(); }}>
+                Toggle Wireframe
+              </MenuItem>
+              <MenuSeparator />
+              <MenuItem
+                icon={theme === "dark" ? Sun : theme === "light" ? Moon : Desktop}
+                onClick={() => {
+                  setTheme(theme === "dark" ? "light" : theme === "light" ? "system" : "dark");
+                  close();
+                }}
+              >
+                {theme === "dark" ? "Light Theme" : theme === "light" ? "System Theme" : "Dark Theme"}
+              </MenuItem>
+            </>
+          )}
+        </MenuBarItem>
+
+        <MenuBarItem label="Tools" accelerator="T">
+          {(close: () => void) => (
+            <>
+              <MenuItem icon={Command} shortcut="⌘K" onClick={() => { handleCommandPalette(); close(); }}>
+                Command Palette…
+              </MenuItem>
+              <MenuItem icon={ChatDots} onClick={() => { handleOpenChat(); close(); }}>
+                AI Chat
+              </MenuItem>
+            </>
+          )}
+        </MenuBarItem>
+
+        <MenuBarItem label="Help" accelerator="H">
+          {(close: () => void) => (
+            <>
+              <MenuItem icon={Info} onClick={() => { onAboutOpen(); close(); }}>
+                About vcad
+              </MenuItem>
+              <MenuItem icon={Keyboard} onClick={() => { handleCommandPalette(); close(); }}>
+                Keyboard Shortcuts
+              </MenuItem>
+              <MenuSeparator />
+              <MenuItem
+                icon={GithubLogo}
+                onClick={() => { window.open("https://github.com/ecto/vcad", "_blank"); close(); }}
+              >
+                GitHub
+              </MenuItem>
+              <MenuItem
+                icon={DiscordLogo}
+                onClick={() => { window.open("https://discord.gg/vcad", "_blank"); close(); }}
+              >
+                Discord
+              </MenuItem>
+            </>
+          )}
+        </MenuBarItem>
+
+        <div className="flex-1" />
+
+        {/* Auth: Sign in button or user menu */}
+        <SignInButton
+          variant="icon-text"
+          className={cn(
+            "flex items-center justify-center gap-1.5 h-6 px-2 text-[10px] font-medium",
+            "text-text-muted hover:text-text hover:bg-hover",
+          )}
+        />
+        <UserMenu onSyncNow={() => triggerSync()} />
       </div>
 
-      <div className="flex-1" />
+      {/* ─────────────────────────────────────────────────────── */}
+      {/* Row 2: Borland-style toolbar — grouped icons + dividers */}
+      {/* ─────────────────────────────────────────────────────── */}
+      <div className="flex h-9 items-center px-2 gap-0.5">
+        {/* File group */}
+        <ToolbarIconButton tooltip="Open (⌘O)" onClick={onOpen}>
+          <FolderOpen size={15} />
+        </ToolbarIconButton>
+        <ToolbarIconButton tooltip="Save (⌘S)" onClick={onSave}>
+          <FloppyDisk size={15} />
+        </ToolbarIconButton>
 
-      {/* Right cluster: save, chat, settings, auth */}
-      <IconButton tooltip="Save (Cmd+S)" onClick={onSave}>
-        <FloppyDisk size={16} />
-      </IconButton>
+        <ToolbarDivider />
 
-      <IconButton
-        tooltip="Toggle chat"
-        onClick={() => useChatStore.getState().toggleOpen()}
-        active={chatOpen}
-      >
-        <ChatDots size={16} />
-      </IconButton>
+        {/* View group */}
+        <ToolbarIconButton
+          tooltip="Toggle Feature Tree (`)"
+          onClick={toggleFeatureTree}
+          active={featureTreeOpen}
+        >
+          <List size={15} />
+        </ToolbarIconButton>
+        <ToolbarIconButton
+          tooltip="Toggle Chat"
+          onClick={() => useChatStore.getState().toggleOpen()}
+          active={chatOpen}
+        >
+          <ChatDots size={15} />
+        </ToolbarIconButton>
 
-      <SettingsMenu onAboutOpen={onAboutOpen} onOpen={onOpen} />
+        <ToolbarDivider />
 
-      <SignInButton
-        variant="icon-text"
-        className={cn(
-          "flex items-center justify-center gap-1.5 h-8 sm:w-auto sm:px-2 text-xs font-medium",
-          "text-text-muted hover:text-text hover:bg-hover rounded",
-        )}
-      />
-      <UserMenu onSyncNow={() => triggerSync()} />
+        {/* Tools group */}
+        <ToolbarIconButton tooltip="Command Palette (⌘K)" onClick={handleCommandPalette}>
+          <Command size={15} />
+        </ToolbarIconButton>
+
+        <div className="flex-1" />
+
+        {/* Catch-all settings/help dropdown on the right */}
+        <SettingsMenu onAboutOpen={onAboutOpen} onOpen={onOpen} />
+      </div>
     </div>
   );
 }

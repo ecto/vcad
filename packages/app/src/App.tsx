@@ -507,6 +507,7 @@ export function App() {
   // Track cylinder position for "position-cylinder" guided flow step
   const document = useDocumentStore((s) => s.document);
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
+  const featureTreeOpen = useUiStore((s) => s.featureTreeOpen);
   const cylinderInitialPos = useRef<{ x: number; y: number; z: number } | null>(null);
 
   useEffect(() => {
@@ -582,7 +583,7 @@ export function App() {
               />
             )}
             palette={!electronicsActive && !sketchActive && <ToolPalette />}
-            leftSidebar={!electronicsActive && !sketchActive && (
+            leftSidebar={!electronicsActive && !sketchActive && featureTreeOpen && (
               <FeatureTreeSlot sketchActive={sketchActive} />
             )}
             rightSidebar={!electronicsActive && (
