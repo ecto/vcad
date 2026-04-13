@@ -55,6 +55,8 @@ export interface UiState {
   // Left sidebar pane (tree vs inspector / drill-down)
   sidebarPane: SidebarPane;
   inspectorTarget: InspectorTarget;
+  // Bottom status bar visibility
+  statusBarVisible: boolean;
 
   select: (partId: string | null) => void;
   toggleSelect: (partId: string) => void;
@@ -98,6 +100,7 @@ export interface UiState {
   // Sidebar pane actions
   setSidebarPane: (pane: SidebarPane) => void;
   setInspectorTarget: (target: InspectorTarget) => void;
+  toggleStatusBar: () => void;
 }
 
 // Load persisted material preferences from localStorage
@@ -163,6 +166,7 @@ export const useUiStore = create<UiState>((set) => ({
   toolbarTab: "create" as ToolbarTab,
   sidebarPane: "tree" as SidebarPane,
   inspectorTarget: null as InspectorTarget,
+  statusBarVisible: true,
 
   select: (partId) =>
     set({ selectedPartIds: partId ? new Set([partId]) : new Set() }),
@@ -303,4 +307,6 @@ export const useUiStore = create<UiState>((set) => ({
   setSidebarPane: (pane) => set({ sidebarPane: pane }),
 
   setInspectorTarget: (target) => set({ inspectorTarget: target }),
+
+  toggleStatusBar: () => set((s) => ({ statusBarVisible: !s.statusBarVisible })),
 }));

@@ -174,6 +174,7 @@ export function App() {
   const selIds = useUiStore((s) => s.selectedPartIds);
   const commandPaletteOpen = useUiStore((s) => s.commandPaletteOpen);
   const setCommandPaletteOpen = useUiStore((s) => s.setCommandPaletteOpen);
+  const statusBarVisible = useUiStore((s) => s.statusBarVisible);
   const selPart = selIds.size === 1 ? partIndex.get(Array.from(selIds)[0]!) : undefined;
   const hasSelectedEmbroideryPart = selPart != null && isEmbroideryPatternPart(selPart);
 
@@ -700,7 +701,7 @@ export function App() {
                 <ChatSidebar />
               </Suspense>
             )}
-            footer={!electronicsActive && (
+            footer={!electronicsActive && statusBarVisible && (
               <StatusBar
                 onSave={handleSave}
                 onOpen={handleOpen}

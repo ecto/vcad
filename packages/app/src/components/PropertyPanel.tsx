@@ -1056,7 +1056,7 @@ function InstancePropertiesPanel({ instance }: { instance: PartInstance }) {
     <div
       className={cn(
         "w-full flex flex-col bg-surface",
-        "shrink-0 max-h-[55%]",
+        "h-full",
       )}
     >
       {/* Mobile drag handle */}
@@ -1190,7 +1190,7 @@ function JointPropertiesPanel({ joint }: { joint: Joint }) {
     <div
       className={cn(
         "w-full flex flex-col bg-surface",
-        "shrink-0 max-h-[55%]",
+        "h-full",
       )}
     >
       {/* Mobile drag handle */}
@@ -1290,7 +1290,7 @@ export function PropertyPanel() {
         ref={panelRef}
         className={cn(
           "w-full flex flex-col bg-surface",
-          "min-h-0",
+          "h-full",
         )}
       >
         {/* Mobile drag handle */}
@@ -1343,7 +1343,7 @@ export function PropertyPanel() {
       ref={panelRef}
       className={cn(
         "w-full flex flex-col bg-surface",
-        "shrink-0 max-h-[55%]",
+        "h-full",
       )}
     >
       {/* Mobile drag handle */}

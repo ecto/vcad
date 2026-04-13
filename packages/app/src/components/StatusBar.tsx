@@ -26,7 +26,6 @@ export function StatusBar({ onSave, onOpen, onAboutOpen }: StatusBarProps) {
   const parts = useDocumentStore((s) => s.parts);
   const isDirty = useDocumentStore((s) => s.isDirty);
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
-  const chatOpen = useChatStore((s) => s.open);
   const toggleWireframe = useUiStore((s) => s.toggleWireframe);
 
   const handleCommandPalette = () => {
@@ -45,7 +44,7 @@ export function StatusBar({ onSave, onOpen, onAboutOpen }: StatusBarProps) {
     { key: "F5", label: "Wireframe", icon: CubeTransparent, onClick: toggleWireframe },
     {
       key: "F6",
-      label: chatOpen ? "Close Chat" : "Open Chat",
+      label: "Right Sidebar",
       icon: ChatDots,
       onClick: () => useChatStore.getState().toggleOpen(),
     },
