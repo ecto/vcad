@@ -27,7 +27,14 @@ jobs:
           toolchain: ${{ matrix.toolchain }}
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --all --check
+      # `cargo fmt --all` would traverse into the path-dep workspaces
+      # (tang/phyz/loon, cloned above). Format only vcad workspace members
+      # explicitly so external repos don't gate our CI.
+      - name: Format check (vcad members only)
+        run: |
+          cargo metadata --no-deps --format-version 1 \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); print('\n'.join(p['name'] for p in d['packages']))" \
+            | xargs -n 1 -I{} cargo fmt -p {} --check
       - run: cargo clippy --workspace --exclude vcad-desktop --features vcad-kernel-text/no-builtin-font -- -D warnings
       - run: cargo test --workspace --exclude vcad-desktop --features vcad-kernel-text/no-builtin-font
       - run: cargo build --workspace --exclude vcad-desktop --examples --features vcad-kernel-text/no-builtin-font
@@ -45,5 +52,9 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libcairo2-dev libjpeg-dev libpango1.0-dev libgif-dev librsvg2-dev
       - run: npm ci
       - run: npm run version:check
-      - run: npm run build --workspaces --if-present
+      # Use turbo (npm run build) instead of `--workspaces --if-present` so
+      # workspace deps build before their consumers. The latter runs in
+      # alphabetical order (app < auth < core …) which fails on a clean
+      # checkout because @vcad/app builds before @vcad/{ir,engine,core}.
+      - run: npm run build
       - run: npm test --workspaces --if-present
