@@ -129,7 +129,7 @@ impl FontRegistry {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "no-builtin-font")))]
 mod tests {
     use super::*;
 

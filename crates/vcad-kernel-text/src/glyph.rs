@@ -188,7 +188,7 @@ pub fn contour_to_segments(
     segments
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "no-builtin-font")))]
 mod tests {
     use super::*;
     use crate::font::FontRegistry;

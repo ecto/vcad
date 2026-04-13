@@ -163,7 +163,7 @@ fn calculate_line_width(line: &str, font: &Font, scale: f64, letter_spacing: f64
     width
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "no-builtin-font")))]
 mod tests {
     use super::*;
     use crate::font::FontRegistry;

@@ -22,7 +22,7 @@ pub fn value_to_document(value: &Value) -> Result<Document, String> {
         Value::Adt(tag, fields) if tag == "SceneEntry" && fields.len() == 2 => {
             let root_id = ctx.convert_solid(&fields[0])?;
             let mat_name = match &fields[1] {
-                Value::Str(s) => s.clone(),
+                Value::Str(s) => s.to_string(),
                 _ => "default".into(),
             };
             ctx.doc.roots.push(SceneEntry {
@@ -92,7 +92,7 @@ fn merge_value_into_doc(ctx: &mut ConvertCtx, value: &Value) -> Result<(), Strin
         Value::Adt(tag, fields) if tag == "SceneEntry" && fields.len() == 2 => {
             let root_id = ctx.convert_solid(&fields[0])?;
             let mat_name = match &fields[1] {
-                Value::Str(s) => s.clone(),
+                Value::Str(s) => s.to_string(),
                 _ => "default".into(),
             };
             ctx.doc.roots.push(SceneEntry {
@@ -542,7 +542,7 @@ impl ConvertCtx {
 
     fn str_val(&self, v: &Value) -> Result<String, String> {
         match v {
-            Value::Str(s) => Ok(s.clone()),
+            Value::Str(s) => Ok(s.to_string()),
             _ => Err(format!("expected string, got {v}")),
         }
     }
@@ -883,10 +883,10 @@ mod tests {
         Value::Int(v)
     }
     fn s(v: &str) -> Value {
-        Value::Str(v.to_string())
+        Value::Str(v.into())
     }
     fn adt(tag: &str, fields: Vec<Value>) -> Value {
-        Value::Adt(tag.to_string(), fields)
+        Value::Adt(tag.into(), fields.into())
     }
 
     #[test]
