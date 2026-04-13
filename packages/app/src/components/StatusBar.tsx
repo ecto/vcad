@@ -30,7 +30,7 @@ export function StatusBar({ onSave, onOpen, onAboutOpen }: StatusBarProps) {
   const toggleWireframe = useUiStore((s) => s.toggleWireframe);
 
   const handleCommandPalette = () => {
-    window.dispatchEvent(new CustomEvent("vcad:open-chat"));
+    useUiStore.getState().setCommandPaletteOpen(true);
   };
 
   const hints: Array<{

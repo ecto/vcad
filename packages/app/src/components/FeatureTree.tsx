@@ -874,7 +874,7 @@ export function FeatureTree() {
         // Sidebar pane — fills its grid slot
         "h-full w-full",
         "flex flex-col",
-        "bg-card",
+        "bg-surface",
         "p-2",
       )}
     >

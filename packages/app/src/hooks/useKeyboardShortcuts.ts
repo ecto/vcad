@@ -41,10 +41,10 @@ export function useKeyboardShortcuts() {
 
       const mod = e.ctrlKey || e.metaKey;
 
-      // Chat: Cmd+K
+      // Command palette: Cmd+K
       if (mod && e.key === "k") {
         e.preventDefault();
-        window.dispatchEvent(new CustomEvent("vcad:open-chat"));
+        useUiStore.getState().setCommandPaletteOpen(true);
         return;
       }
 
@@ -78,7 +78,7 @@ export function useKeyboardShortcuts() {
       }
       if (e.key === "F10") {
         e.preventDefault();
-        window.dispatchEvent(new CustomEvent("vcad:open-chat"));
+        useUiStore.getState().setCommandPaletteOpen(true);
         return;
       }
 

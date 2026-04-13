@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Cube } from "@phosphor-icons/react/dist/ssr/Cube";
 import { Cylinder } from "@phosphor-icons/react/dist/ssr/Cylinder";
 import { Globe } from "@phosphor-icons/react/dist/ssr/Globe";
@@ -15,7 +15,6 @@ import { LinkSimple } from "@phosphor-icons/react/dist/ssr/LinkSimple";
 import { Cube as Cube3D } from "@phosphor-icons/react/dist/ssr/Cube";
 import { Blueprint } from "@phosphor-icons/react/dist/ssr/Blueprint";
 import { Download } from "@phosphor-icons/react/dist/ssr/Download";
-import { X } from "@phosphor-icons/react/dist/ssr/X";
 import { Circle } from "@phosphor-icons/react/dist/ssr/Circle";
 import { Octagon } from "@phosphor-icons/react/dist/ssr/Octagon";
 import { CubeTransparent } from "@phosphor-icons/react/dist/ssr/CubeTransparent";
@@ -26,28 +25,12 @@ import { Pause } from "@phosphor-icons/react/dist/ssr/Pause";
 import { Stop } from "@phosphor-icons/react/dist/ssr/Stop";
 import { FastForward } from "@phosphor-icons/react/dist/ssr/FastForward";
 import { Printer } from "@phosphor-icons/react/dist/ssr/Printer";
-import { MagnifyingGlass } from "@phosphor-icons/react/dist/ssr/MagnifyingGlass";
-import { FloppyDisk } from "@phosphor-icons/react/dist/ssr/FloppyDisk";
-import { FolderOpen } from "@phosphor-icons/react/dist/ssr/FolderOpen";
 import { Export } from "@phosphor-icons/react/dist/ssr/Export";
-import { GridFour } from "@phosphor-icons/react/dist/ssr/GridFour";
-import { SidebarSimple } from "@phosphor-icons/react/dist/ssr/SidebarSimple";
-import { Sun } from "@phosphor-icons/react/dist/ssr/Sun";
-import { Info } from "@phosphor-icons/react/dist/ssr/Info";
-import { ArrowCounterClockwise } from "@phosphor-icons/react/dist/ssr/ArrowCounterClockwise";
-import { ArrowClockwise } from "@phosphor-icons/react/dist/ssr/ArrowClockwise";
-import { Trash } from "@phosphor-icons/react/dist/ssr/Trash";
-import { Copy } from "@phosphor-icons/react/dist/ssr/Copy";
-import { Anchor } from "@phosphor-icons/react/dist/ssr/Anchor";
 import { Sparkle } from "@phosphor-icons/react/dist/ssr/Sparkle";
-import { SpinnerGap } from "@phosphor-icons/react/dist/ssr/SpinnerGap";
-import { ChatCircle } from "@phosphor-icons/react/dist/ssr/ChatCircle";
 import { Path } from "@phosphor-icons/react/dist/ssr/Path";
 import { Circuitry } from "@phosphor-icons/react/dist/ssr/Circuitry";
 import { Scissors } from "@phosphor-icons/react/dist/ssr/Scissors";
 import { TextT } from "@phosphor-icons/react/dist/ssr/TextT";
-import * as Popover from "@radix-ui/react-popover";
-import { Tooltip } from "@/components/ui/tooltip";
 import {
   ToolbarButton,
   MoreDropdown,
@@ -60,22 +43,16 @@ import {
   useSketchStore,
   useEngineStore,
   useSimulationStore,
-  createCommandRegistry,
   exportStlBlob,
   exportGltfBlob,
   exportStepBlob,
   type ToolbarTab,
-  type Command as CommandType,
 } from "@vcad/core";
 import type { PrimitiveKind, BooleanType } from "@vcad/core";
 import { isStitchEligible, getPcbNodeIds } from "@vcad/core";
 import { downloadBlob } from "@/lib/download";
 import { useNotificationStore } from "@/stores/notification-store";
-import { generateCADServer, rateGeneration } from "@/lib/server-inference";
-import { fromVCode, type Document } from "@vcad/ir";
-import { useRequireAuth, AuthModal, useAuthStore } from "@vcad/auth";
 import { useOutputStore, estimatePrice } from "@/stores/output-store";
-import type { VcadFile } from "@vcad/core";
 import { cn } from "@/lib/utils";
 import {
   InsertInstanceDialog,
@@ -132,663 +109,6 @@ const CHAT_WIDTH = 70;
 const MORE_WIDTH = 44;
 const MIN_VISIBLE_TABS = 0; // Can collapse all to More on very small screens
 
-// Icon mapping for command palette
-const COMMAND_ICONS: Record<string, typeof Cube> = {
-  Cube,
-  Cylinder,
-  Globe,
-  ArrowsOutCardinal,
-  ArrowClockwise,
-  ArrowsOut,
-  ArrowCounterClockwise,
-  Unite,
-  Subtract,
-  Intersect,
-  FloppyDisk,
-  FolderOpen,
-  Export,
-  GridFour,
-  CubeTransparent,
-  SidebarSimple,
-  Sun,
-  Info,
-  Trash,
-  Copy,
-  X,
-  Package,
-  PlusSquare,
-  Anchor,
-  ArrowsClockwise: ArrowClockwise,
-  ArrowsHorizontal,
-  Sparkle,
-  Circle,
-  Octagon,
-  DotsThree,
-};
-
-function CommandDropdown() {
-  const [open, setOpen] = useState(false);
-  const [pinned, setPinned] = useState(false);
-  const [query, setQuery] = useState("");
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  const [aiGenerating, setAiGenerating] = useState(false);
-  const [aiStatus, setAiStatus] = useState("");
-  const [isMobile, setIsMobile] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
-  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-
-  // Auth gating for AI features
-  const { requireAuth, showAuth, setShowAuth, feature } = useRequireAuth("ai");
-
-  const handleMouseEnter = useCallback(() => {
-    clearTimeout(hoverTimeoutRef.current);
-    setOpen(true);
-  }, []);
-
-  const handleMouseLeave = useCallback(() => {
-    if (!pinned) {
-      hoverTimeoutRef.current = setTimeout(() => setOpen(false), 100);
-    }
-  }, [pinned]);
-
-  const handleClick = useCallback(() => {
-    setPinned((p) => !p);
-    setOpen(true);
-  }, []);
-
-  const handleOpenChange = useCallback((newOpen: boolean) => {
-    setOpen(newOpen);
-    if (!newOpen) setPinned(false);
-  }, []);
-
-  // Track mobile state for tooltip visibility
-  useEffect(() => {
-    const mq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`);
-    setIsMobile(mq.matches);
-    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
-    mq.addEventListener("change", handler);
-    return () => {
-      mq.removeEventListener("change", handler);
-      clearTimeout(hoverTimeoutRef.current);
-    };
-  }, []);
-
-  // Store actions
-  const addPrimitive = useDocumentStore((s) => s.addPrimitive);
-  const applyBoolean = useDocumentStore((s) => s.applyBoolean);
-  const undo = useDocumentStore((s) => s.undo);
-  const redo = useDocumentStore((s) => s.redo);
-  const removePart = useDocumentStore((s) => s.removePart);
-  const duplicateParts = useDocumentStore((s) => s.duplicateParts);
-  const crdtEngine = useDocumentStore((s) => s._crdtEngine);
-  const parts = useDocumentStore((s) => s.parts);
-  const document = useDocumentStore((s) => s.document);
-  const createPartDef = useDocumentStore((s) => s.createPartDef);
-  const addJoint = useDocumentStore((s) => s.addJoint);
-  const setGroundInstance = useDocumentStore((s) => s.setGroundInstance);
-  const loadDocument = useDocumentStore((s) => s.loadDocument);
-
-  const selectedPartIds = useUiStore((s) => s.selectedPartIds);
-  const select = useUiStore((s) => s.select);
-  const selectMultiple = useUiStore((s) => s.selectMultiple);
-  const clearSelection = useUiStore((s) => s.clearSelection);
-  const setTransformMode = useUiStore((s) => s.setTransformMode);
-  const toggleWireframe = useUiStore((s) => s.toggleWireframe);
-  const toggleGridSnap = useUiStore((s) => s.toggleGridSnap);
-  const toggleFeatureTree = useUiStore((s) => s.toggleFeatureTree);
-
-  const scene = useEngineStore((s) => s.scene);
-
-  // AI generation handler (inner function that does the actual work)
-  const doAIGenerate = useCallback(async (prompt: string) => {
-    setAiGenerating(true);
-    setOpen(false);
-
-    const store = useNotificationStore.getState();
-    const progressId = store.startAIOperation(prompt, [
-      "Connecting to server",
-      "Generating geometry",
-      "Building mesh",
-    ]);
-
-    try {
-      store.updateAIProgress(progressId, 0, 10);
-      setAiStatus("Connecting to server...");
-      analytics.aiGenerationStarted(prompt);
-
-      const currentSession = useAuthStore.getState().session;
-      if (!currentSession) {
-        throw new Error("Not authenticated");
-      }
-      const result = await generateCADServer(prompt, {
-        authToken: currentSession.access_token,
-      });
-
-      store.updateAIProgress(progressId, 1, 80);
-      setAiStatus("Building geometry...");
-
-      const generatedDoc: Document = fromVCode(result.ir);
-
-      store.updateAIProgress(progressId, 2, 95);
-
-      const vcadFile: VcadFile = {
-        document: generatedDoc,
-        parts: [],
-        nextNodeId: Object.keys(generatedDoc.nodes).length,
-        nextPartNum: 1,
-      };
-
-      loadDocument(vcadFile);
-
-      // Build rating actions if we have a logId
-      const ratingActions = result.logId
-        ? [
-            {
-              label: "\u{1F44D}",
-              onClick: async () => {
-                const session = useAuthStore.getState().session;
-                if (session && result.logId) {
-                  try {
-                    await rateGeneration(result.logId, 1, session.access_token);
-                  } catch (e) {
-                    console.error("Failed to submit rating:", e);
-                  }
-                }
-              },
-              variant: "secondary" as const,
-            },
-            {
-              label: "\u{1F44E}",
-              onClick: async () => {
-                const session = useAuthStore.getState().session;
-                if (session && result.logId) {
-                  try {
-                    await rateGeneration(result.logId, -1, session.access_token);
-                  } catch (e) {
-                    console.error("Failed to submit rating:", e);
-                  }
-                }
-              },
-              variant: "secondary" as const,
-            },
-          ]
-        : [];
-
-      analytics.aiGenerationCompleted(result.durationMs);
-
-      store.completeAIOperation(progressId, {
-        type: "success",
-        title: "Generation complete",
-        description: `Created in ${(result.durationMs / 1000).toFixed(1)}s`,
-        actions: [
-          ...ratingActions,
-          {
-            label: "Undo",
-            onClick: () => useDocumentStore.getState().undo(),
-            variant: "secondary",
-          },
-        ],
-      });
-    } catch (err) {
-      console.error("AI generation failed:", err);
-      store.failAIOperation(
-        progressId,
-        err instanceof Error ? err.message : "Generation failed"
-      );
-    } finally {
-      setAiGenerating(false);
-      setAiStatus("");
-    }
-  }, [loadDocument]);
-
-  // Wrapper that requires auth before generating
-  const handleAIGenerate = useCallback((prompt: string) => {
-    requireAuth(() => doAIGenerate(prompt));
-  }, [requireAuth, doAIGenerate]);
-
-  const commands = useMemo(() => {
-    return createCommandRegistry({
-      addPrimitive: (kind) => {
-        const partId = addPrimitive(kind);
-        select(partId);
-        setTransformMode("translate");
-        setOpen(false);
-      },
-      applyBoolean: (type) => {
-        const ids = Array.from(selectedPartIds);
-        if (ids.length === 2) {
-          const newId = applyBoolean(type, ids[0]!, ids[1]!);
-          if (newId) select(newId);
-        }
-        setOpen(false);
-      },
-      setTransformMode: (mode) => {
-        setTransformMode(mode);
-        setOpen(false);
-      },
-      undo: () => {
-        undo();
-        setOpen(false);
-      },
-      redo: () => {
-        redo();
-        setOpen(false);
-      },
-      toggleWireframe: () => {
-        toggleWireframe();
-        setOpen(false);
-      },
-      toggleGridSnap: () => {
-        toggleGridSnap();
-        setOpen(false);
-      },
-      toggleFeatureTree: () => {
-        toggleFeatureTree();
-        setOpen(false);
-      },
-      save: () => {
-        window.dispatchEvent(new CustomEvent("vcad:save"));
-        setOpen(false);
-      },
-      open: () => {
-        window.dispatchEvent(new CustomEvent("vcad:open"));
-        setOpen(false);
-      },
-      exportStl: () => {
-        if (scene) {
-          const blob = exportStlBlob(scene);
-          downloadBlob(blob, "model.stl");
-        }
-        setOpen(false);
-      },
-      exportGlb: () => {
-        if (scene) {
-          const blob = exportGltfBlob(scene);
-          downloadBlob(blob, "model.glb");
-        }
-        setOpen(false);
-      },
-      openAbout: () => {
-        window.dispatchEvent(new CustomEvent("vcad:about"));
-        setOpen(false);
-      },
-      deleteSelected: () => {
-        for (const id of selectedPartIds) {
-          removePart(id);
-        }
-        clearSelection();
-        setOpen(false);
-      },
-      duplicateSelected: () => {
-        if (selectedPartIds.size > 0) {
-          const ids = Array.from(selectedPartIds);
-          const newIds = duplicateParts(ids);
-          selectMultiple(newIds);
-        }
-        setOpen(false);
-      },
-      deselectAll: () => {
-        clearSelection();
-        setOpen(false);
-      },
-      hasTwoSelected: () => selectedPartIds.size === 2,
-      hasSelection: () => selectedPartIds.size > 0,
-      hasParts: () => parts.length > 0,
-      canUndo: () => crdtEngine?.can_undo() ?? false,
-      canRedo: () => crdtEngine?.can_redo() ?? false,
-      createPartDef: () => {
-        const partId = Array.from(selectedPartIds)[0];
-        if (partId && parts.some((p) => p.id === partId)) {
-          const defId = createPartDef(partId);
-          if (defId) {
-            const instance = document.instances?.find((i) => i.partDefId === defId);
-            if (instance) select(instance.id);
-          }
-        }
-        setOpen(false);
-      },
-      insertInstance: () => {
-        window.dispatchEvent(new CustomEvent("vcad:insert-instance"));
-        setOpen(false);
-      },
-      addJoint: (kind) => {
-        const instanceIds = Array.from(selectedPartIds).filter((id) =>
-          document.instances?.some((i) => i.id === id)
-        );
-        if (instanceIds.length === 2) {
-          const jointId = addJoint({
-            parentInstanceId: instanceIds[0]!,
-            childInstanceId: instanceIds[1]!,
-            parentAnchor: { x: 0, y: 0, z: 0 },
-            childAnchor: { x: 0, y: 0, z: 0 },
-            kind,
-          });
-          select(`joint:${jointId}`);
-        }
-        setOpen(false);
-      },
-      setGroundInstance: () => {
-        const instanceId = Array.from(selectedPartIds)[0];
-        if (instanceId && document.instances?.some((i) => i.id === instanceId)) {
-          setGroundInstance(instanceId);
-        }
-        setOpen(false);
-      },
-      hasOnePartSelected: () =>
-        selectedPartIds.size === 1 && parts.some((p) => selectedPartIds.has(p.id)),
-      hasPartDefs: () =>
-        document.partDefs !== undefined && Object.keys(document.partDefs).length > 0,
-      hasTwoInstancesSelected: () => {
-        const instanceIds = Array.from(selectedPartIds).filter((id) =>
-          document.instances?.some((i) => i.id === id)
-        );
-        return instanceIds.length === 2;
-      },
-      hasOneInstanceSelected: () => {
-        const instanceIds = Array.from(selectedPartIds).filter((id) =>
-          document.instances?.some((i) => i.id === id)
-        );
-        return instanceIds.length === 1;
-      },
-      applyFillet: () => {
-        window.dispatchEvent(new CustomEvent("vcad:apply-fillet"));
-        setOpen(false);
-      },
-      applyChamfer: () => {
-        window.dispatchEvent(new CustomEvent("vcad:apply-chamfer"));
-        setOpen(false);
-      },
-      applyShell: () => {
-        window.dispatchEvent(new CustomEvent("vcad:apply-shell"));
-        setOpen(false);
-      },
-      applyLinearPattern: () => {
-        window.dispatchEvent(new CustomEvent("vcad:apply-pattern"));
-        setOpen(false);
-      },
-      applyCircularPattern: () => {
-        window.dispatchEvent(new CustomEvent("vcad:apply-pattern"));
-        setOpen(false);
-      },
-      applyMirror: () => {
-        window.dispatchEvent(new CustomEvent("vcad:apply-mirror"));
-        setOpen(false);
-      },
-      applyStitch: () => {
-        window.dispatchEvent(new CustomEvent("vcad:apply-stitch"));
-        setOpen(false);
-      },
-    });
-  }, [
-    addJoint,
-    addPrimitive,
-    applyBoolean,
-    clearSelection,
-    createPartDef,
-    document,
-    duplicateParts,
-    parts,
-    redo,
-    crdtEngine,
-    removePart,
-    scene,
-    select,
-    selectMultiple,
-    selectedPartIds,
-    setGroundInstance,
-    setTransformMode,
-    toggleFeatureTree,
-    toggleGridSnap,
-    toggleWireframe,
-    undo,
-  ]);
-
-  const filteredCommands = useMemo(() => {
-    if (!query.trim()) return commands;
-    const q = query.toLowerCase();
-    return commands.filter((cmd) => {
-      if (cmd.label.toLowerCase().includes(q)) return true;
-      return cmd.keywords.some((kw) => kw.includes(q));
-    });
-  }, [commands, query]);
-
-  // Listen for keyboard shortcut to open chat
-  useEffect(() => {
-    function handleOpenChat() {
-      setOpen(true);
-    }
-    window.addEventListener("vcad:open-chat", handleOpenChat);
-    return () => window.removeEventListener("vcad:open-chat", handleOpenChat);
-  }, []);
-
-  // Reset when opening/closing
-  useEffect(() => {
-    if (open) {
-      setQuery("");
-      setSelectedIndex(0);
-      // Focus input after popover opens
-      setTimeout(() => inputRef.current?.focus(), 0);
-    }
-  }, [open]);
-
-  // Reset selection when query changes
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [query]);
-
-  // Scroll selected item into view
-  useEffect(() => {
-    const list = listRef.current;
-    if (!list) return;
-    const selected = list.querySelector("[data-selected=true]");
-    if (selected) {
-      selected.scrollIntoView({ block: "nearest" });
-    }
-  }, [selectedIndex]);
-
-  const executeCommand = useCallback((cmd: CommandType) => {
-    if (cmd.enabled && !cmd.enabled()) return;
-    cmd.action();
-  }, []);
-
-  const aiPrompt = query.trim();
-  const showAIOption = aiPrompt.length > 2;
-
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (aiGenerating) {
-      if (e.key === "Escape") {
-        // TODO: Cancel generation
-      }
-      return;
-    }
-
-    switch (e.key) {
-      case "ArrowDown":
-        e.preventDefault();
-        setSelectedIndex((i) => Math.min(i + 1, filteredCommands.length - 1));
-        break;
-      case "ArrowUp":
-        e.preventDefault();
-        setSelectedIndex((i) => Math.max(i - 1, 0));
-        break;
-      case "Enter":
-        e.preventDefault();
-        // If we have a matching command, execute it
-        if (filteredCommands.length > 0 && selectedIndex < filteredCommands.length) {
-          const cmd = filteredCommands[selectedIndex];
-          if (cmd) executeCommand(cmd);
-        }
-        // Otherwise, if we have a query, generate with AI
-        else if (aiPrompt) {
-          handleAIGenerate(aiPrompt);
-        }
-        break;
-      case "Escape":
-        setOpen(false);
-        break;
-    }
-  }
-
-  function highlightMatch(text: string, q: string): React.ReactNode {
-    if (!q) return text;
-    const lower = text.toLowerCase();
-    const idx = lower.indexOf(q.toLowerCase());
-    if (idx === -1) return text;
-    return (
-      <>
-        {text.slice(0, idx)}
-        <span className="text-accent font-medium">{text.slice(idx, idx + q.length)}</span>
-        {text.slice(idx + q.length)}
-      </>
-    );
-  }
-
-  const triggerButton = (
-    <button
-      className={cn(
-        "relative flex items-center justify-center gap-1 text-xs",
-        "w-9 h-9 sm:w-auto sm:h-auto sm:px-3 sm:py-2",
-        "hover:bg-hover/50 transition-all",
-        (pinned || aiGenerating) && "bg-hover/50",
-      )}
-      onClick={handleClick}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
-    >
-      {aiGenerating ? (
-        <SpinnerGap size={18} className="text-accent animate-spin" />
-      ) : (
-        <ChatCircle
-          size={18}
-          weight={pinned ? "fill" : "regular"}
-          className={cn("text-accent", "transition-transform")}
-        />
-      )}
-      <span className={cn(
-        "hidden sm:inline font-medium transition-colors",
-        pinned ? "text-text" : "text-text-muted"
-      )}>
-        Chat
-      </span>
-    </button>
-  );
-
-  return (
-    <>
-    <Popover.Root open={open} onOpenChange={handleOpenChange}>
-      {isMobile ? (
-        <Tooltip content="Chat (⌘K)" side="top">
-          <Popover.Trigger asChild>{triggerButton}</Popover.Trigger>
-        </Tooltip>
-      ) : (
-        <Popover.Trigger asChild>{triggerButton}</Popover.Trigger>
-      )}
-      <Popover.Portal>
-        <Popover.Content
-          className="bottom-toolbar-menu z-50 w-80 bg-surface"
-          sideOffset={4}
-          side="top"
-          align="start"
-          onKeyDown={handleKeyDown}
-          onMouseEnter={handleMouseEnter}
-          onMouseLeave={handleMouseLeave}
-        >
-          {/* Search input */}
-          <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-            <MagnifyingGlass size={14} className="text-text-muted" />
-            <input
-              ref={inputRef}
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search or describe what to create..."
-              className="flex-1 bg-transparent text-xs text-text outline-none placeholder:text-text-muted"
-              disabled={aiGenerating}
-            />
-            <kbd className="bg-border/50 px-1 py-0.5 text-[9px] text-text-muted">esc</kbd>
-          </div>
-
-          {/* Content */}
-          <div ref={listRef} className="max-h-[300px] overflow-y-auto p-1">
-            {/* AI generating state */}
-            {aiGenerating && (
-              <div className="flex items-center gap-2 px-2 py-3 border-b border-border mb-1">
-                <SpinnerGap size={14} className="text-accent animate-spin" />
-                <span className="text-xs text-text-muted">{aiStatus || "Generating..."}</span>
-              </div>
-            )}
-
-            {/* Commands */}
-            {!aiGenerating && filteredCommands.length > 0 && (
-              filteredCommands.map((cmd, idx) => {
-                const Icon = COMMAND_ICONS[cmd.icon] ?? Cube;
-                const isDisabled = cmd.enabled && !cmd.enabled();
-                const isSelected = idx === selectedIndex;
-
-                return (
-                  <button
-                    key={cmd.id}
-                    data-selected={isSelected}
-                    disabled={isDisabled}
-                    onClick={() => executeCommand(cmd)}
-                    className={cn(
-                      "flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs transition-colors",
-                      isSelected && !isDisabled && "bg-accent/20",
-                      isDisabled && "opacity-40 cursor-not-allowed",
-                      !isSelected && !isDisabled && "hover:bg-border/30",
-                    )}
-                  >
-                    <Icon size={14} className="shrink-0 text-text-muted" />
-                    <span className="flex-1">{highlightMatch(cmd.label, query)}</span>
-                    {cmd.shortcut && (
-                      <kbd className="bg-border/50 px-1 py-0.5 text-[9px] text-text-muted">
-                        {cmd.shortcut}
-                      </kbd>
-                    )}
-                  </button>
-                );
-              })
-            )}
-
-            {/* AI generation option */}
-            {!aiGenerating && showAIOption && (
-              <>
-                {filteredCommands.length > 0 && (
-                  <div className="border-t border-border my-1" />
-                )}
-                <button
-                  onClick={() => handleAIGenerate(aiPrompt)}
-                  className={cn(
-                    "flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs transition-colors",
-                    filteredCommands.length === 0 ? "bg-accent/20" : "hover:bg-border/30",
-                  )}
-                >
-                  <Sparkle size={14} className="shrink-0 text-accent" />
-                  <span className="flex-1">
-                    Generate: <span className="text-accent">{aiPrompt}</span>
-                  </span>
-                  <kbd className="bg-border/50 px-1 py-0.5 text-[9px] text-text-muted">
-                    server
-                  </kbd>
-                </button>
-              </>
-            )}
-
-            {/* Empty state */}
-            {!aiGenerating && filteredCommands.length === 0 && !showAIOption && (
-              <div className="px-2 py-4 text-center text-xs text-text-muted">
-                Type to search commands or describe what to create
-              </div>
-            )}
-          </div>
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
-    <AuthModal open={showAuth} onOpenChange={setShowAuth} feature={feature} />
-  </>
-  );
-}
 
 export function ToolPalette() {
   const addPrimitive = useDocumentStore((s) => s.addPrimitive);
@@ -1151,7 +471,7 @@ export function ToolPalette() {
                 label={label}
                 iconColor={color}
               >
-                <Icon size={20} />
+                <Icon size={15} />
               </ToolbarButton>
             ))}
             <ToolbarButton
@@ -1171,7 +491,7 @@ export function ToolPalette() {
               shortcut="S"
               iconColor={color}
             >
-              <PencilSimple size={20} />
+              <PencilSimple size={15} />
             </ToolbarButton>
             <ToolbarButton
               tooltip="Add Text"
@@ -1181,7 +501,7 @@ export function ToolPalette() {
               label="Text"
               iconColor={color}
             >
-              <TextT size={20} />
+              <TextT size={15} />
             </ToolbarButton>
             <ToolbarButton
               tooltip="Add PCB Board"
@@ -1195,7 +515,7 @@ export function ToolPalette() {
               label="PCB"
               iconColor={color}
             >
-              <Circuitry size={20} />
+              <Circuitry size={15} />
             </ToolbarButton>
           </>
         );
@@ -1213,7 +533,7 @@ export function ToolPalette() {
               shortcut="M"
               iconColor={color}
             >
-              <ArrowsOutCardinal size={20} />
+              <ArrowsOutCardinal size={15} />
             </ToolbarButton>
             <ToolbarButton
               tooltip={!hasSelection ? "Rotate (select a part)" : "Rotate (R)"}
@@ -1225,7 +545,7 @@ export function ToolPalette() {
               shortcut="R"
               iconColor={color}
             >
-              <ArrowsClockwise size={20} />
+              <ArrowsClockwise size={15} />
             </ToolbarButton>
             <ToolbarButton
               tooltip={!hasSelection ? "Scale (select a part)" : "Scale (S)"}
@@ -1237,7 +557,7 @@ export function ToolPalette() {
               shortcut="S"
               iconColor={color}
             >
-              <ArrowsOut size={20} />
+              <ArrowsOut size={15} />
             </ToolbarButton>
           </>
         );
@@ -1257,7 +577,7 @@ export function ToolPalette() {
                 shortcut={shortcut}
                 iconColor={color}
               >
-                <Icon size={20} />
+                <Icon size={15} />
               </ToolbarButton>
             ))}
           </>
@@ -1274,7 +594,7 @@ export function ToolPalette() {
               label="Fillet"
               iconColor={color}
             >
-              <Circle size={20} />
+              <Circle size={15} />
             </ToolbarButton>
             <ToolbarButton
               tooltip={!hasOnePartSelected ? "Chamfer (select a part)" : "Chamfer"}
@@ -1284,7 +604,7 @@ export function ToolPalette() {
               label="Chamfer"
               iconColor={color}
             >
-              <Octagon size={20} />
+              <Octagon size={15} />
             </ToolbarButton>
             <ToolbarButton
               tooltip={!hasOnePartSelected ? "Shell (select a part)" : "Shell"}
@@ -1294,7 +614,7 @@ export function ToolPalette() {
               label="Shell"
               iconColor={color}
             >
-              <CubeTransparent size={20} />
+              <CubeTransparent size={15} />
             </ToolbarButton>
             <ToolbarButton
               tooltip={!hasOnePartSelected ? "Pattern (select a part)" : "Pattern"}
@@ -1304,7 +624,7 @@ export function ToolPalette() {
               label="Pattern"
               iconColor={color}
             >
-              <DotsThree size={20} />
+              <DotsThree size={15} />
             </ToolbarButton>
             <ToolbarButton
               tooltip={!hasOnePartSelected ? "Mirror (select a part)" : "Mirror"}
@@ -1314,7 +634,7 @@ export function ToolPalette() {
               label="Mirror"
               iconColor={color}
             >
-              <ArrowsHorizontal size={20} />
+              <ArrowsHorizontal size={15} />
             </ToolbarButton>
             <ToolbarButton
               tooltip={!hasOnePartSelected ? "Stitch (select a part)" : !selectedPartStitchEligible ? "Stitch (requires text/extrude/revolve/sweep/loft)" : "Stitch"}
@@ -1324,7 +644,7 @@ export function ToolPalette() {
               label="Stitch"
               iconColor={color}
             >
-              <Scissors size={20} />
+              <Scissors size={15} />
             </ToolbarButton>
           </>
         );
@@ -1340,7 +660,7 @@ export function ToolPalette() {
               label="Create Part"
               iconColor={color}
             >
-              <Package size={20} />
+              <Package size={15} />
             </ToolbarButton>
             <ToolbarButton
               tooltip={!hasPartDefs ? "Insert Instance (create a part def first)" : "Insert Instance"}
@@ -1350,7 +670,7 @@ export function ToolPalette() {
               label="Insert"
               iconColor={color}
             >
-              <PlusSquare size={20} />
+              <PlusSquare size={15} />
             </ToolbarButton>
             <ToolbarButton
               tooltip={!hasTwoInstancesSelected ? "Add Joint (select 2 instances)" : "Add Joint"}
@@ -1360,7 +680,7 @@ export function ToolPalette() {
               label="Joint"
               iconColor={color}
             >
-              <LinkSimple size={20} />
+              <LinkSimple size={15} />
             </ToolbarButton>
           </>
         );
@@ -1390,7 +710,7 @@ export function ToolPalette() {
               label={simMode === "running" ? "Pause" : "Play"}
               iconColor={color}
             >
-              {simMode === "running" ? <Pause size={20} /> : <Play size={20} />}
+              {simMode === "running" ? <Pause size={15} /> : <Play size={15} />}
             </ToolbarButton>
             <ToolbarButton
               tooltip={!hasJoints ? "Stop (add joints to simulate)" : "Stop Simulation"}
@@ -1400,7 +720,7 @@ export function ToolPalette() {
               label="Stop"
               iconColor={color}
             >
-              <Stop size={20} />
+              <Stop size={15} />
             </ToolbarButton>
             <ToolbarButton
               tooltip={!hasJoints ? "Step (add joints to simulate)" : "Step Simulation"}
@@ -1410,7 +730,7 @@ export function ToolPalette() {
               label="Step"
               iconColor={color}
             >
-              <FastForward size={20} />
+              <FastForward size={15} />
             </ToolbarButton>
             <div className="flex items-center gap-0.5 px-1">
               <span className="text-xs text-text-muted">{playbackSpeed.toFixed(1)}x</span>
@@ -1446,7 +766,7 @@ export function ToolPalette() {
               className="bg-accent/10 hover:bg-accent/20 rounded"
               labelClassName="text-accent font-medium"
             >
-              <Sparkle size={20} />
+              <Sparkle size={15} />
             </ToolbarButton>
             <ToolbarButton
               tooltip="3D View"
@@ -1456,7 +776,7 @@ export function ToolPalette() {
               label="3D"
               iconColor={color}
             >
-              <Cube3D size={20} />
+              <Cube3D size={15} />
             </ToolbarButton>
             <ToolbarButton
               tooltip="2D Drawing View"
@@ -1466,7 +786,7 @@ export function ToolPalette() {
               label="2D"
               iconColor={color}
             >
-              <Blueprint size={20} />
+              <Blueprint size={15} />
             </ToolbarButton>
             <ToolbarButton
               tooltip={!scene?.parts?.length ? "Export STL (add geometry first)" : "Export STL"}
@@ -1483,7 +803,7 @@ export function ToolPalette() {
               label="STL"
               iconColor={color}
             >
-              <Download size={20} />
+              <Download size={15} />
             </ToolbarButton>
             <ToolbarButton
               tooltip={!scene?.parts?.length ? "Export GLB (add geometry first)" : "Export GLB"}
@@ -1500,7 +820,7 @@ export function ToolPalette() {
               label="GLB"
               iconColor={color}
             >
-              <Download size={20} />
+              <Download size={15} />
             </ToolbarButton>
             <ToolbarButton
               tooltip={!scene?.parts?.length ? "Export STEP (add geometry first)" : "Export STEP"}
@@ -1524,7 +844,7 @@ export function ToolPalette() {
               label="STEP"
               iconColor={color}
             >
-              <Download size={20} />
+              <Download size={15} />
             </ToolbarButton>
             <ToolbarButton
               tooltip={!scene?.parts?.length ? "Print (add geometry first)" : "Open Print Settings"}
@@ -1537,7 +857,7 @@ export function ToolPalette() {
               label="Print"
               iconColor={color}
             >
-              <Printer size={20} />
+              <Printer size={15} />
             </ToolbarButton>
             <ToolbarButton
               tooltip="Open CAM Panel"
@@ -1549,7 +869,7 @@ export function ToolPalette() {
               label="CAM"
               iconColor={color}
             >
-              <Path size={20} />
+              <Path size={15} />
             </ToolbarButton>
             <ToolbarButton
               tooltip="Open Electronics Workspace"
@@ -1569,7 +889,7 @@ export function ToolPalette() {
               label="ECAD"
               iconColor={color}
             >
-              <Circuitry size={20} />
+              <Circuitry size={15} />
             </ToolbarButton>
             <ToolbarButton
               tooltip="Open Embroidery Panel"
@@ -1581,7 +901,7 @@ export function ToolPalette() {
               label="Emb"
               iconColor={color}
             >
-              <Scissors size={20} />
+              <Scissors size={15} />
             </ToolbarButton>
           </>
         );
@@ -1653,8 +973,6 @@ export function ToolPalette() {
       >
         {/* Row 1: tab strip */}
         <div className="flex h-7 items-stretch border-b border-border/40">
-          <CommandDropdown />
-          <div className="w-px bg-border/50 my-1" />
           {ALL_TABS.slice(0, visibleTabCount).map(({ id, label, icon: Icon }, index) => {
             const isActive = displayedTab === id;
             return (

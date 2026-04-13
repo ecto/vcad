@@ -18,6 +18,7 @@ import { Viewport } from "@/components/Viewport";
 import { FeatureTree } from "@/components/FeatureTree";
 import { MobileShell } from "@/components/mobile/MobileShell";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { CaretLeft } from "@phosphor-icons/react/dist/ssr/CaretLeft";
 
 // Lazy-loaded components (behind user actions, modals, or conditional renders)
 const PropertyPanel = lazy(() => import("@/components/PropertyPanel").then(m => ({ default: m.PropertyPanel })));
@@ -26,6 +27,7 @@ const GhostPromptController = lazy(() => import("@/components/GhostPromptControl
 const CelebrationOverlay = lazy(() => import("@/components/CelebrationOverlay").then(m => ({ default: m.CelebrationOverlay })));
 const SignInDelight = lazy(() => import("@/components/SignInDelight").then(m => ({ default: m.SignInDelight })));
 const AboutModal = lazy(() => import("@/components/AboutModal").then(m => ({ default: m.AboutModal })));
+const CommandPalette = lazy(() => import("@/components/CommandPalette").then(m => ({ default: m.CommandPalette })));
 const SketchToolbar = lazy(() => import("@/components/SketchToolbar").then(m => ({ default: m.SketchToolbar })));
 const SketchStatusPanel = lazy(() => import("@/components/SketchStatusPanel").then(m => ({ default: m.SketchStatusPanel })));
 const DrawingToolbar = lazy(() => import("@/components/DrawingToolbar").then(m => ({ default: m.DrawingToolbar })));
@@ -59,6 +61,7 @@ import { useEngine } from "@/hooks/useEngine";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useAutoSave } from "@/hooks/useAutoSave";
 import { useChatHandler } from "@/hooks/useChatHandler";
+import { useUrlSync } from "@/hooks/useUrlSync";
 import { saveDocument } from "@/lib/save-load";
 import {
   getMostRecentDocument,
@@ -112,17 +115,31 @@ function ErrorScreen({ message }: { message: string }) {
   );
 }
 
-/** Left sidebar: feature tree on top, property panel for the current selection underneath. */
+/** Left sidebar: tree by default, drills into inspector when something is selected. */
 function FeatureTreeSlot({ sketchActive }: { sketchActive: boolean }) {
+  const sidebarPane = useUiStore((s) => s.sidebarPane);
+  const setSidebarPane = useUiStore((s) => s.setSidebarPane);
   if (sketchActive) return null;
   return (
     <div className="flex h-full w-full flex-col min-h-0">
+      {sidebarPane === "inspector" && (
+        <button
+          onClick={() => setSidebarPane("tree")}
+          className="flex h-7 shrink-0 items-center gap-1.5 px-2 text-[11px] text-text-muted hover:text-text hover:bg-hover border-b border-border"
+        >
+          <CaretLeft size={12} />
+          <span>Tree</span>
+        </button>
+      )}
       <div className="flex-1 min-h-0 overflow-hidden">
-        <FeatureTree />
+        {sidebarPane === "tree" ? (
+          <FeatureTree />
+        ) : (
+          <Suspense fallback={null}>
+            <PropertyPanel />
+          </Suspense>
+        )}
       </div>
-      <Suspense fallback={null}>
-        <PropertyPanel />
-      </Suspense>
     </div>
   );
 }
@@ -133,6 +150,7 @@ export function App() {
   useThemeSync();
   useAutoSave();
   useChatHandler();
+  useUrlSync();
 
   const [aboutOpen, setAboutOpen] = useState(false);
   const [documentPickerOpen, setDocumentPickerOpen] = useState(false);
@@ -159,8 +177,22 @@ export function App() {
   const embroideryPanelOpen = useEmbroideryStore((s) => s.panelOpen);
   const partIndex = useDocumentStore((s) => s.partIndex);
   const selIds = useUiStore((s) => s.selectedPartIds);
+  const commandPaletteOpen = useUiStore((s) => s.commandPaletteOpen);
+  const setCommandPaletteOpen = useUiStore((s) => s.setCommandPaletteOpen);
   const selPart = selIds.size === 1 ? partIndex.get(Array.from(selIds)[0]!) : undefined;
   const hasSelectedEmbroideryPart = selPart != null && isEmbroideryPatternPart(selPart);
+
+  // Auto-drill the left sidebar into the inspector when something is selected,
+  // and back to the tree when selection clears. Selection from the tree itself
+  // also drills, which is fine — the user can hit ← to go back.
+  useEffect(() => {
+    const setSidebarPane = useUiStore.getState().setSidebarPane;
+    if (selIds.size >= 1) {
+      setSidebarPane("inspector");
+    } else {
+      setSidebarPane("tree");
+    }
+  }, [selIds]);
 
   const handleSave = useCallback(() => {
     const state = useDocumentStore.getState();
@@ -699,6 +731,11 @@ export function App() {
           <DocumentPicker
             open={documentPickerOpen}
             onOpenChange={setDocumentPickerOpen}
+          />
+          <CommandPalette
+            open={commandPaletteOpen}
+            onOpenChange={setCommandPaletteOpen}
+            onAboutOpen={() => setAboutOpen(true)}
           />
         </Suspense>
         <input

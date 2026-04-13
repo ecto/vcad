@@ -394,7 +394,7 @@ export function ChatSidebar() {
     <div
       className={cn(
         "flex h-full w-full flex-col",
-        "bg-card"
+        "bg-surface"
       )}
     >
       {/* Header with tabs */}

@@ -12,6 +12,8 @@ export type RaytraceDebugMode = "off" | "normals" | "face-id" | "lighting" | "or
 
 export type ToolbarTab = "create" | "transform" | "combine" | "modify" | "assembly" | "simulate" | "build";
 
+export type SidebarPane = "tree" | "inspector";
+
 export interface UiState {
   selectedPartIds: Set<string>;
   hoveredPartId: string | null;
@@ -43,6 +45,8 @@ export interface UiState {
   // Toolbar state
   toolbarExpanded: boolean;
   toolbarTab: ToolbarTab;
+  // Left sidebar pane (tree vs inspector / drill-down)
+  sidebarPane: SidebarPane;
 
   select: (partId: string | null) => void;
   toggleSelect: (partId: string) => void;
@@ -83,6 +87,8 @@ export interface UiState {
   setToolbarExpanded: (expanded: boolean) => void;
   toggleToolbarExpanded: () => void;
   setToolbarTab: (tab: ToolbarTab) => void;
+  // Sidebar pane actions
+  setSidebarPane: (pane: SidebarPane) => void;
 }
 
 // Load persisted material preferences from localStorage
@@ -146,6 +152,7 @@ export const useUiStore = create<UiState>((set) => ({
   raytraceEdgeNormalThreshold: 30.0,
   toolbarExpanded: persistedToolbarExpanded,
   toolbarTab: "create" as ToolbarTab,
+  sidebarPane: "tree" as SidebarPane,
 
   select: (partId) =>
     set({ selectedPartIds: partId ? new Set([partId]) : new Set() }),
@@ -282,4 +289,6 @@ export const useUiStore = create<UiState>((set) => ({
     }),
 
   setToolbarTab: (tab) => set({ toolbarTab: tab }),
+
+  setSidebarPane: (pane) => set({ sidebarPane: pane }),
 }));

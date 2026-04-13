@@ -34,6 +34,7 @@ import { Terminal } from "@phosphor-icons/react/dist/ssr/Terminal";
 import { Printer } from "@phosphor-icons/react/dist/ssr/Printer";
 import { Wrench } from "@phosphor-icons/react/dist/ssr/Wrench";
 import { Keyboard } from "@phosphor-icons/react/dist/ssr/Keyboard";
+import { MagnifyingGlass } from "@phosphor-icons/react/dist/ssr/MagnifyingGlass";
 import * as Popover from "@radix-ui/react-popover";
 import {
   useDocumentStore,
@@ -790,13 +791,29 @@ export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
       {/* ─────────────────────────────────────────────────────── */}
       {/* Row 1: menu bar (logo + File/Edit/View/Tools/Help)     */}
       {/* ─────────────────────────────────────────────────────── */}
-      <div className="flex h-6 items-center gap-0 px-2 border-b border-border/30">
+      <div className="relative flex h-7 items-center gap-0 px-2 border-b border-border/30">
         <div className="flex items-center gap-1 pr-3">
           <span className="text-sm font-bold tracking-tighter text-text">
             vcad<span className="text-accent">.</span>
           </span>
           {isDirty && <span className="text-accent text-xs">*</span>}
         </div>
+
+        {/* iTunes-style center search bar — opens the screen-centered ⌘K palette */}
+        <button
+          onClick={handleCommandPalette}
+          className={cn(
+            "absolute left-1/2 -translate-x-1/2",
+            "flex h-5 w-72 max-w-[40vw] items-center gap-1.5 px-2",
+            "border border-border bg-bg/60 hover:bg-bg",
+            "text-[11px] text-text-muted hover:text-text",
+            "rounded-sm transition-colors",
+          )}
+        >
+          <MagnifyingGlass size={11} />
+          <span className="flex-1 text-left truncate">Search or ask AI…</span>
+          <span className="text-[9px] text-text-muted/70 font-mono">⌘K</span>
+        </button>
 
         <MenuBarItem label="File" accelerator="F">
           {(close: () => void) => (

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { cn } from "@/lib/utils";
 
 const LEFT_KEY = "vcad:layout:left-width";
 const RIGHT_KEY = "vcad:layout:right-width";
@@ -37,13 +38,15 @@ interface ResizeHandleProps {
 }
 
 /**
- * Narrow vertical drag handle for resizing a sidebar.
- * Lives between a sidebar column and the viewport.
+ * Invisible 8px-wide drag hit zone overlaid on the sidebar's 1px border.
+ * Visually it's just the border; functionally it's grabbable. Hover paints
+ * an accent line on top of the border so users get feedback.
  */
 function ResizeHandle({ side, width, onResize }: ResizeHandleProps) {
   const dragging = useRef(false);
   const startX = useRef(0);
   const startWidth = useRef(0);
+  const [hover, setHover] = useState(false);
 
   useEffect(() => {
     function onMove(e: MouseEvent) {
@@ -66,6 +69,8 @@ function ResizeHandle({ side, width, onResize }: ResizeHandleProps) {
     };
   }, [side, onResize]);
 
+  // The handle is absolutely positioned, straddling the column edge. Width is
+  // 8px hit zone; the visible 1px border is owned by the sidebar column itself.
   return (
     <div
       onMouseDown={(e) => {
@@ -75,10 +80,24 @@ function ResizeHandle({ side, width, onResize }: ResizeHandleProps) {
         document.body.style.cursor = "col-resize";
         document.body.style.userSelect = "none";
       }}
-      className="w-[4px] shrink-0 cursor-col-resize bg-border/30 hover:bg-accent transition-colors"
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      className={cn(
+        "absolute top-0 bottom-0 z-10 w-2 cursor-col-resize",
+        side === "left" ? "-right-1" : "-left-1",
+      )}
       aria-label={`Resize ${side} sidebar`}
       role="separator"
-    />
+    >
+      {(hover || dragging.current) && (
+        <div
+          className={cn(
+            "absolute top-0 bottom-0 w-px bg-accent",
+            side === "left" ? "right-1" : "left-1",
+          )}
+        />
+      )}
+    </div>
   );
 }
 
@@ -122,29 +141,25 @@ export function AppShell({
       )}
       <div className="flex flex-1 min-h-0 flex-row">
         {leftSidebar && (
-          <>
-            <div
-              className="shrink-0 min-h-0 overflow-hidden border-r border-border bg-card"
-              style={{ width: `${leftWidth}px` }}
-            >
-              {leftSidebar}
-            </div>
+          <div
+            className="relative shrink-0 min-h-0 overflow-visible border-r border-border bg-surface"
+            style={{ width: `${leftWidth}px` }}
+          >
+            <div className="h-full w-full overflow-hidden">{leftSidebar}</div>
             <ResizeHandle side="left" width={leftWidth} onResize={setLeftWidth} />
-          </>
+          </div>
         )}
         <div className="relative flex-1 min-w-0 min-h-0">
           {children}
         </div>
         {rightSidebar && (
-          <>
+          <div
+            className="relative shrink-0 min-h-0 overflow-visible border-l border-border bg-surface"
+            style={{ width: `${rightWidth}px` }}
+          >
             <ResizeHandle side="right" width={rightWidth} onResize={setRightWidth} />
-            <div
-              className="shrink-0 min-h-0 overflow-hidden border-l border-border bg-card"
-              style={{ width: `${rightWidth}px` }}
-            >
-              {rightSidebar}
-            </div>
-          </>
+            <div className="h-full w-full overflow-hidden">{rightSidebar}</div>
+          </div>
         )}
       </div>
       {footer && (

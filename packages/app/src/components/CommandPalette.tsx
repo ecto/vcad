@@ -560,7 +560,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/30" />
         <Dialog.Content
-          className="fixed left-1/2 top-[20%] z-50 w-full max-w-md -translate-x-1/2  border border-border bg-card shadow-2xl"
+          className="fixed left-1/2 top-[20%] z-50 w-full max-w-md -translate-x-1/2  border border-border bg-surface shadow-2xl"
           onKeyDown={handleKeyDown}
           aria-describedby={undefined}
         >
