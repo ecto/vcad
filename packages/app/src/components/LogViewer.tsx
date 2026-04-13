@@ -1,12 +1,30 @@
 import { useEffect, useRef } from "react";
 import { X } from "@phosphor-icons/react/dist/ssr/X";
 import { Copy } from "@phosphor-icons/react/dist/ssr/Copy";
-import { Trash } from "@phosphor-icons/react/dist/ssr/Trash";
+import { Prohibit } from "@phosphor-icons/react/dist/ssr/Prohibit";
 import { cn } from "@/lib/utils";
-import type { LogEntry, LogLevelName } from "@vcad/core";
+import type { LogEntry, LogLevelName, LogSourceName } from "@vcad/core";
 import { useLogStore, getFilteredEntries } from "@/stores/log-store";
-import { LogFilterBar } from "@/components/LogFilterBar";
 import { useNotificationStore } from "@/stores/notification-store";
+
+const TABS = [{ id: "console", label: "Console" }] as const;
+type TabId = (typeof TABS)[number]["id"];
+
+const LEVELS: { value: LogLevelName; label: string }[] = [
+  { value: "DEBUG", label: "Debug" },
+  { value: "INFO", label: "Info" },
+  { value: "WARN", label: "Warn" },
+  { value: "ERROR", label: "Error" },
+];
+
+const SOURCES: { value: LogSourceName; label: string }[] = [
+  { value: "kernel", label: "kernel" },
+  { value: "engine", label: "engine" },
+  { value: "app", label: "app" },
+  { value: "gpu", label: "gpu" },
+  { value: "step", label: "step" },
+  { value: "mesh", label: "mesh" },
+];
 
 const LEVEL_COLORS: Record<LogLevelName, string> = {
   DEBUG: "text-text-muted",
@@ -36,32 +54,20 @@ function LogEntryRow({ entry }: { entry: LogEntry }) {
   return (
     <div
       className={cn(
-        "flex items-start gap-2 px-3 py-1.5 border-b border-border/50 font-mono text-[11px]",
+        "flex items-baseline gap-2 px-3 py-0.5 border-b border-border/30 font-mono text-[11px]",
         LEVEL_BG[entry.level],
       )}
     >
-      {/* Timestamp */}
-      <span className="text-text-muted shrink-0">
+      <span className="text-text-muted/60 shrink-0 text-[10px]">
         {formatTimestamp(entry.timestamp)}
       </span>
-
-      {/* Level badge */}
-      <span
-        className={cn(
-          "shrink-0 w-12 text-center font-bold uppercase text-[9px]",
-          LEVEL_COLORS[entry.level],
-        )}
-      >
+      <span className={cn("shrink-0 text-[10px] uppercase font-semibold w-10", LEVEL_COLORS[entry.level])}>
         {entry.level}
       </span>
-
-      {/* Source badge */}
-      <span className="shrink-0 w-14 text-center text-[9px] font-medium bg-hover px-1 py-0.5 text-text-muted">
+      <span className="shrink-0 text-text-muted/70 text-[10px]">
         {entry.source}
       </span>
-
-      {/* Message */}
-      <span className="text-text break-all">{entry.message}</span>
+      <span className="text-text break-all min-w-0 flex-1">{entry.message}</span>
     </div>
   );
 }
@@ -76,7 +82,10 @@ export function LogViewer() {
   const clearLogs = useLogStore((s) => s.clearLogs);
   const entries = useLogStore((s) => s.entries);
   const minLevel = useLogStore((s) => s.minLevel);
+  const setMinLevel = useLogStore((s) => s.setMinLevel);
   const enabledSources = useLogStore((s) => s.enabledSources);
+  const toggleSource = useLogStore((s) => s.toggleSource);
+  const activeTab: TabId = "console";
 
   const filteredEntries = getFilteredEntries({
     entries,
@@ -142,58 +151,117 @@ export function LogViewer() {
         "animate-in slide-in-from-bottom duration-150",
       )}
     >
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-border px-3 py-2 shrink-0">
-          <h3 className="text-xs font-bold">DevTools</h3>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={handleCopy}
-              className="flex h-6 w-6 items-center justify-center text-text-muted hover:text-text hover:bg-hover"
-              title="Copy logs"
-            >
-              <Copy size={14} />
-            </button>
-            <button
-              onClick={handleClear}
-              className="flex h-6 w-6 items-center justify-center text-text-muted hover:text-text hover:bg-hover"
-              title="Clear logs"
-            >
-              <Trash size={14} />
-            </button>
-            <button
-              onClick={closePanel}
-              className="flex h-6 w-6 items-center justify-center text-text-muted hover:text-text hover:bg-hover"
-              title="Close (~)"
-            >
-              <X size={14} />
-            </button>
-          </div>
-        </div>
-
-        {/* Filter bar */}
-        <LogFilterBar />
-
-        {/* Log entries */}
-        <div
-          ref={listRef}
-          onScroll={handleScroll}
-          className="flex-1 overflow-y-auto min-h-0"
+      {/* Tab strip — DevTools-style. One tab today; structure ready for more. */}
+      <div className="flex h-7 shrink-0 items-stretch border-b border-border">
+        {TABS.map((tab) => (
+          <button
+            key={tab.id}
+            className={cn(
+              "px-3 text-[11px] border-r border-border/50 transition-colors",
+              activeTab === tab.id
+                ? "bg-bg text-text border-b-0"
+                : "text-text-muted hover:text-text hover:bg-hover",
+            )}
+          >
+            {tab.label}
+          </button>
+        ))}
+        <div className="flex-1" />
+        <button
+          onClick={closePanel}
+          className="flex h-full w-7 items-center justify-center text-text-muted hover:text-text hover:bg-hover"
+          title="Close DevTools (~)"
         >
-          {filteredEntries.length === 0 ? (
-            <div className="flex items-center justify-center h-32 text-text-muted text-xs">
-              No logs to display
-            </div>
-          ) : (
-            filteredEntries.map((entry) => (
-              <LogEntryRow key={entry.id} entry={entry} />
-            ))
-          )}
+          <X size={13} />
+        </button>
+      </div>
+
+      {/* Toolbar — clear / copy / level filter / source filter / count */}
+      <div className="flex h-7 shrink-0 items-center gap-1 px-2 border-b border-border text-[10px]">
+        <button
+          onClick={handleClear}
+          className="flex h-5 w-5 items-center justify-center text-text-muted hover:text-text hover:bg-hover"
+          title="Clear console"
+        >
+          <Prohibit size={12} />
+        </button>
+        <button
+          onClick={handleCopy}
+          className="flex h-5 w-5 items-center justify-center text-text-muted hover:text-text hover:bg-hover"
+          title="Copy filtered entries"
+        >
+          <Copy size={12} />
+        </button>
+
+        <div className="mx-1 h-4 w-px bg-border" />
+
+        {/* Level pills */}
+        <div className="flex items-center gap-0.5">
+          {LEVELS.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => setMinLevel(opt.value)}
+              className={cn(
+                "px-1.5 h-5 leading-none transition-colors",
+                minLevel === opt.value
+                  ? "bg-accent/15 text-accent"
+                  : "text-text-muted hover:text-text hover:bg-hover",
+              )}
+              title={`Show ${opt.label} and above`}
+            >
+              {opt.label}
+            </button>
+          ))}
         </div>
 
-        {/* Footer with count */}
-        <div className="border-t border-border px-3 py-1.5 text-[10px] text-text-muted shrink-0">
-          {filteredEntries.length} of {entries.length} entries
+        <div className="mx-1 h-4 w-px bg-border" />
+
+        {/* Source toggles */}
+        <div className="flex items-center gap-0.5 flex-wrap">
+          {SOURCES.map((opt) => {
+            const enabled = enabledSources.has(opt.value);
+            return (
+              <button
+                key={opt.value}
+                onClick={() => toggleSource(opt.value)}
+                className={cn(
+                  "px-1.5 h-5 leading-none font-mono transition-colors",
+                  enabled
+                    ? "text-text"
+                    : "text-text-muted/50 line-through hover:text-text-muted",
+                )}
+                title={enabled ? `Hide ${opt.label}` : `Show ${opt.label}`}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
         </div>
+
+        <div className="flex-1" />
+
+        <span className="text-text-muted">
+          {filteredEntries.length}
+          {filteredEntries.length !== entries.length && ` / ${entries.length}`}
+        </span>
+      </div>
+
+      {/* Log entries */}
+      <div
+        ref={listRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto min-h-0 bg-bg"
+      >
+        {filteredEntries.length === 0 ? (
+          <div className="flex items-center justify-center h-32 text-text-muted text-xs">
+            No messages
+          </div>
+        ) : (
+          filteredEntries.map((entry) => (
+            <LogEntryRow key={entry.id} entry={entry} />
+          ))
+        )}
+      </div>
     </div>
   );
 }
