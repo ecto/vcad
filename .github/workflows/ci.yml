@@ -12,7 +12,10 @@ jobs:
   rust:
     name: Rust (${{ matrix.toolchain }})
     runs-on: ubuntu-latest
+    # Nightly clippy adds new lints constantly; treat it as informational.
+    continue-on-error: ${{ matrix.toolchain == 'nightly' }}
     strategy:
+      fail-fast: false
       matrix:
         toolchain: [stable, nightly]
     steps:
