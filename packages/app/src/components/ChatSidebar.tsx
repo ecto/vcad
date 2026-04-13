@@ -3,7 +3,6 @@ import { X } from "@phosphor-icons/react/dist/ssr/X";
 import { PaperPlaneTilt } from "@phosphor-icons/react/dist/ssr/PaperPlaneTilt";
 import { Plus } from "@phosphor-icons/react/dist/ssr/Plus";
 import { SpinnerGap } from "@phosphor-icons/react/dist/ssr/SpinnerGap";
-import { ChatDots } from "@phosphor-icons/react/dist/ssr/ChatDots";
 import { Stop } from "@phosphor-icons/react/dist/ssr/Stop";
 import { cn } from "@/lib/utils";
 import {
@@ -309,7 +308,6 @@ function SourcePanel() {
 type SidebarTab = "chat" | "source";
 
 export function ChatSidebar() {
-  const open = useChatStore((s) => s.open);
   const messages = useChatStore((s) => s.messages);
   const streaming = useChatStore((s) => s.streaming);
   const setOpen = useChatStore((s) => s.setOpen);
@@ -365,22 +363,6 @@ export function ChatSidebar() {
     },
     [handleSend]
   );
-
-  // Collapsed state: render only a narrow icon strip so the sidebar keeps
-  // its grid slot. Clicking the strip re-opens the full panel.
-  if (!open) {
-    return (
-      <div className="flex h-full w-full flex-col items-center py-2">
-        <button
-          onClick={() => setOpen(true)}
-          className="flex h-8 w-8 items-center justify-center text-text-muted hover:text-text hover:bg-hover rounded"
-          title="Open chat"
-        >
-          <ChatDots size={16} />
-        </button>
-      </div>
-    );
-  }
 
   const firstCtx = selectionContext[0];
   const placeholder =

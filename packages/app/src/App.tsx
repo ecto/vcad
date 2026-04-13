@@ -51,6 +51,7 @@ import {
   useEngineStore,
   useDocumentStore,
   useUiStore,
+  useChatStore,
   isEmbroideryPatternPart,
   parseVcadFile,
   parseStl,
@@ -550,6 +551,7 @@ export function App() {
   const document = useDocumentStore((s) => s.document);
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
   const featureTreeOpen = useUiStore((s) => s.featureTreeOpen);
+  const chatOpen = useChatStore((s) => s.open);
   const cylinderInitialPos = useRef<{ x: number; y: number; z: number } | null>(null);
 
   useEffect(() => {
@@ -691,7 +693,7 @@ export function App() {
             leftSidebar={!electronicsActive && !sketchActive && featureTreeOpen && (
               <FeatureTreeSlot sketchActive={sketchActive} />
             )}
-            rightSidebar={!electronicsActive && (
+            rightSidebar={!electronicsActive && chatOpen && (
               <Suspense fallback={null}>
                 <ChatSidebar />
               </Suspense>
