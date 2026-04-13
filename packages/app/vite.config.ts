@@ -284,7 +284,20 @@ export default defineConfig(({ mode }) => {
         "@vcad/kernel-wasm": resolve(__dirname, "../kernel-wasm/vcad_kernel_wasm.js"),
         "vcad-kernel-wasm": resolve(__dirname, "../kernel-wasm/vcad_kernel_wasm.js"),
       },
-      dedupe: ["@vcad/kernel-wasm", "vcad-kernel-wasm"],
+      // Force a single React instance across the workspace. Without this,
+      // workspace packages (@vcad/auth, @vcad/core, etc.) can resolve their own
+      // React copies, which throws "null is not an object (evaluating
+      // 'resolveDispatcher().useState')" when components from different
+      // packages mount together. react/jsx-runtime is dedup'd separately
+      // because vite's optimizer treats it as a distinct import.
+      dedupe: [
+        "@vcad/kernel-wasm",
+        "vcad-kernel-wasm",
+        "react",
+        "react-dom",
+        "react/jsx-runtime",
+        "react/jsx-dev-runtime",
+      ],
     },
     worker: {
       format: "es",
@@ -304,6 +317,19 @@ export default defineConfig(({ mode }) => {
     },
     optimizeDeps: {
       exclude: ["@vcad/kernel-wasm", "@vcad/engine"],
+      // Force-include the AI Elements / streamdown stack in the prebundle so
+      // they all use the deduped React instance. Without this, vite can lazily
+      // optimize them on first import with a stale React snapshot, triggering
+      // the dispatcher null error.
+      include: [
+        "react",
+        "react-dom",
+        "react-dom/client",
+        "react/jsx-runtime",
+        "streamdown",
+        "use-stick-to-bottom",
+        "lucide-react",
+      ],
       esbuildOptions: {
         plugins: [r3fDisableProfilingPlugin()],
       },

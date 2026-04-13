@@ -100,15 +100,23 @@ export function NotificationContainer() {
         )}
       </div>
 
-      {/* Visual notifications */}
+      {/* Visual notifications.
+          Mobile (< 768px): top-center, clear of the safe-area inset AND the
+          h-12 mobile header (48px), newest on top. Desktop (md+): bottom-right
+          corner. The flex direction flips so the newest toast always lands
+          closest to the screen edge it's anchored to. */}
       <div
         ref={containerRef}
         role="region"
         aria-label="Notifications"
         className={cn(
-          "fixed bottom-4 right-4 z-50",
-          "flex flex-col-reverse gap-2",
-          "max-w-sm w-full pointer-events-none"
+          "fixed z-50 pointer-events-none flex gap-2",
+          // Mobile: top-center, below header (h-12) + notch + 8px breathing room
+          "left-1/2 -translate-x-1/2 top-[calc(env(safe-area-inset-top)+3.5rem)]",
+          "max-w-[calc(100%-1rem)] w-full flex-col",
+          // Desktop: bottom-right corner
+          "md:left-auto md:right-4 md:translate-x-0 md:top-auto md:bottom-4",
+          "md:max-w-sm md:flex-col-reverse",
         )}
       >
         {/* Overflow indicator */}
