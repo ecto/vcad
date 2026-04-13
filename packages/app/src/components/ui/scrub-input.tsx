@@ -1,6 +1,18 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { Minus } from "@phosphor-icons/react/dist/ssr/Minus";
+import { Plus } from "@phosphor-icons/react/dist/ssr/Plus";
 import { cn } from "@/lib/utils";
 import { Tooltip } from "./tooltip";
+
+/**
+ * True when the primary pointer is coarse (touch). Drives the mobile stepper
+ * UI below. Checked at module load — pointer capability doesn't change mid-
+ * session in practice.
+ */
+const isCoarsePointer =
+  typeof window !== "undefined" &&
+  typeof window.matchMedia === "function" &&
+  window.matchMedia("(pointer: coarse)").matches;
 
 function round(n: number, decimals = 3): number {
   const factor = Math.pow(10, decimals);
@@ -67,8 +79,8 @@ export function ScrubInput({
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent) => {
-      // Only scrub with left mouse button and not when editing
-      if (e.button !== 0 || isEditing) return;
+      // Only scrub with mouse (coarse/touch devices get stepper buttons instead)
+      if (isCoarsePointer || e.pointerType !== "mouse" || e.button !== 0 || isEditing) return;
 
       e.preventDefault();
       setIsScrubbing(true);
@@ -77,6 +89,14 @@ export function ScrubInput({
       onScrubStart?.();
     },
     [isEditing, value, onScrubStart],
+  );
+
+  const bump = useCallback(
+    (direction: 1 | -1) => {
+      const newValue = round(value + direction * step);
+      onChange(Math.max(min, Math.min(max, newValue)));
+    },
+    [value, step, min, max, onChange],
   );
 
   const handlePointerMove = useCallback(
@@ -134,12 +154,29 @@ export function ScrubInput({
   return (
     <label className={cn("flex items-center gap-1.5 text-xs", className)}>
       {tooltip ? <Tooltip content={tooltip} side="top">{labelSpan}</Tooltip> : labelSpan}
+      {isCoarsePointer && !compact && (
+        <button
+          type="button"
+          onClick={() => bump(-1)}
+          className="flex h-9 w-9 shrink-0 items-center justify-center border border-border bg-card text-text-muted active:bg-hover"
+          aria-label={`Decrease ${label}`}
+        >
+          <Minus size={14} />
+        </button>
+      )}
       <input
         ref={inputRef}
-        type="text"
+        type={isCoarsePointer && isEditing ? "number" : "text"}
+        inputMode={isCoarsePointer ? "decimal" : undefined}
         value={isEditing ? text : String(round(value))}
         onChange={(e) => setText(e.target.value)}
         onBlur={commit}
+        onFocus={() => {
+          if (isCoarsePointer) {
+            setIsEditing(true);
+            setTimeout(() => inputRef.current?.select(), 0);
+          }
+        }}
         onKeyDown={(e) => {
           if (e.key === "Enter") commit();
           if (e.key === "Escape") {
@@ -149,15 +186,26 @@ export function ScrubInput({
         }}
         onPointerDown={handlePointerDown}
         onDoubleClick={handleDoubleClick}
-        readOnly={!isEditing}
+        readOnly={!isEditing && !isCoarsePointer}
         className={cn(
-          "flex-1 min-w-0 bg-card border border-border text-xs text-text outline-none transition-colors",
+          "flex-1 min-w-0 bg-card border border-border text-text outline-none transition-colors text-center",
           "hover:border-text-muted focus:border-accent",
-          !isEditing && "cursor-ew-resize select-none",
+          !isEditing && !isCoarsePointer && "cursor-ew-resize select-none",
           isScrubbing && "cursor-ew-resize",
-          compact ? "px-1 py-0.5 text-[10px]" : "px-2 py-1",
+          compact ? "px-1 py-0.5 text-[10px]" : "px-2 py-1 text-xs",
+          isCoarsePointer && !compact && "h-9 text-sm tabular-nums",
         )}
       />
+      {isCoarsePointer && !compact && (
+        <button
+          type="button"
+          onClick={() => bump(1)}
+          className="flex h-9 w-9 shrink-0 items-center justify-center border border-border bg-card text-text-muted active:bg-hover"
+          aria-label={`Increase ${label}`}
+        >
+          <Plus size={14} />
+        </button>
+      )}
       {unit && !compact && <span className="text-[10px] text-text-muted shrink-0">{unit}</span>}
     </label>
   );

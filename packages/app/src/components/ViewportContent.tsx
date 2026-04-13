@@ -1,5 +1,10 @@
 import { useRef, useEffect, useMemo, useState, Suspense } from "react";
-import { Spherical, Vector3, Box3, Raycaster, Vector2, Quaternion, Matrix4, Color } from "three";
+import { Spherical, Vector3, Box3, Raycaster, Vector2, Quaternion, Matrix4, Color, TOUCH } from "three";
+
+const isCoarsePointer =
+  typeof window !== "undefined" &&
+  typeof window.matchMedia === "function" &&
+  window.matchMedia("(pointer: coarse)").matches;
 import { useThree, useFrame } from "@react-three/fiber";
 import {
   OrbitControls,
@@ -895,7 +900,10 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
         ref={orbitRef}
         makeDefault
         enableDamping={false}
-        enableZoom={false}
+        // Desktop uses a custom wheel zoom handler; touch devices need the
+        // built-in pinch-to-dolly path, so enable zoom when the pointer is coarse.
+        enableZoom={isCoarsePointer}
+        touches={{ ONE: TOUCH.ROTATE, TWO: TOUCH.DOLLY_PAN }}
         mouseButtons={(() => {
           const schemeButtons = getOrbitControlsMouseButtons(
             controlScheme,

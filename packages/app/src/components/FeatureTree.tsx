@@ -5,7 +5,8 @@ import {
   DragOverlay,
   closestCenter,
   KeyboardSensor,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   useSensor,
   useSensors,
   type DragEndEvent,
@@ -789,10 +790,14 @@ export function FeatureTree() {
 
   // Drag and drop sensors
   const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: 8, // 8px movement before drag starts
-      },
+    // Mouse: 8px movement triggers a drag (lets click/select still work)
+    useSensor(MouseSensor, {
+      activationConstraint: { distance: 8 },
+    }),
+    // Touch: long-press 250ms starts a drag so finger-scroll of the tree
+    // keeps working without accidentally grabbing a row
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 250, tolerance: 5 },
     }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,

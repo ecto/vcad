@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { TransformControls } from "@react-three/drei";
+
+const isCoarsePointer =
+  typeof window !== "undefined" &&
+  typeof window.matchMedia === "function" &&
+  window.matchMedia("(pointer: coarse)").matches;
 import * as THREE from "three";
 import { useUiStore, useDocumentStore } from "@vcad/core";
 import type { RefObject } from "react";
@@ -233,7 +238,7 @@ export function TransformGizmo({
           object={proxy}
           mode={transformMode}
           space="local"
-          size={0.8}
+          size={isCoarsePointer ? 1.8 : 0.8}
           {...snapProps}
         />
       )}

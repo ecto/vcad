@@ -16,6 +16,8 @@ import { StatusBar } from "@/components/StatusBar";
 import { ToolPalette } from "@/components/ToolPalette";
 import { Viewport } from "@/components/Viewport";
 import { FeatureTree } from "@/components/FeatureTree";
+import { MobileShell } from "@/components/mobile/MobileShell";
+import { useIsMobile } from "@/hooks/useIsMobile";
 
 // Lazy-loaded components (behind user actions, modals, or conditional renders)
 const PropertyPanel = lazy(() => import("@/components/PropertyPanel").then(m => ({ default: m.PropertyPanel })));
@@ -139,6 +141,7 @@ export function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const desktopMode = isTauri();
+  const isMobile = useIsMobile();
   const engineReady = useEngineStore((s) => s.engineReady);
   const error = useEngineStore((s) => s.error);
   const sketchActive = useSketchStore((s) => s.active);
@@ -575,6 +578,63 @@ export function App() {
   // Only block on fatal error - let viewport render while engine loads
   if (error && !engineReady) return <ErrorScreen message={error} />;
 
+  const viewportStack = (
+    <>
+      <Viewport />
+      <Suspense fallback={null}>
+        <SketchToolbar />
+        <SketchStatusPanel />
+        <DrawingToolbar />
+        <FaceSelectionOverlay />
+      </Suspense>
+
+      {/* Electronics toolbar + status (self-gate via electronicsActive) */}
+      {electronicsActive && (
+        <Suspense fallback={null}>
+          <ElectronicsToolbar />
+          <ElectronicsStatusPanel />
+        </Suspense>
+      )}
+
+      {/* Onboarding overlays */}
+      <Suspense fallback={null}>
+        <GuidedFlowOverlay />
+        <GhostPromptController />
+        <CelebrationOverlay />
+        <SignInDelight />
+      </Suspense>
+
+      {/* Quote panel (slides in from right when Make It Real clicked) */}
+      <Suspense fallback={null}>
+        <QuotePanel />
+      </Suspense>
+
+      {/* Print panel (for 3D printing slicer settings) */}
+      {printPanelOpen && <Suspense fallback={null}><PrintPanel /></Suspense>}
+      {printPanelOpen && <Suspense fallback={null}><DfmOverlay /></Suspense>}
+
+      {/* CAM panel (for CNC toolpath generation) */}
+      {camPanelOpen && <Suspense fallback={null}><CamPanel /></Suspense>}
+
+      {/* Embroidery panel — hide when an embroidery part is selected so PropertyPanel shows */}
+      {embroideryPanelOpen && !hasSelectedEmbroideryPart && <Suspense fallback={null}><EmbroideryPanel /></Suspense>}
+
+      {/* Log viewer (Cmd+J to toggle) */}
+      <Suspense fallback={null}>
+        <LogViewer />
+      </Suspense>
+    </>
+  );
+
+  const dragOverlay = isDragging && (
+    <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-accent/10 backdrop-blur-sm">
+      <div className="rounded-lg border-2 border-dashed border-accent bg-bg/90 px-8 py-6 text-center">
+        <div className="text-lg font-medium text-text">Drop file to import</div>
+        <div className="mt-1 text-sm text-text-muted">.vcad, .loon, .stl, .step, .pes, .dst</div>
+      </div>
+    </div>
+  );
+
   return (
     <ErrorBoundary>
       <TooltipProvider>
@@ -584,6 +644,16 @@ export function App() {
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
         >
+          {isMobile ? (
+            <MobileShell
+              onAboutOpen={() => setAboutOpen(true)}
+              onSave={handleSave}
+              onOpen={handleOpen}
+            >
+              {viewportStack}
+              {dragOverlay}
+            </MobileShell>
+          ) : (
           <AppShell
             header={!electronicsActive && (
               <Header
@@ -610,61 +680,10 @@ export function App() {
               />
             )}
           >
-          {/* Full-bleed viewport */}
-          <Viewport />
-          <Suspense fallback={null}>
-            <SketchToolbar />
-            <SketchStatusPanel />
-            <DrawingToolbar />
-            <FaceSelectionOverlay />
-          </Suspense>
-
-          {/* Electronics toolbar + status (self-gate via electronicsActive) */}
-          {electronicsActive && (
-            <Suspense fallback={null}>
-              <ElectronicsToolbar />
-              <ElectronicsStatusPanel />
-            </Suspense>
-          )}
-
-          {/* Onboarding overlays */}
-          <Suspense fallback={null}>
-            <GuidedFlowOverlay />
-            <GhostPromptController />
-            <CelebrationOverlay />
-            <SignInDelight />
-          </Suspense>
-
-          {/* Quote panel (slides in from right when Make It Real clicked) */}
-          <Suspense fallback={null}>
-            <QuotePanel />
-          </Suspense>
-
-          {/* Print panel (for 3D printing slicer settings) */}
-          {printPanelOpen && <Suspense fallback={null}><PrintPanel /></Suspense>}
-          {printPanelOpen && <Suspense fallback={null}><DfmOverlay /></Suspense>}
-
-          {/* CAM panel (for CNC toolpath generation) */}
-          {camPanelOpen && <Suspense fallback={null}><CamPanel /></Suspense>}
-
-          {/* Embroidery panel — hide when an embroidery part is selected so PropertyPanel shows */}
-          {embroideryPanelOpen && !hasSelectedEmbroideryPart && <Suspense fallback={null}><EmbroideryPanel /></Suspense>}
-
-          {/* Log viewer (Cmd+J to toggle) */}
-          <Suspense fallback={null}>
-            <LogViewer />
-          </Suspense>
-
-          {/* Drag overlay */}
-          {isDragging && (
-            <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-accent/10 backdrop-blur-sm">
-              <div className="rounded-lg border-2 border-dashed border-accent bg-bg/90 px-8 py-6 text-center">
-                <div className="text-lg font-medium text-text">Drop file to import</div>
-                <div className="mt-1 text-sm text-text-muted">.vcad, .loon, .stl, .step, .pes, .dst</div>
-              </div>
-            </div>
-          )}
+          {viewportStack}
+          {dragOverlay}
         </AppShell>
+          )}
 
         {/* Offline indicator (browser only — Tauri doesn't use PWA) */}
         {!desktopMode && (
