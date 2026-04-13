@@ -61,6 +61,7 @@ pub struct App {
     /// File path if opened from file.
     pub file_path: Option<PathBuf>,
     /// CRDT document for new-style operations.
+    #[allow(dead_code)] // staged for future CRDT-backed ops
     pub crdt: CrdtDocument,
 
     // -- Visual state --

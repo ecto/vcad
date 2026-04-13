@@ -537,13 +537,15 @@ function SketchCursor3D({
   xDir,
   yDir,
 }: SketchCursor3DProps) {
-  if (!cursorWorldPos || !cursorSketchPos) return null;
-
-  const cursorPos = toVec3(cursorWorldPos);
+  const cursorPos = useMemo(
+    () => (cursorWorldPos ? toVec3(cursorWorldPos) : null),
+    [cursorWorldPos],
+  );
   const crosshairSize = 3;
 
   // Crosshair lines
   const xCross = useMemo(() => {
+    if (!cursorPos) return null;
     const x = toVec3(xDir);
     const start = cursorPos
       .clone()
@@ -556,6 +558,7 @@ function SketchCursor3D({
   }, [cursorPos, xDir]);
 
   const yCross = useMemo(() => {
+    if (!cursorPos) return null;
     const y = toVec3(yDir);
     const start = cursorPos
       .clone()
@@ -626,6 +629,8 @@ function SketchCursor3D({
     if (!snapTarget) return null;
     return sketchToWorld(snapTarget, origin, xDir, yDir);
   }, [snapTarget, origin, xDir, yDir]);
+
+  if (!cursorPos || !cursorSketchPos || !xCross || !yCross) return null;
 
   return (
     <group>
@@ -814,7 +819,7 @@ export function SketchPlane3D() {
 
   // Raycast to plane and update cursor
   const handlePointerMove = useCallback(
-    (_e: ThreeEvent<PointerEvent>) => {
+    () => {
       if (!planeMeshRef.current) return;
 
       // Raycast to the plane

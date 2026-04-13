@@ -165,13 +165,13 @@ mod tests {
 
     #[test]
     fn parse_escaped_quotes() {
-        let (rest, node) = sexpr_node(r#""he said \"hi\"" rest"#).unwrap();
+        let (_rest, node) = sexpr_node(r#""he said \"hi\"" rest"#).unwrap();
         assert_eq!(node.as_str(), Some(r#"he said "hi""#));
     }
 
     #[test]
     fn parse_simple_list() {
-        let (rest, node) = sexpr_node("(foo bar 42)").unwrap();
+        let (_rest, node) = sexpr_node("(foo bar 42)").unwrap();
         assert_eq!(node.tag_name(), Some("foo"));
         let children = node.children().unwrap();
         assert_eq!(children.len(), 3);

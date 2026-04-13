@@ -135,6 +135,7 @@ export function usePhysicsSimulation() {
     return () => {
       mounted = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- jointStructureKey is the stable signature of `joints`; depending on `joints` directly would re-init physics on every document mutation
   }, [jointStructureKey, setJointStates, setObservation]);
 
   // Cleanup on unmount

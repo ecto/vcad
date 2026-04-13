@@ -281,7 +281,7 @@ mod tests {
 
         // When corner_radius equals radius, bull becomes ball
         let z_bull = drop_cutter_bull(&accel, 3.0, 3.0, 10.0, 10.0);
-        let z_ball = super::super::ball::drop_cutter_ball(&accel, 3.0, 10.0, 10.0);
+        let _z_ball = super::super::ball::drop_cutter_ball(&accel, 3.0, 10.0, 10.0);
 
         // Ball returns sphere center Z, bull returns tip Z
         // For ball, tip is at z_center - radius = 3.0 - 3.0 = 0

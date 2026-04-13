@@ -388,7 +388,10 @@ mod tests {
         let brep = make_cylinder(5.0, 20.0, 32);
         let analysis = analyze_for_printing(&brep, 1570.8, 942.5);
 
-        // Cylinder has a cylindrical surface that should be detected
-        assert!(!analysis.holes.is_empty() || analysis.notes.len() >= 0);
+        // Cylinder has a cylindrical surface that should be detected.
+        // This test mainly verifies analyze_for_printing doesn't panic;
+        // the analysis struct is available for inspection.
+        let _ = &analysis.holes;
+        let _ = &analysis.notes;
     }
 }

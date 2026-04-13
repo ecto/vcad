@@ -23,12 +23,11 @@ import { Hammer } from "@phosphor-icons/react/dist/ssr/Hammer";
 import { CheckCircle } from "@phosphor-icons/react/dist/ssr/CheckCircle";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
+import { TabDropdown, ToolbarButton } from "@/components/ui/toolbar";
 import {
-  TabDropdown,
-  ToolbarButton,
   SKETCH_TAB_COLORS,
   type SketchTab,
-} from "@/components/ui/toolbar";
+} from "@/components/ui/toolbar-constants";
 import { cn } from "@/lib/utils";
 import { useSketchStore, useDocumentStore, useUiStore, useEngineStore, getSketchPlaneDirections, formatDirection, negateDirection } from "@vcad/core";
 import { useNotificationStore } from "@/stores/notification-store";

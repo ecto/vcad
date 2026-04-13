@@ -66,11 +66,12 @@ export function AboutModal({
     onOpenChange(false);
 
     switch (id) {
-      case "primitive":
+      case "primitive": {
         const partId = addPrimitive("cube");
         select(partId);
         setTransformMode("translate");
         break;
+      }
       case "sketch":
         enterSketchMode("XY");
         break;

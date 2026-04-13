@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use phyz::math::{Mat3, Quat, SpatialInertia, SpatialTransform, Vec3};
 use phyz::model::{Model, ModelBuilder, State};
-use phyz::{forward_kinematics, ContactMaterial, Geometry};
+use phyz::{forward_kinematics, Geometry};
 use phyz::aba_with_external_forces;
 use vcad_ir::{Document, JointKind};
 
@@ -31,8 +31,6 @@ pub struct PhysicsWorld {
     // phyz components
     model: Model,
     state: State,
-    contact_material: ContactMaterial,
-    ground_height: f64,
 
     // Motor targets for PD control
     motors: HashMap<String, MotorTarget>,
@@ -233,8 +231,6 @@ impl PhysicsWorld {
         let mut world = Self {
             model,
             state,
-            contact_material: ContactMaterial::default(),
-            ground_height: 0.0,
             motors: HashMap::new(),
             instance_to_body,
             joint_to_index,
@@ -287,7 +283,7 @@ impl PhysicsWorld {
                 self.state.q[i] += self.state.v[i.min(nv - 1)] * dt;
             }
 
-            forward_kinematics(&self.model, &mut self.state);
+            forward_kinematics(&self.model, &self.state);
         }
 
         self.model.dt = original_dt;

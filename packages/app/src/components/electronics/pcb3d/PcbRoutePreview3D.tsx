@@ -2,7 +2,7 @@
  * In-progress route trace + clearance corridor as semi-transparent geometry.
  */
 
-import type { Pcb, Vec2 } from "@vcad/ir";
+import type { Pcb, PcbLayer, Vec2 } from "@vcad/ir";
 import { layerZ } from "./pcb-geometry";
 
 interface Props {
@@ -10,7 +10,7 @@ interface Props {
   routeStartPad: { fpRef: string; padNum: string; net: string } | null;
   routePreview: Vec2[];
   boardThickness: number;
-  activeLayer: string;
+  activeLayer: PcbLayer;
   explosion: number;
 }
 
@@ -29,7 +29,7 @@ export function PcbRoutePreview3D({ pcb, routeStartPad, routePreview, boardThick
     y: fp.position.y + pad.position.y,
   };
   const endPos = routePreview[routePreview.length - 1]!;
-  const z = layerZ(activeLayer as any, boardThickness, explosion) + 0.02;
+  const z = layerZ(activeLayer, boardThickness, explosion) + 0.02;
   const traceWidth = pcb.rules.defaultRules.traceWidth;
   const clearance = pcb.rules.defaultRules.clearance;
 

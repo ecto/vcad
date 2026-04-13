@@ -23,16 +23,16 @@ import { MagnetStraight } from "@phosphor-icons/react/dist/ssr/MagnetStraight";
 import { Package } from "@phosphor-icons/react/dist/ssr/Package";
 import { Ruler } from "@phosphor-icons/react/dist/ssr/Ruler";
 import { ArrowSquareDown } from "@phosphor-icons/react/dist/ssr/ArrowSquareDown";
+import { TabDropdown, ToolbarButton } from "@/components/ui/toolbar";
 import {
-  TabDropdown,
-  ToolbarButton,
   ELECTRONICS_TAB_COLORS,
   type ElectronicsTab,
-} from "@/components/ui/toolbar";
+} from "@/components/ui/toolbar-constants";
 import { cn } from "@/lib/utils";
 import { useElectronicsStore } from "@/stores/electronics-store";
 import { useDocumentStore, useCoreElectronicsStore, getNodePcb } from "@vcad/core";
 import { useUiStore } from "@vcad/core";
+import type { PcbLayer } from "@vcad/ir";
 
 import { SYMBOL_LIBRARY } from "./symbol-library";
 
@@ -556,7 +556,7 @@ export function ElectronicsToolbar() {
         <select
           className="text-[10px] bg-transparent text-text border border-border rounded px-1 py-0.5"
           value={pcbActiveLayer}
-          onChange={(e) => setPcbActiveLayer(e.target.value as any)}
+          onChange={(e) => setPcbActiveLayer(e.target.value as PcbLayer)}
           onClick={(e) => e.stopPropagation()}
         >
           {pcbLayers

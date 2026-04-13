@@ -9,7 +9,7 @@
 //! 4. Mapping back to 3D via surface evaluation
 
 use std::f64::consts::PI;
-use vcad_kernel_geom::{BilinearSurface, GeometryStore, Surface, SurfaceKind};
+use vcad_kernel_geom::{BilinearSurface, GeometryStore, SurfaceKind};
 use vcad_kernel_math::{Point2, Point3, Vec3};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_topo::{FaceId, Orientation, Topology};

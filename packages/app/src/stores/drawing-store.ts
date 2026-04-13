@@ -101,7 +101,7 @@ export const useDrawingStore = create<DrawingState>((set, get) => ({
   setZoom: (zoom) =>
     set({ zoom: Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom)) }),
 
-  adjustZoom: (delta, _centerX, _centerY) =>
+  adjustZoom: (delta) =>
     set((s) => {
       const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, s.zoom * (1 + delta)));
       return { zoom: newZoom };

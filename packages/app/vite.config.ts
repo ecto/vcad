@@ -133,8 +133,9 @@ function devApiPlugin(env: Record<string, string>): Plugin {
           // Vercel's body parser runs; the handler already falls back to reading
           // the raw stream, so we leave req.body undefined.
 
-          // @ts-expect-error adapting node http to VercelRequest shape
-          await mod.default(req, res);
+          // Cast: node's http req/res are structurally compatible with
+          // the bits api/chat.ts actually uses (headers, statusCode, end).
+          await mod.default(req as never, res as never);
         } catch (err) {
           console.error("[dev-api] /api/chat delegation error:", err);
           if (!res.headersSent) {

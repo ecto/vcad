@@ -1,4 +1,4 @@
-import { useRef, useEffect, useMemo, useState, Suspense } from "react";
+import { useRef, useEffect, useMemo, useState, useCallback, Suspense } from "react";
 import { Spherical, Vector3, Box3, Raycaster, Vector2, Quaternion, Matrix4, Color, TOUCH } from "three";
 
 const isCoarsePointer =
@@ -55,6 +55,11 @@ import type {
 } from "@vcad/ir";
 import { PcbScene } from "./electronics/pcb3d/PcbScene";
 import { usePcbCamera } from "./electronics/pcb3d/usePcbCamera";
+
+// Initial camera state for reset (module-scope so refs are stable)
+const INITIAL_POSITION_V = new Vector3(50, 50, 50);
+const INITIAL_TARGET_V = new Vector3(0, 0, 0);
+const INITIAL_DISTANCE_V = INITIAL_POSITION_V.distanceTo(INITIAL_TARGET_V);
 
 // Map IR environment presets to drei preset names
 const ENVIRONMENT_PRESET_MAP: Record<EnvironmentPreset, string> = {
@@ -250,10 +255,9 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
   // Quaternion ref for smooth orientation interpolation
   const goalQuatRef = useRef(new Quaternion());
 
-  // Initial camera state for reset
-  const INITIAL_POSITION = new Vector3(50, 50, 50);
-  const INITIAL_TARGET = new Vector3(0, 0, 0);
-  const INITIAL_DISTANCE = INITIAL_POSITION.distanceTo(INITIAL_TARGET);
+  // Initial camera state for reset (stable refs across renders)
+  const INITIAL_TARGET = INITIAL_TARGET_V;
+  const INITIAL_DISTANCE = INITIAL_DISTANCE_V;
 
   // Build mapping from root index to instance ID (for assembly mode rendering with legacy parts)
   const rootIndexToInstanceId = useMemo(() => {
@@ -279,14 +283,17 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
   }, [docInstances, docPartDefs, docRoots]);
 
   // Check if a part at given index is selected (handles both part IDs and instance IDs)
-  const isPartSelected = (partId: string, partIndex: number): boolean => {
-    // Direct part ID match
-    if (selectedPartIds.has(partId)) return true;
-    // Instance ID match (for assembly mode)
-    const instanceId = rootIndexToInstanceId.get(partIndex);
-    if (instanceId && selectedPartIds.has(instanceId)) return true;
-    return false;
-  };
+  const isPartSelected = useCallback(
+    (partId: string, partIndex: number): boolean => {
+      // Direct part ID match
+      if (selectedPartIds.has(partId)) return true;
+      // Instance ID match (for assembly mode)
+      const instanceId = rootIndexToInstanceId.get(partIndex);
+      if (instanceId && selectedPartIds.has(instanceId)) return true;
+      return false;
+    },
+    [selectedPartIds, rootIndexToInstanceId],
+  );
 
   // Calculate center and size of selected parts/instances
   const selectionInfo = useMemo(() => {
@@ -346,7 +353,7 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
     // Rotation -90° around X: (x, y, z) → (x, z, -y)
     const center = new Vector3(kernelCenter.x, kernelCenter.z, -kernelCenter.y);
     return { center, maxDim };
-  }, [selectedPartIds, scene, parts, rootIndexToInstanceId]);
+  }, [selectedPartIds, scene, parts, isPartSelected]);
 
   // Animate orbit target to selection center and zoom to fit
   // Skip during gizmo drag to avoid fighting with the user's transform
@@ -670,7 +677,7 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
 
     domElement.addEventListener("dblclick", handleDoubleClick);
     return () => domElement.removeEventListener("dblclick", handleDoubleClick);
-  }, []);
+  }, [INITIAL_DISTANCE, INITIAL_TARGET]);
 
   // Face selection: swing camera to view face flat
   useEffect(() => {

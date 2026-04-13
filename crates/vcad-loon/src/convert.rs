@@ -996,7 +996,7 @@ mod tests {
             vec![adt("Cube", vec![f(10.0), f(10.0), f(10.0)]), s("steel")],
         );
         let entry2 = adt("SceneEntry", vec![adt("Sphere", vec![f(5.0)]), s("glass")]);
-        let vec_val = Value::Vec(vec![entry1, entry2]);
+        let vec_val = Value::Vec(vec![entry1, entry2].into());
         let doc = value_to_document(&vec_val).unwrap();
         assert_eq!(doc.roots.len(), 2);
         assert_eq!(doc.roots[0].material, "steel");
@@ -1022,7 +1022,7 @@ mod tests {
                 f(0.0),
                 f(1.0),
                 f(0.0), // y_dir
-                Value::Vec(vec![line1, line2, line3, line4]),
+                Value::Vec(vec![line1, line2, line3, line4].into()),
             ],
         );
         let extrude = adt("Extrude", vec![sketch, f(0.0), f(0.0), f(20.0)]);
@@ -1154,7 +1154,7 @@ mod tests {
             "SceneEntry",
             vec![adt("Cube", vec![f(10.0), f(10.0), f(10.0)]), s("steel")],
         );
-        let vec_val = Value::Vec(vec![mat, entry]);
+        let vec_val = Value::Vec(vec![mat, entry].into());
         let doc = value_to_document(&vec_val).unwrap();
         assert_eq!(doc.materials.len(), 2); // steel + default
         assert!(doc.materials.contains_key("steel"));
@@ -1192,7 +1192,7 @@ mod tests {
                 f(0.0),
                 f(1.0),
                 f(0.0),
-                Value::Vec(vec![line1, line2, line3, line4]),
+                Value::Vec(vec![line1, line2, line3, line4].into()),
             ],
         );
         let sweep = adt(
@@ -1228,7 +1228,7 @@ mod tests {
                 f(0.0),
                 f(1.0),
                 f(0.0),
-                Value::Vec(vec![line1, line2, line3, line4]),
+                Value::Vec(vec![line1, line2, line3, line4].into()),
             ],
         );
         let sweep = adt("SweepHelix", vec![sketch, f(10.0), f(5.0), f(20.0), f(4.0)]);
@@ -1264,13 +1264,13 @@ mod tests {
                     f(0.0),
                     f(0.0),
                     f(1.0),
-                    Value::Vec(vec![l1, l2, l3, l4]),
+                    Value::Vec(vec![l1, l2, l3, l4].into()),
                 ],
             )
         };
         let loft = adt(
             "Loft",
-            vec![Value::Vec(vec![mk_sketch(0.0), mk_sketch(20.0)])],
+            vec![Value::Vec(vec![mk_sketch(0.0), mk_sketch(20.0)].into())],
         );
         let doc = value_to_document(&loft).unwrap();
         assert_eq!(doc.nodes.len(), 3); // 2 sketches + loft
@@ -1300,7 +1300,7 @@ mod tests {
                     f(0.0),
                     f(0.0),
                     f(1.0),
-                    Value::Vec(vec![l1, l2]),
+                    Value::Vec(vec![l1, l2].into()),
                 ],
             )
         };
@@ -1310,7 +1310,7 @@ mod tests {
                 mk_sketch(0.0),
                 mk_sketch(10.0),
                 mk_sketch(20.0),
-            ])],
+            ].into())],
         );
         let doc = value_to_document(&loft).unwrap();
         match &doc.nodes[&3].op {
@@ -1348,7 +1348,7 @@ mod tests {
                     s("aluminum"),
                 ],
             ),
-        ]);
+        ].into());
         let instances = Value::Vec(vec![
             adt(
                 "InstanceEntry",
@@ -1358,7 +1358,7 @@ mod tests {
                 "InstanceEntry",
                 vec![s("arm1-inst"), s("arm1"), f(0.0), f(0.0), f(30.0)],
             ),
-        ]);
+        ].into());
         let joints = Value::Vec(vec![adt(
             "RevoluteJoint",
             vec![
@@ -1377,7 +1377,7 @@ mod tests {
                 f(0.0),
                 f(0.0), // child anchor
             ],
-        )]);
+        )].into());
         let ground = s("base-inst");
         let assembly = adt("Assembly", vec![parts, instances, joints, ground]);
 
@@ -1447,7 +1447,7 @@ mod tests {
                     s("default"),
                 ],
             ),
-        ]);
+        ].into());
         let instances = Value::Vec(vec![
             adt(
                 "InstanceEntry",
@@ -1461,7 +1461,7 @@ mod tests {
                 "InstanceEntry",
                 vec![s("c-inst"), s("c"), f(0.0), f(0.0), f(0.0)],
             ),
-        ]);
+        ].into());
         let joints = Value::Vec(vec![
             adt(
                 "FixedJoint",
@@ -1491,7 +1491,7 @@ mod tests {
                     f(0.0),
                 ],
             ),
-        ]);
+        ].into());
         let assembly = adt("Assembly", vec![parts, instances, joints, s("a-inst")]);
         let doc = value_to_document(&assembly).unwrap();
 
@@ -1519,7 +1519,7 @@ mod tests {
                 f(0.0),
                 f(1.0),
                 f(0.0),
-                Value::Vec(vec![line1, line2, line3, line4]),
+                Value::Vec(vec![line1, line2, line3, line4].into()),
             ],
         );
         let revolve = adt(
@@ -1569,7 +1569,7 @@ mod tests {
                 f(0.0),
                 f(1.0),
                 f(0.0),
-                Value::Vec(vec![arc]),
+                Value::Vec(vec![arc].into()),
             ],
         );
         let extrude = adt("Extrude", vec![sketch, f(0.0), f(0.0), f(5.0)]);

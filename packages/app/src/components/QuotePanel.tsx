@@ -56,6 +56,7 @@ function AnimatedPrice({ value, duration = 500 }: { value: number; duration?: nu
     }
 
     requestAnimationFrame(animate);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally exclude displayValue so animation starts from current value without restarting on every tick
   }, [value, duration]);
 
   return <>${displayValue.toFixed(2)}</>;

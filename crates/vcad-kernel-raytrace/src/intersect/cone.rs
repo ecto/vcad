@@ -147,7 +147,7 @@ mod tests {
             Point3::new(0.0, 0.0, 10.0),
             Vec3::new(1.0, 0.0, 0.0), // Perpendicular to axis, not hitting
         );
-        let hits = intersect_cone(&ray, &cone);
+        let _hits = intersect_cone(&ray, &cone);
 
         // Ray is perpendicular to axis and at z=10, the cone radius is tan(30°)*10 ≈ 5.77
         // Ray at y=0 should hit at x = ±5.77... so this actually hits.

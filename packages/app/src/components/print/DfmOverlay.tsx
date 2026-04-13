@@ -35,7 +35,7 @@ async function loadWasm(): Promise<typeof import("@vcad/kernel-wasm") | null> {
 
 export function DfmOverlay() {
   const [dfmResult, setDfmResult] = useState<DfmResult | null>(null);
-  const [_loading, setLoading] = useState(false);
+  const [, setLoading] = useState(false);
   const printPanelOpen = useSlicerStore((s) => s.printPanelOpen);
   const scene = useEngineStore((s) => s.scene);
   const selectedPrinter = usePrinterStore((s) => s.selectedPrinter);

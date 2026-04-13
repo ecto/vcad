@@ -129,8 +129,8 @@ export function usePcbCamera(
       controls.update();
     }
 
+    const ctrl = orbitRef.current;
     return () => {
-      const ctrl = orbitRef.current;
       if (ctrl && prevCameraRef.current) {
         ctrl.object = prevCameraRef.current;
         ctrl.enableRotate = true;
@@ -138,7 +138,7 @@ export function usePcbCamera(
         ctrl.update();
       }
     };
-  }, [active, gl, set, invalidate]);
+  }, [active, camera, gl, set, invalidate, orbitRef]);
 
   // Position camera at the given tilt angle around the orbit target
   const applyCameraTilt = useCallback((angleDeg: number) => {
@@ -173,7 +173,7 @@ export function usePcbCamera(
     orthoCam.lookAt(target);
     orthoCam.updateProjectionMatrix();
     controls.update();
-  }, []);
+  }, [orbitRef]);
 
   // Middle-mouse drag for tilt control
   useEffect(() => {
@@ -209,7 +209,7 @@ export function usePcbCamera(
       invalidate();
     };
 
-    const handlePointerUp = (_e: PointerEvent) => {
+    const handlePointerUp = () => {
       if (!tiltDragRef.current) return;
       tiltDragRef.current = null;
 
@@ -246,7 +246,7 @@ export function usePcbCamera(
       window.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [active, gl, invalidate, applyCameraTilt]);
+  }, [active, gl, invalidate, applyCameraTilt, orbitRef]);
 
   // Smooth tilt animation (snap back to 0 when below threshold)
   useFrame(() => {
@@ -338,7 +338,7 @@ export function usePcbCamera(
 
     canvas.addEventListener("wheel", handleWheel, { passive: false });
     return () => canvas.removeEventListener("wheel", handleWheel);
-  }, [active, gl, invalidate]);
+  }, [active, gl, invalidate, orbitRef]);
 
   // Keep ortho frustum in sync with canvas resize (preserve current frustum height)
   useFrame(() => {

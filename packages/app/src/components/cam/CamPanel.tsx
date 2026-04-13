@@ -110,7 +110,7 @@ export function CamPanel() {
 
       // Generate toolpath for each operation and collect G-code
       let allGcode = "";
-      let totalStats = {
+      const totalStats = {
         cuttingLength: 0,
         estimatedTime: 0,
         segmentCount: 0,

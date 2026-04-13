@@ -67,7 +67,7 @@ export function PcbPadMesh({ pcb, layers, activeNet, hoveredNet, explosion }: Pr
   const thtMeshRef = useRef<THREE.InstancedMesh>(null);
   const drillMeshRef = useRef<THREE.InstancedMesh>(null);
 
-  const allPads = useMemo(() => flattenPads(pcb), [pcb.footprints]);
+  const allPads = useMemo(() => flattenPads(pcb), [pcb]);
 
   const smdPads = useMemo(
     () => allPads.filter((p) => p.pad.padType === "SMD"),

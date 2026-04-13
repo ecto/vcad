@@ -7,7 +7,7 @@
 
 import { useCallback, useMemo, useRef } from "react";
 import { Grid, Plane } from "@react-three/drei";
-import { useThree } from "@react-three/fiber";
+import { useThree, type ThreeEvent } from "@react-three/fiber";
 import * as THREE from "three";
 import { useDocumentStore, useCoreElectronicsStore, getNodePcb } from "@vcad/core";
 import type { Vec2 } from "@vcad/ir";
@@ -74,7 +74,7 @@ export function PcbScene() {
   const dragRef = useRef<{ fpIdx: number; startWorld: Vec2 } | null>(null);
 
   const onPlanePointerDown = useCallback(
-    (e: any) => {
+    (e: ThreeEvent<PointerEvent>) => {
       if (!pcb || e.button !== 0) return;
       e.stopPropagation();
 
@@ -210,7 +210,7 @@ export function PcbScene() {
   );
 
   const onPlanePointerMove = useCallback(
-    (e: any) => {
+    (e: ThreeEvent<PointerEvent>) => {
       if (!pcb) return;
       const point = e.point as THREE.Vector3;
       const pcbPos = worldToPcb(point, pcbGridSize, pcbSnapToGrid);

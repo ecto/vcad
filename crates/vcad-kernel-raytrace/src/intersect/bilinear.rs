@@ -2,7 +2,7 @@
 
 use super::SurfaceHit;
 use crate::Ray;
-use vcad_kernel_geom::{BilinearSurface, Surface};
+use vcad_kernel_geom::BilinearSurface;
 use vcad_kernel_math::Point2;
 
 /// Maximum Newton iterations.

@@ -15,7 +15,7 @@ type CameraState = {
 
 let cameraStateCallback: ((state: CameraState) => void) | null = null;
 
-export function setCameraStateCallback(cb: ((state: CameraState) => void) | null) {
+function setCameraStateCallback(cb: ((state: CameraState) => void) | null) {
   cameraStateCallback = cb;
 }
 
@@ -46,12 +46,10 @@ export function RayTracedViewportSync() {
     let uploaded = false;
     let materialKey: string | undefined;
     for (const p of scene.parts) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const solid = (p as any).solid;
+      const solid = (p as { solid?: unknown }).solid;
       if (!solid) continue;
 
       try {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
         rayTracer.uploadSolid(solid);
         materialKey = p.material;
         uploaded = true;
@@ -66,7 +64,6 @@ export function RayTracedViewportSync() {
       const mat = document.materials[materialKey];
       if (mat) {
         try {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
           rayTracer.setMaterial(
             mat.color[0],
             mat.color[1],
@@ -90,8 +87,7 @@ export function RayTracedViewportSync() {
     const cam = camera as PerspectiveCamera;
 
     // Get orbit target from controls if available
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const orbitControls = controls as any;
+    const orbitControls = controls as { target?: { x: number; y: number; z: number } } | null;
     const target = orbitControls?.target ?? { x: 0, y: 0, z: 0 };
 
     // Check if camera changed (dirty check)
@@ -224,7 +220,6 @@ export function RayTracedViewportOverlay() {
         canvas.height = state.height;
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
       const currentFrame = (rayTracer?.getFrameIndex?.() as number) ?? 0;
 
       // Quality-based resolution limits
@@ -259,7 +254,6 @@ export function RayTracedViewportOverlay() {
       const cw = state.width;
       const ch = state.height;
 
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
       (
         rayTracer.render(
           state.position,
@@ -291,7 +285,7 @@ export function RayTracedViewportOverlay() {
           renderInProgressRef.current = false;
         });
     },
-    [rayTracer, qualityScale, drawPixels]
+    [rayTracer, qualityScale, drawPixels, raytraceQuality]
   );
 
   // Public render function
@@ -344,8 +338,8 @@ export function RayTracedViewportOverlay() {
     console.log(`[DEBUG] Setting debug mode: ${raytraceDebugMode} -> ${modeNumber}`);
 
     // Check if method exists
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any
-    const hasMethod = typeof (rayTracer as any).setDebugMode === "function";
+    const rt = rayTracer as { setDebugMode?: (mode: number) => void };
+    const hasMethod = typeof rt.setDebugMode === "function";
     console.log(`[DEBUG] setDebugMode method exists: ${hasMethod}`);
 
     if (!hasMethod) {
@@ -353,8 +347,7 @@ export function RayTracedViewportOverlay() {
       return;
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-    (rayTracer as any).setDebugMode(modeNumber);
+    rt.setDebugMode!(modeNumber);
     console.log(`[DEBUG] Called setDebugMode(${modeNumber})`);
 
     // Re-render to see the change
@@ -382,15 +375,14 @@ export function RayTracedViewportOverlay() {
       normal: raytraceEdgeNormalThreshold,
     };
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any
-    const hasMethod = typeof (rayTracer as any).setEdgeDetection === "function";
+    const rt = rayTracer as { setEdgeDetection?: (enabled: boolean, depth: number, normal: number) => void };
+    const hasMethod = typeof rt.setEdgeDetection === "function";
     if (!hasMethod) {
       logger.debug("gpu", "setEdgeDetection not available - WASM may need rebuild");
       return;
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-    (rayTracer as any).setEdgeDetection(
+    rt.setEdgeDetection!(
       raytraceEdgesEnabled,
       raytraceEdgeDepthThreshold,
       raytraceEdgeNormalThreshold

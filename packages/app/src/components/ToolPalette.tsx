@@ -31,12 +31,8 @@ import { Path } from "@phosphor-icons/react/dist/ssr/Path";
 import { Circuitry } from "@phosphor-icons/react/dist/ssr/Circuitry";
 import { Scissors } from "@phosphor-icons/react/dist/ssr/Scissors";
 import { TextT } from "@phosphor-icons/react/dist/ssr/TextT";
-import {
-  ToolbarButton,
-  MoreDropdown,
-  TAB_COLORS,
-  MOBILE_BREAKPOINT,
-} from "@/components/ui/toolbar";
+import { ToolbarButton, MoreDropdown } from "@/components/ui/toolbar";
+import { TAB_COLORS, MOBILE_BREAKPOINT } from "@/components/ui/toolbar-constants";
 import {
   useDocumentStore,
   useUiStore,
@@ -192,8 +188,7 @@ export function ToolPalette() {
     };
   }, []);
 
-  // Split tabs into visible and overflow
-  const visibleTabs = ALL_TABS.slice(0, visibleTabCount);
+  // Tabs that don't fit are stuffed into the More dropdown
   const overflowTabs = ALL_TABS.slice(visibleTabCount);
 
   // displayedTab is just toolbarTab (no more hover preview)

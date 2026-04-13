@@ -35,6 +35,18 @@ export function EmbroideryProperties({ part }: EmbroideryPropertiesProps) {
     [document, part.patternNodeId],
   );
 
+  // Per-thread stitch counts (hoisted above early return to keep hook order stable)
+  const threadStitchCounts = useMemo(() => {
+    if (!design) return [];
+    const counts: number[] = new Array(design.threads.length).fill(0);
+    for (const g of design.stitch_groups) {
+      if (g.thread_index < counts.length) {
+        counts[g.thread_index]! += g.stitches.length;
+      }
+    }
+    return counts;
+  }, [design]);
+
   if (!design) {
     return (
       <div className="text-xs text-text-muted py-1">
@@ -51,17 +63,6 @@ export function EmbroideryProperties({ part }: EmbroideryPropertiesProps) {
   const groupCount = design.stitch_groups.length;
   // ~0.06s per 1000 stitches at typical machine speed
   const estimatedMinutes = Math.round((totalStitches * 0.06) / 60);
-
-  // Per-thread stitch counts
-  const threadStitchCounts = useMemo(() => {
-    const counts: number[] = new Array(design.threads.length).fill(0);
-    for (const g of design.stitch_groups) {
-      if (g.thread_index < counts.length) {
-        counts[g.thread_index]! += g.stitches.length;
-      }
-    }
-    return counts;
-  }, [design]);
 
   return (
     <div className="space-y-1">

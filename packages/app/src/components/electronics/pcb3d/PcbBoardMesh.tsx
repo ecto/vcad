@@ -86,8 +86,8 @@ export function PcbBoardMesh({ pcb, explosion }: Props) {
 
       {/* Dielectric slabs between copper layers (visible when exploded) */}
       {explosion > 0 && slabGeometry && DIELECTRIC_LAYERS.map((dl) => {
-        const topZ = layerZOffset(dl.top as any, explosion);
-        const bottomZ = layerZOffset(dl.bottom as any, explosion);
+        const topZ = layerZOffset(dl.top, explosion);
+        const bottomZ = layerZOffset(dl.bottom, explosion);
         const midZ = (topZ + bottomZ) / 2;
         return (
           <mesh

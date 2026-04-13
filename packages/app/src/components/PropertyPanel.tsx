@@ -945,7 +945,8 @@ function TextProperties({ part }: { part: TextPartInfo }) {
   );
 }
 
-function MirrorProperties({ part: _ }: { part: MirrorPartInfo }) {
+function MirrorProperties(props: { part: MirrorPartInfo }) {
+  void props.part;
   return (
     <div>
       <SectionHeader tooltip="Editing not yet supported">Mirror</SectionHeader>

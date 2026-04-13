@@ -437,7 +437,7 @@ export function SchematicCanvas() {
   );
 
   const onPointerUp = useCallback(
-    (_e: React.PointerEvent) => {
+    () => {
       // Finish panning
       if (dragging) {
         setDragging(false);

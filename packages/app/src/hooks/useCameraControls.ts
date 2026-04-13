@@ -115,7 +115,7 @@ export function useCameraControls() {
         controls && "target" in controls && controls.target
           ? controls.target
           : new THREE.Vector3(0, 0, 0);
-      let dir = new THREE.Vector3().copy(camera.position).sub(currentTarget);
+      const dir = new THREE.Vector3().copy(camera.position).sub(currentTarget);
       if (dir.lengthSq() < 1e-6) {
         dir.set(1, 1, 1);
       }

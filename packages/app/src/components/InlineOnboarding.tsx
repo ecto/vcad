@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { X } from "@phosphor-icons/react/dist/ssr/X";
 import { Plus } from "@phosphor-icons/react/dist/ssr/Plus";
 import { FolderOpen } from "@phosphor-icons/react/dist/ssr/FolderOpen";
@@ -44,6 +44,13 @@ export function InlineOnboarding({ visible }: InlineOnboardingProps) {
     });
   }
 
+  const handleDismiss = useCallback(() => {
+    if (dontShowAgain) {
+      dismissWelcomeModal();
+    }
+    setDismissed(true);
+  }, [dontShowAgain, dismissWelcomeModal]);
+
   // Close on Escape
   const show = visible && !dismissed;
   useEffect(() => {
@@ -54,14 +61,7 @@ export function InlineOnboarding({ visible }: InlineOnboardingProps) {
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [show]);
-
-  function handleDismiss() {
-    if (dontShowAgain) {
-      dismissWelcomeModal();
-    }
-    setDismissed(true);
-  }
+  }, [show, handleDismiss]);
 
   const startGuidedFlow = useOnboardingStore((s) => s.startGuidedFlow);
   const skipGuidedFlow = useOnboardingStore((s) => s.skipGuidedFlow);

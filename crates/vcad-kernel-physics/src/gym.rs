@@ -402,7 +402,7 @@ mod tests {
 
         // Step with position target
         let action = Action::PositionTarget(vec![45.0, 30.0]);
-        let (obs, reward, done) = env.step(action);
+        let (obs, _reward, done) = env.step(action);
 
         assert_eq!(obs.joint_positions.len(), 2);
         assert!(!done); // Should not be done after 1 step

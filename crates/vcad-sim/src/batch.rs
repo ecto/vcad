@@ -124,7 +124,7 @@ impl BatchSimPipeline {
 
     /// Build a phyz Model from a vcad Document.
     fn build_model(doc: &Document) -> Result<Model, SimError> {
-        use phyz::phyz_math::{Mat3, SpatialInertia, SpatialTransform, Vec3};
+        use phyz_math::{Mat3, SpatialInertia, SpatialTransform, Vec3};
         use phyz_model::ModelBuilder;
         use std::collections::{HashMap, HashSet};
 
@@ -225,7 +225,7 @@ impl BatchSimPipeline {
                     .ok_or(SimError::NoAssembly)?;
                 let (_, inertia) = compute_inertia(part.root);
 
-                let phyz_joint = vcad_kernel_physics::joints::vcad_joint_to_phyz(joint)?;
+                let phyz_joint = build_phyz_model_joint(joint)?;
 
                 builder =
                     builder.add_body(&child_inst.id, parent_body_idx as i32, phyz_joint, inertia);
@@ -239,4 +239,91 @@ impl BatchSimPipeline {
 
         Ok(builder.build())
     }
+}
+
+/// Convert a vcad `Joint` into a `phyz_model::Joint`.
+///
+/// Mirrors `vcad_kernel_physics::joints::vcad_joint_to_phyz`, but targets the
+/// `phyz_model` crate's `Joint` type (required by `phyz-gpu`'s `ModelBuilder`),
+/// which is a separate Rust type from `phyz::model::Joint`.
+fn build_phyz_model_joint(
+    joint: &vcad_ir::Joint,
+) -> Result<phyz_model::Joint, SimError> {
+    use phyz_math::{Mat3, SpatialTransform, Vec3};
+    use phyz_model::Joint as PhyzJoint;
+    use vcad_ir::JointKind;
+
+    // Convert parent anchor from mm to meters — this becomes the translation
+    // in the parent-to-joint transform.
+    let anchor = Vec3::new(
+        joint.parent_anchor.x / 1000.0,
+        joint.parent_anchor.y / 1000.0,
+        joint.parent_anchor.z / 1000.0,
+    );
+
+    match &joint.kind {
+        JointKind::Fixed => {
+            let xform = SpatialTransform::new(Mat3::identity(), anchor);
+            Ok(PhyzJoint::fixed(xform))
+        }
+        JointKind::Revolute { axis, limits } => {
+            let axis_vec = Vec3::new(axis.x, axis.y, axis.z).normalize();
+            let rot = rotation_aligning_z_to(axis_vec);
+            let xform = SpatialTransform::new(rot, anchor);
+
+            let mut phyz_joint = PhyzJoint::revolute(xform);
+
+            if let Some((lower, upper)) = limits {
+                phyz_joint.limits = Some([lower.to_radians(), upper.to_radians()]);
+            }
+
+            Ok(phyz_joint)
+        }
+        JointKind::Slider { axis, limits } => {
+            let axis_vec = Vec3::new(axis.x, axis.y, axis.z).normalize();
+            let xform = SpatialTransform::new(Mat3::identity(), anchor);
+
+            let mut phyz_joint = PhyzJoint::prismatic(xform, axis_vec);
+
+            if let Some((lower, upper)) = limits {
+                phyz_joint.limits = Some([*lower / 1000.0, *upper / 1000.0]);
+            }
+
+            Ok(phyz_joint)
+        }
+        JointKind::Cylindrical { axis } => {
+            let axis_vec = Vec3::new(axis.x, axis.y, axis.z).normalize();
+            let rot = rotation_aligning_z_to(axis_vec);
+            let xform = SpatialTransform::new(rot, anchor);
+            Ok(PhyzJoint::revolute(xform))
+        }
+        JointKind::Ball => {
+            let xform = SpatialTransform::new(Mat3::identity(), anchor);
+            Ok(PhyzJoint::spherical(xform))
+        }
+    }
+}
+
+/// Compute a rotation matrix that maps the Z unit vector to the given axis.
+fn rotation_aligning_z_to(target: phyz_math::Vec3) -> phyz_math::Mat3 {
+    use phyz_math::{Mat3, Vec3};
+
+    let z = Vec3::new(0.0, 0.0, 1.0);
+    let dot = z.dot(target);
+
+    if dot > 0.9999 {
+        return Mat3::identity();
+    }
+    if dot < -0.9999 {
+        // 180° rotation about X
+        return Mat3::new(1.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, -1.0);
+    }
+
+    let cross = z.cross(target);
+    let s = cross.norm();
+    let c = dot;
+    let vx = phyz_math::skew(&cross.normalize());
+
+    // Rodrigues: R = I + sin(θ) * [v]× + (1 - cos(θ)) * [v]×²
+    Mat3::identity() + vx * s + vx * vx * (1.0 - c)
 }

@@ -452,7 +452,7 @@ mod tests {
         // so marching cubes only extracts the boundary (which for a uniform
         // SDF might produce nothing or just the outer surface)
         let stock = Stock::from_box([0.0, 0.0, 0.0, 10.0, 10.0, 10.0], 2.0);
-        let (vertices, indices) = MarchingCubes::extract(&stock);
+        let (_vertices, indices) = MarchingCubes::extract(&stock);
 
         // For a solid uniform stock, the boundary is at the edge of the bounds
         // This test just verifies no crash - actual mesh depends on SDF implementation
