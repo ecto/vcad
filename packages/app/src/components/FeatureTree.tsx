@@ -91,6 +91,49 @@ const KIND_ICONS: Record<PrimitiveKind, typeof Cube> = {
   sphere: Globe,
 };
 
+/**
+ * Empty-state shown in the feature tree when the document has no parts or
+ * instances yet. Three quick-add tiles for the most common primitives plus a
+ * one-line nudge toward ⌘K and the AI chat.
+ */
+function FeatureTreeEmptyState() {
+  const addPrimitive = useDocumentStore((s) => s.addPrimitive);
+  const setCommandPaletteOpen = useUiStore((s) => s.setCommandPaletteOpen);
+
+  const tiles: { kind: PrimitiveKind; icon: typeof Cube; label: string }[] = [
+    { kind: "cube", icon: Cube, label: "Box" },
+    { kind: "cylinder", icon: Cylinder, label: "Cylinder" },
+    { kind: "sphere", icon: Globe, label: "Sphere" },
+  ];
+
+  return (
+    <div className="px-2 py-3 flex flex-col items-center gap-3 text-center">
+      <div className="text-[11px] text-text-muted leading-tight">
+        Your document is empty.<br />Drop in a primitive to get started.
+      </div>
+      <div className="grid grid-cols-3 gap-1.5 w-full">
+        {tiles.map(({ kind, icon: Icon, label }) => (
+          <button
+            key={kind}
+            onClick={() => addPrimitive(kind)}
+            className="flex flex-col items-center justify-center gap-1 aspect-square border border-border bg-card hover:bg-hover hover:border-accent/50 transition-colors"
+            title={`Add ${label}`}
+          >
+            <Icon size={20} className="text-text-muted" />
+            <span className="text-[10px] text-text">{label}</span>
+          </button>
+        ))}
+      </div>
+      <button
+        onClick={() => setCommandPaletteOpen(true)}
+        className="text-[10px] text-text-muted hover:text-accent transition-colors"
+      >
+        or press <span className="font-mono px-1 bg-hover text-text">⌘K</span> to search or ask AI
+      </button>
+    </div>
+  );
+}
+
 function getPartIcon(part: PartInfo): typeof Cube {
   if (part.kind === "boolean") return Intersect;
   if (part.kind === "extrude") return ArrowUp;
@@ -907,6 +950,14 @@ export function FeatureTree() {
           <div className="space-y-0.5">
             {/* Scene row — drill into inspector to edit env / background / lights */}
             <SceneTreeRow />
+
+            {/* Empty state when no parts/instances yet */}
+            {!hasGeometry && (
+              <>
+                <div className="border-t border-border/30 my-1" />
+                <FeatureTreeEmptyState />
+              </>
+            )}
 
             {/* Separator and geometry when present */}
             {hasGeometry && (
