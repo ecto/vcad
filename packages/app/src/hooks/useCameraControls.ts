@@ -98,24 +98,28 @@ export function useCameraControls() {
 
     function handleCameraFit() {
       const box = getSceneBoundingBox();
-      if (!box) return;
-
       const center = new THREE.Vector3();
-      box.getCenter(center);
-      const size = new THREE.Vector3();
-      box.getSize(size);
-      const maxDim = Math.max(size.x, size.y, size.z, 1);
+      let dist = 150;
 
-      // Position camera to frame the bounding box, keeping current direction
-      const dist = maxDim * 2;
-      const dir = new THREE.Vector3()
-        .copy(camera.position)
-        .sub(
-          controls && "target" in controls && controls.target
-            ? controls.target
-            : new THREE.Vector3(0, 0, 0),
-        )
-        .normalize();
+      if (box) {
+        box.getCenter(center);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        dist = Math.max(size.x, size.y, size.z, 50) * 2;
+      }
+
+      // Preserve current direction when there's already a meaningful target;
+      // otherwise fall back to an isometric angle so pressing Fit on an empty
+      // scene still moves the camera somewhere sensible.
+      const currentTarget =
+        controls && "target" in controls && controls.target
+          ? controls.target
+          : new THREE.Vector3(0, 0, 0);
+      let dir = new THREE.Vector3().copy(camera.position).sub(currentTarget);
+      if (dir.lengthSq() < 1e-6) {
+        dir.set(1, 1, 1);
+      }
+      dir.normalize();
 
       camera.position.copy(center).addScaledVector(dir, dist);
       if (controls && "target" in controls && controls.target) {

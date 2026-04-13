@@ -7,7 +7,7 @@ interface BottomSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title?: string;
-  /** "auto" = height fits content up to 85vh, "full" = always 85vh */
+  /** "auto" = height fits content up to 85dvh, "full" = always 85dvh */
   size?: "auto" | "full";
   children: ReactNode;
 }
@@ -35,7 +35,7 @@ export function BottomSheet({
             "rounded-t-2xl",
             "shadow-[0_-8px_32px_rgba(0,0,0,0.4)]",
             "focus:outline-none",
-            size === "full" ? "h-[85vh]" : "max-h-[85vh]",
+            size === "full" ? "h-[85dvh]" : "max-h-[85dvh]",
             "pb-[env(safe-area-inset-bottom)]",
             "data-[state=open]:animate-in data-[state=closed]:animate-out",
             "data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",

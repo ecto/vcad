@@ -114,7 +114,7 @@ export function AppShell({
   useEffect(() => { saveWidth(RIGHT_KEY, rightWidth); }, [rightWidth]);
 
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-bg">
+    <div className="flex h-[100dvh] w-screen flex-col overflow-hidden bg-bg">
       {header && (
         <div className="shrink-0 border-b border-border">
           {header}

@@ -1,4 +1,4 @@
-import { useState, type ReactNode, Suspense, lazy } from "react";
+import { useState, useEffect, type ReactNode, Suspense, lazy } from "react";
 import { List as MenuIcon } from "@phosphor-icons/react/dist/ssr/List";
 import { TreeStructure } from "@phosphor-icons/react/dist/ssr/TreeStructure";
 import { Plus } from "@phosphor-icons/react/dist/ssr/Plus";
@@ -52,7 +52,7 @@ export function MobileShell({ onAboutOpen, onSave, onOpen, children }: MobileShe
   const [menuOpen, setMenuOpen] = useState(false);
   const [treeOpen, setTreeOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
-  const [chatOpenSheet, setChatOpenSheet] = useState(false);
+  const [chatSheetOpen, setChatSheetOpen] = useState(false);
 
   const isDirty = useDocumentStore((s) => s.isDirty);
   const docName = useDocumentStore((s) => s.documentName);
@@ -62,15 +62,20 @@ export function MobileShell({ onAboutOpen, onSave, onOpen, children }: MobileShe
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
   const selection = selectedPartIds.size;
 
-  // Chat sheet also listens to the global chat store so the existing
-  // `vcad:open-chat` event path (⌘K, ChatSidebar code) still opens it.
-  const chatStoreOpen = useChatStore((s) => s.open);
-  const setChatStoreOpen = useChatStore((s) => s.setOpen);
-  const chatSheetOpen = chatOpenSheet || chatStoreOpen;
+  // Chat opens only on explicit action — dock button, ⌘K / F6 event, or
+  // code that dispatches `vcad:open-chat`. Never mirrors the store's default
+  // `open: true` (which is right for desktop sidebars, wrong for mobile sheets).
   const handleChatSheetChange = (next: boolean) => {
-    setChatOpenSheet(next);
-    setChatStoreOpen(next);
+    setChatSheetOpen(next);
+    useChatStore.getState().setOpen(next);
   };
+  useEffect(() => {
+    // Force the store closed on mount so the mobile shell starts with no sheet.
+    if (useChatStore.getState().open) useChatStore.getState().setOpen(false);
+    const handleOpen = () => setChatSheetOpen(true);
+    window.addEventListener("vcad:open-chat", handleOpen);
+    return () => window.removeEventListener("vcad:open-chat", handleOpen);
+  }, []);
 
   const handleCreate = (kind: PrimitiveKind) => {
     addPrimitive(kind);
@@ -78,7 +83,7 @@ export function MobileShell({ onAboutOpen, onSave, onOpen, children }: MobileShe
   };
 
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-bg">
+    <div className="flex h-[100dvh] w-screen flex-col overflow-hidden bg-bg">
       {/* ──── Top bar ────────────────────────────────── */}
       <div className="flex h-12 shrink-0 items-center border-b border-border bg-surface pl-3 pr-1">
         <button
@@ -126,7 +131,7 @@ export function MobileShell({ onAboutOpen, onSave, onOpen, children }: MobileShe
         {/* Selection property sheet — always mounted, auto-shows when selection > 0. */}
         {selection > 0 && (
           <div className="pointer-events-none fixed inset-x-0 bottom-[calc(56px+env(safe-area-inset-bottom))] z-30 flex justify-center">
-            <div className="pointer-events-auto w-full max-h-[55vh] bg-surface border-t border-border shadow-[0_-4px_16px_rgba(0,0,0,0.3)] flex flex-col">
+            <div className="pointer-events-auto w-full max-h-[55dvh] bg-surface border-t border-border shadow-[0_-4px_16px_rgba(0,0,0,0.3)] flex flex-col">
               <Suspense fallback={null}>
                 <PropertyPanel />
               </Suspense>
