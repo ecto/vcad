@@ -1,9 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { X } from "@phosphor-icons/react/dist/ssr/X";
-import { PaperPlaneTilt } from "@phosphor-icons/react/dist/ssr/PaperPlaneTilt";
 import { Plus } from "@phosphor-icons/react/dist/ssr/Plus";
-import { SpinnerGap } from "@phosphor-icons/react/dist/ssr/SpinnerGap";
-import { Stop } from "@phosphor-icons/react/dist/ssr/Stop";
 import { cn } from "@/lib/utils";
 import {
   useChatStore,
@@ -15,7 +12,23 @@ import {
 } from "@vcad/core";
 import type { SelectionContext, ChatMessage, MessagePart } from "@vcad/core";
 import { useAuth, AuthModal } from "@vcad/auth";
-import { ToolCallCard } from "@/components/chat/ToolCallCard";
+import {
+  Conversation,
+  ConversationContent,
+  ConversationEmptyState,
+  ConversationScrollButton,
+} from "@/components/ai-elements/conversation";
+import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
+import {
+  PromptInput,
+  PromptInputHeader,
+  PromptInputTextarea,
+  PromptInputSubmit,
+} from "@/components/ai-elements/prompt-input";
+import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
+import { Shimmer } from "@/components/ai-elements/shimmer";
+import { VcadToolCard } from "@/components/chat/VcadToolCard";
+import { CadSuggestions } from "@/components/chat/CadSuggestions";
 
 // ---------------------------------------------------------------------------
 // Hook: build SelectionContext[] from current selection
@@ -117,79 +130,60 @@ function summarizeToolParts(parts: MessagePart[] | undefined): string | null {
   return nonZero.map(([k, v]) => `${v} ${k}`).join(" · ");
 }
 
-function MessageRow({ msg }: { msg: ChatMessage }) {
+function VcadMessage({ msg }: { msg: ChatMessage }) {
   const isUser = msg.role === "user";
 
+  // Assistant messages have a parts array (text + tool chunks interleaved).
+  // User messages only have content + context. Both need to render through
+  // the same Message shell so AI Elements' bubble styling cascades correctly.
+  const hasParts = !isUser && msg.parts && msg.parts.length > 0;
+  const summary = !isUser ? summarizeToolParts(msg.parts) : null;
+
   return (
-    <div className="px-3 py-2">
-      <div className="flex items-center gap-1.5 mb-1">
-        {/* Avatar */}
-        <div
-          className={cn(
-            "flex h-4 w-4 items-center justify-center rounded text-[9px] font-bold shrink-0",
-            isUser ? "bg-bg-elevated text-text" : "bg-purple-600 text-white"
-          )}
-        >
-          {isUser ? "Y" : "v"}
-        </div>
-        <span className="text-[10px] font-medium text-text">
-          {isUser ? "You" : "vcad"}
-        </span>
-      </div>
+    <Message from={isUser ? "user" : "assistant"}>
+      <MessageContent className="text-[11px]">
+        {/* Context pills attached to the user bubble */}
+        {isUser && msg.context && msg.context.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {msg.context.map((ctx) => (
+              <span
+                key={ctx.partId}
+                className="inline-flex items-center gap-1 rounded border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[9px] text-accent"
+              >
+                {ctx.partName}
+              </span>
+            ))}
+          </div>
+        )}
 
-      {/* Context pills (user messages) */}
-      {isUser && msg.context && msg.context.length > 0 && (
-        <div className="flex flex-wrap gap-1 mb-1.5 pl-5">
-          {msg.context.map((ctx) => (
-            <span
-              key={ctx.partId}
-              className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-accent/10 border border-accent/20 rounded text-[9px] text-accent"
-            >
-              {ctx.partName}
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* Chronological parts (assistant messages with parts) */}
-      {!isUser && msg.parts && msg.parts.length > 0 ? (
-        <div className="pl-5 space-y-1.5">
-          {msg.parts.map((part, i) =>
-            part.type === "text" ? (
-              part.text.trim() ? (
-                <p key={`text-${i}`} className="text-[11px] text-text leading-relaxed whitespace-pre-wrap">
-                  {part.text}
-                </p>
-              ) : null
-            ) : (
-              <ToolCallCard key={part.tool.id} call={part.tool} />
-            )
-          )}
-          {(() => {
-            const summary = summarizeToolParts(msg.parts);
-            return summary ? (
-              <p className="text-[9px] text-text-muted italic">{summary}</p>
-            ) : null;
-          })()}
-        </div>
-      ) : (
-        <>
-          {/* Fallback: legacy tool calls + content for messages without parts */}
-          {!isUser && msg.toolCalls && msg.toolCalls.length > 0 && (
-            <div className="pl-5 mb-1.5">
-              {msg.toolCalls.map((call) => (
-                <ToolCallCard key={call.id} call={call} />
-              ))}
-            </div>
-          )}
-          {msg.content && (
-            <p className="pl-5 text-[11px] text-text leading-relaxed whitespace-pre-wrap">
-              {msg.content}
-            </p>
-          )}
-        </>
-      )}
-    </div>
+        {isUser ? (
+          msg.content && <span className="whitespace-pre-wrap">{msg.content}</span>
+        ) : hasParts ? (
+          <>
+            {msg.parts!.map((part, i) =>
+              part.type === "text" ? (
+                part.text.trim() ? (
+                  <MessageResponse key={`text-${i}`}>{part.text}</MessageResponse>
+                ) : null
+              ) : (
+                <VcadToolCard key={part.tool.id} call={part.tool} />
+              ),
+            )}
+            {summary && (
+              <p className="text-[9px] italic text-text-muted">{summary}</p>
+            )}
+          </>
+        ) : (
+          /* Legacy assistant message without parts array */
+          <>
+            {msg.toolCalls?.map((call) => (
+              <VcadToolCard key={call.id} call={call} />
+            ))}
+            {msg.content && <MessageResponse>{msg.content}</MessageResponse>}
+          </>
+        )}
+      </MessageContent>
+    </Message>
   );
 }
 
@@ -318,7 +312,6 @@ export function ChatSidebar() {
   const { user } = useAuth();
 
   const [activeTab, setActiveTab] = useState<SidebarTab>("chat");
-  const [input, setInput] = useState("");
   const [selectionContext, removeContextPart] = useSelectionContext();
   const [showAuthModal, setShowAuthModal] = useState(false);
 
@@ -329,39 +322,35 @@ export function ChatSidebar() {
     }
   }, [usageError]);
 
-  const threadRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  // Scroll to bottom when messages change or streaming starts/stops
-  useEffect(() => {
-    if (threadRef.current) {
-      threadRef.current.scrollTop = threadRef.current.scrollHeight;
-    }
-  }, [messages, streaming]);
-
-  const handleSend = useCallback(() => {
-    const content = input.trim();
-    if (!content || streaming) return;
-
-    const context: SelectionContext[] = selectionContext.length > 0 ? selectionContext : [];
-
-    window.dispatchEvent(
-      new CustomEvent("vcad:chat-send", {
-        detail: { content, context },
-      })
-    );
-
-    setInput("");
-  }, [input, selectionContext, streaming]);
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        handleSend();
-      }
+  const sendMessage = useCallback(
+    (content: string) => {
+      const trimmed = content.trim();
+      if (!trimmed || streaming) return;
+      window.dispatchEvent(
+        new CustomEvent("vcad:chat-send", {
+          detail: {
+            content: trimmed,
+            context: selectionContext.length > 0 ? selectionContext : [],
+          },
+        }),
+      );
     },
-    [handleSend]
+    [selectionContext, streaming],
+  );
+
+  const handlePromptSubmit = useCallback(
+    (message: PromptInputMessage) => {
+      sendMessage(message.text);
+    },
+    [sendMessage],
+  );
+
+  // Suggestion chips dispatch directly without going through the textarea.
+  const handleSuggestionPick = useCallback(
+    (text: string) => {
+      sendMessage(text);
+    },
+    [sendMessage],
   );
 
   const firstCtx = selectionContext[0];
@@ -369,14 +358,26 @@ export function ChatSidebar() {
     selectionContext.length === 1 && firstCtx
       ? `Ask about ${firstCtx.partName}...`
       : selectionContext.length > 1
-      ? `Ask about ${selectionContext.length} selected parts...`
-      : "Ask anything...";
+        ? `Ask about ${selectionContext.length} selected parts...`
+        : "Ask anything...";
+
+  // Map vcad's streaming flag to PromptInputSubmit's status enum.
+  const submitStatus: "submitted" | "streaming" | "ready" = streaming ? "streaming" : "ready";
+
+  // True when the very last visible chunk is a tool call still running — that's
+  // when the Shimmer "thinking" line is most informative (vs. just streaming text).
+  const lastMsg = messages[messages.length - 1];
+  const lastPart = lastMsg?.parts?.[lastMsg.parts.length - 1];
+  const showShimmer =
+    streaming &&
+    (lastPart?.type === "tool" || (!lastPart && lastMsg?.role === "assistant"));
 
   return (
     <div
       className={cn(
+        "ai-elements-scope",
         "flex h-full w-full flex-col",
-        "bg-surface"
+        "bg-surface",
       )}
     >
       {/* Header with tabs */}
@@ -427,137 +428,92 @@ export function ChatSidebar() {
       {activeTab === "source" && <SourcePanel />}
 
       {/* Chat tab content — only rendered when chat tab active */}
-      {activeTab === "chat" && <>
-
-      {/* Message thread */}
-      <div
-        ref={threadRef}
-        className="flex-1 overflow-y-auto"
-      >
-        {messages.length === 0 && (
-          <div className="flex h-full items-center justify-center p-6">
-            <p className="text-center text-[11px] text-text-muted leading-relaxed">
-              Ask questions about your model, request changes, or get design suggestions.
-            </p>
-          </div>
-        )}
-        {messages.map((msg) => (
-          <MessageRow key={msg.id} msg={msg} />
-        ))}
-
-        {/* Streaming indicator */}
-        {streaming && (
-          <div className="flex items-center gap-2 px-3 py-2">
-            <SpinnerGap size={12} className="animate-spin text-text-muted" />
-            <span className="text-[10px] text-text-muted">Thinking...</span>
-          </div>
-        )}
-      </div>
-
-      {/* Usage limit banner — monthly cap for logged-in users */}
-      {usageError?.kind === "monthly_limit" && (
-        <div className="shrink-0 border-t border-border bg-danger/10 px-3 py-2 text-[10px] text-danger">
-          <div className="font-semibold mb-0.5">Monthly chat limit reached</div>
-          <div className="text-text-muted">{usageError.message}</div>
-        </div>
-      )}
-
-      {/* Usage limit banner — anon cap */}
-      {usageError?.kind === "anon_limit" && (
-        <div className="shrink-0 border-t border-border bg-accent/10 px-3 py-2 text-[10px] text-text">
-          <div className="font-semibold mb-0.5 text-accent">Free chat limit reached</div>
-          <div className="text-text-muted">{usageError.message}</div>
-          <button
-            onClick={() => setShowAuthModal(true)}
-            className="mt-1 px-2 py-0.5 bg-accent text-white rounded text-[9px] hover:bg-accent/90"
-          >
-            Sign in to continue
-          </button>
-        </div>
-      )}
-
-      {/* Anon free-usage badge (shown when anon and has used >= 1, capped at limit) */}
-      {!user && anonUsage.used > 0 && !usageError && (
-        <div className="shrink-0 border-t border-border px-3 py-1 text-[9px] text-text-muted text-center">
-          {Math.min(anonUsage.used, anonUsage.limit)}/{anonUsage.limit} free chat messages used
-        </div>
-      )}
-
-      {/* Input area */}
-      <div className="shrink-0 border-t border-border">
-        {/* Context pills */}
-        {selectionContext.length > 0 && (
-          <div className="flex flex-wrap gap-1 px-2 pt-2">
-            {selectionContext.map((ctx) => (
-              <span
-                key={ctx.partId}
-                className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-accent/10 border border-accent/20 rounded text-[9px] text-accent"
-              >
-                {ctx.partName}
-                <button
-                  onClick={() => removeContextPart(ctx.partId)}
-                  className="hover:text-accent/70 transition-colors"
-                  aria-label={`Remove ${ctx.partName}`}
-                >
-                  <X size={9} />
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-
-        <div className="flex items-end gap-1 p-2">
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={placeholder}
-            rows={1}
-            className={cn(
-              "flex-1 resize-none bg-bg border border-border rounded px-2 py-1.5",
-              "text-[11px] text-text placeholder:text-text-muted/50",
-              "focus:outline-none focus:border-accent",
-              "min-h-[32px] max-h-[120px] leading-relaxed",
-            )}
-            style={{ height: "auto" }}
-            onInput={(e) => {
-              const el = e.currentTarget;
-              el.style.height = "auto";
-              el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
-            }}
-            disabled={streaming}
-          />
-          {streaming ? (
-            <button
-              onClick={() => useChatStore.getState().requestCancel()}
-              className={cn(
-                "flex h-8 w-8 shrink-0 items-center justify-center rounded",
-                "bg-danger text-white",
-                "hover:bg-danger/90 transition-colors"
+      {activeTab === "chat" && (
+        <>
+          <Conversation className="flex-1 min-h-0">
+            <ConversationContent className="gap-4 p-3">
+              {messages.length === 0 && (
+                <ConversationEmptyState
+                  title="Ask vcad anything"
+                  description="Request changes to your model, ask questions about geometry, or pick a suggestion below."
+                />
               )}
-              title="Stop"
-            >
-              <Stop size={14} weight="fill" />
-            </button>
-          ) : (
-            <button
-              onClick={handleSend}
-              disabled={!input.trim()}
-              className={cn(
-                "flex h-8 w-8 shrink-0 items-center justify-center rounded",
-                "bg-accent text-white",
-                "hover:bg-accent/90 transition-colors",
-                "disabled:opacity-40 disabled:cursor-not-allowed"
+              {messages.map((msg) => (
+                <VcadMessage key={msg.id} msg={msg} />
+              ))}
+              {showShimmer && (
+                <Shimmer className="px-1 text-[11px]">Thinking...</Shimmer>
               )}
-              title="Send (Enter)"
-            >
-              <PaperPlaneTilt size={14} />
-            </button>
+            </ConversationContent>
+            <ConversationScrollButton />
+          </Conversation>
+
+          {/* Usage banners — borderless, distinguished by tinted bg only */}
+          {usageError?.kind === "monthly_limit" && (
+            <div className="shrink-0 bg-danger/10 px-4 py-2 text-[10px] text-danger">
+              <div className="mb-0.5 font-semibold">Monthly chat limit reached</div>
+              <div className="text-text-muted">{usageError.message}</div>
+            </div>
           )}
-        </div>
-      </div>
-      </>}
+          {usageError?.kind === "anon_limit" && (
+            <div className="shrink-0 bg-accent/10 px-4 py-2 text-[10px] text-text">
+              <div className="mb-0.5 font-semibold text-accent">Free chat limit reached</div>
+              <div className="text-text-muted">{usageError.message}</div>
+              <button
+                onClick={() => setShowAuthModal(true)}
+                className="mt-1 rounded bg-accent px-2 py-0.5 text-[9px] text-white hover:bg-accent/90"
+              >
+                Sign in to continue
+              </button>
+            </div>
+          )}
+          {!user && anonUsage.used > 0 && !usageError && (
+            <div className="shrink-0 px-4 py-1 text-center text-[9px] text-text-muted">
+              {Math.min(anonUsage.used, anonUsage.limit)}/{anonUsage.limit} free chat messages used
+            </div>
+          )}
+
+          {/* Compose dock — suggestions + input grouped in one padded surface,
+              no dividing borders. The input's own border is the only line. */}
+          <div className="shrink-0 space-y-2.5 px-3 pb-3 pt-1">
+            <CadSuggestions
+              selection={selectionContext}
+              onPick={handleSuggestionPick}
+            />
+
+            <PromptInput onSubmit={handlePromptSubmit}>
+              {selectionContext.length > 0 && (
+                <PromptInputHeader>
+                  {selectionContext.map((ctx) => (
+                    <span
+                      key={ctx.partId}
+                      className="inline-flex items-center gap-1 rounded-full border border-accent/30 bg-accent/10 py-0.5 pl-2 pr-1 text-[9px] text-accent"
+                    >
+                      {ctx.partName}
+                      <button
+                        onClick={() => removeContextPart(ctx.partId)}
+                        className="flex h-3 w-3 items-center justify-center rounded-full hover:bg-accent/20 hover:text-accent/80 transition-colors"
+                        aria-label={`Remove ${ctx.partName}`}
+                      >
+                        <X size={8} />
+                      </button>
+                    </span>
+                  ))}
+                </PromptInputHeader>
+              )}
+              <PromptInputTextarea
+                placeholder={placeholder}
+                disabled={streaming}
+                className="text-[11px]"
+              />
+              <PromptInputSubmit
+                status={submitStatus}
+                onStop={() => useChatStore.getState().requestCancel()}
+              />
+            </PromptInput>
+          </div>
+        </>
+      )}
 
       {/* Auth modal — opens automatically when anon limit is hit, or on demand */}
       <AuthModal

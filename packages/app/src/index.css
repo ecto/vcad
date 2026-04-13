@@ -28,6 +28,63 @@
   --color-accent: #F92672;
   --color-accent-hover: #d91e63;
   --color-danger: #F92672;
+
+  /* shadcn / AI Elements compatibility shim — these expose vcad's monokai palette
+     under shadcn's standard token names so AI Elements components blend in
+     without forking. Edit the underlying --bg / --text / etc. tokens above to
+     restyle, not these aliases. */
+  --color-background: var(--bg);
+  --color-foreground: var(--text);
+  --color-card-foreground: var(--text);
+  --color-popover: var(--surface);
+  --color-popover-foreground: var(--text);
+  --color-primary: #F92672;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: var(--surface);
+  --color-secondary-foreground: var(--text);
+  --color-muted: var(--surface);
+  --color-muted-foreground: var(--text-muted);
+  /* shadcn `accent` = subtle hover bg, NOT vcad's pink action color */
+  --color-accent-foreground: var(--text);
+  --color-destructive: #F92672;
+  --color-destructive-foreground: #ffffff;
+  --color-input: var(--border);
+  --color-ring: #F92672;
+  --radius: 0.25rem;
+}
+
+/* shadcn token aliases — these need to live in :root (not @theme) so they
+   resolve dynamically when .light flips the underlying vars. */
+:root {
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card-foreground: var(--text);
+  --popover: var(--surface);
+  --popover-foreground: var(--text);
+  --primary: #F92672;
+  --primary-foreground: #ffffff;
+  --secondary: var(--surface);
+  --secondary-foreground: var(--text);
+  --muted: var(--surface);
+  --muted-foreground: var(--text-muted);
+  --accent: var(--hover);
+  --accent-foreground: var(--text);
+  --destructive: #F92672;
+  --destructive-foreground: #ffffff;
+  --input: var(--border);
+  --ring: #F92672;
+}
+
+/* AI Elements scope: vcad's `bg-accent` is the brand pink (used 265× across
+   the app), but shadcn/AI Elements expects `bg-accent` to be a subtle hover
+   background. Wrapping the chat in `.ai-elements-scope` overrides
+   `--color-accent` (a Tailwind v4 design token consumed by `bg-accent` /
+   `text-accent`) to vcad's `--hover` so dropdown hovers, focus rings, and
+   menu selection states render correctly without touching the rest of the
+   app. */
+.ai-elements-scope {
+  --color-accent: var(--hover);
+  --color-accent-foreground: var(--text);
 }
 
 /* Safe area insets for mobile devices */
