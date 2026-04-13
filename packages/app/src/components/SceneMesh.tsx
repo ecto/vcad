@@ -9,6 +9,7 @@ import { useEmbroideryStore } from "@/stores/embroidery-store";
 import type { ThreeEvent } from "@react-three/fiber";
 import type { Transform3D } from "@vcad/ir";
 import { getMaterialByKey } from "@/data/materials";
+import { viewportWasDrag } from "@/lib/viewport-drag";
 import {
   hasProceduralShader,
   getProceduralShaderForMaterial,
@@ -542,6 +543,8 @@ export const SceneMesh = memo(function SceneMesh({
 
   const handleClick = useCallback(
     (e: ThreeEvent<MouseEvent>) => {
+      // Ignore the click that fires after a camera rotate/pan gesture.
+      if (viewportWasDrag()) return;
       e.stopPropagation();
 
       // In face selection mode, select the face

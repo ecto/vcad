@@ -13,6 +13,12 @@ import { useTheme } from "@/hooks/useTheme";
 import { useDrawingStore } from "@/stores/drawing-store";
 import { useElectronicsStore } from "@/stores/electronics-store";
 import { useElectronicsSync } from "@/hooks/useElectronicsSync";
+import {
+  viewportPointerDown,
+  viewportPointerMove,
+  viewportPointerUp,
+  viewportWasDrag,
+} from "@/lib/viewport-drag";
 
 const SchematicOverlayPanel = lazy(() =>
   import("./electronics/SchematicOverlayPanel").then((m) => ({
@@ -62,6 +68,10 @@ function BoxSelectHandler({
 
     function handlePointerDown(e: PointerEvent) {
       if (e.button !== 0) return;
+      // Box-select is a mouse-only gesture. On touch, one-finger drag
+      // rotates the camera via OrbitControls, so we must not also draw
+      // a selection rectangle.
+      if (e.pointerType !== "mouse") return;
 
       shiftHeld = e.shiftKey;
       startPoint = { x: e.clientX, y: e.clientY };
@@ -215,6 +225,37 @@ export function Viewport() {
   // Run electronics sync when in electronics mode
   useElectronicsSync();
 
+  // Track drag distance on the viewport so click handlers can ignore the
+  // click that follows a camera rotation / pan gesture. Without this, on
+  // touch a one-finger rotate also selects whichever mesh the finger was
+  // over at pointerup.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onDown = (e: PointerEvent) => viewportPointerDown(e.clientX, e.clientY);
+    const onMove = (e: PointerEvent) => viewportPointerMove(e.clientX, e.clientY);
+    const onUp = () => viewportPointerUp();
+    const onContextMenu = (e: MouseEvent) => {
+      // Suppress the browser context menu over the canvas (long-press on
+      // touch, right-click on desktop) so it doesn't interrupt gestures.
+      e.preventDefault();
+    };
+    el.addEventListener("pointerdown", onDown);
+    // Listen on window so we still see the up even if the pointer leaves
+    // the container mid-gesture.
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    el.addEventListener("contextmenu", onContextMenu);
+    return () => {
+      el.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      el.removeEventListener("contextmenu", onContextMenu);
+    };
+  }, []);
+
   // Render 2D Drawing View
   if (viewMode === "2d") {
     return (
@@ -233,11 +274,17 @@ export function Viewport() {
     : (isDark ? BG_DARK : BG_LIGHT);
 
   return (
-    <div ref={containerRef} className="absolute inset-0">
+    <div
+      ref={containerRef}
+      className="absolute inset-0"
+      style={{ touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
+    >
       <Canvas
         frameloop="demand"
         camera={{ position: [50, 50, 50], fov: 50, near: 0.1, far: 10000 }}
         onPointerMissed={() => {
+          // Ignore the click that follows a drag/rotate gesture.
+          if (viewportWasDrag()) return;
           if (!electronicsActive) clearSelection();
         }}
         onCreated={() => performance.mark("canvas-ready")}

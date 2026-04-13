@@ -10,6 +10,7 @@ import {
 import type { SketchPlane } from "@vcad/core";
 import type { Vec2, Vec3, SketchSegment2D, SketchConstraint } from "@vcad/ir";
 import { useTheme } from "@/hooks/useTheme";
+import { viewportWasDrag } from "@/lib/viewport-drag";
 
 const GRID_SIZE = 10; // mm
 const GRID_EXTENT = 200; // mm from origin
@@ -859,6 +860,8 @@ export function SketchPlane3D() {
   const handleClick = useCallback(
     (e: ThreeEvent<MouseEvent>) => {
       if (e.button !== 0) return; // Left click only
+      // Ignore the click that follows a camera rotate/pan gesture.
+      if (viewportWasDrag()) return;
       e.stopPropagation();
 
       if (!cursorSketchPos) return;
