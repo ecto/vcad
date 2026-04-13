@@ -57,20 +57,46 @@ fn generate_for_footprint(
         return chip_model(fp, chip, cx, cy, zb, z_dir);
     }
     if let Some(pins) = parse_soic(name) {
-        return vec![ic_body_model(fp, 3.9, soic_length(pins), 1.75, cx, cy, zb, z_dir, IC_COLOR)];
+        return vec![ic_body_model(
+            fp,
+            3.9,
+            soic_length(pins),
+            1.75,
+            cx,
+            cy,
+            zb,
+            z_dir,
+            IC_COLOR,
+        )];
     }
     if let Some(pins) = parse_qfp(name) {
         let body = qfp_body_size(pins);
-        return vec![ic_body_model(fp, body, body, 1.6, cx, cy, zb, z_dir, IC_COLOR)];
+        return vec![ic_body_model(
+            fp, body, body, 1.6, cx, cy, zb, z_dir, IC_COLOR,
+        )];
     }
     if let Some(pins) = parse_dip(name) {
-        return vec![ic_body_model(fp, 7.62, dip_length(pins), 4.0, cx, cy, zb, z_dir, IC_COLOR)];
+        return vec![ic_body_model(
+            fp,
+            7.62,
+            dip_length(pins),
+            4.0,
+            cx,
+            cy,
+            zb,
+            z_dir,
+            IC_COLOR,
+        )];
     }
     if name.contains("SOT-23") || name.contains("SOT23") {
-        return vec![ic_body_model(fp, 2.9, 1.3, 1.1, cx, cy, zb, z_dir, IC_COLOR)];
+        return vec![ic_body_model(
+            fp, 2.9, 1.3, 1.1, cx, cy, zb, z_dir, IC_COLOR,
+        )];
     }
     if name.contains("SOT-223") || name.contains("SOT223") {
-        return vec![ic_body_model(fp, 6.5, 3.5, 1.6, cx, cy, zb, z_dir, IC_COLOR)];
+        return vec![ic_body_model(
+            fp, 6.5, 3.5, 1.6, cx, cy, zb, z_dir, IC_COLOR,
+        )];
     }
     if name.contains("PinHeader") {
         return pin_header_model(fp, cx, cy, zb, z_dir);
@@ -99,30 +125,60 @@ struct ChipDims {
 
 fn parse_chip_size(name: &str) -> Option<ChipDims> {
     if name.contains("0402") {
-        Some(ChipDims { body_w: 1.0, body_h: 0.5, height: 0.35, cap_w: 0.25 })
+        Some(ChipDims {
+            body_w: 1.0,
+            body_h: 0.5,
+            height: 0.35,
+            cap_w: 0.25,
+        })
     } else if name.contains("0603") {
-        Some(ChipDims { body_w: 1.6, body_h: 0.8, height: 0.45, cap_w: 0.3 })
+        Some(ChipDims {
+            body_w: 1.6,
+            body_h: 0.8,
+            height: 0.45,
+            cap_w: 0.3,
+        })
     } else if name.contains("0805") {
-        Some(ChipDims { body_w: 2.0, body_h: 1.25, height: 0.5, cap_w: 0.4 })
+        Some(ChipDims {
+            body_w: 2.0,
+            body_h: 1.25,
+            height: 0.5,
+            cap_w: 0.4,
+        })
     } else if name.contains("1206") {
-        Some(ChipDims { body_w: 3.2, body_h: 1.6, height: 0.55, cap_w: 0.5 })
+        Some(ChipDims {
+            body_w: 3.2,
+            body_h: 1.6,
+            height: 0.55,
+            cap_w: 0.5,
+        })
     } else {
         None
     }
 }
 
 fn parse_soic(name: &str) -> Option<u32> {
-    if name.contains("SOIC-8") || name.contains("SOIC8") { Some(8) }
-    else if name.contains("SOIC-14") || name.contains("SOIC14") { Some(14) }
-    else if name.contains("SOIC-16") || name.contains("SOIC16") { Some(16) }
-    else { None }
+    if name.contains("SOIC-8") || name.contains("SOIC8") {
+        Some(8)
+    } else if name.contains("SOIC-14") || name.contains("SOIC14") {
+        Some(14)
+    } else if name.contains("SOIC-16") || name.contains("SOIC16") {
+        Some(16)
+    } else {
+        None
+    }
 }
 
 fn parse_qfp(name: &str) -> Option<u32> {
-    if name.contains("QFP-32") || name.contains("QFP32") { Some(32) }
-    else if name.contains("QFP-48") || name.contains("QFP48") { Some(48) }
-    else if name.contains("QFP-64") || name.contains("QFP64") { Some(64) }
-    else { None }
+    if name.contains("QFP-32") || name.contains("QFP32") {
+        Some(32)
+    } else if name.contains("QFP-48") || name.contains("QFP48") {
+        Some(48)
+    } else if name.contains("QFP-64") || name.contains("QFP64") {
+        Some(64)
+    } else {
+        None
+    }
 }
 
 fn parse_dip(name: &str) -> Option<u32> {
@@ -174,8 +230,18 @@ fn chip_model(
     // Main body (center section)
     let inner_hw = hw - dims.cap_w;
     meshes.push(make_box(
-        cx, cy, zb, inner_hw, hh, h, z_dir, cos_r, sin_r,
-        CHIP_BODY_COLOR, 0.0, &fp.reference,
+        cx,
+        cy,
+        zb,
+        inner_hw,
+        hh,
+        h,
+        z_dir,
+        cos_r,
+        sin_r,
+        CHIP_BODY_COLOR,
+        0.0,
+        &fp.reference,
     ));
 
     // Left end cap
@@ -183,8 +249,18 @@ fn chip_model(
     let cap_cx = cx + cap_cx_local * cos_r;
     let cap_cy = cy + cap_cx_local * sin_r;
     meshes.push(make_box(
-        cap_cx, cap_cy, zb, dims.cap_w / 2.0, hh, h, z_dir, cos_r, sin_r,
-        CHIP_CAP_COLOR, 0.8, &fp.reference,
+        cap_cx,
+        cap_cy,
+        zb,
+        dims.cap_w / 2.0,
+        hh,
+        h,
+        z_dir,
+        cos_r,
+        sin_r,
+        CHIP_CAP_COLOR,
+        0.8,
+        &fp.reference,
     ));
 
     // Right end cap
@@ -192,8 +268,18 @@ fn chip_model(
     let cap_cx = cx + cap_cx_local * cos_r;
     let cap_cy = cy + cap_cx_local * sin_r;
     meshes.push(make_box(
-        cap_cx, cap_cy, zb, dims.cap_w / 2.0, hh, h, z_dir, cos_r, sin_r,
-        CHIP_CAP_COLOR, 0.8, &fp.reference,
+        cap_cx,
+        cap_cy,
+        zb,
+        dims.cap_w / 2.0,
+        hh,
+        h,
+        z_dir,
+        cos_r,
+        sin_r,
+        CHIP_CAP_COLOR,
+        0.8,
+        &fp.reference,
     ));
 
     meshes
@@ -213,17 +299,24 @@ fn ic_body_model(
     color: [f32; 3],
 ) -> ComponentMesh {
     let rot = (fp.rotation as f32).to_radians();
-    make_box(cx, cy, zb, w / 2.0, l / 2.0, h, z_dir, rot.cos(), rot.sin(), color, 0.0, &fp.reference)
+    make_box(
+        cx,
+        cy,
+        zb,
+        w / 2.0,
+        l / 2.0,
+        h,
+        z_dir,
+        rot.cos(),
+        rot.sin(),
+        color,
+        0.0,
+        &fp.reference,
+    )
 }
 
 /// Pin header: housing + individual pins.
-fn pin_header_model(
-    fp: &Footprint,
-    cx: f32,
-    cy: f32,
-    zb: f32,
-    z_dir: f32,
-) -> Vec<ComponentMesh> {
+fn pin_header_model(fp: &Footprint, cx: f32, cy: f32, zb: f32, z_dir: f32) -> Vec<ComponentMesh> {
     let (min, max) = footprint_bounds(fp);
     let w = (max.x - min.x) as f32 + 1.0;
     let l = (max.y - min.y) as f32 + 1.0;
@@ -234,19 +327,23 @@ fn pin_header_model(
     let sin_r = rot.sin();
 
     vec![make_box(
-        cx, cy, zb, w / 2.0, l / 2.0, h, z_dir, cos_r, sin_r,
-        PIN_HEADER_BODY, 0.0, &fp.reference,
+        cx,
+        cy,
+        zb,
+        w / 2.0,
+        l / 2.0,
+        h,
+        z_dir,
+        cos_r,
+        sin_r,
+        PIN_HEADER_BODY,
+        0.0,
+        &fp.reference,
     )]
 }
 
 /// Fallback: box from pad extents.
-fn fallback_model(
-    fp: &Footprint,
-    cx: f32,
-    cy: f32,
-    zb: f32,
-    z_dir: f32,
-) -> Vec<ComponentMesh> {
+fn fallback_model(fp: &Footprint, cx: f32, cy: f32, zb: f32, z_dir: f32) -> Vec<ComponentMesh> {
     let (min, max) = footprint_bounds(fp);
     let w = (max.x - min.x) as f32;
     let l = (max.y - min.y) as f32;
@@ -256,8 +353,18 @@ fn fallback_model(
 
     let rot = (fp.rotation as f32).to_radians();
     vec![make_box(
-        cx, cy, zb, w / 2.0, l / 2.0, 1.0, z_dir, rot.cos(), rot.sin(),
-        IC_COLOR, 0.0, &fp.reference,
+        cx,
+        cy,
+        zb,
+        w / 2.0,
+        l / 2.0,
+        1.0,
+        z_dir,
+        rot.cos(),
+        rot.sin(),
+        IC_COLOR,
+        0.0,
+        &fp.reference,
     )]
 }
 
@@ -286,12 +393,7 @@ fn make_box(
     let (z_lo, z_hi) = if z0 < z1 { (z0, z1) } else { (z1, z0) };
 
     // 4 corners in local space, rotated to world
-    let corners: [(f32, f32); 4] = [
-        (-hw, -hh),
-        (hw, -hh),
-        (hw, hh),
-        (-hw, hh),
-    ];
+    let corners: [(f32, f32); 4] = [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)];
 
     let mut positions = Vec::with_capacity(24 * 3);
     let mut normals = Vec::with_capacity(24 * 3);
@@ -319,33 +421,75 @@ fn make_box(
 
     // Top face (+Z)
     add_face(
-        [(c[0].0, c[0].1, z_hi), (c[1].0, c[1].1, z_hi), (c[2].0, c[2].1, z_hi), (c[3].0, c[3].1, z_hi)],
-        0.0, 0.0, 1.0,
+        [
+            (c[0].0, c[0].1, z_hi),
+            (c[1].0, c[1].1, z_hi),
+            (c[2].0, c[2].1, z_hi),
+            (c[3].0, c[3].1, z_hi),
+        ],
+        0.0,
+        0.0,
+        1.0,
     );
     // Bottom face (-Z)
     add_face(
-        [(c[3].0, c[3].1, z_lo), (c[2].0, c[2].1, z_lo), (c[1].0, c[1].1, z_lo), (c[0].0, c[0].1, z_lo)],
-        0.0, 0.0, -1.0,
+        [
+            (c[3].0, c[3].1, z_lo),
+            (c[2].0, c[2].1, z_lo),
+            (c[1].0, c[1].1, z_lo),
+            (c[0].0, c[0].1, z_lo),
+        ],
+        0.0,
+        0.0,
+        -1.0,
     );
     // Front face (edge 0-1)
     add_face(
-        [(c[0].0, c[0].1, z_lo), (c[1].0, c[1].1, z_lo), (c[1].0, c[1].1, z_hi), (c[0].0, c[0].1, z_hi)],
-        -sin_r, cos_r, 0.0, // actually we need correct normals per face
+        [
+            (c[0].0, c[0].1, z_lo),
+            (c[1].0, c[1].1, z_lo),
+            (c[1].0, c[1].1, z_hi),
+            (c[0].0, c[0].1, z_hi),
+        ],
+        -sin_r,
+        cos_r,
+        0.0, // actually we need correct normals per face
     );
     // Back face (edge 2-3)
     add_face(
-        [(c[2].0, c[2].1, z_lo), (c[3].0, c[3].1, z_lo), (c[3].0, c[3].1, z_hi), (c[2].0, c[2].1, z_hi)],
-        sin_r, -cos_r, 0.0,
+        [
+            (c[2].0, c[2].1, z_lo),
+            (c[3].0, c[3].1, z_lo),
+            (c[3].0, c[3].1, z_hi),
+            (c[2].0, c[2].1, z_hi),
+        ],
+        sin_r,
+        -cos_r,
+        0.0,
     );
     // Right face (edge 1-2)
     add_face(
-        [(c[1].0, c[1].1, z_lo), (c[2].0, c[2].1, z_lo), (c[2].0, c[2].1, z_hi), (c[1].0, c[1].1, z_hi)],
-        cos_r, sin_r, 0.0,
+        [
+            (c[1].0, c[1].1, z_lo),
+            (c[2].0, c[2].1, z_lo),
+            (c[2].0, c[2].1, z_hi),
+            (c[1].0, c[1].1, z_hi),
+        ],
+        cos_r,
+        sin_r,
+        0.0,
     );
     // Left face (edge 3-0)
     add_face(
-        [(c[3].0, c[3].1, z_lo), (c[0].0, c[0].1, z_lo), (c[0].0, c[0].1, z_hi), (c[3].0, c[3].1, z_hi)],
-        -cos_r, -sin_r, 0.0,
+        [
+            (c[3].0, c[3].1, z_lo),
+            (c[0].0, c[0].1, z_lo),
+            (c[0].0, c[0].1, z_hi),
+            (c[3].0, c[3].1, z_hi),
+        ],
+        -cos_r,
+        -sin_r,
+        0.0,
     );
 
     ComponentMesh {
@@ -361,16 +505,36 @@ fn make_box(
 /// Get the expected component height for a footprint name.
 /// Used by the evaluator to set accurate bounding boxes.
 pub fn package_height(footprint_name: &str) -> f64 {
-    if footprint_name.contains("0402") { return 0.35; }
-    if footprint_name.contains("0603") { return 0.45; }
-    if footprint_name.contains("0805") { return 0.5; }
-    if footprint_name.contains("1206") { return 0.55; }
-    if footprint_name.contains("SOIC") { return 1.75; }
-    if footprint_name.contains("QFP") { return 1.6; }
-    if footprint_name.contains("DIP") { return 4.0; }
-    if footprint_name.contains("SOT-23") || footprint_name.contains("SOT23") { return 1.1; }
-    if footprint_name.contains("SOT-223") || footprint_name.contains("SOT223") { return 1.6; }
-    if footprint_name.contains("PinHeader") { return 8.5; }
+    if footprint_name.contains("0402") {
+        return 0.35;
+    }
+    if footprint_name.contains("0603") {
+        return 0.45;
+    }
+    if footprint_name.contains("0805") {
+        return 0.5;
+    }
+    if footprint_name.contains("1206") {
+        return 0.55;
+    }
+    if footprint_name.contains("SOIC") {
+        return 1.75;
+    }
+    if footprint_name.contains("QFP") {
+        return 1.6;
+    }
+    if footprint_name.contains("DIP") {
+        return 4.0;
+    }
+    if footprint_name.contains("SOT-23") || footprint_name.contains("SOT23") {
+        return 1.1;
+    }
+    if footprint_name.contains("SOT-223") || footprint_name.contains("SOT223") {
+        return 1.6;
+    }
+    if footprint_name.contains("PinHeader") {
+        return 8.5;
+    }
     1.0 // default fallback
 }
 
@@ -439,7 +603,10 @@ mod tests {
                     Pad {
                         number: "1".into(),
                         pad_type: PadType::SMD,
-                        shape: PadShape::Rect { width: 1.0, height: 1.2 },
+                        shape: PadShape::Rect {
+                            width: 1.0,
+                            height: 1.2,
+                        },
                         position: Vec2::new(-1.0, 0.0),
                         rotation: 0.0,
                         drill: None,
@@ -449,7 +616,10 @@ mod tests {
                     Pad {
                         number: "2".into(),
                         pad_type: PadType::SMD,
-                        shape: PadShape::Rect { width: 1.0, height: 1.2 },
+                        shape: PadShape::Rect {
+                            width: 1.0,
+                            height: 1.2,
+                        },
                         position: Vec2::new(1.0, 0.0),
                         rotation: 0.0,
                         drill: None,

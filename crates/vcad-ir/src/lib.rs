@@ -9,10 +9,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-pub mod vcode;
 pub mod ecad;
 pub mod file_io;
 pub mod to_loon;
+pub mod vcode;
 
 pub use vcad_tool_derive::ToolSchema;
 
@@ -395,13 +395,19 @@ pub struct EmbroideryDesign {
 #[serde(tag = "type")]
 #[tool(category = "modeling")]
 pub enum CsgOp {
-    #[tool(category = "primitive", ai_hint = "Use for rectangular/box shapes. Size is width(x), depth(y), height(z).")]
+    #[tool(
+        category = "primitive",
+        ai_hint = "Use for rectangular/box shapes. Size is width(x), depth(y), height(z)."
+    )]
     /// Axis-aligned box centered at origin.
     Cube {
         /// Size along each axis.
         size: Vec3,
     },
-    #[tool(category = "primitive", ai_hint = "Axis along Z. Use for round shapes, pins, holes.")]
+    #[tool(
+        category = "primitive",
+        ai_hint = "Axis along Z. Use for round shapes, pins, holes."
+    )]
     /// Cylinder along the Z axis, centered at origin.
     Cylinder {
         /// Radius of the cylinder.
@@ -482,7 +488,10 @@ pub enum CsgOp {
         /// Scale factors per axis.
         factor: Vec3,
     },
-    #[tool(category = "sketch_op", ai_hint = "Defines a closed 2D profile. Segments are Line{start,end} or Arc{start,end,center,ccw}. Usually used inline with extrude/revolve — prefer creating extrude directly with inline sketch.")]
+    #[tool(
+        category = "sketch_op",
+        ai_hint = "Defines a closed 2D profile. Segments are Line{start,end} or Arc{start,end,center,ccw}. Usually used inline with extrude/revolve — prefer creating extrude directly with inline sketch."
+    )]
     /// A 2D sketch profile on a plane.
     ///
     /// The sketch defines a closed profile in a local 2D coordinate system.
@@ -497,7 +506,10 @@ pub enum CsgOp {
         /// The segments forming the closed profile.
         segments: Vec<SketchSegment2D>,
     },
-    #[tool(category = "sketch_op", ai_hint = "PREFERRED for custom shapes. Pass sketch as inline object with origin, x_dir, y_dir, segments. Example: {sketch: {origin:{x:0,y:0,z:0}, x_dir:{x:1,y:0,z:0}, y_dir:{x:0,y:1,z:0}, segments:[{type:'Line',start:{x:0,y:0},end:{x:20,y:0}},{type:'Line',start:{x:20,y:0},end:{x:20,y:15}},{type:'Line',start:{x:20,y:15},end:{x:0,y:15}},{type:'Line',start:{x:0,y:15},end:{x:0,y:0}}]}, direction:{x:0,y:0,z:10}}")]
+    #[tool(
+        category = "sketch_op",
+        ai_hint = "PREFERRED for custom shapes. Pass sketch as inline object with origin, x_dir, y_dir, segments. Example: {sketch: {origin:{x:0,y:0,z:0}, x_dir:{x:1,y:0,z:0}, y_dir:{x:0,y:1,z:0}, segments:[{type:'Line',start:{x:0,y:0},end:{x:20,y:0}},{type:'Line',start:{x:20,y:0},end:{x:20,y:15}},{type:'Line',start:{x:20,y:15},end:{x:0,y:15}},{type:'Line',start:{x:0,y:15},end:{x:0,y:0}}]}, direction:{x:0,y:0,z:10}}"
+    )]
     /// Extrude a sketch profile along a direction vector.
     Extrude {
         /// The sketch node to extrude.
@@ -549,7 +561,10 @@ pub enum CsgOp {
         /// Total angle span in degrees.
         angle_deg: f64,
     },
-    #[tool(category = "modifier", ai_hint = "Hollow out a solid. Use parent_part_id. Great for enclosures, cups, containers.")]
+    #[tool(
+        category = "modifier",
+        ai_hint = "Hollow out a solid. Use parent_part_id. Great for enclosures, cups, containers."
+    )]
     /// Shell — hollow out a solid by offsetting faces.
     Shell {
         /// Child node to shell.
@@ -557,7 +572,10 @@ pub enum CsgOp {
         /// Wall thickness (inward offset).
         thickness: f64,
     },
-    #[tool(category = "modifier", ai_hint = "Apply after creating geometry. Use parent_part_id to target a part. Typical radius: 1-5mm for small features, 5-20mm for large.")]
+    #[tool(
+        category = "modifier",
+        ai_hint = "Apply after creating geometry. Use parent_part_id to target a part. Typical radius: 1-5mm for small features, 5-20mm for large."
+    )]
     /// Fillet — round edges of a solid.
     Fillet {
         /// Child node to fillet.
@@ -565,7 +583,10 @@ pub enum CsgOp {
         /// Fillet radius.
         radius: f64,
     },
-    #[tool(category = "modifier", ai_hint = "Bevel edges. Apply after creating geometry. Use parent_part_id to target a part.")]
+    #[tool(
+        category = "modifier",
+        ai_hint = "Bevel edges. Apply after creating geometry. Use parent_part_id to target a part."
+    )]
     /// Chamfer — bevel edges of a solid.
     Chamfer {
         /// Child node to chamfer.
@@ -1658,9 +1679,16 @@ mod tool_schema_tests {
         assert!(!schemas.is_empty(), "should generate at least one schema");
 
         // Cube should be present
-        let cube = schemas.iter().find(|s| s.name == "cube").expect("cube schema missing");
+        let cube = schemas
+            .iter()
+            .find(|s| s.name == "cube")
+            .expect("cube schema missing");
         assert_eq!(cube.category, "primitive");
-        assert!(cube.description.contains("box"), "cube description should mention 'box': got '{}'", cube.description);
+        assert!(
+            cube.description.contains("box"),
+            "cube description should mention 'box': got '{}'",
+            cube.description
+        );
 
         // Check cube has size property
         let props = cube.input_schema["properties"].as_object().unwrap();
@@ -1668,7 +1696,10 @@ mod tool_schema_tests {
 
         // Check required fields
         let required = cube.input_schema["required"].as_array().unwrap();
-        assert!(required.iter().any(|v| v == "size"), "size should be required");
+        assert!(
+            required.iter().any(|v| v == "size"),
+            "size should be required"
+        );
     }
 
     #[test]
@@ -1677,25 +1708,46 @@ mod tool_schema_tests {
         let names: Vec<&str> = schemas.iter().map(|s| s.name.as_str()).collect();
 
         assert!(!names.contains(&"empty"), "Empty should be hidden");
-        assert!(!names.contains(&"imported_mesh"), "ImportedMesh should be hidden");
-        assert!(!names.contains(&"step_import"), "StepImport should be hidden");
+        assert!(
+            !names.contains(&"imported_mesh"),
+            "ImportedMesh should be hidden"
+        );
+        assert!(
+            !names.contains(&"step_import"),
+            "StepImport should be hidden"
+        );
         assert!(!names.contains(&"pcb_board"), "PcbBoard should be hidden");
-        assert!(!names.contains(&"embroidery_pattern"), "EmbroideryPattern should be hidden");
+        assert!(
+            !names.contains(&"embroidery_pattern"),
+            "EmbroideryPattern should be hidden"
+        );
     }
 
     #[test]
     fn test_extrude_schema() {
         let schemas = CsgOp::tool_schemas();
-        let extrude = schemas.iter().find(|s| s.name == "extrude").expect("extrude schema missing");
+        let extrude = schemas
+            .iter()
+            .find(|s| s.name == "extrude")
+            .expect("extrude schema missing");
         assert_eq!(extrude.category, "sketch_op");
 
         let props = extrude.input_schema["properties"].as_object().unwrap();
-        assert!(props.contains_key("sketch"), "extrude should have sketch property");
-        assert!(props.contains_key("direction"), "extrude should have direction property");
+        assert!(
+            props.contains_key("sketch"),
+            "extrude should have sketch property"
+        );
+        assert!(
+            props.contains_key("direction"),
+            "extrude should have direction property"
+        );
 
         // twist_angle should not be required (it's Option<f64>)
         let required = extrude.input_schema["required"].as_array().unwrap();
-        assert!(!required.iter().any(|v| v == "twist_angle"), "twist_angle should be optional");
+        assert!(
+            !required.iter().any(|v| v == "twist_angle"),
+            "twist_angle should be optional"
+        );
     }
 
     #[test]

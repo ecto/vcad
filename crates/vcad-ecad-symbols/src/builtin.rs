@@ -143,11 +143,7 @@ pub fn fp_soic(pins: u32) -> FootprintTemplate {
 
     let half_len = (half as f64 * pitch) / 2.0;
     let mut graphics = silk_rect(-body_w / 2.0, -half_len, body_w / 2.0, half_len);
-    graphics.push(pin1_dot(
-        -body_w / 2.0 + 0.5,
-        -half_len + 0.5,
-        0.25,
-    ));
+    graphics.push(pin1_dot(-body_w / 2.0 + 0.5, -half_len + 0.5, 0.25));
 
     FootprintTemplate {
         name: format!("SOIC-{pins}"),

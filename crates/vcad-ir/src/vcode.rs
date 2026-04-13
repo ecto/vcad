@@ -924,11 +924,7 @@ fn parse_string_arg(s: &str) -> String {
 }
 
 /// Parse a material definition.
-fn parse_material(
-    doc: &mut Document,
-    parts: &[&str],
-    line: usize,
-) -> Result<(), VCodeParseError> {
+fn parse_material(doc: &mut Document, parts: &[&str], line: usize) -> Result<(), VCodeParseError> {
     if parts.len() < 7 {
         return Err(VCodeParseError {
             line,
@@ -989,11 +985,7 @@ fn parse_root(doc: &mut Document, parts: &[&str], line: usize) -> Result<(), VCo
 }
 
 /// Parse a part definition.
-fn parse_part_def(
-    doc: &mut Document,
-    parts: &[&str],
-    line: usize,
-) -> Result<(), VCodeParseError> {
+fn parse_part_def(doc: &mut Document, parts: &[&str], line: usize) -> Result<(), VCodeParseError> {
     if parts.len() < 4 {
         return Err(VCodeParseError {
             line,
@@ -1021,11 +1013,7 @@ fn parse_part_def(
 }
 
 /// Parse an instance.
-fn parse_instance(
-    doc: &mut Document,
-    parts: &[&str],
-    line: usize,
-) -> Result<(), VCodeParseError> {
+fn parse_instance(doc: &mut Document, parts: &[&str], line: usize) -> Result<(), VCodeParseError> {
     if parts.len() < 13 {
         return Err(VCodeParseError {
             line,
@@ -1585,11 +1573,7 @@ fn parse_bloom(doc: &mut Document, parts: &[&str], line: usize) -> Result<(), VC
 }
 
 /// Parse vignette settings.
-fn parse_vignette(
-    doc: &mut Document,
-    parts: &[&str],
-    line: usize,
-) -> Result<(), VCodeParseError> {
+fn parse_vignette(doc: &mut Document, parts: &[&str], line: usize) -> Result<(), VCodeParseError> {
     if parts.len() < 4 {
         return Err(VCodeParseError {
             line,
@@ -1648,11 +1632,7 @@ fn parse_tone_mapping(
 }
 
 /// Parse exposure.
-fn parse_exposure(
-    doc: &mut Document,
-    parts: &[&str],
-    line: usize,
-) -> Result<(), VCodeParseError> {
+fn parse_exposure(doc: &mut Document, parts: &[&str], line: usize) -> Result<(), VCodeParseError> {
     if parts.len() < 2 {
         return Err(VCodeParseError {
             line,

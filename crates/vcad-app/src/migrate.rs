@@ -241,11 +241,7 @@ fn analyze_node_chain(doc: &Document, root_id: NodeId) -> Option<(String, HashMa
                 }
                 return Some(("loft".to_string(), params));
             }
-            CsgOp::Text2D {
-                text,
-                height,
-                ..
-            } => {
+            CsgOp::Text2D { text, height, .. } => {
                 params.insert("text".to_string(), Value::String(text.clone()));
                 params.insert("height".to_string(), Value::F64(*height));
                 return Some(("text".to_string(), params));

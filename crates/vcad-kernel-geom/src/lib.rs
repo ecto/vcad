@@ -526,8 +526,7 @@ impl<S: Scalar> ConeSurface<S> {
         let sa = self.half_angle.sin();
         let y = self.y_dir();
         self.apex
-            + ((*self.axis.as_ref()) * ca
-                + ((*self.ref_dir.as_ref()) * cos_u + y * sin_u) * sa)
+            + ((*self.axis.as_ref()) * ca + ((*self.ref_dir.as_ref()) * cos_u + y * sin_u) * sa)
                 * uv.y
     }
 
@@ -708,8 +707,7 @@ impl<S: Scalar> SphereSurface<S> {
         let (sin_v, cos_v) = (uv.y.sin(), uv.y.cos());
         let y = self.y_dir();
         tang::Dir3::new_normalize(
-            ((*self.ref_dir.as_ref()) * cos_u + y * sin_u) * cos_v
-                + (*self.axis.as_ref()) * sin_v,
+            ((*self.ref_dir.as_ref()) * cos_u + y * sin_u) * cos_v + (*self.axis.as_ref()) * sin_v,
         )
     }
 
@@ -726,8 +724,7 @@ impl<S: Scalar> SphereSurface<S> {
         let (sin_u, cos_u) = (uv.x.sin(), uv.x.cos());
         let (sin_v, cos_v) = (uv.y.sin(), uv.y.cos());
         let y = self.y_dir();
-        (((*self.ref_dir.as_ref()) * cos_u + y * sin_u) * (-sin_v)
-            + (*self.axis.as_ref()) * cos_v)
+        (((*self.ref_dir.as_ref()) * cos_u + y * sin_u) * (-sin_v) + (*self.axis.as_ref()) * cos_v)
             * self.radius
     }
 }
@@ -1080,9 +1077,8 @@ impl BilinearSurface {
 
     /// Promote this bilinear surface to a generic scalar type.
     pub fn lift<T: Scalar>(&self) -> BilinearSurface<T> {
-        let lift_p = |p: &Point3| {
-            tang::Point3::new(T::from_f64(p.x), T::from_f64(p.y), T::from_f64(p.z))
-        };
+        let lift_p =
+            |p: &Point3| tang::Point3::new(T::from_f64(p.x), T::from_f64(p.y), T::from_f64(p.z));
         let lift_d = |d: &Dir3| {
             tang::Dir3::new_unchecked(tang::Vec3::new(
                 T::from_f64(d.x),
@@ -1095,9 +1091,14 @@ impl BilinearSurface {
             p10: lift_p(&self.p10),
             p01: lift_p(&self.p01),
             p11: lift_p(&self.p11),
-            corner_normals: self
-                .corner_normals
-                .map(|ns| [lift_d(&ns[0]), lift_d(&ns[1]), lift_d(&ns[2]), lift_d(&ns[3])]),
+            corner_normals: self.corner_normals.map(|ns| {
+                [
+                    lift_d(&ns[0]),
+                    lift_d(&ns[1]),
+                    lift_d(&ns[2]),
+                    lift_d(&ns[3]),
+                ]
+            }),
         }
     }
 }

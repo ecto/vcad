@@ -54,9 +54,7 @@ pub fn pad_dimensions(shape: &PadShape) -> (f64, f64) {
         PadShape::Circle { diameter } => (*diameter, *diameter),
         PadShape::Rect { width, height }
         | PadShape::Oval { width, height }
-        | PadShape::RoundRect {
-            width, height, ..
-        } => (*width, *height),
+        | PadShape::RoundRect { width, height, .. } => (*width, *height),
         PadShape::Custom { .. } => (2.0, 2.0),
     }
 }
@@ -67,9 +65,7 @@ pub fn pad_radius(shape: &PadShape) -> f64 {
         PadShape::Circle { diameter } => diameter / 2.0,
         PadShape::Rect { width, height }
         | PadShape::Oval { width, height }
-        | PadShape::RoundRect {
-            width, height, ..
-        } => width.max(*height) / 2.0,
+        | PadShape::RoundRect { width, height, .. } => width.max(*height) / 2.0,
         PadShape::Custom { .. } => 1.0,
     }
 }

@@ -2,10 +2,10 @@
 
 use std::collections::HashMap;
 
+use phyz::aba_with_external_forces;
 use phyz::math::{Mat3, Quat, SpatialInertia, SpatialTransform, Vec3};
 use phyz::model::{Model, ModelBuilder, State};
 use phyz::{forward_kinematics, Geometry};
-use phyz::aba_with_external_forces;
 use vcad_ir::{Document, JointKind};
 
 use crate::colliders::{estimate_mass, mesh_to_collider, ColliderStrategy};

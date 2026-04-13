@@ -405,10 +405,7 @@ fn parse_vcode_vcad(compact: &str) -> Result<VcadFile, String> {
 }
 
 /// Parse loon format (v0.3).
-fn parse_loon_vcad(
-    source: &str,
-    eval_loon: LoonEvaluator<'_>,
-) -> Result<VcadFile, String> {
+fn parse_loon_vcad(source: &str, eval_loon: LoonEvaluator<'_>) -> Result<VcadFile, String> {
     let eval = eval_loon.ok_or_else(|| {
         "Loon format detected but no evaluator provided. Engine may not be ready.".to_string()
     })?;
@@ -744,15 +741,13 @@ fn compute_next_ids(document: &Document, parts: &[PartInfo]) -> (u64, u64) {
                 | PartInfo::PcbBoard { id, .. }
                 | PartInfo::EmbroideryPattern { id, .. } => id,
             };
-            id.strip_prefix("part-")
-                .and_then(|n| n.parse::<u64>().ok())
+            id.strip_prefix("part-").and_then(|n| n.parse::<u64>().ok())
         })
         .max()
         .unwrap_or(0);
 
     (max_node_id + 1, max_part_num + 1)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -785,7 +780,10 @@ mod tests {
     #[test]
     fn detect_loon_format() {
         assert_eq!(detect_format("[cube 10.0 20.0 30.0]"), VcadFormat::Loon);
-        assert_eq!(detect_format("; comment\n[cube 1.0 1.0 1.0]"), VcadFormat::Loon);
+        assert_eq!(
+            detect_format("; comment\n[cube 1.0 1.0 1.0]"),
+            VcadFormat::Loon
+        );
     }
 
     #[test]
@@ -803,7 +801,12 @@ mod tests {
         let parts = derive_parts(&doc);
         assert_eq!(parts.len(), 1);
         match &parts[0] {
-            PartInfo::Cube { id, name, primitive_node_id, .. } => {
+            PartInfo::Cube {
+                id,
+                name,
+                primitive_node_id,
+                ..
+            } => {
                 assert_eq!(id, "part-1");
                 assert_eq!(name, "Box");
                 assert_eq!(*primitive_node_id, 1);
@@ -912,16 +915,37 @@ mod tests {
     fn derive_boolean_part() {
         let doc = make_doc(
             vec![
-                Node { id: 1, name: None, op: CsgOp::Cube { size: Vec3::new(10.0, 10.0, 10.0) } },
-                Node { id: 2, name: None, op: CsgOp::Sphere { radius: 5.0, segments: 0 } },
-                Node { id: 3, name: Some("merged".to_string()), op: CsgOp::Union { left: 1, right: 2 } },
+                Node {
+                    id: 1,
+                    name: None,
+                    op: CsgOp::Cube {
+                        size: Vec3::new(10.0, 10.0, 10.0),
+                    },
+                },
+                Node {
+                    id: 2,
+                    name: None,
+                    op: CsgOp::Sphere {
+                        radius: 5.0,
+                        segments: 0,
+                    },
+                },
+                Node {
+                    id: 3,
+                    name: Some("merged".to_string()),
+                    op: CsgOp::Union { left: 1, right: 2 },
+                },
             ],
             3,
         );
         let parts = derive_parts(&doc);
         assert_eq!(parts.len(), 1);
         match &parts[0] {
-            PartInfo::Boolean { boolean_type, boolean_node_id, .. } => {
+            PartInfo::Boolean {
+                boolean_type,
+                boolean_node_id,
+                ..
+            } => {
                 assert_eq!(boolean_type, "union");
                 assert_eq!(*boolean_node_id, 3);
             }
@@ -932,9 +956,13 @@ mod tests {
     #[test]
     fn compute_next_ids_basic() {
         let doc = make_doc(
-            vec![
-                Node { id: 5, name: None, op: CsgOp::Cube { size: Vec3::new(1.0, 1.0, 1.0) } },
-            ],
+            vec![Node {
+                id: 5,
+                name: None,
+                op: CsgOp::Cube {
+                    size: Vec3::new(1.0, 1.0, 1.0),
+                },
+            }],
             5,
         );
         let parts = derive_parts(&doc);

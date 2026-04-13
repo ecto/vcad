@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use vcad_crdt::{HLC, Value};
+use vcad_crdt::{Value, HLC};
 
 /// Feature parameters stored in a CRDT feature.
 pub type FeatureParams = HashMap<String, (Value, HLC)>;
@@ -360,12 +360,20 @@ impl FeatureInput {
         let mut p = HashMap::new();
 
         match self {
-            Self::Cube { size_x, size_y, size_z } => {
+            Self::Cube {
+                size_x,
+                size_y,
+                size_z,
+            } => {
                 p.insert("size_x".into(), Value::F64(*size_x));
                 p.insert("size_y".into(), Value::F64(*size_y));
                 p.insert("size_z".into(), Value::F64(*size_z));
             }
-            Self::Cylinder { radius, height, segments } => {
+            Self::Cylinder {
+                radius,
+                height,
+                segments,
+            } => {
                 p.insert("radius".into(), Value::F64(*radius));
                 p.insert("height".into(), Value::F64(*height));
                 if let Some(s) = segments {
@@ -378,7 +386,12 @@ impl FeatureInput {
                     p.insert("segments".into(), Value::F64(*s as f64));
                 }
             }
-            Self::Cone { radius_bottom, radius_top, height, segments } => {
+            Self::Cone {
+                radius_bottom,
+                radius_top,
+                height,
+                segments,
+            } => {
                 p.insert("radius_bottom".into(), Value::F64(*radius_bottom));
                 p.insert("radius_top".into(), Value::F64(*radius_top));
                 p.insert("height".into(), Value::F64(*height));
@@ -386,12 +399,25 @@ impl FeatureInput {
                     p.insert("segments".into(), Value::F64(*s as f64));
                 }
             }
-            Self::Boolean { boolean_type, input_a, input_b } => {
-                p.insert("boolean_type".into(), Value::String(boolean_type.as_str().into()));
+            Self::Boolean {
+                boolean_type,
+                input_a,
+                input_b,
+            } => {
+                p.insert(
+                    "boolean_type".into(),
+                    Value::String(boolean_type.as_str().into()),
+                );
                 p.insert("input_a".into(), Value::FeatureRef(input_a.clone()));
                 p.insert("input_b".into(), Value::FeatureRef(input_b.clone()));
             }
-            Self::Extrude { sketch, depth, direction, twist_angle, scale_end } => {
+            Self::Extrude {
+                sketch,
+                depth,
+                direction,
+                twist_angle,
+                scale_end,
+            } => {
                 p.insert("sketch".into(), Value::String(sketch.clone()));
                 p.insert("depth".into(), Value::F64(*depth));
                 p.insert("direction".into(), Value::Vec3(*direction));
@@ -402,13 +428,24 @@ impl FeatureInput {
                     p.insert("scale_end".into(), Value::F64(*v));
                 }
             }
-            Self::Revolve { sketch, axis_origin, axis_dir, angle_deg } => {
+            Self::Revolve {
+                sketch,
+                axis_origin,
+                axis_dir,
+                angle_deg,
+            } => {
                 p.insert("sketch".into(), Value::String(sketch.clone()));
                 p.insert("axis_origin".into(), Value::Vec3(*axis_origin));
                 p.insert("axis_dir".into(), Value::Vec3(*axis_dir));
                 p.insert("angle_deg".into(), Value::F64(*angle_deg));
             }
-            Self::Sweep { sketch, path, twist_angle, scale_start, scale_end } => {
+            Self::Sweep {
+                sketch,
+                path,
+                twist_angle,
+                scale_start,
+                scale_end,
+            } => {
                 p.insert("sketch".into(), Value::String(sketch.clone()));
                 if let Some(v) = path {
                     p.insert("path".into(), Value::String(v.clone()));
@@ -444,13 +481,24 @@ impl FeatureInput {
                 p.insert("input".into(), Value::FeatureRef(input.clone()));
                 p.insert("thickness".into(), Value::F64(*thickness));
             }
-            Self::LinearPattern { input, direction, count, spacing } => {
+            Self::LinearPattern {
+                input,
+                direction,
+                count,
+                spacing,
+            } => {
                 p.insert("input".into(), Value::FeatureRef(input.clone()));
                 p.insert("direction".into(), Value::Vec3(*direction));
                 p.insert("count".into(), Value::F64(*count as f64));
                 p.insert("spacing".into(), Value::F64(*spacing));
             }
-            Self::CircularPattern { input, axis_origin, axis_dir, count, angle_deg } => {
+            Self::CircularPattern {
+                input,
+                axis_origin,
+                axis_dir,
+                count,
+                angle_deg,
+            } => {
                 p.insert("input".into(), Value::FeatureRef(input.clone()));
                 p.insert("axis_origin".into(), Value::Vec3(*axis_origin));
                 p.insert("axis_dir".into(), Value::Vec3(*axis_dir));
@@ -461,7 +509,14 @@ impl FeatureInput {
                 p.insert("input".into(), Value::FeatureRef(input.clone()));
                 p.insert("plane".into(), Value::String(plane.clone()));
             }
-            Self::Text { text, height, depth, alignment, letter_spacing, line_spacing } => {
+            Self::Text {
+                text,
+                height,
+                depth,
+                alignment,
+                letter_spacing,
+                line_spacing,
+            } => {
                 p.insert("text".into(), Value::String(text.clone()));
                 p.insert("height".into(), Value::F64(*height));
                 p.insert("depth".into(), Value::F64(*depth));
@@ -475,8 +530,16 @@ impl FeatureInput {
                     p.insert("line_spacing".into(), Value::F64(*v));
                 }
             }
-            Self::ImportedMesh { positions_json, indices_json, normals_json, source } => {
-                p.insert("positions_json".into(), Value::String(positions_json.clone()));
+            Self::ImportedMesh {
+                positions_json,
+                indices_json,
+                normals_json,
+                source,
+            } => {
+                p.insert(
+                    "positions_json".into(),
+                    Value::String(positions_json.clone()),
+                );
                 p.insert("indices_json".into(), Value::String(indices_json.clone()));
                 if let Some(v) = normals_json {
                     p.insert("normals_json".into(), Value::String(v.clone()));
@@ -498,13 +561,23 @@ impl FeatureInput {
                     p.insert("source".into(), Value::String(v.clone()));
                 }
             }
-            Self::PartDef { source_feature, name } => {
-                p.insert("source_feature".into(), Value::FeatureRef(source_feature.clone()));
+            Self::PartDef {
+                source_feature,
+                name,
+            } => {
+                p.insert(
+                    "source_feature".into(),
+                    Value::FeatureRef(source_feature.clone()),
+                );
                 if let Some(v) = name {
                     p.insert("name".into(), Value::String(v.clone()));
                 }
             }
-            Self::Instance { part_def, name, transform } => {
+            Self::Instance {
+                part_def,
+                name,
+                transform,
+            } => {
                 p.insert("part_def".into(), Value::FeatureRef(part_def.clone()));
                 if let Some(v) = name {
                     p.insert("name".into(), Value::String(v.clone()));
@@ -513,9 +586,21 @@ impl FeatureInput {
                     p.insert("transform".into(), Value::String(v.clone()));
                 }
             }
-            Self::Joint { kind, child_instance, parent_instance, anchor_a, anchor_b, axis, name, limits } => {
+            Self::Joint {
+                kind,
+                child_instance,
+                parent_instance,
+                anchor_a,
+                anchor_b,
+                axis,
+                name,
+                limits,
+            } => {
                 p.insert("kind".into(), Value::String(kind.clone()));
-                p.insert("instance_b".into(), Value::FeatureRef(child_instance.clone()));
+                p.insert(
+                    "instance_b".into(),
+                    Value::FeatureRef(child_instance.clone()),
+                );
                 if let Some(v) = parent_instance {
                     p.insert("instance_a".into(), Value::FeatureRef(v.clone()));
                 }
@@ -531,7 +616,13 @@ impl FeatureInput {
                     p.insert("limits".into(), Value::String(v.clone()));
                 }
             }
-            Self::SceneSettings { environment, lights, background, post_processing, camera_presets } => {
+            Self::SceneSettings {
+                environment,
+                lights,
+                background,
+                post_processing,
+                camera_presets,
+            } => {
                 if let Some(v) = environment {
                     p.insert("environment".into(), Value::String(v.clone()));
                 }
@@ -769,7 +860,11 @@ mod tests {
 
         let restored = FeatureInput::from_crdt_params(kind, &fp).unwrap();
         match restored {
-            FeatureInput::Cube { size_x, size_y, size_z } => {
+            FeatureInput::Cube {
+                size_x,
+                size_y,
+                size_z,
+            } => {
                 assert_eq!(size_x, 10.0);
                 assert_eq!(size_y, 20.0);
                 assert_eq!(size_z, 30.0);
@@ -792,7 +887,11 @@ mod tests {
 
         let restored = FeatureInput::from_crdt_params(kind, &fp).unwrap();
         match restored {
-            FeatureInput::Boolean { boolean_type, input_a, input_b } => {
+            FeatureInput::Boolean {
+                boolean_type,
+                input_a,
+                input_b,
+            } => {
                 assert_eq!(boolean_type, BooleanType::Difference);
                 assert_eq!(input_a, "1:0");
                 assert_eq!(input_b, "1:1");
@@ -837,7 +936,9 @@ mod tests {
 
         let restored: FeatureInput = serde_json::from_str(&json).unwrap();
         match restored {
-            FeatureInput::Extrude { depth, twist_angle, .. } => {
+            FeatureInput::Extrude {
+                depth, twist_angle, ..
+            } => {
                 assert_eq!(depth, 15.0);
                 assert_eq!(twist_angle, Some(45.0));
             }
@@ -855,17 +956,84 @@ mod tests {
     fn test_kind_strings_match_materializer() {
         // Verify all kind() returns match the strings used in the materializer
         let cases: Vec<(FeatureInput, &str)> = vec![
-            (FeatureInput::Cube { size_x: 1.0, size_y: 1.0, size_z: 1.0 }, "cube"),
-            (FeatureInput::Cylinder { radius: 1.0, height: 1.0, segments: None }, "cylinder"),
-            (FeatureInput::Sphere { radius: 1.0, segments: None }, "sphere"),
-            (FeatureInput::Fillet { input: "".into(), radius: 1.0 }, "fillet"),
-            (FeatureInput::Chamfer { input: "".into(), distance: 1.0 }, "chamfer"),
-            (FeatureInput::Shell { input: "".into(), thickness: 1.0 }, "shell"),
-            (FeatureInput::LinearPattern { input: "".into(), direction: [1.0, 0.0, 0.0], count: 3, spacing: 10.0 }, "linear-pattern"),
-            (FeatureInput::CircularPattern { input: "".into(), axis_origin: [0.0; 3], axis_dir: [0.0, 0.0, 1.0], count: 4, angle_deg: 360.0 }, "circular-pattern"),
-            (FeatureInput::Mirror { input: "".into(), plane: "YZ".into() }, "mirror"),
+            (
+                FeatureInput::Cube {
+                    size_x: 1.0,
+                    size_y: 1.0,
+                    size_z: 1.0,
+                },
+                "cube",
+            ),
+            (
+                FeatureInput::Cylinder {
+                    radius: 1.0,
+                    height: 1.0,
+                    segments: None,
+                },
+                "cylinder",
+            ),
+            (
+                FeatureInput::Sphere {
+                    radius: 1.0,
+                    segments: None,
+                },
+                "sphere",
+            ),
+            (
+                FeatureInput::Fillet {
+                    input: "".into(),
+                    radius: 1.0,
+                },
+                "fillet",
+            ),
+            (
+                FeatureInput::Chamfer {
+                    input: "".into(),
+                    distance: 1.0,
+                },
+                "chamfer",
+            ),
+            (
+                FeatureInput::Shell {
+                    input: "".into(),
+                    thickness: 1.0,
+                },
+                "shell",
+            ),
+            (
+                FeatureInput::LinearPattern {
+                    input: "".into(),
+                    direction: [1.0, 0.0, 0.0],
+                    count: 3,
+                    spacing: 10.0,
+                },
+                "linear-pattern",
+            ),
+            (
+                FeatureInput::CircularPattern {
+                    input: "".into(),
+                    axis_origin: [0.0; 3],
+                    axis_dir: [0.0, 0.0, 1.0],
+                    count: 4,
+                    angle_deg: 360.0,
+                },
+                "circular-pattern",
+            ),
+            (
+                FeatureInput::Mirror {
+                    input: "".into(),
+                    plane: "YZ".into(),
+                },
+                "mirror",
+            ),
             (FeatureInput::PcbBoard { board: None }, "pcb-board"),
-            (FeatureInput::EmbroideryPattern { design: None, source: None }, "embroidery-pattern"),
+            (
+                FeatureInput::EmbroideryPattern {
+                    design: None,
+                    source: None,
+                },
+                "embroidery-pattern",
+            ),
         ];
         for (input, expected_kind) in cases {
             assert_eq!(input.kind(), expected_kind);
@@ -878,7 +1046,11 @@ mod tests {
 
         let cube = FeatureInput::from_crdt_params("cube", &empty).unwrap();
         match cube {
-            FeatureInput::Cube { size_x, size_y, size_z } => {
+            FeatureInput::Cube {
+                size_x,
+                size_y,
+                size_z,
+            } => {
                 assert_eq!(size_x, 10.0);
                 assert_eq!(size_y, 10.0);
                 assert_eq!(size_z, 10.0);

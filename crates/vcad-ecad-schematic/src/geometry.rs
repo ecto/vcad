@@ -125,11 +125,7 @@ mod tests {
     use super::*;
     use vcad_ir::ecad::{PinType, SchematicPin};
 
-    fn make_component(
-        reference: &str,
-        pos: Vec2,
-        pins: Vec<(Vec2, &str)>,
-    ) -> SchematicComponent {
+    fn make_component(reference: &str, pos: Vec2, pins: Vec<(Vec2, &str)>) -> SchematicComponent {
         SchematicComponent {
             reference: reference.to_string(),
             value: "10k".to_string(),

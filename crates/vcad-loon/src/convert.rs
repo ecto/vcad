@@ -1306,11 +1306,9 @@ mod tests {
         };
         let loft = adt(
             "LoftClosed",
-            vec![Value::Vec(vec![
-                mk_sketch(0.0),
-                mk_sketch(10.0),
-                mk_sketch(20.0),
-            ].into())],
+            vec![Value::Vec(
+                vec![mk_sketch(0.0), mk_sketch(10.0), mk_sketch(20.0)].into(),
+            )],
         );
         let doc = value_to_document(&loft).unwrap();
         match &doc.nodes[&3].op {
@@ -1331,53 +1329,62 @@ mod tests {
     #[test]
     fn assembly_to_document() {
         // Build: Assembly([parts], [instances], [joints], ground)
-        let parts = Value::Vec(vec![
-            adt(
-                "PartEntry",
-                vec![
-                    s("base"),
-                    adt("Cylinder", vec![f(40.0), f(30.0)]),
-                    s("steel"),
-                ],
-            ),
-            adt(
-                "PartEntry",
-                vec![
-                    s("arm1"),
-                    adt("Cube", vec![f(80.0), f(20.0), f(20.0)]),
-                    s("aluminum"),
-                ],
-            ),
-        ].into());
-        let instances = Value::Vec(vec![
-            adt(
-                "InstanceEntry",
-                vec![s("base-inst"), s("base"), f(0.0), f(0.0), f(0.0)],
-            ),
-            adt(
-                "InstanceEntry",
-                vec![s("arm1-inst"), s("arm1"), f(0.0), f(0.0), f(30.0)],
-            ),
-        ].into());
-        let joints = Value::Vec(vec![adt(
-            "RevoluteJoint",
+        let parts = Value::Vec(
             vec![
-                s("shoulder"),
-                f(0.0),
-                f(1.0),
-                f(0.0), // axis
-                f(-90.0),
-                f(90.0),        // limits
-                s("base-inst"), // parent
-                f(0.0),
-                f(0.0),
-                f(25.0),        // parent anchor
-                s("arm1-inst"), // child
-                f(0.0),
-                f(0.0),
-                f(0.0), // child anchor
-            ],
-        )].into());
+                adt(
+                    "PartEntry",
+                    vec![
+                        s("base"),
+                        adt("Cylinder", vec![f(40.0), f(30.0)]),
+                        s("steel"),
+                    ],
+                ),
+                adt(
+                    "PartEntry",
+                    vec![
+                        s("arm1"),
+                        adt("Cube", vec![f(80.0), f(20.0), f(20.0)]),
+                        s("aluminum"),
+                    ],
+                ),
+            ]
+            .into(),
+        );
+        let instances = Value::Vec(
+            vec![
+                adt(
+                    "InstanceEntry",
+                    vec![s("base-inst"), s("base"), f(0.0), f(0.0), f(0.0)],
+                ),
+                adt(
+                    "InstanceEntry",
+                    vec![s("arm1-inst"), s("arm1"), f(0.0), f(0.0), f(30.0)],
+                ),
+            ]
+            .into(),
+        );
+        let joints = Value::Vec(
+            vec![adt(
+                "RevoluteJoint",
+                vec![
+                    s("shoulder"),
+                    f(0.0),
+                    f(1.0),
+                    f(0.0), // axis
+                    f(-90.0),
+                    f(90.0),        // limits
+                    s("base-inst"), // parent
+                    f(0.0),
+                    f(0.0),
+                    f(25.0),        // parent anchor
+                    s("arm1-inst"), // child
+                    f(0.0),
+                    f(0.0),
+                    f(0.0), // child anchor
+                ],
+            )]
+            .into(),
+        );
         let ground = s("base-inst");
         let assembly = adt("Assembly", vec![parts, instances, joints, ground]);
 
@@ -1422,76 +1429,85 @@ mod tests {
 
     #[test]
     fn assembly_with_multiple_joint_types() {
-        let parts = Value::Vec(vec![
-            adt(
-                "PartEntry",
-                vec![
-                    s("a"),
-                    adt("Cube", vec![f(10.0), f(10.0), f(10.0)]),
-                    s("default"),
-                ],
-            ),
-            adt(
-                "PartEntry",
-                vec![
-                    s("b"),
-                    adt("Cube", vec![f(10.0), f(10.0), f(10.0)]),
-                    s("default"),
-                ],
-            ),
-            adt(
-                "PartEntry",
-                vec![
-                    s("c"),
-                    adt("Cube", vec![f(10.0), f(10.0), f(10.0)]),
-                    s("default"),
-                ],
-            ),
-        ].into());
-        let instances = Value::Vec(vec![
-            adt(
-                "InstanceEntry",
-                vec![s("a-inst"), s("a"), f(0.0), f(0.0), f(0.0)],
-            ),
-            adt(
-                "InstanceEntry",
-                vec![s("b-inst"), s("b"), f(0.0), f(0.0), f(0.0)],
-            ),
-            adt(
-                "InstanceEntry",
-                vec![s("c-inst"), s("c"), f(0.0), f(0.0), f(0.0)],
-            ),
-        ].into());
-        let joints = Value::Vec(vec![
-            adt(
-                "FixedJoint",
-                vec![
-                    s("fix"),
-                    s("a-inst"),
-                    f(0.0),
-                    f(0.0),
-                    f(5.0),
-                    s("b-inst"),
-                    f(0.0),
-                    f(0.0),
-                    f(0.0),
-                ],
-            ),
-            adt(
-                "BallJoint",
-                vec![
-                    s("ball"),
-                    s("b-inst"),
-                    f(0.0),
-                    f(0.0),
-                    f(5.0),
-                    s("c-inst"),
-                    f(0.0),
-                    f(0.0),
-                    f(0.0),
-                ],
-            ),
-        ].into());
+        let parts = Value::Vec(
+            vec![
+                adt(
+                    "PartEntry",
+                    vec![
+                        s("a"),
+                        adt("Cube", vec![f(10.0), f(10.0), f(10.0)]),
+                        s("default"),
+                    ],
+                ),
+                adt(
+                    "PartEntry",
+                    vec![
+                        s("b"),
+                        adt("Cube", vec![f(10.0), f(10.0), f(10.0)]),
+                        s("default"),
+                    ],
+                ),
+                adt(
+                    "PartEntry",
+                    vec![
+                        s("c"),
+                        adt("Cube", vec![f(10.0), f(10.0), f(10.0)]),
+                        s("default"),
+                    ],
+                ),
+            ]
+            .into(),
+        );
+        let instances = Value::Vec(
+            vec![
+                adt(
+                    "InstanceEntry",
+                    vec![s("a-inst"), s("a"), f(0.0), f(0.0), f(0.0)],
+                ),
+                adt(
+                    "InstanceEntry",
+                    vec![s("b-inst"), s("b"), f(0.0), f(0.0), f(0.0)],
+                ),
+                adt(
+                    "InstanceEntry",
+                    vec![s("c-inst"), s("c"), f(0.0), f(0.0), f(0.0)],
+                ),
+            ]
+            .into(),
+        );
+        let joints = Value::Vec(
+            vec![
+                adt(
+                    "FixedJoint",
+                    vec![
+                        s("fix"),
+                        s("a-inst"),
+                        f(0.0),
+                        f(0.0),
+                        f(5.0),
+                        s("b-inst"),
+                        f(0.0),
+                        f(0.0),
+                        f(0.0),
+                    ],
+                ),
+                adt(
+                    "BallJoint",
+                    vec![
+                        s("ball"),
+                        s("b-inst"),
+                        f(0.0),
+                        f(0.0),
+                        f(5.0),
+                        s("c-inst"),
+                        f(0.0),
+                        f(0.0),
+                        f(0.0),
+                    ],
+                ),
+            ]
+            .into(),
+        );
         let assembly = adt("Assembly", vec![parts, instances, joints, s("a-inst")]);
         let doc = value_to_document(&assembly).unwrap();
 

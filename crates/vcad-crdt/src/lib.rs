@@ -192,10 +192,7 @@ impl CrdtDocument {
                     };
                     if should_update {
                         f.params.insert(key.clone(), (value.clone(), op.hlc));
-                        cs.params
-                            .entry(*feature)
-                            .or_default()
-                            .insert(key.clone());
+                        cs.params.entry(*feature).or_default().insert(key.clone());
                     }
                 }
             }
@@ -215,10 +212,7 @@ impl CrdtDocument {
             .or_default()
             .push(op_ids);
         // Clear redo on new action.
-        self.redo_stacks
-            .entry(self.replica_id)
-            .or_default()
-            .clear();
+        self.redo_stacks.entry(self.replica_id).or_default().clear();
     }
 
     // -- Public mutations --
@@ -391,10 +385,7 @@ impl CrdtDocument {
                         f.params.remove(key.as_str());
                     }
                     let mut cs = ChangeSet::default();
-                    cs.params
-                        .entry(*feature)
-                        .or_default()
-                        .insert(key.clone());
+                    cs.params.entry(*feature).or_default().insert(key.clone());
                     cs
                 }
             }
@@ -726,17 +717,30 @@ mod tests {
 
         // Verify initial value was set by create_feature.
         assert_eq!(
-            doc.get_feature(fid).unwrap().params.get("size_x").unwrap().0,
+            doc.get_feature(fid)
+                .unwrap()
+                .params
+                .get("size_x")
+                .unwrap()
+                .0,
             Value::F64(10.0),
             "initial param should be 10.0"
         );
 
         // Overwrite the param.
         let cs = doc.set_param(fid, "size_x", Value::F64(20.0));
-        assert!(cs.params.contains_key(&fid), "changeset should include the feature");
+        assert!(
+            cs.params.contains_key(&fid),
+            "changeset should include the feature"
+        );
 
         assert_eq!(
-            doc.get_feature(fid).unwrap().params.get("size_x").unwrap().0,
+            doc.get_feature(fid)
+                .unwrap()
+                .params
+                .get("size_x")
+                .unwrap()
+                .0,
             Value::F64(20.0),
             "param should be updated to 20.0"
         );
@@ -745,25 +749,17 @@ mod tests {
     #[test]
     fn test_move_feature() {
         let mut doc = CrdtDocument::new(ReplicaId(1));
-        let (fid1, _) = doc.create_feature(
-            "cube",
-            FractionalIndex::between(None, None),
-            HashMap::new(),
-        );
+        let (fid1, _) =
+            doc.create_feature("cube", FractionalIndex::between(None, None), HashMap::new());
         let (fid2, _) = doc.create_feature(
             "cylinder",
-            FractionalIndex::between(
-                Some(&doc.get_feature(fid1).unwrap().position),
-                None,
-            ),
+            FractionalIndex::between(Some(&doc.get_feature(fid1).unwrap().position), None),
             HashMap::new(),
         );
 
         // Move fid2 before fid1
-        let new_pos = FractionalIndex::between(
-            None,
-            Some(&doc.get_feature(fid1).unwrap().position),
-        );
+        let new_pos =
+            FractionalIndex::between(None, Some(&doc.get_feature(fid1).unwrap().position));
         doc.move_feature(fid2, new_pos);
 
         let features = doc.ordered_features();
@@ -782,7 +778,12 @@ mod tests {
 
         doc.set_param(fid, "size_x", Value::F64(20.0));
         assert_eq!(
-            doc.get_feature(fid).unwrap().params.get("size_x").unwrap().0,
+            doc.get_feature(fid)
+                .unwrap()
+                .params
+                .get("size_x")
+                .unwrap()
+                .0,
             Value::F64(20.0)
         );
 
@@ -791,7 +792,12 @@ mod tests {
         let cs = doc.undo().unwrap();
         assert!(!cs.is_empty());
         assert_eq!(
-            doc.get_feature(fid).unwrap().params.get("size_x").unwrap().0,
+            doc.get_feature(fid)
+                .unwrap()
+                .params
+                .get("size_x")
+                .unwrap()
+                .0,
             Value::F64(10.0)
         );
 
@@ -799,7 +805,12 @@ mod tests {
         assert!(doc.can_redo());
         doc.redo().unwrap();
         assert_eq!(
-            doc.get_feature(fid).unwrap().params.get("size_x").unwrap().0,
+            doc.get_feature(fid)
+                .unwrap()
+                .params
+                .get("size_x")
+                .unwrap()
+                .0,
             Value::F64(20.0)
         );
     }
@@ -880,8 +891,20 @@ mod tests {
         doc2.merge(ops_for_2);
 
         // Both docs should agree
-        let v1 = &doc1.get_feature(fid).unwrap().params.get("size_x").unwrap().0;
-        let v2 = &doc2.get_feature(fid).unwrap().params.get("size_x").unwrap().0;
+        let v1 = &doc1
+            .get_feature(fid)
+            .unwrap()
+            .params
+            .get("size_x")
+            .unwrap()
+            .0;
+        let v2 = &doc2
+            .get_feature(fid)
+            .unwrap()
+            .params
+            .get("size_x")
+            .unwrap()
+            .0;
         assert_eq!(v1, v2);
     }
 
@@ -913,10 +936,7 @@ mod tests {
         let pos_a = FractionalIndex::between(None, None);
         let (fid_a, _) = doc.create_feature("a", pos_a, HashMap::new());
 
-        let pos_b = FractionalIndex::between(
-            Some(&doc.get_feature(fid_a).unwrap().position),
-            None,
-        );
+        let pos_b = FractionalIndex::between(Some(&doc.get_feature(fid_a).unwrap().position), None);
         let (fid_b, _) = doc.create_feature("b", pos_b, HashMap::new());
 
         let pos_c = FractionalIndex::between(

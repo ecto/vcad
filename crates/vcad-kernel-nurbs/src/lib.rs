@@ -364,9 +364,7 @@ impl BSplineSurface {
             control_points: self
                 .control_points
                 .iter()
-                .map(|p| {
-                    tang::Point3::new(T::from_f64(p.x), T::from_f64(p.y), T::from_f64(p.z))
-                })
+                .map(|p| tang::Point3::new(T::from_f64(p.x), T::from_f64(p.y), T::from_f64(p.z)))
                 .collect(),
             n_u: self.n_u,
             n_v: self.n_v,

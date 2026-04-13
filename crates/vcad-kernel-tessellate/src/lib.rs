@@ -48,18 +48,20 @@ impl TriangleMesh {
     /// Merge another mesh into this one.
     pub fn merge(&mut self, other: &TriangleMesh) {
         let offset = self.num_vertices() as u32;
-        let other_num_verts = other.num_vertices();
 
         // Validate other mesh indices before merge
         #[cfg(debug_assertions)]
-        for (i, &idx) in other.indices.iter().enumerate() {
-            debug_assert!(
-                (idx as usize) < other_num_verts,
-                "Other mesh has invalid index {} at position {} (only {} vertices)",
-                idx,
-                i,
-                other_num_verts
-            );
+        {
+            let other_num_verts = other.num_vertices();
+            for (i, &idx) in other.indices.iter().enumerate() {
+                debug_assert!(
+                    (idx as usize) < other_num_verts,
+                    "Other mesh has invalid index {} at position {} (only {} vertices)",
+                    idx,
+                    i,
+                    other_num_verts
+                );
+            }
         }
 
         // Validate normals match vertices in source mesh

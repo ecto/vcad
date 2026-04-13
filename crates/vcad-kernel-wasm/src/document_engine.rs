@@ -8,12 +8,12 @@
 
 use std::collections::HashMap;
 
+use serde::Serialize;
 use vcad_app::document_api::{ApiResult, DocumentApi};
 use vcad_app::feature::FeatureInput;
 use vcad_app::materializer::materialize;
 use vcad_app::migrate::{detect_format, migrate_v1, FileFormat};
 use vcad_crdt::{CrdtDocument, FeatureId, FractionalIndex, ReplicaId, Value};
-use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 /// CRDT-backed document engine for WASM.
@@ -116,8 +116,7 @@ impl WasmDocumentEngine {
     ///
     /// Returns `{ document, parts, createdFeatureId }` as a JsValue.
     pub fn create_feature(&mut self, kind: &str, params_json: &str) -> JsValue {
-        let params: HashMap<String, Value> =
-            serde_json::from_str(params_json).unwrap_or_default();
+        let params: HashMap<String, Value> = serde_json::from_str(params_json).unwrap_or_default();
 
         let ordered = self.api.crdt().ordered_features();
         let position = if let Some(last) = ordered.last() {
@@ -139,12 +138,7 @@ impl WasmDocumentEngine {
     }
 
     /// Set a parameter on a feature.
-    pub fn set_param(
-        &mut self,
-        feature_id_json: &str,
-        key: &str,
-        value_json: &str,
-    ) -> JsValue {
+    pub fn set_param(&mut self, feature_id_json: &str, key: &str, value_json: &str) -> JsValue {
         if let (Some(fid), Ok(value)) = (
             parse_feature_id(feature_id_json),
             serde_json::from_str::<Value>(value_json),
@@ -230,8 +224,7 @@ impl WasmDocumentEngine {
     pub fn load(bytes: &[u8]) -> Result<WasmDocumentEngine, JsError> {
         match detect_format(bytes) {
             FileFormat::V2Crdt => {
-                let crdt =
-                    CrdtDocument::load(bytes).map_err(|e| JsError::new(&e.to_string()))?;
+                let crdt = CrdtDocument::load(bytes).map_err(|e| JsError::new(&e.to_string()))?;
                 Ok(Self::from_crdt(crdt))
             }
             FileFormat::V1Json => Self::from_v1_bytes(bytes),
@@ -257,11 +250,7 @@ impl WasmDocumentEngine {
     }
 
     /// Compute a FractionalIndex position between two neighbor feature IDs.
-    pub fn compute_position_between(
-        &self,
-        before_id_json: &str,
-        after_id_json: &str,
-    ) -> String {
+    pub fn compute_position_between(&self, before_id_json: &str, after_id_json: &str) -> String {
         let ordered = self.api.crdt().ordered_features();
 
         let before_pos = if before_id_json.is_empty() {
@@ -308,15 +297,14 @@ impl WasmDocumentEngine {
 
     /// Get operations since a remote clock state (JSON).
     pub fn get_ops_since(&self, remote_clock_json: &str) -> String {
-        let remote_clock = if let Ok(map) =
-            serde_json::from_str::<HashMap<String, u64>>(remote_clock_json)
-        {
-            map.into_iter()
-                .filter_map(|(k, v)| k.parse::<u64>().ok().map(|r| (ReplicaId(r), v)))
-                .collect()
-        } else {
-            std::collections::BTreeMap::new()
-        };
+        let remote_clock =
+            if let Ok(map) = serde_json::from_str::<HashMap<String, u64>>(remote_clock_json) {
+                map.into_iter()
+                    .filter_map(|(k, v)| k.parse::<u64>().ok().map(|r| (ReplicaId(r), v)))
+                    .collect()
+            } else {
+                std::collections::BTreeMap::new()
+            };
         let ops = self.api.crdt().ops_since(&remote_clock);
         serde_json::to_string(&ops).unwrap_or_else(|_| "[]".to_string())
     }
@@ -353,8 +341,7 @@ impl WasmDocumentEngine {
             "parts": serde_json::from_str::<serde_json::Value>(&parts_json).unwrap_or_default(),
         });
         if let Some(fid) = created_fid {
-            obj["createdFeatureId"] =
-                serde_json::Value::String(format!("{}:{}", fid.0 .0, fid.1));
+            obj["createdFeatureId"] = serde_json::Value::String(format!("{}:{}", fid.0 .0, fid.1));
         }
 
         let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);

@@ -3079,6 +3079,24 @@ export function get_kernel_version() {
 }
 
 /**
+ * Get tool schema definitions for all CsgOp variants.
+ * Returns JSON array of ToolSchemaEntry objects.
+ * @returns {string}
+ */
+export function get_tool_schemas() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.get_tool_schemas();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
  * Import solids from STEP file bytes.
  *
  * Returns a JS array of mesh data for each imported body.
@@ -4948,7 +4966,7 @@ function __wbg_get_imports() {
                     const a = state0.a;
                     state0.a = 0;
                     try {
-                        return wasm_bindgen__convert__closures_____invoke__h7fe4e9d895e0bfbd(a, state0.b, arg0, arg1);
+                        return wasm_bindgen__convert__closures_____invoke__h397719c423f4718e(a, state0.b, arg0, arg1);
                     } finally {
                         state0.a = a;
                     }
@@ -5533,13 +5551,13 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 1119, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1120, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hb866a658679f7c90, wasm_bindgen__convert__closures_____invoke__hd3174526aa1241bc);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 1130, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1131, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__ha8d4e097953964e6, wasm_bindgen__convert__closures_____invoke__h3c3248f38441540b);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 1862, function: Function { arguments: [Externref], shim_idx: 1863, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__ha3f46f4f424453fe, wasm_bindgen__convert__closures_____invoke__h3b7e8ca02e296028);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 1844, function: Function { arguments: [Externref], shim_idx: 1845, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hf40b7bdcf0d09ecb, wasm_bindgen__convert__closures_____invoke__ha9bc019092e7ecae);
             return ret;
         },
         __wbindgen_cast_0000000000000003: function(arg0) {
@@ -5627,16 +5645,16 @@ function __wbg_get_imports() {
     };
 }
 
-function wasm_bindgen__convert__closures_____invoke__hd3174526aa1241bc(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__hd3174526aa1241bc(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h3c3248f38441540b(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h3c3248f38441540b(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h3b7e8ca02e296028(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h3b7e8ca02e296028(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__ha9bc019092e7ecae(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__ha9bc019092e7ecae(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h7fe4e9d895e0bfbd(arg0, arg1, arg2, arg3) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h7fe4e9d895e0bfbd(arg0, arg1, arg2, arg3);
+function wasm_bindgen__convert__closures_____invoke__h397719c423f4718e(arg0, arg1, arg2, arg3) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h397719c423f4718e(arg0, arg1, arg2, arg3);
 }
 
 
@@ -6028,19 +6046,6 @@ if (!('encodeInto' in cachedTextEncoder)) {
 let WASM_VECTOR_LEN = 0;
 
 let wasmModule, wasm;
-
-// PATCH: window-level singleton to prevent WASM double-instantiation.
-// Multiple Vite module instances (from alias resolution bugs) each get their
-// own `wasm` variable, so the module-level guard in __wbg_init is insufficient.
-// This ensures only ONE WebAssembly instance exists across all module copies.
-const _vcadWasmKey = '__vcad_kernel_wasm_instance';
-const _vcadWasmInitCount = '__vcad_kernel_wasm_init_count';
-
-function _wasmTrace(msg) {
-    // Uses [WASM] prefix so the vcad logger intercepts it at DEBUG level
-    console.debug('[WASM] [wasm-init] ' + msg);
-}
-
 function __wbg_finalize_init(instance, module) {
     wasm = instance.exports;
     wasmModule = module;
@@ -6053,22 +6058,7 @@ function __wbg_finalize_init(instance, module) {
     cachedUint16ArrayMemory0 = null;
     cachedUint32ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;
-
-    if (typeof globalThis !== 'undefined') {
-        const count = (globalThis[_vcadWasmInitCount] || 0) + 1;
-        globalThis[_vcadWasmInitCount] = count;
-        _wasmTrace('__wbg_finalize_init called (instantiation #' + count + ')');
-        if (count > 1) {
-            _wasmTrace('WARNING: WASM re-instantiated! Previous pointers are now invalid.');
-            _wasmTrace('Stack: ' + new Error().stack);
-        }
-    }
-
     wasm.__wbindgen_start();
-    // Store globally so other module instances can reuse
-    if (typeof globalThis !== 'undefined') {
-        globalThis[_vcadWasmKey] = { wasm, wasmModule: module };
-    }
     return wasm;
 }
 
@@ -6108,17 +6098,8 @@ async function __wbg_load(module, imports) {
 }
 
 function initSync(module) {
-    _wasmTrace('initSync called. wasm=' + (wasm !== undefined ? 'exists' : 'undefined'));
-    _wasmTrace('caller: ' + new Error().stack?.split('\n').slice(1, 4).join(' <- '));
     if (wasm !== undefined) return wasm;
 
-    // PATCH: reuse global singleton
-    if (typeof globalThis !== 'undefined' && globalThis[_vcadWasmKey]) {
-        _wasmTrace('initSync: reusing globalThis singleton');
-        wasm = globalThis[_vcadWasmKey].wasm;
-        wasmModule = globalThis[_vcadWasmKey].wasmModule;
-        return wasm;
-    }
 
     if (module !== undefined) {
         if (Object.getPrototypeOf(module) === Object.prototype) {
@@ -6136,39 +6117,10 @@ function initSync(module) {
     return __wbg_finalize_init(instance, module);
 }
 
-let _initPromise = null;
-
 async function __wbg_init(module_or_path) {
-    _wasmTrace('__wbg_init called. wasm=' + (wasm !== undefined ? 'exists' : 'undefined') +
-               ', globalSingleton=' + (typeof globalThis !== 'undefined' && !!globalThis[_vcadWasmKey]) +
-               ', initPromise=' + (!!_initPromise));
-    _wasmTrace('caller: ' + new Error().stack?.split('\n').slice(1, 4).join(' <- '));
+    if (wasm !== undefined) return wasm;
 
-    if (wasm !== undefined) {
-        _wasmTrace('__wbg_init: returning cached module-local wasm');
-        return wasm;
-    }
 
-    // PATCH: reuse global singleton if another module instance already initialized
-    if (typeof globalThis !== 'undefined' && globalThis[_vcadWasmKey]) {
-        _wasmTrace('__wbg_init: reusing globalThis singleton (avoiding re-instantiation)');
-        wasm = globalThis[_vcadWasmKey].wasm;
-        wasmModule = globalThis[_vcadWasmKey].wasmModule;
-        return wasm;
-    }
-
-    // PATCH: race guard — if another call is already loading, share its promise
-    if (_initPromise) {
-        _wasmTrace('__wbg_init: load already in progress, sharing promise');
-        return _initPromise;
-    }
-
-    _wasmTrace('__wbg_init: no cached instance, will instantiate WASM binary');
-    _initPromise = __wbg_init_inner(module_or_path);
-    return _initPromise;
-}
-
-async function __wbg_init_inner(module_or_path) {
     if (module_or_path !== undefined) {
         if (Object.getPrototypeOf(module_or_path) === Object.prototype) {
             ({module_or_path} = module_or_path)

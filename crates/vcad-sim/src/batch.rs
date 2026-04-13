@@ -246,9 +246,7 @@ impl BatchSimPipeline {
 /// Mirrors `vcad_kernel_physics::joints::vcad_joint_to_phyz`, but targets the
 /// `phyz_model` crate's `Joint` type (required by `phyz-gpu`'s `ModelBuilder`),
 /// which is a separate Rust type from `phyz::model::Joint`.
-fn build_phyz_model_joint(
-    joint: &vcad_ir::Joint,
-) -> Result<phyz_model::Joint, SimError> {
+fn build_phyz_model_joint(joint: &vcad_ir::Joint) -> Result<phyz_model::Joint, SimError> {
     use phyz_math::{Mat3, SpatialTransform, Vec3};
     use phyz_model::Joint as PhyzJoint;
     use vcad_ir::JointKind;

@@ -51,10 +51,7 @@ mod tests {
         assert_eq!(Value::F64(1.0), Value::F64(1.0));
         assert_ne!(Value::F64(1.0), Value::F64(2.0));
         assert_eq!(Value::Bool(true), Value::Bool(true));
-        assert_eq!(
-            Value::String("hello".into()),
-            Value::String("hello".into())
-        );
+        assert_eq!(Value::String("hello".into()), Value::String("hello".into()));
         assert_eq!(Value::Vec3([1.0, 2.0, 3.0]), Value::Vec3([1.0, 2.0, 3.0]));
         assert_ne!(Value::F64(1.0), Value::Bool(true));
     }

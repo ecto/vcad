@@ -382,7 +382,9 @@ fn compute_consumed_part_ids(parts: &[PartInfo]) -> Vec<String> {
     let mut consumed = Vec::new();
     for part in parts {
         match part {
-            PartInfo::Boolean { source_part_ids, .. } => {
+            PartInfo::Boolean {
+                source_part_ids, ..
+            } => {
                 consumed.extend(source_part_ids.iter().cloned());
             }
             PartInfo::Fillet { source_part_id, .. }
@@ -548,7 +550,9 @@ mod tests {
 
         // Verify the prim node uses new dimensions
         let prim_id = match &result.parts[0] {
-            PartInfo::Cube { primitive_node_id, .. } => *primitive_node_id,
+            PartInfo::Cube {
+                primitive_node_id, ..
+            } => *primitive_node_id,
             _ => panic!("expected cube"),
         };
         match &result.document.nodes.get(&prim_id).unwrap().op {

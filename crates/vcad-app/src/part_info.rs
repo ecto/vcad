@@ -458,16 +458,34 @@ mod tests {
         let json = serde_json::to_string(&part).unwrap();
 
         // Verify camelCase field names
-        assert!(json.contains("\"primitiveNodeId\""), "expected camelCase: {json}");
-        assert!(json.contains("\"scaleNodeId\""), "expected camelCase: {json}");
-        assert!(json.contains("\"rotateNodeId\""), "expected camelCase: {json}");
-        assert!(json.contains("\"translateNodeId\""), "expected camelCase: {json}");
+        assert!(
+            json.contains("\"primitiveNodeId\""),
+            "expected camelCase: {json}"
+        );
+        assert!(
+            json.contains("\"scaleNodeId\""),
+            "expected camelCase: {json}"
+        );
+        assert!(
+            json.contains("\"rotateNodeId\""),
+            "expected camelCase: {json}"
+        );
+        assert!(
+            json.contains("\"translateNodeId\""),
+            "expected camelCase: {json}"
+        );
 
         // Verify variant name still uses explicit rename
-        assert!(json.contains("\"kind\":\"cube\""), "expected kind=cube: {json}");
+        assert!(
+            json.contains("\"kind\":\"cube\""),
+            "expected kind=cube: {json}"
+        );
 
         // Verify snake_case is NOT in output
-        assert!(!json.contains("primitive_node_id"), "unexpected snake_case: {json}");
+        assert!(
+            !json.contains("primitive_node_id"),
+            "unexpected snake_case: {json}"
+        );
 
         // Roundtrip
         let deserialized: PartInfo = serde_json::from_str(&json).unwrap();
@@ -489,9 +507,18 @@ mod tests {
         };
 
         let json = serde_json::to_string(&part).unwrap();
-        assert!(json.contains("\"booleanType\""), "expected camelCase: {json}");
-        assert!(json.contains("\"booleanNodeId\""), "expected camelCase: {json}");
-        assert!(json.contains("\"sourcePartIds\""), "expected camelCase: {json}");
+        assert!(
+            json.contains("\"booleanType\""),
+            "expected camelCase: {json}"
+        );
+        assert!(
+            json.contains("\"booleanNodeId\""),
+            "expected camelCase: {json}"
+        );
+        assert!(
+            json.contains("\"sourcePartIds\""),
+            "expected camelCase: {json}"
+        );
 
         let deserialized: PartInfo = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.id(), "1:1");
@@ -510,8 +537,14 @@ mod tests {
         };
 
         let json = serde_json::to_string(&part).unwrap();
-        assert!(json.contains("\"sketchNodeIds\""), "expected camelCase: {json}");
-        assert!(json.contains("\"loftNodeId\""), "expected camelCase: {json}");
+        assert!(
+            json.contains("\"sketchNodeIds\""),
+            "expected camelCase: {json}"
+        );
+        assert!(
+            json.contains("\"loftNodeId\""),
+            "expected camelCase: {json}"
+        );
 
         let deserialized: PartInfo = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.id(), "1:3");

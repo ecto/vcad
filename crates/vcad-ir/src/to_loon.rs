@@ -105,12 +105,7 @@ fn node_name(id: NodeId, doc: &Document) -> String {
     format!("n{}", id)
 }
 
-fn emit_node(
-    node: &Node,
-    doc: &Document,
-    lines: &mut Vec<String>,
-    emitted: &mut HashSet<NodeId>,
-) {
+fn emit_node(node: &Node, doc: &Document, lines: &mut Vec<String>, emitted: &mut HashSet<NodeId>) {
     if emitted.contains(&node.id) {
         return;
     }
@@ -153,116 +148,158 @@ fn node_ref(id: NodeId, doc: &Document) -> String {
 #[allow(clippy::too_many_lines)]
 fn op_to_loon(op: &CsgOp, doc: &Document) -> Option<String> {
     match op {
-        CsgOp::Cube { size } => {
-            Some(format!("[cube {} {} {}]", fmt_f64(size.x), fmt_f64(size.y), fmt_f64(size.z)))
-        }
+        CsgOp::Cube { size } => Some(format!(
+            "[cube {} {} {}]",
+            fmt_f64(size.x),
+            fmt_f64(size.y),
+            fmt_f64(size.z)
+        )),
 
-        CsgOp::Cylinder { radius, height, .. } => {
-            Some(format!("[cylinder {} {}]", fmt_f64(*radius), fmt_f64(*height)))
-        }
+        CsgOp::Cylinder { radius, height, .. } => Some(format!(
+            "[cylinder {} {}]",
+            fmt_f64(*radius),
+            fmt_f64(*height)
+        )),
 
-        CsgOp::Sphere { radius, .. } => {
-            Some(format!("[sphere {}]", fmt_f64(*radius)))
-        }
+        CsgOp::Sphere { radius, .. } => Some(format!("[sphere {}]", fmt_f64(*radius))),
 
-        CsgOp::Cone { radius_bottom, radius_top, height, .. } => {
-            Some(format!(
-                "[cone {} {} {}]",
-                fmt_f64(*radius_bottom),
-                fmt_f64(*radius_top),
-                fmt_f64(*height)
-            ))
-        }
+        CsgOp::Cone {
+            radius_bottom,
+            radius_top,
+            height,
+            ..
+        } => Some(format!(
+            "[cone {} {} {}]",
+            fmt_f64(*radius_bottom),
+            fmt_f64(*radius_top),
+            fmt_f64(*height)
+        )),
 
         CsgOp::Empty => Some("Empty".to_string()),
 
-        CsgOp::Union { left, right } => {
-            Some(format!("[union {} {}]", node_ref(*left, doc), node_ref(*right, doc)))
-        }
+        CsgOp::Union { left, right } => Some(format!(
+            "[union {} {}]",
+            node_ref(*left, doc),
+            node_ref(*right, doc)
+        )),
 
-        CsgOp::Difference { left, right } => {
-            Some(format!("[difference {} {}]", node_ref(*left, doc), node_ref(*right, doc)))
-        }
+        CsgOp::Difference { left, right } => Some(format!(
+            "[difference {} {}]",
+            node_ref(*left, doc),
+            node_ref(*right, doc)
+        )),
 
-        CsgOp::Intersection { left, right } => {
-            Some(format!("[intersection {} {}]", node_ref(*left, doc), node_ref(*right, doc)))
-        }
+        CsgOp::Intersection { left, right } => Some(format!(
+            "[intersection {} {}]",
+            node_ref(*left, doc),
+            node_ref(*right, doc)
+        )),
 
-        CsgOp::Translate { child, offset } => {
-            Some(format!(
-                "[translate {} {} {} {}]",
-                fmt_f64(offset.x),
-                fmt_f64(offset.y),
-                fmt_f64(offset.z),
-                node_ref(*child, doc)
-            ))
-        }
+        CsgOp::Translate { child, offset } => Some(format!(
+            "[translate {} {} {} {}]",
+            fmt_f64(offset.x),
+            fmt_f64(offset.y),
+            fmt_f64(offset.z),
+            node_ref(*child, doc)
+        )),
 
-        CsgOp::Rotate { child, angles } => {
-            Some(format!(
-                "[rotate {} {} {} {}]",
-                fmt_f64(angles.x),
-                fmt_f64(angles.y),
-                fmt_f64(angles.z),
-                node_ref(*child, doc)
-            ))
-        }
+        CsgOp::Rotate { child, angles } => Some(format!(
+            "[rotate {} {} {} {}]",
+            fmt_f64(angles.x),
+            fmt_f64(angles.y),
+            fmt_f64(angles.z),
+            node_ref(*child, doc)
+        )),
 
-        CsgOp::Scale { child, factor } => {
-            Some(format!(
-                "[scale {} {} {} {}]",
-                fmt_f64(factor.x),
-                fmt_f64(factor.y),
-                fmt_f64(factor.z),
-                node_ref(*child, doc)
-            ))
-        }
+        CsgOp::Scale { child, factor } => Some(format!(
+            "[scale {} {} {} {}]",
+            fmt_f64(factor.x),
+            fmt_f64(factor.y),
+            fmt_f64(factor.z),
+            node_ref(*child, doc)
+        )),
 
-        CsgOp::Fillet { child, radius } => {
-            Some(format!("[fillet {} {}]", fmt_f64(*radius), node_ref(*child, doc)))
-        }
+        CsgOp::Fillet { child, radius } => Some(format!(
+            "[fillet {} {}]",
+            fmt_f64(*radius),
+            node_ref(*child, doc)
+        )),
 
-        CsgOp::Chamfer { child, distance } => {
-            Some(format!("[chamfer {} {}]", fmt_f64(*distance), node_ref(*child, doc)))
-        }
+        CsgOp::Chamfer { child, distance } => Some(format!(
+            "[chamfer {} {}]",
+            fmt_f64(*distance),
+            node_ref(*child, doc)
+        )),
 
-        CsgOp::Shell { child, thickness } => {
-            Some(format!("[shell {} {}]", fmt_f64(*thickness), node_ref(*child, doc)))
-        }
+        CsgOp::Shell { child, thickness } => Some(format!(
+            "[shell {} {}]",
+            fmt_f64(*thickness),
+            node_ref(*child, doc)
+        )),
 
-        CsgOp::LinearPattern { child, direction, count, spacing } => {
-            Some(format!(
-                "[linear-pattern {} {} {} {} {} {}]",
-                fmt_f64(direction.x),
-                fmt_f64(direction.y),
-                fmt_f64(direction.z),
-                count,
-                fmt_f64(*spacing),
-                node_ref(*child, doc)
-            ))
-        }
+        CsgOp::LinearPattern {
+            child,
+            direction,
+            count,
+            spacing,
+        } => Some(format!(
+            "[linear-pattern {} {} {} {} {} {}]",
+            fmt_f64(direction.x),
+            fmt_f64(direction.y),
+            fmt_f64(direction.z),
+            count,
+            fmt_f64(*spacing),
+            node_ref(*child, doc)
+        )),
 
-        CsgOp::CircularPattern { child, axis_origin, axis_dir, count, angle_deg } => {
-            Some(format!(
-                "[circular-pattern {} {} {} {} {} {} {} {} {}]",
-                fmt_f64(axis_origin.x),
-                fmt_f64(axis_origin.y),
-                fmt_f64(axis_origin.z),
-                fmt_f64(axis_dir.x),
-                fmt_f64(axis_dir.y),
-                fmt_f64(axis_dir.z),
-                count,
-                fmt_f64(*angle_deg),
-                node_ref(*child, doc)
-            ))
-        }
+        CsgOp::CircularPattern {
+            child,
+            axis_origin,
+            axis_dir,
+            count,
+            angle_deg,
+        } => Some(format!(
+            "[circular-pattern {} {} {} {} {} {} {} {} {}]",
+            fmt_f64(axis_origin.x),
+            fmt_f64(axis_origin.y),
+            fmt_f64(axis_origin.z),
+            fmt_f64(axis_dir.x),
+            fmt_f64(axis_dir.y),
+            fmt_f64(axis_dir.z),
+            count,
+            fmt_f64(*angle_deg),
+            node_ref(*child, doc)
+        )),
 
-        CsgOp::Sketch2D { origin, x_dir, y_dir, segments } => {
+        CsgOp::Sketch2D {
+            origin,
+            x_dir,
+            y_dir,
+            segments,
+        } => {
             let mut buf = String::new();
             let _ = writeln!(buf, "[sketch");
-            let _ = writeln!(buf, "  {} {} {}", fmt_f64(origin.x), fmt_f64(origin.y), fmt_f64(origin.z));
-            let _ = writeln!(buf, "  {} {} {}", fmt_f64(x_dir.x), fmt_f64(x_dir.y), fmt_f64(x_dir.z));
-            let _ = writeln!(buf, "  {} {} {}", fmt_f64(y_dir.x), fmt_f64(y_dir.y), fmt_f64(y_dir.z));
+            let _ = writeln!(
+                buf,
+                "  {} {} {}",
+                fmt_f64(origin.x),
+                fmt_f64(origin.y),
+                fmt_f64(origin.z)
+            );
+            let _ = writeln!(
+                buf,
+                "  {} {} {}",
+                fmt_f64(x_dir.x),
+                fmt_f64(x_dir.y),
+                fmt_f64(x_dir.z)
+            );
+            let _ = writeln!(
+                buf,
+                "  {} {} {}",
+                fmt_f64(y_dir.x),
+                fmt_f64(y_dir.y),
+                fmt_f64(y_dir.z)
+            );
             let _ = writeln!(buf, "  #[");
             for seg in segments {
                 match seg {
@@ -270,17 +307,27 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> Option<String> {
                         let _ = writeln!(
                             buf,
                             "    [line {} {} {} {}]",
-                            fmt_f64(start.x), fmt_f64(start.y),
-                            fmt_f64(end.x), fmt_f64(end.y)
+                            fmt_f64(start.x),
+                            fmt_f64(start.y),
+                            fmt_f64(end.x),
+                            fmt_f64(end.y)
                         );
                     }
-                    SketchSegment2D::Arc { start, end, center, ccw } => {
+                    SketchSegment2D::Arc {
+                        start,
+                        end,
+                        center,
+                        ccw,
+                    } => {
                         let _ = writeln!(
                             buf,
                             "    [arc {} {} {} {} {} {} {}]",
-                            fmt_f64(start.x), fmt_f64(start.y),
-                            fmt_f64(end.x), fmt_f64(end.y),
-                            fmt_f64(center.x), fmt_f64(center.y),
+                            fmt_f64(start.x),
+                            fmt_f64(start.y),
+                            fmt_f64(end.x),
+                            fmt_f64(end.y),
+                            fmt_f64(center.x),
+                            fmt_f64(center.y),
                             ccw
                         );
                     }
@@ -290,51 +337,59 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> Option<String> {
             Some(buf)
         }
 
-        CsgOp::Extrude { sketch, direction, .. } => {
-            Some(format!(
-                "[extrude {} {} {} {}]",
-                fmt_f64(direction.x),
-                fmt_f64(direction.y),
-                fmt_f64(direction.z),
-                node_ref(*sketch, doc)
-            ))
-        }
+        CsgOp::Extrude {
+            sketch, direction, ..
+        } => Some(format!(
+            "[extrude {} {} {} {}]",
+            fmt_f64(direction.x),
+            fmt_f64(direction.y),
+            fmt_f64(direction.z),
+            node_ref(*sketch, doc)
+        )),
 
-        CsgOp::Revolve { sketch, axis_origin, axis_dir, angle_deg } => {
-            Some(format!(
-                "[revolve {} {} {} {} {} {} {} {}]",
-                fmt_f64(axis_origin.x),
-                fmt_f64(axis_origin.y),
-                fmt_f64(axis_origin.z),
-                fmt_f64(axis_dir.x),
-                fmt_f64(axis_dir.y),
-                fmt_f64(axis_dir.z),
-                fmt_f64(*angle_deg),
-                node_ref(*sketch, doc)
-            ))
-        }
+        CsgOp::Revolve {
+            sketch,
+            axis_origin,
+            axis_dir,
+            angle_deg,
+        } => Some(format!(
+            "[revolve {} {} {} {} {} {} {} {}]",
+            fmt_f64(axis_origin.x),
+            fmt_f64(axis_origin.y),
+            fmt_f64(axis_origin.z),
+            fmt_f64(axis_dir.x),
+            fmt_f64(axis_dir.y),
+            fmt_f64(axis_dir.z),
+            fmt_f64(*angle_deg),
+            node_ref(*sketch, doc)
+        )),
 
         CsgOp::Sweep { sketch, path, .. } => {
             let sk = node_ref(*sketch, doc);
             match path {
-                PathCurve::Line { start, end } => {
-                    Some(format!(
-                        "[sweep-line {} {} {} {} {} {} {}]",
-                        fmt_f64(start.x), fmt_f64(start.y), fmt_f64(start.z),
-                        fmt_f64(end.x), fmt_f64(end.y), fmt_f64(end.z),
-                        sk
-                    ))
-                }
-                PathCurve::Helix { radius, pitch, height, turns } => {
-                    Some(format!(
-                        "[sweep-helix {} {} {} {} {}]",
-                        fmt_f64(*radius),
-                        fmt_f64(*pitch),
-                        fmt_f64(*height),
-                        fmt_f64(*turns),
-                        sk
-                    ))
-                }
+                PathCurve::Line { start, end } => Some(format!(
+                    "[sweep-line {} {} {} {} {} {} {}]",
+                    fmt_f64(start.x),
+                    fmt_f64(start.y),
+                    fmt_f64(start.z),
+                    fmt_f64(end.x),
+                    fmt_f64(end.y),
+                    fmt_f64(end.z),
+                    sk
+                )),
+                PathCurve::Helix {
+                    radius,
+                    pitch,
+                    height,
+                    turns,
+                } => Some(format!(
+                    "[sweep-helix {} {} {} {} {}]",
+                    fmt_f64(*radius),
+                    fmt_f64(*pitch),
+                    fmt_f64(*height),
+                    fmt_f64(*turns),
+                    sk
+                )),
             }
         }
 
@@ -348,15 +403,18 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> Option<String> {
             }
         }
 
-        CsgOp::Text2D { text, height, .. } => {
-            Some(format!(
-                "; TODO: Text2D {:?} (h={}) — not yet supported in loon\n; [text2d ...]",
-                text,
-                fmt_f64(*height)
-            ))
-        }
+        CsgOp::Text2D { text, height, .. } => Some(format!(
+            "; TODO: Text2D {:?} (h={}) — not yet supported in loon\n; [text2d ...]",
+            text,
+            fmt_f64(*height)
+        )),
 
-        CsgOp::ImportedMesh { positions, indices, source, .. } => {
+        CsgOp::ImportedMesh {
+            positions,
+            indices,
+            source,
+            ..
+        } => {
             let verts = positions.len() / 3;
             let tris = indices.len() / 3;
             let src = source
@@ -369,13 +427,12 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> Option<String> {
             ))
         }
 
-        CsgOp::StepImport { path } => {
-            Some(format!("; TODO: StepImport {:?} — not yet supported in loon", path))
-        }
+        CsgOp::StepImport { path } => Some(format!(
+            "; TODO: StepImport {:?} — not yet supported in loon",
+            path
+        )),
 
-        CsgOp::PcbBoard { .. } => {
-            Some("; TODO: PcbBoard — not yet supported in loon".to_string())
-        }
+        CsgOp::PcbBoard { .. } => Some("; TODO: PcbBoard — not yet supported in loon".to_string()),
 
         CsgOp::EmbroideryPattern { .. } => {
             Some("; TODO: EmbroideryPattern — not yet supported in loon".to_string())
@@ -414,12 +471,7 @@ fn topo_sort(doc: &Document) -> Vec<NodeId> {
     let mut visited = HashSet::new();
     let mut order = Vec::new();
 
-    fn visit(
-        id: NodeId,
-        doc: &Document,
-        visited: &mut HashSet<NodeId>,
-        order: &mut Vec<NodeId>,
-    ) {
+    fn visit(id: NodeId, doc: &Document, visited: &mut HashSet<NodeId>, order: &mut Vec<NodeId>) {
         if visited.contains(&id) {
             return;
         }
@@ -482,10 +534,40 @@ mod tests {
     #[test]
     fn boolean_union() {
         let mut doc = Document::new();
-        doc.nodes.insert(1, Node { id: 1, name: Some("a".into()), op: CsgOp::Cube { size: Vec3::new(10.0, 10.0, 10.0) } });
-        doc.nodes.insert(2, Node { id: 2, name: Some("b".into()), op: CsgOp::Sphere { radius: 5.0, segments: 0 } });
-        doc.nodes.insert(3, Node { id: 3, name: Some("merged".into()), op: CsgOp::Union { left: 1, right: 2 } });
-        doc.roots.push(SceneEntry { root: 3, material: "default".into(), visible: None });
+        doc.nodes.insert(
+            1,
+            Node {
+                id: 1,
+                name: Some("a".into()),
+                op: CsgOp::Cube {
+                    size: Vec3::new(10.0, 10.0, 10.0),
+                },
+            },
+        );
+        doc.nodes.insert(
+            2,
+            Node {
+                id: 2,
+                name: Some("b".into()),
+                op: CsgOp::Sphere {
+                    radius: 5.0,
+                    segments: 0,
+                },
+            },
+        );
+        doc.nodes.insert(
+            3,
+            Node {
+                id: 3,
+                name: Some("merged".into()),
+                op: CsgOp::Union { left: 1, right: 2 },
+            },
+        );
+        doc.roots.push(SceneEntry {
+            root: 3,
+            material: "default".into(),
+            visible: None,
+        });
         let loon = document_to_loon(&doc);
         assert!(loon.contains("[let merged [union a b]]"));
     }
@@ -507,16 +589,46 @@ mod tests {
         let loon = document_to_loon(&doc);
         let mat_pos = loon.find("[let mat-steel").unwrap();
         let node_pos = loon.find("[let box").unwrap();
-        assert!(mat_pos < node_pos, "materials should be emitted before nodes");
+        assert!(
+            mat_pos < node_pos,
+            "materials should be emitted before nodes"
+        );
     }
 
     #[test]
     fn multiple_roots() {
         let mut doc = Document::new();
-        doc.nodes.insert(1, Node { id: 1, name: Some("a".into()), op: CsgOp::Cube { size: Vec3::new(1.0, 1.0, 1.0) } });
-        doc.nodes.insert(2, Node { id: 2, name: Some("b".into()), op: CsgOp::Sphere { radius: 2.0, segments: 0 } });
-        doc.roots.push(SceneEntry { root: 1, material: "steel".into(), visible: None });
-        doc.roots.push(SceneEntry { root: 2, material: "glass".into(), visible: None });
+        doc.nodes.insert(
+            1,
+            Node {
+                id: 1,
+                name: Some("a".into()),
+                op: CsgOp::Cube {
+                    size: Vec3::new(1.0, 1.0, 1.0),
+                },
+            },
+        );
+        doc.nodes.insert(
+            2,
+            Node {
+                id: 2,
+                name: Some("b".into()),
+                op: CsgOp::Sphere {
+                    radius: 2.0,
+                    segments: 0,
+                },
+            },
+        );
+        doc.roots.push(SceneEntry {
+            root: 1,
+            material: "steel".into(),
+            visible: None,
+        });
+        doc.roots.push(SceneEntry {
+            root: 2,
+            material: "glass".into(),
+            visible: None,
+        });
         let loon = document_to_loon(&doc);
         assert!(loon.contains("#["));
         assert!(loon.contains("[root a \"steel\"]"));
@@ -526,9 +638,32 @@ mod tests {
     #[test]
     fn transform_chain() {
         let mut doc = Document::new();
-        doc.nodes.insert(1, Node { id: 1, name: Some("c".into()), op: CsgOp::Cube { size: Vec3::new(5.0, 5.0, 5.0) } });
-        doc.nodes.insert(2, Node { id: 2, name: None, op: CsgOp::Translate { child: 1, offset: Vec3::new(10.0, 0.0, 0.0) } });
-        doc.roots.push(SceneEntry { root: 2, material: "default".into(), visible: None });
+        doc.nodes.insert(
+            1,
+            Node {
+                id: 1,
+                name: Some("c".into()),
+                op: CsgOp::Cube {
+                    size: Vec3::new(5.0, 5.0, 5.0),
+                },
+            },
+        );
+        doc.nodes.insert(
+            2,
+            Node {
+                id: 2,
+                name: None,
+                op: CsgOp::Translate {
+                    child: 1,
+                    offset: Vec3::new(10.0, 0.0, 0.0),
+                },
+            },
+        );
+        doc.roots.push(SceneEntry {
+            root: 2,
+            material: "default".into(),
+            visible: None,
+        });
         let loon = document_to_loon(&doc);
         assert!(loon.contains("[let c [cube 5.0 5.0 5.0]]"));
         assert!(loon.contains("[let n2 [translate 10.0 0.0 0.0 c]]"));

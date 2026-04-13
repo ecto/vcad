@@ -2606,8 +2606,7 @@ pub fn to_vcode(doc_json: &str) -> Result<String, JsError> {
     let doc = vcad_ir::Document::from_json(doc_json)
         .map_err(|e| JsError::new(&format!("Invalid JSON: {}", e)))?;
 
-    vcad_ir::vcode::to_vcode(&doc)
-        .map_err(|e| JsError::new(&format!("Conversion error: {}", e)))
+    vcad_ir::vcode::to_vcode(&doc).map_err(|e| JsError::new(&format!("Conversion error: {}", e)))
 }
 
 /// Evaluate VCode and return a Solid for rendering.
@@ -4274,10 +4273,7 @@ mod ecad_wasm {
     /// # Returns
     /// Array of ratsnest lines as JsValue.
     #[wasm_bindgen(js_name = ecadComputeRatsnest)]
-    pub fn ecad_compute_ratsnest(
-        pcb_json: &str,
-        netlist_json: &str,
-    ) -> Result<JsValue, JsError> {
+    pub fn ecad_compute_ratsnest(pcb_json: &str, netlist_json: &str) -> Result<JsValue, JsError> {
         let pcb: vcad_ir::ecad::Pcb =
             serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
         let netlist: vcad_ecad_pcb::ratsnest::Netlist =
@@ -4593,9 +4589,8 @@ pub fn document_to_loon(doc_json: &str) -> Result<String, JsError> {
 /// Returns a JSON-serialized VcadFile with document, parts, and metadata.
 #[wasm_bindgen(js_name = parseVcadFile)]
 pub fn parse_vcad_file(content: &str) -> Result<JsValue, JsError> {
-    let eval_loon = |source: &str| -> Result<vcad_ir::Document, String> {
-        vcad_loon::eval_vcad(source, None)
-    };
+    let eval_loon =
+        |source: &str| -> Result<vcad_ir::Document, String> { vcad_loon::eval_vcad(source, None) };
     let vcad_file = vcad_ir::file_io::parse_vcad_file_with_loon(content, Some(&eval_loon))
         .map_err(|e| JsError::new(&e))?;
     serde_wasm_bindgen::to_value(&vcad_file).map_err(|e| JsError::new(&e.to_string()))
@@ -4631,11 +4626,22 @@ pub fn compute_mesh_volume(positions: &[f32], indices: &[u32]) -> f64 {
         if i2 + 2 >= positions.len() {
             continue;
         }
-        let v0 = [positions[i0] as f64, positions[i0 + 1] as f64, positions[i0 + 2] as f64];
-        let v1 = [positions[i1] as f64, positions[i1 + 1] as f64, positions[i1 + 2] as f64];
-        let v2 = [positions[i2] as f64, positions[i2 + 1] as f64, positions[i2 + 2] as f64];
-        vol += v0[0] * (v1[1] * v2[2] - v2[1] * v1[2])
-            - v1[0] * (v0[1] * v2[2] - v2[1] * v0[2])
+        let v0 = [
+            positions[i0] as f64,
+            positions[i0 + 1] as f64,
+            positions[i0 + 2] as f64,
+        ];
+        let v1 = [
+            positions[i1] as f64,
+            positions[i1 + 1] as f64,
+            positions[i1 + 2] as f64,
+        ];
+        let v2 = [
+            positions[i2] as f64,
+            positions[i2 + 1] as f64,
+            positions[i2 + 2] as f64,
+        ];
+        vol += v0[0] * (v1[1] * v2[2] - v2[1] * v1[2]) - v1[0] * (v0[1] * v2[2] - v2[1] * v0[2])
             + v2[0] * (v0[1] * v1[2] - v1[1] * v0[2]);
     }
     (vol / 6.0).abs()

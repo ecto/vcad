@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{parse_macro_input, DeriveInput, Fields, Lit, Meta, Expr};
+use syn::{parse_macro_input, DeriveInput, Expr, Fields, Lit, Meta};
 
 #[proc_macro_derive(ToolSchema, attributes(tool))]
 pub fn derive_tool_schema(input: TokenStream) -> TokenStream {
@@ -51,7 +51,11 @@ fn parse_tool_attrs(attrs: &[syn::Attribute]) -> syn::Result<ToolAttrs> {
         })?;
     }
 
-    Ok(ToolAttrs { hidden, category, ai_hint })
+    Ok(ToolAttrs {
+        hidden,
+        category,
+        ai_hint,
+    })
 }
 
 fn extract_doc_comment(attrs: &[syn::Attribute]) -> String {
@@ -93,11 +97,18 @@ fn impl_tool_schema(input: &DeriveInput) -> syn::Result<TokenStream2> {
 
     let data = match &input.data {
         syn::Data::Enum(data) => data,
-        _ => return Err(syn::Error::new_spanned(input, "ToolSchema only supports enums")),
+        _ => {
+            return Err(syn::Error::new_spanned(
+                input,
+                "ToolSchema only supports enums",
+            ))
+        }
     };
 
     let enum_attrs = parse_tool_attrs(&input.attrs)?;
-    let default_category = enum_attrs.category.unwrap_or_else(|| "uncategorized".to_string());
+    let default_category = enum_attrs
+        .category
+        .unwrap_or_else(|| "uncategorized".to_string());
 
     let mut variant_entries = Vec::new();
 
@@ -190,12 +201,11 @@ fn build_fields_schema(fields: &Fields) -> syn::Result<TokenStream2> {
                 }
             })
         }
-        Fields::Unit => {
-            Ok(quote! { serde_json::json!({ "type": "object", "properties": {} }) })
-        }
-        Fields::Unnamed(_) => {
-            Err(syn::Error::new_spanned(fields, "ToolSchema does not support tuple variants"))
-        }
+        Fields::Unit => Ok(quote! { serde_json::json!({ "type": "object", "properties": {} }) }),
+        Fields::Unnamed(_) => Err(syn::Error::new_spanned(
+            fields,
+            "ToolSchema does not support tuple variants",
+        )),
     }
 }
 
@@ -213,9 +223,12 @@ fn type_to_schema(ty: &syn::Type) -> syn::Result<(TokenStream2, bool)> {
     if ty_str.starts_with("Vec<") && !ty_str.starts_with("Vec2") && !ty_str.starts_with("Vec3") {
         let inner = extract_generic_inner(ty, "Vec")?;
         let (inner_schema, _) = type_to_schema(inner)?;
-        return Ok((quote! {
-            serde_json::json!({ "type": "array", "items": #inner_schema })
-        }, false));
+        return Ok((
+            quote! {
+                serde_json::json!({ "type": "array", "items": #inner_schema })
+            },
+            false,
+        ));
     }
 
     // Box<T>
@@ -231,28 +244,37 @@ fn type_to_schema(ty: &syn::Type) -> syn::Result<(TokenStream2, bool)> {
         }
         "bool" => Ok((quote! { serde_json::json!({ "type": "boolean" }) }, false)),
         "String" => Ok((quote! { serde_json::json!({ "type": "string" }) }, false)),
-        "NodeId" => Ok((quote! { serde_json::json!({ "type": "string", "description": "Node ID reference" }) }, false)),
-        "Vec3" => Ok((quote! {
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "x": { "type": "number" },
-                    "y": { "type": "number" },
-                    "z": { "type": "number" }
-                },
-                "required": ["x", "y", "z"]
-            })
-        }, false)),
-        "Vec2" => Ok((quote! {
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "x": { "type": "number" },
-                    "y": { "type": "number" }
-                },
-                "required": ["x", "y"]
-            })
-        }, false)),
+        "NodeId" => Ok((
+            quote! { serde_json::json!({ "type": "string", "description": "Node ID reference" }) },
+            false,
+        )),
+        "Vec3" => Ok((
+            quote! {
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "x": { "type": "number" },
+                        "y": { "type": "number" },
+                        "z": { "type": "number" }
+                    },
+                    "required": ["x", "y", "z"]
+                })
+            },
+            false,
+        )),
+        "Vec2" => Ok((
+            quote! {
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "x": { "type": "number" },
+                        "y": { "type": "number" }
+                    },
+                    "required": ["x", "y"]
+                })
+            },
+            false,
+        )),
         _ => {
             // Unknown types — generic object fallback
             Ok((quote! { serde_json::json!({ "type": "object" }) }, false))
@@ -272,5 +294,8 @@ fn extract_generic_inner<'a>(ty: &'a syn::Type, wrapper: &str) -> syn::Result<&'
             }
         }
     }
-    Err(syn::Error::new_spanned(ty, format!("expected {}<T>", wrapper)))
+    Err(syn::Error::new_spanned(
+        ty,
+        format!("expected {}<T>", wrapper),
+    ))
 }
