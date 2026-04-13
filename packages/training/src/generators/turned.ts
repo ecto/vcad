@@ -339,7 +339,7 @@ export class TurnedGenerator implements PartGenerator {
       case "knob":
         return 3;
       case "steppedShaft":
-        return 2 + p.steps;
+        return Math.min(2 + p.steps, 5);
       case "bowl":
         return 3;
       default:

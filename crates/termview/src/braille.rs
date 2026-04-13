@@ -70,13 +70,16 @@ pub fn buffer_to_braille(buffer: &RenderBuffer) -> (u16, u16, String) {
             let braille_char = char::from_u32(0x2800 + dots as u32).unwrap_or(' ');
 
             // Get average color
-            if count > 0 {
-                let r = (total_r / count) as u8;
-                let g = (total_g / count) as u8;
-                let b = (total_b / count) as u8;
-
+            if let (Some(r), Some(g), Some(b)) = (
+                total_r.checked_div(count),
+                total_g.checked_div(count),
+                total_b.checked_div(count),
+            ) {
                 // ANSI 24-bit color escape sequence
-                result.push_str(&format!("\x1b[38;2;{};{};{}m{}", r, g, b, braille_char));
+                result.push_str(&format!(
+                    "\x1b[38;2;{};{};{}m{}",
+                    r as u8, g as u8, b as u8, braille_char
+                ));
             } else {
                 result.push(' ');
             }

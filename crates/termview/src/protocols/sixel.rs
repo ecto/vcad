@@ -133,7 +133,7 @@ impl SixelEncoder {
 
         // Take top 64 colors by frequency
         let mut colors: Vec<_> = color_counts.into_iter().collect();
-        colors.sort_by(|a, b| b.1.cmp(&a.1));
+        colors.sort_by_key(|c| std::cmp::Reverse(c.1));
         colors.truncate(64);
 
         self.palette = colors.iter().map(|(c, _)| *c).collect();
