@@ -147,7 +147,7 @@ export function LogViewer() {
     <div
       ref={panelRef}
       className={cn(
-        "w-full bg-surface flex flex-col h-[40vh] min-h-0",
+        "w-full bg-surface flex flex-col h-[40vh] min-h-0 border-t border-border",
         "animate-in slide-in-from-bottom duration-150",
       )}
     >

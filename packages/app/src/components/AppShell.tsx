@@ -166,7 +166,7 @@ export function AppShell({
         )}
       </div>
       {bottomDock && (
-        <div className="shrink-0 border-t border-border">
+        <div className="shrink-0">
           {bottomDock}
         </div>
       )}
