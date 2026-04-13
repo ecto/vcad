@@ -105,6 +105,8 @@ interface AppShellProps {
   header?: ReactNode;
   leftSidebar?: ReactNode;
   rightSidebar?: ReactNode;
+  /** Optional dock above the footer (e.g. DevTools / log panel) */
+  bottomDock?: ReactNode;
   /** Bottom status bar (Borland F-key hint row) */
   footer?: ReactNode;
   /** Main viewport content — takes the remaining flex space in the body row. */
@@ -123,6 +125,7 @@ export function AppShell({
   header,
   leftSidebar,
   rightSidebar,
+  bottomDock,
   footer,
   children,
 }: AppShellProps) {
@@ -162,6 +165,11 @@ export function AppShell({
           </div>
         )}
       </div>
+      {bottomDock && (
+        <div className="shrink-0 border-t border-border">
+          {bottomDock}
+        </div>
+      )}
       {footer && (
         <div className="shrink-0 border-t border-border">
           {footer}

@@ -253,7 +253,6 @@ export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
   const showWireframe = useUiStore((s) => s.showWireframe);
   const toggleGridSnap = useUiStore((s) => s.toggleGridSnap);
   const gridSnap = useUiStore((s) => s.gridSnap);
-  const logPanelOpen = useLogStore((s) => s.panelOpen);
   const unreadChangelog = useChangelogStore((s) => s.getUnreadCount());
 
   const handleCommandPalette = () => {
@@ -503,7 +502,7 @@ export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
                 shortcut="`"
                 onClick={() => { useLogStore.getState().togglePanel(); close(); }}
               >
-                {logPanelOpen ? "Hide Log Viewer" : "Show Log Viewer"}
+                Toggle DevTools
               </MenuItem>
               <MenuSeparator />
               <MenuItem icon={Cube} onClick={() => { handleCameraPreset("isometric"); close(); }}>

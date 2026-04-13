@@ -647,11 +647,6 @@ export function App() {
 
       {/* Embroidery panel — hide when an embroidery part is selected so PropertyPanel shows */}
       {embroideryPanelOpen && !hasSelectedEmbroideryPart && <Suspense fallback={null}><EmbroideryPanel /></Suspense>}
-
-      {/* Log viewer (Cmd+J to toggle) */}
-      <Suspense fallback={null}>
-        <LogViewer />
-      </Suspense>
     </>
   );
 
@@ -699,6 +694,11 @@ export function App() {
             rightSidebar={!electronicsActive && (
               <Suspense fallback={null}>
                 <ChatSidebar />
+              </Suspense>
+            )}
+            bottomDock={!electronicsActive && (
+              <Suspense fallback={null}>
+                <LogViewer />
               </Suspense>
             )}
             footer={!electronicsActive && statusBarVisible && (

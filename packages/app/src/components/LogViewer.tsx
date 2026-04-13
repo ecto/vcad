@@ -135,19 +135,16 @@ export function LogViewer() {
   if (!panelOpen) return null;
 
   return (
-    <>
-      {/* Quake-style dropdown console */}
-      <div
-        ref={panelRef}
-        className={cn(
-          "fixed z-50 bg-surface/95 backdrop-blur-sm border-b border-border shadow-2xl flex flex-col",
-          "animate-in slide-in-from-top duration-150",
-          "top-0 left-0 right-0 h-[50vh]",
-        )}
-      >
+    <div
+      ref={panelRef}
+      className={cn(
+        "w-full bg-surface flex flex-col h-[40vh] min-h-0",
+        "animate-in slide-in-from-bottom duration-150",
+      )}
+    >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border px-3 py-2 shrink-0">
-          <h3 className="text-xs font-bold">Logs</h3>
+          <h3 className="text-xs font-bold">DevTools</h3>
           <div className="flex items-center gap-1">
             <button
               onClick={handleCopy}
@@ -197,7 +194,6 @@ export function LogViewer() {
         <div className="border-t border-border px-3 py-1.5 text-[10px] text-text-muted shrink-0">
           {filteredEntries.length} of {entries.length} entries
         </div>
-      </div>
-    </>
+    </div>
   );
 }
