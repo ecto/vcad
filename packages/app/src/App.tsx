@@ -18,10 +18,10 @@ import { Viewport } from "@/components/Viewport";
 import { FeatureTree } from "@/components/FeatureTree";
 import { MobileShell } from "@/components/mobile/MobileShell";
 import { useIsMobile } from "@/hooks/useIsMobile";
-import { CaretLeft } from "@phosphor-icons/react/dist/ssr/CaretLeft";
 
 // Lazy-loaded components (behind user actions, modals, or conditional renders)
 const PropertyPanel = lazy(() => import("@/components/PropertyPanel").then(m => ({ default: m.PropertyPanel })));
+const SceneInspector = lazy(() => import("@/components/SceneInspector").then(m => ({ default: m.SceneInspector })));
 const GuidedFlowOverlay = lazy(() => import("@/components/GuidedFlowOverlay").then(m => ({ default: m.GuidedFlowOverlay })));
 const GhostPromptController = lazy(() => import("@/components/GhostPromptController").then(m => ({ default: m.GhostPromptController })));
 const CelebrationOverlay = lazy(() => import("@/components/CelebrationOverlay").then(m => ({ default: m.CelebrationOverlay })));
@@ -118,22 +118,17 @@ function ErrorScreen({ message }: { message: string }) {
 /** Left sidebar: tree by default, drills into inspector when something is selected. */
 function FeatureTreeSlot({ sketchActive }: { sketchActive: boolean }) {
   const sidebarPane = useUiStore((s) => s.sidebarPane);
-  const setSidebarPane = useUiStore((s) => s.setSidebarPane);
+  const inspectorTarget = useUiStore((s) => s.inspectorTarget);
   if (sketchActive) return null;
   return (
     <div className="flex h-full w-full flex-col min-h-0">
-      {sidebarPane === "inspector" && (
-        <button
-          onClick={() => setSidebarPane("tree")}
-          className="flex h-7 shrink-0 items-center gap-1.5 px-2 text-[11px] text-text-muted hover:text-text hover:bg-hover border-b border-border"
-        >
-          <CaretLeft size={12} />
-          <span>Tree</span>
-        </button>
-      )}
       <div className="flex-1 min-h-0 overflow-hidden">
         {sidebarPane === "tree" ? (
           <FeatureTree />
+        ) : inspectorTarget?.kind === "scene" ? (
+          <Suspense fallback={null}>
+            <SceneInspector />
+          </Suspense>
         ) : (
           <Suspense fallback={null}>
             <PropertyPanel />
@@ -183,13 +178,14 @@ export function App() {
   const hasSelectedEmbroideryPart = selPart != null && isEmbroideryPatternPart(selPart);
 
   // Auto-drill the left sidebar into the inspector when something is selected,
-  // and back to the tree when selection clears. Selection from the tree itself
-  // also drills, which is fine — the user can hit ← to go back.
+  // and back to the tree when selection clears. Selecting a part also clears
+  // the scene inspector target so the scene doesn't shadow the part.
   useEffect(() => {
-    const setSidebarPane = useUiStore.getState().setSidebarPane;
+    const { setSidebarPane, setInspectorTarget } = useUiStore.getState();
     if (selIds.size >= 1) {
+      setInspectorTarget(null);
       setSidebarPane("inspector");
-    } else {
+    } else if (useUiStore.getState().inspectorTarget == null) {
       setSidebarPane("tree");
     }
   }, [selIds]);

@@ -59,7 +59,31 @@ import { InlineCubeDimensions, InlineCylinderDimensions, InlineSphereDimensions,
 import { InlinePositionSection, InlineRotationSection } from "./tree/InlineTransform";
 import { InlineMaterial } from "./tree/InlineMaterial";
 import { EmbroideryProperties } from "./embroidery/EmbroideryProperties";
-import { SceneSection } from "./tree/SceneSection";
+function SceneTreeRow() {
+  const inspectorTarget = useUiStore((s) => s.inspectorTarget);
+  const setInspectorTarget = useUiStore((s) => s.setInspectorTarget);
+  const setSidebarPane = useUiStore((s) => s.setSidebarPane);
+  const clearSelection = useUiStore((s) => s.clearSelection);
+  const active = inspectorTarget?.kind === "scene";
+  return (
+    <button
+      onClick={() => {
+        clearSelection();
+        setInspectorTarget({ kind: "scene" });
+        setSidebarPane("inspector");
+      }}
+      className={cn(
+        "flex w-full items-center gap-2 px-2 h-7 text-xs",
+        "hover:bg-hover",
+        active ? "text-accent bg-accent/10" : "text-text",
+      )}
+      title="Inspect scene (background, environment, lights)"
+    >
+      <Globe size={13} className={active ? "text-accent" : "text-text-muted"} />
+      <span className="font-medium">Scene</span>
+    </button>
+  );
+}
 
 const KIND_ICONS: Record<PrimitiveKind, typeof Cube> = {
   cube: Cube,
@@ -881,8 +905,8 @@ export function FeatureTree() {
       <div className="overflow-y-auto scrollbar-thin flex-1">
         <ContextMenu>
           <div className="space-y-0.5">
-            {/* Scene section - always at top */}
-            <SceneSection />
+            {/* Scene row — drill into inspector to edit env / background / lights */}
+            <SceneTreeRow />
 
             {/* Separator and geometry when present */}
             {hasGeometry && (

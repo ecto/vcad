@@ -1010,7 +1010,7 @@ export function ToolPalette() {
         </div>
 
         {/* Row 2: active tab content — rendered inline, not in a popover */}
-        <div className="flex items-center gap-0.5 px-2 py-1 min-h-11">
+        <div className="flex items-center gap-0.5 px-2 h-7">
           {renderTabContent(displayedTab)}
         </div>
       </div>

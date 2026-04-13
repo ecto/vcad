@@ -14,6 +14,13 @@ export type ToolbarTab = "create" | "transform" | "combine" | "modify" | "assemb
 
 export type SidebarPane = "tree" | "inspector";
 
+/**
+ * What the inspector pane is focused on. `null` means it follows the viewport
+ * selection (the common case). Non-null targets are things you can inspect
+ * that are NOT 3D-selectable parts — currently just the scene itself.
+ */
+export type InspectorTarget = { kind: "scene" } | null;
+
 export interface UiState {
   selectedPartIds: Set<string>;
   hoveredPartId: string | null;
@@ -47,6 +54,7 @@ export interface UiState {
   toolbarTab: ToolbarTab;
   // Left sidebar pane (tree vs inspector / drill-down)
   sidebarPane: SidebarPane;
+  inspectorTarget: InspectorTarget;
 
   select: (partId: string | null) => void;
   toggleSelect: (partId: string) => void;
@@ -89,6 +97,7 @@ export interface UiState {
   setToolbarTab: (tab: ToolbarTab) => void;
   // Sidebar pane actions
   setSidebarPane: (pane: SidebarPane) => void;
+  setInspectorTarget: (target: InspectorTarget) => void;
 }
 
 // Load persisted material preferences from localStorage
@@ -153,6 +162,7 @@ export const useUiStore = create<UiState>((set) => ({
   toolbarExpanded: persistedToolbarExpanded,
   toolbarTab: "create" as ToolbarTab,
   sidebarPane: "tree" as SidebarPane,
+  inspectorTarget: null as InspectorTarget,
 
   select: (partId) =>
     set({ selectedPartIds: partId ? new Set([partId]) : new Set() }),
@@ -291,4 +301,6 @@ export const useUiStore = create<UiState>((set) => ({
   setToolbarTab: (tab) => set({ toolbarTab: tab }),
 
   setSidebarPane: (pane) => set({ sidebarPane: pane }),
+
+  setInspectorTarget: (target) => set({ inspectorTarget: target }),
 }));

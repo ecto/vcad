@@ -1,6 +1,12 @@
 import { useEffect, useRef } from "react";
 import { useUiStore, useSketchStore, type SidebarPane } from "@vcad/core";
 
+const INSPECT_VALUES = ["scene"] as const;
+type InspectValue = (typeof INSPECT_VALUES)[number];
+function isInspectValue(v: string | null): v is InspectValue {
+  return v != null && (INSPECT_VALUES as readonly string[]).includes(v);
+}
+
 /**
  * Mirrors a small slice of UI state to and from the URL query string so that
  * a refresh, deep-link, or browser back/forward navigates as the user expects.
@@ -17,6 +23,7 @@ import { useUiStore, useSketchStore, type SidebarPane } from "@vcad/core";
 export function useUrlSync() {
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
   const sidebarPane = useUiStore((s) => s.sidebarPane);
+  const inspectorTarget = useUiStore((s) => s.inspectorTarget);
   const sketchActive = useSketchStore((s) => s.active);
   const applyingFromUrl = useRef(false);
 
@@ -37,6 +44,13 @@ export function useUrlSync() {
         const pane = params.get("pane");
         if (pane === "tree" || pane === "inspector") {
           useUiStore.getState().setSidebarPane(pane);
+        }
+
+        const inspect = params.get("inspect");
+        if (isInspectValue(inspect)) {
+          useUiStore.getState().setInspectorTarget({ kind: inspect });
+        } else {
+          useUiStore.getState().setInspectorTarget(null);
         }
       } finally {
         applyingFromUrl.current = false;
@@ -68,6 +82,12 @@ export function useUrlSync() {
       params.delete("pane");
     }
 
+    if (inspectorTarget) {
+      params.set("inspect", inspectorTarget.kind);
+    } else {
+      params.delete("inspect");
+    }
+
     if (sketchActive) {
       params.set("sketch", "1");
     } else {
@@ -79,5 +99,5 @@ export function useUrlSync() {
     if (url !== window.location.pathname + window.location.search + window.location.hash) {
       window.history.replaceState(null, "", url);
     }
-  }, [selectedPartIds, sidebarPane, sketchActive]);
+  }, [selectedPartIds, sidebarPane, sketchActive, inspectorTarget]);
 }

@@ -2,22 +2,21 @@ import { Image } from "@phosphor-icons/react/dist/ssr/Image";
 import { Cube } from "@phosphor-icons/react/dist/ssr/Cube";
 import { CircleHalf } from "@phosphor-icons/react/dist/ssr/CircleHalf";
 import { X } from "@phosphor-icons/react/dist/ssr/X";
-import { cn } from "@/lib/utils";
-import { Tooltip } from "@/components/ui/tooltip";
-import { useDocumentStore } from "@vcad/core";
+import { CaretLeft } from "@phosphor-icons/react/dist/ssr/CaretLeft";
+import { Globe } from "@phosphor-icons/react/dist/ssr/Globe";
+import { useDocumentStore, useUiStore } from "@vcad/core";
 import type { EnvironmentPreset, Background } from "@vcad/ir";
+import { Tooltip } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 
-// Environment presets
 const PRESETS: EnvironmentPreset[] = [
-  "studio", "dawn", "sunset", "night", "warehouse", "park", "city", "forest", "apartment", "neutral"
+  "studio", "dawn", "sunset", "night", "warehouse", "park", "city", "forest", "apartment", "neutral",
 ];
 
-/** Convert RGB array to hex */
 function rgbToHex(color: [number, number, number]): string {
   return `#${color.map((c) => Math.round(c * 255).toString(16).padStart(2, "0")).join("")}`;
 }
 
-/** Convert hex to RGB array */
 function hexToRgb(hex: string): [number, number, number] {
   return [
     parseInt(hex.slice(1, 3), 16) / 255,
@@ -26,21 +25,25 @@ function hexToRgb(hex: string): [number, number, number] {
   ];
 }
 
-/** Labeled row */
-function LabeledRow({ label, children }: { label: string; children: React.ReactNode }) {
+function SectionHeader({ children }: { children: string }) {
   return (
-    <div className="flex items-center gap-3 px-2 py-1.5">
-      <span className="text-[10px] text-text-muted/70 w-16 shrink-0">{label}</span>
-      <div className="flex-1 flex items-center gap-2 min-w-0">{children}</div>
+    <div className="text-[10px] font-medium uppercase tracking-wider text-text-muted pt-2 pb-1">
+      {children}
     </div>
   );
 }
 
-/** Main scene section */
-export function SceneSection() {
+/**
+ * Inspector pane for the scene itself — environment, background, and (later)
+ * lights, units, grid, etc. Mirrors the structure of PropertyPanel's part
+ * variants so it slots cleanly into the same drill-down flow.
+ */
+export function SceneInspector() {
   const document = useDocumentStore((s) => s.document);
   const updateEnvironment = useDocumentStore((s) => s.updateEnvironment);
   const updateBackground = useDocumentStore((s) => s.updateBackground);
+  const setSidebarPane = useUiStore((s) => s.setSidebarPane);
+  const setInspectorTarget = useUiStore((s) => s.setInspectorTarget);
 
   const env = document.scene?.environment;
   const envValue = env?.type === "None" ? "none" : env?.type === "Preset" ? env.preset : "none";
@@ -70,10 +73,37 @@ export function SceneSection() {
     }
   }
 
+  function back() {
+    setInspectorTarget(null);
+    setSidebarPane("tree");
+  }
+
   return (
-    <div className="space-y-0.5 overflow-hidden">
-      {/* Environment */}
-      <LabeledRow label="Environment">
+    <div className="w-full h-full flex flex-col bg-surface min-h-0">
+      <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border px-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <button
+            onClick={back}
+            className="flex h-6 w-6 -ml-1 shrink-0 items-center justify-center text-text-muted hover:text-text hover:bg-hover"
+            aria-label="Back to tree"
+            title="Back to tree"
+          >
+            <CaretLeft size={14} />
+          </button>
+          <Globe size={13} className="text-accent shrink-0" />
+          <span className="text-xs font-medium text-text truncate">Scene</span>
+        </div>
+        <button
+          onClick={() => setInspectorTarget(null)}
+          className="flex h-6 w-6 shrink-0 items-center justify-center text-text-muted hover:text-text hover:bg-hover"
+          aria-label="Close"
+        >
+          <X size={14} />
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-3 scrollbar-thin">
+        <SectionHeader>Environment</SectionHeader>
         <select
           value={envValue}
           onChange={(e) => {
@@ -88,7 +118,7 @@ export function SceneSection() {
               });
             }
           }}
-          className="flex-1 min-w-0 px-1.5 py-0.5 text-xs bg-surface/50 rounded border-none focus:outline-none cursor-pointer capitalize"
+          className="w-full px-2 py-1 text-xs bg-card border border-border text-text outline-none focus:border-accent capitalize"
         >
           <option value="none" className="bg-surface">none</option>
           {PRESETS.map((p) => (
@@ -97,20 +127,18 @@ export function SceneSection() {
             </option>
           ))}
         </select>
-      </LabeledRow>
 
-      {/* Background */}
-      <LabeledRow label="Background">
+        <SectionHeader>Background</SectionHeader>
         <div className="flex items-center gap-1">
           {bgTypes.map(({ type, icon: TypeIcon, label }) => (
             <Tooltip key={type} content={label}>
               <button
                 onClick={() => setBgType(type)}
                 className={cn(
-                  "p-1.5 rounded",
+                  "flex h-7 w-7 items-center justify-center border",
                   bg.type === type
-                    ? "bg-accent/20 text-accent"
-                    : "bg-surface/30 opacity-60 hover:opacity-100"
+                    ? "bg-accent/15 border-accent/40 text-accent"
+                    : "bg-card border-border text-text-muted hover:text-text",
                 )}
               >
                 <TypeIcon size={14} />
@@ -119,36 +147,40 @@ export function SceneSection() {
           ))}
         </div>
         {bg.type === "Solid" && (
-          <Tooltip content="Background color">
-            <input
-              type="color"
-              value={rgbToHex(bg.color)}
-              onChange={(e) => updateBackground({ type: "Solid", color: hexToRgb(e.target.value) })}
-              className="w-6 h-6 border border-border/50 cursor-pointer rounded shrink-0"
-            />
-          </Tooltip>
+          <div className="flex items-center gap-2 mt-2">
+            <Tooltip content="Background color">
+              <input
+                type="color"
+                value={rgbToHex(bg.color)}
+                onChange={(e) => updateBackground({ type: "Solid", color: hexToRgb(e.target.value) })}
+                className="w-8 h-8 border border-border cursor-pointer shrink-0"
+              />
+            </Tooltip>
+            <span className="text-[10px] text-text-muted font-mono">{rgbToHex(bg.color)}</span>
+          </div>
         )}
         {bg.type === "Gradient" && (
-          <>
+          <div className="flex items-center gap-2 mt-2">
             <Tooltip content="Top color">
               <input
                 type="color"
                 value={rgbToHex(bg.top)}
                 onChange={(e) => updateBackground({ ...bg, top: hexToRgb(e.target.value) })}
-                className="w-6 h-6 border border-border/50 cursor-pointer rounded shrink-0"
+                className="w-8 h-8 border border-border cursor-pointer shrink-0"
               />
             </Tooltip>
+            <span className="text-[10px] text-text-muted">→</span>
             <Tooltip content="Bottom color">
               <input
                 type="color"
                 value={rgbToHex(bg.bottom)}
                 onChange={(e) => updateBackground({ ...bg, bottom: hexToRgb(e.target.value) })}
-                className="w-6 h-6 border border-border/50 cursor-pointer rounded shrink-0"
+                className="w-8 h-8 border border-border cursor-pointer shrink-0"
               />
             </Tooltip>
-          </>
+          </div>
         )}
-      </LabeledRow>
+      </div>
     </div>
   );
 }

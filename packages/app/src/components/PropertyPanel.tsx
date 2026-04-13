@@ -1,5 +1,20 @@
 import { useEffect, useRef, useMemo, lazy, Suspense } from "react";
 import { X } from "@phosphor-icons/react/dist/ssr/X";
+import { CaretLeft } from "@phosphor-icons/react/dist/ssr/CaretLeft";
+
+function BackButton() {
+  const setSidebarPane = useUiStore((s) => s.setSidebarPane);
+  return (
+    <button
+      onClick={() => setSidebarPane("tree")}
+      className="flex h-6 w-6 -ml-1 shrink-0 items-center justify-center text-text-muted hover:text-text hover:bg-hover"
+      aria-label="Back to tree"
+      title="Back to tree"
+    >
+      <CaretLeft size={14} />
+    </button>
+  );
+}
 import { Tooltip } from "@/components/ui/tooltip";
 import { ScrubInput } from "@/components/ui/scrub-input";
 import { useDocumentStore, useUiStore, isPrimitivePart, isBooleanPart, isSweepPart, isEmbroideryPatternPart, isStitchPart, isPcbBoardPart, isExtrudePart, isRevolvePart, isFilletPart, isChamferPart, isShellPart, isLinearPatternPart, isCircularPatternPart, isLoftPart, isTextPart, isMirrorPart, f64, vec3, bool } from "@vcad/core";
@@ -1041,7 +1056,6 @@ function InstancePropertiesPanel({ instance }: { instance: PartInstance }) {
     <div
       className={cn(
         "w-full flex flex-col bg-surface",
-        "border-t border-border",
         "shrink-0 max-h-[55%]",
       )}
     >
@@ -1050,6 +1064,7 @@ function InstancePropertiesPanel({ instance }: { instance: PartInstance }) {
       {/* Header */}
       <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border px-3">
         <div className="flex items-center gap-2 min-w-0">
+          <BackButton />
           <span className="text-xs font-medium text-text truncate">
             {displayName}
           </span>
@@ -1175,7 +1190,6 @@ function JointPropertiesPanel({ joint }: { joint: Joint }) {
     <div
       className={cn(
         "w-full flex flex-col bg-surface",
-        "border-t border-border",
         "shrink-0 max-h-[55%]",
       )}
     >
@@ -1184,6 +1198,7 @@ function JointPropertiesPanel({ joint }: { joint: Joint }) {
       {/* Header */}
       <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border px-3">
         <div className="flex items-center gap-2 min-w-0">
+          <BackButton />
           <span className="text-xs font-medium text-text truncate">
             {displayName}
           </span>
@@ -1275,15 +1290,17 @@ export function PropertyPanel() {
         ref={panelRef}
         className={cn(
           "w-full flex flex-col bg-surface",
-          "border-t border-border",
           "min-h-0",
         )}
       >
         {/* Mobile drag handle */}
           <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border px-3">
-          <span className="text-xs font-medium text-text">
-            {selectedPartIds.size} parts selected
-          </span>
+          <div className="flex items-center gap-2 min-w-0">
+            <BackButton />
+            <span className="text-xs font-medium text-text">
+              {selectedPartIds.size} parts selected
+            </span>
+          </div>
           <button
             onClick={clearSelection}
             className="flex h-8 w-8 sm:h-6 sm:w-6 items-center justify-center text-text-muted hover:text-text hover:bg-hover"
@@ -1326,7 +1343,6 @@ export function PropertyPanel() {
       ref={panelRef}
       className={cn(
         "w-full flex flex-col bg-surface",
-        "border-t border-border",
         "shrink-0 max-h-[55%]",
       )}
     >
@@ -1335,6 +1351,7 @@ export function PropertyPanel() {
       {/* Header */}
       <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border px-3">
         <div className="flex items-center gap-2 min-w-0">
+          <BackButton />
           <span className="text-xs font-medium text-text truncate">
             {part.name}
           </span>

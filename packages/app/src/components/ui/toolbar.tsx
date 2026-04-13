@@ -76,7 +76,7 @@ export function ToolbarButton({
         className={cn(
           "flex items-center justify-center relative gap-1",
           "h-10 min-w-[40px] px-1.5",
-          "md:h-7 md:min-w-0",
+          "md:h-6 md:min-w-0",
           expanded ? "md:px-1.5" : "md:px-1",
           "disabled:opacity-30 disabled:cursor-not-allowed",
           pulse && "animate-pulse",

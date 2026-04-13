@@ -69,7 +69,7 @@ export { useCrdtDocumentStore, f64, vec3, bool, str, featureRef } from "./stores
 export type { CrdtDocumentState, CrdtValue } from "./stores/crdt-document-store.js";
 
 export { useUiStore } from "./stores/ui-store.js";
-export type { UiState, MaterialPreview, RenderMode, RaytraceQuality, RaytraceDebugMode, ToolbarTab, SidebarPane } from "./stores/ui-store.js";
+export type { UiState, MaterialPreview, RenderMode, RaytraceQuality, RaytraceDebugMode, ToolbarTab, SidebarPane, InspectorTarget } from "./stores/ui-store.js";
 
 export { useSketchStore } from "./stores/sketch-store.js";
 export type { SketchStore, ProfileSnapshot, SketchExitStatus } from "./stores/sketch-store.js";
