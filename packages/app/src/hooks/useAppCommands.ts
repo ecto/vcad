@@ -205,6 +205,107 @@ export function useAppCommands({
         window.open("https://discord.gg/ZU8QHnFAc2", "_blank");
         onDismiss();
       },
+
+      // Assembly — all state reads go through getState() so the returned
+      // action closures stay referentially stable across the consumer's
+      // re-renders (the registry itself doesn't need to rebuild just because
+      // selectedPartIds changes — consumers re-evaluate enabled() inline).
+      createPartDef: () => {
+        const ui = useUiStore.getState();
+        const doc = useDocumentStore.getState();
+        const partId = Array.from(ui.selectedPartIds)[0];
+        if (partId && doc.parts.some((p) => p.id === partId)) {
+          const defId = doc.createPartDef(partId);
+          if (defId) {
+            const instance = doc.document.instances?.find((i) => i.partDefId === defId);
+            if (instance) ui.select(instance.id);
+          }
+        }
+        onDismiss();
+      },
+      insertInstance: () => {
+        window.dispatchEvent(new CustomEvent("vcad:insert-instance"));
+        onDismiss();
+      },
+      addJoint: (kind) => {
+        const ui = useUiStore.getState();
+        const doc = useDocumentStore.getState();
+        const instanceIds = Array.from(ui.selectedPartIds).filter((id) =>
+          doc.document.instances?.some((i) => i.id === id),
+        );
+        if (instanceIds.length === 2) {
+          const jointId = doc.addJoint({
+            parentInstanceId: instanceIds[0]!,
+            childInstanceId: instanceIds[1]!,
+            parentAnchor: { x: 0, y: 0, z: 0 },
+            childAnchor: { x: 0, y: 0, z: 0 },
+            kind,
+          });
+          if (jointId) ui.select(`joint:${jointId}`);
+        }
+        onDismiss();
+      },
+      setGroundInstance: () => {
+        const ui = useUiStore.getState();
+        const doc = useDocumentStore.getState();
+        const instanceId = Array.from(ui.selectedPartIds)[0];
+        if (instanceId && doc.document.instances?.some((i) => i.id === instanceId)) {
+          doc.setGroundInstance(instanceId);
+        }
+        onDismiss();
+      },
+      hasOnePartSelected: () => {
+        const selIds = useUiStore.getState().selectedPartIds;
+        const parts = useDocumentStore.getState().parts;
+        return selIds.size === 1 && parts.some((p) => selIds.has(p.id));
+      },
+      hasPartDefs: () => {
+        const defs = useDocumentStore.getState().document.partDefs;
+        return defs !== undefined && Object.keys(defs).length > 0;
+      },
+      hasTwoInstancesSelected: () => {
+        const selIds = useUiStore.getState().selectedPartIds;
+        const instances = useDocumentStore.getState().document.instances;
+        const hit = Array.from(selIds).filter((id) =>
+          instances?.some((i) => i.id === id),
+        );
+        return hit.length === 2;
+      },
+      hasOneInstanceSelected: () => {
+        const selIds = useUiStore.getState().selectedPartIds;
+        const instances = useDocumentStore.getState().document.instances;
+        const hit = Array.from(selIds).filter((id) =>
+          instances?.some((i) => i.id === id),
+        );
+        return hit.length === 1;
+      },
+
+      // Modify — all dispatched via window events; the actual UI for each
+      // lives in a dialog opened by a listener elsewhere in the app.
+      applyFillet: () => {
+        window.dispatchEvent(new CustomEvent("vcad:apply-fillet"));
+        onDismiss();
+      },
+      applyChamfer: () => {
+        window.dispatchEvent(new CustomEvent("vcad:apply-chamfer"));
+        onDismiss();
+      },
+      applyShell: () => {
+        window.dispatchEvent(new CustomEvent("vcad:apply-shell"));
+        onDismiss();
+      },
+      applyLinearPattern: () => {
+        window.dispatchEvent(new CustomEvent("vcad:apply-pattern"));
+        onDismiss();
+      },
+      applyCircularPattern: () => {
+        window.dispatchEvent(new CustomEvent("vcad:apply-pattern"));
+        onDismiss();
+      },
+      applyMirror: () => {
+        window.dispatchEvent(new CustomEvent("vcad:apply-mirror"));
+        onDismiss();
+      },
     });
   }, [onDismiss, onAboutOpen, onSave, onOpen]);
 }

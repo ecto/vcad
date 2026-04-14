@@ -38,9 +38,9 @@ import { useNotificationStore } from "@/stores/notification-store";
 import { useRequireAuth, AuthModal, useAuthStore } from "@vcad/auth";
 import { useOnboardingStore } from "@/stores/onboarding-store";
 import type { Command } from "@vcad/core";
-import { createCommandRegistry, createDefaultCommandActions, useUiStore, useDocumentStore, useEngineStore, exportStlBlob, exportGltfBlob, parseVcadFile, useChatStore } from "@vcad/core";
+import { useUiStore, useDocumentStore, parseVcadFile, useChatStore } from "@vcad/core";
 import type { SelectionContext } from "@vcad/core";
-import { downloadBlob } from "@/lib/download";
+import { useAppCommands } from "@/hooks/useAppCommands";
 import { cn } from "@/lib/utils";
 import { examples, type Example } from "@/data/examples";
 
@@ -154,153 +154,21 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
   const startGuidedFlow = useOnboardingStore((s) => s.startGuidedFlow);
   const incrementProjectsCreated = useOnboardingStore((s) => s.incrementProjectsCreated);
 
-  const addPrimitive = useDocumentStore((s) => s.addPrimitive);
+  // Subscribe to bits of store state that affect palette UI — welcome-mode
+  // detection, AI suggestion gating, handleNewProject, send-to-chat. The
+  // subscription also ensures that when selection changes, the palette
+  // re-renders and re-evaluates each command's enabled() callback inline.
   const parts = useDocumentStore((s) => s.parts);
-  const document = useDocumentStore((s) => s.document);
-  const createPartDef = useDocumentStore((s) => s.createPartDef);
-  const addJoint = useDocumentStore((s) => s.addJoint);
-  const setGroundInstance = useDocumentStore((s) => s.setGroundInstance);
-
+  const addPrimitive = useDocumentStore((s) => s.addPrimitive);
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
   const select = useUiStore((s) => s.select);
   const setTransformMode = useUiStore((s) => s.setTransformMode);
 
-  const scene = useEngineStore((s) => s.scene);
-
-  const commands = useMemo(() => {
-    const dismiss = () => onOpenChange(false);
-    const base = createDefaultCommandActions(dismiss);
-
-    return createCommandRegistry({
-      ...base,
-      // App-specific overrides
-      addPrimitive: (kind) => {
-        const partId = addPrimitive(kind);
-        select(partId);
-        setTransformMode("translate");
-        dismiss();
-      },
-      save: () => {
-        window.dispatchEvent(new CustomEvent("vcad:save"));
-        dismiss();
-      },
-      open: () => {
-        window.dispatchEvent(new CustomEvent("vcad:open"));
-        dismiss();
-      },
-      exportStl: () => {
-        if (scene) {
-          const blob = exportStlBlob(scene);
-          downloadBlob(blob, "model.stl");
-        }
-        dismiss();
-      },
-      exportGlb: () => {
-        if (scene) {
-          const blob = exportGltfBlob(scene);
-          downloadBlob(blob, "model.glb");
-        }
-        dismiss();
-      },
-      openAbout: () => {
-        onAboutOpen();
-        dismiss();
-      },
-      // Assembly actions
-      createPartDef: () => {
-        const partId = Array.from(selectedPartIds)[0];
-        if (partId && parts.some((p) => p.id === partId)) {
-          const defId = createPartDef(partId);
-          if (defId) {
-            const instance = document.instances?.find((i) => i.partDefId === defId);
-            if (instance) select(instance.id);
-          }
-        }
-        dismiss();
-      },
-      insertInstance: () => {
-        window.dispatchEvent(new CustomEvent("vcad:insert-instance"));
-        dismiss();
-      },
-      addJoint: (kind) => {
-        const instanceIds = Array.from(selectedPartIds).filter((id) =>
-          document.instances?.some((i) => i.id === id)
-        );
-        if (instanceIds.length === 2) {
-          const jointId = addJoint({
-            parentInstanceId: instanceIds[0]!,
-            childInstanceId: instanceIds[1]!,
-            parentAnchor: { x: 0, y: 0, z: 0 },
-            childAnchor: { x: 0, y: 0, z: 0 },
-            kind,
-          });
-          select(`joint:${jointId}`);
-        }
-        dismiss();
-      },
-      setGroundInstance: () => {
-        const instanceId = Array.from(selectedPartIds)[0];
-        if (instanceId && document.instances?.some((i) => i.id === instanceId)) {
-          setGroundInstance(instanceId);
-        }
-        dismiss();
-      },
-      hasOnePartSelected: () =>
-        selectedPartIds.size === 1 && parts.some((p) => selectedPartIds.has(p.id)),
-      hasPartDefs: () =>
-        document.partDefs !== undefined && Object.keys(document.partDefs).length > 0,
-      hasTwoInstancesSelected: () => {
-        const instanceIds = Array.from(selectedPartIds).filter((id) =>
-          document.instances?.some((i) => i.id === id)
-        );
-        return instanceIds.length === 2;
-      },
-      hasOneInstanceSelected: () => {
-        const instanceIds = Array.from(selectedPartIds).filter((id) =>
-          document.instances?.some((i) => i.id === id)
-        );
-        return instanceIds.length === 1;
-      },
-      // Modify operations
-      applyFillet: () => {
-        window.dispatchEvent(new CustomEvent("vcad:apply-fillet"));
-        dismiss();
-      },
-      applyChamfer: () => {
-        window.dispatchEvent(new CustomEvent("vcad:apply-chamfer"));
-        dismiss();
-      },
-      applyShell: () => {
-        window.dispatchEvent(new CustomEvent("vcad:apply-shell"));
-        dismiss();
-      },
-      applyLinearPattern: () => {
-        window.dispatchEvent(new CustomEvent("vcad:apply-pattern"));
-        dismiss();
-      },
-      applyCircularPattern: () => {
-        window.dispatchEvent(new CustomEvent("vcad:apply-pattern"));
-        dismiss();
-      },
-      applyMirror: () => {
-        window.dispatchEvent(new CustomEvent("vcad:apply-mirror"));
-        dismiss();
-      },
-    });
-  }, [
-    addJoint,
-    addPrimitive,
-    createPartDef,
-    document,
+  const dismissPalette = useCallback(() => onOpenChange(false), [onOpenChange]);
+  const commands = useAppCommands({
+    onDismiss: dismissPalette,
     onAboutOpen,
-    onOpenChange,
-    parts,
-    scene,
-    select,
-    selectedPartIds,
-    setGroundInstance,
-    setTransformMode,
-  ]);
+  });
 
   // AI generation handler (inner function that does the actual work)
   const doAIGenerate = useCallback(async (prompt: string, useBrowser: boolean) => {
