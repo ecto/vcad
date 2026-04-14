@@ -1,4 +1,4 @@
-import { useState, useEffect, type ReactNode, Suspense, lazy } from "react";
+import { useState, useEffect, useCallback, type ReactNode, Suspense, lazy } from "react";
 import { List as MenuIcon } from "@phosphor-icons/react/dist/ssr/List";
 import { TreeStructure } from "@phosphor-icons/react/dist/ssr/TreeStructure";
 import { Plus } from "@phosphor-icons/react/dist/ssr/Plus";
@@ -10,24 +10,24 @@ import { Cube } from "@phosphor-icons/react/dist/ssr/Cube";
 import { Cylinder } from "@phosphor-icons/react/dist/ssr/Cylinder";
 import { Sphere } from "@phosphor-icons/react/dist/ssr/Sphere";
 import { PencilSimple } from "@phosphor-icons/react/dist/ssr/PencilSimple";
-import { FolderOpen } from "@phosphor-icons/react/dist/ssr/FolderOpen";
-import { FloppyDisk } from "@phosphor-icons/react/dist/ssr/FloppyDisk";
-import { FilePlus } from "@phosphor-icons/react/dist/ssr/FilePlus";
-import { Trash } from "@phosphor-icons/react/dist/ssr/Trash";
-import { Copy } from "@phosphor-icons/react/dist/ssr/Copy";
-import { Info } from "@phosphor-icons/react/dist/ssr/Info";
 import {
   useDocumentStore,
   useUiStore,
   useChatStore,
   useSketchStore,
+  COMMAND_CATEGORIES,
+  CATEGORY_LABELS,
+  type Command,
   type PrimitiveKind,
 } from "@vcad/core";
 import { useNotificationStore } from "@/stores/notification-store";
+import { useChangelogStore } from "@/stores/changelog-store";
 import { SignInButton, UserMenu, triggerSync } from "@vcad/auth";
 import { cn } from "@/lib/utils";
 import { BottomSheet } from "./BottomSheet";
 import { FeatureTree } from "@/components/FeatureTree";
+import { useAppCommands } from "@/hooks/useAppCommands";
+import { COMMAND_ICONS } from "@/lib/command-icons";
 
 const PropertyPanel = lazy(() =>
   import("@/components/PropertyPanel").then((m) => ({ default: m.PropertyPanel })),
@@ -59,8 +59,22 @@ export function MobileShell({ onAboutOpen, onSave, onOpen, children }: MobileShe
   const undo = useDocumentStore((s) => s.undo);
   const redo = useDocumentStore((s) => s.redo);
   const addPrimitive = useDocumentStore((s) => s.addPrimitive);
+  // Subscribing so enabled-state changes trigger a re-render of the menu
+  // rows (which call cmd.enabled?.() inline). The values themselves are read
+  // via getState() inside the useAppCommands actions.
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
+  const parts = useDocumentStore((s) => s.parts);
+  const unreadChangelog = useChangelogStore((s) => s.getUnreadCount());
   const selection = selectedPartIds.size;
+  void parts;
+
+  const dismissMenu = useCallback(() => setMenuOpen(false), []);
+  const commands = useAppCommands({
+    onDismiss: dismissMenu,
+    onAboutOpen,
+    onSave,
+    onOpen,
+  });
 
   // Chat opens only on explicit action — dock button, ⌘K / F6 event, or
   // code that dispatches `vcad:open-chat`. Never mirrors the store's default
@@ -172,39 +186,23 @@ export function MobileShell({ onAboutOpen, onSave, onOpen, children }: MobileShe
 
       {/* ──── Sheets ─────────────────────────────────── */}
       <BottomSheet open={menuOpen} onOpenChange={setMenuOpen} title="Menu">
-        <div className="p-2">
-          <SheetSection>File</SheetSection>
-          <SheetRow icon={FilePlus} label="New"
-            onClick={() => {
-              if (useDocumentStore.getState().isDirty && !window.confirm("Discard unsaved changes?")) return;
-              useDocumentStore.getState().newDocument(crypto.randomUUID(), "Untitled");
-              setMenuOpen(false);
-            }}
-          />
-          <SheetRow icon={FolderOpen} label="Open…" onClick={() => { onOpen(); setMenuOpen(false); }} />
-          <SheetRow icon={FloppyDisk} label="Save" onClick={() => { onSave(); setMenuOpen(false); }} />
-          <SheetSection>Edit</SheetSection>
-          <SheetRow icon={ArrowCounterClockwise} label="Undo" onClick={() => { undo(); setMenuOpen(false); }} />
-          <SheetRow icon={ArrowClockwise} label="Redo" onClick={() => { redo(); setMenuOpen(false); }} />
-          <SheetRow icon={Copy} label="Duplicate Selection"
-            onClick={() => {
-              const ids = Array.from(useUiStore.getState().selectedPartIds);
-              if (ids.length === 0) return;
-              const newIds = useDocumentStore.getState().duplicateParts(ids);
-              useUiStore.getState().selectMultiple(newIds);
-              setMenuOpen(false);
-            }}
-          />
-          <SheetRow icon={Trash} label="Delete Selection"
-            onClick={() => {
-              const { selectedPartIds, clearSelection } = useUiStore.getState();
-              for (const id of selectedPartIds) useDocumentStore.getState().removePart(id);
-              clearSelection();
-              setMenuOpen(false);
-            }}
-          />
-          <SheetSection>Help</SheetSection>
-          <SheetRow icon={Info} label="About vcad" onClick={() => { onAboutOpen(); setMenuOpen(false); }} />
+        <div className="py-1">
+          {COMMAND_CATEGORIES.map((cat) => {
+            const inCat = commands.filter((c) => c.category === cat);
+            if (inCat.length === 0) return null;
+            return (
+              <div key={cat}>
+                <SheetSection>{CATEGORY_LABELS[cat]}</SheetSection>
+                {inCat.map((cmd) => (
+                  <CommandRow
+                    key={cmd.id}
+                    command={cmd}
+                    badge={cmd.id === "whats-new" && unreadChangelog > 0 ? unreadChangelog : undefined}
+                  />
+                ))}
+              </div>
+            );
+          })}
         </div>
       </BottomSheet>
 
@@ -275,22 +273,34 @@ function SheetSection({ children }: { children: ReactNode }) {
   );
 }
 
-function SheetRow({
-  icon: Icon,
-  label,
-  onClick,
+function CommandRow({
+  command,
+  badge,
 }: {
-  icon: React.ComponentType<{ size?: number }>;
-  label: string;
-  onClick: () => void;
+  command: Command;
+  badge?: number;
 }) {
+  const Icon = COMMAND_ICONS[command.icon];
+  const enabled = command.enabled ? command.enabled() : true;
   return (
     <button
-      onClick={onClick}
-      className="flex w-full items-center gap-3 px-3 min-h-11 text-sm text-text active:bg-hover"
+      onClick={command.action}
+      disabled={!enabled}
+      className={cn(
+        "flex w-full items-center gap-3 px-3 min-h-11 text-sm text-text active:bg-hover",
+        !enabled && "opacity-40",
+      )}
     >
-      <Icon size={18} />
-      <span>{label}</span>
+      {Icon ? <Icon size={18} /> : <span className="inline-block w-[18px]" />}
+      <span className="flex-1 text-left">{command.label}</span>
+      {badge !== undefined && badge > 0 && (
+        <span className="min-w-[18px] rounded-full bg-brand px-1.5 py-0.5 text-center text-[10px] font-bold text-white">
+          {badge}
+        </span>
+      )}
+      {command.shortcut && (
+        <kbd className="font-mono text-[10px] text-text-muted">{command.shortcut}</kbd>
+      )}
     </button>
   );
 }

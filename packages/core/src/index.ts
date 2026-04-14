@@ -97,9 +97,9 @@ export type {
   ElectronicsSelection,
 } from "./stores/electronics-store.js";
 
-// Commands (palette)
-export { createCommandRegistry } from "./commands.js";
-export type { Command, CommandRegistry, CommandActions } from "./commands.js";
+// Commands (palette / menus)
+export { createCommandRegistry, COMMAND_CATEGORIES, CATEGORY_LABELS } from "./commands.js";
+export type { Command, CommandRegistry, CommandActions, CommandCategory } from "./commands.js";
 export { createDefaultCommandActions } from "./command-actions.js";
 
 // AI Tool Registry (CRUD)

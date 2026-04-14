@@ -1,6 +1,21 @@
 import type { PrimitiveKind, BooleanType, TransformMode } from "./types.js";
 import type { JointKind } from "@vcad/ir";
 
+/**
+ * Grouping buckets used by surfaces that render the command registry as a
+ * menu (mobile hamburger sheet, desktop header — future). Matches the classic
+ * Borland-style menu bar layout so desktop and mobile can stay aligned.
+ */
+export type CommandCategory =
+  | "file"
+  | "edit"
+  | "view"
+  | "create"
+  | "modify"
+  | "assembly"
+  | "tools"
+  | "help";
+
 export interface Command {
   id: string;
   label: string;
@@ -9,9 +24,36 @@ export interface Command {
   shortcut?: string;
   action: () => void;
   enabled?: () => boolean;
+  /** Menu category used by MobileShell (and future Header refactor) to group
+   * commands into sections. Undefined = don't show in menus, only palette. */
+  category?: CommandCategory;
 }
 
 export type CommandRegistry = Command[];
+
+/** Ordered list of categories for menu rendering. Any category not in this
+ * list won't appear in the menu (the command palette shows everything). */
+export const COMMAND_CATEGORIES: CommandCategory[] = [
+  "file",
+  "edit",
+  "create",
+  "modify",
+  "assembly",
+  "view",
+  "tools",
+  "help",
+];
+
+export const CATEGORY_LABELS: Record<CommandCategory, string> = {
+  file: "File",
+  edit: "Edit",
+  create: "Create",
+  modify: "Modify",
+  assembly: "Assembly",
+  view: "View",
+  tools: "Tools",
+  help: "Help",
+};
 
 /** Core actions required by all consumers. */
 export interface CommandActions {
@@ -36,6 +78,31 @@ export interface CommandActions {
   hasParts: () => boolean;
   canUndo: () => boolean;
   canRedo: () => boolean;
+  // File — optional extras
+  openFromCloud?: () => void;
+  exportStep?: () => void;
+  newDocument?: () => void;
+  // Edit — optional extras
+  copy?: () => void;
+  paste?: () => void;
+  selectAll?: () => void;
+  // View — optional extras (all app-layer)
+  cameraFit?: () => void;
+  cameraPreset?: (preset: "isometric" | "top" | "front" | "right") => void;
+  toggleChatSidebar?: () => void;
+  toggleStatusBar?: () => void;
+  toggleDevTools?: () => void;
+  cycleTheme?: () => void;
+  // Tools — optional extras
+  openCommandPalette?: () => void;
+  newSketch?: () => void;
+  openSlicer?: () => void;
+  openCam?: () => void;
+  // Help — optional extras
+  openDocs?: () => void;
+  openGithub?: () => void;
+  openDiscord?: () => void;
+  openWhatsNew?: () => void;
   // Assembly actions (optional — only needed by full app)
   createPartDef?: () => void;
   insertInstance?: () => void;
@@ -71,6 +138,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       icon: "Cube",
       keywords: ["box", "cube", "primitive", "create", "add"],
       action: () => actions.addPrimitive("cube"),
+      category: "create",
     },
     {
       id: "add-cylinder",
@@ -78,6 +146,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       icon: "Cylinder",
       keywords: ["cylinder", "primitive", "create", "add", "tube"],
       action: () => actions.addPrimitive("cylinder"),
+      category: "create",
     },
     {
       id: "add-sphere",
@@ -85,6 +154,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       icon: "Globe",
       keywords: ["sphere", "ball", "primitive", "create", "add"],
       action: () => actions.addPrimitive("sphere"),
+      category: "create",
     },
 
     // Booleans
@@ -96,6 +166,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       shortcut: "Ctrl+Shift+U",
       action: () => actions.applyBoolean("union"),
       enabled: actions.hasTwoSelected,
+      category: "modify",
     },
     {
       id: "boolean-difference",
@@ -105,6 +176,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       shortcut: "Ctrl+Shift+D",
       action: () => actions.applyBoolean("difference"),
       enabled: actions.hasTwoSelected,
+      category: "modify",
     },
     {
       id: "boolean-intersection",
@@ -114,6 +186,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       shortcut: "Ctrl+Shift+I",
       action: () => actions.applyBoolean("intersection"),
       enabled: actions.hasTwoSelected,
+      category: "modify",
     },
 
     // Transform modes
@@ -124,6 +197,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       keywords: ["move", "translate", "position", "transform"],
       shortcut: "M",
       action: () => actions.setTransformMode("translate"),
+      category: "edit",
     },
     {
       id: "mode-rotate",
@@ -132,6 +206,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       keywords: ["rotate", "spin", "turn", "transform"],
       shortcut: "R",
       action: () => actions.setTransformMode("rotate"),
+      category: "edit",
     },
     {
       id: "mode-scale",
@@ -140,6 +215,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       keywords: ["scale", "resize", "size", "transform"],
       shortcut: "Shift+S",
       action: () => actions.setTransformMode("scale"),
+      category: "edit",
     },
 
     // Edit operations
@@ -151,6 +227,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       shortcut: "Ctrl+Z",
       action: actions.undo,
       enabled: actions.canUndo,
+      category: "edit",
     },
     {
       id: "redo",
@@ -160,6 +237,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       shortcut: "Ctrl+Shift+Z",
       action: actions.redo,
       enabled: actions.canRedo,
+      category: "edit",
     },
     {
       id: "delete",
@@ -169,6 +247,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       shortcut: "Backspace",
       action: actions.deleteSelected,
       enabled: actions.hasSelection,
+      category: "edit",
     },
     {
       id: "duplicate",
@@ -178,6 +257,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       shortcut: "Ctrl+D",
       action: actions.duplicateSelected,
       enabled: actions.hasSelection,
+      category: "edit",
     },
     {
       id: "deselect",
@@ -186,6 +266,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       keywords: ["deselect", "clear", "none"],
       shortcut: "Esc",
       action: actions.deselectAll,
+      category: "edit",
     },
 
     // View toggles
@@ -196,6 +277,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       keywords: ["wireframe", "edges", "view"],
       shortcut: "X",
       action: actions.toggleWireframe,
+      category: "view",
     },
     {
       id: "toggle-grid-snap",
@@ -204,13 +286,15 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       keywords: ["snap", "grid", "align"],
       shortcut: "G",
       action: actions.toggleGridSnap,
+      category: "view",
     },
     {
       id: "toggle-sidebar",
-      label: "Toggle Sidebar",
+      label: "Toggle Feature Tree",
       icon: "SidebarSimple",
       keywords: ["sidebar", "panel", "tree", "features"],
       action: actions.toggleFeatureTree,
+      category: "view",
     },
 
     // File operations
@@ -221,6 +305,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       keywords: ["save", "export", "file"],
       shortcut: "Ctrl+S",
       action: actions.save,
+      category: "file",
     },
     {
       id: "open",
@@ -229,6 +314,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       keywords: ["open", "load", "file", "import"],
       shortcut: "Ctrl+O",
       action: actions.open,
+      category: "file",
     },
     {
       id: "export-stl",
@@ -237,6 +323,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       keywords: ["export", "stl", "mesh", "3d print"],
       action: actions.exportStl,
       enabled: actions.hasParts,
+      category: "file",
     },
     {
       id: "export-glb",
@@ -245,6 +332,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       keywords: ["export", "glb", "gltf", "mesh"],
       action: actions.exportGlb,
       enabled: actions.hasParts,
+      category: "file",
     },
 
     // Help
@@ -254,8 +342,259 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       icon: "Info",
       keywords: ["about", "help", "info", "version"],
       action: actions.openAbout,
+      category: "help",
     },
   ];
+
+  // ---------- File extras ----------
+  if (actions.newDocument) {
+    cmds.push({
+      id: "new-document",
+      label: "New",
+      icon: "FilePlus",
+      keywords: ["new", "document", "blank", "fresh"],
+      shortcut: "Ctrl+N",
+      action: actions.newDocument,
+      category: "file",
+    });
+  }
+  if (actions.openFromCloud) {
+    cmds.push({
+      id: "open-cloud",
+      label: "Open from Cloud…",
+      icon: "CloudArrowDown",
+      keywords: ["open", "cloud", "load", "sync", "remote"],
+      shortcut: "Ctrl+Shift+O",
+      action: actions.openFromCloud,
+      category: "file",
+    });
+  }
+  if (actions.exportStep) {
+    cmds.push({
+      id: "export-step",
+      label: "Export STEP",
+      icon: "Export",
+      keywords: ["export", "step", "cad", "solidworks", "fusion"],
+      action: actions.exportStep,
+      enabled: actions.hasParts,
+      category: "file",
+    });
+  }
+
+  // ---------- Edit extras ----------
+  if (actions.copy) {
+    cmds.push({
+      id: "copy",
+      label: "Copy",
+      icon: "Copy",
+      keywords: ["copy", "clipboard"],
+      shortcut: "Ctrl+C",
+      action: actions.copy,
+      enabled: actions.hasSelection,
+      category: "edit",
+    });
+  }
+  if (actions.paste) {
+    cmds.push({
+      id: "paste",
+      label: "Paste",
+      icon: "ClipboardText",
+      keywords: ["paste", "clipboard"],
+      shortcut: "Ctrl+V",
+      action: actions.paste,
+      category: "edit",
+    });
+  }
+  if (actions.selectAll) {
+    cmds.push({
+      id: "select-all",
+      label: "Select All",
+      icon: "Selection",
+      keywords: ["select", "all", "everything"],
+      shortcut: "Ctrl+A",
+      action: actions.selectAll,
+      category: "edit",
+    });
+  }
+
+  // ---------- View extras ----------
+  if (actions.cameraFit) {
+    cmds.push({
+      id: "camera-fit",
+      label: "Fit to View",
+      icon: "ArrowsOutCardinal",
+      keywords: ["fit", "zoom", "frame", "view", "camera"],
+      shortcut: "F",
+      action: actions.cameraFit,
+      category: "view",
+    });
+  }
+  if (actions.cameraPreset) {
+    const preset = actions.cameraPreset;
+    cmds.push(
+      {
+        id: "camera-isometric",
+        label: "Isometric View",
+        icon: "Cube",
+        keywords: ["isometric", "iso", "view", "camera", "angle"],
+        action: () => preset("isometric"),
+        category: "view",
+      },
+      {
+        id: "camera-top",
+        label: "Top View",
+        icon: "ArrowUp",
+        keywords: ["top", "view", "camera", "angle", "plan"],
+        action: () => preset("top"),
+        category: "view",
+      },
+      {
+        id: "camera-front",
+        label: "Front View",
+        icon: "ArrowRight",
+        keywords: ["front", "view", "camera", "angle"],
+        action: () => preset("front"),
+        category: "view",
+      },
+      {
+        id: "camera-right",
+        label: "Right View",
+        icon: "ArrowRight",
+        keywords: ["right", "side", "view", "camera", "angle"],
+        action: () => preset("right"),
+        category: "view",
+      },
+    );
+  }
+  if (actions.toggleChatSidebar) {
+    cmds.push({
+      id: "toggle-chat",
+      label: "Toggle Chat",
+      icon: "ChatDots",
+      keywords: ["chat", "sidebar", "ai", "assistant"],
+      shortcut: "F6",
+      action: actions.toggleChatSidebar,
+      category: "view",
+    });
+  }
+  if (actions.toggleStatusBar) {
+    cmds.push({
+      id: "toggle-status-bar",
+      label: "Toggle Status Bar",
+      icon: "Terminal",
+      keywords: ["status", "bar", "toggle", "view"],
+      action: actions.toggleStatusBar,
+      category: "view",
+    });
+  }
+  if (actions.toggleDevTools) {
+    cmds.push({
+      id: "toggle-devtools",
+      label: "Toggle DevTools",
+      icon: "Terminal",
+      keywords: ["devtools", "console", "log", "debug"],
+      shortcut: "`",
+      action: actions.toggleDevTools,
+      category: "view",
+    });
+  }
+  if (actions.cycleTheme) {
+    cmds.push({
+      id: "cycle-theme",
+      label: "Cycle Theme",
+      icon: "Sun",
+      keywords: ["theme", "dark", "light", "system", "mode"],
+      action: actions.cycleTheme,
+      category: "view",
+    });
+  }
+
+  // ---------- Tools extras ----------
+  if (actions.openCommandPalette) {
+    cmds.push({
+      id: "command-palette",
+      label: "Command Palette…",
+      icon: "Command",
+      keywords: ["command", "palette", "search", "go"],
+      shortcut: "Ctrl+K",
+      action: actions.openCommandPalette,
+      category: "tools",
+    });
+  }
+  if (actions.newSketch) {
+    cmds.push({
+      id: "new-sketch",
+      label: "New Sketch…",
+      icon: "Pencil",
+      keywords: ["sketch", "2d", "draw", "profile"],
+      action: actions.newSketch,
+      category: "tools",
+    });
+  }
+  if (actions.openSlicer) {
+    cmds.push({
+      id: "open-slicer",
+      label: "Print (Slicer)…",
+      icon: "Printer",
+      keywords: ["print", "slicer", "3d", "gcode"],
+      action: actions.openSlicer,
+      enabled: actions.hasParts,
+      category: "tools",
+    });
+  }
+  if (actions.openCam) {
+    cmds.push({
+      id: "open-cam",
+      label: "CAM (Toolpath)…",
+      icon: "Wrench",
+      keywords: ["cam", "toolpath", "mill", "cnc"],
+      action: actions.openCam,
+      enabled: actions.hasParts,
+      category: "tools",
+    });
+  }
+
+  // ---------- Help extras ----------
+  if (actions.openWhatsNew) {
+    cmds.push({
+      id: "whats-new",
+      label: "What's New",
+      icon: "Rocket",
+      keywords: ["changelog", "whats", "new", "release", "updates"],
+      action: actions.openWhatsNew,
+      category: "help",
+    });
+  }
+  if (actions.openDocs) {
+    cmds.push({
+      id: "open-docs",
+      label: "Documentation",
+      icon: "BookOpen",
+      keywords: ["docs", "documentation", "help", "manual", "guide"],
+      action: actions.openDocs,
+      category: "help",
+    });
+  }
+  if (actions.openGithub) {
+    cmds.push({
+      id: "open-github",
+      label: "GitHub",
+      icon: "GithubLogo",
+      keywords: ["github", "source", "code", "repo"],
+      action: actions.openGithub,
+      category: "help",
+    });
+  }
+  if (actions.openDiscord) {
+    cmds.push({
+      id: "open-discord",
+      label: "Discord",
+      icon: "DiscordLogo",
+      keywords: ["discord", "chat", "community"],
+      action: actions.openDiscord,
+      category: "help",
+    });
+  }
 
   // Assembly commands — only added when actions are provided
   if (actions.createPartDef) {
@@ -266,6 +605,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       keywords: ["part", "definition", "assembly", "create", "convert"],
       action: actions.createPartDef,
       enabled: actions.hasOnePartSelected ?? alwaysFalse,
+      category: "assembly",
     });
   }
   if (actions.insertInstance) {
@@ -276,6 +616,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       keywords: ["insert", "instance", "assembly", "add", "part"],
       action: actions.insertInstance,
       enabled: actions.hasPartDefs ?? alwaysFalse,
+      category: "assembly",
     });
   }
   if (actions.addJoint) {
@@ -289,6 +630,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
         keywords: ["joint", "fixed", "assembly", "connect", "weld"],
         action: () => addJoint({ type: "Fixed" }),
         enabled: enabledTwoInst,
+        category: "assembly",
       },
       {
         id: "add-revolute-joint",
@@ -297,6 +639,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
         keywords: ["joint", "revolute", "hinge", "assembly", "rotate"],
         action: () => addJoint({ type: "Revolute", axis: { x: 0, y: 0, z: 1 } }),
         enabled: enabledTwoInst,
+        category: "assembly",
       },
       {
         id: "add-slider-joint",
@@ -305,6 +648,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
         keywords: ["joint", "slider", "prismatic", "assembly", "slide"],
         action: () => addJoint({ type: "Slider", axis: { x: 0, y: 0, z: 1 } }),
         enabled: enabledTwoInst,
+        category: "assembly",
       },
     );
   }
@@ -316,6 +660,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       keywords: ["ground", "fix", "base", "assembly", "anchor"],
       action: actions.setGroundInstance,
       enabled: actions.hasOneInstanceSelected ?? alwaysFalse,
+      category: "assembly",
     });
   }
 
@@ -329,6 +674,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       keywords: ["fillet", "round", "radius", "edge"],
       action: actions.applyFillet,
       enabled: enabledOnePart,
+      category: "modify",
     });
   }
   if (actions.applyChamfer) {
@@ -339,6 +685,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       keywords: ["chamfer", "bevel", "edge", "corner"],
       action: actions.applyChamfer,
       enabled: enabledOnePart,
+      category: "modify",
     });
   }
   if (actions.applyShell) {
@@ -349,6 +696,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       keywords: ["shell", "hollow", "thickness", "wall"],
       action: actions.applyShell,
       enabled: enabledOnePart,
+      category: "modify",
     });
   }
   if (actions.applyLinearPattern) {
@@ -359,6 +707,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       keywords: ["pattern", "linear", "array", "repeat", "copy"],
       action: actions.applyLinearPattern,
       enabled: enabledOnePart,
+      category: "modify",
     });
   }
   if (actions.applyCircularPattern) {
@@ -369,6 +718,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       keywords: ["pattern", "circular", "radial", "array", "repeat"],
       action: actions.applyCircularPattern,
       enabled: enabledOnePart,
+      category: "modify",
     });
   }
   if (actions.applyMirror) {
@@ -379,6 +729,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       keywords: ["mirror", "reflect", "flip", "symmetry"],
       action: actions.applyMirror,
       enabled: enabledOnePart,
+      category: "modify",
     });
   }
   if (actions.applyStitch) {
@@ -389,6 +740,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       keywords: ["stitch", "embroidery", "sew", "embroider"],
       action: actions.applyStitch,
       enabled: enabledOnePart,
+      category: "modify",
     });
   }
 
@@ -401,6 +753,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       keywords: ["electronics", "pcb", "schematic", "board", "ecad"],
       action: actions.enterElectronics,
       enabled: actions.hasPcb ?? alwaysFalse,
+      category: "tools",
     });
   }
   if (actions.exitElectronics) {
@@ -410,6 +763,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       icon: "X",
       keywords: ["electronics", "close", "exit", "pcb"],
       action: actions.exitElectronics,
+      category: "tools",
     });
   }
 
