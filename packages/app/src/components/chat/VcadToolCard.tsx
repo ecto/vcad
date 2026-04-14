@@ -8,20 +8,30 @@ import { CodeBlock } from "@/components/ai-elements/code-block";
 import { cn } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
-// PartLink — inline clickable part reference
+// PartLink — inline clickable part reference. Rendered as a <span> (not a
+// <button>) because it appears inside the CollapsibleTrigger, which is itself
+// a <button> — and HTML forbids nested interactive content. role + keyboard
+// handlers preserve the affordance for assistive tech.
 // ---------------------------------------------------------------------------
 
 function PartLink({ partId, name }: { partId: string; name: string }) {
+  const select = (e: React.SyntheticEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    useUiStore.getState().select(partId);
+  };
   return (
-    <button
-      onClick={(e) => {
-        e.stopPropagation();
-        useUiStore.getState().select(partId);
+    <span
+      role="button"
+      tabIndex={0}
+      onClick={select}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") select(e);
       }}
-      className="inline-flex items-center rounded px-1 bg-brand/10 text-brand hover:bg-brand/20 transition-colors font-medium"
+      className="inline-flex cursor-pointer items-center rounded px-1 bg-brand/10 text-brand hover:bg-brand/20 transition-colors font-medium"
     >
       {name}
-    </button>
+    </span>
   );
 }
 
