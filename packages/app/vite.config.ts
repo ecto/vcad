@@ -317,6 +317,13 @@ export default defineConfig(({ mode }) => {
     },
     optimizeDeps: {
       exclude: ["@vcad/kernel-wasm", "@vcad/engine"],
+      // Crawl the entire src/ tree (not just the html entry + statically
+      // imported modules) so deps that only appear inside lazy/dynamic chunks
+      // — e.g. the phosphor-icons used inside FeatureTree — get into the
+      // initial prebundle. Without this, vite re-runs optimizeDeps the first
+      // time a lazy chunk imports a previously-unseen icon, invalidating the
+      // prebundle hash and 504'ing every chunk that's already in flight.
+      entries: ["./index.html", "./src/**/*.{ts,tsx}"],
       // Force-include the AI Elements / streamdown stack in the prebundle so
       // they all use the deduped React instance. Without this, vite can lazily
       // optimize them on first import with a stale React snapshot, triggering
