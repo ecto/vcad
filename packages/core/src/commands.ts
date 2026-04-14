@@ -55,6 +55,20 @@ export const CATEGORY_LABELS: Record<CommandCategory, string> = {
   help: "Help",
 };
 
+/** Tailwind color classes used by menu surfaces to tint command icons by
+ * category. Keeps a monokai-adjacent palette so the chrome feels cohesive
+ * with vcad's existing brand pink without leaning on it for every row. */
+export const CATEGORY_ICON_COLORS: Record<CommandCategory, string> = {
+  file: "text-sky-400",
+  edit: "text-orange-400",
+  create: "text-cyan-400",
+  modify: "text-green-400",
+  assembly: "text-purple-400",
+  view: "text-yellow-400",
+  tools: "text-brand",
+  help: "text-text-muted",
+};
+
 /** Core actions required by all consumers. */
 export interface CommandActions {
   addPrimitive: (kind: PrimitiveKind) => void;

@@ -98,7 +98,12 @@ export type {
 } from "./stores/electronics-store.js";
 
 // Commands (palette / menus)
-export { createCommandRegistry, COMMAND_CATEGORIES, CATEGORY_LABELS } from "./commands.js";
+export {
+  createCommandRegistry,
+  COMMAND_CATEGORIES,
+  CATEGORY_LABELS,
+  CATEGORY_ICON_COLORS,
+} from "./commands.js";
 export type { Command, CommandRegistry, CommandActions, CommandCategory } from "./commands.js";
 export { createDefaultCommandActions } from "./command-actions.js";
 

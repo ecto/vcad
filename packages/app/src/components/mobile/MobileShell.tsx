@@ -17,6 +17,7 @@ import {
   useSketchStore,
   COMMAND_CATEGORIES,
   CATEGORY_LABELS,
+  CATEGORY_ICON_COLORS,
   type Command,
   type PrimitiveKind,
 } from "@vcad/core";
@@ -267,7 +268,7 @@ function DockButton({
 
 function SheetSection({ children }: { children: ReactNode }) {
   return (
-    <div className="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-text-muted">
+    <div className="px-4 pt-4 pb-1 text-[10px] font-bold uppercase tracking-[0.12em] text-text-muted">
       {children}
     </div>
   );
@@ -282,16 +283,26 @@ function CommandRow({
 }) {
   const Icon = COMMAND_ICONS[command.icon];
   const enabled = command.enabled ? command.enabled() : true;
+  const iconColor = command.category
+    ? CATEGORY_ICON_COLORS[command.category]
+    : "text-text-muted";
   return (
     <button
       onClick={command.action}
       disabled={!enabled}
       className={cn(
-        "flex w-full items-center gap-3 px-3 min-h-11 text-sm text-text active:bg-hover",
+        "flex w-full items-center gap-3 px-4 min-h-11 text-sm text-text active:bg-hover transition-colors",
         !enabled && "opacity-40",
       )}
     >
-      {Icon ? <Icon size={18} /> : <span className="inline-block w-[18px]" />}
+      <span
+        className={cn(
+          "flex h-7 w-7 shrink-0 items-center justify-center rounded bg-bg/50",
+          iconColor,
+        )}
+      >
+        {Icon ? <Icon size={16} weight="regular" /> : null}
+      </span>
       <span className="flex-1 text-left">{command.label}</span>
       {badge !== undefined && badge > 0 && (
         <span className="min-w-[18px] rounded-full bg-brand px-1.5 py-0.5 text-center text-[10px] font-bold text-white">
