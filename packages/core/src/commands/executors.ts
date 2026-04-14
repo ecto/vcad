@@ -187,6 +187,15 @@ function executeCreateWithName(
   return result;
 }
 
+/** Tool-name aliases — Claude occasionally hallucinates extra underscores in
+ * snake_case (`sketch_2_d` instead of `sketch_2d`). Normalize at the boundary
+ * so legitimate prompts don't fail just because the model picked the wrong
+ * shape of underscore. */
+const CREATE_TYPE_ALIASES: Record<string, string> = {
+  sketch_2_d: "sketch_2d",
+  text_2_d: "text_2d",
+};
+
 function executeCreate(
   type: string,
   params: Record<string, unknown>,
@@ -194,6 +203,7 @@ function executeCreate(
   docStore: DocStore,
   uiStore: UiStore,
 ): ExecutionResult {
+  type = CREATE_TYPE_ALIASES[type] ?? type;
   try {
     switch (type) {
       case "cube":

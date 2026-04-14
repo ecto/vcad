@@ -265,12 +265,35 @@ function flattenContentForClassifier(content: string | object[]): string {
  * errors we fail open (verdict: 'error') to avoid blocking real users on
  * transient Anthropic outages — but we still log the error verdict.
  */
+/** True if every block in an Anthropic content array is a tool_result. The
+ * chat handler appends synthetic user-role messages containing only
+ * tool_results when looping a multi-turn agent, and those should not be
+ * re-classified — they're agent loop state, not fresh user input. The
+ * original prompt was already classified at the start of the session. */
+function isOnlyToolResults(content: string | object[]): boolean {
+  if (typeof content === "string") return false;
+  if (content.length === 0) return false;
+  return content.every((block) => {
+    const b = block as { type?: string };
+    return b.type === "tool_result";
+  });
+}
+
 async function classifyPromptSafety(
   apiKey: string,
   messages: Array<{ role: "user" | "assistant"; content: string | object[] }>,
 ): Promise<SafetyVerdict> {
   const lastUser = [...messages].reverse().find((m) => m.role === "user");
   if (!lastUser) return { verdict: "safe", reason: "no user message" };
+
+  // Skip classification on agent loop turns. The chat handler issues a
+  // follow-up /api/chat call after every tool round-trip, with the tool
+  // results packed into a synthetic user-role message. The classifier should
+  // only judge real user prompts, not the agent's own feedback.
+  if (isOnlyToolResults(lastUser.content)) {
+    return { verdict: "safe", reason: "tool-result loop, not user input" };
+  }
+
   const lastUserText = flattenContentForClassifier(lastUser.content).trim();
   if (!lastUserText) return { verdict: "safe", reason: "empty prompt" };
 
