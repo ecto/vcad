@@ -141,6 +141,17 @@ function MenuSeparator() {
  * id, applies the category icon color, wires onClick to run the action and
  * then close the parent menu popover. Keeps Header in sync with mobile and
  * the command palette — all three surfaces render the same action list. */
+/** Defensive wrapper around command.enabled() — keeps a throwing check (e.g.
+ * kernel WASM in a broken state) from tripping the error boundary. */
+function safeEnabled(command: Command): boolean {
+  if (!command.enabled) return true;
+  try {
+    return command.enabled();
+  } catch {
+    return false;
+  }
+}
+
 function CommandMenuItem({
   id,
   close,
@@ -160,7 +171,7 @@ function CommandMenuItem({
   const cmd = commands.find((c) => c.id === id);
   if (!cmd) return null;
   const Icon = COMMAND_ICONS[cmd.icon];
-  const enabled = cmd.enabled ? cmd.enabled() : true;
+  const enabled = safeEnabled(cmd);
   const iconColor = cmd.category
     ? CATEGORY_ICON_COLORS[cmd.category]
     : "text-text-muted";

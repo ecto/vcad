@@ -274,6 +274,18 @@ function SheetSection({ children }: { children: ReactNode }) {
   );
 }
 
+/** Defensive wrapper around command.enabled() — a throwing check (e.g. the
+ * kernel WASM falling over) should NOT crash the whole app via the error
+ * boundary. Treat any exception as "disabled" and keep the menu rendering. */
+function safeEnabled(command: Command): boolean {
+  if (!command.enabled) return true;
+  try {
+    return command.enabled();
+  } catch {
+    return false;
+  }
+}
+
 function CommandRow({
   command,
   badge,
@@ -282,7 +294,7 @@ function CommandRow({
   badge?: number;
 }) {
   const Icon = COMMAND_ICONS[command.icon];
-  const enabled = command.enabled ? command.enabled() : true;
+  const enabled = safeEnabled(command);
   const iconColor = command.category
     ? CATEGORY_ICON_COLORS[command.category]
     : "text-text-muted";

@@ -83,7 +83,24 @@ export function createDefaultCommandActions(
     hasTwoSelected: () => uiState().selectedPartIds.size === 2,
     hasSelection: () => uiState().selectedPartIds.size > 0,
     hasParts: () => docState().parts.length > 0,
-    canUndo: () => docState()._crdtEngine?.can_undo() ?? false,
-    canRedo: () => docState()._crdtEngine?.can_redo() ?? false,
+    // The `?.` guards against _crdtEngine being null, but can_undo/can_redo
+    // can also throw "null pointer passed to rust" if the kernel is in a
+    // bad state (e.g. after a failed legacy-document migration). Catch so
+    // a broken kernel doesn't cascade into an error-boundary crash from
+    // every menu/palette that checks the Undo enabled state.
+    canUndo: () => {
+      try {
+        return docState()._crdtEngine?.can_undo() ?? false;
+      } catch {
+        return false;
+      }
+    },
+    canRedo: () => {
+      try {
+        return docState()._crdtEngine?.can_redo() ?? false;
+      } catch {
+        return false;
+      }
+    },
   };
 }
