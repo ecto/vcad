@@ -79,7 +79,7 @@ function BoxSelectHandler({
 
       overlayEl = document.createElement("div");
       overlayEl.className =
-        "pointer-events-none absolute z-20 border-2 border-accent bg-accent/10";
+        "pointer-events-none absolute z-20 border-2 border-brand bg-brand/10";
       overlayEl.style.left = "0";
       overlayEl.style.top = "0";
       overlayEl.style.width = "0";

@@ -37,7 +37,7 @@ export function LayerPanel() {
                 key={cfg.layer}
                 className={`flex items-center gap-1.5 px-1.5 py-0.5 rounded text-[11px] cursor-pointer transition-colors ${
                   cfg.layer === pcbActiveLayer
-                    ? "bg-accent/15 text-accent"
+                    ? "bg-brand/15 text-brand"
                     : "text-text hover:bg-surface-hover"
                 }`}
                 onClick={() => setPcbActiveLayer(cfg.layer)}

@@ -75,11 +75,11 @@ function SceneTreeRow() {
       className={cn(
         "flex w-full items-center gap-2 px-2 h-7 text-xs",
         "hover:bg-hover",
-        active ? "text-accent bg-accent/10" : "text-text",
+        active ? "text-brand bg-brand/10" : "text-text",
       )}
       title="Inspect scene (background, environment, lights)"
     >
-      <Globe size={13} className={active ? "text-accent" : "text-text-muted"} />
+      <Globe size={13} className={active ? "text-brand" : "text-text-muted"} />
       <span className="font-medium">Scene</span>
     </button>
   );
@@ -116,7 +116,7 @@ function FeatureTreeEmptyState() {
           <button
             key={kind}
             onClick={() => addPrimitive(kind)}
-            className="flex flex-col items-center justify-center gap-1 aspect-square border border-border bg-card hover:bg-hover hover:border-accent/50 transition-colors"
+            className="flex flex-col items-center justify-center gap-1 aspect-square border border-border bg-card hover:bg-hover hover:border-brand/50 transition-colors"
             title={`Add ${label}`}
           >
             <Icon size={20} className="text-text-muted" />
@@ -126,7 +126,7 @@ function FeatureTreeEmptyState() {
       </div>
       <button
         onClick={() => setCommandPaletteOpen(true)}
-        className="text-[10px] text-text-muted hover:text-accent transition-colors"
+        className="text-[10px] text-text-muted hover:text-brand transition-colors"
       >
         or press <span className="font-mono px-1 bg-hover text-text">⌘K</span> to search or ask AI
       </button>
@@ -158,7 +158,7 @@ function getPartIcon(part: PartInfo): typeof Cube {
 function DragPreview({ part }: { part: PartInfo }) {
   const Icon = getPartIcon(part);
   return (
-    <div className="flex items-center gap-1.5 px-2 py-1 bg-surface border border-accent rounded shadow-lg text-xs text-text">
+    <div className="flex items-center gap-1.5 px-2 py-1 bg-surface border border-brand rounded shadow-lg text-xs text-text">
       <Icon size={12} className="shrink-0 text-text-muted" />
       <span className="truncate max-w-32">{part.name}</span>
     </div>
@@ -201,7 +201,7 @@ function InlineRenameInput({
         if (e.key === "Enter") commit();
         if (e.key === "Escape") onDone();
       }}
-      className="flex-1 border border-accent bg-surface px-1 py-0.5 text-xs text-text outline-none w-0"
+      className="flex-1 border border-brand bg-surface px-1 py-0.5 text-xs text-text outline-none w-0"
       autoFocus
     />
   );
@@ -329,7 +329,7 @@ function TreeNode({
         className={cn(
           "group flex items-center gap-1 px-2 py-1 text-xs cursor-pointer rounded",
           isSelected
-            ? "bg-accent/20 text-accent backdrop-blur-sm"
+            ? "bg-brand/20 text-brand backdrop-blur-sm"
             : isHovered
             ? "bg-surface/80 text-text backdrop-blur-sm"
             : "text-text-muted/90 hover:bg-surface/60 hover:text-text hover:backdrop-blur-sm",
@@ -573,7 +573,7 @@ function AssemblyMenuItem({
 }) {
   return (
     <RadixContextMenu.Item
-      className="group flex items-center gap-2 px-2 py-1.5 text-xs text-text outline-none cursor-pointer data-[disabled]:opacity-40 data-[disabled]:cursor-default data-[highlighted]:bg-accent/20 data-[highlighted]:text-accent"
+      className="group flex items-center gap-2 px-2 py-1.5 text-xs text-text outline-none cursor-pointer data-[disabled]:opacity-40 data-[disabled]:cursor-default data-[highlighted]:bg-brand/20 data-[highlighted]:text-brand"
       disabled={disabled}
       onClick={onClick}
     >
@@ -626,7 +626,7 @@ function InstanceNode({ instance, joint, isGround, onRename }: InstanceNodeProps
           className={cn(
             "group flex items-center gap-1 px-2 py-1 text-xs cursor-pointer rounded",
             isSelected
-              ? "bg-accent/20 text-accent backdrop-blur-sm"
+              ? "bg-brand/20 text-brand backdrop-blur-sm"
               : isHovered
               ? "bg-surface/80 text-text backdrop-blur-sm"
               : "text-text-muted/90 hover:bg-surface/60 hover:text-text hover:backdrop-blur-sm",
@@ -724,7 +724,7 @@ function JointNode({ joint, instancesById }: JointNodeProps) {
           className={cn(
             "group flex items-center gap-1 px-2 py-1 text-xs cursor-pointer rounded",
             isSelected
-              ? "bg-accent/20 text-accent backdrop-blur-sm"
+              ? "bg-brand/20 text-brand backdrop-blur-sm"
               : isHovered
               ? "bg-surface/80 text-text backdrop-blur-sm"
               : "text-text-muted/90 hover:bg-surface/60 hover:text-text hover:backdrop-blur-sm",

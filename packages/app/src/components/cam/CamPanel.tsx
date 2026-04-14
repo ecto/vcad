@@ -260,7 +260,7 @@ export function CamPanel() {
         <button
           className={`flex-1 flex items-center justify-center gap-1 py-2 text-sm ${
             activeTab === "operations"
-              ? "border-b-2 border-accent text-text"
+              ? "border-b-2 border-brand text-text"
               : "text-text-muted"
           }`}
           onClick={() => setActiveTab("operations")}
@@ -271,7 +271,7 @@ export function CamPanel() {
         <button
           className={`flex-1 flex items-center justify-center gap-1 py-2 text-sm ${
             activeTab === "tools"
-              ? "border-b-2 border-accent text-text"
+              ? "border-b-2 border-brand text-text"
               : "text-text-muted"
           }`}
           onClick={() => setActiveTab("tools")}
@@ -282,7 +282,7 @@ export function CamPanel() {
         <button
           className={`flex-1 flex items-center justify-center gap-1 py-2 text-sm ${
             activeTab === "settings"
-              ? "border-b-2 border-accent text-text"
+              ? "border-b-2 border-brand text-text"
               : "text-text-muted"
           }`}
           onClick={() => setActiveTab("settings")}
@@ -325,7 +325,7 @@ export function CamPanel() {
       {/* Footer actions */}
       <div className="p-3 border-t border-border space-y-2">
         <button
-          className="w-full flex items-center justify-center gap-2 py-2 bg-accent text-white rounded hover:bg-accent/90 disabled:opacity-50"
+          className="w-full flex items-center justify-center gap-2 py-2 bg-brand text-white rounded hover:bg-brand/90 disabled:opacity-50"
           onClick={handleGenerate}
           disabled={isGenerating || !hasOperations}
         >

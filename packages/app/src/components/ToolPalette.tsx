@@ -736,7 +736,7 @@ export function ToolPalette() {
                 step="0.1"
                 value={playbackSpeed}
                 onChange={(e) => setPlaybackSpeed(parseFloat(e.target.value))}
-                className="w-16 h-1 accent-accent"
+                className="w-16 h-1 accent-brand"
                 title="Playback Speed"
                 disabled={!hasJoints}
               />
@@ -757,9 +757,9 @@ export function ToolPalette() {
               }}
               expanded={toolbarExpanded}
               label="Build"
-              iconColor="text-accent"
-              className="bg-accent/10 hover:bg-accent/20 rounded"
-              labelClassName="text-accent font-medium"
+              iconColor="text-brand"
+              className="bg-brand/10 hover:bg-brand/20 rounded"
+              labelClassName="text-brand font-medium"
             >
               <Sparkle size={15} />
             </ToolbarButton>
@@ -978,7 +978,7 @@ export function ToolPalette() {
                   "flex items-center gap-1.5 px-3 text-[11px] font-medium border-b-2",
                   "transition-colors",
                   isActive
-                    ? cn("border-accent text-text bg-hover/30")
+                    ? cn("border-brand text-text bg-hover/30")
                     : "border-transparent text-text-muted hover:text-text hover:bg-hover/20",
                 )}
                 title={`${index + 1}. ${label}`}

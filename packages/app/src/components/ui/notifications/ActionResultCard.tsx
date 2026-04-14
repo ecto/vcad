@@ -40,9 +40,9 @@ function ActionButtonComponent({
       disabled={disabled}
       className={cn(
         "px-2 py-1 text-[10px] rounded transition-colors",
-        "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50",
+        "focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/50",
         action.variant === "primary" &&
-          "bg-accent text-white hover:bg-accent/90",
+          "bg-brand text-white hover:bg-brand/90",
         action.variant === "destructive" &&
           "bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-400/30",
         (!action.variant || action.variant === "secondary") &&
@@ -119,7 +119,7 @@ export function ActionResultCard({
                 ? "translate-x-0 opacity-100"
                 : "translate-x-4 opacity-0"
             ),
-        "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+        "focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/50"
       )}
     >
       {/* Header */}
@@ -138,7 +138,7 @@ export function ActionResultCard({
             onClick={handleDismiss}
             className={cn(
               "text-text-muted hover:text-text",
-              "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 rounded"
+              "focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 rounded"
             )}
             aria-label="Dismiss notification"
           >

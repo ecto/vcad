@@ -146,7 +146,7 @@ export function InlineOnboarding({ visible }: InlineOnboardingProps) {
         <div className="flex flex-col items-center px-6 py-5">
           {/* Header */}
           <h1 className="text-2xl font-bold tracking-tighter text-text mb-0.5">
-            vcad<span className="text-accent">.</span>
+            vcad<span className="text-brand">.</span>
           </h1>
           <p className="text-xs text-text-muted mb-5">
             free parametric cad for everyone
@@ -257,7 +257,7 @@ export function InlineOnboarding({ visible }: InlineOnboardingProps) {
               type="checkbox"
               checked={dontShowAgain}
               onChange={(e) => setDontShowAgain(e.target.checked)}
-              className="accent-accent w-3 h-3"
+              className="accent-brand w-3 h-3"
             />
             Don't show again
           </label>

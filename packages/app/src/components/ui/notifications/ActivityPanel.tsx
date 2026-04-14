@@ -27,7 +27,7 @@ const TYPE_ICONS: Record<ActivityType, typeof Sparkle> = {
 };
 
 const TYPE_COLORS: Record<ActivityType, string> = {
-  "ai-generation": "text-accent",
+  "ai-generation": "text-brand",
   operation: "text-text-muted",
   export: "text-blue-400",
   error: "text-red-400",
@@ -127,7 +127,7 @@ function ActivityEntryItem({ entry }: ActivityEntryItemProps) {
                   className={cn(
                     "flex items-center gap-1 px-2 py-1 text-[10px] rounded",
                     "bg-border/50 text-text-muted hover:text-text hover:bg-border",
-                    "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+                    "focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/50"
                   )}
                 >
                   <ArrowCounterClockwise size={10} />
@@ -140,7 +140,7 @@ function ActivityEntryItem({ entry }: ActivityEntryItemProps) {
                   className={cn(
                     "flex items-center gap-1 px-2 py-1 text-[10px] rounded",
                     "bg-border/50 text-text-muted hover:text-text hover:bg-border",
-                    "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+                    "focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/50"
                   )}
                 >
                   <ArrowsClockwise size={10} />
@@ -211,7 +211,7 @@ export function ActivityPanel() {
               className={cn(
                 "appearance-none bg-transparent text-[10px] text-text-muted",
                 "pr-4 cursor-pointer",
-                "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+                "focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/50"
               )}
             >
               <option value="all">All</option>
@@ -233,7 +233,7 @@ export function ActivityPanel() {
               onClick={handleClear}
               className={cn(
                 "text-text-muted hover:text-text",
-                "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 rounded"
+                "focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 rounded"
               )}
               aria-label="Clear activity log"
               title="Clear activity log"
@@ -247,7 +247,7 @@ export function ActivityPanel() {
             onClick={handleClose}
             className={cn(
               "text-text-muted hover:text-text",
-              "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 rounded"
+              "focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 rounded"
             )}
             aria-label="Close activity panel"
           >

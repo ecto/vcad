@@ -141,7 +141,7 @@ export function PrintPreview({ width = 300, height = 200 }: PrintPreviewProps) {
             max={layerCount - 1}
             value={previewLayerIndex}
             onChange={handleLayerChange}
-            className="w-full h-2 accent-accent"
+            className="w-full h-2 accent-brand"
           />
         </div>
       )}

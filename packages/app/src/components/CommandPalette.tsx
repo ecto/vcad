@@ -126,7 +126,7 @@ function highlightMatch(text: string, query: string): React.ReactNode {
   return (
     <>
       {text.slice(0, idx)}
-      <span className="text-accent font-medium">{text.slice(idx, idx + query.length)}</span>
+      <span className="text-brand font-medium">{text.slice(idx, idx + query.length)}</span>
       {text.slice(idx + query.length)}
     </>
   );
@@ -531,7 +531,6 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
         }
         // Otherwise, escalate to AI chat sidebar
         else if (aiPrompt) {
-          // Escalate to AI chat sidebar
           const chatStore = useChatStore.getState();
           chatStore.setOpen(true);
           const selContext = Array.from(selectedPartIds).map((id) => {
@@ -540,12 +539,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
               ? { partId: id, partName: part.name, geometryType: "part" as const }
               : null;
           }).filter(Boolean) as SelectionContext[];
-          // Handler adds the user message — don't double-add here
-          window.dispatchEvent(
-            new CustomEvent("vcad:chat-send", {
-              detail: { content: aiPrompt, context: selContext },
-            }),
-          );
+          chatStore.sendMessage(aiPrompt, selContext);
           onOpenChange(false);
         }
         break;
@@ -593,7 +587,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
             {/* AI generating state */}
             {aiGenerating && (
               <div className="flex items-center gap-3 px-3 py-4 border-b border-border mb-1">
-                <SpinnerGap size={16} className="text-accent animate-spin" />
+                <SpinnerGap size={16} className="text-brand animate-spin" />
                 <span className="text-sm text-text-muted">{aiStatus || "Generating..."}</span>
               </div>
             )}
@@ -604,7 +598,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
                 {/* Branding */}
                 <div className="flex flex-col items-center py-4 border-b border-border mb-1">
                   <h1 className="text-xl font-bold tracking-tighter text-text">
-                    vcad<span className="text-accent">.</span>
+                    vcad<span className="text-brand">.</span>
                   </h1>
                   <p className="text-[10px] text-text-muted">
                     free parametric cad for everyone
@@ -621,7 +615,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
                   onClick={handleNewProject}
                   className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-border/30"
                 >
-                  <Plus size={16} className="shrink-0 text-accent" />
+                  <Plus size={16} className="shrink-0 text-brand" />
                   <span className="flex-1">New Project</span>
                   <span className="text-[10px] text-text-muted">guided tutorial</span>
                 </button>
@@ -673,7 +667,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
                     onClick={() => handleAIGenerate(suggestion.prompt)}
                     className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-border/30"
                   >
-                    <Sparkle size={16} className="shrink-0 text-accent/60" />
+                    <Sparkle size={16} className="shrink-0 text-brand/60" />
                     <span className="flex-1 text-text-muted">{suggestion.label}</span>
                   </button>
                 ))}
@@ -696,7 +690,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
                       onClick={() => executeCommand(cmd)}
                       className={cn(
                         "flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition-colors",
-                        isSelected && !isDisabled && "bg-accent/20",
+                        isSelected && !isDisabled && "bg-brand/20",
                         isDisabled && "opacity-40 cursor-not-allowed",
                         !isSelected && !isDisabled && "hover:bg-border/30",
                       )}
@@ -733,13 +727,13 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
                     className={cn(
                       "flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition-colors",
                       filteredCommands.length === 0 && selectedIndex === 0
-                        ? "bg-accent/20"
+                        ? "bg-brand/20"
                         : "hover:bg-border/30",
                     )}
                   >
-                    <Sparkle size={16} className="shrink-0 text-accent" />
+                    <Sparkle size={16} className="shrink-0 text-brand" />
                     <span className="flex-1">
-                      Generate: <span className="text-accent">{aiPrompt}</span>
+                      Generate: <span className="text-brand">{aiPrompt}</span>
                     </span>
                     <kbd className="bg-border/50 px-1.5 py-0.5 text-[10px] text-text-muted">
                       server
@@ -757,7 +751,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
                       "hover:bg-border/30",
                     )}
                   >
-                    <Sparkle size={16} className="shrink-0 text-accent/60" />
+                    <Sparkle size={16} className="shrink-0 text-brand/60" />
                     <span className="flex-1 text-text-muted">{suggestion.label}</span>
                   </button>
                 ))}

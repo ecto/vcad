@@ -156,8 +156,8 @@ export function QuotePanel() {
         )}
       >
         {/* Preview banner */}
-        <div className="bg-accent/10 border-b border-accent/20 px-4 py-2 text-center">
-          <span className="text-[10px] font-medium uppercase tracking-wider text-accent">
+        <div className="bg-brand/10 border-b border-brand/20 px-4 py-2 text-center">
+          <span className="text-[10px] font-medium uppercase tracking-wider text-brand">
             Preview — Manufacturing launches Q2
           </span>
         </div>
@@ -200,7 +200,7 @@ export function QuotePanel() {
                 className={cn(
                   "w-full flex items-center justify-between p-3 border transition-all",
                   isSelected
-                    ? "border-accent bg-accent/5"
+                    ? "border-brand bg-brand/5"
                     : "border-border hover:border-text-muted/30",
                 )}
               >
@@ -215,7 +215,7 @@ export function QuotePanel() {
                 </div>
                 <div className={cn(
                   "text-sm font-bold",
-                  isSelected && "text-accent",
+                  isSelected && "text-brand",
                 )}>
                   ${materialPrice.toFixed(2)}
                 </div>
@@ -234,7 +234,7 @@ export function QuotePanel() {
                 <span>Ships in {selectedMaterialInfo.days} days</span>
               </div>
             </div>
-            <div className="text-xl font-bold text-accent">
+            <div className="text-xl font-bold text-brand">
               <AnimatedPrice value={price} />
             </div>
           </div>
@@ -260,7 +260,7 @@ export function QuotePanel() {
                   "w-full h-10 pl-9 pr-3 text-sm",
                   "bg-bg border border-border",
                   "placeholder:text-text-muted/50",
-                  "focus:outline-none focus:border-accent",
+                  "focus:outline-none focus:border-brand",
                 )}
               />
             </div>
@@ -269,7 +269,7 @@ export function QuotePanel() {
               disabled={!email || isSubmitting}
               className={cn(
                 "h-10 px-4 text-xs font-bold uppercase tracking-wider",
-                "bg-accent text-white",
+                "bg-brand text-white",
                 "hover:bg-[#d91e63]",
                 "disabled:opacity-40 disabled:cursor-not-allowed",
                 "transition-all",

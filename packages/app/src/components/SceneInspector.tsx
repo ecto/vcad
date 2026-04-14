@@ -90,7 +90,7 @@ export function SceneInspector() {
           >
             <CaretLeft size={14} />
           </button>
-          <Globe size={13} className="text-accent shrink-0" />
+          <Globe size={13} className="text-brand shrink-0" />
           <span className="text-xs font-medium text-text truncate">Scene</span>
         </div>
         <button
@@ -118,7 +118,7 @@ export function SceneInspector() {
               });
             }
           }}
-          className="w-full px-2 py-1 text-xs bg-card border border-border text-text outline-none focus:border-accent capitalize"
+          className="w-full px-2 py-1 text-xs bg-card border border-border text-text outline-none focus:border-brand capitalize"
         >
           <option value="none" className="bg-surface">none</option>
           {PRESETS.map((p) => (
@@ -137,7 +137,7 @@ export function SceneInspector() {
                 className={cn(
                   "flex h-7 w-7 items-center justify-center border",
                   bg.type === type
-                    ? "bg-accent/15 border-accent/40 text-accent"
+                    ? "bg-brand/15 border-brand/40 text-brand"
                     : "bg-card border-border text-text-muted hover:text-text",
                 )}
               >

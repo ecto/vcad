@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Wrench, Check, X, SpinnerGap, CaretDown, Download } from "@phosphor-icons/react/dist/ssr";
+import { Wrench, Check, X, SpinnerGap, CaretDown } from "@phosphor-icons/react/dist/ssr";
 import { useUiStore } from "@vcad/core";
 import type { ToolCallInfo } from "@vcad/core";
 import { Tool, ToolContent } from "@/components/ai-elements/tool";
@@ -18,7 +18,7 @@ function PartLink({ partId, name }: { partId: string; name: string }) {
         e.stopPropagation();
         useUiStore.getState().select(partId);
       }}
-      className="inline-flex items-center rounded px-1 bg-accent/10 text-accent hover:bg-accent/20 transition-colors font-medium"
+      className="inline-flex items-center rounded px-1 bg-brand/10 text-brand hover:bg-brand/20 transition-colors font-medium"
     >
       {name}
     </button>
@@ -26,9 +26,9 @@ function PartLink({ partId, name }: { partId: string; name: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// Per-tool extra UI registry — adds custom widgets above the generic field grid.
-// Most tools are well-served by display.fields alone; this is for the few that
-// benefit from a richer affordance (color swatch, download button, etc.).
+// Per-tool extra UI registry — adds custom widgets above the generic field
+// grid for tools where display.fields alone isn't enough. Add new entries
+// when their corresponding tools land; don't speculate.
 // ---------------------------------------------------------------------------
 
 type ExtraRenderer = (call: ToolCallInfo) => React.ReactNode;
@@ -53,70 +53,8 @@ function MaterialSwatch({ call }: { call: ToolCallInfo }) {
   );
 }
 
-function ReadStats({ call }: { call: ToolCallInfo }) {
-  // The inspect/read result is a JSON string with bbox/volume/area when the
-  // model asked for measurements. Try to parse and render as a stats grid.
-  if (typeof call.result !== "string") return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(call.result);
-  } catch {
-    return null;
-  }
-  if (!parsed || typeof parsed !== "object") return null;
-  const obj = parsed as Record<string, unknown>;
-  const stats: Array<[string, string]> = [];
-  if (typeof obj.volume === "number") stats.push(["Volume", `${obj.volume.toFixed(2)} mm³`]);
-  if (typeof obj.area === "number") stats.push(["Surface", `${obj.area.toFixed(2)} mm²`]);
-  if (Array.isArray(obj.bbox) && obj.bbox.length === 6 && obj.bbox.every((v) => typeof v === "number")) {
-    const b = obj.bbox as [number, number, number, number, number, number];
-    stats.push(["Size", `${(b[3] - b[0]).toFixed(1)} × ${(b[4] - b[1]).toFixed(1)} × ${(b[5] - b[2]).toFixed(1)} mm`]);
-  }
-  if (Array.isArray(obj.center) && obj.center.length === 3 && obj.center.every((v) => typeof v === "number")) {
-    const c = obj.center as [number, number, number];
-    stats.push(["Center", `(${c[0].toFixed(1)}, ${c[1].toFixed(1)}, ${c[2].toFixed(1)})`]);
-  }
-  if (stats.length === 0) return null;
-  return (
-    <div className="rounded border border-border bg-bg p-2">
-      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[10px]">
-        {stats.map(([k, v]) => (
-          <div key={k} className="contents">
-            <dt className="text-text-muted">{k}</dt>
-            <dd className="text-text font-mono">{v}</dd>
-          </div>
-        ))}
-      </dl>
-    </div>
-  );
-}
-
-function ExportDownload({ call }: { call: ToolCallInfo }) {
-  // The export tool returns a result string; if it contains a data URL or a
-  // file path, surface a download button. Otherwise no-op.
-  if (call.status !== "success" || typeof call.result !== "string") return null;
-  const dataUrlMatch = call.result.match(/(data:[^\s)]+|blob:[^\s)]+|https?:\/\/[^\s)]+\.(?:stl|glb|step|stp|dxf))/i);
-  if (!dataUrlMatch) return null;
-  const url = dataUrlMatch[1];
-  const filename = (typeof call.args.filename === "string" && call.args.filename) || "export";
-  return (
-    <a
-      href={url}
-      download={filename}
-      className="inline-flex items-center gap-1.5 rounded border border-border bg-bg px-2 py-1 text-[10px] text-text hover:bg-hover transition-colors"
-    >
-      <Download size={11} />
-      Download {filename}
-    </a>
-  );
-}
-
 const extraRenderers: Record<string, ExtraRenderer> = {
   set_material: (call) => <MaterialSwatch call={call} />,
-  read: (call) => <ReadStats call={call} />,
-  // Vcad doesn't currently route exports through the tool registry, but if it
-  // did, this slot would handle it.
-  export_cad: (call) => <ExportDownload call={call} />,
 };
 
 // ---------------------------------------------------------------------------

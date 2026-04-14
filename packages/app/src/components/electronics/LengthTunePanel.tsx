@@ -28,7 +28,7 @@ export function LengthTunePanel() {
       </div>
 
       {lengthTuneNet && (
-        <div className="text-[10px] text-accent mb-2">Net: {lengthTuneNet}</div>
+        <div className="text-[10px] text-brand mb-2">Net: {lengthTuneNet}</div>
       )}
 
       <div className="space-y-2 text-text-muted">
@@ -59,7 +59,7 @@ export function LengthTunePanel() {
             onChange={(e) =>
               setParams({ max_amplitude: parseFloat(e.target.value) })
             }
-            className="w-full h-1 accent-accent"
+            className="w-full h-1 accent-brand"
             min={0.1}
             max={10}
             step={0.1}
@@ -78,7 +78,7 @@ export function LengthTunePanel() {
             onChange={(e) =>
               setParams({ spacing: parseFloat(e.target.value) })
             }
-            className="w-full h-1 accent-accent"
+            className="w-full h-1 accent-brand"
             min={0.1}
             max={5}
             step={0.1}

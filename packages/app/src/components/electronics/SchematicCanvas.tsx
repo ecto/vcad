@@ -644,7 +644,7 @@ export function SchematicCanvas() {
       <div className="flex flex-col items-center justify-center h-full gap-3">
         <span className="text-text-muted text-sm">No schematic data</span>
         <button
-          className="px-3 py-1.5 text-xs bg-accent text-white rounded hover:bg-accent/90 transition-colors"
+          className="px-3 py-1.5 text-xs bg-brand text-white rounded hover:bg-brand/90 transition-colors"
           onClick={() => {
             initSchematic();
             const doc = useDocumentStore.getState().document;

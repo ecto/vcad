@@ -68,7 +68,7 @@ export function StatusBar({ onSave, onOpen, onAboutOpen }: StatusBarProps) {
             )}
             title={h.label}
           >
-            <span className="text-accent font-bold">{h.key}</span>
+            <span className="text-brand font-bold">{h.key}</span>
             {h.icon && <h.icon size={11} className="opacity-80" />}
             <span>{h.label}</span>
           </button>
@@ -81,14 +81,14 @@ export function StatusBar({ onSave, onOpen, onAboutOpen }: StatusBarProps) {
       {/* Right info cluster: doc state */}
       <div className="flex items-center gap-3 px-3 text-text-muted">
         {isDirty && (
-          <span className="text-accent flex items-center gap-1">
+          <span className="text-brand flex items-center gap-1">
             <ArrowsClockwise size={11} />
             modified
           </span>
         )}
         <span>{parts.length} {parts.length === 1 ? "part" : "parts"}</span>
         {selCount > 0 && (
-          <span className="text-accent">
+          <span className="text-brand">
             {selCount} selected
           </span>
         )}

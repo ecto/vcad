@@ -123,7 +123,7 @@ function DocumentRow({
       className={cn(
         "group flex items-center gap-3 px-3 py-2 cursor-pointer border border-transparent",
         "hover:bg-surface/50",
-        isSelected && "bg-accent/10 border-accent/30",
+        isSelected && "bg-brand/10 border-brand/30",
         isDownloading && "opacity-60"
       )}
       onClick={onSelect}
@@ -142,7 +142,7 @@ function DocumentRow({
               if (e.key === "Enter") handleRename();
               if (e.key === "Escape") setIsEditing(false);
             }}
-            className="w-full bg-transparent border-b border-accent text-sm text-text outline-none"
+            className="w-full bg-transparent border-b border-brand text-sm text-text outline-none"
             autoFocus
           />
         ) : (
@@ -193,13 +193,13 @@ function DocumentRow({
         doc.syncStatus === "cloud-only" ? "Cloud only (click to download)" : "Local only"
       }>
         {isDownloading ? (
-          <SpinnerGap size={14} className="text-accent animate-spin" />
+          <SpinnerGap size={14} className="text-brand animate-spin" />
         ) : doc.syncStatus === "synced" ? (
-          <Cloud size={14} className="text-accent" />
+          <Cloud size={14} className="text-brand" />
         ) : doc.syncStatus === "pending" ? (
           <Cloud size={14} className="text-warning" />
         ) : doc.syncStatus === "cloud-only" ? (
-          <CloudArrowDown size={14} className="text-accent" />
+          <CloudArrowDown size={14} className="text-brand" />
         ) : (
           <CloudSlash size={14} />
         )}
@@ -458,7 +458,7 @@ export function DocumentPicker({
                 Documents
               </Dialog.Title>
               {loadingCloud && (
-                <SpinnerGap size={12} className="text-accent animate-spin" />
+                <SpinnerGap size={12} className="text-brand animate-spin" />
               )}
               {isOffline && user && (
                 <div className="flex items-center gap-1 text-[10px] text-text-muted" title="Offline - showing local documents only">
@@ -478,7 +478,7 @@ export function DocumentPicker({
               onClick={handleNewDocument}
               className="flex items-center gap-2 w-full px-3 py-2 text-sm text-text hover:bg-surface/50 transition-colors"
             >
-              <Plus size={16} className="text-accent" />
+              <Plus size={16} className="text-brand" />
               New Document
             </button>
           </div>
@@ -531,7 +531,7 @@ export function DocumentPicker({
               className={cn(
                 "px-4 py-1.5 text-xs font-medium transition-colors",
                 selectedId && !lockedIds.has(selectedId) && !isSelectedDownloading
-                  ? "bg-accent text-white hover:bg-accent/90"
+                  ? "bg-brand text-white hover:bg-brand/90"
                   : "bg-border text-text-muted cursor-not-allowed"
               )}
             >

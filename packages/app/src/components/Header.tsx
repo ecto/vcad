@@ -162,7 +162,7 @@ function RayTracingSubmenu() {
     <Popover.Root>
       <Popover.Trigger asChild>
         <button className="flex w-full items-center gap-2 px-3 py-1 text-xs text-text hover:bg-hover">
-          <Sparkle size={13} className={renderMode === "raytrace" ? "text-accent" : "text-text-muted"} />
+          <Sparkle size={13} className={renderMode === "raytrace" ? "text-brand" : "text-text-muted"} />
           <span className="flex-1 text-left">Ray Tracing</span>
           <span className="text-text-muted text-[10px]">
             {renderMode === "raytrace" ? raytraceQuality : "Off"}
@@ -181,7 +181,7 @@ function RayTracingSubmenu() {
             onClick={() => { if (renderMode === "raytrace") toggleRenderMode(); }}
             className="flex w-full items-center px-3 py-1 text-xs hover:bg-hover"
           >
-            <span className={renderMode === "standard" ? "text-accent" : "text-text"}>Off</span>
+            <span className={renderMode === "standard" ? "text-brand" : "text-text"}>Off</span>
           </button>
           {(["draft", "standard", "high"] as const).map((q) => (
             <button
@@ -194,7 +194,7 @@ function RayTracingSubmenu() {
             >
               <span
                 className={
-                  renderMode === "raytrace" && raytraceQuality === q ? "text-accent" : "text-text"
+                  renderMode === "raytrace" && raytraceQuality === q ? "text-brand" : "text-text"
                 }
               >
                 {q.charAt(0).toUpperCase() + q.slice(1)}
@@ -206,7 +206,7 @@ function RayTracingSubmenu() {
             onClick={() => setRaytraceEdgesEnabled(!raytraceEdgesEnabled)}
             className="flex w-full items-center px-3 py-1 text-xs hover:bg-hover"
           >
-            <span className={raytraceEdgesEnabled ? "text-accent" : "text-text"}>
+            <span className={raytraceEdgesEnabled ? "text-brand" : "text-text"}>
               Edges {raytraceEdgesEnabled ? "On" : "Off"}
             </span>
           </button>
@@ -345,9 +345,9 @@ export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
       <div className="relative flex h-7 items-center gap-0 px-2 border-b border-border/30">
         <div className="flex items-center gap-1 pr-3">
           <span className="text-sm font-bold tracking-tighter text-text">
-            vcad<span className="text-accent">.</span>
+            vcad<span className="text-brand">.</span>
           </span>
-          {isDirty && <span className="text-accent text-xs">*</span>}
+          {isDirty && <span className="text-brand text-xs">*</span>}
         </div>
 
         {/* iTunes-style center search bar — opens the screen-centered ⌘K palette */}
@@ -590,10 +590,10 @@ export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
                 }}
                 className="flex w-full items-center gap-2 px-3 py-1 text-xs text-text hover:bg-hover"
               >
-                <Rocket size={13} className="text-accent" />
+                <Rocket size={13} className="text-brand" />
                 <span className="flex-1 text-left">What's New</span>
                 {unreadChangelog > 0 && (
-                  <span className="px-1.5 py-0.5 text-[10px] font-bold bg-accent text-white rounded-full min-w-[18px] text-center">
+                  <span className="px-1.5 py-0.5 text-[10px] font-bold bg-brand text-white rounded-full min-w-[18px] text-center">
                     {unreadChangelog}
                   </span>
                 )}

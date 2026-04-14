@@ -63,7 +63,7 @@ export function MirrorDialog({
                   className={cn(
                     "flex-1 px-3 py-2 text-xs font-medium",
                     plane === p
-                      ? "bg-accent text-white"
+                      ? "bg-brand text-white"
                       : "bg-surface text-text hover:bg-hover border border-border"
                   )}
                   onClick={() => setPlane(p)}

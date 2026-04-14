@@ -96,7 +96,7 @@ export function EmbroideryProperties({ part }: EmbroideryPropertiesProps) {
               type="text"
               value={thread.name}
               onChange={(e) => setThreadName(nodeId, idx, e.target.value)}
-              className="flex-1 min-w-0 text-xs bg-transparent border-b border-transparent hover:border-border focus:border-accent focus:outline-none text-text px-0.5 py-0.5"
+              className="flex-1 min-w-0 text-xs bg-transparent border-b border-transparent hover:border-border focus:border-brand focus:outline-none text-text px-0.5 py-0.5"
             />
             <span className="text-[10px] text-text-muted tabular-nums shrink-0">
               {threadStitchCounts[idx]?.toLocaleString()}
@@ -205,7 +205,7 @@ export function EmbroideryProperties({ part }: EmbroideryPropertiesProps) {
                       onChange={(e) =>
                         setStitchGroupFillParams(nodeId, gIdx, { underlay: e.target.checked })
                       }
-                      className="w-3 h-3 accent-accent"
+                      className="w-3 h-3 accent-brand"
                     />
                     <span className="text-xs text-text">Underlay</span>
                   </label>

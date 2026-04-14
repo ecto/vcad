@@ -142,7 +142,7 @@ export function ToolLibrary({ compact = false }: ToolLibraryProps) {
               Cancel
             </button>
             <button
-              className="px-2 py-1 bg-accent text-white rounded hover:bg-accent/90"
+              className="px-2 py-1 bg-brand text-white rounded hover:bg-brand/90"
               onClick={handleAddTool}
             >
               Add
@@ -160,7 +160,7 @@ export function ToolLibrary({ compact = false }: ToolLibraryProps) {
               className={cn(
                 "flex items-center gap-2 p-2 rounded cursor-pointer text-sm",
                 "hover:bg-hover transition-colors",
-                selectedToolId === tool.id && "bg-accent/20 border border-accent/40"
+                selectedToolId === tool.id && "bg-brand/20 border border-brand/40"
               )}
               onClick={() => selectTool(tool.id)}
             >

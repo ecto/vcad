@@ -92,7 +92,7 @@ function ResizeHandle({ side, width, onResize }: ResizeHandleProps) {
       {(hover || dragging.current) && (
         <div
           className={cn(
-            "absolute top-0 bottom-0 w-px bg-accent",
+            "absolute top-0 bottom-0 w-px bg-brand",
             side === "left" ? "right-1" : "left-1",
           )}
         />

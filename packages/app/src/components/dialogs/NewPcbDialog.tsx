@@ -117,7 +117,7 @@ export function NewPcbDialog({ open, onOpenChange, initialWidth, initialHeight }
                   onClick={() => selectPreset(p)}
                   className={`px-2 py-1.5 text-[11px] rounded border transition-colors ${
                     preset === p.id
-                      ? "border-accent bg-accent/10 text-accent"
+                      ? "border-brand bg-brand/10 text-brand"
                       : "border-border text-text-muted hover:border-text-muted"
                   }`}
                 >
@@ -138,7 +138,7 @@ export function NewPcbDialog({ open, onOpenChange, initialWidth, initialHeight }
                   onChange={(e) => handleDimensionChange(setWidth, Math.max(1, parseFloat(e.target.value) || 1))}
                   min={1}
                   step={0.1}
-                  className="min-w-0 flex-1 rounded border border-border bg-card px-3 py-1.5 text-sm text-text outline-none focus:border-accent"
+                  className="min-w-0 flex-1 rounded border border-border bg-card px-3 py-1.5 text-sm text-text outline-none focus:border-brand"
                 />
                 <span className="shrink-0 text-xs text-text-muted">mm</span>
               </div>
@@ -152,7 +152,7 @@ export function NewPcbDialog({ open, onOpenChange, initialWidth, initialHeight }
                   onChange={(e) => handleDimensionChange(setHeight, Math.max(1, parseFloat(e.target.value) || 1))}
                   min={1}
                   step={0.1}
-                  className="min-w-0 flex-1 rounded border border-border bg-card px-3 py-1.5 text-sm text-text outline-none focus:border-accent"
+                  className="min-w-0 flex-1 rounded border border-border bg-card px-3 py-1.5 text-sm text-text outline-none focus:border-brand"
                 />
                 <span className="shrink-0 text-xs text-text-muted">mm</span>
               </div>
@@ -171,7 +171,7 @@ export function NewPcbDialog({ open, onOpenChange, initialWidth, initialHeight }
                     onClick={() => setLayers(n)}
                     className={`px-2 py-1.5 text-xs rounded border transition-colors ${
                       layers === n
-                        ? "border-accent bg-accent/10 text-accent"
+                        ? "border-brand bg-brand/10 text-brand"
                         : "border-border text-text-muted hover:border-text-muted"
                     }`}
                   >
@@ -189,7 +189,7 @@ export function NewPcbDialog({ open, onOpenChange, initialWidth, initialHeight }
                   onChange={(e) => setThickness(Math.max(0.2, parseFloat(e.target.value) || 0.2))}
                   min={0.2}
                   step={0.1}
-                  className="min-w-0 flex-1 rounded border border-border bg-card px-3 py-1.5 text-sm text-text outline-none focus:border-accent"
+                  className="min-w-0 flex-1 rounded border border-border bg-card px-3 py-1.5 text-sm text-text outline-none focus:border-brand"
                 />
                 <span className="shrink-0 text-xs text-text-muted">mm</span>
               </div>
@@ -216,7 +216,7 @@ export function NewPcbDialog({ open, onOpenChange, initialWidth, initialHeight }
                     onChange={(e) => setTraceWidth(Math.max(0.05, parseFloat(e.target.value) || 0.05))}
                     min={0.05}
                     step={0.01}
-                    className="min-w-0 flex-1 rounded border border-border bg-card px-3 py-1.5 text-sm text-text outline-none focus:border-accent"
+                    className="min-w-0 flex-1 rounded border border-border bg-card px-3 py-1.5 text-sm text-text outline-none focus:border-brand"
                   />
                   <span className="shrink-0 text-xs text-text-muted">mm</span>
                 </div>
@@ -230,7 +230,7 @@ export function NewPcbDialog({ open, onOpenChange, initialWidth, initialHeight }
                     onChange={(e) => setClearance(Math.max(0.05, parseFloat(e.target.value) || 0.05))}
                     min={0.05}
                     step={0.01}
-                    className="min-w-0 flex-1 rounded border border-border bg-card px-3 py-1.5 text-sm text-text outline-none focus:border-accent"
+                    className="min-w-0 flex-1 rounded border border-border bg-card px-3 py-1.5 text-sm text-text outline-none focus:border-brand"
                   />
                   <span className="shrink-0 text-xs text-text-muted">mm</span>
                 </div>

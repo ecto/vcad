@@ -653,8 +653,8 @@ export function App() {
   );
 
   const dragOverlay = isDragging && (
-    <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-accent/10 backdrop-blur-sm">
-      <div className="rounded-lg border-2 border-dashed border-accent bg-bg/90 px-8 py-6 text-center">
+    <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-brand/10 backdrop-blur-sm">
+      <div className="rounded-lg border-2 border-dashed border-brand bg-bg/90 px-8 py-6 text-center">
         <div className="text-lg font-medium text-text">Drop file to import</div>
         <div className="mt-1 text-sm text-text-muted">.vcad, .loon, .stl, .step, .pes, .dst</div>
       </div>

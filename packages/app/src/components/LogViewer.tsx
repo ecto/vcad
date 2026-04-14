@@ -204,7 +204,7 @@ export function LogViewer() {
               className={cn(
                 "px-1.5 h-5 leading-none transition-colors",
                 minLevel === opt.value
-                  ? "bg-accent/15 text-accent"
+                  ? "bg-brand/15 text-brand"
                   : "text-text-muted hover:text-text hover:bg-hover",
               )}
               title={`Show ${opt.label} and above`}

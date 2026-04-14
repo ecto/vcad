@@ -63,7 +63,7 @@ export function UserMenu({ onSyncNow }: UserMenuProps) {
       {/* Avatar button */}
       <button
         onClick={() => setOpen(!open)}
-        className="w-8 h-8 rounded-full bg-accent text-white flex items-center justify-center text-sm font-medium relative overflow-hidden hover:opacity-80 transition-opacity"
+        className="w-8 h-8 rounded-full bg-brand text-white flex items-center justify-center text-sm font-medium relative overflow-hidden hover:opacity-80 transition-opacity"
         aria-haspopup="true"
         aria-expanded={open}
       >
@@ -96,7 +96,7 @@ export function UserMenu({ onSyncNow }: UserMenuProps) {
         <div className="absolute right-0 mt-2 w-56 border border-border bg-card/95 backdrop-blur-sm shadow-lg py-1 z-50">
           {/* User info with inline avatar */}
           <div className="px-3 py-2 border-b border-border flex items-center gap-2">
-            <div className="w-6 h-6 rounded-full bg-accent text-white flex items-center justify-center text-[10px] font-medium overflow-hidden flex-shrink-0">
+            <div className="w-6 h-6 rounded-full bg-brand text-white flex items-center justify-center text-[10px] font-medium overflow-hidden flex-shrink-0">
               {avatarUrl ? (
                 <img
                   src={avatarUrl}

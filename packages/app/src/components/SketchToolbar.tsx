@@ -128,7 +128,7 @@ function NumberInputDialog({
             type="number"
             value={value}
             onChange={(e) => setValue(Number(e.target.value))}
-            className="w-24  border border-border bg-bg px-2 py-1 text-sm text-text outline-none focus:border-accent"
+            className="w-24  border border-border bg-bg px-2 py-1 text-sm text-text outline-none focus:border-brand"
             autoFocus
             onKeyDown={(e) => {
               if (e.key === "Enter") onSubmit(value);
@@ -277,14 +277,14 @@ function ExtrudeDialog({
         <div className="text-xs font-medium text-text">Extrude Depth</div>
         <div className="flex items-center gap-2 text-xs text-text-muted">
           <span>Direction:</span>
-          <span className="font-mono text-accent">{displayDir}</span>
+          <span className="font-mono text-brand">{displayDir}</span>
         </div>
         <div className="flex items-center gap-2">
           <input
             type="number"
             value={depth}
             onChange={(e) => setDepth(Number(e.target.value))}
-            className="w-24 border border-border bg-bg px-2 py-1 text-sm text-text outline-none focus:border-accent"
+            className="w-24 border border-border bg-bg px-2 py-1 text-sm text-text outline-none focus:border-brand"
             autoFocus
             onKeyDown={(e) => {
               if (e.key === "Enter") handleExtrude();
@@ -298,7 +298,7 @@ function ExtrudeDialog({
             type="checkbox"
             checked={flip}
             onChange={(e) => setFlip(e.target.checked)}
-            className="accent-accent"
+            className="accent-brand"
           />
           <span className="text-xs text-text-muted">Flip direction</span>
         </label>
@@ -321,7 +321,7 @@ function ExtrudeDialog({
                 type="number"
                 value={twistDeg}
                 onChange={(e) => setTwistDeg(Number(e.target.value))}
-                className="w-16 border border-border bg-bg px-2 py-1 text-sm text-text outline-none focus:border-accent"
+                className="w-16 border border-border bg-bg px-2 py-1 text-sm text-text outline-none focus:border-brand"
                 step="15"
               />
               <span className="text-xs text-text-muted">°</span>
@@ -332,7 +332,7 @@ function ExtrudeDialog({
                 type="number"
                 value={scaleEnd}
                 onChange={(e) => setScaleEnd(Number(e.target.value))}
-                className="w-16 border border-border bg-bg px-2 py-1 text-sm text-text outline-none focus:border-accent"
+                className="w-16 border border-border bg-bg px-2 py-1 text-sm text-text outline-none focus:border-brand"
                 step="0.1"
                 min="0.1"
                 max="3.0"
@@ -467,7 +467,7 @@ function RevolveDialog({
             type="number"
             value={angle}
             onChange={(e) => setAngle(Number(e.target.value))}
-            className="w-24 border border-border bg-bg px-2 py-1 text-sm text-text outline-none focus:border-accent"
+            className="w-24 border border-border bg-bg px-2 py-1 text-sm text-text outline-none focus:border-brand"
             autoFocus
             onKeyDown={(e) => {
               if (e.key === "Enter") onRevolve(angle, flip);
@@ -481,7 +481,7 @@ function RevolveDialog({
             type="checkbox"
             checked={flip}
             onChange={(e) => setFlip(e.target.checked)}
-            className="accent-accent"
+            className="accent-brand"
           />
           <span className="text-xs text-text-muted">Flip axis direction</span>
         </label>
@@ -529,13 +529,13 @@ function SweepDialog({
         <div className="flex gap-2">
           <button
             onClick={() => setPathType("line")}
-            className={`px-3 py-1  text-xs ${pathType === "line" ? "bg-accent text-white" : "bg-surface text-text hover:bg-border/30"}`}
+            className={`px-3 py-1  text-xs ${pathType === "line" ? "bg-brand text-white" : "bg-surface text-text hover:bg-border/30"}`}
           >
             Line
           </button>
           <button
             onClick={() => setPathType("helix")}
-            className={`px-3 py-1  text-xs ${pathType === "helix" ? "bg-accent text-white" : "bg-surface text-text hover:bg-border/30"}`}
+            className={`px-3 py-1  text-xs ${pathType === "helix" ? "bg-brand text-white" : "bg-surface text-text hover:bg-border/30"}`}
           >
             Helix
           </button>
@@ -547,7 +547,7 @@ function SweepDialog({
             type="number"
             value={height}
             onChange={(e) => setHeight(Number(e.target.value))}
-            className="w-20  border border-border bg-bg px-2 py-1 text-sm text-text outline-none focus:border-accent"
+            className="w-20  border border-border bg-bg px-2 py-1 text-sm text-text outline-none focus:border-brand"
           />
           <span className="text-xs text-text-muted">mm</span>
         </div>
@@ -560,7 +560,7 @@ function SweepDialog({
                 type="number"
                 value={radius}
                 onChange={(e) => setRadius(Number(e.target.value))}
-                className="w-20  border border-border bg-bg px-2 py-1 text-sm text-text outline-none focus:border-accent"
+                className="w-20  border border-border bg-bg px-2 py-1 text-sm text-text outline-none focus:border-brand"
               />
               <span className="text-xs text-text-muted">mm</span>
             </div>
@@ -570,7 +570,7 @@ function SweepDialog({
                 type="number"
                 value={turns}
                 onChange={(e) => setTurns(Number(e.target.value))}
-                className="w-20  border border-border bg-bg px-2 py-1 text-sm text-text outline-none focus:border-accent"
+                className="w-20  border border-border bg-bg px-2 py-1 text-sm text-text outline-none focus:border-brand"
               />
             </div>
           </>
@@ -978,7 +978,7 @@ export function SketchToolbar() {
     if (loftMode) {
       return (
         <>
-          <div className="px-2 text-xs text-accent font-medium">
+          <div className="px-2 text-xs text-brand font-medium">
             Profile {profiles.length + (hasSegments ? 1 : 0)}
           </div>
           <ToolbarButton

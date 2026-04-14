@@ -128,7 +128,7 @@ export function AddJointDialog({ open, onOpenChange }: AddJointDialogProps) {
                     "border border-transparent",
                     "hover:bg-hover",
                     selectedKind.type === kind.type &&
-                      "bg-accent/20 text-accent border-accent/30",
+                      "bg-brand/20 text-brand border-brand/30",
                   )}
                   onClick={() => setSelectedKind(kind)}
                 >

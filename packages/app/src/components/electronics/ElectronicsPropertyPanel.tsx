@@ -78,7 +78,7 @@ export function ElectronicsPropertyPanel() {
 
     return (
       <div className="absolute top-3 right-3 w-56 rounded-lg border border-border bg-surface/95 backdrop-blur-sm shadow-lg p-3 text-[11px] pointer-events-auto">
-        <div className="font-medium text-accent mb-2">{netName}</div>
+        <div className="font-medium text-brand mb-2">{netName}</div>
         <div className="space-y-1 text-text-muted">
           <Row label="Pads" value={String(netInfo?.connections.length ?? 0)} />
           <Row label="Traces" value={String(traceCount)} />
@@ -310,7 +310,7 @@ function ComponentFootprintPanel({ compRef }: { compRef: string }) {
               {[...nets].map((n) => (
                 <span
                   key={n}
-                  className="px-1 py-0.5 bg-accent/10 text-accent rounded text-[9px] cursor-pointer hover:bg-accent/20"
+                  className="px-1 py-0.5 bg-brand/10 text-brand rounded text-[9px] cursor-pointer hover:bg-brand/20"
                   onClick={() =>
                     useElectronicsStore.getState().select({ type: "net", netId: n })
                   }

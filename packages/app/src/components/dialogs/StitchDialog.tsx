@@ -85,7 +85,7 @@ export function StitchDialog({
                   onClick={() => setStitchType(st)}
                   className={`flex-1 rounded px-3 py-2 text-xs font-medium transition-colors ${
                     stitchType === st
-                      ? "bg-accent text-white"
+                      ? "bg-brand text-white"
                       : "bg-hover text-text-muted hover:text-text"
                   }`}
                 >

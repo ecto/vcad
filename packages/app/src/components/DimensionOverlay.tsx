@@ -96,7 +96,7 @@ function EditableDimensionLabel({ value, paramKey, partId, primitiveNodeId }: Ed
   if (isEditing) {
     return (
       <div
-        className="bg-surface border border-accent px-1 py-0.5 text-[10px] text-text whitespace-nowrap flex items-center rounded"
+        className="bg-surface border border-brand px-1 py-0.5 text-[10px] text-text whitespace-nowrap flex items-center rounded"
         onClick={(e) => e.stopPropagation()}
         onPointerDown={(e) => e.stopPropagation()}
       >
@@ -119,7 +119,7 @@ function EditableDimensionLabel({ value, paramKey, partId, primitiveNodeId }: Ed
 
   return (
     <div
-      className="bg-surface border border-border px-1 py-0.5 text-[10px] text-text-muted whitespace-nowrap cursor-pointer hover:border-accent hover:text-text transition-colors rounded"
+      className="bg-surface border border-border px-1 py-0.5 text-[10px] text-text-muted whitespace-nowrap cursor-pointer hover:border-brand hover:text-text transition-colors rounded"
       onClick={(e) => {
         e.stopPropagation();
         setIsEditing(true);

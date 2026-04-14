@@ -24,7 +24,7 @@ function MenuItem({
 }) {
   return (
     <RadixContextMenu.Item
-      className="group flex items-center gap-2  px-2 py-1.5 text-xs text-text outline-none cursor-pointer data-[disabled]:opacity-40 data-[disabled]:cursor-default data-[highlighted]:bg-accent/20 data-[highlighted]:text-accent"
+      className="group flex items-center gap-2  px-2 py-1.5 text-xs text-text outline-none cursor-pointer data-[disabled]:opacity-40 data-[disabled]:cursor-default data-[highlighted]:bg-brand/20 data-[highlighted]:text-brand"
       disabled={disabled}
       onClick={onClick}
     >

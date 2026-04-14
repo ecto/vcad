@@ -189,7 +189,7 @@ export function ScrubInput({
         readOnly={!isEditing && !isCoarsePointer}
         className={cn(
           "flex-1 min-w-0 bg-card border border-border text-text outline-none transition-colors text-center",
-          "hover:border-text-muted focus:border-accent",
+          "hover:border-text-muted focus:border-brand",
           !isEditing && !isCoarsePointer && "cursor-ew-resize select-none",
           isScrubbing && "cursor-ew-resize",
           compact ? "px-1 py-0.5 text-[10px]" : "px-2 py-1 text-xs",

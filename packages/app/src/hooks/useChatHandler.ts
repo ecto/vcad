@@ -84,8 +84,7 @@ function runTurn(
 
 export function useChatHandler() {
   const handleChatSend = useCallback(
-    async (e: CustomEvent<{ content: string; context: SelectionContext[] }>) => {
-      const { content, context } = e.detail;
+    async (content: string, context: SelectionContext[]) => {
       const store = useChatStore.getState();
 
       const session = useAuthStore.getState().session;
@@ -274,10 +273,12 @@ export function useChatHandler() {
     [],
   );
 
+  // Register the handler with the chat store so any UI component can call
+  // useChatStore.getState().sendMessage() without depending on this hook
+  // directly. Hook still has to be mounted at App root so the registration
+  // survives across re-renders of UI components that fire sends.
   useEffect(() => {
-    const handler = (e: Event) =>
-      handleChatSend(e as CustomEvent<{ content: string; context: SelectionContext[] }>);
-    window.addEventListener("vcad:chat-send", handler);
-    return () => window.removeEventListener("vcad:chat-send", handler);
+    useChatStore.getState().setSendHandler(handleChatSend);
+    return () => useChatStore.getState().setSendHandler(null);
   }, [handleChatSend]);
 }

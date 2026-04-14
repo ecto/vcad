@@ -36,7 +36,7 @@ function ActionButtonComponent({
       disabled={disabled}
       className={cn(
         "px-2 py-1 text-[10px] rounded transition-colors",
-        "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50",
+        "focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/50",
         action.variant === "primary" &&
           "bg-yellow-500/20 text-yellow-200 hover:bg-yellow-500/30",
         action.variant === "destructive" &&
@@ -108,7 +108,7 @@ export function WarningCard({
                 ? "translate-x-0 opacity-100"
                 : "translate-x-4 opacity-0"
             ),
-        "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+        "focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/50"
       )}
     >
       {/* Header */}
@@ -131,7 +131,7 @@ export function WarningCard({
               onClick={handleDismiss}
               className={cn(
                 "text-text-muted hover:text-text",
-                "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 rounded"
+                "focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 rounded"
               )}
               aria-label="Dismiss warning"
             >
@@ -160,8 +160,8 @@ export function WarningCard({
               target="_blank"
               rel="noopener noreferrer"
               className={cn(
-                "flex items-center gap-1 text-[10px] text-text-muted hover:text-accent",
-                "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 rounded"
+                "flex items-center gap-1 text-[10px] text-text-muted hover:text-brand",
+                "focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 rounded"
               )}
             >
               Learn more

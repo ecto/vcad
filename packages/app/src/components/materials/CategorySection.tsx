@@ -102,7 +102,7 @@ export function CategorySection({
 
       {/* Show indicator if collapsed but has selected material */}
       {!open && hasSelectedMaterial && (
-        <div className="text-[10px] text-accent pl-4 pb-1">• selected</div>
+        <div className="text-[10px] text-brand pl-4 pb-1">• selected</div>
       )}
     </div>
   );

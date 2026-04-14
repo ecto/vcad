@@ -15,8 +15,8 @@ export function FaceSelectionOverlay() {
 
   return (
     <div className="fixed inset-x-0 top-4 z-30 flex justify-center pointer-events-none">
-      <div className="bg-surface border border-accent/50 shadow-lg px-4 py-3 flex items-center gap-4 pointer-events-auto">
-        <div className="flex items-center gap-2 text-accent">
+      <div className="bg-surface border border-brand/50 shadow-lg px-4 py-3 flex items-center gap-4 pointer-events-auto">
+        <div className="flex items-center gap-2 text-brand">
           <Crosshair size={20} weight="bold" />
           <span className="text-sm font-medium">
             {hasParts ? "Click a face to start sketching" : "No parts to select from"}

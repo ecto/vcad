@@ -239,7 +239,7 @@ export function PrintPanel() {
       {/* Header */}
       <div className="flex items-center justify-between p-3 border-b border-border">
         <div className="flex items-center gap-2">
-          <Printer size={20} className="text-accent" />
+          <Printer size={20} className="text-brand" />
           <span className="font-medium">Print</span>
         </div>
         <button
@@ -256,7 +256,7 @@ export function PrintPanel() {
           onClick={() => setActiveTab("settings")}
           className={`flex-1 flex items-center justify-center gap-1 py-2 text-sm ${
             activeTab === "settings"
-              ? "text-accent border-b-2 border-accent"
+              ? "text-brand border-b-2 border-brand"
               : "text-text-muted hover:text-text"
           }`}
         >
@@ -267,7 +267,7 @@ export function PrintPanel() {
           onClick={() => setActiveTab("preview")}
           className={`flex-1 flex items-center justify-center gap-1 py-2 text-sm ${
             activeTab === "preview"
-              ? "text-accent border-b-2 border-accent"
+              ? "text-brand border-b-2 border-brand"
               : "text-text-muted hover:text-text"
           }`}
         >
@@ -278,7 +278,7 @@ export function PrintPanel() {
           onClick={() => setActiveTab("printer")}
           className={`flex-1 flex items-center justify-center gap-1 py-2 text-sm ${
             activeTab === "printer"
-              ? "text-accent border-b-2 border-accent"
+              ? "text-brand border-b-2 border-brand"
               : "text-text-muted hover:text-text"
           }`}
         >
@@ -372,7 +372,7 @@ export function PrintPanel() {
         <button
           onClick={handleSlice}
           disabled={!hasMesh || isSlicing}
-          className="w-full flex items-center justify-center gap-2 py-2 bg-accent hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded font-medium"
+          className="w-full flex items-center justify-center gap-2 py-2 bg-brand hover:bg-brand/90 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded font-medium"
         >
           {isSlicing ? (
             <>

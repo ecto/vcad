@@ -76,7 +76,7 @@ export function PatternDialog({
               className={cn(
                 "px-3 py-1.5 text-xs",
                 patternType === "linear"
-                  ? "bg-accent text-white"
+                  ? "bg-brand text-white"
                   : "bg-surface text-text hover:bg-hover"
               )}
               onClick={() => setPatternType("linear")}
@@ -87,7 +87,7 @@ export function PatternDialog({
               className={cn(
                 "px-3 py-1.5 text-xs",
                 patternType === "circular"
-                  ? "bg-accent text-white"
+                  ? "bg-brand text-white"
                   : "bg-surface text-text hover:bg-hover"
               )}
               onClick={() => setPatternType("circular")}
@@ -108,7 +108,7 @@ export function PatternDialog({
                   className={cn(
                     "w-8 h-8 text-xs font-medium",
                     axis === a
-                      ? "bg-accent text-white"
+                      ? "bg-brand text-white"
                       : "bg-surface text-text hover:bg-hover border border-border"
                   )}
                   onClick={() => setAxis(a)}

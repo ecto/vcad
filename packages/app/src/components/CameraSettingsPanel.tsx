@@ -52,7 +52,7 @@ export function CameraSettingsPanel({ className }: CameraSettingsPanelProps) {
                 value={preset.id}
                 checked={controlSchemeId === preset.id}
                 onChange={() => setControlScheme(preset.id)}
-                className="mt-0.5 accent-accent"
+                className="mt-0.5 accent-brand"
               />
               <div className="flex-1 min-w-0">
                 <div className="text-xs text-text">{preset.name}</div>
@@ -81,7 +81,7 @@ export function CameraSettingsPanel({ className }: CameraSettingsPanelProps) {
               className={cn(
                 "flex-1 px-2 py-1.5 text-xs border border-border",
                 inputDevice === device
-                  ? "bg-accent text-white border-accent"
+                  ? "bg-brand text-white border-brand"
                   : "text-text hover:bg-hover",
               )}
             >
@@ -114,7 +114,7 @@ export function CameraSettingsPanel({ className }: CameraSettingsPanelProps) {
               onChange={(e) =>
                 setZoomBehavior({ zoomTowardsCursor: e.target.checked })
               }
-              className="accent-accent"
+              className="accent-brand"
             />
             <span className="text-xs text-text">Zoom toward cursor</span>
           </label>
@@ -125,7 +125,7 @@ export function CameraSettingsPanel({ className }: CameraSettingsPanelProps) {
               onChange={(e) =>
                 setZoomBehavior({ invertDirection: e.target.checked })
               }
-              className="accent-accent"
+              className="accent-brand"
             />
             <span className="text-xs text-text">Invert zoom direction</span>
           </label>
@@ -145,7 +145,7 @@ export function CameraSettingsPanel({ className }: CameraSettingsPanelProps) {
               onChange={(e) =>
                 setZoomBehavior({ sensitivity: parseFloat(e.target.value) })
               }
-              className="w-full h-1 bg-border rounded appearance-none cursor-pointer accent-accent"
+              className="w-full h-1 bg-border rounded appearance-none cursor-pointer accent-brand"
             />
           </div>
         </div>
@@ -164,7 +164,7 @@ export function CameraSettingsPanel({ className }: CameraSettingsPanelProps) {
             type="checkbox"
             checked={orbitMomentum}
             onChange={(e) => setOrbitMomentum(e.target.checked)}
-            className="accent-accent"
+            className="accent-brand"
           />
           <span className="text-xs text-text">Orbit momentum</span>
         </label>

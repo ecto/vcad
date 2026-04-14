@@ -488,7 +488,7 @@ function BooleanProperties({ part }: { part: BooleanPartInfo }) {
       <select
         value={part.booleanType}
         onChange={(e) => updateBooleanType(part.id, e.target.value as BooleanType)}
-        className="w-full text-xs bg-hover border border-border rounded px-2 py-1 text-text focus:outline-none focus:border-accent"
+        className="w-full text-xs bg-hover border border-border rounded px-2 py-1 text-text focus:outline-none focus:border-brand"
       >
         <option value="union">Union</option>
         <option value="difference">Difference</option>
@@ -862,7 +862,7 @@ function LoftProperties({ part }: { part: LoftPartInfo }) {
             onChange={(e) =>
               setFeatureParam(part.id, "closed", bool(e.target.checked))
             }
-            className="accent-accent"
+            className="accent-brand"
           />
           <span>{op.closed ? "Closed loop" : "Open"}</span>
         </label>
@@ -1157,7 +1157,7 @@ function JointStateSlider({ joint }: { joint: Joint }) {
           onChange={(e) => setJointState(joint.id, Number(e.target.value))}
           className="flex-1 h-1 bg-border rounded-full appearance-none cursor-pointer
             [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3
-            [&::-webkit-slider-thumb]:bg-accent [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:cursor-pointer"
+            [&::-webkit-slider-thumb]:bg-brand [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:cursor-pointer"
         />
         <span className="text-xs text-text tabular-nums w-16 text-right">
           {joint.state.toFixed(kind.type === "Slider" ? 1 : 0)}{unit}
@@ -1491,8 +1491,8 @@ export function PropertyPanel() {
               type="button"
               onClick={() => useElectronicsStore.getState().enter()}
               className="w-full mt-2 px-3 py-2 text-xs font-medium rounded
-                bg-accent/10 text-accent border border-accent/30
-                hover:bg-accent/20 transition-colors"
+                bg-brand/10 text-brand border border-brand/30
+                hover:bg-brand/20 transition-colors"
             >
               Edit Circuit
             </button>
@@ -1507,8 +1507,8 @@ export function PropertyPanel() {
               type="button"
               onClick={() => useEmbroideryStore.getState().openPanel()}
               className="w-full mt-2 px-3 py-2 text-xs font-medium rounded
-                bg-accent/10 text-accent border border-accent/30
-                hover:bg-accent/20 transition-colors"
+                bg-brand/10 text-brand border border-brand/30
+                hover:bg-brand/20 transition-colors"
             >
               Open Embroidery Panel
             </button>

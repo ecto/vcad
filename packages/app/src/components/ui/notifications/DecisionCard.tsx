@@ -50,7 +50,7 @@ export function DecisionCard({
       onMouseLeave={onMouseLeave}
       className={cn(
         "border border-yellow-400/30 bg-card shadow-2xl",
-        "focus-within:ring-2 focus-within:ring-accent/50"
+        "focus-within:ring-2 focus-within:ring-brand/50"
       )}
     >
       {/* Header */}
@@ -92,12 +92,12 @@ export function DecisionCard({
               className={cn(
                 "flex flex-col items-center gap-1 p-2 border rounded transition-all",
                 selectedId === option.id
-                  ? "border-accent bg-accent/20"
-                  : "border-border hover:border-accent/50 hover:bg-accent/5",
+                  ? "border-brand bg-brand/20"
+                  : "border-border hover:border-brand/50 hover:bg-brand/5",
                 selectedId !== null &&
                   selectedId !== option.id &&
                   "opacity-50",
-                "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+                "focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/50"
               )}
             >
               {option.thumbnail && (
@@ -128,12 +128,12 @@ export function DecisionCard({
               className={cn(
                 "px-3 py-1.5 text-[11px] border rounded transition-all",
                 selectedId === option.id
-                  ? "border-accent bg-accent text-white"
-                  : "border-border hover:border-accent/50 hover:bg-accent/5",
+                  ? "border-brand bg-brand text-white"
+                  : "border-border hover:border-brand/50 hover:bg-brand/5",
                 selectedId !== null &&
                   selectedId !== option.id &&
                   "opacity-50",
-                "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+                "focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/50"
               )}
             >
               {option.label}

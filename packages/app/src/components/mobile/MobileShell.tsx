@@ -95,12 +95,12 @@ export function MobileShell({ onAboutOpen, onSave, onOpen, children }: MobileShe
         </button>
         <div className="flex items-center gap-1 ml-1 min-w-0">
           <span className="text-sm font-bold tracking-tighter text-text">
-            vcad<span className="text-accent">.</span>
+            vcad<span className="text-brand">.</span>
           </span>
           <span className="text-xs text-text-muted truncate max-w-[120px]">
             {docName ?? "Untitled"}
           </span>
-          {isDirty && <span className="text-accent text-xs">*</span>}
+          {isDirty && <span className="text-brand text-xs">*</span>}
         </div>
         <div className="flex-1" />
         <button
@@ -257,8 +257,8 @@ function DockButton({
       className={cn(
         "flex flex-1 flex-col items-center justify-center gap-0.5 min-h-11",
         "text-text-muted active:bg-hover",
-        active && "text-accent",
-        primary && "text-accent",
+        active && "text-brand",
+        primary && "text-brand",
       )}
     >
       <Icon size={22} weight={primary ? "bold" : "regular"} />

@@ -90,9 +90,9 @@ export function GuidedFlowOverlay() {
               className={cn(
                 "w-1.5 h-1.5 rounded-full transition-colors",
                 index < currentStepIndex
-                  ? "bg-accent"
+                  ? "bg-brand"
                   : index === currentStepIndex
-                    ? "bg-accent"
+                    ? "bg-brand"
                     : "bg-border"
               )}
             />

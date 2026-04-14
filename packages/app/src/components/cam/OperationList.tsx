@@ -507,7 +507,7 @@ export function OperationList() {
               className={cn(
                 "flex items-center gap-2 p-2 rounded cursor-pointer text-sm",
                 "hover:bg-hover transition-colors",
-                selectedOperationId === op.id && "bg-accent/20 border border-accent/40"
+                selectedOperationId === op.id && "bg-brand/20 border border-brand/40"
               )}
               onClick={() => selectOperation(op.id)}
             >

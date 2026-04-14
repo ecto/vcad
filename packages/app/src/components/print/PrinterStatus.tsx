@@ -44,7 +44,7 @@ export function PrinterStatus() {
           </div>
           <div className="h-2 bg-hover rounded-full overflow-hidden">
             <div
-              className="h-full bg-accent transition-all"
+              className="h-full bg-brand transition-all"
               style={{ width: `${status.progressPercent}%` }}
             />
           </div>

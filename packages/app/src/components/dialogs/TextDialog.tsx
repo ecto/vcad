@@ -60,7 +60,7 @@ export function TextDialog({ open, onOpenChange }: TextDialogProps) {
               onChange={(e) => setText(e.target.value)}
               placeholder="Enter text..."
               rows={3}
-              className="w-full rounded border border-border bg-card px-3 py-2 text-sm text-text outline-none focus:border-accent resize-none"
+              className="w-full rounded border border-border bg-card px-3 py-2 text-sm text-text outline-none focus:border-brand resize-none"
               autoFocus
             />
           </div>
@@ -75,7 +75,7 @@ export function TextDialog({ open, onOpenChange }: TextDialogProps) {
                 onChange={(e) => setHeight(Math.max(0.1, parseFloat(e.target.value) || 0.1))}
                 min={0.1}
                 step={1}
-                className="flex-1 rounded border border-border bg-card px-3 py-1.5 text-sm text-text outline-none focus:border-accent"
+                className="flex-1 rounded border border-border bg-card px-3 py-1.5 text-sm text-text outline-none focus:border-brand"
               />
               <span className="text-xs text-text-muted">mm</span>
             </div>
@@ -91,7 +91,7 @@ export function TextDialog({ open, onOpenChange }: TextDialogProps) {
                 onChange={(e) => setDepth(Math.max(0.1, parseFloat(e.target.value) || 0.1))}
                 min={0.1}
                 step={0.5}
-                className="flex-1 rounded border border-border bg-card px-3 py-1.5 text-sm text-text outline-none focus:border-accent"
+                className="flex-1 rounded border border-border bg-card px-3 py-1.5 text-sm text-text outline-none focus:border-brand"
               />
               <span className="text-xs text-text-muted">mm</span>
             </div>
@@ -108,7 +108,7 @@ export function TextDialog({ open, onOpenChange }: TextDialogProps) {
                   onClick={() => setAlignment(align)}
                   className={`flex-1 px-3 py-1.5 text-xs capitalize rounded border transition-colors ${
                     alignment === align
-                      ? "border-accent bg-accent/10 text-accent"
+                      ? "border-brand bg-brand/10 text-brand"
                       : "border-border text-text-muted hover:border-text-muted"
                   }`}
                 >

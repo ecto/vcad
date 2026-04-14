@@ -30,7 +30,7 @@ function StageIcon({ status }: { status: AIStage["status"] }) {
       return (
         <SpinnerGap
           size={12}
-          className="text-accent animate-spin"
+          className="text-brand animate-spin"
           aria-hidden="true"
         />
       );
@@ -113,8 +113,8 @@ export function AIProgressCard({
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       className={cn(
-        "border border-accent/30 bg-card shadow-2xl",
-        "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+        "border border-brand/30 bg-card shadow-2xl",
+        "focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/50"
       )}
     >
       {/* Header */}
@@ -122,7 +122,7 @@ export function AIProgressCard({
         <div className="flex items-center gap-2">
           <SpinnerGap
             size={14}
-            className="text-accent animate-spin"
+            className="text-brand animate-spin"
             aria-hidden="true"
           />
           <span className="text-xs font-medium text-text">{currentLabel}</span>
@@ -136,7 +136,7 @@ export function AIProgressCard({
               onClick={handleCancel}
               className={cn(
                 "text-text-muted hover:text-text",
-                "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 rounded"
+                "focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 rounded"
               )}
               aria-label="Cancel operation"
             >
@@ -149,7 +149,7 @@ export function AIProgressCard({
       {/* Progress bar */}
       <div className="h-1 bg-border/30">
         <div
-          className="h-full bg-accent transition-all duration-300 ease-out"
+          className="h-full bg-brand transition-all duration-300 ease-out"
           style={{ width: `${progress.progress}%` }}
           role="progressbar"
           aria-valuenow={progress.progress}

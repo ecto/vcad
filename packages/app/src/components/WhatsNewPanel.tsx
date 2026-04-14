@@ -80,7 +80,7 @@ export function WhatsNewPanel() {
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-border">
             <Dialog.Title className="text-sm font-bold text-text flex items-center gap-2">
-              <Rocket size={16} className="text-accent" />
+              <Rocket size={16} className="text-brand" />
               What's New
             </Dialog.Title>
             <Dialog.Close className="p-1.5 text-text-muted hover:text-text transition-colors">

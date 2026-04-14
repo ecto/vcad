@@ -117,7 +117,7 @@ export function EmbroideryPanel() {
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-2">
-          <Scissors size={18} className="text-accent" />
+          <Scissors size={18} className="text-brand" />
           <span className="text-sm font-medium text-text">Embroidery</span>
           {fileName && (
             <span className="text-xs text-text-muted truncate max-w-[120px]">{fileName}</span>
@@ -139,7 +139,7 @@ export function EmbroideryPanel() {
             onClick={() => setActiveTab(id)}
             className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs transition-colors ${
               activeTab === id
-                ? "border-b-2 border-accent text-accent"
+                ? "border-b-2 border-brand text-brand"
                 : "text-text-muted hover:text-text"
             }`}
           >
@@ -164,7 +164,7 @@ export function EmbroideryPanel() {
               <textarea
                 value={createText}
                 onChange={(e) => setCreateText(e.target.value)}
-                className="w-full rounded border border-border bg-hover/50 px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-accent focus:outline-none resize-none"
+                className="w-full rounded border border-border bg-hover/50 px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-brand focus:outline-none resize-none"
                 rows={3}
                 placeholder="Enter text..."
               />
@@ -181,7 +181,7 @@ export function EmbroideryPanel() {
                 step={0.5}
                 value={createHeight}
                 onChange={(e) => setCreateHeight(Number(e.target.value))}
-                className="w-full accent-accent"
+                className="w-full accent-brand"
               />
             </div>
 
@@ -207,7 +207,7 @@ export function EmbroideryPanel() {
                     onClick={() => setCreateStitchType(st)}
                     className={`flex-1 rounded px-3 py-2 text-xs font-medium transition-colors ${
                       createStitchType === st
-                        ? "bg-accent text-white"
+                        ? "bg-brand text-white"
                         : "bg-hover text-text-muted hover:text-text"
                     }`}
                   >
@@ -220,7 +220,7 @@ export function EmbroideryPanel() {
             <button
               onClick={handleGenerate}
               disabled={generating || !createText.trim()}
-              className="w-full rounded bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full rounded bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {generating ? "Generating..." : "Generate Stitches"}
             </button>
@@ -316,7 +316,7 @@ export function EmbroideryPanel() {
                     onClick={() => setSelectedFormat(fmt)}
                     className={`flex-1 rounded px-3 py-2 text-xs font-medium transition-colors ${
                       selectedFormat === fmt
-                        ? "bg-accent text-white"
+                        ? "bg-brand text-white"
                         : "bg-hover text-text-muted hover:text-text"
                     }`}
                   >
@@ -334,7 +334,7 @@ export function EmbroideryPanel() {
             </div>
 
             <button
-              className="w-full rounded bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent/90 transition-colors disabled:opacity-50"
+              className="w-full rounded bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand/90 transition-colors disabled:opacity-50"
               disabled={!patternJson}
               onClick={() => handleExport(selectedFormat)}
             >
@@ -354,7 +354,7 @@ export function EmbroideryPanel() {
       {pattern && (
         <div className="border-t border-border px-4 py-3 flex gap-2">
           <button
-            className="flex-1 rounded bg-accent px-3 py-1.5 text-xs font-medium text-white hover:bg-accent/90 transition-colors disabled:opacity-50"
+            className="flex-1 rounded bg-brand px-3 py-1.5 text-xs font-medium text-white hover:bg-brand/90 transition-colors disabled:opacity-50"
             disabled={!patternJson}
             onClick={() => handleExport("pes")}
           >

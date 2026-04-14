@@ -88,6 +88,14 @@ export interface ChatUsageError {
   resetsAt?: string;
 }
 
+/** Implementation of sendMessage, registered by the app-layer chat handler at
+ * mount time. The store can't depend on `chat-api.ts` directly (layering), so
+ * the streaming logic registers itself here and the store just delegates. */
+export type SendMessageHandler = (
+  content: string,
+  context: SelectionContext[],
+) => void;
+
 export interface ChatState {
   messages: ChatMessage[];
   open: boolean;
@@ -99,6 +107,8 @@ export interface ChatState {
   anonUsage: { used: number; limit: number };
   /** Server-rejected rate limit for the most recent send attempt. */
   usageError: ChatUsageError | null;
+  /** Implementation of sendMessage, populated at mount by useChatHandler. */
+  _sendHandler: SendMessageHandler | null;
 
   // Visibility
   setOpen: (open: boolean) => void;
@@ -108,6 +118,10 @@ export interface ChatState {
   addUserMessage: (content: string, context?: SelectionContext[]) => void;
   addAssistantMessage: (content: string, toolCalls?: ToolCallInfo[]) => void;
   updateLastAssistant: (content: string, toolCalls?: ToolCallInfo[], parts?: MessagePart[]) => void;
+
+  // Send (delegated to registered handler — call from any UI component)
+  sendMessage: (content: string, context: SelectionContext[]) => void;
+  setSendHandler: (fn: SendMessageHandler | null) => void;
 
   // Status
   setStreaming: (streaming: boolean) => void;
@@ -145,7 +159,7 @@ const WELCOME_MESSAGE: ChatMessage = {
   timestamp: Date.now(),
 };
 
-export const useChatStore = create<ChatState>((set) => ({
+export const useChatStore = create<ChatState>((set, get) => ({
   messages: [WELCOME_MESSAGE],
   open: true,
   streaming: false,
@@ -153,6 +167,7 @@ export const useChatStore = create<ChatState>((set) => ({
   cancelRequested: false,
   anonUsage: loadAnonUsage(),
   usageError: null,
+  _sendHandler: null,
 
   setOpen: (open) => set({ open }),
 
@@ -195,6 +210,19 @@ export const useChatStore = create<ChatState>((set) => ({
       if (parts !== undefined) updated.parts = parts;
       return { messages: [...s.messages.slice(0, -1), updated] };
     }),
+
+  sendMessage: (content, context) => {
+    const handler = get()._sendHandler;
+    if (!handler) {
+      // Handler not yet registered — useChatHandler is mounted at App root,
+      // so this only fires if something dispatches before App mounts.
+      console.warn("[chat-store] sendMessage called before handler registered");
+      return;
+    }
+    handler(content, context);
+  },
+
+  setSendHandler: (fn) => set({ _sendHandler: fn }),
 
   setStreaming: (streaming) => set({ streaming }),
 

@@ -82,7 +82,7 @@ export function AuthModal({ open, onOpenChange, feature }: AuthModalProps) {
           <div className="flex flex-col items-center px-6 py-5">
             {/* Header */}
             <Dialog.Title className="text-2xl font-bold tracking-tighter text-text mb-5">
-              vcad<span className="text-accent">.</span>
+              vcad<span className="text-brand">.</span>
             </Dialog.Title>
 
             {error && (
@@ -93,8 +93,8 @@ export function AuthModal({ open, onOpenChange, feature }: AuthModalProps) {
 
             {sent ? (
               <div className="text-center">
-                <div className="w-10 h-10 mx-auto mb-3 flex items-center justify-center bg-accent/10">
-                  <EnvelopeSimple size={20} className="text-accent" />
+                <div className="w-10 h-10 mx-auto mb-3 flex items-center justify-center bg-brand/10">
+                  <EnvelopeSimple size={20} className="text-brand" />
                 </div>
                 <p className="text-sm text-text mb-1">Check your email</p>
                 <p className="text-xs text-text-muted mb-4">
@@ -116,7 +116,7 @@ export function AuthModal({ open, onOpenChange, feature }: AuthModalProps) {
                     placeholder="Email address"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="w-full h-9 px-3 bg-transparent border border-border text-xs text-text placeholder-text-muted/50 focus:outline-none focus:border-accent transition-colors"
+                    className="w-full h-9 px-3 bg-transparent border border-border text-xs text-text placeholder-text-muted/50 focus:outline-none focus:border-brand transition-colors"
                     disabled={loading}
                     autoComplete="email"
                     autoFocus

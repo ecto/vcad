@@ -104,7 +104,7 @@ export function MaterialEditor({
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="w-full bg-card border border-border px-2 py-1 text-xs text-text outline-none hover:border-text-muted focus:border-accent"
+                className="w-full bg-card border border-border px-2 py-1 text-xs text-text outline-none hover:border-text-muted focus:border-brand"
               />
             </div>
           </div>
@@ -130,7 +130,7 @@ export function MaterialEditor({
                     setColorHex(val);
                   }
                 }}
-                className="flex-1 bg-card border border-border px-2 py-1 text-xs text-text font-mono outline-none hover:border-text-muted focus:border-accent"
+                className="flex-1 bg-card border border-border px-2 py-1 text-xs text-text font-mono outline-none hover:border-text-muted focus:border-brand"
               />
             </div>
           </div>
@@ -186,7 +186,7 @@ export function MaterialEditor({
           <button
             type="button"
             onClick={handleSave}
-            className="px-3 py-1.5 text-xs bg-accent text-white hover:bg-accent/90"
+            className="px-3 py-1.5 text-xs bg-brand text-white hover:bg-brand/90"
           >
             Save Material
           </button>

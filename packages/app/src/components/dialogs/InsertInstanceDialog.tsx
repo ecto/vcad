@@ -64,7 +64,7 @@ export function InsertInstanceDialog({
                   "w-full flex items-center gap-2 px-3 py-2 text-xs text-left",
                   "hover:bg-hover",
                   selectedPartDefId === partDef.id &&
-                    "bg-accent/20 text-accent",
+                    "bg-brand/20 text-brand",
                 )}
                 onClick={() => setSelectedPartDefId(partDef.id)}
               >

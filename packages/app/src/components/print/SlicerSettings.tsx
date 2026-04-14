@@ -43,7 +43,7 @@ export function SlicerSettings() {
           max="100"
           value={settings.infillDensity * 100}
           onChange={(e) => setSettings({ infillDensity: parseInt(e.target.value) / 100 })}
-          className="w-full h-2 accent-accent"
+          className="w-full h-2 accent-brand"
         />
       </div>
 
@@ -74,7 +74,7 @@ export function SlicerSettings() {
           max="6"
           value={settings.wallCount}
           onChange={(e) => setSettings({ wallCount: parseInt(e.target.value) })}
-          className="w-full h-2 accent-accent"
+          className="w-full h-2 accent-brand"
         />
       </div>
 
@@ -85,7 +85,7 @@ export function SlicerSettings() {
           id="support-enabled"
           checked={settings.supportEnabled}
           onChange={(e) => setSettings({ supportEnabled: e.target.checked })}
-          className="w-4 h-4 accent-accent"
+          className="w-4 h-4 accent-brand"
         />
         <label htmlFor="support-enabled" className="text-sm text-text">
           Enable Support
@@ -103,7 +103,7 @@ export function SlicerSettings() {
             max="90"
             value={settings.supportAngle}
             onChange={(e) => setSettings({ supportAngle: parseInt(e.target.value) })}
-            className="w-full h-2 accent-accent"
+            className="w-full h-2 accent-brand"
           />
         </div>
       )}

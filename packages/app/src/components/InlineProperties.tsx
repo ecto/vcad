@@ -41,7 +41,7 @@ function InlineRenameInput({
         if (e.key === "Enter") commit();
         if (e.key === "Escape") onDone();
       }}
-      className="w-full  border border-accent bg-surface px-1.5 py-0.5 text-xs text-text outline-none"
+      className="w-full  border border-brand bg-surface px-1.5 py-0.5 text-xs text-text outline-none"
       autoFocus
     />
   );
@@ -247,7 +247,7 @@ export function InlineProperties() {
           ) : (
             <button
               onClick={() => setIsRenaming(true)}
-              className="w-full text-left text-xs font-medium text-text hover:text-accent truncate"
+              className="w-full text-left text-xs font-medium text-text hover:text-brand truncate"
             >
               {part.name}
             </button>

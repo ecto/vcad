@@ -105,7 +105,7 @@ export function Toast({ toast, onDismiss, onMouseEnter, onMouseLeave }: ToastPro
                 : "translate-x-4 opacity-0"
             ),
         // Focus ring for keyboard navigation
-        "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+        "focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/50"
       )}
     >
       <Icon
@@ -120,7 +120,7 @@ export function Toast({ toast, onDismiss, onMouseEnter, onMouseLeave }: ToastPro
           onClick={handleDismiss}
           className={cn(
             "ml-2 shrink-0 text-text-muted hover:text-text",
-            "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 rounded"
+            "focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 rounded"
           )}
           aria-label="Dismiss notification"
         >

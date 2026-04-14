@@ -707,7 +707,7 @@ export const SceneMesh = memo(function SceneMesh({
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); useElectronicsStore.getState().enter(); }}
-                className="px-1.5 py-0.5 text-[10px] rounded bg-accent/15 text-accent hover:bg-accent/25 transition-colors"
+                className="px-1.5 py-0.5 text-[10px] rounded bg-brand/15 text-brand hover:bg-brand/25 transition-colors"
               >
                 Edit
               </button>
@@ -719,7 +719,7 @@ export const SceneMesh = memo(function SceneMesh({
                   e.stopPropagation();
                   useEmbroideryStore.getState().openPanel();
                 }}
-                className="px-1.5 py-0.5 text-[10px] rounded bg-accent/15 text-accent hover:bg-accent/25 transition-colors"
+                className="px-1.5 py-0.5 text-[10px] rounded bg-brand/15 text-brand hover:bg-brand/25 transition-colors"
               >
                 Edit
               </button>

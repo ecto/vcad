@@ -101,7 +101,7 @@ export function PrinterSelect() {
         {relayAvailable === false && (
           <div className="text-xs text-text-muted text-center py-1 mb-2 bg-hover rounded p-2">
             Print relay not running. Start with:
-            <code className="block mt-1 text-accent">vcad print-server</code>
+            <code className="block mt-1 text-brand">vcad print-server</code>
           </div>
         )}
 
@@ -114,7 +114,7 @@ export function PrinterSelect() {
                 onClick={() => selectPrinter(printer)}
                 className={`w-full flex items-center gap-2 p-2 text-left text-sm rounded ${
                   selectedPrinter?.id === printer.id
-                    ? "bg-accent text-white"
+                    ? "bg-brand text-white"
                     : "bg-hover hover:bg-border"
                 }`}
               >

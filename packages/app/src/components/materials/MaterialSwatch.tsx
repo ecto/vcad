@@ -66,9 +66,9 @@ export function MaterialSwatch({
         SIZE_CLASSES[size],
         "rounded-full border-2 cursor-pointer transition-all duration-100",
         "hover:scale-110 hover:shadow-md",
-        "focus:outline-none focus:ring-2 focus:ring-accent/50",
+        "focus:outline-none focus:ring-2 focus:ring-brand/50",
         selected
-          ? "border-accent ring-2 ring-accent/30"
+          ? "border-brand ring-2 ring-brand/30"
           : "border-transparent hover:border-border"
       )}
       style={{ background: gradient }}

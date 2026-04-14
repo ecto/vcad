@@ -148,7 +148,7 @@ function VcadMessage({ msg }: { msg: ChatMessage }) {
             {msg.context.map((ctx) => (
               <span
                 key={ctx.partId}
-                className="inline-flex items-center gap-1 rounded border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[9px] text-accent"
+                className="inline-flex items-center gap-1 rounded border border-brand/30 bg-brand/10 px-1.5 py-0.5 text-[9px] text-brand"
               >
                 {ctx.partName}
               </span>
@@ -326,13 +326,9 @@ export function ChatSidebar() {
     (content: string) => {
       const trimmed = content.trim();
       if (!trimmed || streaming) return;
-      window.dispatchEvent(
-        new CustomEvent("vcad:chat-send", {
-          detail: {
-            content: trimmed,
-            context: selectionContext.length > 0 ? selectionContext : [],
-          },
-        }),
+      useChatStore.getState().sendMessage(
+        trimmed,
+        selectionContext.length > 0 ? selectionContext : [],
       );
     },
     [selectionContext, streaming],
@@ -375,7 +371,6 @@ export function ChatSidebar() {
   return (
     <div
       className={cn(
-        "ai-elements-scope",
         "flex h-full w-full flex-col",
         "bg-surface",
       )}
@@ -387,7 +382,7 @@ export function ChatSidebar() {
           className={cn(
             "px-2 py-1 text-[10px] font-semibold rounded transition-colors",
             activeTab === "chat"
-              ? "bg-accent/10 text-accent"
+              ? "bg-brand/10 text-brand"
               : "text-text-muted hover:text-text hover:bg-hover"
           )}
         >
@@ -398,7 +393,7 @@ export function ChatSidebar() {
           className={cn(
             "px-2 py-1 text-[10px] font-semibold rounded transition-colors",
             activeTab === "source"
-              ? "bg-accent/10 text-accent"
+              ? "bg-brand/10 text-brand"
               : "text-text-muted hover:text-text hover:bg-hover"
           )}
         >
@@ -456,12 +451,12 @@ export function ChatSidebar() {
             </div>
           )}
           {usageError?.kind === "anon_limit" && (
-            <div className="shrink-0 bg-accent/10 px-4 py-2 text-[10px] text-text">
-              <div className="mb-0.5 font-semibold text-accent">Free chat limit reached</div>
+            <div className="shrink-0 bg-brand/10 px-4 py-2 text-[10px] text-text">
+              <div className="mb-0.5 font-semibold text-brand">Free chat limit reached</div>
               <div className="text-text-muted">{usageError.message}</div>
               <button
                 onClick={() => setShowAuthModal(true)}
-                className="mt-1 rounded bg-accent px-2 py-0.5 text-[9px] text-white hover:bg-accent/90"
+                className="mt-1 rounded bg-brand px-2 py-0.5 text-[9px] text-white hover:bg-brand/90"
               >
                 Sign in to continue
               </button>
@@ -487,12 +482,12 @@ export function ChatSidebar() {
                   {selectionContext.map((ctx) => (
                     <span
                       key={ctx.partId}
-                      className="inline-flex items-center gap-1 rounded-full border border-accent/30 bg-accent/10 py-0.5 pl-2 pr-1 text-[9px] text-accent"
+                      className="inline-flex items-center gap-1 rounded-full border border-brand/30 bg-brand/10 py-0.5 pl-2 pr-1 text-[9px] text-brand"
                     >
                       {ctx.partName}
                       <button
                         onClick={() => removeContextPart(ctx.partId)}
-                        className="flex h-3 w-3 items-center justify-center rounded-full hover:bg-accent/20 hover:text-accent/80 transition-colors"
+                        className="flex h-3 w-3 items-center justify-center rounded-full hover:bg-brand/20 hover:text-brand/80 transition-colors"
                         aria-label={`Remove ${ctx.partName}`}
                       >
                         <X size={8} />

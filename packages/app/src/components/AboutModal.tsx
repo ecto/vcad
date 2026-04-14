@@ -103,7 +103,7 @@ export function AboutModal({
           {/* Header */}
           <div className="text-center mb-8">
             <Dialog.Title className="text-3xl font-bold tracking-tight text-text mb-2">
-              vcad<span className="text-accent">.</span>
+              vcad<span className="text-brand">.</span>
             </Dialog.Title>
             <p className="text-sm text-text-muted">
               Parametric CAD for everyone
@@ -174,7 +174,7 @@ export function AboutModal({
                 openWhatsNew();
                 onOpenChange(false);
               }}
-              className="text-text-muted/50 hover:text-accent transition-colors"
+              className="text-text-muted/50 hover:text-brand transition-colors"
               title="What's new"
             >
               v{__APP_VERSION__}
