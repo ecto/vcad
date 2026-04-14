@@ -2,47 +2,24 @@ import { useState } from "react";
 import { Sun } from "@phosphor-icons/react/dist/ssr/Sun";
 import { Moon } from "@phosphor-icons/react/dist/ssr/Moon";
 import { Desktop } from "@phosphor-icons/react/dist/ssr/Desktop";
-import { Command } from "@phosphor-icons/react/dist/ssr/Command";
-import { List } from "@phosphor-icons/react/dist/ssr/List";
 import { CubeTransparent } from "@phosphor-icons/react/dist/ssr/CubeTransparent";
 import { GridFour } from "@phosphor-icons/react/dist/ssr/GridFour";
-import { Info } from "@phosphor-icons/react/dist/ssr/Info";
 import { BookOpen } from "@phosphor-icons/react/dist/ssr/BookOpen";
-import { Cube } from "@phosphor-icons/react/dist/ssr/Cube";
-import { ArrowsOutCardinal } from "@phosphor-icons/react/dist/ssr/ArrowsOutCardinal";
-import { GithubLogo } from "@phosphor-icons/react/dist/ssr/GithubLogo";
-import { DiscordLogo } from "@phosphor-icons/react/dist/ssr/DiscordLogo";
 import { Mouse } from "@phosphor-icons/react/dist/ssr/Mouse";
 import { Sparkle } from "@phosphor-icons/react/dist/ssr/Sparkle";
-import { FolderOpen } from "@phosphor-icons/react/dist/ssr/FolderOpen";
 import { CaretRight } from "@phosphor-icons/react/dist/ssr/CaretRight";
-import { Rocket } from "@phosphor-icons/react/dist/ssr/Rocket";
-import { FloppyDisk } from "@phosphor-icons/react/dist/ssr/FloppyDisk";
-import { ChatDots } from "@phosphor-icons/react/dist/ssr/ChatDots";
-import { FilePlus } from "@phosphor-icons/react/dist/ssr/FilePlus";
 import { Export } from "@phosphor-icons/react/dist/ssr/Export";
-import { Files } from "@phosphor-icons/react/dist/ssr/Files";
-import { ArrowCounterClockwise } from "@phosphor-icons/react/dist/ssr/ArrowCounterClockwise";
-import { ArrowClockwise } from "@phosphor-icons/react/dist/ssr/ArrowClockwise";
-import { Copy } from "@phosphor-icons/react/dist/ssr/Copy";
-import { ClipboardText } from "@phosphor-icons/react/dist/ssr/ClipboardText";
-import { Trash } from "@phosphor-icons/react/dist/ssr/Trash";
-import { Selection } from "@phosphor-icons/react/dist/ssr/Selection";
-import { Pencil } from "@phosphor-icons/react/dist/ssr/Pencil";
-import { Terminal } from "@phosphor-icons/react/dist/ssr/Terminal";
-import { Printer } from "@phosphor-icons/react/dist/ssr/Printer";
-import { Wrench } from "@phosphor-icons/react/dist/ssr/Wrench";
 import { MagnifyingGlass } from "@phosphor-icons/react/dist/ssr/MagnifyingGlass";
 import * as Popover from "@radix-ui/react-popover";
 import {
   useDocumentStore,
   useUiStore,
-  useChatStore,
   useEngineStore,
-  useSketchStore,
   exportStlBlob,
   exportGltfBlob,
   exportStepBlob,
+  CATEGORY_ICON_COLORS,
+  type Command,
 } from "@vcad/core";
 import { cn } from "@/lib/utils";
 import { downloadBlob } from "@/lib/download";
@@ -52,10 +29,9 @@ import { useCameraSettingsStore } from "@/stores/camera-settings-store";
 import { CONTROL_PRESETS } from "@/types/camera-controls";
 import { SignInButton, UserMenu, triggerSync } from "@vcad/auth";
 import { useChangelogStore } from "@/stores/changelog-store";
-import { useLogStore } from "@/stores/log-store";
-import { useSlicerStore } from "@/stores/slicer-store";
-import { useCamStore } from "@/stores/cam-store";
 import { useNotificationStore } from "@/stores/notification-store";
+import { useAppCommands } from "@/hooks/useAppCommands";
+import { COMMAND_ICONS } from "@/lib/command-icons";
 
 interface HeaderProps {
   onAboutOpen: () => void;
@@ -124,19 +100,34 @@ function MenuItem({
   children,
   shortcut,
   icon: Icon,
+  iconClassName,
+  disabled,
+  badge,
 }: {
   onClick: () => void;
   children: React.ReactNode;
   shortcut?: string;
   icon?: React.ComponentType<{ size?: number; className?: string }>;
+  iconClassName?: string;
+  disabled?: boolean;
+  badge?: number;
 }) {
   return (
     <button
       onClick={onClick}
-      className="flex w-full items-center gap-2 px-3 py-1 text-xs text-text hover:bg-hover"
+      disabled={disabled}
+      className={cn(
+        "flex w-full items-center gap-2 px-3 py-1 text-xs text-text hover:bg-hover",
+        disabled && "opacity-40 cursor-not-allowed",
+      )}
     >
-      {Icon && <Icon size={13} className="text-text-muted" />}
+      {Icon && <Icon size={13} className={iconClassName ?? "text-text-muted"} />}
       <span className="flex-1 text-left">{children}</span>
+      {badge !== undefined && badge > 0 && (
+        <span className="min-w-[18px] rounded-full bg-brand px-1.5 py-0.5 text-center text-[10px] font-bold text-white">
+          {badge}
+        </span>
+      )}
       {shortcut && <span className="text-text-muted text-[10px]">{shortcut}</span>}
     </button>
   );
@@ -144,6 +135,51 @@ function MenuItem({
 
 function MenuSeparator() {
   return <div className="my-1 border-t border-border" />;
+}
+
+/** Render a registry command as a Header MenuItem. Looks the command up by
+ * id, applies the category icon color, wires onClick to run the action and
+ * then close the parent menu popover. Keeps Header in sync with mobile and
+ * the command palette — all three surfaces render the same action list. */
+function CommandMenuItem({
+  id,
+  close,
+  commands,
+  label,
+  badge,
+}: {
+  id: string;
+  close: () => void;
+  commands: Command[];
+  /** Optional label override for commands whose display text is dynamic
+   * (e.g. theme cycle, wireframe toggle). Registry's static label is used
+   * when omitted. */
+  label?: React.ReactNode;
+  badge?: number;
+}) {
+  const cmd = commands.find((c) => c.id === id);
+  if (!cmd) return null;
+  const Icon = COMMAND_ICONS[cmd.icon];
+  const enabled = cmd.enabled ? cmd.enabled() : true;
+  const iconColor = cmd.category
+    ? CATEGORY_ICON_COLORS[cmd.category]
+    : "text-text-muted";
+  return (
+    <MenuItem
+      icon={Icon}
+      iconClassName={iconColor}
+      shortcut={cmd.shortcut}
+      disabled={!enabled}
+      badge={badge}
+      onClick={() => {
+        if (!enabled) return;
+        cmd.action();
+        close();
+      }}
+    >
+      {label ?? cmd.label}
+    </MenuItem>
+  );
 }
 
 /** Ray Tracing submenu — opens to the right of the View menu with quality presets. */
@@ -246,14 +282,29 @@ function MouseControlsSubmenu() {
 
 export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
   const isDirty = useDocumentStore((s) => s.isDirty);
-  const toggleFeatureTree = useUiStore((s) => s.toggleFeatureTree);
-  const setTheme = useUiStore((s) => s.setTheme);
   const theme = useUiStore((s) => s.theme);
+  const setTheme = useUiStore((s) => s.setTheme);
   const toggleWireframe = useUiStore((s) => s.toggleWireframe);
   const showWireframe = useUiStore((s) => s.showWireframe);
   const toggleGridSnap = useUiStore((s) => s.toggleGridSnap);
   const gridSnap = useUiStore((s) => s.gridSnap);
   const unreadChangelog = useChangelogStore((s) => s.getUnreadCount());
+  // Subscribe to state that affects enabled() checks on the commands below.
+  // Actions themselves read via getState() inside useAppCommands.
+  useDocumentStore((s) => s.parts);
+  useDocumentStore((s) => s.document);
+  useUiStore((s) => s.selectedPartIds);
+
+  const commands = useAppCommands({
+    onDismiss: () => {
+      // Each MenuBarItem owns its own close() via render prop — we close it
+      // explicitly from CommandMenuItem so each popover dismisses at the
+      // right time. onDismiss stays a noop here.
+    },
+    onAboutOpen,
+    onSave,
+    onOpen,
+  });
 
   const handleCommandPalette = () => {
     useUiStore.getState().setCommandPaletteOpen(true);
@@ -278,63 +329,11 @@ export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
     }
   };
 
-  const handleNew = () => {
-    if (useDocumentStore.getState().isDirty) {
-      if (!window.confirm("Discard unsaved changes and start a new document?")) return;
-    }
-    useDocumentStore.getState().newDocument(crypto.randomUUID(), "Untitled");
-  };
-
-  const handleUndo = () => useDocumentStore.getState().undo();
-  const handleRedo = () => useDocumentStore.getState().redo();
-
-  const handleDelete = () => {
-    const { selectedPartIds, clearSelection } = useUiStore.getState();
-    if (selectedPartIds.size === 0) return;
-    const { removePart } = useDocumentStore.getState();
-    for (const id of selectedPartIds) removePart(id);
-    clearSelection();
-  };
-
-  const handleDuplicate = () => {
-    const { selectedPartIds, selectMultiple } = useUiStore.getState();
-    if (selectedPartIds.size === 0) return;
-    const newIds = useDocumentStore.getState().duplicateParts(Array.from(selectedPartIds));
-    selectMultiple(newIds);
-  };
-
-  const handleCopy = () => {
-    const { selectedPartIds, copyToClipboard } = useUiStore.getState();
-    if (selectedPartIds.size === 0) return;
-    copyToClipboard(Array.from(selectedPartIds));
-    useNotificationStore
-      .getState()
-      .addToast(`Copied ${selectedPartIds.size} part${selectedPartIds.size > 1 ? "s" : ""}`, "success");
-  };
-
-  const handlePaste = () => {
-    const { clipboard, selectMultiple } = useUiStore.getState();
-    if (clipboard.length === 0) return;
-    const newIds = useDocumentStore.getState().duplicateParts(clipboard);
-    selectMultiple(newIds);
-  };
-
-  const handleSelectAll = () => {
-    const parts = useDocumentStore.getState().parts;
-    useUiStore.getState().selectMultiple(parts.map((p) => p.id));
-  };
-
+  // Examples live in /src/data and their file loader still goes through a
+  // dispatched event — not in the command registry because each entry is
+  // unique, not a shared command.
   const handleLoadExample = (file: unknown) => {
     window.dispatchEvent(new CustomEvent("vcad:load-example", { detail: { file } }));
-  };
-
-  const handleCameraPreset = (preset: string) => {
-    window.dispatchEvent(new CustomEvent(`vcad:camera-${preset}`));
-  };
-
-  const handleStartSketch = () => {
-    useSketchStore.getState().enterFaceSelectionMode();
-    useNotificationStore.getState().addToast("Select a face to sketch on", "info");
   };
 
   return (
@@ -369,28 +368,16 @@ export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
         <MenuBarItem label="File" accelerator="F">
           {(close: () => void) => (
             <>
-              <MenuItem icon={FilePlus} shortcut="⌘N" onClick={() => { handleNew(); close(); }}>
-                New
-              </MenuItem>
-              <MenuItem icon={FolderOpen} shortcut="⌘O" onClick={() => { onOpen(); close(); }}>
-                Open…
-              </MenuItem>
-              <MenuItem
-                icon={Files}
-                shortcut="⌘⇧O"
-                onClick={() => { window.dispatchEvent(new CustomEvent("vcad:documents")); close(); }}
-              >
-                Open from Cloud…
-              </MenuItem>
+              <CommandMenuItem id="new-document" close={close} commands={commands} />
+              <CommandMenuItem id="open" close={close} commands={commands} />
+              <CommandMenuItem id="open-cloud" close={close} commands={commands} />
               <MenuSeparator />
-              <MenuItem icon={FloppyDisk} shortcut="⌘S" onClick={() => { onSave(); close(); }}>
-                Save
-              </MenuItem>
+              <CommandMenuItem id="save" close={close} commands={commands} />
               <MenuSeparator />
               <Popover.Root>
                 <Popover.Trigger asChild>
                   <button className="flex w-full items-center gap-2 px-3 py-1 text-xs text-text hover:bg-hover">
-                    <Export size={13} className="text-text-muted" />
+                    <Export size={13} className="text-sky-400" />
                     <span className="flex-1 text-left">Export</span>
                     <CaretRight size={10} className="text-text-muted" />
                   </button>
@@ -412,7 +399,7 @@ export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
               <Popover.Root>
                 <Popover.Trigger asChild>
                   <button className="flex w-full items-center gap-2 px-3 py-1 text-xs text-text hover:bg-hover">
-                    <BookOpen size={13} className="text-text-muted" />
+                    <BookOpen size={13} className="text-sky-400" />
                     <span className="flex-1 text-left">Examples</span>
                     <CaretRight size={10} className="text-text-muted" />
                   </button>
@@ -442,35 +429,16 @@ export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
         <MenuBarItem label="Edit" accelerator="E">
           {(close: () => void) => (
             <>
-              <MenuItem icon={ArrowCounterClockwise} shortcut="⌘Z" onClick={() => { handleUndo(); close(); }}>
-                Undo
-              </MenuItem>
-              <MenuItem icon={ArrowClockwise} shortcut="⌘⇧Z" onClick={() => { handleRedo(); close(); }}>
-                Redo
-              </MenuItem>
+              <CommandMenuItem id="undo" close={close} commands={commands} />
+              <CommandMenuItem id="redo" close={close} commands={commands} />
               <MenuSeparator />
-              <MenuItem icon={Copy} shortcut="⌘C" onClick={() => { handleCopy(); close(); }}>
-                Copy
-              </MenuItem>
-              <MenuItem icon={ClipboardText} shortcut="⌘V" onClick={() => { handlePaste(); close(); }}>
-                Paste
-              </MenuItem>
-              <MenuItem icon={Copy} shortcut="⌘D" onClick={() => { handleDuplicate(); close(); }}>
-                Duplicate
-              </MenuItem>
-              <MenuItem icon={Trash} shortcut="Del" onClick={() => { handleDelete(); close(); }}>
-                Delete
-              </MenuItem>
+              <CommandMenuItem id="copy" close={close} commands={commands} />
+              <CommandMenuItem id="paste" close={close} commands={commands} />
+              <CommandMenuItem id="duplicate" close={close} commands={commands} />
+              <CommandMenuItem id="delete" close={close} commands={commands} />
               <MenuSeparator />
-              <MenuItem icon={Selection} shortcut="⌘A" onClick={() => { handleSelectAll(); close(); }}>
-                Select All
-              </MenuItem>
-              <MenuItem
-                shortcut="Esc"
-                onClick={() => { useUiStore.getState().clearSelection(); close(); }}
-              >
-                Deselect
-              </MenuItem>
+              <CommandMenuItem id="select-all" close={close} commands={commands} />
+              <CommandMenuItem id="deselect" close={close} commands={commands} />
             </>
           )}
         </MenuBarItem>
@@ -478,49 +446,21 @@ export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
         <MenuBarItem label="View" accelerator="V">
           {(close: () => void) => (
             <>
-              <MenuItem
-                icon={List}
-                onClick={() => { toggleFeatureTree(); close(); }}
-              >
-                Toggle Left Sidebar
-              </MenuItem>
-              <MenuItem
-                icon={ChatDots}
-                shortcut="F6"
-                onClick={() => { useChatStore.getState().toggleOpen(); close(); }}
-              >
-                Toggle Right Sidebar
-              </MenuItem>
-              <MenuItem
-                icon={Terminal}
-                onClick={() => { useUiStore.getState().toggleStatusBar(); close(); }}
-              >
-                Toggle Status Bar
-              </MenuItem>
-              <MenuItem
-                icon={Terminal}
-                shortcut="`"
-                onClick={() => { useLogStore.getState().togglePanel(); close(); }}
-              >
-                Toggle DevTools
-              </MenuItem>
+              <CommandMenuItem id="toggle-sidebar" close={close} commands={commands} />
+              <CommandMenuItem id="toggle-chat" close={close} commands={commands} />
+              <CommandMenuItem id="toggle-status-bar" close={close} commands={commands} />
+              <CommandMenuItem id="toggle-devtools" close={close} commands={commands} />
               <MenuSeparator />
-              <MenuItem icon={Cube} onClick={() => { handleCameraPreset("isometric"); close(); }}>
-                Isometric
-              </MenuItem>
-              <MenuItem onClick={() => { handleCameraPreset("top"); close(); }}>Top</MenuItem>
-              <MenuItem onClick={() => { handleCameraPreset("front"); close(); }}>Front</MenuItem>
-              <MenuItem onClick={() => { handleCameraPreset("right"); close(); }}>Right</MenuItem>
-              <MenuItem
-                icon={ArrowsOutCardinal}
-                shortcut="F"
-                onClick={() => { handleCameraPreset("fit"); close(); }}
-              >
-                Fit to View
-              </MenuItem>
+              <CommandMenuItem id="camera-isometric" close={close} commands={commands} />
+              <CommandMenuItem id="camera-top" close={close} commands={commands} />
+              <CommandMenuItem id="camera-front" close={close} commands={commands} />
+              <CommandMenuItem id="camera-right" close={close} commands={commands} />
+              <CommandMenuItem id="camera-fit" close={close} commands={commands} />
               <MenuSeparator />
+              {/* Wireframe + grid snap kept inline: labels flip based on state. */}
               <MenuItem
                 icon={CubeTransparent}
+                iconClassName={CATEGORY_ICON_COLORS.view}
                 shortcut="X"
                 onClick={() => { toggleWireframe(); close(); }}
               >
@@ -528,6 +468,7 @@ export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
               </MenuItem>
               <MenuItem
                 icon={GridFour}
+                iconClassName={CATEGORY_ICON_COLORS.view}
                 shortcut="G"
                 onClick={() => { toggleGridSnap(); close(); }}
               >
@@ -537,8 +478,10 @@ export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
               <RayTracingSubmenu />
               <MouseControlsSubmenu />
               <MenuSeparator />
+              {/* Theme cycle kept inline: both icon and label depend on current theme. */}
               <MenuItem
                 icon={theme === "dark" ? Sun : theme === "light" ? Desktop : Moon}
+                iconClassName={CATEGORY_ICON_COLORS.view}
                 onClick={() => {
                   setTheme(theme === "dark" ? "light" : theme === "light" ? "system" : "dark");
                   close();
@@ -553,26 +496,12 @@ export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
         <MenuBarItem label="Tools" accelerator="T">
           {(close: () => void) => (
             <>
-              <MenuItem icon={Command} shortcut="⌘K" onClick={() => { handleCommandPalette(); close(); }}>
-                Command Palette…
-              </MenuItem>
+              <CommandMenuItem id="command-palette" close={close} commands={commands} />
               <MenuSeparator />
-              <MenuItem icon={Pencil} onClick={() => { handleStartSketch(); close(); }}>
-                New Sketch…
-              </MenuItem>
+              <CommandMenuItem id="new-sketch" close={close} commands={commands} />
               <MenuSeparator />
-              <MenuItem
-                icon={Printer}
-                onClick={() => { useSlicerStore.getState().openPrintPanel(); close(); }}
-              >
-                Print (Slicer)…
-              </MenuItem>
-              <MenuItem
-                icon={Wrench}
-                onClick={() => { useCamStore.getState().openCamPanel(); close(); }}
-              >
-                CAM (Toolpath)…
-              </MenuItem>
+              <CommandMenuItem id="open-slicer" close={close} commands={commands} />
+              <CommandMenuItem id="open-cam" close={close} commands={commands} />
             </>
           )}
         </MenuBarItem>
@@ -580,43 +509,17 @@ export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
         <MenuBarItem label="Help" accelerator="H">
           {(close: () => void) => (
             <>
-              <MenuItem icon={Info} onClick={() => { onAboutOpen(); close(); }}>
-                About vcad
-              </MenuItem>
-              <button
-                onClick={() => {
-                  useChangelogStore.getState().openPanel();
-                  close();
-                }}
-                className="flex w-full items-center gap-2 px-3 py-1 text-xs text-text hover:bg-hover"
-              >
-                <Rocket size={13} className="text-brand" />
-                <span className="flex-1 text-left">What's New</span>
-                {unreadChangelog > 0 && (
-                  <span className="px-1.5 py-0.5 text-[10px] font-bold bg-brand text-white rounded-full min-w-[18px] text-center">
-                    {unreadChangelog}
-                  </span>
-                )}
-              </button>
+              <CommandMenuItem id="about" close={close} commands={commands} />
+              <CommandMenuItem
+                id="whats-new"
+                close={close}
+                commands={commands}
+                badge={unreadChangelog}
+              />
               <MenuSeparator />
-              <MenuItem
-                icon={BookOpen}
-                onClick={() => { window.open("https://docs.vcad.io", "_blank"); close(); }}
-              >
-                Documentation
-              </MenuItem>
-              <MenuItem
-                icon={GithubLogo}
-                onClick={() => { window.open("https://github.com/ecto/vcad", "_blank"); close(); }}
-              >
-                GitHub
-              </MenuItem>
-              <MenuItem
-                icon={DiscordLogo}
-                onClick={() => { window.open("https://discord.gg/ZU8QHnFAc2", "_blank"); close(); }}
-              >
-                Discord
-              </MenuItem>
+              <CommandMenuItem id="open-docs" close={close} commands={commands} />
+              <CommandMenuItem id="open-github" close={close} commands={commands} />
+              <CommandMenuItem id="open-discord" close={close} commands={commands} />
             </>
           )}
         </MenuBarItem>
