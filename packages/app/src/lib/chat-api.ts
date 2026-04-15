@@ -146,7 +146,14 @@ export async function streamChat(
 
     callbacks.onFinish();
   } catch (err) {
-    callbacks.onError(err instanceof Error ? err.message : "Stream failed");
+    // AbortError fires when the caller cancels via signal — that's a
+    // user-initiated stop, not a failure, so we don't surface it as an error.
+    const isAbort =
+      (err instanceof DOMException && err.name === "AbortError") ||
+      options?.signal?.aborted === true;
+    if (!isAbort) {
+      callbacks.onError(err instanceof Error ? err.message : "Stream failed");
+    }
     callbacks.onFinish();
   }
 }

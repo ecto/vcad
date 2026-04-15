@@ -205,17 +205,31 @@ function summarizeToolParts(parts: MessagePart[] | undefined): string | null {
   return nonZero.map(([k, v]) => `${v} ${k}`).join(" · ");
 }
 
-function VcadMessage({ msg }: { msg: ChatMessage }) {
+function VcadMessage({ msg, userName }: { msg: ChatMessage; userName: string }) {
   const isUser = msg.role === "user";
 
   // Assistant messages have a parts array (text + tool chunks interleaved).
   // User messages only have content + context. Both need to render through
-  // the same Message shell so AI Elements' bubble styling cascades correctly.
+  // the same Message shell so turn styling stays consistent.
   const hasParts = !isUser && msg.parts && msg.parts.length > 0;
   const summary = !isUser ? summarizeToolParts(msg.parts) : null;
 
+  // IRC-style role prefix. Brand pink for the user, muted for vcad — gives
+  // each turn a scannable "who's talking" label without bubbles or alignment
+  // tricks that fight the rest of the monokai/terminal UI.
+  const roleLabel = isUser ? userName : "vcad";
+  const roleClass = isUser ? "text-brand" : "text-text-muted";
+
   return (
     <Message from={isUser ? "user" : "assistant"}>
+      <div
+        className={cn(
+          "font-mono text-[9px] uppercase tracking-wider select-none",
+          roleClass,
+        )}
+      >
+        {roleLabel}
+      </div>
       <MessageContent className="text-[11px]">
         {/* Context pills attached to the user bubble */}
         {isUser && msg.context && msg.context.length > 0 && (
@@ -400,6 +414,17 @@ export function ChatSidebar() {
   const setUsageError = useChatStore((s) => s.setUsageError);
   const { user } = useAuth();
 
+  // Derive a short display name for the IRC-style role prefix. Prefer the
+  // user's first name, then the email prefix, then fall back to "you" for
+  // anonymous sessions.
+  const userName = (() => {
+    const full =
+      user?.user_metadata?.full_name || user?.user_metadata?.name;
+    if (full) return String(full).split(" ")[0]!.toLowerCase();
+    if (user?.email) return user.email.split("@")[0]!.toLowerCase();
+    return "you";
+  })();
+
   const [activeTab, setActiveTab] = useState<SidebarTab>("chat");
   const [selectionContext, removeContextPart] = useSelectionContext();
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -540,7 +565,7 @@ export function ChatSidebar() {
                 />
               )}
               {messages.map((msg) => (
-                <VcadMessage key={msg.id} msg={msg} />
+                <VcadMessage key={msg.id} msg={msg} userName={userName} />
               ))}
               {showShimmer && (
                 <Shimmer className="px-1 text-[11px]">Thinking...</Shimmer>

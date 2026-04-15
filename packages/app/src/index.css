@@ -54,7 +54,19 @@
   --color-destructive-foreground: #ffffff;
   --color-input: var(--border);
   --color-ring: #F92672;
-  --radius: 0.25rem;
+
+  /* vcad design system: zero border radius. Override Tailwind's default radius
+     scale so every `rounded-*` utility resolves to 0. `rounded-full` is a
+     static utility (not token-driven), so it's flattened in @layer below. */
+  --radius: 0;
+  --radius-xs: 0;
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+  --radius-2xl: 0;
+  --radius-3xl: 0;
+  --radius-4xl: 0;
 }
 
 /* shadcn token aliases — these need to live in :root (not @theme) so they
@@ -120,6 +132,14 @@ body {
   color: var(--text);
 }
 
+/* vcad design system: flatten Tailwind's static `rounded-full` utility.
+   The `--radius-*` tokens above handle the rest of the rounded-* scale. */
+@layer utilities {
+  .rounded-full {
+    border-radius: 0;
+  }
+}
+
 /* Thin scrollbar utility */
 .scrollbar-thin {
   scrollbar-width: thin;
@@ -134,7 +154,6 @@ body {
 }
 .scrollbar-thin::-webkit-scrollbar-thumb {
   background: var(--border);
-  border-radius: 3px;
 }
 .scrollbar-thin::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);
