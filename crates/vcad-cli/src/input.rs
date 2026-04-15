@@ -525,6 +525,31 @@ pub fn handle_mouse(
         }
         MouseEventKind::Moved => {
             app.mouse_pos = (col, row);
+            // Update the status-bar cursor XYZ readout whenever the
+            // mouse is over the viewport. The viewport spans the full
+            // area; the menu bar (row 0), tool strip (rows 1-2), and
+            // status bar (last row) overlay it, so we only raycast
+            // when the mouse is actually in the 3D region.
+            let top_chrome = 3u16;
+            let bot_chrome = 1u16;
+            let viewport_h = area.height.saturating_sub(top_chrome + bot_chrome);
+            let in_viewport = row >= area.y + top_chrome
+                && row < area.y + top_chrome + viewport_h
+                && !(app.chat.open
+                    && col >= crate::ui::chat::chat_rect(area).x);
+            app.cursor_world = if in_viewport {
+                crate::raycast::raycast_ground_plane(
+                    &app.camera,
+                    col,
+                    row,
+                    area.x,
+                    area.y + top_chrome,
+                    area.width,
+                    viewport_h,
+                )
+            } else {
+                None
+            };
         }
         _ => {}
     }

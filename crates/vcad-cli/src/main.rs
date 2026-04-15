@@ -14,6 +14,7 @@ mod keybinding_adapter;
 mod log_capture;
 #[cfg(feature = "print-server")]
 mod print_server;
+mod raycast;
 mod render;
 mod repl;
 mod tui;
