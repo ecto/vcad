@@ -16,11 +16,13 @@
 //! The TS reference lives in `packages/core/src/commands/registry.ts`,
 //! `packages/app/src/lib/chat-api.ts`, and `api/chat.ts`.
 
+pub mod auth;
 pub mod prompt;
 pub mod schemas;
 pub mod stream;
 pub mod tools;
 
+pub use auth::{clear_token, load_token, save_token, token_path, AuthError, Token};
 pub use prompt::{build_system_prompt, type_catalog, NodeInfo, PartInfo, SelectionInfo};
 pub use schemas::{all_schemas, type_enum};
 pub use stream::{
