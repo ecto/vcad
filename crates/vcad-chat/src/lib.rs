@@ -23,7 +23,10 @@ pub mod schemas;
 pub mod stream;
 pub mod tools;
 
-pub use auth::{clear_token, load_token, save_token, token_path, AuthError, Token};
+pub use auth::{
+    clear_token, generate_device_code, load_token, open_browser, poll_for_token, save_token,
+    token_path, AuthError, DeviceCode, Token,
+};
 pub use executor::{execute_crud, ExecutionResult, ExecutionStatus};
 pub use prompt::{build_system_prompt, type_catalog, NodeInfo, PartInfo, SelectionInfo};
 pub use schemas::{all_schemas, type_enum};

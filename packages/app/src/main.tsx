@@ -19,6 +19,7 @@ import {
   type StorageAdapter,
 } from "@vcad/auth";
 import { App } from "./App";
+import { CliAuth } from "./components/CliAuth";
 import "./index.css";
 import {
   getAllDocuments,
@@ -80,10 +81,16 @@ configureStorage(storageAdapter);
 configureVersionHistoryStorage(storageAdapter);
 initSyncListeners();
 
+// Route: `/cli-auth` is the device-code browser flow completion page for
+// `vcad login`. Check the pathname at mount time and render the standalone
+// CliAuth component instead of the full editor — zero risk of breaking the
+// normal load path since App never runs in this branch.
+const isCliAuth = window.location.pathname === "/cli-auth";
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <AuthProvider onSignIn={() => triggerSync()}>
-      <App />
+      {isCliAuth ? <CliAuth /> : <App />}
     </AuthProvider>
   </StrictMode>,
 );

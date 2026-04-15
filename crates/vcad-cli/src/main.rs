@@ -191,6 +191,18 @@ enum Commands {
         #[arg(long, default_value = "7878")]
         port: u16,
     },
+
+    /// Sign in so the chat panel uses your account's quota instead of
+    /// the anonymous limit. Without `--token` this opens a browser
+    /// and polls for the device-code flow to complete.
+    Login {
+        /// Paste-token path: write the JWT directly without opening a browser.
+        #[arg(long)]
+        token: Option<String>,
+    },
+
+    /// Remove the stored chat auth token.
+    Logout,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -302,12 +314,64 @@ fn main() -> Result<()> {
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(print_server::start_server(port))?;
         }
+        Some(Commands::Login { token }) => {
+            run_login(token)?;
+        }
+        Some(Commands::Logout) => {
+            run_logout()?;
+        }
         None => {
             // Default to TUI with no file
             app::run_tui(None)?;
         }
     }
 
+    Ok(())
+}
+
+/// `vcad login` — accept a pasted JWT or drive the device-code flow.
+fn run_login(token: Option<String>) -> Result<()> {
+    if let Some(jwt) = token {
+        let jwt = jwt.trim().to_string();
+        if jwt.is_empty() {
+            anyhow::bail!("--token must not be empty");
+        }
+        vcad_chat::save_token(&vcad_chat::Token {
+            access_token: jwt,
+            refresh_token: None,
+            expires_at: None,
+        })?;
+        let path = vcad_chat::token_path()?;
+        println!("Saved token to {}", path.display());
+        return Ok(());
+    }
+
+    // Device-code browser flow.
+    let device = vcad_chat::generate_device_code();
+    println!("Opening {}", device.login_url);
+    println!("(if your browser didn't open, visit the URL above and sign in)");
+    if let Err(e) = vcad_chat::open_browser(&device.login_url) {
+        eprintln!("note: couldn't spawn a browser ({e}); open the URL manually");
+    }
+
+    println!("Waiting for sign-in to complete…");
+    match vcad_chat::poll_for_token(&device.code, None) {
+        Ok(token) => {
+            vcad_chat::save_token(&token)?;
+            let path = vcad_chat::token_path()?;
+            println!("Saved token to {}", path.display());
+            Ok(())
+        }
+        Err(e) => {
+            anyhow::bail!("device-code login failed: {e}")
+        }
+    }
+}
+
+/// `vcad logout` — remove the stored token.
+fn run_logout() -> Result<()> {
+    vcad_chat::clear_token()?;
+    println!("Logged out — chat will use anonymous quota.");
     Ok(())
 }
 
