@@ -57,6 +57,8 @@ export interface UiState {
   inspectorTarget: InspectorTarget;
   // Bottom status bar visibility
   statusBarVisible: boolean;
+  // Live cursor position in world space (Z-up), null when pointer is off the viewport
+  cursorWorld: { x: number; y: number; z: number } | null;
 
   select: (partId: string | null) => void;
   toggleSelect: (partId: string) => void;
@@ -101,6 +103,7 @@ export interface UiState {
   setSidebarPane: (pane: SidebarPane) => void;
   setInspectorTarget: (target: InspectorTarget) => void;
   toggleStatusBar: () => void;
+  setCursorWorld: (pos: { x: number; y: number; z: number } | null) => void;
 }
 
 // Load persisted material preferences from localStorage
@@ -167,6 +170,7 @@ export const useUiStore = create<UiState>((set) => ({
   sidebarPane: "tree" as SidebarPane,
   inspectorTarget: null as InspectorTarget,
   statusBarVisible: true,
+  cursorWorld: null,
 
   select: (partId) =>
     set({ selectedPartIds: partId ? new Set([partId]) : new Set() }),
@@ -309,4 +313,6 @@ export const useUiStore = create<UiState>((set) => ({
   setInspectorTarget: (target) => set({ inspectorTarget: target }),
 
   toggleStatusBar: () => set((s) => ({ statusBarVisible: !s.statusBarVisible })),
+
+  setCursorWorld: (pos) => set({ cursorWorld: pos }),
 }));

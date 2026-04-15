@@ -4,4 +4,3 @@ export { AIProgressCard } from "./AIProgressCard";
 export { DecisionCard } from "./DecisionCard";
 export { ActionResultCard } from "./ActionResultCard";
 export { WarningCard } from "./WarningCard";
-export { ActivityPanel } from "./ActivityPanel";

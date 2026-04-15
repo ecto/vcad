@@ -8,7 +8,7 @@ import {
   Suspense,
 } from "react";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { NotificationContainer, ActivityPanel } from "@/components/ui/notifications";
+import { NotificationContainer } from "@/components/ui/notifications";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AppShell } from "@/components/AppShell";
 import { Header } from "@/components/Header";
@@ -703,13 +703,7 @@ export function App() {
                 <LogViewer />
               </Suspense>
             )}
-            footer={!electronicsActive && statusBarVisible && (
-              <StatusBar
-                onSave={handleSave}
-                onOpen={handleOpen}
-                onAboutOpen={() => setAboutOpen(true)}
-              />
-            )}
+            footer={!electronicsActive && statusBarVisible && <StatusBar />}
           >
           {viewportStack}
           {dragOverlay}
@@ -745,7 +739,6 @@ export function App() {
           onChange={handleFileChange}
         />
         <NotificationContainer />
-        <ActivityPanel />
         <Suspense fallback={null}>
           <WhatsNewPanel />
         </Suspense>

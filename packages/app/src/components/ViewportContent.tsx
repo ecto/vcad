@@ -1,5 +1,5 @@
 import { useRef, useEffect, useMemo, useState, useCallback, Suspense } from "react";
-import { Spherical, Vector3, Box3, Raycaster, Vector2, Quaternion, Matrix4, Color, TOUCH } from "three";
+import { Spherical, Vector3, Box3, Plane, Raycaster, Vector2, Quaternion, Matrix4, Color, TOUCH } from "three";
 
 const isCoarsePointer =
   typeof window !== "undefined" &&
@@ -683,6 +683,63 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
     domElement.addEventListener("dblclick", handleDoubleClick);
     return () => domElement.removeEventListener("dblclick", handleDoubleClick);
   }, [INITIAL_DISTANCE, INITIAL_TARGET]);
+
+  // Publish cursor world position (Z-up) to UiStore for the status bar readout.
+  // Raycasts pointer against the ground plane (kernel Z=0, display Y=0) via the
+  // Three.js -90°X scene rotation. Throttled to one update per animation frame.
+  useEffect(() => {
+    const controls = orbitRef.current;
+    const domElement = controls?.domElement;
+    if (!domElement) return;
+
+    const groundPlane = new Plane(new Vector3(0, 1, 0), 0);
+    const pointer = new Vector2();
+    const raycaster = new Raycaster();
+    const hit = new Vector3();
+    let pending = false;
+    let lastEvent: PointerEvent | null = null;
+
+    const flush = () => {
+      pending = false;
+      const e = lastEvent;
+      if (!e) return;
+      const rect = domElement.getBoundingClientRect();
+      pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+      const intersected = raycaster.ray.intersectPlane(groundPlane, hit);
+      if (!intersected) {
+        useUiStore.getState().setCursorWorld(null);
+        return;
+      }
+      // Display (Y-up) → kernel (Z-up): (dx, dy, dz) → (dx, -dz, dy)
+      useUiStore.getState().setCursorWorld({
+        x: hit.x,
+        y: -hit.z,
+        z: hit.y,
+      });
+    };
+
+    const handlePointerMove = (e: PointerEvent) => {
+      lastEvent = e;
+      if (pending) return;
+      pending = true;
+      requestAnimationFrame(flush);
+    };
+
+    const handlePointerLeave = () => {
+      lastEvent = null;
+      useUiStore.getState().setCursorWorld(null);
+    };
+
+    domElement.addEventListener("pointermove", handlePointerMove);
+    domElement.addEventListener("pointerleave", handlePointerLeave);
+    return () => {
+      domElement.removeEventListener("pointermove", handlePointerMove);
+      domElement.removeEventListener("pointerleave", handlePointerLeave);
+      useUiStore.getState().setCursorWorld(null);
+    };
+  }, [camera]);
 
   // Face selection: swing camera to view face flat
   useEffect(() => {
