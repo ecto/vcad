@@ -274,40 +274,65 @@ pub fn draw_chat(buf: &mut CellBuffer, panel: &ChatPanel, area: Rect) {
     } else {
         output_top
     };
-    let visible_lines = (output_bot - output_top) as usize;
+    let visible_rows = (output_bot - output_top) as usize;
 
-    if visible_lines > 0 && !panel.lines.is_empty() {
-        let total = panel.lines.len();
-        let scroll = panel.scroll.min(total.saturating_sub(visible_lines));
-        let start = total.saturating_sub(visible_lines + scroll);
+    if visible_rows > 0 && !panel.lines.is_empty() {
+        // Fixed two-cell prefix column ("▶ ", "✦ ", "│ ") — text wraps
+        // at inner_w - 2 so continuation rows can indent past it.
+        let inner_w = (right - left - 1) as usize;
+        let text_w = inner_w.saturating_sub(2);
+
+        // Flatten source lines into visual rows. `is_head` marks the first
+        // row of a source line so the prefix icon only appears once; later
+        // rows render spaces at the same column.
+        let mut visual: Vec<(ChatLineKind, String, bool)> = Vec::new();
+        for line in &panel.lines {
+            let wrapped = wrap_text(&line.text, text_w);
+            for (i, chunk) in wrapped.into_iter().enumerate() {
+                visual.push((line.kind, chunk, i == 0));
+            }
+        }
+
+        let total = visual.len();
+        let scroll = panel.scroll.min(total.saturating_sub(visible_rows));
+        let start = total.saturating_sub(visible_rows + scroll);
         let end = total.saturating_sub(scroll);
 
-        for (i, line) in panel.lines[start..end].iter().enumerate() {
+        for (i, (kind, text, is_head)) in visual[start..end].iter().enumerate() {
             let y = output_top + i as u16;
             if y >= output_bot {
                 break;
             }
 
-            let (prefix, prefix_fg, text_fg) = match line.kind {
+            let (prefix, prefix_fg, text_fg) = match kind {
                 ChatLineKind::User => ("\u{25B6} ", theme::GREEN(), theme::TEXT()),
                 ChatLineKind::Assistant => ("\u{2726} ", theme::ACCENT(), theme::PURPLE()),
                 ChatLineKind::Debug => ("\u{2502} ", theme::BORDER(), theme::TEXT_MUTED()),
             };
 
-            let inner_w = (right - left - 1) as usize;
             let mut cx = left + 1;
 
-            // Draw prefix
-            for ch in prefix.chars() {
-                if (cx - left) as usize >= inner_w {
-                    break;
+            // Prefix on the head row, two blank cells on continuation rows
+            // so wrapped text stays visually aligned under the same column.
+            if *is_head {
+                for ch in prefix.chars() {
+                    if (cx - left) as usize >= inner_w {
+                        break;
+                    }
+                    set_char(buf, cx, y, ch, prefix_fg, theme::SURFACE());
+                    cx += 1;
                 }
-                set_char(buf, cx, y, ch, prefix_fg, theme::SURFACE());
-                cx += 1;
+            } else {
+                for _ in 0..2 {
+                    if (cx - left) as usize >= inner_w {
+                        break;
+                    }
+                    set_char(buf, cx, y, ' ', theme::SURFACE(), theme::SURFACE());
+                    cx += 1;
+                }
             }
 
-            // Draw text
-            for ch in line.text.chars() {
+            for ch in text.chars() {
                 if (cx - left) as usize >= inner_w {
                     break;
                 }
@@ -316,7 +341,7 @@ pub fn draw_chat(buf: &mut CellBuffer, panel: &ChatPanel, area: Rect) {
             }
         }
 
-        // Scroll indicator
+        // Scroll indicator — shows how many visual rows are hidden above.
         if scroll > 0 {
             let indicator = format!("[+{}]", scroll);
             let ix = right.saturating_sub(indicator.len() as u16 + 1);
@@ -414,5 +439,99 @@ pub fn draw_chat(buf: &mut CellBuffer, panel: &ChatPanel, area: Rect) {
                 theme::SURFACE(),
             );
         }
+    }
+}
+
+/// Word-wrap `text` to lines no wider than `width` cells. Soft-breaks on
+/// whitespace; if a single word is longer than `width` it's hard-broken
+/// across as many rows as needed. An empty input still produces a single
+/// empty row so scroll math stays consistent.
+fn wrap_text(text: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![text.to_string()];
+    }
+    if text.is_empty() {
+        return vec![String::new()];
+    }
+
+    let mut out: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut current_len = 0usize;
+
+    let push_hard_break = |out: &mut Vec<String>, word: &str, width: usize| {
+        let mut remaining = word;
+        while !remaining.is_empty() {
+            let take: String = remaining.chars().take(width).collect();
+            let take_bytes = take.len();
+            out.push(take);
+            remaining = &remaining[take_bytes..];
+        }
+    };
+
+    for word in text.split_whitespace() {
+        let word_len = word.chars().count();
+        if current_len == 0 {
+            if word_len > width {
+                push_hard_break(&mut out, word, width);
+            } else {
+                current.push_str(word);
+                current_len = word_len;
+            }
+        } else if current_len + 1 + word_len <= width {
+            current.push(' ');
+            current.push_str(word);
+            current_len += 1 + word_len;
+        } else {
+            out.push(std::mem::take(&mut current));
+            current_len = 0;
+            if word_len > width {
+                push_hard_break(&mut out, word, width);
+            } else {
+                current.push_str(word);
+                current_len = word_len;
+            }
+        }
+    }
+
+    if !current.is_empty() {
+        out.push(current);
+    }
+    if out.is_empty() {
+        out.push(String::new());
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wraps_long_lines_at_word_boundaries() {
+        let wrapped = wrap_text("the quick brown fox jumps over the lazy dog", 15);
+        // Each row should be ≤ 15 and split on whitespace.
+        for row in &wrapped {
+            assert!(row.chars().count() <= 15, "row too long: {row:?}");
+        }
+        assert!(wrapped.len() >= 2);
+    }
+
+    #[test]
+    fn hard_breaks_oversize_words() {
+        let wrapped = wrap_text("supercalifragilisticexpialidocious", 10);
+        assert!(wrapped.iter().all(|r| r.chars().count() <= 10));
+        // Should fully account for every char.
+        let joined: String = wrapped.join("");
+        assert_eq!(joined, "supercalifragilisticexpialidocious");
+    }
+
+    #[test]
+    fn empty_input_returns_one_empty_row() {
+        assert_eq!(wrap_text("", 20), vec![String::new()]);
+    }
+
+    #[test]
+    fn zero_width_returns_full_text() {
+        assert_eq!(wrap_text("anything", 0), vec!["anything".to_string()]);
     }
 }

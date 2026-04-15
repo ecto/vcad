@@ -209,9 +209,9 @@ fn handle_sub_tool_click(app: &mut App, tool_idx: usize) -> anyhow::Result<bool>
     match tool.command {
         // Sketch mode — special handling
         "sketch" => {
-            app.mode = TuiMode::Sketch(crate::tui::SketchModeState::new(
+            app.mode = TuiMode::Sketch(Box::new(crate::tui::SketchModeState::new(
                 crate::tui::SketchPlane::XY,
-            ));
+            )));
             app.status = "Sketch mode (XY plane) - L:line R:rect C:circle".to_string();
         }
 
@@ -630,6 +630,15 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
     // When the chat input has focus, route keys there first.
     if app.chat.focused {
         match key.code {
+            KeyCode::Esc if app.chat_session.is_busy() => {
+                // Abort the in-flight request without surrendering focus.
+                app.chat_session.abort();
+                app.log(
+                    crate::app::LogLevel::Info,
+                    "chat",
+                    "aborted in-flight request",
+                );
+            }
             KeyCode::Char('`') | KeyCode::Esc => {
                 app.chat.focused = false;
             }
@@ -810,9 +819,9 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
                 app.chat.focused = true;
             }
             KeyCode::Char('S') if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                app.mode = TuiMode::Sketch(crate::tui::SketchModeState::new(
+                app.mode = TuiMode::Sketch(Box::new(crate::tui::SketchModeState::new(
                     crate::tui::SketchPlane::XY,
-                ));
+                )));
                 app.set_status("Sketch mode (XY plane) - L:line R:rect C:circle");
             }
             // Number keys 1-7: switch toolbar tabs (matching web app)

@@ -13,7 +13,9 @@
 //! events; every document mutation happens on the main thread in
 //! [`drain_chat_events`] so we never fight the kernel over `&mut Document`.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Arc;
 use std::thread;
 
 use anyhow::Result;
@@ -48,8 +50,39 @@ pub enum ChatUpdate {
     },
     /// Stream finished cleanly.
     Done,
-    /// Fatal stream error. The caller shows this in the chat panel.
-    Error(String),
+    /// Fatal stream error. The caller renders a friendly message via
+    /// [`friendly_error_text`] so the user sees actionable guidance
+    /// instead of a raw error body.
+    Error(ChatErrorKind),
+}
+
+/// Typed error kind delivered over the stream channel. Preserves enough
+/// information for [`friendly_error_text`] to pick the right message
+/// without embedding UI strings in the background task.
+///
+/// `body` fields are preserved for future diagnostic rendering (details
+/// pane, debug panel) but aren't surfaced by the current friendly
+/// formatter — they get `#[allow(dead_code)]` so clippy doesn't complain.
+#[derive(Debug, Clone)]
+pub enum ChatErrorKind {
+    /// Server returned 429. Anonymous quota hit or signed-in quota exceeded.
+    RateLimited {
+        #[allow(dead_code)]
+        body: String,
+    },
+    /// Non-2xx, non-429 HTTP response — most commonly 404 (endpoint
+    /// missing) or 500 (upstream Anthropic failure).
+    Http {
+        status: u16,
+        #[allow(dead_code)]
+        body: String,
+    },
+    /// reqwest or tokio error before/during the stream — connection
+    /// refused, DNS failure, TLS error, etc.
+    Network(String),
+    /// The stream parser rejected the payload — shouldn't happen unless
+    /// the server protocol changes.
+    Parse(String),
 }
 
 /// One tool invocation from a single assistant turn — recorded as it
@@ -85,12 +118,25 @@ pub struct ChatSession {
     /// True while a request is in flight; blocks new sends and the
     /// assistant row renders with a spinner.
     pub in_flight: bool,
+    /// Shared abort flag — set to true by [`ChatSession::abort`] on the
+    /// main thread, polled by the bg request loop before each event.
+    /// When true the bg thread drops its stream and emits a `Done` so
+    /// the drain path finalizes whatever partial text was received.
+    abort_flag: Option<Arc<AtomicBool>>,
 }
 
 impl ChatSession {
     /// True when a request is streaming or tool-execution is pending.
     pub fn is_busy(&self) -> bool {
         self.in_flight
+    }
+
+    /// Signal the in-flight request to stop ASAP. Safe to call when
+    /// nothing is streaming (no-op).
+    pub fn abort(&self) {
+        if let Some(flag) = &self.abort_flag {
+            flag.store(true, Ordering::Relaxed);
+        }
     }
 }
 
@@ -130,10 +176,12 @@ pub fn start_chat_turn(app: &mut App) -> Result<()> {
         std::env::var("VCAD_CHAT_ENDPOINT").unwrap_or_else(|_| DEFAULT_ENDPOINT.to_string());
 
     let (tx, rx) = mpsc::channel();
+    let abort_flag = Arc::new(AtomicBool::new(false));
     app.chat_session.event_rx = Some(rx);
     app.chat_session.assistant_buffer.clear();
     app.chat_session.pending_tools.clear();
     app.chat_session.in_flight = true;
+    app.chat_session.abort_flag = Some(abort_flag.clone());
 
     thread::spawn(move || {
         // Private current-thread tokio runtime — we only run one task.
@@ -143,33 +191,35 @@ pub fn start_chat_turn(app: &mut App) -> Result<()> {
         {
             Ok(rt) => rt,
             Err(e) => {
-                let _ = tx.send(ChatUpdate::Error(format!("tokio runtime: {e}")));
+                let _ = tx.send(ChatUpdate::Error(ChatErrorKind::Network(format!(
+                    "tokio runtime: {e}"
+                ))));
                 return;
             }
         };
-        runtime.block_on(run_request(endpoint, request, bearer, tx));
+        runtime.block_on(run_request(endpoint, request, bearer, tx, abort_flag));
     });
 
     Ok(())
 }
 
 /// The async request body that runs on the background thread. Forwards
-/// parsed events through `tx`.
+/// parsed events through `tx`. Polls `abort_flag` between each stream
+/// event — when the main thread sets it, the loop breaks and the
+/// stream is dropped, emitting a `Done` so the drain path finalizes
+/// whatever partial text was received.
 async fn run_request(
     endpoint: String,
     request: ChatRequest,
     bearer: Option<String>,
     tx: Sender<ChatUpdate>,
+    abort_flag: Arc<AtomicBool>,
 ) {
     let client = Client::new(endpoint);
     let mut stream = match client.stream(&request, bearer.as_deref()).await {
         Ok(s) => s,
-        Err(ChatError::RateLimited { body }) => {
-            let _ = tx.send(ChatUpdate::Error(format!("rate limited: {body}")));
-            return;
-        }
         Err(e) => {
-            let _ = tx.send(ChatUpdate::Error(e.to_string()));
+            let _ = tx.send(ChatUpdate::Error(chat_error_kind(e)));
             return;
         }
     };
@@ -177,6 +227,10 @@ async fn run_request(
     let mut pending_tool: Option<(String, String, String)> = None; // (id, name, json)
 
     while let Some(event) = stream.next().await {
+        if abort_flag.load(Ordering::Relaxed) {
+            let _ = tx.send(ChatUpdate::Done);
+            return;
+        }
         match event {
             Ok(ChatEvent::Text(t)) => {
                 if tx.send(ChatUpdate::Text(t)).is_err() {
@@ -204,13 +258,68 @@ async fn run_request(
                 return;
             }
             Err(e) => {
-                let _ = tx.send(ChatUpdate::Error(e.to_string()));
+                let _ = tx.send(ChatUpdate::Error(chat_error_kind(e)));
                 return;
             }
         }
     }
     // Stream ended without an explicit Done — treat it as clean close.
     let _ = tx.send(ChatUpdate::Done);
+}
+
+/// Map a typed `ChatError` into a `ChatErrorKind` we can ship over the
+/// channel. Stringifies network errors (they carry a reqwest::Error which
+/// isn't straightforward to preserve as a rich value).
+fn chat_error_kind(err: ChatError) -> ChatErrorKind {
+    match err {
+        ChatError::RateLimited { body } => ChatErrorKind::RateLimited { body },
+        ChatError::Http { status, body } => ChatErrorKind::Http { status, body },
+        ChatError::Network(e) => ChatErrorKind::Network(e.to_string()),
+        ChatError::Parse(msg) => ChatErrorKind::Parse(msg),
+    }
+}
+
+/// Produce a (log line, chat line) pair for a [`ChatErrorKind`]. The log
+/// line is one-line terse so the status bar ticker stays readable; the
+/// chat line is multi-paragraph with actionable next steps.
+pub fn friendly_error_text(kind: &ChatErrorKind) -> (String, String) {
+    match kind {
+        ChatErrorKind::RateLimited { .. } => (
+            "chat rate limit reached".to_string(),
+            "You've hit the anonymous chat quota (3 messages/day). \
+             Run `vcad login` in another terminal to sign in and keep chatting."
+                .to_string(),
+        ),
+        ChatErrorKind::Http { status: 404, .. } => (
+            "chat endpoint 404".to_string(),
+            "The chat endpoint isn't reachable. If you're running a local \
+             api, set VCAD_CHAT_ENDPOINT (e.g. http://localhost:3001/api/chat)."
+                .to_string(),
+        ),
+        ChatErrorKind::Http { status: 401, .. } | ChatErrorKind::Http { status: 403, .. } => (
+            "chat auth rejected".to_string(),
+            "Your stored token was rejected. Run `vcad login --token <jwt>` \
+             to replace it or `vcad logout` to go anonymous."
+                .to_string(),
+        ),
+        ChatErrorKind::Http { status, .. } => (
+            format!("chat HTTP {status}"),
+            format!(
+                "Chat endpoint returned {status}. Set VCAD_CHAT_ENDPOINT if \
+                 you're targeting a non-default URL."
+            ),
+        ),
+        ChatErrorKind::Network(e) => (
+            format!("chat network: {e}"),
+            "Couldn't reach the chat endpoint — network down or the URL is \
+             wrong. Check your connection or set VCAD_CHAT_ENDPOINT."
+                .to_string(),
+        ),
+        ChatErrorKind::Parse(e) => (
+            format!("chat parse: {e}"),
+            format!("Chat stream parse failed: {e}. This is likely a bug."),
+        ),
+    }
 }
 
 /// Drain any ready events from the background thread and apply them to
@@ -245,12 +354,15 @@ pub fn drain_chat_events(app: &mut App) {
                 finalize_turn_and_maybe_chain(app);
                 return;
             }
-            ChatUpdate::Error(e) => {
-                app.log(LogLevel::Error, "chat", e.clone());
-                app.chat.assistant(format!("[error] {e}"));
+            ChatUpdate::Error(kind) => {
+                let (log_line, chat_line) = friendly_error_text(&kind);
+                app.log(LogLevel::Error, "chat", log_line);
+                app.chat.assistant(chat_line);
                 app.chat_session.in_flight = false;
                 app.chat_session.event_rx = None;
                 app.chat_session.pending_tools.clear();
+                app.chat_session.assistant_buffer.clear();
+                app.chat_session.abort_flag = None;
                 return;
             }
         }
@@ -374,6 +486,7 @@ fn finalize_turn_and_maybe_chain(app: &mut App) {
     }
     app.chat_session.in_flight = false;
     app.chat_session.event_rx = None;
+    app.chat_session.abort_flag = None;
 }
 
 /// Push a new user message onto the conversation history. Called from the
