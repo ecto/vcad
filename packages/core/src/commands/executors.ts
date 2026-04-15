@@ -141,7 +141,25 @@ function tryExecuteViaWasm(
 
 /** Route a planned `ToolOutcome` through the closest CRDT-aware
  *  docstore method. Returns an `ExecutionResult` with the ids the
- *  engine assigned. */
+ *  engine assigned, or `null` to fall through to the legacy TS path.
+ *
+ *  `add_feature` deliberately falls through: the Rust planner emits
+ *  a `vcad_ir::CsgOp`-shaped payload, but the web's CRDT engine
+ *  (`WasmDocumentEngine::add_feature`) parses its input as
+ *  `vcad_app::feature::FeatureInput` — a different, web-specific schema
+ *  with flat primitive fields (`size_x` / `size_y` / `size_z`), string
+ *  stable IDs, boolean-kind inner enum, and JSON-serialized sketches.
+ *  The two shapes don't round-trip, and the wasm engine silently
+ *  ignores parse failures, so routing `add_feature` through here
+ *  would falsely report "success" on a no-op mutation. Until the Rust
+ *  planner emits `FeatureInput`-shaped payloads (or the TUI moves onto
+ *  the shared `DocumentApi` pipeline), the TS legacy path in
+ *  `executeCrudInner` remains the authority for creation on the web.
+ *
+ *  The three non-create outcomes (`remove_part`, `set_part_material`,
+ *  `update_params`) are dispatched here because they hit higher-level
+ *  docstore methods that take plain part-id / key / value arguments
+ *  rather than the FeatureInput schema. */
 function dispatchOutcome(
   plannedResult: string,
   outcome: ToolOutcome,
@@ -149,29 +167,8 @@ function dispatchOutcome(
 ): ExecutionResult | null {
   switch (outcome.kind) {
     case "add_feature": {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const engine = (docStore as any)._crdtEngine;
-      if (!engine || typeof engine.add_feature !== "function") return null;
-      const result = engine.add_feature(JSON.stringify(outcome.op));
-      // applyApiResult is internal; we reuse the public addFromIR
-      // path that the other docstore methods use by re-reading the
-      // returned document from the engine. Simpler: just trigger the
-      // store to re-read via its existing reactive subscriptions.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const applyApiResult = (docStore as any)._applyApiResult;
-      if (typeof applyApiResult === "function") {
-        applyApiResult(result);
-      }
-      const createdId: string | null = result?.createdFeatureId ?? null;
-      if (outcome.name && createdId && typeof docStore.renamePart === "function") {
-        docStore.renamePart(createdId, outcome.name);
-      }
-      return {
-        status: "success",
-        result: createdId ? `${plannedResult} with id: ${createdId}` : plannedResult,
-        partId: createdId ?? undefined,
-        nodeId: createdId ?? undefined,
-      };
+      // See doc comment above — fall through to TS until Rust emits FeatureInput.
+      return null;
     }
     case "remove_part": {
       docStore.removePart(outcome.part_id);

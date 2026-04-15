@@ -899,4 +899,227 @@ mod tests {
         assert_eq!(doc.nodes.len(), 1);
         assert_eq!(doc.roots.len(), 1);
     }
+
+    // -- Variant coverage: exhaustively verify every CsgOp shape the
+    //    Rust planner is expected to handle end-to-end via the TUI's
+    //    `plan_crud → apply_outcome` pipeline. This is the source of
+    //    truth for "what the TUI chat tool actually supports today" and
+    //    the shopping list for FeatureInput parity on the web path.
+
+    /// Run create → verify success → verify op variant matches.
+    fn create_and_verify<F>(doc: &mut Document, args: Value, check: F)
+    where
+        F: Fn(&CsgOp),
+    {
+        let res = execute_crud("create", &args, doc);
+        assert_eq!(
+            res.status,
+            ExecutionStatus::Success,
+            "{args} failed: {}",
+            res.result
+        );
+        let nid: NodeId = res
+            .node_id
+            .as_deref()
+            .expect("node_id")
+            .parse()
+            .expect("parse nid");
+        let node = doc.nodes.get(&nid).expect("node present");
+        check(&node.op);
+    }
+
+    #[test]
+    fn all_primitive_variants_plan_and_apply() {
+        let mut doc = empty_doc();
+        create_and_verify(
+            &mut doc,
+            json!({"type":"cube","params":{"size":{"x":10,"y":10,"z":10}}}),
+            |op| assert!(matches!(op, CsgOp::Cube { .. })),
+        );
+        create_and_verify(
+            &mut doc,
+            json!({"type":"cylinder","params":{"radius":5,"height":10,"segments":0}}),
+            |op| assert!(matches!(op, CsgOp::Cylinder { .. })),
+        );
+        create_and_verify(
+            &mut doc,
+            json!({"type":"sphere","params":{"radius":5,"segments":0}}),
+            |op| assert!(matches!(op, CsgOp::Sphere { .. })),
+        );
+        create_and_verify(
+            &mut doc,
+            json!({"type":"cone","params":{"radius_bottom":5,"radius_top":0,"height":10,"segments":0}}),
+            |op| assert!(matches!(op, CsgOp::Cone { .. })),
+        );
+        assert_eq!(doc.roots.len(), 4);
+    }
+
+    #[test]
+    fn boolean_variants_plan_and_apply() {
+        let mut doc = empty_doc();
+        // Seed two source parts to reference by id.
+        let a = execute_crud(
+            "create",
+            &json!({"type":"cube","params":{"size":{"x":10,"y":10,"z":10}}}),
+            &mut doc,
+        )
+        .node_id
+        .unwrap();
+        let b = execute_crud(
+            "create",
+            &json!({"type":"sphere","params":{"radius":6,"segments":0}}),
+            &mut doc,
+        )
+        .node_id
+        .unwrap();
+
+        let left: NodeId = a.parse().unwrap();
+        let right: NodeId = b.parse().unwrap();
+
+        for kind in ["union", "difference", "intersection"] {
+            let res = execute_crud(
+                "create",
+                &json!({
+                    "type": kind,
+                    "params": { "left": left, "right": right }
+                }),
+                &mut doc,
+            );
+            assert_eq!(
+                res.status,
+                ExecutionStatus::Success,
+                "{kind} failed: {}",
+                res.result
+            );
+            let nid: NodeId = res.node_id.unwrap().parse().unwrap();
+            let node = doc.nodes.get(&nid).unwrap();
+            match (kind, &node.op) {
+                ("union", CsgOp::Union { .. })
+                | ("difference", CsgOp::Difference { .. })
+                | ("intersection", CsgOp::Intersection { .. }) => {}
+                (k, op) => panic!("expected {k} variant, got {op:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn transform_variants_plan_and_apply() {
+        let mut doc = empty_doc();
+        let child = execute_crud(
+            "create",
+            &json!({"type":"cube","params":{"size":{"x":10,"y":10,"z":10}}}),
+            &mut doc,
+        )
+        .node_id
+        .unwrap();
+        let child_nid: NodeId = child.parse().unwrap();
+
+        let cases = [
+            (
+                "translate",
+                json!({"type":"translate","params":{"child": child_nid, "offset":{"x":5,"y":0,"z":0}}}),
+            ),
+            (
+                "rotate",
+                json!({"type":"rotate","params":{"child": child_nid, "angles":{"x":0,"y":0,"z":90}}}),
+            ),
+            (
+                "scale",
+                json!({"type":"scale","params":{"child": child_nid, "factor":{"x":2,"y":2,"z":2}}}),
+            ),
+        ];
+        for (label, args) in cases {
+            let res = execute_crud("create", &args, &mut doc);
+            assert_eq!(
+                res.status,
+                ExecutionStatus::Success,
+                "{label} failed: {}",
+                res.result
+            );
+            let nid: NodeId = res.node_id.unwrap().parse().unwrap();
+            let op = &doc.nodes.get(&nid).unwrap().op;
+            match (label, op) {
+                ("translate", CsgOp::Translate { .. })
+                | ("rotate", CsgOp::Rotate { .. })
+                | ("scale", CsgOp::Scale { .. }) => {}
+                (l, op) => panic!("expected {l} variant, got {op:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn modifier_variants_with_parent_rewire_roots() {
+        let mut doc = empty_doc();
+        let parent = execute_crud(
+            "create",
+            &json!({"type":"cube","params":{"size":{"x":20,"y":20,"z":20}}}),
+            &mut doc,
+        )
+        .node_id
+        .unwrap();
+        let parent_nid: NodeId = parent.parse().unwrap();
+
+        // Fillet wraps the parent and rewires the scene root.
+        let res = execute_crud(
+            "create",
+            &json!({
+                "type": "fillet",
+                "params": { "child": parent_nid, "radius": 2.0 },
+                "parent_part_id": parent
+            }),
+            &mut doc,
+        );
+        assert_eq!(res.status, ExecutionStatus::Success, "fillet: {}", res.result);
+        let fillet_nid: NodeId = res.node_id.unwrap().parse().unwrap();
+        // Scene root should now be the fillet, not the cube.
+        assert_eq!(doc.roots.len(), 1);
+        assert_eq!(doc.roots[0].root, fillet_nid);
+        // Both nodes live in the document.
+        assert!(doc.nodes.contains_key(&parent_nid));
+        assert!(doc.nodes.contains_key(&fillet_nid));
+    }
+
+    #[test]
+    fn pattern_variants_plan_and_apply() {
+        let mut doc = empty_doc();
+        let child = execute_crud(
+            "create",
+            &json!({"type":"cube","params":{"size":{"x":5,"y":5,"z":5}}}),
+            &mut doc,
+        )
+        .node_id
+        .unwrap();
+        let child_nid: NodeId = child.parse().unwrap();
+
+        let lp = execute_crud(
+            "create",
+            &json!({
+                "type": "linear_pattern",
+                "params": {
+                    "child": child_nid,
+                    "direction": {"x": 1, "y": 0, "z": 0},
+                    "count": 3,
+                    "spacing": 10.0
+                }
+            }),
+            &mut doc,
+        );
+        assert_eq!(lp.status, ExecutionStatus::Success, "linear: {}", lp.result);
+
+        let cp = execute_crud(
+            "create",
+            &json!({
+                "type": "circular_pattern",
+                "params": {
+                    "child": child_nid,
+                    "axis_origin": {"x": 0, "y": 0, "z": 0},
+                    "axis_dir": {"x": 0, "y": 0, "z": 1},
+                    "count": 6,
+                    "angle_deg": 360.0
+                }
+            }),
+            &mut doc,
+        );
+        assert_eq!(cp.status, ExecutionStatus::Success, "circular: {}", cp.result);
+    }
 }
