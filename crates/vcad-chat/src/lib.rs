@@ -16,8 +16,10 @@
 //! The TS reference lives in `packages/core/src/commands/registry.ts`,
 //! `packages/app/src/lib/chat-api.ts`, and `api/chat.ts`.
 
+pub mod prompt;
 pub mod schemas;
 pub mod tools;
 
+pub use prompt::{build_system_prompt, type_catalog, NodeInfo, PartInfo, SelectionInfo};
 pub use schemas::{all_schemas, type_enum};
 pub use tools::{anthropic_tools, AnthropicTool};
