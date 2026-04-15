@@ -2,6 +2,7 @@ import { useRef, useEffect, useCallback } from "react";
 import { useThree, useFrame } from "@react-three/fiber";
 import { useEngineStore, useDocumentStore, useUiStore, logger } from "@vcad/core";
 import { getRayTracer } from "@vcad/engine";
+import { getMaterialByKey } from "@/data/materials";
 import type { PerspectiveCamera } from "three";
 
 // Store for syncing camera state from R3F to external overlay
@@ -59,9 +60,11 @@ export function RayTracedViewportSync() {
       }
     }
 
-    // Apply material from document if available
+    // Apply material — document overrides take precedence, fall back to preset library.
     if (uploaded && materialKey) {
-      const mat = document.materials[materialKey];
+      const docMat = document.materials[materialKey];
+      const preset = docMat ? null : getMaterialByKey(materialKey);
+      const mat = docMat ?? preset;
       if (mat) {
         try {
           rayTracer.setMaterial(

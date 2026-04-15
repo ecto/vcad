@@ -11,6 +11,7 @@ import {
   GizmoHelper,
   GizmoViewport,
   Environment,
+  Lightformer,
   ContactShadows,
   Html,
 } from "@react-three/drei";
@@ -72,7 +73,7 @@ const ENVIRONMENT_PRESET_MAP: Record<EnvironmentPreset, string> = {
   night: "night",
   sunset: "sunset",
   forest: "forest",
-  neutral: "studio", // fallback for neutral
+  neutral: "studio", // drei has no "neutral" preset; studio is closest
 };
 
 // Effective scene settings type (all fields required)
@@ -85,6 +86,9 @@ interface EffectiveSceneSettings {
 
 // Default scene settings (smart defaults)
 const DEFAULT_SCENE_SETTINGS: EffectiveSceneSettings = {
+  // No HDR preset — the default scene renders a procedural "grey room"
+  // IBL via Lightformers below. Users can opt into a preset via the
+  // Scene inspector.
   environment: { type: "None" },
   lights: [
     {
@@ -107,7 +111,8 @@ const DEFAULT_SCENE_SETTINGS: EffectiveSceneSettings = {
       intensity: 0.2,
     },
   ],
-  background: { type: "Environment" },
+  // Fusion-style neutral grey backdrop.
+  background: { type: "Solid", color: [0.55, 0.57, 0.6] },
   postProcessing: {
     ambientOcclusion: { enabled: true, intensity: 1.5, radius: 0.5 },
     vignette: { enabled: true, offset: 0.3, darkness: 0.3 },
@@ -823,8 +828,6 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
   return (
     <>
       {/* Engine-independent content - renders immediately */}
-      {/* Ambient light when no environment map provides indirect illumination */}
-      {!environmentPreset && <ambientLight intensity={0.4} />}
       {/* Scene lights from document settings */}
       {sceneSettings.lights.map((light) => {
         if (light.enabled === false) return null;
@@ -953,6 +956,57 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
             background={sceneSettings.background.type === "Environment"}
           />
         </Suspense>
+      )}
+
+      {/* Default procedural "grey room" IBL — provides reflections for
+          metallic materials without loading an HDR preset. Only active
+          when the user has no explicit environment preset selected. */}
+      {!isPcbMode && !environmentPreset && (
+        <Environment resolution={256} frames={1} background={false}>
+          <color attach="background" args={[0.6, 0.6, 0.62]} />
+          {/* Bright ceiling panel */}
+          <Lightformer
+            form="rect"
+            intensity={4}
+            color="white"
+            position={[0, 10, 0]}
+            rotation={[-Math.PI / 2, 0, 0]}
+            scale={[20, 20, 1]}
+          />
+          {/* Four softer side panels for even wrap-around fill */}
+          <Lightformer
+            form="rect"
+            intensity={1.5}
+            color="white"
+            position={[10, 2, 0]}
+            rotation={[0, -Math.PI / 2, 0]}
+            scale={[10, 8, 1]}
+          />
+          <Lightformer
+            form="rect"
+            intensity={1.5}
+            color="white"
+            position={[-10, 2, 0]}
+            rotation={[0, Math.PI / 2, 0]}
+            scale={[10, 8, 1]}
+          />
+          <Lightformer
+            form="rect"
+            intensity={1.5}
+            color="white"
+            position={[0, 2, 10]}
+            rotation={[0, Math.PI, 0]}
+            scale={[10, 8, 1]}
+          />
+          <Lightformer
+            form="rect"
+            intensity={1.5}
+            color="white"
+            position={[0, 2, -10]}
+            rotation={[0, 0, 0]}
+            scale={[10, 8, 1]}
+          />
+        </Environment>
       )}
 
       {/* Custom background (if not using environment) */}

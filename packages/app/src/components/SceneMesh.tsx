@@ -191,9 +191,19 @@ export function ImportedMesh({ mesh, materialKey }: ImportedMeshProps) {
   const isOrbiting = useUiStore((s) => s.isOrbiting);
   const materials = useDocumentStore((s) => s.document.materials);
 
-  // Resolve material from document
+  // Resolve material from document, falling back to the preset library.
   const materialDef = useMemo(() => {
-    return materials[materialKey] ?? null;
+    if (materials[materialKey]) return materials[materialKey];
+    const preset = getMaterialByKey(materialKey);
+    if (preset) {
+      return {
+        name: preset.name,
+        color: preset.color,
+        metallic: preset.metallic,
+        roughness: preset.roughness,
+      };
+    }
+    return null;
   }, [materials, materialKey]);
 
   const materialColor = useMemo(() => {
@@ -362,7 +372,17 @@ export const SceneMesh = memo(function SceneMesh({
         };
       }
     }
-    return materials[materialKey] ?? null;
+    if (materials[materialKey]) return materials[materialKey];
+    const preset = getMaterialByKey(materialKey);
+    if (preset) {
+      return {
+        name: preset.name,
+        color: preset.color,
+        metallic: preset.metallic,
+        roughness: preset.roughness,
+      };
+    }
+    return null;
   }, [materials, materialKey, previewMaterial, partInfo.id]);
 
   // Check if this material should use a procedural shader
