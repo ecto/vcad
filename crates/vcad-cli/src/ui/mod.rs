@@ -6,6 +6,8 @@ pub mod command;
 pub mod menu;
 pub mod status;
 pub mod theme;
+#[cfg(unix)]
+pub mod theme_probe;
 pub mod toolbar;
 pub mod top_bar;
 pub mod tree;

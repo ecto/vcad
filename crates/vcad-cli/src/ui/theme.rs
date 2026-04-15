@@ -10,8 +10,15 @@
 #![allow(dead_code)]
 
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::OnceLock;
 
 use super::buffer::{Color, NamedColor};
+
+/// Cached Terminal theme, built once in `init()` after the OSC 11 probe
+/// so `active()` stays a cheap field copy during rendering. Starts as
+/// the raw `TERMINAL` const and is replaced with a probe-derived variant
+/// when the terminal reports a real background color.
+static TERMINAL_RUNTIME: OnceLock<Theme> = OnceLock::new();
 
 /// Active theme mode. Stored as a `u8` so we can swap it atomically.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,19 +132,70 @@ pub const TERMINAL: Theme = Theme {
     viewport_bg: (0x11, 0x11, 0x11),
 };
 
-/// Initialize theme from environment. Call once at startup. For now
-/// this is a no-op — `THEME_MODE` already defaults to Terminal and we
-/// no longer auto-detect from `COLORFGBG` since the whole point of the
-/// Terminal theme is that the user's palette decides.
-pub fn init() {}
+/// Initialize theme from environment. Call once at startup, *before*
+/// entering alt-screen / raw mode, so the OSC 11 probe can enable its
+/// own raw-mode bracket cleanly.
+pub fn init() {
+    #[cfg(unix)]
+    let probed = super::theme_probe::probe_background();
+    #[cfg(not(unix))]
+    let probed = None::<(u8, u8, u8)>;
+    let runtime = match probed {
+        Some((r, g, b)) => terminal_from_bg(r, g, b),
+        None => TERMINAL,
+    };
+    let _ = TERMINAL_RUNTIME.set(runtime);
+}
 
-/// Get the active theme.
-pub fn active() -> &'static Theme {
+/// Get the active theme. Dark/Light hit the static `const`s directly;
+/// Terminal hits a `OnceLock`-cached variant that was built once in
+/// `init()` with an OSC 11–probed surface shade.
+pub fn active() -> Theme {
     match ThemeMode::from_u8(THEME_MODE.load(Ordering::Relaxed)) {
-        ThemeMode::Terminal => &TERMINAL,
-        ThemeMode::Dark => &DARK,
-        ThemeMode::Light => &LIGHT,
+        ThemeMode::Terminal => *TERMINAL_RUNTIME.get().unwrap_or(&TERMINAL),
+        ThemeMode::Dark => DARK,
+        ThemeMode::Light => LIGHT,
     }
+}
+
+/// Build a Terminal theme whose `surface`/`card`/`border` sit a notch
+/// off the real terminal background — lighter on dark terminals,
+/// darker on light ones — so the menu bar reads as a subtle stripe
+/// without clobbering the user's palette.
+fn terminal_from_bg(r: u8, g: u8, b: u8) -> Theme {
+    let mut theme = TERMINAL;
+    let is_dark_bg = luminance(r, g, b) < 0.5;
+    let (surface_delta, card_delta, border_delta) = if is_dark_bg {
+        (18i16, 28, 48)
+    } else {
+        (-14i16, -22, -48)
+    };
+    let surface = shift(r, g, b, surface_delta);
+    let card = shift(r, g, b, card_delta);
+    let border = shift(r, g, b, border_delta);
+    theme.bg = Color::Rgb(r, g, b);
+    theme.surface = Color::Rgb(surface.0, surface.1, surface.2);
+    theme.card = Color::Rgb(card.0, card.1, card.2);
+    theme.border = Color::Rgb(border.0, border.1, border.2);
+    theme.viewport_bg = (r, g, b);
+    theme
+}
+
+/// ITU BT.601 luma, 0.0..=1.0. Good enough to pick a light/dark branch.
+fn luminance(r: u8, g: u8, b: u8) -> f32 {
+    (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32) / 255.0
+}
+
+/// Offset each channel by `delta` (positive = lighter, negative =
+/// darker), saturating at 0..=255. Uniform per-channel so we stay on
+/// the same hue as the source.
+fn shift(r: u8, g: u8, b: u8, delta: i16) -> (u8, u8, u8) {
+    let clamp = |v: i16| v.clamp(0, 255) as u8;
+    (
+        clamp(r as i16 + delta),
+        clamp(g as i16 + delta),
+        clamp(b as i16 + delta),
+    )
 }
 
 /// Current theme mode.
