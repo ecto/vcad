@@ -10,7 +10,7 @@ use crossterm::{
     },
 };
 use std::{
-    collections::HashSet,
+    collections::{HashSet, VecDeque},
     io::{self, Stdout},
     path::PathBuf,
     time::{Duration, Instant},
@@ -31,6 +31,43 @@ pub struct EvaluatedMesh {
     pub vertices: Vec<f32>,
     pub indices: Vec<u32>,
 }
+
+/// Severity of a log line — maps to the DEBUG/INFO/WARN/ERROR pills shown
+/// in the status bar ticker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogLevel {
+    #[allow(dead_code)]
+    Debug,
+    Info,
+    #[allow(dead_code)]
+    Warn,
+    #[allow(dead_code)]
+    Error,
+}
+
+impl LogLevel {
+    /// Short uppercase label for the status ticker.
+    pub fn label(self) -> &'static str {
+        match self {
+            LogLevel::Debug => "DEBUG",
+            LogLevel::Info => "INFO",
+            LogLevel::Warn => "WARN",
+            LogLevel::Error => "ERROR",
+        }
+    }
+}
+
+/// Structured log entry pushed by `App::log` and rendered by the status bar.
+#[derive(Debug, Clone)]
+pub struct LogEntry {
+    pub level: LogLevel,
+    pub source: &'static str,
+    pub message: String,
+    pub timestamp: Instant,
+}
+
+/// Max log entries retained in the in-memory ring buffer.
+const MAX_LOG_ENTRIES: usize = 200;
 
 /// Application state.
 pub struct App {
@@ -97,6 +134,12 @@ pub struct App {
     pub menu_state: crate::ui::menu::MenuBarState,
     /// True after any edit until the next save — drives the ● indicator.
     dirty: bool,
+    /// Ring buffer of structured log entries powering the status-bar ticker.
+    pub logs: VecDeque<LogEntry>,
+    /// Most recent cursor world-space position (mm, Z-up), if the cursor is
+    /// hovering over the viewport. Populated by input hit-testing in M2;
+    /// currently `None` so the middle segment shows `—` placeholders.
+    pub cursor_world: Option<(f64, f64, f64)>,
 }
 
 impl App {
@@ -143,6 +186,8 @@ impl App {
             last_manual_tab: Instant::now(),
             menu_state: Default::default(),
             dirty: false,
+            logs: VecDeque::with_capacity(MAX_LOG_ENTRIES),
+            cursor_world: None,
         };
 
         app.evaluate()?;
@@ -862,11 +907,31 @@ impl App {
         triangles
     }
 
-    /// Set status and log to chat panel debug output.
+    /// Set status and log to the status-bar ticker + chat panel debug output.
     pub fn set_status(&mut self, msg: impl Into<String>) {
         let s: String = msg.into();
         self.status = s.clone();
+        self.log(LogLevel::Info, "status", s.clone());
         self.chat.debug(s);
+    }
+
+    /// Push a structured log entry. Used by the status-bar ticker and, later,
+    /// by the chat session + kernel error channel.
+    pub fn log(&mut self, level: LogLevel, source: &'static str, message: impl Into<String>) {
+        self.logs.push_back(LogEntry {
+            level,
+            source,
+            message: message.into(),
+            timestamp: Instant::now(),
+        });
+        while self.logs.len() > MAX_LOG_ENTRIES {
+            self.logs.pop_front();
+        }
+    }
+
+    /// Most recent log entry, if any.
+    pub fn latest_log(&self) -> Option<&LogEntry> {
+        self.logs.back()
     }
 
     /// Check if currently in command input mode.

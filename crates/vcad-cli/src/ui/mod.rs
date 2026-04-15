@@ -77,15 +77,7 @@ fn draw_overlays_with_area(buf: &mut CellBuffer, app: &App, area: Rect) {
     }
 
     // Status bar — always visible
-    let tri_count: usize = app.meshes.iter().map(|m| m.indices.len() / 3).sum();
-    status::draw_status_bar(
-        buf,
-        &app.status,
-        app.get_parts().len(),
-        tri_count,
-        app.selected.len(),
-        area,
-    );
+    status::draw_status_bar(buf, app, area);
 
     // Open menu dropdown (drawn after toolbar so it overlays it).
     if !app.is_orbiting && app.menu_state.is_open() {
