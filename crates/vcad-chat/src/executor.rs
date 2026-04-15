@@ -271,14 +271,61 @@ fn pascal_to_snake(s: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// update — stub; real per-variant merging lands in a follow-up
+// update
 // ---------------------------------------------------------------------------
 
-fn execute_update(_args: &Value, _doc: &mut Document) -> ExecutionResult {
-    ExecutionResult::error(
-        "update is not yet implemented in the Rust executor — delete and \
-         recreate the node, or update the document directly for now.",
-    )
+fn execute_update(args: &Value, doc: &mut Document) -> ExecutionResult {
+    let Some(node_id_str) = args.get("node_id").and_then(|v| v.as_str()) else {
+        return ExecutionResult::error("update requires `node_id`");
+    };
+    let Ok(nid) = node_id_str.parse::<NodeId>() else {
+        return ExecutionResult::error(format!("invalid node_id: {node_id_str}"));
+    };
+    let Some(params_value) = args.get("params") else {
+        return ExecutionResult::error("update requires `params`");
+    };
+    let Value::Object(incoming) = params_value else {
+        return ExecutionResult::error("update `params` must be an object");
+    };
+
+    let Some(node) = doc.nodes.get_mut(&nid) else {
+        return ExecutionResult::error(format!("node not found: {node_id_str}"));
+    };
+
+    // Serde round-trip: serialize the current op to a Value (produces
+    // {"type": "Cube", "size": {...}}), merge the incoming params in,
+    // deserialize back into a new CsgOp. Handles every variant uniformly
+    // without needing per-variant match arms, and any shape mismatch
+    // falls out as a clean serde error.
+    let mut op_value = match serde_json::to_value(&node.op) {
+        Ok(v) => v,
+        Err(e) => return ExecutionResult::error(format!("failed to serialize op: {e}")),
+    };
+    let Value::Object(ref mut op_map) = op_value else {
+        return ExecutionResult::error("current op is not an object — unexpected shape");
+    };
+    for (key, val) in incoming {
+        // Don't let the caller mutate the variant tag via `update`. That
+        // would change the variant entirely, which is what `delete` +
+        // `create` is for — preserve invariants here.
+        if key == "type" {
+            continue;
+        }
+        op_map.insert(key.clone(), val.clone());
+    }
+
+    let new_op: CsgOp = match serde_json::from_value(op_value) {
+        Ok(op) => op,
+        Err(e) => {
+            return ExecutionResult::error(format!(
+                "failed to apply params to {node_id_str}: {e}"
+            ))
+        }
+    };
+    node.op = new_op;
+
+    ExecutionResult::success(format!("Updated node {node_id_str}"))
+        .with_node(node_id_str.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -450,11 +497,110 @@ mod tests {
     }
 
     #[test]
-    fn update_returns_not_implemented() {
+    fn update_merges_params_on_existing_node() {
         let mut doc = empty_doc();
-        let res = execute_crud("update", &json!({"node_id":"1","params":{}}), &mut doc);
+        let created = execute_crud(
+            "create",
+            &json!({"type":"cube","params":{"size":{"x":10,"y":10,"z":10}},"name":"C"}),
+            &mut doc,
+        );
+        assert_eq!(created.status, ExecutionStatus::Success);
+        let node_id = created.node_id.expect("create returns node_id");
+
+        let res = execute_crud(
+            "update",
+            &json!({
+                "node_id": node_id,
+                "params": { "size": { "x": 30, "y": 20, "z": 5 } }
+            }),
+            &mut doc,
+        );
+        assert_eq!(res.status, ExecutionStatus::Success, "got: {:?}", res);
+
+        // Verify the new size landed on the live node.
+        let nid: NodeId = node_id.parse().unwrap();
+        let node = doc.nodes.get(&nid).unwrap();
+        match &node.op {
+            CsgOp::Cube { size } => {
+                assert_eq!(size.x, 30.0);
+                assert_eq!(size.y, 20.0);
+                assert_eq!(size.z, 5.0);
+            }
+            other => panic!("expected Cube, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn update_nonexistent_is_error() {
+        let mut doc = empty_doc();
+        let res = execute_crud(
+            "update",
+            &json!({"node_id":"999","params":{"size":{"x":1,"y":1,"z":1}}}),
+            &mut doc,
+        );
         assert_eq!(res.status, ExecutionStatus::Error);
-        assert!(res.result.contains("not yet implemented"));
+        assert!(res.result.contains("node not found"));
+    }
+
+    #[test]
+    fn update_rejects_incompatible_field() {
+        let mut doc = empty_doc();
+        let created = execute_crud(
+            "create",
+            &json!({"type":"cube","params":{"size":{"x":10,"y":10,"z":10}}}),
+            &mut doc,
+        );
+        let node_id = created.node_id.unwrap();
+
+        // `radius` isn't a field on Cube — serde should reject the
+        // round-trip after we can't rebuild a Cube with a stray field.
+        // (serde is permissive by default and ignores unknown fields, so
+        // the field is dropped and the op stays valid — this asserts the
+        // permissive behavior, which is what we want. Incompatible types
+        // on an existing field would fail.)
+        let res = execute_crud(
+            "update",
+            &json!({"node_id": node_id, "params": { "radius": 5 }}),
+            &mut doc,
+        );
+        assert_eq!(res.status, ExecutionStatus::Success);
+
+        // But a wrong-typed existing field should fail.
+        let res = execute_crud(
+            "update",
+            &json!({"node_id": node_id, "params": { "size": "huge" }}),
+            &mut doc,
+        );
+        assert_eq!(res.status, ExecutionStatus::Error);
+    }
+
+    #[test]
+    fn update_cannot_change_variant_type() {
+        let mut doc = empty_doc();
+        let created = execute_crud(
+            "create",
+            &json!({"type":"cube","params":{"size":{"x":10,"y":10,"z":10}}}),
+            &mut doc,
+        );
+        let node_id = created.node_id.unwrap();
+
+        // Attempting to flip the variant via `type` should be ignored —
+        // the node stays a Cube regardless of what the model sends.
+        let res = execute_crud(
+            "update",
+            &json!({
+                "node_id": node_id,
+                "params": { "type": "Sphere", "radius": 5 }
+            }),
+            &mut doc,
+        );
+        assert_eq!(res.status, ExecutionStatus::Success);
+        let nid: NodeId = node_id.parse().unwrap();
+        let node = doc.nodes.get(&nid).unwrap();
+        assert!(
+            matches!(node.op, CsgOp::Cube { .. }),
+            "variant must not change"
+        );
     }
 
     #[test]
