@@ -25,3 +25,14 @@ export async function getKernelWasm(): Promise<WasmModule> {
   }
   return wasmPromise;
 }
+
+/**
+ * Synchronous accessor for the already-loaded kernel WASM module.
+ *
+ * Returns `null` if the module hasn't been loaded yet — callers must handle
+ * that case (or ensure they've `await getKernelWasm()` first). Used by code
+ * paths that need to invoke WASM from a synchronous Zustand action.
+ */
+export function getKernelWasmSync(): WasmModule | null {
+  return wasmModule;
+}

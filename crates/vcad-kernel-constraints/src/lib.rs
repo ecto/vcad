@@ -94,6 +94,7 @@ pub mod gpu;
 pub mod jacobian;
 /// Residual computation (reference implementation for benchmarks).
 pub mod residual;
+mod session;
 mod sketch;
 mod solver;
 pub mod symbolic;
@@ -101,6 +102,10 @@ pub mod symbolic;
 pub use constraint::{Constraint, EntityRef};
 pub use entity::{EntityId, SketchArc, SketchCircle, SketchEntity, SketchLine, SketchPoint};
 pub use export::ExportError;
+pub use session::{
+    ClickOutcome, ConstraintStatus, Cursor, ExitStatus, SegmentKind, SegmentView, SketchPlane,
+    SketchSession, SketchTool, SnapConfig,
+};
 pub use sketch::Sketch2D;
 pub use solver::{SolveResult, SolveStatus, SolverConfig};
 

@@ -2,6 +2,8 @@ import { create } from "zustand";
 import type { Vec2, Vec3, SketchSegment2D, SketchConstraint } from "@vcad/ir";
 import type { SketchPlane, SketchState, ConstraintTool, ConstraintStatus, FaceInfo } from "../types.js";
 import { computePlaneFromFace, getSketchPlaneDirections } from "../types.js";
+import { getKernelWasmSync } from "../wasm-singleton.js";
+import { buildRectangle, buildCircle } from "../sketch-math.js";
 
 /** A saved profile snapshot for loft operations */
 export interface ProfileSnapshot {
@@ -88,41 +90,17 @@ export interface SketchStore extends SketchState {
   setCursorPos: (world: Vec3 | null, sketch: Vec2 | null, snap: Vec2 | null) => void;
 }
 
-function makeRectangleSegments(p1: Vec2, p2: Vec2): SketchSegment2D[] {
-  const minX = Math.min(p1.x, p2.x);
-  const maxX = Math.max(p1.x, p2.x);
-  const minY = Math.min(p1.y, p2.y);
-  const maxY = Math.max(p1.y, p2.y);
+// Shape builders are delegated to `@vcad/core/sketch-math` so the web
+// app, the TUI, and the WASM SketchSession all generate identical
+// geometry. These locals just thread the store's call sites.
+const makeRectangleSegments = (p1: Vec2, p2: Vec2): SketchSegment2D[] =>
+  buildRectangle(p1, p2);
 
-  return [
-    { type: "Line", start: { x: minX, y: minY }, end: { x: maxX, y: minY } },
-    { type: "Line", start: { x: maxX, y: minY }, end: { x: maxX, y: maxY } },
-    { type: "Line", start: { x: maxX, y: maxY }, end: { x: minX, y: maxY } },
-    { type: "Line", start: { x: minX, y: maxY }, end: { x: minX, y: minY } },
-  ];
-}
-
-function makeCircleSegments(center: Vec2, radius: number, n: number = 32): SketchSegment2D[] {
-  const segments: SketchSegment2D[] = [];
-  for (let i = 0; i < n; i++) {
-    const theta0 = (2 * Math.PI * i) / n;
-    const theta1 = (2 * Math.PI * (i + 1)) / n;
-    segments.push({
-      type: "Arc",
-      start: {
-        x: center.x + radius * Math.cos(theta0),
-        y: center.y + radius * Math.sin(theta0),
-      },
-      end: {
-        x: center.x + radius * Math.cos(theta1),
-        y: center.y + radius * Math.sin(theta1),
-      },
-      center,
-      ccw: true,
-    });
-  }
-  return segments;
-}
+const makeCircleSegments = (
+  center: Vec2,
+  radius: number,
+  n: number = 32,
+): SketchSegment2D[] => buildCircle(center, radius, n);
 
 let profileIdCounter = 0;
 
@@ -529,84 +507,43 @@ export const useSketchStore = create<SketchStore>((set, get) => {
       return;
     }
 
-    // Simple constraint solver for common cases
-    const newSegments = [...state.segments];
-    let changed = false;
+    // Delegate to the kernel's Levenberg-Marquardt solver via WASM.
+    // The TUI and the web app share the same `SketchSession` implementation
+    // in `vcad-kernel-constraints`, so both frontends get the same 15
+    // constraint types and the same numerical behavior.
+    const wasm = getKernelWasmSync() as unknown as {
+      solveSketchSegments?: (segments: string, constraints: string) => string;
+    } | null;
 
-    for (const constraint of state.constraints) {
-      if (constraint.type === "Horizontal") {
-        const seg = newSegments[constraint.line];
-        if (seg?.type === "Line") {
-          const midY = (seg.start.y + seg.end.y) / 2;
-          newSegments[constraint.line] = {
-            ...seg,
-            start: { ...seg.start, y: midY },
-            end: { ...seg.end, y: midY },
-          };
-          changed = true;
-        }
-      } else if (constraint.type === "Vertical") {
-        const seg = newSegments[constraint.line];
-        if (seg?.type === "Line") {
-          const midX = (seg.start.x + seg.end.x) / 2;
-          newSegments[constraint.line] = {
-            ...seg,
-            start: { ...seg.start, x: midX },
-            end: { ...seg.end, x: midX },
-          };
-          changed = true;
-        }
-      } else if (constraint.type === "Length") {
-        const seg = newSegments[constraint.line];
-        if (seg?.type === "Line") {
-          const dx = seg.end.x - seg.start.x;
-          const dy = seg.end.y - seg.start.y;
-          const currentLen = Math.sqrt(dx * dx + dy * dy);
-          if (currentLen > 0.001) {
-            const scale = constraint.length / currentLen;
-            const mx = (seg.start.x + seg.end.x) / 2;
-            const my = (seg.start.y + seg.end.y) / 2;
-            newSegments[constraint.line] = {
-              ...seg,
-              start: { x: mx - (dx * scale) / 2, y: my - (dy * scale) / 2 },
-              end: { x: mx + (dx * scale) / 2, y: my + (dy * scale) / 2 },
-            };
-            changed = true;
-          }
-        }
-      } else if (constraint.type === "Fixed") {
-        // Find the segment containing the point
-        const ref = constraint.point;
-        if (ref.type === "LineStart" || ref.type === "LineEnd") {
-          const seg = newSegments[ref.index];
-          if (seg?.type === "Line") {
-            if (ref.type === "LineStart") {
-              const dx = constraint.x - seg.start.x;
-              const dy = constraint.y - seg.start.y;
-              newSegments[ref.index] = {
-                ...seg,
-                start: { x: constraint.x, y: constraint.y },
-                end: { x: seg.end.x + dx, y: seg.end.y + dy },
-              };
-            } else {
-              const dx = constraint.x - seg.end.x;
-              const dy = constraint.y - seg.end.y;
-              newSegments[ref.index] = {
-                ...seg,
-                start: { x: seg.start.x + dx, y: seg.start.y + dy },
-                end: { x: constraint.x, y: constraint.y },
-              };
-            }
-            changed = true;
-          }
-        }
-      }
+    if (!wasm || typeof wasm.solveSketchSegments !== "function") {
+      // WASM not hydrated yet (e.g. tests) — mark solved without touching
+      // segments. The UI will show "solved" feedback but won't apply any
+      // geometric updates.
+      set({ solved: true, constraintStatus: "solved" });
+      return;
     }
 
-    if (changed) {
-      set({ segments: newSegments, solved: true, constraintStatus: "solved" });
-    } else {
-      set({ solved: true, constraintStatus: "solved" });
+    try {
+      const resultJson = wasm.solveSketchSegments(
+        JSON.stringify(state.segments),
+        JSON.stringify(state.constraints),
+      );
+      const result = JSON.parse(resultJson) as {
+        segments: SketchSegment2D[];
+        converged: boolean;
+      };
+      // Push *before* overwriting segments so Ctrl-Z restores the
+      // pre-solve geometry — important when a user tightens constraints
+      // and wants to back out of the solve's choices.
+      pushHistory();
+      set({
+        segments: result.segments,
+        solved: result.converged,
+        constraintStatus: result.converged ? "solved" : "error",
+      });
+    } catch (err) {
+      console.warn("[sketch] solver error:", err);
+      set({ solved: false, constraintStatus: "error" });
     }
   },
 

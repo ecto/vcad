@@ -9,6 +9,7 @@
 
 pub mod document_engine;
 pub mod keybindings;
+pub mod sketch_session;
 
 use serde::{Deserialize, Serialize};
 use vcad_kernel::vcad_kernel_math::{Point2, Point3, Vec3};

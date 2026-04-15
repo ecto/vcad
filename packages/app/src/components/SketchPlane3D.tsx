@@ -5,10 +5,11 @@ import { Line, Html } from "@react-three/drei";
 import {
   useSketchStore,
   useUiStore,
-  getSketchPlaneDirections,
+  getPlaneBasis,
+  hitTestSegments,
+  snapPoint,
 } from "@vcad/core";
-import type { SketchPlane } from "@vcad/core";
-import type { Vec2, Vec3, SketchSegment2D, SketchConstraint } from "@vcad/ir";
+import type { Vec2, Vec3, SketchConstraint, SketchSegment2D } from "@vcad/ir";
 import { useTheme } from "@/hooks/useTheme";
 import { viewportWasDrag } from "@/lib/viewport-drag";
 
@@ -21,104 +22,76 @@ function toVec3(v: Vec3): THREE.Vector3 {
   return new THREE.Vector3(v.x, v.y, v.z);
 }
 
-/** Convert 3D world point to 2D sketch coordinates */
-function worldToSketch(
-  worldPt: THREE.Vector3,
-  origin: Vec3,
-  xDir: Vec3,
-  yDir: Vec3,
-): Vec2 {
-  const rel = worldPt.clone().sub(toVec3(origin));
-  return {
-    x: rel.dot(toVec3(xDir)),
-    y: rel.dot(toVec3(yDir)),
-  };
-}
-
-/** Convert 2D sketch coordinates to 3D world point */
+/**
+ * Inlined 2D → 3D projection helper — the math is trivial once the
+ * basis is known, and this runs on every pointer event so we don't
+ * want the JSON round-trip through WASM. Use the kernel-backed
+ * helpers in `@vcad/core/sketch-math` when you need something less
+ * latency-sensitive.
+ */
 function sketchToWorld(
   pt: Vec2,
   origin: Vec3,
   xDir: Vec3,
   yDir: Vec3,
 ): THREE.Vector3 {
-  const o = toVec3(origin);
-  const x = toVec3(xDir).multiplyScalar(pt.x);
-  const y = toVec3(yDir).multiplyScalar(pt.y);
-  return o.add(x).add(y);
+  return new THREE.Vector3(
+    origin.x + pt.x * xDir.x + pt.y * yDir.x,
+    origin.y + pt.x * xDir.y + pt.y * yDir.y,
+    origin.z + pt.x * xDir.z + pt.y * yDir.z,
+  );
 }
 
-/** Get plane directions from SketchPlane type */
-function getPlaneVectors(
-  plane: SketchPlane,
+/** Inlined 3D → 2D projection (see `sketchToWorld` for rationale). */
+function worldToSketchFast(
+  world: THREE.Vector3,
   origin: Vec3,
-): { origin: Vec3; xDir: Vec3; yDir: Vec3; normal: Vec3 } {
-  const dirs = getSketchPlaneDirections(plane);
+  xDir: Vec3,
+  yDir: Vec3,
+): Vec2 {
+  const dx = world.x - origin.x;
+  const dy = world.y - origin.y;
+  const dz = world.z - origin.z;
   return {
-    origin,
-    xDir: dirs.x_dir,
-    yDir: dirs.y_dir,
-    normal: dirs.normal,
+    x: dx * xDir.x + dy * xDir.y + dz * xDir.z,
+    y: dx * yDir.x + dy * yDir.y + dz * yDir.z,
   };
-}
-
-/** Find the closest segment to a point for selection */
-function findClosestSegment(
-  pt: Vec2,
-  segments: SketchSegment2D[],
-): { index: number; distance: number } | null {
-  if (segments.length === 0) return null;
-
-  let closest = { index: 0, distance: Infinity };
-
-  for (let i = 0; i < segments.length; i++) {
-    const seg = segments[i]!;
-    if (seg.type === "Line") {
-      const d = pointToSegmentDistance(pt, seg.start, seg.end);
-      if (d < closest.distance) {
-        closest = { index: i, distance: d };
-      }
-    } else {
-      // Arc: distance to arc path
-      const d = Math.sqrt(
-        (pt.x - seg.center.x) ** 2 + (pt.y - seg.center.y) ** 2,
-      );
-      const radius = Math.sqrt(
-        (seg.start.x - seg.center.x) ** 2 + (seg.start.y - seg.center.y) ** 2,
-      );
-      const arcDist = Math.abs(d - radius);
-      if (arcDist < closest.distance) {
-        closest = { index: i, distance: arcDist };
-      }
-    }
-  }
-
-  return closest;
-}
-
-function pointToSegmentDistance(pt: Vec2, a: Vec2, b: Vec2): number {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const len2 = dx * dx + dy * dy;
-  if (len2 < 0.0001) {
-    return Math.sqrt((pt.x - a.x) ** 2 + (pt.y - a.y) ** 2);
-  }
-  let t = ((pt.x - a.x) * dx + (pt.y - a.y) * dy) / len2;
-  t = Math.max(0, Math.min(1, t));
-  const projX = a.x + t * dx;
-  const projY = a.y + t * dy;
-  return Math.sqrt((pt.x - projX) ** 2 + (pt.y - projY) ** 2);
 }
 
 interface SketchGrid3DProps {
   origin: Vec3;
   xDir: Vec3;
   yDir: Vec3;
+  /** 2D bounds in sketch-local (U/V) coordinates. When provided, the grid
+   *  is sized to wrap the face being sketched on instead of being a fixed
+   *  ±GRID_EXTENT square. Bounds are snapped outward to the nearest cell. */
+  bounds: { minU: number; maxU: number; minV: number; maxV: number } | null;
 }
 
 /** Grid rendered on the sketch plane */
-function SketchGrid3D({ origin, xDir, yDir }: SketchGrid3DProps) {
+function SketchGrid3D({ origin, xDir, yDir, bounds }: SketchGrid3DProps) {
   const { isDark } = useTheme();
+
+  // Snap-extend the bounds outward to the nearest GRID_SIZE multiple in
+  // sketch-local coordinates. Falls back to a centered ±GRID_EXTENT square
+  // when there's no face (sketching on XY/XZ/YZ reference planes).
+  const extents = useMemo(() => {
+    if (!bounds) {
+      return {
+        minU: -GRID_EXTENT,
+        maxU: GRID_EXTENT,
+        minV: -GRID_EXTENT,
+        maxV: GRID_EXTENT,
+      };
+    }
+    const pad = GRID_SIZE;
+    return {
+      minU: Math.floor((bounds.minU - pad) / GRID_SIZE) * GRID_SIZE,
+      maxU: Math.ceil((bounds.maxU + pad) / GRID_SIZE) * GRID_SIZE,
+      minV: Math.floor((bounds.minV - pad) / GRID_SIZE) * GRID_SIZE,
+      maxV: Math.ceil((bounds.maxV + pad) / GRID_SIZE) * GRID_SIZE,
+    };
+  }, [bounds]);
 
   // Build grid lines in sketch plane coordinate system
   const gridLines = useMemo(() => {
@@ -130,73 +103,75 @@ function SketchGrid3D({ origin, xDir, yDir }: SketchGrid3DProps) {
     const o = toVec3(origin);
     const x = toVec3(xDir);
     const y = toVec3(yDir);
+    const color = isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)";
 
-    // Minor grid lines
-    for (let i = -GRID_EXTENT; i <= GRID_EXTENT; i += GRID_SIZE) {
-      if (i === 0) continue; // Skip origin lines, we'll draw axes separately
-
-      // Lines parallel to X axis
-      const startX = o
+    // Lines parallel to the U axis (constant V), spanning [minU, maxU]
+    for (let v = extents.minV; v <= extents.maxV; v += GRID_SIZE) {
+      if (v === 0) continue; // axis is drawn separately
+      const start = o
         .clone()
-        .add(x.clone().multiplyScalar(-GRID_EXTENT))
-        .add(y.clone().multiplyScalar(i));
-      const endX = o
+        .add(x.clone().multiplyScalar(extents.minU))
+        .add(y.clone().multiplyScalar(v));
+      const end = o
         .clone()
-        .add(x.clone().multiplyScalar(GRID_EXTENT))
-        .add(y.clone().multiplyScalar(i));
+        .add(x.clone().multiplyScalar(extents.maxU))
+        .add(y.clone().multiplyScalar(v));
       lines.push({
         points: [
-          [startX.x, startX.y, startX.z],
-          [endX.x, endX.y, endX.z],
+          [start.x, start.y, start.z],
+          [end.x, end.y, end.z],
         ],
-        color: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)",
+        color,
         width: 1,
       });
+    }
 
-      // Lines parallel to Y axis
-      const startY = o
+    // Lines parallel to the V axis (constant U), spanning [minV, maxV]
+    for (let u = extents.minU; u <= extents.maxU; u += GRID_SIZE) {
+      if (u === 0) continue;
+      const start = o
         .clone()
-        .add(y.clone().multiplyScalar(-GRID_EXTENT))
-        .add(x.clone().multiplyScalar(i));
-      const endY = o
+        .add(y.clone().multiplyScalar(extents.minV))
+        .add(x.clone().multiplyScalar(u));
+      const end = o
         .clone()
-        .add(y.clone().multiplyScalar(GRID_EXTENT))
-        .add(x.clone().multiplyScalar(i));
+        .add(y.clone().multiplyScalar(extents.maxV))
+        .add(x.clone().multiplyScalar(u));
       lines.push({
         points: [
-          [startY.x, startY.y, startY.z],
-          [endY.x, endY.y, endY.z],
+          [start.x, start.y, start.z],
+          [end.x, end.y, end.z],
         ],
-        color: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)",
+        color,
         width: 1,
       });
     }
 
     return lines;
-  }, [origin, xDir, yDir, isDark]);
+  }, [origin, xDir, yDir, isDark, extents]);
 
-  // Axis lines
+  // Axis lines — span the full grid extent.
   const xAxisPoints = useMemo(() => {
     const o = toVec3(origin);
     const x = toVec3(xDir);
-    const start = o.clone().add(x.clone().multiplyScalar(-GRID_EXTENT));
-    const end = o.clone().add(x.clone().multiplyScalar(GRID_EXTENT));
+    const start = o.clone().add(x.clone().multiplyScalar(extents.minU));
+    const end = o.clone().add(x.clone().multiplyScalar(extents.maxU));
     return [
       [start.x, start.y, start.z],
       [end.x, end.y, end.z],
     ] as [number, number, number][];
-  }, [origin, xDir]);
+  }, [origin, xDir, extents]);
 
   const yAxisPoints = useMemo(() => {
     const o = toVec3(origin);
     const y = toVec3(yDir);
-    const start = o.clone().add(y.clone().multiplyScalar(-GRID_EXTENT));
-    const end = o.clone().add(y.clone().multiplyScalar(GRID_EXTENT));
+    const start = o.clone().add(y.clone().multiplyScalar(extents.minV));
+    const end = o.clone().add(y.clone().multiplyScalar(extents.maxV));
     return [
       [start.x, start.y, start.z],
       [end.x, end.y, end.z],
     ] as [number, number, number][];
-  }, [origin, yDir]);
+  }, [origin, yDir, extents]);
 
   // Origin marker position
   const originPos = useMemo(() => toVec3(origin), [origin]);
@@ -714,7 +689,6 @@ function SketchCursor3D({
 
 /** Main 3D sketch plane component */
 export function SketchPlane3D() {
-  const { isDark } = useTheme();
   const { raycaster } = useThree();
 
   // Sketch store state
@@ -730,6 +704,7 @@ export function SketchPlane3D() {
   const cursorWorldPos = useSketchStore((s) => s.cursorWorldPos);
   const cursorSketchPos = useSketchStore((s) => s.cursorSketchPos);
   const snapTarget = useSketchStore((s) => s.snapTarget);
+  const selectedFace = useSketchStore((s) => s.selectedFace);
   const addPoint = useSketchStore((s) => s.addPoint);
   const finishShape = useSketchStore((s) => s.finishShape);
   const toggleSegmentSelection = useSketchStore(
@@ -742,66 +717,89 @@ export function SketchPlane3D() {
 
   const isConstraintMode = constraintTool !== "none";
 
-  // Get plane vectors
-  const planeVectors = useMemo(
-    () => getPlaneVectors(plane, origin),
-    [plane, origin],
-  );
+  // Plane basis (origin + in-plane axes + normal) sourced from the kernel
+  // so the web app, the TUI, and the WASM SketchSession all use the same
+  // math. We merge in the store's `origin` because axis-aligned planes
+  // don't carry their own origin.
+  const planeVectors = useMemo(() => {
+    const basis = getPlaneBasis(plane);
+    return { ...basis, origin };
+  }, [plane, origin]);
 
-  // Collect all unique vertices from segments for point snapping
-  const vertices = useMemo(() => {
-    const pts: Vec2[] = [];
-    for (const seg of segments) {
-      pts.push(seg.start, seg.end);
+  // Project the selected face's coplanar vertices into 2D sketch (U/V)
+  // coordinates. Used to size the grid to the face and to provide snap
+  // targets at the face's corners. Only populated when sketching on a
+  // real part face — null on XY/XZ/YZ reference planes.
+  const faceProjection = useMemo(() => {
+    const verts = selectedFace?.vertices;
+    if (!verts || verts.length === 0) return null;
+    const projected: Vec2[] = verts.map((v) =>
+      worldToSketchFast(
+        toVec3(v),
+        planeVectors.origin,
+        planeVectors.xDir,
+        planeVectors.yDir,
+      ),
+    );
+    let minU = Infinity;
+    let maxU = -Infinity;
+    let minV = Infinity;
+    let maxV = -Infinity;
+    for (const p of projected) {
+      if (p.x < minU) minU = p.x;
+      if (p.x > maxU) maxU = p.x;
+      if (p.y < minV) minV = p.y;
+      if (p.y > maxV) maxV = p.y;
     }
-    // Dedupe by proximity
-    const unique: Vec2[] = [];
-    for (const pt of pts) {
-      const exists = unique.some(
-        (u) => Math.abs(u.x - pt.x) < 0.1 && Math.abs(u.y - pt.y) < 0.1,
-      );
-      if (!exists) {
-        unique.push(pt);
-      }
-    }
-    return unique;
-  }, [segments]);
+    return { vertices: projected, bounds: { minU, maxU, minV, maxV } };
+  }, [selectedFace, planeVectors]);
 
-  // Snap function
+  // Build the segment list we'll feed to the kernel snap/hit-test helpers.
+  // Face corners (when sketching on a real face) are modelled as
+  // degenerate line segments so the kernel's vertex-snap pass picks them
+  // up — keeps the snap logic in a single place instead of maintaining a
+  // parallel vertex list here.
+  const snapSegments = useMemo(() => {
+    if (!faceProjection || faceProjection.vertices.length === 0) {
+      return segments;
+    }
+    const extra: SketchSegment2D[] = faceProjection.vertices.map((v) => ({
+      type: "Line",
+      start: v,
+      end: v,
+    }));
+    return [...segments, ...extra];
+  }, [segments, faceProjection]);
+
+  // Snap function — forwards to the kernel-backed helper so the rules
+  // (vertex priority over grid, configurable tolerances) stay in sync
+  // with the TUI and any future WASM-driven sketch clients.
   const snap = useCallback(
     (pt: Vec2): { snapped: Vec2; target: Vec2 | null } => {
-      // Priority 1: Point snap
-      if (pointSnap && vertices.length > 0) {
-        for (const v of vertices) {
-          const dist = Math.hypot(pt.x - v.x, pt.y - v.y);
-          if (dist < POINT_SNAP_TOLERANCE) {
-            return { snapped: v, target: v };
-          }
-        }
-      }
-
-      // Priority 2: Grid snap
-      if (gridSnap) {
-        return {
-          snapped: {
-            x: Math.round(pt.x / GRID_SIZE) * GRID_SIZE,
-            y: Math.round(pt.y / GRID_SIZE) * GRID_SIZE,
-          },
-          target: null,
-        };
-      }
-
-      return { snapped: pt, target: null };
+      const { snapped, target } = snapPoint(snapSegments, pt, {
+        gridEnabled: gridSnap,
+        gridSize: GRID_SIZE,
+        pointEnabled: pointSnap,
+        pointTolerance: POINT_SNAP_TOLERANCE,
+      });
+      return { snapped, target };
     },
-    [pointSnap, gridSnap, vertices],
+    [pointSnap, gridSnap, snapSegments],
   );
 
-  // Invisible plane mesh for raycasting
+  // Invisible plane mesh for raycasting. The mesh exists only as an event
+  // capture target; it's deliberately huge (effectively infinite within the
+  // camera's 10 000 mm far plane) so clicks work anywhere on screen — no
+  // hard dead zone at the edge of a small square. Frustum culling is
+  // disabled for the same reason: an oversized bounding sphere centered on
+  // the sketch origin would otherwise drop out of view when the camera
+  // pans far away.
   const planeMeshRef = useRef<THREE.Mesh>(null);
+  const RAYCAST_PLANE_SIZE = 50000; // mm
 
   // Create plane geometry oriented to sketch plane
   const planeGeometry = useMemo(() => {
-    const geo = new THREE.PlaneGeometry(GRID_EXTENT * 2, GRID_EXTENT * 2);
+    const geo = new THREE.PlaneGeometry(RAYCAST_PLANE_SIZE, RAYCAST_PLANE_SIZE);
 
     // Build rotation matrix from normal
     const n = toVec3(planeVectors.normal);
@@ -837,7 +835,7 @@ export function SketchPlane3D() {
       const localPt = planeMeshRef.current.worldToLocal(
         intersects[0]!.point.clone(),
       );
-      const sketchPt = worldToSketch(
+      const sketchPt = worldToSketchFast(
         localPt,
         planeVectors.origin,
         planeVectors.xDir,
@@ -873,10 +871,11 @@ export function SketchPlane3D() {
       if (!cursorSketchPos) return;
 
       if (isConstraintMode) {
-        // In constraint mode, select/deselect segments
-        const closest = findClosestSegment(cursorSketchPos, segments);
-        if (closest && closest.distance < 2) {
-          toggleSegmentSelection(closest.index);
+        // In constraint mode, select/deselect segments via the kernel
+        // hit-test (shared with the TUI and the WASM session).
+        const idx = hitTestSegments(segments, cursorSketchPos, 2);
+        if (idx !== null) {
+          toggleSegmentSelection(idx);
         }
       } else {
         // Normal drawing mode
@@ -939,10 +938,14 @@ export function SketchPlane3D() {
 
   return (
     <group>
-      {/* Invisible plane for raycasting */}
+      {/* Invisible plane for raycasting — oversized + frustumCulled off so
+          clicks land anywhere on screen, not just inside a 400 mm square.
+          No semi-transparent backdrop: the real 3D scene stays visible
+          through the sketch. */}
       <mesh
         ref={planeMeshRef}
         geometry={planeGeometry}
+        frustumCulled={false}
         onPointerMove={handlePointerMove}
         onClick={handleClick}
         onDoubleClick={handleDoubleClick}
@@ -951,25 +954,13 @@ export function SketchPlane3D() {
         <meshBasicMaterial visible={false} side={THREE.DoubleSide} />
       </mesh>
 
-      {/* Semi-transparent backdrop */}
-      <mesh geometry={planeGeometry}>
-        <meshBasicMaterial
-          color={isDark ? "#000000" : "#888888"}
-          transparent
-          opacity={0.3}
-          side={THREE.DoubleSide}
-          depthWrite={false}
-          polygonOffset
-          polygonOffsetFactor={-1}
-          polygonOffsetUnits={-1}
-        />
-      </mesh>
-
-      {/* Grid */}
+      {/* Grid — sized to the face when sketching on one, otherwise a
+          centered ±GRID_EXTENT square on a reference plane. */}
       <SketchGrid3D
         origin={planeVectors.origin}
         xDir={planeVectors.xDir}
         yDir={planeVectors.yDir}
+        bounds={faceProjection?.bounds ?? null}
       />
 
       {/* Sketch geometry (segments, vertices, constraints) */}

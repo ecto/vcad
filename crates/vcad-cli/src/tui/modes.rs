@@ -3,6 +3,7 @@
 #![allow(dead_code)] // Modes will be used as TUI features are implemented
 
 use vcad_ir::NodeId;
+use vcad_kernel_constraints::{SketchPlane, SketchSession, SketchTool};
 
 /// Active TUI editing mode.
 #[derive(Debug, Clone, Default)]
@@ -13,7 +14,11 @@ pub enum TuiMode {
     /// Command input mode (: or / pressed)
     Command,
     /// Sketch mode - 2D constraint-based drawing
-    Sketch(SketchModeState),
+    ///
+    /// Boxed because [`SketchModeState`] owns a full kernel session with
+    /// undo/redo history snapshots, which is much larger than the other
+    /// mode payloads.
+    Sketch(Box<SketchModeState>),
     /// Assembly mode - instances, joints, forward kinematics
     Assembly(AssemblyModeState),
     /// Physics simulation mode
@@ -70,46 +75,49 @@ impl TuiMode {
     }
 }
 
-/// Sketch mode state.
-#[derive(Debug, Clone, Default)]
+/// Sketch mode state, backed by the kernel [`SketchSession`].
+///
+/// This is a thin shell around the kernel session — the TUI and the web app
+/// share the same session implementation via `vcad-kernel-constraints::session`,
+/// so any tool-state or solver improvement shows up in both frontends.
+#[derive(Debug, Clone)]
 pub struct SketchModeState {
-    /// Current drawing tool
-    pub tool: SketchTool,
-    /// Sketch plane
-    pub plane: SketchPlane,
-    /// Selected entity indices
-    pub selected_entities: Vec<usize>,
-    /// Cursor position in sketch coordinates
-    pub cursor: [f64; 2],
-    /// Pending line start point (if drawing)
-    pub pending_start: Option<[f64; 2]>,
-    /// Target face for sketch (if any)
+    /// The kernel-backed editing session.
+    pub session: SketchSession,
+    /// Target face for the sketch, if the plane came from a face pick.
     pub target_face: Option<NodeId>,
 }
 
-/// Sketch drawing tool.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum SketchTool {
-    #[default]
-    Select,
-    Line,
-    Rectangle,
-    Circle,
-    Arc,
-    Point,
+impl Default for SketchModeState {
+    fn default() -> Self {
+        Self {
+            session: SketchSession::new(SketchPlane::XY),
+            target_face: None,
+        }
+    }
 }
 
-/// Sketch plane orientation.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub enum SketchPlane {
-    #[default]
-    XY,
-    XZ,
-    YZ,
-    Custom {
-        origin: [f64; 3],
-        normal: [f64; 3],
-    },
+impl SketchModeState {
+    /// Create a new sketch mode on the given plane.
+    pub fn new(plane: SketchPlane) -> Self {
+        Self {
+            session: SketchSession::new(plane),
+            target_face: None,
+        }
+    }
+
+    /// Current tool.
+    pub fn tool(&self) -> SketchTool {
+        self.session.tool()
+    }
+
+    /// Current cursor position in sketch coordinates (if any).
+    pub fn cursor(&self) -> [f64; 2] {
+        self.session
+            .cursor()
+            .map(|c| [c.x, c.y])
+            .unwrap_or([0.0, 0.0])
+    }
 }
 
 /// Assembly mode state.
@@ -225,14 +233,14 @@ mod tests {
     #[test]
     fn test_mode_names() {
         assert_eq!(TuiMode::Normal.name(), "NORMAL");
-        assert_eq!(TuiMode::Sketch(Default::default()).name(), "SKETCH");
+        assert_eq!(TuiMode::Sketch(Box::default()).name(), "SKETCH");
     }
 
     #[test]
     fn test_submode_detection() {
         assert!(!TuiMode::Normal.is_submode());
         assert!(!TuiMode::Command.is_submode());
-        assert!(TuiMode::Sketch(Default::default()).is_submode());
+        assert!(TuiMode::Sketch(Box::<SketchModeState>::default()).is_submode());
         assert!(TuiMode::Physics(Default::default()).is_submode());
     }
 }

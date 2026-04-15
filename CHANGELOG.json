@@ -2,6 +2,24 @@
   "$schema": "./changelog.schema.json",
   "entries": [
     {
+      "id": "2026-04-15-sketch-math-web-migration",
+      "version": "0.8.0",
+      "date": "2026-04-15",
+      "category": "feat",
+      "title": "Web sketch math routed through kernel",
+      "summary": "Plane projection, snap, hit-test, and rectangle/circle builders now come from @vcad/core/sketch-math, a kernel-backed WASM wrapper — SketchPlane3D.tsx and sketch-store.ts no longer own duplicate copies.",
+      "features": ["sketch", "kernel", "wasm", "web"]
+    },
+    {
+      "id": "2026-04-15-sketch-session-kernel",
+      "version": "0.8.0",
+      "date": "2026-04-15",
+      "category": "feat",
+      "title": "Unified sketch session in kernel",
+      "summary": "New SketchSession in vcad-kernel-constraints owns tool state, snapping, hit-testing, undo/redo and the LM solver; web app and TUI share it via WASM.",
+      "features": ["sketch", "kernel", "constraints", "tui", "wasm"]
+    },
+    {
       "id": "2026-04-12-rich-tool-chips",
       "version": "0.8.0",
       "date": "2026-04-12",

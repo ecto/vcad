@@ -3,6 +3,7 @@ import { useEngineStore } from "./stores/engine-store.js";
 import { useDocumentStore } from "./stores/document-store.js";
 import type { WasmDocumentEngineConstructor } from "./stores/document-store.js";
 import { commandRegistry } from "./commands/index.js";
+import { getKernelWasm } from "./wasm-singleton.js";
 
 export interface EngineLifecycleOptions {
   /** Called after the engine is initialized and the first evaluation completes. */
@@ -33,10 +34,12 @@ export async function initEngineLifecycle(
     setEngineReady(true);
     setLoading(false);
 
-    // Initialize CRDT document engine (best-effort, non-blocking)
+    // Initialize CRDT document engine (best-effort, non-blocking).
+    // Route through the shared singleton so the rest of the app can use
+    // `getKernelWasmSync()` from synchronous code paths once this runs.
     if (!options?.skipCrdt) {
       try {
-        const wasmModule = await import("@vcad/kernel-wasm");
+        const wasmModule = await getKernelWasm();
         const EngineClass = (wasmModule as Record<string, unknown>)
           .WasmDocumentEngine as WasmDocumentEngineConstructor | undefined;
         if (EngineClass) {
