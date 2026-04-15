@@ -700,31 +700,31 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
             }
             // Number keys 1-7: switch toolbar tabs (matching web app)
             KeyCode::Char('1') => {
-                app.active_tab = 1; // Create
+                app.active_tab = 0; // Create
                 app.last_manual_tab = Instant::now();
             }
             KeyCode::Char('2') => {
-                app.active_tab = 2; // Transform
+                app.active_tab = 1; // Transform
                 app.last_manual_tab = Instant::now();
             }
             KeyCode::Char('3') => {
-                app.active_tab = 3; // Combine
+                app.active_tab = 2; // Combine
                 app.last_manual_tab = Instant::now();
             }
             KeyCode::Char('4') => {
-                app.active_tab = 4; // Modify
+                app.active_tab = 3; // Modify
                 app.last_manual_tab = Instant::now();
             }
             KeyCode::Char('5') => {
-                app.active_tab = 5; // Assembly
+                app.active_tab = 4; // Assembly
                 app.last_manual_tab = Instant::now();
             }
             KeyCode::Char('6') => {
-                app.active_tab = 6; // Simulate
+                app.active_tab = 5; // Simulate
                 app.last_manual_tab = Instant::now();
             }
             KeyCode::Char('7') => {
-                app.active_tab = 7; // Export
+                app.active_tab = 6; // Export
                 app.last_manual_tab = Instant::now();
             }
             KeyCode::Char('x') | KeyCode::Delete | KeyCode::Backspace => {

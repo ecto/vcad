@@ -103,13 +103,11 @@ impl ToolInput {
     }
 }
 
-/// Get sub-tools for a given tab index.
+/// Get sub-tools for a given tab index. Indices match `theme::TABS`.
 pub fn sub_tools(tab: usize) -> &'static [SubTool] {
     match tab {
-        // Chat — no sub-tools
-        0 => &[],
         // Create
-        1 => &[
+        0 => &[
             SubTool {
                 icon: "\u{25A1}",
                 label: "Box",
@@ -147,7 +145,7 @@ pub fn sub_tools(tab: usize) -> &'static [SubTool] {
             },
         ],
         // Transform
-        2 => &[
+        1 => &[
             SubTool {
                 icon: "\u{2195}",
                 label: "Move",
@@ -171,7 +169,7 @@ pub fn sub_tools(tab: usize) -> &'static [SubTool] {
             },
         ],
         // Combine
-        3 => &[
+        2 => &[
             SubTool {
                 icon: "\u{222A}",
                 label: "Union",
@@ -195,7 +193,7 @@ pub fn sub_tools(tab: usize) -> &'static [SubTool] {
             },
         ],
         // Modify
-        4 => &[
+        3 => &[
             SubTool {
                 icon: "\u{25E0}",
                 label: "Fillet",
@@ -233,7 +231,7 @@ pub fn sub_tools(tab: usize) -> &'static [SubTool] {
             },
         ],
         // Assembly — placeholder sub-tools
-        5 => &[
+        4 => &[
             SubTool {
                 icon: "\u{2B12}",
                 label: "Part",
@@ -257,7 +255,7 @@ pub fn sub_tools(tab: usize) -> &'static [SubTool] {
             },
         ],
         // Simulate — placeholder sub-tools
-        6 => &[
+        5 => &[
             SubTool {
                 icon: "\u{25B6}",
                 label: "Play",
@@ -281,7 +279,7 @@ pub fn sub_tools(tab: usize) -> &'static [SubTool] {
             },
         ],
         // Export
-        7 => &[
+        6 => &[
             SubTool {
                 icon: "\u{2B07}",
                 label: "STL",
@@ -378,10 +376,10 @@ fn render_toolbar(
     let left = area.x;
     let right = area.x + area.width - 1;
 
-    set_border_char(buf, left, top, '\u{256D}');
-    set_border_char(buf, right, top, '\u{256E}');
-    set_border_char(buf, left, bot, '\u{2570}');
-    set_border_char(buf, right, bot, '\u{256F}');
+    set_border_char(buf, left, top, '\u{250C}');
+    set_border_char(buf, right, top, '\u{2510}');
+    set_border_char(buf, left, bot, '\u{2514}');
+    set_border_char(buf, right, bot, '\u{2518}');
 
     for x in (left + 1)..right {
         set_border_char(buf, x, top, '\u{2500}');

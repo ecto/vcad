@@ -125,7 +125,7 @@ impl App {
             // Visual state
             sidebar_visible: true,
             is_orbiting: false,
-            active_tab: 1, // Create tab
+            active_tab: 0, // Create tab
             sidebar_scroll: 0,
             focused_part_index: 0,
             // Mouse state
@@ -872,11 +872,11 @@ impl App {
         }
         let selected = self.selected.len();
         let new_tab = if selected >= 2 {
-            3 // Combine
+            2 // Combine
         } else if selected == 1 {
-            2 // Transform
+            1 // Transform
         } else {
-            1 // Create
+            0 // Create
         };
         self.active_tab = new_tab;
     }

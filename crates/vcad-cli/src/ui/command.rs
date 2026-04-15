@@ -59,7 +59,7 @@ fn render_palette(
         buf,
         left,
         top,
-        '\u{256D}',
+        '\u{250C}',
         theme::BORDER(),
         theme::SURFACE(),
     );
@@ -67,7 +67,7 @@ fn render_palette(
         buf,
         right,
         top,
-        '\u{256E}',
+        '\u{2510}',
         theme::BORDER(),
         theme::SURFACE(),
     );
@@ -75,7 +75,7 @@ fn render_palette(
         buf,
         left,
         bot,
-        '\u{2570}',
+        '\u{2514}',
         theme::BORDER(),
         theme::SURFACE(),
     );
@@ -83,7 +83,7 @@ fn render_palette(
         buf,
         right,
         bot,
-        '\u{256F}',
+        '\u{2518}',
         theme::BORDER(),
         theme::SURFACE(),
     );

@@ -156,7 +156,7 @@ pub fn draw_chat(buf: &mut CellBuffer, panel: &ChatPanel, area: Rect) {
         buf,
         left,
         top,
-        '\u{256D}',
+        '\u{250C}',
         theme::BORDER(),
         theme::SURFACE(),
     );
@@ -164,7 +164,7 @@ pub fn draw_chat(buf: &mut CellBuffer, panel: &ChatPanel, area: Rect) {
         buf,
         right,
         top,
-        '\u{256E}',
+        '\u{2510}',
         theme::BORDER(),
         theme::SURFACE(),
     );
@@ -172,7 +172,7 @@ pub fn draw_chat(buf: &mut CellBuffer, panel: &ChatPanel, area: Rect) {
         buf,
         left,
         bot,
-        '\u{2570}',
+        '\u{2514}',
         theme::BORDER(),
         theme::SURFACE(),
     );
@@ -180,7 +180,7 @@ pub fn draw_chat(buf: &mut CellBuffer, panel: &ChatPanel, area: Rect) {
         buf,
         right,
         bot,
-        '\u{256F}',
+        '\u{2518}',
         theme::BORDER(),
         theme::SURFACE(),
     );
@@ -311,7 +311,7 @@ pub fn draw_chat(buf: &mut CellBuffer, panel: &ChatPanel, area: Rect) {
         buf,
         left,
         input_y,
-        '\u{2570}',
+        '\u{2514}',
         theme::BORDER(),
         theme::SURFACE(),
     );
@@ -319,7 +319,7 @@ pub fn draw_chat(buf: &mut CellBuffer, panel: &ChatPanel, area: Rect) {
         buf,
         right,
         input_y,
-        '\u{256F}',
+        '\u{2518}',
         theme::BORDER(),
         theme::SURFACE(),
     );

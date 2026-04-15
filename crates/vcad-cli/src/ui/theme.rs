@@ -175,7 +175,6 @@ pub fn BG_RGB() -> (u8, u8, u8) {
 }
 
 // Tab colors — these stay the same across themes (vibrant on both).
-pub const TAB_CHAT: Color = Color::rgb(0xF9, 0x26, 0x72);
 pub const TAB_CREATE: Color = Color::rgb(0x34, 0xD3, 0x99);
 pub const TAB_TRANSFORM: Color = Color::rgb(0x60, 0xA5, 0xFA);
 pub const TAB_COMBINE: Color = Color::rgb(0xA7, 0x8B, 0xFA);
@@ -184,29 +183,29 @@ pub const TAB_ASSEMBLY: Color = Color::rgb(0xFB, 0x71, 0x85);
 pub const TAB_SIMULATE: Color = Color::rgb(0x22, 0xD3, 0xEE);
 pub const TAB_EXPORT: Color = Color::rgb(0x94, 0xA3, 0xB8);
 
-/// Get tab color by index (0-7).
+/// Get tab color by index (0-6). Matches the `TABS` array ordering.
 pub fn tab_color(index: usize) -> Color {
     match index {
-        0 => TAB_CHAT,
-        1 => TAB_CREATE,
-        2 => TAB_TRANSFORM,
-        3 => TAB_COMBINE,
-        4 => TAB_MODIFY,
-        5 => TAB_ASSEMBLY,
-        6 => TAB_SIMULATE,
-        7 => TAB_EXPORT,
+        0 => TAB_CREATE,
+        1 => TAB_TRANSFORM,
+        2 => TAB_COMBINE,
+        3 => TAB_MODIFY,
+        4 => TAB_ASSEMBLY,
+        5 => TAB_SIMULATE,
+        6 => TAB_EXPORT,
         _ => TEXT_MUTED(),
     }
 }
 
-/// Tab metadata: (icon, label, color).
+/// Tab metadata: (icon, label, color). Mirrors the web app's `ALL_TABS`
+/// ordering in `ToolPalette.tsx` — chat lives in its own sidebar, not in the
+/// tab strip.
 pub const TABS: &[(&str, &str, Color)] = &[
-    ("\u{2726}", "Chat", TAB_CHAT),         // ✦
-    ("+", "Create", TAB_CREATE),            // +
-    ("\u{2194}", "Xform", TAB_TRANSFORM),   // ↔
-    ("\u{2295}", "Combine", TAB_COMBINE),   // ⊕
-    ("\u{270E}", "Modify", TAB_MODIFY),     // ✎
-    ("\u{2699}", "Assembly", TAB_ASSEMBLY), // ⚙
-    ("\u{25B6}", "Simulate", TAB_SIMULATE), // ▶
-    ("\u{2197}", "Export", TAB_EXPORT),     // ↗
+    ("+", "Create", TAB_CREATE),              // +
+    ("\u{2194}", "Transform", TAB_TRANSFORM), // ↔
+    ("\u{2295}", "Combine", TAB_COMBINE),     // ⊕
+    ("\u{270E}", "Modify", TAB_MODIFY),       // ✎
+    ("\u{2699}", "Assembly", TAB_ASSEMBLY),   // ⚙
+    ("\u{25B6}", "Simulate", TAB_SIMULATE),   // ▶
+    ("\u{2197}", "Export", TAB_EXPORT),       // ↗
 ];
