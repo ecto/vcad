@@ -11,6 +11,13 @@ let lastEscapeTime = 0;
 export function useKeyboardShortcuts() {
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
+      // The new useKeybindingDispatcher runs in the capture phase and
+      // preventDefaults any event it successfully dispatches through the
+      // Rust registry. Bail here so we don't double-fire for migrated
+      // bindings. Commands still owned by this hook (sketch tool picks,
+      // chat shortcuts, etc.) keep their existing behavior.
+      if (e.defaultPrevented) return;
+
       // Ignore when typing in inputs
       const target = e.target as HTMLElement;
       if (

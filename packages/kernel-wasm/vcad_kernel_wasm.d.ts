@@ -786,6 +786,67 @@ export class WasmDocumentEngine {
     update_feature(stable_id: string, input_json: string): any;
 }
 
+export class WasmKeybindings {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * Return the effective chord (user override or default) for a command
+     * id, or `None` if disabled / unbound.
+     */
+    chordFor(id: string): string | undefined;
+    /**
+     * Returns a JSON array describing every registered command. The TS UI
+     * (command palette, keyboard prefs) reads this once at startup.
+     *
+     * Each entry is a [`CommandView`] — a flattened, owned projection of
+     * `Command` that serde can serialize (the source struct uses `&'static
+     * str` and a non-serializable `ModeScope` enum).
+     */
+    commandsJson(): string;
+    /**
+     * Report binding conflicts in the given mode: pairs of commands that
+     * share the same chord. Returns a JSON array for the prefs UI to
+     * highlight.
+     */
+    conflictsJson(mode_name: string): string;
+    /**
+     * Load overrides previously returned by [`save_overrides`]. Malformed
+     * entries are skipped — the caller never sees a parse failure for
+     * stale config.
+     */
+    loadOverrides(json: string): boolean;
+    /**
+     * Construct a fresh registry with all default bindings.
+     */
+    constructor();
+    /**
+     * Clear all user overrides, restoring default bindings.
+     */
+    resetAll(): void;
+    /**
+     * Resolve a chord to a command id.
+     *
+     * - `chord_json` is the JSON-serialized [`Chord`] produced by the TS
+     *   adapter (`chord.ts` normalizes `KeyboardEvent` → `Chord`).
+     * - `mode_name` is one of `"Normal" | "Sketch" | "Assembly" | ...`
+     *   (see [`AppMode`]).
+     * - `ctx_bits` is the packed u32 from [`WhenContext::bits`].
+     *
+     * Returns the command id on match, or `None` — the TS side checks for
+     * `null` and falls through if nothing binds.
+     */
+    resolve(chord_json: string, mode_name: string, ctx_bits: number): string | undefined;
+    /**
+     * Serialize user overrides for persistence (e.g. localStorage).
+     */
+    saveOverrides(): string;
+    /**
+     * Rebind a command. Pass a JSON-encoded chord to set, or `None` to
+     * clear (disabling the binding).
+     */
+    setBinding(id: string, chord_json?: string | null): void;
+}
+
 /**
  * Analyze a solid for 3D printing characteristics.
  *
@@ -1653,86 +1714,6 @@ export interface InitOutput {
     readonly solid_shell: (a: number, b: number) => number;
     readonly solid_circularPattern: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
     readonly solid_revolve: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number];
-    readonly __wbg_wasmdocumentengine_free: (a: number, b: number) => void;
-    readonly wasmdocumentengine_add_feature: (a: number, b: number, c: number) => any;
-    readonly wasmdocumentengine_can_redo: (a: number) => number;
-    readonly wasmdocumentengine_can_undo: (a: number) => number;
-    readonly wasmdocumentengine_compute_position_between: (a: number, b: number, c: number, d: number, e: number) => [number, number];
-    readonly wasmdocumentengine_create_feature: (a: number, b: number, c: number, d: number, e: number) => any;
-    readonly wasmdocumentengine_delete_feature: (a: number, b: number, c: number) => any;
-    readonly wasmdocumentengine_delete_feature_by_id: (a: number, b: number, c: number) => any;
-    readonly wasmdocumentengine_from_v1_json: (a: number, b: number) => [number, number, number];
-    readonly wasmdocumentengine_get_document_json: (a: number) => [number, number];
-    readonly wasmdocumentengine_get_ops_since: (a: number, b: number, c: number) => [number, number];
-    readonly wasmdocumentengine_get_ordered_features_json: (a: number) => [number, number];
-    readonly wasmdocumentengine_get_parts_json: (a: number) => [number, number];
-    readonly wasmdocumentengine_get_sync_clock: (a: number) => [number, number];
-    readonly wasmdocumentengine_import_ir: (a: number, b: number, c: number) => any;
-    readonly wasmdocumentengine_load: (a: number, b: number) => [number, number, number];
-    readonly wasmdocumentengine_merge_remote: (a: number, b: number, c: number) => any;
-    readonly wasmdocumentengine_move_feature: (a: number, b: number, c: number, d: number, e: number) => any;
-    readonly wasmdocumentengine_new: () => number;
-    readonly wasmdocumentengine_redo: (a: number) => any;
-    readonly wasmdocumentengine_rename_feature: (a: number, b: number, c: number, d: number, e: number) => any;
-    readonly wasmdocumentengine_save: (a: number) => [number, number];
-    readonly wasmdocumentengine_set_joint_state: (a: number, b: number, c: number, d: number) => any;
-    readonly wasmdocumentengine_set_material: (a: number, b: number, c: number, d: number, e: number) => any;
-    readonly wasmdocumentengine_set_param: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
-    readonly wasmdocumentengine_set_rotation: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
-    readonly wasmdocumentengine_set_scale: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
-    readonly wasmdocumentengine_set_translation: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
-    readonly wasmdocumentengine_set_visible: (a: number, b: number, c: number, d: number) => any;
-    readonly wasmdocumentengine_undo: (a: number) => any;
-    readonly wasmdocumentengine_update_feature: (a: number, b: number, c: number, d: number, e: number) => any;
-    readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
-    readonly ecadBuiltinSymbols: () => [number, number, number];
-    readonly ecadCheckDrc: (a: number, b: number) => [number, number, number];
-    readonly ecadCheckErc: (a: number, b: number) => [number, number, number];
-    readonly ecadComponentMeshes: (a: number, b: number) => [number, number, number];
-    readonly ecadComputeRatsnest: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly ecadFillZones: (a: number, b: number) => [number, number, number];
-    readonly ecadGenerateNetlist: (a: number, b: number) => [number, number, number];
-    readonly ecadGetSymbol: (a: number, b: number) => [number, number, number];
-    readonly ecadLayerZ: (a: number, b: number, c: number, d: number) => number;
-    readonly ecadNetForWire: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly ecadRouteNet: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
-    readonly ecadSnapToGridOrPin: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly isEcadAvailable: () => number;
-    readonly parseKicadPcb: (a: number, b: number) => [number, number, number];
-    readonly readEmbroideryDst: (a: number, b: number) => [number, number, number, number];
-    readonly readEmbroideryPes: (a: number, b: number) => [number, number, number, number];
-    readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
-    readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
-    readonly isEmbroideryAvailable: () => number;
-    readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_safe_z: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_spindle_rpm: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_stepdown: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_stepover: (a: number) => number;
-    readonly __wbg_set_wasmcamsettings_feed_rate: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_plunge_rate: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_retract_z: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_safe_z: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_spindle_rpm: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_stepdown: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_stepover: (a: number, b: number) => void;
-    readonly __wbg_wasmcamsettings_free: (a: number, b: number) => void;
-    readonly camDropCutter: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
-    readonly camExportGcode: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
-    readonly camExportLinuxCnc: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly camGenerateCircularPocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
-    readonly camGenerateContour: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number, number, number];
-    readonly camGenerateFace: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly camGeneratePocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly camGenerateRoughing3d: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
-    readonly camGetDefaultTools: () => [number, number, number, number];
-    readonly camToolpathStats: (a: number, b: number) => [number, number, number];
-    readonly isCamAvailable: () => number;
-    readonly wasmcamsettings_fromJson: (a: number, b: number) => [number, number, number];
-    readonly wasmcamsettings_new: () => number;
     readonly __wbg_get_slicersettings_first_layer_height: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_density: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_pattern: (a: number) => number;
@@ -1771,6 +1752,96 @@ export interface InitOutput {
     readonly sliceresult_statsJson: (a: number) => [number, number, number, number];
     readonly slicersettings_fromJson: (a: number, b: number) => [number, number, number];
     readonly slicersettings_new: () => number;
+    readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_safe_z: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_spindle_rpm: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_stepdown: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_stepover: (a: number) => number;
+    readonly __wbg_set_wasmcamsettings_feed_rate: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_plunge_rate: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_retract_z: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_safe_z: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_spindle_rpm: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_stepdown: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_stepover: (a: number, b: number) => void;
+    readonly __wbg_wasmcamsettings_free: (a: number, b: number) => void;
+    readonly __wbg_wasmkeybindings_free: (a: number, b: number) => void;
+    readonly camDropCutter: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
+    readonly camExportGcode: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+    readonly camExportLinuxCnc: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly camGenerateCircularPocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+    readonly camGenerateContour: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number, number, number];
+    readonly camGenerateFace: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly camGeneratePocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly camGenerateRoughing3d: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
+    readonly camGetDefaultTools: () => [number, number, number, number];
+    readonly camToolpathStats: (a: number, b: number) => [number, number, number];
+    readonly isCamAvailable: () => number;
+    readonly wasmcamsettings_fromJson: (a: number, b: number) => [number, number, number];
+    readonly wasmcamsettings_new: () => number;
+    readonly wasmkeybindings_chordFor: (a: number, b: number, c: number) => [number, number];
+    readonly wasmkeybindings_commandsJson: (a: number) => [number, number];
+    readonly wasmkeybindings_conflictsJson: (a: number, b: number, c: number) => [number, number];
+    readonly wasmkeybindings_loadOverrides: (a: number, b: number, c: number) => number;
+    readonly wasmkeybindings_new: () => number;
+    readonly wasmkeybindings_resetAll: (a: number) => void;
+    readonly wasmkeybindings_resolve: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
+    readonly wasmkeybindings_saveOverrides: (a: number) => [number, number];
+    readonly wasmkeybindings_setBinding: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly ecadBuiltinSymbols: () => [number, number, number];
+    readonly ecadCheckDrc: (a: number, b: number) => [number, number, number];
+    readonly ecadCheckErc: (a: number, b: number) => [number, number, number];
+    readonly ecadComponentMeshes: (a: number, b: number) => [number, number, number];
+    readonly ecadComputeRatsnest: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly ecadFillZones: (a: number, b: number) => [number, number, number];
+    readonly ecadGenerateNetlist: (a: number, b: number) => [number, number, number];
+    readonly ecadGetSymbol: (a: number, b: number) => [number, number, number];
+    readonly ecadLayerZ: (a: number, b: number, c: number, d: number) => number;
+    readonly ecadNetForWire: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly ecadRouteNet: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
+    readonly ecadSnapToGridOrPin: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly isEcadAvailable: () => number;
+    readonly parseKicadPcb: (a: number, b: number) => [number, number, number];
+    readonly readEmbroideryDst: (a: number, b: number) => [number, number, number, number];
+    readonly readEmbroideryPes: (a: number, b: number) => [number, number, number, number];
+    readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
+    readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
+    readonly isEmbroideryAvailable: () => number;
+    readonly __wbg_wasmdocumentengine_free: (a: number, b: number) => void;
+    readonly wasmdocumentengine_add_feature: (a: number, b: number, c: number) => any;
+    readonly wasmdocumentengine_can_redo: (a: number) => number;
+    readonly wasmdocumentengine_can_undo: (a: number) => number;
+    readonly wasmdocumentengine_compute_position_between: (a: number, b: number, c: number, d: number, e: number) => [number, number];
+    readonly wasmdocumentengine_create_feature: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly wasmdocumentengine_delete_feature: (a: number, b: number, c: number) => any;
+    readonly wasmdocumentengine_delete_feature_by_id: (a: number, b: number, c: number) => any;
+    readonly wasmdocumentengine_from_v1_json: (a: number, b: number) => [number, number, number];
+    readonly wasmdocumentengine_get_document_json: (a: number) => [number, number];
+    readonly wasmdocumentengine_get_ops_since: (a: number, b: number, c: number) => [number, number];
+    readonly wasmdocumentengine_get_ordered_features_json: (a: number) => [number, number];
+    readonly wasmdocumentengine_get_parts_json: (a: number) => [number, number];
+    readonly wasmdocumentengine_get_sync_clock: (a: number) => [number, number];
+    readonly wasmdocumentengine_import_ir: (a: number, b: number, c: number) => any;
+    readonly wasmdocumentengine_load: (a: number, b: number) => [number, number, number];
+    readonly wasmdocumentengine_merge_remote: (a: number, b: number, c: number) => any;
+    readonly wasmdocumentengine_move_feature: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly wasmdocumentengine_new: () => number;
+    readonly wasmdocumentengine_redo: (a: number) => any;
+    readonly wasmdocumentengine_rename_feature: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly wasmdocumentengine_save: (a: number) => [number, number];
+    readonly wasmdocumentengine_set_joint_state: (a: number, b: number, c: number, d: number) => any;
+    readonly wasmdocumentengine_set_material: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly wasmdocumentengine_set_param: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+    readonly wasmdocumentengine_set_rotation: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+    readonly wasmdocumentengine_set_scale: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+    readonly wasmdocumentengine_set_translation: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+    readonly wasmdocumentengine_set_visible: (a: number, b: number, c: number, d: number) => any;
+    readonly wasmdocumentengine_undo: (a: number) => any;
+    readonly wasmdocumentengine_update_feature: (a: number, b: number, c: number, d: number, e: number) => any;
     readonly wasm_bindgen__closure__destroy__ha8d4e097953964e6: (a: number, b: number) => void;
     readonly wasm_bindgen__closure__destroy__hf40b7bdcf0d09ecb: (a: number, b: number) => void;
     readonly wasm_bindgen__convert__closures_____invoke__h397719c423f4718e: (a: number, b: number, c: any, d: any) => void;

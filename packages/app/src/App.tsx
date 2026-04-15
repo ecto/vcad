@@ -60,6 +60,7 @@ import {
 } from "@vcad/core";
 import { useEngine } from "@/hooks/useEngine";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
+import { useKeybindingDispatcher } from "@/hooks/useKeybindingDispatcher";
 import { useAutoSave } from "@/hooks/useAutoSave";
 import { useChatHandler } from "@/hooks/useChatHandler";
 import { useUrlSync } from "@/hooks/useUrlSync";
@@ -142,7 +143,6 @@ function FeatureTreeSlot({ sketchActive }: { sketchActive: boolean }) {
 
 export function App() {
   useEngine();
-  useKeyboardShortcuts();
   useThemeSync();
   useAutoSave();
   useChatHandler();
@@ -202,6 +202,17 @@ export function App() {
   const handleOpen = useCallback(() => {
     fileInputRef.current?.click();
   }, []);
+
+  // Global keybinding dispatcher — runs the shared Rust registry first.
+  // useKeyboardShortcuts continues to handle bindings not yet in the
+  // registry; it checks `e.defaultPrevented` and bails for any chord this
+  // hook already dispatched.
+  useKeybindingDispatcher({
+    onAboutOpen: () => setAboutOpen(true),
+    onSave: handleSave,
+    onOpen: handleOpen,
+  });
+  useKeyboardShortcuts();
 
   const processFile = useCallback(async (file: File) => {
     const ext = file.name.split(".").pop()?.toLowerCase();

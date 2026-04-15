@@ -1943,6 +1943,165 @@ export class WasmDocumentEngine {
 }
 if (Symbol.dispose) WasmDocumentEngine.prototype[Symbol.dispose] = WasmDocumentEngine.prototype.free;
 
+export class WasmKeybindings {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmKeybindingsFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmkeybindings_free(ptr, 0);
+    }
+    /**
+     * Return the effective chord (user override or default) for a command
+     * id, or `None` if disabled / unbound.
+     * @param {string} id
+     * @returns {string | undefined}
+     */
+    chordFor(id) {
+        const ptr0 = passStringToWasm0(id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmkeybindings_chordFor(this.__wbg_ptr, ptr0, len0);
+        let v2;
+        if (ret[0] !== 0) {
+            v2 = getStringFromWasm0(ret[0], ret[1]).slice();
+            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v2;
+    }
+    /**
+     * Returns a JSON array describing every registered command. The TS UI
+     * (command palette, keyboard prefs) reads this once at startup.
+     *
+     * Each entry is a [`CommandView`] — a flattened, owned projection of
+     * `Command` that serde can serialize (the source struct uses `&'static
+     * str` and a non-serializable `ModeScope` enum).
+     * @returns {string}
+     */
+    commandsJson() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.wasmkeybindings_commandsJson(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * Report binding conflicts in the given mode: pairs of commands that
+     * share the same chord. Returns a JSON array for the prefs UI to
+     * highlight.
+     * @param {string} mode_name
+     * @returns {string}
+     */
+    conflictsJson(mode_name) {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ptr0 = passStringToWasm0(mode_name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.wasmkeybindings_conflictsJson(this.__wbg_ptr, ptr0, len0);
+            deferred2_0 = ret[0];
+            deferred2_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * Load overrides previously returned by [`save_overrides`]. Malformed
+     * entries are skipped — the caller never sees a parse failure for
+     * stale config.
+     * @param {string} json
+     * @returns {boolean}
+     */
+    loadOverrides(json) {
+        const ptr0 = passStringToWasm0(json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmkeybindings_loadOverrides(this.__wbg_ptr, ptr0, len0);
+        return ret !== 0;
+    }
+    /**
+     * Construct a fresh registry with all default bindings.
+     */
+    constructor() {
+        const ret = wasm.wasmkeybindings_new();
+        this.__wbg_ptr = ret >>> 0;
+        WasmKeybindingsFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * Clear all user overrides, restoring default bindings.
+     */
+    resetAll() {
+        wasm.wasmkeybindings_resetAll(this.__wbg_ptr);
+    }
+    /**
+     * Resolve a chord to a command id.
+     *
+     * - `chord_json` is the JSON-serialized [`Chord`] produced by the TS
+     *   adapter (`chord.ts` normalizes `KeyboardEvent` → `Chord`).
+     * - `mode_name` is one of `"Normal" | "Sketch" | "Assembly" | ...`
+     *   (see [`AppMode`]).
+     * - `ctx_bits` is the packed u32 from [`WhenContext::bits`].
+     *
+     * Returns the command id on match, or `None` — the TS side checks for
+     * `null` and falls through if nothing binds.
+     * @param {string} chord_json
+     * @param {string} mode_name
+     * @param {number} ctx_bits
+     * @returns {string | undefined}
+     */
+    resolve(chord_json, mode_name, ctx_bits) {
+        const ptr0 = passStringToWasm0(chord_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(mode_name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmkeybindings_resolve(this.__wbg_ptr, ptr0, len0, ptr1, len1, ctx_bits);
+        let v3;
+        if (ret[0] !== 0) {
+            v3 = getStringFromWasm0(ret[0], ret[1]).slice();
+            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v3;
+    }
+    /**
+     * Serialize user overrides for persistence (e.g. localStorage).
+     * @returns {string}
+     */
+    saveOverrides() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.wasmkeybindings_saveOverrides(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * Rebind a command. Pass a JSON-encoded chord to set, or `None` to
+     * clear (disabling the binding).
+     * @param {string} id
+     * @param {string | null} [chord_json]
+     */
+    setBinding(id, chord_json) {
+        const ptr0 = passStringToWasm0(id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(chord_json) ? 0 : passStringToWasm0(chord_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        wasm.wasmkeybindings_setBinding(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+    }
+}
+if (Symbol.dispose) WasmKeybindings.prototype[Symbol.dispose] = WasmKeybindings.prototype.free;
+
 /**
  * Analyze a solid for 3D printing characteristics.
  *
@@ -5551,12 +5710,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 1130, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1131, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 1135, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1136, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__ha8d4e097953964e6, wasm_bindgen__convert__closures_____invoke__h3c3248f38441540b);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 1844, function: Function { arguments: [Externref], shim_idx: 1845, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 1849, function: Function { arguments: [Externref], shim_idx: 1850, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hf40b7bdcf0d09ecb, wasm_bindgen__convert__closures_____invoke__ha9bc019092e7ecae);
             return ret;
         },
@@ -5695,6 +5854,9 @@ const WasmCamSettingsFinalization = (typeof FinalizationRegistry === 'undefined'
 const WasmDocumentEngineFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmdocumentengine_free(ptr >>> 0, 1));
+const WasmKeybindingsFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmkeybindings_free(ptr >>> 0, 1));
 
 function addToExternrefTable0(obj) {
     const idx = wasm.__externref_table_alloc();

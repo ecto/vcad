@@ -127,6 +127,27 @@ export {
 export type { Command, CommandRegistry, CommandActions, CommandCategory } from "./commands.js";
 export { createDefaultCommandActions } from "./command-actions.js";
 
+// Keybinding registry (shared with Rust via kernel-wasm)
+export type {
+  Chord,
+  Key,
+  WhenBits,
+  WhenInputs,
+  AppMode as KeybindingMode,
+  CommandView as KeybindingCommandView,
+} from "./keybindings/index.js";
+export {
+  WHEN,
+  KeybindingRegistry,
+  chordFromEvent,
+  formatChord,
+  isMac,
+  buildWhenContext,
+  isInputFocused,
+  getKeybindingRegistry,
+  getKeybindingRegistrySync,
+} from "./keybindings/index.js";
+
 // AI Tool Registry (CRUD)
 export { commandRegistry, executeCrud } from "./commands/index.js";
 export type { ToolSchemaEntry, ExecutionResult, ExecutionDisplay, SummarySegment, AnthropicTool } from "./commands/index.js";
@@ -149,7 +170,20 @@ export { initEngineLifecycle } from "./engine-lifecycle.js";
 export type { EngineLifecycleOptions } from "./engine-lifecycle.js";
 
 // WASM singleton — prevents double-instantiation
-export { getKernelWasm } from "./wasm-singleton.js";
+export { getKernelWasm, getKernelWasmSync } from "./wasm-singleton.js";
+
+// Kernel-backed sketch math (projection, snap, hit-test, shape builders)
+export {
+  getPlaneBasis,
+  worldToSketch,
+  sketchToWorld,
+  intersectRay,
+  snapPoint,
+  hitTestSegments,
+  buildRectangle,
+  buildCircle,
+} from "./sketch-math.js";
+export type { PlaneBasis, SnapOptions, SnapResult } from "./sketch-math.js";
 
 // Re-export engine initialization
 export { Engine } from "@vcad/engine";
