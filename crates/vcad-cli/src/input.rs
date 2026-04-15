@@ -145,6 +145,51 @@ pub fn hit_test(app: &App, area: Rect, col: u16, row: u16) -> HitRegion {
     HitRegion::Viewport
 }
 
+/// Intercept left-clicks related to the menu bar.
+///
+/// Returns `true` if the click was consumed by menu-bar logic (label click,
+/// popover item click, or dismiss). Returns `false` if the caller should
+/// continue with normal hit-testing.
+fn handle_menu_click(app: &mut App, area: Rect, col: u16, row: u16) -> anyhow::Result<bool> {
+    use crate::ui::menu;
+
+    // Case 1: a menu is currently open — intercept to run an item, switch
+    // menus, or dismiss on outside-click.
+    if let Some(open_idx) = app.menu_state.open {
+        // Item inside the open dropdown?
+        if let Some(item_idx) = menu::item_at(area, open_idx, col, row) {
+            if let Some(cmd) = menu::item_command(open_idx, item_idx) {
+                app.menu_state.close();
+                app.process_command(cmd)?;
+            }
+            return Ok(true);
+        }
+        // Click on a different menu-bar label switches menus instead of
+        // closing.
+        if let Some(new_idx) = menu::menu_at(area, col, row) {
+            app.menu_state.open_menu(new_idx);
+            return Ok(true);
+        }
+        // Click on the same label closes the menu.
+        let open_rect = menu::menu_label_rect(area, open_idx);
+        if row == open_rect.y && col >= open_rect.x && col < open_rect.x + open_rect.width {
+            app.menu_state.close();
+            return Ok(true);
+        }
+        // Anywhere else — dismiss without running anything.
+        app.menu_state.close();
+        return Ok(true);
+    }
+
+    // Case 2: no menu open — opening a menu on label click.
+    if let Some(idx) = menu::menu_at(area, col, row) {
+        app.menu_state.open_menu(idx);
+        return Ok(true);
+    }
+
+    Ok(false)
+}
+
 /// Open the appropriate ToolInput for a sub-tool click, or execute directly.
 /// Returns true if the tool was handled (either opened input or executed).
 fn handle_sub_tool_click(app: &mut App, tool_idx: usize) -> anyhow::Result<bool> {
@@ -309,6 +354,12 @@ pub fn handle_mouse(
 
     match event.kind {
         MouseEventKind::Down(MouseButton::Left) => {
+            // Menu-bar click handling comes first — an open dropdown
+            // intercepts all clicks so the user can dismiss or re-target it.
+            if handle_menu_click(app, area, col, row)? {
+                return Ok(true);
+            }
+
             // If tool_input is active, clicking outside cancels it
             if app.tool_input.is_some() {
                 let region = hit_test(app, area, col, row);
@@ -349,12 +400,8 @@ pub fn handle_mouse(
                     }
                 }
                 HitRegion::Toolbar(tab) => {
-                    if tab == 0 {
-                        app.chat.open = !app.chat.open;
-                    } else {
-                        app.active_tab = tab;
-                        app.last_manual_tab = Instant::now();
-                    }
+                    app.active_tab = tab;
+                    app.last_manual_tab = Instant::now();
                 }
                 HitRegion::SubTool(tool_idx) => {
                     handle_sub_tool_click(app, tool_idx)?;
@@ -683,6 +730,67 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
             _ => {}
         },
         TuiMode::Normal => match key.code {
+            // Menu bar: Esc closes an open dropdown before anything else.
+            KeyCode::Esc if app.menu_state.is_open() => {
+                app.menu_state.close();
+            }
+            // Alt+F/E/V/T/H opens the corresponding top-level menu.
+            KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::ALT) => {
+                if let Some(idx) = crate::ui::menu::accelerator_to_menu(c) {
+                    app.menu_state.open_menu(idx);
+                }
+            }
+            // Arrow keys navigate an open menu; Enter runs the focused item.
+            KeyCode::Down if app.menu_state.is_open() => {
+                let open_idx = app.menu_state.open.unwrap();
+                let items = crate::ui::menu::MENUS[open_idx].items;
+                let mut next = app.menu_state.focused_item + 1;
+                while next < items.len()
+                    && matches!(items[next], crate::ui::menu::MenuItem::Separator)
+                {
+                    next += 1;
+                }
+                if next < items.len() {
+                    app.menu_state.focused_item = next;
+                }
+            }
+            KeyCode::Up if app.menu_state.is_open() => {
+                let open_idx = app.menu_state.open.unwrap();
+                let items = crate::ui::menu::MENUS[open_idx].items;
+                let mut prev = app.menu_state.focused_item;
+                loop {
+                    if prev == 0 {
+                        break;
+                    }
+                    prev -= 1;
+                    if !matches!(items[prev], crate::ui::menu::MenuItem::Separator) {
+                        app.menu_state.focused_item = prev;
+                        break;
+                    }
+                }
+            }
+            KeyCode::Left if app.menu_state.is_open() => {
+                let idx = app.menu_state.open.unwrap();
+                let new = if idx == 0 {
+                    crate::ui::menu::MENUS.len() - 1
+                } else {
+                    idx - 1
+                };
+                app.menu_state.open_menu(new);
+            }
+            KeyCode::Right if app.menu_state.is_open() => {
+                let idx = app.menu_state.open.unwrap();
+                let new = (idx + 1) % crate::ui::menu::MENUS.len();
+                app.menu_state.open_menu(new);
+            }
+            KeyCode::Enter if app.menu_state.is_open() => {
+                let open_idx = app.menu_state.open.unwrap();
+                let item_idx = app.menu_state.focused_item;
+                if let Some(cmd) = crate::ui::menu::item_command(open_idx, item_idx) {
+                    app.menu_state.close();
+                    app.process_command(cmd)?;
+                }
+            }
             KeyCode::Char('q') => {
                 return Ok(false); // signal quit
             }

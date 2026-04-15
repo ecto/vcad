@@ -3,6 +3,7 @@
 pub mod buffer;
 pub mod chat;
 pub mod command;
+pub mod menu;
 pub mod status;
 pub mod theme;
 pub mod toolbar;
@@ -46,8 +47,8 @@ pub fn draw_overlays(buf: &mut CellBuffer, app: &App) {
 /// Internal: draw all floating overlay widgets.
 fn draw_overlays_with_area(buf: &mut CellBuffer, app: &App, area: Rect) {
     if !app.is_orbiting {
-        // Top bar
-        top_bar::draw_top_bar(buf, app.sidebar_visible, app.mode.name(), area);
+        // Top bar (Borland menu bar + right cluster)
+        top_bar::draw_top_bar(buf, app, area);
 
         // Sidebar (toggleable)
         if app.sidebar_visible {
@@ -85,6 +86,11 @@ fn draw_overlays_with_area(buf: &mut CellBuffer, app: &App, area: Rect) {
         app.selected.len(),
         area,
     );
+
+    // Open menu dropdown (drawn after toolbar so it overlays it).
+    if !app.is_orbiting && app.menu_state.is_open() {
+        menu::draw_open_menu(buf, area, &app.menu_state);
+    }
 
     // Command palette (when in command mode)
     if app.command_mode() {

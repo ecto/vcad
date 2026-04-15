@@ -4,7 +4,7 @@
 
 use crossterm::{
     cursor::MoveTo,
-    style::{Color as CtColor, SetBackgroundColor, SetForegroundColor},
+    style::{Attribute, Color as CtColor, SetAttribute, SetBackgroundColor, SetForegroundColor},
     QueueableCommand,
 };
 use std::io::{self, Write};
@@ -51,6 +51,8 @@ pub struct Cell {
     pub ch: char,
     pub fg: Color,
     pub bg: Color,
+    /// SGR underline flag — used by menu-bar accelerators and link styling.
+    pub underline: bool,
 }
 
 impl Default for Cell {
@@ -59,6 +61,7 @@ impl Default for Cell {
             ch: ' ',
             fg: theme::TEXT(),
             bg: theme::BG(),
+            underline: false,
         }
     }
 }
@@ -111,6 +114,7 @@ impl CellBuffer {
     pub fn flush(&mut self, stdout: &mut impl Write) -> io::Result<()> {
         let mut last_fg = Color::rgb(0, 0, 0);
         let mut last_bg = Color::rgb(0, 0, 0);
+        let mut last_underline = false;
         let mut last_pos: Option<(u16, u16)> = None;
         let mut colors_set = false;
 
@@ -146,6 +150,14 @@ impl CellBuffer {
                     }))?;
                     last_bg = cell.bg;
                 }
+                if !colors_set || cell.underline != last_underline {
+                    stdout.queue(SetAttribute(if cell.underline {
+                        Attribute::Underlined
+                    } else {
+                        Attribute::NoUnderline
+                    }))?;
+                    last_underline = cell.underline;
+                }
                 colors_set = true;
 
                 // Write character
@@ -154,6 +166,9 @@ impl CellBuffer {
             }
         }
 
+        // Reset attributes at the end of the frame so external terminal state
+        // (e.g. the shell prompt after we exit alt-screen) doesn't inherit them.
+        stdout.queue(SetAttribute(Attribute::Reset))?;
         stdout.flush()?;
 
         // Swap buffers
@@ -174,12 +189,31 @@ impl CellBuffer {
     }
 }
 
-/// Helper: set a character with colors at a position.
+/// Helper: set a character with colors at a position. Clears any underline
+/// attribute — call `set_char_underline` if you want it.
 pub fn set_char(buf: &mut CellBuffer, x: u16, y: u16, ch: char, fg: Color, bg: Color) {
     if let Some(cell) = buf.cell_mut(x, y) {
         cell.ch = ch;
         cell.fg = fg;
         cell.bg = bg;
+        cell.underline = false;
+    }
+}
+
+/// Helper: set an underlined character. Used by menu-bar accelerators.
+pub fn set_char_underline(
+    buf: &mut CellBuffer,
+    x: u16,
+    y: u16,
+    ch: char,
+    fg: Color,
+    bg: Color,
+) {
+    if let Some(cell) = buf.cell_mut(x, y) {
+        cell.ch = ch;
+        cell.fg = fg;
+        cell.bg = bg;
+        cell.underline = true;
     }
 }
 

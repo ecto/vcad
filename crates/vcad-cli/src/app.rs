@@ -93,6 +93,10 @@ pub struct App {
     pub tool_input: Option<ToolInput>,
     /// Timestamp of last manual tab click (suppresses auto-switch briefly).
     pub last_manual_tab: Instant,
+    /// Menu-bar dropdown state (which top-level menu is open).
+    pub menu_state: crate::ui::menu::MenuBarState,
+    /// True after any edit until the next save — drives the ● indicator.
+    dirty: bool,
 }
 
 impl App {
@@ -137,6 +141,8 @@ impl App {
             chat: ChatPanel::new(),
             tool_input: None,
             last_manual_tab: Instant::now(),
+            menu_state: Default::default(),
+            dirty: false,
         };
 
         app.evaluate()?;
@@ -157,6 +163,12 @@ impl App {
         if self.undo_stack.len() > 100 {
             self.undo_stack.remove(0);
         }
+        self.dirty = true;
+    }
+
+    /// True while the document has unsaved changes.
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
     }
 
     /// Undo the last action.
@@ -741,6 +753,7 @@ impl App {
         if let Some(ref path) = self.file_path {
             let json = self.document.to_json()?;
             std::fs::write(path, json)?;
+            self.dirty = false;
             self.set_status(format!("Saved to {}", path.display()));
         } else {
             self.set_status("No file path - use 'save <path>' command");
@@ -753,6 +766,7 @@ impl App {
         let json = self.document.to_json()?;
         std::fs::write(&path, json)?;
         self.file_path = Some(path.clone());
+        self.dirty = false;
         self.set_status(format!("Saved to {}", path.display()));
         Ok(())
     }
@@ -984,10 +998,65 @@ impl App {
             "quit" | "q" => {
                 self.running = false;
             }
-            "help" | "?" => {
-                self.status = "Commands: cube, cylinder, sphere, delete, move, save, export, quit"
-                    .to_string();
+            // -- Menu-bar commands that don't yet have full TUI support --
+            // These are routed through `process_command` so the menu, command
+            // palette, and Alt accelerators all share one dispatch path.
+            "new" => {
+                self.document = Document::new();
+                self.selected.clear();
+                self.undo_stack.clear();
+                self.redo_stack.clear();
+                self.file_path = None;
+                self.dirty = false;
+                self.evaluate()?;
+                self.set_status("New document");
             }
+            "open" => self.set_status("Open: drag a .vcad file into the terminal"),
+            "export_glb" => self.set_status("Export GLB: not yet implemented in TUI"),
+            "export_step" => self.set_status("Export STEP: not yet implemented in TUI"),
+            "duplicate" => self.set_status("Duplicate: select a part and press Shift+D (TODO)"),
+            "select_all" => {
+                let ids: Vec<_> = self.get_parts().into_iter().map(|(id, _)| id).collect();
+                self.selected = ids.into_iter().collect();
+                self.set_status(format!("Selected {} parts", self.selected.len()));
+            }
+            "deselect" => {
+                self.selected.clear();
+                self.set_status("Deselected");
+            }
+            "toggle_sidebar" => {
+                self.sidebar_visible = !self.sidebar_visible;
+            }
+            "toggle_chat" => {
+                self.chat.open = !self.chat.open;
+            }
+            "toggle_wireframe" => self.set_status("Wireframe: not yet implemented in TUI"),
+            "cycle_theme" => {
+                let name = crate::ui::theme::toggle();
+                self.set_status(format!("Theme: {name}"));
+            }
+            "camera_iso" => {
+                self.camera = crate::render::Camera::default();
+                self.set_status("Isometric view");
+            }
+            "camera_top" | "camera_front" | "camera_right" | "camera_fit" => {
+                self.set_status(format!("{}: not yet implemented in TUI", parts[0]));
+            }
+            "palette" => {
+                self.mode = TuiMode::Command;
+                self.command_input.clear();
+                self.command_selected_index = 0;
+            }
+            "sketch" => {
+                self.mode = TuiMode::Sketch(crate::tui::SketchModeState::new(
+                    crate::tui::SketchPlane::XY,
+                ));
+                self.set_status("Sketch mode (XY plane) - L:line R:rect C:circle");
+            }
+            "about" => self.set_status("vcad — parametric CAD for humans and AIs"),
+            "open_docs" => self.set_status("Docs: https://vcad.io/docs"),
+            "open_github" => self.set_status("GitHub: https://github.com/vcad"),
+            "open_discord" => self.set_status("Discord: https://discord.gg/vcad"),
             _ => {
                 self.set_status(format!("Unknown command: {}", parts[0]));
             }
