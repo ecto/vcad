@@ -254,6 +254,16 @@ impl App {
             app.keybindings.set_binding(cmd_id, None);
         }
 
+        // Rehydrate chat history so the sidebar shows prior turns on
+        // launch. Full fidelity goes into session.messages (what the
+        // model sees on the next turn); a simplified view goes into
+        // chat.lines (what the user sees in the sidebar).
+        let history = crate::chat_session::load_history();
+        if !history.is_empty() {
+            crate::chat_session::rehydrate_display(&mut app, &history);
+            app.chat_session.messages = history;
+        }
+
         app.evaluate()?;
         Ok(app)
     }
@@ -1163,7 +1173,11 @@ impl App {
                 self.sidebar_visible = !self.sidebar_visible;
             }
             "toggle_chat" => {
+                // Keep `open` and `focused` in sync so closing via the
+                // menu doesn't leave an invisible keystroke trap — keys
+                // would otherwise keep routing to the hidden sidebar.
                 self.chat.open = !self.chat.open;
+                self.chat.focused = self.chat.open;
             }
             "toggle_wireframe" => self.set_status("Wireframe: not yet implemented in TUI"),
             "cycle_theme" => {

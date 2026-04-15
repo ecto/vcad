@@ -13,6 +13,9 @@
 //! events; every document mutation happens on the main thread in
 //! [`drain_chat_events`] so we never fight the kernel over `&mut Document`.
 
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
@@ -441,10 +444,12 @@ fn finalize_turn_and_maybe_chain(app: &mut App) {
                 "input": t.input,
             }));
         }
-        app.chat_session.messages.push(ChatMessage {
+        let assistant_msg = ChatMessage {
             role: MessageRole::Assistant,
             content: MessageContent::Blocks(assistant_blocks),
-        });
+        };
+        append_history(&assistant_msg);
+        app.chat_session.messages.push(assistant_msg);
 
         // Corresponding user message carries the tool_result blocks.
         let result_blocks: Vec<Value> = tools
@@ -463,10 +468,12 @@ fn finalize_turn_and_maybe_chain(app: &mut App) {
                 obj
             })
             .collect();
-        app.chat_session.messages.push(ChatMessage {
+        let tool_result_msg = ChatMessage {
             role: MessageRole::User,
             content: MessageContent::Blocks(result_blocks),
-        });
+        };
+        append_history(&tool_result_msg);
+        app.chat_session.messages.push(tool_result_msg);
 
         // Close out the current stream and fire the follow-up.
         app.chat_session.event_rx = None;
@@ -479,10 +486,12 @@ fn finalize_turn_and_maybe_chain(app: &mut App) {
 
     // No tool calls this turn — commit plain text and end.
     if !text.is_empty() {
-        app.chat_session.messages.push(ChatMessage {
+        let msg = ChatMessage {
             role: MessageRole::Assistant,
             content: MessageContent::Text(text),
-        });
+        };
+        append_history(&msg);
+        app.chat_session.messages.push(msg);
     }
     app.chat_session.in_flight = false;
     app.chat_session.event_rx = None;
@@ -492,10 +501,123 @@ fn finalize_turn_and_maybe_chain(app: &mut App) {
 /// Push a new user message onto the conversation history. Called from the
 /// chat panel's Enter handler before [`start_chat_turn`].
 pub fn push_user_message(app: &mut App, text: String) {
-    app.chat_session.messages.push(ChatMessage {
+    let msg = ChatMessage {
         role: MessageRole::User,
         content: MessageContent::Text(text),
-    });
+    };
+    append_history(&msg);
+    app.chat_session.messages.push(msg);
+}
+
+// ---------------------------------------------------------------------------
+// History persistence
+// ---------------------------------------------------------------------------
+
+/// Path to the chat history file: piggybacks on vcad_chat::token_path's
+/// parent directory so we don't have to introduce a new dep on
+/// `directories` here.
+fn history_path() -> Option<PathBuf> {
+    let token = vcad_chat::token_path().ok()?;
+    token.parent().map(|p| p.join("chat.jsonl"))
+}
+
+/// Append a single finalized message to `chat.jsonl`. Best-effort — a
+/// persistence failure logs via `eprintln!` (captured by log_capture in
+/// the TUI) but never blocks the chat flow.
+fn append_history(msg: &ChatMessage) {
+    let Some(path) = history_path() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let Ok(json) = serde_json::to_string(msg) else {
+        return;
+    };
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(f, "{json}");
+    }
+}
+
+/// Load the persisted chat history as a `Vec<ChatMessage>`. Missing or
+/// unreadable files produce an empty vec. Individual unparseable lines
+/// are skipped so a corrupted tail doesn't lose the whole file.
+pub fn load_history() -> Vec<ChatMessage> {
+    let Some(path) = history_path() else {
+        return Vec::new();
+    };
+    let Ok(body) = fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    body.lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|line| serde_json::from_str::<ChatMessage>(line).ok())
+        .collect()
+}
+
+/// Render a loaded message into the chat panel's display lines so the
+/// history is visible on launch. Messages with content-block arrays
+/// (tool_use / tool_result) are expanded into debug lines so the user
+/// sees what happened at each turn, not just raw JSON.
+pub fn rehydrate_display(app: &mut App, messages: &[ChatMessage]) {
+    use crate::ui::chat::ChatLineKind;
+    for msg in messages {
+        match &msg.content {
+            MessageContent::Text(text) => {
+                let kind = match msg.role {
+                    MessageRole::User => ChatLineKind::User,
+                    MessageRole::Assistant => ChatLineKind::Assistant,
+                };
+                app.chat.lines.push(crate::ui::chat::ChatLine {
+                    text: text.clone(),
+                    kind,
+                });
+            }
+            MessageContent::Blocks(blocks) => {
+                for block in blocks {
+                    let Some(obj) = block.as_object() else {
+                        continue;
+                    };
+                    let ty = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                    match ty {
+                        "text" => {
+                            let text = obj
+                                .get("text")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let kind = match msg.role {
+                                MessageRole::User => ChatLineKind::User,
+                                MessageRole::Assistant => ChatLineKind::Assistant,
+                            };
+                            app.chat.lines.push(crate::ui::chat::ChatLine {
+                                text,
+                                kind,
+                            });
+                        }
+                        "tool_use" => {
+                            let name =
+                                obj.get("name").and_then(|v| v.as_str()).unwrap_or("tool");
+                            app.chat.debug(format!("\u{2726} {name}"));
+                        }
+                        "tool_result" => {
+                            let is_error = obj
+                                .get("is_error")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+                            let summary = obj
+                                .get("content")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("(result)");
+                            let icon = if is_error { "\u{2717}" } else { "\u{2713}" };
+                            app.chat.debug(format!("{icon} {summary}"));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

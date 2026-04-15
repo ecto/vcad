@@ -162,8 +162,9 @@ pub fn chat_rect(area: Rect) -> Rect {
     Rect::new(x, y, width, height)
 }
 
-/// Draw the chat panel overlay.
-pub fn draw_chat(buf: &mut CellBuffer, panel: &ChatPanel, area: Rect) {
+/// Draw the chat panel overlay. `in_flight` controls whether the
+/// streaming spinner renders in the title bar.
+pub fn draw_chat(buf: &mut CellBuffer, panel: &ChatPanel, in_flight: bool, area: Rect) {
     let rect = chat_rect(area);
     if rect.height < 4 || rect.width < 10 {
         return;
@@ -231,6 +232,23 @@ pub fn draw_chat(buf: &mut CellBuffer, panel: &ChatPanel, area: Rect) {
         let x = title_x + i as u16;
         if x < right {
             set_char(buf, x, top, ch, theme::ACCENT(), theme::SURFACE());
+        }
+    }
+
+    // Streaming spinner: when a request is in flight, animate a single
+    // cell just after the title so the user can tell something is
+    // actually happening between "send" and the first text token.
+    if in_flight {
+        let spinner_x = title_x + title.chars().count() as u16 + 1;
+        if spinner_x < right {
+            set_char(
+                buf,
+                spinner_x,
+                top,
+                spinner_frame(),
+                theme::ACCENT(),
+                theme::SURFACE(),
+            );
         }
     }
 
@@ -440,6 +458,21 @@ pub fn draw_chat(buf: &mut CellBuffer, panel: &ChatPanel, area: Rect) {
             );
         }
     }
+}
+
+/// Pick one frame of the streaming spinner from the wall clock. Ten-frame
+/// braille cycle matching Claude Code / oh-my-zsh style spinners, advancing
+/// every 80 ms so the animation is visible but not frantic.
+fn spinner_frame() -> char {
+    const FRAMES: &[char] = &[
+        '\u{280B}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283C}',
+        '\u{2834}', '\u{2826}', '\u{2827}', '\u{2807}', '\u{280F}',
+    ];
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    FRAMES[((ms / 80) as usize) % FRAMES.len()]
 }
 
 /// Word-wrap `text` to lines no wider than `width` cells. Soft-breaks on

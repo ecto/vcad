@@ -100,6 +100,6 @@ fn draw_overlays_with_area(buf: &mut CellBuffer, app: &App, area: Rect) {
 
     // Chat panel (when open)
     if app.chat.open {
-        chat::draw_chat(buf, &app.chat, area);
+        chat::draw_chat(buf, &app.chat, app.chat_session.is_busy(), area);
     }
 }
