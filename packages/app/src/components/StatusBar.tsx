@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Circle } from "@phosphor-icons/react/dist/ssr/Circle";
 import { Terminal } from "@phosphor-icons/react/dist/ssr/Terminal";
 import { useDocumentStore, useUiStore, type LogLevelName } from "@vcad/core";
+import { useAuthStore, useSyncStore } from "@vcad/auth";
 import { useLogStore, getFilteredEntries } from "@/stores/log-store";
 import { cn } from "@/lib/utils";
 
@@ -37,6 +38,8 @@ export function StatusBar() {
   const isDirty = useDocumentStore((s) => s.isDirty);
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
   const cursorWorld = useUiStore((s) => s.cursorWorld);
+  const user = useAuthStore((s) => s.user);
+  const syncStatus = useSyncStore((s) => s.syncStatus);
 
   // Subscribe to the pieces of the log store the ticker actually needs so we
   // re-render only when filtered output changes.
@@ -73,6 +76,41 @@ export function StatusBar() {
   const selCount = selectedPartIds.size;
   const fresh = latest && now - latest.timestamp < 3000;
   const levelColor = latest ? LEVEL_COLOR[latest.level] : "";
+
+  // Combined save indicator: local dirty state takes precedence, then cloud
+  // sync status (only meaningful when the user is signed in).
+  const saveIndicator: {
+    label: string;
+    title: string;
+    className: string;
+    pulse: boolean;
+  } = isDirty
+    ? {
+        label: "modified",
+        title: "Unsaved changes",
+        className: "text-brand",
+        pulse: true,
+      }
+    : user && syncStatus === "syncing"
+      ? {
+          label: "syncing",
+          title: "Syncing to cloud",
+          className: "text-yellow-500",
+          pulse: true,
+        }
+      : user && syncStatus === "error"
+        ? {
+            label: "sync failed",
+            title: "Cloud sync failed",
+            className: "text-danger",
+            pulse: false,
+          }
+        : {
+            label: "saved",
+            title: user ? "Saved and synced" : "Saved",
+            className: "text-text-muted/60",
+            pulse: false,
+          };
 
   return (
     <div
@@ -170,18 +208,15 @@ export function StatusBar() {
         )}
       >
         <span
-          className={cn(
-            "flex items-center gap-1",
-            isDirty ? "text-brand" : "text-text-muted/60",
-          )}
-          title={isDirty ? "Unsaved changes" : "Saved"}
+          className={cn("flex items-center gap-1", saveIndicator.className)}
+          title={saveIndicator.title}
         >
           <Circle
             size={7}
             weight="fill"
-            className={cn(isDirty && "animate-pulse")}
+            className={cn(saveIndicator.pulse && "animate-pulse")}
           />
-          {isDirty ? "modified" : "saved"}
+          {saveIndicator.label}
         </span>
         <span className="tabular-nums">
           {parts.length} {parts.length === 1 ? "part" : "parts"}

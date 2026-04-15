@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { BookOpen } from "@phosphor-icons/react/dist/ssr/BookOpen";
 import { Mouse } from "@phosphor-icons/react/dist/ssr/Mouse";
 import { Sparkle } from "@phosphor-icons/react/dist/ssr/Sparkle";
 import { CaretRight } from "@phosphor-icons/react/dist/ssr/CaretRight";
 import { Export } from "@phosphor-icons/react/dist/ssr/Export";
 import { MagnifyingGlass } from "@phosphor-icons/react/dist/ssr/MagnifyingGlass";
-import * as Popover from "@radix-ui/react-popover";
+import { Bell } from "@phosphor-icons/react/dist/ssr/Bell";
+import * as Menubar from "@radix-ui/react-menubar";
 import {
   useDocumentStore,
   useUiStore,
@@ -14,8 +15,12 @@ import {
   exportGltfBlob,
   exportStepBlob,
   CATEGORY_ICON_COLORS,
+  TIERS,
+  useBillingStore,
   type Command,
 } from "@vcad/core";
+import { openCustomerPortal } from "@/lib/billing-api";
+import { UpgradeModal } from "@/components/UpgradeModal";
 import { cn } from "@/lib/utils";
 import { downloadBlob } from "@/lib/download";
 import { examples } from "@/data/examples";
@@ -38,60 +43,38 @@ interface HeaderProps {
 
 
 // ---------------------------------------------------------------------------
-// Borland C++ Builder / Delphi-style menu bar
+// Borland C++ Builder / Delphi-style menu bar — built on Radix Menubar for
+// native keyboard nav: Tab/Arrow between menus, typeahead inside them,
+// hover-handoff between triggers and submenus.
 // ---------------------------------------------------------------------------
 
-/** Classic text-style menu item used in the top menu-bar row. */
-function MenuBarItem({
-  label,
-  accelerator,
-  children,
-}: {
-  label: string;
-  /** First letter to underline, e.g. "F" for "File" */
-  accelerator?: string;
-  children: React.ReactNode | ((close: () => void) => React.ReactNode);
-}) {
-  const [open, setOpen] = useState(false);
-  const renderedLabel =
-    accelerator && label.startsWith(accelerator) ? (
-      <>
-        <span className="underline">{label[0]}</span>
-        {label.slice(1)}
-      </>
-    ) : (
-      label
-    );
+const TRIGGER_CLASS = cn(
+  "h-6 px-2 text-xs text-text outline-none cursor-default select-none",
+  "hover:bg-hover data-[state=open]:bg-hover transition-colors",
+);
+
+const CONTENT_CLASS =
+  "z-50 min-w-[180px] border border-border bg-surface shadow-lg py-1";
+
+const ITEM_CLASS = cn(
+  "flex w-full items-center gap-2 px-3 py-1 text-xs text-text outline-none cursor-default select-none",
+  "data-[highlighted]:bg-hover data-[disabled]:opacity-40 data-[disabled]:cursor-not-allowed",
+);
+
+/** Renders a top-level trigger label with the first letter underlined as a
+ * typeahead hint — once the menubar has focus, pressing that letter jumps
+ * to the corresponding menu. */
+function TriggerLabel({ label }: { label: string }) {
   return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
-      <Popover.Trigger asChild>
-        <button
-          className={cn(
-            "h-6 px-2 text-xs text-text hover:bg-hover transition-colors",
-            open && "bg-hover",
-          )}
-        >
-          {renderedLabel}
-        </button>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content
-          sideOffset={2}
-          align="start"
-          className="z-50 min-w-[180px] border border-border bg-surface shadow-lg py-1"
-          onCloseAutoFocus={(e) => e.preventDefault()}
-        >
-          {typeof children === "function"
-            ? (children as (close: () => void) => React.ReactNode)(() => setOpen(false))
-            : children}
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
+    <>
+      <span className="underline">{label[0]}</span>
+      {label.slice(1)}
+    </>
   );
 }
 
 function MenuItem({
-  onClick,
+  onSelect,
   children,
   shortcut,
   icon: Icon,
@@ -99,7 +82,7 @@ function MenuItem({
   disabled,
   badge,
 }: {
-  onClick: () => void;
+  onSelect: () => void;
   children: React.ReactNode;
   shortcut?: string;
   icon?: React.ComponentType<{ size?: number; className?: string }>;
@@ -108,13 +91,10 @@ function MenuItem({
   badge?: number;
 }) {
   return (
-    <button
-      onClick={onClick}
+    <Menubar.Item
       disabled={disabled}
-      className={cn(
-        "flex w-full items-center gap-2 px-3 py-1 text-xs text-text hover:bg-hover",
-        disabled && "opacity-40 cursor-not-allowed",
-      )}
+      onSelect={onSelect}
+      className={ITEM_CLASS}
     >
       {Icon && <Icon size={13} className={iconClassName ?? "text-text-muted"} />}
       <span className="flex-1 text-left">{children}</span>
@@ -124,18 +104,55 @@ function MenuItem({
         </span>
       )}
       {shortcut && <span className="text-text-muted text-[10px]">{shortcut}</span>}
-    </button>
+    </Menubar.Item>
   );
 }
 
 function MenuSeparator() {
-  return <div className="my-1 border-t border-border" />;
+  return <Menubar.Separator className="my-1 border-t border-border" />;
 }
 
-/** Render a registry command as a Header MenuItem. Looks the command up by
- * id, applies the category icon color, wires onClick to run the action and
- * then close the parent menu popover. Keeps Header in sync with mobile and
- * the command palette — all three surfaces render the same action list. */
+/** A submenu that opens on hover/right-arrow. Menubar.Sub handles all the
+ * coordination (open-on-hover, close on sibling hover, arrow nav). */
+function Submenu({
+  label,
+  icon: Icon,
+  iconClassName,
+  hint,
+  contentClassName,
+  children,
+}: {
+  label: React.ReactNode;
+  icon?: React.ComponentType<{ size?: number; className?: string }>;
+  iconClassName?: string;
+  hint?: React.ReactNode;
+  contentClassName?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Menubar.Sub>
+      <Menubar.SubTrigger className={ITEM_CLASS}>
+        {Icon && <Icon size={13} className={iconClassName ?? "text-text-muted"} />}
+        <span className="flex-1 text-left">{label}</span>
+        {hint && <span className="text-text-muted text-[10px]">{hint}</span>}
+        <CaretRight size={10} className="text-text-muted" />
+      </Menubar.SubTrigger>
+      <Menubar.Portal>
+        <Menubar.SubContent
+          sideOffset={0}
+          alignOffset={-5}
+          className={cn(
+            "z-50 min-w-[160px] border border-border bg-surface shadow-lg py-1",
+            contentClassName,
+          )}
+        >
+          {children}
+        </Menubar.SubContent>
+      </Menubar.Portal>
+    </Menubar.Sub>
+  );
+}
+
 /** Defensive wrapper around command.enabled() — keeps a throwing check (e.g.
  * kernel WASM in a broken state) from tripping the error boundary. */
 function safeEnabled(command: Command): boolean {
@@ -147,15 +164,17 @@ function safeEnabled(command: Command): boolean {
   }
 }
 
+/** Render a registry command as a Menubar item. Looks the command up by id,
+ * applies the category icon color, wires onSelect to run the action (Radix
+ * auto-closes the menu on select). Keeps Header in sync with mobile and the
+ * command palette — all three surfaces render the same action list. */
 function CommandMenuItem({
   id,
-  close,
   commands,
   label,
   badge,
 }: {
   id: string;
-  close: () => void;
   commands: Command[];
   /** Optional label override for commands whose display text is dynamic
    * (e.g. theme cycle, wireframe toggle). Registry's static label is used
@@ -179,10 +198,9 @@ function CommandMenuItem({
       shortcut={cmd.shortcut}
       disabled={!enabled}
       badge={badge}
-      onClick={() => {
+      onSelect={() => {
         if (!enabled) return;
         cmd.action();
-        close();
       }}
     >
       {displayLabel}
@@ -203,60 +221,41 @@ function RayTracingSubmenu() {
   if (!raytraceAvailable) return null;
 
   return (
-    <Popover.Root>
-      <Popover.Trigger asChild>
-        <button className="flex w-full items-center gap-2 px-3 py-1 text-xs text-text hover:bg-hover">
-          <Sparkle size={13} className={renderMode === "raytrace" ? "text-brand" : "text-text-muted"} />
-          <span className="flex-1 text-left">Ray Tracing</span>
-          <span className="text-text-muted text-[10px]">
-            {renderMode === "raytrace" ? raytraceQuality : "Off"}
-          </span>
-          <CaretRight size={10} className="text-text-muted" />
-        </button>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content
-          side="right"
-          sideOffset={0}
-          align="start"
-          className="z-50 min-w-[160px] border border-border bg-surface shadow-lg py-1"
+    <Submenu
+      label="Ray Tracing"
+      icon={Sparkle}
+      iconClassName={renderMode === "raytrace" ? "text-brand" : "text-text-muted"}
+      hint={renderMode === "raytrace" ? raytraceQuality : "Off"}
+    >
+      <MenuItem
+        onSelect={() => { if (renderMode === "raytrace") toggleRenderMode(); }}
+      >
+        <span className={renderMode === "standard" ? "text-brand" : "text-text"}>Off</span>
+      </MenuItem>
+      {(["draft", "standard", "high"] as const).map((q) => (
+        <MenuItem
+          key={q}
+          onSelect={() => {
+            if (renderMode !== "raytrace") toggleRenderMode();
+            setRaytraceQuality(q);
+          }}
         >
-          <button
-            onClick={() => { if (renderMode === "raytrace") toggleRenderMode(); }}
-            className="flex w-full items-center px-3 py-1 text-xs hover:bg-hover"
+          <span
+            className={
+              renderMode === "raytrace" && raytraceQuality === q ? "text-brand" : "text-text"
+            }
           >
-            <span className={renderMode === "standard" ? "text-brand" : "text-text"}>Off</span>
-          </button>
-          {(["draft", "standard", "high"] as const).map((q) => (
-            <button
-              key={q}
-              onClick={() => {
-                if (renderMode !== "raytrace") toggleRenderMode();
-                setRaytraceQuality(q);
-              }}
-              className="flex w-full items-center px-3 py-1 text-xs hover:bg-hover"
-            >
-              <span
-                className={
-                  renderMode === "raytrace" && raytraceQuality === q ? "text-brand" : "text-text"
-                }
-              >
-                {q.charAt(0).toUpperCase() + q.slice(1)}
-              </span>
-            </button>
-          ))}
-          <MenuSeparator />
-          <button
-            onClick={() => setRaytraceEdgesEnabled(!raytraceEdgesEnabled)}
-            className="flex w-full items-center px-3 py-1 text-xs hover:bg-hover"
-          >
-            <span className={raytraceEdgesEnabled ? "text-brand" : "text-text"}>
-              Edges {raytraceEdgesEnabled ? "On" : "Off"}
-            </span>
-          </button>
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
+            {q.charAt(0).toUpperCase() + q.slice(1)}
+          </span>
+        </MenuItem>
+      ))}
+      <MenuSeparator />
+      <MenuItem onSelect={() => setRaytraceEdgesEnabled(!raytraceEdgesEnabled)}>
+        <span className={raytraceEdgesEnabled ? "text-brand" : "text-text"}>
+          Edges {raytraceEdgesEnabled ? "On" : "Off"}
+        </span>
+      </MenuItem>
+    </Submenu>
   );
 }
 
@@ -265,32 +264,24 @@ function MouseControlsSubmenu() {
   const controlSchemeId = useCameraSettingsStore((s) => s.controlSchemeId);
   const currentSchemeName = CONTROL_PRESETS[controlSchemeId]?.name ?? "vcad";
   return (
-    <Popover.Root>
-      <Popover.Trigger asChild>
-        <button className="flex w-full items-center gap-2 px-3 py-1 text-xs text-text hover:bg-hover">
-          <Mouse size={13} className="text-text-muted" />
-          <span className="flex-1 text-left">Mouse Controls</span>
-          <span className="text-text-muted text-[10px]">{currentSchemeName}</span>
-          <CaretRight size={10} className="text-text-muted" />
-        </button>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content
-          side="right"
-          sideOffset={0}
-          align="start"
-          className="z-50 w-64 border border-border bg-surface shadow-lg p-2 max-h-[80vh] overflow-y-auto"
-        >
-          <CameraSettingsPanel />
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
+    <Submenu
+      label="Mouse Controls"
+      icon={Mouse}
+      hint={currentSchemeName}
+      contentClassName="w-64 p-2 max-h-[80vh] overflow-y-auto"
+    >
+      <CameraSettingsPanel />
+    </Submenu>
   );
 }
 
 export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
   const isDirty = useDocumentStore((s) => s.isDirty);
+  const billingTier = useBillingStore((s) => s.snapshot?.tier ?? null);
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
+  const [menuValue, setMenuValue] = useState("");
   const unreadChangelog = useChangelogStore((s) => s.getUnreadCount());
+  const openChangelogPanel = useChangelogStore((s) => s.openPanel);
   // Subscribe to state that affects command.enabled() / dynamicLabel() /
   // dynamicIcon() results. The actions and getters themselves read via
   // getState() inside useAppCommands, but the menu surface needs to
@@ -302,11 +293,28 @@ export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
   useUiStore((s) => s.showWireframe);
   useUiStore((s) => s.gridSnap);
 
+  // F10 activates the menu bar — opens File and hands focus to Menubar so
+  // the user can arrow between menus or typeahead by letter (F/E/V/T/H).
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (
+        e.key === "F10" &&
+        !e.shiftKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.metaKey
+      ) {
+        e.preventDefault();
+        setMenuValue((v) => (v ? "" : "file"));
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
   const commands = useAppCommands({
     onDismiss: () => {
-      // Each MenuBarItem owns its own close() via render prop — we close it
-      // explicitly from CommandMenuItem so each popover dismisses at the
-      // right time. onDismiss stays a noop here.
+      // Menubar auto-closes on item select — no explicit dismiss needed.
     },
     onAboutOpen,
     onSave,
@@ -373,143 +381,193 @@ export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
           <span className="text-[9px] text-text-muted/70 font-mono">⌘K</span>
         </button>
 
-        <MenuBarItem label="File" accelerator="F">
-          {(close: () => void) => (
-            <>
-              <CommandMenuItem id="new-document" close={close} commands={commands} />
-              <CommandMenuItem id="open" close={close} commands={commands} />
-              <CommandMenuItem id="open-cloud" close={close} commands={commands} />
-              <MenuSeparator />
-              <CommandMenuItem id="save" close={close} commands={commands} />
-              <MenuSeparator />
-              <Popover.Root>
-                <Popover.Trigger asChild>
-                  <button className="flex w-full items-center gap-2 px-3 py-1 text-xs text-text hover:bg-hover">
-                    <Export size={13} className="text-sky-400" />
-                    <span className="flex-1 text-left">Export</span>
-                    <CaretRight size={10} className="text-text-muted" />
-                  </button>
-                </Popover.Trigger>
-                <Popover.Portal>
-                  <Popover.Content
-                    side="right"
-                    sideOffset={0}
-                    align="start"
-                    className="z-50 min-w-[160px] border border-border bg-surface shadow-lg py-1"
-                  >
-                    <MenuItem onClick={() => { handleExport("stl"); close(); }}>STL</MenuItem>
-                    <MenuItem onClick={() => { handleExport("glb"); close(); }}>GLB</MenuItem>
-                    <MenuItem onClick={() => { handleExport("step"); close(); }}>STEP</MenuItem>
-                  </Popover.Content>
-                </Popover.Portal>
-              </Popover.Root>
-              <MenuSeparator />
-              <Popover.Root>
-                <Popover.Trigger asChild>
-                  <button className="flex w-full items-center gap-2 px-3 py-1 text-xs text-text hover:bg-hover">
-                    <BookOpen size={13} className="text-sky-400" />
-                    <span className="flex-1 text-left">Examples</span>
-                    <CaretRight size={10} className="text-text-muted" />
-                  </button>
-                </Popover.Trigger>
-                <Popover.Portal>
-                  <Popover.Content
-                    side="right"
-                    sideOffset={0}
-                    align="start"
-                    className="z-50 min-w-[200px] max-h-[60vh] overflow-y-auto border border-border bg-surface shadow-lg py-1"
-                  >
-                    {examples.map((ex) => (
-                      <MenuItem
-                        key={ex.id}
-                        onClick={() => { handleLoadExample(ex.file); close(); }}
-                      >
-                        {ex.name}
-                      </MenuItem>
-                    ))}
-                  </Popover.Content>
-                </Popover.Portal>
-              </Popover.Root>
-            </>
-          )}
-        </MenuBarItem>
+        <Menubar.Root
+          value={menuValue}
+          onValueChange={setMenuValue}
+          loop
+          className="flex items-center gap-0"
+        >
+          <Menubar.Menu value="file">
+            <Menubar.Trigger className={TRIGGER_CLASS}>
+              <TriggerLabel label="File" />
+            </Menubar.Trigger>
+            <Menubar.Portal>
+              <Menubar.Content
+                align="start"
+                sideOffset={2}
+                alignOffset={-3}
+                className={CONTENT_CLASS}
+                onCloseAutoFocus={(e) => e.preventDefault()}
+              >
+                <CommandMenuItem id="new-document" commands={commands} />
+                <CommandMenuItem id="open" commands={commands} />
+                <CommandMenuItem id="open-cloud" commands={commands} />
+                <MenuSeparator />
+                <CommandMenuItem id="save" commands={commands} />
+                <MenuSeparator />
+                <Submenu label="Export" icon={Export} iconClassName="text-sky-400">
+                  <MenuItem onSelect={() => handleExport("stl")}>STL</MenuItem>
+                  <MenuItem onSelect={() => handleExport("glb")}>GLB</MenuItem>
+                  <MenuItem onSelect={() => handleExport("step")}>STEP</MenuItem>
+                </Submenu>
+                <MenuSeparator />
+                <Submenu
+                  label="Examples"
+                  icon={BookOpen}
+                  iconClassName="text-sky-400"
+                  contentClassName="min-w-[200px] max-h-[60vh] overflow-y-auto"
+                >
+                  {examples.map((ex) => (
+                    <MenuItem
+                      key={ex.id}
+                      onSelect={() => handleLoadExample(ex.file)}
+                    >
+                      {ex.name}
+                    </MenuItem>
+                  ))}
+                </Submenu>
+              </Menubar.Content>
+            </Menubar.Portal>
+          </Menubar.Menu>
 
-        <MenuBarItem label="Edit" accelerator="E">
-          {(close: () => void) => (
-            <>
-              <CommandMenuItem id="undo" close={close} commands={commands} />
-              <CommandMenuItem id="redo" close={close} commands={commands} />
-              <MenuSeparator />
-              <CommandMenuItem id="copy" close={close} commands={commands} />
-              <CommandMenuItem id="paste" close={close} commands={commands} />
-              <CommandMenuItem id="duplicate" close={close} commands={commands} />
-              <CommandMenuItem id="delete" close={close} commands={commands} />
-              <MenuSeparator />
-              <CommandMenuItem id="select-all" close={close} commands={commands} />
-              <CommandMenuItem id="deselect" close={close} commands={commands} />
-            </>
-          )}
-        </MenuBarItem>
+          <Menubar.Menu value="edit">
+            <Menubar.Trigger className={TRIGGER_CLASS}>
+              <TriggerLabel label="Edit" />
+            </Menubar.Trigger>
+            <Menubar.Portal>
+              <Menubar.Content
+                align="start"
+                sideOffset={2}
+                alignOffset={-3}
+                className={CONTENT_CLASS}
+                onCloseAutoFocus={(e) => e.preventDefault()}
+              >
+                <CommandMenuItem id="undo" commands={commands} />
+                <CommandMenuItem id="redo" commands={commands} />
+                <MenuSeparator />
+                <CommandMenuItem id="copy" commands={commands} />
+                <CommandMenuItem id="paste" commands={commands} />
+                <CommandMenuItem id="duplicate" commands={commands} />
+                <CommandMenuItem id="delete" commands={commands} />
+                <MenuSeparator />
+                <CommandMenuItem id="select-all" commands={commands} />
+                <CommandMenuItem id="deselect" commands={commands} />
+              </Menubar.Content>
+            </Menubar.Portal>
+          </Menubar.Menu>
 
-        <MenuBarItem label="View" accelerator="V">
-          {(close: () => void) => (
-            <>
-              <CommandMenuItem id="toggle-sidebar" close={close} commands={commands} />
-              <CommandMenuItem id="toggle-chat" close={close} commands={commands} />
-              <CommandMenuItem id="toggle-status-bar" close={close} commands={commands} />
-              <CommandMenuItem id="toggle-devtools" close={close} commands={commands} />
-              <MenuSeparator />
-              <CommandMenuItem id="camera-isometric" close={close} commands={commands} />
-              <CommandMenuItem id="camera-top" close={close} commands={commands} />
-              <CommandMenuItem id="camera-front" close={close} commands={commands} />
-              <CommandMenuItem id="camera-right" close={close} commands={commands} />
-              <CommandMenuItem id="camera-fit" close={close} commands={commands} />
-              <MenuSeparator />
-              <CommandMenuItem id="toggle-wireframe" close={close} commands={commands} />
-              <CommandMenuItem id="toggle-grid-snap" close={close} commands={commands} />
-              <MenuSeparator />
-              <RayTracingSubmenu />
-              <MouseControlsSubmenu />
-              <MenuSeparator />
-              <CommandMenuItem id="cycle-theme" close={close} commands={commands} />
-            </>
-          )}
-        </MenuBarItem>
+          <Menubar.Menu value="view">
+            <Menubar.Trigger className={TRIGGER_CLASS}>
+              <TriggerLabel label="View" />
+            </Menubar.Trigger>
+            <Menubar.Portal>
+              <Menubar.Content
+                align="start"
+                sideOffset={2}
+                alignOffset={-3}
+                className={CONTENT_CLASS}
+                onCloseAutoFocus={(e) => e.preventDefault()}
+              >
+                <CommandMenuItem id="toggle-sidebar" commands={commands} />
+                <CommandMenuItem id="toggle-chat" commands={commands} />
+                <CommandMenuItem id="toggle-status-bar" commands={commands} />
+                <CommandMenuItem id="toggle-devtools" commands={commands} />
+                <MenuSeparator />
+                <CommandMenuItem id="camera-isometric" commands={commands} />
+                <CommandMenuItem id="camera-top" commands={commands} />
+                <CommandMenuItem id="camera-front" commands={commands} />
+                <CommandMenuItem id="camera-right" commands={commands} />
+                <CommandMenuItem id="camera-fit" commands={commands} />
+                <MenuSeparator />
+                <CommandMenuItem id="toggle-wireframe" commands={commands} />
+                <CommandMenuItem id="toggle-grid-snap" commands={commands} />
+                <MenuSeparator />
+                <RayTracingSubmenu />
+                <MouseControlsSubmenu />
+                <MenuSeparator />
+                <CommandMenuItem id="cycle-theme" commands={commands} />
+              </Menubar.Content>
+            </Menubar.Portal>
+          </Menubar.Menu>
 
-        <MenuBarItem label="Tools" accelerator="T">
-          {(close: () => void) => (
-            <>
-              <CommandMenuItem id="command-palette" close={close} commands={commands} />
-              <MenuSeparator />
-              <CommandMenuItem id="new-sketch" close={close} commands={commands} />
-              <MenuSeparator />
-              <CommandMenuItem id="open-slicer" close={close} commands={commands} />
-              <CommandMenuItem id="open-cam" close={close} commands={commands} />
-            </>
-          )}
-        </MenuBarItem>
+          <Menubar.Menu value="tools">
+            <Menubar.Trigger className={TRIGGER_CLASS}>
+              <TriggerLabel label="Tools" />
+            </Menubar.Trigger>
+            <Menubar.Portal>
+              <Menubar.Content
+                align="start"
+                sideOffset={2}
+                alignOffset={-3}
+                className={CONTENT_CLASS}
+                onCloseAutoFocus={(e) => e.preventDefault()}
+              >
+                <CommandMenuItem id="command-palette" commands={commands} />
+                <MenuSeparator />
+                <CommandMenuItem id="new-sketch" commands={commands} />
+                <MenuSeparator />
+                <CommandMenuItem id="open-slicer" commands={commands} />
+                <CommandMenuItem id="open-cam" commands={commands} />
+              </Menubar.Content>
+            </Menubar.Portal>
+          </Menubar.Menu>
 
-        <MenuBarItem label="Help" accelerator="H">
-          {(close: () => void) => (
-            <>
-              <CommandMenuItem id="about" close={close} commands={commands} />
-              <CommandMenuItem
-                id="whats-new"
-                close={close}
-                commands={commands}
-                badge={unreadChangelog}
-              />
-              <MenuSeparator />
-              <CommandMenuItem id="open-docs" close={close} commands={commands} />
-              <CommandMenuItem id="open-github" close={close} commands={commands} />
-              <CommandMenuItem id="open-discord" close={close} commands={commands} />
-            </>
-          )}
-        </MenuBarItem>
+          <Menubar.Menu value="help">
+            <Menubar.Trigger className={TRIGGER_CLASS}>
+              <TriggerLabel label="Help" />
+            </Menubar.Trigger>
+            <Menubar.Portal>
+              <Menubar.Content
+                align="start"
+                sideOffset={2}
+                alignOffset={-3}
+                className={CONTENT_CLASS}
+                onCloseAutoFocus={(e) => e.preventDefault()}
+              >
+                <CommandMenuItem id="about" commands={commands} />
+                <CommandMenuItem
+                  id="whats-new"
+                  commands={commands}
+                  badge={unreadChangelog}
+                />
+                <MenuSeparator />
+                <CommandMenuItem id="open-docs" commands={commands} />
+                <CommandMenuItem id="open-github" commands={commands} />
+                <CommandMenuItem id="open-discord" commands={commands} />
+              </Menubar.Content>
+            </Menubar.Portal>
+          </Menubar.Menu>
+        </Menubar.Root>
 
         <div className="flex-1" />
 
-        {/* Right cluster: auth */}
+        {/* Right cluster: glance zone — changelog bell + auth */}
+        <button
+          type="button"
+          onClick={openChangelogPanel}
+          title={
+            unreadChangelog > 0
+              ? `What's new — ${unreadChangelog} unread`
+              : "What's new"
+          }
+          aria-label={
+            unreadChangelog > 0
+              ? `What's new — ${unreadChangelog} unread`
+              : "What's new"
+          }
+          className={cn(
+            "relative flex items-center justify-center w-6 h-6",
+            "text-text-muted hover:text-text hover:bg-hover transition-colors",
+          )}
+        >
+          <Bell size={13} weight={unreadChangelog > 0 ? "fill" : "regular"} />
+          {unreadChangelog > 0 && (
+            <span
+              className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-brand"
+              aria-hidden="true"
+            />
+          )}
+        </button>
         <SignInButton
           variant="icon-text"
           className={cn(
@@ -517,8 +575,28 @@ export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
             "text-text-muted hover:text-text hover:bg-hover",
           )}
         />
-        <UserMenu onSyncNow={() => triggerSync()} />
+        <UserMenu
+          onSyncNow={() => triggerSync()}
+          planLabel={billingTier ? TIERS[billingTier].name : undefined}
+          onUpgrade={
+            billingTier !== "max" ? () => setUpgradeOpen(true) : undefined
+          }
+          onManageSubscription={
+            billingTier && billingTier !== "free"
+              ? () => {
+                  void openCustomerPortal().catch((err) => {
+                    console.error("[header] portal error:", err);
+                  });
+                }
+              : undefined
+          }
+        />
       </div>
+      <UpgradeModal
+        open={upgradeOpen}
+        onOpenChange={setUpgradeOpen}
+        reason="manual"
+      />
 
       {/* ─────────────────────────────────────────────────────── */}
       {/* Row 2+: tool palette (tab strip + icon row) docked under */}
