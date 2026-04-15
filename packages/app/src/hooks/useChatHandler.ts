@@ -1,9 +1,14 @@
 import { useEffect, useCallback } from "react";
 import { useChatStore, useDocumentStore, useUiStore, commandRegistry, executeCrud } from "@vcad/core";
-import type { SelectionContext, ToolCallInfo, MessagePart, ExecutionResult, ChatUsageError } from "@vcad/core";
+import type { SelectionContext, ToolCallInfo, MessagePart, ExecutionResult, ChatUsageError, ChatAttachment, ChatMessage } from "@vcad/core";
 import { useAuthStore } from "@vcad/auth";
 import { streamChat, LIMIT_ERROR_PREFIX } from "@/lib/chat-api";
 import type { ToolCall, ChatRequestMessage } from "@/lib/chat-api";
+import {
+  SCREENSHOT_VIEWPORT_TOOL,
+  SCREENSHOT_SYSTEM_PROMPT_APPENDIX,
+  executeScreenshotViewport,
+} from "@/lib/ai-screenshot";
 
 /**
  * Parse a rate-limit error body emitted by streamChat with LIMIT_ERROR_PREFIX.
@@ -43,6 +48,48 @@ function executeTool(tool: ToolCall): ExecutionResult {
   return executeCrud(tool.name, tool.args, docStore, uiStore);
 }
 
+/** Split a `data:<media-type>;base64,<data>` URL into its parts. Returns
+ * null if the URL isn't a base64 data URL (e.g. still a blob: URL). */
+function splitDataUrl(
+  dataUrl: string,
+): { mediaType: string; base64: string } | null {
+  const match = /^data:([^;]+);base64,(.*)$/.exec(dataUrl);
+  if (!match) return null;
+  return { mediaType: match[1]!, base64: match[2]! };
+}
+
+/** Build the `content` field for an Anthropic user message that may carry
+ * attachments. Returns a plain string when there are no attachments so we
+ * don't bloat the API payload; returns a multimodal content array otherwise.
+ * Attachments that fail to decode are silently dropped — partial delivery is
+ * better than failing the whole turn. */
+function buildUserMessageContent(msg: ChatMessage): string | object[] {
+  const attachments = msg.attachments ?? [];
+  if (attachments.length === 0) return msg.content;
+
+  const blocks: object[] = [];
+  for (const a of attachments) {
+    const parts = splitDataUrl(a.dataUrl);
+    if (!parts) continue;
+    blocks.push({
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: a.mediaType || parts.mediaType,
+        data: parts.base64,
+      },
+    });
+  }
+  if (msg.content.trim()) {
+    blocks.push({ type: "text", text: msg.content });
+  }
+  // If every attachment failed to decode and there's no text, fall back to
+  // the raw content so we don't emit an empty-block message (Anthropic
+  // rejects those).
+  if (blocks.length === 0) return msg.content;
+  return blocks;
+}
+
 /**
  * Build a list of document parts for use in the system prompt.
  */
@@ -70,8 +117,10 @@ function runTurn(
     const toolCalls: ToolCall[] = [];
     let error: string | null = null;
 
-    const tools = commandRegistry.toAnthropicTools();
-    const systemPrompt = commandRegistry.buildSystemPrompt(getDocumentParts(), context);
+    const tools = [...commandRegistry.toAnthropicTools(), SCREENSHOT_VIEWPORT_TOOL];
+    const systemPrompt =
+      commandRegistry.buildSystemPrompt(getDocumentParts(), context) +
+      SCREENSHOT_SYSTEM_PROMPT_APPENDIX;
 
     streamChat(history, context, {
       onText: (t) => { text = t; onStreamText(t); },
@@ -84,7 +133,11 @@ function runTurn(
 
 export function useChatHandler() {
   const handleChatSend = useCallback(
-    async (content: string, context: SelectionContext[]) => {
+    async (
+      content: string,
+      context: SelectionContext[],
+      attachments?: ChatAttachment[],
+    ) => {
       const store = useChatStore.getState();
 
       const session = useAuthStore.getState().session;
@@ -117,14 +170,24 @@ export function useChatHandler() {
       }
 
       // Add the user message to the store
-      store.addUserMessage(content, context);
+      store.addUserMessage(content, context, attachments);
 
-      // Build base history from store (text-only messages)
+      // Build base history from store. Text messages flow through as plain
+      // strings; user messages with attached images become multimodal content
+      // arrays so Claude actually sees the screenshots.
       const allMessages = useChatStore.getState().messages;
       const baseHistory: ChatRequestMessage[] = [];
       for (const msg of allMessages) {
-        if (msg.content.trim() === "") continue;
-        baseHistory.push({ role: msg.role as "user" | "assistant", content: msg.content });
+        const hasAttachments = (msg.attachments?.length ?? 0) > 0;
+        if (msg.content.trim() === "" && !hasAttachments) continue;
+        const messageContent =
+          msg.role === "user"
+            ? buildUserMessageContent(msg)
+            : msg.content;
+        baseHistory.push({
+          role: msg.role as "user" | "assistant",
+          content: messageContent,
+        });
       }
       const history: ChatRequestMessage[] = baseHistory.slice(-20);
 
@@ -145,6 +208,10 @@ export function useChatHandler() {
       const parts: MessagePart[] = [];
       let fullText = "";
       const abortController = new AbortController();
+      // Expose the abort controller so requestCancel() can interrupt the
+      // in-flight fetch immediately instead of waiting for the current turn
+      // to finish naturally.
+      useChatStore.getState().setAbortController(abortController);
 
       const updateUI = () => {
         useChatStore.getState().updateLastAssistant(fullText, accumulatedToolCalls, [...parts]);
@@ -182,6 +249,15 @@ export function useChatHandler() {
             }
           }
           fullText = parts.filter((p) => p.type === "text").map((p) => (p as { type: "text"; text: string }).text).join("\n\n");
+
+          // Mid-stream cancel: the abort took effect during runTurn. Mark the
+          // message as stopped and exit the loop. (The top-of-loop check
+          // handles cancellation that lands cleanly between turns.)
+          if (useChatStore.getState().cancelRequested) {
+            parts.push({ type: "text", text: "_[Stopped by user]_" });
+            updateUI();
+            break;
+          }
 
           if (error) {
             // Detect rate-limit errors from the server and route them to the
@@ -224,17 +300,39 @@ export function useChatHandler() {
           // Defer tool execution to next tick
           await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-          // Execute tools and update their status in-place
-          const toolResults: Array<{ id: string; result: string; status: "success" | "error" }> = [];
+          // Execute tools and update their status in-place. Tool results sent
+          // back to the model may be a plain string (CRUD tools) or an array
+          // of Anthropic content blocks (screenshot tool — image + text).
+          const toolResults: Array<{
+            id: string;
+            content: string | object[];
+            status: "success" | "error";
+          }> = [];
           for (const tool of toolCalls) {
-            const exec = executeTool(tool);
-            toolResults.push({ id: tool.id, result: exec.result, status: exec.status });
-            const entry = accumulatedToolCalls.find((t) => t.id === tool.id);
-            if (entry) {
-              entry.result = exec.result;
-              entry.status = exec.status;
-              entry.display = exec.display;
-              entry.duration = exec.duration;
+            if (tool.name === "screenshot_viewport") {
+              const shot = await executeScreenshotViewport(tool.args);
+              toolResults.push({
+                id: tool.id,
+                content: shot.toolResultContent ?? shot.result,
+                status: shot.status,
+              });
+              const entry = accumulatedToolCalls.find((t) => t.id === tool.id);
+              if (entry) {
+                entry.result = shot.result;
+                entry.status = shot.status;
+                entry.duration = shot.duration;
+                if (shot.imageDataUrl) entry.imageDataUrl = shot.imageDataUrl;
+              }
+            } else {
+              const exec = executeTool(tool);
+              toolResults.push({ id: tool.id, content: exec.result, status: exec.status });
+              const entry = accumulatedToolCalls.find((t) => t.id === tool.id);
+              if (entry) {
+                entry.result = exec.result;
+                entry.status = exec.status;
+                entry.display = exec.display;
+                entry.duration = exec.duration;
+              }
             }
           }
           updateUI();
@@ -258,7 +356,7 @@ export function useChatHandler() {
           const userContent = toolResults.map((r) => ({
             type: "tool_result",
             tool_use_id: r.id,
-            content: r.result,
+            content: r.content,
             is_error: r.status === "error",
           }));
           history.push({ role: "user", content: userContent });
@@ -268,6 +366,7 @@ export function useChatHandler() {
       } finally {
         useChatStore.getState().setStreaming(false);
         useChatStore.getState().clearCancel();
+        useChatStore.getState().setAbortController(null);
       }
     },
     [],

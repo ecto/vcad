@@ -57,12 +57,28 @@ export interface ToolCallInfo {
   status: "pending" | "success" | "error";
   display?: ExecutionDisplay;
   duration?: number;
+  /** Optional data URL (e.g. data:image/jpeg;base64,...) for tools that
+   * produce an image — rendered as a thumbnail in the tool chip. */
+  imageDataUrl?: string;
 }
 
 /** A chronological chunk in an assistant message — text or a tool call. */
 export type MessagePart =
   | { type: "text"; text: string }
   | { type: "tool"; tool: ToolCallInfo };
+
+/** An image attached to a user message — captured viewport, pasted image,
+ * uploaded file. Stored as a data URL on the message so the UI can preview
+ * it and the chat handler can decode it into an Anthropic image content block
+ * at send time. */
+export interface ChatAttachment {
+  id: string;
+  /** Full `data:<media-type>;base64,<data>` URL. */
+  dataUrl: string;
+  mediaType: string;
+  /** Optional filename for display. */
+  filename?: string;
+}
 
 export interface ChatMessage {
   id: string;
@@ -72,6 +88,8 @@ export interface ChatMessage {
   toolCalls?: ToolCallInfo[];
   /** Chronological sequence of text and tool-call chunks. Used for inline rendering. */
   parts?: MessagePart[];
+  /** Images attached by the user (e.g. viewport screenshots). */
+  attachments?: ChatAttachment[];
   timestamp: number;
 }
 
@@ -94,6 +112,7 @@ export interface ChatUsageError {
 export type SendMessageHandler = (
   content: string,
   context: SelectionContext[],
+  attachments?: ChatAttachment[],
 ) => void;
 
 export interface ChatState {
@@ -109,18 +128,30 @@ export interface ChatState {
   usageError: ChatUsageError | null;
   /** Implementation of sendMessage, populated at mount by useChatHandler. */
   _sendHandler: SendMessageHandler | null;
+  /** AbortController for the in-flight stream, registered by useChatHandler.
+   * `requestCancel` calls `.abort()` on this so the fetch is interrupted
+   * immediately instead of waiting for the current turn to finish. */
+  _abortController: AbortController | null;
 
   // Visibility
   setOpen: (open: boolean) => void;
   toggleOpen: () => void;
 
   // Message actions
-  addUserMessage: (content: string, context?: SelectionContext[]) => void;
+  addUserMessage: (
+    content: string,
+    context?: SelectionContext[],
+    attachments?: ChatAttachment[],
+  ) => void;
   addAssistantMessage: (content: string, toolCalls?: ToolCallInfo[]) => void;
   updateLastAssistant: (content: string, toolCalls?: ToolCallInfo[], parts?: MessagePart[]) => void;
 
   // Send (delegated to registered handler — call from any UI component)
-  sendMessage: (content: string, context: SelectionContext[]) => void;
+  sendMessage: (
+    content: string,
+    context: SelectionContext[],
+    attachments?: ChatAttachment[],
+  ) => void;
   setSendHandler: (fn: SendMessageHandler | null) => void;
 
   // Status
@@ -130,6 +161,7 @@ export interface ChatState {
   // Cancellation
   requestCancel: () => void;
   clearCancel: () => void;
+  setAbortController: (ac: AbortController | null) => void;
 
   // Usage tracking
   incAnonUsage: () => void;
@@ -168,12 +200,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   anonUsage: loadAnonUsage(),
   usageError: null,
   _sendHandler: null,
+  _abortController: null,
 
   setOpen: (open) => set({ open }),
 
   toggleOpen: () => set((s) => ({ open: !s.open })),
 
-  addUserMessage: (content, context) =>
+  addUserMessage: (content, context, attachments) =>
     set((s) => ({
       messages: [
         ...s.messages,
@@ -182,6 +215,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           role: "user",
           content,
           context,
+          attachments: attachments && attachments.length > 0 ? attachments : undefined,
           timestamp: Date.now(),
         },
       ],
@@ -211,7 +245,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return { messages: [...s.messages.slice(0, -1), updated] };
     }),
 
-  sendMessage: (content, context) => {
+  sendMessage: (content, context, attachments) => {
     const handler = get()._sendHandler;
     if (!handler) {
       // Handler not yet registered — useChatHandler is mounted at App root,
@@ -219,7 +253,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       console.warn("[chat-store] sendMessage called before handler registered");
       return;
     }
-    handler(content, context);
+    handler(content, context, attachments);
   },
 
   setSendHandler: (fn) => set({ _sendHandler: fn }),
@@ -228,8 +262,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setError: (error) => set({ error }),
 
-  requestCancel: () => set({ cancelRequested: true }),
+  requestCancel: () => {
+    get()._abortController?.abort();
+    set({ cancelRequested: true });
+  },
   clearCancel: () => set({ cancelRequested: false }),
+  setAbortController: (ac) => set({ _abortController: ac }),
 
   incAnonUsage: () => set((s) => {
     const used = s.anonUsage.used + 1;

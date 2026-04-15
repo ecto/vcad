@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { X } from "@phosphor-icons/react/dist/ssr/X";
 import { Plus } from "@phosphor-icons/react/dist/ssr/Plus";
+import { Camera } from "@phosphor-icons/react/dist/ssr/Camera";
 import { cn } from "@/lib/utils";
 import {
   useChatStore,
@@ -10,7 +11,12 @@ import {
   parseVcadFile,
   documentToLoon,
 } from "@vcad/core";
-import type { SelectionContext, ChatMessage, MessagePart } from "@vcad/core";
+import type {
+  SelectionContext,
+  ChatMessage,
+  ChatAttachment,
+  MessagePart,
+} from "@vcad/core";
 import { useAuth, AuthModal } from "@vcad/auth";
 import {
   Conversation,
@@ -21,14 +27,83 @@ import {
 import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
 import {
   PromptInput,
+  PromptInputButton,
+  PromptInputFooter,
   PromptInputHeader,
-  PromptInputTextarea,
   PromptInputSubmit,
+  PromptInputTextarea,
+  PromptInputTools,
+  usePromptInputAttachments,
 } from "@/components/ai-elements/prompt-input";
 import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { VcadToolCard } from "@/components/chat/VcadToolCard";
 import { CadSuggestions } from "@/components/chat/CadSuggestions";
+import { captureViewportAsFile } from "@/lib/ai-screenshot";
+
+// ---------------------------------------------------------------------------
+// Attach-viewport button — grabs the current 3D viewport canvas as a JPEG
+// and adds it to the PromptInput's attachments. The user can aim the camera
+// themselves before clicking, so we just capture whatever's on screen.
+// ---------------------------------------------------------------------------
+
+function AttachViewportButton() {
+  const attachments = usePromptInputAttachments();
+  const [capturing, setCapturing] = useState(false);
+
+  const handleClick = useCallback(async () => {
+    if (capturing) return;
+    setCapturing(true);
+    try {
+      const file = await captureViewportAsFile();
+      if (file) attachments.add([file]);
+    } finally {
+      setCapturing(false);
+    }
+  }, [attachments, capturing]);
+
+  return (
+    <PromptInputButton
+      type="button"
+      onClick={handleClick}
+      disabled={capturing}
+      tooltip="Attach viewport screenshot"
+      aria-label="Attach viewport screenshot"
+    >
+      <Camera size={14} />
+    </PromptInputButton>
+  );
+}
+
+// Render the current attachment list as a thumbnail strip above the textarea.
+// Users can click a thumbnail to remove it.
+function AttachmentPreviewStrip() {
+  const attachments = usePromptInputAttachments();
+  if (attachments.files.length === 0) return null;
+  return (
+    <PromptInputHeader>
+      {attachments.files.map((f) => (
+        <div key={f.id} className="relative">
+          {f.url && (
+            <img
+              src={f.url}
+              alt={f.filename ?? "attachment"}
+              className="h-12 w-12 rounded border border-border object-cover"
+            />
+          )}
+          <button
+            type="button"
+            onClick={() => attachments.remove(f.id)}
+            aria-label="Remove attachment"
+            className="absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-bg border border-border text-text-muted hover:text-text hover:bg-hover transition-colors"
+          >
+            <X size={8} />
+          </button>
+        </div>
+      ))}
+    </PromptInputHeader>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Hook: build SelectionContext[] from current selection
@@ -152,6 +227,20 @@ function VcadMessage({ msg }: { msg: ChatMessage }) {
               >
                 {ctx.partName}
               </span>
+            ))}
+          </div>
+        )}
+
+        {/* Attachment thumbnails on the user bubble */}
+        {isUser && msg.attachments && msg.attachments.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {msg.attachments.map((a) => (
+              <img
+                key={a.id}
+                src={a.dataUrl}
+                alt={a.filename ?? "attachment"}
+                className="max-h-32 rounded border border-border"
+              />
             ))}
           </div>
         )}
@@ -323,12 +412,16 @@ export function ChatSidebar() {
   }, [usageError]);
 
   const sendMessage = useCallback(
-    (content: string) => {
+    (content: string, attachments?: ChatAttachment[]) => {
       const trimmed = content.trim();
-      if (!trimmed || streaming) return;
+      // Allow attachment-only sends (e.g. "here's a screenshot, what do you
+      // think?" with an empty text field). Require at least text OR one image.
+      if (!trimmed && (!attachments || attachments.length === 0)) return;
+      if (streaming) return;
       useChatStore.getState().sendMessage(
         trimmed,
         selectionContext.length > 0 ? selectionContext : [],
+        attachments,
       );
     },
     [selectionContext, streaming],
@@ -336,7 +429,20 @@ export function ChatSidebar() {
 
   const handlePromptSubmit = useCallback(
     (message: PromptInputMessage) => {
-      sendMessage(message.text);
+      // PromptInput converts any attached blob: URLs to data URLs before
+      // firing onSubmit, so message.files[i].url is already a `data:...`
+      // string we can forward straight to the chat handler.
+      const attachments: ChatAttachment[] = [];
+      for (const f of message.files) {
+        if (!f.url || !f.url.startsWith("data:")) continue;
+        attachments.push({
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          dataUrl: f.url,
+          mediaType: f.mediaType ?? "image/jpeg",
+          filename: f.filename,
+        });
+      }
+      sendMessage(message.text, attachments.length > 0 ? attachments : undefined);
     },
     [sendMessage],
   );
@@ -476,7 +582,7 @@ export function ChatSidebar() {
               onPick={handleSuggestionPick}
             />
 
-            <PromptInput onSubmit={handlePromptSubmit}>
+            <PromptInput onSubmit={handlePromptSubmit} accept="image/*">
               {selectionContext.length > 0 && (
                 <PromptInputHeader>
                   {selectionContext.map((ctx) => (
@@ -496,15 +602,21 @@ export function ChatSidebar() {
                   ))}
                 </PromptInputHeader>
               )}
+              <AttachmentPreviewStrip />
               <PromptInputTextarea
                 placeholder={placeholder}
                 disabled={streaming}
                 className="text-[11px]"
               />
-              <PromptInputSubmit
-                status={submitStatus}
-                onStop={() => useChatStore.getState().requestCancel()}
-              />
+              <PromptInputFooter>
+                <PromptInputTools>
+                  <AttachViewportButton />
+                </PromptInputTools>
+                <PromptInputSubmit
+                  status={submitStatus}
+                  onStop={() => useChatStore.getState().requestCancel()}
+                />
+              </PromptInputFooter>
             </PromptInput>
           </div>
         </>

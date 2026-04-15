@@ -87,7 +87,7 @@ export type {
 } from "./stores/simulation-store.js";
 
 export { useChatStore } from "./stores/chat-store.js";
-export type { ChatState, ChatMessage, SelectionContext, ToolCallInfo, MessagePart, ChatUsageError } from "./stores/chat-store.js";
+export type { ChatState, ChatMessage, SelectionContext, ToolCallInfo, MessagePart, ChatAttachment, ChatUsageError } from "./stores/chat-store.js";
 
 export { useCoreElectronicsStore } from "./stores/electronics-store.js";
 export type {

@@ -276,6 +276,7 @@ export function Viewport() {
   return (
     <div
       ref={containerRef}
+      data-viewport-root
       className="absolute inset-0"
       style={{ touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
     >

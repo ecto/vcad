@@ -126,6 +126,17 @@ export function VcadToolCard({ call }: { call: ToolCallInfo }) {
           className="ml-auto text-text-muted shrink-0 transition-transform group-data-[state=open]/trigger:rotate-180"
         />
       </CollapsibleTrigger>
+      {/* Inline image preview — shown in the collapsed chip so a user doesn't
+          have to expand the tool row to see a screenshot. */}
+      {call.imageDataUrl && (
+        <div className="border-t border-border p-1">
+          <img
+            src={call.imageDataUrl}
+            alt={`${call.name} result`}
+            className="block w-full rounded-sm"
+          />
+        </div>
+      )}
       <ToolContent className="space-y-2 border-t border-border p-2 text-text">
         {extra}
 
