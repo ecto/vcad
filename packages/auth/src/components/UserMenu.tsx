@@ -1,4 +1,8 @@
 import { useState, useRef, useEffect } from "react";
+import { FloppyDisk } from "@phosphor-icons/react/dist/ssr/FloppyDisk";
+import { Check } from "@phosphor-icons/react/dist/ssr/Check";
+import { CircleNotch } from "@phosphor-icons/react/dist/ssr/CircleNotch";
+import { X } from "@phosphor-icons/react/dist/ssr/X";
 import { getSupabase } from "../client";
 import { useAuthStore } from "../stores/auth-store";
 import { useSyncStore } from "../stores/sync-store";
@@ -7,12 +11,23 @@ import { useUserPreferences } from "../hooks/useUserPreferences";
 interface UserMenuProps {
   /** Callback when "Sync now" is clicked */
   onSyncNow?: () => void;
+  /** Current plan label (e.g. "Free", "Pro"). Rendered next to the email. */
+  planLabel?: string;
+  /** Callback when "Upgrade plan" is clicked. Hidden if omitted. */
+  onUpgrade?: () => void;
+  /** Callback when "Manage subscription" is clicked. Hidden if omitted. */
+  onManageSubscription?: () => void;
 }
 
 /**
  * User avatar dropdown menu showing account info, sync status, and sign-out option.
  */
-export function UserMenu({ onSyncNow }: UserMenuProps) {
+export function UserMenu({
+  onSyncNow,
+  planLabel,
+  onUpgrade,
+  onManageSubscription,
+}: UserMenuProps) {
   const user = useAuthStore((s) => s.user);
   const { syncStatus, lastSyncAt } = useSyncStore();
   const { preferences, updatePreferences } = useUserPreferences();
@@ -58,38 +73,71 @@ export function UserMenu({ onSyncNow }: UserMenuProps) {
     user.user_metadata?.full_name?.[0]?.toUpperCase() ||
     "U";
 
-  return (
-    <div ref={menuRef} className="relative">
-      {/* Avatar button */}
-      <button
-        onClick={() => setOpen(!open)}
-        className="w-8 h-8 rounded-full bg-brand text-white flex items-center justify-center text-sm font-medium relative overflow-hidden hover:opacity-80 transition-opacity"
-        aria-haspopup="true"
-        aria-expanded={open}
-      >
-        {avatarUrl ? (
-          <img
-            src={avatarUrl}
-            alt=""
-            className="w-full h-full object-cover"
-            referrerPolicy="no-referrer"
-          />
-        ) : (
-          initials
-        )}
+  const syncTitle =
+    syncStatus === "syncing"
+      ? "Syncing to cloud…"
+      : syncStatus === "error"
+        ? "Cloud sync failed"
+        : syncStatus === "synced"
+          ? `Synced${lastSyncAt ? ` ${formatRelativeTime(lastSyncAt)}` : ""}`
+          : "Not synced";
 
-        {/* Sync status indicator dot */}
-        <span
-          className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-bg ${
-            syncStatus === "syncing"
-              ? "bg-yellow-500"
-              : syncStatus === "error"
-                ? "bg-danger"
-                : "bg-green-500"
-          }`}
-          aria-label={`Sync status: ${syncStatus}`}
-        />
+  return (
+    <div ref={menuRef} className="flex items-center gap-1.5">
+      {/* Sync status indicator — sibling, left of avatar */}
+      <button
+        type="button"
+        onClick={onSyncNow}
+        title={syncTitle}
+        aria-label={`Sync status: ${syncTitle}`}
+        className="group flex items-center justify-center w-6 h-6 hover:bg-hover transition-colors"
+      >
+        <span className="relative inline-flex text-text-muted transition-transform group-hover:scale-110">
+          <FloppyDisk size={13} weight="regular" />
+          {syncStatus === "synced" && (
+            <Check
+              size={7}
+              weight="bold"
+              className="absolute -bottom-0.5 -right-0.5 text-green-500 bg-bg rounded-full"
+            />
+          )}
+          {syncStatus === "syncing" && (
+            <CircleNotch
+              size={7}
+              weight="bold"
+              className="absolute -bottom-0.5 -right-0.5 text-yellow-500 bg-bg rounded-full animate-spin"
+            />
+          )}
+          {syncStatus === "error" && (
+            <X
+              size={7}
+              weight="bold"
+              className="absolute -bottom-0.5 -right-0.5 text-danger bg-bg rounded-full"
+            />
+          )}
+        </span>
       </button>
+
+      {/* Avatar button anchors the dropdown so menu position is stable */}
+      <div className="relative">
+        <button
+          onClick={() => setOpen(!open)}
+          className="w-6 h-6 rounded-full bg-brand text-white flex items-center justify-center text-[10px] font-medium relative overflow-hidden hover:opacity-80 transition-opacity"
+          aria-haspopup="true"
+          aria-expanded={open}
+          aria-label="Account"
+        >
+          {avatarUrl ? (
+            <img
+              src={avatarUrl}
+              alt=""
+              className="w-full h-full object-cover"
+              referrerPolicy="no-referrer"
+            />
+          ) : (
+            initials
+          )}
+        </button>
 
       {/* Dropdown menu */}
       {open && (
@@ -108,9 +156,16 @@ export function UserMenu({ onSyncNow }: UserMenuProps) {
                 initials
               )}
             </div>
-            <div className="min-w-0">
-              <div className="text-xs text-text truncate">
-                {user.user_metadata?.full_name || user.email}
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <div className="text-xs text-text truncate">
+                  {user.user_metadata?.full_name || user.email}
+                </div>
+                {planLabel && (
+                  <span className="rounded bg-brand/15 px-1 py-0.5 text-[8px] font-semibold uppercase tracking-wider text-brand shrink-0">
+                    {planLabel}
+                  </span>
+                )}
               </div>
               {user.user_metadata?.full_name && (
                 <div className="text-[10px] text-text-muted truncate">
@@ -153,6 +208,29 @@ export function UserMenu({ onSyncNow }: UserMenuProps) {
             Sync now
           </button>
 
+          {onUpgrade && (
+            <button
+              onClick={() => {
+                onUpgrade();
+                setOpen(false);
+              }}
+              className="w-full px-3 py-2 text-left text-xs text-brand hover:bg-border/50 border-t border-border"
+            >
+              Upgrade plan
+            </button>
+          )}
+          {onManageSubscription && (
+            <button
+              onClick={() => {
+                onManageSubscription();
+                setOpen(false);
+              }}
+              className="w-full px-3 py-2 text-left text-xs text-text hover:bg-border/50 border-t border-border"
+            >
+              Manage subscription
+            </button>
+          )}
+
           {/* Share conversations toggle (SFT opt-out) */}
           <label className="flex items-start gap-2 px-3 py-2 border-t border-border cursor-pointer hover:bg-border/30">
             <input
@@ -179,6 +257,7 @@ export function UserMenu({ onSyncNow }: UserMenuProps) {
           </button>
         </div>
       )}
+      </div>
     </div>
   );
 }

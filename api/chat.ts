@@ -1,12 +1,24 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createHash } from "node:crypto";
+import { TIERS } from "@vcad/core";
+import {
+  applyCors,
+  getSupabaseAdmin,
+  getUserIdFromAuth,
+} from "./_lib/supabase.js";
+import {
+  getEntitlement,
+  getPeriodUsage,
+  isOverLimit,
+  recordChatUsage,
+  type Entitlement,
+} from "./_lib/entitlements.js";
 
 const FALLBACK_SYSTEM_PROMPT =
   "You are vcad's AI assistant — a parametric CAD copilot. Coordinate system: Z-up (X right, Y forward, Z up). Units: millimeters. Be concise.";
 
-const ANON_DAILY_LIMIT = 3;
-const MONTHLY_TOKEN_LIMIT = 500_000;
+const ANON_DAILY_LIMIT = TIERS.anon.anonDailyMessageLimit ?? 3;
 const ANTHROPIC_MODEL = "claude-sonnet-4-6";
 const ANTHROPIC_SAFETY_MODEL = "claude-haiku-4-5";
 const ANTHROPIC_MAX_TOKENS = 8192;
@@ -47,18 +59,8 @@ type ChatRequestBody = {
 };
 
 // ---------------------------------------------------------------------------
-// Supabase helpers
+// Anon IP tracking
 // ---------------------------------------------------------------------------
-
-let cachedAdmin: SupabaseClient | null = null;
-function getSupabaseAdmin(): SupabaseClient | null {
-  if (cachedAdmin) return cachedAdmin;
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) return null;
-  cachedAdmin = createClient(url, key, { auth: { persistSession: false } });
-  return cachedAdmin;
-}
 
 function getClientIp(req: VercelRequest): string {
   const xff = req.headers["x-forwarded-for"];
@@ -78,23 +80,6 @@ function hashIp(ip: string): string {
   return createHash("sha256").update(`${salt}:${ip}`).digest("hex");
 }
 
-async function getUserIdFromAuth(
-  req: VercelRequest,
-  admin: SupabaseClient | null,
-): Promise<string | null> {
-  if (!admin) return null;
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
-  const token = authHeader.slice(7);
-  try {
-    const { data, error } = await admin.auth.getUser(token);
-    if (error || !data.user) return null;
-    return data.user.id;
-  } catch {
-    return null;
-  }
-}
-
 async function countAnonMessages(admin: SupabaseClient, ipHash: string): Promise<number> {
   const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const { count, error } = await admin
@@ -110,46 +95,30 @@ async function countAnonMessages(admin: SupabaseClient, ipHash: string): Promise
   return count ?? 0;
 }
 
-async function sumMonthlyTokens(admin: SupabaseClient, userId: string): Promise<number> {
-  const startOfMonth = new Date();
-  startOfMonth.setUTCDate(1);
-  startOfMonth.setUTCHours(0, 0, 0, 0);
-  const { data, error } = await admin
-    .from("inference_logs")
-    .select("tokens")
-    .eq("user_id", userId)
-    .eq("kind", "chat")
-    .gte("created_at", startOfMonth.toISOString());
-  if (error) {
-    console.error("[chat] sumMonthlyTokens error:", error);
-    return 0;
-  }
-  return (data ?? []).reduce((sum, row) => sum + ((row.tokens as number | null) ?? 0), 0);
-}
-
-function nextMonthStartIso(): string {
-  const d = new Date();
-  const next = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1, 0, 0, 0));
-  return next.toISOString();
-}
+// ---------------------------------------------------------------------------
+// Usage audit log
+// ---------------------------------------------------------------------------
 
 async function logUsage(
   admin: SupabaseClient,
   userId: string | null,
   ipHash: string | null,
   promptPreview: string,
-  tokens: number,
+  tokens: { input: number; output: number },
   toolCalls: number,
   durationMs: number,
   error: string | null,
 ): Promise<void> {
+  const total = tokens.input + tokens.output;
   const { error: insertError } = await admin.from("inference_logs").insert({
     kind: "chat",
     user_id: userId,
     ip_hash: userId ? null : ipHash,
     prompt: promptPreview,
     result: null,
-    tokens,
+    tokens: total,
+    input_tokens: tokens.input,
+    output_tokens: tokens.output,
     tool_calls: toolCalls,
     duration_ms: durationMs,
     error,
@@ -166,16 +135,19 @@ async function logUsage(
  * delimited JSON format that the vcad client expects:
  *   data: { type: "text" | "tool_start" | "tool_delta" | "block_stop" | "done" }
  *
- * Returns { tokens, toolCallCount } for usage logging.
+ * Returns split {input, output} token counts for usage metering. Anthropic
+ * emits input_tokens in message_start.usage and cumulative output_tokens in
+ * message_delta.usage — we capture both.
  */
 async function pipeAnthropicStream(
   anthropicBody: ReadableStream<Uint8Array>,
   write: (chunk: string) => void,
-): Promise<{ tokens: number; toolCallCount: number }> {
+): Promise<{ inputTokens: number; outputTokens: number; toolCallCount: number }> {
   const reader = anthropicBody.getReader();
   const decoder = new TextDecoder();
   let sseBuffer = "";
-  let tokens = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
   let toolCallCount = 0;
 
   while (true) {
@@ -190,7 +162,11 @@ async function pipeAnthropicStream(
       if (data === "[DONE]") continue;
       try {
         const event = JSON.parse(data);
-        if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
+        if (event.type === "message_start" && event.message?.usage) {
+          const u = event.message.usage;
+          inputTokens = Number(u.input_tokens ?? 0);
+          outputTokens = Number(u.output_tokens ?? 0);
+        } else if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
           write(`data: ${JSON.stringify({ type: "text", text: event.delta.text })}\n\n`);
         } else if (event.type === "content_block_start" && event.content_block?.type === "tool_use") {
           toolCallCount++;
@@ -206,9 +182,12 @@ async function pipeAnthropicStream(
         } else if (event.type === "content_block_stop") {
           write(`data: ${JSON.stringify({ type: "block_stop" })}\n\n`);
         } else if (event.type === "message_delta" && event.usage) {
-          // Anthropic emits cumulative usage in message_delta
+          // Anthropic emits cumulative output tokens in message_delta events.
+          // Input tokens were already captured at message_start and don't
+          // change mid-stream.
           const u = event.usage;
-          tokens = (u.input_tokens ?? 0) + (u.output_tokens ?? 0);
+          if (typeof u.output_tokens === "number") outputTokens = u.output_tokens;
+          if (typeof u.input_tokens === "number" && inputTokens === 0) inputTokens = u.input_tokens;
         } else if (event.type === "message_stop") {
           write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
         }
@@ -218,7 +197,7 @@ async function pipeAnthropicStream(
     }
   }
 
-  return { tokens, toolCallCount };
+  return { inputTokens, outputTokens, toolCallCount };
 }
 
 // ---------------------------------------------------------------------------
@@ -227,11 +206,6 @@ async function pipeAnthropicStream(
 
 type SafetyVerdict = { verdict: "safe" | "flagged" | "error"; reason: string };
 
-/**
- * Flatten an Anthropic content block array into plain text the classifier can
- * skim. Tool-use and tool-result blocks become terse markers so the classifier
- * sees the *shape* of prior actions without drowning in JSON.
- */
 function flattenContentForClassifier(content: string | object[]): string {
   if (typeof content === "string") return content;
   return content
@@ -255,21 +229,6 @@ function flattenContentForClassifier(content: string | object[]): string {
     .join("\n");
 }
 
-/**
- * Classify the latest user prompt as safe or flagged using Claude Haiku. The
- * classifier sees the last few turns of conversation so it can resolve
- * referential prompts like "now subtract them" — without that context, Haiku
- * tended to flag ambiguous follow-ups as "incomplete prompt".
- *
- * Returns { verdict: 'safe' | 'flagged' | 'error', reason }. On classifier
- * errors we fail open (verdict: 'error') to avoid blocking real users on
- * transient Anthropic outages — but we still log the error verdict.
- */
-/** True if every block in an Anthropic content array is a tool_result. The
- * chat handler appends synthetic user-role messages containing only
- * tool_results when looping a multi-turn agent, and those should not be
- * re-classified — they're agent loop state, not fresh user input. The
- * original prompt was already classified at the start of the session. */
 function isOnlyToolResults(content: string | object[]): boolean {
   if (typeof content === "string") return false;
   if (content.length === 0) return false;
@@ -286,10 +245,6 @@ async function classifyPromptSafety(
   const lastUser = [...messages].reverse().find((m) => m.role === "user");
   if (!lastUser) return { verdict: "safe", reason: "no user message" };
 
-  // Skip classification on agent loop turns. The chat handler issues a
-  // follow-up /api/chat call after every tool round-trip, with the tool
-  // results packed into a synthetic user-role message. The classifier should
-  // only judge real user prompts, not the agent's own feedback.
   if (isOnlyToolResults(lastUser.content)) {
     return { verdict: "safe", reason: "tool-result loop, not user input" };
   }
@@ -297,10 +252,6 @@ async function classifyPromptSafety(
   const lastUserText = flattenContentForClassifier(lastUser.content).trim();
   if (!lastUserText) return { verdict: "safe", reason: "empty prompt" };
 
-  // Send the last 6 turns (3 user + 3 assistant) as conversation context.
-  // 6 turns is enough to resolve "now subtract them" without ballooning the
-  // classifier call cost. Anthropic requires the message list to start with a
-  // user turn, so trim leading assistant turns after slicing.
   const recent = messages.slice(-6);
   while (recent.length > 0 && recent[0]!.role !== "user") {
     recent.shift();
@@ -344,7 +295,6 @@ async function classifyPromptSafety(
     if (reply.toUpperCase().startsWith("NO")) {
       return { verdict: "flagged", reason: reply.slice(3, 200) };
     }
-    // Malformed response — fail open with a warning.
     console.warn("[safety] malformed classifier reply:", reply.slice(0, 200));
     return { verdict: "error", reason: `malformed reply: ${reply.slice(0, 60)}` };
   } catch (err) {
@@ -353,15 +303,11 @@ async function classifyPromptSafety(
   }
 }
 
-/**
- * Check whether a logged-in user has opted out of conversation storage.
- * Anon users always get stored. Missing preferences row defaults to true.
- */
 async function shouldStoreConversation(
   admin: SupabaseClient,
   userId: string | null,
 ): Promise<boolean> {
-  if (!userId) return true; // anon always stored
+  if (!userId) return true;
   const { data, error } = await admin
     .from("user_preferences")
     .select("share_chat_conversations")
@@ -369,7 +315,7 @@ async function shouldStoreConversation(
     .maybeSingle();
   if (error) {
     console.error("[chat] user_preferences lookup failed:", error);
-    return true; // fail-open: store by default
+    return true;
   }
   return data?.share_chat_conversations ?? true;
 }
@@ -413,10 +359,7 @@ async function storeConversation(
 // ---------------------------------------------------------------------------
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // CORS
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  applyCors(res);
 
   if (req.method === "OPTIONS") {
     res.status(200).end();
@@ -435,7 +378,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   } else if (req.body && typeof req.body === "object") {
     body = req.body as ChatRequestBody;
   } else {
-    // Read raw body (dev path when no body parser ran)
     let raw = "";
     for await (const chunk of req) raw += chunk;
     try { body = JSON.parse(raw); } catch { res.status(400).json({ error: "invalid json" }); return; }
@@ -459,26 +401,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const ip = getClientIp(req);
   const ipHash = hashIp(ip);
 
-  // Loud warning if Supabase isn't configured. Rate limiting and usage
-  // tracking both depend on the admin client — without it we have no
-  // protection at all. Safe for self-hosted setups, dangerous in production.
   if (!admin) {
     console.warn(
       "[chat] WARNING: Supabase admin client unavailable — rate limiting and usage tracking are DISABLED. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY to enable.",
     );
   }
 
-  // Rate limit checks — only enforced when Supabase is configured.
+  // Rate limit check — authed users go through entitlements, anon through the
+  // IP-hash rolling daily counter.
+  let entitlement: Entitlement | null = null;
   if (admin) {
     if (userId) {
-      const used = await sumMonthlyTokens(admin, userId);
-      if (used >= MONTHLY_TOKEN_LIMIT) {
+      entitlement = await getEntitlement(admin, userId);
+      const usage = await getPeriodUsage(admin, userId, entitlement.periodStart);
+      if (isOverLimit(entitlement, usage)) {
         res.status(429).json({
           error: "monthly_limit",
-          message: `Monthly chat limit reached (${used.toLocaleString()} of ${MONTHLY_TOKEN_LIMIT.toLocaleString()} tokens). Resets at the start of next month.`,
-          usage: used,
-          limit: MONTHLY_TOKEN_LIMIT,
-          resets_at: nextMonthStartIso(),
+          message: `You've used all ${entitlement.limit.toLocaleString()} tokens on the ${entitlement.tier} plan for this period. Upgrade to continue chatting.`,
+          tier: entitlement.tier,
+          usage: usage.inputTokens + usage.outputTokens,
+          limit: entitlement.limit,
+          resets_at: entitlement.periodEnd.toISOString(),
         });
         return;
       }
@@ -500,15 +443,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const tools = clientTools || [];
   const startedAt = Date.now();
 
-  // ── Safety classifier ─────────────────────────────────────────────
-  // Pre-screen the most recent user message before dispatching to Sonnet.
-  // Classifier failures fail open (verdict 'error') so Anthropic outages
-  // don't black out the chat for everyone. The classifier sees the recent
-  // conversation history so it can resolve referential follow-ups.
   const safety = await classifyPromptSafety(apiKey, messages);
 
   if (safety.verdict === "flagged") {
-    // Store the flagged conversation for review, then return 400.
     if (admin) {
       const consented = await shouldStoreConversation(admin, userId);
       if (consented) {
@@ -557,15 +494,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const errText = await anthropicRes.text();
       res.statusCode = anthropicRes.status;
       res.end(errText);
-      // Log the error for visibility but don't block on it
       if (admin) {
         const promptPreview = extractPromptPreview(messages);
-        void logUsage(admin, userId, ipHash, promptPreview, 0, 0, Date.now() - startedAt, errText.slice(0, 500));
+        void logUsage(
+          admin,
+          userId,
+          ipHash,
+          promptPreview,
+          { input: 0, output: 0 },
+          0,
+          Date.now() - startedAt,
+          errText.slice(0, 500),
+        );
       }
       return;
     }
 
-    // Client-compatible streaming response
     res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
     res.setHeader("Transfer-Encoding", "chunked");
     res.setHeader("Cache-Control", "no-cache");
@@ -575,28 +519,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return;
     }
 
-    const { tokens, toolCallCount } = await pipeAnthropicStream(
+    const { inputTokens, outputTokens, toolCallCount } = await pipeAnthropicStream(
       anthropicRes.body,
       (chunk) => res.write(chunk),
     );
     res.end();
 
-    // Fire-and-forget usage log (for rate limiting) and conversation
-    // storage (for SFT data) after the stream closes.
+    const totalTokens = inputTokens + outputTokens;
+    const durationMs = Date.now() - startedAt;
+
     if (admin) {
       const promptPreview = extractPromptPreview(messages);
-      const durationMs = Date.now() - startedAt;
       void logUsage(
         admin,
         userId,
         ipHash,
         promptPreview,
-        tokens,
+        { input: inputTokens, output: outputTokens },
         toolCallCount,
         durationMs,
         null,
       );
-      // Anon rows are always stored (forced). Logged-in users may opt out.
+
+      // Authoritative metering: atomically increment the denormalized counter
+      // the next rate-limit check will read. Free tier entitlement is
+      // re-derived here if the user had no subscription row, so anon→free
+      // upgrades don't miss the first write.
+      if (userId) {
+        const finalEntitlement = entitlement ?? (await getEntitlement(admin, userId));
+        void recordChatUsage(admin, userId, finalEntitlement, {
+          input: inputTokens,
+          output: outputTokens,
+        });
+      }
+
       void shouldStoreConversation(admin, userId).then((consented) => {
         if (!consented) return;
         return storeConversation(admin, {
@@ -605,7 +561,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           messages,
           tools,
           systemPrompt,
-          tokens,
+          tokens: totalTokens,
           toolCallCount,
           durationMs,
           safety,

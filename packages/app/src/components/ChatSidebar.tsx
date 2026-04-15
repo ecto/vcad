@@ -39,6 +39,8 @@ import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { VcadToolCard } from "@/components/chat/VcadToolCard";
 import { CadSuggestions } from "@/components/chat/CadSuggestions";
+import { ChatUsageMeter } from "@/components/ChatUsageMeter";
+import { UpgradeModal } from "@/components/UpgradeModal";
 import { captureViewportAsFile } from "@/lib/ai-screenshot";
 
 // ---------------------------------------------------------------------------
@@ -428,11 +430,15 @@ export function ChatSidebar() {
   const [activeTab, setActiveTab] = useState<SidebarTab>("chat");
   const [selectionContext, removeContextPart] = useSelectionContext();
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
 
-  // When the user hits the anon limit, open the sign-in modal automatically.
+  // Route each kind of usage error to the right modal: anon → sign in,
+  // monthly → upgrade plan.
   useEffect(() => {
     if (usageError?.kind === "anon_limit") {
       setShowAuthModal(true);
+    } else if (usageError?.kind === "monthly_limit") {
+      setShowUpgradeModal(true);
     }
   }, [usageError]);
 
@@ -574,13 +580,12 @@ export function ChatSidebar() {
             <ConversationScrollButton />
           </Conversation>
 
-          {/* Usage banners — borderless, distinguished by tinted bg only */}
-          {usageError?.kind === "monthly_limit" && (
-            <div className="shrink-0 bg-danger/10 px-4 py-2 text-[10px] text-danger">
-              <div className="mb-0.5 font-semibold">Monthly chat limit reached</div>
-              <div className="text-text-muted">{usageError.message}</div>
-            </div>
+          {/* Signed-in: live usage meter drives the "approaching limit" UX. */}
+          {user && (
+            <ChatUsageMeter onUpgradeClick={() => setShowUpgradeModal(true)} />
           )}
+
+          {/* Anon: unchanged — sign-in banner since they have no meter. */}
           {usageError?.kind === "anon_limit" && (
             <div className="shrink-0 bg-brand/10 px-4 py-2 text-[10px] text-text">
               <div className="mb-0.5 font-semibold text-brand">Free chat limit reached</div>
@@ -659,6 +664,20 @@ export function ChatSidebar() {
           }
         }}
         feature="ai"
+      />
+
+      {/* Upgrade modal — opens on 429 monthly_limit or when the meter's
+          Upgrade button is clicked. Dismissing clears the limit error so the
+          user can retry after upgrading. */}
+      <UpgradeModal
+        open={showUpgradeModal}
+        onOpenChange={(v) => {
+          setShowUpgradeModal(v);
+          if (!v && usageError?.kind === "monthly_limit") {
+            setUsageError(null);
+          }
+        }}
+        reason={usageError?.kind === "monthly_limit" ? "limit-reached" : "manual"}
       />
     </div>
   );

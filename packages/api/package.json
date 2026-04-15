@@ -4,13 +4,15 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "ai": "^3.4.0",
     "@ai-sdk/anthropic": "^0.0.50",
     "@ai-sdk/openai": "^0.0.60",
-    "@supabase/supabase-js": "^2.45.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "@vcad/core": "*",
+    "@vcad/engine": "*",
     "@vcad/mcp": "*",
-    "@vcad/engine": "*"
+    "ai": "^3.4.0",
+    "stripe": "^17.7.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

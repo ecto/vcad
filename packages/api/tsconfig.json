@@ -12,6 +12,6 @@
     "isolatedModules": true,
     "noEmit": true
   },
-  "include": ["api/**/*"],
+  "include": ["../../api/**/*"],
   "exclude": ["node_modules", "dist"]
 }

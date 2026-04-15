@@ -89,6 +89,26 @@ export type {
 export { useChatStore } from "./stores/chat-store.js";
 export type { ChatState, ChatMessage, SelectionContext, ToolCallInfo, MessagePart, ChatAttachment, ChatUsageError } from "./stores/chat-store.js";
 
+// Billing
+export {
+  TIERS,
+  PURCHASABLE_TIERS,
+  getTier,
+  tierFromStripeLookupKey,
+  parseTier,
+  formatTokens,
+} from "./billing/tiers.js";
+export type { Tier, TierId, PaidTierId } from "./billing/tiers.js";
+
+export {
+  useBillingStore,
+  totalTokensUsed,
+  usageFraction,
+  usageSeverity,
+  parseUsageResponse,
+} from "./stores/billing-store.js";
+export type { BillingState, UsageSnapshot } from "./stores/billing-store.js";
+
 export { useCoreElectronicsStore } from "./stores/electronics-store.js";
 export type {
   CoreElectronicsState,

@@ -199,6 +199,87 @@ body {
   }
 }
 
+/* ------------------------------------------------------------------------
+ * Upgrade modal animations
+ *
+ * Drive entrance/exit via Radix's data-state attribute so the dialog scales
+ * and fades with the backdrop rather than popping in. Keeps the limit-
+ * reached roadblock from feeling abrupt or punitive.
+ * ------------------------------------------------------------------------ */
+@keyframes upgrade-overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes upgrade-overlay-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+@keyframes upgrade-content-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+@keyframes upgrade-content-out {
+  from {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.98);
+  }
+}
+@keyframes upgrade-sheen {
+  0%   { transform: translateX(-100%); }
+  60%  { transform: translateX(220%); }
+  100% { transform: translateX(220%); }
+}
+.upgrade-overlay[data-state="open"] {
+  animation: upgrade-overlay-in 180ms ease-out;
+}
+.upgrade-overlay[data-state="closed"] {
+  animation: upgrade-overlay-out 140ms ease-in;
+}
+.upgrade-content[data-state="open"] {
+  animation: upgrade-content-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.upgrade-content[data-state="closed"] {
+  animation: upgrade-content-out 140ms ease-in;
+}
+.upgrade-cta {
+  position: relative;
+  overflow: hidden;
+}
+.upgrade-cta::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 40%;
+  background: linear-gradient(
+    100deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.22) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  transform: translateX(-100%);
+  animation: upgrade-sheen 2800ms ease-in-out 600ms infinite;
+  pointer-events: none;
+}
+/* Pause the sheen when the user is about to commit — keeps the sweeping
+ * motion from fighting the hover color change and makes the button feel
+ * reactive under the cursor. */
+.upgrade-cta:hover::after {
+  animation-play-state: paused;
+  opacity: 0;
+}
+
 /* Bottom toolbar: remove focus outlines in the bar and its menus */
 .bottom-toolbar,
 .bottom-toolbar-menu {

@@ -80,34 +80,60 @@ function devApiPlugin(env: Record<string, string>): Plugin {
     return validLines.join("\n").trim();
   }
 
+  // Route → handler file mapping for dev-time delegation to Vercel functions.
+  // Each production api/*.ts file is loaded on demand when the matching URL
+  // is hit. Keeping this as a single table means adding a new endpoint only
+  // requires editing this list (plus the file itself).
+  const ENDPOINT_ROUTES: Array<{
+    path: string;
+    file: string;
+    methods: readonly string[];
+  }> = [
+    { path: "/api/chat", file: "api/chat.ts", methods: ["POST", "OPTIONS"] },
+    { path: "/api/usage", file: "api/usage.ts", methods: ["GET", "OPTIONS"] },
+    { path: "/api/billing/checkout", file: "api/billing/checkout.ts", methods: ["POST", "OPTIONS"] },
+    { path: "/api/billing/portal", file: "api/billing/portal.ts", methods: ["POST", "OPTIONS"] },
+    { path: "/api/billing/webhook", file: "api/billing/webhook.ts", methods: ["POST"] },
+  ];
+
+  // Env var names the dev delegator mirrors from Vite's env into process.env
+  // so server handlers can read them as if running on Vercel.
+  const ENV_PASSTHROUGH = [
+    "ANTHROPIC_API_KEY",
+    "SUPABASE_URL",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "IP_HASH_SALT",
+    "STRIPE_SECRET_KEY",
+    "STRIPE_WEBHOOK_SECRET",
+    "APP_ORIGIN",
+  ] as const;
+
   return {
     name: "dev-api",
     configureServer(server) {
-      // ── /api/chat — delegates to the production handler so dev and prod share
-      // rate limiting, auth gating, and usage logging.
+      // Generic delegator: matches each incoming URL against ENDPOINT_ROUTES,
+      // lazy-imports the production handler, and dispatches via the same
+      // VercelRequest/Response shim. A single middleware handles every route
+      // in the table so adding /api/something is one line instead of a new
+      // 60-line middleware block.
       server.middlewares.use(async (req, res, next) => {
-        if (req.url !== "/api/chat" || (req.method !== "POST" && req.method !== "OPTIONS")) {
-          return next();
-        }
+        const url = req.url ?? "";
+        // Strip query string so "/api/usage?ts=..." still matches.
+        const pathname = url.split("?")[0] ?? url;
+        const match = ENDPOINT_ROUTES.find((r) => r.path === pathname);
+        if (!match) return next();
+        if (!match.methods.includes(req.method ?? "")) return next();
 
-        // Set process.env from Vite's loaded env so the handler can read it.
-        // (Vercel's runtime already populates process.env; we mirror that in dev.)
-        if (env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
-          process.env.ANTHROPIC_API_KEY = env.ANTHROPIC_API_KEY;
-        }
-        if (env.SUPABASE_URL && !process.env.SUPABASE_URL) {
-          process.env.SUPABASE_URL = env.SUPABASE_URL;
-        }
-        if (env.SUPABASE_SERVICE_ROLE_KEY && !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-          process.env.SUPABASE_SERVICE_ROLE_KEY = env.SUPABASE_SERVICE_ROLE_KEY;
-        }
-        if (env.IP_HASH_SALT && !process.env.IP_HASH_SALT) {
-          process.env.IP_HASH_SALT = env.IP_HASH_SALT;
+        for (const key of ENV_PASSTHROUGH) {
+          if (env[key] && !process.env[key]) {
+            process.env[key] = env[key];
+          }
         }
 
         try {
-          // Lazy import so the production handler isn't loaded during unrelated dev work.
-          const mod = await import(resolve(__dirname, "../../api/chat.ts"));
+          const mod = await server.ssrLoadModule(
+            resolve(__dirname, "../../", match.file),
+          );
 
           // The production handler is written for Vercel's VercelRequest/Response
           // which adds helpers like res.status().json(), req.body auto-parsing,
@@ -128,19 +154,15 @@ function devApiPlugin(env: Record<string, string>): Plugin {
               return resShim;
             };
           }
-          // VercelRequest exposes headers as a plain object — Node already does
-          // this, so nothing to shim there. req.body is only populated when
-          // Vercel's body parser runs; the handler already falls back to reading
-          // the raw stream, so we leave req.body undefined.
 
           // Cast: node's http req/res are structurally compatible with
-          // the bits api/chat.ts actually uses (headers, statusCode, end).
+          // the bits api/*.ts actually use (headers, statusCode, end).
           await mod.default(req as never, res as never);
         } catch (err) {
-          console.error("[dev-api] /api/chat delegation error:", err);
+          console.error(`[dev-api] ${match.path} delegation error:`, err);
           if (!res.headersSent) {
             res.statusCode = 500;
-            res.end(JSON.stringify({ error: "dev chat delegation failed" }));
+            res.end(JSON.stringify({ error: `dev ${match.path} delegation failed` }));
           } else {
             try { res.end(); } catch { /* noop */ }
           }
