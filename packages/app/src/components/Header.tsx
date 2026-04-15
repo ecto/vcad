@@ -311,6 +311,7 @@ export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
     onAboutOpen,
     onSave,
     onOpen,
+    surface: "desktop-menu",
   });
 
   const handleCommandPalette = () => {

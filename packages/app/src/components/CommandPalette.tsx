@@ -168,6 +168,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
   const commands = useAppCommands({
     onDismiss: dismissPalette,
     onAboutOpen,
+    surface: "palette",
   });
 
   // AI generation handler (inner function that does the actual work)

@@ -18,6 +18,9 @@ import { useSlicerStore } from "@/stores/slicer-store";
 import { useCamStore } from "@/stores/cam-store";
 import { useNotificationStore } from "@/stores/notification-store";
 import { downloadBlob } from "@/lib/download";
+import { analytics } from "@/lib/analytics";
+
+export type CommandSurface = "palette" | "mobile-menu" | "desktop-menu";
 
 interface UseAppCommandsProps {
   /** Called after any command fires — use this to dismiss an open palette/sheet. */
@@ -28,6 +31,9 @@ interface UseAppCommandsProps {
   onSave?: () => void;
   /** Open action — dispatches a window event by default if unspecified. */
   onOpen?: () => void;
+  /** Which UI triggered the command. Threaded into PostHog telemetry so we
+   * can attribute usage across palette / mobile hamburger / desktop menu. */
+  surface: CommandSurface;
 }
 
 /**
@@ -45,6 +51,7 @@ export function useAppCommands({
   onAboutOpen,
   onSave,
   onOpen,
+  surface,
 }: UseAppCommandsProps): CommandRegistry {
   return useMemo(() => {
     const base = createDefaultCommandActions(onDismiss);
@@ -71,7 +78,7 @@ export function useAppCommands({
       onDismiss();
     };
 
-    return createCommandRegistry({
+    const registry = createCommandRegistry({
       ...base,
       // App-specific overrides of core actions
       addPrimitive: (kind) => {
@@ -325,5 +332,22 @@ export function useAppCommands({
         onDismiss();
       },
     });
-  }, [onDismiss, onAboutOpen, onSave, onOpen]);
+
+    // Wrap every command.action in a telemetry shim. This is the single
+    // place where we instrument command usage, so every surface (palette,
+    // mobile menu, desktop menu) captures identical PostHog events without
+    // each consumer remembering to fire them. Fire the event BEFORE the
+    // underlying action so commands that throw or open modals still log.
+    return registry.map((cmd) => ({
+      ...cmd,
+      action: () => {
+        analytics.commandExecuted({
+          id: cmd.id,
+          category: cmd.category,
+          surface,
+        });
+        cmd.action();
+      },
+    }));
+  }, [onDismiss, onAboutOpen, onSave, onOpen, surface]);
 }

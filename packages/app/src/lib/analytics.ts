@@ -38,4 +38,19 @@ export const analytics = {
   physicsSimulationRun: () => ph?.capture("physics_simulation_run"),
   printPanelOpened: () => ph?.capture("print_panel_opened"),
   quotePanelOpened: () => ph?.capture("quote_panel_opened"),
+
+  // Command registry — fired for every action triggered through
+  // useAppCommands, regardless of which surface invoked it. Lets us see
+  // which commands are actually used and whether users prefer the mobile
+  // hamburger, desktop menu bar, or ⌘K palette for each.
+  commandExecuted: (params: {
+    id: string;
+    category?: string;
+    surface: "palette" | "mobile-menu" | "desktop-menu";
+  }) =>
+    ph?.capture("command_executed", {
+      command_id: params.id,
+      command_category: params.category ?? "uncategorized",
+      surface: params.surface,
+    }),
 };

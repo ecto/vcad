@@ -75,6 +75,7 @@ export function MobileShell({ onAboutOpen, onSave, onOpen, children }: MobileShe
     onAboutOpen,
     onSave,
     onOpen,
+    surface: "mobile-menu",
   });
 
   // Chat opens only on explicit action — dock button, ⌘K / F6 event, or
