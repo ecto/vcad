@@ -349,9 +349,15 @@ export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
       {/* ─────────────────────────────────────────────────────── */}
       <div className="relative flex h-7 items-center gap-0 px-2 border-b border-border/30">
         <div className="flex items-center gap-1 pr-3">
-          <span className="text-sm font-bold tracking-tighter text-text">
+          <button
+            type="button"
+            onClick={onAboutOpen}
+            title="About vcad"
+            aria-label="About vcad"
+            className="text-sm font-bold tracking-tighter text-text hover:text-brand transition-colors cursor-default outline-none"
+          >
             vcad<span className="text-brand">.</span>
-          </span>
+          </button>
           {isDirty && <span className="text-brand text-xs">*</span>}
         </div>
 

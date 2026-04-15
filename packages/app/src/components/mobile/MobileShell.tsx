@@ -96,9 +96,14 @@ export function MobileShell({ onAboutOpen, onSave, onOpen, children }: MobileShe
           <MenuIcon size={22} />
         </button>
         <div className="flex items-center gap-1 ml-1 min-w-0">
-          <span className="text-sm font-bold tracking-tighter text-text">
+          <button
+            type="button"
+            onClick={onAboutOpen}
+            aria-label="About vcad"
+            className="text-sm font-bold tracking-tighter text-text active:text-brand outline-none"
+          >
             vcad<span className="text-brand">.</span>
-          </span>
+          </button>
           <span className="text-xs text-text-muted truncate max-w-[120px]">
             {docName ?? "Untitled"}
           </span>
