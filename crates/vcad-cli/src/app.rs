@@ -1150,9 +1150,9 @@ impl App {
                 self.command_selected_index = 0;
             }
             "sketch" => {
-                self.mode = TuiMode::Sketch(crate::tui::SketchModeState::new(
+                self.mode = TuiMode::Sketch(Box::new(crate::tui::SketchModeState::new(
                     crate::tui::SketchPlane::XY,
-                ));
+                )));
                 self.set_status("Sketch mode (XY plane) - L:line R:rect C:circle");
             }
             "about" => self.set_status("vcad — parametric CAD for humans and AIs"),
@@ -1189,6 +1189,12 @@ pub fn evaluate_document(doc: &Document) -> Result<Vec<EvaluatedMesh>> {
 /// Run the TUI application.
 pub fn run_tui(file: Option<PathBuf>) -> Result<()> {
     crate::ui::theme::init();
+
+    // Install panic + stderr capture BEFORE entering alt-screen. Any early
+    // stderr writes (e.g. from a failing terminal capability probe) end up
+    // in the log store instead of corrupting the cell buffer.
+    let capture = crate::log_capture::Capture::install();
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(
@@ -1200,7 +1206,7 @@ pub fn run_tui(file: Option<PathBuf>) -> Result<()> {
 
     let mut app = App::new(file)?;
 
-    let result = run_loop(&mut stdout, &mut app);
+    let result = run_loop(&mut stdout, &mut app, &capture);
 
     disable_raw_mode()?;
     execute!(
@@ -1210,10 +1216,18 @@ pub fn run_tui(file: Option<PathBuf>) -> Result<()> {
         cursor::Show
     )?;
 
+    // `capture` drops here — fd 2 is restored before we return so any
+    // error printed by the caller goes to the real tty.
+    drop(capture);
+
     result
 }
 
-fn run_loop(stdout: &mut Stdout, app: &mut App) -> Result<()> {
+fn run_loop(
+    stdout: &mut Stdout,
+    app: &mut App,
+    capture: &crate::log_capture::Capture,
+) -> Result<()> {
     let (term_w, term_h) = terminal::size()?;
     let mut cell_buffer = CellBuffer::new(term_w, term_h);
     let mut render_buffer = RenderBuffer::new(80, 40);
@@ -1293,6 +1307,10 @@ fn run_loop(stdout: &mut Stdout, app: &mut App) -> Result<()> {
 
         // Flush only changed cells
         cell_buffer.flush(stdout)?;
+
+        // Drain captured stderr/panic lines into the log ring buffer so
+        // the status bar surfaces them instead of a corrupt display.
+        crate::log_capture::drain_captured(app, capture);
 
         // Drain any chat events that arrived from the background stream
         // thread and apply them to the chat panel / document.
@@ -1429,8 +1447,8 @@ mod tests {
 
         for (name, solid) in &shapes {
             let mesh = solid.to_mesh(32);
-            assert!(mesh.vertices.len() > 0, "{name} has no vertices");
-            assert!(mesh.indices.len() > 0, "{name} has no indices");
+            assert!(!mesh.vertices.is_empty(), "{name} has no vertices");
+            assert!(!mesh.indices.is_empty(), "{name} has no indices");
 
             // Build triangles
             let mut triangles = Vec::new();

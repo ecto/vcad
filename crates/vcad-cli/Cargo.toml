@@ -41,6 +41,10 @@ termview = { path = "../termview" }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time"] }
 futures-util = "0.3"
 
+# fd-level stderr redirection for the TUI log capture — `dup2` + `pipe`.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # TUI framework
 crossterm = "0.28"
 
