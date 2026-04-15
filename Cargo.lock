@@ -6387,6 +6387,7 @@ dependencies = [
  "serde_json",
  "ts-rs",
  "vcad-app",
+ "vcad-chat",
  "vcad-crdt",
  "vcad-ecad-export",
  "vcad-ecad-pcb",
