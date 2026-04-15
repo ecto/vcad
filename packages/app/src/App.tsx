@@ -14,6 +14,7 @@ import { AppShell } from "@/components/AppShell";
 import { Header } from "@/components/Header";
 import { StatusBar } from "@/components/StatusBar";
 import { ToolPalette } from "@/components/ToolPalette";
+import { ToolDialogs } from "@/components/ToolDialogs";
 import { Viewport } from "@/components/Viewport";
 import { FeatureTree } from "@/components/FeatureTree";
 import { MobileShell } from "@/components/mobile/MobileShell";
@@ -65,12 +66,10 @@ import { useAutoSave } from "@/hooks/useAutoSave";
 import { useChatHandler } from "@/hooks/useChatHandler";
 import { useUrlSync } from "@/hooks/useUrlSync";
 import { saveDocument } from "@/lib/save-load";
-import {
-  getMostRecentDocument,
-  loadDocument as loadDocumentFromDb,
-  generateDocumentName,
-} from "@/lib/storage";
-import { loadDocumentFromUrl } from "@/lib/url-document";
+import { bootstrap } from "@/lib/bootstrap";
+import { useBootStore } from "@/stores/boot-store";
+import { Splash } from "@/components/Splash";
+import { ErrorScreen } from "@/components/ErrorScreen";
 import { isTauri } from "@/lib/tauri";
 import {
   mergeMeshes,
@@ -104,17 +103,6 @@ function useThemeSync() {
       return () => mq.removeEventListener("change", handler);
     }
   }, [theme]);
-}
-
-function ErrorScreen({ message }: { message: string }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg">
-      <div className="flex flex-col items-center gap-2 text-center">
-        <div className="text-sm font-bold text-danger">engine error</div>
-        <div className="max-w-md text-xs text-text-muted">{message}</div>
-      </div>
-    </div>
-  );
 }
 
 /** Left sidebar: tree by default, drills into inspector when something is selected. */
@@ -151,8 +139,14 @@ export function App() {
   const [aboutOpen, setAboutOpen] = useState(false);
   const [documentPickerOpen, setDocumentPickerOpen] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
-  const [initialized, setInitialized] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const bootPhase = useBootStore((s) => s.phase);
+  const bootError = useBootStore((s) => s.error);
+
+  useEffect(() => {
+    void bootstrap();
+  }, []);
 
   const desktopMode = isTauri();
   const isMobile = useIsMobile();
@@ -513,51 +507,6 @@ export function App() {
     incrementSessions();
   }, [incrementSessions]);
 
-  // Initialize document on app load
-  useEffect(() => {
-    if (initialized) return;
-
-    async function initDocument() {
-      try {
-        // First, check for document in URL (shared link)
-        const urlDoc = await loadDocumentFromUrl();
-        if (urlDoc) {
-          const id = crypto.randomUUID();
-          useDocumentStore.getState().loadDocument(urlDoc.file);
-          useDocumentStore.getState().setDocumentMeta(id, urlDoc.name);
-          useNotificationStore.getState().addToast("Loaded shared document", "success");
-          setInitialized(true);
-          return;
-        }
-
-        // Try to restore most recent document
-        const recent = await getMostRecentDocument();
-        if (recent) {
-          const stored = await loadDocumentFromDb(recent.id);
-          if (stored) {
-            useDocumentStore.getState().loadDocument(stored.document);
-            useDocumentStore.getState().setDocumentMeta(stored.id, stored.name);
-            setInitialized(true);
-            return;
-          }
-        }
-
-        // No recent document, create a new one
-        const name = await generateDocumentName();
-        const id = crypto.randomUUID();
-        useDocumentStore.getState().newDocument(id, name);
-      } catch (err) {
-        console.error("Failed to initialize document:", err);
-        // Fallback: create new document
-        const id = crypto.randomUUID();
-        useDocumentStore.getState().newDocument(id, "Untitled");
-      }
-      setInitialized(true);
-    }
-
-    initDocument();
-  }, [initialized]);
-
   // Track cylinder position for "position-cylinder" guided flow step
   const document = useDocumentStore((s) => s.document);
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
@@ -617,8 +566,11 @@ export function App() {
 
 
 
-  // Only block on fatal error - let viewport render while engine loads
+  // Boot routing: splash until bootstrap reaches `ready`, error screen on
+  // fatal boot failure. Post-boot engine errors fall through to the app.
+  if (bootError) return <ErrorScreen message={bootError} />;
   if (error && !engineReady) return <ErrorScreen message={error} />;
+  if (bootPhase !== "ready") return <Splash />;
 
   const viewportStack = (
     <>
@@ -750,6 +702,7 @@ export function App() {
           onChange={handleFileChange}
         />
         <NotificationContainer />
+        <ToolDialogs />
         <Suspense fallback={null}>
           <WhatsNewPanel />
         </Suspense>

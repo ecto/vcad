@@ -2,6 +2,15 @@
   "$schema": "./changelog.schema.json",
   "entries": [
     {
+      "id": "2026-04-15-mobile-tool-palette-parity",
+      "version": "0.8.0",
+      "date": "2026-04-15",
+      "category": "feat",
+      "title": "Mobile tool palette reaches desktop parity",
+      "summary": "Mobile bottom bar is now a 7-tab tool palette (Create, Transform, Combine, Modify, Assembly, Simulate, Export) sharing a useToolDefinitions hook with desktop — every operation is reachable on phones.",
+      "features": ["mobile", "ux", "toolbar"]
+    },
+    {
       "id": "2026-04-15-sketch-math-web-migration",
       "version": "0.8.0",
       "date": "2026-04-15",

@@ -1,31 +1,24 @@
 import { useState, useEffect, useCallback, type ReactNode, Suspense, lazy } from "react";
 import { List as MenuIcon } from "@phosphor-icons/react/dist/ssr/List";
 import { TreeStructure } from "@phosphor-icons/react/dist/ssr/TreeStructure";
-import { Plus } from "@phosphor-icons/react/dist/ssr/Plus";
 import { ChatDots } from "@phosphor-icons/react/dist/ssr/ChatDots";
 import { ArrowsOutCardinal } from "@phosphor-icons/react/dist/ssr/ArrowsOutCardinal";
 import { ArrowCounterClockwise } from "@phosphor-icons/react/dist/ssr/ArrowCounterClockwise";
 import { ArrowClockwise } from "@phosphor-icons/react/dist/ssr/ArrowClockwise";
-import { Cube } from "@phosphor-icons/react/dist/ssr/Cube";
-import { Cylinder } from "@phosphor-icons/react/dist/ssr/Cylinder";
-import { Sphere } from "@phosphor-icons/react/dist/ssr/Sphere";
-import { PencilSimple } from "@phosphor-icons/react/dist/ssr/PencilSimple";
 import {
   useDocumentStore,
   useUiStore,
   useChatStore,
-  useSketchStore,
   COMMAND_CATEGORIES,
   CATEGORY_LABELS,
   CATEGORY_ICON_COLORS,
   type Command,
-  type PrimitiveKind,
 } from "@vcad/core";
-import { useNotificationStore } from "@/stores/notification-store";
 import { useChangelogStore } from "@/stores/changelog-store";
 import { SignInButton, UserMenu, triggerSync } from "@vcad/auth";
 import { cn } from "@/lib/utils";
 import { BottomSheet } from "./BottomSheet";
+import { MobileToolPalette } from "./MobileToolPalette";
 import { FeatureTree } from "@/components/FeatureTree";
 import { useAppCommands } from "@/hooks/useAppCommands";
 import { COMMAND_ICONS } from "@/lib/command-icons";
@@ -52,14 +45,12 @@ interface MobileShellProps {
 export function MobileShell({ onAboutOpen, onSave, onOpen, children }: MobileShellProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [treeOpen, setTreeOpen] = useState(false);
-  const [createOpen, setCreateOpen] = useState(false);
   const [chatSheetOpen, setChatSheetOpen] = useState(false);
 
   const isDirty = useDocumentStore((s) => s.isDirty);
   const docName = useDocumentStore((s) => s.documentName);
   const undo = useDocumentStore((s) => s.undo);
   const redo = useDocumentStore((s) => s.redo);
-  const addPrimitive = useDocumentStore((s) => s.addPrimitive);
   // Subscribing so enabled-state changes trigger a re-render of the menu
   // rows (which call cmd.enabled?.() inline). The values themselves are read
   // via getState() inside the useAppCommands actions.
@@ -93,11 +84,6 @@ export function MobileShell({ onAboutOpen, onSave, onOpen, children }: MobileShe
     return () => window.removeEventListener("vcad:open-chat", handleOpen);
   }, []);
 
-  const handleCreate = (kind: PrimitiveKind) => {
-    addPrimitive(kind);
-    setCreateOpen(false);
-  };
-
   return (
     <div className="flex h-[100dvh] w-screen flex-col overflow-hidden bg-bg">
       {/* ──── Top bar ────────────────────────────────── */}
@@ -121,17 +107,38 @@ export function MobileShell({ onAboutOpen, onSave, onOpen, children }: MobileShe
         <div className="flex-1" />
         <button
           onClick={undo}
-          className="flex h-10 w-10 items-center justify-center text-text-muted active:text-text"
+          className="flex h-10 w-9 items-center justify-center text-text-muted active:text-text"
           aria-label="Undo"
         >
-          <ArrowCounterClockwise size={20} />
+          <ArrowCounterClockwise size={18} />
         </button>
         <button
           onClick={redo}
-          className="flex h-10 w-10 items-center justify-center text-text-muted active:text-text"
+          className="flex h-10 w-9 items-center justify-center text-text-muted active:text-text"
           aria-label="Redo"
         >
-          <ArrowClockwise size={20} />
+          <ArrowClockwise size={18} />
+        </button>
+        <button
+          onClick={() => setTreeOpen(true)}
+          className="flex h-10 w-9 items-center justify-center text-text-muted active:text-text"
+          aria-label="Feature Tree"
+        >
+          <TreeStructure size={18} />
+        </button>
+        <button
+          onClick={() => handleChatSheetChange(true)}
+          className="flex h-10 w-9 items-center justify-center text-text-muted active:text-text"
+          aria-label="Chat"
+        >
+          <ChatDots size={18} />
+        </button>
+        <button
+          onClick={() => window.dispatchEvent(new CustomEvent("vcad:camera-fit"))}
+          className="flex h-10 w-9 items-center justify-center text-text-muted active:text-text"
+          aria-label="Fit View"
+        >
+          <ArrowsOutCardinal size={18} />
         </button>
         <SignInButton
           variant="icon-text"
@@ -156,35 +163,8 @@ export function MobileShell({ onAboutOpen, onSave, onOpen, children }: MobileShe
         )}
       </div>
 
-      {/* ──── Bottom dock ────────────────────────────── */}
-      <div
-        className={cn(
-          "flex h-14 shrink-0 items-stretch border-t border-border bg-surface",
-          "pb-[env(safe-area-inset-bottom)]",
-        )}
-      >
-        <DockButton
-          icon={TreeStructure}
-          label="Tree"
-          onClick={() => setTreeOpen(true)}
-        />
-        <DockButton
-          icon={Plus}
-          label="Create"
-          primary
-          onClick={() => setCreateOpen(true)}
-        />
-        <DockButton
-          icon={ChatDots}
-          label="Chat"
-          onClick={() => handleChatSheetChange(true)}
-        />
-        <DockButton
-          icon={ArrowsOutCardinal}
-          label="Fit"
-          onClick={() => window.dispatchEvent(new CustomEvent("vcad:camera-fit"))}
-        />
-      </div>
+      {/* ──── Bottom tool palette ────────────────────── */}
+      <MobileToolPalette />
 
       {/* ──── Sheets ─────────────────────────────────── */}
       <BottomSheet open={menuOpen} onOpenChange={setMenuOpen} title="Menu">
@@ -214,19 +194,6 @@ export function MobileShell({ onAboutOpen, onSave, onOpen, children }: MobileShe
         </div>
       </BottomSheet>
 
-      <BottomSheet open={createOpen} onOpenChange={setCreateOpen} title="Create">
-        <div className="grid grid-cols-3 gap-2 p-3">
-          <CreateTile icon={Cube} label="Box" onClick={() => handleCreate("cube")} />
-          <CreateTile icon={Cylinder} label="Cylinder" onClick={() => handleCreate("cylinder")} />
-          <CreateTile icon={Sphere} label="Sphere" onClick={() => handleCreate("sphere")} />
-          <CreateTile icon={PencilSimple} label="Sketch" onClick={() => {
-            useSketchStore.getState().enterFaceSelectionMode();
-            useNotificationStore.getState().addToast("Select a face to sketch on", "info");
-            setCreateOpen(false);
-          }} />
-        </div>
-      </BottomSheet>
-
       <BottomSheet open={chatSheetOpen} onOpenChange={handleChatSheetChange} title="AI Chat" size="full">
         <div className="h-full flex flex-col">
           <Suspense fallback={null}>
@@ -235,35 +202,6 @@ export function MobileShell({ onAboutOpen, onSave, onOpen, children }: MobileShe
         </div>
       </BottomSheet>
     </div>
-  );
-}
-
-function DockButton({
-  icon: Icon,
-  label,
-  onClick,
-  active,
-  primary,
-}: {
-  icon: React.ComponentType<{ size?: number; weight?: "bold" | "regular" }>;
-  label: string;
-  onClick: () => void;
-  active?: boolean;
-  primary?: boolean;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "flex flex-1 flex-col items-center justify-center gap-0.5 min-h-11",
-        "text-text-muted active:bg-hover",
-        active && "text-brand",
-        primary && "text-brand",
-      )}
-    >
-      <Icon size={22} weight={primary ? "bold" : "regular"} />
-      <span className="text-[10px] leading-none">{label}</span>
-    </button>
   );
 }
 
@@ -331,22 +269,3 @@ function CommandRow({
   );
 }
 
-function CreateTile({
-  icon: Icon,
-  label,
-  onClick,
-}: {
-  icon: React.ComponentType<{ size?: number }>;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className="flex aspect-square flex-col items-center justify-center gap-2 border border-border bg-card active:bg-hover rounded"
-    >
-      <Icon size={32} />
-      <span className="text-xs text-text">{label}</span>
-    </button>
-  );
-}
