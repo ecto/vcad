@@ -18,8 +18,13 @@
 
 pub mod prompt;
 pub mod schemas;
+pub mod stream;
 pub mod tools;
 
 pub use prompt::{build_system_prompt, type_catalog, NodeInfo, PartInfo, SelectionInfo};
 pub use schemas::{all_schemas, type_enum};
+pub use stream::{
+    ChatContext, ChatError, ChatEvent, ChatMessage, ChatRequest, Client, MessageContent,
+    MessageRole, SelectedPart,
+};
 pub use tools::{anthropic_tools, AnthropicTool};
