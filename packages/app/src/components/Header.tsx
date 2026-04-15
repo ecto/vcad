@@ -1,9 +1,4 @@
 import { useState } from "react";
-import { Sun } from "@phosphor-icons/react/dist/ssr/Sun";
-import { Moon } from "@phosphor-icons/react/dist/ssr/Moon";
-import { Desktop } from "@phosphor-icons/react/dist/ssr/Desktop";
-import { CubeTransparent } from "@phosphor-icons/react/dist/ssr/CubeTransparent";
-import { GridFour } from "@phosphor-icons/react/dist/ssr/GridFour";
 import { BookOpen } from "@phosphor-icons/react/dist/ssr/BookOpen";
 import { Mouse } from "@phosphor-icons/react/dist/ssr/Mouse";
 import { Sparkle } from "@phosphor-icons/react/dist/ssr/Sparkle";
@@ -170,11 +165,13 @@ function CommandMenuItem({
 }) {
   const cmd = commands.find((c) => c.id === id);
   if (!cmd) return null;
-  const Icon = COMMAND_ICONS[cmd.icon];
+  const iconName = cmd.dynamicIcon?.() ?? cmd.icon;
+  const Icon = COMMAND_ICONS[iconName];
   const enabled = safeEnabled(cmd);
   const iconColor = cmd.category
     ? CATEGORY_ICON_COLORS[cmd.category]
     : "text-text-muted";
+  const displayLabel = label ?? cmd.dynamicLabel?.() ?? cmd.label;
   return (
     <MenuItem
       icon={Icon}
@@ -188,7 +185,7 @@ function CommandMenuItem({
         close();
       }}
     >
-      {label ?? cmd.label}
+      {displayLabel}
     </MenuItem>
   );
 }
@@ -293,18 +290,17 @@ function MouseControlsSubmenu() {
 
 export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
   const isDirty = useDocumentStore((s) => s.isDirty);
-  const theme = useUiStore((s) => s.theme);
-  const setTheme = useUiStore((s) => s.setTheme);
-  const toggleWireframe = useUiStore((s) => s.toggleWireframe);
-  const showWireframe = useUiStore((s) => s.showWireframe);
-  const toggleGridSnap = useUiStore((s) => s.toggleGridSnap);
-  const gridSnap = useUiStore((s) => s.gridSnap);
   const unreadChangelog = useChangelogStore((s) => s.getUnreadCount());
-  // Subscribe to state that affects enabled() checks on the commands below.
-  // Actions themselves read via getState() inside useAppCommands.
+  // Subscribe to state that affects command.enabled() / dynamicLabel() /
+  // dynamicIcon() results. The actions and getters themselves read via
+  // getState() inside useAppCommands, but the menu surface needs to
+  // re-render when these change for the labels/icons to refresh.
   useDocumentStore((s) => s.parts);
   useDocumentStore((s) => s.document);
   useUiStore((s) => s.selectedPartIds);
+  useUiStore((s) => s.theme);
+  useUiStore((s) => s.showWireframe);
+  useUiStore((s) => s.gridSnap);
 
   const commands = useAppCommands({
     onDismiss: () => {
@@ -468,38 +464,13 @@ export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
               <CommandMenuItem id="camera-right" close={close} commands={commands} />
               <CommandMenuItem id="camera-fit" close={close} commands={commands} />
               <MenuSeparator />
-              {/* Wireframe + grid snap kept inline: labels flip based on state. */}
-              <MenuItem
-                icon={CubeTransparent}
-                iconClassName={CATEGORY_ICON_COLORS.view}
-                shortcut="X"
-                onClick={() => { toggleWireframe(); close(); }}
-              >
-                {showWireframe ? "Hide Wireframe" : "Show Wireframe"}
-              </MenuItem>
-              <MenuItem
-                icon={GridFour}
-                iconClassName={CATEGORY_ICON_COLORS.view}
-                shortcut="G"
-                onClick={() => { toggleGridSnap(); close(); }}
-              >
-                {gridSnap ? "Disable Grid Snap" : "Enable Grid Snap"}
-              </MenuItem>
+              <CommandMenuItem id="toggle-wireframe" close={close} commands={commands} />
+              <CommandMenuItem id="toggle-grid-snap" close={close} commands={commands} />
               <MenuSeparator />
               <RayTracingSubmenu />
               <MouseControlsSubmenu />
               <MenuSeparator />
-              {/* Theme cycle kept inline: both icon and label depend on current theme. */}
-              <MenuItem
-                icon={theme === "dark" ? Sun : theme === "light" ? Desktop : Moon}
-                iconClassName={CATEGORY_ICON_COLORS.view}
-                onClick={() => {
-                  setTheme(theme === "dark" ? "light" : theme === "light" ? "system" : "dark");
-                  close();
-                }}
-              >
-                {theme === "dark" ? "Light Theme" : theme === "light" ? "System Theme" : "Dark Theme"}
-              </MenuItem>
+              <CommandMenuItem id="cycle-theme" close={close} commands={commands} />
             </>
           )}
         </MenuBarItem>

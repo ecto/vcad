@@ -293,7 +293,9 @@ function CommandRow({
   command: Command;
   badge?: number;
 }) {
-  const Icon = COMMAND_ICONS[command.icon];
+  const iconName = command.dynamicIcon?.() ?? command.icon;
+  const label = command.dynamicLabel?.() ?? command.label;
+  const Icon = COMMAND_ICONS[iconName];
   const enabled = safeEnabled(command);
   const iconColor = command.category
     ? CATEGORY_ICON_COLORS[command.category]
@@ -315,7 +317,7 @@ function CommandRow({
       >
         {Icon ? <Icon size={16} weight="regular" /> : null}
       </span>
-      <span className="flex-1 text-left">{command.label}</span>
+      <span className="flex-1 text-left">{label}</span>
       {badge !== undefined && badge > 0 && (
         <span className="min-w-[18px] rounded-full bg-brand px-1.5 py-0.5 text-center text-[10px] font-bold text-white">
           {badge}

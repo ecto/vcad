@@ -27,6 +27,15 @@ export interface Command {
   /** Menu category used by MobileShell (and future Header refactor) to group
    * commands into sections. Undefined = don't show in menus, only palette. */
   category?: CommandCategory;
+  /** Optional render-time override for the static `label` field. Used for
+   * stateful commands like "Show/Hide Wireframe" or the theme cycle, whose
+   * displayed text depends on current store state. Menu surfaces should
+   * call this inline during render and fall back to `label`. */
+  dynamicLabel?: () => string;
+  /** Optional render-time override for the static `icon` field. Returns an
+   * icon name that the consumer resolves through its icon map. Used for
+   * commands where the glyph changes with state (e.g. theme cycle). */
+  dynamicIcon?: () => string;
 }
 
 export type CommandRegistry = Command[];
@@ -107,6 +116,13 @@ export interface CommandActions {
   toggleStatusBar?: () => void;
   toggleDevTools?: () => void;
   cycleTheme?: () => void;
+  // Dynamic label/icon getters — let consumers override a command's display
+  // text/glyph based on current state. Each is read at render time in
+  // whichever menu surface is showing the command.
+  getWireframeLabel?: () => string;
+  getGridSnapLabel?: () => string;
+  getThemeLabel?: () => string;
+  getThemeIcon?: () => string;
   // Tools — optional extras
   openCommandPalette?: () => void;
   newSketch?: () => void;
@@ -292,6 +308,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       shortcut: "X",
       action: actions.toggleWireframe,
       category: "view",
+      dynamicLabel: actions.getWireframeLabel,
     },
     {
       id: "toggle-grid-snap",
@@ -301,6 +318,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       shortcut: "G",
       action: actions.toggleGridSnap,
       category: "view",
+      dynamicLabel: actions.getGridSnapLabel,
     },
     {
       id: "toggle-sidebar",
@@ -520,6 +538,8 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       keywords: ["theme", "dark", "light", "system", "mode"],
       action: actions.cycleTheme,
       category: "view",
+      dynamicLabel: actions.getThemeLabel,
+      dynamicIcon: actions.getThemeIcon,
     });
   }
 

@@ -169,6 +169,24 @@ export function useAppCommands({
         onDismiss();
       },
 
+      // Dynamic labels/icons — read at render time so Show/Hide, theme, etc.
+      // match the live store state without the consumer having to subscribe
+      // to every relevant slice.
+      getWireframeLabel: () =>
+        useUiStore.getState().showWireframe ? "Hide Wireframe" : "Show Wireframe",
+      getGridSnapLabel: () =>
+        useUiStore.getState().gridSnap ? "Disable Grid Snap" : "Enable Grid Snap",
+      getThemeLabel: () => {
+        const t = useUiStore.getState().theme;
+        return t === "dark" ? "Light Theme" : t === "light" ? "System Theme" : "Dark Theme";
+      },
+      getThemeIcon: () => {
+        const t = useUiStore.getState().theme;
+        // Return the icon that represents the NEXT theme state (what clicking
+        // will give you), matching the previous inline Header semantics.
+        return t === "dark" ? "Sun" : t === "light" ? "Desktop" : "Moon";
+      },
+
       // Tools extras
       openCommandPalette: () => {
         useUiStore.getState().setCommandPaletteOpen(true);
