@@ -408,13 +408,13 @@ pub fn handle_mouse(
                 }
                 HitRegion::CommandPalette(item_idx) => {
                     app.command_selected_index = item_idx;
-                    // Execute the selected command
+                    // Execute the selected command via its canonical id.
                     let items = crate::ui::command::build_command_items(&app.command_input);
                     if item_idx < items.len() {
-                        let cmd_label = items[item_idx].label.to_lowercase();
+                        let cmd_id = items[item_idx].id.clone();
                         app.command_input.clear();
                         app.mode = TuiMode::Normal;
-                        app.process_command(&cmd_label)?;
+                        app.process_command(&cmd_id)?;
                     }
                 }
                 HitRegion::Viewport => {
@@ -675,7 +675,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
             KeyCode::Enter => {
                 let items = crate::ui::command::build_command_items(&app.command_input);
                 if !items.is_empty() && app.command_selected_index < items.len() {
-                    let cmd = items[app.command_selected_index].label.to_lowercase();
+                    let cmd = items[app.command_selected_index].id.clone();
                     app.command_input.clear();
                     app.command_selected_index = 0;
                     app.mode = TuiMode::Normal;

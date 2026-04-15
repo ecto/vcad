@@ -26,6 +26,9 @@ pub fn draw_command_palette(
 /// A single item in the command palette.
 #[derive(Debug, Clone)]
 pub struct CommandItem {
+    /// Canonical command id (matches `vcad_app::commands::Command::id` and
+    /// `App::process_command`'s match arms). Used for dispatch.
+    pub id: String,
     pub icon: String,
     pub label: String,
     pub description: String,
@@ -235,6 +238,7 @@ pub fn build_command_items(query: &str) -> Vec<CommandItem> {
         .into_iter()
         .take(8)
         .map(|cmd| CommandItem {
+            id: cmd.id.to_string(),
             icon: cmd.icon.to_string(),
             label: cmd.label.to_string(),
             description: cmd.shortcut.unwrap_or("").to_string(),
