@@ -13,7 +13,6 @@ import {
   Environment,
   Lightformer,
   ContactShadows,
-  Html,
 } from "@react-three/drei";
 import { EffectComposer, N8AO, Vignette } from "@react-three/postprocessing";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
@@ -999,15 +998,6 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
             labels={["X", "Z", "Y"]}
           />
         </GizmoHelper>
-      )}
-
-      {/* Subtle loading indicator while engine initializes (3D mode) */}
-      {!isPcbMode && !engineReady && (
-        <Html position={[0, 0, 0]} center>
-          <div className="text-xs text-text-muted opacity-50">
-            loading engine...
-          </div>
-        </Html>
       )}
 
       {/* Environment lighting (3D mode only) */}

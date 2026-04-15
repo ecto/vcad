@@ -279,8 +279,17 @@ export class Engine {
     }
   }
 
-  /** Load the vcad-kernel WASM module and return a ready engine. */
-  static async init(): Promise<Engine> {
+  /**
+   * Load the vcad-kernel WASM module and return a ready engine.
+   *
+   * The browser path accepts an optional pre-fetched WASM buffer or Response,
+   * forwarded to wasm-bindgen's init. Callers that want real byte-level
+   * download progress (see `packages/app/src/lib/bootstrap.ts`) fetch the
+   * asset themselves and pass the buffer here.
+   */
+  static async init(opts?: {
+    wasmInput?: BufferSource | Response;
+  }): Promise<Engine> {
     console.debug("[WASM] Engine.init: starting import(@vcad/kernel-wasm)");
     const wasmModule = await import("@vcad/kernel-wasm");
     console.debug("[WASM] Engine.init: import resolved");
@@ -310,8 +319,10 @@ export class Engine {
       const wasmBuffer = fs.readFileSync(wasmPath);
       wasmModule.initSync({ module: wasmBuffer });
     } else {
-      // In browser, use the default async init
-      await wasmModule.default();
+      // In browser, use the default async init. When `wasmInput` is provided,
+      // wasm-bindgen accepts a BufferSource/Response directly and skips its
+      // internal fetch — letting the caller drive download progress.
+      await wasmModule.default(opts?.wasmInput as Parameters<typeof wasmModule.default>[0]);
     }
 
     // Get the compiled WebAssembly.Module to share with the worker.

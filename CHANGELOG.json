@@ -2,6 +2,15 @@
   "$schema": "./changelog.schema.json",
   "entries": [
     {
+      "id": "2026-04-15-splash-screen-unified-boot",
+      "version": "0.8.0",
+      "date": "2026-04-15",
+      "category": "feat",
+      "title": "Splash screen and unified boot sequence",
+      "summary": "New full-screen splash replaces the racing boot path — service-worker update check, byte-level kernel fetch progress, and a rotating tip of the day. Eliminates flicker on fast boots and gives slow connections real feedback.",
+      "features": ["app", "ux", "boot", "pwa"]
+    },
+    {
       "id": "2026-04-15-mobile-tool-palette-parity",
       "version": "0.8.0",
       "date": "2026-04-15",
