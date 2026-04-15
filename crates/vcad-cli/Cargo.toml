@@ -17,6 +17,7 @@ vcad-ir = { path = "../vcad-ir" }
 vcad-crdt = { path = "../vcad-crdt" }
 vcad-kernel = { path = "../vcad-kernel" }
 vcad-app = { path = "../vcad-app" }
+vcad-chat = { path = "../vcad-chat" }
 vcad-eval = { path = "../vcad-eval" }
 vcad-kernel-urdf = { path = "../vcad-kernel-urdf" }
 vcad-kernel-sketch = { path = "../vcad-kernel-sketch" }
@@ -32,8 +33,13 @@ vcad-slicer-bambu = { path = "../vcad-slicer-bambu", default-features = false }
 # Print server (optional feature)
 axum = { version = "0.8", optional = true }
 tower-http = { version = "0.6", features = ["cors"], optional = true }
-tokio = { version = "1", features = ["full"], optional = true }
 termview = { path = "../termview" }
+
+# Async runtime for the chat stream background thread. `tokio` is required
+# unconditionally now; the print-server feature extends it with full runtime
+# support via `tokio` → full pulled in through feature.
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time"] }
+futures-util = "0.3"
 
 # TUI framework
 crossterm = "0.28"
@@ -53,7 +59,7 @@ anyhow.workspace = true
 thiserror.workspace = true
 
 [features]
-print-server = ["dep:axum", "dep:tower-http", "dep:tokio", "vcad-slicer-bambu/network"]
+print-server = ["dep:axum", "dep:tower-http", "vcad-slicer-bambu/network"]
 
 [dev-dependencies]
 tempfile = "3"

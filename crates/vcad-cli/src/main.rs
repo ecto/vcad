@@ -8,6 +8,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 mod app;
+mod chat_session;
 mod input;
 #[cfg(feature = "print-server")]
 mod print_server;

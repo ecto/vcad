@@ -377,7 +377,13 @@ pub fn handle_mouse(
             }
 
             let region = hit_test(app, area, col, row);
+            // Focus follows the click: clicking the chat sidebar focuses
+            // it, anything else unfocuses.
+            app.chat.focused = matches!(region, HitRegion::Terminal);
             match region {
+                HitRegion::Terminal => {
+                    // Sidebar click — already focused above, nothing else to do.
+                }
                 HitRegion::SidebarToggle => {
                     app.sidebar_visible = !app.sidebar_visible;
                 }
@@ -621,16 +627,18 @@ fn update_axis_template(ti: &mut ToolInput) {
 
 /// Handle a key event. Returns Ok(true) if the app should continue running.
 pub fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
-    // When terminal is open, route keys there first
-    if app.chat.open {
+    // When the chat input has focus, route keys there first.
+    if app.chat.focused {
         match key.code {
             KeyCode::Char('`') | KeyCode::Esc => {
-                app.chat.open = false;
+                app.chat.focused = false;
             }
             KeyCode::Enter => {
-                if let Some(_msg) = app.chat.send_message() {
-                    // TODO: send to AI agent backend
-                    app.chat.assistant("AI agent not yet connected.");
+                if let Some(msg) = app.chat.send_message() {
+                    crate::chat_session::push_user_message(app, msg);
+                    if let Err(e) = crate::chat_session::start_chat_turn(app) {
+                        app.log(crate::app::LogLevel::Error, "chat", e.to_string());
+                    }
                 }
             }
             KeyCode::Backspace => {
@@ -798,7 +806,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
                 app.mode = TuiMode::Command;
             }
             KeyCode::Char('`') => {
-                app.chat.open = true;
+                // Focus the chat input (sidebar is always visible now).
+                app.chat.focused = true;
             }
             KeyCode::Char('S') if key.modifiers.contains(KeyModifiers::SHIFT) => {
                 app.mode = TuiMode::Sketch(crate::tui::SketchModeState::new(

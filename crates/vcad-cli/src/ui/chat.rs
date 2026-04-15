@@ -29,10 +29,13 @@ pub struct ChatLine {
     pub kind: ChatLineKind,
 }
 
-/// Persistent drop-down chat panel state.
+/// Persistent chat sidebar state.
 pub struct ChatPanel {
-    /// Whether the panel is visible.
+    /// Whether the sidebar is rendered.
     pub open: bool,
+    /// Whether the input has keyboard focus — when true, key events route
+    /// to the chat input instead of the viewport/menu.
+    pub focused: bool,
     /// Current input buffer.
     pub input: String,
     /// Chat lines (messages + debug logs).
@@ -48,11 +51,13 @@ pub struct ChatPanel {
 }
 
 impl ChatPanel {
-    /// Create a chat panel docked to the right. Open by default — matches
-    /// the web app where the sidebar is the primary interaction surface.
+    /// Create a chat panel docked to the right. Open but not focused by
+    /// default — so CAD hotkeys still work until the user explicitly
+    /// focuses the input via `` ` `` / Tab / clicking the sidebar.
     pub fn new() -> Self {
         Self {
             open: true,
+            focused: false,
             input: String::new(),
             lines: Vec::new(),
             history: Vec::new(),

@@ -140,6 +140,9 @@ pub struct App {
     /// hovering over the viewport. Populated by input hit-testing in M2;
     /// currently `None` so the middle segment shows `—` placeholders.
     pub cursor_world: Option<(f64, f64, f64)>,
+    /// Conversational chat state — message history, in-flight request
+    /// receiver, accumulating assistant buffer. Populated by chat_session.
+    pub chat_session: crate::chat_session::ChatSession,
 }
 
 impl App {
@@ -188,6 +191,7 @@ impl App {
             dirty: false,
             logs: VecDeque::with_capacity(MAX_LOG_ENTRIES),
             cursor_world: None,
+            chat_session: Default::default(),
         };
 
         app.evaluate()?;
@@ -1289,6 +1293,10 @@ fn run_loop(stdout: &mut Stdout, app: &mut App) -> Result<()> {
 
         // Flush only changed cells
         cell_buffer.flush(stdout)?;
+
+        // Drain any chat events that arrived from the background stream
+        // thread and apply them to the chat panel / document.
+        crate::chat_session::drain_chat_events(app);
 
         // Handle input with 16ms poll
         if event::poll(Duration::from_millis(16))? {
