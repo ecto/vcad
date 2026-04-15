@@ -35,6 +35,7 @@ members = [
     "crates/vcad-kernel-stocksim",
     "crates/vcad-crdt",
     "crates/vcad-app",
+    "crates/vcad-chat",
     "crates/vcad-eval",
     "crates/vcad-loon",
     "crates/vcad-sim",

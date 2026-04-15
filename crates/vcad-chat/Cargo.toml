@@ -1,0 +1,32 @@
+[package]
+name = "vcad-chat"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "AI chat contract for vcad — tool schemas, system prompt, Anthropic streaming, token storage"
+
+[dependencies]
+vcad-ir = { workspace = true }
+vcad-kernel = { workspace = true }
+
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+
+# HTTP + streaming
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+    "json",
+    "stream",
+] }
+tokio = { version = "1", features = ["rt", "macros", "sync", "time", "io-util"] }
+futures-util = "0.3"
+bytes = "1"
+
+# Config / token storage
+directories = "5"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros", "test-util"] }
