@@ -41,9 +41,9 @@ pub enum ChatUpdate {
     Text(String),
     /// A tool call fully assembled from `tool_start` + `tool_delta*` + `block_stop`.
     ToolCall {
-        /// Unique id from the server — used by M4c when we send back a
-        /// `tool_result` content block to chain the next turn.
-        #[allow(dead_code)]
+        /// Unique id from the server. Threaded into `ToolUseRecord` and
+        /// emitted as the `id` / `tool_use_id` on both halves of the
+        /// next request's tool_use + tool_result content blocks.
         id: String,
         name: String,
         args: Value,

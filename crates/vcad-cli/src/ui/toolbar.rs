@@ -1,6 +1,6 @@
 //! Bottom toolbar — centered pill with tabs and expandable sub-tools.
 
-use super::buffer::{set_char, set_char_underline, set_string, CellBuffer, Color, Rect};
+use super::buffer::{set_char, set_char_underline, set_string, CellBuffer, Rect};
 use super::theme;
 
 /// A sub-tool within a tab.
@@ -531,7 +531,7 @@ fn render_sub_tools_flush(
     selected_count: usize,
 ) {
     let tab_color = theme::tab_color(active_tab);
-    let disabled_color = Color::rgb(0x55, 0x55, 0x55);
+    let disabled_color = theme::DISABLED();
     let right_edge = area.x + area.width;
 
     let mut tx = area.x + LEFT_PAD;

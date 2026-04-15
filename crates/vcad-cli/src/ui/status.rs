@@ -13,7 +13,7 @@
 
 use std::time::Instant;
 
-use super::buffer::{set_char, set_string, CellBuffer, Color, Rect};
+use super::buffer::{set_char, set_string, CellBuffer, Rect};
 use super::theme;
 
 use crate::app::{App, LogLevel};
@@ -200,7 +200,7 @@ fn draw_cursor_segment(buf: &mut CellBuffer, app: &App, x_start: u16, y: u16, wi
             let fg = if value.is_some() {
                 theme::TEXT()
             } else {
-                Color::rgb(0x55, 0x55, 0x55)
+                theme::DISABLED()
             };
             set_char(buf, cx, y, ch, fg, theme::SURFACE());
             cx += 1;

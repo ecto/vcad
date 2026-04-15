@@ -59,6 +59,11 @@ pub struct Theme {
     pub border: Color,
     pub text: Color,
     pub text_muted: Color,
+    /// Used for buttons/sub-tools that are un-clickable in the current
+    /// context (e.g. "requires selection" while nothing is selected).
+    /// Each theme picks its own shade instead of the old hardcoded
+    /// `#555555` which looked wrong on light / terminal-native themes.
+    pub disabled: Color,
     pub accent: Color,
     // Semantic
     pub green: Color,
@@ -80,6 +85,7 @@ pub const DARK: Theme = Theme {
     border: Color::rgb(0x44, 0x44, 0x44),
     text: Color::rgb(0xF8, 0xF8, 0xF2),
     text_muted: Color::rgb(0x75, 0x71, 0x5E),
+    disabled: Color::rgb(0x55, 0x55, 0x55),
     accent: Color::rgb(0xF9, 0x26, 0x72),
     green: Color::rgb(0xA6, 0xE2, 0x2E),
     yellow: Color::rgb(0xE6, 0xDB, 0x74),
@@ -98,6 +104,7 @@ pub const LIGHT: Theme = Theme {
     border: Color::rgb(0xBB, 0xBB, 0xB0),
     text: Color::rgb(0x1E, 0x1E, 0x1E),
     text_muted: Color::rgb(0x6B, 0x6B, 0x60),
+    disabled: Color::rgb(0xB5, 0xB5, 0xA8),
     accent: Color::rgb(0xD1, 0x1A, 0x5C),
     green: Color::rgb(0x3A, 0x8C, 0x0A),
     yellow: Color::rgb(0x9C, 0x8A, 0x00),
@@ -122,6 +129,7 @@ pub const TERMINAL: Theme = Theme {
     border: Color::Named(NamedColor::DarkGrey),
     text: Color::Default,
     text_muted: Color::Named(NamedColor::DarkGrey),
+    disabled: Color::Named(NamedColor::DarkGrey),
     accent: Color::Named(NamedColor::Red),
     green: Color::Named(NamedColor::Green),
     yellow: Color::Named(NamedColor::Yellow),
@@ -249,6 +257,10 @@ pub fn TEXT() -> Color {
 #[allow(non_snake_case)]
 pub fn TEXT_MUTED() -> Color {
     active().text_muted
+}
+#[allow(non_snake_case)]
+pub fn DISABLED() -> Color {
+    active().disabled
 }
 #[allow(non_snake_case)]
 pub fn ACCENT() -> Color {
