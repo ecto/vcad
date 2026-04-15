@@ -648,6 +648,24 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   _crdtEngineClass: null,
 
   _initCrdt: (EngineClass) => {
+    // Guard against double-initialization. React StrictMode fires effects
+    // twice in dev, and without this guard we'd construct two independent
+    // WasmDocumentEngine instances, leak the first, and risk downstream
+    // wasm-bindgen borrow / OOB / null-ptr errors if GC frees the orphaned
+    // instance while its ptr is still referenced somewhere. If the engine
+    // class changes (shouldn't happen in practice), we do recreate.
+    const existing = get()._crdtEngine;
+    const existingClass = get()._crdtEngineClass;
+    if (existing && existingClass === EngineClass) {
+      return;
+    }
+    if (existing) {
+      try {
+        existing.free();
+      } catch {
+        /* best effort */
+      }
+    }
     _sceneSettingsFeatureId = null;
     _schematicFeatureId = null;
     const engine = new EngineClass();
