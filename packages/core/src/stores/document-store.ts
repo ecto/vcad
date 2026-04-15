@@ -829,26 +829,51 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   loadDocument: (file) => {
     const state = get();
+    if (!state._crdtEngineClass) return;
 
-    if (state._crdtEngineClass) {
-      try {
-        const irJson = JSON.stringify(file.document);
-        const engine = state._crdtEngineClass.from_v1_json(irJson);
-        const doc: Document = JSON.parse(engine.get_document_json());
-        const parts: PartInfo[] = JSON.parse(engine.get_parts_json());
-        const patch = applyLegacyResult({ document: doc, parts });
-        if (state._crdtEngine) {
-          state._crdtEngine.free();
+    // Phase 1: build everything off the NEW engine in isolation. If any step
+    // throws (migration panic, borrow-check failure inside wasm-bindgen), the
+    // old engine is still untouched and the store is never left in a half-
+    // installed state.
+    let newEngine: WasmDocumentEngine | null = null;
+    let patch: Partial<DocumentState> | null = null;
+    try {
+      const irJson = JSON.stringify(file.document);
+      newEngine = state._crdtEngineClass.from_v1_json(irJson);
+      const doc: Document = JSON.parse(newEngine.get_document_json());
+      const parts: PartInfo[] = JSON.parse(newEngine.get_parts_json());
+      patch = applyLegacyResult({ document: doc, parts });
+    } catch (e) {
+      console.error("Failed to migrate legacy document to CRDT:", e);
+      // Clean up the half-constructed new engine if migration died mid-read.
+      if (newEngine) {
+        try {
+          newEngine.free();
+        } catch {
+          /* best effort — the wrapper is dead to us either way */
         }
-        set({
-          ...patch,
-          _crdtEngine: engine,
-          isDirty: false,
-          loonSource: file.loonSource ?? null,
-        });
-        return;
+      }
+      return;
+    }
+
+    // Phase 2: commit. Install the new engine FIRST so the store is valid
+    // the moment any subscriber re-renders, THEN free the old engine. If
+    // the old free() throws (the symptom cam hit when legacy examples
+    // trigger wasm-bindgen re-entrancy on an in-flight borrow), the store
+    // is already pointing at the healthy new engine so undo/redo checks
+    // won't crash into a zeroed wrapper.
+    const oldEngine = state._crdtEngine;
+    set({
+      ...patch,
+      _crdtEngine: newEngine,
+      isDirty: false,
+      loonSource: file.loonSource ?? null,
+    });
+    if (oldEngine) {
+      try {
+        oldEngine.free();
       } catch (e) {
-        console.error("Failed to migrate legacy document to CRDT:", e);
+        console.warn("Failed to free previous engine (leaked):", e);
       }
     }
   },
