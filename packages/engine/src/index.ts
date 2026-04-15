@@ -586,7 +586,13 @@ export class Engine {
         positions: new Float32Array(meshData.positions),
         indices: new Uint32Array(meshData.indices),
       };
-    } catch {
+    } catch (e) {
+      // Log the error instead of silently swallowing it. A panic inside
+      // `Solid.extrude` poisons the wasm borrow tracking and the very next
+      // `WasmDocumentEngine.add_feature` call will fail with "recursive
+      // use of an object detected" — without this log, the root cause is
+      // invisible.
+      console.warn("[engine] evaluateExtrudePreview failed:", e);
       return null;
     }
   }
@@ -636,7 +642,10 @@ export class Engine {
         positions: new Float32Array(meshData.positions),
         indices: new Uint32Array(meshData.indices),
       };
-    } catch {
+    } catch (e) {
+      // See evaluateExtrudePreview — silent catches here poison wasm
+      // borrows and break the next mutation.
+      console.warn("[engine] evaluateRevolvePreview failed:", e);
       return null;
     }
   }

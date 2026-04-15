@@ -25,6 +25,10 @@ export interface FaceInfo {
   faceIndex: number;
   normal: Vec3;
   centroid: Vec3;
+  /** Unique vertices on this coplanar face, in kernel (Z-up) coordinates.
+   *  Used to size the sketch grid and provide snap targets. Optional for
+   *  back-compat with hover paths that only need normal+centroid. */
+  vertices?: Vec3[];
 }
 
 export interface PrimitivePartInfo {

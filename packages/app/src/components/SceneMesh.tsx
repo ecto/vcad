@@ -133,18 +133,23 @@ interface SceneMeshProps {
   selectionId?: string;
 }
 
-/** Compute face info from a raycast hit */
+/** Compute face info from a raycast hit.
+ *
+ * Walks the mesh once to collect all triangles coplanar with the hit
+ * triangle, returning the true face centroid (average of unique vertices)
+ * and the list of unique vertices on the face. Both are in kernel (Z-up)
+ * coordinates, matching the buffer positions — the raycast `hitPoint`
+ * passed in by R3F is in world (Y-up) space and is intentionally ignored.
+ */
 function computeFaceInfo(
   mesh: TriangleMesh,
   faceIndex: number,
   partId: string,
-  hitPoint: THREE.Vector3,
 ): FaceInfo {
-  // Get triangle vertices from mesh indices
+  // Get the hit triangle's normal (kernel space — buffer is unrotated)
   const i0 = mesh.indices[faceIndex * 3]!;
   const i1 = mesh.indices[faceIndex * 3 + 1]!;
   const i2 = mesh.indices[faceIndex * 3 + 2]!;
-
   const v0 = new THREE.Vector3(
     mesh.positions[i0 * 3]!,
     mesh.positions[i0 * 3 + 1]!,
@@ -160,17 +165,64 @@ function computeFaceInfo(
     mesh.positions[i2 * 3 + 1]!,
     mesh.positions[i2 * 3 + 2]!,
   );
+  const refNormal = v1.clone().sub(v0).cross(v2.clone().sub(v0)).normalize();
+  const refOffset = refNormal.dot(v0); // signed distance of plane from origin
 
-  // Compute face normal via cross product
-  const edge1 = v1.clone().sub(v0);
-  const edge2 = v2.clone().sub(v0);
-  const normal = edge1.cross(edge2).normalize();
+  // Walk every triangle, keep those coplanar with the hit triangle, and
+  // collect their unique vertices.
+  const PLANE_TOLERANCE = 0.01; // mm
+  const vertexMap = new Map<string, { x: number; y: number; z: number }>();
+  const triCount = mesh.indices.length / 3;
+  for (let t = 0; t < triCount; t++) {
+    const a = mesh.indices[t * 3]!;
+    const b = mesh.indices[t * 3 + 1]!;
+    const c = mesh.indices[t * 3 + 2]!;
+    const va = new THREE.Vector3(
+      mesh.positions[a * 3]!,
+      mesh.positions[a * 3 + 1]!,
+      mesh.positions[a * 3 + 2]!,
+    );
+    const vb = new THREE.Vector3(
+      mesh.positions[b * 3]!,
+      mesh.positions[b * 3 + 1]!,
+      mesh.positions[b * 3 + 2]!,
+    );
+    const vc = new THREE.Vector3(
+      mesh.positions[c * 3]!,
+      mesh.positions[c * 3 + 1]!,
+      mesh.positions[c * 3 + 2]!,
+    );
+    const triNormal = vb.clone().sub(va).cross(vc.clone().sub(va)).normalize();
+    if (triNormal.dot(refNormal) < 1 - NORMAL_TOLERANCE) continue;
+    if (Math.abs(refNormal.dot(va) - refOffset) > PLANE_TOLERANCE) continue;
+
+    for (const v of [va, vb, vc]) {
+      const key = `${v.x.toFixed(4)},${v.y.toFixed(4)},${v.z.toFixed(4)}`;
+      if (!vertexMap.has(key)) {
+        vertexMap.set(key, { x: v.x, y: v.y, z: v.z });
+      }
+    }
+  }
+
+  const vertices = Array.from(vertexMap.values());
+  // True face centroid: average of unique vertices, in kernel coords.
+  let cx = 0;
+  let cy = 0;
+  let cz = 0;
+  for (const v of vertices) {
+    cx += v.x;
+    cy += v.y;
+    cz += v.z;
+  }
+  const n = Math.max(vertices.length, 1);
+  const centroid = { x: cx / n, y: cy / n, z: cz / n };
 
   return {
     partId,
     faceIndex,
-    normal: { x: normal.x, y: normal.y, z: normal.z },
-    centroid: { x: hitPoint.x, y: hitPoint.y, z: hitPoint.z },
+    normal: { x: refNormal.x, y: refNormal.y, z: refNormal.z },
+    centroid,
+    vertices,
   };
 }
 
@@ -569,12 +621,7 @@ export const SceneMesh = memo(function SceneMesh({
 
       // In face selection mode, select the face
       if (faceSelectionMode && e.faceIndex != null) {
-        const faceInfo = computeFaceInfo(
-          mesh,
-          e.faceIndex,
-          partInfo.id,
-          e.point,
-        );
+        const faceInfo = computeFaceInfo(mesh, e.faceIndex, partInfo.id);
         selectFace(faceInfo);
         return;
       }
@@ -595,12 +642,7 @@ export const SceneMesh = memo(function SceneMesh({
       if (isOrbiting) return;
       if (faceSelectionMode && e.faceIndex != null) {
         e.stopPropagation();
-        const faceInfo = computeFaceInfo(
-          mesh,
-          e.faceIndex,
-          partInfo.id,
-          e.point,
-        );
+        const faceInfo = computeFaceInfo(mesh, e.faceIndex, partInfo.id);
         setHoveredFace(faceInfo);
       }
     },
