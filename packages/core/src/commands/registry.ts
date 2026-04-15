@@ -18,6 +18,31 @@ import { STATIC_TOOL_SCHEMAS } from "./static-schemas.js";
 export interface ChatWasmBindings {
   get_anthropic_tools_json(): string;
   build_chat_system_prompt(partsJson: string, selectionJson: string): string;
+  /** Plan a CRUD tool call against a document snapshot. Returns a JSON
+   *  `PlannedResponse`. Not every kernel-wasm build exposes this (it
+   *  landed after the other two bindings), so callers must null-check. */
+  plan_chat_tool?(tool: string, argsJson: string, docJson: string): string;
+}
+
+/** Rust-side `ToolOutcome` enum mirrored for TS dispatch. Every variant
+ *  corresponds to a specific docstore mutation path on the web. */
+export type ToolOutcome =
+  | {
+      kind: "add_feature";
+      /** The new feature's op, ready to hand to `engine.add_feature`. */
+      op: Record<string, unknown>;
+      name?: string;
+      parent_part_id?: string;
+    }
+  | { kind: "update_params"; node_id: string; params: Record<string, unknown> }
+  | { kind: "remove_part"; part_id: string }
+  | { kind: "set_part_material"; part_id: string; material: string };
+
+/** Rust-side `PlannedResponse` mirrored for TS. */
+export interface PlannedResponse {
+  status: "success" | "error";
+  result: string;
+  outcome?: ToolOutcome;
 }
 
 export class CommandRegistry {
@@ -43,6 +68,28 @@ export class CommandRegistry {
    */
   setWasm(wasm: ChatWasmBindings | null): void {
     this.wasm = wasm;
+  }
+
+  /**
+   * Plan a CRUD tool call via the Rust executor. Returns `null` if the
+   * wasm binding isn't present (old kernel build, test harness, etc.)
+   * so callers can fall back to the TS `executeCrud` path.
+   *
+   * `docJson` is a `JSON.stringify(document)` of the current store
+   * snapshot — the planner needs it for id/existence validation.
+   */
+  planCrud(
+    tool: string,
+    args: Record<string, unknown>,
+    docJson: string,
+  ): PlannedResponse | null {
+    if (!this.wasm?.plan_chat_tool) return null;
+    try {
+      const raw = this.wasm.plan_chat_tool(tool, JSON.stringify(args), docJson);
+      return JSON.parse(raw) as PlannedResponse;
+    } catch {
+      return null;
+    }
   }
 
   /** Get all loaded schema entries. */

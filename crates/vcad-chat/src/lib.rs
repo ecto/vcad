@@ -36,7 +36,10 @@ pub use auth::{
     clear_token, generate_device_code, load_token, open_browser, poll_for_token, save_token,
     token_path, AuthError, DeviceCode, Token,
 };
-pub use executor::{execute_crud, ExecutionResult, ExecutionStatus};
+pub use executor::{
+    apply_outcome, execute_crud, plan_crud, ApplyResult, ExecutionResult, ExecutionStatus,
+    PlannedResponse, ToolOutcome,
+};
 pub use prompt::{
     build_system_prompt, parts_from_document, type_catalog, NodeInfo, PartInfo, SelectionInfo,
 };

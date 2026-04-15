@@ -50,6 +50,31 @@ pub fn get_anthropic_tools_json() -> String {
     serde_json::to_string(&vcad_chat::anthropic_tools()).unwrap()
 }
 
+/// Plan a chat tool call against the current document snapshot.
+///
+/// This is the web-side entry point for the Rust chat executor: the TS
+/// web app serializes its current `Document`, hands it plus the tool
+/// name and args to this function, and gets back a JSON
+/// `PlannedResponse` that describes the mutation to perform. The TS
+/// caller then dispatches the outcome through the CRDT engine's
+/// existing methods (`add_feature` / `setFeatureParam` / `removePart` /
+/// `setPartMaterial`) — which keeps CRDT op logs in sync and preserves
+/// undo, while sharing the validation + argument parsing logic with
+/// the TUI via `vcad_chat::plan_crud`.
+///
+/// `doc_json` must deserialize into `vcad_ir::Document`; a parse
+/// failure treats the doc as empty (an empty Document never validates
+/// any id lookups, so planners that need to check part_id existence
+/// will return a clean error).
+#[wasm_bindgen]
+pub fn plan_chat_tool(tool: &str, args_json: &str, doc_json: &str) -> String {
+    let args: serde_json::Value =
+        serde_json::from_str(args_json).unwrap_or(serde_json::Value::Null);
+    let doc: vcad_ir::Document = serde_json::from_str(doc_json).unwrap_or_default();
+    let response = vcad_chat::plan_crud(tool, &args, &doc);
+    serde_json::to_string(&response).unwrap_or_else(|_| "{}".to_string())
+}
+
 /// Build the system prompt sent with every `/api/chat` request.
 ///
 /// `parts_json` must deserialize into `Vec<vcad_chat::PartInfo>` (the TS

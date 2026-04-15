@@ -1,19 +1,23 @@
-//! CRUD tool executor — Rust port of `executeCrud` from
-//! `packages/core/src/commands/executors.ts`.
+//! CRUD tool executor — the Rust side of the chat tool contract.
 //!
-//! Takes a `&mut vcad_ir::Document` and a tool name + args, returns a
-//! structured [`ExecutionResult`] that the chat panel can render. Unlike
-//! the TS version — which wraps a huge Zustand `DocumentStore` — the Rust
-//! version mutates the IR document directly. A future frontend that needs
-//! different semantics (e.g. CRDT-backed, undo-aware) can wrap the same
-//! functions with a trait layer.
+//! Split into two layers so every frontend can reuse the validation +
+//! argument parsing without being forced into the same mutation machinery:
 //!
-//! Scope for M3.5:
-//! - **create**       — full support via `CsgOp` serde roundtrip.
-//! - **read**         — list parts or describe one by part id.
-//! - **delete**       — removes the scene entry and its root node.
-//! - **set_material** — updates the scene entry's material key.
-//! - **update**       — stub; real per-variant param merging is M3.5+.
+//! - [`plan_crud`] takes a `&Document` read-only and returns a
+//!   [`PlannedResponse`] describing what should happen via a
+//!   [`ToolOutcome`]. No mutation. Used by the web's TS executor, which
+//!   dispatches the outcome through the CRDT engine.
+//! - [`apply_outcome`] takes a `&mut Document` and applies the planned
+//!   outcome via direct struct mutation. Used by the TUI and by
+//!   [`execute_crud`], which is now a thin wrapper for the
+//!   `plan → apply` flow.
+//!
+//! Tools:
+//! - **create**       — builds a `ToolOutcome::AddFeature` via `CsgOp` serde roundtrip.
+//! - **read**         — pure, no outcome — returns the description string.
+//! - **update**       — builds a `ToolOutcome::UpdateParams` to merge into a node.
+//! - **delete**       — builds a `ToolOutcome::RemovePart`.
+//! - **set_material** — builds a `ToolOutcome::SetPartMaterial`.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -74,40 +78,278 @@ impl ExecutionResult {
     }
 }
 
-/// Dispatch a CRUD tool call. `tool` is one of `create` / `read` / `update` /
-/// `delete` / `set_material`; `args` is the Anthropic-supplied input object.
-pub fn execute_crud(tool: &str, args: &Value, doc: &mut Document) -> ExecutionResult {
+// ---------------------------------------------------------------------------
+// Plan + apply split
+// ---------------------------------------------------------------------------
+
+/// What a tool call should do, independent of how a particular frontend
+/// applies it. The web dispatches this through its CRDT engine methods
+/// (`add_feature` / `setFeatureParam` / `removePart` / `setPartMaterial`);
+/// the TUI applies it in-place via [`apply_outcome`].
+///
+/// Note: `AddFeature` does not carry a node id. Each applier assigns its
+/// own id — the TUI picks `max(existing ids) + 1`, the CRDT engine
+/// returns its own id from `add_feature`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ToolOutcome {
+    /// Insert a new feature. `parent_part_id`, when set, rewires an
+    /// existing scene-entry root to the new node (used by modifiers
+    /// like Fillet / Shell that wrap an existing solid).
+    AddFeature {
+        op: CsgOp,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        parent_part_id: Option<String>,
+    },
+    /// Merge partial params into an existing node's op. The applier
+    /// handles the serde roundtrip (web can also dispatch per-field via
+    /// `setFeatureParam`).
+    UpdateParams {
+        node_id: String,
+        params: Value,
+    },
+    /// Remove a part and its root node from the document.
+    RemovePart { part_id: String },
+    /// Assign a material preset to a part's scene entry.
+    SetPartMaterial { part_id: String, material: String },
+}
+
+/// Read-only planner response. `result` is the human-facing summary the
+/// chat panel renders (and the model sees on the next turn). `outcome`
+/// is `None` for pure reads.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlannedResponse {
+    pub status: ExecutionStatus,
+    pub result: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<ToolOutcome>,
+}
+
+impl PlannedResponse {
+    fn success(result: impl Into<String>) -> Self {
+        Self {
+            status: ExecutionStatus::Success,
+            result: result.into(),
+            outcome: None,
+        }
+    }
+
+    fn error(result: impl Into<String>) -> Self {
+        Self {
+            status: ExecutionStatus::Error,
+            result: result.into(),
+            outcome: None,
+        }
+    }
+
+    fn with_outcome(mut self, outcome: ToolOutcome) -> Self {
+        self.outcome = Some(outcome);
+        self
+    }
+}
+
+/// Plan a tool call against a read-only document. Returns what should
+/// happen without mutating anything. Each frontend feeds the resulting
+/// [`ToolOutcome`] into its own mutation path.
+pub fn plan_crud(tool: &str, args: &Value, doc: &Document) -> PlannedResponse {
     match tool {
-        "create" => execute_create(args, doc),
-        "read" => execute_read(args, doc),
-        "update" => execute_update(args, doc),
-        "delete" => execute_delete(args, doc),
-        "set_material" => execute_set_material(args, doc),
-        other => ExecutionResult::error(format!("unknown tool: {other}")),
+        "create" => plan_create(args, doc),
+        "read" => plan_read(args, doc),
+        "update" => plan_update(args, doc),
+        "delete" => plan_delete(args, doc),
+        "set_material" => plan_set_material(args, doc),
+        other => PlannedResponse::error(format!("unknown tool: {other}")),
+    }
+}
+
+/// Apply a planned outcome to a `&mut Document`. Returns the id assigned
+/// to a newly-created node (for `AddFeature`), or a matched id for other
+/// outcomes so the caller can tell the model which entity was affected.
+///
+/// The web's CRDT-backed docstore uses its own applier that dispatches
+/// through `engine.add_feature` etc.; this function is for every other
+/// frontend that mutates a `vcad_ir::Document` directly.
+pub fn apply_outcome(
+    doc: &mut Document,
+    outcome: &ToolOutcome,
+) -> Result<ApplyResult, String> {
+    match outcome {
+        ToolOutcome::AddFeature {
+            op,
+            name,
+            parent_part_id,
+        } => {
+            let new_id = next_node_id(doc);
+            doc.nodes.insert(
+                new_id,
+                Node {
+                    id: new_id,
+                    name: name.clone(),
+                    op: op.clone(),
+                },
+            );
+            if let Some(parent) = parent_part_id {
+                let parent_nid = parent
+                    .parse::<NodeId>()
+                    .map_err(|_| format!("invalid parent_part_id: {parent}"))?;
+                let entry = doc
+                    .roots
+                    .iter_mut()
+                    .find(|e| e.root == parent_nid)
+                    .ok_or_else(|| format!("parent part not found: {parent}"))?;
+                entry.root = new_id;
+            } else {
+                doc.roots.push(SceneEntry {
+                    root: new_id,
+                    material: "default".to_string(),
+                    visible: None,
+                });
+            }
+            Ok(ApplyResult {
+                part_id: Some(new_id.to_string()),
+                node_id: Some(new_id.to_string()),
+            })
+        }
+        ToolOutcome::UpdateParams { node_id, params } => {
+            let nid = node_id
+                .parse::<NodeId>()
+                .map_err(|_| format!("invalid node_id: {node_id}"))?;
+            let node = doc
+                .nodes
+                .get_mut(&nid)
+                .ok_or_else(|| format!("node not found: {node_id}"))?;
+            let mut op_value = serde_json::to_value(&node.op)
+                .map_err(|e| format!("failed to serialize op: {e}"))?;
+            let op_map = op_value
+                .as_object_mut()
+                .ok_or_else(|| "current op is not an object — unexpected shape".to_string())?;
+            if let Value::Object(incoming) = params {
+                for (key, val) in incoming {
+                    if key == "type" {
+                        continue;
+                    }
+                    op_map.insert(key.clone(), val.clone());
+                }
+            }
+            let new_op: CsgOp = serde_json::from_value(op_value)
+                .map_err(|e| format!("failed to apply params to {node_id}: {e}"))?;
+            node.op = new_op;
+            Ok(ApplyResult {
+                part_id: None,
+                node_id: Some(node_id.clone()),
+            })
+        }
+        ToolOutcome::RemovePart { part_id } => {
+            let nid = part_id
+                .parse::<NodeId>()
+                .map_err(|_| format!("invalid part_id: {part_id}"))?;
+            let before = doc.roots.len();
+            doc.roots.retain(|e| e.root != nid);
+            if doc.roots.len() == before {
+                return Err(format!("part not found: {part_id}"));
+            }
+            doc.nodes.remove(&nid);
+            Ok(ApplyResult {
+                part_id: Some(part_id.clone()),
+                node_id: None,
+            })
+        }
+        ToolOutcome::SetPartMaterial { part_id, material } => {
+            let nid = part_id
+                .parse::<NodeId>()
+                .map_err(|_| format!("invalid part_id: {part_id}"))?;
+            let entry = doc
+                .roots
+                .iter_mut()
+                .find(|e| e.root == nid)
+                .ok_or_else(|| format!("part not found: {part_id}"))?;
+            entry.material = material.clone();
+            Ok(ApplyResult {
+                part_id: Some(part_id.clone()),
+                node_id: None,
+            })
+        }
+    }
+}
+
+/// Identifiers a successful [`apply_outcome`] call resolved or assigned.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ApplyResult {
+    pub part_id: Option<String>,
+    pub node_id: Option<String>,
+}
+
+/// Dispatch a CRUD tool call and apply it to the document in one shot.
+/// Thin wrapper over [`plan_crud`] + [`apply_outcome`] — the split is
+/// the seam the web uses to dispatch the outcome through its CRDT
+/// engine instead of mutating the IR document directly.
+pub fn execute_crud(tool: &str, args: &Value, doc: &mut Document) -> ExecutionResult {
+    let planned = plan_crud(tool, args, doc);
+    let Some(outcome) = planned.outcome.clone() else {
+        // Pure read or planner error — no mutation.
+        return ExecutionResult {
+            status: planned.status,
+            result: planned.result,
+            part_id: None,
+            node_id: None,
+        };
+    };
+    if planned.status == ExecutionStatus::Error {
+        return ExecutionResult {
+            status: planned.status,
+            result: planned.result,
+            part_id: None,
+            node_id: None,
+        };
+    }
+
+    match apply_outcome(doc, &outcome) {
+        Ok(ids) => {
+            // Augment the result with the assigned id so follow-up tool
+            // calls can reference the new part. The planner's result is
+            // id-agnostic ("Created cube"); we append the concrete id
+            // the applier picked.
+            let augmented = match (&outcome, &ids.node_id) {
+                (ToolOutcome::AddFeature { .. }, Some(nid)) => {
+                    format!("{} with id: {nid}", planned.result)
+                }
+                _ => planned.result,
+            };
+            ExecutionResult {
+                status: ExecutionStatus::Success,
+                result: augmented,
+                part_id: ids.part_id,
+                node_id: ids.node_id,
+            }
+        }
+        Err(e) => ExecutionResult::error(e),
     }
 }
 
 // ---------------------------------------------------------------------------
-// create
+// plan: create
 // ---------------------------------------------------------------------------
 
-fn execute_create(args: &Value, doc: &mut Document) -> ExecutionResult {
+fn plan_create(args: &Value, _doc: &Document) -> PlannedResponse {
     let Some(ty) = args.get("type").and_then(|v| v.as_str()) else {
-        return ExecutionResult::error("create requires `type`");
+        return PlannedResponse::error("create requires `type`");
     };
     let params = args
         .get("params")
         .cloned()
         .unwrap_or_else(|| Value::Object(Map::new()));
     let name = args.get("name").and_then(|v| v.as_str()).map(str::to_string);
-    let parent_part_id = args.get("parent_part_id").and_then(|v| v.as_str());
+    let parent_part_id = args
+        .get("parent_part_id")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
 
     // CsgOp carries `#[serde(tag = "type")]` with no rename_all, so serde
     // wants the PascalCase variant name ("Cube") — but the ToolSchema proc
-    // macro publishes snake_case names ("cube"). Bridge the two: map
-    // snake_case → PascalCase via the schema list (authoritative) before
-    // handing off to serde. Unknown names fall through as-is and serde
-    // will surface a clear error.
+    // macro publishes snake_case names ("cube"). Bridge the two before
+    // handing off to serde.
     let pascal_ty = snake_to_pascal(ty);
 
     let mut obj = Map::new();
@@ -117,49 +359,27 @@ fn execute_create(args: &Value, doc: &mut Document) -> ExecutionResult {
             obj.insert(k, v);
         }
     } else {
-        return ExecutionResult::error("create `params` must be an object");
+        return PlannedResponse::error("create `params` must be an object");
     }
 
     let op: CsgOp = match serde_json::from_value(Value::Object(obj)) {
         Ok(op) => op,
-        Err(e) => return ExecutionResult::error(format!("failed to parse {ty}: {e}")),
+        Err(e) => return PlannedResponse::error(format!("failed to parse {ty}: {e}")),
     };
 
-    let new_id = next_node_id(doc);
-    doc.nodes.insert(
-        new_id,
-        Node {
-            id: new_id,
-            name,
-            op,
-        },
-    );
-
-    if let Some(parent) = parent_part_id {
-        // Rewire the parent scene entry so it points at the new node. The
-        // caller is responsible for having the new node reference the
-        // previous root through its own fields (fillet/shell/etc. have a
-        // `parent` field in their params).
-        let Ok(parent_nid) = parent.parse::<NodeId>() else {
-            return ExecutionResult::error(format!("invalid parent_part_id: {parent}"));
-        };
-        let Some(entry) = doc.roots.iter_mut().find(|e| e.root == parent_nid) else {
-            return ExecutionResult::error(format!("parent part not found: {parent}"));
-        };
-        entry.root = new_id;
-        ExecutionResult::success(format!("Wrapped part {parent} with {ty}, new id: {new_id}"))
-            .with_part(new_id.to_string())
-            .with_node(new_id.to_string())
+    // Planner result is id-agnostic — the applier appends the concrete
+    // id it picked once the node actually lands.
+    let summary = if parent_part_id.is_some() {
+        format!("Wrapped part with {ty}")
     } else {
-        doc.roots.push(SceneEntry {
-            root: new_id,
-            material: "default".to_string(),
-            visible: None,
-        });
-        ExecutionResult::success(format!("Created {ty} with id: {new_id}"))
-            .with_part(new_id.to_string())
-            .with_node(new_id.to_string())
-    }
+        format!("Created {ty}")
+    };
+
+    PlannedResponse::success(summary).with_outcome(ToolOutcome::AddFeature {
+        op,
+        name,
+        parent_part_id,
+    })
 }
 
 /// Compute the next free NodeId by taking max + 1 over the existing keys.
@@ -186,10 +406,21 @@ fn snake_to_pascal(s: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// read
+// plan: read
 // ---------------------------------------------------------------------------
 
-fn execute_read(args: &Value, doc: &Document) -> ExecutionResult {
+fn plan_read(args: &Value, doc: &Document) -> PlannedResponse {
+    // Read is pure — delegate to the existing impl which already returns
+    // an id-agnostic result string.
+    let er = execute_read_inner(args, doc);
+    PlannedResponse {
+        status: er.status,
+        result: er.result,
+        outcome: None,
+    }
+}
+
+fn execute_read_inner(args: &Value, doc: &Document) -> ExecutionResult {
     let part_id = args.get("part_id").and_then(|v| v.as_str());
     match part_id {
         None => {
@@ -271,103 +502,100 @@ fn pascal_to_snake(s: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// update
+// plan: update
 // ---------------------------------------------------------------------------
 
-fn execute_update(args: &Value, doc: &mut Document) -> ExecutionResult {
+fn plan_update(args: &Value, doc: &Document) -> PlannedResponse {
     let Some(node_id_str) = args.get("node_id").and_then(|v| v.as_str()) else {
-        return ExecutionResult::error("update requires `node_id`");
+        return PlannedResponse::error("update requires `node_id`");
     };
     let Ok(nid) = node_id_str.parse::<NodeId>() else {
-        return ExecutionResult::error(format!("invalid node_id: {node_id_str}"));
+        return PlannedResponse::error(format!("invalid node_id: {node_id_str}"));
     };
     let Some(params_value) = args.get("params") else {
-        return ExecutionResult::error("update requires `params`");
+        return PlannedResponse::error("update requires `params`");
     };
-    let Value::Object(incoming) = params_value else {
-        return ExecutionResult::error("update `params` must be an object");
-    };
+    if !matches!(params_value, Value::Object(_)) {
+        return PlannedResponse::error("update `params` must be an object");
+    }
 
-    let Some(node) = doc.nodes.get_mut(&nid) else {
-        return ExecutionResult::error(format!("node not found: {node_id_str}"));
+    // Verify the node exists and the merge would succeed — this is the
+    // "dry run" planner, so we do a serde round-trip against a clone
+    // without touching the document.
+    let Some(node) = doc.nodes.get(&nid) else {
+        return PlannedResponse::error(format!("node not found: {node_id_str}"));
     };
-
-    // Serde round-trip: serialize the current op to a Value (produces
-    // {"type": "Cube", "size": {...}}), merge the incoming params in,
-    // deserialize back into a new CsgOp. Handles every variant uniformly
-    // without needing per-variant match arms, and any shape mismatch
-    // falls out as a clean serde error.
     let mut op_value = match serde_json::to_value(&node.op) {
         Ok(v) => v,
-        Err(e) => return ExecutionResult::error(format!("failed to serialize op: {e}")),
+        Err(e) => return PlannedResponse::error(format!("failed to serialize op: {e}")),
     };
-    let Value::Object(ref mut op_map) = op_value else {
-        return ExecutionResult::error("current op is not an object — unexpected shape");
+    let Value::Object(op_map) = &mut op_value else {
+        return PlannedResponse::error("current op is not an object — unexpected shape");
     };
-    for (key, val) in incoming {
-        // Don't let the caller mutate the variant tag via `update`. That
-        // would change the variant entirely, which is what `delete` +
-        // `create` is for — preserve invariants here.
-        if key == "type" {
-            continue;
+    if let Value::Object(incoming) = params_value {
+        for (key, val) in incoming {
+            if key == "type" {
+                continue;
+            }
+            op_map.insert(key.clone(), val.clone());
         }
-        op_map.insert(key.clone(), val.clone());
+    }
+    if let Err(e) = serde_json::from_value::<CsgOp>(op_value) {
+        return PlannedResponse::error(format!("failed to apply params to {node_id_str}: {e}"));
     }
 
-    let new_op: CsgOp = match serde_json::from_value(op_value) {
-        Ok(op) => op,
-        Err(e) => {
-            return ExecutionResult::error(format!(
-                "failed to apply params to {node_id_str}: {e}"
-            ))
-        }
-    };
-    node.op = new_op;
-
-    ExecutionResult::success(format!("Updated node {node_id_str}"))
-        .with_node(node_id_str.to_string())
+    PlannedResponse::success(format!("Updated node {node_id_str}")).with_outcome(
+        ToolOutcome::UpdateParams {
+            node_id: node_id_str.to_string(),
+            params: params_value.clone(),
+        },
+    )
 }
 
 // ---------------------------------------------------------------------------
-// delete
+// plan: delete
 // ---------------------------------------------------------------------------
 
-fn execute_delete(args: &Value, doc: &mut Document) -> ExecutionResult {
+fn plan_delete(args: &Value, doc: &Document) -> PlannedResponse {
     let Some(part_id) = args.get("part_id").and_then(|v| v.as_str()) else {
-        return ExecutionResult::error("delete requires `part_id`");
+        return PlannedResponse::error("delete requires `part_id`");
     };
     let Ok(nid) = part_id.parse::<NodeId>() else {
-        return ExecutionResult::error(format!("invalid part_id: {part_id}"));
+        return PlannedResponse::error(format!("invalid part_id: {part_id}"));
     };
-    let before = doc.roots.len();
-    doc.roots.retain(|e| e.root != nid);
-    if doc.roots.len() == before {
-        return ExecutionResult::error(format!("part not found: {part_id}"));
+    if !doc.roots.iter().any(|e| e.root == nid) {
+        return PlannedResponse::error(format!("part not found: {part_id}"));
     }
-    doc.nodes.remove(&nid);
-    ExecutionResult::success(format!("Deleted part {part_id}"))
+    PlannedResponse::success(format!("Deleted part {part_id}")).with_outcome(
+        ToolOutcome::RemovePart {
+            part_id: part_id.to_string(),
+        },
+    )
 }
 
 // ---------------------------------------------------------------------------
-// set_material
+// plan: set_material
 // ---------------------------------------------------------------------------
 
-fn execute_set_material(args: &Value, doc: &mut Document) -> ExecutionResult {
+fn plan_set_material(args: &Value, doc: &Document) -> PlannedResponse {
     let Some(part_id) = args.get("part_id").and_then(|v| v.as_str()) else {
-        return ExecutionResult::error("set_material requires `part_id`");
+        return PlannedResponse::error("set_material requires `part_id`");
     };
     let Some(material) = args.get("material").and_then(|v| v.as_str()) else {
-        return ExecutionResult::error("set_material requires `material`");
+        return PlannedResponse::error("set_material requires `material`");
     };
     let Ok(nid) = part_id.parse::<NodeId>() else {
-        return ExecutionResult::error(format!("invalid part_id: {part_id}"));
+        return PlannedResponse::error(format!("invalid part_id: {part_id}"));
     };
-    let Some(entry) = doc.roots.iter_mut().find(|e| e.root == nid) else {
-        return ExecutionResult::error(format!("part not found: {part_id}"));
-    };
-    entry.material = material.to_string();
-    ExecutionResult::success(format!("Set {part_id} material to {material}"))
-        .with_part(part_id.to_string())
+    if !doc.roots.iter().any(|e| e.root == nid) {
+        return PlannedResponse::error(format!("part not found: {part_id}"));
+    }
+    PlannedResponse::success(format!("Set {part_id} material to {material}")).with_outcome(
+        ToolOutcome::SetPartMaterial {
+            part_id: part_id.to_string(),
+            material: material.to_string(),
+        },
+    )
 }
 
 #[cfg(test)]
@@ -609,5 +837,66 @@ mod tests {
         let res = execute_crud("frobnicate", &json!({}), &mut doc);
         assert_eq!(res.status, ExecutionStatus::Error);
         assert!(res.result.contains("unknown tool"));
+    }
+
+    // -- plan_crud tests: verify the pure planner returns the right
+    //    ToolOutcome shape without mutating the document.
+
+    #[test]
+    fn plan_create_returns_add_feature_outcome() {
+        let doc = empty_doc();
+        let args = json!({
+            "type": "cube",
+            "params": { "size": { "x": 10, "y": 10, "z": 10 } },
+            "name": "PlanCube"
+        });
+        let res = plan_crud("create", &args, &doc);
+        assert_eq!(res.status, ExecutionStatus::Success);
+        assert!(res.result.contains("Created cube"));
+        let outcome = res.outcome.expect("create should produce an outcome");
+        match outcome {
+            ToolOutcome::AddFeature { op, name, parent_part_id } => {
+                assert!(matches!(op, CsgOp::Cube { .. }));
+                assert_eq!(name.as_deref(), Some("PlanCube"));
+                assert_eq!(parent_part_id, None);
+            }
+            other => panic!("expected AddFeature, got {other:?}"),
+        }
+        // Planner must not mutate the document.
+        assert_eq!(doc.nodes.len(), 0);
+        assert_eq!(doc.roots.len(), 0);
+    }
+
+    #[test]
+    fn plan_delete_validates_part_exists() {
+        let doc = empty_doc();
+        let res = plan_crud("delete", &json!({"part_id": "999"}), &doc);
+        assert_eq!(res.status, ExecutionStatus::Error);
+        assert!(res.outcome.is_none());
+    }
+
+    #[test]
+    fn plan_read_has_no_outcome() {
+        let doc = empty_doc();
+        let res = plan_crud("read", &json!({}), &doc);
+        assert_eq!(res.status, ExecutionStatus::Success);
+        assert!(res.outcome.is_none());
+    }
+
+    #[test]
+    fn apply_outcome_mutates_doc() {
+        let mut doc = empty_doc();
+        let op = CsgOp::Cube {
+            size: vcad_ir::Vec3::new(5.0, 5.0, 5.0),
+        };
+        let outcome = ToolOutcome::AddFeature {
+            op,
+            name: Some("direct".into()),
+            parent_part_id: None,
+        };
+        let ids = apply_outcome(&mut doc, &outcome).unwrap();
+        assert!(ids.node_id.is_some());
+        assert_eq!(doc.nodes.len(), 1);
+        assert_eq!(doc.roots.len(), 1);
     }
 }

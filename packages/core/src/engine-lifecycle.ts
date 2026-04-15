@@ -63,10 +63,14 @@ export async function initEngineLifecycle(
         const buildChatSystemPrompt = bindings.build_chat_system_prompt as
           | ((partsJson: string, selectionJson: string) => string)
           | undefined;
+        const planChatTool = bindings.plan_chat_tool as
+          | ((tool: string, argsJson: string, docJson: string) => string)
+          | undefined;
         if (getAnthropicToolsJson && buildChatSystemPrompt) {
           commandRegistry.setWasm({
             get_anthropic_tools_json: getAnthropicToolsJson,
             build_chat_system_prompt: buildChatSystemPrompt,
+            plan_chat_tool: planChatTool,
           });
         }
       } catch (e) {

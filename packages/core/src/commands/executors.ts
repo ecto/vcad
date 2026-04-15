@@ -1,4 +1,6 @@
 import type { ExecutionResult, ExecutionDisplay, SummarySegment } from "./types.js";
+import type { PlannedResponse, ToolOutcome } from "./registry.js";
+import { commandRegistry } from "./registry.js";
 import { useDocumentStore } from "../stores/document-store.js";
 import { useUiStore } from "../stores/ui-store.js";
 import { vec3Cross, vec3Normalize } from "@vcad/ir";
@@ -84,9 +86,109 @@ export function executeCrud(
   uiStore: UiStore,
 ): ExecutionResult {
   const t0 = performance.now();
+  // Prefer the Rust planner when the kernel exposes plan_chat_tool.
+  // Falls through to the TS path when the binding isn't loaded yet,
+  // when Rust returns an outcome shape we haven't wired to a docstore
+  // method, or when anything in the dispatch trips. The TS fallback is
+  // the authoritative path for anything Rust doesn't yet cover
+  // (sketched extrudes, booleans, transforms, etc).
+  const wasmResult = tryExecuteViaWasm(tool, args, docStore);
+  if (wasmResult) {
+    wasmResult.duration = performance.now() - t0;
+    return wasmResult;
+  }
   const result = executeCrudInner(tool, args, docStore, uiStore);
   result.duration = performance.now() - t0;
   return result;
+}
+
+/**
+ * Ask the Rust planner what should happen, then dispatch the returned
+ * `ToolOutcome` through the existing CRDT-backed docstore methods.
+ * Returns `null` when wasm isn't available or when the planner's
+ * response doesn't fit into one of the four outcome shapes we know how
+ * to apply — both cases fall through to the legacy TS `executeCrudInner`.
+ */
+function tryExecuteViaWasm(
+  tool: string,
+  args: Record<string, unknown>,
+  docStore: DocStore,
+): ExecutionResult | null {
+  // Skip reads — the TS path already handles them cheaply without any
+  // mutation, and the planner would just return a no-outcome
+  // PlannedResponse we'd still have to translate.
+  if (tool === "read") return null;
+
+  const docJson = JSON.stringify(docStore.document);
+  const planned: PlannedResponse | null = commandRegistry.planCrud(
+    tool,
+    args,
+    docJson,
+  );
+  if (!planned) return null;
+  if (planned.status === "error") {
+    return { status: "error", result: planned.result };
+  }
+  if (!planned.outcome) return null;
+
+  try {
+    return dispatchOutcome(planned.result, planned.outcome, docStore);
+  } catch (e) {
+    console.warn("[executors] wasm dispatch failed, falling back to TS:", e);
+    return null;
+  }
+}
+
+/** Route a planned `ToolOutcome` through the closest CRDT-aware
+ *  docstore method. Returns an `ExecutionResult` with the ids the
+ *  engine assigned. */
+function dispatchOutcome(
+  plannedResult: string,
+  outcome: ToolOutcome,
+  docStore: DocStore,
+): ExecutionResult | null {
+  switch (outcome.kind) {
+    case "add_feature": {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const engine = (docStore as any)._crdtEngine;
+      if (!engine || typeof engine.add_feature !== "function") return null;
+      const result = engine.add_feature(JSON.stringify(outcome.op));
+      // applyApiResult is internal; we reuse the public addFromIR
+      // path that the other docstore methods use by re-reading the
+      // returned document from the engine. Simpler: just trigger the
+      // store to re-read via its existing reactive subscriptions.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const applyApiResult = (docStore as any)._applyApiResult;
+      if (typeof applyApiResult === "function") {
+        applyApiResult(result);
+      }
+      const createdId: string | null = result?.createdFeatureId ?? null;
+      if (outcome.name && createdId && typeof docStore.renamePart === "function") {
+        docStore.renamePart(createdId, outcome.name);
+      }
+      return {
+        status: "success",
+        result: createdId ? `${plannedResult} with id: ${createdId}` : plannedResult,
+        partId: createdId ?? undefined,
+        nodeId: createdId ?? undefined,
+      };
+    }
+    case "remove_part": {
+      docStore.removePart(outcome.part_id);
+      return { status: "success", result: plannedResult };
+    }
+    case "set_part_material": {
+      docStore.setPartMaterial(outcome.part_id, outcome.material);
+      return { status: "success", result: plannedResult, partId: outcome.part_id };
+    }
+    case "update_params": {
+      for (const [key, value] of Object.entries(outcome.params)) {
+        if (key === "type") continue;
+        docStore.setFeatureParam(outcome.node_id, key, value as never);
+      }
+      return { status: "success", result: plannedResult, nodeId: outcome.node_id };
+    }
+  }
 }
 
 function executeCrudInner(
