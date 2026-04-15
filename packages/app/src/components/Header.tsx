@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { BookOpen } from "@phosphor-icons/react/dist/ssr/BookOpen";
 import { Mouse } from "@phosphor-icons/react/dist/ssr/Mouse";
 import { Sparkle } from "@phosphor-icons/react/dist/ssr/Sparkle";
@@ -24,14 +24,19 @@ import { UpgradeModal } from "@/components/UpgradeModal";
 import { cn } from "@/lib/utils";
 import { downloadBlob } from "@/lib/download";
 import { examples } from "@/data/examples";
-import { CameraSettingsPanel } from "./CameraSettingsPanel";
-import { useCameraSettingsStore } from "@/stores/camera-settings-store";
-import { CONTROL_PRESETS } from "@/types/camera-controls";
 import { SignInButton, UserMenu, triggerSync } from "@vcad/auth";
 import { useChangelogStore } from "@/stores/changelog-store";
 import { useNotificationStore } from "@/stores/notification-store";
 import { useAppCommands } from "@/hooks/useAppCommands";
 import { COMMAND_ICONS } from "@/lib/command-icons";
+
+// Lazy so the prefs dialog (and its wasm-backed keybinding hook) doesn't
+// bloat the Header bundle until the user opens it.
+const InputPreferencesDialog = lazy(() =>
+  import("./InputPreferencesDialog").then((m) => ({
+    default: m.InputPreferencesDialog,
+  })),
+);
 
 interface HeaderProps {
   onAboutOpen: () => void;
@@ -259,26 +264,11 @@ function RayTracingSubmenu() {
   );
 }
 
-/** Mouse Controls submenu — opens the CameraSettingsPanel as a right-side popover. */
-function MouseControlsSubmenu() {
-  const controlSchemeId = useCameraSettingsStore((s) => s.controlSchemeId);
-  const currentSchemeName = CONTROL_PRESETS[controlSchemeId]?.name ?? "vcad";
-  return (
-    <Submenu
-      label="Mouse Controls"
-      icon={Mouse}
-      hint={currentSchemeName}
-      contentClassName="w-64 p-2 max-h-[80vh] overflow-y-auto"
-    >
-      <CameraSettingsPanel />
-    </Submenu>
-  );
-}
-
 export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
   const isDirty = useDocumentStore((s) => s.isDirty);
   const billingTier = useBillingStore((s) => s.snapshot?.tier ?? null);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
+  const [inputPrefsOpen, setInputPrefsOpen] = useState(false);
   const [menuValue, setMenuValue] = useState("");
   const unreadChangelog = useChangelogStore((s) => s.getUnreadCount());
   const openChangelogPanel = useChangelogStore((s) => s.openPanel);
@@ -483,7 +473,12 @@ export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
                 <CommandMenuItem id="toggle-grid-snap" commands={commands} />
                 <MenuSeparator />
                 <RayTracingSubmenu />
-                <MouseControlsSubmenu />
+                <MenuItem
+                  icon={Mouse}
+                  onSelect={() => setInputPrefsOpen(true)}
+                >
+                  Input Preferences…
+                </MenuItem>
                 <MenuSeparator />
                 <CommandMenuItem id="cycle-theme" commands={commands} />
               </Menubar.Content>
@@ -597,6 +592,12 @@ export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
         onOpenChange={setUpgradeOpen}
         reason="manual"
       />
+      <Suspense fallback={null}>
+        <InputPreferencesDialog
+          open={inputPrefsOpen}
+          onOpenChange={setInputPrefsOpen}
+        />
+      </Suspense>
 
       {/* ─────────────────────────────────────────────────────── */}
       {/* Row 2+: tool palette (tab strip + icon row) docked under */}
