@@ -68,6 +68,35 @@ pub struct LogEntry {
 
 /// Max log entries retained in the in-memory ring buffer.
 const MAX_LOG_ENTRIES: usize = 200;
+/// Max characters stored per log message — cuts off gigantic HTTP error
+/// bodies before they reach the status bar.
+const MAX_LOG_MESSAGE_LEN: usize = 500;
+
+/// Normalize a raw log string: collapse whitespace/control runs into a
+/// single space and truncate to `MAX_LOG_MESSAGE_LEN` characters. This is
+/// the ingestion-side guard; `ui/buffer.rs::set_char` has a second
+/// defense that turns any control char that slips through into `·`.
+fn normalize_log_message(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len().min(MAX_LOG_MESSAGE_LEN));
+    let mut last_was_space = false;
+    for ch in raw.chars() {
+        if out.chars().count() >= MAX_LOG_MESSAGE_LEN {
+            out.push('…');
+            break;
+        }
+        let is_space_like = ch.is_whitespace() || (ch as u32) < 0x20 || (ch as u32) == 0x7F;
+        if is_space_like {
+            if !last_was_space {
+                out.push(' ');
+                last_was_space = true;
+            }
+        } else {
+            out.push(ch);
+            last_was_space = false;
+        }
+    }
+    out.trim().to_string()
+}
 
 /// Application state.
 pub struct App {
@@ -921,11 +950,17 @@ impl App {
 
     /// Push a structured log entry. Used by the status-bar ticker and, later,
     /// by the chat session + kernel error channel.
+    ///
+    /// Normalizes the message: collapses any run of whitespace/control
+    /// characters into a single space and truncates to [`MAX_LOG_MESSAGE_LEN`]
+    /// so a multiline HTTP 404 body doesn't blow up the ticker.
     pub fn log(&mut self, level: LogLevel, source: &'static str, message: impl Into<String>) {
+        let raw = message.into();
+        let normalized = normalize_log_message(&raw);
         self.logs.push_back(LogEntry {
             level,
             source,
-            message: message.into(),
+            message: normalized,
             timestamp: Instant::now(),
         });
         while self.logs.len() > MAX_LOG_ENTRIES {

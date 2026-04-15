@@ -189,11 +189,25 @@ impl CellBuffer {
     }
 }
 
+/// Swap any C0/DEL control character for a visible placeholder. The
+/// terminal interprets raw `\n`, `\r`, escape, etc. as real control
+/// codes and would corrupt the display if we wrote them into the cell
+/// buffer verbatim — this keeps stray log text from an upstream server
+/// or a library panic from escaping the TUI's own rendering.
+fn safe_glyph(ch: char) -> char {
+    let code = ch as u32;
+    if (code < 0x20) || code == 0x7F {
+        '\u{00B7}' // ·
+    } else {
+        ch
+    }
+}
+
 /// Helper: set a character with colors at a position. Clears any underline
 /// attribute — call `set_char_underline` if you want it.
 pub fn set_char(buf: &mut CellBuffer, x: u16, y: u16, ch: char, fg: Color, bg: Color) {
     if let Some(cell) = buf.cell_mut(x, y) {
-        cell.ch = ch;
+        cell.ch = safe_glyph(ch);
         cell.fg = fg;
         cell.bg = bg;
         cell.underline = false;
@@ -210,7 +224,7 @@ pub fn set_char_underline(
     bg: Color,
 ) {
     if let Some(cell) = buf.cell_mut(x, y) {
-        cell.ch = ch;
+        cell.ch = safe_glyph(ch);
         cell.fg = fg;
         cell.bg = bg;
         cell.underline = true;
