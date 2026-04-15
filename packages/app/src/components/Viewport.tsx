@@ -42,8 +42,8 @@ const PcbGettingStarted = lazy(() =>
 );
 
 // Monokai Soda from tmTheme
-const BG_DARK = "#222222";
-const BG_LIGHT = "#f6f6ef";
+export const BG_DARK = "#222222";
+export const BG_LIGHT = "#e8eaec";
 const MIN_DRAG_THRESHOLD = 5;
 
 function BoxSelectHandler({

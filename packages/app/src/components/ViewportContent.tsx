@@ -56,6 +56,7 @@ import type {
 } from "@vcad/ir";
 import { PcbScene } from "./electronics/pcb3d/PcbScene";
 import { usePcbCamera } from "./electronics/pcb3d/usePcbCamera";
+import { BG_DARK, BG_LIGHT } from "./Viewport";
 
 // Initial camera state for reset (module-scope so refs are stable)
 const INITIAL_POSITION_V = new Vector3(50, 50, 50);
@@ -84,60 +85,65 @@ interface EffectiveSceneSettings {
   postProcessing: NonNullable<SceneSettings["postProcessing"]>;
 }
 
-// Default scene settings (smart defaults)
-const DEFAULT_SCENE_SETTINGS: EffectiveSceneSettings = {
-  // No HDR preset — the default scene renders a procedural "grey room"
-  // IBL via Lightformers below. Users can opt into a preset via the
-  // Scene inspector.
-  environment: { type: "None" },
-  lights: [
-    {
-      id: "key",
-      kind: { type: "Directional", direction: { x: 0.5, y: -0.8, z: 0.4 } },
-      color: [1, 0.98, 0.95],
-      intensity: 1.2,
-      castShadow: true,
-    },
-    {
-      id: "fill",
-      kind: { type: "Directional", direction: { x: -0.3, y: -0.4, z: -0.2 } },
-      color: [0.95, 0.97, 1.0],
-      intensity: 0.4,
-    },
-    {
-      id: "rim",
-      kind: { type: "Directional", direction: { x: -0.5, y: -0.2, z: 0.5 } },
-      color: [1, 1, 1],
-      intensity: 0.2,
-    },
-  ],
-  // Fusion-style neutral grey backdrop.
-  background: { type: "Solid", color: [0.55, 0.57, 0.6] },
-  postProcessing: {
-    ambientOcclusion: { enabled: true, intensity: 1.5, radius: 0.5 },
-    vignette: { enabled: true, offset: 0.3, darkness: 0.3 },
-  },
-};
+// Default scene settings (smart defaults).
+// Background matches the surrounding UI chrome so the viewport blends
+// into the app. The `<Environment>` below still produces IBL through
+// `scene.environment`, independent of `scene.background`, so metallic
+// reflections stay intact.
+function buildDefaultSceneSettings(isDark: boolean): EffectiveSceneSettings {
+  return {
+    // No HDR preset — the default scene renders a procedural room
+    // IBL via Lightformers below. Users can opt into a preset via the
+    // Scene inspector.
+    environment: { type: "None" },
+    lights: [
+      {
+        id: "key",
+        kind: { type: "Directional", direction: { x: 0.5, y: -0.8, z: 0.4 } },
+        color: [1, 0.98, 0.95],
+        intensity: isDark ? 1.4 : 1.2,
+        castShadow: true,
+      },
+      {
+        id: "fill",
+        kind: { type: "Directional", direction: { x: -0.3, y: -0.4, z: -0.2 } },
+        color: [0.95, 0.97, 1.0],
+        intensity: isDark ? 0.5 : 0.4,
+      },
+      {
+        id: "rim",
+        kind: { type: "Directional", direction: { x: -0.5, y: -0.2, z: 0.5 } },
+        color: [1, 1, 1],
+        intensity: isDark ? 0.35 : 0.2,
+      },
+    ],
+    // No background in defaults — the render path below paints the
+    // viewport flat with the UI chrome color when the doc hasn't
+    // overridden it.
+    background: { type: "Solid", color: [0, 0, 0] },
+    postProcessing: isDark
+      ? {
+          ambientOcclusion: { enabled: true, intensity: 1.8, radius: 0.5 },
+          vignette: { enabled: true, offset: 0.5, darkness: 0.15 },
+        }
+      : {
+          ambientOcclusion: { enabled: true, intensity: 1.5, radius: 0.5 },
+          vignette: { enabled: true, offset: 0.5, darkness: 0.1 },
+        },
+  };
+}
 
 // Compute effective scene settings (merge document settings with defaults)
 function getEffectiveSceneSettings(scene: SceneSettings | undefined, isDark: boolean): EffectiveSceneSettings {
-  const base = DEFAULT_SCENE_SETTINGS;
+  const base = buildDefaultSceneSettings(isDark);
 
-  // Adjust defaults for dark mode
-  const darkModePostProcessing = isDark ? {
-    ambientOcclusion: { enabled: true, intensity: 2, radius: 0.5 },
-    vignette: { enabled: true, offset: 0.3, darkness: 0.5 },
-  } : base.postProcessing;
-
-  if (!scene) {
-    return { ...base, postProcessing: darkModePostProcessing };
-  }
+  if (!scene) return base;
 
   return {
     environment: scene.environment ?? base.environment,
     lights: scene.lights ?? base.lights,
     background: scene.background ?? base.background,
-    postProcessing: scene.postProcessing ?? darkModePostProcessing,
+    postProcessing: scene.postProcessing ?? base.postProcessing,
   };
 }
 
@@ -1015,16 +1021,21 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
         </Suspense>
       )}
 
-      {/* Default procedural "grey room" IBL — provides reflections for
+      {/* Default procedural room IBL — provides reflections for
           metallic materials without loading an HDR preset. Only active
-          when the user has no explicit environment preset selected. */}
+          when the user has no explicit environment preset selected.
+          The interior is near-black so that metallic reflections read
+          as bright studio panels against a dark backdrop, Fusion-style. */}
       {!isPcbMode && !environmentPreset && (
         <Environment resolution={256} frames={1} background={false}>
-          <color attach="background" args={[0.6, 0.6, 0.62]} />
-          {/* Bright ceiling panel */}
+          <color
+            attach="background"
+            args={isDark ? [0.015, 0.02, 0.03] : [0.58, 0.6, 0.62]}
+          />
+          {/* Ceiling panel — main highlight source */}
           <Lightformer
             form="rect"
-            intensity={4}
+            intensity={isDark ? 2.5 : 4}
             color="white"
             position={[0, 10, 0]}
             rotation={[-Math.PI / 2, 0, 0]}
@@ -1033,7 +1044,7 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
           {/* Four softer side panels for even wrap-around fill */}
           <Lightformer
             form="rect"
-            intensity={1.5}
+            intensity={isDark ? 0.9 : 1.5}
             color="white"
             position={[10, 2, 0]}
             rotation={[0, -Math.PI / 2, 0]}
@@ -1041,7 +1052,7 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
           />
           <Lightformer
             form="rect"
-            intensity={1.5}
+            intensity={isDark ? 0.9 : 1.5}
             color="white"
             position={[-10, 2, 0]}
             rotation={[0, Math.PI / 2, 0]}
@@ -1049,7 +1060,7 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
           />
           <Lightformer
             form="rect"
-            intensity={1.5}
+            intensity={isDark ? 0.9 : 1.5}
             color="white"
             position={[0, 2, 10]}
             rotation={[0, Math.PI, 0]}
@@ -1057,7 +1068,7 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
           />
           <Lightformer
             form="rect"
-            intensity={1.5}
+            intensity={isDark ? 0.9 : 1.5}
             color="white"
             position={[0, 2, -10]}
             rotation={[0, 0, 0]}
@@ -1066,11 +1077,16 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
         </Environment>
       )}
 
-      {/* Custom background (if not using environment) */}
-      {!isPcbMode && sceneSettings.background.type === "Solid" && (
-        <color attach="background" args={[sceneSettings.background.color[0], sceneSettings.background.color[1], sceneSettings.background.color[2]]} />
+      {/* Background: match UI chrome so the viewport blends with the app.
+          The <Environment> above still produces IBL via scene.environment,
+          so metallic reflections keep their studio highlights. */}
+      {!isPcbMode && !docScene?.background && (
+        <color attach="background" args={[isDark ? BG_DARK : BG_LIGHT]} />
       )}
-      {!isPcbMode && sceneSettings.background.type === "Transparent" && (
+      {!isPcbMode && docScene?.background?.type === "Solid" && (
+        <color attach="background" args={[docScene.background.color[0], docScene.background.color[1], docScene.background.color[2]]} />
+      )}
+      {!isPcbMode && docScene?.background?.type === "Transparent" && (
         <color attach="background" args={[0, 0, 0]} />
       )}
 

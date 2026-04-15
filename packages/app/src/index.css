@@ -111,16 +111,16 @@
   --hover: rgba(255, 255, 255, 0.1);
 }
 
-/* Light mode - warm cream/paper */
+/* Light mode - macOS-style neutral grey chrome */
 :root.light {
   color-scheme: light;
-  --bg: oklch(0.96 0.02 85);          /* warm cream */
-  --surface: oklch(0.93 0.025 80);    /* slightly darker cream */
-  --card: oklch(0.98 0.015 90);       /* near-white with warmth */
-  --border: oklch(0.82 0.03 75);      /* warm tan border */
-  --text: oklch(0.22 0.02 55);        /* warm dark brown */
-  --text-muted: oklch(0.50 0.03 65);  /* warm medium brown */
-  --hover: rgba(0, 0, 0, 0.06);
+  --bg: #e8eaec;          /* macOS window grey */
+  --surface: #dde0e3;     /* recessed panels */
+  --card: #f4f5f7;        /* raised cards, lighter than bg */
+  --border: #c4c8cc;      /* neutral grey border */
+  --text: #1d1f23;        /* near-black text */
+  --text-muted: #6e7278;  /* mid-grey muted */
+  --hover: rgba(0, 0, 0, 0.05);
 }
 
 body {
