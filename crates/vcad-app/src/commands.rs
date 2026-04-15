@@ -1,6 +1,18 @@
 //! Command registry with metadata.
+//!
+//! The `Command` struct is the static metadata source: id, display strings,
+//! category, default keybinding, `when` gate, mode scope. Hosts (web, TUI)
+//! each maintain their own action map keyed by command `id` — actions never
+//! cross the language boundary.
 
-/// Toolbar tab categories.
+use serde::{Deserialize, Serialize};
+
+use crate::keybinding::{Chord, Key};
+use crate::mode::{ModeScope, Target};
+
+/// Toolbar tab categories — maps each command to one of the TUI's bottom
+/// toolbar rows. Display-only; unrelated to `CommandCategory` (which groups
+/// by menu bar section).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolbarTab {
     Chat,
@@ -13,23 +25,71 @@ pub enum ToolbarTab {
     Export,
 }
 
-/// Command metadata.
+/// Menu category — matches the Borland-style menu bar sections shared by
+/// web and TUI (File / Edit / View / Create / Modify / Assembly / Tools /
+/// Help). `None` means the command is palette-only (not shown in menus).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CommandCategory {
+    File,
+    Edit,
+    View,
+    Create,
+    Modify,
+    Assembly,
+    Tools,
+    Help,
+}
+
+/// Command metadata — everything the registry needs to render, resolve, and
+/// describe a command.
 #[derive(Debug, Clone)]
 pub struct Command {
     pub id: &'static str,
     pub label: &'static str,
     pub keywords: &'static [&'static str],
-    pub shortcut: Option<&'static str>,
     pub icon: &'static str,
+    /// Legacy display-only shortcut string kept for backward compatibility
+    /// with the existing TUI palette rendering. The registry's authoritative
+    /// chord lives in [`Command::default_chord`].
+    pub shortcut: Option<&'static str>,
     pub tab: ToolbarTab,
+    /// Menu grouping (None = palette-only, never shown in menus).
+    pub category: Option<CommandCategory>,
+    /// Default key binding. User overrides live in the [`crate::registry::KeybindingRegistry`].
+    pub default_chord: Option<Chord>,
+    /// Optional `when`-expression source; parsed at registry construction.
+    /// See [`crate::context::WhenExpr::parse`] for the grammar.
+    pub when: Option<&'static str>,
+    /// Which modes this command's binding fires in.
+    pub mode_scope: ModeScope,
+    /// Advisory hint: kernel-owned action or host-owned action.
+    pub target: Target,
 }
+
+/// Default values for new metadata fields — spread with `..CMD_DEFAULTS` so
+/// individual entries only declare the fields they care about.
+const CMD_DEFAULTS: Command = Command {
+    id: "",
+    label: "",
+    keywords: &[],
+    icon: "",
+    shortcut: None,
+    tab: ToolbarTab::Create,
+    category: None,
+    default_chord: None,
+    when: None,
+    mode_scope: ModeScope::Global,
+    target: Target::Host,
+};
 
 /// All registered commands.
 pub fn all_commands() -> &'static [Command] {
     COMMANDS
 }
 
-/// Search commands by query (case-insensitive prefix match on id, label, keywords).
+/// Search commands by query (case-insensitive contains match on id, label,
+/// keywords).
 pub fn find_commands(query: &str) -> Vec<&'static Command> {
     if query.is_empty() {
         return COMMANDS.iter().collect();
@@ -46,252 +106,285 @@ pub fn find_commands(query: &str) -> Vec<&'static Command> {
 }
 
 static COMMANDS: &[Command] = &[
-    // Create
+    // ── Create ───────────────────────────────────────────────────────
     Command {
         id: "cube",
         label: "Add Cube",
         keywords: &["box", "rectangular", "prism"],
-        shortcut: None,
         icon: "\u{25A0}",
         tab: ToolbarTab::Create,
+        category: Some(CommandCategory::Create),
+        target: Target::Kernel,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "cylinder",
         label: "Add Cylinder",
         keywords: &["cyl", "tube", "pipe"],
-        shortcut: None,
         icon: "\u{25CB}",
         tab: ToolbarTab::Create,
+        category: Some(CommandCategory::Create),
+        target: Target::Kernel,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "sphere",
         label: "Add Sphere",
         keywords: &["ball", "globe"],
-        shortcut: None,
         icon: "\u{25CF}",
         tab: ToolbarTab::Create,
+        category: Some(CommandCategory::Create),
+        target: Target::Kernel,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "cone",
         label: "Add Cone",
         keywords: &["conical", "taper"],
-        shortcut: None,
         icon: "\u{25B2}",
         tab: ToolbarTab::Create,
+        category: Some(CommandCategory::Create),
+        target: Target::Kernel,
+        ..CMD_DEFAULTS
     },
-    // Transform
+    // ── Transform ────────────────────────────────────────────────────
     Command {
         id: "translate",
         label: "Move",
         keywords: &["translate", "position", "offset"],
-        shortcut: Some("g"),
+        shortcut: Some("G"),
         icon: "\u{2194}",
         tab: ToolbarTab::Transform,
+        category: Some(CommandCategory::Edit),
+        default_chord: Some(Chord::bare(Key::Char('g'))),
+        when: Some("has_selection && !input_focused"),
+        target: Target::Kernel,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "rotate",
         label: "Rotate",
         keywords: &["spin", "turn", "orientation"],
-        shortcut: Some("r"),
+        shortcut: Some("R"),
         icon: "\u{21BB}",
         tab: ToolbarTab::Transform,
+        category: Some(CommandCategory::Edit),
+        default_chord: Some(Chord::bare(Key::Char('r'))),
+        when: Some("has_selection && !input_focused"),
+        target: Target::Kernel,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "scale",
         label: "Scale",
         keywords: &["resize", "size"],
-        shortcut: Some("s"),
+        shortcut: Some("Shift+S"),
         icon: "\u{2922}",
         tab: ToolbarTab::Transform,
+        category: Some(CommandCategory::Edit),
+        default_chord: Some(Chord::shift(Key::Char('s'))),
+        when: Some("has_selection && !input_focused"),
+        target: Target::Kernel,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "mirror",
         label: "Mirror",
         keywords: &["flip", "reflect", "symmetry"],
-        shortcut: None,
         icon: "\u{2016}",
         tab: ToolbarTab::Transform,
+        category: Some(CommandCategory::Modify),
+        when: Some("one_part"),
+        target: Target::Kernel,
+        ..CMD_DEFAULTS
     },
-    // Combine
+    // ── Combine (booleans) ───────────────────────────────────────────
     Command {
         id: "union",
         label: "Union",
         keywords: &["add", "join", "merge", "combine"],
-        shortcut: None,
+        shortcut: Some("Cmd+Shift+U"),
         icon: "\u{222A}",
         tab: ToolbarTab::Combine,
+        category: Some(CommandCategory::Modify),
+        default_chord: Some(Chord::primary_shift(Key::Char('u'))),
+        when: Some("two_selected"),
+        target: Target::Kernel,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "difference",
         label: "Difference",
         keywords: &["subtract", "cut", "remove"],
-        shortcut: None,
+        shortcut: Some("Cmd+Shift+D"),
         icon: "\u{2216}",
         tab: ToolbarTab::Combine,
+        category: Some(CommandCategory::Modify),
+        default_chord: Some(Chord::primary_shift(Key::Char('d'))),
+        when: Some("two_selected"),
+        target: Target::Kernel,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "intersection",
         label: "Intersection",
         keywords: &["intersect", "common", "overlap"],
-        shortcut: None,
+        shortcut: Some("Cmd+Shift+I"),
         icon: "\u{2229}",
         tab: ToolbarTab::Combine,
+        category: Some(CommandCategory::Modify),
+        default_chord: Some(Chord::primary_shift(Key::Char('i'))),
+        when: Some("two_selected"),
+        target: Target::Kernel,
+        ..CMD_DEFAULTS
     },
-    // Modify
+    // ── Modify ───────────────────────────────────────────────────────
     Command {
         id: "fillet",
         label: "Fillet",
         keywords: &["round", "radius", "smooth"],
-        shortcut: None,
         icon: "\u{25E0}",
         tab: ToolbarTab::Modify,
+        category: Some(CommandCategory::Modify),
+        when: Some("one_part"),
+        target: Target::Kernel,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "chamfer",
         label: "Chamfer",
         keywords: &["bevel", "edge"],
-        shortcut: None,
         icon: "\u{25FA}",
         tab: ToolbarTab::Modify,
+        category: Some(CommandCategory::Modify),
+        when: Some("one_part"),
+        target: Target::Kernel,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "shell",
         label: "Shell",
         keywords: &["hollow", "thin", "wall"],
-        shortcut: None,
         icon: "\u{25A1}",
         tab: ToolbarTab::Modify,
+        category: Some(CommandCategory::Modify),
+        when: Some("one_part"),
+        target: Target::Kernel,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "linear_pattern",
         label: "Linear Pattern",
         keywords: &["array", "repeat", "linear"],
-        shortcut: None,
         icon: "\u{2026}",
         tab: ToolbarTab::Modify,
+        category: Some(CommandCategory::Modify),
+        when: Some("one_part"),
+        target: Target::Kernel,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "circular_pattern",
         label: "Circular Pattern",
         keywords: &["radial", "polar", "array"],
-        shortcut: None,
         icon: "\u{25CE}",
         tab: ToolbarTab::Modify,
+        category: Some(CommandCategory::Modify),
+        when: Some("one_part"),
+        target: Target::Kernel,
+        ..CMD_DEFAULTS
     },
-    // General
+    // ── Edit ─────────────────────────────────────────────────────────
     Command {
         id: "delete",
         label: "Delete",
         keywords: &["remove", "erase", "del"],
-        shortcut: Some("x"),
+        shortcut: Some("Delete"),
         icon: "\u{2715}",
         tab: ToolbarTab::Create,
+        category: Some(CommandCategory::Edit),
+        default_chord: Some(Chord::bare(Key::Delete)),
+        when: Some("has_selection && !input_focused"),
+        target: Target::Kernel,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "undo",
         label: "Undo",
         keywords: &["back", "revert"],
-        shortcut: Some("u"),
+        shortcut: Some("Cmd+Z"),
         icon: "\u{21B6}",
         tab: ToolbarTab::Create,
+        category: Some(CommandCategory::Edit),
+        default_chord: Some(Chord::primary(Key::Char('z'))),
+        when: Some("can_undo"),
+        target: Target::Kernel,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "redo",
         label: "Redo",
         keywords: &["forward"],
-        shortcut: Some("Ctrl+r"),
+        shortcut: Some("Cmd+Shift+Z"),
         icon: "\u{21B7}",
         tab: ToolbarTab::Create,
+        category: Some(CommandCategory::Edit),
+        default_chord: Some(Chord::primary_shift(Key::Char('z'))),
+        when: Some("can_redo"),
+        target: Target::Kernel,
+        ..CMD_DEFAULTS
     },
-    // Export / File I/O
-    Command {
-        id: "export_stl",
-        label: "Export STL",
-        keywords: &["stl", "mesh", "3d print"],
-        shortcut: None,
-        icon: "\u{2197}",
-        tab: ToolbarTab::Export,
-    },
-    Command {
-        id: "export_glb",
-        label: "Export GLB",
-        keywords: &["glb", "gltf", "mesh", "web"],
-        shortcut: None,
-        icon: "\u{2197}",
-        tab: ToolbarTab::Export,
-    },
-    Command {
-        id: "export_step",
-        label: "Export STEP",
-        keywords: &["step", "stp", "cad"],
-        shortcut: None,
-        icon: "\u{2197}",
-        tab: ToolbarTab::Export,
-    },
-    Command {
-        id: "save",
-        label: "Save",
-        keywords: &["write", "store"],
-        shortcut: Some("Ctrl+s"),
-        icon: "S",
-        tab: ToolbarTab::Export,
-    },
-    Command {
-        id: "new",
-        label: "New Document",
-        keywords: &["empty", "clear", "start"],
-        shortcut: Some("Ctrl+n"),
-        icon: "+",
-        tab: ToolbarTab::Export,
-    },
-    Command {
-        id: "open",
-        label: "Open…",
-        keywords: &["load", "file", "import"],
-        shortcut: Some("Ctrl+o"),
-        icon: "\u{2198}",
-        tab: ToolbarTab::Export,
-    },
-    Command {
-        id: "quit",
-        label: "Quit",
-        keywords: &["exit", "close", "q"],
-        shortcut: Some("Ctrl+q"),
-        icon: "\u{2715}",
-        tab: ToolbarTab::Export,
-    },
-    // Edit clipboard
     Command {
         id: "copy",
         label: "Copy",
         keywords: &["clipboard", "yank"],
-        shortcut: Some("Ctrl+c"),
+        shortcut: Some("Cmd+C"),
         icon: "\u{29C9}",
         tab: ToolbarTab::Create,
+        category: Some(CommandCategory::Edit),
+        default_chord: Some(Chord::primary(Key::Char('c'))),
+        when: Some("has_selection && !input_focused"),
+        target: Target::Kernel,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "paste",
         label: "Paste",
         keywords: &["clipboard"],
-        shortcut: Some("Ctrl+v"),
+        shortcut: Some("Cmd+V"),
         icon: "\u{2398}",
         tab: ToolbarTab::Create,
+        category: Some(CommandCategory::Edit),
+        default_chord: Some(Chord::primary(Key::Char('v'))),
+        when: Some("!input_focused"),
+        target: Target::Kernel,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "duplicate",
         label: "Duplicate",
         keywords: &["clone", "copy"],
-        shortcut: Some("Ctrl+d"),
+        shortcut: Some("Cmd+D"),
         icon: "\u{29C9}",
         tab: ToolbarTab::Create,
+        category: Some(CommandCategory::Edit),
+        default_chord: Some(Chord::primary(Key::Char('d'))),
+        when: Some("has_selection && !input_focused"),
+        target: Target::Kernel,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "select_all",
         label: "Select All",
         keywords: &["all", "everything"],
-        shortcut: Some("Ctrl+a"),
+        shortcut: Some("Cmd+A"),
         icon: "\u{25A3}",
         tab: ToolbarTab::Create,
+        category: Some(CommandCategory::Edit),
+        default_chord: Some(Chord::primary(Key::Char('a'))),
+        when: Some("!input_focused"),
+        target: Target::Host,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "deselect",
@@ -300,8 +393,94 @@ static COMMANDS: &[Command] = &[
         shortcut: Some("Esc"),
         icon: "\u{25A1}",
         tab: ToolbarTab::Create,
+        category: Some(CommandCategory::Edit),
+        default_chord: Some(Chord::bare(Key::Esc)),
+        target: Target::Host,
+        ..CMD_DEFAULTS
     },
-    // View toggles
+    // ── File ─────────────────────────────────────────────────────────
+    Command {
+        id: "new",
+        label: "New Document",
+        keywords: &["empty", "clear", "start"],
+        shortcut: Some("Cmd+N"),
+        icon: "+",
+        tab: ToolbarTab::Export,
+        category: Some(CommandCategory::File),
+        default_chord: Some(Chord::primary(Key::Char('n'))),
+        target: Target::Kernel,
+        ..CMD_DEFAULTS
+    },
+    Command {
+        id: "open",
+        label: "Open…",
+        keywords: &["load", "file", "import"],
+        shortcut: Some("Cmd+O"),
+        icon: "\u{2198}",
+        tab: ToolbarTab::Export,
+        category: Some(CommandCategory::File),
+        default_chord: Some(Chord::primary(Key::Char('o'))),
+        target: Target::Host,
+        ..CMD_DEFAULTS
+    },
+    Command {
+        id: "save",
+        label: "Save",
+        keywords: &["write", "store"],
+        shortcut: Some("Cmd+S"),
+        icon: "S",
+        tab: ToolbarTab::Export,
+        category: Some(CommandCategory::File),
+        default_chord: Some(Chord::primary(Key::Char('s'))),
+        target: Target::Host,
+        ..CMD_DEFAULTS
+    },
+    Command {
+        id: "export_stl",
+        label: "Export STL",
+        keywords: &["stl", "mesh", "3d print"],
+        icon: "\u{2197}",
+        tab: ToolbarTab::Export,
+        category: Some(CommandCategory::File),
+        when: Some("has_parts"),
+        target: Target::Host,
+        ..CMD_DEFAULTS
+    },
+    Command {
+        id: "export_glb",
+        label: "Export GLB",
+        keywords: &["glb", "gltf", "mesh", "web"],
+        icon: "\u{2197}",
+        tab: ToolbarTab::Export,
+        category: Some(CommandCategory::File),
+        when: Some("has_parts"),
+        target: Target::Host,
+        ..CMD_DEFAULTS
+    },
+    Command {
+        id: "export_step",
+        label: "Export STEP",
+        keywords: &["step", "stp", "cad"],
+        icon: "\u{2197}",
+        tab: ToolbarTab::Export,
+        category: Some(CommandCategory::File),
+        when: Some("has_parts"),
+        target: Target::Host,
+        ..CMD_DEFAULTS
+    },
+    Command {
+        id: "quit",
+        label: "Quit",
+        keywords: &["exit", "close", "q"],
+        shortcut: Some("Cmd+Q"),
+        icon: "\u{2715}",
+        tab: ToolbarTab::Export,
+        category: Some(CommandCategory::File),
+        default_chord: Some(Chord::primary(Key::Char('q'))),
+        target: Target::Host,
+        ..CMD_DEFAULTS
+    },
+    // ── View ─────────────────────────────────────────────────────────
     Command {
         id: "toggle_sidebar",
         label: "Toggle Sidebar",
@@ -309,32 +488,75 @@ static COMMANDS: &[Command] = &[
         shortcut: Some("\\"),
         icon: "\u{2630}",
         tab: ToolbarTab::Create,
+        category: Some(CommandCategory::View),
+        default_chord: Some(Chord::bare(Key::Char('\\'))),
+        when: Some("!input_focused"),
+        target: Target::Host,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "toggle_chat",
         label: "Toggle Chat",
         keywords: &["ai", "assistant", "panel"],
-        shortcut: Some("`"),
+        shortcut: Some("F6"),
         icon: "\u{2726}",
         tab: ToolbarTab::Chat,
+        category: Some(CommandCategory::View),
+        default_chord: Some(Chord::bare(Key::F(6))),
+        target: Target::Host,
+        ..CMD_DEFAULTS
+    },
+    Command {
+        id: "toggle_devtools",
+        label: "Toggle DevTools",
+        keywords: &["console", "log", "debug", "devtools"],
+        shortcut: Some("`"),
+        icon: "\u{25AE}",
+        tab: ToolbarTab::Create,
+        category: Some(CommandCategory::View),
+        default_chord: Some(Chord::bare(Key::Backtick)),
+        target: Target::Host,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "toggle_wireframe",
         label: "Toggle Wireframe",
         keywords: &["edges", "mesh", "view"],
-        shortcut: None,
+        shortcut: Some("X"),
         icon: "\u{25C7}",
         tab: ToolbarTab::Create,
+        category: Some(CommandCategory::View),
+        default_chord: Some(Chord::bare(Key::Char('x'))),
+        when: Some("!input_focused"),
+        target: Target::Host,
+        ..CMD_DEFAULTS
+    },
+    Command {
+        id: "toggle_grid_snap",
+        label: "Toggle Grid Snap",
+        keywords: &["snap", "grid", "align"],
+        shortcut: Some("G"),
+        icon: "\u{25A6}",
+        tab: ToolbarTab::Create,
+        category: Some(CommandCategory::View),
+        // Note: G collides with the `translate` shortcut above. When a
+        // selection exists, translate wins (has `has_selection` gate); when
+        // there's no selection, grid snap fires as the fallback.
+        default_chord: Some(Chord::bare(Key::Char('g'))),
+        when: Some("!has_selection && !input_focused"),
+        target: Target::Host,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "cycle_theme",
         label: "Cycle Theme",
         keywords: &["dark", "light", "appearance"],
-        shortcut: None,
         icon: "\u{25D0}",
         tab: ToolbarTab::Create,
+        category: Some(CommandCategory::View),
+        target: Target::Host,
+        ..CMD_DEFAULTS
     },
-    // Camera presets
     Command {
         id: "camera_iso",
         label: "Isometric View",
@@ -342,6 +564,11 @@ static COMMANDS: &[Command] = &[
         shortcut: Some("7"),
         icon: "\u{25C6}",
         tab: ToolbarTab::Create,
+        category: Some(CommandCategory::View),
+        default_chord: Some(Chord::bare(Key::Char('7'))),
+        when: Some("!input_focused"),
+        target: Target::Host,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "camera_top",
@@ -350,6 +577,11 @@ static COMMANDS: &[Command] = &[
         shortcut: Some("8"),
         icon: "\u{25AB}",
         tab: ToolbarTab::Create,
+        category: Some(CommandCategory::View),
+        default_chord: Some(Chord::bare(Key::Char('8'))),
+        when: Some("!input_focused"),
+        target: Target::Host,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "camera_front",
@@ -358,6 +590,11 @@ static COMMANDS: &[Command] = &[
         shortcut: Some("9"),
         icon: "\u{25A1}",
         tab: ToolbarTab::Create,
+        category: Some(CommandCategory::View),
+        default_chord: Some(Chord::bare(Key::Char('9'))),
+        when: Some("!input_focused"),
+        target: Target::Host,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "camera_right",
@@ -366,64 +603,90 @@ static COMMANDS: &[Command] = &[
         shortcut: Some("0"),
         icon: "\u{25A1}",
         tab: ToolbarTab::Create,
+        category: Some(CommandCategory::View),
+        default_chord: Some(Chord::bare(Key::Char('0'))),
+        when: Some("!input_focused"),
+        target: Target::Host,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "camera_fit",
         label: "Fit to Screen",
         keywords: &["camera", "zoom", "frame", "home"],
-        shortcut: Some("f"),
+        shortcut: Some("F"),
         icon: "\u{2922}",
         tab: ToolbarTab::Create,
+        category: Some(CommandCategory::View),
+        default_chord: Some(Chord::bare(Key::Char('f'))),
+        when: Some("!input_focused"),
+        target: Target::Host,
+        ..CMD_DEFAULTS
     },
-    // Tools
+    // ── Tools ────────────────────────────────────────────────────────
     Command {
         id: "palette",
         label: "Command Palette",
         keywords: &["search", "command", "palette", "jump"],
-        shortcut: Some(":"),
+        shortcut: Some("Cmd+K"),
         icon: "\u{2318}",
         tab: ToolbarTab::Create,
+        category: Some(CommandCategory::Tools),
+        default_chord: Some(Chord::primary(Key::Char('k'))),
+        target: Target::Host,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "sketch",
         label: "New Sketch",
         keywords: &["2d", "draw", "profile"],
-        shortcut: Some("S"),
         icon: "\u{270E}",
         tab: ToolbarTab::Create,
+        category: Some(CommandCategory::Tools),
+        target: Target::Host,
+        ..CMD_DEFAULTS
     },
-    // Help
+    // ── Help ─────────────────────────────────────────────────────────
     Command {
         id: "about",
         label: "About vcad",
         keywords: &["info", "version", "credits"],
-        shortcut: None,
+        shortcut: Some("F1"),
         icon: "\u{2139}",
         tab: ToolbarTab::Create,
+        category: Some(CommandCategory::Help),
+        default_chord: Some(Chord::bare(Key::F(1))),
+        target: Target::Host,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "open_docs",
         label: "Open Docs",
         keywords: &["help", "manual", "guide"],
-        shortcut: None,
         icon: "\u{1F4D6}",
         tab: ToolbarTab::Create,
+        category: Some(CommandCategory::Help),
+        target: Target::Host,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "open_github",
         label: "GitHub",
         keywords: &["source", "repo", "code"],
-        shortcut: None,
         icon: "\u{2756}",
         tab: ToolbarTab::Create,
+        category: Some(CommandCategory::Help),
+        target: Target::Host,
+        ..CMD_DEFAULTS
     },
     Command {
         id: "open_discord",
         label: "Discord",
         keywords: &["chat", "community", "help"],
-        shortcut: None,
         icon: "\u{25CD}",
         tab: ToolbarTab::Create,
+        category: Some(CommandCategory::Help),
+        target: Target::Host,
+        ..CMD_DEFAULTS
     },
 ];
 
@@ -454,5 +717,24 @@ mod tests {
     fn test_empty_query_returns_all() {
         let results = find_commands("");
         assert_eq!(results.len(), all_commands().len());
+    }
+
+    #[test]
+    fn every_command_has_unique_id() {
+        let mut seen = std::collections::HashSet::new();
+        for cmd in all_commands() {
+            assert!(seen.insert(cmd.id), "duplicate command id: {}", cmd.id);
+        }
+    }
+
+    #[test]
+    fn all_when_clauses_parse() {
+        use crate::context::WhenExpr;
+        for cmd in all_commands() {
+            if let Some(src) = cmd.when {
+                WhenExpr::parse(src)
+                    .unwrap_or_else(|e| panic!("command {} has bad when {:?}: {}", cmd.id, src, e));
+            }
+        }
     }
 }
