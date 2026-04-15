@@ -749,7 +749,34 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
             }
             _ => {}
         },
-        TuiMode::Normal => match key.code {
+        TuiMode::Normal => {
+            // Try the shared registry first. If it resolves the chord to a
+            // command id, dispatch through process_command (the TUI's
+            // canonical action map) and skip the legacy match arms below.
+            // Anything not in the registry falls through unchanged.
+            //
+            // Skip dispatch when the menu bar is open — those Esc/arrow/
+            // Enter handlers below own the menu interaction.
+            if !app.menu_state.is_open() {
+                if let Some(chord) = crate::keybinding_adapter::chord_from_crossterm(key) {
+                    let mode = crate::keybinding_adapter::app_mode_for(&app.mode);
+                    let ctx = crate::keybinding_adapter::when_context_for(app);
+                    if let Some(cmd_id) = app.keybindings.resolve(&chord, mode, ctx) {
+                        let cmd_id = cmd_id.to_string();
+                        // Special case: "quit" returns false to break the
+                        // event loop instead of dispatching through
+                        // process_command.
+                        if cmd_id == "quit" {
+                            return Ok(false);
+                        }
+                        app.process_command(&cmd_id)?;
+                        app.auto_switch_tab();
+                        return Ok(true);
+                    }
+                }
+            }
+
+            match key.code {
             // Menu bar: Esc closes an open dropdown before anything else.
             KeyCode::Esc if app.menu_state.is_open() => {
                 app.menu_state.close();
@@ -928,7 +955,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
                 app.set_status(format!("Theme: {mode_name}"));
             }
             _ => {}
-        },
+            }
+        }
         // Other modes — Esc to exit
         _ => {
             if key.code == KeyCode::Esc {

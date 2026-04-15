@@ -10,6 +10,7 @@ use std::path::PathBuf;
 mod app;
 mod chat_session;
 mod input;
+mod keybinding_adapter;
 mod log_capture;
 #[cfg(feature = "print-server")]
 mod print_server;

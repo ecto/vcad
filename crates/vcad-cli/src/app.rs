@@ -172,6 +172,10 @@ pub struct App {
     /// Conversational chat state — message history, in-flight request
     /// receiver, accumulating assistant buffer. Populated by chat_session.
     pub chat_session: crate::chat_session::ChatSession,
+    /// Shared command/keybinding registry — same instance type the web app
+    /// uses through wasm. Drives `handle_key`'s dispatch path before the
+    /// legacy match arms run.
+    pub keybindings: vcad_app::KeybindingRegistry,
 }
 
 impl App {
@@ -221,7 +225,34 @@ impl App {
             logs: VecDeque::with_capacity(MAX_LOG_ENTRIES),
             cursor_world: None,
             chat_session: Default::default(),
+            keybindings: vcad_app::KeybindingRegistry::new(),
         };
+
+        // The TUI uses single bare keys for vim-style local actions
+        // (`r`=redo, `7`=Export tab, `g` and `Shift+S` are unused). The
+        // web registry binds `r`/`g`/`Shift+S` to `rotate`/`translate`/
+        // `scale` (modal CAD style, has_selection-gated) and `7` to
+        // `camera_iso`. Both styles are valid; on this host we want the
+        // legacy match arms to keep handling those keys, so we clear the
+        // registry's defaults for them. Bindings come back automatically
+        // for any user that re-binds via the prefs UI.
+        for cmd_id in [
+            "camera_iso",
+            "camera_top",
+            "camera_front",
+            "camera_right",
+            "camera_fit",
+            "translate",
+            "rotate",
+            "scale",
+            "toggle_sidebar",
+            "toggle_wireframe",
+            "toggle_grid_snap",
+            "toggle_devtools",
+            "palette",
+        ] {
+            app.keybindings.set_binding(cmd_id, None);
+        }
 
         app.evaluate()?;
         Ok(app)
