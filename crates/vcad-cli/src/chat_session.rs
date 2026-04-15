@@ -18,7 +18,7 @@ use std::thread;
 
 use anyhow::Result;
 use futures_util::StreamExt;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use vcad_chat::{
     anthropic_tools, build_system_prompt, execute_crud, load_token, stream::ChatRequest,
@@ -52,6 +52,21 @@ pub enum ChatUpdate {
     Error(String),
 }
 
+/// One tool invocation from a single assistant turn — recorded as it
+/// happens so we can build the tool_use + tool_result content blocks
+/// that chain the next request.
+#[derive(Debug, Clone)]
+pub struct ToolUseRecord {
+    pub id: String,
+    pub name: String,
+    pub input: Value,
+    /// Execution summary — filled immediately after `execute_crud`.
+    pub result: String,
+    /// True when the execution succeeded. Anthropic's `tool_result` has
+    /// an optional `is_error` flag we set when this is false.
+    pub is_error: bool,
+}
+
 /// Persistent chat state owned by [`App`].
 #[derive(Debug, Default)]
 pub struct ChatSession {
@@ -63,6 +78,10 @@ pub struct ChatSession {
     pub event_rx: Option<Receiver<ChatUpdate>>,
     /// Accumulating assistant response text for the current turn.
     pub assistant_buffer: String,
+    /// Tool calls the assistant has made in the current turn, each
+    /// already executed — composed into the next request as tool_use +
+    /// tool_result content blocks when the turn completes.
+    pub pending_tools: Vec<ToolUseRecord>,
     /// True while a request is in flight; blocks new sends and the
     /// assistant row renders with a spinner.
     pub in_flight: bool,
@@ -113,6 +132,7 @@ pub fn start_chat_turn(app: &mut App) -> Result<()> {
     let (tx, rx) = mpsc::channel();
     app.chat_session.event_rx = Some(rx);
     app.chat_session.assistant_buffer.clear();
+    app.chat_session.pending_tools.clear();
     app.chat_session.in_flight = true;
 
     thread::spawn(move || {
@@ -220,11 +240,9 @@ pub fn drain_chat_events(app: &mut App) {
     for update in updates {
         match update {
             ChatUpdate::Text(t) => apply_text(app, &t),
-            ChatUpdate::ToolCall { id: _, name, args } => apply_tool_call(app, &name, args),
+            ChatUpdate::ToolCall { id, name, args } => apply_tool_call(app, id, &name, args),
             ChatUpdate::Done => {
-                finalize_assistant(app);
-                app.chat_session.in_flight = false;
-                app.chat_session.event_rx = None;
+                finalize_turn_and_maybe_chain(app);
                 return;
             }
             ChatUpdate::Error(e) => {
@@ -232,14 +250,14 @@ pub fn drain_chat_events(app: &mut App) {
                 app.chat.assistant(format!("[error] {e}"));
                 app.chat_session.in_flight = false;
                 app.chat_session.event_rx = None;
+                app.chat_session.pending_tools.clear();
                 return;
             }
         }
     }
 
     if stream_closed {
-        app.chat_session.in_flight = false;
-        app.chat_session.event_rx = None;
+        finalize_turn_and_maybe_chain(app);
     }
 }
 
@@ -263,21 +281,24 @@ fn apply_text(app: &mut App, delta: &str) {
     }
 }
 
-/// Execute a tool call against the live document and show a chip line.
-fn apply_tool_call(app: &mut App, name: &str, args: Value) {
-    // Snapshot the assistant buffer as a committed line so the tool chip
-    // appears underneath any partial text already streamed.
-    finalize_assistant(app);
-
+/// Execute a tool call against the live document and record it for the
+/// next follow-up request. Shows a ✓/✗ chip in the chat panel.
+fn apply_tool_call(app: &mut App, id: String, name: &str, args: Value) {
     let result = execute_crud(name, &args, &mut app.document);
-    let status_icon = match result.status {
-        vcad_chat::ExecutionStatus::Success => "\u{2713}",
-        vcad_chat::ExecutionStatus::Error => "\u{2717}",
-    };
+    let is_error = matches!(result.status, vcad_chat::ExecutionStatus::Error);
+    let status_icon = if is_error { "\u{2717}" } else { "\u{2713}" };
     app.chat.debug(format!(
         "{status_icon} {name} — {}",
         result.result.lines().next().unwrap_or("")
     ));
+
+    app.chat_session.pending_tools.push(ToolUseRecord {
+        id,
+        name: name.to_string(),
+        input: args,
+        result: result.result,
+        is_error,
+    });
 
     // Re-evaluate meshes since the document changed.
     if let Err(e) = app.evaluate() {
@@ -285,16 +306,74 @@ fn apply_tool_call(app: &mut App, name: &str, args: Value) {
     }
 }
 
-/// Commit the current streaming assistant buffer into `messages` as a
-/// finalized assistant message and reset the buffer.
-fn finalize_assistant(app: &mut App) {
-    let buf = std::mem::take(&mut app.chat_session.assistant_buffer);
-    if !buf.is_empty() {
+/// Commit the assistant's current turn to the history and, if any tools
+/// were executed, fire a follow-up request with tool_result blocks so
+/// the model can continue.
+fn finalize_turn_and_maybe_chain(app: &mut App) {
+    let text = std::mem::take(&mut app.chat_session.assistant_buffer);
+    let tools = std::mem::take(&mut app.chat_session.pending_tools);
+
+    // Build the assistant message. If there were tool calls, use a
+    // content-block array that mirrors Anthropic's native shape; otherwise
+    // a plain text message is enough.
+    if !tools.is_empty() {
+        let mut assistant_blocks: Vec<Value> = Vec::new();
+        if !text.is_empty() {
+            assistant_blocks.push(json!({ "type": "text", "text": text }));
+        }
+        for t in &tools {
+            assistant_blocks.push(json!({
+                "type": "tool_use",
+                "id": t.id,
+                "name": t.name,
+                "input": t.input,
+            }));
+        }
         app.chat_session.messages.push(ChatMessage {
             role: MessageRole::Assistant,
-            content: MessageContent::Text(buf),
+            content: MessageContent::Blocks(assistant_blocks),
+        });
+
+        // Corresponding user message carries the tool_result blocks.
+        let result_blocks: Vec<Value> = tools
+            .iter()
+            .map(|t| {
+                let mut obj = json!({
+                    "type": "tool_result",
+                    "tool_use_id": t.id,
+                    "content": t.result,
+                });
+                if t.is_error {
+                    if let Some(map) = obj.as_object_mut() {
+                        map.insert("is_error".into(), Value::Bool(true));
+                    }
+                }
+                obj
+            })
+            .collect();
+        app.chat_session.messages.push(ChatMessage {
+            role: MessageRole::User,
+            content: MessageContent::Blocks(result_blocks),
+        });
+
+        // Close out the current stream and fire the follow-up.
+        app.chat_session.event_rx = None;
+        app.chat_session.in_flight = false;
+        if let Err(e) = start_chat_turn(app) {
+            app.log(LogLevel::Error, "chat", e.to_string());
+        }
+        return;
+    }
+
+    // No tool calls this turn — commit plain text and end.
+    if !text.is_empty() {
+        app.chat_session.messages.push(ChatMessage {
+            role: MessageRole::Assistant,
+            content: MessageContent::Text(text),
         });
     }
+    app.chat_session.in_flight = false;
+    app.chat_session.event_rx = None;
 }
 
 /// Push a new user message onto the conversation history. Called from the
