@@ -6,6 +6,20 @@ license.workspace = true
 repository.workspace = true
 description = "AI chat contract for vcad — tool schemas, system prompt, Anthropic streaming, token storage"
 
+[features]
+# `native` pulls in the HTTP client + async runtime + token storage
+# so the TUI (and any other native binary) gets everything. Disabled
+# for WASM consumers like `vcad-kernel-wasm` that only need the pure
+# schema / tool / prompt / executor surface.
+default = ["native"]
+native = [
+    "dep:reqwest",
+    "dep:tokio",
+    "dep:futures-util",
+    "dep:bytes",
+    "dep:directories",
+]
+
 [dependencies]
 vcad-ir = { workspace = true }
 vcad-kernel = { workspace = true }
@@ -15,18 +29,21 @@ serde_json.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 
-# HTTP + streaming
+# HTTP + streaming — native only. Reqwest + tokio + fs-based token
+# storage don't compile to wasm32-unknown-unknown, so consumers that
+# target WASM disable the `native` feature and use just the pure
+# Rust parts (schemas / tools / prompt / executor).
 reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
     "json",
     "stream",
-] }
-tokio = { version = "1", features = ["rt", "macros", "sync", "time", "io-util"] }
-futures-util = "0.3"
-bytes = "1"
+], optional = true }
+tokio = { version = "1", features = ["rt", "macros", "sync", "time", "io-util"], optional = true }
+futures-util = { version = "0.3", optional = true }
+bytes = { version = "1", optional = true }
 
-# Config / token storage
-directories = "5"
+# Config / token storage — native only.
+directories = { version = "5", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros", "test-util"] }

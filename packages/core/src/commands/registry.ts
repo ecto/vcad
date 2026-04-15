@@ -2,14 +2,47 @@ import type { ToolSchemaEntry, AnthropicTool } from "./types.js";
 import type { SelectionContext } from "../stores/chat-store.js";
 import { STATIC_TOOL_SCHEMAS } from "./static-schemas.js";
 
+/**
+ * Optional wasm-bindgen surface from `vcad-kernel-wasm` that mirrors the
+ * TS tool builder + prompt builder. When the web kernel loads, bootstrap
+ * wires the module in via `commandRegistry.setWasm(wasm)` — from that
+ * point on, `toAnthropicTools` and `buildSystemPrompt` delegate to Rust
+ * so the TS and TUI render byte-identical payloads.
+ *
+ * Keeping the TS fallback means:
+ *  - tests that don't load wasm still run
+ *  - the static-schemas bootstrap still works before the module resolves
+ *  - a future contributor who forgets to call `setWasm` gets a valid,
+ *    slightly-stale prompt instead of a crash
+ */
+export interface ChatWasmBindings {
+  get_anthropic_tools_json(): string;
+  build_chat_system_prompt(partsJson: string, selectionJson: string): string;
+}
+
 export class CommandRegistry {
   private schemas: ToolSchemaEntry[] = STATIC_TOOL_SCHEMAS;
   private typeCatalogCache: string | null = null;
+  private wasm: ChatWasmBindings | null = null;
 
   /** Load schemas from JSON string (e.g. from WASM). Overrides static schemas. */
   loadSchemas(json: string): void {
     this.schemas = JSON.parse(json) as ToolSchemaEntry[];
     this.typeCatalogCache = null;
+  }
+
+  /**
+   * Register the kernel-wasm module so the registry can delegate
+   * `toAnthropicTools` / `buildSystemPrompt` to the Rust implementation
+   * in `vcad-chat`. Both sides produce identical output; the delegation
+   * prevents long-term drift when either half changes.
+   *
+   * Safe to call multiple times — last call wins. Callers pass `null`
+   * to drop the binding (used by tests that want to exercise the TS
+   * fallback explicitly).
+   */
+  setWasm(wasm: ChatWasmBindings | null): void {
+    this.wasm = wasm;
   }
 
   /** Get all loaded schema entries. */
@@ -22,8 +55,23 @@ export class CommandRegistry {
     return this.schemas.map((s) => s.name);
   }
 
-  /** Generate the four CRUD tool definitions in Anthropic format. */
+  /**
+   * Generate the five CRUD tool definitions in Anthropic format. When
+   * the kernel-wasm binding is wired (the common case in the running
+   * web app), delegates to `vcad_chat::anthropic_tools` so the TS and
+   * the Rust TUI emit byte-identical tool payloads. Falls back to the
+   * inline hand-written definitions below during bootstrap before wasm
+   * has loaded, and in tests that don't mount the kernel.
+   */
   toAnthropicTools(): AnthropicTool[] {
+    if (this.wasm) {
+      try {
+        return JSON.parse(this.wasm.get_anthropic_tools_json()) as AnthropicTool[];
+      } catch {
+        // Fall through to the TS fallback — better a stale copy than a
+        // runtime crash if wasm is in a bad state.
+      }
+    }
     const typeEnum = this.getTypeEnum();
 
     return [
@@ -152,11 +200,27 @@ export class CommandRegistry {
     return this.typeCatalogCache;
   }
 
-  /** Build the full system prompt with type catalog and document state. */
+  /**
+   * Build the full system prompt with type catalog and document state.
+   * Delegates to `vcad_chat::build_system_prompt` via wasm when the
+   * binding is wired, so the TS and the TUI produce byte-identical
+   * prompts for the same inputs. Falls back to the inline TS string
+   * below during bootstrap or in tests that don't mount wasm.
+   */
   buildSystemPrompt(
     parts: Array<{ id: string; name: string; kind: string; nodes?: Array<{ nodeId: string; type: string; params: Record<string, unknown> }> }>,
     selection?: SelectionContext[],
   ): string {
+    if (this.wasm) {
+      try {
+        return this.wasm.build_chat_system_prompt(
+          JSON.stringify(parts),
+          JSON.stringify(selection ?? []),
+        );
+      } catch {
+        // Fall through to the TS fallback.
+      }
+    }
     const sections: string[] = [
       `You are vcad's AI assistant — a parametric CAD copilot.
 Coordinate system: Z-up (X right, Y forward, Z up). Units: millimeters.

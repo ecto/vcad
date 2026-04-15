@@ -12,37 +12,95 @@
 //!    nodes, built from a caller-supplied `&[PartInfo]`.
 //! 4. **Selection** — the currently selected geometry, if any.
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::schemas::all_schemas;
+use vcad_ir::Document;
 
 /// A single part in the caller's current document. Callers (TUI, later web
 /// frontends) walk their `Document` and populate this. Keeping it decoupled
 /// from `vcad_ir::Document` means the prompt builder stays trivially testable.
-#[derive(Debug, Clone)]
+///
+/// Serde is set up so the JSON wire format matches what the TS
+/// `getDocumentParts()` helper already emits from the web document store:
+/// camelCase fields, and `nodes` is optional (defaults to `[]`) since the
+/// current web caller doesn't thread feature-tree nodes through. Rust
+/// callers still use the snake_case field names natively — only the
+/// on-the-wire representation is TS-shaped.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PartInfo {
     pub id: String,
     pub name: String,
     pub kind: String,
+    #[serde(default)]
     pub nodes: Vec<NodeInfo>,
 }
 
-/// A single feature-tree node belonging to a [`PartInfo`].
-#[derive(Debug, Clone)]
+/// A single feature-tree node belonging to a [`PartInfo`]. The
+/// serde rename aligns with the TS `{ nodeId, type, params }` shape
+/// that `getDocumentParts` would produce if it ever grew nodes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeInfo {
+    #[serde(rename = "nodeId")]
     pub node_id: String,
+    #[serde(rename = "type")]
     pub node_type: String,
     /// Serialized param object. Typically a JSON object; any non-object
     /// value is rendered via `serde_json::to_string`.
     pub params: Value,
 }
 
-/// Selected geometry entry corresponding to `SelectionContext` in the web app.
-#[derive(Debug, Clone)]
+/// Selected geometry entry corresponding to the web app's
+/// `SelectionContext` shape in `packages/core/src/stores/chat-store.ts`.
+/// camelCase on the wire; the Rust side stays snake_case.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SelectionInfo {
     pub part_id: String,
     pub part_name: String,
     pub geometry_type: String,
+}
+
+/// Walk a [`vcad_ir::Document`] and produce the [`PartInfo`] view the
+/// prompt builder needs. Shared helper so every frontend (TUI today,
+/// WASM-bridged web next, future Dioxus/Blitz native after that)
+/// computes parts identically.
+pub fn parts_from_document(doc: &Document) -> Vec<PartInfo> {
+    doc.roots
+        .iter()
+        .filter_map(|entry| {
+            let node = doc.nodes.get(&entry.root)?;
+            let op_value = serde_json::to_value(&node.op).ok()?;
+            let kind = op_value
+                .get("type")
+                .and_then(|t| t.as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| "csg_op".to_string());
+            let params = op_value
+                .as_object()
+                .map(|o| {
+                    let mut clone = o.clone();
+                    clone.remove("type");
+                    Value::Object(clone)
+                })
+                .unwrap_or(Value::Null);
+            Some(PartInfo {
+                id: entry.root.to_string(),
+                name: node
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| format!("part {}", entry.root)),
+                kind: kind.clone(),
+                nodes: vec![NodeInfo {
+                    node_id: entry.root.to_string(),
+                    node_type: kind,
+                    params,
+                }],
+            })
+        })
+        .collect()
 }
 
 /// Build the full system prompt — preamble, type catalog, doc state, selection.

@@ -16,6 +16,7 @@ vcad-kernel-tessellate = { workspace = true }
 vcad-ir = { workspace = true }
 vcad-crdt = { workspace = true }
 vcad-app = { workspace = true }
+vcad-chat = { path = "../vcad-chat", default-features = false }
 vcad-eval = { workspace = true }
 vcad-loon = { workspace = true }
 wasmosis = { workspace = true }

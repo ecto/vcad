@@ -38,6 +38,38 @@ pub fn get_tool_schemas() -> String {
     serde_json::to_string(&vcad_ir::CsgOp::tool_schemas()).unwrap()
 }
 
+/// Get the five Anthropic CRUD tool definitions
+/// (`create` / `read` / `update` / `delete` / `set_material`) as a JSON
+/// array, with the `create` tool's `type` enum pre-populated from the
+/// kernel's tool schema list. Consumers on the web (TypeScript
+/// `CommandRegistry.toAnthropicTools`) and in the TUI (`vcad_chat::
+/// anthropic_tools`) render byte-identical payloads — single source of
+/// truth lives in `vcad-chat::tools`.
+#[wasm_bindgen]
+pub fn get_anthropic_tools_json() -> String {
+    serde_json::to_string(&vcad_chat::anthropic_tools()).unwrap()
+}
+
+/// Build the system prompt sent with every `/api/chat` request.
+///
+/// `parts_json` must deserialize into `Vec<vcad_chat::PartInfo>` (the TS
+/// web caller already walks its own document store to build this shape,
+/// so we accept it pre-built rather than reserializing the full Document
+/// through the wasm boundary on every request). `selection_json` must
+/// deserialize into `Vec<vcad_chat::SelectionInfo>`. Either defaults to
+/// an empty array on parse failure.
+///
+/// Returns the rendered prompt string — byte-identical to what the TUI
+/// produces via `vcad_chat::build_system_prompt` for the same inputs.
+#[wasm_bindgen]
+pub fn build_chat_system_prompt(parts_json: &str, selection_json: &str) -> String {
+    let parts: Vec<vcad_chat::PartInfo> =
+        serde_json::from_str(parts_json).unwrap_or_default();
+    let selection: Vec<vcad_chat::SelectionInfo> =
+        serde_json::from_str(selection_json).unwrap_or_default();
+    vcad_chat::build_system_prompt(&parts, &selection)
+}
+
 /// Initialize the WASM module (sets up panic hook for better error messages).
 #[wasm_bindgen(start)]
 pub fn init() {

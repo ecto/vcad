@@ -16,20 +16,32 @@
 //! The TS reference lives in `packages/core/src/commands/registry.ts`,
 //! `packages/app/src/lib/chat-api.ts`, and `api/chat.ts`.
 
-pub mod auth;
+// Pure-Rust surface: always compiled, wasm-compatible.
 pub mod executor;
 pub mod prompt;
 pub mod schemas;
-pub mod stream;
 pub mod tools;
 
+// Native-only surface: HTTP client, async stream parser, token storage.
+// Gated behind the default-enabled `native` feature; WASM consumers
+// (`vcad-kernel-wasm`, eventual Dioxus/Blitz web target) depend on
+// vcad-chat with `default-features = false` and skip these modules.
+#[cfg(feature = "native")]
+pub mod auth;
+#[cfg(feature = "native")]
+pub mod stream;
+
+#[cfg(feature = "native")]
 pub use auth::{
     clear_token, generate_device_code, load_token, open_browser, poll_for_token, save_token,
     token_path, AuthError, DeviceCode, Token,
 };
 pub use executor::{execute_crud, ExecutionResult, ExecutionStatus};
-pub use prompt::{build_system_prompt, type_catalog, NodeInfo, PartInfo, SelectionInfo};
+pub use prompt::{
+    build_system_prompt, parts_from_document, type_catalog, NodeInfo, PartInfo, SelectionInfo,
+};
 pub use schemas::{all_schemas, type_enum};
+#[cfg(feature = "native")]
 pub use stream::{
     ChatContext, ChatError, ChatEvent, ChatMessage, ChatRequest, Client, MessageContent,
     MessageRole, SelectedPart,

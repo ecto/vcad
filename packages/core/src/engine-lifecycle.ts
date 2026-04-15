@@ -51,6 +51,24 @@ export async function initEngineLifecycle(
         if (getToolSchemas) {
           commandRegistry.loadSchemas(getToolSchemas());
         }
+        // Wire the registry to the kernel's chat helpers so
+        // `toAnthropicTools` and `buildSystemPrompt` delegate to
+        // `vcad_chat` in Rust instead of maintaining a parallel TS
+        // implementation. Both halves produce byte-identical output —
+        // this is drift prevention, not a behavior change.
+        const bindings = wasmModule as Record<string, unknown>;
+        const getAnthropicToolsJson = bindings.get_anthropic_tools_json as
+          | (() => string)
+          | undefined;
+        const buildChatSystemPrompt = bindings.build_chat_system_prompt as
+          | ((partsJson: string, selectionJson: string) => string)
+          | undefined;
+        if (getAnthropicToolsJson && buildChatSystemPrompt) {
+          commandRegistry.setWasm({
+            get_anthropic_tools_json: getAnthropicToolsJson,
+            build_chat_system_prompt: buildChatSystemPrompt,
+          });
+        }
       } catch (e) {
         // CRDT engine is optional — log and continue
         console.warn("[CRDT] Failed to initialize document engine:", e);

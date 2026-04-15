@@ -28,7 +28,7 @@ use serde_json::{json, Value};
 use vcad_chat::{
     anthropic_tools, build_system_prompt, execute_crud, load_token, stream::ChatRequest,
     ChatContext, ChatError, ChatEvent, ChatMessage, Client, MessageContent, MessageRole,
-    PartInfo, SelectedPart, SelectionInfo,
+    SelectedPart, SelectionInfo,
 };
 
 use crate::app::{App, LogLevel};
@@ -154,7 +154,7 @@ pub fn start_chat_turn(app: &mut App) -> Result<()> {
 
     // Build the ChatRequest off the current document + selection so the
     // model sees what the user sees.
-    let parts = parts_from_document(app);
+    let parts = vcad_chat::parts_from_document(&app.document);
     let selection = selection_from_app(app);
     let system_prompt = build_system_prompt(&parts, &selection);
     let context = ChatContext {
@@ -621,42 +621,11 @@ pub fn rehydrate_display(app: &mut App, messages: &[ChatMessage]) {
 }
 
 // ---------------------------------------------------------------------------
-// Document → prompt adapters
+// TUI → prompt adapters. `parts_from_document` lives in vcad-chat now so
+// both the TUI and the web (via vcad-kernel-wasm bindings) compute parts
+// identically. `selection_from_app` stays here because it reaches into
+// App::selected + App::document in a TUI-specific way.
 // ---------------------------------------------------------------------------
-
-fn parts_from_document(app: &App) -> Vec<PartInfo> {
-    app.document
-        .roots
-        .iter()
-        .filter_map(|entry| {
-            let node = app.document.nodes.get(&entry.root)?;
-            let op_value = serde_json::to_value(&node.op).ok()?;
-            let kind = op_value
-                .get("type")
-                .and_then(|t| t.as_str())
-                .map(str::to_string)
-                .unwrap_or_else(|| "csg_op".to_string());
-            let params = op_value
-                .as_object()
-                .map(|o| {
-                    let mut clone = o.clone();
-                    clone.remove("type");
-                    Value::Object(clone)
-                })
-                .unwrap_or(Value::Null);
-            Some(PartInfo {
-                id: entry.root.to_string(),
-                name: node.name.clone().unwrap_or_else(|| format!("part {}", entry.root)),
-                kind: kind.clone(),
-                nodes: vec![vcad_chat::NodeInfo {
-                    node_id: entry.root.to_string(),
-                    node_type: kind,
-                    params,
-                }],
-            })
-        })
-        .collect()
-}
 
 fn selection_from_app(app: &App) -> Vec<SelectionInfo> {
     app.selected
