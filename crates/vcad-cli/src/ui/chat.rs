@@ -1,4 +1,9 @@
-//! Quake-style drop-down chat panel — conversational AI + debug logs.
+//! Right-docked chat sidebar — conversational AI + debug logs.
+//!
+//! Layout mirrors `packages/app/src/components/ChatSidebar.tsx`: a
+//! full-height column on the right, anchored below the menu bar and above
+//! the status bar. Messages stack top-to-bottom with the input line pinned
+//! to the bottom.
 
 use super::buffer::{set_char, CellBuffer, Rect};
 use super::theme;
@@ -43,10 +48,11 @@ pub struct ChatPanel {
 }
 
 impl ChatPanel {
-    /// Create a new closed chat panel.
+    /// Create a chat panel docked to the right. Open by default — matches
+    /// the web app where the sidebar is the primary interaction surface.
     pub fn new() -> Self {
         Self {
-            open: false,
+            open: true,
             input: String::new(),
             lines: Vec::new(),
             history: Vec::new(),
@@ -126,10 +132,29 @@ impl ChatPanel {
     }
 }
 
-/// Compute the chat panel rect (drops from row 1, 40% of height).
+/// Desired sidebar width in cells. Clamped to 60% of the area width so the
+/// viewport still has room on narrow terminals.
+const SIDEBAR_WIDTH: u16 = 50;
+
+/// Rows reserved at the top for the menu bar (1) + tool strip (up to 2).
+/// The chat sidebar starts immediately below this and the tool strip is
+/// rendered across the full width so its right edge is visually occluded
+/// by the chat, matching ChatSidebar.tsx's layout under Header.tsx.
+const TOP_OFFSET: u16 = 3;
+/// Rows reserved at the bottom for the status bar.
+const BOTTOM_OFFSET: u16 = 1;
+
+/// Compute the right-docked sidebar rect. Spans from the row below the tool
+/// strip down to the row above the status bar.
 pub fn chat_rect(area: Rect) -> Rect {
-    let panel_height = (area.height * 40 / 100).max(5);
-    Rect::new(area.x, area.y + 1, area.width, panel_height)
+    let max_width = (area.width * 3 / 5).max(20);
+    let width = SIDEBAR_WIDTH.min(max_width);
+    let x = area.x + area.width.saturating_sub(width);
+    let y = area.y + TOP_OFFSET;
+    let height = area
+        .height
+        .saturating_sub(TOP_OFFSET + BOTTOM_OFFSET);
+    Rect::new(x, y, width, height)
 }
 
 /// Draw the chat panel overlay.
