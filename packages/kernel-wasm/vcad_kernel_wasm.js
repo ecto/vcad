@@ -2103,6 +2103,231 @@ export class WasmKeybindings {
 if (Symbol.dispose) WasmKeybindings.prototype[Symbol.dispose] = WasmKeybindings.prototype.free;
 
 /**
+ * A sketch editing session bound to JavaScript. See module docs.
+ */
+export class WasmSketchSession {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmSketchSessionFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmsketchsession_free(ptr, 0);
+    }
+    /**
+     * Add a full circle.
+     * @param {number} cx
+     * @param {number} cy
+     * @param {number} radius
+     */
+    addCircle(cx, cy, radius) {
+        wasm.wasmsketchsession_addCircle(this.__wbg_ptr, cx, cy, radius);
+    }
+    /**
+     * Add a constraint from a JSON object matching the TypeScript
+     * `SketchConstraint` shape.
+     * @param {string} json
+     */
+    addConstraint(json) {
+        const ptr0 = passStringToWasm0(json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmsketchsession_addConstraint(this.__wbg_ptr, ptr0, len0);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * Add a line directly (for scripted / MCP use).
+     * @param {number} x1
+     * @param {number} y1
+     * @param {number} x2
+     * @param {number} y2
+     */
+    addLine(x1, y1, x2, y2) {
+        wasm.wasmsketchsession_addLine(this.__wbg_ptr, x1, y1, x2, y2);
+    }
+    /**
+     * Add an axis-aligned rectangle between two corners.
+     * @param {number} x1
+     * @param {number} y1
+     * @param {number} x2
+     * @param {number} y2
+     */
+    addRectangle(x1, y1, x2, y2) {
+        wasm.wasmsketchsession_addRectangle(this.__wbg_ptr, x1, y1, x2, y2);
+    }
+    /**
+     * Clear pending input.
+     */
+    cancelPending() {
+        wasm.wasmsketchsession_cancelPending(this.__wbg_ptr);
+    }
+    /**
+     * Clear every entity and constraint.
+     */
+    clear() {
+        wasm.wasmsketchsession_clear(this.__wbg_ptr);
+    }
+    /**
+     * Clear the selection.
+     */
+    clearSelection() {
+        wasm.wasmsketchsession_clearSelection(this.__wbg_ptr);
+    }
+    /**
+     * Construct a new session on the given plane.
+     *
+     * `plane_json` is either a JSON string (`"XY"` / `"XZ"` / `"YZ"`) or a
+     * JSON object `{ origin, xDir, yDir }` for a custom plane.
+     * @param {string} plane_json
+     */
+    constructor(plane_json) {
+        const ptr0 = passStringToWasm0(plane_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmsketchsession_new(ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0] >>> 0;
+        WasmSketchSessionFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * Handle a primary-button click at the current cursor position. Returns
+     * a short outcome string: `"no-cursor"`, `"selection"`, `"pending"`, or
+     * `"committed"`.
+     * @returns {string}
+     */
+    onClick() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.wasmsketchsession_onClick(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * Clear the cursor.
+     */
+    onCursorLeave() {
+        wasm.wasmsketchsession_onCursorLeave(this.__wbg_ptr);
+    }
+    /**
+     * Update the cursor from a world-space ray (e.g. camera pick ray).
+     * @param {number} ox
+     * @param {number} oy
+     * @param {number} oz
+     * @param {number} dx
+     * @param {number} dy
+     * @param {number} dz
+     */
+    onCursorRay(ox, oy, oz, dx, dy, dz) {
+        wasm.wasmsketchsession_onCursorRay(this.__wbg_ptr, ox, oy, oz, dx, dy, dz);
+    }
+    /**
+     * Update the cursor directly from 2D sketch coordinates.
+     * @param {number} x
+     * @param {number} y
+     */
+    onCursorSketch(x, y) {
+        wasm.wasmsketchsession_onCursorSketch(this.__wbg_ptr, x, y);
+    }
+    /**
+     * Handle a double-click (closes a polyline for the line tool).
+     */
+    onDoubleClick() {
+        wasm.wasmsketchsession_onDoubleClick(this.__wbg_ptr);
+    }
+    /**
+     * Redo the last undone mutation. Returns `true` if anything was redone.
+     * @returns {boolean}
+     */
+    redo() {
+        const ret = wasm.wasmsketchsession_redo(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * Remove the constraint at `index`.
+     * @param {number} index
+     */
+    removeConstraint(index) {
+        wasm.wasmsketchsession_removeConstraint(this.__wbg_ptr, index);
+    }
+    /**
+     * Configure snapping behavior.
+     * @param {boolean} grid_enabled
+     * @param {number} grid_size
+     * @param {boolean} point_enabled
+     * @param {number} point_tolerance
+     */
+    setSnap(grid_enabled, grid_size, point_enabled, point_tolerance) {
+        wasm.wasmsketchsession_setSnap(this.__wbg_ptr, grid_enabled, grid_size, point_enabled, point_tolerance);
+    }
+    /**
+     * Change the active drawing tool. Unknown names are ignored.
+     * @param {string} tool
+     */
+    setTool(tool) {
+        const ptr0 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.wasmsketchsession_setTool(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * Return a JSON snapshot of the full session state. React can mirror
+     * this into its own store on every mutation.
+     * @returns {string}
+     */
+    snapshot() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.wasmsketchsession_snapshot(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * Run the constraint solver. Returns `true` if it converged.
+     * @returns {boolean}
+     */
+    solve() {
+        const ret = wasm.wasmsketchsession_solve(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * Test-select or deselect a segment.
+     * @param {number} segment_index
+     */
+    toggleSelection(segment_index) {
+        wasm.wasmsketchsession_toggleSelection(this.__wbg_ptr, segment_index);
+    }
+    /**
+     * Undo the last mutation. Returns `true` if anything was undone.
+     * @returns {boolean}
+     */
+    undo() {
+        const ret = wasm.wasmsketchsession_undo(this.__wbg_ptr);
+        return ret !== 0;
+    }
+}
+if (Symbol.dispose) WasmSketchSession.prototype[Symbol.dispose] = WasmSketchSession.prototype.free;
+
+/**
  * Analyze a solid for 3D printing characteristics.
  *
  * Returns JSON with wall thicknesses, overhang angles, hole sizes, etc.
@@ -3321,7 +3546,7 @@ export function isEcadAvailable() {
  * @returns {boolean}
  */
 export function isEmbroideryAvailable() {
-    const ret = wasm.isEcadAvailable();
+    const ret = wasm.isCamAvailable();
     return ret !== 0;
 }
 
@@ -3758,6 +3983,236 @@ export function sectionMesh(mesh_js, plane_json, hatch_json) {
 }
 
 /**
+ * Build an N-sided polygonal approximation of a circle as arc segments.
+ * Returns a JSON array of `SketchSegment2D`.
+ * @param {number} cx
+ * @param {number} cy
+ * @param {number} radius
+ * @param {number} segments
+ * @returns {string}
+ */
+export function sketchCircleSegments(cx, cy, radius, segments) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ret = wasm.sketchCircleSegments(cx, cy, radius, segments);
+        var ptr1 = ret[0];
+        var len1 = ret[1];
+        if (ret[3]) {
+            ptr1 = 0; len1 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred2_0 = ptr1;
+        deferred2_1 = len1;
+        return getStringFromWasm0(ptr1, len1);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Find the segment-index closest to `(x, y)` within `tolerance`. Returns
+ * `-1` if no segment is within reach.
+ * @param {string} segments_json
+ * @param {number} x
+ * @param {number} y
+ * @param {number} tolerance
+ * @returns {number}
+ */
+export function sketchHitTest(segments_json, x, y, tolerance) {
+    const ptr0 = passStringToWasm0(segments_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.sketchHitTest(ptr0, len0, x, y, tolerance);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ret[0];
+}
+
+/**
+ * Return a plane's `{origin, xDir, yDir, normal}` as JSON. Accepts either a
+ * named plane string or a custom-plane object (same shape as
+ * [`WasmSketchSession`]'s constructor argument).
+ * @param {string} plane_json
+ * @returns {string}
+ */
+export function sketchPlaneBasis(plane_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(plane_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sketchPlaneBasis(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Intersect a world-space ray with a plane and return the hit in 2D
+ * sketch coordinates as `[x, y]` JSON, or the literal string `"null"` when
+ * the ray is parallel to the plane.
+ * @param {string} plane_json
+ * @param {number} ox
+ * @param {number} oy
+ * @param {number} oz
+ * @param {number} dx
+ * @param {number} dy
+ * @param {number} dz
+ * @returns {string}
+ */
+export function sketchPlaneIntersectRay(plane_json, ox, oy, oz, dx, dy, dz) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(plane_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sketchPlaneIntersectRay(ptr0, len0, ox, oy, oz, dx, dy, dz);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Build the four line segments of an axis-aligned rectangle between two
+ * opposite corners. Returns a JSON array of `SketchSegment2D`.
+ * @param {number} p1x
+ * @param {number} p1y
+ * @param {number} p2x
+ * @param {number} p2y
+ * @returns {string}
+ */
+export function sketchRectangleSegments(p1x, p1y, p2x, p2y) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ret = wasm.sketchRectangleSegments(p1x, p1y, p2x, p2y);
+        var ptr1 = ret[0];
+        var len1 = ret[1];
+        if (ret[3]) {
+            ptr1 = 0; len1 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred2_0 = ptr1;
+        deferred2_1 = len1;
+        return getStringFromWasm0(ptr1, len1);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Snap a 2D point against a segment list with grid + vertex rules. Returns
+ * `{x, y, snapTarget}` JSON — the snapped position plus (if a vertex snap
+ * fired) the vertex that was matched.
+ * @param {string} segments_json
+ * @param {number} x
+ * @param {number} y
+ * @param {boolean} grid_enabled
+ * @param {number} grid_size
+ * @param {boolean} point_enabled
+ * @param {number} point_tolerance
+ * @returns {string}
+ */
+export function sketchSnap(segments_json, x, y, grid_enabled, grid_size, point_enabled, point_tolerance) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(segments_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sketchSnap(ptr0, len0, x, y, grid_enabled, grid_size, point_enabled, point_tolerance);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Convert 2D sketch coordinates to a 3D world-space point, returning
+ * `[x, y, z]` JSON.
+ * @param {string} plane_json
+ * @param {number} sx
+ * @param {number} sy
+ * @returns {string}
+ */
+export function sketchToWorld(plane_json, sx, sy) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(plane_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sketchToWorld(ptr0, len0, sx, sy);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Project a 3D world-space point onto a plane, returning 2D sketch
+ * coordinates as `[x, y]` JSON.
+ * @param {string} plane_json
+ * @param {number} wx
+ * @param {number} wy
+ * @param {number} wz
+ * @returns {string}
+ */
+export function sketchWorldToSketch(plane_json, wx, wy, wz) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(plane_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sketchWorldToSketch(ptr0, len0, wx, wy, wz);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Slice a mesh from vertices and indices.
  * @param {Float32Array} vertices
  * @param {Uint32Array} indices
@@ -3815,6 +4270,42 @@ export function solveForwardKinematics(doc_json) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Solve a TS-shaped sketch in one call.
+ *
+ * Takes a JSON array of `SketchSegment2D` and a JSON array of
+ * `SketchConstraint`, runs the Levenberg-Marquardt solver, and returns a
+ * JSON object `{ segments, converged }` where `segments` is the solved
+ * segment list in the same order as the input. Segments that don't belong
+ * to the constraint system (e.g. circle-as-arcs that live purely for
+ * rendering) pass through unchanged.
+ * @param {string} segments_json
+ * @param {string} constraints_json
+ * @returns {string}
+ */
+export function solveSketchSegments(segments_json, constraints_json) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(segments_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(constraints_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.solveSketchSegments(ptr0, len0, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
 }
 
 /**
@@ -5710,12 +6201,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 1135, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1136, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 1156, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1157, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__ha8d4e097953964e6, wasm_bindgen__convert__closures_____invoke__h3c3248f38441540b);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 1849, function: Function { arguments: [Externref], shim_idx: 1850, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 1870, function: Function { arguments: [Externref], shim_idx: 1871, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hf40b7bdcf0d09ecb, wasm_bindgen__convert__closures_____invoke__ha9bc019092e7ecae);
             return ret;
         },
@@ -5857,6 +6348,9 @@ const WasmDocumentEngineFinalization = (typeof FinalizationRegistry === 'undefin
 const WasmKeybindingsFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmkeybindings_free(ptr >>> 0, 1));
+const WasmSketchSessionFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmsketchsession_free(ptr >>> 0, 1));
 
 function addToExternrefTable0(obj) {
     const idx = wasm.__externref_table_alloc();

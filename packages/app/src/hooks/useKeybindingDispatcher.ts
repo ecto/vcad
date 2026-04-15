@@ -128,18 +128,14 @@ function readWhenContext(target: EventTarget | null): number {
   const sim = useSimulationStore.getState();
   const electronics = useElectronicsStore.getState();
 
-  // canUndo / canRedo live on the engine, not the store — for now leave
-  // them off and let useKeyboardShortcuts handle Ctrl+Z / Ctrl+Shift+Z.
-  // They'll get wired up in the follow-up slice once the store exposes
-  // the flags as selectors.
   return buildWhenContext({
     inputFocused,
     menuOpen: false,
     commandMode: false,
     selectionSize: ui.selectedPartIds.size,
     partCount: doc.parts.length,
-    canUndo: false,
-    canRedo: false,
+    canUndo: doc.canUndo(),
+    canRedo: doc.canRedo(),
     sketchHasPoints: sketch.active && sketch.segments.length > 0,
     physicsRunning: sim.mode === "running",
     electronicsActive: electronics.active ?? false,

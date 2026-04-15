@@ -395,6 +395,9 @@ static COMMANDS: &[Command] = &[
         tab: ToolbarTab::Create,
         category: Some(CommandCategory::Edit),
         default_chord: Some(Chord::bare(Key::Esc)),
+        // Esc is overloaded in other modes (sketch escape, assembly cancel,
+        // etc.) — only let the registry steal it in Normal.
+        mode_scope: ModeScope::Mode(crate::AppMode::Normal),
         target: Target::Host,
         ..CMD_DEFAULTS
     },

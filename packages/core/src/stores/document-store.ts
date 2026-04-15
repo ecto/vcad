@@ -273,6 +273,10 @@ export interface DocumentState {
   pushUndoSnapshot: () => void;
   undo: () => void;
   redo: () => void;
+  /** Whether the engine has undo history available. */
+  canUndo: () => boolean;
+  /** Whether the engine has redo history available. */
+  canRedo: () => boolean;
   markSaved: () => void;
   setDocumentMeta: (id: string, name: string) => void;
   setDocumentName: (name: string) => void;
@@ -1361,6 +1365,16 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       const result = engine.redo();
       set(applyLegacyResult(result));
     }
+  },
+
+  canUndo: () => {
+    const engine = get()._crdtEngine;
+    return engine ? engine.can_undo() : false;
+  },
+
+  canRedo: () => {
+    const engine = get()._crdtEngine;
+    return engine ? engine.can_redo() : false;
   },
 
   markSaved: () => {

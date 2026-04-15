@@ -40,29 +40,16 @@ export function useKeyboardShortcuts() {
         setTransformMode,
         toggleWireframe,
         toggleGridSnap,
-        copyToClipboard,
         toggleFeatureTree,
       } = useUiStore.getState();
-      const { undo, redo, removePart, duplicateParts, applyBoolean } =
-        useDocumentStore.getState();
+      const { undo, redo } = useDocumentStore.getState();
 
       const mod = e.ctrlKey || e.metaKey;
 
-      // Command palette: Cmd+K
-      if (mod && e.key === "k") {
-        e.preventDefault();
-        useUiStore.getState().setCommandPaletteOpen(true);
-        return;
-      }
-
-      // ── Borland-style function key bindings ────────────────────────
-      // (Match the StatusBar hints. All of these are also click-activable
-      // from the F-key hint row at the bottom of the window.)
-      if (e.key === "F1") {
-        e.preventDefault();
-        window.dispatchEvent(new CustomEvent("vcad:about"));
-        return;
-      }
+      // ── Borland-style function key bindings (alt paths kept here) ───
+      // F1/F6/Cmd+K/Cmd+S/Cmd+O are now claimed by the Rust registry via
+      // useKeybindingDispatcher. F2/F3/F5/F10 stay as alternative
+      // function-key bindings until they're added to the registry too.
       if (e.key === "F2") {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent("vcad:save"));
@@ -76,11 +63,6 @@ export function useKeyboardShortcuts() {
       if (e.key === "F5") {
         e.preventDefault();
         toggleWireframe();
-        return;
-      }
-      if (e.key === "F6") {
-        e.preventDefault();
-        useChatStore.getState().toggleOpen();
         return;
       }
       if (e.key === "F10") {
@@ -149,92 +131,16 @@ export function useKeyboardShortcuts() {
         return;
       }
 
-      // Duplicate: Ctrl/Cmd+D
-      if (mod && !e.shiftKey && e.key === "d") {
-        e.preventDefault();
-        if (selectedPartIds.size > 0) {
-          const ids = Array.from(selectedPartIds);
-          const newIds = duplicateParts(ids);
-          useUiStore.getState().selectMultiple(newIds);
-        }
-        return;
-      }
-
-      // Copy: Ctrl/Cmd+C
-      if (mod && !e.shiftKey && e.key === "c") {
-        e.preventDefault();
-        if (selectedPartIds.size === 0) {
-          useNotificationStore.getState().addToast("Nothing to copy", "info");
-          return;
-        }
-        copyToClipboard(Array.from(selectedPartIds));
-        const count = selectedPartIds.size;
-        useNotificationStore
-          .getState()
-          .addToast(`Copied ${count} part${count > 1 ? "s" : ""}`, "success");
-        return;
-      }
-
-      // Paste: Ctrl/Cmd+V
-      if (mod && !e.shiftKey && e.key === "v") {
-        const { clipboard } = useUiStore.getState();
-        if (clipboard.length > 0) {
-          e.preventDefault();
-          const newIds = duplicateParts(clipboard);
-          useUiStore.getState().selectMultiple(newIds);
-          const count = newIds.length;
-          useNotificationStore
-            .getState()
-            .addToast(`Pasted ${count} part${count > 1 ? "s" : ""}`, "success");
-        }
-        return;
-      }
-
-      // Save: Ctrl/Cmd+S
-      if (mod && !e.shiftKey && e.key === "s") {
-        e.preventDefault();
-        // Dispatched as custom event, handled by App.tsx
-        window.dispatchEvent(new CustomEvent("vcad:save"));
-        return;
-      }
-
-      // Open file: Ctrl/Cmd+O
-      if (mod && !e.shiftKey && e.key === "o") {
-        e.preventDefault();
-        window.dispatchEvent(new CustomEvent("vcad:open"));
-        return;
-      }
-
-      // Document picker: Alt+O or Ctrl/Cmd+Shift+O
+      // Document picker: Alt+O or Ctrl/Cmd+Shift+O — not in the registry
+      // (it's a separate flow from the regular Open dispatch).
       if ((e.altKey && e.key === "o") || (mod && e.shiftKey && e.key === "o")) {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent("vcad:documents"));
         return;
       }
 
-      // Boolean shortcuts (2 selected)
-      if (mod && e.shiftKey && selectedPartIds.size === 2) {
-        const ids = Array.from(selectedPartIds);
-        const keyLower = e.key.toLowerCase();
-        if (keyLower === "u") {
-          e.preventDefault();
-          const newId = applyBoolean("union", ids[0]!, ids[1]!);
-          if (newId) useUiStore.getState().select(newId);
-          return;
-        }
-        if (keyLower === "d") {
-          e.preventDefault();
-          const newId = applyBoolean("difference", ids[0]!, ids[1]!);
-          if (newId) useUiStore.getState().select(newId);
-          return;
-        }
-        if (keyLower === "i") {
-          e.preventDefault();
-          const newId = applyBoolean("intersection", ids[0]!, ids[1]!);
-          if (newId) useUiStore.getState().select(newId);
-          return;
-        }
-      }
+      // Cmd+D / Cmd+C / Cmd+V / Cmd+S / Cmd+O / Cmd+Shift+U/D/I are now
+      // dispatched by useKeybindingDispatcher via the Rust registry.
 
       // Command palette: S (no modifiers, not in sketch)
       if ((e.key === "s" || e.key === "S") && !mod && !e.shiftKey && !e.altKey) {
@@ -279,11 +185,7 @@ export function useKeyboardShortcuts() {
         return;
       }
 
-      // Toggle wireframe
-      if (e.key === "x" || e.key === "X") {
-        toggleWireframe();
-        return;
-      }
+      // X (wireframe toggle) is now handled by the registry dispatcher.
 
       // Toggle ray tracing: Alt+R
       if (e.altKey && (e.key === "r" || e.key === "R")) {
@@ -319,19 +221,8 @@ export function useKeyboardShortcuts() {
         return;
       }
 
-      // Delete selected
-      if (
-        (e.key === "Delete" || e.key === "Backspace") &&
-        selectedPartIds.size > 0
-      ) {
-        e.preventDefault();
-        const ids = Array.from(selectedPartIds);
-        for (const id of ids) {
-          removePart(id);
-        }
-        clearSelection();
-        return;
-      }
+      // Delete (Delete/Backspace) is now handled by the registry dispatcher
+      // via the `delete` command (when=has_selection && !input_focused).
 
       // Escape: cancel in-progress tool, exit sketch mode, cancel face selection, or deselect
       if (e.key === "Escape") {
