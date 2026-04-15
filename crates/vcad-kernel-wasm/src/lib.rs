@@ -8,6 +8,7 @@
 //! for all serializable types. Run `cargo test --features ts-rs` to generate types.
 
 pub mod document_engine;
+pub mod keybindings;
 
 use serde::{Deserialize, Serialize};
 use vcad_kernel::vcad_kernel_math::{Point2, Point3, Vec3};
