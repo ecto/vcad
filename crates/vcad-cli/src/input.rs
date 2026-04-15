@@ -640,6 +640,9 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
                 );
             }
             KeyCode::Char('`') | KeyCode::Esc => {
+                // Actually close the sidebar, not just unfocus. The hint
+                // text says "close" and that's what users expect.
+                app.chat.open = false;
                 app.chat.focused = false;
             }
             KeyCode::Enter => {
@@ -815,7 +818,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
                 app.mode = TuiMode::Command;
             }
             KeyCode::Char('`') => {
-                // Focus the chat input (sidebar is always visible now).
+                // Open and focus the chat sidebar.
+                app.chat.open = true;
                 app.chat.focused = true;
             }
             KeyCode::Char('S') if key.modifiers.contains(KeyModifiers::SHIFT) => {

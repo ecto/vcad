@@ -1,13 +1,46 @@
-//! Theme system — dark (Monokai Soda) and light palettes with auto-detection.
+//! Theme system — Terminal (user palette), Dark (Monokai Soda), Light.
+//!
+//! Terminal is the default: all chrome colors resolve to `Color::Default`
+//! (SGR 39/49, the terminal's current fg/bg) and semantic accents resolve
+//! to the 16 ANSI named colors so they inherit whatever palette the user's
+//! terminal already has. Dark and Light remain hardcoded RGB themes for
+//! users who want the full Monokai Soda / paper-cream look regardless of
+//! terminal config.
 
 #![allow(dead_code)]
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 
-use super::buffer::Color;
+use super::buffer::{Color, NamedColor};
 
-/// Whether the active theme is dark. `true` = dark (default), `false` = light.
-static DARK_MODE: AtomicBool = AtomicBool::new(true);
+/// Active theme mode. Stored as a `u8` so we can swap it atomically.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThemeMode {
+    Terminal = 0,
+    Dark = 1,
+    Light = 2,
+}
+
+impl ThemeMode {
+    fn from_u8(v: u8) -> Self {
+        match v {
+            1 => ThemeMode::Dark,
+            2 => ThemeMode::Light,
+            _ => ThemeMode::Terminal,
+        }
+    }
+    fn name(self) -> &'static str {
+        match self {
+            ThemeMode::Terminal => "terminal",
+            ThemeMode::Dark => "dark",
+            ThemeMode::Light => "light",
+        }
+    }
+}
+
+/// Active theme mode. Starts Terminal so first-launch users see their
+/// own palette instead of Monokai.
+static THEME_MODE: AtomicU8 = AtomicU8::new(ThemeMode::Terminal as u8);
 
 /// A complete UI color palette.
 #[derive(Debug, Clone, Copy)]
@@ -68,48 +101,68 @@ pub const LIGHT: Theme = Theme {
     viewport_bg: (0xE8, 0xE8, 0xE0),
 };
 
-/// Detect terminal background from `COLORFGBG` env var.
-/// Format is `fg;bg` — bg >= 8 is typically dark, < 8 is light.
-/// Falls back to dark if the variable is missing or unparseable.
-pub fn detect_dark_mode() -> bool {
-    if let Ok(val) = std::env::var("COLORFGBG") {
-        if let Some(bg_str) = val.rsplit(';').next() {
-            if let Ok(bg) = bg_str.parse::<u8>() {
-                return bg < 8;
-            }
-        }
-    }
-    true // default to dark
-}
+/// Terminal theme — inherits the user's own palette. `bg/surface/card/
+/// text` all resolve to `Color::Default` so the TUI doesn't clobber the
+/// terminal's current fg/bg, and the semantic accents map to the 16 ANSI
+/// named colors so the user's existing colorscheme decides exactly how
+/// each one renders. `viewport_bg` stays a concrete dark RGB since the
+/// rasterizer needs a real clear value and the terminal doesn't expose
+/// its own bg to the process.
+pub const TERMINAL: Theme = Theme {
+    bg: Color::Default,
+    surface: Color::Default,
+    card: Color::Default,
+    border: Color::Named(NamedColor::DarkGrey),
+    text: Color::Default,
+    text_muted: Color::Named(NamedColor::DarkGrey),
+    accent: Color::Named(NamedColor::Red),
+    green: Color::Named(NamedColor::Green),
+    yellow: Color::Named(NamedColor::Yellow),
+    orange: Color::Named(NamedColor::DarkYellow),
+    purple: Color::Named(NamedColor::Magenta),
+    cyan: Color::Named(NamedColor::Cyan),
+    selection_bg: Color::Named(NamedColor::DarkBlue),
+    viewport_bg: (0x11, 0x11, 0x11),
+};
 
-/// Initialize theme from environment. Call once at startup.
-pub fn init() {
-    DARK_MODE.store(detect_dark_mode(), Ordering::Relaxed);
-}
+/// Initialize theme from environment. Call once at startup. For now
+/// this is a no-op — `THEME_MODE` already defaults to Terminal and we
+/// no longer auto-detect from `COLORFGBG` since the whole point of the
+/// Terminal theme is that the user's palette decides.
+pub fn init() {}
 
 /// Get the active theme.
 pub fn active() -> &'static Theme {
-    if DARK_MODE.load(Ordering::Relaxed) {
-        &DARK
-    } else {
-        &LIGHT
+    match ThemeMode::from_u8(THEME_MODE.load(Ordering::Relaxed)) {
+        ThemeMode::Terminal => &TERMINAL,
+        ThemeMode::Dark => &DARK,
+        ThemeMode::Light => &LIGHT,
     }
 }
 
-/// Returns true if currently in dark mode.
+/// Current theme mode.
+pub fn mode() -> ThemeMode {
+    ThemeMode::from_u8(THEME_MODE.load(Ordering::Relaxed))
+}
+
+/// Returns true if currently in the Dark theme. Callers that used to
+/// gate on "dark vs light" should prefer `mode()` directly now that
+/// there are three options.
 pub fn is_dark() -> bool {
-    DARK_MODE.load(Ordering::Relaxed)
+    matches!(mode(), ThemeMode::Dark)
 }
 
-/// Toggle between dark and light themes. Returns the new mode name.
+/// Cycle through Terminal → Dark → Light → Terminal. Returns the new
+/// mode name for the status bar.
 pub fn toggle() -> &'static str {
-    let was_dark = DARK_MODE.load(Ordering::Relaxed);
-    DARK_MODE.store(!was_dark, Ordering::Relaxed);
-    if was_dark {
-        "light"
-    } else {
-        "dark"
-    }
+    let current = mode();
+    let next = match current {
+        ThemeMode::Terminal => ThemeMode::Dark,
+        ThemeMode::Dark => ThemeMode::Light,
+        ThemeMode::Light => ThemeMode::Terminal,
+    };
+    THEME_MODE.store(next as u8, Ordering::Relaxed);
+    next.name()
 }
 
 // ── Convenience accessors (keep call sites concise) ──

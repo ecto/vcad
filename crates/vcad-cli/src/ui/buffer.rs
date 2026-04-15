@@ -31,17 +31,78 @@ impl Rect {
     }
 }
 
-/// 24-bit RGB color.
+/// 16 ANSI named colors — inherit whatever palette the user's terminal
+/// has configured. Mirrors the subset of `crossterm::style::Color`
+/// variants that are safe on every terminal. Variants that aren't
+/// currently referenced by any theme are still part of the palette so
+/// call sites (and future themes) can reach for them.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Color {
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
+pub enum NamedColor {
+    Black,
+    DarkGrey,
+    Grey,
+    White,
+    Red,
+    DarkRed,
+    Green,
+    DarkGreen,
+    Yellow,
+    DarkYellow,
+    Blue,
+    DarkBlue,
+    Magenta,
+    DarkMagenta,
+    Cyan,
+    DarkCyan,
+}
+
+/// A cell color. Three kinds:
+///
+/// - [`Color::Default`] — use the terminal's current fg/bg (SGR 39/49).
+///   Picked by the `Terminal` theme so the TUI inherits the user's
+///   existing terminal colors instead of imposing our own.
+/// - [`Color::Rgb`] — a 24-bit true-color value. Used by the viewport
+///   rasterizer and by the Dark/Light themes.
+/// - [`Color::Named`] — one of the 16 ANSI named colors. Used by the
+///   Terminal theme for semantic accents (brand = Red, warn = Yellow,
+///   success = Green, …) so each resolves against the terminal's
+///   palette.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Color {
+    Default,
+    Rgb(u8, u8, u8),
+    Named(NamedColor),
 }
 
 impl Color {
     pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
-        Self { r, g, b }
+        Color::Rgb(r, g, b)
+    }
+}
+
+fn to_crossterm_color(c: Color) -> CtColor {
+    match c {
+        Color::Default => CtColor::Reset,
+        Color::Rgb(r, g, b) => CtColor::Rgb { r, g, b },
+        Color::Named(n) => match n {
+            NamedColor::Black => CtColor::Black,
+            NamedColor::DarkGrey => CtColor::DarkGrey,
+            NamedColor::Grey => CtColor::Grey,
+            NamedColor::White => CtColor::White,
+            NamedColor::Red => CtColor::Red,
+            NamedColor::DarkRed => CtColor::DarkRed,
+            NamedColor::Green => CtColor::Green,
+            NamedColor::DarkGreen => CtColor::DarkGreen,
+            NamedColor::Yellow => CtColor::Yellow,
+            NamedColor::DarkYellow => CtColor::DarkYellow,
+            NamedColor::Blue => CtColor::Blue,
+            NamedColor::DarkBlue => CtColor::DarkBlue,
+            NamedColor::Magenta => CtColor::Magenta,
+            NamedColor::DarkMagenta => CtColor::DarkMagenta,
+            NamedColor::Cyan => CtColor::Cyan,
+            NamedColor::DarkCyan => CtColor::DarkCyan,
+        },
     }
 }
 
@@ -112,8 +173,11 @@ impl CellBuffer {
 
     /// Flush only changed cells to the terminal.
     pub fn flush(&mut self, stdout: &mut impl Write) -> io::Result<()> {
-        let mut last_fg = Color::rgb(0, 0, 0);
-        let mut last_bg = Color::rgb(0, 0, 0);
+        // Sentinel — `Default` is the first color `to_crossterm_color`
+        // resolves to `Reset`, so the very first non-default cell will
+        // correctly force an SGR write.
+        let mut last_fg = Color::Default;
+        let mut last_bg = Color::Default;
         let mut last_underline = false;
         let mut last_pos: Option<(u16, u16)> = None;
         let mut colors_set = false;
@@ -135,19 +199,11 @@ impl CellBuffer {
 
                 // Set colors if changed
                 if !colors_set || cell.fg != last_fg {
-                    stdout.queue(SetForegroundColor(CtColor::Rgb {
-                        r: cell.fg.r,
-                        g: cell.fg.g,
-                        b: cell.fg.b,
-                    }))?;
+                    stdout.queue(SetForegroundColor(to_crossterm_color(cell.fg)))?;
                     last_fg = cell.fg;
                 }
                 if !colors_set || cell.bg != last_bg {
-                    stdout.queue(SetBackgroundColor(CtColor::Rgb {
-                        r: cell.bg.r,
-                        g: cell.bg.g,
-                        b: cell.bg.b,
-                    }))?;
+                    stdout.queue(SetBackgroundColor(to_crossterm_color(cell.bg)))?;
                     last_bg = cell.bg;
                 }
                 if !colors_set || cell.underline != last_underline {
