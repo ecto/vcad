@@ -43,7 +43,7 @@ export function StatusBar() {
   const entries = useLogStore((s) => s.entries);
   const minLevel = useLogStore((s) => s.minLevel);
   const enabledSources = useLogStore((s) => s.enabledSources);
-  const openPanel = useLogStore((s) => s.openPanel);
+  const togglePanel = useLogStore((s) => s.togglePanel);
 
   const latest = useMemo(() => {
     // getFilteredEntries wants the whole state shape but only reads these
@@ -84,7 +84,7 @@ export function StatusBar() {
       {/* Left: console ticker — click to open the full console panel */}
       <button
         type="button"
-        onClick={openPanel}
+        onClick={togglePanel}
         className={cn(
           "flex items-center gap-2 px-3 min-w-0 flex-1",
           "text-text-muted hover:bg-hover hover:text-text",
