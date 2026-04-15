@@ -28,10 +28,10 @@ import {
   useSketchStore,
   useSimulationStore,
   type KeybindingRegistry,
-  type KeybindingMode as AppMode,
 } from "@vcad/core";
 import { useElectronicsStore } from "@/stores/electronics-store";
 import { useAppCommands } from "@/hooks/useAppCommands";
+import { readAppMode } from "@/hooks/useAppMode";
 
 interface UseKeybindingDispatcherProps {
   onAboutOpen: () => void;
@@ -142,13 +142,7 @@ function readWhenContext(target: EventTarget | null): number {
   });
 }
 
-/** Work out which [`AppMode`] the registry should filter against. */
-function readCurrentMode(): AppMode {
-  if (useSketchStore.getState().active) return "Sketch";
-  if (useElectronicsStore.getState().active) return "Electronics";
-  if (useSimulationStore.getState().mode === "running") return "Physics";
-  return "Normal";
-}
+// Mode detection is owned by `useAppMode.ts` — imported as `readAppMode`.
 
 export function useKeybindingDispatcher({
   onAboutOpen,
@@ -196,7 +190,7 @@ export function useKeybindingDispatcher({
       const chord = chordFromEvent(e);
       if (!chord) return;
 
-      const mode = readCurrentMode();
+      const mode = readAppMode();
       const ctxBits = readWhenContext(e.target);
       const id = registry.resolve(chord, mode, ctxBits);
       if (!id) return;

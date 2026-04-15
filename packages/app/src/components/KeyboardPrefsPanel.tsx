@@ -23,6 +23,7 @@ import {
 } from "@vcad/core";
 import { cn } from "@/lib/utils";
 import { useKeybindingPrefs } from "@/hooks/useKeybindingPrefs";
+import { useAppMode } from "@/hooks/useAppMode";
 
 const CATEGORY_ORDER = [
   "file",
@@ -49,8 +50,9 @@ interface KeyboardPrefsPanelProps {
 }
 
 export function KeyboardPrefsPanel({ className }: KeyboardPrefsPanelProps) {
+  const currentMode = useAppMode();
   const { registry, commands, conflicts, setBinding, resetAll } =
-    useKeybindingPrefs("Normal");
+    useKeybindingPrefs(currentMode);
   const [filter, setFilter] = useState("");
   const [capturingId, setCapturingId] = useState<string | null>(null);
 
@@ -119,7 +121,7 @@ export function KeyboardPrefsPanel({ className }: KeyboardPrefsPanelProps) {
 
   return (
     <div className={cn("flex flex-col h-full min-h-0", className)}>
-      {/* Toolbar: search + reset all */}
+      {/* Toolbar: search + current-mode badge + reset all */}
       <div className="flex items-center gap-2 p-3 border-b border-border">
         <div className="relative flex-1">
           <MagnifyingGlass
@@ -137,6 +139,17 @@ export function KeyboardPrefsPanel({ className }: KeyboardPrefsPanelProps) {
               "focus:outline-none focus:border-brand/60",
             )}
           />
+        </div>
+        <div
+          className={cn(
+            "h-7 px-2 flex items-center gap-1",
+            "border border-border bg-bg",
+            "text-[10px] font-mono uppercase tracking-wider text-text-muted",
+          )}
+          title="Conflicts and mode-scoped bindings are evaluated for this mode"
+        >
+          <span className="text-text-muted/60">mode</span>
+          <span className="text-text">{currentMode}</span>
         </div>
         <button
           onClick={resetAll}
