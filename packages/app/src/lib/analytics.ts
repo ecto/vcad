@@ -53,4 +53,16 @@ export const analytics = {
       command_category: params.category ?? "uncategorized",
       surface: params.surface,
     }),
+  commandFailed: (params: {
+    id: string;
+    category?: string;
+    surface: "palette" | "mobile-menu" | "desktop-menu";
+    error: string;
+  }) =>
+    ph?.capture("command_failed", {
+      command_id: params.id,
+      command_category: params.category ?? "uncategorized",
+      surface: params.surface,
+      error: params.error.slice(0, 500),
+    }),
 };

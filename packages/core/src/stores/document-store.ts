@@ -678,15 +678,30 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   addPrimitive: (kind) => {
-    const engine = get()._crdtEngine!;
+    const engine = get()._crdtEngine;
+    // Guard against a stale wrapper whose underlying Rust value has already
+    // been freed. Calling add_feature with __wbg_ptr === 0 passes null into
+    // wasm-bindgen and throws "Out of bounds memory access" from WASM, which
+    // React's error boundary then catches and blanks the app. Bail early
+    // with an empty id so callers see a failed primitive add instead.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (!engine || (engine as any).__wbg_ptr === 0) {
+      console.warn("[document-store] addPrimitive: engine is null/freed");
+      return "";
+    }
     const defaults: Record<PrimitiveKind, object> = {
       cube: { type: "Cube", size_x: 20, size_y: 20, size_z: 20 },
       cylinder: { type: "Cylinder", radius: 10, height: 20, segments: 32 },
       sphere: { type: "Sphere", radius: 10, segments: 32 },
     };
-    const result = engine.add_feature(JSON.stringify(defaults[kind]));
-    set(applyApiResult(result));
-    return result.createdFeatureId ?? "";
+    try {
+      const result = engine.add_feature(JSON.stringify(defaults[kind]));
+      set(applyApiResult(result));
+      return result.createdFeatureId ?? "";
+    } catch (e) {
+      console.error("[document-store] addPrimitive crashed:", e);
+      return "";
+    }
   },
 
   removePart: (partId) => {

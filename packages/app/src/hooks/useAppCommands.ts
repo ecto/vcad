@@ -333,11 +333,11 @@ export function useAppCommands({
       },
     });
 
-    // Wrap every command.action in a telemetry shim. This is the single
-    // place where we instrument command usage, so every surface (palette,
-    // mobile menu, desktop menu) captures identical PostHog events without
-    // each consumer remembering to fire them. Fire the event BEFORE the
-    // underlying action so commands that throw or open modals still log.
+    // Wrap every command.action in a telemetry + safety shim. This is the
+    // single place where we instrument command usage AND defend against
+    // command throws (e.g. kernel WASM re-entrancy, OOB memory access from
+    // a stale engine pointer). A crashing action now surfaces as a toast
+    // instead of tripping React's error boundary and blanking the app.
     return registry.map((cmd) => ({
       ...cmd,
       action: () => {
@@ -346,7 +346,24 @@ export function useAppCommands({
           category: cmd.category,
           surface,
         });
-        cmd.action();
+        try {
+          cmd.action();
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`[command] ${cmd.id} crashed:`, err);
+          analytics.commandFailed({
+            id: cmd.id,
+            category: cmd.category,
+            surface,
+            error: message,
+          });
+          useNotificationStore
+            .getState()
+            .addToast(
+              `"${cmd.label}" failed — ${message.slice(0, 120)}`,
+              "error",
+            );
+        }
       },
     }));
   }, [onDismiss, onAboutOpen, onSave, onOpen, surface]);
