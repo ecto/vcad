@@ -121,14 +121,24 @@ export function useKeyboardShortcuts() {
       // Undo: Ctrl/Cmd+Z
       if (mod && !e.shiftKey && e.key === "z") {
         e.preventDefault();
-        undo();
+        // While in an active sketch, undo mutates sketch-local history
+        // (drawn segments, constraints) rather than the document history.
+        if (useSketchStore.getState().active) {
+          useSketchStore.getState().undoSketch();
+        } else {
+          undo();
+        }
         return;
       }
 
       // Redo: Ctrl/Cmd+Shift+Z
       if (mod && e.shiftKey && e.key === "z") {
         e.preventDefault();
-        redo();
+        if (useSketchStore.getState().active) {
+          useSketchStore.getState().redoSketch();
+        } else {
+          redo();
+        }
         return;
       }
 
@@ -229,16 +239,35 @@ export function useKeyboardShortcuts() {
         }
       }
 
-      // Transform modes
-      if (e.key === "m" || e.key === "M") {
+      // Sketch tool shortcuts: R/C/L pick the drawing tool while a sketch
+      // is active. These must come before the transform-mode bindings
+      // below so "R" doesn't get captured as "rotate" in sketch mode.
+      if (useSketchStore.getState().active && !mod && !e.shiftKey && !e.altKey) {
+        const key = e.key.toLowerCase();
+        if (key === "r" || key === "c" || key === "l") {
+          e.preventDefault();
+          const tool = key === "r" ? "rectangle" : key === "c" ? "circle" : "line";
+          useSketchStore.getState().setTool(tool);
+          return;
+        }
+      }
+
+      // Transform modes (only outside sketch mode — those keys mean
+      // "pick a drawing tool" while sketching).
+      if ((e.key === "m" || e.key === "M") && !useSketchStore.getState().active) {
         setTransformMode("translate");
         return;
       }
-      if (e.key === "r" || e.key === "R") {
+      if ((e.key === "r" || e.key === "R") && !useSketchStore.getState().active) {
         setTransformMode("rotate");
         return;
       }
-      if (e.shiftKey && (e.key === "s" || e.key === "S") && !mod) {
+      if (
+        e.shiftKey &&
+        (e.key === "s" || e.key === "S") &&
+        !mod &&
+        !useSketchStore.getState().active
+      ) {
         setTransformMode("scale");
         return;
       }

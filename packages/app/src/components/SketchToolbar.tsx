@@ -716,7 +716,10 @@ export function SketchToolbar() {
   const canApplyConstraint = selectedSegments.length === currentToolReq;
 
   function handleExtrude(options: ExtrudeOptions) {
-    if (!hasSegments) return;
+    if (!hasSegments) {
+      addToast("Nothing to extrude — draw a closed profile first", "error");
+      return;
+    }
 
     // Determine extrusion direction based on plane normal
     const { normal } = getSketchPlaneDirections(plane);
@@ -726,19 +729,33 @@ export function SketchToolbar() {
       z: normal.z * options.depth,
     };
 
-    const partId = addExtrude(plane, origin, segments, direction, {
-      twist_angle: options.twistAngle,
-      scale_end: options.scaleEnd,
-    });
-    if (partId) {
-      select(partId);
-      analytics.extrudeApplied();
-      analytics.sketchCompleted(constraints.length);
-      const label = options.twistAngle || options.scaleEnd
-        ? "Created Twisted Extrude"
-        : "Created Extrude";
-      addToast(label, "success");
+    let partId: string | null = null;
+    try {
+      partId = addExtrude(plane, origin, segments, direction, {
+        twist_angle: options.twistAngle,
+        scale_end: options.scaleEnd,
+      });
+    } catch (err) {
+      console.error("extrude threw:", err);
+      addToast(`Extrude failed: ${String(err)}`, "error");
+      setShowExtrudeDialog(false);
+      return;
     }
+
+    if (!partId) {
+      console.error("extrude returned null — check that the sketch forms a closed loop");
+      addToast("Extrude failed — sketch must form a closed loop", "error");
+      setShowExtrudeDialog(false);
+      return;
+    }
+
+    select(partId);
+    analytics.extrudeApplied();
+    analytics.sketchCompleted(constraints.length);
+    const label = options.twistAngle || options.scaleEnd
+      ? "Created Twisted Extrude"
+      : "Created Extrude";
+    addToast(label, "success");
     exitSketchMode();
     setShowExtrudeDialog(false);
   }

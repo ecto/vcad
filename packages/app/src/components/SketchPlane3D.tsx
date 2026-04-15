@@ -830,9 +830,15 @@ export function SketchPlane3D() {
         return;
       }
 
-      const worldPt = intersects[0]!.point;
+      // `intersects[0].point` is in Three world (Y-up) space, but SketchPlane3D
+      // lives inside the Z-up→Y-up rotation group in ViewportContent. The
+      // sketch basis vectors are in kernel (Z-up) space, so convert back to
+      // that frame before projecting.
+      const localPt = planeMeshRef.current.worldToLocal(
+        intersects[0]!.point.clone(),
+      );
       const sketchPt = worldToSketch(
-        worldPt,
+        localPt,
         planeVectors.origin,
         planeVectors.xDir,
         planeVectors.yDir,

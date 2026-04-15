@@ -13,9 +13,25 @@ export interface ProfileSnapshot {
 
 export type SketchExitStatus = "cancelled" | "empty" | "has_segments";
 
+/** Undo snapshot for sketch-local history — captured before each mutation. */
+interface SketchSnapshot {
+  segments: SketchSegment2D[];
+  constraints: SketchConstraint[];
+  points: Vec2[];
+  selectedSegments: number[];
+  solved: boolean;
+  constraintStatus: ConstraintStatus;
+}
+
+const MAX_SKETCH_HISTORY = 100;
+
 export interface SketchStore extends SketchState {
   // Confirmation state
   pendingExit: boolean;
+
+  // Sketch-local undo/redo stacks (cleared on enter/exit sketch)
+  history: SketchSnapshot[];
+  future: SketchSnapshot[];
 
   // Face selection state
   faceSelectionMode: boolean;
@@ -28,6 +44,8 @@ export interface SketchStore extends SketchState {
   snapTarget: Vec2 | null;
 
   // Actions
+  undoSketch: () => void;
+  redoSketch: () => void;
   validateState: () => boolean; // Returns true if state was fixed
   enterFaceSelectionMode: () => void;
   setHoveredFace: (face: FaceInfo | null) => void;
@@ -127,7 +145,28 @@ function computeConstraintStatus(
   return "solved";
 }
 
-export const useSketchStore = create<SketchStore>((set, get) => ({
+/** Capture the parts of state that sketch-local undo should restore. */
+function snapshot(s: SketchStore): SketchSnapshot {
+  return {
+    segments: [...s.segments],
+    constraints: [...s.constraints],
+    points: [...s.points],
+    selectedSegments: [...s.selectedSegments],
+    solved: s.solved,
+    constraintStatus: s.constraintStatus,
+  };
+}
+
+export const useSketchStore = create<SketchStore>((set, get) => {
+  /** Push current state onto the undo stack and clear redo. */
+  function pushHistory() {
+    const state = get();
+    const next = [...state.history, snapshot(state)];
+    if (next.length > MAX_SKETCH_HISTORY) next.shift();
+    set({ history: next, future: [] });
+  }
+
+  return {
   active: false,
   plane: "XY",
   origin: { x: 0, y: 0, z: 0 },
@@ -142,12 +181,50 @@ export const useSketchStore = create<SketchStore>((set, get) => ({
   loftMode: false,
   profiles: [],
   pendingExit: false,
+  history: [],
+  future: [],
   faceSelectionMode: false,
   hoveredFace: null,
   selectedFace: null,
   cursorWorldPos: null,
   cursorSketchPos: null,
   snapTarget: null,
+
+  undoSketch: () => {
+    const state = get();
+    if (state.history.length === 0) return;
+    const prev = state.history[state.history.length - 1]!;
+    const newHistory = state.history.slice(0, -1);
+    const newFuture = [...state.future, snapshot(state)];
+    set({
+      segments: prev.segments,
+      constraints: prev.constraints,
+      points: prev.points,
+      selectedSegments: prev.selectedSegments,
+      solved: prev.solved,
+      constraintStatus: prev.constraintStatus,
+      history: newHistory,
+      future: newFuture,
+    });
+  },
+
+  redoSketch: () => {
+    const state = get();
+    if (state.future.length === 0) return;
+    const next = state.future[state.future.length - 1]!;
+    const newFuture = state.future.slice(0, -1);
+    const newHistory = [...state.history, snapshot(state)];
+    set({
+      segments: next.segments,
+      constraints: next.constraints,
+      points: next.points,
+      selectedSegments: next.selectedSegments,
+      solved: next.solved,
+      constraintStatus: next.constraintStatus,
+      history: newHistory,
+      future: newFuture,
+    });
+  },
 
   validateState: () => {
     const state = get();
@@ -207,6 +284,8 @@ export const useSketchStore = create<SketchStore>((set, get) => ({
       loftMode: false,
       profiles: [],
       pendingExit: false,
+      history: [],
+      future: [],
     });
 
     // Dispatch event to trigger camera swing to face the plane
@@ -244,6 +323,8 @@ export const useSketchStore = create<SketchStore>((set, get) => ({
       loftMode: false,
       profiles: [],
       pendingExit: false,
+      history: [],
+      future: [],
       faceSelectionMode: false,
       hoveredFace: null,
       selectedFace: null,
@@ -273,6 +354,8 @@ export const useSketchStore = create<SketchStore>((set, get) => ({
       loftMode: false,
       profiles: [],
       pendingExit: false,
+      history: [],
+      future: [],
       faceSelectionMode: false,
       hoveredFace: null,
       selectedFace: null,
@@ -314,6 +397,7 @@ export const useSketchStore = create<SketchStore>((set, get) => ({
         // Add a line segment
         const start = newPoints[newPoints.length - 2]!;
         const end = newPoints[newPoints.length - 1]!;
+        pushHistory();
         set((s) => ({
           segments: [...s.segments, { type: "Line", start, end }],
           points: [end], // Keep last point for continuation
@@ -327,6 +411,7 @@ export const useSketchStore = create<SketchStore>((set, get) => ({
         const p1 = newPoints[0]!;
         const p2 = newPoints[1]!;
         const rectSegments = makeRectangleSegments(p1, p2);
+        pushHistory();
         set((s) => ({
           segments: [...s.segments, ...rectSegments],
           points: [],
@@ -344,6 +429,7 @@ export const useSketchStore = create<SketchStore>((set, get) => ({
         );
         if (radius > 0.1) {
           const circleSegments = makeCircleSegments(center, radius);
+          pushHistory();
           set((s) => ({
             segments: [...s.segments, ...circleSegments],
             points: [],
@@ -365,26 +451,32 @@ export const useSketchStore = create<SketchStore>((set, get) => ({
       if (firstSeg?.type === "Line") {
         const lastPoint = state.points[0]!;
         const firstPoint = firstSeg.start;
+        pushHistory();
         set((s) => ({
           segments: [...s.segments, { type: "Line", start: lastPoint, end: firstPoint }],
           points: [],
         }));
+        return;
       }
     }
     set({ points: [] });
   },
 
   clearSketch: () => {
-    set({ segments: [], points: [] });
+    if (get().segments.length === 0) return;
+    pushHistory();
+    set({ segments: [], points: [], constraints: [], selectedSegments: [] });
   },
 
   addRectangle: (p1, p2) => {
     const rectSegments = makeRectangleSegments(p1, p2);
+    pushHistory();
     set((s) => ({ segments: [...s.segments, ...rectSegments] }));
   },
 
   addCircle: (center, radius, segments = 32) => {
     const circleSegments = makeCircleSegments(center, radius, segments);
+    pushHistory();
     set((s) => ({ segments: [...s.segments, ...circleSegments] }));
   },
 
@@ -407,6 +499,7 @@ export const useSketchStore = create<SketchStore>((set, get) => ({
   },
 
   addConstraint: (constraint) => {
+    pushHistory();
     set((s) => {
       const newConstraints = [...s.constraints, constraint];
       return {
@@ -418,6 +511,7 @@ export const useSketchStore = create<SketchStore>((set, get) => ({
   },
 
   removeConstraint: (index) => {
+    pushHistory();
     set((s) => {
       const newConstraints = s.constraints.filter((_, i) => i !== index);
       return {
@@ -665,4 +759,5 @@ export const useSketchStore = create<SketchStore>((set, get) => ({
   setCursorPos: (world, sketch, snap) => {
     set({ cursorWorldPos: world, cursorSketchPos: sketch, snapTarget: snap });
   },
-}));
+  };
+});

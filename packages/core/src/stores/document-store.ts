@@ -929,7 +929,15 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   addExtrude: (plane, origin, segments, direction, options) => {
     if (segments.length === 0) return null;
-    const engine = get()._crdtEngine!;
+    const engine = get()._crdtEngine;
+    // Same guard as addPrimitive: a stale wrapper whose underlying Rust
+    // value has already been freed will OOB inside WASM and blow up the
+    // error boundary. Bail early instead.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (!engine || (engine as any).__wbg_ptr === 0) {
+      console.warn("[document-store] addExtrude: engine is null/freed");
+      return null;
+    }
 
     const depth = Math.sqrt(direction.x ** 2 + direction.y ** 2 + direction.z ** 2);
     const dir = depth > 0 ? { x: direction.x / depth, y: direction.y / depth, z: direction.z / depth } : { x: 0, y: 0, z: 1 };
@@ -941,9 +949,14 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     };
     if (options?.twist_angle != null) input.twist_angle = options.twist_angle;
     if (options?.scale_end != null) input.scale_end = options.scale_end;
-    const result = engine.add_feature(JSON.stringify(input));
-    set(applyApiResult(result));
-    return result.createdFeatureId ?? null;
+    try {
+      const result = engine.add_feature(JSON.stringify(input));
+      set(applyApiResult(result));
+      return result.createdFeatureId ?? null;
+    } catch (e) {
+      console.error("[document-store] addExtrude crashed:", e);
+      return null;
+    }
   },
 
   addRevolve: (plane, origin, segments, axisOrigin, axisDir, angleDeg) => {
