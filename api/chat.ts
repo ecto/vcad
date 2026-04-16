@@ -14,6 +14,7 @@ import {
   recordChatUsage,
   type Entitlement,
 } from "./_lib/entitlements.js";
+import { sendEmail, usageAlertEmail } from "./_lib/email.js";
 
 const FALLBACK_SYSTEM_PROMPT =
   "You are vcad's AI assistant — a parametric CAD copilot. Coordinate system: Z-up (X right, Y forward, Z up). Units: millimeters. Be concise.";
@@ -355,6 +356,76 @@ async function storeConversation(
 }
 
 // ---------------------------------------------------------------------------
+// Usage alert (80% threshold email)
+// ---------------------------------------------------------------------------
+
+const USAGE_ALERT_THRESHOLD = 0.8;
+
+async function checkAndSendUsageAlert(
+  admin: SupabaseClient,
+  userId: string,
+  entitlement: Entitlement,
+  newTokensThisTurn: number,
+): Promise<void> {
+  try {
+    // Read the current period row to get the post-increment total and
+    // check whether we already sent an alert for this period.
+    const { data, error } = await admin
+      .from("usage_periods")
+      .select("input_tokens, output_tokens, usage_alert_sent_at")
+      .eq("user_id", userId)
+      .eq("period_start", entitlement.periodStart.toISOString())
+      .maybeSingle();
+    if (error || !data) return;
+
+    if (data.usage_alert_sent_at) return; // already notified
+
+    const total =
+      Number(data.input_tokens ?? 0) + Number(data.output_tokens ?? 0);
+    const prevTotal = total - newTokensThisTurn;
+
+    // Only fire if this specific turn is what crossed the threshold.
+    if (
+      prevTotal < entitlement.limit * USAGE_ALERT_THRESHOLD &&
+      total >= entitlement.limit * USAGE_ALERT_THRESHOLD
+    ) {
+      // Look up the user's email for the notification.
+      const { data: authUser } = await admin.auth.admin.getUserById(userId);
+      const email = authUser?.user?.email;
+      if (!email) return;
+
+      const firstName = (() => {
+        const full =
+          authUser?.user?.user_metadata?.full_name ??
+          authUser?.user?.user_metadata?.name;
+        if (full) return String(full).split(" ")[0] ?? "there";
+        return email.split("@")[0] ?? "there";
+      })();
+
+      const msg = usageAlertEmail({
+        firstName,
+        tier: entitlement.tier,
+        used: total,
+        limit: entitlement.limit,
+        periodEnd: entitlement.periodEnd.toISOString(),
+      });
+
+      const sent = await sendEmail({ to: email, ...msg });
+      if (sent) {
+        await admin
+          .from("usage_periods")
+          .update({ usage_alert_sent_at: new Date().toISOString() })
+          .eq("user_id", userId)
+          .eq("period_start", entitlement.periodStart.toISOString());
+      }
+    }
+  } catch (err) {
+    // Non-fatal — never block the chat response for an email failure.
+    console.error("[chat] usage alert check failed:", err);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Handler
 // ---------------------------------------------------------------------------
 
@@ -551,6 +622,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           input: inputTokens,
           output: outputTokens,
         });
+
+        // Fire-and-forget: check if this message pushed the user past 80%
+        // and send a one-shot email alert if so.
+        void checkAndSendUsageAlert(
+          admin,
+          userId,
+          finalEntitlement,
+          totalTokens,
+        );
       }
 
       void shouldStoreConversation(admin, userId).then((consented) => {

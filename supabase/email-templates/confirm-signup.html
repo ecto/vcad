@@ -1,0 +1,56 @@
+<!-- Supabase Auth → Email Templates → Confirm Signup
+     Paste this HTML into the template editor. Variables:
+     {{ .ConfirmationURL }} — the confirmation link
+     {{ .SiteURL }}         — your app origin -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>Confirm your vcad account</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #1a1a1a;
+             font-family: 'Berkeley Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+             color: #F8F8F2; -webkit-font-smoothing: antialiased;">
+  <div style="max-width: 520px; margin: 0 auto; padding: 40px 24px;">
+    <div style="margin-bottom: 32px;">
+      <span style="font-size: 22px; font-weight: 700; letter-spacing: -0.04em; color: #F8F8F2;">vcad</span><span style="font-size: 22px; font-weight: 700; color: #F92672;">.</span>
+    </div>
+
+    <div style="background-color: #222222; border: 1px solid #444444; padding: 28px 24px;">
+      <h1 style="margin: 0 0 16px; font-size: 18px; font-weight: 700;
+                 letter-spacing: -0.02em; color: #F8F8F2;">
+        Welcome to vcad
+      </h1>
+      <p style="margin: 0 0 12px; font-size: 13px; line-height: 1.6; color: #F8F8F2;">
+        Confirm your email to start building. Your designs sync to the cloud automatically once you're signed in.
+      </p>
+      <div style="margin: 28px 0 20px;">
+        <a href="{{ .ConfirmationURL }}"
+           style="display: inline-block; padding: 12px 28px;
+                  background-color: #F92672; color: #ffffff;
+                  font-family: 'Berkeley Mono', ui-monospace, monospace;
+                  font-size: 13px; font-weight: 700;
+                  text-transform: uppercase; letter-spacing: 0.08em;
+                  text-decoration: none;">
+          Confirm email
+        </a>
+      </div>
+      <p style="margin: 0; font-size: 11px; color: #75715E; line-height: 1.5;">
+        If the button doesn't work, copy and paste this URL:<br />
+        <a href="{{ .ConfirmationURL }}" style="color: #F92672; text-decoration: none; word-break: break-all;">{{ .ConfirmationURL }}</a>
+      </p>
+    </div>
+
+    <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #333333;">
+      <p style="margin: 0 0 8px; font-size: 11px; color: #75715E;">
+        If you didn't create a vcad account, you can safely ignore this email.
+      </p>
+      <p style="margin: 0; font-size: 10px; color: #555555;">
+        vcad &mdash; open-source parametric CAD
+      </p>
+    </div>
+  </div>
+</body>
+</html>

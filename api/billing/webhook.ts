@@ -14,6 +14,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { tierFromStripeLookupKey, type TierId } from "@vcad/core";
 import { getSupabaseAdmin } from "../_lib/supabase.js";
 import { getStripe } from "../_lib/stripe.js";
+import { sendEmail, upgradeWelcomeEmail } from "../_lib/email.js";
 
 export const config = {
   api: {
@@ -167,6 +168,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             sub.metadata = { ...sub.metadata, vcad_user_id: session.client_reference_id };
           }
           await upsertSubscription(admin, sub);
+
+          // Send the "Welcome to Pro/Max" email on first checkout.
+          const tier = tierFromSubscription(sub);
+          if (tier !== "free") {
+            const userId = session.client_reference_id ?? (await resolveUserId(admin, sub));
+            if (userId) {
+              void (async () => {
+                try {
+                  const { data: authUser } = await admin.auth.admin.getUserById(userId);
+                  const email = authUser?.user?.email;
+                  if (!email) return;
+                  const firstName = (() => {
+                    const full = authUser?.user?.user_metadata?.full_name ?? authUser?.user?.user_metadata?.name;
+                    if (full) return String(full).split(" ")[0] ?? "there";
+                    return email.split("@")[0] ?? "there";
+                  })();
+                  const msg = upgradeWelcomeEmail({ firstName, tier });
+                  await sendEmail({ to: email, ...msg });
+                } catch (err) {
+                  console.error("[webhook] welcome email failed:", err);
+                }
+              })();
+            }
+          }
         }
         break;
       }
