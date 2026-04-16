@@ -29,6 +29,7 @@ const CelebrationOverlay = lazy(() => import("@/components/CelebrationOverlay").
 const SignInDelight = lazy(() => import("@/components/SignInDelight").then(m => ({ default: m.SignInDelight })));
 const UpgradeDelight = lazy(() => import("@/components/UpgradeDelight").then(m => ({ default: m.UpgradeDelight })));
 const AboutModal = lazy(() => import("@/components/AboutModal").then(m => ({ default: m.AboutModal })));
+const ProductModal = lazy(() => import("@/components/ProductModal").then(m => ({ default: m.ProductModal })));
 const ShareDialog = lazy(() => import("@/components/ShareDialog").then(m => ({ default: m.ShareDialog })));
 const ForkPromptModal = lazy(() => import("@/components/ForkPromptModal").then(m => ({ default: m.ForkPromptModal })));
 const ReadOnlyBanner = lazy(() => import("@/components/ReadOnlyBanner").then(m => ({ default: m.ReadOnlyBanner })));
@@ -69,6 +70,7 @@ import { useEngine } from "@/hooks/useEngine";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useKeybindingDispatcher } from "@/hooks/useKeybindingDispatcher";
 import { useAutoSave } from "@/hooks/useAutoSave";
+import { useCollabSync } from "@/hooks/useCollabSync";
 import { useChatHandler } from "@/hooks/useChatHandler";
 import { useUrlSync } from "@/hooks/useUrlSync";
 import { saveDocument } from "@/lib/save-load";
@@ -140,10 +142,12 @@ export function App() {
   useEngine();
   useThemeSync();
   useAutoSave();
+  useCollabSync();
   useChatHandler();
   useUrlSync();
 
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [productOpen, setProductOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [documentPickerOpen, setDocumentPickerOpen] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -682,6 +686,7 @@ export function App() {
             header={!electronicsActive && (
               <Header
                 onAboutOpen={() => setAboutOpen(true)}
+                onProductOpen={() => setProductOpen(true)}
                 onSave={handleSave}
                 onOpen={handleOpen}
                 onShareOpen={() => setShareOpen(true)}
@@ -720,6 +725,7 @@ export function App() {
         {/* Modals */}
         <Suspense fallback={null}>
           <AboutModal open={aboutOpen} onOpenChange={setAboutOpen} />
+          <ProductModal open={productOpen} onOpenChange={setProductOpen} />
           <ShareDialog open={shareOpen} onOpenChange={setShareOpen} />
           <ForkPromptModal />
           <DocumentPicker

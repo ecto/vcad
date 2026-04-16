@@ -41,6 +41,7 @@ const InputPreferencesDialog = lazy(() =>
 
 interface HeaderProps {
   onAboutOpen: () => void;
+  onProductOpen: () => void;
   onSave: () => void;
   onOpen: () => void;
   /** Opens the ShareDialog. Enabled only when signed in + cloud-synced. */
@@ -267,7 +268,7 @@ function RayTracingSubmenu() {
   );
 }
 
-export function Header({ onAboutOpen, onSave, onOpen, onShareOpen, children }: HeaderProps) {
+export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen, children }: HeaderProps) {
   const isDirty = useDocumentStore((s) => s.isDirty);
   const user = useAuthStore((s) => s.user);
   const billingTier = useBillingStore((s) => s.snapshot?.tier ?? null);
@@ -538,6 +539,12 @@ export function Header({ onAboutOpen, onSave, onOpen, onShareOpen, children }: H
                 onCloseAutoFocus={(e) => e.preventDefault()}
               >
                 <CommandMenuItem id="about" commands={commands} />
+                <Menubar.Item
+                  className={ITEM_CLASS}
+                  onSelect={() => onProductOpen()}
+                >
+                  vcad Pro
+                </Menubar.Item>
                 <CommandMenuItem
                   id="whats-new"
                   commands={commands}
