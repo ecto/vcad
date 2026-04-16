@@ -7,7 +7,7 @@
  *
  * The sync protocol is delta-based: each client tracks the last clock it sent
  * and only broadcasts new ops. On join, a full state exchange happens via the
- * "sync" event.
+ * "sync-request" event.
  */
 
 import { requireSupabase, isAuthEnabled } from "./client";
@@ -58,6 +58,7 @@ export function joinCollabChannel(
 
   let lastSentClock = callbacks.getSyncClock();
   let channel: RealtimeChannel | null = null;
+  let subscribed = false;
 
   channel = supabase.channel(channelName, {
     config: {
@@ -69,8 +70,6 @@ export function joinCollabChannel(
   channel.on("broadcast", { event: "ops" }, (payload) => {
     const opsJson = payload.payload?.ops as string | undefined;
     if (!opsJson) return;
-    const parsed = JSON.parse(opsJson) as unknown[];
-    console.log("[collab] received", parsed.length, "remote ops");
     _applyingRemote = true;
     try {
       callbacks.mergeRemoteOps(opsJson);
@@ -84,8 +83,8 @@ export function joinCollabChannel(
     const remoteClock = (payload.payload?.clock ?? "{}") as string;
     const ops = callbacks.getOpsSince(remoteClock);
     const parsed = JSON.parse(ops) as unknown[];
-    if (parsed.length > 0) {
-      channel?.send({
+    if (parsed.length > 0 && channel) {
+      channel.send({
         type: "broadcast",
         event: "ops",
         payload: { ops },
@@ -96,23 +95,44 @@ export function joinCollabChannel(
   // ─── Subscribe and request sync on join ──────────────────────────────
   channel.subscribe((status) => {
     if (status === "SUBSCRIBED") {
+      subscribed = true;
       // Ask existing peers for any ops we're missing.
       channel?.send({
         type: "broadcast",
         event: "sync-request",
         payload: { clock: callbacks.getSyncClock() },
       });
+      // Flush any ops that were buffered while waiting for subscription.
+      flushPending();
     }
   });
 
-  // ─── Broadcast local ops ─────────────────────────────────────────────
+  // ─── Buffered broadcast ──────────────────────────────────────────────
+  // Ops generated before the WebSocket is SUBSCRIBED are buffered and
+  // flushed once the channel is ready, avoiding the REST API fallback.
+  function flushPending() {
+    if (!channel || !subscribed) return;
+    const ops = callbacks.getOpsSince(lastSentClock);
+    const parsed = JSON.parse(ops) as unknown[];
+    if (parsed.length === 0) return;
+    channel.send({
+      type: "broadcast",
+      event: "ops",
+      payload: { ops },
+    });
+    lastSentClock = callbacks.getSyncClock();
+  }
+
   const broadcastOps = () => {
     if (!channel) return;
+
+    // If not yet subscribed, skip — flushPending will send when ready.
+    if (!subscribed) return;
+
     const ops = callbacks.getOpsSince(lastSentClock);
     const parsed = JSON.parse(ops) as unknown[];
     if (parsed.length === 0) return;
 
-    console.log("[collab] broadcasting", parsed.length, "ops");
     channel.send({
       type: "broadcast",
       event: "ops",
@@ -123,6 +143,7 @@ export function joinCollabChannel(
 
   const leave = () => {
     if (channel) {
+      subscribed = false;
       supabase.removeChannel(channel);
       channel = null;
     }

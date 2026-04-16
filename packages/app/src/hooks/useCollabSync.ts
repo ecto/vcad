@@ -80,31 +80,33 @@ export function useCollabSync() {
     };
   }, [documentId, user, readOnly]);
 
-  // Open/close the collab channel when cloudId becomes available.
+  // Open/close the collab channel when cloudId becomes available. Debounced
+  // with a short delay so Vite HMR unmount+remount doesn't cause a
+  // leave→rejoin cycle on every hot update.
   useEffect(() => {
-    // Clean up previous channel.
+    // Clean up previous channel immediately.
     channelRef.current?.leave();
     channelRef.current = null;
 
-    if (!cloudId || !user || readOnly) {
-      console.log("[collab] channel precondition not met:", { cloudId, user: !!user, readOnly: !!readOnly });
-      return;
-    }
+    if (!cloudId || !user || readOnly) return;
 
-    console.log("[collab] joining channel for", cloudId);
-
-    const channel = joinCollabChannel(cloudId, {
-      getSyncClock: () => useDocumentStore.getState().getSyncClock(),
-      getOpsSince: (clock) => useDocumentStore.getState().getOpsSince(clock),
-      mergeRemoteOps: (ops) => useDocumentStore.getState().mergeRemoteOps(ops),
-    });
-
-    channelRef.current = channel;
+    const timer = setTimeout(() => {
+      console.log("[collab] joining channel for", cloudId);
+      const channel = joinCollabChannel(cloudId, {
+        getSyncClock: () => useDocumentStore.getState().getSyncClock(),
+        getOpsSince: (clock) => useDocumentStore.getState().getOpsSince(clock),
+        mergeRemoteOps: (ops) => useDocumentStore.getState().mergeRemoteOps(ops),
+      });
+      channelRef.current = channel;
+    }, 200);
 
     return () => {
-      console.log("[collab] leaving channel for", cloudId);
-      channel?.leave();
-      channelRef.current = null;
+      clearTimeout(timer);
+      if (channelRef.current) {
+        console.log("[collab] leaving channel for", cloudId);
+        channelRef.current.leave();
+        channelRef.current = null;
+      }
     };
   }, [cloudId, user, readOnly]);
 
