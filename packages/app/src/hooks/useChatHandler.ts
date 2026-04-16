@@ -18,7 +18,11 @@ import {
   SCREENSHOT_SYSTEM_PROMPT_APPENDIX,
   executeScreenshotViewport,
 } from "@/lib/ai-screenshot";
-import { AI_CAMERA_TOOL_NAMES, executeAiCamera } from "@/lib/ai-camera-tools";
+import {
+  AI_CAMERA_TOOL_NAMES,
+  AI_CAMERA_SYSTEM_PROMPT_APPENDIX,
+  executeAiCamera,
+} from "@/lib/ai-camera-tools";
 
 /**
  * Parse a rate-limit error body emitted by streamChat with LIMIT_ERROR_PREFIX.
@@ -160,7 +164,8 @@ function runTurn(
     const tools = [...commandRegistry.toAnthropicTools(), SCREENSHOT_VIEWPORT_TOOL];
     const systemPrompt =
       commandRegistry.buildSystemPrompt(getDocumentParts(), context) +
-      SCREENSHOT_SYSTEM_PROMPT_APPENDIX;
+      SCREENSHOT_SYSTEM_PROMPT_APPENDIX +
+      AI_CAMERA_SYSTEM_PROMPT_APPENDIX;
 
     streamChat(history, context, {
       onText: (t) => { text = t; onStreamText(t); },

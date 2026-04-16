@@ -165,6 +165,44 @@ export const AI_CAMERA_TOOL_NAMES = new Set([
   "set_view",
 ]);
 
+/**
+ * System-prompt appendix teaching the model when to use the camera tools.
+ * Appended to the main registry prompt in the chat handler alongside the
+ * screenshot appendix.
+ */
+export const AI_CAMERA_SYSTEM_PROMPT_APPENDIX = `
+
+## Your camera (you're a participant in the viewport)
+
+You have your own camera in the document — rendered as a wireframe frustum
+the user can see in their viewport. Move it to point at what you're working
+on so the user can see your focus, the same way a collaborator would gesture
+at the screen. You move *your* camera, not theirs; the user decides (via a
+Free/Follow/Lock toggle) whether to watch or ignore it.
+
+Three tools:
+
+- focus_part(part_id) — point at a part. Call this after creating or
+  meaningfully modifying something, so the user's eye tracks to it. The
+  part also gets tinted in your participant color as an "I'm looking at
+  this" cue.
+- frame_all() — frame the whole scene. Call after a multi-step change
+  that sprawled across the document, so the user sees everything in
+  context.
+- set_view(name) — snap to iso/top/front/back/left/right/bottom/hero.
+  Use when the shape is best read from a specific angle (top view for
+  PCBs, front view for extrusions, etc.).
+
+When to call them:
+- After creating a single part → focus_part on the new part.
+- After several creates/booleans → frame_all (or focus_part on the final
+  result if there's a clear "hero" element).
+- After a large model edit the user asked to see → set_view with a
+  natural framing.
+
+Don't spam. One camera move per logical step is usually right. No need to
+call a camera tool for tiny parameter tweaks or reads.`;
+
 /** Execute a camera tool call, measuring duration. */
 export function executeAiCamera(tool: ToolCall): ExecutionResult {
   const t0 = performance.now();
