@@ -86,11 +86,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   let body: { tier?: unknown };
-  try {
-    body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body ?? {});
-  } catch {
-    res.status(400).json({ error: "invalid json" });
-    return;
+  if (typeof req.body === "string") {
+    try { body = JSON.parse(req.body); } catch { res.status(400).json({ error: "invalid json" }); return; }
+  } else if (req.body && typeof req.body === "object") {
+    body = req.body as { tier?: unknown };
+  } else {
+    let raw = "";
+    for await (const chunk of req) raw += chunk;
+    try { body = JSON.parse(raw); } catch { res.status(400).json({ error: "invalid json" }); return; }
   }
 
   if (!isPaidTier(body.tier)) {

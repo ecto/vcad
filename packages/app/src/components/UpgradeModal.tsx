@@ -512,7 +512,15 @@ export function UpgradeModal({ open, onOpenChange, reason }: UpgradeModalProps) 
     setError(null);
     setBusy(tier);
     try {
-      await startCheckout(tier);
+      const url = await startCheckout(tier);
+      // Navigate via a synthetic anchor click. Safari blocks
+      // window.location.href in async callbacks that have lost the
+      // original user-gesture context; dispatching a click on an <a>
+      // avoids that restriction.
+      const a = document.createElement("a");
+      a.href = url;
+      a.rel = "noopener";
+      a.click();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Checkout failed");
       setBusy(null);

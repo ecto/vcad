@@ -60,11 +60,11 @@ export async function refreshUsage(): Promise<void> {
 }
 
 /**
- * Kick off Stripe Checkout for the requested tier. Navigates the current tab
- * to Stripe's hosted checkout page. Throws on any non-OK response so the
- * upgrade modal can surface the error inline.
+ * Kick off Stripe Checkout for the requested tier. Returns the Checkout URL
+ * so the caller can navigate. Throws on any non-OK response so the upgrade
+ * modal can surface the error inline.
  */
-export async function startCheckout(tier: PaidTierId): Promise<void> {
+export async function startCheckout(tier: PaidTierId): Promise<string> {
   const res = await fetch("/api/billing/checkout", {
     method: "POST",
     headers: authHeaders(),
@@ -76,14 +76,14 @@ export async function startCheckout(tier: PaidTierId): Promise<void> {
   }
   const { url } = (await res.json()) as { url?: string };
   if (!url) throw new Error("Checkout response missing URL");
-  window.location.href = url;
+  return url;
 }
 
 /**
  * Open Stripe's Customer Portal in the current tab — used for managing
  * payment methods, invoices, and cancellation.
  */
-export async function openCustomerPortal(): Promise<void> {
+export async function openCustomerPortal(): Promise<string> {
   const res = await fetch("/api/billing/portal", {
     method: "POST",
     headers: authHeaders(),
@@ -94,5 +94,9 @@ export async function openCustomerPortal(): Promise<void> {
   }
   const { url } = (await res.json()) as { url?: string };
   if (!url) throw new Error("Portal response missing URL");
-  window.location.href = url;
+  const a = document.createElement("a");
+  a.href = url;
+  a.rel = "noopener";
+  a.click();
+  return url;
 }
