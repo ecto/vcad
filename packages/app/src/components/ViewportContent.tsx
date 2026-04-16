@@ -26,11 +26,14 @@ import { TransformGizmo } from "./TransformGizmo";
 import { SelectionOverlay } from "./SelectionOverlay";
 import { DimensionOverlay } from "./DimensionOverlay";
 import { RayTracedViewportSync } from "./RayTracedViewport";
+import { ParticipantCameraOverlay } from "./ParticipantCameraOverlay";
 import {
   useEngineStore,
   useDocumentStore,
   useUiStore,
   useSketchStore,
+  useParticipantStore,
+  kernelToDisplay,
 } from "@vcad/core";
 import type { PartInfo } from "@vcad/core";
 import { useCameraControls } from "@/hooks/useCameraControls";
@@ -448,6 +451,32 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
       // Request next frame to continue animation (demand mode)
       invalidate();
     }
+  });
+
+  // Lock mode: each frame, lerp the user's camera onto the followed
+  // participant's camera (kernel Z-up → display Y-up). Skip when the
+  // existing animation system is already driving the camera so we don't
+  // fight over it. Also skips when no participant is followed or the
+  // target participant has no camera opinion yet.
+  useFrame(() => {
+    const { followMode, followingParticipantId } = useUiStore.getState();
+    if (followMode !== "lock" || !followingParticipantId) return;
+    if (isAnimatingTargetRef.current) return;
+    const participant =
+      useParticipantStore.getState().participants.get(followingParticipantId);
+    if (!participant?.camera) return;
+
+    const [px, py, pz] = kernelToDisplay(participant.camera.position);
+    const [tx, ty, tz] = kernelToDisplay(participant.camera.target);
+    const lerp = 0.15;
+    camera.position.lerp(new Vector3(px, py, pz), lerp);
+    if (orbitRef.current) {
+      orbitRef.current.target.lerp(new Vector3(tx, ty, tz), lerp);
+      orbitRef.current.update();
+    } else {
+      camera.lookAt(tx, ty, tz);
+    }
+    invalidate();
   });
 
   // Wheel handler with configurable control schemes
@@ -1203,6 +1232,9 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
 
           {/* Dimension annotations for primitives */}
           <DimensionOverlay />
+
+          {/* Other participants' camera frustums (AI for now, peers later) */}
+          <ParticipantCameraOverlay />
           </group>
 
           {/* Transform gizmo — outside rotation group; does its own Z-up ↔ Y-up conversion

@@ -1,13 +1,27 @@
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import * as THREE from "three";
 import { Line } from "@react-three/drei";
-import { useUiStore, useDocumentStore, useEngineStore } from "@vcad/core";
+import {
+  useUiStore,
+  useDocumentStore,
+  useEngineStore,
+  useParticipantStore,
+  LOCAL_PARTICIPANT_ID,
+} from "@vcad/core";
 import { useTheme } from "@/hooks/useTheme";
 
 const ACCENT_DARK = "#6b8fa3";
 const ACCENT_LIGHT = "#4a7080";
 
-function BoundingBoxLines({ box, color }: { box: THREE.Box3; color: string }) {
+function BoundingBoxLines({
+  box,
+  color,
+  opacity,
+}: {
+  box: THREE.Box3;
+  color: string;
+  opacity: number;
+}) {
   const min = box.min;
   const max = box.max;
 
@@ -78,33 +92,25 @@ function BoundingBoxLines({ box, color }: { box: THREE.Box3; color: string }) {
           dashSize={1}
           gapSize={0.8}
           transparent
-          opacity={0.5}
+          opacity={opacity}
         />
       ))}
     </>
   );
 }
 
-export function SelectionOverlay() {
-  const selectedPartIds = useUiStore((s) => s.selectedPartIds);
-  const isDraggingGizmo = useUiStore((s) => s.isDraggingGizmo);
-  const isOrbiting = useUiStore((s) => s.isOrbiting);
+/** Compute the combined bbox (kernel Z-up) of a set of selected part ids. */
+function useSelectionBox(partIdSet: Set<string>): THREE.Box3 | null {
   const parts = useDocumentStore((s) => s.parts);
   const scene = useEngineStore((s) => s.scene);
-  const { isDark } = useTheme();
 
-  const accentColor = isDark ? ACCENT_DARK : ACCENT_LIGHT;
-
-  // Compute combined bounding box for all selected parts
-  const box = useMemo(() => {
-    if (selectedPartIds.size === 0 || !scene) {
-      return null;
-    }
+  return useMemo(() => {
+    if (partIdSet.size === 0 || !scene) return null;
 
     const combinedBox = new THREE.Box3();
     let hasValidBox = false;
 
-    selectedPartIds.forEach((partId) => {
+    partIdSet.forEach((partId) => {
       const partIndex = parts.findIndex((p) => p.id === partId);
       if (partIndex === -1) return;
 
@@ -129,21 +135,57 @@ export function SelectionOverlay() {
       hasValidBox = true;
     });
 
-    if (!hasValidBox) {
-      return null;
-    }
+    return hasValidBox ? combinedBox : null;
+  }, [partIdSet, parts, scene]);
+}
 
-    return combinedBox;
-  }, [selectedPartIds, parts, scene]);
+/** Local user's selection box — dashed accent outline. */
+function LocalSelection() {
+  const selectedPartIds = useUiStore((s) => s.selectedPartIds);
+  const box = useSelectionBox(selectedPartIds);
+  const { isDark } = useTheme();
+  if (!box) return null;
+  const accentColor = isDark ? ACCENT_DARK : ACCENT_LIGHT;
+  return <BoundingBoxLines box={box} color={accentColor} opacity={0.5} />;
+}
 
-  // Skip rendering during orbit for performance, or when no selection
-  if (isOrbiting || !box || isDraggingGizmo) return null;
+/**
+ * Every non-local participant's selection, drawn in their own color so
+ * the user can see at a glance what the AI (or a peer) is looking at.
+ */
+function ParticipantAttention() {
+  const participants = useParticipantStore((s) => s.participants);
+  const followMode = useUiStore((s) => s.followMode);
+  // Free mode hides all non-local presence cues.
+  if (followMode === "free") return null;
+  const nodes: ReactNode[] = [];
+  participants.forEach((p) => {
+    if (p.id === LOCAL_PARTICIPANT_ID) return;
+    if (p.selectedPartIds.size === 0) return;
+    nodes.push(<ParticipantSelection key={p.id} ids={p.selectedPartIds} color={p.color} />);
+  });
+  return <>{nodes}</>;
+}
+
+function ParticipantSelection({ ids, color }: { ids: Set<string>; color: string }) {
+  const box = useSelectionBox(ids);
+  if (!box) return null;
+  // AI/peer attention is slightly brighter than local selection so it
+  // reads as an event drawing your eye.
+  return <BoundingBoxLines box={box} color={color} opacity={0.7} />;
+}
+
+export function SelectionOverlay() {
+  const isDraggingGizmo = useUiStore((s) => s.isDraggingGizmo);
+  const isOrbiting = useUiStore((s) => s.isOrbiting);
+
+  // Skip rendering during orbit for performance.
+  if (isOrbiting || isDraggingGizmo) return null;
 
   return (
     <>
-      {/* Dashed wireframe bounding box */}
-      <BoundingBoxLines box={box} color={accentColor} />
-
+      <LocalSelection />
+      <ParticipantAttention />
     </>
   );
 }

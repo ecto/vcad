@@ -15,6 +15,16 @@ export type ToolbarTab = "create" | "transform" | "combine" | "modify" | "assemb
 export type SidebarPane = "tree" | "inspector";
 
 /**
+ * How the local user's camera relates to another participant's camera.
+ * - "free": independent. The local camera is only moved by user input.
+ * - "follow": user camera stays put, but the other participant's camera
+ *             is rendered in-scene (frustum + attention highlight).
+ * - "lock":  user camera lerps to match the followed participant's camera
+ *             every frame — "see through their eyes".
+ */
+export type FollowMode = "free" | "follow" | "lock";
+
+/**
  * What the inspector pane is focused on. `null` means it follows the viewport
  * selection (the common case). Non-null targets are things you can inspect
  * that are NOT 3D-selectable parts — currently just the scene itself.
@@ -57,6 +67,11 @@ export interface UiState {
   inspectorTarget: InspectorTarget;
   // Bottom status bar visibility
   statusBarVisible: boolean;
+  // Follow/Lock mode for watching another participant's camera (AI for now,
+  // peers in the future). When `followingParticipantId` is null, the mode
+  // is effectively "free" regardless of value.
+  followMode: FollowMode;
+  followingParticipantId: string | null;
   // Live cursor position in world space (Z-up), null when pointer is off the viewport
   cursorWorld: { x: number; y: number; z: number } | null;
   // Read-only share session. When set, the app is viewing a public share link;
@@ -108,6 +123,8 @@ export interface UiState {
   toggleStatusBar: () => void;
   setCursorWorld: (pos: { x: number; y: number; z: number } | null) => void;
   setReadOnlyShare: (share: { token: string; docName: string } | null) => void;
+  setFollowMode: (mode: FollowMode) => void;
+  setFollowingParticipant: (participantId: string | null) => void;
 }
 
 // Load persisted material preferences from localStorage
@@ -176,6 +193,8 @@ export const useUiStore = create<UiState>((set) => ({
   statusBarVisible: true,
   cursorWorld: null,
   readOnlyShare: null,
+  followMode: "free",
+  followingParticipantId: null,
 
   select: (partId) =>
     set({ selectedPartIds: partId ? new Set([partId]) : new Set() }),
@@ -322,4 +341,8 @@ export const useUiStore = create<UiState>((set) => ({
   setCursorWorld: (pos) => set({ cursorWorld: pos }),
 
   setReadOnlyShare: (share) => set({ readOnlyShare: share }),
+
+  setFollowMode: (mode) => set({ followMode: mode }),
+
+  setFollowingParticipant: (participantId) => set({ followingParticipantId: participantId }),
 }));

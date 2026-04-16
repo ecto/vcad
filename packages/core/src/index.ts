@@ -69,7 +69,17 @@ export { useCrdtDocumentStore, f64, vec3, bool, str, featureRef } from "./stores
 export type { CrdtDocumentState, CrdtValue } from "./stores/crdt-document-store.js";
 
 export { useUiStore } from "./stores/ui-store.js";
-export type { UiState, MaterialPreview, RenderMode, RaytraceQuality, RaytraceDebugMode, ToolbarTab, SidebarPane, InspectorTarget } from "./stores/ui-store.js";
+export type {
+  UiState,
+  MaterialPreview,
+  RenderMode,
+  RaytraceQuality,
+  RaytraceDebugMode,
+  ToolbarTab,
+  SidebarPane,
+  InspectorTarget,
+  FollowMode,
+} from "./stores/ui-store.js";
 
 export { useSketchStore } from "./stores/sketch-store.js";
 export type { SketchStore, ProfileSnapshot, SketchExitStatus } from "./stores/sketch-store.js";
@@ -88,6 +98,19 @@ export type {
 
 export { useChatStore } from "./stores/chat-store.js";
 export type { ChatState, ChatMessage, SelectionContext, ToolCallInfo, MessagePart, ChatAttachment, ChatUsageError } from "./stores/chat-store.js";
+
+export {
+  useParticipantStore,
+  makeAiParticipant,
+  ensureAiParticipant,
+  LOCAL_PARTICIPANT_ID,
+  AI_PARTICIPANT_ID,
+} from "./stores/participant-store.js";
+export type {
+  Participant,
+  ParticipantKind,
+  ParticipantState,
+} from "./stores/participant-store.js";
 
 // Billing
 export {
@@ -184,6 +207,22 @@ export {
   buildCircle,
 } from "./sketch-math.js";
 export type { PlaneBasis, SnapOptions, SnapResult } from "./sketch-math.js";
+
+// Camera framing math (kernel Z-up)
+export {
+  SNAP_VIEWS,
+  isSnapView,
+  bboxCenter,
+  bboxSize,
+  bboxMaxDim,
+  expandBboxFromPositions,
+  clampFramingDistance,
+  frameBbox,
+  defaultCameraGoal,
+  kernelToDisplay,
+  displayToKernel,
+} from "./camera-framing.js";
+export type { Vec3, Bbox, CameraGoal, SnapView } from "./camera-framing.js";
 
 // Re-export engine initialization
 export { Engine } from "@vcad/engine";

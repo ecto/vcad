@@ -2,6 +2,16 @@
   "$schema": "./changelog.schema.json",
   "entries": [
     {
+      "id": "2026-04-16-ai-as-participant",
+      "version": "0.8.0",
+      "date": "2026-04-16",
+      "category": "feat",
+      "title": "AI joins the document as its own participant",
+      "summary": "Chat AI gets its own camera and selection, drawn as a wireframe frustum with a name chip. Free/Follow/Lock toggle controls how your view relates to the AI's. User pan/zoom no longer snaps back mid-AI-turn.",
+      "features": ["chat", "viewport", "collab", "ux"],
+      "mcpTools": ["focus_part", "frame_all", "set_view"]
+    },
+    {
       "id": "2026-04-16-billing-upgrade-flow",
       "version": "0.8.0",
       "date": "2026-04-16",

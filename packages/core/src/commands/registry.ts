@@ -113,12 +113,26 @@ export class CommandRegistry {
   toAnthropicTools(): AnthropicTool[] {
     if (this.wasm) {
       try {
-        return JSON.parse(this.wasm.get_anthropic_tools_json()) as AnthropicTool[];
+        const rustTools = JSON.parse(
+          this.wasm.get_anthropic_tools_json(),
+        ) as AnthropicTool[];
+        // Append any TS-side tools that the Rust side doesn't know about
+        // yet. This lets us ship new tools (e.g. camera tools) without a
+        // lockstep Rust edit; the TS fallback below is the source of
+        // truth, and duplicates from Rust win.
+        const rustNames = new Set(rustTools.map((t) => t.name));
+        const extras = this.tsFallbackTools().filter((t) => !rustNames.has(t.name));
+        return extras.length > 0 ? [...rustTools, ...extras] : rustTools;
       } catch {
         // Fall through to the TS fallback — better a stale copy than a
         // runtime crash if wasm is in a bad state.
       }
     }
+    return this.tsFallbackTools();
+  }
+
+  /** Hand-written tool definitions used when wasm isn't loaded. */
+  private tsFallbackTools(): AnthropicTool[] {
     const typeEnum = this.getTypeEnum();
 
     return [
@@ -216,6 +230,46 @@ export class CommandRegistry {
             },
           },
           required: ["part_id", "material"],
+        },
+      },
+      {
+        name: "focus_part",
+        description:
+          "Point your camera at a part so the user can see what you're working on. Also highlights the part in your participant color as an attention cue. Use this after creating or modifying something you want the user to notice.",
+        input_schema: {
+          type: "object",
+          properties: {
+            part_id: {
+              type: "string",
+              description: "The part ID to focus on.",
+            },
+          },
+          required: ["part_id"],
+        },
+      },
+      {
+        name: "frame_all",
+        description:
+          "Frame the entire scene in your camera view. Useful for taking a step back to show the user the whole model at once.",
+        input_schema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
+        name: "set_view",
+        description:
+          "Snap your camera to a preset viewing angle: iso, hero, top, bottom, front, back, left, or right. Frames the current scene bounding box from the chosen direction.",
+        input_schema: {
+          type: "object",
+          properties: {
+            name: {
+              type: "string",
+              enum: ["iso", "hero", "top", "bottom", "front", "back", "left", "right"],
+              description: "The snap view to use.",
+            },
+          },
+          required: ["name"],
         },
       },
     ];

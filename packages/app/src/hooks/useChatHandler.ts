@@ -1,5 +1,14 @@
 import { useEffect, useCallback } from "react";
-import { useChatStore, useDocumentStore, useUiStore, commandRegistry, executeCrud } from "@vcad/core";
+import {
+  useChatStore,
+  useDocumentStore,
+  useUiStore,
+  useParticipantStore,
+  ensureAiParticipant,
+  AI_PARTICIPANT_ID,
+  commandRegistry,
+  executeCrud,
+} from "@vcad/core";
 import type { SelectionContext, ToolCallInfo, MessagePart, ExecutionResult, ChatUsageError, ChatAttachment, ChatMessage } from "@vcad/core";
 import { useAuthStore } from "@vcad/auth";
 import { streamChat, LIMIT_ERROR_PREFIX } from "@/lib/chat-api";
@@ -9,6 +18,7 @@ import {
   SCREENSHOT_SYSTEM_PROMPT_APPENDIX,
   executeScreenshotViewport,
 } from "@/lib/ai-screenshot";
+import { AI_CAMERA_TOOL_NAMES, executeAiCamera } from "@/lib/ai-camera-tools";
 
 /**
  * Parse a rate-limit error body emitted by streamChat with LIMIT_ERROR_PREFIX.
@@ -39,12 +49,42 @@ function parseLimitError(err: string): ChatUsageError | null {
 }
 
 /**
+ * Wrap `useUiStore` so that `select` / `selectMultiple` / `clearSelection`
+ * calls made from a chat tool executor write to the AI participant's
+ * selection instead of the human user's. This is how we model the AI as
+ * a separate participant: the AI "selecting" a part it just created
+ * becomes its own focus/highlight, and never disturbs the user's
+ * viewport, property panel, or feature-tree selection.
+ */
+function uiStoreForAi(): ReturnType<typeof useUiStore.getState> {
+  const real = useUiStore.getState();
+  ensureAiParticipant();
+  const participants = useParticipantStore.getState();
+  const aiParticipant = participants.participants.get(AI_PARTICIPANT_ID);
+  const aiSelection = aiParticipant?.selectedPartIds ?? new Set<string>();
+  return {
+    ...real,
+    // Route selection *reads* to the AI participant too, so tools that fall
+    // back to "whatever is selected" (e.g. booleans with no ids passed)
+    // see the AI's focus, not the human user's.
+    selectedPartIds: aiSelection,
+    select: (partId) => {
+      if (partId) participants.setSelection(AI_PARTICIPANT_ID, [partId]);
+      else participants.clearSelection(AI_PARTICIPANT_ID);
+    },
+    selectMultiple: (partIds) =>
+      participants.setSelection(AI_PARTICIPANT_ID, partIds),
+    clearSelection: () => participants.clearSelection(AI_PARTICIPANT_ID),
+  };
+}
+
+/**
  * Execute a tool call against the document/UI stores via the CRUD registry.
  * Returns the full ExecutionResult so display payload and duration can be propagated.
  */
 function executeTool(tool: ToolCall): ExecutionResult {
   const docStore = useDocumentStore.getState();
-  const uiStore = useUiStore.getState();
+  const uiStore = uiStoreForAi();
   return executeCrud(tool.name, tool.args, docStore, uiStore);
 }
 
@@ -198,6 +238,21 @@ export function useChatHandler() {
       store.setUsageError(null);
       store.clearCancel();
 
+      // The AI participant joins the document for this turn. If this is
+      // the first time we've seen them in this session, default to Follow
+      // so the user sees the AI camera as a frustum in-scene (Lock is
+      // opt-in via the toggle). After the user has made an explicit
+      // choice, don't override it on subsequent turns.
+      const firstAppearance = !useParticipantStore
+        .getState()
+        .participants.has(AI_PARTICIPANT_ID);
+      ensureAiParticipant();
+      if (firstAppearance) {
+        const uiState = useUiStore.getState();
+        uiState.setFollowMode("follow");
+        uiState.setFollowingParticipant(AI_PARTICIPANT_ID);
+      }
+
       // Count the send against the local anon badge as soon as it leaves the
       // client. The server is the source of truth; this is just the UX hint.
       if (isAnon) {
@@ -322,6 +377,16 @@ export function useChatHandler() {
                 entry.status = shot.status;
                 entry.duration = shot.duration;
                 if (shot.imageDataUrl) entry.imageDataUrl = shot.imageDataUrl;
+              }
+            } else if (AI_CAMERA_TOOL_NAMES.has(tool.name)) {
+              const exec = executeAiCamera(tool);
+              toolResults.push({ id: tool.id, content: exec.result, status: exec.status });
+              const entry = accumulatedToolCalls.find((t) => t.id === tool.id);
+              if (entry) {
+                entry.result = exec.result;
+                entry.status = exec.status;
+                entry.display = exec.display;
+                entry.duration = exec.duration;
               }
             } else {
               const exec = executeTool(tool);

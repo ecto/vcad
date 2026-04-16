@@ -173,10 +173,18 @@ describe("CommandRegistry", () => {
   });
 
   describe("toAnthropicTools", () => {
-    it("returns CRUD tools plus set_material", () => {
+    it("returns CRUD tools plus set_material and AI camera tools", () => {
       const tools = registry.toAnthropicTools();
-      expect(tools).toHaveLength(5);
-      expect(tools.map((t) => t.name)).toEqual(["create", "read", "update", "delete", "set_material"]);
+      expect(tools.map((t) => t.name)).toEqual([
+        "create",
+        "read",
+        "update",
+        "delete",
+        "set_material",
+        "focus_part",
+        "frame_all",
+        "set_view",
+      ]);
     });
 
     it("create tool has type enum from schemas", () => {
@@ -298,7 +306,8 @@ describe("CommandRegistry", () => {
       const fresh = new CommandRegistry();
       fresh.loadSchemas("[]");
       const tools = fresh.toAnthropicTools();
-      expect(tools).toHaveLength(5);
+      // 5 CRUD/material + 3 AI camera tools.
+      expect(tools).toHaveLength(8);
       const create = tools[0]!;
       const typeEnum = (create.input_schema.properties as Record<string, Record<string, unknown>>)
         .type.enum as string[];

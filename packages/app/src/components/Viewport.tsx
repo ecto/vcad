@@ -4,6 +4,7 @@ import { Canvas, useThree } from "@react-three/fiber";
 import { ViewportContent } from "./ViewportContent";
 import { DrawingView } from "./DrawingView";
 import { RayTracedViewportOverlay } from "./RayTracedViewport";
+import { FollowModeToggle } from "./FollowModeToggle";
 import {
   useUiStore,
   useDocumentStore,
@@ -324,6 +325,15 @@ export function Viewport() {
       {/* Ray-traced overlay - rendered outside Canvas to avoid R3F reconciler issues */}
       {!electronicsActive && renderMode === "raytrace" && raytraceAvailable && (
         <RayTracedViewportOverlay />
+      )}
+
+      {/* Presence bar: who else is in this document, plus follow/lock controls.
+          Pointer-events none on the wrapper so the canvas still receives orbit
+          drags in the gaps; the toggle itself re-enables them. */}
+      {!electronicsActive && (
+        <div className="pointer-events-none absolute top-3 right-3 z-10">
+          <FollowModeToggle />
+        </div>
       )}
     </div>
   );
