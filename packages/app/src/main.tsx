@@ -95,9 +95,11 @@ createRoot(document.getElementById("root")!).render(
   </StrictMode>,
 );
 
-// Vercel Analytics + Speed Insights
-import("@vercel/analytics").then(({ inject }) => inject());
-import("@vercel/speed-insights").then(({ injectSpeedInsights }) => injectSpeedInsights());
+// Vercel Analytics + Speed Insights — prod only, silently skip if blocked
+if (import.meta.env.PROD) {
+  import("@vercel/analytics").then(({ inject }) => inject()).catch(() => {});
+  import("@vercel/speed-insights").then(({ injectSpeedInsights }) => injectSpeedInsights()).catch(() => {});
+}
 
 // Defer analytics until after first paint
 const initAnalytics = () => {
