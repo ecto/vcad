@@ -6,6 +6,7 @@ import { CaretRight } from "@phosphor-icons/react/dist/ssr/CaretRight";
 import { Export } from "@phosphor-icons/react/dist/ssr/Export";
 import { MagnifyingGlass } from "@phosphor-icons/react/dist/ssr/MagnifyingGlass";
 import { Bell } from "@phosphor-icons/react/dist/ssr/Bell";
+import { Link as LinkIcon } from "@phosphor-icons/react/dist/ssr/Link";
 import * as Menubar from "@radix-ui/react-menubar";
 import {
   useDocumentStore,
@@ -24,7 +25,7 @@ import { UpgradeModal } from "@/components/UpgradeModal";
 import { cn } from "@/lib/utils";
 import { downloadBlob } from "@/lib/download";
 import { examples } from "@/data/examples";
-import { SignInButton, UserMenu, triggerSync } from "@vcad/auth";
+import { SignInButton, UserMenu, triggerSync, useAuthStore } from "@vcad/auth";
 import { useChangelogStore } from "@/stores/changelog-store";
 import { useNotificationStore } from "@/stores/notification-store";
 import { useAppCommands } from "@/hooks/useAppCommands";
@@ -42,6 +43,8 @@ interface HeaderProps {
   onAboutOpen: () => void;
   onSave: () => void;
   onOpen: () => void;
+  /** Opens the ShareDialog. Enabled only when signed in + cloud-synced. */
+  onShareOpen: () => void;
   /** Tool palette (tab strip + icon row) docked directly under the menu bar. */
   children?: React.ReactNode;
 }
@@ -264,8 +267,9 @@ function RayTracingSubmenu() {
   );
 }
 
-export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
+export function Header({ onAboutOpen, onSave, onOpen, onShareOpen, children }: HeaderProps) {
   const isDirty = useDocumentStore((s) => s.isDirty);
+  const user = useAuthStore((s) => s.user);
   const billingTier = useBillingStore((s) => s.snapshot?.tier ?? null);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [inputPrefsOpen, setInputPrefsOpen] = useState(false);
@@ -400,6 +404,14 @@ export function Header({ onAboutOpen, onSave, onOpen, children }: HeaderProps) {
                 <CommandMenuItem id="open-cloud" commands={commands} />
                 <MenuSeparator />
                 <CommandMenuItem id="save" commands={commands} />
+                <MenuItem
+                  onSelect={onShareOpen}
+                  icon={LinkIcon}
+                  iconClassName="text-sky-400"
+                  disabled={!user}
+                >
+                  Share link…
+                </MenuItem>
                 <MenuSeparator />
                 <Submenu label="Export" icon={Export} iconClassName="text-sky-400">
                   <MenuItem onSelect={() => handleExport("stl")}>STL</MenuItem>

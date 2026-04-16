@@ -48,6 +48,7 @@ import {
   isStitchEligible,
   getSketchPlaneDirections,
 } from "../types.js";
+import { useUiStore } from "./ui-store.js";
 
 // ---------------------------------------------------------------------------
 // CRDT bridge types
@@ -489,6 +490,79 @@ function computeNextNodeId(doc: Document): number {
 }
 
 /**
+ * CRDT engine methods that mutate persistent document state.
+ * Proxy-intercepted in read-only share sessions to prevent viewer edits.
+ */
+const MUTATION_METHODS = new Set<string>([
+  "add_feature",
+  "update_feature",
+  "delete_feature_by_id",
+  "set_translation",
+  "set_rotation",
+  "set_scale",
+  "set_material",
+  "set_visible",
+  "rename_feature",
+  "set_joint_state",
+  "create_feature",
+  "delete_feature",
+  "set_param",
+  "move_feature",
+  "import_ir",
+  "undo",
+  "redo",
+]);
+
+/**
+ * Build a no-op result object shaped like ApiResult/CrdtMutationResult that
+ * leaves the store state unchanged. Used when a mutation call is blocked by
+ * the read-only share guard.
+ */
+function makeNoOpResult(target: WasmDocumentEngine): ApiResult & CrdtMutationResult {
+  const document: Document = JSON.parse(target.get_document_json());
+  const parts: PartInfo[] = JSON.parse(target.get_parts_json());
+  return {
+    document,
+    parts,
+    consumedPartIds: [],
+  };
+}
+
+/**
+ * Wrap a WasmDocumentEngine so that any call to a persistent-state mutation
+ * method is intercepted when the UI is in a read-only share session. Blocked
+ * calls dispatch a `vcad:fork-prompt` event (picked up by App.tsx to open the
+ * sign-in-to-fork modal) and return a no-op result that keeps store state
+ * unchanged.
+ */
+function wrapEngineWithReadOnlyGuard(
+  engine: WasmDocumentEngine,
+): WasmDocumentEngine {
+  return new Proxy(engine, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value !== "function") return value;
+      const name = prop as string;
+      if (!MUTATION_METHODS.has(name)) {
+        return (value as (...a: unknown[]) => unknown).bind(target);
+      }
+      return function (this: unknown, ...args: unknown[]) {
+        const readOnly = useUiStore.getState().readOnlyShare;
+        if (readOnly) {
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(
+              new CustomEvent("vcad:fork-prompt", { detail: readOnly }),
+            );
+          }
+          return makeNoOpResult(target);
+        }
+        return (value as (...a: unknown[]) => unknown).apply(target, args);
+      };
+    },
+  });
+}
+
+/**
  * Apply a typed API result (has consumedPartIds) to the store.
  */
 function applyApiResult(result: ApiResult): Partial<DocumentState> {
@@ -672,7 +746,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
     _sceneSettingsFeatureId = null;
     _schematicFeatureId = null;
-    const engine = new EngineClass();
+    const engine = wrapEngineWithReadOnlyGuard(new EngineClass());
     set({ _crdtEngine: engine, _crdtEngineClass: EngineClass });
   },
 
@@ -683,7 +757,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   loadCrdt: (bytes, EngineClass) => {
-    const engine = EngineClass.load(bytes);
+    const engine = wrapEngineWithReadOnlyGuard(EngineClass.load(bytes));
     const doc: Document = JSON.parse(engine.get_document_json());
     const parts: PartInfo[] = JSON.parse(engine.get_parts_json());
     const patch = applyLegacyResult({ document: doc, parts });
@@ -876,7 +950,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     let patch: Partial<DocumentState> | null = null;
     try {
       const irJson = JSON.stringify(file.document);
-      newEngine = state._crdtEngineClass.from_v1_json(irJson);
+      newEngine = wrapEngineWithReadOnlyGuard(
+        state._crdtEngineClass.from_v1_json(irJson),
+      );
       const doc: Document = JSON.parse(newEngine.get_document_json());
       const parts: PartInfo[] = JSON.parse(newEngine.get_parts_json());
       patch = applyLegacyResult({ document: doc, parts });
@@ -1506,7 +1582,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (state._crdtEngineClass) {
       _sceneSettingsFeatureId = null;
       _schematicFeatureId = null;
-      const engine = new state._crdtEngineClass();
+      const engine = wrapEngineWithReadOnlyGuard(new state._crdtEngineClass());
       set({
         document: createDocument(),
         parts: [],

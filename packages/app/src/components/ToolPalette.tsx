@@ -209,18 +209,28 @@ export function ToolPalette() {
 
 function ToolPaletteButton({ def, expanded }: { def: ToolDef; expanded: boolean }) {
   const Icon = def.icon;
+  const readOnlyShare = useUiStore((s) => s.readOnlyShare);
+  const handleClick = () => {
+    if (readOnlyShare) {
+      window.dispatchEvent(
+        new CustomEvent("vcad:fork-prompt", { detail: readOnlyShare }),
+      );
+      return;
+    }
+    def.onClick();
+  };
   return (
     <ToolbarButton
-      tooltip={def.tooltip}
+      tooltip={readOnlyShare ? "Sign in to fork — this doc is read-only" : def.tooltip}
       active={def.active}
       disabled={!def.enabled}
-      onClick={def.onClick}
+      onClick={handleClick}
       pulse={def.pulse}
       expanded={expanded}
       label={def.label}
       shortcut={def.shortcut}
       iconColor={def.iconColor}
-      className={def.className}
+      className={cn(def.className, readOnlyShare && "opacity-50")}
       labelClassName={def.labelClassName}
     >
       <Icon size={15} />

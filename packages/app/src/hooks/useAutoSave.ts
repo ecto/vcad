@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from "react";
-import { useDocumentStore } from "@vcad/core";
+import { useDocumentStore, useUiStore } from "@vcad/core";
 import { useNotificationStore } from "@/stores/notification-store";
 import {
   saveDocument,
@@ -18,6 +18,7 @@ export function useAutoSave() {
   const documentName = useDocumentStore((s) => s.documentName);
   const isDirty = useDocumentStore((s) => s.isDirty);
   const markSaved = useDocumentStore((s) => s.markSaved);
+  const readOnlyShare = useUiStore((s) => s.readOnlyShare);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lockRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -69,6 +70,8 @@ export function useAutoSave() {
     // Reset lock state on document change to avoid stale true.
     setHasLock(false);
     if (!documentId) return;
+    // Read-only share sessions never persist anything, so no lock needed.
+    if (readOnlyShare) return;
 
     let cancelled = false;
 
@@ -94,7 +97,7 @@ export function useAutoSave() {
         releaseLock(documentId);
       }
     };
-  }, [documentId]);
+  }, [documentId, readOnlyShare]);
 
   // Periodically refresh lock
   useEffect(() => {
@@ -126,6 +129,8 @@ export function useAutoSave() {
   // Debounced auto-save when dirty
   useEffect(() => {
     if (!isDirty || !documentId || !hasLock) return;
+    // Read-only share sessions must not persist anything to local storage.
+    if (readOnlyShare) return;
 
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
@@ -141,7 +146,7 @@ export function useAutoSave() {
         debounceRef.current = null;
       }
     };
-  }, [isDirty, documentId, save, hasLock]);
+  }, [isDirty, documentId, save, hasLock, readOnlyShare]);
 
   return { save };
 }

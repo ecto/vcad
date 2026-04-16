@@ -285,10 +285,35 @@ async function initDocument(): Promise<void> {
       const id = crypto.randomUUID();
       useDocumentStore.getState().loadDocument(urlDoc.file);
       useDocumentStore.getState().setDocumentMeta(id, urlDoc.name);
-      useNotificationStore.getState().addToast(
-        "Loaded shared document",
-        "success",
-      );
+
+      if (urlDoc.readOnlyShareToken) {
+        // Enter read-only share session. The Proxy-wrapped document store
+        // will block every mutation from here on and redirect the viewer
+        // to the fork prompt.
+        useUiStore.getState().setReadOnlyShare({
+          token: urlDoc.readOnlyShareToken,
+          docName: urlDoc.name,
+        });
+        useNotificationStore
+          .getState()
+          .toast.info(`Viewing ${urlDoc.name} (read-only)`);
+
+        if (urlDoc.viewerStateHint) {
+          // Apply viewer state on the next frame so the doc has rendered
+          // once before we move the camera and restore selection.
+          const hint = urlDoc.viewerStateHint;
+          setTimeout(() => {
+            void import("@/lib/viewer-state").then(({ applyViewerStateHint }) => {
+              applyViewerStateHint(hint);
+            });
+          }, 100);
+        }
+      } else {
+        useNotificationStore.getState().addToast(
+          "Loaded shared document",
+          "success",
+        );
+      }
       return;
     }
 

@@ -384,6 +384,100 @@ export async function listCloudDocuments(): Promise<CloudDocumentMeta[]> {
   return (data ?? []) as CloudDocumentMeta[];
 }
 
+// ---------------------------------------------------------------------------
+// Share links (Phase 0)
+// ---------------------------------------------------------------------------
+
+/** A row in document_shares — pointer only, no duplicated doc state. */
+export interface ShareRecord {
+  token: string;
+  document_id: string;
+  created_at: string;
+}
+
+/** Safe public fields returned by the get_shared_document() RPC. */
+export interface SharedDocumentResult {
+  id: string;
+  name: string;
+  content: unknown; // VcadFile JSON — validated with parseVcadFile() in the app
+  version: number;
+  updated_at: string;
+}
+
+/**
+ * Create a public read-only share link for a cloud-synced document.
+ * Returns the inserted row. Requires the user to be signed in and own the doc.
+ */
+export async function createShare(
+  cloudDocumentId: string,
+): Promise<ShareRecord> {
+  const { user } = useAuthStore.getState();
+  if (!isAuthEnabled() || !user) {
+    throw new Error("Must be signed in to create a share");
+  }
+  const supabase = requireSupabase();
+  const { data, error } = await supabase
+    .from("document_shares")
+    .insert({ document_id: cloudDocumentId, created_by: user.id })
+    .select("token, document_id, created_at")
+    .single();
+  if (error) throw error;
+  if (!data) throw new Error("Share creation returned no row");
+  return data as ShareRecord;
+}
+
+/**
+ * Revoke a share link by its token. RLS ensures only the owner can delete.
+ */
+export async function revokeShare(token: string): Promise<void> {
+  if (!isAuthEnabled()) return;
+  const supabase = requireSupabase();
+  const { error } = await supabase
+    .from("document_shares")
+    .delete()
+    .eq("token", token);
+  if (error) throw error;
+}
+
+/**
+ * List all active share tokens for a cloud document owned by the current user.
+ * Used by the share dialog to check for an existing share before creating one.
+ */
+export async function listSharesForDocument(
+  cloudDocumentId: string,
+): Promise<ShareRecord[]> {
+  if (!isAuthEnabled()) return [];
+  const supabase = requireSupabase();
+  const { data, error } = await supabase
+    .from("document_shares")
+    .select("token, document_id, created_at")
+    .eq("document_id", cloudDocumentId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as ShareRecord[];
+}
+
+/**
+ * Fetch a public document by its share token. Anonymous callers allowed —
+ * hits the get_shared_document() SECURITY DEFINER RPC. Returns null if the
+ * token is invalid or has been revoked.
+ */
+export async function fetchSharedDocument(
+  token: string,
+): Promise<SharedDocumentResult | null> {
+  const supabase = requireSupabase();
+  const { data, error } = await supabase.rpc("get_shared_document", {
+    p_token: token,
+  });
+  if (error) {
+    console.warn("[sync] fetchSharedDocument error:", error);
+    return null;
+  }
+  if (!data || (Array.isArray(data) && data.length === 0)) return null;
+  const row = Array.isArray(data) ? data[0] : data;
+  return row as SharedDocumentResult;
+}
+
 /**
  * Fetch a single document from cloud by its cloud ID.
  * Downloads the full document content and saves it locally.

@@ -34,6 +34,33 @@ export function useKeyboardShortcuts() {
         return;
       }
 
+      // Read-only share session: intercept known mutation-class keys so the
+      // viewer gets the fork prompt instead of silently switching transform
+      // mode or triggering deletes. View-only keys (escape, navigation, view
+      // toggles, camera) fall through and work normally.
+      const readOnlyShare = useUiStore.getState().readOnlyShare;
+      if (readOnlyShare) {
+        const isMod = e.ctrlKey || e.metaKey;
+        const key = e.key.toLowerCase();
+        const isMutationKey =
+          // Delete / backspace — would remove features
+          e.key === "Delete" ||
+          e.key === "Backspace" ||
+          // Transform mode switches — harmless but confusing in read-only
+          (!isMod && (key === "m" || key === "r" || key === "s")) ||
+          // Cmd/Ctrl+D duplicate
+          (isMod && key === "d") ||
+          // Sketch tools / shape tools (unmodified)
+          (!isMod && (key === "l" || key === "c"));
+        if (isMutationKey) {
+          e.preventDefault();
+          window.dispatchEvent(
+            new CustomEvent("vcad:fork-prompt", { detail: readOnlyShare }),
+          );
+          return;
+        }
+      }
+
       const {
         selectedPartIds,
         clearSelection,

@@ -4,9 +4,15 @@
  * URL format: https://vcad.io/#/new?doc=<compressed>&name=<name>
  *
  * The `doc` parameter contains gzip-compressed, base64url-encoded VCode.
+ *
+ * Also handles /view/<token> paths for Phase 0 public share links — fetches
+ * the shared doc via the get_shared_document RPC and returns it alongside a
+ * read-only flag and optional viewer-state hint (from the ?at= query param).
  */
 
 import { parseVcadFile, type VcadFile } from "@vcad/core";
+import { fetchSharedDocument } from "@vcad/auth";
+import { decodeViewerState, type ViewerState } from "@/lib/viewer-state";
 
 /**
  * Base64url decode (URL-safe base64 without padding).
@@ -82,14 +88,67 @@ export function parseUrlParams(): UrlDocumentParams | null {
   };
 }
 
+export interface UrlDocumentResult {
+  file: VcadFile;
+  name: string;
+  /** Present when the doc was loaded from a /view/<token> share link. */
+  readOnlyShareToken?: string;
+  /** Present when the share URL carried a ?at=<encoded> viewer-state hint. */
+  viewerStateHint?: ViewerState;
+}
+
+/** Detect /view/<token> on the current pathname. Returns the token or null. */
+function parseShareTokenFromPath(): string | null {
+  if (typeof window === "undefined") return null;
+  const match = window.location.pathname.match(
+    /^\/view\/([0-9a-fA-F-]{8,64})\/?$/,
+  );
+  return match?.[1] ?? null;
+}
+
+/** Read and decode the optional ?at=<encoded> viewer state hint. */
+function parseViewerStateHint(): ViewerState | null {
+  if (typeof window === "undefined") return null;
+  const at = new URLSearchParams(window.location.search).get("at");
+  if (!at) return null;
+  return decodeViewerState(at);
+}
+
 /**
  * Load a document from URL parameters.
  * Returns null if no URL document is present or loading fails.
  */
-export async function loadDocumentFromUrl(): Promise<{
-  file: VcadFile;
-  name: string;
-} | null> {
+export async function loadDocumentFromUrl(): Promise<UrlDocumentResult | null> {
+  // 1. /view/<token> — Phase 0 public share links
+  const shareToken = parseShareTokenFromPath();
+  if (shareToken) {
+    try {
+      const shared = await fetchSharedDocument(shareToken);
+      if (!shared) {
+        console.warn("[url-document] share token invalid or revoked");
+        return null;
+      }
+      // The RPC returns content as `unknown` (jsonb). parseVcadFile validates.
+      const file =
+        typeof shared.content === "string"
+          ? parseVcadFile(shared.content)
+          : parseVcadFile(JSON.stringify(shared.content));
+      const viewerStateHint = parseViewerStateHint() ?? undefined;
+      // Do NOT clear the URL — we want the read-only share URL to persist
+      // across reloads so the viewer stays in the shared session.
+      return {
+        file,
+        name: shared.name,
+        readOnlyShareToken: shareToken,
+        viewerStateHint,
+      };
+    } catch (err) {
+      console.error("[url-document] failed to load shared doc:", err);
+      return null;
+    }
+  }
+
+  // 2. Existing hash-based VCode shares + ?ir= raw shares
   const params = parseUrlParams();
   if (!params) {
     return null;
@@ -127,5 +186,5 @@ export async function loadDocumentFromUrl(): Promise<{
  * Check if the current URL has document parameters.
  */
 export function hasUrlDocument(): boolean {
-  return parseUrlParams() !== null;
+  return parseUrlParams() !== null || parseShareTokenFromPath() !== null;
 }

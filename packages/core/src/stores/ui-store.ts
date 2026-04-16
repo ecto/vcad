@@ -59,6 +59,9 @@ export interface UiState {
   statusBarVisible: boolean;
   // Live cursor position in world space (Z-up), null when pointer is off the viewport
   cursorWorld: { x: number; y: number; z: number } | null;
+  // Read-only share session. When set, the app is viewing a public share link;
+  // every persistent-state mutation is blocked and redirected to the fork prompt.
+  readOnlyShare: { token: string; docName: string } | null;
 
   select: (partId: string | null) => void;
   toggleSelect: (partId: string) => void;
@@ -104,6 +107,7 @@ export interface UiState {
   setInspectorTarget: (target: InspectorTarget) => void;
   toggleStatusBar: () => void;
   setCursorWorld: (pos: { x: number; y: number; z: number } | null) => void;
+  setReadOnlyShare: (share: { token: string; docName: string } | null) => void;
 }
 
 // Load persisted material preferences from localStorage
@@ -171,6 +175,7 @@ export const useUiStore = create<UiState>((set) => ({
   inspectorTarget: null as InspectorTarget,
   statusBarVisible: true,
   cursorWorld: null,
+  readOnlyShare: null,
 
   select: (partId) =>
     set({ selectedPartIds: partId ? new Set([partId]) : new Set() }),
@@ -315,4 +320,6 @@ export const useUiStore = create<UiState>((set) => ({
   toggleStatusBar: () => set((s) => ({ statusBarVisible: !s.statusBarVisible })),
 
   setCursorWorld: (pos) => set({ cursorWorld: pos }),
+
+  setReadOnlyShare: (share) => set({ readOnlyShare: share }),
 }));

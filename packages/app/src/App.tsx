@@ -28,6 +28,9 @@ const GhostPromptController = lazy(() => import("@/components/GhostPromptControl
 const CelebrationOverlay = lazy(() => import("@/components/CelebrationOverlay").then(m => ({ default: m.CelebrationOverlay })));
 const SignInDelight = lazy(() => import("@/components/SignInDelight").then(m => ({ default: m.SignInDelight })));
 const AboutModal = lazy(() => import("@/components/AboutModal").then(m => ({ default: m.AboutModal })));
+const ShareDialog = lazy(() => import("@/components/ShareDialog").then(m => ({ default: m.ShareDialog })));
+const ForkPromptModal = lazy(() => import("@/components/ForkPromptModal").then(m => ({ default: m.ForkPromptModal })));
+const ReadOnlyBanner = lazy(() => import("@/components/ReadOnlyBanner").then(m => ({ default: m.ReadOnlyBanner })));
 const CommandPalette = lazy(() => import("@/components/CommandPalette").then(m => ({ default: m.CommandPalette })));
 const SketchToolbar = lazy(() => import("@/components/SketchToolbar").then(m => ({ default: m.SketchToolbar })));
 const SketchStatusPanel = lazy(() => import("@/components/SketchStatusPanel").then(m => ({ default: m.SketchStatusPanel })));
@@ -137,6 +140,7 @@ export function App() {
   useUrlSync();
 
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [documentPickerOpen, setDocumentPickerOpen] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -575,6 +579,16 @@ export function App() {
   const viewportStack = (
     <>
       <Viewport />
+
+      {/* Read-only share banner — fixed to the top of the viewport region */}
+      <div className="absolute inset-x-0 top-0 z-30 pointer-events-none">
+        <div className="pointer-events-auto">
+          <Suspense fallback={null}>
+            <ReadOnlyBanner />
+          </Suspense>
+        </div>
+      </div>
+
       <Suspense fallback={null}>
         <SketchToolbar />
         <SketchStatusPanel />
@@ -649,6 +663,7 @@ export function App() {
                 onAboutOpen={() => setAboutOpen(true)}
                 onSave={handleSave}
                 onOpen={handleOpen}
+                onShareOpen={() => setShareOpen(true)}
               >
                 {!sketchActive && <ToolPalette />}
               </Header>
@@ -684,6 +699,8 @@ export function App() {
         {/* Modals */}
         <Suspense fallback={null}>
           <AboutModal open={aboutOpen} onOpenChange={setAboutOpen} />
+          <ShareDialog open={shareOpen} onOpenChange={setShareOpen} />
+          <ForkPromptModal />
           <DocumentPicker
             open={documentPickerOpen}
             onOpenChange={setDocumentPickerOpen}

@@ -28,10 +28,16 @@ export {
   configureStorage,
   listCloudDocuments,
   fetchCloudDocument,
+  createShare,
+  revokeShare,
+  listSharesForDocument,
+  fetchSharedDocument,
   type StorageAdapter,
   type LocalDocument,
   type CloudDocument,
   type CloudDocumentMeta,
+  type ShareRecord,
+  type SharedDocumentResult,
 } from "./sync";
 
 // Version history
