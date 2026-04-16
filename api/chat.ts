@@ -621,7 +621,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-    res.setHeader("Transfer-Encoding", "chunked");
     res.setHeader("Cache-Control", "no-cache");
 
     if (!anthropicRes.body) {
