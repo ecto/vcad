@@ -265,6 +265,16 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
   // Quaternion ref for smooth orientation interpolation
   const goalQuatRef = useRef(new Quaternion());
 
+  // Cancel any in-flight camera animation so user input takes over immediately.
+  const cancelCameraAnimation = useCallback(() => {
+    if (!isAnimatingTargetRef.current) return;
+    isAnimatingTargetRef.current = false;
+    distanceGoalRef.current = null;
+    cameraPositionGoalRef.current = null;
+    if (orbitRef.current) orbitRef.current.enabled = true;
+    setIsCameraMoving(false);
+  }, []);
+
   // Initial camera state for reset (stable refs across renders)
   const INITIAL_TARGET = INITIAL_TARGET_V;
   const INITIAL_DISTANCE = INITIAL_DISTANCE_V;
@@ -600,6 +610,9 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
       e.preventDefault();
       e.stopPropagation();
 
+      // User input overrides any in-flight focus/snap camera animation.
+      cancelCameraAnimation();
+
       // Normalize deltaMode: 0=pixels, 1=lines, 2=pages
       let dx = e.deltaX;
       let dy = e.deltaY;
@@ -642,12 +655,20 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
 
     domElement.addEventListener("wheel", handleWheel, { passive: false });
     return () => domElement.removeEventListener("wheel", handleWheel);
-  }, [camera, controlScheme, effectiveDevice, zoomBehavior, orbitMomentum]);
+  }, [
+    camera,
+    controlScheme,
+    effectiveDevice,
+    zoomBehavior,
+    orbitMomentum,
+    cancelCameraAnimation,
+  ]);
 
   // Disable raycasting and expensive effects during orbit for performance
   useEffect(() => {
     const controls = orbitRef.current;
     if (!controls) return;
+    const domElement = controls.domElement;
 
     const handleStart = () => {
       setOrbiting(true);
@@ -657,15 +678,23 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
       setOrbiting(false);
       setIsCameraMoving(false);
     };
+    // Any mouse/touch press cancels an in-flight camera animation so user
+    // drag takes over immediately (covers cases where OrbitControls is
+    // disabled during snap/face animations and "start" wouldn't fire).
+    const handlePointerDown = () => {
+      cancelCameraAnimation();
+    };
 
     controls.addEventListener("start", handleStart);
     controls.addEventListener("end", handleEnd);
+    domElement?.addEventListener("pointerdown", handlePointerDown);
 
     return () => {
       controls.removeEventListener("start", handleStart);
       controls.removeEventListener("end", handleEnd);
+      domElement?.removeEventListener("pointerdown", handlePointerDown);
     };
-  }, [setOrbiting]);
+  }, [setOrbiting, cancelCameraAnimation]);
 
   // Double-click on empty canvas resets camera to initial position
   useEffect(() => {
