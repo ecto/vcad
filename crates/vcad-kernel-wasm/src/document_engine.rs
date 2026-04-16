@@ -317,6 +317,9 @@ impl WasmDocumentEngine {
         let mut api = DocumentApi::new(replica_id);
         // Replace the fresh CRDT with the loaded one.
         *api.crdt_mut() = crdt;
+        // Rebuild the stable-id map so existing features can be resolved
+        // by their stable IDs (delete, rename, set_translation, etc.).
+        api.rebuild_stable_ids();
         Self { api }
     }
 

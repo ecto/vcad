@@ -104,6 +104,11 @@ export interface WasmDocumentEngine {
   get_ordered_features_json(): string;
   get_document_json(): string;
   get_parts_json(): string;
+
+  // Sync API (used by the collab transport layer)
+  merge_remote(ops_json: string): CrdtMutationResult;
+  get_sync_clock(): string;
+  get_ops_since(remote_clock_json: string): string;
   compute_position_between(before_id_json: string, after_id_json: string): string;
   import_ir(ir_json: string): CrdtMutationResult;
 }
@@ -197,6 +202,14 @@ export interface DocumentState {
     bytes: Uint8Array,
     EngineClass: WasmDocumentEngineConstructor,
   ) => void;
+
+  // ─── Collab sync API ───────────────────────────────────────────────────
+  /** Merge remote CRDT ops (JSON array). Returns true if state changed. */
+  mergeRemoteOps: (opsJson: string) => boolean;
+  /** Get the local sync clock as JSON (for delta sync). */
+  getSyncClock: () => string;
+  /** Get ops the remote hasn't seen (JSON). */
+  getOpsSince: (remoteClockJson: string) => string;
 
   // mutations
   addPrimitive: (kind: PrimitiveKind) => string;
@@ -771,6 +784,29 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   pushUndoSnapshot: () => {
     // No-op — CRDT undo handles granularity automatically.
+  },
+
+  mergeRemoteOps: (opsJson) => {
+    const engine = get()._crdtEngine;
+    if (!engine) return false;
+    const result = engine.merge_remote(opsJson);
+    if (result) {
+      set(applyLegacyResult(result));
+      return true;
+    }
+    return false;
+  },
+
+  getSyncClock: () => {
+    const engine = get()._crdtEngine;
+    if (!engine) return "{}";
+    return engine.get_sync_clock();
+  },
+
+  getOpsSince: (remoteClockJson) => {
+    const engine = get()._crdtEngine;
+    if (!engine) return "[]";
+    return engine.get_ops_since(remoteClockJson);
   },
 
   addPrimitive: (kind) => {

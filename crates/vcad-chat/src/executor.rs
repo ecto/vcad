@@ -560,10 +560,19 @@ fn plan_delete(args: &Value, doc: &Document) -> PlannedResponse {
     let Some(part_id) = args.get("part_id").and_then(|v| v.as_str()) else {
         return PlannedResponse::error("delete requires `part_id`");
     };
-    let Ok(nid) = part_id.parse::<NodeId>() else {
-        return PlannedResponse::error(format!("invalid part_id: {part_id}"));
+    if part_id.is_empty() {
+        return PlannedResponse::error("delete requires a non-empty part_id");
+    }
+    // Validate: part_id may be a numeric NodeId (TUI) or a CRDT stable_id
+    // like "1:0" (web). Check both formats.
+    let found = if let Ok(nid) = part_id.parse::<NodeId>() {
+        doc.roots.iter().any(|e| e.root == nid)
+    } else {
+        // Stable-id — can't validate against the IR document's NodeId-based
+        // roots, so trust it and let the CRDT engine handle resolution.
+        true
     };
-    if !doc.roots.iter().any(|e| e.root == nid) {
+    if !found {
         return PlannedResponse::error(format!("part not found: {part_id}"));
     }
     PlannedResponse::success(format!("Deleted part {part_id}")).with_outcome(
@@ -584,10 +593,17 @@ fn plan_set_material(args: &Value, doc: &Document) -> PlannedResponse {
     let Some(material) = args.get("material").and_then(|v| v.as_str()) else {
         return PlannedResponse::error("set_material requires `material`");
     };
-    let Ok(nid) = part_id.parse::<NodeId>() else {
-        return PlannedResponse::error(format!("invalid part_id: {part_id}"));
+    if part_id.is_empty() {
+        return PlannedResponse::error("set_material requires a non-empty part_id");
+    }
+    // Validate: part_id may be a numeric NodeId (TUI) or a CRDT stable_id
+    // like "1:0" (web). Check both formats.
+    let found = if let Ok(nid) = part_id.parse::<NodeId>() {
+        doc.roots.iter().any(|e| e.root == nid)
+    } else {
+        true
     };
-    if !doc.roots.iter().any(|e| e.root == nid) {
+    if !found {
         return PlannedResponse::error(format!("part not found: {part_id}"));
     }
     PlannedResponse::success(format!("Set {part_id} material to {material}")).with_outcome(

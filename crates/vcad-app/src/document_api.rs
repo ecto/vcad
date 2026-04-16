@@ -350,6 +350,14 @@ impl DocumentApi {
         &self.stable_ids
     }
 
+    /// Rebuild the stable-id map from the current CRDT state.
+    ///
+    /// Must be called after loading or replacing the CRDT document so that
+    /// existing features can be resolved by their stable IDs.
+    pub fn rebuild_stable_ids(&mut self) {
+        self.stable_ids.rebuild(&self.crdt);
+    }
+
     // -- Internal helpers --
 
     fn set_vec3_param(&mut self, stable_id: &str, key: &str, value: [f64; 3]) -> ApiResult {

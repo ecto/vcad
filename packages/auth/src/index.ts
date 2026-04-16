@@ -58,6 +58,14 @@ export {
   type PublicDocumentMeta,
 } from "./profile";
 
+// Collab transport
+export {
+  joinCollabChannel,
+  isApplyingRemoteOps,
+  type CollabCallbacks,
+  type CollabChannel,
+} from "./collab-channel";
+
 // Version history
 export {
   getVersionHistory,
