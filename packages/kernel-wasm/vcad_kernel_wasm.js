@@ -2345,6 +2345,39 @@ export function analyzeForPrinting(solid) {
 }
 
 /**
+ * Build the system prompt sent with every `/api/chat` request.
+ *
+ * `parts_json` must deserialize into `Vec<vcad_chat::PartInfo>` (the TS
+ * web caller already walks its own document store to build this shape,
+ * so we accept it pre-built rather than reserializing the full Document
+ * through the wasm boundary on every request). `selection_json` must
+ * deserialize into `Vec<vcad_chat::SelectionInfo>`. Either defaults to
+ * an empty array on parse failure.
+ *
+ * Returns the rendered prompt string — byte-identical to what the TUI
+ * produces via `vcad_chat::build_system_prompt` for the same inputs.
+ * @param {string} parts_json
+ * @param {string} selection_json
+ * @returns {string}
+ */
+export function build_chat_system_prompt(parts_json, selection_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(parts_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(selection_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.build_chat_system_prompt(ptr0, len0, ptr1, len1);
+        deferred3_0 = ret[0];
+        deferred3_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Generate a height field from mesh using drop-cutter algorithm.
  *
  * # Arguments
@@ -3444,6 +3477,29 @@ export function getSlicerPrinterProfiles() {
 }
 
 /**
+ * Get the five Anthropic CRUD tool definitions
+ * (`create` / `read` / `update` / `delete` / `set_material`) as a JSON
+ * array, with the `create` tool's `type` enum pre-populated from the
+ * kernel's tool schema list. Consumers on the web (TypeScript
+ * `CommandRegistry.toAnthropicTools`) and in the TUI (`vcad_chat::
+ * anthropic_tools`) render byte-identical payloads — single source of
+ * truth lives in `vcad-chat::tools`.
+ * @returns {string}
+ */
+export function get_anthropic_tools_json() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.get_anthropic_tools_json();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
  * Get the kernel version string.
  * Use this in browser console to verify the correct WASM build is loaded:
  * `kernelWasm.get_kernel_version()` should return "2025-02-21-step-facebound-fix"
@@ -3832,6 +3888,47 @@ export function parseVcadFile(content) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Plan a chat tool call against the current document snapshot.
+ *
+ * This is the web-side entry point for the Rust chat executor: the TS
+ * web app serializes its current `Document`, hands it plus the tool
+ * name and args to this function, and gets back a JSON
+ * `PlannedResponse` that describes the mutation to perform. The TS
+ * caller then dispatches the outcome through the CRDT engine's
+ * existing methods (`add_feature` / `setFeatureParam` / `removePart` /
+ * `setPartMaterial`) — which keeps CRDT op logs in sync and preserves
+ * undo, while sharing the validation + argument parsing logic with
+ * the TUI via `vcad_chat::plan_crud`.
+ *
+ * `doc_json` must deserialize into `vcad_ir::Document`; a parse
+ * failure treats the doc as empty (an empty Document never validates
+ * any id lookups, so planners that need to check part_id existence
+ * will return a clean error).
+ * @param {string} tool
+ * @param {string} args_json
+ * @param {string} doc_json
+ * @returns {string}
+ */
+export function plan_chat_tool(tool, args_json, doc_json) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(args_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(doc_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.plan_chat_tool(ptr0, len0, ptr1, len1, ptr2, len2);
+        deferred4_0 = ret[0];
+        deferred4_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
 }
 
 /**
@@ -6201,12 +6298,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 1156, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1157, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 1315, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1316, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__ha8d4e097953964e6, wasm_bindgen__convert__closures_____invoke__h3c3248f38441540b);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 1870, function: Function { arguments: [Externref], shim_idx: 1871, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2029, function: Function { arguments: [Externref], shim_idx: 2030, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hf40b7bdcf0d09ecb, wasm_bindgen__convert__closures_____invoke__ha9bc019092e7ecae);
             return ret;
         },

@@ -16,6 +16,7 @@ use vcad_kernel_text::{FontRegistry, TextAlignment};
 
 use crate::convert::{ir_sketch_to_profile, to_point3, to_vec3};
 use crate::kinematics::solve_forward_kinematics;
+use crate::validate::validate_document;
 use crate::{
     Clock, EvalError, EvalOptions, EvalTiming, EvaluatedInstance, EvaluatedMesh, EvaluatedPart,
     EvaluatedPartDef, EvaluatedScene, NodeTiming,
@@ -28,6 +29,10 @@ pub fn evaluate_document(
 ) -> Result<EvaluatedScene, EvalError> {
     let clock = options.clock.as_deref();
     let t_start = clock.map(|c| c.now_ms());
+
+    // Pre-flight validation: fail fast with a rich path if any NodeId
+    // reference is dangling.
+    validate_document(doc)?;
 
     let mut cache: HashMap<NodeId, Option<Solid>> = HashMap::new();
     let mut node_timings: HashMap<String, NodeTiming> = HashMap::new();

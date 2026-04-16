@@ -5,6 +5,7 @@ import {
   useUiStore,
   logger,
   commandRegistry,
+  primeKernelWasm,
 } from "@vcad/core";
 import { initializeGpu, initializeRayTracer } from "@vcad/engine";
 import { registerSW } from "virtual:pwa-register";
@@ -85,11 +86,8 @@ async function runBootstrap(): Promise<void> {
   // Narrow to ArrayBuffer — wasm-bindgen's `BufferSource` rejects
   // `ArrayBufferLike` (which may be a SharedArrayBuffer) but any buffer
   // we built from a fetch stream is always a plain ArrayBuffer.
-  const engine = await Engine.init(
-    wasmBuffer
-      ? { wasmInput: wasmBuffer.buffer as ArrayBuffer }
-      : undefined,
-  );
+  if (wasmBuffer) primeKernelWasm(wasmBuffer.buffer as ArrayBuffer);
+  const engine = await Engine.init();
 
   // ── Phase 3: CRDT document engine + AI tool schemas ──────────────────
   useBootStore.getState().setPhase("starting-engine");

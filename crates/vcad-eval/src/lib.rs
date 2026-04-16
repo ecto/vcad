@@ -19,6 +19,7 @@
 pub mod convert;
 pub mod evaluate;
 pub mod kinematics;
+pub mod validate;
 
 use std::collections::HashMap;
 
@@ -29,6 +30,7 @@ use vcad_kernel::Solid;
 // Re-export main entry points
 pub use evaluate::{evaluate_document, evaluate_node};
 pub use kinematics::solve_forward_kinematics;
+pub use validate::validate_document;
 
 /// Platform-agnostic clock for timing instrumentation.
 ///
@@ -86,6 +88,17 @@ pub enum EvalError {
     /// A node referenced by ID was not found in the document.
     #[error("missing node: {0}")]
     MissingNode(vcad_ir::NodeId),
+
+    /// A node referenced by ID was not found in the document; includes the
+    /// dotted path that led to the dangling reference (e.g.
+    /// `nodes[47].Translate.child`).
+    #[error("missing node {node_id} (referenced from {path})")]
+    MissingNodeAt {
+        /// The missing node id.
+        node_id: vcad_ir::NodeId,
+        /// Dotted path describing where the reference came from.
+        path: String,
+    },
 
     /// An Extrude/Revolve/Sweep references a node that is not a Sketch2D.
     #[error("invalid sketch reference — expected Sketch2D node")]

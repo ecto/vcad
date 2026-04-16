@@ -170,7 +170,7 @@ export { initEngineLifecycle } from "./engine-lifecycle.js";
 export type { EngineLifecycleOptions } from "./engine-lifecycle.js";
 
 // WASM singleton — prevents double-instantiation
-export { getKernelWasm, getKernelWasmSync } from "./wasm-singleton.js";
+export { getKernelWasm, getKernelWasmSync, primeKernelWasm } from "./wasm-singleton.js";
 
 // Kernel-backed sketch math (projection, snap, hit-test, shape builders)
 export {

@@ -22,6 +22,12 @@ export {
 } from "./kinematics.js";
 
 export {
+  getKernelWasm,
+  getKernelWasmSync,
+  primeKernelWasm,
+} from "./wasm-singleton.js";
+
+export {
   initializeGpu,
   isGpuAvailable,
   processGeometryGpu,
@@ -290,40 +296,9 @@ export class Engine {
   static async init(opts?: {
     wasmInput?: BufferSource | Response;
   }): Promise<Engine> {
-    console.debug("[WASM] Engine.init: starting import(@vcad/kernel-wasm)");
-    const wasmModule = await import("@vcad/kernel-wasm");
-    console.debug("[WASM] Engine.init: import resolved");
-
-    // Check if we're in Node.js environment (for tests)
-    const isNode =
-      typeof process !== "undefined" &&
-      process.versions != null &&
-      process.versions.node != null;
-
-    if (isNode) {
-      // In Node.js, we need to read the WASM file and pass it as a buffer
-      // Dynamic imports ensure these aren't bundled for browser
-      const fs = await import("node:fs");
-      const url = await import("node:url");
-      const path = await import("node:path");
-
-      // Get the path to the WASM file relative to the kernel-wasm package
-      const kernelWasmPath = url.fileURLToPath(import.meta.url);
-      const wasmPath = path.join(
-        path.dirname(kernelWasmPath),
-        "..",
-        "..",
-        "kernel-wasm",
-        "vcad_kernel_wasm_bg.wasm",
-      );
-      const wasmBuffer = fs.readFileSync(wasmPath);
-      wasmModule.initSync({ module: wasmBuffer });
-    } else {
-      // In browser, use the default async init. When `wasmInput` is provided,
-      // wasm-bindgen accepts a BufferSource/Response directly and skips its
-      // internal fetch — letting the caller drive download progress.
-      await wasmModule.default(opts?.wasmInput as Parameters<typeof wasmModule.default>[0]);
-    }
+    const { getKernelWasm, primeKernelWasm } = await import("./wasm-singleton.js");
+    if (opts?.wasmInput) primeKernelWasm(opts.wasmInput);
+    const wasmModule = await getKernelWasm();
 
     // Get the compiled WebAssembly.Module to share with the worker.
     // This avoids a ~3s recompilation in the worker thread.

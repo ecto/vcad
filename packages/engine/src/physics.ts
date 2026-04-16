@@ -40,9 +40,6 @@ export interface PhysicsEnvOptions {
   maxSteps?: number;
 }
 
-// Module-level WASM instance (lazily loaded)
-let wasmModule: typeof import("@vcad/kernel-wasm") | null = null;
-
 /**
  * Recursively convert a Map (from serde_wasm_bindgen) to a plain object.
  *
@@ -63,49 +60,10 @@ function mapToObject(value: unknown): unknown {
   return value;
 }
 
-/** Initialize the WASM module if not already loaded */
+/** Resolve the kernel WASM module through the shared singleton. */
 async function ensureWasmLoaded(): Promise<typeof import("@vcad/kernel-wasm")> {
-  if (wasmModule) return wasmModule;
-
-  console.debug("[WASM] physics.ensureWasmLoaded: starting import(@vcad/kernel-wasm)");
-  const module = await import("@vcad/kernel-wasm");
-  console.debug("[WASM] physics.ensureWasmLoaded: import resolved");
-
-  // Check if we're in Node.js environment
-  const isNode =
-    typeof process !== "undefined" &&
-    process.versions != null &&
-    process.versions.node != null;
-
-  if (isNode) {
-    // In Node.js, we need to read the WASM file and pass it as a buffer
-    const fs = await import("node:fs");
-    const url = await import("node:url");
-    const path = await import("node:path");
-
-    const currentPath = url.fileURLToPath(import.meta.url);
-    const wasmPath = path.join(
-      path.dirname(currentPath),
-      "..",
-      "..",
-      "kernel-wasm",
-      "vcad_kernel_wasm_bg.wasm",
-    );
-    const wasmBuffer = fs.readFileSync(wasmPath);
-    module.initSync({ module: wasmBuffer });
-  } else {
-    // In browser, the WASM might already be initialized by Engine.init()
-    // Try to init, but catch if already initialized
-    try {
-      await module.default();
-    } catch (e) {
-      // WASM may already be initialized, which is fine
-      console.log("[Physics] WASM already initialized or error:", e);
-    }
-  }
-
-  wasmModule = module;
-  return module;
+  const { getKernelWasm } = await import("./wasm-singleton.js");
+  return getKernelWasm();
 }
 
 /**
