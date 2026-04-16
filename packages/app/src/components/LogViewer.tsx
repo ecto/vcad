@@ -54,7 +54,7 @@ function LogEntryRow({ entry }: { entry: LogEntry }) {
   return (
     <div
       className={cn(
-        "flex items-baseline gap-2 px-3 py-0.5 border-b border-border/30 font-mono text-[11px]",
+        "flex items-baseline gap-2 px-3 py-0.5 border-b border-border/40 font-mono text-[11px]",
         LEVEL_BG[entry.level],
       )}
     >
@@ -147,17 +147,17 @@ export function LogViewer() {
     <div
       ref={panelRef}
       className={cn(
-        "w-full bg-surface flex flex-col h-[40vh] min-h-0 border-t border-border",
+        "w-full bg-surface flex flex-col h-[40vh] min-h-0 border-t border-border/40",
         "animate-in slide-in-from-bottom duration-150",
       )}
     >
       {/* Tab strip — DevTools-style. One tab today; structure ready for more. */}
-      <div className="flex h-7 shrink-0 items-stretch border-b border-border">
+      <div className="flex h-7 shrink-0 items-stretch border-b border-border/40">
         {TABS.map((tab) => (
           <button
             key={tab.id}
             className={cn(
-              "px-3 text-[11px] border-r border-border/50 transition-colors",
+              "px-3 text-[11px] border-r border-border/40 transition-colors",
               activeTab === tab.id
                 ? "bg-bg text-text border-b-0"
                 : "text-text-muted hover:text-text hover:bg-hover",
@@ -177,7 +177,7 @@ export function LogViewer() {
       </div>
 
       {/* Toolbar — clear / copy / level filter / source filter / count */}
-      <div className="flex h-7 shrink-0 items-center gap-1 px-2 border-b border-border text-[10px]">
+      <div className="flex h-7 shrink-0 items-center gap-1 px-2 border-b border-border/40 text-[10px]">
         <button
           onClick={handleClear}
           className="flex h-5 w-5 items-center justify-center text-text-muted hover:text-text hover:bg-hover"

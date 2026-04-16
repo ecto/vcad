@@ -956,7 +956,7 @@ function MirrorProperties(props: { part: MirrorPartInfo }) {
 }
 
 function Divider() {
-  return <div className="border-t border-border my-2" />;
+  return <div className="border-t border-border/40 my-2" />;
 }
 
 // --- Instance Properties ---
@@ -1063,7 +1063,7 @@ function InstancePropertiesPanel({ instance }: { instance: PartInstance }) {
       {/* Mobile drag handle */}
 
       {/* Header */}
-      <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border px-3">
+      <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border/40 px-3">
         <div className="flex items-center gap-2 min-w-0">
           <BackButton />
           <span className="text-xs font-medium text-text truncate">
@@ -1197,7 +1197,7 @@ function JointPropertiesPanel({ joint }: { joint: Joint }) {
       {/* Mobile drag handle */}
 
       {/* Header */}
-      <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border px-3">
+      <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border/40 px-3">
         <div className="flex items-center gap-2 min-w-0">
           <BackButton />
           <span className="text-xs font-medium text-text truncate">
@@ -1295,7 +1295,7 @@ export function PropertyPanel() {
         )}
       >
         {/* Mobile drag handle */}
-          <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border px-3">
+          <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border/40 px-3">
           <div className="flex items-center gap-2 min-w-0">
             <BackButton />
             <span className="text-xs font-medium text-text">
@@ -1350,7 +1350,7 @@ export function PropertyPanel() {
       {/* Mobile drag handle */}
 
       {/* Header */}
-      <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border px-3">
+      <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border/40 px-3">
         <div className="flex items-center gap-2 min-w-0">
           <BackButton />
           <span className="text-xs font-medium text-text truncate">

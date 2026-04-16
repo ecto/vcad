@@ -87,7 +87,7 @@ export function MobileShell({ onAboutOpen, onSave, onOpen, children }: MobileShe
   return (
     <div className="flex h-[100dvh] w-screen flex-col overflow-hidden bg-bg">
       {/* ──── Top bar ────────────────────────────────── */}
-      <div className="flex h-12 shrink-0 items-center border-b border-border bg-surface pl-3 pr-1">
+      <div className="flex h-12 shrink-0 items-center border-b border-border/40 bg-surface pl-3 pr-1">
         <button
           onClick={() => setMenuOpen(true)}
           className="flex h-10 w-10 -ml-2 items-center justify-center text-text-muted hover:text-text"
@@ -159,7 +159,7 @@ export function MobileShell({ onAboutOpen, onSave, onOpen, children }: MobileShe
         {/* Selection property sheet — always mounted, auto-shows when selection > 0. */}
         {selection > 0 && (
           <div className="pointer-events-none fixed inset-x-0 bottom-[calc(56px+env(safe-area-inset-bottom))] z-30 flex justify-center">
-            <div className="pointer-events-auto w-full max-h-[55dvh] bg-surface border-t border-border shadow-[0_-4px_16px_rgba(0,0,0,0.3)] flex flex-col">
+            <div className="pointer-events-auto w-full max-h-[55dvh] bg-surface border-t border-border/40 shadow-[0_-4px_16px_rgba(0,0,0,0.3)] flex flex-col">
               <Suspense fallback={null}>
                 <PropertyPanel />
               </Suspense>

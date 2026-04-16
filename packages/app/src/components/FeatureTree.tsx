@@ -954,7 +954,7 @@ export function FeatureTree() {
             {/* Empty state when no parts/instances yet */}
             {!hasGeometry && (
               <>
-                <div className="border-t border-border/30 my-1" />
+                <div className="border-t border-border/40 my-1" />
                 <FeatureTreeEmptyState />
               </>
             )}
@@ -962,7 +962,7 @@ export function FeatureTree() {
             {/* Separator and geometry when present */}
             {hasGeometry && (
               <>
-                <div className="border-t border-border/30 my-1" />
+                <div className="border-t border-border/40 my-1" />
 
                 {/* Assembly mode: show instances and joints */}
                 {hasInstances ? (

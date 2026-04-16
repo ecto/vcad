@@ -393,7 +393,7 @@ function SourcePanel() {
           {error}
         </div>
       )}
-      <div className="border-t border-border px-3 py-1 text-[9px] text-text-muted shrink-0">
+      <div className="border-t border-border/40 px-3 py-1 text-[9px] text-text-muted shrink-0">
         {isDirty ? "Editing (will eval on pause)" : "Synced with document"} · ⌘⏎ to eval
       </div>
     </div>
@@ -531,7 +531,7 @@ export function ChatSidebar() {
       )}
     >
       {/* Header with tabs */}
-      <div className="flex items-center gap-1 px-2 py-1.5 border-b border-border shrink-0">
+      <div className="flex items-center gap-1 px-2 py-1.5 border-b border-border/40 shrink-0">
         <button
           onClick={() => setActiveTab("chat")}
           className={cn(

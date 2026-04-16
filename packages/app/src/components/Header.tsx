@@ -118,7 +118,7 @@ function MenuItem({
 }
 
 function MenuSeparator() {
-  return <Menubar.Separator className="my-1 border-t border-border" />;
+  return <Menubar.Separator className="my-1 border-t border-border/40" />;
 }
 
 /** A submenu that opens on hover/right-arrow. Menubar.Sub handles all the
@@ -352,7 +352,7 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
       {/* ─────────────────────────────────────────────────────── */}
       {/* Row 1: menu bar (logo + File/Edit/View/Tools/Help)     */}
       {/* ─────────────────────────────────────────────────────── */}
-      <div className="relative flex h-7 items-center gap-0 px-2 border-b border-border/30">
+      <div className="relative flex h-7 items-center gap-0 px-2 border-b border-border/40">
         <div className="flex items-center gap-1 pr-3">
           <button
             type="button"

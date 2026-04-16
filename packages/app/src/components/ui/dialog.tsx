@@ -38,7 +38,7 @@ export function DialogContent({
           className,
         )}
       >
-        <div className="flex h-10 items-center justify-between border-b border-border px-4">
+        <div className="flex h-10 items-center justify-between border-b border-border/40 px-4">
           <RadixDialog.Title className="text-sm font-medium text-text">
             {title}
           </RadixDialog.Title>
@@ -62,7 +62,7 @@ export function DialogFooter({
   return (
     <div
       className={cn(
-        "flex items-center justify-end gap-2 pt-4 border-t border-border mt-4 -mx-4 px-4 -mb-4 pb-4",
+        "flex items-center justify-end gap-2 pt-4 border-t border-border/40 mt-4 -mx-4 px-4 -mb-4 pb-4",
         className,
       )}
     >

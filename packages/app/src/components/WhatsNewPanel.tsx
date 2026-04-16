@@ -40,7 +40,7 @@ function EntryCard({ entry }: { entry: ChangelogEntry }) {
   const color = CATEGORY_COLORS[entry.category];
 
   return (
-    <div className="flex gap-3 py-3 border-b border-border last:border-b-0">
+    <div className="flex gap-3 py-3 border-b border-border/40 last:border-b-0">
       <Icon size={18} className={cn(color, "flex-shrink-0 mt-0.5")} />
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline gap-2">
@@ -78,7 +78,7 @@ export function WhatsNewPanel() {
           )}
         >
           {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
             <Dialog.Title className="text-sm font-bold text-text flex items-center gap-2">
               <Rocket size={16} className="text-brand" />
               What's New
@@ -96,7 +96,7 @@ export function WhatsNewPanel() {
           </div>
 
           {/* Footer */}
-          <div className="px-4 py-2 border-t border-border text-center text-[10px] text-text-muted">
+          <div className="px-4 py-2 border-t border-border/40 text-center text-[10px] text-text-muted">
             v{CURRENT_VERSION}
           </div>
         </Dialog.Content>

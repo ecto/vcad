@@ -11,7 +11,7 @@ export function PanelHeader({
   return (
     <div
       className={cn(
-        "flex h-10 shrink-0 items-center gap-2 border-b border-border px-3 text-xs font-bold uppercase tracking-wider text-text-muted",
+        "flex h-10 shrink-0 items-center gap-2 border-b border-border/40 px-3 text-xs font-bold uppercase tracking-wider text-text-muted",
         className,
       )}
     >

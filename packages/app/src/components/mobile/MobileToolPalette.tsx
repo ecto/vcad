@@ -35,7 +35,7 @@ export function MobileToolPalette() {
     <>
       <div
         className={cn(
-          "flex h-14 shrink-0 items-stretch border-t border-border bg-surface",
+          "flex h-14 shrink-0 items-stretch border-t border-border/40 bg-surface",
           "overflow-x-auto no-scrollbar",
           "pb-[env(safe-area-inset-bottom)]",
         )}
@@ -72,7 +72,7 @@ export function MobileToolPalette() {
         <div className="p-3">
           <ToolGrid defs={activeDefs} onRun={() => setSheetTab(null)} />
           {activeTab === "simulate" && (
-            <div className="mt-3 border-t border-border pt-3">
+            <div className="mt-3 border-t border-border/40 pt-3">
               {renderSimulateExtras({ compact: true })}
             </div>
           )}
