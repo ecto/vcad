@@ -15,6 +15,7 @@ import { useDocumentStore, useUiStore } from "@vcad/core";
 import {
   joinCollabChannel,
   isApplyingRemoteOps,
+  enableCloudSync,
   useAuthStore,
   type CollabChannel,
 } from "@vcad/auth";
@@ -30,16 +31,48 @@ export function useCollabSync() {
   // Resolve cloudId from local storage whenever documentId changes.
   useEffect(() => {
     setCloudId(null);
-    if (!documentId || !user || readOnly) return;
+    if (!documentId) {
+      console.log("[collab] no documentId, skipping");
+      return;
+    }
+    if (!user) {
+      console.log("[collab] not signed in, skipping");
+      return;
+    }
+    if (readOnly) {
+      console.log("[collab] read-only share, skipping");
+      return;
+    }
 
     let cancelled = false;
     (async () => {
       try {
         const stored = await loadStoredDocument(documentId);
         if (cancelled) return;
-        setCloudId(stored?.cloudId ?? null);
-      } catch {
-        // Storage lookup failed — no collab for this doc.
+        const resolved = stored?.cloudId ?? null;
+        console.log("[collab] resolved cloudId:", resolved, "for localId:", documentId);
+
+        if (!resolved) {
+          // Doc isn't cloud-synced yet. Promote to pending and trigger sync
+          // so we get a cloudId. Re-check after sync completes.
+          console.log("[collab] no cloudId — promoting to cloud sync");
+          try {
+            await enableCloudSync(documentId);
+            // Re-read after sync
+            const updated = await loadStoredDocument(documentId);
+            if (cancelled) return;
+            const newCloudId = updated?.cloudId ?? null;
+            console.log("[collab] post-sync cloudId:", newCloudId);
+            setCloudId(newCloudId);
+          } catch (syncErr) {
+            console.warn("[collab] cloud sync promotion failed:", syncErr);
+          }
+          return;
+        }
+
+        setCloudId(resolved);
+      } catch (err) {
+        console.warn("[collab] storage lookup failed:", err);
       }
     })();
     return () => {
@@ -53,7 +86,10 @@ export function useCollabSync() {
     channelRef.current?.leave();
     channelRef.current = null;
 
-    if (!cloudId || !user || readOnly) return;
+    if (!cloudId || !user || readOnly) {
+      console.log("[collab] channel precondition not met:", { cloudId, user: !!user, readOnly: !!readOnly });
+      return;
+    }
 
     console.log("[collab] joining channel for", cloudId);
 

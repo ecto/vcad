@@ -23,6 +23,7 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 // Lazy-loaded components (behind user actions, modals, or conditional renders)
 const PropertyPanel = lazy(() => import("@/components/PropertyPanel").then(m => ({ default: m.PropertyPanel })));
 const SceneInspector = lazy(() => import("@/components/SceneInspector").then(m => ({ default: m.SceneInspector })));
+const InlineOnboarding = lazy(() => import("@/components/InlineOnboarding").then(m => ({ default: m.InlineOnboarding })));
 const GuidedFlowOverlay = lazy(() => import("@/components/GuidedFlowOverlay").then(m => ({ default: m.GuidedFlowOverlay })));
 const GhostPromptController = lazy(() => import("@/components/GhostPromptController").then(m => ({ default: m.GhostPromptController })));
 const CelebrationOverlay = lazy(() => import("@/components/CelebrationOverlay").then(m => ({ default: m.CelebrationOverlay })));
@@ -172,6 +173,7 @@ export function App() {
   const advanceGuidedFlow = useOnboardingStore((s) => s.advanceGuidedFlow);
   const incrementSessions = useOnboardingStore((s) => s.incrementSessions);
   const startGuidedFlow = useOnboardingStore((s) => s.startGuidedFlow);
+  const welcomeModalDismissed = useOnboardingStore((s) => s.welcomeModalDismissed);
   const parts = useDocumentStore((s) => s.parts);
   const selectMultiple = useUiStore((s) => s.selectMultiple);
   const printPanelOpen = useSlicerStore((s) => s.printPanelOpen);
@@ -184,6 +186,7 @@ export function App() {
   const statusBarVisible = useUiStore((s) => s.statusBarVisible);
   const selPart = selIds.size === 1 ? partIndex.get(Array.from(selIds)[0]!) : undefined;
   const hasSelectedEmbroideryPart = selPart != null && isEmbroideryPatternPart(selPart);
+  const showOnboarding = !welcomeModalDismissed && parts.length === 0 && !guidedFlowActive;
 
   // Auto-drill the left sidebar into the inspector when something is selected,
   // and back to the tree when selection clears. Selecting a part also clears
@@ -630,6 +633,7 @@ export function App() {
 
       {/* Onboarding overlays */}
       <Suspense fallback={null}>
+        <InlineOnboarding visible={showOnboarding} />
         <GuidedFlowOverlay />
         <GhostPromptController />
         <CelebrationOverlay />
@@ -694,10 +698,10 @@ export function App() {
                 {!sketchActive && <ToolPalette />}
               </Header>
             )}
-            leftSidebar={!electronicsActive && !sketchActive && featureTreeOpen && (
+            leftSidebar={!electronicsActive && !sketchActive && !showOnboarding && featureTreeOpen && (
               <FeatureTreeSlot sketchActive={sketchActive} />
             )}
-            rightSidebar={!electronicsActive && chatOpen && (
+            rightSidebar={!electronicsActive && !showOnboarding && chatOpen && (
               <Suspense fallback={null}>
                 <ChatSidebar />
               </Suspense>

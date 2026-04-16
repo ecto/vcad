@@ -69,6 +69,8 @@ export function joinCollabChannel(
   channel.on("broadcast", { event: "ops" }, (payload) => {
     const opsJson = payload.payload?.ops as string | undefined;
     if (!opsJson) return;
+    const parsed = JSON.parse(opsJson) as unknown[];
+    console.log("[collab] received", parsed.length, "remote ops");
     _applyingRemote = true;
     try {
       callbacks.mergeRemoteOps(opsJson);
@@ -110,6 +112,7 @@ export function joinCollabChannel(
     const parsed = JSON.parse(ops) as unknown[];
     if (parsed.length === 0) return;
 
+    console.log("[collab] broadcasting", parsed.length, "ops");
     channel.send({
       type: "broadcast",
       event: "ops",

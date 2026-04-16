@@ -759,7 +759,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
     _sceneSettingsFeatureId = null;
     _schematicFeatureId = null;
-    const engine = wrapEngineWithReadOnlyGuard(new EngineClass());
+    const engine = new EngineClass();
     set({ _crdtEngine: engine, _crdtEngineClass: EngineClass });
   },
 
@@ -770,7 +770,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   loadCrdt: (bytes, EngineClass) => {
-    const engine = wrapEngineWithReadOnlyGuard(EngineClass.load(bytes));
+    const engine = EngineClass.load(bytes);
     const doc: Document = JSON.parse(engine.get_document_json());
     const parts: PartInfo[] = JSON.parse(engine.get_parts_json());
     const patch = applyLegacyResult({ document: doc, parts });
@@ -791,7 +791,12 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (!engine) return false;
     const result = engine.merge_remote(opsJson);
     if (result) {
-      set(applyLegacyResult(result));
+      // Apply the merged state WITHOUT marking dirty — remote ops are already
+      // persisted on the sender's side. Setting isDirty would trigger auto-save
+      // and camera-fit side effects we don't want for incoming remote changes.
+      const patch = applyLegacyResult(result);
+      delete patch.isDirty;
+      set(patch);
       return true;
     }
     return false;
@@ -986,9 +991,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     let patch: Partial<DocumentState> | null = null;
     try {
       const irJson = JSON.stringify(file.document);
-      newEngine = wrapEngineWithReadOnlyGuard(
-        state._crdtEngineClass.from_v1_json(irJson),
-      );
+      newEngine = state._crdtEngineClass.from_v1_json(irJson);
       const doc: Document = JSON.parse(newEngine.get_document_json());
       const parts: PartInfo[] = JSON.parse(newEngine.get_parts_json());
       patch = applyLegacyResult({ document: doc, parts });
@@ -1618,7 +1621,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (state._crdtEngineClass) {
       _sceneSettingsFeatureId = null;
       _schematicFeatureId = null;
-      const engine = wrapEngineWithReadOnlyGuard(new state._crdtEngineClass());
+      const engine = new state._crdtEngineClass();
       set({
         document: createDocument(),
         parts: [],

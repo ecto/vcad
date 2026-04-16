@@ -188,6 +188,8 @@ async function uploadPendingDocuments(): Promise<void> {
 async function uploadDocument(doc: LocalDocument): Promise<void> {
   const supabase = requireSupabase();
   const storage = requireStorage();
+  const { user } = useAuthStore.getState();
+  if (!user) throw new Error("Not signed in");
 
   // Check if document already exists in cloud
   const { data: existing } = await supabase
@@ -220,10 +222,12 @@ async function uploadDocument(doc: LocalDocument): Promise<void> {
 
     if (error) throw error;
   } else {
-    // New document - insert
+    // New document - insert. Explicitly set user_id so the RLS policy
+    // passes even if PostgREST hasn't picked up the auth.uid() default.
     const { data, error } = await supabase
       .from("documents")
       .insert({
+        user_id: user.id,
         local_id: doc.id,
         name: doc.name,
         content: doc.document,
@@ -320,10 +324,14 @@ async function updateDocumentFromCloud(
 /**
  * Enable cloud sync for a local-only document.
  * Marks the document as pending and triggers sync.
+ * Resets any error backoff so the sync runs immediately.
  */
 export async function enableCloudSync(documentId: string): Promise<void> {
   const storage = requireStorage();
   await storage.updateDocument(documentId, { syncStatus: "pending" });
+  // Reset backoff so the explicit sync request isn't blocked by earlier errors.
+  consecutiveErrors = 0;
+  lastErrorTime = 0;
   await triggerSync();
 }
 
