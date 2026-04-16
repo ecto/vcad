@@ -6,8 +6,8 @@
       "version": "0.8.0",
       "date": "2026-04-16",
       "category": "feat",
-      "title": "AI joins the document as its own participant",
-      "summary": "Chat AI gets its own camera and selection, drawn as a wireframe frustum with a name chip. Free/Follow/Lock toggle controls how your view relates to the AI's. User pan/zoom no longer snaps back mid-AI-turn.",
+      "title": "The AI is in the room with you",
+      "summary": "The chat AI now shows up in your viewport as its own little camera — you can see where it's looking and what it's selecting, same as if it were another person on the call. Pick whether your view follows along, locks to it, or does its own thing. Also: no more getting yanked back to the AI's camera mid-drag.",
       "features": ["chat", "viewport", "collab", "ux"],
       "mcpTools": ["focus_part", "frame_all", "set_view"]
     },
@@ -16,8 +16,8 @@
       "version": "0.8.0",
       "date": "2026-04-16",
       "category": "feat",
-      "title": "Pro and Max subscription tiers with Stripe",
-      "summary": "Usage-metered billing with live sidebar meter, tier comparison upgrade modal, Stripe Checkout, and confetti on successful upgrade. Free tier stays at 500k tokens/month.",
+      "title": "Pro and Max plans are live",
+      "summary": "If you're hitting the limits of the free tier, you can now upgrade to Pro or Max through Stripe. There's a usage meter in the sidebar so you can see how much you've burned through, and yes, there is confetti when you subscribe. Free tier's still got 500k tokens a month — no change there.",
       "features": ["billing", "chat", "stripe", "ux"]
     },
     {
@@ -25,8 +25,8 @@
       "version": "0.8.0",
       "date": "2026-04-15",
       "category": "feat",
-      "title": "Splash screen and unified boot sequence",
-      "summary": "New full-screen splash replaces the racing boot path — service-worker update check, byte-level kernel fetch progress, and a rotating tip of the day. Eliminates flicker on fast boots and gives slow connections real feedback.",
+      "title": "A real splash screen, finally",
+      "summary": "Boot used to flicker on fast connections and leave you staring at nothing on slow ones. Now there's a proper splash: you can watch the kernel download byte-by-byte, catch a rotating tip while you wait, and we quietly check for service worker updates in the background.",
       "features": ["app", "ux", "boot", "pwa"]
     },
     {
