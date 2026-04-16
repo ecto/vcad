@@ -2,6 +2,15 @@
   "$schema": "./changelog.schema.json",
   "entries": [
     {
+      "id": "2026-04-16-billing-upgrade-flow",
+      "version": "0.8.0",
+      "date": "2026-04-16",
+      "category": "feat",
+      "title": "Pro and Max subscription tiers with Stripe",
+      "summary": "Usage-metered billing with live sidebar meter, tier comparison upgrade modal, Stripe Checkout, and confetti on successful upgrade. Free tier stays at 500k tokens/month.",
+      "features": ["billing", "chat", "stripe", "ux"]
+    },
+    {
       "id": "2026-04-15-splash-screen-unified-boot",
       "version": "0.8.0",
       "date": "2026-04-15",

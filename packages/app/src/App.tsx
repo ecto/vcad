@@ -27,6 +27,7 @@ const GuidedFlowOverlay = lazy(() => import("@/components/GuidedFlowOverlay").th
 const GhostPromptController = lazy(() => import("@/components/GhostPromptController").then(m => ({ default: m.GhostPromptController })));
 const CelebrationOverlay = lazy(() => import("@/components/CelebrationOverlay").then(m => ({ default: m.CelebrationOverlay })));
 const SignInDelight = lazy(() => import("@/components/SignInDelight").then(m => ({ default: m.SignInDelight })));
+const UpgradeDelight = lazy(() => import("@/components/UpgradeDelight").then(m => ({ default: m.UpgradeDelight })));
 const AboutModal = lazy(() => import("@/components/AboutModal").then(m => ({ default: m.AboutModal })));
 const ShareDialog = lazy(() => import("@/components/ShareDialog").then(m => ({ default: m.ShareDialog })));
 const ForkPromptModal = lazy(() => import("@/components/ForkPromptModal").then(m => ({ default: m.ForkPromptModal })));
@@ -629,6 +630,7 @@ export function App() {
         <GhostPromptController />
         <CelebrationOverlay />
         <SignInDelight />
+        <UpgradeDelight />
       </Suspense>
 
       {/* Quote panel (slides in from right when Make It Real clicked) */}

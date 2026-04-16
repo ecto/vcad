@@ -75,15 +75,14 @@ export function CelebrationOverlay() {
     }
   }, [guidedFlowStep, triggerCelebration]);
 
-  // Trigger on sign-in celebration event
+  // Trigger on sign-in / upgrade celebration events
   useEffect(() => {
-    const handleSignInCelebration = () => {
-      triggerCelebration();
-    };
-
-    window.addEventListener("vcad:celebrate-sign-in", handleSignInCelebration);
+    const handle = () => triggerCelebration();
+    window.addEventListener("vcad:celebrate-sign-in", handle);
+    window.addEventListener("vcad:celebrate-upgrade", handle);
     return () => {
-      window.removeEventListener("vcad:celebrate-sign-in", handleSignInCelebration);
+      window.removeEventListener("vcad:celebrate-sign-in", handle);
+      window.removeEventListener("vcad:celebrate-upgrade", handle);
     };
   }, [triggerCelebration]);
 
