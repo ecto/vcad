@@ -11,7 +11,11 @@
  */
 
 import { parseVcadFile, type VcadFile } from "@vcad/core";
-import { fetchSharedDocument } from "@vcad/auth";
+import {
+  fetchSharedDocument,
+  fetchPublicDocument,
+  lookupShareRedirect,
+} from "@vcad/auth";
 import { decodeViewerState, type ViewerState } from "@/lib/viewer-state";
 
 /**
@@ -91,19 +95,39 @@ export function parseUrlParams(): UrlDocumentParams | null {
 export interface UrlDocumentResult {
   file: VcadFile;
   name: string;
-  /** Present when the doc was loaded from a /view/<token> share link. */
+  /** Present when the doc was loaded from a share/public link (read-only). */
   readOnlyShareToken?: string;
   /** Present when the share URL carried a ?at=<encoded> viewer-state hint. */
   viewerStateHint?: ViewerState;
+  /** When viewing a public doc via /@user/slug, the owner info. */
+  ownerUsername?: string;
 }
 
-/** Detect /view/<token> on the current pathname. Returns the token or null. */
-function parseShareTokenFromPath(): string | null {
+/** Route type detected from the current pathname. */
+type UrlRoute =
+  | { kind: "share-token"; token: string }
+  | { kind: "public-doc"; username: string; slug: string }
+  | { kind: "profile"; username: string }
+  | null;
+
+/** Parse the current pathname into a route. */
+function parseRoute(): UrlRoute {
   if (typeof window === "undefined") return null;
-  const match = window.location.pathname.match(
-    /^\/view\/([0-9a-fA-F-]{8,64})\/?$/,
-  );
-  return match?.[1] ?? null;
+  const path = window.location.pathname;
+
+  // /view/<uuid-token>
+  const shareMatch = path.match(/^\/view\/([0-9a-fA-F-]{8,64})\/?$/);
+  if (shareMatch?.[1]) return { kind: "share-token", token: shareMatch[1] };
+
+  // /@<username>/<slug>
+  const docMatch = path.match(/^\/@([a-z0-9][a-z0-9-]*[a-z0-9])\/([a-z0-9][a-z0-9-]*)\/?$/);
+  if (docMatch?.[1] && docMatch[2]) return { kind: "public-doc", username: docMatch[1], slug: docMatch[2] };
+
+  // /@<username> (profile page — no slug)
+  const profileMatch = path.match(/^\/@([a-z0-9][a-z0-9-]*[a-z0-9])\/?$/);
+  if (profileMatch?.[1]) return { kind: "profile", username: profileMatch[1] };
+
+  return null;
 }
 
 /** Read and decode the optional ?at=<encoded> viewer state hint. */
@@ -119,27 +143,58 @@ function parseViewerStateHint(): ViewerState | null {
  * Returns null if no URL document is present or loading fails.
  */
 export async function loadDocumentFromUrl(): Promise<UrlDocumentResult | null> {
-  // 1. /view/<token> — Phase 0 public share links
-  const shareToken = parseShareTokenFromPath();
-  if (shareToken) {
+  const route = parseRoute();
+
+  // 1. /@username/slug — Phase 1 canonical public doc URLs
+  if (route?.kind === "public-doc") {
     try {
-      const shared = await fetchSharedDocument(shareToken);
+      const pub = await fetchPublicDocument(route.username, route.slug);
+      if (!pub) {
+        console.warn("[url-document] public doc not found:", route.username, route.slug);
+        return null;
+      }
+      const file =
+        typeof pub.content === "string"
+          ? parseVcadFile(pub.content)
+          : parseVcadFile(JSON.stringify(pub.content));
+      const viewerStateHint = parseViewerStateHint() ?? undefined;
+      return {
+        file,
+        name: pub.name,
+        readOnlyShareToken: `@${route.username}/${route.slug}`,
+        viewerStateHint,
+        ownerUsername: pub.owner_username,
+      };
+    } catch (err) {
+      console.error("[url-document] failed to load public doc:", err);
+      return null;
+    }
+  }
+
+  // 2. /view/<token> — Phase 0 share links (check for redirect first)
+  if (route?.kind === "share-token") {
+    try {
+      // Check if this token has been upgraded to a canonical /@user/slug URL
+      const redirect = await lookupShareRedirect(route.token);
+      if (redirect) {
+        window.location.replace(`/@${redirect.username}/${redirect.slug}`);
+        return null; // navigation will reload the page
+      }
+
+      const shared = await fetchSharedDocument(route.token);
       if (!shared) {
         console.warn("[url-document] share token invalid or revoked");
         return null;
       }
-      // The RPC returns content as `unknown` (jsonb). parseVcadFile validates.
       const file =
         typeof shared.content === "string"
           ? parseVcadFile(shared.content)
           : parseVcadFile(JSON.stringify(shared.content));
       const viewerStateHint = parseViewerStateHint() ?? undefined;
-      // Do NOT clear the URL — we want the read-only share URL to persist
-      // across reloads so the viewer stays in the shared session.
       return {
         file,
         name: shared.name,
-        readOnlyShareToken: shareToken,
+        readOnlyShareToken: route.token,
         viewerStateHint,
       };
     } catch (err) {
@@ -186,5 +241,14 @@ export async function loadDocumentFromUrl(): Promise<UrlDocumentResult | null> {
  * Check if the current URL has document parameters.
  */
 export function hasUrlDocument(): boolean {
-  return parseUrlParams() !== null || parseShareTokenFromPath() !== null;
+  return parseUrlParams() !== null || parseRoute() !== null;
+}
+
+/**
+ * Check if the current URL is a profile page (/@username with no slug).
+ * The app renders a ProfilePage instead of the normal editor in this case.
+ */
+export function getProfileRouteUsername(): string | null {
+  const route = parseRoute();
+  return route?.kind === "profile" ? route.username : null;
 }

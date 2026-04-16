@@ -40,6 +40,24 @@ export {
   type SharedDocumentResult,
 } from "./sync";
 
+// Profiles
+export {
+  getMyProfile,
+  getProfileByUsername,
+  checkUsernameAvailable,
+  createProfile,
+  updateProfile,
+  fetchPublicDocument,
+  listPublicDocuments,
+  publishDocument,
+  slugify,
+  createShareRedirect,
+  lookupShareRedirect,
+  type Profile,
+  type PublicDocumentResult,
+  type PublicDocumentMeta,
+} from "./profile";
+
 // Version history
 export {
   getVersionHistory,

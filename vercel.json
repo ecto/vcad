@@ -4,6 +4,7 @@
   "buildCommand": "npm run build -w @vcad/ir && npm run build -w @vcad/engine && npm run build -w @vcad/core && npm run build -w @vcad/mcp && npm run build -w @vcad/app && cp -r dist ../../dist",
   "outputDirectory": "dist",
   "rewrites": [
-    { "source": "/view/(.*)", "destination": "/" }
+    { "source": "/view/(.*)", "destination": "/" },
+    { "source": "/@:path*", "destination": "/" }
   ]
 }

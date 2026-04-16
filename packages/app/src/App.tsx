@@ -31,6 +31,8 @@ const AboutModal = lazy(() => import("@/components/AboutModal").then(m => ({ def
 const ShareDialog = lazy(() => import("@/components/ShareDialog").then(m => ({ default: m.ShareDialog })));
 const ForkPromptModal = lazy(() => import("@/components/ForkPromptModal").then(m => ({ default: m.ForkPromptModal })));
 const ReadOnlyBanner = lazy(() => import("@/components/ReadOnlyBanner").then(m => ({ default: m.ReadOnlyBanner })));
+const ProfilePage = lazy(() => import("@/components/ProfilePage").then(m => ({ default: m.ProfilePage })));
+// UsernamePickerModal is lazy-loaded inside ShareDialog, not here.
 const CommandPalette = lazy(() => import("@/components/CommandPalette").then(m => ({ default: m.CommandPalette })));
 const SketchToolbar = lazy(() => import("@/components/SketchToolbar").then(m => ({ default: m.SketchToolbar })));
 const SketchStatusPanel = lazy(() => import("@/components/SketchStatusPanel").then(m => ({ default: m.SketchStatusPanel })));
@@ -74,6 +76,7 @@ import { useBootStore } from "@/stores/boot-store";
 import { Splash } from "@/components/Splash";
 import { ErrorScreen } from "@/components/ErrorScreen";
 import { isTauri } from "@/lib/tauri";
+import { getProfileRouteUsername } from "@/lib/url-document";
 import {
   mergeMeshes,
 } from "@vcad/engine";
@@ -575,6 +578,22 @@ export function App() {
   if (bootError) return <ErrorScreen message={bootError} />;
   if (error && !engineReady) return <ErrorScreen message={error} />;
   if (bootPhase !== "ready") return <Splash />;
+
+  // /@username profile page — render a standalone page, not the editor.
+  const profileUsername = getProfileRouteUsername();
+  if (profileUsername) {
+    return (
+      <Suspense
+        fallback={
+          <div className="flex h-screen items-center justify-center bg-bg text-text-muted text-sm">
+            Loading…
+          </div>
+        }
+      >
+        <ProfilePage username={profileUsername} />
+      </Suspense>
+    );
+  }
 
   const viewportStack = (
     <>
