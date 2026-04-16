@@ -143,13 +143,21 @@ async function logUsage(
 async function pipeAnthropicStream(
   anthropicBody: ReadableStream<Uint8Array>,
   write: (chunk: string) => void,
-): Promise<{ inputTokens: number; outputTokens: number; toolCallCount: number }> {
+): Promise<{
+  inputTokens: number;
+  outputTokens: number;
+  toolCallCount: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+}> {
   const reader = anthropicBody.getReader();
   const decoder = new TextDecoder();
   let sseBuffer = "";
   let inputTokens = 0;
   let outputTokens = 0;
   let toolCallCount = 0;
+  let cacheCreationTokens = 0;
+  let cacheReadTokens = 0;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -167,6 +175,8 @@ async function pipeAnthropicStream(
           const u = event.message.usage;
           inputTokens = Number(u.input_tokens ?? 0);
           outputTokens = Number(u.output_tokens ?? 0);
+          cacheCreationTokens = Number(u.cache_creation_input_tokens ?? 0);
+          cacheReadTokens = Number(u.cache_read_input_tokens ?? 0);
         } else if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
           write(`data: ${JSON.stringify({ type: "text", text: event.delta.text })}\n\n`);
         } else if (event.type === "content_block_start" && event.content_block?.type === "tool_use") {
@@ -198,7 +208,7 @@ async function pipeAnthropicStream(
     }
   }
 
-  return { inputTokens, outputTokens, toolCallCount };
+  return { inputTokens, outputTokens, toolCallCount, cacheCreationTokens, cacheReadTokens };
 }
 
 // ---------------------------------------------------------------------------
@@ -269,11 +279,18 @@ async function classifyPromptSafety(
         "Content-Type": "application/json",
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
+        "anthropic-beta": "prompt-caching-2024-07-31",
       },
       body: JSON.stringify({
         model: ANTHROPIC_SAFETY_MODEL,
         max_tokens: 60,
-        system: SAFETY_SYSTEM_PROMPT,
+        system: [
+          {
+            type: "text",
+            text: SAFETY_SYSTEM_PROMPT,
+            cache_control: { type: "ephemeral" },
+          },
+        ],
         messages: classifierMessages,
       }),
     });
@@ -543,6 +560,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
+  // Prompt caching: the system prompt and tool schemas are identical across
+  // every turn in a conversation. Marking them with cache_control lets
+  // Anthropic serve them from cache for 5 minutes — 90% discount on those
+  // input tokens. For a typical vcad chat with ~3k tokens of tools, this
+  // saves ~50% of input cost on multi-turn sessions.
+  const systemBlocks = [
+    {
+      type: "text" as const,
+      text: systemPrompt,
+      cache_control: { type: "ephemeral" as const },
+    },
+  ];
+  const cachedTools =
+    tools.length > 0
+      ? tools.map((t, i) =>
+          i === tools.length - 1
+            ? { ...t, cache_control: { type: "ephemeral" as const } }
+            : t,
+        )
+      : tools;
+
   try {
     const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -550,13 +588,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         "Content-Type": "application/json",
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
+        "anthropic-beta": "prompt-caching-2024-07-31",
       },
       body: JSON.stringify({
         model: ANTHROPIC_MODEL,
         max_tokens: ANTHROPIC_MAX_TOKENS,
-        system: systemPrompt,
+        system: systemBlocks,
         stream: true,
-        tools,
+        tools: cachedTools,
         messages,
       }),
     });
@@ -590,11 +629,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return;
     }
 
-    const { inputTokens, outputTokens, toolCallCount } = await pipeAnthropicStream(
-      anthropicRes.body,
-      (chunk) => res.write(chunk),
-    );
+    const { inputTokens, outputTokens, toolCallCount, cacheReadTokens, cacheCreationTokens } =
+      await pipeAnthropicStream(
+        anthropicRes.body,
+        (chunk) => res.write(chunk),
+      );
     res.end();
+
+    if (cacheReadTokens > 0 || cacheCreationTokens > 0) {
+      console.log(
+        `[chat] cache: ${cacheReadTokens} read (90% off), ${cacheCreationTokens} created, ${inputTokens} input total`,
+      );
+    }
 
     const totalTokens = inputTokens + outputTokens;
     const durationMs = Date.now() - startedAt;
