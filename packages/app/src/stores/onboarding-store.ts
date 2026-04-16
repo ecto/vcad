@@ -13,6 +13,9 @@ interface OnboardingState {
   // Existing
   projectsCreated: number;
   welcomeModalDismissed: boolean;
+  /** Session-only: the welcome has been closed this visit but may return
+   * on next page load unless `welcomeModalDismissed` is also set. */
+  welcomeHiddenThisSession: boolean;
 
   // Guided Flow
   guidedFlowActive: boolean;
@@ -25,6 +28,7 @@ interface OnboardingState {
   // Actions
   incrementProjectsCreated: () => void;
   dismissWelcomeModal: () => void;
+  hideWelcomeThisSession: () => void;
   startGuidedFlow: () => void;
   advanceGuidedFlow: () => void;
   skipGuidedFlow: () => void;
@@ -45,6 +49,7 @@ export const useOnboardingStore = create<OnboardingState>()(
     (set, get) => ({
       projectsCreated: 0,
       welcomeModalDismissed: false,
+      welcomeHiddenThisSession: false,
       guidedFlowActive: false,
       guidedFlowStep: null,
       guidedFlowCompleted: false,
@@ -55,13 +60,16 @@ export const useOnboardingStore = create<OnboardingState>()(
           projectsCreated: state.projectsCreated + 1,
         })),
 
-      dismissWelcomeModal: () => set({ welcomeModalDismissed: true }),
+      dismissWelcomeModal: () =>
+        set({ welcomeModalDismissed: true, welcomeHiddenThisSession: true }),
+
+      hideWelcomeThisSession: () => set({ welcomeHiddenThisSession: true }),
 
       startGuidedFlow: () =>
         set({
           guidedFlowActive: true,
           guidedFlowStep: "add-cube",
-          welcomeModalDismissed: true,
+          welcomeHiddenThisSession: true,
         }),
 
       advanceGuidedFlow: () => {

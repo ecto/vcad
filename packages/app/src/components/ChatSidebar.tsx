@@ -431,6 +431,24 @@ export function ChatSidebar() {
   const [selectionContext, removeContextPart] = useSelectionContext();
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const inputWrapRef = useRef<HTMLDivElement>(null);
+
+  // External callers (e.g. the welcome overlay's "Build with AI" action)
+  // can dispatch `vcad:focus-chat-input` to jump cursor to the textarea.
+  useEffect(() => {
+    const handler = () => {
+      // Defer a frame so the sidebar has mounted if it just opened.
+      requestAnimationFrame(() => {
+        const textarea = inputWrapRef.current?.querySelector("textarea");
+        if (textarea) {
+          textarea.focus();
+          setActiveTab("chat");
+        }
+      });
+    };
+    window.addEventListener("vcad:focus-chat-input", handler);
+    return () => window.removeEventListener("vcad:focus-chat-input", handler);
+  }, []);
 
   // Route each kind of usage error to the right modal: anon → sign in,
   // monthly → upgrade plan.
@@ -612,42 +630,44 @@ export function ChatSidebar() {
               onPick={handleSuggestionPick}
             />
 
-            <PromptInput onSubmit={handlePromptSubmit} accept="image/*">
-              {selectionContext.length > 0 && (
-                <PromptInputHeader>
-                  {selectionContext.map((ctx) => (
-                    <span
-                      key={ctx.partId}
-                      className="inline-flex items-center gap-1 rounded-full border border-brand/30 bg-brand/10 py-0.5 pl-2 pr-1 text-[9px] text-brand"
-                    >
-                      {ctx.partName}
-                      <button
-                        onClick={() => removeContextPart(ctx.partId)}
-                        className="flex h-3 w-3 items-center justify-center rounded-full hover:bg-brand/20 hover:text-brand/80 transition-colors"
-                        aria-label={`Remove ${ctx.partName}`}
+            <div ref={inputWrapRef}>
+              <PromptInput onSubmit={handlePromptSubmit} accept="image/*">
+                {selectionContext.length > 0 && (
+                  <PromptInputHeader>
+                    {selectionContext.map((ctx) => (
+                      <span
+                        key={ctx.partId}
+                        className="inline-flex items-center gap-1 rounded-full border border-brand/30 bg-brand/10 py-0.5 pl-2 pr-1 text-[9px] text-brand"
                       >
-                        <X size={8} />
-                      </button>
-                    </span>
-                  ))}
-                </PromptInputHeader>
-              )}
-              <AttachmentPreviewStrip />
-              <PromptInputTextarea
-                placeholder={placeholder}
-                disabled={streaming}
-                className="text-[11px]"
-              />
-              <PromptInputFooter>
-                <PromptInputTools>
-                  <AttachViewportButton />
-                </PromptInputTools>
-                <PromptInputSubmit
-                  status={submitStatus}
-                  onStop={() => useChatStore.getState().requestCancel()}
+                        {ctx.partName}
+                        <button
+                          onClick={() => removeContextPart(ctx.partId)}
+                          className="flex h-3 w-3 items-center justify-center rounded-full hover:bg-brand/20 hover:text-brand/80 transition-colors"
+                          aria-label={`Remove ${ctx.partName}`}
+                        >
+                          <X size={8} />
+                        </button>
+                      </span>
+                    ))}
+                  </PromptInputHeader>
+                )}
+                <AttachmentPreviewStrip />
+                <PromptInputTextarea
+                  placeholder={placeholder}
+                  disabled={streaming}
+                  className="text-[11px]"
                 />
-              </PromptInputFooter>
-            </PromptInput>
+                <PromptInputFooter>
+                  <PromptInputTools>
+                    <AttachViewportButton />
+                  </PromptInputTools>
+                  <PromptInputSubmit
+                    status={submitStatus}
+                    onStop={() => useChatStore.getState().requestCancel()}
+                  />
+                </PromptInputFooter>
+              </PromptInput>
+            </div>
           </div>
         </>
       )}

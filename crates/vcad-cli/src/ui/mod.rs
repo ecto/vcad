@@ -12,6 +12,7 @@ pub mod toolbar;
 pub mod top_bar;
 pub mod tree;
 pub mod viewport;
+pub mod welcome;
 
 use buffer::{CellBuffer, Rect};
 
@@ -48,6 +49,14 @@ pub fn draw_overlays(buf: &mut CellBuffer, app: &App) {
 
 /// Internal: draw all floating overlay widgets.
 fn draw_overlays_with_area(buf: &mut CellBuffer, app: &App, area: Rect) {
+    // Welcome overlay replaces the normal chrome — only the status bar
+    // and the welcome card itself are drawn.
+    if app.show_welcome {
+        status::draw_status_bar(buf, app, area);
+        welcome::draw_welcome(buf, app.welcome_selected, area);
+        return;
+    }
+
     if !app.is_orbiting {
         // Top bar (Borland menu bar + right cluster)
         top_bar::draw_top_bar(buf, app, area);

@@ -176,6 +176,12 @@ pub struct App {
     /// uses through wasm. Drives `handle_key`'s dispatch path before the
     /// legacy match arms run.
     pub keybindings: vcad_app::KeybindingRegistry,
+
+    // -- Welcome overlay --
+    /// Show the welcome overlay on first launch with no file.
+    pub show_welcome: bool,
+    /// Currently highlighted item in the welcome overlay.
+    pub welcome_selected: usize,
 }
 
 impl App {
@@ -189,6 +195,7 @@ impl App {
         };
 
         let next_node_id = document.nodes.keys().copied().max().unwrap_or(0) + 1;
+        let is_new_session = file_path.is_none();
 
         let mut app = Self {
             document,
@@ -226,6 +233,8 @@ impl App {
             cursor_world: None,
             chat_session: Default::default(),
             keybindings: vcad_app::KeybindingRegistry::new(),
+            show_welcome: is_new_session,
+            welcome_selected: 0,
         };
 
         // The TUI uses single bare keys for vim-style local actions

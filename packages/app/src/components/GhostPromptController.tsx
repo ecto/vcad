@@ -15,10 +15,6 @@ export function GhostPromptController() {
   const prompt = useMemo(() => {
     if (!enabled) return null;
 
-    if (parts.length === 0) {
-      return "Open Create to add a shape";
-    }
-
     if (parts.length === 1) {
       return "Open Create to add another shape";
     }

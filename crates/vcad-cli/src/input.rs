@@ -709,6 +709,56 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
         return Ok(true);
     }
 
+    // Welcome overlay intercepts all keys when visible
+    if app.show_welcome {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if app.welcome_selected > 0 {
+                    app.welcome_selected -= 1;
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if app.welcome_selected + 1 < crate::ui::welcome::ITEM_COUNT {
+                    app.welcome_selected += 1;
+                }
+            }
+            KeyCode::Enter => {
+                let action = match app.welcome_selected {
+                    0 => crate::ui::welcome::WelcomeAction::Tutorial,
+                    1 => crate::ui::welcome::WelcomeAction::BlankProject,
+                    2 => crate::ui::welcome::WelcomeAction::OpenFile,
+                    _ => crate::ui::welcome::WelcomeAction::Dismiss,
+                };
+                app.show_welcome = false;
+                match action {
+                    crate::ui::welcome::WelcomeAction::Tutorial => {
+                        // Add a cube as the first tutorial step
+                        app.process_command("cube")?;
+                        app.set_status("Tutorial: now add a cylinder (open Create tab)");
+                    }
+                    crate::ui::welcome::WelcomeAction::BlankProject => {
+                        app.set_status("Ready — press : for commands, Tab for tools");
+                    }
+                    crate::ui::welcome::WelcomeAction::OpenFile => {
+                        // Enter command mode with "open" pre-filled
+                        app.mode = TuiMode::Command;
+                        app.command_input = "open".to_string();
+                        app.command_selected_index = 0;
+                    }
+                    crate::ui::welcome::WelcomeAction::Dismiss => {
+                        app.set_status("Ready — press : for commands, Tab for tools");
+                    }
+                }
+            }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                app.show_welcome = false;
+                app.set_status("Ready — press : for commands, Tab for tools");
+            }
+            _ => {}
+        }
+        return Ok(true);
+    }
+
     // Tool input mode takes priority over normal key handling
     if app.tool_input.is_some() {
         handle_tool_input_key(app, key)?;

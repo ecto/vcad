@@ -174,6 +174,7 @@ export function App() {
   const incrementSessions = useOnboardingStore((s) => s.incrementSessions);
   const startGuidedFlow = useOnboardingStore((s) => s.startGuidedFlow);
   const welcomeModalDismissed = useOnboardingStore((s) => s.welcomeModalDismissed);
+  const welcomeHiddenThisSession = useOnboardingStore((s) => s.welcomeHiddenThisSession);
   const parts = useDocumentStore((s) => s.parts);
   const selectMultiple = useUiStore((s) => s.selectMultiple);
   const printPanelOpen = useSlicerStore((s) => s.printPanelOpen);
@@ -186,7 +187,11 @@ export function App() {
   const statusBarVisible = useUiStore((s) => s.statusBarVisible);
   const selPart = selIds.size === 1 ? partIndex.get(Array.from(selIds)[0]!) : undefined;
   const hasSelectedEmbroideryPart = selPart != null && isEmbroideryPatternPart(selPart);
-  const showOnboarding = !welcomeModalDismissed && parts.length === 0 && !guidedFlowActive;
+  const showOnboarding =
+    !welcomeModalDismissed &&
+    !welcomeHiddenThisSession &&
+    parts.length === 0 &&
+    !guidedFlowActive;
 
   // Auto-drill the left sidebar into the inspector when something is selected,
   // and back to the tree when selection clears. Selecting a part also clears
