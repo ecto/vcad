@@ -18,6 +18,28 @@ import {
 } from "@/lib/storage";
 import { loadDocumentFromUrl } from "@/lib/url-document";
 import { useNotificationStore } from "@/stores/notification-store";
+import { analytics } from "@/lib/analytics";
+
+/**
+ * One-shot reload when a dynamically imported chunk's hashed URL no longer
+ * exists — the classic "deployed a new version while the tab was open" case.
+ * Retrying is useless (the file is gone), but a reload fetches the fresh
+ * entry point and new chunk manifest.
+ *
+ * sessionStorage guards against a reload loop: if we already reloaded once
+ * and still get a preload error, the deploy itself is broken — fall through
+ * to the per-region AsyncBoundary (or root ErrorBoundary) instead of looping.
+ */
+const PRELOAD_RELOAD_KEY = "vcad_reloaded_for_preload";
+if (typeof window !== "undefined") {
+  window.addEventListener("vite:preloadError", (event) => {
+    if (sessionStorage.getItem(PRELOAD_RELOAD_KEY)) return;
+    event.preventDefault();
+    sessionStorage.setItem(PRELOAD_RELOAD_KEY, "1");
+    analytics.chunkLoadStaleDeploy();
+    window.location.reload();
+  });
+}
 
 /**
  * Resolve the kernel WASM URL through Vite's asset pipeline. `new URL(…,

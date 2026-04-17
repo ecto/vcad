@@ -4,12 +4,12 @@ import {
   useEffect,
   useCallback,
   useLayoutEffect,
-  lazy,
   Suspense,
 } from "react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { NotificationContainer } from "@/components/ui/notifications";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { AsyncBoundary } from "@/components/AsyncBoundary";
 import { AppShell } from "@/components/AppShell";
 import { Header } from "@/components/Header";
 import { StatusBar } from "@/components/StatusBar";
@@ -19,41 +19,44 @@ import { Viewport } from "@/components/Viewport";
 import { FeatureTree } from "@/components/FeatureTree";
 import { MobileShell } from "@/components/mobile/MobileShell";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { lazyWithRetry } from "@/lib/lazy-with-retry";
 
-// Lazy-loaded components (behind user actions, modals, or conditional renders)
-const PropertyPanel = lazy(() => import("@/components/PropertyPanel").then(m => ({ default: m.PropertyPanel })));
-const SceneInspector = lazy(() => import("@/components/SceneInspector").then(m => ({ default: m.SceneInspector })));
-const InlineOnboarding = lazy(() => import("@/components/InlineOnboarding").then(m => ({ default: m.InlineOnboarding })));
-const GuidedFlowOverlay = lazy(() => import("@/components/GuidedFlowOverlay").then(m => ({ default: m.GuidedFlowOverlay })));
-const GhostPromptController = lazy(() => import("@/components/GhostPromptController").then(m => ({ default: m.GhostPromptController })));
-const CelebrationOverlay = lazy(() => import("@/components/CelebrationOverlay").then(m => ({ default: m.CelebrationOverlay })));
-const SignInDelight = lazy(() => import("@/components/SignInDelight").then(m => ({ default: m.SignInDelight })));
-const UpgradeDelight = lazy(() => import("@/components/UpgradeDelight").then(m => ({ default: m.UpgradeDelight })));
-const AboutModal = lazy(() => import("@/components/AboutModal").then(m => ({ default: m.AboutModal })));
-const ProductModal = lazy(() => import("@/components/ProductModal").then(m => ({ default: m.ProductModal })));
-const ShareDialog = lazy(() => import("@/components/ShareDialog").then(m => ({ default: m.ShareDialog })));
-const ForkPromptModal = lazy(() => import("@/components/ForkPromptModal").then(m => ({ default: m.ForkPromptModal })));
-const ReadOnlyBanner = lazy(() => import("@/components/ReadOnlyBanner").then(m => ({ default: m.ReadOnlyBanner })));
-const ProfilePage = lazy(() => import("@/components/ProfilePage").then(m => ({ default: m.ProfilePage })));
+// Lazy-loaded components (behind user actions, modals, or conditional renders).
+// `lazyWithRetry` silently retries transient network failures; stale-deploy
+// chunk errors are handled globally in bootstrap.ts via `vite:preloadError`.
+const PropertyPanel = lazyWithRetry(() => import("@/components/PropertyPanel").then(m => ({ default: m.PropertyPanel })), "PropertyPanel");
+const SceneInspector = lazyWithRetry(() => import("@/components/SceneInspector").then(m => ({ default: m.SceneInspector })), "SceneInspector");
+const InlineOnboarding = lazyWithRetry(() => import("@/components/InlineOnboarding").then(m => ({ default: m.InlineOnboarding })), "InlineOnboarding");
+const GuidedFlowOverlay = lazyWithRetry(() => import("@/components/GuidedFlowOverlay").then(m => ({ default: m.GuidedFlowOverlay })), "GuidedFlowOverlay");
+const GhostPromptController = lazyWithRetry(() => import("@/components/GhostPromptController").then(m => ({ default: m.GhostPromptController })), "GhostPromptController");
+const CelebrationOverlay = lazyWithRetry(() => import("@/components/CelebrationOverlay").then(m => ({ default: m.CelebrationOverlay })), "CelebrationOverlay");
+const SignInDelight = lazyWithRetry(() => import("@/components/SignInDelight").then(m => ({ default: m.SignInDelight })), "SignInDelight");
+const UpgradeDelight = lazyWithRetry(() => import("@/components/UpgradeDelight").then(m => ({ default: m.UpgradeDelight })), "UpgradeDelight");
+const AboutModal = lazyWithRetry(() => import("@/components/AboutModal").then(m => ({ default: m.AboutModal })), "AboutModal");
+const ProductModal = lazyWithRetry(() => import("@/components/ProductModal").then(m => ({ default: m.ProductModal })), "ProductModal");
+const ShareDialog = lazyWithRetry(() => import("@/components/ShareDialog").then(m => ({ default: m.ShareDialog })), "ShareDialog");
+const ForkPromptModal = lazyWithRetry(() => import("@/components/ForkPromptModal").then(m => ({ default: m.ForkPromptModal })), "ForkPromptModal");
+const ReadOnlyBanner = lazyWithRetry(() => import("@/components/ReadOnlyBanner").then(m => ({ default: m.ReadOnlyBanner })), "ReadOnlyBanner");
+const ProfilePage = lazyWithRetry(() => import("@/components/ProfilePage").then(m => ({ default: m.ProfilePage })), "ProfilePage");
 // UsernamePickerModal is lazy-loaded inside ShareDialog, not here.
-const CommandPalette = lazy(() => import("@/components/CommandPalette").then(m => ({ default: m.CommandPalette })));
-const SketchToolbar = lazy(() => import("@/components/SketchToolbar").then(m => ({ default: m.SketchToolbar })));
-const SketchStatusPanel = lazy(() => import("@/components/SketchStatusPanel").then(m => ({ default: m.SketchStatusPanel })));
-const DrawingToolbar = lazy(() => import("@/components/DrawingToolbar").then(m => ({ default: m.DrawingToolbar })));
-const FaceSelectionOverlay = lazy(() => import("@/components/FaceSelectionOverlay").then(m => ({ default: m.FaceSelectionOverlay })));
-const QuotePanel = lazy(() => import("@/components/QuotePanel").then(m => ({ default: m.QuotePanel })));
-const LogViewer = lazy(() => import("@/components/LogViewer").then(m => ({ default: m.LogViewer })));
-const PrintPanel = lazy(() => import("@/components/print").then(m => ({ default: m.PrintPanel })));
-const DfmOverlay = lazy(() => import("@/components/print/DfmOverlay").then(m => ({ default: m.DfmOverlay })));
-const CamPanel = lazy(() => import("@/components/cam").then(m => ({ default: m.CamPanel })));
-const ChatSidebar = lazy(() => import("@/components/ChatSidebar").then(m => ({ default: m.ChatSidebar })));
-const DocumentPicker = lazy(() => import("@/components/DocumentPicker").then(m => ({ default: m.DocumentPicker })));
-const OfflineIndicator = lazy(() => import("@/components/OfflineIndicator").then(m => ({ default: m.OfflineIndicator })));
-const UpdateNotification = lazy(() => import("@/components/UpdateNotification").then(m => ({ default: m.UpdateNotification })));
-const WhatsNewPanel = lazy(() => import("@/components/WhatsNewPanel").then(m => ({ default: m.WhatsNewPanel })));
-const ElectronicsToolbar = lazy(() => import("@/components/electronics/ElectronicsToolbar").then(m => ({ default: m.ElectronicsToolbar })));
-const ElectronicsStatusPanel = lazy(() => import("@/components/electronics/ElectronicsStatusPanel").then(m => ({ default: m.ElectronicsStatusPanel })));
-const EmbroideryPanel = lazy(() => import("@/components/embroidery").then(m => ({ default: m.EmbroideryPanel })));
+const CommandPalette = lazyWithRetry(() => import("@/components/CommandPalette").then(m => ({ default: m.CommandPalette })), "CommandPalette");
+const SketchToolbar = lazyWithRetry(() => import("@/components/SketchToolbar").then(m => ({ default: m.SketchToolbar })), "SketchToolbar");
+const SketchStatusPanel = lazyWithRetry(() => import("@/components/SketchStatusPanel").then(m => ({ default: m.SketchStatusPanel })), "SketchStatusPanel");
+const DrawingToolbar = lazyWithRetry(() => import("@/components/DrawingToolbar").then(m => ({ default: m.DrawingToolbar })), "DrawingToolbar");
+const FaceSelectionOverlay = lazyWithRetry(() => import("@/components/FaceSelectionOverlay").then(m => ({ default: m.FaceSelectionOverlay })), "FaceSelectionOverlay");
+const QuotePanel = lazyWithRetry(() => import("@/components/QuotePanel").then(m => ({ default: m.QuotePanel })), "QuotePanel");
+const LogViewer = lazyWithRetry(() => import("@/components/LogViewer").then(m => ({ default: m.LogViewer })), "LogViewer");
+const PrintPanel = lazyWithRetry(() => import("@/components/print").then(m => ({ default: m.PrintPanel })), "PrintPanel");
+const DfmOverlay = lazyWithRetry(() => import("@/components/print/DfmOverlay").then(m => ({ default: m.DfmOverlay })), "DfmOverlay");
+const CamPanel = lazyWithRetry(() => import("@/components/cam").then(m => ({ default: m.CamPanel })), "CamPanel");
+const ChatSidebar = lazyWithRetry(() => import("@/components/ChatSidebar").then(m => ({ default: m.ChatSidebar })), "ChatSidebar");
+const DocumentPicker = lazyWithRetry(() => import("@/components/DocumentPicker").then(m => ({ default: m.DocumentPicker })), "DocumentPicker");
+const OfflineIndicator = lazyWithRetry(() => import("@/components/OfflineIndicator").then(m => ({ default: m.OfflineIndicator })), "OfflineIndicator");
+const UpdateNotification = lazyWithRetry(() => import("@/components/UpdateNotification").then(m => ({ default: m.UpdateNotification })), "UpdateNotification");
+const WhatsNewPanel = lazyWithRetry(() => import("@/components/WhatsNewPanel").then(m => ({ default: m.WhatsNewPanel })), "WhatsNewPanel");
+const ElectronicsToolbar = lazyWithRetry(() => import("@/components/electronics/ElectronicsToolbar").then(m => ({ default: m.ElectronicsToolbar })), "ElectronicsToolbar");
+const ElectronicsStatusPanel = lazyWithRetry(() => import("@/components/electronics/ElectronicsStatusPanel").then(m => ({ default: m.ElectronicsStatusPanel })), "ElectronicsStatusPanel");
+const EmbroideryPanel = lazyWithRetry(() => import("@/components/embroidery").then(m => ({ default: m.EmbroideryPanel })), "EmbroideryPanel");
 
 import {
   useSketchStore,
@@ -73,6 +76,7 @@ import { useKeybindingDispatcher } from "@/hooks/useKeybindingDispatcher";
 import { useAutoSave } from "@/hooks/useAutoSave";
 import { useCollabSync } from "@/hooks/useCollabSync";
 import { useChatHandler } from "@/hooks/useChatHandler";
+import { useChatHydration } from "@/hooks/useChatHydration";
 import { useUrlSync } from "@/hooks/useUrlSync";
 import { saveDocument } from "@/lib/save-load";
 import { bootstrap } from "@/lib/bootstrap";
@@ -126,13 +130,13 @@ function FeatureTreeSlot({ sketchActive }: { sketchActive: boolean }) {
         {sidebarPane === "tree" ? (
           <FeatureTree />
         ) : inspectorTarget?.kind === "scene" ? (
-          <Suspense fallback={null}>
+          <AsyncBoundary region="scene-inspector" fallback={null}>
             <SceneInspector />
-          </Suspense>
+          </AsyncBoundary>
         ) : (
-          <Suspense fallback={null}>
+          <AsyncBoundary region="property-panel" fallback={null}>
             <PropertyPanel />
-          </Suspense>
+          </AsyncBoundary>
         )}
       </div>
     </div>
@@ -145,6 +149,7 @@ export function App() {
   useAutoSave();
   useCollabSync();
   useChatHandler();
+  useChatHydration();
   useUrlSync();
 
   const [aboutOpen, setAboutOpen] = useState(false);
@@ -596,7 +601,8 @@ export function App() {
   const profileUsername = getProfileRouteUsername();
   if (profileUsername) {
     return (
-      <Suspense
+      <AsyncBoundary
+        region="profile-page"
         fallback={
           <div className="flex h-screen items-center justify-center bg-bg text-text-muted text-sm">
             Loading…
@@ -604,7 +610,7 @@ export function App() {
         }
       >
         <ProfilePage username={profileUsername} />
-      </Suspense>
+      </AsyncBoundary>
     );
   }
 
@@ -647,19 +653,31 @@ export function App() {
       </Suspense>
 
       {/* Quote panel (slides in from right when Make It Real clicked) */}
-      <Suspense fallback={null}>
+      <AsyncBoundary region="quote-panel" fallback={null}>
         <QuotePanel />
-      </Suspense>
+      </AsyncBoundary>
 
       {/* Print panel (for 3D printing slicer settings) */}
-      {printPanelOpen && <Suspense fallback={null}><PrintPanel /></Suspense>}
-      {printPanelOpen && <Suspense fallback={null}><DfmOverlay /></Suspense>}
+      {printPanelOpen && (
+        <AsyncBoundary region="print-panel" fallback={null}>
+          <PrintPanel />
+          <DfmOverlay />
+        </AsyncBoundary>
+      )}
 
       {/* CAM panel (for CNC toolpath generation) */}
-      {camPanelOpen && <Suspense fallback={null}><CamPanel /></Suspense>}
+      {camPanelOpen && (
+        <AsyncBoundary region="cam-panel" fallback={null}>
+          <CamPanel />
+        </AsyncBoundary>
+      )}
 
       {/* Embroidery panel — hide when an embroidery part is selected so PropertyPanel shows */}
-      {embroideryPanelOpen && !hasSelectedEmbroideryPart && <Suspense fallback={null}><EmbroideryPanel /></Suspense>}
+      {embroideryPanelOpen && !hasSelectedEmbroideryPart && (
+        <AsyncBoundary region="embroidery-panel" fallback={null}>
+          <EmbroideryPanel />
+        </AsyncBoundary>
+      )}
     </>
   );
 
@@ -707,14 +725,14 @@ export function App() {
               <FeatureTreeSlot sketchActive={sketchActive} />
             )}
             rightSidebar={!electronicsActive && !showOnboarding && chatOpen && (
-              <Suspense fallback={null}>
+              <AsyncBoundary region="chat-sidebar" fallback={null}>
                 <ChatSidebar />
-              </Suspense>
+              </AsyncBoundary>
             )}
             bottomDock={!electronicsActive && (
-              <Suspense fallback={null}>
+              <AsyncBoundary region="log-viewer" fallback={null}>
                 <LogViewer />
-              </Suspense>
+              </AsyncBoundary>
             )}
             footer={!electronicsActive && statusBarVisible && <StatusBar />}
           >
@@ -732,7 +750,7 @@ export function App() {
         )}
 
         {/* Modals */}
-        <Suspense fallback={null}>
+        <AsyncBoundary region="modals" fallback={null}>
           <AboutModal open={aboutOpen} onOpenChange={setAboutOpen} />
           <ProductModal open={productOpen} onOpenChange={setProductOpen} />
           <ShareDialog open={shareOpen} onOpenChange={setShareOpen} />
@@ -746,7 +764,7 @@ export function App() {
             onOpenChange={setCommandPaletteOpen}
             onAboutOpen={() => setAboutOpen(true)}
           />
-        </Suspense>
+        </AsyncBoundary>
         <input
           ref={fileInputRef}
           type="file"

@@ -22,10 +22,16 @@ export function getSupabaseAdmin(): SupabaseClient | null {
 }
 
 /** Extract the authenticated user id from a request's Bearer token, or null
- *  if the token is missing / invalid. */
+ *  if the token is missing / invalid.
+ *
+ *  By default, anonymous Supabase sessions (`user.is_anonymous`) are treated
+ *  as not-signed-in (returns null) so existing rate-limit / entitlement code
+ *  paths still apply the anonymous tier rules. Pass `{ allowAnon: true }`
+ *  when you want the actual uid back (e.g. to scope rows in chat_threads). */
 export async function getUserIdFromAuth(
   req: VercelRequest,
   admin: SupabaseClient | null,
+  opts: { allowAnon?: boolean } = {},
 ): Promise<string | null> {
   if (!admin) return null;
   const authHeader = req.headers.authorization;
@@ -34,9 +40,33 @@ export async function getUserIdFromAuth(
   try {
     const { data, error } = await admin.auth.getUser(token);
     if (error || !data.user) return null;
+    if (data.user.is_anonymous && !opts.allowAnon) return null;
     return data.user.id;
   } catch {
     return null;
+  }
+}
+
+/** Extract both the uid and whether the session is anonymous. Use this
+ *  when you need to differentiate between "no session", "anon session",
+ *  and "permanent session" — for example, the chat endpoint stores rows
+ *  under the anon uid but applies the anonymous rate-limit tier. */
+export async function getAuthDetail(
+  req: VercelRequest,
+  admin: SupabaseClient | null,
+): Promise<{ userId: string | null; isAnonymous: boolean }> {
+  if (!admin) return { userId: null, isAnonymous: false };
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return { userId: null, isAnonymous: false };
+  }
+  const token = authHeader.slice(7);
+  try {
+    const { data, error } = await admin.auth.getUser(token);
+    if (error || !data.user) return { userId: null, isAnonymous: false };
+    return { userId: data.user.id, isAnonymous: !!data.user.is_anonymous };
+  } catch {
+    return { userId: null, isAnonymous: false };
   }
 }
 

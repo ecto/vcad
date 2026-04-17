@@ -97,7 +97,17 @@ export type {
 } from "./stores/simulation-store.js";
 
 export { useChatStore } from "./stores/chat-store.js";
-export type { ChatState, ChatMessage, SelectionContext, ToolCallInfo, MessagePart, ChatAttachment, ChatUsageError } from "./stores/chat-store.js";
+export type {
+  ChatState,
+  ChatMessage,
+  ChatMessageStatus,
+  SelectionContext,
+  ToolCallInfo,
+  MessagePart,
+  ChatAttachment,
+  ChatUsageError,
+  HydrateHandler,
+} from "./stores/chat-store.js";
 
 export {
   useParticipantStore,

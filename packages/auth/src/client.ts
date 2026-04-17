@@ -1,4 +1,8 @@
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import {
+  createClient,
+  type Session as SupabaseSession,
+  type SupabaseClient,
+} from "@supabase/supabase-js";
 
 // Supabase client - only created if credentials are configured
 let supabaseClient: SupabaseClient | null = null;
@@ -73,4 +77,45 @@ export function requireSupabase(): SupabaseClient {
     throw new Error("Supabase not configured");
   }
   return client;
+}
+
+/**
+ * Ensure the current Supabase client has a session — sign in anonymously if
+ * not. Returns the active session, or null when Supabase is not configured.
+ *
+ * Anonymous sessions give the user a real `auth.uid()` so RLS predicates of
+ * the form `auth.uid() = user_id` work uniformly across anon and authed
+ * users. When the user later signs in with Google/GitHub, Supabase emits a
+ * USER_UPDATED event with a new uid, and the AuthProvider re-parents any
+ * rows owned by the previous anon uid.
+ *
+ * Concurrent callers are deduped via an in-flight promise — `signInAnonymously`
+ * is not idempotent on the wire and we don't want two anon users created on
+ * a race.
+ */
+let _ensureSessionInflight: Promise<SupabaseSession | null> | null = null;
+
+export async function ensureSession(): Promise<SupabaseSession | null> {
+  const client = getSupabase();
+  if (!client) return null;
+
+  const { data } = await client.auth.getSession();
+  if (data.session) return data.session;
+
+  if (_ensureSessionInflight) return _ensureSessionInflight;
+
+  _ensureSessionInflight = (async () => {
+    try {
+      const { data: anon, error } = await client.auth.signInAnonymously();
+      if (error) {
+        console.error("[auth] anonymous sign-in failed:", error.message);
+        return null;
+      }
+      return anon.session;
+    } finally {
+      _ensureSessionInflight = null;
+    }
+  })();
+
+  return _ensureSessionInflight;
 }

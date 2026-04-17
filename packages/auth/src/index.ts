@@ -1,5 +1,5 @@
 // Client
-export { getSupabase, isAuthEnabled, requireSupabase } from "./client";
+export { ensureSession, getSupabase, isAuthEnabled, requireSupabase } from "./client";
 
 // Stores
 export { useAuthStore } from "./stores/auth-store";
@@ -77,3 +77,22 @@ export {
 
 // AI
 export { textToCAD, isAIAvailable } from "./ai";
+
+// Chat persistence
+export {
+  loadOrCreateThread,
+  hydrateThread,
+  loadDeltas,
+  subscribeToThread,
+  persistToolResult,
+  clearThreadMessages,
+  type DbChatThread,
+  type DbChatMessage,
+  type DbChatToolCall,
+  type DbChatMessageDelta,
+  type ChatMessageStatus,
+  type ChatToolStatus,
+  type ThreadHydration,
+  type ThreadSubscription,
+  type ThreadSubscriptionCallbacks,
+} from "./chat-persistence";

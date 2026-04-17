@@ -215,6 +215,11 @@ function VcadMessage({ msg, userName }: { msg: ChatMessage; userName: string }) 
   // the same Message shell so turn styling stays consistent.
   const hasParts = !isUser && msg.parts && msg.parts.length > 0;
   const summary = !isUser ? summarizeToolParts(msg.parts) : null;
+  // Show a subtle badge when an assistant turn was cut off (server died, tab
+  // closed mid-stream). Distinct from the user-initiated "[Stopped]" marker
+  // which is a text part — this surfaces the persisted DB status.
+  const isInterrupted = !isUser && msg.status === "interrupted";
+  const isErrored = !isUser && msg.status === "error";
 
   // IRC-style role prefix. Brand pink for the user, muted for vcad — gives
   // each turn a scannable "who's talking" label without bubbles or alignment
@@ -276,6 +281,13 @@ function VcadMessage({ msg, userName }: { msg: ChatMessage; userName: string }) 
             )}
             {summary && (
               <p className="text-[9px] italic text-text-muted">{summary}</p>
+            )}
+            {(isInterrupted || isErrored) && (
+              <p className="text-[9px] italic text-text-muted">
+                {isInterrupted
+                  ? "— interrupted before completing —"
+                  : "— turn errored out —"}
+              </p>
             )}
           </>
         ) : (

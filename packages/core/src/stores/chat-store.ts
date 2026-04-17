@@ -80,8 +80,19 @@ export interface ChatAttachment {
   filename?: string;
 }
 
+export type ChatMessageStatus =
+  | "pending"
+  | "streaming"
+  | "complete"
+  | "interrupted"
+  | "error";
+
 export interface ChatMessage {
   id: string;
+  /** Parent message id in the thread DAG. null for the root message. The
+   * schema supports branching (multiple children per parent); the UI renders
+   * a linear path along `parent_id` chains today. */
+  parentId?: string | null;
   role: "user" | "assistant";
   content: string;
   context?: SelectionContext[];
@@ -90,6 +101,10 @@ export interface ChatMessage {
   parts?: MessagePart[];
   /** Images attached by the user (e.g. viewport screenshots). */
   attachments?: ChatAttachment[];
+  /** Lifecycle status. `streaming` means the server is actively writing this
+   * row; `interrupted` means the stream was cut off (server died or user
+   * aborted) and can't be resumed. */
+  status?: ChatMessageStatus;
   timestamp: number;
 }
 
@@ -115,7 +130,18 @@ export type SendMessageHandler = (
   attachments?: ChatAttachment[],
 ) => void;
 
+/** Implementation of hydrate, registered by the app-layer hydration hook.
+ * Wired separately because the store doesn't depend on @vcad/auth (the
+ * persistence layer lives there). */
+export type HydrateHandler = (documentId: string | null) => Promise<void>;
+
 export interface ChatState {
+  /** Active thread id from chat_threads. null when no document is open or
+   * Supabase isn't configured. */
+  threadId: string | null;
+  /** True while hydrate() is in flight — UI shows a soft loading state and
+   * disables sends. */
+  hydrating: boolean;
   messages: ChatMessage[];
   open: boolean;
   streaming: boolean;
@@ -128,23 +154,58 @@ export interface ChatState {
   usageError: ChatUsageError | null;
   /** Implementation of sendMessage, populated at mount by useChatHandler. */
   _sendHandler: SendMessageHandler | null;
+  /** Implementation of hydrate, populated at mount by useChatHydration. */
+  _hydrateHandler: HydrateHandler | null;
   /** AbortController for the in-flight stream, registered by useChatHandler.
    * `requestCancel` calls `.abort()` on this so the fetch is interrupted
    * immediately instead of waiting for the current turn to finish. */
   _abortController: AbortController | null;
+  /** Message ids whose content is being streamed by THIS tab right now.
+   * Realtime updates for these ids are ignored by useChatHydration so the
+   * local SSE-driven render isn't overwritten by the slower DB roundtrip. */
+  locallyStreamingIds: Set<string>;
 
   // Visibility
   setOpen: (open: boolean) => void;
   toggleOpen: () => void;
 
-  // Message actions
+  // Thread
+  setThreadId: (id: string | null) => void;
+  hydrate: (documentId: string | null) => Promise<void>;
+  setHydrateHandler: (fn: HydrateHandler | null) => void;
+  setHydrating: (hydrating: boolean) => void;
+  /** Replace the entire message array with a fresh hydration snapshot.
+   * Used by the persistence layer after fetching the thread or a Realtime
+   * full-resync. */
+  setMessages: (messages: ChatMessage[]) => void;
+  /** Apply a single Realtime upsert: insert a new message or replace one
+   * by id. Used when the server inserts/updates a row. */
+  upsertMessage: (msg: ChatMessage) => void;
+
+  // Message actions (legacy — kept for the streaming UI's optimistic updates;
+  // the persistence layer reconciles via upsertMessage + setMessages).
+  /** Append a user message. Pass `id` to use a pre-generated id so the
+   * local row matches the persisted one. */
   addUserMessage: (
     content: string,
     context?: SelectionContext[],
     attachments?: ChatAttachment[],
+    id?: string,
   ) => void;
-  addAssistantMessage: (content: string, toolCalls?: ToolCallInfo[]) => void;
-  updateLastAssistant: (content: string, toolCalls?: ToolCallInfo[], parts?: MessagePart[]) => void;
+  /** Append an assistant message. Pass `id` to use a pre-generated id so
+   * the local placeholder matches the persisted row id (Realtime upserts
+   * key on id). */
+  addAssistantMessage: (
+    content: string,
+    toolCalls?: ToolCallInfo[],
+    id?: string,
+  ) => void;
+  updateLastAssistant: (
+    content: string,
+    toolCalls?: ToolCallInfo[],
+    parts?: MessagePart[],
+    status?: ChatMessageStatus,
+  ) => void;
 
   // Send (delegated to registered handler — call from any UI component)
   sendMessage: (
@@ -162,6 +223,10 @@ export interface ChatState {
   requestCancel: () => void;
   clearCancel: () => void;
   setAbortController: (ac: AbortController | null) => void;
+
+  // Local streaming tracking
+  markLocallyStreaming: (id: string) => void;
+  unmarkLocallyStreaming: (id: string) => void;
 
   // Usage tracking
   incAnonUsage: () => void;
@@ -188,10 +253,13 @@ const WELCOME_MESSAGE: ChatMessage = {
   id: "welcome",
   role: "assistant",
   content: "Hi! I'm your vcad assistant. I can create and modify parts, answer questions about CAD, and help you design. Try asking me to add a shape, or select something in the viewport and ask me about it.",
+  status: "complete",
   timestamp: Date.now(),
 };
 
 export const useChatStore = create<ChatState>((set, get) => ({
+  threadId: null,
+  hydrating: false,
   messages: [WELCOME_MESSAGE],
   open: true,
   streaming: false,
@@ -200,48 +268,91 @@ export const useChatStore = create<ChatState>((set, get) => ({
   anonUsage: loadAnonUsage(),
   usageError: null,
   _sendHandler: null,
+  _hydrateHandler: null,
   _abortController: null,
+  locallyStreamingIds: new Set(),
 
   setOpen: (open) => set({ open }),
 
   toggleOpen: () => set((s) => ({ open: !s.open })),
 
-  addUserMessage: (content, context, attachments) =>
+  setThreadId: (id) => set({ threadId: id }),
+
+  hydrate: async (documentId) => {
+    const handler = get()._hydrateHandler;
+    if (!handler) {
+      // Hydration handler isn't mounted yet (Supabase not configured, or App
+      // root hasn't mounted useChatHydration). Reset to the welcome state so
+      // the UI is at least consistent.
+      set({
+        threadId: null,
+        messages: [{ ...WELCOME_MESSAGE, timestamp: Date.now() }],
+        hydrating: false,
+      });
+      return;
+    }
+    set({ hydrating: true });
+    try {
+      await handler(documentId);
+    } finally {
+      set({ hydrating: false });
+    }
+  },
+
+  setHydrateHandler: (fn) => set({ _hydrateHandler: fn }),
+
+  setHydrating: (hydrating) => set({ hydrating }),
+
+  setMessages: (messages) => set({ messages }),
+
+  upsertMessage: (msg) =>
+    set((s) => {
+      const idx = s.messages.findIndex((m) => m.id === msg.id);
+      if (idx === -1) return { messages: [...s.messages, msg] };
+      const next = [...s.messages];
+      next[idx] = msg;
+      return { messages: next };
+    }),
+
+  addUserMessage: (content, context, attachments, id) =>
     set((s) => ({
       messages: [
         ...s.messages,
         {
-          id: makeId(),
+          id: id ?? makeId(),
           role: "user",
           content,
           context,
           attachments: attachments && attachments.length > 0 ? attachments : undefined,
+          status: "complete",
           timestamp: Date.now(),
         },
       ],
     })),
 
-  addAssistantMessage: (content, toolCalls) =>
+  addAssistantMessage: (content, toolCalls, id) =>
     set((s) => ({
       messages: [
         ...s.messages,
         {
-          id: makeId(),
+          id: id ?? makeId(),
           role: "assistant",
           content,
           toolCalls,
+          status: "streaming",
           timestamp: Date.now(),
         },
       ],
     })),
 
-  updateLastAssistant: (content, toolCalls, parts) =>
+  updateLastAssistant: (content, toolCalls, parts, status) =>
     set((s) => {
       const last = s.messages[s.messages.length - 1];
       if (!last || last.role !== "assistant") return s;
       const updated: ChatMessage = { ...last, content };
       if (toolCalls !== undefined) updated.toolCalls = toolCalls;
       if (parts !== undefined) updated.parts = parts;
+      if (status !== undefined) updated.status = status;
       return { messages: [...s.messages.slice(0, -1), updated] };
     }),
 
@@ -269,6 +380,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
   clearCancel: () => set({ cancelRequested: false }),
   setAbortController: (ac) => set({ _abortController: ac }),
 
+  markLocallyStreaming: (id) =>
+    set((s) => {
+      const next = new Set(s.locallyStreamingIds);
+      next.add(id);
+      return { locallyStreamingIds: next };
+    }),
+  unmarkLocallyStreaming: (id) =>
+    set((s) => {
+      if (!s.locallyStreamingIds.has(id)) return s;
+      const next = new Set(s.locallyStreamingIds);
+      next.delete(id);
+      return { locallyStreamingIds: next };
+    }),
+
   incAnonUsage: () => set((s) => {
     const used = s.anonUsage.used + 1;
     persistAnonUsage(used);
@@ -276,7 +401,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
   }),
   setUsageError: (err) => set({ usageError: err }),
 
-  clearThread: () => set({ messages: [{ ...WELCOME_MESSAGE, timestamp: Date.now() }], streaming: false, error: null, cancelRequested: false, usageError: null }),
+  clearThread: () => set({
+    messages: [{ ...WELCOME_MESSAGE, timestamp: Date.now() }],
+    streaming: false,
+    error: null,
+    cancelRequested: false,
+    usageError: null,
+  }),
 
-  reset: () => set({ messages: [{ ...WELCOME_MESSAGE, timestamp: Date.now() }], open: true, streaming: false, error: null, cancelRequested: false, usageError: null }),
+  reset: () => set({
+    threadId: null,
+    messages: [{ ...WELCOME_MESSAGE, timestamp: Date.now() }],
+    open: true,
+    streaming: false,
+    error: null,
+    cancelRequested: false,
+    usageError: null,
+  }),
 }));

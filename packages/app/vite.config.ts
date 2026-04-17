@@ -133,7 +133,7 @@ function devApiPlugin(env: Record<string, string>): Plugin {
 
         try {
           const mod = await server.ssrLoadModule(
-            resolve(__dirname, "../../", match.file),
+            resolve(__dirname, match.file),
           );
 
           // The production handler is written for Vercel's VercelRequest/Response

@@ -10,7 +10,7 @@ import {
   executeCrud,
 } from "@vcad/core";
 import type { SelectionContext, ToolCallInfo, MessagePart, ExecutionResult, ChatUsageError, ChatAttachment, ChatMessage } from "@vcad/core";
-import { useAuthStore } from "@vcad/auth";
+import { persistToolResult, useAuthStore } from "@vcad/auth";
 import { streamChat, LIMIT_ERROR_PREFIX } from "@/lib/chat-api";
 import type { ToolCall, ChatRequestMessage } from "@/lib/chat-api";
 import {
@@ -154,7 +154,15 @@ function runTurn(
   history: ChatRequestMessage[],
   context: SelectionContext[],
   onStreamText: (text: string) => void,
+  onMeta: (meta: { threadId: string; assistantMessageId: string }) => void,
   signal: AbortSignal,
+  persistence: {
+    threadId: string | null;
+    documentId: string | null;
+    userMessageId: string | null;
+    parentMessageId: string | null;
+    assistantMessageId: string | null;
+  },
 ): Promise<{ text: string; toolCalls: ToolCall[]; error: string | null }> {
   return new Promise((resolve) => {
     let text = "";
@@ -172,8 +180,22 @@ function runTurn(
       onToolCall: (tool) => { toolCalls.push(tool); },
       onError: (err) => { error = err; },
       onFinish: () => { resolve({ text, toolCalls, error }); },
-    }, { tools, systemPrompt, signal });
+      onMeta,
+    }, {
+      tools,
+      systemPrompt,
+      signal,
+      threadId: persistence.threadId,
+      documentId: persistence.documentId,
+      userMessageId: persistence.userMessageId,
+      parentMessageId: persistence.parentMessageId,
+      assistantMessageId: persistence.assistantMessageId,
+    });
   });
+}
+
+function makeMessageId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
 export function useChatHandler() {
@@ -186,7 +208,26 @@ export function useChatHandler() {
       const store = useChatStore.getState();
 
       const session = useAuthStore.getState().session;
-      const isAnon = !session;
+      const isAnonymous = useAuthStore.getState().isAnonymous;
+      // "Anon" for rate-limit purposes means no permanent identity. An
+      // anonymous Supabase session still counts as anon here so the IP-based
+      // 3-message-per-day cap applies, but it has a real auth.uid() so
+      // chat threads persist under that uid.
+      const isAnon = !session || isAnonymous;
+
+      // Persistence context — pulled from chat-store (set by useChatHydration)
+      // and document-store. When threadId is null (Supabase not configured,
+      // no document open), the server falls back to the legacy in-memory
+      // path and writes nothing.
+      const threadId = useChatStore.getState().threadId;
+      const documentId = useDocumentStore.getState().documentId;
+      // Track parent across turns; updated from the meta event each turn so
+      // the next user message points at the right ancestor.
+      let parentMessageId: string | null = null;
+      const lastAssistant = [...useChatStore.getState().messages]
+        .reverse()
+        .find((m) => m.role === "assistant" && m.id !== "welcome");
+      if (lastAssistant) parentMessageId = lastAssistant.id;
 
       // Defense-in-depth: hard-block anon sends once the local counter hits
       // the limit. This prevents runaway cost if the server-side rate limit
@@ -214,8 +255,15 @@ export function useChatHandler() {
         return;
       }
 
-      // Add the user message to the store
-      store.addUserMessage(content, context, attachments);
+      // Pre-generate ids so the local optimistic rows share ids with the
+      // server-persisted rows. Without this, Realtime upserts would create
+      // duplicate bubbles next to the local placeholders.
+      const firstUserMessageId = makeMessageId();
+      const firstAssistantMessageId = makeMessageId();
+
+      // Add the user message to the store with the same id we'll send to
+      // the server as user_message_id.
+      store.addUserMessage(content, context, attachments, firstUserMessageId);
 
       // Build base history from store. Text messages flow through as plain
       // strings; user messages with attached images become multimodal content
@@ -236,8 +284,14 @@ export function useChatHandler() {
       }
       const history: ChatRequestMessage[] = baseHistory.slice(-20);
 
-      // Add empty placeholder for streaming response
-      store.addAssistantMessage("");
+      // Add empty placeholder for streaming response. Uses the same id we'll
+      // send the server as assistant_message_id so Realtime updates merge
+      // with this placeholder instead of creating a sibling row.
+      store.addAssistantMessage("", undefined, firstAssistantMessageId);
+      // Mark this id as locally-streamed so useChatHydration's reproject
+      // doesn't overwrite our SSE-driven render with the (slower, possibly
+      // empty) DB version.
+      store.markLocallyStreaming(firstAssistantMessageId);
       store.setStreaming(true);
       store.setError(null);
       store.setUsageError(null);
@@ -277,6 +331,13 @@ export function useChatHandler() {
         useChatStore.getState().updateLastAssistant(fullText, accumulatedToolCalls, [...parts]);
       };
 
+      // Generated fresh per turn. The first turn uses the ids we already
+      // generated (so they match the local placeholder rows); subsequent
+      // turns are tool-result continuations and the server skips writing
+      // those as user messages (results live on chat_tool_calls rows).
+      let nextUserMessageId = firstUserMessageId;
+      let nextAssistantMessageId: string = firstAssistantMessageId;
+
       try {
         while (true) {
           // Check for user cancellation before each turn
@@ -287,17 +348,36 @@ export function useChatHandler() {
             break;
           }
           // Stream a turn — text gets appended to the current text part
-          const { text, toolCalls, error } = await runTurn(history, context, (streamedText) => {
-            // Replace the trailing text part with the latest streamed text
-            const lastPart = parts[parts.length - 1];
-            if (lastPart?.type === "text") {
-              lastPart.text = streamedText;
-            } else if (streamedText) {
-              parts.push({ type: "text", text: streamedText });
-            }
-            fullText = parts.filter((p) => p.type === "text").map((p) => (p as { type: "text"; text: string }).text).join("\n\n");
-            updateUI();
-          }, abortController.signal);
+          const { text, toolCalls, error } = await runTurn(
+            history,
+            context,
+            (streamedText) => {
+              // Replace the trailing text part with the latest streamed text
+              const lastPart = parts[parts.length - 1];
+              if (lastPart?.type === "text") {
+                lastPart.text = streamedText;
+              } else if (streamedText) {
+                parts.push({ type: "text", text: streamedText });
+              }
+              fullText = parts.filter((p) => p.type === "text").map((p) => (p as { type: "text"; text: string }).text).join("\n\n");
+              updateUI();
+            },
+            (meta) => {
+              // Server assigned an assistant message id. Use it as the
+              // parent for the next user message (or tool-result turn) and
+              // remember it so persisted tool results are correctly tied
+              // back to this turn.
+              parentMessageId = meta.assistantMessageId;
+            },
+            abortController.signal,
+            {
+              threadId,
+              documentId,
+              userMessageId: nextUserMessageId,
+              parentMessageId,
+              assistantMessageId: nextAssistantMessageId,
+            },
+          );
 
           // Finalize this turn's text part
           if (text.trim()) {
@@ -407,6 +487,45 @@ export function useChatHandler() {
           }
           updateUI();
 
+          // Persist the tool execution results to the server so subsequent
+          // turns (and other tabs) see them. Fire-and-forget — failure to
+          // persist doesn't block the in-memory loop. Skip when there's no
+          // thread (Supabase unconfigured) — the server wouldn't have
+          // written the tool_call row anyway.
+          if (threadId) {
+            for (const entry of accumulatedToolCalls) {
+              if (entry.status === "pending") continue;
+              if (entry.result === undefined) continue;
+              void persistToolResult(entry.id, {
+                result: entry.result,
+                status: entry.status,
+                display: entry.display,
+                imageDataUrl: entry.imageDataUrl,
+                durationMs: entry.duration,
+              });
+            }
+          }
+
+          // Roll the ids for the next (tool-result-continuation) turn.
+          // Server will detect tool-result-only content and skip writing
+          // the user msg as a UI row, but the id is still threaded
+          // through for logging consistency. The assistant id, however,
+          // becomes the row id of the next streaming response — the local
+          // placeholder for it is created below before the loop continues.
+          parentMessageId = nextAssistantMessageId;
+          // Stop protecting the just-completed turn from Realtime updates;
+          // the DB row is now the canonical source.
+          useChatStore.getState().unmarkLocallyStreaming(nextAssistantMessageId);
+          nextUserMessageId = makeMessageId();
+          nextAssistantMessageId = makeMessageId();
+          store.addAssistantMessage("", undefined, nextAssistantMessageId);
+          useChatStore.getState().markLocallyStreaming(nextAssistantMessageId);
+          // Reset accumulators for the next turn's parts. Without this the
+          // continuation overwrites the previous turn's tool chips.
+          parts.length = 0;
+          accumulatedToolCalls.length = 0;
+          fullText = "";
+
           // Append the assistant turn (with text + tool uses) and the user turn (with tool results)
           // to the history for the follow-up request.
           const assistantContent: Array<{ type: string; [k: string]: unknown }> = [];
@@ -437,6 +556,10 @@ export function useChatHandler() {
         useChatStore.getState().setStreaming(false);
         useChatStore.getState().clearCancel();
         useChatStore.getState().setAbortController(null);
+        // Release the protection on the trailing assistant turn so that
+        // future Realtime updates (e.g. server marking it interrupted via
+        // a sweep) actually take effect.
+        useChatStore.getState().unmarkLocallyStreaming(nextAssistantMessageId);
       }
     },
     [],

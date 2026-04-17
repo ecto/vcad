@@ -24,6 +24,11 @@ export interface ChatStreamCallbacks {
   onToolCall: (tool: ToolCall) => void;
   onError: (error: string) => void;
   onFinish: () => void;
+  /** Server-side persistence echoes the message id assigned to the
+   * streaming assistant row + the thread id (which may have been created
+   * lazily server-side). The caller uses this to reconcile its in-memory
+   * placeholder with the persisted row. */
+  onMeta?: (meta: { threadId: string; assistantMessageId: string }) => void;
 }
 
 export async function streamChat(
@@ -34,6 +39,16 @@ export async function streamChat(
     tools?: AnthropicTool[];
     systemPrompt?: string;
     signal?: AbortSignal;
+    /** Persistence context — required for the server to write the turn to
+     * chat_threads / chat_messages / chat_message_deltas. Omit to use the
+     * legacy in-memory-only path. */
+    threadId?: string | null;
+    documentId?: string | null;
+    userMessageId?: string | null;
+    parentMessageId?: string | null;
+    /** Pre-generated assistant message id; the server uses it for the
+     * persisted row so Realtime updates match the in-memory placeholder. */
+    assistantMessageId?: string | null;
   },
 ): Promise<void> {
   const selectedParts = context.map((c) => ({
@@ -43,9 +58,9 @@ export async function streamChat(
   }));
 
   try {
-    // Attach the Supabase access token if the user is signed in, so the
-    // backend can apply the higher monthly-budget rate limit instead of the
-    // anonymous 3-message-per-day cap.
+    // Attach the Supabase access token if the user is signed in (including
+    // anonymous sessions), so the backend can scope persistence rows to
+    // their auth.uid() and apply the right rate-limit tier.
     const session = useAuthStore.getState().session;
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (session?.access_token) {
@@ -60,6 +75,11 @@ export async function streamChat(
         context: { selectedParts },
         tools: options?.tools,
         systemPrompt: options?.systemPrompt,
+        thread_id: options?.threadId ?? null,
+        document_id: options?.documentId ?? null,
+        user_message_id: options?.userMessageId ?? null,
+        parent_message_id: options?.parentMessageId ?? null,
+        assistant_message_id: options?.assistantMessageId ?? null,
       }),
       signal: options?.signal,
     });
@@ -111,6 +131,12 @@ export async function streamChat(
         try {
           const event = JSON.parse(line.slice(6));
           switch (event.type) {
+            case "meta":
+              callbacks.onMeta?.({
+                threadId: event.thread_id,
+                assistantMessageId: event.assistant_message_id,
+              });
+              break;
             case "text":
               fullText += event.text;
               callbacks.onText(fullText);

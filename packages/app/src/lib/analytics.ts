@@ -65,4 +65,28 @@ export const analytics = {
       surface: params.surface,
       error: params.error.slice(0, 500),
     }),
+
+  // Lazy chunk loading — transient network failures, stale-deploy
+  // reloads, and per-region error-boundary recoveries. Lets us see how
+  // often users hit these and which chunks are flakiest in production.
+  chunkLoadRetry: (name: string, attempt: number, error: string) =>
+    ph?.capture("chunk_load_retry", {
+      chunk: name,
+      attempt,
+      error: error.slice(0, 500),
+    }),
+  chunkLoadFailed: (name: string, attempts: number, error: string) =>
+    ph?.capture("chunk_load_failed", {
+      chunk: name,
+      attempts,
+      error: error.slice(0, 500),
+    }),
+  chunkLoadStaleDeploy: () => ph?.capture("chunk_load_stale_deploy"),
+  asyncBoundaryCaught: (region: string, error: string) =>
+    ph?.capture("async_boundary_caught", {
+      region,
+      error: error.slice(0, 500),
+    }),
+  asyncBoundaryReset: (region: string) =>
+    ph?.capture("async_boundary_reset", { region }),
 };

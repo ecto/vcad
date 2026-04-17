@@ -4,9 +4,20 @@ import { createHash } from "node:crypto";
 import { TIERS } from "@vcad/core";
 import {
   applyCors,
+  getAuthDetail,
   getSupabaseAdmin,
-  getUserIdFromAuth,
 } from "./_lib/supabase.js";
+import {
+  finalizeAssistantMessage,
+  findOrCreateThread,
+  persistAssistantStub,
+  persistDelta,
+  persistToolCallArgs,
+  persistToolCallStart,
+  persistUserMessage,
+  updateThreadHead,
+} from "./_lib/chat-persistence.js";
+import { randomUUID } from "node:crypto";
 import {
   getEntitlement,
   getPeriodUsage,
@@ -57,6 +68,26 @@ type ChatRequestBody = {
   context?: { selectedParts: Array<{ partId: string; partName: string; geometryType: string }> };
   tools?: AnthropicTool[];
   systemPrompt?: string;
+  /** Optional persistence context. When `thread_id` and `document_id` are
+   * provided, the server writes the user message + a streaming assistant
+   * message + tool_call rows + per-block deltas to the chat_threads schema
+   * during the stream. */
+  thread_id?: string | null;
+  document_id?: string | null;
+  /** Client-generated id for the new user message in this turn. Allows the
+   * client to optimistically render with a stable id before the server
+   * roundtrip. Skipped if the last message in `messages` is a tool-result
+   * continuation (those are stored on chat_tool_calls rows, not as
+   * messages). */
+  user_message_id?: string | null;
+  /** Parent of the user message. Usually the previous assistant message id;
+   * null for the first turn in a thread. */
+  parent_message_id?: string | null;
+  /** Client-generated id for the assistant message this turn produces. Lets
+   * the client pre-render a placeholder with the same id the server will
+   * persist, so Realtime updates match the in-memory bubble instead of
+   * spawning a duplicate. */
+  assistant_message_id?: string | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -140,15 +171,33 @@ async function logUsage(
  * emits input_tokens in message_start.usage and cumulative output_tokens in
  * message_delta.usage — we capture both.
  */
+interface AssembledContentBlock {
+  type: string;
+  text?: string;
+  id?: string;
+  name?: string;
+  input?: Record<string, unknown>;
+}
+
+interface PersistenceHooks {
+  onContentBlock: (block: AssembledContentBlock) => void;
+  onDelta: (
+    deltaType: "text" | "tool_start" | "tool_input_json" | "block_stop" | "done",
+    payload: unknown,
+  ) => void;
+}
+
 async function pipeAnthropicStream(
   anthropicBody: ReadableStream<Uint8Array>,
   write: (chunk: string) => void,
+  persistence?: PersistenceHooks,
 ): Promise<{
   inputTokens: number;
   outputTokens: number;
   toolCallCount: number;
   cacheCreationTokens: number;
   cacheReadTokens: number;
+  contentBlocks: AssembledContentBlock[];
 }> {
   const reader = anthropicBody.getReader();
   const decoder = new TextDecoder();
@@ -158,6 +207,13 @@ async function pipeAnthropicStream(
   let toolCallCount = 0;
   let cacheCreationTokens = 0;
   let cacheReadTokens = 0;
+
+  // Reassemble Anthropic's incremental stream into final content_blocks so
+  // the server can persist the canonical form once message_stop fires.
+  const contentBlocks: AssembledContentBlock[] = [];
+  let currentTextIdx: number | null = null;
+  let currentToolIdx: number | null = null;
+  let currentToolJson = "";
 
   while (true) {
     const { done, value } = await reader.read();
@@ -177,10 +233,28 @@ async function pipeAnthropicStream(
           outputTokens = Number(u.output_tokens ?? 0);
           cacheCreationTokens = Number(u.cache_creation_input_tokens ?? 0);
           cacheReadTokens = Number(u.cache_read_input_tokens ?? 0);
+        } else if (event.type === "content_block_start" && event.content_block?.type === "text") {
+          contentBlocks.push({ type: "text", text: "" });
+          currentTextIdx = contentBlocks.length - 1;
+          currentToolIdx = null;
         } else if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
+          if (currentTextIdx !== null) {
+            const block = contentBlocks[currentTextIdx]!;
+            block.text = (block.text ?? "") + event.delta.text;
+          }
           write(`data: ${JSON.stringify({ type: "text", text: event.delta.text })}\n\n`);
+          persistence?.onDelta("text", { text: event.delta.text });
         } else if (event.type === "content_block_start" && event.content_block?.type === "tool_use") {
           toolCallCount++;
+          contentBlocks.push({
+            type: "tool_use",
+            id: event.content_block.id,
+            name: event.content_block.name,
+            input: {},
+          });
+          currentToolIdx = contentBlocks.length - 1;
+          currentTextIdx = null;
+          currentToolJson = "";
           write(
             `data: ${JSON.stringify({
               type: "tool_start",
@@ -188,19 +262,49 @@ async function pipeAnthropicStream(
               name: event.content_block.name,
             })}\n\n`,
           );
+          persistence?.onContentBlock({
+            type: "tool_use",
+            id: event.content_block.id,
+            name: event.content_block.name,
+          });
+          persistence?.onDelta("tool_start", {
+            id: event.content_block.id,
+            name: event.content_block.name,
+          });
         } else if (event.type === "content_block_delta" && event.delta?.type === "input_json_delta") {
+          currentToolJson += event.delta.partial_json;
           write(`data: ${JSON.stringify({ type: "tool_delta", json: event.delta.partial_json })}\n\n`);
+          persistence?.onDelta("tool_input_json", { json: event.delta.partial_json });
         } else if (event.type === "content_block_stop") {
+          if (currentToolIdx !== null) {
+            // Finalize tool_use input by parsing accumulated JSON.
+            try {
+              const parsed = JSON.parse(currentToolJson || "{}") as Record<string, unknown>;
+              contentBlocks[currentToolIdx]!.input = parsed;
+              const toolId = contentBlocks[currentToolIdx]!.id;
+              if (toolId) {
+                persistence?.onContentBlock({
+                  type: "__tool_args_finalized__",
+                  id: toolId,
+                  input: parsed,
+                });
+              }
+            } catch {
+              /* leave as {} if Anthropic streamed invalid JSON */
+            }
+          }
+          currentToolIdx = null;
+          currentTextIdx = null;
+          currentToolJson = "";
           write(`data: ${JSON.stringify({ type: "block_stop" })}\n\n`);
+          persistence?.onDelta("block_stop", null);
         } else if (event.type === "message_delta" && event.usage) {
-          // Anthropic emits cumulative output tokens in message_delta events.
-          // Input tokens were already captured at message_start and don't
-          // change mid-stream.
           const u = event.usage;
           if (typeof u.output_tokens === "number") outputTokens = u.output_tokens;
           if (typeof u.input_tokens === "number" && inputTokens === 0) inputTokens = u.input_tokens;
         } else if (event.type === "message_stop") {
           write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
+          persistence?.onDelta("done", null);
         }
       } catch {
         /* skip non-JSON SSE comments, etc. */
@@ -208,7 +312,14 @@ async function pipeAnthropicStream(
     }
   }
 
-  return { inputTokens, outputTokens, toolCallCount, cacheCreationTokens, cacheReadTokens };
+  return {
+    inputTokens,
+    outputTokens,
+    toolCallCount,
+    cacheCreationTokens,
+    cacheReadTokens,
+    contentBlocks,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -485,7 +596,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const admin = getSupabaseAdmin();
-  const userId = await getUserIdFromAuth(req, admin);
+  // `effectiveUserId` is null for non-permanent sessions (anon or no auth) —
+  // used for entitlement / rate-limit decisions. `persistUserId` is the real
+  // auth.uid() (including anon) — used for chat_threads ownership so anon
+  // users still get their conversation persisted under a stable id.
+  const auth = await getAuthDetail(req, admin);
+  const userId = auth.isAnonymous ? null : auth.userId;
+  const persistUserId = auth.userId;
   const ip = getClientIp(req);
   const ipHash = hashIp(ip);
 
@@ -581,6 +698,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         )
       : tools;
 
+  // Hoisted so the outer catch can finalize an in-flight assistant message
+  // as 'error' if the stream blows up partway through.
+  let persistedTurn: {
+    threadId: string;
+    assistantMessageId: string;
+  } | null = null;
+
   try {
     const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -628,12 +752,131 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return;
     }
 
-    const { inputTokens, outputTokens, toolCallCount, cacheReadTokens, cacheCreationTokens } =
-      await pipeAnthropicStream(
-        anthropicRes.body,
-        (chunk) => res.write(chunk),
+    // Persistence path: opt-in when the client supplies thread_id +
+    // document_id and we have a real auth.uid() (anon counts) + admin client.
+    let deltaSequence = 0;
+    if (
+      admin &&
+      persistUserId &&
+      body.thread_id &&
+      body.document_id &&
+      body.user_message_id
+    ) {
+      const thread = await findOrCreateThread(
+        admin,
+        persistUserId,
+        body.document_id,
       );
+      if (thread) {
+        const lastMsg = messages[messages.length - 1];
+        if (lastMsg) {
+          await persistUserMessage(admin, {
+            threadId: thread.id,
+            messageId: body.user_message_id,
+            parentMessageId: body.parent_message_id ?? thread.head_message_id,
+            content: lastMsg.content,
+            attachments: undefined,
+            context: body.context?.selectedParts ?? undefined,
+          });
+        }
+        // Client supplies the id when it pre-renders a placeholder so the
+        // Realtime upsert lands on the same row. Falls back to randomUUID
+        // for the legacy path / older clients.
+        const assistantMessageId = body.assistant_message_id ?? randomUUID();
+        // Tell the client which id was assigned so it can correlate Realtime
+        // updates with the in-memory streaming bubble.
+        res.write(
+          `data: ${JSON.stringify({
+            type: "meta",
+            thread_id: thread.id,
+            assistant_message_id: assistantMessageId,
+          })}\n\n`,
+        );
+        await persistAssistantStub(admin, {
+          threadId: thread.id,
+          messageId: assistantMessageId,
+          parentMessageId: body.user_message_id,
+          modelId: ANTHROPIC_MODEL,
+        });
+        persistedTurn = { threadId: thread.id, assistantMessageId };
+      }
+    }
+
+    // Capture into a const so the closure narrowing survives.
+    const turnForPersistence = persistedTurn;
+    const adminForPersistence = admin;
+    const persistence: PersistenceHooks | undefined =
+      turnForPersistence && adminForPersistence
+        ? {
+            onContentBlock: (block) => {
+              if (
+                block.type === "tool_use" &&
+                block.id &&
+                block.name
+              ) {
+                void persistToolCallStart(adminForPersistence, {
+                  toolUseId: block.id,
+                  messageId: turnForPersistence.assistantMessageId,
+                  threadId: turnForPersistence.threadId,
+                  name: block.name,
+                });
+              } else if (
+                block.type === "__tool_args_finalized__" &&
+                block.id
+              ) {
+                void persistToolCallArgs(
+                  adminForPersistence,
+                  block.id,
+                  (block.input ?? {}) as Record<string, unknown>,
+                );
+              }
+            },
+            onDelta: (deltaType, payload) => {
+              const seq = deltaSequence++;
+              void persistDelta(adminForPersistence, {
+                messageId: turnForPersistence.assistantMessageId,
+                sequence: seq,
+                deltaType,
+                payload,
+              });
+            },
+          }
+        : undefined;
+
+    const {
+      inputTokens,
+      outputTokens,
+      toolCallCount,
+      cacheReadTokens,
+      cacheCreationTokens,
+      contentBlocks,
+    } = await pipeAnthropicStream(
+      anthropicRes.body,
+      (chunk) => res.write(chunk),
+      persistence,
+    );
     res.end();
+
+    if (admin && persistedTurn) {
+      // Strip our internal sentinel that pipeAnthropicStream never adds to
+      // the actual blocks list, but be defensive in case the shape evolves.
+      const finalBlocks = contentBlocks.filter(
+        (b) => b.type !== "__tool_args_finalized__",
+      );
+      void finalizeAssistantMessage(admin, {
+        messageId: persistedTurn.assistantMessageId,
+        contentBlocks: finalBlocks,
+        status: "complete",
+        inputTokens,
+        outputTokens,
+        durationMs: Date.now() - startedAt,
+      });
+      void updateThreadHead(
+        admin,
+        persistedTurn.threadId,
+        persistedTurn.assistantMessageId,
+      );
+    }
 
     if (cacheReadTokens > 0 || cacheCreationTokens > 0) {
       console.log(
@@ -696,6 +939,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   } catch (err) {
     console.error("Chat API error:", err);
+    if (admin && persistedTurn) {
+      void finalizeAssistantMessage(admin, {
+        messageId: persistedTurn.assistantMessageId,
+        contentBlocks: [],
+        status: "error",
+        inputTokens: 0,
+        outputTokens: 0,
+        durationMs: 0,
+      });
+    }
     if (!res.headersSent) {
       res.status(500).json({ error: "Internal server error" });
     } else {

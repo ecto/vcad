@@ -9,6 +9,13 @@ export function useAuth() {
   const session = useAuthStore((s) => s.session);
   const loading = useAuthStore((s) => s.loading);
   const initialized = useAuthStore((s) => s.initialized);
+  const isAnonymous = useAuthStore((s) => s.isAnonymous);
+
+  // A user is "permanently signed in" if they have a session AND that session
+  // isn't a Supabase anonymous one. Anonymous users have an auth.uid() (so RLS
+  // works) but the UI still treats them as not-signed-in for everything that
+  // matters: auth modals, sync banners, paid entitlements, sign-out menus.
+  const hasPermanentIdentity = !!user && !isAnonymous;
 
   return {
     /** Current authenticated user or null */
@@ -19,9 +26,9 @@ export function useAuth() {
     loading,
     /** True after initial session check completes */
     initialized,
-    /** True if user is signed in */
-    isAuthenticated: !!user,
-    /** True if session check is complete and user is not signed in */
-    isAnonymous: initialized && !user,
+    /** True if user is signed in with a permanent (non-anon) identity */
+    isAuthenticated: hasPermanentIdentity,
+    /** True if session check is complete and user has no permanent identity. */
+    isAnonymous: initialized && !hasPermanentIdentity,
   };
 }

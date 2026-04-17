@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from "react";
-import { getSupabase, isAuthEnabled } from "../client";
+import { ensureSession, getSupabase, isAuthEnabled } from "../client";
 import { useAuthStore } from "../stores/auth-store";
 import { useSignInDelightStore } from "../stores/sign-in-delight-store";
 
@@ -83,12 +83,21 @@ export function AuthProvider({
       return;
     }
 
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
+    // Track the previous user id so we can detect anon→permanent upgrades
+    // (Supabase emits USER_UPDATED with a new uid when an anonymous account
+    // is linked to an OAuth identity).
+    let previousUserId: string | null = null;
+    let previousWasAnonymous = false;
 
-      if (session?.user) {
-        // Identify user in analytics
+    // Get initial session — and create an anonymous one if there isn't one,
+    // so RLS predicates of the form `auth.uid() = user_id` work uniformly
+    // for every user (anon or permanent).
+    ensureSession().then((session) => {
+      setSession(session);
+      previousUserId = session?.user?.id ?? null;
+      previousWasAnonymous = session?.user?.is_anonymous ?? false;
+
+      if (session?.user && !session.user.is_anonymous) {
         if (typeof posthog !== "undefined") {
           posthog.identify(session.user.id, {
             email: session.user.email,
@@ -106,7 +115,34 @@ export function AuthProvider({
     } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session);
 
-      if (event === "SIGNED_IN" && session?.user) {
+      // Detect anon → permanent upgrade. Supabase keeps the same uid when
+      // an anon user links an identity (USER_UPDATED), but if for any
+      // reason the uid changes we re-parent the chat threads so the user
+      // doesn't lose their history at sign-in.
+      const newUserId = session?.user?.id ?? null;
+      const newIsAnon = session?.user?.is_anonymous ?? false;
+      if (
+        previousWasAnonymous &&
+        !newIsAnon &&
+        previousUserId &&
+        newUserId &&
+        previousUserId !== newUserId
+      ) {
+        const fromId = previousUserId;
+        const toId = newUserId;
+        void supabase.rpc("migrate_chat_threads_to_user", {
+          from_user_id: fromId,
+          to_user_id: toId,
+        }).then(({ error }) => {
+          if (error) {
+            console.warn("[auth] migrate_chat_threads_to_user failed:", error.message);
+          }
+        });
+      }
+      previousUserId = newUserId;
+      previousWasAnonymous = newIsAnon;
+
+      if (event === "SIGNED_IN" && session?.user && !session.user.is_anonymous) {
         // Identify user in analytics
         if (typeof posthog !== "undefined") {
           posthog.identify(session.user.id, {
