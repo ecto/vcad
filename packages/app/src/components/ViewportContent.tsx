@@ -65,6 +65,18 @@ const INITIAL_POSITION_V = new Vector3(50, 50, 50);
 const INITIAL_TARGET_V = new Vector3(0, 0, 0);
 const INITIAL_DISTANCE_V = INITIAL_POSITION_V.distanceTo(INITIAL_TARGET_V);
 
+/**
+ * Flip Lock mode back to Free when the user grabs the camera themselves.
+ * Cheap to call on every orbit start / pointer down / wheel tick — noop
+ * unless we're actually locked.
+ */
+function breakLockOnUserInput(): void {
+  const ui = useUiStore.getState();
+  if (ui.followMode !== "lock") return;
+  ui.setFollowMode("free");
+  ui.setFollowingParticipant(null);
+}
+
 // Map IR environment presets to drei preset names
 const ENVIRONMENT_PRESET_MAP: Record<EnvironmentPreset, string> = {
   studio: "studio",
@@ -641,6 +653,7 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
 
       // User input overrides any in-flight focus/snap camera animation.
       cancelCameraAnimation();
+      breakLockOnUserInput();
 
       // Normalize deltaMode: 0=pixels, 1=lines, 2=pages
       let dx = e.deltaX;
@@ -702,6 +715,9 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
     const handleStart = () => {
       setOrbiting(true);
       setIsCameraMoving(true);
+      // User took the wheel — drop out of Lock so we stop fighting for
+      // camera control every frame.
+      breakLockOnUserInput();
     };
     const handleEnd = () => {
       setOrbiting(false);
@@ -712,6 +728,7 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
     // disabled during snap/face animations and "start" wouldn't fire).
     const handlePointerDown = () => {
       cancelCameraAnimation();
+      breakLockOnUserInput();
     };
 
     controls.addEventListener("start", handleStart);
