@@ -1,5 +1,5 @@
 import { useRef, useEffect, useMemo, useState, useCallback, Suspense } from "react";
-import { Spherical, Vector3, Box3, Plane, Raycaster, Vector2, Quaternion, Matrix4, Color, TOUCH } from "three";
+import { Spherical, Vector3, Box3, Plane, Raycaster, Vector2, Quaternion, Matrix4, Color, TOUCH, PerspectiveCamera, WebGLRenderTarget, SRGBColorSpace } from "three";
 
 const isCoarsePointer =
   typeof window !== "undefined" &&
@@ -35,7 +35,7 @@ import {
   useParticipantStore,
   kernelToDisplay,
 } from "@vcad/core";
-import type { PartInfo } from "@vcad/core";
+import type { PartInfo, CameraGoal } from "@vcad/core";
 import { useCameraControls } from "@/hooks/useCameraControls";
 import { useTheme } from "@/hooks/useTheme";
 import { useInputDeviceDetection } from "@/hooks/useInputDeviceDetection";
@@ -64,6 +64,10 @@ import { BG_DARK, BG_LIGHT } from "./Viewport";
 const INITIAL_POSITION_V = new Vector3(50, 50, 50);
 const INITIAL_TARGET_V = new Vector3(0, 0, 0);
 const INITIAL_DISTANCE_V = INITIAL_POSITION_V.distanceTo(INITIAL_TARGET_V);
+
+// Reused per-frame in the Lock-mode lerp hook.
+const _lockGoalPos = new Vector3();
+const _lockGoalTarget = new Vector3();
 
 /**
  * Flip Lock mode back to Free when the user grabs the camera themselves.
@@ -465,6 +469,23 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
     }
   });
 
+  // Demand rendering never kicks a frame on its own when the AI moves
+  // its camera while we're in Lock (we skip drawing the AI's frustum in
+  // that mode, so there's no other subscriber to invalidate for us).
+  // Subscribe to both stores and invalidate whenever a lock-relevant
+  // change lands — the useFrame below self-sustains after the first fire.
+  useEffect(() => {
+    const kick = () => {
+      if (useUiStore.getState().followMode === "lock") invalidate();
+    };
+    const unsubUi = useUiStore.subscribe(kick);
+    const unsubPart = useParticipantStore.subscribe(kick);
+    return () => {
+      unsubUi();
+      unsubPart();
+    };
+  }, [invalidate]);
+
   // Lock mode: each frame, lerp the user's camera onto the followed
   // participant's camera (kernel Z-up → display Y-up). Skip when the
   // existing animation system is already driving the camera so we don't
@@ -480,15 +501,25 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
 
     const [px, py, pz] = kernelToDisplay(participant.camera.position);
     const [tx, ty, tz] = kernelToDisplay(participant.camera.target);
+    const goalPos = _lockGoalPos.set(px, py, pz);
+    const goalTarget = _lockGoalTarget.set(tx, ty, tz);
     const lerp = 0.15;
-    camera.position.lerp(new Vector3(px, py, pz), lerp);
+    camera.position.lerp(goalPos, lerp);
     if (orbitRef.current) {
-      orbitRef.current.target.lerp(new Vector3(tx, ty, tz), lerp);
+      orbitRef.current.target.lerp(goalTarget, lerp);
       orbitRef.current.update();
     } else {
-      camera.lookAt(tx, ty, tz);
+      camera.lookAt(goalTarget);
     }
-    invalidate();
+    // Only keep the demand loop alive while we're still converging.
+    // Once we're within a tight tolerance of the goal, stop asking for
+    // frames — the store subscription above will kick us again the
+    // next time the AI moves its camera.
+    const posDelta = camera.position.distanceToSquared(goalPos);
+    const targetDelta = orbitRef.current
+      ? orbitRef.current.target.distanceToSquared(goalTarget)
+      : 0;
+    if (posDelta > 1e-4 || targetDelta > 1e-4) invalidate();
   });
 
   // Wheel handler with configurable control schemes
@@ -914,6 +945,70 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
         handleSnapView as EventListener,
       );
   }, []);
+
+  // Offscreen render from the AI's camera goal. The AI's `screenshot_viewport`
+  // tool calls `window.__vcadCaptureAiCamera(goal)` to grab a frame from the
+  // AI's point of view WITHOUT disturbing the user's OrbitControls state.
+  //
+  // We render the existing scene graph (which already has the kernel Z-up →
+  // display Y-up rotation applied by the geometry group) with a temporary
+  // camera positioned per the goal, into a WebGLRenderTarget, then read back
+  // pixels and Y-flip them into a 2D canvas the caller can encode as JPEG.
+  const gl = useThree((s) => s.gl);
+  const r3fScene = useThree((s) => s.scene);
+  const viewportSize = useThree((s) => s.size);
+  useEffect(() => {
+    const capture = (goal: CameraGoal): HTMLCanvasElement | null => {
+      const w = Math.max(1, viewportSize.width);
+      const h = Math.max(1, viewportSize.height);
+      const [px, py, pz] = kernelToDisplay(goal.position);
+      const [tx, ty, tz] = kernelToDisplay(goal.target);
+
+      const tempCam = new PerspectiveCamera(50, w / h, 0.1, 10000);
+      tempCam.up.set(0, 1, 0);
+      tempCam.position.set(px, py, pz);
+      tempCam.lookAt(tx, ty, tz);
+      tempCam.updateMatrixWorld();
+
+      const rt = new WebGLRenderTarget(w, h, { samples: 4 });
+      rt.texture.colorSpace = SRGBColorSpace;
+
+      const prevTarget = gl.getRenderTarget();
+      gl.setRenderTarget(rt);
+      gl.clear();
+      gl.render(r3fScene, tempCam);
+      gl.setRenderTarget(prevTarget);
+
+      const buffer = new Uint8Array(w * h * 4);
+      gl.readRenderTargetPixels(rt, 0, 0, w, h, buffer);
+      rt.dispose();
+
+      const out = document.createElement("canvas");
+      out.width = w;
+      out.height = h;
+      const ctx = out.getContext("2d");
+      if (!ctx) return null;
+      const imgData = ctx.createImageData(w, h);
+      // WebGL origin is bottom-left; canvas is top-left. Flip rows as we copy.
+      const rowBytes = w * 4;
+      for (let y = 0; y < h; y++) {
+        const src = (h - 1 - y) * rowBytes;
+        imgData.data.set(buffer.subarray(src, src + rowBytes), y * rowBytes);
+      }
+      ctx.putImageData(imgData, 0, 0);
+      return out;
+    };
+
+    const win = window as unknown as {
+      __vcadCaptureAiCamera?: (goal: CameraGoal) => HTMLCanvasElement | null;
+    };
+    win.__vcadCaptureAiCamera = capture;
+    return () => {
+      if (win.__vcadCaptureAiCamera === capture) {
+        delete win.__vcadCaptureAiCamera;
+      }
+    };
+  }, [gl, r3fScene, viewportSize.width, viewportSize.height]);
 
   // Hero view: special "Make It Real" presentation angle
   useEffect(() => {

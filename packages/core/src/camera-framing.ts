@@ -122,14 +122,17 @@ function normalize(v: Vec3): Vec3 {
   return [v[0] / len, v[1] / len, v[2] / len];
 }
 
-/** Clamp a distance to the viewport's sensible framing range. */
+/** Clamp a distance to the viewport's sensible framing range. Only a lower
+ * bound — scenes can be any size (a 2.4 m moon gate, an 80 m building), so an
+ * upper clamp would park the camera inside the geometry. The 30 mm floor keeps
+ * near-empty scenes from collapsing to the camera origin. */
 export function clampFramingDistance(dist: number): number {
-  return Math.max(30, Math.min(300, dist));
+  return Math.max(30, dist);
 }
 
 /**
  * Frame a bounding box from a given direction (or snap view).
- * Distance is 2.5× the max dimension, clamped to [30, 300].
+ * Distance is 2.5× the max dimension, with a 30 mm lower floor.
  */
 export function frameBbox(
   bbox: Bbox,

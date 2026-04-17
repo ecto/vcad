@@ -1,7 +1,14 @@
-import type { AnthropicTool } from "@vcad/core";
+import {
+  AI_PARTICIPANT_ID,
+  defaultCameraGoal,
+  frameBbox,
+  isSnapView,
+  useParticipantStore,
+} from "@vcad/core";
+import type { AnthropicTool, CameraGoal, SnapView } from "@vcad/core";
+import { computeSceneBbox, setAiCamera } from "@/lib/ai-camera-tools";
 
-/** Named camera presets the screenshot tool can target. Must match the
- * handler in ViewportContent.tsx (`vcad:snap-view` listener). */
+/** Named camera presets the screenshot tool can target. Subset of SnapView. */
 export const SCREENSHOT_VIEW_NAMES = [
   "front",
   "back",
@@ -17,17 +24,17 @@ export type ScreenshotView = (typeof SCREENSHOT_VIEW_NAMES)[number];
 export const SCREENSHOT_VIEWPORT_TOOL: AnthropicTool = {
   name: "screenshot_viewport",
   description:
-    "Capture a screenshot of the 3D viewport from a named camera angle so you can visually verify your work. The camera animates smoothly to the angle before the shot is taken. Views: front, back, left, right, top, bottom, iso (isometric 3/4 view), hero (dramatic presentation angle). Each screenshot costs tokens, so don't spam — one iso shot after a multi-step task is usually enough.",
+    "Capture a screenshot from YOUR camera (not the user's) so you can visually verify your work. The user's viewport is not disturbed — they see this angle as your wireframe frustum if they're watching. Pass an optional `view` (front/back/left/right/top/bottom/iso/hero) to reframe your camera first; omit it to shoot from wherever you last aimed your camera with set_view / frame_all / focus_part. Each screenshot costs tokens, so don't spam — one iso shot after a multi-step task is usually enough.",
   input_schema: {
     type: "object",
     properties: {
       view: {
         type: "string",
         enum: [...SCREENSHOT_VIEW_NAMES],
-        description: "Named camera angle to capture from.",
+        description:
+          "Optional named camera angle. If provided, your camera is reframed to this angle (fitted to the scene) before the shot. If omitted, your camera stays where set_view / frame_all / focus_part left it.",
       },
     },
-    required: ["view"],
   },
 };
 
@@ -38,7 +45,11 @@ export const SCREENSHOT_SYSTEM_PROMPT_APPENDIX = `
 
 ## Visual verification
 
-You have a screenshot_viewport tool that captures the live 3D viewport from a named angle (front, back, left, right, top, bottom, iso, hero). Use it to visually verify non-trivial work — after building a multi-part assembly, before reporting success on a complex model, or when you're unsure whether an operation produced the intended shape. You can call it multiple times with different angles if something looks off and you need another view. Don't use it for trivial single-primitive requests. Each screenshot consumes tokens, so be judicious.`;
+You have a screenshot_viewport tool that captures a JPEG from YOUR camera — not the user's. The user's view is untouched; they just see your camera's wireframe frustum overlay in their scene, so they know what angle you're looking at.
+
+Typical flow: aim your camera first (set_view / frame_all / focus_part), then call screenshot_viewport with no args to shoot what you're aimed at. Or pass a view name to reframe + shoot in one step.
+
+Use it to verify non-trivial work — after building a multi-part assembly, before reporting success on a complex model, or when you're unsure whether an operation produced the intended shape. You can call it multiple times with different angles if something looks off. Don't use it for trivial single-primitive requests. Each screenshot consumes tokens, so be judicious.`;
 
 export interface ScreenshotExecutionResult {
   status: "success" | "error";
@@ -56,9 +67,12 @@ export interface ScreenshotExecutionResult {
  * token usage low — Anthropic bills image input roughly per pixel. */
 const MAX_IMAGE_DIM = 1024;
 
-/** Camera animation + render settle window in ms. The viewport uses a lerp
- * that converges in a few dozen frames; 700 ms is a safe upper bound. */
-const SETTLE_MS = 700;
+/** Delay (ms) after reframing the AI camera before capturing — the frustum
+ * overlay lerps toward its goal; this lets the user see the move happen.
+ * The offscreen capture itself doesn't need the lerp to finish (we pass the
+ * goal directly to the renderer), but the user-facing frustum looks natural
+ * if the shot happens just after it has started moving. */
+const AIM_SETTLE_MS = 250;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -69,9 +83,6 @@ function nextFrame(): Promise<void> {
 }
 
 function findViewportCanvas(): HTMLCanvasElement | null {
-  // The Viewport div is tagged with data-viewport-root; R3F renders its
-  // canvas as a descendant. Target that specifically so we don't pick up
-  // the schematic overlay or the 2D drawing canvas.
   const root = document.querySelector<HTMLElement>("[data-viewport-root]");
   if (!root) return null;
   return root.querySelector<HTMLCanvasElement>("canvas");
@@ -98,9 +109,6 @@ function downscaleToCanvas(canvas: HTMLCanvasElement): HTMLCanvasElement {
   tmp.height = outH;
   const ctx = tmp.getContext("2d");
   if (!ctx) throw new Error("2D context unavailable");
-  // Fill with a neutral backdrop first — the viewport normally paints every
-  // pixel, but if anything ever leaves transparent regions we don't want
-  // JPEG encoding them as pure black.
   ctx.fillStyle = "#1a1a1a";
   ctx.fillRect(0, 0, outW, outH);
   ctx.drawImage(canvas, 0, 0, outW, outH);
@@ -144,12 +152,42 @@ export async function captureViewportAsFile(): Promise<File | null> {
   }
 }
 
+/** Pick the camera goal the screenshot should render from.
+ *
+ * - If `view` is provided, compute a bbox-fitted goal for that snap view and
+ *   also write it to the AI participant so the user sees the frustum move.
+ * - Otherwise use the AI's current camera if it has one, else frame_all + iso.
+ */
+function resolveGoal(view: ScreenshotView | undefined): CameraGoal {
+  if (view) {
+    const snap: SnapView = isSnapView(view) ? view : "iso";
+    const bbox = computeSceneBbox();
+    const goal = bbox ? frameBbox(bbox, { view: snap }) : defaultCameraGoal();
+    setAiCamera(goal);
+    return goal;
+  }
+  const existing =
+    useParticipantStore.getState().participants.get(AI_PARTICIPANT_ID)?.camera;
+  if (existing) return existing;
+  const bbox = computeSceneBbox();
+  const goal = bbox ? frameBbox(bbox, { view: "iso" }) : defaultCameraGoal();
+  setAiCamera(goal);
+  return goal;
+}
+
+type CaptureFn = (goal: CameraGoal) => HTMLCanvasElement | null;
+
+function getCaptureFn(): CaptureFn | null {
+  const win = window as unknown as { __vcadCaptureAiCamera?: CaptureFn };
+  return win.__vcadCaptureAiCamera ?? null;
+}
+
 export async function executeScreenshotViewport(
   args: Record<string, unknown>,
 ): Promise<ScreenshotExecutionResult> {
   const t0 = performance.now();
-  const view = args.view as string | undefined;
-  if (!view || !SCREENSHOT_VIEW_NAMES.includes(view as ScreenshotView)) {
+  const viewArg = args.view as string | undefined;
+  if (viewArg && !SCREENSHOT_VIEW_NAMES.includes(viewArg as ScreenshotView)) {
     return {
       status: "error",
       result: `screenshot_viewport: view must be one of ${SCREENSHOT_VIEW_NAMES.join(", ")}`,
@@ -159,26 +197,32 @@ export async function executeScreenshotViewport(
     };
   }
 
+  const capture = getCaptureFn();
+  if (!capture) {
+    return {
+      status: "error",
+      result: "screenshot_viewport: AI camera renderer not mounted",
+      toolResultContent: null,
+      imageDataUrl: null,
+      duration: performance.now() - t0,
+    };
+  }
+
   try {
-    // Dispatch the existing snap-view event. ViewportContent listens on
-    // window and animates the camera via the same code path used by the
-    // desktop view menu.
-    window.dispatchEvent(
-      new CustomEvent("vcad:snap-view", { detail: view }),
-    );
+    const goal = resolveGoal(viewArg as ScreenshotView | undefined);
 
-    // Wait for the lerp animation to settle, then two rAFs so the final
-    // frame is definitely in the drawing buffer (preserveDrawingBuffer is
-    // enabled on the R3F Canvas so the last rendered frame survives read).
-    await sleep(SETTLE_MS);
+    // Small settle window so the user's frustum overlay starts moving before
+    // the shot, and so any just-committed scene changes (material swaps, new
+    // geometry) have been flushed into the R3F scene graph.
+    await sleep(AIM_SETTLE_MS);
     await nextFrame();
     await nextFrame();
 
-    const canvas = findViewportCanvas();
-    if (!canvas) {
+    const rendered = capture(goal);
+    if (!rendered) {
       return {
         status: "error",
-        result: "screenshot_viewport: viewport canvas not found",
+        result: "screenshot_viewport: capture failed",
         toolResultContent: null,
         imageDataUrl: null,
         duration: performance.now() - t0,
@@ -186,11 +230,12 @@ export async function executeScreenshotViewport(
     }
 
     const { base64, mediaType, dataUrl, width, height } =
-      encodeCanvasAsJpeg(canvas);
+      encodeCanvasAsJpeg(rendered);
 
+    const viewLabel = viewArg ?? "current";
     return {
       status: "success",
-      result: `Captured ${view} view (${width}×${height})`,
+      result: `Captured ${viewLabel} view (${width}×${height})`,
       toolResultContent: [
         {
           type: "image",
@@ -198,7 +243,7 @@ export async function executeScreenshotViewport(
         },
         {
           type: "text",
-          text: `Screenshot from ${view} view. Use this to verify the current document state and then continue.`,
+          text: `Screenshot from your camera (${viewLabel}). This is YOUR view; the user's viewport is unchanged but they see this angle as your frustum overlay. Use this to verify the document state and then continue.`,
         },
       ],
       imageDataUrl: dataUrl,

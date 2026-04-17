@@ -31,7 +31,7 @@ import type { ToolCall } from "@/lib/chat-api";
  * Union every part's mesh into a single bbox in kernel Z-up. Returns null
  * when the scene is empty or not yet evaluated.
  */
-function computeSceneBbox(): Bbox | null {
+export function computeSceneBbox(): Bbox | null {
   const scene = useEngineStore.getState().scene;
   if (!scene) return null;
   let box: Bbox | null = null;
@@ -76,7 +76,7 @@ function computePartBbox(partId: string): Bbox | null {
 }
 
 /** Write the AI participant's camera + focus selection, creating it if needed. */
-function setAiCamera(camera: CameraGoal, selection: string[] = []): void {
+export function setAiCamera(camera: CameraGoal, selection: string[] = []): void {
   ensureAiParticipant();
   const store = useParticipantStore.getState();
   store.setCamera(AI_PARTICIPANT_ID, camera);
