@@ -489,12 +489,21 @@ describe("Scene", () => {
 });
 
 describe("Errors", () => {
-  it("throws on missing node reference", () => {
+  it("records a failure (instead of throwing) on a missing node reference", () => {
+    // Evaluation is per-root resilient: a dangling NodeId must not blank
+    // the whole scene — it should emit an empty mesh for that root and
+    // surface the error in `scene.failures`.
     const doc = singlePartDoc(
       [{ id: 1, name: "bad", op: { type: "Union", left: 99, right: 100 } }],
       1,
     );
-    expect(() => engine.evaluate(doc)).toThrow("Missing node: 99");
+    const scene = engine.evaluate(doc);
+    expect(scene.parts).toHaveLength(1);
+    expect(scene.parts[0].mesh.positions.length).toBe(0);
+    expect(scene.failures).toBeDefined();
+    expect(scene.failures!.length).toBeGreaterThan(0);
+    expect(scene.failures![0].scope).toBe("root[0]");
+    expect(scene.failures![0].error).toMatch(/99|missing/i);
   });
 });
 

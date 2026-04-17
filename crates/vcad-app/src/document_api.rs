@@ -73,6 +73,9 @@ pub struct ApiResult {
     pub consumed_part_ids: Vec<String>,
     /// Stable ID of the newly created feature, if any.
     pub created_feature_id: Option<String>,
+    /// Non-fatal issues detected during materialization (e.g. dangling
+    /// input references). Consumers should surface these to the user.
+    pub warnings: Vec<String>,
 }
 
 impl ApiResult {
@@ -84,6 +87,7 @@ impl ApiResult {
             parts: result.parts,
             consumed_part_ids: consumed,
             created_feature_id: created_id,
+            warnings: result.warnings,
         }
     }
 }

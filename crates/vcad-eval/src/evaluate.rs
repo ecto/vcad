@@ -4,6 +4,7 @@
 //! Ported from `packages/engine/src/evaluate.ts`.
 
 use std::collections::HashMap;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use vcad_ir::ecad::{Footprint, Pad, PadShape, Pcb, PcbLayer, Trace, Via, Zone};
 use vcad_ir::{CsgOp, Document, NodeId, PathCurve};
@@ -16,10 +17,9 @@ use vcad_kernel_text::{FontRegistry, TextAlignment};
 
 use crate::convert::{ir_sketch_to_profile, to_point3, to_vec3};
 use crate::kinematics::solve_forward_kinematics;
-use crate::validate::validate_document;
 use crate::{
     Clock, EvalError, EvalOptions, EvalTiming, EvaluatedInstance, EvaluatedMesh, EvaluatedPart,
-    EvaluatedPartDef, EvaluatedScene, NodeTiming,
+    EvaluatedPartDef, EvaluatedScene, NodeTiming, RootFailure,
 };
 
 /// Evaluate a full document into an EvaluatedScene.
@@ -30,19 +30,16 @@ pub fn evaluate_document(
     let clock = options.clock.as_deref();
     let t_start = clock.map(|c| c.now_ms());
 
-    // Pre-flight validation: fail fast with a rich path if any NodeId
-    // reference is dangling.
-    validate_document(doc)?;
-
     let mut cache: HashMap<NodeId, Option<Solid>> = HashMap::new();
     let mut node_timings: HashMap<String, NodeTiming> = HashMap::new();
     let mut tessellate_ms: f64 = 0.0;
+    let mut failures: Vec<RootFailure> = Vec::new();
 
     // Evaluate visible roots
     let mut parts = Vec::new();
     let mut solids = Vec::new();
 
-    for entry in &doc.roots {
+    for (idx, entry) in doc.roots.iter().enumerate() {
         if entry.visible == Some(false) {
             continue;
         }
@@ -59,28 +56,57 @@ pub fn evaluate_document(
             continue;
         }
 
-        let solid =
-            evaluate_node_timed(entry.root, &doc.nodes, &mut cache, clock, &mut node_timings)?;
-        match solid {
-            Some(ref s) => {
-                let t_mesh = clock.map(|c| c.now_ms());
-                let tri = s.to_mesh(32);
-                if let Some(t0) = t_mesh {
-                    let ms = clock.unwrap().now_ms() - t0;
-                    tessellate_ms += ms;
-                    if let Some(nt) = node_timings.get_mut(&entry.root.to_string()) {
-                        nt.mesh_ms = ms;
+        // Wrap eval + tessellate in catch_unwind so a kernel assertion
+        // (e.g. `add_loop` invariant) turns into a per-root failure
+        // instead of aborting the whole scene. AssertUnwindSafe is safe
+        // here: cache/timings populated for earlier nodes stay valid
+        // even if this root's evaluation panics mid-way.
+        let eval_outcome = catch_unwind(AssertUnwindSafe(|| -> Result<(EvaluatedMesh, Option<Solid>), EvalError> {
+            match evaluate_node_timed(entry.root, &doc.nodes, &mut cache, clock, &mut node_timings)? {
+                Some(s) => {
+                    let t_mesh = clock.map(|c| c.now_ms());
+                    let tri = s.to_mesh(32);
+                    if let Some(t0) = t_mesh {
+                        let ms = clock.unwrap().now_ms() - t0;
+                        tessellate_ms += ms;
+                        if let Some(nt) = node_timings.get_mut(&entry.root.to_string()) {
+                            nt.mesh_ms = ms;
+                        }
                     }
+                    Ok((tri_to_evaluated(&tri), Some(s)))
                 }
-                let mesh = tri_to_evaluated(&tri);
+                None => Ok((EvaluatedMesh::empty(), None)),
+            }
+        }));
+
+        match eval_outcome {
+            Ok(Ok((mesh, solid))) => {
                 parts.push(EvaluatedPart {
                     mesh,
                     material: entry.material.clone(),
-                    solid: Some(s.clone()),
+                    solid: solid.clone(),
                 });
-                solids.push(Some(s.clone()));
+                solids.push(solid);
             }
-            None => {
+            Ok(Err(err)) => {
+                failures.push(RootFailure {
+                    scope: format!("root[{idx}]"),
+                    node_id: entry.root,
+                    error: err.to_string(),
+                });
+                parts.push(EvaluatedPart {
+                    mesh: EvaluatedMesh::empty(),
+                    material: entry.material.clone(),
+                    solid: None,
+                });
+                solids.push(None);
+            }
+            Err(panic_payload) => {
+                failures.push(RootFailure {
+                    scope: format!("root[{idx}]"),
+                    node_id: entry.root,
+                    error: format!("kernel panic: {}", panic_message(&panic_payload)),
+                });
                 parts.push(EvaluatedPart {
                     mesh: EvaluatedMesh::empty(),
                     material: entry.material.clone(),
@@ -104,23 +130,43 @@ pub fn evaluate_document(
             let mut part_def_meshes: HashMap<String, EvaluatedMesh> = HashMap::new();
 
             for (id, part_def) in pd_map {
-                let solid = evaluate_node_timed(
-                    part_def.root,
-                    &doc.nodes,
-                    &mut cache,
-                    clock,
-                    &mut node_timings,
-                )?;
-                let mesh = match solid {
-                    Some(s) => {
-                        let t_mesh = clock.map(|c| c.now_ms());
-                        let tri = s.to_mesh(32);
-                        if let Some(t0) = t_mesh {
-                            tessellate_ms += clock.unwrap().now_ms() - t0;
+                let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<EvaluatedMesh, EvalError> {
+                    match evaluate_node_timed(
+                        part_def.root,
+                        &doc.nodes,
+                        &mut cache,
+                        clock,
+                        &mut node_timings,
+                    )? {
+                        Some(s) => {
+                            let t_mesh = clock.map(|c| c.now_ms());
+                            let tri = s.to_mesh(32);
+                            if let Some(t0) = t_mesh {
+                                tessellate_ms += clock.unwrap().now_ms() - t0;
+                            }
+                            Ok(tri_to_evaluated(&tri))
                         }
-                        tri_to_evaluated(&tri)
+                        None => Ok(EvaluatedMesh::empty()),
                     }
-                    None => EvaluatedMesh::empty(),
+                }));
+                let mesh = match outcome {
+                    Ok(Ok(m)) => m,
+                    Ok(Err(err)) => {
+                        failures.push(RootFailure {
+                            scope: format!("partDef[{id:?}]"),
+                            node_id: part_def.root,
+                            error: err.to_string(),
+                        });
+                        EvaluatedMesh::empty()
+                    }
+                    Err(panic_payload) => {
+                        failures.push(RootFailure {
+                            scope: format!("partDef[{id:?}]"),
+                            node_id: part_def.root,
+                            error: format!("kernel panic: {}", panic_message(&panic_payload)),
+                        });
+                        EvaluatedMesh::empty()
+                    }
                 };
                 part_def_meshes.insert(id.clone(), mesh.clone());
                 eval_part_defs.push(EvaluatedPartDef {
@@ -203,6 +249,7 @@ pub fn evaluate_document(
         part_defs,
         instances,
         clashes,
+        failures,
         timing,
     })
 }
@@ -1361,6 +1408,17 @@ fn merge_copper_meshes(meshes: &[RawMesh]) -> (Vec<f32>, Vec<u32>) {
     }
 
     (positions, indices)
+}
+
+/// Best-effort extraction of a human-readable message from a panic payload.
+fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<&'static str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown kernel panic".to_string()
+    }
 }
 
 /// Convert kernel TriangleMesh to EvaluatedMesh.

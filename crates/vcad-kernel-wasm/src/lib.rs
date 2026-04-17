@@ -4589,6 +4589,14 @@ fn scene_to_js(scene: &vcad_eval::EvaluatedScene) -> JsValue {
     }
     let _ = js_sys::Reflect::set(&obj, &"clashes".into(), &clashes_arr.into());
 
+    // Failures (per-root evaluation errors). Omit when empty so JS consumers
+    // can treat `undefined` and `[]` interchangeably.
+    if !scene.failures.is_empty() {
+        if let Ok(f) = serde_wasm_bindgen::to_value(&scene.failures) {
+            let _ = js_sys::Reflect::set(&obj, &"failures".into(), &f);
+        }
+    }
+
     // Timing
     if let Some(ref timing) = scene.timing {
         if let Ok(t) = serde_wasm_bindgen::to_value(timing) {

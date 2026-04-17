@@ -65,6 +65,18 @@ export interface EvalTimingData {
   nodes: Record<string, NodeTimingData>;
 }
 
+/** A single feature that failed to evaluate. Evaluation is per-root, so one
+ * bad feature produces an empty mesh + a RootFailure instead of aborting the
+ * whole scene. */
+export interface RootFailure {
+  /** Where the failure happened: `"root[<idx>]"` or `"partDef[\"<id>\"]"`. */
+  scope: string;
+  /** Root node id that failed to evaluate. */
+  node_id: number;
+  /** Human-readable error message. */
+  error: string;
+}
+
 /** Result of evaluating a full document — one part per scene root. */
 export interface EvaluatedScene {
   parts: EvaluatedPart[];
@@ -74,6 +86,8 @@ export interface EvaluatedScene {
   instances?: EvaluatedInstance[];
   /** Meshes representing intersections between overlapping parts (for clash visualization). */
   clashes: TriangleMesh[];
+  /** Per-root evaluation failures. Absent/empty on a fully successful eval. */
+  failures?: RootFailure[];
   /** Timing breakdown (present when WASM evaluator provides it). */
   timing?: EvalTimingData;
 }

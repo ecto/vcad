@@ -183,6 +183,21 @@ pub struct EvaluatedInstance {
     pub transform: Option<Transform3D>,
 }
 
+/// A single feature that failed to evaluate.
+///
+/// Evaluation is per-root: one bad feature yields an empty mesh + a
+/// `RootFailure` entry rather than aborting the whole scene.
+#[derive(Debug, Clone, Serialize)]
+pub struct RootFailure {
+    /// Where the failure happened: `"root[<idx>]"` for a scene root,
+    /// `"partDef[<id>]"` for an assembly part definition.
+    pub scope: String,
+    /// The root node id we tried to evaluate.
+    pub node_id: vcad_ir::NodeId,
+    /// Human-readable error message.
+    pub error: String,
+}
+
 /// Result of evaluating a full document.
 #[derive(Debug, Clone)]
 pub struct EvaluatedScene {
@@ -194,6 +209,8 @@ pub struct EvaluatedScene {
     pub instances: Option<Vec<EvaluatedInstance>>,
     /// Clash meshes (intersections between overlapping parts).
     pub clashes: Vec<EvaluatedMesh>,
+    /// Per-root evaluation failures. Empty on a fully successful eval.
+    pub failures: Vec<RootFailure>,
     /// Timing breakdown (populated when a `Clock` is provided in `EvalOptions`).
     pub timing: Option<EvalTiming>,
 }
@@ -242,6 +259,48 @@ mod tests {
         assert_eq!(scene.parts.len(), 1);
         assert!(!scene.parts[0].mesh.positions.is_empty());
         assert!(!scene.parts[0].mesh.indices.is_empty());
+        assert!(scene.failures.is_empty());
+    }
+
+    #[test]
+    fn one_broken_root_does_not_blank_the_scene() {
+        // Regression: before per-root resilience, one dangling NodeId
+        // reference aborted evaluation of the entire document and every
+        // feature rendered as nothing. Now the broken feature reports
+        // a failure and its siblings still produce meshes.
+        let mut doc = make_cube_doc(10.0, 10.0, 10.0);
+        // Fillet referencing node 0 (which doesn't exist) — mirrors the
+        // real bug where the materializer emitted NodeId(0) as a sentinel.
+        doc.nodes.insert(
+            99,
+            Node {
+                id: 99,
+                name: None,
+                op: CsgOp::Fillet {
+                    child: 0,
+                    radius: 1.0,
+                },
+            },
+        );
+        doc.roots.push(SceneEntry {
+            root: 99,
+            material: "default".to_string(),
+            visible: None,
+        });
+
+        let scene = evaluate_document(&doc, &EvalOptions::default()).unwrap();
+        assert_eq!(scene.parts.len(), 2, "both roots kept their slot");
+        assert!(
+            !scene.parts[0].mesh.positions.is_empty(),
+            "good cube still renders"
+        );
+        assert!(
+            scene.parts[1].mesh.positions.is_empty(),
+            "broken fillet rendered as empty mesh"
+        );
+        assert_eq!(scene.failures.len(), 1);
+        assert_eq!(scene.failures[0].scope, "root[1]");
+        assert_eq!(scene.failures[0].node_id, 99);
     }
 
     #[test]

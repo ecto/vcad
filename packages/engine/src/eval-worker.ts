@@ -36,6 +36,7 @@ interface WasmEvaluatedScene {
     transform?: unknown;
   }>;
   clashes: Array<WasmMesh>;
+  failures?: Array<{ scope: string; node_id: number; error: string }>;
   timing?: EvalTimingData;
 }
 
@@ -92,6 +93,7 @@ function wasmResultToScene(result: WasmEvaluatedScene): EvaluatedScene {
       transform: inst.transform as EvaluatedScene["instances"] extends Array<infer T> ? T extends { transform?: infer X } ? X : never : never,
     })),
     clashes: result.clashes.map(toMesh),
+    failures: result.failures,
     timing: result.timing,
   };
 }

@@ -3629,7 +3629,7 @@ export function isPhysicsAvailable() {
  * @returns {boolean}
  */
 export function isSlicerAvailable() {
-    const ret = wasm.isSlicerAvailable();
+    const ret = wasm.isEcadAvailable();
     return ret !== 0;
 }
 
@@ -6298,12 +6298,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 1315, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1316, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 1322, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1323, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__ha8d4e097953964e6, wasm_bindgen__convert__closures_____invoke__h3c3248f38441540b);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2029, function: Function { arguments: [Externref], shim_idx: 2030, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2036, function: Function { arguments: [Externref], shim_idx: 2037, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hf40b7bdcf0d09ecb, wasm_bindgen__convert__closures_____invoke__ha9bc019092e7ecae);
             return ret;
         },

@@ -121,3 +121,14 @@ vcad-embroidery-pes = { path = "crates/vcad-embroidery-pes" }
 vcad-embroidery-dst = { path = "crates/vcad-embroidery-dst" }
 vcad-embroidery-wasm = { path = "crates/vcad-embroidery-wasm" }
 vcad-tool-derive = { path = "crates/vcad-tool-derive" }
+
+# Unwinding panics let the evaluator catch a kernel assertion (e.g. the
+# add_loop invariant in vcad-kernel-topo) and turn it into a per-root
+# failure instead of aborting the whole WASM module with an `unreachable`
+# trap. The ~small binary-size cost is worth keeping 19 good features
+# rendering when a 20th hits a kernel bug.
+[profile.release]
+panic = "unwind"
+
+[profile.dev]
+panic = "unwind"

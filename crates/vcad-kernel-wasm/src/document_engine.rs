@@ -358,10 +358,18 @@ impl WasmDocumentEngine {
         let doc_json = serde_json::to_string(&result.document).unwrap_or_default();
         let parts_json = serde_json::to_string(&result.parts).unwrap_or_default();
 
+        // Surface materialization warnings as console.warn so users notice
+        // when a feature has been skipped because its input ref doesn't
+        // resolve. Non-fatal — they're also returned in the ApiResult.
+        for w in &result.warnings {
+            web_sys::console::warn_1(&format!("[vcad] {w}").into());
+        }
+
         let mut obj = serde_json::json!({
             "document": serde_json::from_str::<serde_json::Value>(&doc_json).unwrap_or_default(),
             "parts": serde_json::from_str::<serde_json::Value>(&parts_json).unwrap_or_default(),
             "consumedPartIds": result.consumed_part_ids,
+            "warnings": result.warnings,
         });
         if let Some(id) = &result.created_feature_id {
             obj["createdFeatureId"] = serde_json::Value::String(id.clone());

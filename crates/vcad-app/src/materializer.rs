@@ -23,6 +23,11 @@ pub struct MaterializeResult {
     pub document: Document,
     /// Part info for each materialized feature.
     pub parts: Vec<PartInfo>,
+    /// Non-fatal problems detected while building the document (e.g.
+    /// features that reference inputs that no longer exist). Each entry is
+    /// a short human-readable sentence. Consumers should log these so
+    /// users know why a feature is missing from the scene.
+    pub warnings: Vec<String>,
 }
 
 /// Materialization context — tracks node ID allocation and feature-to-node mapping.
@@ -30,6 +35,8 @@ struct Context {
     next_node_id: NodeId,
     /// Maps feature IDs to their root (translate) node ID.
     feature_roots: HashMap<String, NodeId>,
+    /// Non-fatal warnings accumulated during materialization.
+    warnings: Vec<String>,
 }
 
 impl Context {
@@ -37,6 +44,7 @@ impl Context {
         Self {
             next_node_id: 1,
             feature_roots: HashMap::new(),
+            warnings: Vec::new(),
         }
     }
 
@@ -44,6 +52,26 @@ impl Context {
         let id = self.next_node_id;
         self.next_node_id += 1;
         id
+    }
+
+    /// Resolve a feature id or record a warning that describes the miss.
+    /// Use this when a feature has a required input reference — the caller
+    /// should return `None` when this returns `None`, skipping the feature.
+    fn feature_root_or_warn(
+        &mut self,
+        input: &str,
+        owner_kind: &str,
+        owner_id: &str,
+    ) -> Option<NodeId> {
+        match self.feature_roots.get(input).copied() {
+            Some(id) => Some(id),
+            None => {
+                self.warnings.push(format!(
+                    "{owner_kind} feature {owner_id} references input {input:?} which no longer resolves — skipped"
+                ));
+                None
+            }
+        }
     }
 }
 
@@ -57,7 +85,7 @@ pub fn materialize(crdt: &CrdtDocument) -> MaterializeResult {
         // Non-geometry features: assembly metadata, scene settings.
         match feature.kind.as_str() {
             "part-def" => {
-                materialize_part_def(&mut doc, &ctx, fid, feature);
+                materialize_part_def(&mut doc, &mut ctx, fid, feature);
                 continue;
             }
             "instance" => {
@@ -95,6 +123,7 @@ pub fn materialize(crdt: &CrdtDocument) -> MaterializeResult {
     MaterializeResult {
         document: doc,
         parts,
+        warnings: ctx.warnings,
     }
 }
 
@@ -294,8 +323,8 @@ fn materialize_feature(
             input_a,
             input_b,
         } => {
-            let left = ctx.feature_roots.get(&input_a).copied().unwrap_or(0);
-            let right = ctx.feature_roots.get(&input_b).copied().unwrap_or(0);
+            let left = ctx.feature_root_or_warn(&input_a, "boolean", &id_str)?;
+            let right = ctx.feature_root_or_warn(&input_b, "boolean", &id_str)?;
 
             let bool_id = ctx.alloc();
             let scale_id = ctx.alloc();
@@ -333,7 +362,7 @@ fn materialize_feature(
             ))
         }
         FeatureInput::Fillet { input, radius } => {
-            let child = ctx.feature_roots.get(&input).copied().unwrap_or(0);
+            let child = ctx.feature_root_or_warn(&input, "fillet", &id_str)?;
 
             let fillet_id = ctx.alloc();
             let scale_id = ctx.alloc();
@@ -365,7 +394,7 @@ fn materialize_feature(
             ))
         }
         FeatureInput::Chamfer { input, distance } => {
-            let child = ctx.feature_roots.get(&input).copied().unwrap_or(0);
+            let child = ctx.feature_root_or_warn(&input, "chamfer", &id_str)?;
 
             let chamfer_id = ctx.alloc();
             let scale_id = ctx.alloc();
@@ -397,7 +426,7 @@ fn materialize_feature(
             ))
         }
         FeatureInput::Shell { input, thickness } => {
-            let child = ctx.feature_roots.get(&input).copied().unwrap_or(0);
+            let child = ctx.feature_root_or_warn(&input, "shell", &id_str)?;
 
             let shell_id = ctx.alloc();
             let scale_id = ctx.alloc();
@@ -442,11 +471,13 @@ fn materialize_feature(
             let translate_id = ctx.alloc();
 
             let sketch_op = parse_sketch_str(&sketch);
-            insert_node(doc, sketch_id, &format!("{name} Sketch"), sketch_op);
-            insert_node(
-                doc,
-                extrude_id,
-                &name,
+            let extrude_op = if sketch_is_empty(&sketch_op) {
+                // Profile not yet authored — skip the kernel roundtrip to avoid
+                // the empty-loop panic. The feature still materializes (fillets
+                // and booleans that reference it keep resolving) but renders
+                // as nothing until segments are added.
+                CsgOp::Empty
+            } else {
                 CsgOp::Extrude {
                     sketch: sketch_id,
                     direction: Vec3::new(
@@ -456,8 +487,10 @@ fn materialize_feature(
                     ),
                     twist_angle,
                     scale_end,
-                },
-            );
+                }
+            };
+            insert_node(doc, sketch_id, &format!("{name} Sketch"), sketch_op);
+            insert_node(doc, extrude_id, &name, extrude_op);
             insert_transform_chain(
                 doc,
                 ctx,
@@ -494,18 +527,18 @@ fn materialize_feature(
             let translate_id = ctx.alloc();
 
             let sketch_op = parse_sketch_str(&sketch);
-            insert_node(doc, sketch_id, &format!("{name} Sketch"), sketch_op);
-            insert_node(
-                doc,
-                revolve_id,
-                &name,
+            let revolve_op = if sketch_is_empty(&sketch_op) {
+                CsgOp::Empty
+            } else {
                 CsgOp::Revolve {
                     sketch: sketch_id,
                     axis_origin: Vec3::new(axis_origin[0], axis_origin[1], axis_origin[2]),
                     axis_dir: Vec3::new(axis_dir[0], axis_dir[1], axis_dir[2]),
                     angle_deg,
-                },
-            );
+                }
+            };
+            insert_node(doc, sketch_id, &format!("{name} Sketch"), sketch_op);
+            insert_node(doc, revolve_id, &name, revolve_op);
             insert_transform_chain(
                 doc,
                 ctx,
@@ -543,6 +576,7 @@ fn materialize_feature(
             let translate_id = ctx.alloc();
 
             let sketch_op = parse_sketch_str(&sketch);
+            let sketch_empty = sketch_is_empty(&sketch_op);
             insert_node(doc, sketch_id, &format!("{name} Sketch"), sketch_op);
 
             let path_curve = path
@@ -552,10 +586,9 @@ fn materialize_feature(
                     end: Vec3::new(0.0, 0.0, 50.0),
                 });
 
-            insert_node(
-                doc,
-                sweep_id,
-                &name,
+            let sweep_op = if sketch_empty {
+                CsgOp::Empty
+            } else {
                 CsgOp::Sweep {
                     sketch: sketch_id,
                     path: path_curve,
@@ -565,8 +598,9 @@ fn materialize_feature(
                     orientation: None,
                     path_segments: None,
                     arc_segments: None,
-                },
-            );
+                }
+            };
+            insert_node(doc, sweep_id, &name, sweep_op);
             insert_transform_chain(
                 doc,
                 ctx,
@@ -592,6 +626,7 @@ fn materialize_feature(
         }
         FeatureInput::Loft { profiles, closed } => {
             let mut sketch_node_ids = Vec::new();
+            let mut any_empty = false;
             for (i, profile_data) in profiles.iter().enumerate() {
                 let sketch_id = ctx.alloc();
                 let sketch_op = if profile_data.is_empty() {
@@ -599,6 +634,9 @@ fn materialize_feature(
                 } else {
                     serde_json::from_str::<CsgOp>(profile_data).unwrap_or_else(|_| default_sketch())
                 };
+                if sketch_is_empty(&sketch_op) {
+                    any_empty = true;
+                }
                 insert_node(doc, sketch_id, &format!("{name} Sketch {i}"), sketch_op);
                 sketch_node_ids.push(sketch_id);
             }
@@ -613,15 +651,17 @@ fn materialize_feature(
             let translate_id = ctx.alloc();
 
             let closed_flag = closed.unwrap_or(false);
-            insert_node(
-                doc,
-                loft_id,
-                &name,
+            // Any empty profile would break loft (no ring to loft to/from);
+            // emit Empty so the feature still materializes but renders blank.
+            let loft_op = if any_empty {
+                CsgOp::Empty
+            } else {
                 CsgOp::Loft {
                     sketches: sketch_node_ids.clone(),
                     closed: if closed_flag { Some(true) } else { None },
-                },
-            );
+                }
+            };
+            insert_node(doc, loft_id, &name, loft_op);
             insert_transform_chain(
                 doc,
                 ctx,
@@ -771,7 +811,7 @@ fn materialize_feature(
             count,
             spacing,
         } => {
-            let child = ctx.feature_roots.get(&input).copied().unwrap_or(0);
+            let child = ctx.feature_root_or_warn(&input, "linear-pattern", &id_str)?;
 
             let pattern_id = ctx.alloc();
             let scale_id = ctx.alloc();
@@ -819,7 +859,7 @@ fn materialize_feature(
             count,
             angle_deg,
         } => {
-            let child = ctx.feature_roots.get(&input).copied().unwrap_or(0);
+            let child = ctx.feature_root_or_warn(&input, "circular-pattern", &id_str)?;
 
             let pattern_id = ctx.alloc();
             let scale_id = ctx.alloc();
@@ -862,7 +902,7 @@ fn materialize_feature(
             ))
         }
         FeatureInput::Mirror { input, plane } => {
-            let child = ctx.feature_roots.get(&input).copied().unwrap_or(0);
+            let child = ctx.feature_root_or_warn(&input, "mirror", &id_str)?;
 
             let mirror_factor = match plane.as_str() {
                 "XY" => Vec3::new(1.0, 1.0, -1.0),
@@ -987,7 +1027,12 @@ fn materialize_feature(
 
 // -- Assembly materialization --
 
-fn materialize_part_def(doc: &mut Document, ctx: &Context, fid: FeatureId, feature: &FeatureState) {
+fn materialize_part_def(
+    doc: &mut Document,
+    ctx: &mut Context,
+    fid: FeatureId,
+    feature: &FeatureState,
+) {
     let input = match FeatureInput::from_crdt_params(&feature.kind, &feature.params) {
         Some(FeatureInput::PartDef {
             source_feature,
@@ -1000,7 +1045,12 @@ fn materialize_part_def(doc: &mut Document, ctx: &Context, fid: FeatureId, featu
     let id = fid_to_string(fid);
     let default_material = get_str(feature, "default_material");
 
-    let root = ctx.feature_roots.get(&source_feature).copied().unwrap_or(0);
+    // If the source feature hasn't been materialized, skip emitting this part def —
+    // otherwise the PartDef would reference NodeId(0) and evaluation would fail.
+    let Some(root) = ctx.feature_root_or_warn(&source_feature, "part-def", &fid_to_string(fid))
+    else {
+        return;
+    };
 
     let part_defs = doc.part_defs.get_or_insert_with(HashMap::new);
     part_defs.insert(
@@ -1221,6 +1271,16 @@ fn default_sketch() -> CsgOp {
         y_dir: Vec3::new(0.0, 1.0, 0.0),
         segments: Vec::new(),
     }
+}
+
+/// Does this sketch op carry zero segments?
+///
+/// An Extrude/Revolve/Sweep fed an empty profile would either surface
+/// `SketchError::EmptyProfile` in the evaluator or (worse) hit the kernel's
+/// `add_loop` assertion and crash the whole WASM module. The materializer
+/// detects this up front and swaps the op-under-construction for `Empty`.
+fn sketch_is_empty(op: &CsgOp) -> bool {
+    matches!(op, CsgOp::Sketch2D { segments, .. } if segments.is_empty())
 }
 
 fn insert_node(doc: &mut Document, id: NodeId, name: &str, op: CsgOp) {
@@ -1446,6 +1506,88 @@ mod tests {
             }
             _ => panic!("expected fillet part"),
         }
+    }
+
+    #[test]
+    fn test_fillet_with_missing_input_is_skipped() {
+        // Regression: previously the materializer wrote `Fillet.child = 0`
+        // when the input feature couldn't be resolved, producing a dangling
+        // NodeId reference that crashed evaluation of the whole document.
+        let mut crdt = CrdtDocument::new(ReplicaId(1));
+        crdt.create_feature(
+            "fillet",
+            FractionalIndex::between(None, None),
+            HashMap::from([
+                (
+                    "input".to_string(),
+                    Value::FeatureRef("nonexistent-feature-id".to_string()),
+                ),
+                ("radius".to_string(), Value::F64(2.0)),
+            ]),
+        );
+
+        let result = materialize(&crdt);
+        assert_eq!(result.parts.len(), 0, "fillet must not be emitted");
+        assert_eq!(
+            result.document.roots.len(),
+            0,
+            "no scene root should be created for the unreachable fillet"
+        );
+        // And — critically — no node with a dangling child reference.
+        for node in result.document.nodes.values() {
+            if let CsgOp::Fillet { child, .. } = node.op {
+                assert_ne!(child, 0, "no node should reference NodeId(0)");
+            }
+        }
+        assert!(
+            result.warnings.iter().any(|w| w.contains("fillet")
+                && w.contains("nonexistent-feature-id")),
+            "warnings should mention the skipped fillet: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_extrude_with_empty_sketch_renders_as_empty() {
+        // Regression: an extrude with zero-segment sketch data used to crash
+        // the kernel (add_loop assertion) when evaluated. Now the materializer
+        // swaps the Extrude op for Empty so neither the kernel nor the
+        // sketch validator ever sees the degenerate profile.
+        let mut crdt = CrdtDocument::new(ReplicaId(1));
+        let empty_sketch_json = serde_json::to_string(&vcad_ir::CsgOp::Sketch2D {
+            origin: Vec3::new(0.0, 0.0, 0.0),
+            x_dir: Vec3::new(1.0, 0.0, 0.0),
+            y_dir: Vec3::new(0.0, 1.0, 0.0),
+            segments: Vec::new(),
+        })
+        .unwrap();
+        crdt.create_feature(
+            "extrude",
+            FractionalIndex::between(None, None),
+            HashMap::from([
+                ("sketch".to_string(), Value::String(empty_sketch_json)),
+                ("depth".to_string(), Value::F64(10.0)),
+                ("direction".to_string(), Value::Vec3([0.0, 0.0, 1.0])),
+            ]),
+        );
+
+        let result = materialize(&crdt);
+        // Feature still materializes so dependents can reference it.
+        assert_eq!(result.parts.len(), 1);
+        let extrude_node_id = match &result.parts[0] {
+            PartInfo::Extrude {
+                extrude_node_id, ..
+            } => *extrude_node_id,
+            _ => panic!("expected extrude part"),
+        };
+        // Inner op must be Empty, not Extrude — otherwise eval would fail
+        // (or panic) on the empty profile.
+        let node = result.document.nodes.get(&extrude_node_id).unwrap();
+        assert!(
+            matches!(node.op, CsgOp::Empty),
+            "expected Empty op for empty-sketch extrude, got {:?}",
+            node.op
+        );
     }
 
     #[test]

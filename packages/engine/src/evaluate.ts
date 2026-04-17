@@ -50,6 +50,7 @@ interface WasmEvaluatedScene {
     transform?: Transform3D;
   }>;
   clashes: Array<WasmMesh>;
+  failures?: Array<{ scope: string; node_id: number; error: string }>;
 }
 
 interface WasmMesh {
@@ -109,6 +110,14 @@ export function evaluateDocument(
         return { mesh: wasmMeshToTriangleMesh(p.mesh), material: p.material };
       });
 
+      if (result.failures && result.failures.length > 0) {
+        for (const f of result.failures) {
+          console.warn(
+            `[ENGINE] feature eval failed at ${f.scope} (node ${f.node_id}): ${f.error}`,
+          );
+        }
+      }
+
       return {
         parts,
         partDefs: result.partDefs?.map((pd) => ({
@@ -124,6 +133,7 @@ export function evaluateDocument(
           transform: inst.transform,
         })),
         clashes: result.clashes.map(wasmMeshToTriangleMesh),
+        failures: result.failures,
       };
     } catch (e) {
       console.warn("[ENGINE] WASM evaluateDocument failed, falling back to TS:", e);
@@ -422,7 +432,12 @@ function evaluateDocumentTS(
   // Traditional mode: evaluate roots (filter out hidden parts)
   const visibleRoots = doc.roots.filter((entry) => entry.visible !== false);
   const solids: Solid[] = [];
-  const parts = visibleRoots.map((entry) => {
+  const failures: { scope: string; node_id: number; error: string }[] = [];
+  const emptyMesh = (): TriangleMesh => ({
+    positions: new Float32Array(0),
+    indices: new Uint32Array(0),
+  });
+  const parts = visibleRoots.map((entry, idx) => {
     // Check if this is an EmbroideryPattern
     const embPattern = findEmbroideryPattern(entry.root, doc.nodes);
     if (embPattern) {
@@ -445,14 +460,24 @@ function evaluateDocumentTS(
       return { mesh, material: entry.material };
     }
 
-    const solid = evaluateNode(entry.root, doc.nodes, Solid, cache, 0);
-    const mesh = solidToMesh(solid);
-    solids.push(solid);
-    return {
-      mesh,
-      material: entry.material,
-      solid: solid,
-    };
+    try {
+      const solid = evaluateNode(entry.root, doc.nodes, Solid, cache, 0);
+      const mesh = solidToMesh(solid);
+      solids.push(solid);
+      return {
+        mesh,
+        material: entry.material,
+        solid: solid,
+      };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      failures.push({ scope: `root[${idx}]`, node_id: entry.root, error: msg });
+      console.warn(
+        `[ENGINE] feature eval failed at root[${idx}] (node ${entry.root}): ${msg}`,
+      );
+      solids.push(Solid.empty());
+      return { mesh: emptyMesh(), material: entry.material };
+    }
   });
 
   // Assembly mode
@@ -465,10 +490,21 @@ function evaluateDocumentTS(
     const partDefMeshes = new Map<string, TriangleMesh>();
     evaluatedPartDefs = [];
     for (const [id, partDef] of Object.entries(doc.partDefs)) {
-      const solid = evaluateNode(partDef.root, doc.nodes, Solid, cache, 0);
-      const mesh = solidToMesh(solid);
-      partDefMeshes.set(id, mesh);
-      evaluatedPartDefs.push({ id, mesh });
+      try {
+        const solid = evaluateNode(partDef.root, doc.nodes, Solid, cache, 0);
+        const mesh = solidToMesh(solid);
+        partDefMeshes.set(id, mesh);
+        evaluatedPartDefs.push({ id, mesh });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        failures.push({ scope: `partDef[${JSON.stringify(id)}]`, node_id: partDef.root, error: msg });
+        console.warn(
+          `[ENGINE] partDef eval failed at ${id} (node ${partDef.root}): ${msg}`,
+        );
+        const empty = emptyMesh();
+        partDefMeshes.set(id, empty);
+        evaluatedPartDefs.push({ id, mesh: empty });
+      }
     }
 
     evaluatedInstances = [];
@@ -518,6 +554,7 @@ function evaluateDocumentTS(
     partDefs: evaluatedPartDefs,
     instances: evaluatedInstances,
     clashes,
+    failures: failures.length > 0 ? failures : undefined,
   };
 }
 
