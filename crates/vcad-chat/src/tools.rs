@@ -1,13 +1,20 @@
 //! Anthropic tool definitions — Rust port of `CommandRegistry.toAnthropicTools`.
 //!
-//! Mirrors `packages/core/src/commands/registry.ts:26-127`. The five CRUD
-//! tools are:
+//! Mirrors `packages/core/src/commands/registry.ts`. The five CRUD tools
+//! are:
 //!
 //! - `create`       — create a new part or feature from a CsgOp variant
 //! - `read`         — inspect parts / features (list or detail)
 //! - `update`       — update params on an existing node
 //! - `delete`       — delete a part
 //! - `set_material` — assign a material preset to a part
+//!
+//! Plus three AI-camera tools the assistant uses to gesture in the user's
+//! viewport (shown as a wireframe frustum + attention highlight):
+//!
+//! - `focus_part` — point the AI camera at a specific part
+//! - `frame_all`  — fit the whole scene in the AI camera
+//! - `set_view`   — snap to a named angle (iso / top / front / etc.)
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -132,6 +139,54 @@ pub fn anthropic_tools() -> Vec<AnthropicTool> {
                 "required": ["part_id", "material"]
             }),
         },
+        AnthropicTool {
+            name: "focus_part".to_string(),
+            description:
+                "Point your camera at a part so the user can see what you're working on. Also \
+                 highlights the part in your participant color as an attention cue. Use this \
+                 after creating or modifying something you want the user to notice."
+                    .to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "part_id": {
+                        "type": "string",
+                        "description": "The part ID to focus on."
+                    }
+                },
+                "required": ["part_id"]
+            }),
+        },
+        AnthropicTool {
+            name: "frame_all".to_string(),
+            description:
+                "Frame the entire scene in your camera view. Useful for taking a step back to \
+                 show the user the whole model at once."
+                    .to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        AnthropicTool {
+            name: "set_view".to_string(),
+            description:
+                "Snap your camera to a preset viewing angle: iso, hero, top, bottom, front, \
+                 back, left, or right. Frames the current scene bounding box from the chosen \
+                 direction."
+                    .to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "enum": ["iso", "hero", "top", "bottom", "front", "back", "left", "right"],
+                        "description": "The snap view to use."
+                    }
+                },
+                "required": ["name"]
+            }),
+        },
     ]
 }
 
@@ -140,11 +195,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn produces_five_tools() {
+    fn produces_expected_tools() {
         let tools = anthropic_tools();
-        assert_eq!(tools.len(), 5);
+        assert_eq!(tools.len(), 8);
         let names: Vec<_> = tools.iter().map(|t| t.name.as_str()).collect();
-        assert_eq!(names, ["create", "read", "update", "delete", "set_material"]);
+        assert_eq!(
+            names,
+            [
+                "create",
+                "read",
+                "update",
+                "delete",
+                "set_material",
+                "focus_part",
+                "frame_all",
+                "set_view",
+            ]
+        );
     }
 
     #[test]
@@ -187,6 +254,9 @@ mod tests {
         assert_eq!(required(find("update")), vec!["node_id", "params"]);
         assert_eq!(required(find("delete")), vec!["part_id"]);
         assert_eq!(required(find("set_material")), vec!["part_id", "material"]);
+        assert_eq!(required(find("focus_part")), vec!["part_id"]);
+        assert_eq!(required(find("set_view")), vec!["name"]);
         assert!(required(find("read")).is_empty());
+        assert!(required(find("frame_all")).is_empty());
     }
 }
