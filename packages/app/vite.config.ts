@@ -45,6 +45,33 @@ function r3fDisableProfilingPlugin(): any {
   };
 }
 
+/**
+ * Injects a `<link rel="preload">` for the kernel WASM into index.html at
+ * build time. The browser then starts the ~multi-MB fetch as soon as the
+ * HTML streams in — well before main.tsx parses — overlapping it with
+ * JS parse and React's first render. Build-only: in dev, the wasm is
+ * served from an outside-root path Vite rewrites at runtime, so the
+ * savings aren't worth the extra moving part.
+ */
+function preloadKernelWasmPlugin(): Plugin {
+  return {
+    name: "preload-kernel-wasm",
+    apply: "build",
+    transformIndexHtml: {
+      order: "post",
+      handler(html, ctx) {
+        if (!ctx.bundle) return html;
+        const wasmAsset = Object.keys(ctx.bundle).find((n) =>
+          /vcad_kernel_wasm.*\.wasm$/.test(n),
+        );
+        if (!wasmAsset) return html;
+        const link = `<link rel="preload" href="/${wasmAsset}" as="fetch" type="application/wasm" crossorigin>`;
+        return html.replace("</head>", `    ${link}\n  </head>`);
+      },
+    },
+  };
+}
+
 /** Dev-only plugin that handles /api/generate requests */
 function devApiPlugin(env: Record<string, string>): Plugin {
   const SYSTEM_PROMPT =
@@ -268,6 +295,7 @@ export default defineConfig(({ mode }) => {
     plugins: [
       basicSsl(),
       devApiPlugin(env),
+      preloadKernelWasmPlugin(),
       react(),
       tailwindcss(),
       wasm(),

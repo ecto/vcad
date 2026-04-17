@@ -6,6 +6,7 @@ import {
   logger,
   commandRegistry,
   primeKernelWasm,
+  type VcadFile,
 } from "@vcad/core";
 import { initializeGpu, initializeRayTracer } from "@vcad/engine";
 import { registerSW } from "virtual:pwa-register";
@@ -17,6 +18,7 @@ import {
   generateDocumentName,
 } from "@/lib/storage";
 import { loadDocumentFromUrl } from "@/lib/url-document";
+import type { UrlDocumentResult } from "@/lib/url-document";
 import { useNotificationStore } from "@/stores/notification-store";
 import { analytics } from "@/lib/analytics";
 
@@ -25,10 +27,6 @@ import { analytics } from "@/lib/analytics";
  * exists — the classic "deployed a new version while the tab was open" case.
  * Retrying is useless (the file is gone), but a reload fetches the fresh
  * entry point and new chunk manifest.
- *
- * sessionStorage guards against a reload loop: if we already reloaded once
- * and still get a preload error, the deploy itself is broken — fall through
- * to the per-region AsyncBoundary (or root ErrorBoundary) instead of looping.
  */
 const PRELOAD_RELOAD_KEY = "vcad_reloaded_for_preload";
 if (typeof window !== "undefined") {
@@ -41,40 +39,14 @@ if (typeof window !== "undefined") {
   });
 }
 
-/**
- * Resolve the kernel WASM URL through Vite's asset pipeline. `new URL(…,
- * import.meta.url)` is the documented Vite idiom for cross-package
- * asset URLs — it works identically in dev and prod, and Vite emits
- * the hashed asset at build time. We do this lazily inside bootstrap
- * so a dev-mode resolution failure is recoverable (we just fall back
- * to Engine.init's default fetch path instead of crashing the module).
- */
-function resolveWasmUrl(): string | null {
-  try {
-    return new URL(
-      "../../../kernel-wasm/vcad_kernel_wasm_bg.wasm",
-      import.meta.url,
-    ).href;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Module-level guard: React StrictMode double-invokes effects in dev, and
- * we also want a cached promise so any accidental re-entry returns the
- * same in-flight work. Mirrors the `engineInitPromise` pattern that used
- * to live in useEngine.ts.
- */
-let bootstrapPromise: Promise<void> | null = null;
-
-/** Timeout for the initial SW update check — offline-friendly. */
-const UPDATE_CHECK_TIMEOUT_MS = 1500;
-/** How long to show the "Updating..." message before reload — pure polish. */
-const UPDATING_DISPLAY_DELAY_MS = 400;
 /** Slow-network heuristic: under 100 KB/s after 2s of fetching. */
 const SLOW_NETWORK_AFTER_MS = 2000;
 const SLOW_NETWORK_THRESHOLD_BYTES_PER_MS = 100;
+
+/**
+ * Cached promise so React StrictMode's double-effect doesn't re-enter boot.
+ */
+let bootstrapPromise: Promise<void> | null = null;
 
 export function bootstrap(): Promise<void> {
   if (bootstrapPromise) return bootstrapPromise;
@@ -88,152 +60,113 @@ export function bootstrap(): Promise<void> {
 }
 
 async function runBootstrap(): Promise<void> {
-  const boot = useBootStore.getState();
-
-  // ── Phase 1: check for pending service-worker update ──────────────────
-  boot.setPhase("checking-update");
   performance.mark("boot-start");
 
-  const updated = await checkForUpdate();
-  if (updated) {
-    // updateSW(true) reloads the page, so execution stops here on success.
-    return;
-  }
+  // SW update check runs on the side — a waiting update surfaces as a
+  // "Reload" toast instead of blocking the boot.
+  startBackgroundUpdateCheck();
 
-  // ── Phase 2: fetch + instantiate the kernel WASM ────────────────────
-  // The wasm-bindgen instantiate happens inside Engine.init; it's fast
-  // enough on a pre-fetched buffer that it's not worth its own phase.
-  boot.setPhase("fetching-kernel");
-  const wasmBuffer = await fetchKernelWasmWithProgress();
-  // Narrow to ArrayBuffer — wasm-bindgen's `BufferSource` rejects
-  // `ArrayBufferLike` (which may be a SharedArrayBuffer) but any buffer
-  // we built from a fetch stream is always a plain ArrayBuffer.
-  if (wasmBuffer) primeKernelWasm(wasmBuffer.buffer as ArrayBuffer);
-  const engine = await Engine.init();
+  // ── Critical path: fetch kernel + hydrate document data in parallel ──
+  useBootStore.getState().setPhase("fetching-kernel");
+  const wasmReady = fetchAndPrimeKernelWasm().then(() => Engine.init());
+  const docDataReady = fetchDocumentData();
 
-  // ── Phase 3: CRDT document engine + AI tool schemas ──────────────────
-  useBootStore.getState().setPhase("starting-engine");
+  const engine = await wasmReady;
   useEngineStore.getState().setEngine(engine);
-  await initCrdtAndSchemas();
 
-  // ── Phase 4: GPU + ray tracer (best-effort) ──────────────────────────
-  useBootStore.getState().setPhase("loading-gpu");
-  try {
-    const gpuAvailable = await initializeGpu();
-    const raytraceAvailable = gpuAvailable ? await initializeRayTracer() : false;
-    useUiStore.getState().setRaytraceAvailable(raytraceAvailable);
-  } catch (e) {
-    logger.warn("gpu", `Failed to initialize: ${e}`);
-  }
+  useBootStore.getState().setPhase("starting-engine");
+  const wasmModule = await import("@vcad/kernel-wasm");
+  initCrdt(wasmModule);
 
-  // ── Phase 6: initial document load ───────────────────────────────────
   useBootStore.getState().setPhase("loading-document");
-  await initDocument();
+  applyDocumentData(await docDataReady);
 
-  // ── Phase 7: first evaluation ────────────────────────────────────────
   useBootStore.getState().setPhase("evaluating");
-  const doc = useDocumentStore.getState().document;
-  if (doc.roots.length > 0) {
-    try {
-      const scene = await engine.evaluateAsync(doc, {
-        skipClashDetection: true,
-      });
-      useEngineStore.getState().setScene(scene);
-      scheduleDeferredClash(engine);
-    } catch (e) {
-      useEngineStore.getState().setError(String(e));
-    }
-  }
+  await evaluateInitialScene(engine);
 
-  // ── Phase 8: done ────────────────────────────────────────────────────
   useEngineStore.getState().setEngineReady(true);
   useEngineStore.getState().setLoading(false);
   useBootStore.getState().setPhase("ready");
+
   performance.mark("boot-complete");
   try {
     performance.measure("boot-total", "boot-start", "boot-complete");
   } catch {
     // performance.measure throws in rare cases — non-fatal
   }
+
+  // Anything the user can't see or use on the first frame goes here.
+  scheduleIdle(() => {
+    void initGpuStack();
+    loadToolSchemas(wasmModule);
+    scheduleDeferredClash(engine);
+  });
 }
 
 /**
- * Race a SW update check against a short timeout. Returns true if an
- * update was consumed (page will reload). Swallows all errors so an
- * offline / misconfigured SW never blocks boot.
+ * Resolve the kernel WASM URL through Vite's asset pipeline. `new URL(…,
+ * import.meta.url)` is the documented Vite idiom for cross-package asset
+ * URLs — it works identically in dev and prod, and Vite emits the hashed
+ * asset at build time.
  */
-async function checkForUpdate(): Promise<boolean> {
+function resolveWasmUrl(): string | null {
   try {
-    let updateSW: ((reload?: boolean) => Promise<void>) | null = null;
-    const needRefresh = new Promise<boolean>((resolve) => {
-      try {
-        updateSW = registerSW({
-          onNeedRefresh() {
-            resolve(true);
-          },
-          onRegisteredSW(_, r) {
-            // Kick off an immediate update check. If nothing pending, the
-            // timeout below wins and boot proceeds.
-            r?.update().catch(() => {});
-          },
-          onRegisterError() {
-            resolve(false);
-          },
-        });
-      } catch {
-        resolve(false);
-      }
-    });
-
-    const hasUpdate = await Promise.race([
-      needRefresh,
-      new Promise<boolean>((resolve) =>
-        setTimeout(() => resolve(false), UPDATE_CHECK_TIMEOUT_MS),
-      ),
-    ]);
-
-    if (hasUpdate && updateSW) {
-      useBootStore.getState().setPhase("updating");
-      await new Promise((r) => setTimeout(r, UPDATING_DISPLAY_DELAY_MS));
-      await (updateSW as (reload?: boolean) => Promise<void>)(true);
-      // Reload in progress; don't continue bootstrap. Return true to the
-      // caller, which simply returns without running downstream phases.
-      return true;
-    }
-  } catch (e) {
-    logger.debug("app", `update check failed (non-fatal): ${e}`);
+    return new URL(
+      "../../../kernel-wasm/vcad_kernel_wasm_bg.wasm",
+      import.meta.url,
+    ).href;
+  } catch {
+    return null;
   }
-  return false;
 }
 
 /**
- * Stream-fetch the kernel WASM, updating the boot store with byte-level
- * progress as chunks arrive. Falls back to `null` on any error, in which
- * case Engine.init() will use its own default fetch path.
+ * Stream-fetch the kernel WASM and hand it to the singleton as a Response
+ * so wasm-bindgen can `instantiateStreaming` — compile overlaps with
+ * download. A tee'd copy of the body stream drives the splash progress
+ * bar without slowing the compile path.
  */
-async function fetchKernelWasmWithProgress(): Promise<Uint8Array | null> {
+async function fetchAndPrimeKernelWasm(): Promise<void> {
   const wasmUrl = resolveWasmUrl();
-  if (!wasmUrl) return null;
+  if (!wasmUrl) return;
+
+  let resp: Response;
   try {
-    const resp = await fetch(wasmUrl);
-    if (!resp.ok || !resp.body) {
-      logger.warn("app", `kernel wasm fetch returned ${resp.status}`);
-      return null;
-    }
+    resp = await fetch(wasmUrl);
+  } catch (e) {
+    logger.warn("app", `kernel wasm fetch failed: ${e}`);
+    return;
+  }
+  if (!resp.ok || !resp.body) {
+    logger.warn("app", `kernel wasm fetch returned ${resp.status}`);
+    return;
+  }
 
-    const total = Number(resp.headers.get("content-length") ?? 0);
-    useBootStore.getState().setFetchProgress(0, total);
+  const total = Number(resp.headers.get("content-length") ?? 0);
+  useBootStore.getState().setFetchProgress(0, total);
 
-    const reader = resp.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let received = 0;
-    const start = performance.now();
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
+  const [compileStream, progressStream] = resp.body.tee();
+  const compileResponse = new Response(compileStream, {
+    headers: { "content-type": "application/wasm" },
+  });
+  primeKernelWasm(compileResponse);
+
+  // Fire-and-forget: Engine.init() will await the streaming compile.
+  void trackDownloadProgress(progressStream, total);
+}
+
+async function trackDownloadProgress(
+  stream: ReadableStream<Uint8Array>,
+  total: number,
+): Promise<void> {
+  const reader = stream.getReader();
+  let received = 0;
+  const start = performance.now();
+  try {
+    for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       if (!value) continue;
-      chunks.push(value);
       received += value.length;
       useBootStore.getState().setFetchProgress(received, total);
 
@@ -246,47 +179,146 @@ async function fetchKernelWasmWithProgress(): Promise<Uint8Array | null> {
         useBootStore.getState().setSlowNetwork(true);
       }
     }
-
-    const buffer = new Uint8Array(received);
-    let offset = 0;
-    for (const chunk of chunks) {
-      buffer.set(chunk, offset);
-      offset += chunk.length;
-    }
-    return buffer;
   } catch (e) {
-    logger.warn(
-      "app",
-      `fetch-with-progress failed, falling back to default init: ${e}`,
-    );
-    return null;
+    logger.debug("app", `progress stream ended early: ${e}`);
+  }
+}
+
+/**
+ * Register the service worker and, if an update is waiting, surface it as
+ * a dismissible "Reload" toast. All errors are swallowed — an offline /
+ * misconfigured SW must never block or disturb boot.
+ */
+function startBackgroundUpdateCheck(): void {
+  if (typeof window === "undefined") return;
+  try {
+    let updateSW: ((reload?: boolean) => Promise<void>) | null = null;
+    updateSW = registerSW({
+      onNeedRefresh() {
+        useNotificationStore.getState().showActionResult({
+          type: "success",
+          title: "New version available",
+          description: "Reload to apply the latest vcad build.",
+          actions: [
+            {
+              label: "Reload",
+              variant: "primary",
+              onClick: () => {
+                void updateSW?.(true);
+              },
+            },
+          ],
+        });
+      },
+      onRegisteredSW(_, r) {
+        // Kick off an immediate update check; the onNeedRefresh callback
+        // fires if something is actually waiting.
+        r?.update().catch(() => {});
+      },
+      onRegisterError() {},
+    });
+  } catch (e) {
+    logger.debug("app", `SW registration failed (non-fatal): ${e}`);
+  }
+}
+
+/**
+ * Resolved at boot and applied after the CRDT engine is wired up. Parking
+ * the data in a plain object lets us run the IDB / URL lookup concurrent
+ * with the kernel fetch — the actual store mutations happen serially
+ * once everything the store needs is ready.
+ */
+type DocumentBootData =
+  | { kind: "url"; urlDoc: UrlDocumentResult }
+  | { kind: "stored"; id: string; name: string; file: VcadFile }
+  | { kind: "new"; id: string; name: string };
+
+async function fetchDocumentData(): Promise<DocumentBootData> {
+  try {
+    const urlDoc = await loadDocumentFromUrl();
+    if (urlDoc) return { kind: "url", urlDoc };
+
+    const recent = await getMostRecentDocument();
+    if (recent) {
+      const stored = await loadDocumentFromDb(recent.id);
+      if (stored) {
+        return {
+          kind: "stored",
+          id: stored.id,
+          name: stored.name,
+          file: stored.document,
+        };
+      }
+    }
+
+    const name = await generateDocumentName();
+    return { kind: "new", id: crypto.randomUUID(), name };
+  } catch (err) {
+    logger.warn("app", `Failed to resolve initial document: ${err}`);
+    return { kind: "new", id: crypto.randomUUID(), name: "Untitled" };
+  }
+}
+
+function applyDocumentData(data: DocumentBootData): void {
+  const docStore = useDocumentStore.getState();
+
+  if (data.kind === "stored") {
+    docStore.loadDocument(data.file);
+    docStore.setDocumentMeta(data.id, data.name);
+    return;
+  }
+
+  if (data.kind === "new") {
+    docStore.newDocument(data.id, data.name);
+    return;
+  }
+
+  // kind === "url"
+  const { urlDoc } = data;
+  const id = crypto.randomUUID();
+  docStore.loadDocument(urlDoc.file);
+  docStore.setDocumentMeta(id, urlDoc.name);
+
+  if (urlDoc.readOnlyShareToken) {
+    useUiStore.getState().setReadOnlyShare({
+      token: urlDoc.readOnlyShareToken,
+      docName: urlDoc.name,
+    });
+    useNotificationStore
+      .getState()
+      .toast.info(`Viewing ${urlDoc.name} (read-only)`);
+
+    if (urlDoc.viewerStateHint) {
+      // Apply viewer state on the next frame so the doc has rendered once
+      // before we move the camera and restore selection.
+      const hint = urlDoc.viewerStateHint;
+      setTimeout(() => {
+        void import("@/lib/viewer-state").then(({ applyViewerStateHint }) => {
+          applyViewerStateHint(hint);
+        });
+      }, 100);
+    }
+  } else {
+    useNotificationStore.getState().addToast("Loaded shared document", "success");
   }
 }
 
 /**
  * Import @vcad/kernel-wasm directly (NOT via @vcad/core's getKernelWasm
- * helper) and wire up the CRDT document engine + AI tool schemas. The
- * direct-import constraint exists because the Vite alias only maps a
- * single resolution from the app's import graph — going through core
- * produces a second WASM instance whose pointers don't match.
+ * helper) and wire up the CRDT document engine. The direct-import
+ * constraint exists because the Vite alias only maps a single resolution
+ * from the app's import graph — going through core produces a second
+ * WASM instance whose pointers don't match.
  */
-async function initCrdtAndSchemas(): Promise<void> {
+function initCrdt(
+  wasmModule: typeof import("@vcad/kernel-wasm"),
+): void {
   try {
-    const wasmModule = await import("@vcad/kernel-wasm");
     const EngineClass = (wasmModule as Record<string, unknown>)
       .WasmDocumentEngine as (new () => unknown) | undefined;
     if (EngineClass) {
       useDocumentStore.getState()._initCrdt(EngineClass as never);
       logger.info("wasm", "CRDT document engine initialized");
-    }
-    const getToolSchemas = (wasmModule as Record<string, unknown>)
-      .get_tool_schemas as (() => string) | undefined;
-    if (getToolSchemas) {
-      commandRegistry.loadSchemas(getToolSchemas());
-      logger.info(
-        "wasm",
-        `Loaded ${commandRegistry.getSchemas().length} tool schemas`,
-      );
     }
   } catch (e) {
     logger.warn("wasm", `Failed to initialize CRDT engine: ${e}`);
@@ -294,89 +326,75 @@ async function initCrdtAndSchemas(): Promise<void> {
 }
 
 /**
- * Boot-time document load: URL (shared link) → most recent IDB doc → new
- * blank document. Lifted verbatim from the useEffect that used to live in
- * App.tsx so there's a single source of truth for initial doc state.
+ * Load AI tool schemas from the kernel WASM. Deferred off the critical
+ * path — chat ships with baked-in `STATIC_TOOL_SCHEMAS` fallbacks, so
+ * the registry is usable from the moment the app renders.
  */
-async function initDocument(): Promise<void> {
+function loadToolSchemas(
+  wasmModule: typeof import("@vcad/kernel-wasm"),
+): void {
   try {
-    const urlDoc = await loadDocumentFromUrl();
-    if (urlDoc) {
-      const id = crypto.randomUUID();
-      useDocumentStore.getState().loadDocument(urlDoc.file);
-      useDocumentStore.getState().setDocumentMeta(id, urlDoc.name);
+    const getToolSchemas = (wasmModule as Record<string, unknown>)
+      .get_tool_schemas as (() => string) | undefined;
+    if (!getToolSchemas) return;
+    commandRegistry.loadSchemas(getToolSchemas());
+    logger.info(
+      "wasm",
+      `Loaded ${commandRegistry.getSchemas().length} tool schemas`,
+    );
+  } catch (e) {
+    logger.warn("wasm", `Failed to load tool schemas: ${e}`);
+  }
+}
 
-      if (urlDoc.readOnlyShareToken) {
-        // Enter read-only share session. The Proxy-wrapped document store
-        // will block every mutation from here on and redirect the viewer
-        // to the fork prompt.
-        useUiStore.getState().setReadOnlyShare({
-          token: urlDoc.readOnlyShareToken,
-          docName: urlDoc.name,
-        });
-        useNotificationStore
-          .getState()
-          .toast.info(`Viewing ${urlDoc.name} (read-only)`);
+/** Best-effort GPU + ray-tracer probe. Not required for the first frame. */
+async function initGpuStack(): Promise<void> {
+  try {
+    const gpuAvailable = await initializeGpu();
+    const raytraceAvailable = gpuAvailable
+      ? await initializeRayTracer()
+      : false;
+    useUiStore.getState().setRaytraceAvailable(raytraceAvailable);
+  } catch (e) {
+    logger.warn("gpu", `Failed to initialize: ${e}`);
+  }
+}
 
-        if (urlDoc.viewerStateHint) {
-          // Apply viewer state on the next frame so the doc has rendered
-          // once before we move the camera and restore selection.
-          const hint = urlDoc.viewerStateHint;
-          setTimeout(() => {
-            void import("@/lib/viewer-state").then(({ applyViewerStateHint }) => {
-              applyViewerStateHint(hint);
-            });
-          }, 100);
-        }
-      } else {
-        useNotificationStore.getState().addToast(
-          "Loaded shared document",
-          "success",
-        );
-      }
-      return;
-    }
-
-    const recent = await getMostRecentDocument();
-    if (recent) {
-      const stored = await loadDocumentFromDb(recent.id);
-      if (stored) {
-        useDocumentStore.getState().loadDocument(stored.document);
-        useDocumentStore.getState().setDocumentMeta(stored.id, stored.name);
-        return;
-      }
-    }
-
-    const name = await generateDocumentName();
-    const id = crypto.randomUUID();
-    useDocumentStore.getState().newDocument(id, name);
-  } catch (err) {
-    logger.warn("app", `Failed to initialize document: ${err}`);
-    const id = crypto.randomUUID();
-    useDocumentStore.getState().newDocument(id, "Untitled");
+async function evaluateInitialScene(engine: Engine): Promise<void> {
+  const doc = useDocumentStore.getState().document;
+  if (doc.roots.length === 0) return;
+  try {
+    const scene = await engine.evaluateAsync(doc, {
+      skipClashDetection: true,
+    });
+    useEngineStore.getState().setScene(scene);
+  } catch (e) {
+    useEngineStore.getState().setError(String(e));
   }
 }
 
 /**
  * Schedule a clash-detection pass off the critical path once the main
- * scene has rendered. Lifted from useEngine.ts so bootstrap can drive the
- * first evaluation without importing the hook.
+ * scene has rendered.
  */
 function scheduleDeferredClash(engine: Engine): void {
-  const run = () => {
-    try {
-      const doc = useDocumentStore.getState().document;
-      if (doc.roots.length === 0) return;
-      const scene = engine.evaluate(doc, { skipClashDetection: false });
-      useEngineStore.getState().setScene(scene);
-    } catch (e) {
-      useEngineStore.getState().setError(String(e));
-    }
-  };
+  const doc = useDocumentStore.getState().document;
+  if (doc.roots.length === 0) return;
+  try {
+    const scene = engine.evaluate(doc, { skipClashDetection: false });
+    useEngineStore.getState().setScene(scene);
+  } catch (e) {
+    useEngineStore.getState().setError(String(e));
+  }
+}
 
-  if (typeof requestIdleCallback === "function") {
-    requestIdleCallback(run);
+function scheduleIdle(fn: () => void): void {
+  if (
+    typeof window !== "undefined" &&
+    typeof window.requestIdleCallback === "function"
+  ) {
+    window.requestIdleCallback(fn);
   } else {
-    setTimeout(run, 200);
+    setTimeout(fn, 200);
   }
 }

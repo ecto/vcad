@@ -1,14 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useBootStore, type BootPhase } from "@/stores/boot-store";
 
 const FADE_MS = 300;
 const APP_VERSION = __APP_VERSION__;
-/**
- * Minimum visible splash duration. Fast-cache boots finish in a few
- * hundred ms — faster than the eye registers a full card. Holding for
- * at least this long makes boot feel intentional instead of jittery.
- */
-const MIN_DISPLAY_MS = 900;
 
 /**
  * Tips of the day. One is picked at random on each splash mount, so a
@@ -58,35 +52,19 @@ export function Splash() {
   const [fadingOut, setFadingOut] = useState(false);
   const [mounted, setMounted] = useState(true);
   const [tip] = useState(pickTip);
-  const mountTimeRef = useRef(performance.now());
 
   useEffect(() => {
     if (phase !== "ready") return;
-
-    const elapsed = performance.now() - mountTimeRef.current;
-    const hold = Math.max(0, MIN_DISPLAY_MS - elapsed);
-
-    const fadeTimer = setTimeout(() => {
-      setFadingOut(true);
-    }, hold);
-    const unmountTimer = setTimeout(
-      () => setMounted(false),
-      hold + FADE_MS,
-    );
-    return () => {
-      clearTimeout(fadeTimer);
-      clearTimeout(unmountTimer);
-    };
+    setFadingOut(true);
+    const unmountTimer = setTimeout(() => setMounted(false), FADE_MS);
+    return () => clearTimeout(unmountTimer);
   }, [phase]);
 
   if (!mounted) return null;
 
   const label = phaseLabel(phase, bytesReceived, bytesTotal);
   const indeterminate =
-    phase === "checking-update" ||
-    phase === "updating" ||
     phase === "starting-engine" ||
-    phase === "loading-gpu" ||
     phase === "loading-document" ||
     phase === "evaluating" ||
     (phase === "fetching-kernel" && bytesTotal === 0);
@@ -178,10 +156,6 @@ function phaseLabel(
   total: number,
 ): string {
   switch (phase) {
-    case "checking-update":
-      return "Checking for updates…";
-    case "updating":
-      return "Updating…";
     case "fetching-kernel": {
       if (total > 0) {
         const mb = (received / 1_000_000).toFixed(1);
@@ -195,8 +169,6 @@ function phaseLabel(
     }
     case "starting-engine":
       return "Starting engine…";
-    case "loading-gpu":
-      return "Initializing GPU…";
     case "loading-document":
       return "Loading document…";
     case "evaluating":

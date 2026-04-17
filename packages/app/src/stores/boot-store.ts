@@ -1,11 +1,8 @@
 import { create } from "zustand";
 
 export type BootPhase =
-  | "checking-update"
-  | "updating"
   | "fetching-kernel"
   | "starting-engine"
-  | "loading-gpu"
   | "loading-document"
   | "evaluating"
   | "ready";
@@ -24,7 +21,7 @@ export interface BootState {
 }
 
 export const useBootStore = create<BootState>((set) => ({
-  phase: "checking-update",
+  phase: "fetching-kernel",
   bytesReceived: 0,
   bytesTotal: 0,
   slowNetwork: false,
