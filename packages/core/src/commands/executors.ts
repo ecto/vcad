@@ -309,6 +309,12 @@ function executeCreate(
       case "cylinder":
       case "sphere": {
         const partId = docStore.addPrimitive(type as "cube" | "cylinder" | "sphere");
+        // addPrimitive returns "" when the CRDT engine is null/freed — don't
+        // schedule a follow-up param update against a bogus id, it would crash
+        // when the deferred callback hits `_crdtEngine!` on the same dead engine.
+        if (!partId) {
+          return { status: "error", result: "engine not ready" };
+        }
         if (params && Object.keys(params).length > 0) {
           // Defer param update to next microtask to avoid WASM re-entrant borrow.
           // addPrimitive's set() triggers subscribers synchronously — calling

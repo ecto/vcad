@@ -866,7 +866,12 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   updatePrimitiveOp: (partId, op) => {
-    const engine = get()._crdtEngine!;
+    const engine = get()._crdtEngine;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (!engine || (engine as any).__wbg_ptr === 0 || !partId) {
+      console.warn("[document-store] updatePrimitiveOp: engine null/freed or empty partId");
+      return;
+    }
     const o = op as Record<string, unknown>;
     let lastResult: CrdtMutationResult | undefined;
     if (o.type === "Cube" && "size" in o) {
