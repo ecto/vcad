@@ -142,19 +142,19 @@ export function AppShell({
           {header}
         </div>
       )}
-      <div className="flex flex-1 min-h-0 flex-row">
+      <div className="relative flex flex-1 min-h-0 flex-row">
+        <div className="relative flex-1 min-w-0 min-h-0">
+          {children}
+        </div>
         {leftSidebar && (
           <div
-            className="relative shrink-0 min-h-0 overflow-visible border-r border-border/40 bg-surface"
+            className="absolute left-0 top-0 bottom-0 z-20 min-h-0 overflow-visible bg-transparent"
             style={{ width: `${leftWidth}px` }}
           >
             <div className="h-full w-full overflow-hidden">{leftSidebar}</div>
             <ResizeHandle side="left" width={leftWidth} onResize={setLeftWidth} />
           </div>
         )}
-        <div className="relative flex-1 min-w-0 min-h-0">
-          {children}
-        </div>
         {rightSidebar && (
           <div
             className="relative shrink-0 min-h-0 overflow-visible border-l border-border/40 bg-surface"

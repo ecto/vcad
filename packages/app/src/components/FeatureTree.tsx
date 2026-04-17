@@ -941,7 +941,6 @@ export function FeatureTree() {
         // Sidebar pane — fills its grid slot
         "h-full w-full",
         "flex flex-col",
-        "bg-surface",
         "p-2",
       )}
     >
@@ -952,18 +951,11 @@ export function FeatureTree() {
             <SceneTreeRow />
 
             {/* Empty state when no parts/instances yet */}
-            {!hasGeometry && (
-              <>
-                <div className="border-t border-border/40 my-1" />
-                <FeatureTreeEmptyState />
-              </>
-            )}
+            {!hasGeometry && <FeatureTreeEmptyState />}
 
-            {/* Separator and geometry when present */}
+            {/* Geometry when present */}
             {hasGeometry && (
               <>
-                <div className="border-t border-border/40 my-1" />
-
                 {/* Assembly mode: show instances and joints */}
                 {hasInstances ? (
                   <AssemblyTree
