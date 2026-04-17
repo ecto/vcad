@@ -237,7 +237,8 @@ For the Sun, use gold. For Mars, copper. For Earth, glass-tinted. For gold/silve
 
 ## Orientation Notes
 
-- **Cylinder**: axis along Z. Height is along Z, circular face is in XY plane. To make a wheel (round face visible from the side), use extrude with a circular sketch in the XZ plane (set y_dir to (0,0,1)) and direction along Y for thickness — this is more reliable than rotating a cylinder.
+- **Cylinder**: axis along Z. Height is along Z, circular face is in XY plane. Params are `radius` and `height`, not "size" — don't swap them (radius 330, height 30 is a flat disc; radius 30, height 330 is a long pole).
+- **Wheels — STRONG PREFERENCE**: Do NOT make wheels by rotating a cylinder. Instead, use `extrude` with a circular sketch (two half-arcs) in the XZ plane (set `y_dir` to (0,0,1)) and direction along Y for thickness. Rotating a Z-axis cylinder to lie sideways is fragile because rotation composes with later translates in confusing ways; an extruded disc is already oriented correctly.
 - **Box/Cube**: size.x is width, size.y is depth, size.z is height.
 - The grid lies in the XY plane. Z is up. X is right, Y is forward.
 
@@ -246,6 +247,21 @@ For the Sun, use gold. For Mars, copper. For Earth, glass-tinted. For gold/silve
 When you call create with type translate/rotate/scale, it WRAPS the existing part in place. The returned id is the SAME as the input child id — it does NOT create a new part with a new id. So:
 - create(type:translate, params:{child:abc, offset:...}) → part abc still exists, now translated. Use abc for follow-ups.
 - The DAG node behind the part gets a new wrapping node, but you reference parts by their stable part id, not by node id.
+
+**Rotations happen around the WORLD ORIGIN, not the part's own center.** This is the #1 cause of parts ending up in unexpected places. Rules:
+- Create geometry at origin first, THEN rotate (orients it in place around origin), THEN translate (moves the oriented part to its final position). Always this order.
+- If you translate first and then rotate, the rotate swings the translated part in a wide arc around the origin — almost never what you want.
+- If a part ends up in the wrong place after wrapping, prefer `update` on the translate/rotate params over deleting and recreating. You can also add another translate on top to nudge it.
+
+## Recovery & Iteration
+
+When something looks wrong, **fix in place** — don't nuke and restart.
+
+- **NEVER mass-delete parts to "start over" without explicit user approval.** If the scene looks wrong after screenshotting, the user's existing work (including parts they care about) is in there. Identify the specific misplaced parts and `update` their translate/rotate params. A bad layout is almost always 2–3 wrong numbers, not a reason to delete 16 parts.
+- If more than ~3 parts seem wrong and you're tempted to delete them all, **STOP and ask the user first**: describe what you see, what you think is wrong, and propose the fix. Let them choose "update these parts" vs. "delete everything and retry."
+- When you're uncertain what went wrong (e.g. a screenshot doesn't match your mental model, or you can't tell which part is which), **ask the user** before making destructive changes. A short clarifying question is cheaper than wiping their scene.
+- Prefer `update` with corrected params over `delete` + re-`create`. Updates preserve the part id, name, material, and anything downstream that references it.
+- For a single wrong part, deleting and recreating is fine. For many, ask first.
 
 ## Key Rules
 

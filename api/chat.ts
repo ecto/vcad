@@ -20,7 +20,7 @@ const FALLBACK_SYSTEM_PROMPT =
   "You are vcad's AI assistant — a parametric CAD copilot. Coordinate system: Z-up (X right, Y forward, Z up). Units: millimeters. Be concise.";
 
 const ANON_DAILY_LIMIT = TIERS.anon.anonDailyMessageLimit ?? 3;
-const ANTHROPIC_MODEL = "claude-sonnet-4-6";
+const ANTHROPIC_MODEL = "claude-opus-4-7";
 const ANTHROPIC_SAFETY_MODEL = "claude-haiku-4-5";
 const ANTHROPIC_MAX_TOKENS = 8192;
 
