@@ -1203,7 +1203,13 @@ fn parse_sketch_str(data: &str) -> CsgOp {
     if data.is_empty() {
         default_sketch()
     } else {
-        serde_json::from_str::<CsgOp>(data).unwrap_or_else(|_| default_sketch())
+        serde_json::from_str::<CsgOp>(data).unwrap_or_else(|e| {
+            panic!(
+                "parse_sketch_str: failed to parse sketch JSON: {e}\ninput ({} bytes): {}",
+                data.len(),
+                data
+            );
+        })
     }
 }
 
