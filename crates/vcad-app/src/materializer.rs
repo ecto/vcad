@@ -75,11 +75,42 @@ impl Context {
     }
 }
 
+/// Collect the set of feature IDs referenced as inputs by modifier/boolean
+/// features. Any feature in this set is wrapped by a downstream feature and
+/// must not appear as an independent scene root — otherwise it would render
+/// alongside its consumer and produce z-fighting (e.g. unfilleted cube +
+/// filleted cube).
+fn collect_consumed_feature_ids(crdt: &CrdtDocument) -> std::collections::HashSet<String> {
+    let mut consumed = std::collections::HashSet::new();
+    for (_, feature) in crdt.ordered_features() {
+        let Some(input) = FeatureInput::from_crdt_params(&feature.kind, &feature.params) else {
+            continue;
+        };
+        match input {
+            FeatureInput::Boolean { input_a, input_b, .. } => {
+                consumed.insert(input_a);
+                consumed.insert(input_b);
+            }
+            FeatureInput::Fillet { input, .. }
+            | FeatureInput::Chamfer { input, .. }
+            | FeatureInput::Shell { input, .. }
+            | FeatureInput::LinearPattern { input, .. }
+            | FeatureInput::CircularPattern { input, .. }
+            | FeatureInput::Mirror { input, .. } => {
+                consumed.insert(input);
+            }
+            _ => {}
+        }
+    }
+    consumed
+}
+
 /// Materialize the full CRDT document into an IR document and parts list.
 pub fn materialize(crdt: &CrdtDocument) -> MaterializeResult {
     let mut doc = Document::new();
     let mut parts = Vec::new();
     let mut ctx = Context::new();
+    let consumed = collect_consumed_feature_ids(crdt);
 
     for (fid, feature) in crdt.ordered_features() {
         // Non-geometry features: assembly metadata, scene settings.
@@ -108,14 +139,17 @@ pub fn materialize(crdt: &CrdtDocument) -> MaterializeResult {
         }
 
         if let Some((part, root_id)) = materialize_feature(&mut doc, &mut ctx, fid, feature, crdt) {
-            let material = get_str(feature, "material").unwrap_or_else(|| "default".to_string());
-            let visible = get_bool(feature, "visible");
-            doc.roots.push(SceneEntry {
-                root: root_id,
-                material,
-                visible,
-            });
-            ctx.feature_roots.insert(fid_to_string(fid), root_id);
+            let fid_str = fid_to_string(fid);
+            if !consumed.contains(&fid_str) {
+                let material = get_str(feature, "material").unwrap_or_else(|| "default".to_string());
+                let visible = get_bool(feature, "visible");
+                doc.roots.push(SceneEntry {
+                    root: root_id,
+                    material,
+                    visible,
+                });
+            }
+            ctx.feature_roots.insert(fid_str, root_id);
             parts.push(part);
         }
     }
@@ -1544,6 +1578,82 @@ mod tests {
                 && w.contains("nonexistent-feature-id")),
             "warnings should mention the skipped fillet: {:?}",
             result.warnings
+        );
+    }
+
+    #[test]
+    fn test_consumed_feature_is_not_a_scene_root() {
+        // Regression: the pork-chop z-fighting sawtooth was caused by the
+        // unfilleted source geometry rendering alongside the fillet that
+        // consumed it. Materialize must omit consumed features from
+        // `doc.roots` so the source doesn't render twice.
+        let mut crdt = CrdtDocument::new(ReplicaId(1));
+        let pos1 = FractionalIndex::between(None, None);
+        let (cube_fid, _) = crdt.create_feature("cube", pos1.clone(), HashMap::new());
+        let cube_id_str = fid_to_string(cube_fid);
+
+        let pos2 = FractionalIndex::between(Some(&pos1), None);
+        crdt.create_feature(
+            "fillet",
+            pos2,
+            HashMap::from([
+                ("input".to_string(), Value::FeatureRef(cube_id_str.clone())),
+                ("radius".to_string(), Value::F64(1.0)),
+            ]),
+        );
+
+        let result = materialize(&crdt);
+        // Both parts still materialize (FeatureTree needs them).
+        assert_eq!(result.parts.len(), 2);
+        // Only the fillet is a scene root; the cube is consumed.
+        assert_eq!(
+            result.document.roots.len(),
+            1,
+            "consumed cube must not be a scene root; got roots: {:?}",
+            result.document.roots
+        );
+        let cube_root = match &result.parts[0] {
+            PartInfo::Cube {
+                translate_node_id, ..
+            } => *translate_node_id,
+            _ => panic!("expected cube part"),
+        };
+        assert!(
+            result.document.roots.iter().all(|e| e.root != cube_root),
+            "cube root node must not appear in scene roots"
+        );
+    }
+
+    #[test]
+    fn test_boolean_inputs_are_not_scene_roots() {
+        // Same principle: a difference/union/intersection consumes both its
+        // inputs. Only the boolean result should render.
+        let mut crdt = CrdtDocument::new(ReplicaId(1));
+        let pos1 = FractionalIndex::between(None, None);
+        let (fid_a, _) = crdt.create_feature("cube", pos1.clone(), HashMap::new());
+        let pos2 = FractionalIndex::between(Some(&pos1), None);
+        let (fid_b, _) = crdt.create_feature("cylinder", pos2.clone(), HashMap::new());
+        let pos3 = FractionalIndex::between(Some(&pos2), None);
+        crdt.create_feature(
+            "boolean",
+            pos3,
+            HashMap::from([
+                (
+                    "boolean_type".to_string(),
+                    Value::String("difference".to_string()),
+                ),
+                ("input_a".to_string(), Value::FeatureRef(fid_to_string(fid_a))),
+                ("input_b".to_string(), Value::FeatureRef(fid_to_string(fid_b))),
+            ]),
+        );
+
+        let result = materialize(&crdt);
+        assert_eq!(result.parts.len(), 3);
+        assert_eq!(
+            result.document.roots.len(),
+            1,
+            "boolean inputs must not be scene roots; got: {:?}",
+            result.document.roots
         );
     }
 
