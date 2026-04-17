@@ -16,12 +16,14 @@ struct ToolAttrs {
     hidden: bool,
     category: Option<String>,
     ai_hint: Option<String>,
+    expand: bool,
 }
 
 fn parse_tool_attrs(attrs: &[syn::Attribute]) -> syn::Result<ToolAttrs> {
     let mut hidden = false;
     let mut category = None;
     let mut ai_hint = None;
+    let mut expand = false;
 
     for attr in attrs {
         if !attr.path().is_ident("tool") {
@@ -30,6 +32,9 @@ fn parse_tool_attrs(attrs: &[syn::Attribute]) -> syn::Result<ToolAttrs> {
         attr.parse_nested_meta(|meta| {
             if meta.path.is_ident("hidden") {
                 hidden = true;
+                Ok(())
+            } else if meta.path.is_ident("expand") {
+                expand = true;
                 Ok(())
             } else if meta.path.is_ident("category") {
                 let value = meta.value()?;
@@ -55,6 +60,7 @@ fn parse_tool_attrs(attrs: &[syn::Attribute]) -> syn::Result<ToolAttrs> {
         hidden,
         category,
         ai_hint,
+        expand,
     })
 }
 
@@ -158,7 +164,12 @@ fn build_fields_schema(fields: &Fields) -> syn::Result<TokenStream2> {
             for field in &named.named {
                 let field_name = field.ident.as_ref().unwrap().to_string();
                 let field_desc = extract_doc_comment(&field.attrs);
-                let (schema_expr, is_optional) = type_to_schema(&field.ty)?;
+                let field_attrs = parse_tool_attrs(&field.attrs)?;
+                let (schema_expr, is_optional) = if field_attrs.expand {
+                    expanded_type_schema(&field.ty)?
+                } else {
+                    type_to_schema(&field.ty)?
+                };
 
                 prop_entries.push(quote! {
                     {
@@ -207,6 +218,40 @@ fn build_fields_schema(fields: &Fields) -> syn::Result<TokenStream2> {
             "ToolSchema does not support tuple variants",
         )),
     }
+}
+
+/// Emit a schema that delegates to `<T as SubToolSchema>::sub_schema()` for
+/// the concrete field type (unwrapping `Option<T>` and `Vec<T>` wrappers).
+/// Used when a field is annotated with `#[tool(expand)]`.
+fn expanded_type_schema(ty: &syn::Type) -> syn::Result<(TokenStream2, bool)> {
+    let ty_str = quote!(#ty).to_string().replace(' ', "");
+
+    if ty_str.starts_with("Option<") {
+        let inner = extract_generic_inner(ty, "Option")?;
+        let (inner_schema, _) = expanded_type_schema(inner)?;
+        return Ok((inner_schema, true));
+    }
+
+    if ty_str.starts_with("Vec<") && !ty_str.starts_with("Vec2") && !ty_str.starts_with("Vec3") {
+        let inner = extract_generic_inner(ty, "Vec")?;
+        let (inner_schema, _) = expanded_type_schema(inner)?;
+        return Ok((
+            quote! {
+                serde_json::json!({ "type": "array", "items": #inner_schema })
+            },
+            false,
+        ));
+    }
+
+    if ty_str.starts_with("Box<") {
+        let inner = extract_generic_inner(ty, "Box")?;
+        return expanded_type_schema(inner);
+    }
+
+    Ok((
+        quote! { <#ty as crate::SubToolSchema>::sub_schema() },
+        false,
+    ))
 }
 
 fn type_to_schema(ty: &syn::Type) -> syn::Result<(TokenStream2, bool)> {

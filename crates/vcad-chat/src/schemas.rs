@@ -6,7 +6,8 @@
 //! and downstream frontends never have to touch `CsgOp` directly.
 //!
 //! The TypeScript `STATIC_TOOL_SCHEMAS` in `packages/core/src/commands/static-schemas.ts`
-//! is generated from this same source via `cargo test -p vcad-ir dump_schemas_json`,
+//! is generated from this same source via
+//! `cargo run --quiet --example dump_schemas -p vcad-ir > packages/core/src/commands/static-schemas.ts`,
 //! so the Rust and TS views are guaranteed to match.
 
 use vcad_ir::{CsgOp, ToolSchemaEntry};
