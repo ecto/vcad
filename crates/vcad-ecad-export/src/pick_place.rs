@@ -15,7 +15,7 @@ pub fn write_pick_place<W: Write>(writer: &mut W, pcb: &Pcb) -> Result<(), std::
     writeln!(writer, "Ref,Value,Package,PosX,PosY,Rotation,Side")?;
 
     let mut footprints: Vec<&Footprint> = pcb.footprints.iter().collect();
-    footprints.sort_by(|a, b| natural_sort_key(&a.reference).cmp(&natural_sort_key(&b.reference)));
+    footprints.sort_by_key(|fp| natural_sort_key(&fp.reference));
 
     for fp in footprints {
         let side = if fp.front { "Top" } else { "Bottom" };
