@@ -3,7 +3,9 @@
 use std::collections::HashMap;
 use std::f64::consts::PI;
 
-use vcad_kernel_geom::{BilinearSurface, GeometryStore, Plane};
+use vcad_kernel_geom::{
+    BilinearSurface, Circle3d, CylinderSurface, GeometryStore, Line3d, Plane,
+};
 use vcad_kernel_math::{Dir3, Point2, Point3, Vec3};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_topo::{HalfEdgeId, Orientation, ShellType, Topology, VertexId};
@@ -68,6 +70,29 @@ pub fn extrude(profile: &SketchProfile, direction: Vec3) -> Result<BRepSolid, Sk
     if dir_len < 1e-12 {
         return Err(SketchError::ZeroExtrusion);
     }
+
+    // Analytic fast path: a profile that is a full circle extruded along
+    // its plane normal becomes a true right circular cylinder — one
+    // CylinderSurface lateral face plus two planar disk caps, matching
+    // vcad_kernel_primitives::make_cylinder. This gives pixel-perfect
+    // curved surfaces instead of the N-gon approximation that a
+    // tessellated profile would produce.
+    if let Some(fc) = detect_axial_full_circle(profile, direction) {
+        return Ok(extrude_full_circle_analytic(profile, fc, direction));
+    }
+
+    // Arcs that aren't part of a full analytic circle are tessellated into
+    // short line segments. Without this, the generic polygonal path below
+    // would build each arc as a single planar quad — a 180° arc becomes a
+    // diameter-spanning rectangle, which is exactly the "circle sketches
+    // render as rectangles" bug this replaces.
+    let tessellated;
+    let profile = if profile.is_line_only() {
+        profile
+    } else {
+        tessellated = profile.tessellate(ExtrudeOptions::default().arc_segments as usize);
+        &tessellated
+    };
 
     let mut topo = Topology::new();
     let mut geom = GeometryStore::new();
@@ -210,6 +235,179 @@ pub fn extrude(profile: &SketchProfile, direction: Vec3) -> Result<BRepSolid, Sk
         geometry: geom,
         solid_id,
     })
+}
+
+/// A full-circle profile detected for the analytic-cylinder extrude path.
+struct FullCircle {
+    center: Point2,
+    radius: f64,
+}
+
+/// Detect a profile that is a closed full circle, being extruded along its
+/// plane normal. Returns `None` for any profile containing a non-arc
+/// segment, arcs with disagreeing centers/radii, a signed-angle sum that
+/// isn't ±2π, or an extrusion direction that isn't (anti-)parallel to the
+/// profile normal.
+fn detect_axial_full_circle(profile: &SketchProfile, direction: Vec3) -> Option<FullCircle> {
+    if profile.segments.is_empty() {
+        return None;
+    }
+
+    // Axial: direction must be parallel to the profile normal (either sign).
+    let dir_unit = direction.normalize();
+    let axial_dot = dir_unit.dot(profile.normal.as_ref()).abs();
+    if axial_dot < 1.0 - 1e-6 {
+        return None;
+    }
+
+    // Reference center/radius from the first segment.
+    let (ref_center, ref_radius) = match &profile.segments[0] {
+        SketchSegment::Arc { start, center, .. } => (*center, (start - center).norm()),
+        SketchSegment::Line { .. } => return None,
+    };
+    if ref_radius < 1e-9 {
+        return None;
+    }
+
+    let center_tol = ref_radius * 1e-6 + 1e-9;
+    let radius_tol = ref_radius * 1e-6 + 1e-9;
+    let mut total_angle = 0.0;
+
+    for seg in &profile.segments {
+        let (start, end, center, ccw) = match seg {
+            SketchSegment::Arc {
+                start,
+                end,
+                center,
+                ccw,
+            } => (*start, *end, *center, *ccw),
+            SketchSegment::Line { .. } => return None,
+        };
+        if (center - ref_center).norm() > center_tol {
+            return None;
+        }
+        let r_start = (start - center).norm();
+        let r_end = (end - center).norm();
+        if (r_start - ref_radius).abs() > radius_tol
+            || (r_end - ref_radius).abs() > radius_tol
+        {
+            return None;
+        }
+
+        let d_start = start - center;
+        let d_end = end - center;
+        let start_angle = d_start.y.atan2(d_start.x);
+        let end_angle = d_end.y.atan2(d_end.x);
+        let mut angle = end_angle - start_angle;
+        if ccw {
+            if angle <= 0.0 {
+                angle += 2.0 * PI;
+            }
+        } else if angle >= 0.0 {
+            angle -= 2.0 * PI;
+        }
+        total_angle += angle;
+    }
+
+    if (total_angle.abs() - 2.0 * PI).abs() > 1e-6 {
+        return None;
+    }
+
+    Some(FullCircle {
+        center: ref_center,
+        radius: ref_radius,
+    })
+}
+
+/// Build an analytic-surface BRep for a full-circle profile extruded along
+/// its normal: one `CylinderSurface` lateral face with a seam edge, and two
+/// planar disk caps. Mirrors `vcad_kernel_primitives::make_cylinder`.
+fn extrude_full_circle_analytic(
+    profile: &SketchProfile,
+    fc: FullCircle,
+    direction: Vec3,
+) -> BRepSolid {
+    let mut topo = Topology::new();
+    let mut geom = GeometryStore::new();
+
+    let axis = Dir3::new_normalize(direction);
+    let ref_dir = profile.x_dir; // seam direction lies along profile +X
+    let bot_center = profile.to_3d(fc.center);
+    let top_center = bot_center + direction;
+    let seam_offset = *ref_dir.as_ref() * fc.radius;
+
+    // Seam vertices (at u=0 on the cylinder's parameterization).
+    let v_bot = topo.add_vertex(bot_center + seam_offset);
+    let v_top = topo.add_vertex(top_center + seam_offset);
+
+    // Surfaces.
+    let cyl = CylinderSurface {
+        center: bot_center,
+        axis,
+        ref_dir,
+        radius: fc.radius,
+    };
+    let cyl_idx = geom.add_surface(Box::new(cyl));
+
+    // Bottom cap: outward normal = -axis. Top cap: outward normal = +axis.
+    let bot_plane = Plane::from_normal(bot_center, -*axis.as_ref());
+    let bot_idx = geom.add_surface(Box::new(bot_plane));
+    let top_plane = Plane::from_normal(top_center, *axis.as_ref());
+    let top_idx = geom.add_surface(Box::new(top_plane));
+
+    // Curves for provenance (bottom circle, top circle, seam line).
+    geom.add_curve_3d(Box::new(Circle3d::with_normal(
+        bot_center,
+        fc.radius,
+        *axis.as_ref(),
+    )));
+    geom.add_curve_3d(Box::new(Circle3d::with_normal(
+        top_center,
+        fc.radius,
+        *axis.as_ref(),
+    )));
+    geom.add_curve_3d(Box::new(Line3d::from_points(
+        bot_center + seam_offset,
+        top_center + seam_offset,
+    )));
+
+    // Lateral face: single loop with a seam.
+    //   he_bot_lat : v_bot → v_bot (bottom circle, full sweep)
+    //   he_seam_up : v_bot → v_top (seam)
+    //   he_top_lat : v_top → v_top (top circle, reversed sweep)
+    //   he_seam_dn : v_top → v_bot (seam return)
+    let he_bot_lat = topo.add_half_edge(v_bot);
+    let he_seam_up = topo.add_half_edge(v_bot);
+    let he_top_lat = topo.add_half_edge(v_top);
+    let he_seam_dn = topo.add_half_edge(v_top);
+    let lat_loop = topo.add_loop(&[he_bot_lat, he_seam_up, he_top_lat, he_seam_dn]);
+    let lat_face = topo.add_face(lat_loop, cyl_idx, Orientation::Forward);
+
+    // Caps: each is a single degenerate half-edge loop. The tessellator
+    // detects loop_len<=1 on a Plane face and samples the disk from the
+    // surface + loop vertex radius.
+    let he_bot_cap = topo.add_half_edge(v_bot);
+    let bot_loop = topo.add_loop(&[he_bot_cap]);
+    let bot_face = topo.add_face(bot_loop, bot_idx, Orientation::Forward);
+
+    let he_top_cap = topo.add_half_edge(v_top);
+    let top_loop = topo.add_loop(&[he_top_cap]);
+    let top_face = topo.add_face(top_loop, top_idx, Orientation::Forward);
+
+    // Twin pairing: each circle edge has a lateral side and a cap side;
+    // the seam has its two directions.
+    topo.add_edge(he_bot_lat, he_bot_cap);
+    topo.add_edge(he_top_lat, he_top_cap);
+    topo.add_edge(he_seam_up, he_seam_dn);
+
+    let shell = topo.add_shell(vec![lat_face, bot_face, top_face], ShellType::Outer);
+    let solid_id = topo.add_solid(shell);
+
+    BRepSolid {
+        topology: topo,
+        geometry: geom,
+        solid_id,
+    }
 }
 
 /// Extrude a closed profile with twist and/or scale (taper).
@@ -765,8 +963,17 @@ mod tests {
 
         let solid = extrude(&profile, Vec3::new(0.0, 0.0, 10.0)).unwrap();
 
-        // 10 faces: 8 lateral + 2 caps
-        assert_eq!(solid.topology.faces.len(), 10);
+        // Analytic cylinder: 1 CylinderSurface lateral face + 2 planar disk caps.
+        assert_eq!(solid.topology.faces.len(), 3);
+        assert_eq!(
+            solid
+                .geometry
+                .surfaces
+                .iter()
+                .filter(|s| s.surface_type() == SurfaceKind::Cylinder)
+                .count(),
+            1
+        );
 
         // All half-edges should be paired
         let unpaired = solid
@@ -778,14 +985,49 @@ mod tests {
         assert_eq!(unpaired, 0, "expected no unpaired half-edges");
 
         // Volume should approximate π*r²*h = π*25*10 ≈ 785
-        // Note: Using planar approximation for arc faces, so some error expected
         let mesh = vcad_kernel_tessellate::tessellate_brep(&solid, 64);
         let vol = compute_mesh_volume(&mesh);
         let expected = PI * 25.0 * 10.0;
-        // Allow 10% error due to planar approximation of curved faces
+        assert!(
+            (vol - expected).abs() < expected * 0.01,
+            "expected volume ~{expected:.1}, got {vol:.1}"
+        );
+    }
+
+    #[test]
+    fn test_extrude_two_arc_circle_is_not_a_rectangle() {
+        // The AI chat path emits a full circle as exactly two half-arcs
+        // (start=(r,0)→end=(-r,0), then start=(-r,0)→end=(r,0)). Without
+        // arc tessellation, extrude() builds cap faces from only the 2
+        // segment-start points and approximates each arc as a planar
+        // quad, producing a degenerate "rectangle" instead of a cylinder.
+        let r = 15.0;
+        let h = 1.0;
+        let segments = vec![
+            SketchSegment::Arc {
+                start: Point2::new(r, 0.0),
+                end: Point2::new(-r, 0.0),
+                center: Point2::origin(),
+                ccw: false,
+            },
+            SketchSegment::Arc {
+                start: Point2::new(-r, 0.0),
+                end: Point2::new(r, 0.0),
+                center: Point2::origin(),
+                ccw: false,
+            },
+        ];
+        let profile =
+            SketchProfile::new(Point3::origin(), Vec3::x(), Vec3::y(), segments).unwrap();
+
+        let solid = extrude(&profile, Vec3::new(0.0, 0.0, h)).unwrap();
+
+        let mesh = vcad_kernel_tessellate::tessellate_brep(&solid, 64);
+        let vol = compute_mesh_volume(&mesh);
+        let expected = PI * r * r * h;
         assert!(
             (vol - expected).abs() < expected * 0.1,
-            "expected volume ~{expected:.1}, got {vol:.1}"
+            "two-arc circle should extrude to a cylinder (vol≈{expected:.1}), got {vol:.1} — likely built as a rectangle from diameter endpoints"
         );
     }
 
