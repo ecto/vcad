@@ -52,6 +52,9 @@ function buildShareUrl(
 
 export function ShareDialog({ open, onOpenChange }: ShareDialogProps) {
   const user = useAuthStore((s) => s.user);
+  const isAnonymous = useAuthStore((s) => s.isAnonymous);
+  // Anon Supabase sessions can't share — sharing requires a permanent identity.
+  const isSignedIn = !!user && !isAnonymous;
   const documentId = useDocumentStore((s) => s.documentId);
   const documentName = useDocumentStore((s) => s.documentName);
 
@@ -210,7 +213,7 @@ export function ShareDialog({ open, onOpenChange }: ShareDialogProps) {
     [existingShare, profile, docSlug],
   );
 
-  const blocker: string | null = !user
+  const blocker: string | null = !isSignedIn
     ? "Sign in to share this document."
     : cloudLookupDone && !cloudId
       ? "Save this document to the cloud before sharing."

@@ -29,24 +29,26 @@ interface ChatUsageMeterProps {
  * streaming (so the bar fills live as tokens are consumed).
  */
 export function ChatUsageMeter({ onUpgradeClick }: ChatUsageMeterProps) {
-  const { user } = useAuth();
+  const { isAuthenticated } = useAuth();
   const snapshot = useBillingStore((s) => s.snapshot);
   const loading = useBillingStore((s) => s.loading);
   const streaming = useChatStore((s) => s.streaming);
 
   // Initial load + refresh when the user signs in / out.
   useEffect(() => {
-    if (user) void refreshUsage();
+    if (isAuthenticated) void refreshUsage();
     else useBillingStore.getState().reset();
-  }, [user]);
+  }, [isAuthenticated]);
 
   // Refresh at the end of every streaming turn so the meter reflects the
   // tokens just consumed.
   useEffect(() => {
-    if (!streaming && user) void refreshUsage();
-  }, [streaming, user]);
+    if (!streaming && isAuthenticated) void refreshUsage();
+  }, [streaming, isAuthenticated]);
 
-  if (!user) return null;
+  // Anon (or anonymous Supabase session) — the chat sidebar surfaces the
+  // free-tier counter elsewhere; this billing meter is paid-tier UX.
+  if (!isAuthenticated) return null;
   if (!snapshot && !loading) return null;
   if (!snapshot) {
     // First fetch in progress — reserve layout space with a thin ghost.

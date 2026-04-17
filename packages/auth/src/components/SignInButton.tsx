@@ -17,11 +17,13 @@ interface SignInButtonProps {
  */
 export function SignInButton({ className, variant = "default" }: SignInButtonProps) {
   const user = useAuthStore((s) => s.user);
+  const isAnonymous = useAuthStore((s) => s.isAnonymous);
   const loading = useAuthStore((s) => s.loading);
   const [showAuth, setShowAuth] = useState(false);
 
-  // Don't render if auth is disabled or user is signed in
-  if (!isAuthEnabled() || user) {
+  // Hide if auth is disabled or the user has a permanent identity. Anon
+  // sessions still show the button so the user can upgrade.
+  if (!isAuthEnabled() || (user && !isAnonymous)) {
     return null;
   }
 

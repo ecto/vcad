@@ -39,6 +39,10 @@ export function StatusBar() {
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
   const cursorWorld = useUiStore((s) => s.cursorWorld);
   const user = useAuthStore((s) => s.user);
+  const isAnonymous = useAuthStore((s) => s.isAnonymous);
+  // Anonymous Supabase sessions exist for chat-thread RLS scoping; the
+  // status bar's "syncing as ..." UI should treat them as not-signed-in.
+  const isSignedIn = !!user && !isAnonymous;
   const syncStatus = useSyncStore((s) => s.syncStatus);
 
   // Subscribe to the pieces of the log store the ticker actually needs so we
@@ -91,14 +95,14 @@ export function StatusBar() {
         className: "text-brand",
         pulse: true,
       }
-    : user && syncStatus === "syncing"
+    : isSignedIn && syncStatus === "syncing"
       ? {
           label: "syncing",
           title: "Syncing to cloud",
           className: "text-yellow-500",
           pulse: true,
         }
-      : user && syncStatus === "error"
+      : isSignedIn && syncStatus === "error"
         ? {
             label: "sync failed",
             title: "Cloud sync failed",
@@ -107,7 +111,7 @@ export function StatusBar() {
           }
         : {
             label: "saved",
-            title: user ? "Saved and synced" : "Saved",
+            title: isSignedIn ? "Saved and synced" : "Saved",
             className: "text-text-muted/60",
             pulse: false,
           };

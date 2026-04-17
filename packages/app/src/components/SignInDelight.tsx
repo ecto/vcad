@@ -11,6 +11,9 @@ import { useNotificationStore } from "@/stores/notification-store";
  */
 export function SignInDelight() {
   const user = useAuthStore((s) => s.user);
+  const isAnonymous = useAuthStore((s) => s.isAnonymous);
+  // Anonymous Supabase sessions don't get the welcome / first-sync delight.
+  const isSignedIn = !!user && !isAnonymous;
   const syncStatus = useSyncStore((s) => s.syncStatus);
   const hasSeenFirstSync = useSignInDelightStore((s) => s.hasSeenFirstSync);
   const markFirstSyncSeen = useSignInDelightStore((s) => s.markFirstSyncSeen);
@@ -35,7 +38,7 @@ export function SignInDelight() {
   // Watch for first sync completion
   useEffect(() => {
     // Only trigger for signed-in users who haven't seen the first sync toast
-    if (!user || hasSeenFirstSync) {
+    if (!isSignedIn || hasSeenFirstSync) {
       prevSyncStatus.current = syncStatus;
       return;
     }
@@ -47,7 +50,7 @@ export function SignInDelight() {
     }
 
     prevSyncStatus.current = syncStatus;
-  }, [user, syncStatus, hasSeenFirstSync, markFirstSyncSeen, addToast]);
+  }, [isSignedIn, syncStatus, hasSeenFirstSync, markFirstSyncSeen, addToast]);
 
   // This component doesn't render anything visible
   return null;

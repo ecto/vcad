@@ -27,6 +27,10 @@ export function useCollabSync() {
   const documentId = useDocumentStore((s) => s.documentId);
   const readOnly = useUiStore((s) => s.readOnlyShare);
   const user = useAuthStore((s) => s.user);
+  const isAnonymous = useAuthStore((s) => s.isAnonymous);
+  // Anonymous Supabase sessions exist for chat-thread RLS scoping; cloud
+  // sync + collab features are gated to permanent identities only.
+  const isCloudUser = !!user && !isAnonymous;
   const [cloudId, setCloudId] = useState<string | null>(null);
   const channelRef = useRef<CollabChannel | null>(null);
 
@@ -37,7 +41,7 @@ export function useCollabSync() {
   // Resolve cloudId from local storage whenever documentId changes.
   useEffect(() => {
     setCloudId(null);
-    if (!ready || !documentId || !user || readOnly) return;
+    if (!ready || !documentId || !isCloudUser || readOnly) return;
 
     let cancelled = false;
     (async () => {
@@ -90,7 +94,7 @@ export function useCollabSync() {
     return () => {
       cancelled = true;
     };
-  }, [ready, documentId, user, readOnly]);
+  }, [ready, documentId, isCloudUser, readOnly]);
 
   // Open/close the collab channel when cloudId becomes available. Debounced
   // with a short delay so Vite HMR unmount+remount doesn't cause a
@@ -100,7 +104,7 @@ export function useCollabSync() {
     channelRef.current?.leave();
     channelRef.current = null;
 
-    if (!ready || !cloudId || !user || readOnly) return;
+    if (!ready || !cloudId || !isCloudUser || readOnly) return;
 
     const timer = setTimeout(() => {
       console.log("[collab] joining channel for", cloudId);
@@ -120,7 +124,7 @@ export function useCollabSync() {
         channelRef.current = null;
       }
     };
-  }, [ready, cloudId, user, readOnly]);
+  }, [ready, cloudId, isCloudUser, readOnly]);
 
   // Broadcast after every local mutation. We detect mutations by watching
   // the `parts` array reference — every mutation produces a new array via

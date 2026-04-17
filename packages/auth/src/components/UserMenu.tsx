@@ -29,6 +29,7 @@ export function UserMenu({
   onManageSubscription,
 }: UserMenuProps) {
   const user = useAuthStore((s) => s.user);
+  const isAnonymous = useAuthStore((s) => s.isAnonymous);
   const { syncStatus, lastSyncAt } = useSyncStore();
   const { preferences, updatePreferences } = useUserPreferences();
   const [open, setOpen] = useState(false);
@@ -65,7 +66,10 @@ export function UserMenu({
     return `${Math.floor(seconds / 86400)}d ago`;
   };
 
-  if (!user) return null;
+  // Anonymous Supabase sessions exist purely so RLS can scope chat threads
+  // to a uid; the UI should still treat them as not-signed-in (show the
+  // sign-in button instead of a user menu).
+  if (!user || isAnonymous) return null;
 
   const avatarUrl = user.user_metadata?.avatar_url;
   const initials =

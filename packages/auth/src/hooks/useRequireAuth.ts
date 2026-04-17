@@ -38,6 +38,8 @@ export type GatedFeature =
  */
 export function useRequireAuth(feature: GatedFeature) {
   const user = useAuthStore((s) => s.user);
+  const isAnonymous = useAuthStore((s) => s.isAnonymous);
+  const hasPermanentIdentity = !!user && !isAnonymous;
   const [showAuth, setShowAuth] = useState(false);
 
   const requireAuth = useCallback(
@@ -48,21 +50,20 @@ export function useRequireAuth(feature: GatedFeature) {
         return;
       }
 
-      // If user is signed in, run the callback
-      if (user) {
+      if (hasPermanentIdentity) {
         callback();
         return;
       }
 
-      // Otherwise, show auth modal
+      // Anon or no session: show the auth modal so they can upgrade.
       setShowAuth(true);
     },
-    [user]
+    [hasPermanentIdentity]
   );
 
   return {
     /** Whether user is currently authenticated (or auth is disabled) */
-    isAuthenticated: !isAuthEnabled() || !!user,
+    isAuthenticated: !isAuthEnabled() || hasPermanentIdentity,
     /** Wrapper that shows auth modal if not authenticated, otherwise runs callback */
     requireAuth,
     /** Whether to show the auth modal */

@@ -271,6 +271,9 @@ function RayTracingSubmenu() {
 export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen, children }: HeaderProps) {
   const isDirty = useDocumentStore((s) => s.isDirty);
   const user = useAuthStore((s) => s.user);
+  const isAnonymous = useAuthStore((s) => s.isAnonymous);
+  // "Has a permanent identity" — false for anon Supabase sessions.
+  const isSignedIn = !!user && !isAnonymous;
   const billingTier = useBillingStore((s) => s.snapshot?.tier ?? null);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [inputPrefsOpen, setInputPrefsOpen] = useState(false);
@@ -409,7 +412,7 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
                   onSelect={onShareOpen}
                   icon={LinkIcon}
                   iconClassName="text-sky-400"
-                  disabled={!user}
+                  disabled={!isSignedIn}
                 >
                   Share link…
                 </MenuItem>

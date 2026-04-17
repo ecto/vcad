@@ -225,6 +225,10 @@ export function DocumentPicker({
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
 
   const user = useAuthStore((s) => s.user);
+  const isAnonymous = useAuthStore((s) => s.isAnonymous);
+  // Anonymous sessions don't have cloud-synced documents — they exist only
+  // for chat-thread RLS scoping. Skip the cloud-list path for them.
+  const isCloudUser = !!user && !isAnonymous;
   const currentDocId = useDocumentStore((s) => s.documentId);
 
   // Track online/offline status
@@ -272,7 +276,7 @@ export function DocumentPicker({
       setStorageUsage(usage);
 
       // If signed in and online, also fetch cloud documents
-      if (user && !isOffline) {
+      if (isCloudUser && !isOffline) {
         setLoadingCloud(true);
         try {
           const cloudDocs = await listCloudDocuments();
@@ -291,7 +295,7 @@ export function DocumentPicker({
     } finally {
       setLoading(false);
     }
-  }, [user, isOffline]);
+  }, [isCloudUser, isOffline]);
 
   useEffect(() => {
     if (open) {
@@ -460,7 +464,7 @@ export function DocumentPicker({
               {loadingCloud && (
                 <SpinnerGap size={12} className="text-brand animate-spin" />
               )}
-              {isOffline && user && (
+              {isOffline && isCloudUser && (
                 <div className="flex items-center gap-1 text-[10px] text-text-muted" title="Offline - showing local documents only">
                   <WifiSlash size={12} />
                   Offline

@@ -46,6 +46,7 @@ export function FeatureGate({
   className,
 }: FeatureGateProps) {
   const user = useAuthStore((s) => s.user);
+  const isAnonymous = useAuthStore((s) => s.isAnonymous);
   const [showAuth, setShowAuth] = useState(false);
 
   // If auth not configured (self-hosted), allow all features
@@ -53,8 +54,8 @@ export function FeatureGate({
     return <>{children}</>;
   }
 
-  // User is signed in - render feature
-  if (user) {
+  // Anonymous Supabase sessions don't count as signed-in for gated features.
+  if (user && !isAnonymous) {
     return <>{children}</>;
   }
 

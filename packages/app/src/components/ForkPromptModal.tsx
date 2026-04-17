@@ -25,6 +25,10 @@ export function ForkPromptModal() {
   const [authOpen, setAuthOpen] = useState(false);
   const [waitingForSignIn, setWaitingForSignIn] = useState(false);
   const user = useAuthStore((s) => s.user);
+  const isAnonymous = useAuthStore((s) => s.isAnonymous);
+  // Anon sessions don't count as "signed in" for the fork-prompt flow:
+  // forking a shared document still requires linking a permanent identity.
+  const isSignedIn = !!user && !isAnonymous;
   const readOnlyShare = useUiStore((s) => s.readOnlyShare);
   const setReadOnlyShare = useUiStore((s) => s.setReadOnlyShare);
 
@@ -40,13 +44,13 @@ export function ForkPromptModal() {
   // When the user signs in while we're waiting, clear the read-only flag and
   // the doc becomes editable.
   useEffect(() => {
-    if (waitingForSignIn && user) {
+    if (waitingForSignIn && isSignedIn) {
       setReadOnlyShare(null);
       setWaitingForSignIn(false);
       setAuthOpen(false);
       setOpen(false);
     }
-  }, [waitingForSignIn, user, setReadOnlyShare]);
+  }, [waitingForSignIn, isSignedIn, setReadOnlyShare]);
 
   const handleSignInClick = () => {
     setWaitingForSignIn(true);
