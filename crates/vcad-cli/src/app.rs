@@ -1194,39 +1194,23 @@ impl App {
                 self.set_status(format!("Theme: {name}"));
             }
             "camera_iso" => {
-                self.camera.set_orbit(
-                    45.0,
-                    30.0,
-                    100.0,
-                    crate::render::Vec3::new(0.0, 0.0, 0.0),
-                );
+                self.camera
+                    .set_orbit(45.0, 30.0, 100.0, crate::render::Vec3::new(0.0, 0.0, 0.0));
                 self.set_status("Isometric view");
             }
             "camera_top" => {
-                self.camera.set_orbit(
-                    0.0,
-                    89.0,
-                    100.0,
-                    crate::render::Vec3::new(0.0, 0.0, 0.0),
-                );
+                self.camera
+                    .set_orbit(0.0, 89.0, 100.0, crate::render::Vec3::new(0.0, 0.0, 0.0));
                 self.set_status("Top view");
             }
             "camera_front" => {
-                self.camera.set_orbit(
-                    0.0,
-                    0.0,
-                    100.0,
-                    crate::render::Vec3::new(0.0, 0.0, 0.0),
-                );
+                self.camera
+                    .set_orbit(0.0, 0.0, 100.0, crate::render::Vec3::new(0.0, 0.0, 0.0));
                 self.set_status("Front view");
             }
             "camera_right" => {
-                self.camera.set_orbit(
-                    90.0,
-                    0.0,
-                    100.0,
-                    crate::render::Vec3::new(0.0, 0.0, 0.0),
-                );
+                self.camera
+                    .set_orbit(90.0, 0.0, 100.0, crate::render::Vec3::new(0.0, 0.0, 0.0));
                 self.set_status("Right view");
             }
             "camera_fit" => {

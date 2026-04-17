@@ -3,9 +3,7 @@
 use std::collections::HashMap;
 use std::f64::consts::PI;
 
-use vcad_kernel_geom::{
-    BilinearSurface, Circle3d, CylinderSurface, GeometryStore, Line3d, Plane,
-};
+use vcad_kernel_geom::{BilinearSurface, Circle3d, CylinderSurface, GeometryStore, Line3d, Plane};
 use vcad_kernel_math::{Dir3, Point2, Point3, Vec3};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_topo::{HalfEdgeId, Orientation, ShellType, Topology, VertexId};
@@ -288,9 +286,7 @@ fn detect_axial_full_circle(profile: &SketchProfile, direction: Vec3) -> Option<
         }
         let r_start = (start - center).norm();
         let r_end = (end - center).norm();
-        if (r_start - ref_radius).abs() > radius_tol
-            || (r_end - ref_radius).abs() > radius_tol
-        {
+        if (r_start - ref_radius).abs() > radius_tol || (r_end - ref_radius).abs() > radius_tol {
             return None;
         }
 
@@ -1017,8 +1013,7 @@ mod tests {
                 ccw: false,
             },
         ];
-        let profile =
-            SketchProfile::new(Point3::origin(), Vec3::x(), Vec3::y(), segments).unwrap();
+        let profile = SketchProfile::new(Point3::origin(), Vec3::x(), Vec3::y(), segments).unwrap();
 
         let solid = extrude(&profile, Vec3::new(0.0, 0.0, h)).unwrap();
 

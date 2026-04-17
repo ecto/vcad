@@ -88,8 +88,7 @@ pub fn plan_chat_tool(tool: &str, args_json: &str, doc_json: &str) -> String {
 /// produces via `vcad_chat::build_system_prompt` for the same inputs.
 #[wasm_bindgen]
 pub fn build_chat_system_prompt(parts_json: &str, selection_json: &str) -> String {
-    let parts: Vec<vcad_chat::PartInfo> =
-        serde_json::from_str(parts_json).unwrap_or_default();
+    let parts: Vec<vcad_chat::PartInfo> = serde_json::from_str(parts_json).unwrap_or_default();
     let selection: Vec<vcad_chat::SelectionInfo> =
         serde_json::from_str(selection_json).unwrap_or_default();
     vcad_chat::build_system_prompt(&parts, &selection)

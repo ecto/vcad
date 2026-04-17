@@ -156,9 +156,7 @@ pub fn chat_rect(area: Rect) -> Rect {
     let width = SIDEBAR_WIDTH.min(max_width);
     let x = area.x + area.width.saturating_sub(width);
     let y = area.y + TOP_OFFSET;
-    let height = area
-        .height
-        .saturating_sub(TOP_OFFSET + BOTTOM_OFFSET);
+    let height = area.height.saturating_sub(TOP_OFFSET + BOTTOM_OFFSET);
     Rect::new(x, y, width, height)
 }
 
@@ -465,8 +463,8 @@ pub fn draw_chat(buf: &mut CellBuffer, panel: &ChatPanel, in_flight: bool, area:
 /// every 80 ms so the animation is visible but not frantic.
 fn spinner_frame() -> char {
     const FRAMES: &[char] = &[
-        '\u{280B}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283C}',
-        '\u{2834}', '\u{2826}', '\u{2827}', '\u{2807}', '\u{280F}',
+        '\u{280B}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283C}', '\u{2834}', '\u{2826}',
+        '\u{2827}', '\u{2807}', '\u{280F}',
     ];
     let ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

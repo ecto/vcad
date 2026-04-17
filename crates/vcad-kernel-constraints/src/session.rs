@@ -130,7 +130,11 @@ impl SketchPlane {
             return None;
         }
         let o = self.origin();
-        let diff = [o[0] - ray_origin[0], o[1] - ray_origin[1], o[2] - ray_origin[2]];
+        let diff = [
+            o[0] - ray_origin[0],
+            o[1] - ray_origin[1],
+            o[2] - ray_origin[2],
+        ];
         let t = dot(diff, n) / denom;
         if !t.is_finite() {
             return None;
@@ -604,7 +608,13 @@ impl SketchSession {
 
     /// Add an arc defined by start, end, and center (with explicit winding).
     /// Returns its segment index.
-    pub fn add_arc(&mut self, start: [f64; 2], end: [f64; 2], center: [f64; 2], ccw: bool) -> usize {
+    pub fn add_arc(
+        &mut self,
+        start: [f64; 2],
+        end: [f64; 2],
+        center: [f64; 2],
+        ccw: bool,
+    ) -> usize {
         let s = self.sketch.add_point(start[0], start[1]);
         let e = self.sketch.add_point(end[0], end[1]);
         let c = self.sketch.add_point(center[0], center[1]);
@@ -641,9 +651,10 @@ impl SketchSession {
             if let SketchEntity::Point(p) = entity {
                 let x = self.sketch.parameters[p.param_x];
                 let y = self.sketch.parameters[p.param_y];
-                if !pts.iter().any(|q: &[f64; 2]| {
-                    (q[0] - x).abs() < 0.01 && (q[1] - y).abs() < 0.01
-                }) {
+                if !pts
+                    .iter()
+                    .any(|q: &[f64; 2]| (q[0] - x).abs() < 0.01 && (q[1] - y).abs() < 0.01)
+                {
                     pts.push([x, y]);
                 }
             }
@@ -715,9 +726,7 @@ impl SketchSession {
                     let r = distance(center, view.start);
                     (distance([x, y], center) - r).abs()
                 }
-                SegmentKind::Circle { center, radius } => {
-                    (distance([x, y], center) - radius).abs()
-                }
+                SegmentKind::Circle { center, radius } => (distance([x, y], center) - radius).abs(),
             };
             if d < tolerance && best.is_none_or(|(_, bd)| d < bd) {
                 best = Some((view.index, d));
@@ -925,10 +934,7 @@ fn point_segment_distance(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
 impl SketchSession {
     /// Return the `EntityRef`s for a line entity's endpoints. Used by tests
     /// that want to assert constraints against specific points.
-    pub(crate) fn line_endpoints_refs(
-        &self,
-        line: EntityId,
-    ) -> Option<(EntityRef, EntityRef)> {
+    pub(crate) fn line_endpoints_refs(&self, line: EntityId) -> Option<(EntityRef, EntityRef)> {
         let SketchEntity::Line(l) = self.sketch.entities.get(line)? else {
             return None;
         };
@@ -1119,4 +1125,3 @@ mod tests {
         assert_eq!(s.exit_status(), ExitStatus::HasSegments);
     }
 }
-

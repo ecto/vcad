@@ -106,10 +106,7 @@ pub enum ToolOutcome {
     /// Merge partial params into an existing node's op. The applier
     /// handles the serde roundtrip (web can also dispatch per-field via
     /// `setFeatureParam`).
-    UpdateParams {
-        node_id: String,
-        params: Value,
-    },
+    UpdateParams { node_id: String, params: Value },
     /// Remove a part and its root node from the document.
     RemovePart { part_id: String },
     /// Assign a material preset to a part's scene entry.
@@ -171,10 +168,7 @@ pub fn plan_crud(tool: &str, args: &Value, doc: &Document) -> PlannedResponse {
 /// The web's CRDT-backed docstore uses its own applier that dispatches
 /// through `engine.add_feature` etc.; this function is for every other
 /// frontend that mutates a `vcad_ir::Document` directly.
-pub fn apply_outcome(
-    doc: &mut Document,
-    outcome: &ToolOutcome,
-) -> Result<ApplyResult, String> {
+pub fn apply_outcome(doc: &mut Document, outcome: &ToolOutcome) -> Result<ApplyResult, String> {
     match outcome {
         ToolOutcome::AddFeature {
             op,
@@ -340,7 +334,10 @@ fn plan_create(args: &Value, _doc: &Document) -> PlannedResponse {
         .get("params")
         .cloned()
         .unwrap_or_else(|| Value::Object(Map::new()));
-    let name = args.get("name").and_then(|v| v.as_str()).map(str::to_string);
+    let name = args
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
     let parent_part_id = args
         .get("parent_part_id")
         .and_then(|v| v.as_str())
@@ -430,9 +427,7 @@ fn execute_read_inner(args: &Value, doc: &Document) -> ExecutionResult {
             let mut lines = vec![format!("{} parts:", doc.roots.len())];
             for entry in &doc.roots {
                 let node = doc.nodes.get(&entry.root);
-                let name = node
-                    .and_then(|n| n.name.as_deref())
-                    .unwrap_or("(unnamed)");
+                let name = node.and_then(|n| n.name.as_deref()).unwrap_or("(unnamed)");
                 let kind = node
                     .map(|n| variant_name(&n.op))
                     .unwrap_or_else(|| "unknown".to_string());
@@ -871,7 +866,11 @@ mod tests {
         assert!(res.result.contains("Created cube"));
         let outcome = res.outcome.expect("create should produce an outcome");
         match outcome {
-            ToolOutcome::AddFeature { op, name, parent_part_id } => {
+            ToolOutcome::AddFeature {
+                op,
+                name,
+                parent_part_id,
+            } => {
                 assert!(matches!(op, CsgOp::Cube { .. }));
                 assert_eq!(name.as_deref(), Some("PlanCube"));
                 assert_eq!(parent_part_id, None);
@@ -1085,7 +1084,12 @@ mod tests {
             }),
             &mut doc,
         );
-        assert_eq!(res.status, ExecutionStatus::Success, "fillet: {}", res.result);
+        assert_eq!(
+            res.status,
+            ExecutionStatus::Success,
+            "fillet: {}",
+            res.result
+        );
         let fillet_nid: NodeId = res.node_id.unwrap().parse().unwrap();
         // Scene root should now be the fillet, not the cube.
         assert_eq!(doc.roots.len(), 1);
@@ -1136,6 +1140,11 @@ mod tests {
             }),
             &mut doc,
         );
-        assert_eq!(cp.status, ExecutionStatus::Success, "circular: {}", cp.result);
+        assert_eq!(
+            cp.status,
+            ExecutionStatus::Success,
+            "circular: {}",
+            cp.result
+        );
     }
 }

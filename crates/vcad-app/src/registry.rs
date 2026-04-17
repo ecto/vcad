@@ -127,8 +127,8 @@ impl KeybindingRegistry {
                 }
             }
             // Rank = specificity×2 + has_when (gated beats fallback).
-            let rank =
-                cmd.mode_scope.specificity() as i32 * 2 + self.when_exprs.contains_key(cmd.id) as i32;
+            let rank = cmd.mode_scope.specificity() as i32 * 2
+                + self.when_exprs.contains_key(cmd.id) as i32;
             match best {
                 None => best = Some((cmd.id, rank)),
                 Some((_, br)) if rank > br => best = Some((cmd.id, rank)),
@@ -298,9 +298,6 @@ mod tests {
         let json = r#"{"overrides":{"save":"NotAChord+???"}}"#;
         reg.load_overrides(json).unwrap();
         // `save` still has its default.
-        assert_eq!(
-            reg.chord_for("save"),
-            Some(Chord::primary(Key::Char('s'))),
-        );
+        assert_eq!(reg.chord_for("save"), Some(Chord::primary(Key::Char('s'))),);
     }
 }

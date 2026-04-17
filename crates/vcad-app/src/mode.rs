@@ -133,8 +133,6 @@ mod tests {
         assert!(ModeScope::Global.matches(AppMode::Sketch));
         assert!(ModeScope::Mode(AppMode::Sketch).matches(AppMode::Sketch));
         assert!(!ModeScope::Mode(AppMode::Sketch).matches(AppMode::Normal));
-        assert!(
-            ModeScope::Modes(&[AppMode::Normal, AppMode::Assembly]).matches(AppMode::Assembly)
-        );
+        assert!(ModeScope::Modes(&[AppMode::Normal, AppMode::Assembly]).matches(AppMode::Assembly));
     }
 }

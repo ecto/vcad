@@ -169,13 +169,11 @@ fn draw_cursor_segment(buf: &mut CellBuffer, app: &App, x_start: u16, y: u16, wi
     let mut cx = x_start;
 
     for (axis_char, value) in ["x", "y", "z"].iter().enumerate().map(|(i, a)| {
-        let v = app
-            .cursor_world
-            .map(|c| match i {
-                0 => c.0,
-                1 => c.1,
-                _ => c.2,
-            });
+        let v = app.cursor_world.map(|c| match i {
+            0 => c.0,
+            1 => c.1,
+            _ => c.2,
+        });
         (*a, v)
     }) {
         // "x" in pink + space + number in text (or placeholder).
@@ -228,7 +226,10 @@ fn draw_right_segment(buf: &mut CellBuffer, app: &App, area: Rect, y: u16) -> u1
         theme::TEXT_MUTED()
     };
 
-    let parts_text = format!("{parts_count} {}", if parts_count == 1 { "part" } else { "parts" });
+    let parts_text = format!(
+        "{parts_count} {}",
+        if parts_count == 1 { "part" } else { "parts" }
+    );
     let sel_text = if sel_count > 0 {
         format!("{sel_count} sel")
     } else {
@@ -283,7 +284,13 @@ mod tests {
     fn test_format_ago() {
         let now = Instant::now();
         assert_eq!(format_ago(now, now), "now");
-        assert_eq!(format_ago(now - std::time::Duration::from_secs(5), now), "5s");
-        assert_eq!(format_ago(now - std::time::Duration::from_secs(120), now), "2m");
+        assert_eq!(
+            format_ago(now - std::time::Duration::from_secs(5), now),
+            "5s"
+        );
+        assert_eq!(
+            format_ago(now - std::time::Duration::from_secs(120), now),
+            "2m"
+        );
     }
 }

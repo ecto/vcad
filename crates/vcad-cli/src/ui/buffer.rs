@@ -271,14 +271,7 @@ pub fn set_char(buf: &mut CellBuffer, x: u16, y: u16, ch: char, fg: Color, bg: C
 }
 
 /// Helper: set an underlined character. Used by menu-bar accelerators.
-pub fn set_char_underline(
-    buf: &mut CellBuffer,
-    x: u16,
-    y: u16,
-    ch: char,
-    fg: Color,
-    bg: Color,
-) {
+pub fn set_char_underline(buf: &mut CellBuffer, x: u16, y: u16, ch: char, fg: Color, bg: Color) {
     if let Some(cell) = buf.cell_mut(x, y) {
         cell.ch = safe_glyph(ch);
         cell.fg = fg;

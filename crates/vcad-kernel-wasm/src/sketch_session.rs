@@ -182,20 +182,31 @@ fn parse_tool(name: &str) -> Option<SketchTool> {
 /// Convert a session [`SegmentKind`] plus endpoints into a [`WireSegment`].
 /// Circles are emitted as four quarter-arcs to match the existing IR /
 /// TypeScript shape, which only knows about lines and arcs.
-fn segment_to_wire(
-    kind: &SegmentKind,
-    start: [f64; 2],
-    end: [f64; 2],
-) -> Vec<WireSegment> {
+fn segment_to_wire(kind: &SegmentKind, start: [f64; 2], end: [f64; 2]) -> Vec<WireSegment> {
     match *kind {
         SegmentKind::Line => vec![WireSegment::Line {
-            start: WireVec2 { x: start[0], y: start[1] },
-            end: WireVec2 { x: end[0], y: end[1] },
+            start: WireVec2 {
+                x: start[0],
+                y: start[1],
+            },
+            end: WireVec2 {
+                x: end[0],
+                y: end[1],
+            },
         }],
         SegmentKind::Arc { center, ccw } => vec![WireSegment::Arc {
-            start: WireVec2 { x: start[0], y: start[1] },
-            end: WireVec2 { x: end[0], y: end[1] },
-            center: WireVec2 { x: center[0], y: center[1] },
+            start: WireVec2 {
+                x: start[0],
+                y: start[1],
+            },
+            end: WireVec2 {
+                x: end[0],
+                y: end[1],
+            },
+            center: WireVec2 {
+                x: center[0],
+                y: center[1],
+            },
             ccw,
         }],
         SegmentKind::Circle { center, radius } => {
@@ -204,18 +215,15 @@ fn segment_to_wire(
                 .map(|i| {
                     let a0 = (i as f64) * std::f64::consts::TAU / (n as f64);
                     let a1 = ((i + 1) as f64) * std::f64::consts::TAU / (n as f64);
-                    let s = [
-                        center[0] + radius * a0.cos(),
-                        center[1] + radius * a0.sin(),
-                    ];
-                    let e = [
-                        center[0] + radius * a1.cos(),
-                        center[1] + radius * a1.sin(),
-                    ];
+                    let s = [center[0] + radius * a0.cos(), center[1] + radius * a0.sin()];
+                    let e = [center[0] + radius * a1.cos(), center[1] + radius * a1.sin()];
                     WireSegment::Arc {
                         start: WireVec2 { x: s[0], y: s[1] },
                         end: WireVec2 { x: e[0], y: e[1] },
-                        center: WireVec2 { x: center[0], y: center[1] },
+                        center: WireVec2 {
+                            x: center[0],
+                            y: center[1],
+                        },
                         ccw: true,
                     }
                 })
@@ -271,18 +279,24 @@ enum WirePlane {
 }
 
 fn parse_plane(s: &str) -> Result<SketchPlane, JsError> {
-    let wire: WirePlane = serde_json::from_str(s)
-        .map_err(|e| JsError::new(&format!("invalid plane JSON: {e}")))?;
+    let wire: WirePlane =
+        serde_json::from_str(s).map_err(|e| JsError::new(&format!("invalid plane JSON: {e}")))?;
     Ok(match wire {
         WirePlane::Named(name) => match name.as_str() {
             "XY" => SketchPlane::XY,
             "XZ" => SketchPlane::XZ,
             "YZ" => SketchPlane::YZ,
             other => {
-                return Err(JsError::new(&format!("unknown axis-aligned plane: {other}")));
+                return Err(JsError::new(&format!(
+                    "unknown axis-aligned plane: {other}"
+                )));
             }
         },
-        WirePlane::Arbitrary { origin, x_dir, y_dir } => SketchPlane::Custom {
+        WirePlane::Arbitrary {
+            origin,
+            x_dir,
+            y_dir,
+        } => SketchPlane::Custom {
             origin,
             x_dir,
             y_dir,
@@ -338,19 +352,18 @@ fn wire_ref_to_kernel(session: &SketchSession, r: WireEntityRef) -> Option<Entit
             None
         }
     };
-    let lookup_arc_endpoint =
-        |index: usize, role: ArcEndpoint| -> Option<EntityRef> {
-            let id = session.segment_entity(index)?;
-            if let SketchEntity::Arc(a) = session.sketch().entities.get(id)? {
-                Some(EntityRef::Point(match role {
-                    ArcEndpoint::Start => a.start,
-                    ArcEndpoint::End => a.end,
-                    ArcEndpoint::Center => a.center,
-                }))
-            } else {
-                None
-            }
-        };
+    let lookup_arc_endpoint = |index: usize, role: ArcEndpoint| -> Option<EntityRef> {
+        let id = session.segment_entity(index)?;
+        if let SketchEntity::Arc(a) = session.sketch().entities.get(id)? {
+            Some(EntityRef::Point(match role {
+                ArcEndpoint::Start => a.start,
+                ArcEndpoint::End => a.end,
+                ArcEndpoint::Center => a.center,
+            }))
+        } else {
+            None
+        }
+    };
     match r {
         // TS `Point` refers to a segment index — by convention we treat
         // "point index N" as "start of segment N" so existing sketch-store
@@ -389,8 +402,7 @@ fn wire_constraint_to_kernel(
             .ok_or_else(|| format!("cannot resolve entity ref {:?}", r_debug(r)))
     };
     let resolve_line = |idx: usize| -> Result<EntityId, String> {
-        wire_segment_to_entity(session, idx)
-            .ok_or_else(|| format!("segment {idx} not found"))
+        wire_segment_to_entity(session, idx).ok_or_else(|| format!("segment {idx} not found"))
     };
     Ok(match c {
         WireConstraint::Coincident { point_a, point_b } => Constraint::Coincident {
@@ -523,15 +535,7 @@ impl WasmSketchSession {
 
     /// Update the cursor from a world-space ray (e.g. camera pick ray).
     #[wasm_bindgen(js_name = onCursorRay)]
-    pub fn on_cursor_ray(
-        &mut self,
-        ox: f64,
-        oy: f64,
-        oz: f64,
-        dx: f64,
-        dy: f64,
-        dz: f64,
-    ) {
+    pub fn on_cursor_ray(&mut self, ox: f64, oy: f64, oz: f64, dx: f64, dy: f64, dz: f64) {
         self.inner.on_cursor_ray([ox, oy, oz], [dx, dy, dz]);
     }
 
@@ -597,8 +601,7 @@ impl WasmSketchSession {
     pub fn add_constraint(&mut self, json: &str) -> Result<(), JsError> {
         let wire: WireConstraint = serde_json::from_str(json)
             .map_err(|e| JsError::new(&format!("constraint JSON: {e}")))?;
-        let kernel = wire_constraint_to_kernel(&self.inner, wire)
-            .map_err(|e| JsError::new(&e))?;
+        let kernel = wire_constraint_to_kernel(&self.inner, wire).map_err(|e| JsError::new(&e))?;
         self.inner.add_constraint(kernel);
         Ok(())
     }
@@ -665,8 +668,7 @@ pub fn sketch_plane_basis(plane_json: &str) -> Result<String, JsError> {
         y_dir: plane.y_dir(),
         normal: plane.normal(),
     };
-    serde_json::to_string(&basis)
-        .map_err(|e| JsError::new(&format!("basis serialize: {e}")))
+    serde_json::to_string(&basis).map_err(|e| JsError::new(&format!("basis serialize: {e}")))
 }
 
 /// Project a 3D world-space point onto a plane, returning 2D sketch
@@ -680,8 +682,7 @@ pub fn sketch_world_to_sketch(
 ) -> Result<String, JsError> {
     let plane = parse_plane(plane_json)?;
     let [sx, sy] = plane.world_to_sketch([wx, wy, wz]);
-    serde_json::to_string(&[sx, sy])
-        .map_err(|e| JsError::new(&format!("serialize: {e}")))
+    serde_json::to_string(&[sx, sy]).map_err(|e| JsError::new(&format!("serialize: {e}")))
 }
 
 /// Convert 2D sketch coordinates to a 3D world-space point, returning
@@ -708,8 +709,9 @@ pub fn sketch_plane_intersect_ray(
 ) -> Result<String, JsError> {
     let plane = parse_plane(plane_json)?;
     match plane.intersect_ray([ox, oy, oz], [dx, dy, dz]) {
-        Some([x, y]) => serde_json::to_string(&[x, y])
-            .map_err(|e| JsError::new(&format!("serialize: {e}"))),
+        Some([x, y]) => {
+            serde_json::to_string(&[x, y]).map_err(|e| JsError::new(&format!("serialize: {e}")))
+        }
         None => Ok("null".to_string()),
     }
 }
@@ -966,8 +968,14 @@ mod tests {
                 .expect("segment after solve");
             match original {
                 WireSegment::Line { .. } => out.push(WireSegment::Line {
-                    start: WireVec2 { x: view.start[0], y: view.start[1] },
-                    end: WireVec2 { x: view.end[0], y: view.end[1] },
+                    start: WireVec2 {
+                        x: view.start[0],
+                        y: view.start[1],
+                    },
+                    end: WireVec2 {
+                        x: view.end[0],
+                        y: view.end[1],
+                    },
                 }),
                 WireSegment::Arc { ccw, .. } => {
                     let center = match view.kind {
@@ -975,9 +983,18 @@ mod tests {
                         _ => [0.0, 0.0],
                     };
                     out.push(WireSegment::Arc {
-                        start: WireVec2 { x: view.start[0], y: view.start[1] },
-                        end: WireVec2 { x: view.end[0], y: view.end[1] },
-                        center: WireVec2 { x: center[0], y: center[1] },
+                        start: WireVec2 {
+                            x: view.start[0],
+                            y: view.start[1],
+                        },
+                        end: WireVec2 {
+                            x: view.end[0],
+                            y: view.end[1],
+                        },
+                        center: WireVec2 {
+                            x: center[0],
+                            y: center[1],
+                        },
                         ccw: *ccw,
                     });
                 }
@@ -1014,7 +1031,10 @@ mod tests {
         assert!((y0 - y1).abs() < 1e-6, "line 0 should be horizontal");
         let x0 = seg0["start"]["x"].as_f64().unwrap();
         let x1 = seg0["end"]["x"].as_f64().unwrap();
-        assert!((x1 - x0 - 10.0).abs() < 1e-6, "line 0 should have length 10");
+        assert!(
+            (x1 - x0 - 10.0).abs() < 1e-6,
+            "line 0 should have length 10"
+        );
     }
 
     #[test]
@@ -1032,11 +1052,9 @@ mod tests {
         assert_eq!(sw, "[3.0,4.0,0.0]");
 
         // Ray intersect
-        let hit =
-            sketch_plane_intersect_ray("\"XY\"", 2.0, 3.0, 5.0, 0.0, 0.0, -1.0).unwrap();
+        let hit = sketch_plane_intersect_ray("\"XY\"", 2.0, 3.0, 5.0, 0.0, 0.0, -1.0).unwrap();
         assert_eq!(hit, "[2.0,3.0]");
-        let miss =
-            sketch_plane_intersect_ray("\"XY\"", 0.0, 0.0, 5.0, 1.0, 0.0, 0.0).unwrap();
+        let miss = sketch_plane_intersect_ray("\"XY\"", 0.0, 0.0, 5.0, 1.0, 0.0, 0.0).unwrap();
         assert_eq!(miss, "null");
     }
 

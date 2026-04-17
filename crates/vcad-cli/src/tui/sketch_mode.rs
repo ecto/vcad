@@ -72,10 +72,7 @@ impl SketchModeState {
         if views.is_empty() {
             return None;
         }
-        let segments: Vec<SketchSegment2D> = views
-            .iter()
-            .flat_map(segment_view_to_ir)
-            .collect();
+        let segments: Vec<SketchSegment2D> = views.iter().flat_map(segment_view_to_ir).collect();
         let plane = self.session.plane();
         let o = plane.origin();
         let x = plane.x_dir();

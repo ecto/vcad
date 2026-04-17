@@ -104,9 +104,7 @@ impl Drop for Capture {
 }
 
 #[cfg(unix)]
-fn redirect_stderr(
-    tx: Sender<CapturedLine>,
-) -> std::io::Result<std::os::fd::OwnedFd> {
+fn redirect_stderr(tx: Sender<CapturedLine>) -> std::io::Result<std::os::fd::OwnedFd> {
     use std::io::{BufRead, BufReader};
     use std::os::fd::{FromRawFd, OwnedFd};
 
@@ -171,11 +169,7 @@ fn format_panic(info: &std::panic::PanicHookInfo<'_>) -> String {
         .payload()
         .downcast_ref::<&str>()
         .copied()
-        .or_else(|| {
-            info.payload()
-                .downcast_ref::<String>()
-                .map(|s| s.as_str())
-        })
+        .or_else(|| info.payload().downcast_ref::<String>().map(|s| s.as_str()))
         .unwrap_or("<non-string panic>");
     let thread = std::thread::current()
         .name()

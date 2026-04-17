@@ -61,23 +61,31 @@ pub fn evaluate_document(
         // instead of aborting the whole scene. AssertUnwindSafe is safe
         // here: cache/timings populated for earlier nodes stay valid
         // even if this root's evaluation panics mid-way.
-        let eval_outcome = catch_unwind(AssertUnwindSafe(|| -> Result<(EvaluatedMesh, Option<Solid>), EvalError> {
-            match evaluate_node_timed(entry.root, &doc.nodes, &mut cache, clock, &mut node_timings)? {
-                Some(s) => {
-                    let t_mesh = clock.map(|c| c.now_ms());
-                    let tri = s.to_mesh(32);
-                    if let Some(t0) = t_mesh {
-                        let ms = clock.unwrap().now_ms() - t0;
-                        tessellate_ms += ms;
-                        if let Some(nt) = node_timings.get_mut(&entry.root.to_string()) {
-                            nt.mesh_ms = ms;
+        let eval_outcome = catch_unwind(AssertUnwindSafe(
+            || -> Result<(EvaluatedMesh, Option<Solid>), EvalError> {
+                match evaluate_node_timed(
+                    entry.root,
+                    &doc.nodes,
+                    &mut cache,
+                    clock,
+                    &mut node_timings,
+                )? {
+                    Some(s) => {
+                        let t_mesh = clock.map(|c| c.now_ms());
+                        let tri = s.to_mesh(32);
+                        if let Some(t0) = t_mesh {
+                            let ms = clock.unwrap().now_ms() - t0;
+                            tessellate_ms += ms;
+                            if let Some(nt) = node_timings.get_mut(&entry.root.to_string()) {
+                                nt.mesh_ms = ms;
+                            }
                         }
+                        Ok((tri_to_evaluated(&tri), Some(s)))
                     }
-                    Ok((tri_to_evaluated(&tri), Some(s)))
+                    None => Ok((EvaluatedMesh::empty(), None)),
                 }
-                None => Ok((EvaluatedMesh::empty(), None)),
-            }
-        }));
+            },
+        ));
 
         match eval_outcome {
             Ok(Ok((mesh, solid))) => {
@@ -130,25 +138,26 @@ pub fn evaluate_document(
             let mut part_def_meshes: HashMap<String, EvaluatedMesh> = HashMap::new();
 
             for (id, part_def) in pd_map {
-                let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<EvaluatedMesh, EvalError> {
-                    match evaluate_node_timed(
-                        part_def.root,
-                        &doc.nodes,
-                        &mut cache,
-                        clock,
-                        &mut node_timings,
-                    )? {
-                        Some(s) => {
-                            let t_mesh = clock.map(|c| c.now_ms());
-                            let tri = s.to_mesh(32);
-                            if let Some(t0) = t_mesh {
-                                tessellate_ms += clock.unwrap().now_ms() - t0;
+                let outcome =
+                    catch_unwind(AssertUnwindSafe(|| -> Result<EvaluatedMesh, EvalError> {
+                        match evaluate_node_timed(
+                            part_def.root,
+                            &doc.nodes,
+                            &mut cache,
+                            clock,
+                            &mut node_timings,
+                        )? {
+                            Some(s) => {
+                                let t_mesh = clock.map(|c| c.now_ms());
+                                let tri = s.to_mesh(32);
+                                if let Some(t0) = t_mesh {
+                                    tessellate_ms += clock.unwrap().now_ms() - t0;
+                                }
+                                Ok(tri_to_evaluated(&tri))
                             }
-                            Ok(tri_to_evaluated(&tri))
+                            None => Ok(EvaluatedMesh::empty()),
                         }
-                        None => Ok(EvaluatedMesh::empty()),
-                    }
-                }));
+                    }));
                 let mesh = match outcome {
                     Ok(Ok(m)) => m,
                     Ok(Err(err)) => {

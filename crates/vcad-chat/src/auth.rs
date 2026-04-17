@@ -45,7 +45,8 @@ pub enum AuthError {
 
 /// Absolute path to the token file.
 pub fn token_path() -> Result<PathBuf, AuthError> {
-    let dirs = directories::ProjectDirs::from("io", "vcad", "vcad").ok_or(AuthError::NoConfigDir)?;
+    let dirs =
+        directories::ProjectDirs::from("io", "vcad", "vcad").ok_or(AuthError::NoConfigDir)?;
     Ok(dirs.config_dir().join("token.json"))
 }
 

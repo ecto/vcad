@@ -170,10 +170,7 @@ pub fn start_chat_turn(app: &mut App) -> Result<()> {
 
     // Auth token — anonymous is allowed (3 messages/day via IP), but if a
     // token exists we use it so the per-user quota applies.
-    let bearer = load_token()
-        .ok()
-        .flatten()
-        .map(|t| t.access_token);
+    let bearer = load_token().ok().flatten().map(|t| t.access_token);
 
     let endpoint =
         std::env::var("VCAD_CHAT_ENDPOINT").unwrap_or_else(|_| DEFAULT_ENDPOINT.to_string());
@@ -590,14 +587,12 @@ pub fn rehydrate_display(app: &mut App, messages: &[ChatMessage]) {
                                 MessageRole::User => ChatLineKind::User,
                                 MessageRole::Assistant => ChatLineKind::Assistant,
                             };
-                            app.chat.lines.push(crate::ui::chat::ChatLine {
-                                text,
-                                kind,
-                            });
+                            app.chat
+                                .lines
+                                .push(crate::ui::chat::ChatLine { text, kind });
                         }
                         "tool_use" => {
-                            let name =
-                                obj.get("name").and_then(|v| v.as_str()).unwrap_or("tool");
+                            let name = obj.get("name").and_then(|v| v.as_str()).unwrap_or("tool");
                             app.chat.debug(format!("\u{2726} {name}"));
                         }
                         "tool_result" => {
@@ -640,10 +635,7 @@ fn selection_from_app(app: &App) -> Vec<SelectionInfo> {
                 .to_string();
             Some(SelectionInfo {
                 part_id: nid.to_string(),
-                part_name: node
-                    .name
-                    .clone()
-                    .unwrap_or_else(|| format!("part {nid}")),
+                part_name: node.name.clone().unwrap_or_else(|| format!("part {nid}")),
                 geometry_type,
             })
         })

@@ -114,7 +114,10 @@ pub fn build_system_prompt(parts: &[PartInfo], selection: &[SelectionInfo]) -> S
     if !parts.is_empty() {
         out.push_str("\n## Current Document\nParts:\n");
         for part in parts {
-            out.push_str(&format!("- {} \"{}\" [{}]\n", part.id, part.name, part.kind));
+            out.push_str(&format!(
+                "- {} \"{}\" [{}]\n",
+                part.id, part.name, part.kind
+            ));
             for node in &part.nodes {
                 let params_str = format_params(&node.params);
                 out.push_str(&format!(

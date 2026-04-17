@@ -535,8 +535,7 @@ pub fn handle_mouse(
             let viewport_h = area.height.saturating_sub(top_chrome + bot_chrome);
             let in_viewport = row >= area.y + top_chrome
                 && row < area.y + top_chrome + viewport_h
-                && !(app.chat.open
-                    && col >= crate::ui::chat::chat_rect(area).x);
+                && !(app.chat.open && col >= crate::ui::chat::chat_rect(area).x);
             app.cursor_world = if in_viewport {
                 crate::raycast::raycast_ground_plane(
                     &app.camera,
@@ -852,184 +851,184 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
             }
 
             match key.code {
-            // Menu bar: Esc closes an open dropdown before anything else.
-            KeyCode::Esc if app.menu_state.is_open() => {
-                app.menu_state.close();
-            }
-            // Alt+F/E/V/T/H opens the corresponding top-level menu.
-            KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::ALT) => {
-                if let Some(idx) = crate::ui::menu::accelerator_to_menu(c) {
-                    app.menu_state.open_menu(idx);
-                }
-            }
-            // Arrow keys navigate an open menu; Enter runs the focused item.
-            KeyCode::Down if app.menu_state.is_open() => {
-                let open_idx = app.menu_state.open.unwrap();
-                let items = crate::ui::menu::MENUS[open_idx].items;
-                let mut next = app.menu_state.focused_item + 1;
-                while next < items.len()
-                    && matches!(items[next], crate::ui::menu::MenuItem::Separator)
-                {
-                    next += 1;
-                }
-                if next < items.len() {
-                    app.menu_state.focused_item = next;
-                }
-            }
-            KeyCode::Up if app.menu_state.is_open() => {
-                let open_idx = app.menu_state.open.unwrap();
-                let items = crate::ui::menu::MENUS[open_idx].items;
-                let mut prev = app.menu_state.focused_item;
-                loop {
-                    if prev == 0 {
-                        break;
-                    }
-                    prev -= 1;
-                    if !matches!(items[prev], crate::ui::menu::MenuItem::Separator) {
-                        app.menu_state.focused_item = prev;
-                        break;
-                    }
-                }
-            }
-            KeyCode::Left if app.menu_state.is_open() => {
-                let idx = app.menu_state.open.unwrap();
-                let new = if idx == 0 {
-                    crate::ui::menu::MENUS.len() - 1
-                } else {
-                    idx - 1
-                };
-                app.menu_state.open_menu(new);
-            }
-            KeyCode::Right if app.menu_state.is_open() => {
-                let idx = app.menu_state.open.unwrap();
-                let new = (idx + 1) % crate::ui::menu::MENUS.len();
-                app.menu_state.open_menu(new);
-            }
-            KeyCode::Enter if app.menu_state.is_open() => {
-                let open_idx = app.menu_state.open.unwrap();
-                let item_idx = app.menu_state.focused_item;
-                if let Some(cmd) = crate::ui::menu::item_command(open_idx, item_idx) {
+                // Menu bar: Esc closes an open dropdown before anything else.
+                KeyCode::Esc if app.menu_state.is_open() => {
                     app.menu_state.close();
-                    app.process_command(cmd)?;
                 }
-            }
-            KeyCode::Char('q') => {
-                return Ok(false); // signal quit
-            }
-            KeyCode::Char(':') | KeyCode::Char('/') => {
-                app.mode = TuiMode::Command;
-            }
-            KeyCode::Char('`') => {
-                // Open and focus the chat sidebar.
-                app.chat.open = true;
-                app.chat.focused = true;
-            }
-            KeyCode::Char('S') if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                app.mode = TuiMode::Sketch(Box::new(crate::tui::SketchModeState::new(
-                    crate::tui::SketchPlane::XY,
-                )));
-                app.set_status("Sketch mode (XY plane) - L:line R:rect C:circle");
-            }
-            // Number keys 1-7: switch toolbar tabs (matching web app)
-            KeyCode::Char('1') => {
-                app.active_tab = 0; // Create
-                app.last_manual_tab = Instant::now();
-            }
-            KeyCode::Char('2') => {
-                app.active_tab = 1; // Transform
-                app.last_manual_tab = Instant::now();
-            }
-            KeyCode::Char('3') => {
-                app.active_tab = 2; // Combine
-                app.last_manual_tab = Instant::now();
-            }
-            KeyCode::Char('4') => {
-                app.active_tab = 3; // Modify
-                app.last_manual_tab = Instant::now();
-            }
-            KeyCode::Char('5') => {
-                app.active_tab = 4; // Assembly
-                app.last_manual_tab = Instant::now();
-            }
-            KeyCode::Char('6') => {
-                app.active_tab = 5; // Simulate
-                app.last_manual_tab = Instant::now();
-            }
-            KeyCode::Char('7') => {
-                app.active_tab = 6; // Export
-                app.last_manual_tab = Instant::now();
-            }
-            KeyCode::Char('x') | KeyCode::Delete | KeyCode::Backspace => {
-                app.delete_selected()?;
-                app.auto_switch_tab();
-            }
-            KeyCode::Char('u') => {
-                app.undo()?;
-            }
-            KeyCode::Char('r')
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
-                    && !key.modifiers.contains(KeyModifiers::SHIFT) =>
-            {
-                app.redo()?;
-            }
-            KeyCode::Char('R') if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                app.raytrace_enabled = !app.raytrace_enabled;
-                app.render_dirty = true;
-                app.set_status(if app.raytrace_enabled {
-                    "Ray tracing ON"
-                } else {
-                    "Ray tracing OFF"
-                });
-            }
-            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                app.save()?;
-            }
-            // Camera keyboard controls
-            KeyCode::Left => app.camera.rotate_horizontal(-15.0),
-            KeyCode::Right => app.camera.rotate_horizontal(15.0),
-            KeyCode::Up => app.camera.rotate_vertical(15.0),
-            KeyCode::Down => app.camera.rotate_vertical(-15.0),
-            KeyCode::Char('+') | KeyCode::Char('=') => app.camera.zoom(0.8),
-            KeyCode::Char('-') => app.camera.zoom(1.25),
-            // Part selection
-            KeyCode::Tab => {
-                let parts = app.get_parts();
-                if !parts.is_empty() {
-                    app.focused_part_index = (app.focused_part_index + 1) % parts.len();
-                    app.selected.clear();
-                    app.selected.insert(parts[app.focused_part_index].0);
-                    app.auto_switch_tab();
-                }
-            }
-            KeyCode::Esc => {
-                app.selected.clear();
-                app.auto_switch_tab();
-            }
-            KeyCode::Enter => {
-                let parts = app.get_parts();
-                if app.focused_part_index < parts.len() {
-                    let id = parts[app.focused_part_index].0;
-                    if app.selected.contains(&id) {
-                        app.selected.remove(&id);
-                    } else {
-                        app.selected.insert(id);
+                // Alt+F/E/V/T/H opens the corresponding top-level menu.
+                KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::ALT) => {
+                    if let Some(idx) = crate::ui::menu::accelerator_to_menu(c) {
+                        app.menu_state.open_menu(idx);
                     }
+                }
+                // Arrow keys navigate an open menu; Enter runs the focused item.
+                KeyCode::Down if app.menu_state.is_open() => {
+                    let open_idx = app.menu_state.open.unwrap();
+                    let items = crate::ui::menu::MENUS[open_idx].items;
+                    let mut next = app.menu_state.focused_item + 1;
+                    while next < items.len()
+                        && matches!(items[next], crate::ui::menu::MenuItem::Separator)
+                    {
+                        next += 1;
+                    }
+                    if next < items.len() {
+                        app.menu_state.focused_item = next;
+                    }
+                }
+                KeyCode::Up if app.menu_state.is_open() => {
+                    let open_idx = app.menu_state.open.unwrap();
+                    let items = crate::ui::menu::MENUS[open_idx].items;
+                    let mut prev = app.menu_state.focused_item;
+                    loop {
+                        if prev == 0 {
+                            break;
+                        }
+                        prev -= 1;
+                        if !matches!(items[prev], crate::ui::menu::MenuItem::Separator) {
+                            app.menu_state.focused_item = prev;
+                            break;
+                        }
+                    }
+                }
+                KeyCode::Left if app.menu_state.is_open() => {
+                    let idx = app.menu_state.open.unwrap();
+                    let new = if idx == 0 {
+                        crate::ui::menu::MENUS.len() - 1
+                    } else {
+                        idx - 1
+                    };
+                    app.menu_state.open_menu(new);
+                }
+                KeyCode::Right if app.menu_state.is_open() => {
+                    let idx = app.menu_state.open.unwrap();
+                    let new = (idx + 1) % crate::ui::menu::MENUS.len();
+                    app.menu_state.open_menu(new);
+                }
+                KeyCode::Enter if app.menu_state.is_open() => {
+                    let open_idx = app.menu_state.open.unwrap();
+                    let item_idx = app.menu_state.focused_item;
+                    if let Some(cmd) = crate::ui::menu::item_command(open_idx, item_idx) {
+                        app.menu_state.close();
+                        app.process_command(cmd)?;
+                    }
+                }
+                KeyCode::Char('q') => {
+                    return Ok(false); // signal quit
+                }
+                KeyCode::Char(':') | KeyCode::Char('/') => {
+                    app.mode = TuiMode::Command;
+                }
+                KeyCode::Char('`') => {
+                    // Open and focus the chat sidebar.
+                    app.chat.open = true;
+                    app.chat.focused = true;
+                }
+                KeyCode::Char('S') if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                    app.mode = TuiMode::Sketch(Box::new(crate::tui::SketchModeState::new(
+                        crate::tui::SketchPlane::XY,
+                    )));
+                    app.set_status("Sketch mode (XY plane) - L:line R:rect C:circle");
+                }
+                // Number keys 1-7: switch toolbar tabs (matching web app)
+                KeyCode::Char('1') => {
+                    app.active_tab = 0; // Create
+                    app.last_manual_tab = Instant::now();
+                }
+                KeyCode::Char('2') => {
+                    app.active_tab = 1; // Transform
+                    app.last_manual_tab = Instant::now();
+                }
+                KeyCode::Char('3') => {
+                    app.active_tab = 2; // Combine
+                    app.last_manual_tab = Instant::now();
+                }
+                KeyCode::Char('4') => {
+                    app.active_tab = 3; // Modify
+                    app.last_manual_tab = Instant::now();
+                }
+                KeyCode::Char('5') => {
+                    app.active_tab = 4; // Assembly
+                    app.last_manual_tab = Instant::now();
+                }
+                KeyCode::Char('6') => {
+                    app.active_tab = 5; // Simulate
+                    app.last_manual_tab = Instant::now();
+                }
+                KeyCode::Char('7') => {
+                    app.active_tab = 6; // Export
+                    app.last_manual_tab = Instant::now();
+                }
+                KeyCode::Char('x') | KeyCode::Delete | KeyCode::Backspace => {
+                    app.delete_selected()?;
                     app.auto_switch_tab();
                 }
-            }
-            // WASD translation
-            KeyCode::Char('w') => app.translate_selected(0.0, 0.0, 5.0)?,
-            KeyCode::Char('s') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                app.translate_selected(0.0, 0.0, -5.0)?
-            }
-            KeyCode::Char('a') => app.translate_selected(-5.0, 0.0, 0.0)?,
-            KeyCode::Char('d') => app.translate_selected(5.0, 0.0, 0.0)?,
-            KeyCode::Char('t') => {
-                let mode_name = crate::ui::theme::toggle();
-                app.render_dirty = true;
-                app.set_status(format!("Theme: {mode_name}"));
-            }
-            _ => {}
+                KeyCode::Char('u') => {
+                    app.undo()?;
+                }
+                KeyCode::Char('r')
+                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                        && !key.modifiers.contains(KeyModifiers::SHIFT) =>
+                {
+                    app.redo()?;
+                }
+                KeyCode::Char('R') if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                    app.raytrace_enabled = !app.raytrace_enabled;
+                    app.render_dirty = true;
+                    app.set_status(if app.raytrace_enabled {
+                        "Ray tracing ON"
+                    } else {
+                        "Ray tracing OFF"
+                    });
+                }
+                KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    app.save()?;
+                }
+                // Camera keyboard controls
+                KeyCode::Left => app.camera.rotate_horizontal(-15.0),
+                KeyCode::Right => app.camera.rotate_horizontal(15.0),
+                KeyCode::Up => app.camera.rotate_vertical(15.0),
+                KeyCode::Down => app.camera.rotate_vertical(-15.0),
+                KeyCode::Char('+') | KeyCode::Char('=') => app.camera.zoom(0.8),
+                KeyCode::Char('-') => app.camera.zoom(1.25),
+                // Part selection
+                KeyCode::Tab => {
+                    let parts = app.get_parts();
+                    if !parts.is_empty() {
+                        app.focused_part_index = (app.focused_part_index + 1) % parts.len();
+                        app.selected.clear();
+                        app.selected.insert(parts[app.focused_part_index].0);
+                        app.auto_switch_tab();
+                    }
+                }
+                KeyCode::Esc => {
+                    app.selected.clear();
+                    app.auto_switch_tab();
+                }
+                KeyCode::Enter => {
+                    let parts = app.get_parts();
+                    if app.focused_part_index < parts.len() {
+                        let id = parts[app.focused_part_index].0;
+                        if app.selected.contains(&id) {
+                            app.selected.remove(&id);
+                        } else {
+                            app.selected.insert(id);
+                        }
+                        app.auto_switch_tab();
+                    }
+                }
+                // WASD translation
+                KeyCode::Char('w') => app.translate_selected(0.0, 0.0, 5.0)?,
+                KeyCode::Char('s') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    app.translate_selected(0.0, 0.0, -5.0)?
+                }
+                KeyCode::Char('a') => app.translate_selected(-5.0, 0.0, 0.0)?,
+                KeyCode::Char('d') => app.translate_selected(5.0, 0.0, 0.0)?,
+                KeyCode::Char('t') => {
+                    let mode_name = crate::ui::theme::toggle();
+                    app.render_dirty = true;
+                    app.set_status(format!("Theme: {mode_name}"));
+                }
+                _ => {}
             }
         }
         // Other modes — Esc to exit

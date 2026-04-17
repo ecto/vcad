@@ -218,9 +218,7 @@ where
                         return Poll::Ready(Some(Err(e)));
                     }
                 }
-                Poll::Ready(Some(Err(e))) => {
-                    return Poll::Ready(Some(Err(ChatError::Network(e))))
-                }
+                Poll::Ready(Some(Err(e))) => return Poll::Ready(Some(Err(ChatError::Network(e)))),
                 Poll::Ready(None) => {
                     this.done = true;
                 }

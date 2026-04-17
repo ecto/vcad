@@ -41,65 +41,202 @@ pub struct Menu {
 }
 
 const FILE_ITEMS: &[MenuItem] = &[
-    MenuItem::Action { label: "New",              shortcut: "Ctrl+N", command: "new" },
-    MenuItem::Action { label: "Open…",            shortcut: "Ctrl+O", command: "open" },
+    MenuItem::Action {
+        label: "New",
+        shortcut: "Ctrl+N",
+        command: "new",
+    },
+    MenuItem::Action {
+        label: "Open…",
+        shortcut: "Ctrl+O",
+        command: "open",
+    },
     MenuItem::Separator,
-    MenuItem::Action { label: "Save",             shortcut: "Ctrl+S", command: "save" },
+    MenuItem::Action {
+        label: "Save",
+        shortcut: "Ctrl+S",
+        command: "save",
+    },
     MenuItem::Separator,
-    MenuItem::Action { label: "Export STL",       shortcut: "",       command: "export_stl" },
-    MenuItem::Action { label: "Export GLB",       shortcut: "",       command: "export_glb" },
-    MenuItem::Action { label: "Export STEP",      shortcut: "",       command: "export_step" },
+    MenuItem::Action {
+        label: "Export STL",
+        shortcut: "",
+        command: "export_stl",
+    },
+    MenuItem::Action {
+        label: "Export GLB",
+        shortcut: "",
+        command: "export_glb",
+    },
+    MenuItem::Action {
+        label: "Export STEP",
+        shortcut: "",
+        command: "export_step",
+    },
     MenuItem::Separator,
-    MenuItem::Action { label: "Quit",             shortcut: "Ctrl+Q", command: "quit" },
+    MenuItem::Action {
+        label: "Quit",
+        shortcut: "Ctrl+Q",
+        command: "quit",
+    },
 ];
 
 const EDIT_ITEMS: &[MenuItem] = &[
-    MenuItem::Action { label: "Undo",             shortcut: "u",      command: "undo" },
-    MenuItem::Action { label: "Redo",             shortcut: "Ctrl+R", command: "redo" },
+    MenuItem::Action {
+        label: "Undo",
+        shortcut: "u",
+        command: "undo",
+    },
+    MenuItem::Action {
+        label: "Redo",
+        shortcut: "Ctrl+R",
+        command: "redo",
+    },
     MenuItem::Separator,
-    MenuItem::Action { label: "Delete",           shortcut: "x",      command: "delete" },
-    MenuItem::Action { label: "Duplicate",        shortcut: "",       command: "duplicate" },
+    MenuItem::Action {
+        label: "Delete",
+        shortcut: "x",
+        command: "delete",
+    },
+    MenuItem::Action {
+        label: "Duplicate",
+        shortcut: "",
+        command: "duplicate",
+    },
     MenuItem::Separator,
-    MenuItem::Action { label: "Select All",       shortcut: "",       command: "select_all" },
-    MenuItem::Action { label: "Deselect",         shortcut: "Esc",    command: "deselect" },
+    MenuItem::Action {
+        label: "Select All",
+        shortcut: "",
+        command: "select_all",
+    },
+    MenuItem::Action {
+        label: "Deselect",
+        shortcut: "Esc",
+        command: "deselect",
+    },
 ];
 
 const VIEW_ITEMS: &[MenuItem] = &[
-    MenuItem::Action { label: "Toggle Sidebar",   shortcut: "\\",     command: "toggle_sidebar" },
-    MenuItem::Action { label: "Toggle Chat",      shortcut: "~",      command: "toggle_chat" },
+    MenuItem::Action {
+        label: "Toggle Sidebar",
+        shortcut: "\\",
+        command: "toggle_sidebar",
+    },
+    MenuItem::Action {
+        label: "Toggle Chat",
+        shortcut: "~",
+        command: "toggle_chat",
+    },
     MenuItem::Separator,
-    MenuItem::Action { label: "Isometric View",   shortcut: "7",      command: "camera_iso" },
-    MenuItem::Action { label: "Top View",         shortcut: "8",      command: "camera_top" },
-    MenuItem::Action { label: "Front View",       shortcut: "9",      command: "camera_front" },
-    MenuItem::Action { label: "Right View",       shortcut: "0",      command: "camera_right" },
-    MenuItem::Action { label: "Fit to Screen",    shortcut: "f",      command: "camera_fit" },
+    MenuItem::Action {
+        label: "Isometric View",
+        shortcut: "7",
+        command: "camera_iso",
+    },
+    MenuItem::Action {
+        label: "Top View",
+        shortcut: "8",
+        command: "camera_top",
+    },
+    MenuItem::Action {
+        label: "Front View",
+        shortcut: "9",
+        command: "camera_front",
+    },
+    MenuItem::Action {
+        label: "Right View",
+        shortcut: "0",
+        command: "camera_right",
+    },
+    MenuItem::Action {
+        label: "Fit to Screen",
+        shortcut: "f",
+        command: "camera_fit",
+    },
     MenuItem::Separator,
-    MenuItem::Action { label: "Wireframe",        shortcut: "",       command: "toggle_wireframe" },
+    MenuItem::Action {
+        label: "Wireframe",
+        shortcut: "",
+        command: "toggle_wireframe",
+    },
     MenuItem::Separator,
-    MenuItem::Action { label: "Cycle Theme",      shortcut: "",       command: "cycle_theme" },
+    MenuItem::Action {
+        label: "Cycle Theme",
+        shortcut: "",
+        command: "cycle_theme",
+    },
 ];
 
 const TOOLS_ITEMS: &[MenuItem] = &[
-    MenuItem::Action { label: "Command Palette…", shortcut: ":",      command: "palette" },
+    MenuItem::Action {
+        label: "Command Palette…",
+        shortcut: ":",
+        command: "palette",
+    },
     MenuItem::Separator,
-    MenuItem::Action { label: "New Sketch",       shortcut: "S",      command: "sketch" },
+    MenuItem::Action {
+        label: "New Sketch",
+        shortcut: "S",
+        command: "sketch",
+    },
 ];
 
 const HELP_ITEMS: &[MenuItem] = &[
-    MenuItem::Action { label: "About vcad",       shortcut: "",       command: "about" },
+    MenuItem::Action {
+        label: "About vcad",
+        shortcut: "",
+        command: "about",
+    },
     MenuItem::Separator,
-    MenuItem::Action { label: "Open Docs",        shortcut: "",       command: "open_docs" },
-    MenuItem::Action { label: "GitHub",           shortcut: "",       command: "open_github" },
-    MenuItem::Action { label: "Discord",          shortcut: "",       command: "open_discord" },
+    MenuItem::Action {
+        label: "Open Docs",
+        shortcut: "",
+        command: "open_docs",
+    },
+    MenuItem::Action {
+        label: "GitHub",
+        shortcut: "",
+        command: "open_github",
+    },
+    MenuItem::Action {
+        label: "Discord",
+        shortcut: "",
+        command: "open_discord",
+    },
 ];
 
 /// The five top-level menus, in display order.
 pub static MENUS: &[Menu] = &[
-    Menu { label: "File",  accelerator: 'f', accelerator_index: 0, items: FILE_ITEMS },
-    Menu { label: "Edit",  accelerator: 'e', accelerator_index: 0, items: EDIT_ITEMS },
-    Menu { label: "View",  accelerator: 'v', accelerator_index: 0, items: VIEW_ITEMS },
-    Menu { label: "Tools", accelerator: 't', accelerator_index: 0, items: TOOLS_ITEMS },
-    Menu { label: "Help",  accelerator: 'h', accelerator_index: 0, items: HELP_ITEMS },
+    Menu {
+        label: "File",
+        accelerator: 'f',
+        accelerator_index: 0,
+        items: FILE_ITEMS,
+    },
+    Menu {
+        label: "Edit",
+        accelerator: 'e',
+        accelerator_index: 0,
+        items: EDIT_ITEMS,
+    },
+    Menu {
+        label: "View",
+        accelerator: 'v',
+        accelerator_index: 0,
+        items: VIEW_ITEMS,
+    },
+    Menu {
+        label: "Tools",
+        accelerator: 't',
+        accelerator_index: 0,
+        items: TOOLS_ITEMS,
+    },
+    Menu {
+        label: "Help",
+        accelerator: 'h',
+        accelerator_index: 0,
+        items: HELP_ITEMS,
+    },
 ];
 
 /// Ephemeral menu-bar state owned by `App`.
@@ -112,8 +249,13 @@ pub struct MenuBarState {
 }
 
 impl MenuBarState {
-    pub fn is_open(&self) -> bool { self.open.is_some() }
-    pub fn close(&mut self) { self.open = None; self.focused_item = 0; }
+    pub fn is_open(&self) -> bool {
+        self.open.is_some()
+    }
+    pub fn close(&mut self) {
+        self.open = None;
+        self.focused_item = 0;
+    }
     pub fn open_menu(&mut self, idx: usize) {
         self.open = Some(idx);
         self.focused_item = 0;
@@ -124,8 +266,8 @@ impl MenuBarState {
 
 const LEFT_PAD: u16 = 1;
 const LOGO_WIDTH: u16 = 5; // "vcad" + "."
-const LOGO_GAP: u16 = 2;   // blank cells between logo and first menu
-const LABEL_PAD: u16 = 2;  // cells of horizontal padding around each menu label
+const LOGO_GAP: u16 = 2; // blank cells between logo and first menu
+const LABEL_PAD: u16 = 2; // cells of horizontal padding around each menu label
 
 /// Column where a given menu label's first character lives.
 fn menu_label_x(area: Rect, menu_idx: usize) -> u16 {
@@ -166,9 +308,9 @@ pub fn popover_rect(area: Rect, menu_idx: usize) -> Rect {
     let max_label_w = items
         .iter()
         .map(|it| match it {
-            MenuItem::Action { label, shortcut, .. } => {
-                label.chars().count() + 2 + shortcut.chars().count()
-            }
+            MenuItem::Action {
+                label, shortcut, ..
+            } => label.chars().count() + 2 + shortcut.chars().count(),
             MenuItem::Submenu { label, .. } => label.chars().count() + 2,
             MenuItem::Separator => 0,
         })
@@ -221,7 +363,11 @@ pub fn draw_menu_bar(buf: &mut CellBuffer, area: Rect, state: &MenuBarState) {
     for (i, menu) in MENUS.iter().enumerate() {
         let label_x = menu_label_x(area, i);
         let is_open = state.open == Some(i);
-        let bg = if is_open { theme::BORDER() } else { theme::SURFACE() };
+        let bg = if is_open {
+            theme::BORDER()
+        } else {
+            theme::SURFACE()
+        };
         let fg = theme::TEXT();
 
         // Redraw padding cells with the highlight bg if open.
@@ -267,10 +413,38 @@ pub fn draw_open_menu(buf: &mut CellBuffer, area: Rect, state: &MenuBarState) {
     let right = rect.x + rect.width - 1;
     let top = rect.y;
     let bot = rect.y + rect.height - 1;
-    set_char(buf, left, top, '\u{250C}', theme::BORDER(), theme::SURFACE());
-    set_char(buf, right, top, '\u{2510}', theme::BORDER(), theme::SURFACE());
-    set_char(buf, left, bot, '\u{2514}', theme::BORDER(), theme::SURFACE());
-    set_char(buf, right, bot, '\u{2518}', theme::BORDER(), theme::SURFACE());
+    set_char(
+        buf,
+        left,
+        top,
+        '\u{250C}',
+        theme::BORDER(),
+        theme::SURFACE(),
+    );
+    set_char(
+        buf,
+        right,
+        top,
+        '\u{2510}',
+        theme::BORDER(),
+        theme::SURFACE(),
+    );
+    set_char(
+        buf,
+        left,
+        bot,
+        '\u{2514}',
+        theme::BORDER(),
+        theme::SURFACE(),
+    );
+    set_char(
+        buf,
+        right,
+        bot,
+        '\u{2518}',
+        theme::BORDER(),
+        theme::SURFACE(),
+    );
     for x in (left + 1)..right {
         set_char(buf, x, top, '\u{2500}', theme::BORDER(), theme::SURFACE());
         set_char(buf, x, bot, '\u{2500}', theme::BORDER(), theme::SURFACE());
@@ -285,7 +459,11 @@ pub fn draw_open_menu(buf: &mut CellBuffer, area: Rect, state: &MenuBarState) {
     for (i, item) in menu.items.iter().enumerate() {
         let row = top + 1 + i as u16;
         let is_focused = i == state.focused_item && !matches!(item, MenuItem::Separator);
-        let bg = if is_focused { theme::BORDER() } else { theme::SURFACE() };
+        let bg = if is_focused {
+            theme::BORDER()
+        } else {
+            theme::SURFACE()
+        };
         let fg = theme::TEXT();
         let muted = theme::TEXT_MUTED();
 
@@ -295,7 +473,9 @@ pub fn draw_open_menu(buf: &mut CellBuffer, area: Rect, state: &MenuBarState) {
         }
 
         match item {
-            MenuItem::Action { label, shortcut, .. } => {
+            MenuItem::Action {
+                label, shortcut, ..
+            } => {
                 // Label flush-left, shortcut flush-right.
                 set_string(buf, left + 2, row, label, fg, bg);
                 if !shortcut.is_empty() {
@@ -313,8 +493,22 @@ pub fn draw_open_menu(buf: &mut CellBuffer, area: Rect, state: &MenuBarState) {
                     set_char(buf, x, row, '\u{2500}', theme::BORDER(), theme::SURFACE());
                 }
                 // Left/right connectors to the border.
-                set_char(buf, left, row, '\u{251C}', theme::BORDER(), theme::SURFACE());
-                set_char(buf, right, row, '\u{2524}', theme::BORDER(), theme::SURFACE());
+                set_char(
+                    buf,
+                    left,
+                    row,
+                    '\u{251C}',
+                    theme::BORDER(),
+                    theme::SURFACE(),
+                );
+                set_char(
+                    buf,
+                    right,
+                    row,
+                    '\u{2524}',
+                    theme::BORDER(),
+                    theme::SURFACE(),
+                );
             }
         }
         // Silence unused-variable warning for inner_w; reserved for future

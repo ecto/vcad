@@ -87,7 +87,9 @@ fn collect_consumed_feature_ids(crdt: &CrdtDocument) -> std::collections::HashSe
             continue;
         };
         match input {
-            FeatureInput::Boolean { input_a, input_b, .. } => {
+            FeatureInput::Boolean {
+                input_a, input_b, ..
+            } => {
                 consumed.insert(input_a);
                 consumed.insert(input_b);
             }
@@ -141,7 +143,8 @@ pub fn materialize(crdt: &CrdtDocument) -> MaterializeResult {
         if let Some((part, root_id)) = materialize_feature(&mut doc, &mut ctx, fid, feature, crdt) {
             let fid_str = fid_to_string(fid);
             if !consumed.contains(&fid_str) {
-                let material = get_str(feature, "material").unwrap_or_else(|| "default".to_string());
+                let material =
+                    get_str(feature, "material").unwrap_or_else(|| "default".to_string());
                 let visible = get_bool(feature, "visible");
                 doc.roots.push(SceneEntry {
                     root: root_id,
@@ -1574,8 +1577,10 @@ mod tests {
             }
         }
         assert!(
-            result.warnings.iter().any(|w| w.contains("fillet")
-                && w.contains("nonexistent-feature-id")),
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains("fillet") && w.contains("nonexistent-feature-id")),
             "warnings should mention the skipped fillet: {:?}",
             result.warnings
         );
@@ -1642,8 +1647,14 @@ mod tests {
                     "boolean_type".to_string(),
                     Value::String("difference".to_string()),
                 ),
-                ("input_a".to_string(), Value::FeatureRef(fid_to_string(fid_a))),
-                ("input_b".to_string(), Value::FeatureRef(fid_to_string(fid_b))),
+                (
+                    "input_a".to_string(),
+                    Value::FeatureRef(fid_to_string(fid_a)),
+                ),
+                (
+                    "input_b".to_string(),
+                    Value::FeatureRef(fid_to_string(fid_b)),
+                ),
             ]),
         );
 

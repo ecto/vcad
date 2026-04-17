@@ -43,12 +43,7 @@ impl WasmKeybindings {
     ///
     /// Returns the command id on match, or `None` — the TS side checks for
     /// `null` and falls through if nothing binds.
-    pub fn resolve(
-        &self,
-        chord_json: &str,
-        mode_name: &str,
-        ctx_bits: u32,
-    ) -> Option<String> {
+    pub fn resolve(&self, chord_json: &str, mode_name: &str, ctx_bits: u32) -> Option<String> {
         let chord: Chord = serde_json::from_str(chord_json).ok()?;
         let mode = AppMode::parse(mode_name).unwrap_or_default();
         let ctx = WhenContext::from_bits(ctx_bits);

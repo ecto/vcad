@@ -227,18 +227,15 @@ mod tests {
             .expect("create tool should have a type.enum array");
         assert!(!type_enum.is_empty());
         // Must contain the core primitives.
-        let has_cube = type_enum
-            .iter()
-            .any(|v| v.as_str() == Some("cube"));
+        let has_cube = type_enum.iter().any(|v| v.as_str() == Some("cube"));
         assert!(has_cube, "create tool type enum should include 'cube'");
     }
 
     #[test]
     fn required_fields_match_web() {
         let tools = anthropic_tools();
-        let find = |name: &str| -> &AnthropicTool {
-            tools.iter().find(|t| t.name == name).unwrap()
-        };
+        let find =
+            |name: &str| -> &AnthropicTool { tools.iter().find(|t| t.name == name).unwrap() };
         let required = |t: &AnthropicTool| -> Vec<String> {
             t.input_schema
                 .get("required")

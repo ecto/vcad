@@ -475,10 +475,7 @@ fn render_tool_input_flush(
         )
     } else {
         let axis_str = ti.axis.map_or(String::new(), |a| format!(" {a}"));
-        format!(
-            "{}{}: [{:.2}] {}",
-            ti.label, axis_str, ti.value, ti.unit
-        )
+        format!("{}{}: [{:.2}] {}", ti.label, axis_str, ti.value, ti.unit)
     };
 
     let mut tx = area.x + LEFT_PAD;
@@ -513,7 +510,14 @@ fn render_tool_input_flush(
     if right_edge >= hint_w + LEFT_PAD {
         let hx = right_edge - hint_w - LEFT_PAD;
         if hx > tx + 2 {
-            set_string(buf, hx, sub_row, hint, theme::TEXT_MUTED(), theme::SURFACE());
+            set_string(
+                buf,
+                hx,
+                sub_row,
+                hint,
+                theme::TEXT_MUTED(),
+                theme::SURFACE(),
+            );
         }
     }
 }
