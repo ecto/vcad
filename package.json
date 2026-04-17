@@ -10,6 +10,7 @@
     "version:check": "node scripts/sync-version.mjs --check"
   },
   "devDependencies": {
+    "@vercel/node": "^3.2.0",
     "turbo": "^2"
   },
   "overrides": {
