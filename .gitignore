@@ -16,6 +16,7 @@ packages/app/dev-dist/
 *.tsbuildinfo
 .claude/worktrees/
 .claude/skills/
+.claude/*.lock
 .ralph-tui/
 .superpowers/
 .agents/
