@@ -35,16 +35,17 @@ jobs:
       - uses: supabase/setup-cli@v2
         with:
           version: latest
-      # `supabase db start` boots a local Postgres with all our migrations
-      # applied in order. If any migration fails to apply to a fresh DB
-      # (the exact scenario prod will hit on `db push`), this errors out.
-      # We don't need the full `supabase start` stack — just the DB.
-      - name: Apply migrations to local Postgres
-        run: supabase db start
-      # Lint runs after apply so syntax errors surface with a clearer
-      # message from the DB itself first. Advisory-only for now to match
-      # the cargo-audit/npm-audit posture in ci.yml; drop `|| true` to
-      # turn it into a merge gate.
+      # `supabase start` boots the full local stack (Postgres + Auth +
+      # Storage + etc.) and applies every migration in supabase/migrations/
+      # during Postgres init. If any migration has broken SQL or bad
+      # ordering — the exact scenario prod hits on `db push` — this step
+      # errors out. There's no lighter "just apply migrations" CLI command;
+      # `db reset` and `db lint` both require the stack to already be up.
+      - name: Start Supabase stack (applies migrations)
+        run: supabase start
+      # Lint runs against the now-running local stack. Advisory-only for
+      # now to match the cargo-audit/npm-audit posture in ci.yml; drop
+      # `|| true` to turn it into a merge gate.
       - name: Lint migrations
         run: supabase db lint || true
 
