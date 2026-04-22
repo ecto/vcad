@@ -4,16 +4,25 @@ use std::sync::OnceLock;
 use thiserror::Error;
 use wgpu::{Device, Instance, Queue};
 
-// Wrapper to make GpuContext Send+Sync for WASM (which is single-threaded anyway)
-#[cfg(target_arch = "wasm32")]
+// Wrapper to make GpuContext Send+Sync for WASM. Safe only while the
+// target is single-threaded WASM; if wasm32 threads (SharedArrayBuffer)
+// are ever enabled, `target_feature = "atomics"` becomes active and this
+// cfg_attr trips a compile error so the bad state can't silently ship.
+#[cfg(all(target_arch = "wasm32", not(target_feature = "atomics")))]
 struct SendSyncWrapper(GpuContext);
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(target_feature = "atomics")))]
 unsafe impl Send for SendSyncWrapper {}
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(target_feature = "atomics")))]
 unsafe impl Sync for SendSyncWrapper {}
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_feature = "atomics"))]
+compile_error!(
+    "vcad-kernel-gpu SendSyncWrapper relies on single-threaded WASM; \
+     revisit GPU_CONTEXT locking before enabling wasm32 threads"
+);
+
+#[cfg(all(target_arch = "wasm32", not(target_feature = "atomics")))]
 static GPU_CONTEXT: OnceLock<SendSyncWrapper> = OnceLock::new();
 
 #[cfg(not(target_arch = "wasm32"))]
