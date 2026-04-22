@@ -1,0 +1,69 @@
+name: Supabase
+
+# Migrations run in two modes:
+#   - PR: spin up a local Supabase stack and apply all migrations fresh.
+#     Catches SQL errors, ordering bugs, and broken references without
+#     touching prod. No secrets required, so this works on fork PRs too.
+#   - Push to main: apply pending migrations to the linked prod project
+#     (yteuhwciuxcbjwmabawj) via `supabase db push`. Gated behind a GitHub
+#     Environment so a human can require approval before prod writes.
+#
+# Path-filtered so unrelated PRs don't pay the ~1m Docker startup cost.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/**'
+      - 'supabase/config.toml'
+      - '.github/workflows/supabase.yml'
+  pull_request:
+    paths:
+      - 'supabase/migrations/**'
+      - 'supabase/config.toml'
+      - '.github/workflows/supabase.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify migrations
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v2
+        with:
+          version: latest
+      # `supabase db start` boots a local Postgres with all our migrations
+      # applied in order. If any migration fails to apply to a fresh DB
+      # (the exact scenario prod will hit on `db push`), this errors out.
+      # We don't need the full `supabase start` stack — just the DB.
+      - name: Apply migrations to local Postgres
+        run: supabase db start
+      # Lint runs after apply so syntax errors surface with a clearer
+      # message from the DB itself first. Advisory-only for now to match
+      # the cargo-audit/npm-audit posture in ci.yml; drop `|| true` to
+      # turn it into a merge gate.
+      - name: Lint migrations
+        run: supabase db lint || true
+
+  deploy:
+    name: Deploy migrations to production
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    # Configure required reviewers on this environment in repo settings
+    # to gate prod writes on a human approval. Also the right place to
+    # scope SUPABASE_* secrets so PR jobs can't read them.
+    environment: production
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v2
+        with:
+          version: latest
+      - run: supabase link --project-ref "$SUPABASE_PROJECT_ID"
+      - run: supabase db push
