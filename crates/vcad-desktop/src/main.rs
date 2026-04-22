@@ -14,10 +14,7 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        // Auto-updater is opt-in: the plugin fails to init without a signed
-        // pubkey in tauri.conf.json. Generate one via `tauri signer generate`
-        // and uncomment to enable update checks.
-        // .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_deep_link::init())
         .manage(bambu::BambuState::new())
         .setup(|app| {

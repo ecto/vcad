@@ -70,6 +70,12 @@
       "desktop": {
         "schemes": ["vcad"]
       }
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJBMkMxQjkwOTVCRDY4OUEKUldTYWFMMlZrQnNzdW5KbTArekdTdDNsVEJyeTYvY3A0Ym15cHdiRlNrUDZNQlRmS0tXU0IzQUcK",
+      "endpoints": [
+        "https://github.com/ecto/vcad/releases/latest/download/latest.json"
+      ]
     }
   }
 }
