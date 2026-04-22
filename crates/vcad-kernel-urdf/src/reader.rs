@@ -11,6 +11,13 @@ use vcad_ir::{
 use crate::error::UrdfError;
 use crate::types::{Geometry, Joint, Link, Robot};
 
+/// Maximum URDF size we will attempt to parse. URDFs are tiny descriptors
+/// (tens of KB); a multi-MB "URDF" is almost always an attack payload.
+const MAX_URDF_BYTES: usize = 8 * 1024 * 1024;
+/// Caps on structural count to bound post-parse work.
+const MAX_LINKS: usize = 10_000;
+const MAX_JOINTS: usize = 10_000;
+
 /// Read a URDF file from a path.
 ///
 /// # Arguments
@@ -35,9 +42,77 @@ pub fn read_urdf(path: impl AsRef<Path>) -> Result<Document, UrdfError> {
 ///
 /// A vcad Document representing the robot.
 pub fn read_urdf_from_str(xml: &str) -> Result<Document, UrdfError> {
+    if xml.len() > MAX_URDF_BYTES {
+        return Err(UrdfError::InvalidFormat(format!(
+            "URDF exceeds {} byte limit",
+            MAX_URDF_BYTES
+        )));
+    }
+    // Reject DOCTYPE outright. quick-xml 0.37 does not expand entity
+    // references, but a DOCTYPE is otherwise never needed in URDF and
+    // rejecting it provides defense-in-depth against XXE / billion-laughs
+    // if a future quick-xml release (or a different parser) ever starts
+    // expanding them.
+    if contains_doctype(xml) {
+        return Err(UrdfError::InvalidFormat(
+            "URDF contains a DOCTYPE declaration (rejected)".into(),
+        ));
+    }
     let robot: Robot = quick_xml::de::from_str(xml)?;
+    if robot.links.len() > MAX_LINKS {
+        return Err(UrdfError::InvalidFormat(format!(
+            "URDF has {} links (cap {})",
+            robot.links.len(),
+            MAX_LINKS
+        )));
+    }
+    if robot.joints.len() > MAX_JOINTS {
+        return Err(UrdfError::InvalidFormat(format!(
+            "URDF has {} joints (cap {})",
+            robot.joints.len(),
+            MAX_JOINTS
+        )));
+    }
     let reader = UrdfReader::new(&robot);
     reader.into_document()
+}
+
+/// Case-insensitive scan for `<!DOCTYPE` that ignores leading whitespace.
+fn contains_doctype(xml: &str) -> bool {
+    // Walk through comments/whitespace and check for a DOCTYPE at the prolog.
+    // A stricter parse isn't worth the cost — false positives here just make
+    // us reject a document that would have been rejected anyway.
+    let bytes = xml.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b' ' | b'\t' | b'\r' | b'\n' => i += 1,
+            b'<' => {
+                if bytes[i..].starts_with(b"<!--") {
+                    if let Some(end) = xml[i..].find("-->") {
+                        i += end + 3;
+                        continue;
+                    }
+                    return false;
+                }
+                if bytes[i..].starts_with(b"<?") {
+                    if let Some(end) = xml[i..].find("?>") {
+                        i += end + 2;
+                        continue;
+                    }
+                    return false;
+                }
+                if bytes[i..].len() >= 9
+                    && bytes[i..i + 9].eq_ignore_ascii_case(b"<!DOCTYPE")
+                {
+                    return true;
+                }
+                return false;
+            }
+            _ => return false,
+        }
+    }
+    false
 }
 
 /// Context for reading URDF and building vcad Document.
