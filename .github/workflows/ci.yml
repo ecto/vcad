@@ -74,7 +74,7 @@ jobs:
       # could change the wasm bytes. A hit skips the whole Rust build.
       - name: Restore wasm pkg cache
         id: wasm-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             packages/kernel-wasm/pkg
@@ -151,7 +151,7 @@ jobs:
       # entry for the branch/OS. Turbo's own per-task hash determines
       # what's reused vs rebuilt — no need to encode inputs in the key.
       - name: Restore turbo cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: node_modules/.cache/turbo
           key: turbo-${{ runner.os }}-${{ github.sha }}
