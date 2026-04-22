@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
 
+# Default-deny: CI only needs to read the repo. Narrower than the
+# implicit permissions so a compromised action in any job gets the
+# minimum required surface.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
