@@ -59,7 +59,7 @@ jobs:
           git clone --depth 1 https://github.com/ecto/phyz.git ../phyz
           git clone --depth 1 https://github.com/ecto/loon.git ../loon
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
