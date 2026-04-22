@@ -6,11 +6,18 @@
   "build": {
     "frontendDist": "../../packages/app/dist",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "npm --prefix ../../packages/app run dev",
-    "beforeBuildCommand": "npm --prefix ../../packages/app run build"
+    "beforeDevCommand": {
+      "cwd": "../../packages/app",
+      "script": "TAURI_DEV=1 npm run dev"
+    },
+    "beforeBuildCommand": {
+      "cwd": "../../packages/app",
+      "script": "npm run build"
+    }
   },
   "app": {
     "withGlobalTauri": false,
+    "macOSPrivateApi": true,
     "windows": [
       {
         "title": "vcad",
@@ -19,7 +26,10 @@
         "resizable": true,
         "fullscreen": false,
         "visible": true,
-        "focus": true
+        "focus": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "transparent": true
       }
     ],
     "security": {
@@ -53,5 +63,13 @@
         "mimeType": "model/stl"
       }
     ]
+  },
+  "plugins": {
+    "deep-link": {
+      "mobile": [],
+      "desktop": {
+        "schemes": ["vcad"]
+      }
+    }
   }
 }

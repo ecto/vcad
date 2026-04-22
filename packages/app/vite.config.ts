@@ -293,7 +293,7 @@ export default defineConfig(({ mode }) => {
       __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
     },
     plugins: [
-      basicSsl(),
+      !process.env.TAURI_DEV && basicSsl(),
       devApiPlugin(env),
       preloadKernelWasmPlugin(),
       react(),

@@ -10,6 +10,13 @@
     "core:window:allow-maximize",
     "core:window:allow-minimize",
     "core:window:allow-set-size",
-    "core:window:allow-toggle-maximize"
+    "core:window:allow-set-theme",
+    "core:window:allow-theme",
+    "core:window:allow-toggle-maximize",
+    "notification:default",
+    "dialog:default",
+    "fs:default",
+    "updater:default",
+    "deep-link:default"
   ]
 }

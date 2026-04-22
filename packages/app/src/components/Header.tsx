@@ -30,6 +30,8 @@ import { useChangelogStore } from "@/stores/changelog-store";
 import { useNotificationStore } from "@/stores/notification-store";
 import { useAppCommands } from "@/hooks/useAppCommands";
 import { COMMAND_ICONS } from "@/lib/command-icons";
+import { useCapabilities } from "@/lib/capabilities";
+import { useNativeMenu } from "@/hooks/useNativeMenu";
 
 // Lazy so the prefs dialog (and its wasm-backed keybinding hook) doesn't
 // bloat the Header bundle until the user opens it.
@@ -320,6 +322,15 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
     surface: "desktop-menu",
   });
 
+  // Under Tauri, the OS menu bar drives the same command registry — listen
+  // for menu events and skip rendering the in-window Menubar triggers.
+  const { tauri: nativeMenu, platform } = useCapabilities();
+  useNativeMenu(commands);
+  // Overlay titlebar on macOS puts the traffic lights on top of our row.
+  // Reserve ~78px so the logo clears them; make the row a drag region so
+  // the user can still drag the window by its toolbar.
+  const macOverlay = nativeMenu && platform === "mac";
+
   const handleCommandPalette = () => {
     useUiStore.getState().setCommandPaletteOpen(true);
   };
@@ -355,8 +366,17 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
       {/* ─────────────────────────────────────────────────────── */}
       {/* Row 1: menu bar (logo + File/Edit/View/Tools/Help)     */}
       {/* ─────────────────────────────────────────────────────── */}
-      <div className="relative flex h-7 items-center gap-0 px-2 border-b border-border/40">
-        <div className="flex items-center gap-1 pr-3">
+      <div
+        data-tauri-drag-region={macOverlay ? "" : undefined}
+        className={cn(
+          "relative flex items-center gap-0 px-2 border-b border-border/40",
+          macOverlay ? "h-9 pl-[78px]" : "h-7",
+        )}
+      >
+        <div
+          className="flex items-center gap-1 pr-3"
+          data-tauri-drag-region={macOverlay ? "" : undefined}
+        >
           <button
             type="button"
             onClick={onAboutOpen}
@@ -389,7 +409,10 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
           value={menuValue}
           onValueChange={setMenuValue}
           loop
-          className="flex items-center gap-0"
+          className={cn(
+            "flex items-center gap-0",
+            nativeMenu && "hidden",
+          )}
         >
           <Menubar.Menu value="file">
             <Menubar.Trigger className={TRIGGER_CLASS}>
@@ -562,7 +585,10 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
           </Menubar.Menu>
         </Menubar.Root>
 
-        <div className="flex-1" />
+        <div
+          className="flex-1"
+          data-tauri-drag-region={macOverlay ? "" : undefined}
+        />
 
         {/* Right cluster: glance zone — changelog bell + auth */}
         <button

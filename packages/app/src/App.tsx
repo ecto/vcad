@@ -33,6 +33,7 @@ const CelebrationOverlay = lazyWithRetry(() => import("@/components/CelebrationO
 const SignInDelight = lazyWithRetry(() => import("@/components/SignInDelight").then(m => ({ default: m.SignInDelight })), "SignInDelight");
 const UpgradeDelight = lazyWithRetry(() => import("@/components/UpgradeDelight").then(m => ({ default: m.UpgradeDelight })), "UpgradeDelight");
 const AboutModal = lazyWithRetry(() => import("@/components/AboutModal").then(m => ({ default: m.AboutModal })), "AboutModal");
+const RecentFilesModal = lazyWithRetry(() => import("@/components/RecentFilesModal").then(m => ({ default: m.RecentFilesModal })), "RecentFilesModal");
 const ProductModal = lazyWithRetry(() => import("@/components/ProductModal").then(m => ({ default: m.ProductModal })), "ProductModal");
 const ShareDialog = lazyWithRetry(() => import("@/components/ShareDialog").then(m => ({ default: m.ShareDialog })), "ShareDialog");
 const ForkPromptModal = lazyWithRetry(() => import("@/components/ForkPromptModal").then(m => ({ default: m.ForkPromptModal })), "ForkPromptModal");
@@ -105,6 +106,10 @@ function useThemeSync() {
         "light",
         effectiveTheme === "light",
       );
+      // Under Tauri, keep the native window chrome (traffic lights, title
+      // bar material) in sync with the app's effective theme so dark app +
+      // light titlebar never happens.
+      void syncNativeWindowTheme(effectiveTheme);
     };
 
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
@@ -116,6 +121,17 @@ function useThemeSync() {
       return () => mq.removeEventListener("change", handler);
     }
   }, [theme]);
+}
+
+async function syncNativeWindowTheme(theme: "light" | "dark") {
+  try {
+    const { isTauri } = await import("@/lib/tauri");
+    if (!isTauri()) return;
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    await getCurrentWindow().setTheme(theme);
+  } catch {
+    // Setting theme is a polish touch — never block the app on failure.
+  }
 }
 
 /** Left sidebar: tree by default, drills into inspector when something is selected. */
@@ -163,6 +179,16 @@ export function App() {
 
   useEffect(() => {
     void bootstrap();
+    // Silent background update check after boot — only fires under Tauri
+    // and only when the updater config includes an endpoint + pubkey.
+    void import("@/lib/native-updater").then((m) =>
+      m.scheduleStartupUpdateCheck(),
+    );
+    // Register the vcad:// scheme handler so sharing links open the app
+    // directly. Feature code subscribes to `vcad:deep-link` events.
+    void import("@/lib/deep-links").then((m) =>
+      m.installDeepLinkListener(),
+    );
   }, []);
 
   const isMobile = useIsMobile();
@@ -211,13 +237,44 @@ export function App() {
 
   const handleSave = useCallback(() => {
     const state = useDocumentStore.getState();
-    saveDocument(state);
-    useDocumentStore.getState().markSaved();
-    useNotificationStore.getState().addToast("Document saved", "success");
+    // Tauri: show native save dialog, write to disk, record in recents.
+    // Browser: download as blob via the legacy code path.
+    void (async () => {
+      const { isTauri } = await import("@/lib/tauri");
+      if (isTauri()) {
+        const { serializeDocument } = await import("@vcad/core");
+        const { saveDocumentNative } = await import("@/lib/native-file");
+        const json = serializeDocument(state);
+        const path = await saveDocumentNative(json);
+        if (!path) return;
+        useDocumentStore.getState().markSaved();
+        useNotificationStore.getState().addToast(`Saved to ${path}`, "success");
+        return;
+      }
+      saveDocument(state);
+      useDocumentStore.getState().markSaved();
+      useNotificationStore.getState().addToast("Document saved", "success");
+    })();
   }, []);
 
+  // `handleOpen` needs `processFile` to forward the Tauri-picked file; it's
+  // declared below, so we reference it through a ref we update after the
+  // definition. Keeps the dispatcher wiring above the processFile body
+  // unchanged.
+  const processFileRef = useRef<((f: File) => Promise<void>) | null>(null);
   const handleOpen = useCallback(() => {
-    fileInputRef.current?.click();
+    void (async () => {
+      const { isTauri } = await import("@/lib/tauri");
+      if (isTauri()) {
+        const { openDocumentNative } = await import("@/lib/native-file");
+        const picked = await openDocumentNative();
+        if (!picked) return;
+        const pseudoFile = new File([picked.contents], picked.name);
+        await processFileRef.current?.(pseudoFile);
+        return;
+      }
+      fileInputRef.current?.click();
+    })();
   }, []);
 
   // Global keybinding dispatcher — runs the shared Rust registry first.
@@ -432,6 +489,10 @@ export function App() {
     }
   }, []);
 
+  // Populate the forward-ref so `handleOpen` (declared above) can dispatch
+  // Tauri-picked files through the same processing pipeline.
+  processFileRef.current = processFile;
+
   const handleFileChange = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
@@ -474,19 +535,30 @@ export function App() {
     const onDocuments = () => handleOpenDocuments();
     const onAbout = () => setAboutOpen(true);
     const onStartTutorial = () => startGuidedFlow();
+    const onRecentFile = (e: CustomEvent<{ file: File }>) => {
+      void processFile(e.detail.file);
+    };
     window.addEventListener("vcad:save", onSave);
     window.addEventListener("vcad:open", onOpen);
     window.addEventListener("vcad:documents", onDocuments);
     window.addEventListener("vcad:about", onAbout);
     window.addEventListener("vcad:start-tutorial", onStartTutorial);
+    window.addEventListener(
+      "vcad:open-recent-file",
+      onRecentFile as EventListener,
+    );
     return () => {
       window.removeEventListener("vcad:save", onSave);
       window.removeEventListener("vcad:open", onOpen);
       window.removeEventListener("vcad:documents", onDocuments);
       window.removeEventListener("vcad:about", onAbout);
       window.removeEventListener("vcad:start-tutorial", onStartTutorial);
+      window.removeEventListener(
+        "vcad:open-recent-file",
+        onRecentFile as EventListener,
+      );
     };
-  }, [handleSave, handleOpen, handleOpenDocuments, startGuidedFlow]);
+  }, [handleSave, handleOpen, handleOpenDocuments, startGuidedFlow, processFile]);
 
   // Listen for load-example events from the menu
   useEffect(() => {
@@ -759,6 +831,7 @@ export function App() {
             onOpenChange={setCommandPaletteOpen}
             onAboutOpen={() => setAboutOpen(true)}
           />
+          <RecentFilesModal />
         </AsyncBoundary>
         <input
           ref={fileInputRef}

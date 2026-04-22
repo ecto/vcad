@@ -67,7 +67,8 @@ export async function streamChat(
       headers.Authorization = `Bearer ${session.access_token}`;
     }
 
-    const response = await fetch("/api/chat", {
+    const { apiUrl } = await import("@/lib/api-origin");
+    const response = await fetch(apiUrl("/api/chat"), {
       method: "POST",
       headers,
       body: JSON.stringify({
