@@ -1,0 +1,43 @@
+# Dependabot config for vcad.
+#
+# The "github-actions" section pins every third-party action in our
+# workflows to a full commit SHA and opens a PR when a new SHA is
+# available. Without this, `uses: foo/bar@v1` silently follows wherever
+# the tag points — a maintainer-account compromise ripples straight into
+# CI.
+#
+# See SECURITY.md for the rationale behind SHA pinning.
+
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci(deps)"
+    labels:
+      - "dependencies"
+      - "github-actions"
+
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+    labels:
+      - "dependencies"
+      - "npm"
+
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(cargo)"
+    labels:
+      - "dependencies"
+      - "rust"
