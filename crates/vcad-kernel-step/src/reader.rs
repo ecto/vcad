@@ -18,6 +18,13 @@ use vcad_kernel_topo::{EdgeId, HalfEdgeId, LoopId, Orientation, ShellType, Topol
 /// Number of intermediate points to sample along a circular arc edge.
 const ARC_SAMPLE_COUNT: usize = 8;
 
+/// Hard ceilings on how much topology we will try to parse from a single
+/// STEP solid. They exist purely to keep a malicious file from pinning the
+/// reader in a multi-hour allocation loop; legitimate CAD models come
+/// nowhere near these numbers.
+const MAX_FACES_PER_SOLID: usize = 200_000;
+const MAX_EDGES_PER_LOOP: usize = 100_000;
+
 /// Compute the absolute enclosed area of a topology loop using Newell's method.
 /// Works in 3D — the magnitude of the cross-product sum gives twice the area.
 fn loop_area_3d(topo: &Topology, loop_id: LoopId) -> f64 {
@@ -139,6 +146,15 @@ impl<'a> StepReader<'a> {
         let step_solid = parse_manifold_solid_brep(self.file, solid_id)?;
         let step_shell = parse_shell(self.file, step_solid.outer_shell_id)?;
 
+        if step_shell.face_ids.len() > MAX_FACES_PER_SOLID {
+            return Err(StepError::UnsupportedEntity(format!(
+                "shell #{} has {} faces (cap {})",
+                step_solid.outer_shell_id,
+                step_shell.face_ids.len(),
+                MAX_FACES_PER_SOLID
+            )));
+        }
+
         // Track faces we skip due to unsupported surface types
         let mut skipped_faces: HashSet<u64> = HashSet::new();
 
@@ -165,6 +181,14 @@ impl<'a> StepReader<'a> {
             // Parse vertices from face bounds
             for bound in &step_face.bounds {
                 let loop_ = parse_edge_loop(self.file, bound.loop_id)?;
+                if loop_.edge_ids.len() > MAX_EDGES_PER_LOOP {
+                    return Err(StepError::UnsupportedEntity(format!(
+                        "loop #{} has {} edges (cap {})",
+                        bound.loop_id,
+                        loop_.edge_ids.len(),
+                        MAX_EDGES_PER_LOOP
+                    )));
+                }
                 for &oe_id in &loop_.edge_ids {
                     let oe = parse_oriented_edge(self.file, oe_id)?;
                     let edge = parse_edge_curve(self.file, oe.edge_id)?;
