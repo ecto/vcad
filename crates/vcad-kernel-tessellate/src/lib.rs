@@ -146,6 +146,13 @@ pub fn tessellate_solid(brep: &BRepSolid, params: &TessellationParams) -> Triang
         mesh.merge(&face_mesh);
     }
 
+    // Each face tessellates independently and `merge` concatenates without
+    // deduplicating vertices, so adjacent faces that share a 3D edge emit
+    // four boundary edges in the combined mesh instead of two shared ones
+    // — the "armpit hole" pattern visible on extruded multi-arc profiles.
+    // Weld coincident vertices so the shell is watertight at face seams.
+    weld_coincident_vertices(&mut mesh);
+
     // Validate final mesh
     #[cfg(debug_assertions)]
     {
@@ -162,6 +169,58 @@ pub fn tessellate_solid(brep: &BRepSolid, params: &TessellationParams) -> Triang
     }
 
     mesh
+}
+
+/// Collapse mesh vertices that share a position to 3 decimal places.
+/// Indices are rewritten; positions kept from the first occurrence.
+/// Normals of the winning vertex are kept as-is — downstream smoothing is
+/// unchanged. Triangles whose three corners collapse to fewer than three
+/// distinct vertices are dropped (degenerate after weld).
+fn weld_coincident_vertices(mesh: &mut TriangleMesh) {
+    let n = mesh.num_vertices();
+    if n == 0 {
+        return;
+    }
+    // Spatial hash at 0.001 mm resolution — tight enough to only weld
+    // true coincidences, loose enough to absorb float drift between
+    // CylinderSurface::evaluate and our hand-computed arc sample points.
+    let key = |i: usize| -> [i64; 3] {
+        [
+            (mesh.vertices[3 * i] as f64 * 1000.0).round() as i64,
+            (mesh.vertices[3 * i + 1] as f64 * 1000.0).round() as i64,
+            (mesh.vertices[3 * i + 2] as f64 * 1000.0).round() as i64,
+        ]
+    };
+    let mut remap: Vec<u32> = vec![u32::MAX; n];
+    let mut dedup: std::collections::HashMap<[i64; 3], u32> = std::collections::HashMap::new();
+    let mut new_vertices: Vec<f32> = Vec::with_capacity(mesh.vertices.len());
+    let mut new_normals: Vec<f32> = Vec::with_capacity(mesh.normals.len());
+    for i in 0..n {
+        let k = key(i);
+        let idx = *dedup.entry(k).or_insert_with(|| {
+            let new_i = (new_vertices.len() / 3) as u32;
+            new_vertices.extend_from_slice(&mesh.vertices[3 * i..3 * i + 3]);
+            if mesh.normals.len() >= 3 * i + 3 {
+                new_normals.extend_from_slice(&mesh.normals[3 * i..3 * i + 3]);
+            }
+            new_i
+        });
+        remap[i] = idx;
+    }
+    let mut new_indices: Vec<u32> = Vec::with_capacity(mesh.indices.len());
+    let tri_count = mesh.indices.len() / 3;
+    for t in 0..tri_count {
+        let a = remap[mesh.indices[3 * t] as usize];
+        let b = remap[mesh.indices[3 * t + 1] as usize];
+        let c = remap[mesh.indices[3 * t + 2] as usize];
+        if a == b || b == c || c == a {
+            continue; // degenerate after weld — drop
+        }
+        new_indices.extend_from_slice(&[a, b, c]);
+    }
+    mesh.vertices = new_vertices;
+    mesh.normals = new_normals;
+    mesh.indices = new_indices;
 }
 
 /// Tessellate a single B-rep face.
@@ -1523,6 +1582,7 @@ fn tessellate_cylindrical_face(
     let mut radius = None;
     let mut u_min = 0.0;
     let mut u_max = 2.0 * PI;
+    let mut unique_angles: Vec<f64> = Vec::new();
     let (v_min, v_max) = if let Some(cyl) = surface
         .as_any()
         .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
@@ -1563,7 +1623,6 @@ fn tessellate_cylindrical_face(
         // Determine U range from the face vertices
         // For a partial face, we need to find the angular extent
         // Get unique angles (vertices at same angle but different heights)
-        let mut unique_angles: Vec<f64> = Vec::new();
         for &a in &angles {
             if !unique_angles.iter().any(|&ua| (ua - a).abs() < 0.01) {
                 unique_angles.push(a);
@@ -1645,14 +1704,61 @@ fn tessellate_cylindrical_face(
     let height = v_max - v_min;
     let u_range = u_max - u_min;
 
-    // Adjust segment count based on angular range
-    let effective_n_circ = if u_range < 2.0 * PI - 0.01 {
-        // Partial face - scale segments by angular fraction
-        let fraction = u_range / (2.0 * PI);
-        (n_circ as f64 * fraction).ceil().max(2.0) as usize
-    } else {
-        n_circ
-    };
+    // Compute the u-sample schedule for the grid. For a partial face
+    // (e.g. one arc-extrude cylinder per arc of a kidney profile) we
+    // anchor samples at every unique_angle on the face's outer loop so
+    // the lateral-face tessellation shares its boundary vertices with
+    // adjacent cap-face vertices at the exact same 3D points. Between
+    // consecutive anchor angles we subdivide to maintain the density
+    // the caller asked for (n_circ samples around a full 2π), keeping
+    // boolean-cut cylinder meshes from going coarse. Full cylinders
+    // keep the original evenly-spaced schedule.
+    let mut u_samples: Vec<f64> = Vec::new();
+    let is_partial = u_range < 2.0 * PI - 0.01;
+    if is_partial && unique_angles.len() >= 2 {
+        // Map unique angles into the (possibly wrap-extended) u range.
+        let offset = if u_max > 2.0 * PI { 2.0 * PI } else { 0.0 };
+        let mut anchors: Vec<f64> = Vec::new();
+        for a in &unique_angles {
+            let adj = if *a < u_min - 1e-6 { *a + offset } else { *a };
+            if adj >= u_min - 1e-6 && adj <= u_max + 1e-6 {
+                anchors.push(adj.clamp(u_min, u_max));
+            }
+        }
+        anchors.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        anchors.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+        if anchors.first().map(|&x| x - u_min > 1e-6).unwrap_or(true) {
+            anchors.insert(0, u_min);
+        }
+        if anchors.last().map(|&x| u_max - x > 1e-6).unwrap_or(true) {
+            anchors.push(u_max);
+        }
+
+        // Subdivide each anchor-to-anchor segment to maintain the
+        // caller's requested density across the full 2π circle.
+        let target_density = n_circ as f64 / (2.0 * PI);
+        u_samples.push(anchors[0]);
+        for w in anchors.windows(2) {
+            let span = w[1] - w[0];
+            let subdivs = ((span * target_density).ceil() as usize).max(1);
+            for i in 1..=subdivs {
+                u_samples.push(w[0] + span * (i as f64 / subdivs as f64));
+            }
+        }
+    }
+    if u_samples.len() < 2 {
+        // Evenly-spaced fallback (full cylinder or loop with <2 unique angles).
+        let effective_n_circ = if is_partial {
+            let fraction = u_range / (2.0 * PI);
+            (n_circ as f64 * fraction).ceil().max(2.0) as usize
+        } else {
+            n_circ
+        };
+        u_samples = (0..=effective_n_circ)
+            .map(|i| u_min + u_range * (i as f64 / effective_n_circ as f64))
+            .collect();
+    }
+    let effective_n_circ = u_samples.len() - 1;
 
     if let Some(radius) = radius {
         let arc_length = radius * u_range;
@@ -1664,15 +1770,15 @@ fn tessellate_cylindrical_face(
 
     let mut mesh = TriangleMesh::new();
 
-    // Generate grid of vertices using surface.evaluate
-    // Respect the face's U range (angular extent)
+    // Generate grid of vertices using surface.evaluate. Each row shares
+    // its u-schedule with the face's outer loop boundary, so adjacent
+    // cap/lateral faces produce coincident seam vertices (welded away by
+    // `weld_coincident_vertices` in `tessellate_brep`).
     for j in 0..=n_height {
         let v = v_min + height * (j as f64 / n_height as f64);
-        for i in 0..=effective_n_circ {
-            // Map i to the face's U range, not full 2π
-            let u = u_min + u_range * (i as f64 / effective_n_circ as f64);
+        for u_raw in &u_samples {
             // Normalize u to [0, 2π) for surface evaluation
-            let u_eval = u % (2.0 * PI);
+            let u_eval = u_raw.rem_euclid(2.0 * PI);
             let uv = Point2::new(u_eval, v);
             let pt = surface.evaluate(uv);
             let normal = *surface.normal(uv);
@@ -2896,6 +3002,7 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
         }
     }
 
+    weld_coincident_vertices(&mut mesh);
     mesh
 }
 
