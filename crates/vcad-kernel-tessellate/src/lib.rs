@@ -2561,13 +2561,72 @@ fn tessellate_toroidal_face(
 ) -> TriangleMesh {
     let face = &topo.faces[face_id];
     let surface = &geom.surfaces[face.surface_index];
-    let n_u = params.circle_segments as usize;
-    let n_v = params.circle_segments as usize;
+    let n_circ = params.circle_segments.max(3) as usize;
 
     let mut mesh = TriangleMesh::new();
 
-    // Get UV domain
-    let ((u_min, u_max), (v_min, v_max)) = surface.domain();
+    // Derive the face's actual u/v range from its outer loop vertices
+    // instead of tessellating the entire torus donut. A plane↔cylinder
+    // fillet torus blend only covers a small rectangular patch in (u, v)
+    // space — rendering the full 2π×2π domain produced the overhanging
+    // ring we saw in the pork-chop render that poked 4 units above the
+    // top cap and below the bottom cap. Falls back to the full domain
+    // when the face doesn't expose a `TorusSurface` we can invert.
+    let ((default_u_min, default_u_max), (default_v_min, default_v_max)) = surface.domain();
+    let (u_min, u_max, v_min, v_max) = if let Some(torus) = surface
+        .as_any()
+        .downcast_ref::<vcad_kernel_geom::TorusSurface>()
+    {
+        let verts: Vec<_> = topo
+            .loop_half_edges(face.outer_loop)
+            .map(|he| topo.vertices[topo.half_edges[he].origin].point)
+            .collect();
+        let y = torus.axis.as_ref().cross(torus.ref_dir.as_ref());
+        let mut us = Vec::new();
+        let mut vs = Vec::new();
+        for pt in &verts {
+            let d = *pt - torus.center;
+            // u: angle around torus major axis from ref_dir → y
+            let ru = d.dot(torus.ref_dir.as_ref());
+            let yu = d.dot(&y);
+            let u = yu.atan2(ru);
+            let u = if u < 0.0 { u + 2.0 * PI } else { u };
+            // v: angle around tube. project d onto (tube_center_dir, axis) plane.
+            let tube_dir = *torus.ref_dir.as_ref() * u.cos() + y * u.sin();
+            let in_tube_plane = d - tube_dir * torus.major_radius;
+            let cv = in_tube_plane.dot(&tube_dir);
+            let sv = in_tube_plane.dot(torus.axis.as_ref());
+            let v = sv.atan2(cv);
+            let v = if v < 0.0 { v + 2.0 * PI } else { v };
+            us.push(u);
+            vs.push(v);
+        }
+        if us.len() >= 2 {
+            us.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            vs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            (us[0], us[us.len() - 1], vs[0], vs[vs.len() - 1])
+        } else {
+            (
+                default_u_min,
+                default_u_max,
+                default_v_min,
+                default_v_max,
+            )
+        }
+    } else {
+        (
+            default_u_min,
+            default_u_max,
+            default_v_min,
+            default_v_max,
+        )
+    };
+
+    // Scale n_u / n_v by the fraction of the full torus the face covers.
+    let u_frac = (u_max - u_min) / (2.0 * PI);
+    let v_frac = (v_max - v_min) / (2.0 * PI);
+    let n_u = ((n_circ as f64 * u_frac).ceil() as usize).max(2);
+    let n_v = ((n_circ as f64 * v_frac).ceil() as usize).max(2);
 
     // Generate grid of vertices with analytical normals
     for j in 0..=n_v {

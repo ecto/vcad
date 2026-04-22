@@ -1023,19 +1023,15 @@ where
     // Get positions
     let positions: Vec<Point3> = verts.iter().map(|&v| topo.vertices[v].point).collect();
 
-    // Create plane surface
+    // Create plane surface — use `normal` directly so the plane's
+    // `normal_dir` always points in the caller-specified outward
+    // direction, regardless of the profile vertex winding. Downstream
+    // consumers (fillet torus builder, tessellator) rely on
+    // `plane.normal_dir` being the cap's true outward normal, not an
+    // arbitrary direction that depends on whether positions[1] - [0]
+    // crossed with positions[n-1] - [0] happens to point out or in.
     let origin = positions[0];
-    let surf_idx = if n >= 3 {
-        let x_dir = positions[1] - origin;
-        let y_dir = positions[n - 1] - origin;
-        if x_dir.norm() > 1e-12 && y_dir.norm() > 1e-12 && x_dir.cross(y_dir).norm() > 1e-12 {
-            geom.add_surface(Box::new(Plane::new(origin, x_dir, y_dir)))
-        } else {
-            geom.add_surface(Box::new(Plane::from_normal(origin, *normal)))
-        }
-    } else {
-        geom.add_surface(Box::new(Plane::from_normal(origin, *normal)))
-    };
+    let surf_idx = geom.add_surface(Box::new(Plane::from_normal(origin, *normal)));
 
     // Create half-edges in the correct order
     let ordered_verts: Vec<VertexId> = if reversed {
