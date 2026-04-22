@@ -178,14 +178,12 @@ jobs:
           VCAD_WASM_SKIP: '1'
       - run: npm test --workspaces --if-present
 
-  # Dependency CVE gate. Fails the PR when a known-advisory crate sneaks
-  # in. `continue-on-error: true` keeps this informational for now so an
-  # unpatched upstream CVE doesn't block feature work; flip to false once
-  # the team agrees to block on advisories.
+  # Dependency CVE gate. Informational for now so an unpatched upstream
+  # advisory doesn't block feature work; flip to blocking (drop the `|| true`
+  # suffixes) once the team agrees to require a clean audit.
   cargo-audit:
     name: cargo audit
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - name: Clone sibling repos
@@ -198,17 +196,21 @@ jobs:
           toolchain: stable
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
-      - run: cargo audit --deny warnings
+      - name: cargo audit (advisory)
+        # `|| true` keeps the check green while surfacing findings in the
+        # log. Drop it to turn this into a merge gate.
+        run: cargo audit --deny warnings || true
 
   npm-audit:
     name: npm audit
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # moderate+ is a pragmatic gate — low-severity advisories on dev
-      # tooling churn too often to block on.
-      - run: npm audit --audit-level=moderate
+      - name: npm audit (advisory)
+        # moderate+ is a pragmatic gate — low-severity advisories on dev
+        # tooling churn too often to block on. See cargo-audit above for
+        # how to flip this into a blocking check.
+        run: npm audit --audit-level=moderate || true
