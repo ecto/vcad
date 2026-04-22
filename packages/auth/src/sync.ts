@@ -201,8 +201,8 @@ async function uploadDocument(doc: LocalDocument): Promise<void> {
   if (existing) {
     // Document exists in cloud - check for conflict
     if (existing.device_modified_at > doc.modifiedAt) {
-      // Cloud is newer - conflict! For now, last-write-wins (cloud)
-      // TODO: Prompt user or implement merge strategy
+      // Cloud is newer - conflict! For now, last-write-wins (cloud).
+      // TODO(#13): prompt user or hand off to CRDT merge strategy.
       console.warn(
         `Conflict on ${doc.id}: cloud is newer, keeping cloud version`
       );
