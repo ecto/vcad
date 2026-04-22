@@ -12,6 +12,17 @@ use vcad_kernel_geom::{
 use vcad_kernel_math::Point3;
 use vcad_kernel_nurbs::BSplineSurface;
 
+/// Cap the expanded knot-vector length to defend against adversarial STEP
+/// inputs whose per-knot multiplicities sum to a huge number; without this,
+/// `expand_knots` happily tries to push billions of entries.
+const MAX_EXPANDED_KNOTS: usize = 1_000_000;
+/// Per-multiplicity cap; a single knot with multiplicity > this is rejected
+/// outright (real files never need this many duplicates).
+const MAX_KNOT_MULTIPLICITY: usize = 10_000;
+/// Largest B-spline surface grid we will accept from a STEP file; beyond this
+/// the memory / compute cost to build the surface is attacker-profitable DoS.
+const MAX_BSPLINE_GRID: usize = 1_000_000;
+
 /// A surface parsed from STEP.
 #[derive(Debug, Clone)]
 pub enum StepSurface {
@@ -306,13 +317,34 @@ pub fn parse_bspline_surface(file: &StepFile, id: u64) -> Result<BSplineSurface,
         )));
     }
 
-    if control_points.len() != n_u * n_v {
+    // Guard against attacker-controlled sizes before calling BSplineSurface::new
+    // (which asserts on mismatched dimensions and invalid knot vectors).
+    let expected_cp = n_u.checked_mul(n_v).ok_or_else(|| {
+        StepError::UnsupportedEntity(format!(
+            "B_SPLINE_SURFACE #{} (control-point grid n_u*n_v overflows usize)",
+            id
+        ))
+    })?;
+    if expected_cp > MAX_BSPLINE_GRID {
+        return Err(StepError::UnsupportedEntity(format!(
+            "B_SPLINE_SURFACE #{} (grid {} exceeds cap {})",
+            id, expected_cp, MAX_BSPLINE_GRID
+        )));
+    }
+    if control_points.len() != expected_cp {
         return Err(StepError::UnsupportedEntity(format!(
             "B_SPLINE_SURFACE #{} (control point mismatch: {} != {}x{})",
             id,
             control_points.len(),
             n_u,
             n_v
+        )));
+    }
+    // Knot vectors must be non-decreasing; BSplineSurface::new asserts this.
+    if !is_non_decreasing(&expanded_u_knots) || !is_non_decreasing(&expanded_v_knots) {
+        return Err(StepError::UnsupportedEntity(format!(
+            "B_SPLINE_SURFACE #{} (non-monotonic knot vector)",
+            id
         )));
     }
 
@@ -334,15 +366,34 @@ fn expand_knots(knots: &[StepValue], mults: &[StepValue]) -> Result<Vec<f64>, St
         let k = knot
             .as_real()
             .ok_or_else(|| StepError::parser(None, "invalid knot value"))?;
-        let m = mult
+        let m_raw = mult
             .as_integer()
-            .ok_or_else(|| StepError::parser(None, "invalid multiplicity"))?
-            as usize;
+            .ok_or_else(|| StepError::parser(None, "invalid multiplicity"))?;
+        if m_raw < 0 {
+            return Err(StepError::parser(None, "negative knot multiplicity"));
+        }
+        let m = m_raw as usize;
+        if m > MAX_KNOT_MULTIPLICITY {
+            return Err(StepError::UnsupportedEntity(format!(
+                "knot multiplicity {} exceeds cap {}",
+                m, MAX_KNOT_MULTIPLICITY
+            )));
+        }
+        if result.len().saturating_add(m) > MAX_EXPANDED_KNOTS {
+            return Err(StepError::UnsupportedEntity(format!(
+                "expanded knot vector exceeds cap {}",
+                MAX_EXPANDED_KNOTS
+            )));
+        }
         for _ in 0..m {
             result.push(k);
         }
     }
     Ok(result)
+}
+
+fn is_non_decreasing(xs: &[f64]) -> bool {
+    xs.windows(2).all(|w| w[0] <= w[1])
 }
 
 /// Compress an expanded knot vector into (unique_knots, multiplicities).

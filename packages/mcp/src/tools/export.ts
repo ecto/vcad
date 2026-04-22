@@ -5,9 +5,9 @@
 import type { Document } from "@vcad/ir";
 import type { Engine } from "@vcad/engine";
 import { writeFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { toStlBytes } from "../export/stl.js";
 import { toGlbBytes } from "../export/glb.js";
+import { resolveWithinRoot } from "./safe-path.js";
 
 interface ExportInput {
   ir: Document;
@@ -57,8 +57,8 @@ export function exportCad(
       throw new Error(`Unsupported format: .${ext}. Use .stl or .glb`);
   }
 
-  // Write to current directory
-  const path = resolve(process.cwd(), filename);
+  // Resolve against cwd and reject any path that escapes it.
+  const path = resolveWithinRoot(filename);
   writeFileSync(path, bytes);
 
   return {

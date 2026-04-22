@@ -1,8 +1,9 @@
 name: Fix CI
 
 # Auto-fix failing CI on PRs. Budgeted: at most MAX_ATTEMPTS auto-fix
-# commits per PR branch. Opt out by adding the `no-auto-fix` label to
-# the PR.
+# commits per PR branch. Opt in by adding the `auto-fix` label to the
+# PR (flip from opt-out to opt-in so a hostile PR can't summon a
+# Claude-authored commit onto its own branch just by failing CI).
 
 on:
   workflow_run:
@@ -65,9 +66,11 @@ jobs:
           echo "pr_repo=${pr_repo}"       >> "$GITHUB_OUTPUT"
           echo "pr_labels=${pr_labels}"   >> "$GITHUB_OUTPUT"
 
-          # Don't touch PRs opted out explicitly.
-          if echo "${pr_labels}" | tr ',' '\n' | grep -qx 'no-auto-fix'; then
-            echo "PR #${pr_number} has no-auto-fix label; skipping."
+          # Opt-in: only run when a maintainer has explicitly labeled the
+          # PR with `auto-fix`. Without this, any PR whose CI fails would
+          # summon the agent — and the agent pushes to the PR branch.
+          if ! echo "${pr_labels}" | tr ',' '\n' | grep -qx 'auto-fix'; then
+            echo "PR #${pr_number} is not labeled auto-fix; skipping."
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -155,7 +158,7 @@ jobs:
 
       - name: Install wasm-pack
         if: steps.pr.outputs.skip != 'true' && steps.budget.outputs.over_budget != 'true'
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+        run: cargo install wasm-pack --locked --version 0.13.1
 
       - name: Install apt deps
         if: steps.pr.outputs.skip != 'true' && steps.budget.outputs.over_budget != 'true'

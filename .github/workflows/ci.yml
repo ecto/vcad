@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
 
+# Default-deny: CI only needs to read the repo. Narrower than the
+# implicit permissions so a compromised action in any job gets the
+# minimum required surface.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -92,7 +98,10 @@ jobs:
           cache-workspace-crates: true
       - name: Install wasm-pack
         if: steps.wasm-cache.outputs.cache-hit != 'true'
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+        # Install via cargo so the binary comes through the same trust
+        # chain as the rest of our Rust toolchain instead of a
+        # curl-pipe-to-shell from the rustwasm GitHub Pages site.
+        run: cargo install wasm-pack --locked --version 0.13.1
       # --profiling uses cargo release + light `-O` wasm-opt (configured
       # in vcad-kernel-wasm/Cargo.toml). Saves ~2m vs default release
       # (which runs full wasm-opt). We can't use --dev because the PWA
@@ -168,3 +177,40 @@ jobs:
         env:
           VCAD_WASM_SKIP: '1'
       - run: npm test --workspaces --if-present
+
+  # Dependency CVE gate. Informational for now so an unpatched upstream
+  # advisory doesn't block feature work; flip to blocking (drop the `|| true`
+  # suffixes) once the team agrees to require a clean audit.
+  cargo-audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clone sibling repos
+        run: |
+          git clone --depth 1 https://github.com/ecto/tang.git ../tang
+          git clone --depth 1 https://github.com/ecto/phyz.git ../phyz
+          git clone --depth 1 https://github.com/ecto/loon.git ../loon
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: cargo audit (advisory)
+        # `|| true` keeps the check green while surfacing findings in the
+        # log. Drop it to turn this into a merge gate.
+        run: cargo audit --deny warnings || true
+
+  npm-audit:
+    name: npm audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: npm audit (advisory)
+        # moderate+ is a pragmatic gate — low-severity advisories on dev
+        # tooling churn too often to block on. See cargo-audit above for
+        # how to flip this into a blocking check.
+        run: npm audit --audit-level=moderate || true

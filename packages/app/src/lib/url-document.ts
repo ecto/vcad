@@ -19,7 +19,10 @@ import {
 import { decodeViewerState, type ViewerState } from "@/lib/viewer-state";
 
 /**
- * Base64url decode (URL-safe base64 without padding).
+ * Base64url decode (URL-safe base64 without padding). Throws a
+ * descriptive Error when the input is not a valid base64 string so that
+ * the caller can render a user-friendly message instead of letting an
+ * unhandled exception crash the page.
  */
 function base64urlDecode(str: string): Uint8Array {
   // Restore standard base64
@@ -28,7 +31,12 @@ function base64urlDecode(str: string): Uint8Array {
   while (base64.length % 4) {
     base64 += "=";
   }
-  const binary = atob(base64);
+  let binary: string;
+  try {
+    binary = atob(base64);
+  } catch {
+    throw new Error("Invalid base64url in shared document URL");
+  }
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i);

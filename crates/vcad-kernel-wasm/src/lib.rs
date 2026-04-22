@@ -66,8 +66,17 @@ pub fn get_anthropic_tools_json() -> String {
 /// failure treats the doc as empty (an empty Document never validates
 /// any id lookups, so planners that need to check part_id existence
 /// will return a clean error).
+/// Cap on how large the caller-supplied JSON strings can be. The host JS
+/// always originates these, but guarding the boundary here keeps a
+/// renderer bug from pushing hundreds of MB of JSON through serde on every
+/// chat tool invocation.
+const MAX_PLAN_CHAT_JSON_BYTES: usize = 32 * 1024 * 1024;
+
 #[wasm_bindgen]
 pub fn plan_chat_tool(tool: &str, args_json: &str, doc_json: &str) -> String {
+    if args_json.len() > MAX_PLAN_CHAT_JSON_BYTES || doc_json.len() > MAX_PLAN_CHAT_JSON_BYTES {
+        return r#"{"error":"plan_chat_tool: input exceeds size limit"}"#.to_string();
+    }
     let args: serde_json::Value =
         serde_json::from_str(args_json).unwrap_or(serde_json::Value::Null);
     let doc: vcad_ir::Document = serde_json::from_str(doc_json).unwrap_or_default();

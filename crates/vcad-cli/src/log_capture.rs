@@ -116,6 +116,14 @@ fn redirect_stderr(tx: Sender<CapturedLine>) -> std::io::Result<std::os::fd::Own
     if rc != 0 {
         return Err(std::io::Error::last_os_error());
     }
+    // Defensive: `pipe()` should always produce two non-negative fds on
+    // success, but a bogus libc could leave an invalid descriptor in the
+    // array. `OwnedFd::from_raw_fd` on a negative fd is UB, so bail out.
+    if fds[0] < 0 || fds[1] < 0 {
+        return Err(std::io::Error::other(
+            "pipe() returned invalid file descriptor",
+        ));
+    }
     let read_fd = unsafe { OwnedFd::from_raw_fd(fds[0]) };
     let write_fd = unsafe { OwnedFd::from_raw_fd(fds[1]) };
 

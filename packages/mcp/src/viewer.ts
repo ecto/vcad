@@ -195,8 +195,15 @@ function loadGlb(base64Data) {
 // ── MCP Apps protocol ────────────────────────────────────────
 let messageId = 1;
 
+// The host iframe origin is not known until the first inbound message
+// arrives. Until then we have to fall back to '*' (the initial handshake
+// has to reach whoever embedded us), but after we learn the real origin
+// we pin postMessage to it so a second frame opened in parallel can't
+// intercept subsequent responses.
+let hostOrigin = '*';
+
 function sendToHost(message) {
-  window.parent.postMessage(message, '*');
+  window.parent.postMessage(message, hostOrigin);
 }
 
 // Report content height to host so iframe is properly sized
@@ -227,6 +234,15 @@ reportHeight(400);
 window.addEventListener('message', (event) => {
   const data = event.data;
   if (!data || typeof data !== 'object') return;
+  // Pin postMessage replies to the origin we first heard from. Once
+  // hostOrigin is set, silently drop messages from any other origin.
+  if (event.origin && event.origin !== 'null') {
+    if (hostOrigin === '*') {
+      hostOrigin = event.origin;
+    } else if (event.origin !== hostOrigin) {
+      return;
+    }
+  }
 
   // Log all messages for debugging
   console.log('[vcad-viewer] message:', data.method || (data.result ? 'response' : 'unknown'));

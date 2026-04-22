@@ -33,7 +33,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src ipc: http://ipc.localhost 'self' https: wss:; font-src 'self' data:; worker-src 'self' blob:"
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src ipc: http://ipc.localhost 'self' https://yteuhwciuxcbjwmabawj.supabase.co wss://yteuhwciuxcbjwmabawj.supabase.co https://us.i.posthog.com https://us-assets.i.posthog.com https://api.github.com http://127.0.0.1:11434; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'"
     }
   },
   "bundle": {

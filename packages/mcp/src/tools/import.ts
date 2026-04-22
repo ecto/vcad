@@ -5,8 +5,12 @@
 import type { Document, Node, NodeId, ImportedMeshOp, Vec3 } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
 import type { Engine, TriangleMesh } from "@vcad/engine";
-import { readFileSync, existsSync } from "node:fs";
-import { resolve, basename } from "node:path";
+import { readFileSync, existsSync, statSync } from "node:fs";
+import { basename } from "node:path";
+import { resolveWithinRoot } from "./safe-path.js";
+
+// Cap STEP imports at 100 MB to prevent a remote caller from pinning memory.
+const MAX_STEP_BYTES = 100 * 1024 * 1024;
 
 interface ImportStepInput {
   filename: string;
@@ -39,11 +43,19 @@ export function importStep(
 ): { content: Array<{ type: "text"; text: string }> } {
   const { filename, name, material } = input as ImportStepInput;
 
-  // Resolve the file path
-  const filepath = resolve(process.cwd(), filename);
+  // Resolve against cwd and reject any path that escapes it.
+  const filepath = resolveWithinRoot(filename);
 
   if (!existsSync(filepath)) {
-    throw new Error(`STEP file not found: ${filepath}`);
+    throw new Error("STEP file not found");
+  }
+
+  const stat = statSync(filepath);
+  if (!stat.isFile()) {
+    throw new Error("STEP path is not a regular file");
+  }
+  if (stat.size > MAX_STEP_BYTES) {
+    throw new Error(`STEP file exceeds ${MAX_STEP_BYTES} byte limit`);
   }
 
   // Read the file

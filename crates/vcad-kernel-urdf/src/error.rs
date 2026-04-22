@@ -53,4 +53,8 @@ pub enum UrdfError {
     /// Document conversion error.
     #[error("Document conversion error: {0}")]
     Conversion(String),
+
+    /// Input violated a structural limit or was otherwise malformed.
+    #[error("Invalid URDF format: {0}")]
+    InvalidFormat(String),
 }

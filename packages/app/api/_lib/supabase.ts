@@ -70,9 +70,31 @@ export async function getAuthDetail(
   }
 }
 
-/** Set the CORS headers this app uses on every endpoint. */
-export function applyCors(res: { setHeader: (k: string, v: string) => void }): void {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+/** The request origin will only receive CORS headers if it appears in this
+ *  allowlist. VCAD_CORS_ALLOWED_ORIGINS is a comma-separated env var; when
+ *  unset, we default to the production web origin only. */
+function allowedOrigins(): string[] {
+  const env = process.env.VCAD_CORS_ALLOWED_ORIGINS;
+  if (env && env.trim().length > 0) {
+    return env.split(",").map((s) => s.trim()).filter(Boolean);
+  }
+  return ["https://vcad.io"];
+}
+
+/** Set CORS headers — but only for origins on the allowlist. For non-browser
+ *  clients (Bearer-authed CLI, server-to-server), no Origin header is sent
+ *  and CORS is not involved. Previously this used `*`, which let any web
+ *  page on any origin call these endpoints with the user's access token. */
+export function applyCors(
+  res: { setHeader: (k: string, v: string) => void },
+  req?: { headers: { origin?: string | string[] } },
+): void {
+  const origin = req && req.headers ? req.headers.origin : undefined;
+  const originStr = Array.isArray(origin) ? origin[0] : origin;
+  if (originStr && allowedOrigins().includes(originStr)) {
+    res.setHeader("Access-Control-Allow-Origin", originStr);
+    res.setHeader("Vary", "Origin");
+  }
   res.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Stripe-Signature");
 }

@@ -108,7 +108,13 @@ function getClientIp(req: VercelRequest): string {
 }
 
 function hashIp(ip: string): string {
-  const salt = process.env.IP_HASH_SALT ?? "vcad-default-salt-change-me";
+  const salt = process.env.IP_HASH_SALT;
+  if (!salt || salt.length < 16) {
+    // Fail closed: without a strong, deployment-specific salt the "hashed
+    // IP" values used for anon rate-limiting collapse to a known mapping
+    // that any caller can precompute.
+    throw new Error("IP_HASH_SALT is not set or is too short (>= 16 chars required)");
+  }
   return createHash("sha256").update(`${salt}:${ip}`).digest("hex");
 }
 
@@ -558,7 +564,7 @@ async function checkAndSendUsageAlert(
 // ---------------------------------------------------------------------------
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  applyCors(res);
+  applyCors(res, req);
 
   if (req.method === "OPTIONS") {
     res.status(200).end();
