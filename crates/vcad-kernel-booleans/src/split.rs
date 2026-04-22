@@ -896,80 +896,6 @@ fn circle_fully_inside_polygon(polygon: &[Point3], circle: &vcad_kernel_geom::Ci
     true
 }
 
-/// Check if a circle overlaps with a polygon (in 3D, assumes coplanar).
-///
-/// Returns true if any part of the circle is inside the polygon.
-/// This handles edge cases like:
-/// - Circle center on polygon boundary or corner
-/// - Circle partially overlapping the polygon
-#[allow(dead_code)]
-fn circle_inside_polygon(polygon: &[Point3], circle: &vcad_kernel_geom::Circle3d) -> bool {
-    if polygon.len() < 3 {
-        return false;
-    }
-
-    // Use the circle's known normal for consistent projection
-    let v0 = polygon[0];
-    let normal = circle.normal.into_inner();
-
-    let e1 = polygon[1] - v0;
-    let u_axis = e1.normalize();
-    let v_axis = normal.cross(u_axis);
-    let v_axis_len = v_axis.norm();
-    if v_axis_len < 1e-12 {
-        return false;
-    }
-    let v_axis = v_axis / v_axis_len;
-
-    let project = |p: &Point3| -> (f64, f64) {
-        let d = p - v0;
-        (d.dot(u_axis), d.dot(v_axis))
-    };
-
-    // Project circle center
-    let (cx, cy) = project(&circle.center);
-
-    // Project polygon vertices
-    let poly_2d: Vec<(f64, f64)> = polygon.iter().map(project).collect();
-
-    // Check if circle center is inside the polygon
-    let center_inside = point_in_polygon_2d(cx, cy, &poly_2d);
-
-    // If center is inside, circle definitely overlaps
-    if center_inside {
-        return true;
-    }
-
-    // Check if center is very close to polygon boundary (tolerance for numerical precision)
-    let tol = 1e-6;
-    let n = poly_2d.len();
-    for i in 0..n {
-        let j = (i + 1) % n;
-        let (xi, yi) = poly_2d[i];
-        let (xj, yj) = poly_2d[j];
-
-        // Distance from center to this edge
-        let dist = point_to_segment_dist_2d(cx, cy, xi, yi, xj, yj);
-        if dist < tol {
-            // Center is on the boundary - check if any part of the circle is inside
-            // Sample points on the circle and check if any are inside
-            for k in 0..8 {
-                let theta = std::f64::consts::PI * 2.0 * (k as f64) / 8.0;
-                let px = cx + circle.radius * theta.cos();
-                let py = cy + circle.radius * theta.sin();
-                if point_in_polygon_2d(px, py, &poly_2d) {
-                    return true;
-                }
-            }
-            // Also check if circle intersects any polygon edge
-            return circle_intersects_polygon_edges(cx, cy, circle.radius, &poly_2d);
-        }
-    }
-
-    // Check if circle intersects any polygon edge
-    circle_intersects_polygon_edges(cx, cy, circle.radius, &poly_2d)
-}
-
 /// Point-in-polygon test using ray casting (2D version).
 fn point_in_polygon_2d(px: f64, py: f64, polygon: &[(f64, f64)]) -> bool {
     let mut inside = false;
@@ -1007,22 +933,6 @@ pub(crate) fn point_to_segment_dist_2d(
     let proj_x = x1 + t * dx;
     let proj_y = y1 + t * dy;
     ((px - proj_x).powi(2) + (py - proj_y).powi(2)).sqrt()
-}
-
-/// Check if a circle intersects any edge of a polygon.
-fn circle_intersects_polygon_edges(cx: f64, cy: f64, radius: f64, polygon: &[(f64, f64)]) -> bool {
-    let n = polygon.len();
-    for i in 0..n {
-        let j = (i + 1) % n;
-        let (x1, y1) = polygon[i];
-        let (x2, y2) = polygon[j];
-
-        let dist = point_to_segment_dist_2d(cx, cy, x1, y1, x2, y2);
-        if dist <= radius {
-            return true;
-        }
-    }
-    false
 }
 
 // =============================================================================

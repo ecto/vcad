@@ -559,19 +559,6 @@ mod tests {
         count
     }
 
-    /// Verify that the mesh has triangles covering a specific face plane.
-    /// Returns the number of triangles on that face.
-    #[allow(dead_code)]
-    fn verify_face_coverage(mesh: &TriangleMesh, coord: usize, value: f64) -> usize {
-        let tris = count_triangles_at_coord(mesh, coord, value, 0.01);
-        assert!(
-            tris > 0,
-            "Expected triangles at {}={}, found none",
-            ["x", "y", "z"][coord],
-            value
-        );
-        tris
-    }
 
     /// Test: Cylinder fully inside box (standard through-hole).
     /// The cylinder is completely contained within the box interior.

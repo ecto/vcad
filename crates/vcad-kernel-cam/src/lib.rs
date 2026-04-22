@@ -50,7 +50,6 @@
 //! let gcode = post.generate("facing_op", &tool, &toolpath, &settings);
 //! ```
 
-pub mod adaptive;
 pub mod dropcutter;
 mod error;
 mod operation;
