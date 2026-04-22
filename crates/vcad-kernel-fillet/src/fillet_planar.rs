@@ -1,7 +1,7 @@
 //! Planar fillet — cylindrical blend between two planar faces.
 
 use std::collections::HashMap;
-use vcad_kernel_geom::{CylinderSurface, GeometryStore, Plane};
+use vcad_kernel_geom::{CylinderSurface, GeometryStore, Plane, SurfaceKind};
 use vcad_kernel_math::{Dir3, Point3};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_topo::{FaceId, HalfEdgeId, Orientation, ShellType, Topology, VertexId};
@@ -11,6 +11,15 @@ use crate::topology::{
     FaceInfo,
 };
 use crate::trim::{build_vertex_faces, compute_trim_vertices, TrimKey};
+
+/// Dihedral angle threshold (radians) above which two adjacent faces count
+/// as "nearly coplanar". Extruding an arc profile produces a strip of thin,
+/// nearly-coplanar planar quads along the curved side wall — applying a
+/// planar fillet to such edges trims each adjacent face by `radius /
+/// tan(angle/2)` which diverges as the angle approaches 180°, producing
+/// the exploding sawtooth artifact visible in the viewport. At ~170° the
+/// blend would already be ~11× the fillet radius.
+const COPLANAR_DIHEDRAL_THRESHOLD: f64 = 170.0 * std::f64::consts::PI / 180.0;
 
 /// Fillet all edges of a B-rep solid with a constant radius.
 ///
@@ -22,11 +31,20 @@ use crate::trim::{build_vertex_faces, compute_trim_vertices, TrimKey};
 /// - All faces must be planar
 /// - The solid should be convex
 /// - Radius must be positive and smaller than the shortest edge / 2
+///
+/// When the B-rep contains non-planar surfaces or any pair of adjacent
+/// faces meeting at a near-coplanar dihedral angle (e.g. the tessellated
+/// side wall of an extruded arc), this function returns the input
+/// unchanged rather than producing broken geometry.
 pub fn fillet_all_edges(brep: &BRepSolid, radius: f64) -> BRepSolid {
     let faces = extract_faces(brep);
     let edges = extract_edges(brep);
 
     if edges.is_empty() {
+        return brep.clone();
+    }
+
+    if !is_fillet_safe(brep, &faces, &edges) {
         return brep.clone();
     }
 
@@ -173,6 +191,42 @@ pub fn fillet_all_edges(brep: &BRepSolid, radius: f64) -> BRepSolid {
         geometry: new_geom,
         solid_id,
     }
+}
+
+/// Pre-flight check that the planar fillet algorithm can produce correct
+/// geometry for this B-rep. Rejects inputs that would explode the trim
+/// calculation: non-planar surfaces and near-coplanar adjacent faces (the
+/// pattern produced by tessellating an extruded arc profile).
+fn is_fillet_safe(brep: &BRepSolid, faces: &[FaceInfo], edges: &[EdgeInfo]) -> bool {
+    for surface in &brep.geometry.surfaces {
+        if surface.surface_type() != SurfaceKind::Plane {
+            return false;
+        }
+    }
+
+    let face_map: HashMap<FaceId, &FaceInfo> = faces.iter().map(|f| (f.face_id, f)).collect();
+    for edge in edges {
+        let Some(fa) = face_map.get(&edge.face_a) else {
+            continue;
+        };
+        let Some(fb) = face_map.get(&edge.face_b) else {
+            continue;
+        };
+        let dot = fa.normal.dot(&fb.normal).clamp(-1.0, 1.0);
+        // Dihedral angle between outward face normals. `acos(dot)` is 0
+        // for identical normals and π for opposite normals. Two adjacent
+        // faces of a convex solid have an outward dihedral < π (the
+        // smaller, the sharper the edge). Near-coplanar ⇒ dot near 1 ⇒
+        // angle near 0. We reject when the interior-supplement (π − angle)
+        // exceeds the threshold, i.e. when the surfaces are nearly in the
+        // same plane.
+        let angle = dot.acos();
+        let interior = std::f64::consts::PI - angle;
+        if interior > COPLANAR_DIHEDRAL_THRESHOLD {
+            return false;
+        }
+    }
+    true
 }
 
 /// Build a plane-plane cylindrical blend (used by fillet_edges_detailed).

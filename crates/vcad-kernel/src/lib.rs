@@ -2062,4 +2062,103 @@ mod tests {
             v.max_triangle_area
         );
     }
+
+    #[test]
+    fn test_fillet_on_extruded_arc_profile_is_safe() {
+        // Regression for the "pork-chop sawtooth": extruding a sketch profile
+        // that contains arcs tessellates each arc into many short line
+        // segments (vcad_kernel_sketch::extrude). Each segment becomes a
+        // thin, nearly-coplanar planar side face. `fillet_all_edges` assumes
+        // a convex solid with well-separated face normals, so for tessellated
+        // arc walls its trim-vertex formula (`radius / tan(half_angle)`)
+        // explodes, producing a shell riddled with diagonal stripes and
+        // sawtooth edges where fillet blends overshoot their hosts. The
+        // kernel must detect the unsafe case and leave the solid unchanged
+        // instead of emitting broken geometry.
+        use vcad_kernel_sketch::{SketchProfile, SketchSegment};
+        use vcad_kernel_math::Point2;
+
+        // Kidney-shaped profile (6 arcs, matching the user's pork-chop).
+        let segments = vec![
+            SketchSegment::Arc {
+                start: Point2::new(45.0, 0.0),
+                end: Point2::new(20.0, 40.0),
+                center: Point2::new(10.0, 15.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: Point2::new(20.0, 40.0),
+                end: Point2::new(-30.0, 35.0),
+                center: Point2::new(-5.0, 25.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: Point2::new(-30.0, 35.0),
+                end: Point2::new(-50.0, 5.0),
+                center: Point2::new(-25.0, 15.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: Point2::new(-50.0, 5.0),
+                end: Point2::new(-35.0, -25.0),
+                center: Point2::new(-30.0, -5.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: Point2::new(-35.0, -25.0),
+                end: Point2::new(10.0, -30.0),
+                center: Point2::new(-10.0, -10.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: Point2::new(10.0, -30.0),
+                end: Point2::new(45.0, 0.0),
+                center: Point2::new(20.0, -10.0),
+                ccw: true,
+            },
+        ];
+        let profile = SketchProfile::new(
+            Point3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            segments,
+        )
+        .expect("valid profile");
+
+        let extruded = Solid::extrude(profile, Vec3::new(0.0, 0.0, 18.0)).expect("extrude ok");
+
+        // Count faces before fillet — this is the tessellated-arc B-rep we
+        // want to protect. Many thin side faces, two planar caps.
+        let face_count_before = match &extruded.repr {
+            SolidRepr::BRep(b) => b.topology.faces.len(),
+            _ => 0,
+        };
+        assert!(
+            face_count_before > 20,
+            "expected tessellated arc walls to produce >20 faces, got {face_count_before}"
+        );
+
+        let filleted = extruded.fillet(4.0);
+
+        // The fillet must not corrupt the solid. Either:
+        //  * faces unchanged (the safe bypass kicked in), or
+        //  * a genuinely larger + well-formed fillet result with watertight
+        //    tessellation.
+        // For the explosive planar path this test used to emit wildly many
+        // faces with zero-area or inverted triangles. The guard now returns
+        // the input unchanged, so the B-rep must keep the same face count.
+        let face_count_after = match &filleted.repr {
+            SolidRepr::BRep(b) => b.topology.faces.len(),
+            _ => 0,
+        };
+        assert_eq!(
+            face_count_after, face_count_before,
+            "fillet on tessellated arc walls must be a no-op bypass, not mutate the B-rep \
+             (the explosive path used to emit garbage geometry)"
+        );
+
+        // Tessellate to confirm we get a real mesh.
+        let mesh = filleted.to_mesh(32);
+        assert!(mesh.num_triangles() > 0, "mesh should be non-empty");
+    }
 }

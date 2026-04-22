@@ -30,14 +30,20 @@ pub fn migrate_v1(doc: &Document) -> CrdtDocument {
 }
 
 /// Tracks the position cursor so each new feature appends at the end of
-/// the ordered feature list.
+/// the ordered feature list, plus a memoization map so a subtree that
+/// appears under multiple v1 roots (e.g. the pre-fillet extrude and the
+/// fillet itself both rooted) migrates to a single CRDT feature.
 struct MigrationCtx {
     last_pos: Option<FractionalIndex>,
+    node_to_feature: HashMap<NodeId, FeatureId>,
 }
 
 impl MigrationCtx {
     fn new() -> Self {
-        Self { last_pos: None }
+        Self {
+            last_pos: None,
+            node_to_feature: HashMap::new(),
+        }
     }
 
     /// Allocate the next ordered position (strictly greater than all prior).
@@ -57,6 +63,10 @@ fn migrate_node(
     doc: &Document,
     node_id: NodeId,
 ) -> Option<FeatureId> {
+    if let Some(fid) = ctx.node_to_feature.get(&node_id).copied() {
+        return Some(fid);
+    }
+    let top_id = node_id;
     let mut params: HashMap<String, Value> = HashMap::new();
     let mut current_id = node_id;
 
@@ -100,7 +110,7 @@ fn migrate_node(
     }
 
     let leaf = doc.nodes.get(&current_id)?;
-    match &leaf.op {
+    let fid = match &leaf.op {
         CsgOp::Cube { size } => {
             params.insert("size_x".to_string(), Value::F64(size.x));
             params.insert("size_y".to_string(), Value::F64(size.y));
@@ -207,9 +217,10 @@ fn migrate_node(
             twist_angle,
             scale_end,
         } => {
-            let depth =
-                (direction.x * direction.x + direction.y * direction.y + direction.z * direction.z)
-                    .sqrt();
+            let depth = (direction.x * direction.x
+                + direction.y * direction.y
+                + direction.z * direction.z)
+                .sqrt();
             if depth > 0.0 {
                 params.insert("depth".to_string(), Value::F64(depth));
                 params.insert(
@@ -329,7 +340,11 @@ fn migrate_node(
         }
         // Ops we don't represent in the CRDT feature model — drop silently.
         _ => None,
+    };
+    if let Some(id) = fid {
+        ctx.node_to_feature.insert(top_id, id);
     }
+    fid
 }
 
 fn migrate_boolean(
@@ -412,7 +427,10 @@ fn migrate_assembly(crdt: &mut CrdtDocument, ctx: &mut MigrationCtx, doc: &Docum
                 continue;
             };
             let mut params = HashMap::new();
-            params.insert("part_def".to_string(), Value::FeatureRef(pd_stable.clone()));
+            params.insert(
+                "part_def".to_string(),
+                Value::FeatureRef(pd_stable.clone()),
+            );
             if let Some(n) = &inst.name {
                 params.insert("name".to_string(), Value::String(n.clone()));
             }
@@ -653,5 +671,191 @@ mod tests {
 
         assert_eq!(detect_format(b""), FileFormat::Unknown);
         assert_eq!(detect_format(b"garbage"), FileFormat::Unknown);
+    }
+
+    #[test]
+    fn test_migrate_fillet_wires_input_and_materializes_single_root() {
+        // Regression: the pork-chop z-fighting came back via the v1 load path —
+        // migrate_v1 flattened a Fillet root into one feature and dropped the
+        // reference to the extrude it was rounding. After migration the fillet
+        // had no `input` FeatureRef, so `collect_consumed_feature_ids` in the
+        // materializer saw neither feature as consumed and both were scene
+        // roots, producing the z-fighting sawtooth.
+        use crate::materializer::materialize;
+        use vcad_ir::SceneEntry;
+
+        let mut doc = Document::new();
+        // Sketch
+        let sketch_id = 1;
+        doc.nodes.insert(
+            sketch_id,
+            vcad_ir::Node {
+                id: sketch_id,
+                name: None,
+                op: CsgOp::Sketch2D {
+                    origin: Vec3::new(0.0, 0.0, 0.0),
+                    x_dir: Vec3::new(1.0, 0.0, 0.0),
+                    y_dir: Vec3::new(0.0, 1.0, 0.0),
+                    segments: vec![
+                        vcad_ir::SketchSegment2D::Line {
+                            start: vcad_ir::Vec2 { x: 0.0, y: 0.0 },
+                            end: vcad_ir::Vec2 { x: 10.0, y: 0.0 },
+                        },
+                        vcad_ir::SketchSegment2D::Line {
+                            start: vcad_ir::Vec2 { x: 10.0, y: 0.0 },
+                            end: vcad_ir::Vec2 { x: 10.0, y: 10.0 },
+                        },
+                        vcad_ir::SketchSegment2D::Line {
+                            start: vcad_ir::Vec2 { x: 10.0, y: 10.0 },
+                            end: vcad_ir::Vec2 { x: 0.0, y: 10.0 },
+                        },
+                        vcad_ir::SketchSegment2D::Line {
+                            start: vcad_ir::Vec2 { x: 0.0, y: 10.0 },
+                            end: vcad_ir::Vec2 { x: 0.0, y: 0.0 },
+                        },
+                    ],
+                },
+            },
+        );
+        // Extrude -> scale -> rotate -> translate (the materializer-produced chain)
+        let extrude_id = 2;
+        doc.nodes.insert(
+            extrude_id,
+            vcad_ir::Node {
+                id: extrude_id,
+                name: Some("Chop Meat".to_string()),
+                op: CsgOp::Extrude {
+                    sketch: sketch_id,
+                    direction: Vec3::new(0.0, 0.0, 20.0),
+                    twist_angle: None,
+                    scale_end: None,
+                },
+            },
+        );
+        let scale_e = 3;
+        doc.nodes.insert(
+            scale_e,
+            vcad_ir::Node {
+                id: scale_e,
+                name: None,
+                op: CsgOp::Scale {
+                    child: extrude_id,
+                    factor: Vec3::new(1.0, 1.0, 1.0),
+                },
+            },
+        );
+        let rotate_e = 4;
+        doc.nodes.insert(
+            rotate_e,
+            vcad_ir::Node {
+                id: rotate_e,
+                name: None,
+                op: CsgOp::Rotate {
+                    child: scale_e,
+                    angles: Vec3::new(0.0, 0.0, 0.0),
+                },
+            },
+        );
+        let translate_e = 5;
+        doc.nodes.insert(
+            translate_e,
+            vcad_ir::Node {
+                id: translate_e,
+                name: Some("Chop Meat".to_string()),
+                op: CsgOp::Translate {
+                    child: rotate_e,
+                    offset: Vec3::new(0.0, 0.0, 0.0),
+                },
+            },
+        );
+        // Fillet -> scale -> rotate -> translate
+        let fillet_id = 6;
+        doc.nodes.insert(
+            fillet_id,
+            vcad_ir::Node {
+                id: fillet_id,
+                name: Some("Meat Rounding".to_string()),
+                op: CsgOp::Fillet {
+                    child: translate_e,
+                    radius: 5.0,
+                },
+            },
+        );
+        let scale_f = 7;
+        doc.nodes.insert(
+            scale_f,
+            vcad_ir::Node {
+                id: scale_f,
+                name: None,
+                op: CsgOp::Scale {
+                    child: fillet_id,
+                    factor: Vec3::new(1.0, 1.0, 1.0),
+                },
+            },
+        );
+        let rotate_f = 8;
+        doc.nodes.insert(
+            rotate_f,
+            vcad_ir::Node {
+                id: rotate_f,
+                name: None,
+                op: CsgOp::Rotate {
+                    child: scale_f,
+                    angles: Vec3::new(0.0, 0.0, 0.0),
+                },
+            },
+        );
+        let translate_f = 9;
+        doc.nodes.insert(
+            translate_f,
+            vcad_ir::Node {
+                id: translate_f,
+                name: Some("Meat Rounding".to_string()),
+                op: CsgOp::Translate {
+                    child: rotate_f,
+                    offset: Vec3::new(0.0, 0.0, 0.0),
+                },
+            },
+        );
+
+        // v1 doc WITH BOTH the pre-fillet extrude AND the fillet as roots —
+        // exactly the shape a "save-then-reload" would produce before the
+        // consumed-roots fix landed. The migration must wire the fillet's
+        // `input` FeatureRef so the extrude is consumed and not re-rooted.
+        doc.roots.push(SceneEntry {
+            root: translate_e,
+            material: "abs-red".to_string(),
+            visible: None,
+        });
+        doc.roots.push(SceneEntry {
+            root: translate_f,
+            material: "default".to_string(),
+            visible: None,
+        });
+
+        let crdt = migrate_v1(&doc);
+        // Two features: extrude + fillet (the migration must NOT create two
+        // disconnected features plus a dangling fillet).
+        let features = crdt.ordered_features();
+        assert_eq!(features.len(), 2, "expected extrude + fillet");
+
+        let fillet_feature = features.iter().find(|(_, f)| f.kind == "fillet").unwrap();
+        let input = fillet_feature
+            .1
+            .params
+            .get("input")
+            .expect("fillet must have `input` param pointing at the extrude");
+        match &input.0 {
+            Value::FeatureRef(_) => {}
+            other => panic!("fillet input must be FeatureRef, got {other:?}"),
+        }
+
+        let result = materialize(&crdt);
+        assert_eq!(
+            result.document.roots.len(),
+            1,
+            "v1 migration of extrude+fillet must produce exactly 1 root; got {:#?}",
+            result.document.roots
+        );
     }
 }

@@ -1636,6 +1636,132 @@ mod tests {
     }
 
     #[test]
+    fn test_pork_chop_chat_flow_produces_one_root() {
+        // Reproduces the exact chat-flow sequence that produced the pork-chop
+        // z-fighting: extrude → fillet → delete extrude → re-extrude → re-fillet
+        // → set material on the new extrude. After this sequence, only the new
+        // fillet should be a scene root. The pre-fillet extrude must NOT root.
+        let mut crdt = CrdtDocument::new(ReplicaId(1));
+
+        // Sketch JSON the AI would pass (a closed kidney-ish profile).
+        let sketch_json = serde_json::to_string(&vcad_ir::CsgOp::Sketch2D {
+            origin: Vec3::new(0.0, 0.0, 0.0),
+            x_dir: Vec3::new(1.0, 0.0, 0.0),
+            y_dir: Vec3::new(0.0, 1.0, 0.0),
+            segments: vec![
+                vcad_ir::SketchSegment2D::Line {
+                    start: vcad_ir::Vec2 { x: 0.0, y: 0.0 },
+                    end: vcad_ir::Vec2 { x: 10.0, y: 0.0 },
+                },
+                vcad_ir::SketchSegment2D::Line {
+                    start: vcad_ir::Vec2 { x: 10.0, y: 0.0 },
+                    end: vcad_ir::Vec2 { x: 10.0, y: 10.0 },
+                },
+                vcad_ir::SketchSegment2D::Line {
+                    start: vcad_ir::Vec2 { x: 10.0, y: 10.0 },
+                    end: vcad_ir::Vec2 { x: 0.0, y: 10.0 },
+                },
+                vcad_ir::SketchSegment2D::Line {
+                    start: vcad_ir::Vec2 { x: 0.0, y: 10.0 },
+                    end: vcad_ir::Vec2 { x: 0.0, y: 0.0 },
+                },
+            ],
+        })
+        .unwrap();
+
+        // Step 1: extrude (Chop Meat v1)
+        let pos1 = FractionalIndex::between(None, None);
+        let (extrude1_fid, _) = crdt.create_feature(
+            "extrude",
+            pos1.clone(),
+            HashMap::from([
+                ("sketch".to_string(), Value::String(sketch_json.clone())),
+                ("depth".to_string(), Value::F64(18.0)),
+                ("direction".to_string(), Value::Vec3([0.0, 0.0, 1.0])),
+                ("name".to_string(), Value::String("Chop Meat".to_string())),
+            ]),
+        );
+        let extrude1_id_str = fid_to_string(extrude1_fid);
+
+        // Step 2: fillet (Meat Rounding v1) — references Chop Meat v1
+        let pos2 = FractionalIndex::between(Some(&pos1), None);
+        crdt.create_feature(
+            "fillet",
+            pos2.clone(),
+            HashMap::from([
+                (
+                    "input".to_string(),
+                    Value::FeatureRef(extrude1_id_str.clone()),
+                ),
+                ("radius".to_string(), Value::F64(4.0)),
+                (
+                    "name".to_string(),
+                    Value::String("Meat Rounding".to_string()),
+                ),
+            ]),
+        );
+
+        // Step 3: set material on Chop Meat v1
+        crdt.set_param(
+            extrude1_fid,
+            "material",
+            Value::String("abs-red".to_string()),
+        );
+
+        // Step 4: delete Chop Meat v1
+        crdt.delete_feature(extrude1_fid);
+
+        // Step 5: create new extrude (Chop Meat v2)
+        let pos3 = FractionalIndex::between(Some(&pos2), None);
+        let (extrude2_fid, _) = crdt.create_feature(
+            "extrude",
+            pos3.clone(),
+            HashMap::from([
+                ("sketch".to_string(), Value::String(sketch_json.clone())),
+                ("depth".to_string(), Value::F64(20.0)),
+                ("direction".to_string(), Value::Vec3([0.0, 0.0, 1.0])),
+                ("name".to_string(), Value::String("Chop Meat".to_string())),
+            ]),
+        );
+        let extrude2_id_str = fid_to_string(extrude2_fid);
+
+        // Step 6: new fillet (Meat Rounding v2) — references Chop Meat v2
+        let pos4 = FractionalIndex::between(Some(&pos3), None);
+        crdt.create_feature(
+            "fillet",
+            pos4,
+            HashMap::from([
+                (
+                    "input".to_string(),
+                    Value::FeatureRef(extrude2_id_str.clone()),
+                ),
+                ("radius".to_string(), Value::F64(5.0)),
+                (
+                    "name".to_string(),
+                    Value::String("Meat Rounding".to_string()),
+                ),
+            ]),
+        );
+
+        // Step 7: set material on Chop Meat v2
+        crdt.set_param(
+            extrude2_fid,
+            "material",
+            Value::String("abs-red".to_string()),
+        );
+
+        let result = materialize(&crdt);
+        // Only the fillet should render — the extrude it consumed is not a root.
+        assert_eq!(
+            result.document.roots.len(),
+            1,
+            "expected exactly 1 root (fillet), got {}: {:#?}",
+            result.document.roots.len(),
+            result.document.roots
+        );
+    }
+
+    #[test]
     fn test_boolean_inputs_are_not_scene_roots() {
         // Same principle: a difference/union/intersection consumes both its
         // inputs. Only the boolean result should render.
