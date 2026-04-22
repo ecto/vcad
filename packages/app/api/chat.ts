@@ -558,7 +558,7 @@ async function checkAndSendUsageAlert(
 // ---------------------------------------------------------------------------
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  applyCors(res);
+  applyCors(res, req);
 
   if (req.method === "OPTIONS") {
     res.status(200).end();

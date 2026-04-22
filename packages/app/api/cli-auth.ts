@@ -19,21 +19,20 @@
  */
 
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { getSupabaseAdmin, getUserIdFromAuth } from "./_lib/supabase.js";
+import { applyCors, getSupabaseAdmin, getUserIdFromAuth } from "./_lib/supabase.js";
 
 const CODE_TTL_SECONDS = 10 * 60;
 
-function setCors(res: VercelResponse): void {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+function setCors(res: VercelResponse, req: VercelRequest): void {
+  applyCors(res, req);
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
 }
 
 export default async function handler(
   req: VercelRequest,
   res: VercelResponse,
 ): Promise<void> {
-  setCors(res);
+  setCors(res, req);
   if (req.method === "OPTIONS") {
     res.status(204).end();
     return;

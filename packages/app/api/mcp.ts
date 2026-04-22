@@ -12,6 +12,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 // Use workspace package imports (Vercel resolves these via node_modules)
 import { createServer } from "@vcad/mcp/server";
 import { Engine } from "@vcad/engine";
+import { applyCors } from "./_lib/supabase.js";
 
 // Module-scope engine — survives warm invocations
 let _engine: Engine | undefined;
@@ -24,12 +25,13 @@ async function getEngine(): Promise<Engine> {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // CORS
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  // Apply the shared allowlisted CORS policy, then add the MCP-specific
+  // headers on top.
+  applyCors(res, req);
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
   res.setHeader(
     "Access-Control-Allow-Headers",
-    "Content-Type, mcp-session-id, Last-Event-ID, mcp-protocol-version",
+    "Content-Type, Authorization, mcp-session-id, Last-Event-ID, mcp-protocol-version",
   );
   res.setHeader(
     "Access-Control-Expose-Headers",
