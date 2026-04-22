@@ -20,3 +20,9 @@ vcad-kernel-shell = { path = "../vcad-kernel-shell" }
 vcad-kernel-step = { path = "../vcad-kernel-step" }
 vcad-kernel-constraints = { path = "../vcad-kernel-constraints" }
 vcad-kernel-text = { path = "../vcad-kernel-text" }
+
+[features]
+# Forwards the `no-builtin-font` flag from vcad-kernel-text so downstream
+# crates (e.g. vcad-kernel-wasm) can disable the compile-time font embed
+# without reaching into a transitive dependency.
+no-builtin-font = ["vcad-kernel-text/no-builtin-font"]

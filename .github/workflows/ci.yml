@@ -94,10 +94,16 @@ jobs:
       # --dev skips wasm-opt (~2m) and uses cargo's dev profile (faster
       # compile, larger/slower wasm — fine for CI tests, never shipped).
       # Production wasm is built by Vercel, not this workflow.
+      #
+      # `no-builtin-font` drops the include_bytes!() of
+      # node_modules/next/.../noto-sans.ttf, which doesn't exist here
+      # (this job doesn't run `npm ci`). Matches the Rust CI job.
       - name: Build wasm (dev)
         if: steps.wasm-cache.outputs.cache-hit != 'true'
         run: |
-          wasm-pack build crates/vcad-kernel-wasm --dev --target web --out-dir ../../packages/kernel-wasm/pkg
+          wasm-pack build crates/vcad-kernel-wasm --dev --target web \
+            --out-dir ../../packages/kernel-wasm/pkg \
+            --features no-builtin-font
           cp packages/kernel-wasm/pkg/vcad_kernel_wasm* packages/kernel-wasm/
       - uses: actions/upload-artifact@v4
         with:
