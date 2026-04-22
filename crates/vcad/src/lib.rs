@@ -4,6 +4,15 @@
 //!
 //! CSG modeling with multi-format export (STL, glTF, USD, DXF).
 //!
+//! # Status
+//!
+//! This crate is the legacy manifold-based CSG API. It is preserved as the
+//! ergonomic Rust-facing way to script models, but the implementation will
+//! be migrated to sit on top of the new BRep kernel (`vcad-kernel`) rather
+//! than its own mesh-CSG backend.
+//!
+//! Tracked in [issue #10](https://github.com/ecto/vcad/issues/10).
+//!
 //! # Example
 //!
 //! ```rust,no_run

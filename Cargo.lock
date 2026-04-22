@@ -5962,7 +5962,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tower-http",
- "vcad",
  "vcad-app",
  "vcad-chat",
  "vcad-crdt",
