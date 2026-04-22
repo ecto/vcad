@@ -8,6 +8,18 @@ vcad is an open-source parametric CAD system aiming to replace Fusion 360, Onsha
 
 **Live app:** https://vcad.io
 
+## Prerequisites
+
+vcad depends on the `tang` math workspace at a **sibling path** (`../tang`). Clone it
+next to vcad before running `cargo build`:
+
+```bash
+git clone git@github.com:ecto/tang.git ../tang
+```
+
+Cargo paths in the workspace (`tang`, `tang-la`, `tang-expr`) all point at
+`../tang/crates/*`.
+
 ## Commands
 
 ```bash
