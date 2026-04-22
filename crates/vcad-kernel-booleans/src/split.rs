@@ -2299,8 +2299,16 @@ pub fn split_cylindrical_face(
             split_cylindrical_face_by_circle(brep, face_id, circle)
         }
         IntersectionCurve::Line(line) => split_cylindrical_face_by_line(brep, face_id, line),
-        IntersectionCurve::Sampled(_points) => {
-            // TODO: Implement general oblique split
+        IntersectionCurve::Sampled(points) => {
+            // General oblique cylinder splits are not yet implemented. Log
+            // so the caller at least sees the operation silently failed
+            // instead of producing a geometrically wrong result.
+            eprintln!(
+                "[vcad-kernel-booleans] split_cylindrical_face: oblique Sampled \
+                 intersection ({} points) not yet supported; returning face unsplit. \
+                 Downstream boolean result will be incorrect for this face.",
+                points.len()
+            );
             SplitResult {
                 sub_faces: vec![face_id],
             }
