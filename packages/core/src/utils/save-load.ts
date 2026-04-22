@@ -88,21 +88,61 @@ function parseVcadFileTS(
   return parseVCodeFile(trimmed);
 }
 
+// Hard caps on shape/size — enough for any realistic document, small enough
+// to keep a malicious .vcad from allocating gigabytes or blowing the stack.
+const MAX_VCAD_BYTES = 64 * 1024 * 1024;
+const MAX_VCAD_NODES = 500_000;
+const MAX_VCAD_PARTS = 50_000;
+
 /**
  * Parse legacy JSON format (v0.1)
  */
 function parseJsonVcadFile(json: string): VcadFile {
-  const data = JSON.parse(json) as VcadFile;
-
-  // Basic validation
-  if (!data.document || !Array.isArray(data.parts)) {
-    throw new Error("Invalid .vcad file: missing document or parts");
+  if (json.length > MAX_VCAD_BYTES) {
+    throw new Error("Invalid .vcad file: exceeds size limit");
   }
-  if (typeof data.nextNodeId !== "number") {
-    throw new Error("Invalid .vcad file: missing nextNodeId");
+  const raw = JSON.parse(json) as unknown;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("Invalid .vcad file: expected an object");
+  }
+  const obj = raw as Record<string, unknown>;
+
+  // Prototype-pollution defense: refuse any top-level key that could
+  // reassign Object.prototype downstream.
+  if ("__proto__" in obj || "constructor" in obj || "prototype" in obj) {
+    throw new Error("Invalid .vcad file: forbidden key in root");
   }
 
-  return data;
+  if (!obj.document || typeof obj.document !== "object" || Array.isArray(obj.document)) {
+    throw new Error("Invalid .vcad file: missing or malformed document");
+  }
+  const doc = obj.document as Record<string, unknown>;
+  if (!doc.nodes || typeof doc.nodes !== "object" || Array.isArray(doc.nodes)) {
+    throw new Error("Invalid .vcad file: document.nodes must be an object");
+  }
+  const nodes = doc.nodes as Record<string, unknown>;
+  if ("__proto__" in nodes || "constructor" in nodes) {
+    throw new Error("Invalid .vcad file: forbidden key in document.nodes");
+  }
+  if (Object.keys(nodes).length > MAX_VCAD_NODES) {
+    throw new Error("Invalid .vcad file: too many nodes");
+  }
+  if (!Array.isArray(doc.roots)) {
+    throw new Error("Invalid .vcad file: document.roots must be an array");
+  }
+
+  if (!Array.isArray(obj.parts)) {
+    throw new Error("Invalid .vcad file: parts must be an array");
+  }
+  if (obj.parts.length > MAX_VCAD_PARTS) {
+    throw new Error("Invalid .vcad file: too many parts");
+  }
+
+  if (typeof obj.nextNodeId !== "number" || !Number.isFinite(obj.nextNodeId)) {
+    throw new Error("Invalid .vcad file: missing or invalid nextNodeId");
+  }
+
+  return obj as unknown as VcadFile;
 }
 
 /**
