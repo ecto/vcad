@@ -248,6 +248,18 @@ export const useNotificationStore = create<NotificationStore>((set, get) => {
 
     scheduleAutoDismiss(id, duration);
 
+    // Success/error toasts double as native notifications when the app is
+    // backgrounded under Tauri — users see export/save/AI outcomes even
+    // when they've switched away. Info/warning stay in-app only.
+    if (type === "success" || type === "error") {
+      void import("@/lib/native-notify").then((m) =>
+        m.notifyIfBackgrounded({
+          title: type === "error" ? "vcad — Error" : "vcad",
+          body: message,
+        }),
+      );
+    }
+
     return id;
   };
 

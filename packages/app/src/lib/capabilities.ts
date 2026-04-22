@@ -28,6 +28,9 @@ export interface Capabilities {
   localAi: LocalAi;
   /** Native filesystem (open/save dialogs, recent files) */
   nativeFs: boolean;
+  /** Host OS. "mac" gates the overlay-titlebar padding; other platforms
+   * render chrome normally. Only populated under Tauri. */
+  platform: "mac" | "windows" | "linux" | "other";
 }
 
 const NULL_CAPABILITIES: Capabilities = {
@@ -35,7 +38,17 @@ const NULL_CAPABILITIES: Capabilities = {
   bambu: false,
   localAi: { ollama: false, endpoint: null, models: [] },
   nativeFs: false,
+  platform: "other",
 };
+
+function detectPlatform(): Capabilities["platform"] {
+  if (typeof navigator === "undefined") return "other";
+  const ua = navigator.userAgent.toLowerCase();
+  if (ua.includes("mac")) return "mac";
+  if (ua.includes("windows")) return "windows";
+  if (ua.includes("linux")) return "linux";
+  return "other";
+}
 
 let cache: Capabilities | null = null;
 let inflight: Promise<Capabilities> | null = null;
@@ -70,6 +83,7 @@ export async function probeCapabilities(): Promise<Capabilities> {
       bambu: tauri,
       localAi,
       nativeFs: false,
+      platform: detectPlatform(),
     };
     cache = caps;
     inflight = null;

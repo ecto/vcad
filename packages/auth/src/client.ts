@@ -7,19 +7,30 @@ import {
 // Supabase client - only created if credentials are configured
 let supabaseClient: SupabaseClient | null = null;
 
+// Production defaults. The `sb_publishable_*` key is a Supabase publishable
+// key — explicitly designed to be embedded in client bundles (web, mobile,
+// desktop). Row Level Security enforces authorization server-side, so
+// shipping these values in the binary is safe and is what Supabase recommends
+// for end-user distribution. Env vars override for staging / local work.
+const DEFAULT_SUPABASE_URL = "https://yteuhwciuxcbjwmabawj.supabase.co";
+const DEFAULT_SUPABASE_ANON_KEY =
+  "sb_publishable_pt2xNsK8d7fEbdlkj9PQrA_KvYERtjM";
+
 function getSupabaseCredentials(): { url: string; anonKey: string } | null {
   // Support both Vite and Node environments
   const url =
     (typeof import.meta !== "undefined" &&
       (import.meta as { env?: Record<string, string> }).env
         ?.VITE_SUPABASE_URL) ||
-    (typeof process !== "undefined" && process.env?.SUPABASE_URL);
+    (typeof process !== "undefined" && process.env?.SUPABASE_URL) ||
+    DEFAULT_SUPABASE_URL;
 
   const anonKey =
     (typeof import.meta !== "undefined" &&
       (import.meta as { env?: Record<string, string> }).env
         ?.VITE_SUPABASE_ANON_KEY) ||
-    (typeof process !== "undefined" && process.env?.SUPABASE_ANON_KEY);
+    (typeof process !== "undefined" && process.env?.SUPABASE_ANON_KEY) ||
+    DEFAULT_SUPABASE_ANON_KEY;
 
   if (!url || !anonKey) {
     return null;

@@ -6,11 +6,18 @@
   "build": {
     "frontendDist": "../../packages/app/dist",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "npm --prefix ../../packages/app run dev",
-    "beforeBuildCommand": "npm --prefix ../../packages/app run build"
+    "beforeDevCommand": {
+      "cwd": "../../packages/app",
+      "script": "TAURI_DEV=1 npm run dev"
+    },
+    "beforeBuildCommand": {
+      "cwd": "../../packages/app",
+      "script": "npm run build"
+    }
   },
   "app": {
     "withGlobalTauri": false,
+    "macOSPrivateApi": true,
     "windows": [
       {
         "title": "vcad",
@@ -19,7 +26,10 @@
         "resizable": true,
         "fullscreen": false,
         "visible": true,
-        "focus": true
+        "focus": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "transparent": true
       }
     ],
     "security": {
@@ -29,6 +39,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -53,5 +64,19 @@
         "mimeType": "model/stl"
       }
     ]
+  },
+  "plugins": {
+    "deep-link": {
+      "mobile": [],
+      "desktop": {
+        "schemes": ["vcad"]
+      }
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJBMkMxQjkwOTVCRDY4OUEKUldTYWFMMlZrQnNzdW5KbTArekdTdDNsVEJyeTYvY3A0Ym15cHdiRlNrUDZNQlRmS0tXU0IzQUcK",
+      "endpoints": [
+        "https://github.com/ecto/vcad/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

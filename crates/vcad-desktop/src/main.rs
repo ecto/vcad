@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod menu;
+mod platform;
 
 use tauri::Manager;
 
@@ -8,6 +10,12 @@ use commands::{bambu, local_ai};
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_deep_link::init())
         .manage(bambu::BambuState::new())
         .setup(|app| {
             // macOS: activate the app so the window actually appears
@@ -16,11 +24,16 @@ fn main() {
             {
                 app.set_activation_policy(tauri::ActivationPolicy::Regular);
             }
+            menu::install(&app.handle())?;
             if let Some(window) = app.get_webview_window("main") {
+                platform::apply_window_effects(&window);
                 let _ = window.show();
                 let _ = window.set_focus();
             }
             Ok(())
+        })
+        .on_menu_event(|app, event| {
+            menu::handle_event(app, event.id().as_ref());
         })
         .invoke_handler(tauri::generate_handler![
             bambu::bambu_discover,
@@ -30,6 +43,7 @@ fn main() {
             bambu::bambu_control,
             local_ai::local_ai_probe,
             local_ai::local_ai_chat_stream,
+            menu::set_menu_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
