@@ -1735,12 +1735,38 @@ fn tessellate_cylindrical_face(
         }
 
         // Subdivide each anchor-to-anchor segment to maintain the
-        // caller's requested density across the full 2π circle.
+        // caller's requested density across the full 2π circle — but
+        // only when the native anchor spacing is coarser than the
+        // target. Arc-extruded cylinder faces carry dense anchors along
+        // the bottom/top arcs (one per tessellation segment of the
+        // source arc); introducing subdivision samples there just
+        // creates new mid-edge vertices that aren't present on the cap
+        // boundary, breaking the weld at the cap-lateral seam. Faces
+        // with sparse anchors (e.g. a boolean-cut cylinder strip with
+        // only two endpoints) still get subdivided so the shell
+        // doesn't go visibly coarse.
         let target_density = n_circ as f64 / (2.0 * PI);
+        let mean_span = u_range / ((anchors.len() - 1) as f64).max(1.0);
+        let anchor_density_ratio = if mean_span > 1e-12 {
+            (1.0 / mean_span) / target_density
+        } else {
+            0.0
+        };
+        // Even anchors that are almost-but-not-quite at target density
+        // are still preferable to subdividing, since the cap tessellation
+        // can only match samples at the anchor positions (anything in
+        // between creates an unweldable mid-edge vertex). Only subdivide
+        // when anchors are clearly sparse (e.g. a 2-vertex boolean-cut
+        // strip) rather than merely 5-10% below target.
+        let anchors_are_dense = anchor_density_ratio >= 0.5;
         u_samples.push(anchors[0]);
         for w in anchors.windows(2) {
             let span = w[1] - w[0];
-            let subdivs = ((span * target_density).ceil() as usize).max(1);
+            let subdivs = if anchors_are_dense {
+                1
+            } else {
+                ((span * target_density).ceil() as usize).max(1)
+            };
             for i in 1..=subdivs {
                 u_samples.push(w[0] + span * (i as f64 / subdivs as f64));
             }
