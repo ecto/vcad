@@ -1,10 +1,28 @@
 import { useEffect, useRef } from "react";
-import { useUiStore, useSketchStore, type SidebarPane } from "@vcad/core";
+import {
+  useDocumentStore,
+  useUiStore,
+  useSketchStore,
+  type SidebarPane,
+} from "@vcad/core";
 
 const INSPECT_VALUES = ["scene"] as const;
 type InspectValue = (typeof INSPECT_VALUES)[number];
 function isInspectValue(v: string | null): v is InspectValue {
   return v != null && (INSPECT_VALUES as readonly string[]).includes(v);
+}
+
+/**
+ * Returns the pathname the URL should carry for a given `documentId`, or null
+ * to leave the pathname alone. We only own the `/d/<id>` and `/` prefixes —
+ * any other path (share token, public slug, profile page) is another
+ * subsystem's to manage.
+ */
+function desiredPathname(documentId: string | null): string | null {
+  const path = window.location.pathname;
+  const ownedByDocSync = path === "/" || /^\/d\//.test(path);
+  if (!ownedByDocSync) return null;
+  return documentId ? `/d/${documentId}` : "/";
 }
 
 /**
@@ -21,6 +39,7 @@ function isInspectValue(v: string | null): v is InspectValue {
  * stores, and a guard ref prevents the two from chasing each other.
  */
 export function useUrlSync() {
+  const documentId = useDocumentStore((s) => s.documentId);
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
   const sidebarPane = useUiStore((s) => s.sidebarPane);
   const inspectorTarget = useUiStore((s) => s.inspectorTarget);
@@ -95,9 +114,13 @@ export function useUrlSync() {
     }
 
     const next = params.toString();
-    const url = `${window.location.pathname}${next ? "?" + next : ""}${window.location.hash}`;
+    // The pathname is either the `/d/<id>` we want (local doc), or we leave
+    // it alone (share token / public slug / profile page).
+    const pathname =
+      desiredPathname(documentId) ?? window.location.pathname;
+    const url = `${pathname}${next ? "?" + next : ""}${window.location.hash}`;
     if (url !== window.location.pathname + window.location.search + window.location.hash) {
       window.history.replaceState(null, "", url);
     }
-  }, [selectedPartIds, sidebarPane, sketchActive, inspectorTarget]);
+  }, [documentId, selectedPartIds, sidebarPane, sketchActive, inspectorTarget]);
 }

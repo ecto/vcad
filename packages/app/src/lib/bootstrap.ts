@@ -17,7 +17,7 @@ import {
   loadDocument as loadDocumentFromDb,
   generateDocumentName,
 } from "@/lib/storage";
-import { loadDocumentFromUrl } from "@/lib/url-document";
+import { loadDocumentFromUrl, getLocalDocRouteId } from "@/lib/url-document";
 import type { UrlDocumentResult } from "@/lib/url-document";
 import { useNotificationStore } from "@/stores/notification-store";
 import { analytics } from "@/lib/analytics";
@@ -237,6 +237,23 @@ async function fetchDocumentData(): Promise<DocumentBootData> {
   try {
     const urlDoc = await loadDocumentFromUrl();
     if (urlDoc) return { kind: "url", urlDoc };
+
+    // `/d/<localId>` — URL carries the exact local doc to open. If the doc
+    // doesn't exist on this device, fall through to the most-recent flow
+    // rather than crash; the URL is replaced by the mirror after loading.
+    const routedId = getLocalDocRouteId();
+    if (routedId) {
+      const stored = await loadDocumentFromDb(routedId);
+      if (stored) {
+        return {
+          kind: "stored",
+          id: stored.id,
+          name: stored.name,
+          file: stored.document,
+        };
+      }
+      logger.warn("app", `URL referenced unknown local doc ${routedId}, falling back`);
+    }
 
     const recent = await getMostRecentDocument();
     if (recent) {

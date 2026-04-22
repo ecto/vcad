@@ -116,6 +116,7 @@ type UrlRoute =
   | { kind: "share-token"; token: string }
   | { kind: "public-doc"; username: string; slug: string }
   | { kind: "profile"; username: string }
+  | { kind: "local-doc"; id: string }
   | null;
 
 /** Parse the current pathname into a route. */
@@ -135,7 +136,21 @@ function parseRoute(): UrlRoute {
   const profileMatch = path.match(/^\/@([a-z0-9][a-z0-9-]*[a-z0-9])\/?$/);
   if (profileMatch?.[1]) return { kind: "profile", username: profileMatch[1] };
 
+  // /d/<uuid> — local IndexedDB document identity
+  const localMatch = path.match(/^\/d\/([0-9a-fA-F-]{8,64})\/?$/);
+  if (localMatch?.[1]) return { kind: "local-doc", id: localMatch[1] };
+
   return null;
+}
+
+/**
+ * Returns the local document ID from the current URL, if the user landed on
+ * a `/d/<id>` path. Bootstrap checks this before falling back to
+ * "most recent document" so refresh always reopens the exact doc.
+ */
+export function getLocalDocRouteId(): string | null {
+  const route = parseRoute();
+  return route?.kind === "local-doc" ? route.id : null;
 }
 
 /** Read and decode the optional ?at=<encoded> viewer state hint. */

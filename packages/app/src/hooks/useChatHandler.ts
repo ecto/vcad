@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useRef } from "react";
 import {
   useChatStore,
   useDocumentStore,
@@ -573,4 +573,37 @@ export function useChatHandler() {
     useChatStore.getState().setSendHandler(handleChatSend);
     return () => useChatStore.getState().setSendHandler(null);
   }, [handleChatSend]);
+
+  // Retire the AI participant (camera frustum + selection highlight in the
+  // viewport) shortly after a chat turn ends. Debounced because `streaming`
+  // toggles within a single turn (LLM pass → tool call → next LLM pass);
+  // we don't want the frustum flickering between passes. The DocTitle
+  // presence pill is gated on `streaming` directly and doesn't flicker —
+  // this cleanup is only for the lingering viewport state.
+  const cleanupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    const unsubscribe = useChatStore.subscribe((state, prev) => {
+      if (state.streaming === prev.streaming) return;
+      if (state.streaming) {
+        // New pass started — cancel any pending cleanup.
+        if (cleanupTimerRef.current) {
+          clearTimeout(cleanupTimerRef.current);
+          cleanupTimerRef.current = null;
+        }
+      } else {
+        // Streaming paused. If the whole turn is done, tear down AI presence.
+        cleanupTimerRef.current = setTimeout(() => {
+          useParticipantStore.getState().remove(AI_PARTICIPANT_ID);
+          cleanupTimerRef.current = null;
+        }, 800);
+      }
+    });
+    return () => {
+      unsubscribe();
+      if (cleanupTimerRef.current) {
+        clearTimeout(cleanupTimerRef.current);
+        cleanupTimerRef.current = null;
+      }
+    };
+  }, []);
 }

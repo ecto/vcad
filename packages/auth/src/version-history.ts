@@ -10,6 +10,25 @@ export interface DocumentVersion {
   content: unknown;
   deviceModifiedAt: number;
   createdAt: string;
+  /** Non-null when the user promoted this row to a named version. */
+  label?: string | null;
+  labeledAt?: string | null;
+  labeledBy?: string | null;
+}
+
+/**
+ * Named-version list row (subset of `DocumentVersion`, no content blob).
+ * Returned by `listNamedVersions` — intentionally skips `content` so the list
+ * view stays cheap for long histories.
+ */
+export interface NamedVersion {
+  id: string;
+  versionNumber: number;
+  label: string;
+  labeledAt: string;
+  labeledBy: string | null;
+  deviceModifiedAt: number;
+  createdAt: string;
 }
 
 // Storage adapter - shared with sync module
@@ -56,6 +75,70 @@ export async function getVersionHistory(
     id: v.id,
     versionNumber: v.version_number,
     content: v.content,
+    deviceModifiedAt: v.device_modified_at,
+    createdAt: v.created_at,
+    label: v.label ?? null,
+    labeledAt: v.labeled_at ?? null,
+    labeledBy: v.labeled_by ?? null,
+  }));
+}
+
+/**
+ * Attach a human-readable label to an existing auto-version row, promoting
+ * it to a named version. Label cannot be empty; RPC enforces ownership.
+ */
+export async function labelVersion(
+  versionId: string,
+  label: string,
+): Promise<void> {
+  const supabase = requireSupabase();
+  const { error } = await supabase.rpc("label_version", {
+    p_version_id: versionId,
+    p_label: label,
+  });
+  if (error) throw new Error(`Failed to label version: ${error.message}`);
+}
+
+/** Remove a named-version label. The auto-save row itself is preserved. */
+export async function unlabelVersion(versionId: string): Promise<void> {
+  const supabase = requireSupabase();
+  const { error } = await supabase.rpc("unlabel_version", {
+    p_version_id: versionId,
+  });
+  if (error) throw new Error(`Failed to unlabel version: ${error.message}`);
+}
+
+/**
+ * List the labeled versions for a document, newest-labeled-first. Skips the
+ * `content` column — callers wanting the blob should load the specific
+ * version through `getVersionHistory` and find by id.
+ */
+export async function listNamedVersions(
+  cloudDocId: string,
+): Promise<NamedVersion[]> {
+  const supabase = requireSupabase();
+  const { data, error } = await supabase.rpc("list_named_versions", {
+    p_document_id: cloudDocId,
+  });
+  if (error) {
+    throw new Error(`Failed to fetch named versions: ${error.message}`);
+  }
+  return (
+    data as Array<{
+      id: string;
+      version_number: number;
+      label: string;
+      labeled_by: string | null;
+      labeled_at: string;
+      device_modified_at: number;
+      created_at: string;
+    }>
+  ).map((v) => ({
+    id: v.id,
+    versionNumber: v.version_number,
+    label: v.label,
+    labeledBy: v.labeled_by,
+    labeledAt: v.labeled_at,
     deviceModifiedAt: v.device_modified_at,
     createdAt: v.created_at,
   }));
