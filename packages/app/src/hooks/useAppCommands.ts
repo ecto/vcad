@@ -22,6 +22,18 @@ import { analytics } from "@/lib/analytics";
 
 export type CommandSurface = "palette" | "mobile-menu" | "desktop-menu";
 
+/** window.open wrapper that refuses non-http(s) URLs so a bug or a rogue
+ *  dependency can't point us at a `javascript:` / `data:` URL. */
+function openExternal(url: string): void {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return;
+    window.open(parsed.href, "_blank", "noopener,noreferrer");
+  } catch {
+    // malformed URL — silently drop
+  }
+}
+
 interface UseAppCommandsProps {
   /** Called after any command fires — use this to dismiss an open palette/sheet. */
   onDismiss: () => void;
@@ -219,15 +231,15 @@ export function useAppCommands({
         onDismiss();
       },
       openDocs: () => {
-        window.open("https://docs.vcad.io", "_blank");
+        openExternal("https://docs.vcad.io");
         onDismiss();
       },
       openGithub: () => {
-        window.open("https://github.com/ecto/vcad", "_blank");
+        openExternal("https://github.com/ecto/vcad");
         onDismiss();
       },
       openDiscord: () => {
-        window.open("https://discord.gg/ZU8QHnFAc2", "_blank");
+        openExternal("https://discord.gg/ZU8QHnFAc2");
         onDismiss();
       },
 
