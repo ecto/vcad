@@ -64,14 +64,39 @@ jobs:
           toolchain: stable
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
+        with:
+          # wasm-pack compiles vcad workspace crates into the wasm32
+          # target, so workspace-crate incremental artifacts are worth
+          # caching for PR re-runs that only touch TS.
+          cache-workspace-crates: true
+      # Turbo local cache. Preserves per-task outputs (dist/, pkg/, wasm
+      # artifacts) across runs. Key bumps on any Rust or TS source change
+      # so we don't serve stale artifacts; a miss still falls back to a
+      # full rebuild.
+      - name: Restore turbo cache
+        uses: actions/cache@v4
+        with:
+          path: node_modules/.cache/turbo
+          key: turbo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'package-lock.json', 'turbo.json') }}-${{ hashFiles('crates/**/src/**', 'crates/**/Cargo.toml', 'packages/**/src/**', 'packages/**/package.json', 'packages/**/tsconfig.json') }}
+          restore-keys: |
+            turbo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'package-lock.json', 'turbo.json') }}-
+            turbo-${{ runner.os }}-
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
       - run: sudo apt-get update && sudo apt-get install -y libcairo2-dev libjpeg-dev libpango1.0-dev libgif-dev librsvg2-dev
-      - run: npm ci
+      # --prefer-offline hits the npm module cache (restored by setup-node)
+      # before the network; --no-audit / --no-fund skip two network round-
+      # trips that have no effect on CI correctness.
+      - run: npm ci --prefer-offline --no-audit --no-fund
       - run: npm run version:check
       # Use turbo (npm run build) instead of `--workspaces --if-present` so
       # workspace deps build before their consumers. The latter runs in
       # alphabetical order (app < auth < core …) which fails on a clean
       # checkout because @vcad/app builds before @vcad/{ir,engine,core}.
-      - run: npm run build
+      #
+      # @vcad/docs is excluded: it's a Next.js static-site build (~44s,
+      # 303 pages) that deploys via its own Vercel project, not via CI
+      # artifacts. Building it in the PR job adds latency without
+      # exercising anything other code paths don't already cover.
+      - run: npm run build -- --filter=!@vcad/docs
       - run: npm test --workspaces --if-present
