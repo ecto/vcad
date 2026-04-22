@@ -1392,10 +1392,8 @@ fn run_loop(
         // Handle input with 16ms poll
         if event::poll(Duration::from_millis(16))? {
             match event::read()? {
-                Event::Key(key) => {
-                    if !crate::input::handle_key(app, key)? {
-                        app.running = false;
-                    }
+                Event::Key(key) if !crate::input::handle_key(app, key)? => {
+                    app.running = false;
                 }
                 Event::Mouse(mouse) => {
                     let cell_dims = match protocol {

@@ -1,0 +1,116 @@
+name: Agent
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: agent-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    if: github.event.label.name == 'agent:ready'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Flip agent:ready → agent:running
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue edit ${{ github.event.issue.number }} \
+            --repo ${{ github.repository }} \
+            --remove-label agent:ready \
+            --add-label agent:running
+
+      - uses: actions/checkout@v4
+
+      # Sibling path-dep workspaces — mirrors ci.yml so the agent can build.
+      - name: Clone sibling repos
+        run: |
+          git clone --depth 1 https://github.com/ecto/tang.git ../tang
+          git clone --depth 1 https://github.com/ecto/phyz.git ../phyz
+          git clone --depth 1 https://github.com/ecto/loon.git ../loon
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Install apt deps
+        run: |
+          sudo apt-get update && sudo apt-get install -y \
+            libcairo2-dev libjpeg-dev libpango1.0-dev libgif-dev librsvg2-dev
+
+      - run: npm ci
+
+      - name: Configure git
+        run: |
+          git config user.name  "vcad-agent[bot]"
+          git config user.email "vcad-agent@users.noreply.github.com"
+
+      - name: Run agent
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            You are executing GitHub issue #${{ github.event.issue.number }}:
+            "${{ github.event.issue.title }}"
+
+            Read CLAUDE.md first. It defines the coordinate system (Z-up),
+            workspace layout, and the commands CI runs. Follow those
+            conventions.
+
+            The full spec is below. Treat it as the complete contract — do
+            not infer requirements that aren't written here.
+
+            --- BEGIN SPEC ---
+            ${{ github.event.issue.body }}
+            --- END SPEC ---
+
+            Execute the spec:
+            1. Create a branch: `agent/issue-${{ github.event.issue.number }}`.
+            2. Implement the changes. Keep the diff minimal — don't refactor
+               surrounding code that wasn't asked for.
+            3. Run every command in the spec's "Verification" section. All
+               must pass. If a command fails, fix the root cause and re-run
+               — never use --no-verify or bypass checks.
+            4. Commit with a clear message. Push the branch.
+            5. Open a PR with `gh pr create` that includes
+               `Closes #${{ github.event.issue.number }}` in the body. Keep
+               the PR body short; the spec lives in the issue.
+
+            If the spec is ambiguous or acceptance criteria conflict, stop
+            and post a comment on the issue describing the conflict instead
+            of guessing.
+          claude_args: |
+            --allowedTools "Read,Edit,Write,Glob,Grep,Bash(cargo:*),Bash(npm:*),Bash(git:*),Bash(gh:*),Bash(rustup:*)"
+
+      - name: Mark failed on error
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue edit ${{ github.event.issue.number }} \
+            --repo ${{ github.repository }} \
+            --remove-label agent:running \
+            --add-label agent:failed
+          gh issue comment ${{ github.event.issue.number }} \
+            --repo ${{ github.repository }} \
+            --body "Agent run failed. See workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

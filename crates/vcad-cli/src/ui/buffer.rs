@@ -282,12 +282,10 @@ pub fn set_char_underline(buf: &mut CellBuffer, x: u16, y: u16, ch: char, fg: Co
 
 /// Helper: write a string horizontally starting at (x, y).
 pub fn set_string(buf: &mut CellBuffer, x: u16, y: u16, s: &str, fg: Color, bg: Color) {
-    let mut cx = x;
-    for ch in s.chars() {
+    for (cx, ch) in (x..).zip(s.chars()) {
         if cx >= buf.width {
             break;
         }
         set_char(buf, cx, y, ch, fg, bg);
-        cx += 1;
     }
 }
