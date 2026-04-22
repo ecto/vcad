@@ -92,7 +92,10 @@ jobs:
           cache-workspace-crates: true
       - name: Install wasm-pack
         if: steps.wasm-cache.outputs.cache-hit != 'true'
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+        # Install via cargo so the binary comes through the same trust
+        # chain as the rest of our Rust toolchain instead of a
+        # curl-pipe-to-shell from the rustwasm GitHub Pages site.
+        run: cargo install wasm-pack --locked --version 0.13.1
       # --profiling uses cargo release + light `-O` wasm-opt (configured
       # in vcad-kernel-wasm/Cargo.toml). Saves ~2m vs default release
       # (which runs full wasm-opt). We can't use --dev because the PWA
