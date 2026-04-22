@@ -31,6 +31,11 @@ getrandom = { version = "0.2", features = ["js"] }
 ts-rs = { version = "10", optional = true }
 
 [features]
+# The `default` set is deliberately kitchen-sink. `wasm-pack build` (see
+# packages/kernel-wasm/package.json) uses it verbatim, so this list *is*
+# the shipping bundle surface for the web app. Trim only if you are
+# intentionally shipping a slimmer build, and update the wasm-pack
+# invocation alongside.
 default = ["console_error_panic_hook", "physics", "slicer", "cam", "gpu", "raytrace", "cpu-raytrace", "ecad", "embroidery"]
 console_error_panic_hook = ["dep:console_error_panic_hook"]
 gpu = ["dep:vcad-kernel-gpu"]
