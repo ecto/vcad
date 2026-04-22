@@ -111,10 +111,7 @@ const VIEW_GROUPS: &[Group] = &[
 const TOOLS_GROUPS: &[Group] = &[
     &[("command-palette", "Command Palette…", Some("CmdOrCtrl+K"))],
     &[("new-sketch", "New Sketch", None)],
-    &[
-        ("open-slicer", "Slicer", None),
-        ("open-cam", "CAM", None),
-    ],
+    &[("open-slicer", "Slicer", None), ("open-cam", "CAM", None)],
 ];
 
 const HELP_GROUPS: &[Group] = &[
@@ -207,10 +204,7 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
 /// this whenever the command registry's enabled() results change, keeping
 /// the native menu's greying/accelerators in sync with app state.
 #[tauri::command]
-pub fn set_menu_enabled<R: Runtime>(
-    app: AppHandle<R>,
-    items: HashMap<String, bool>,
-) {
+pub fn set_menu_enabled<R: Runtime>(app: AppHandle<R>, items: HashMap<String, bool>) {
     if let Some(state) = app.try_state::<MenuState<R>>() {
         for (id, enabled) in items {
             state.set_enabled(&id, enabled);
