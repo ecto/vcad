@@ -7,6 +7,7 @@ import { Export } from "@phosphor-icons/react/dist/ssr/Export";
 import { MagnifyingGlass } from "@phosphor-icons/react/dist/ssr/MagnifyingGlass";
 import { Bell } from "@phosphor-icons/react/dist/ssr/Bell";
 import { Link as LinkIcon } from "@phosphor-icons/react/dist/ssr/Link";
+import { DocTitle } from "@/components/DocTitle";
 import * as Menubar from "@radix-ui/react-menubar";
 import {
   useDocumentStore,
@@ -48,6 +49,8 @@ interface HeaderProps {
   onOpen: () => void;
   /** Opens the ShareDialog. Enabled only when signed in + cloud-synced. */
   onShareOpen: () => void;
+  /** Opens the VersionHistoryModal. Enabled only when signed in. */
+  onVersionHistoryOpen: () => void;
   /** Tool palette (tab strip + icon row) docked directly under the menu bar. */
   children?: React.ReactNode;
 }
@@ -270,8 +273,7 @@ function RayTracingSubmenu() {
   );
 }
 
-export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen, children }: HeaderProps) {
-  const isDirty = useDocumentStore((s) => s.isDirty);
+export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen, onVersionHistoryOpen, children }: HeaderProps) {
   const user = useAuthStore((s) => s.user);
   const isAnonymous = useAuthStore((s) => s.isAnonymous);
   // "Has a permanent identity" — false for anon Supabase sessions.
@@ -386,24 +388,12 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
           >
             vcad<span className="text-brand">.</span>
           </button>
-          {isDirty && <span className="text-brand text-xs">*</span>}
         </div>
 
-        {/* iTunes-style center search bar — opens the screen-centered ⌘K palette */}
-        <button
-          onClick={handleCommandPalette}
-          className={cn(
-            "absolute left-1/2 -translate-x-1/2",
-            "flex h-5 w-72 max-w-[40vw] items-center gap-1.5 px-2",
-            "border border-border bg-bg/60 hover:bg-bg",
-            "text-[11px] text-text-muted hover:text-text",
-            "rounded-sm transition-colors",
-          )}
-        >
-          <MagnifyingGlass size={11} />
-          <span className="flex-1 text-left truncate">Search or ask AI…</span>
-          <span className="text-[9px] text-text-muted/70 font-mono">⌘K</span>
-        </button>
+        {/* Centered document-identity strip — filename, save state, scope breadcrumb */}
+        <div className="absolute left-1/2 -translate-x-1/2">
+          <DocTitle macOverlay={macOverlay} />
+        </div>
 
         <Menubar.Root
           value={menuValue}
@@ -438,6 +428,12 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
                   disabled={!isSignedIn}
                 >
                   Share link…
+                </MenuItem>
+                <MenuItem
+                  onSelect={onVersionHistoryOpen}
+                  disabled={!isSignedIn}
+                >
+                  Version history…
                 </MenuItem>
                 <MenuSeparator />
                 <Submenu label="Export" icon={Export} iconClassName="text-sky-400">
@@ -590,7 +586,19 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
           data-tauri-drag-region={macOverlay ? "" : undefined}
         />
 
-        {/* Right cluster: glance zone — changelog bell + auth */}
+        {/* Right cluster: search · changelog bell · auth */}
+        <button
+          type="button"
+          onClick={handleCommandPalette}
+          title="Search or ask AI… (⌘K)"
+          aria-label="Search or ask AI"
+          className={cn(
+            "relative flex items-center justify-center w-6 h-6",
+            "text-text-muted hover:text-text hover:bg-hover transition-colors",
+          )}
+        >
+          <MagnifyingGlass size={13} />
+        </button>
         <button
           type="button"
           onClick={openChangelogPanel}

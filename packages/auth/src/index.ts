@@ -72,7 +72,11 @@ export {
   restoreVersion,
   getCloudIdForDocument,
   configureVersionHistoryStorage,
+  labelVersion,
+  unlabelVersion,
+  listNamedVersions,
   type DocumentVersion,
+  type NamedVersion,
 } from "./version-history";
 
 // AI
