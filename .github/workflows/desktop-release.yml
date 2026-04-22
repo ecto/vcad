@@ -49,7 +49,7 @@ jobs:
             tauri-args: ''
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # Path-dep sibling workspaces (mirrors ci.yml / agent.yml).
       - name: Clone sibling repos
