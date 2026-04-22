@@ -150,15 +150,17 @@ jobs:
       # (~23s) and the native compile step.
       - run: npm ci --prefer-offline --no-audit --no-fund --ignore-scripts
       - run: npm run version:check
-      # Filter out vcad-kernel-wasm: the `wasm` job already produced
-      # its outputs and the download-artifact step put them in place,
-      # so running the task would just rebuild them. Downstream tasks
-      # (@vcad/engine etc.) read those files directly and don't need
-      # turbo to have "built" them.
+      # VCAD_WASM_SKIP short-circuits vcad-kernel-wasm's build script
+      # (the `wasm` job already produced pkg/ via the artifact above).
+      # turbo's task graph still includes vcad-kernel-wasm#build as a
+      # dep of @vcad/engine#build, so we can't just filter it out —
+      # the script itself has to become a noop.
       #
       # @vcad/docs is excluded: it's a Next.js static-site build (~44s,
       # 303 pages) that deploys via its own Vercel project, not via CI
       # artifacts. Building it in the PR job adds latency without
       # exercising anything other code paths don't already cover.
-      - run: npm run build -- --filter=!@vcad/docs --filter=!vcad-kernel-wasm
+      - run: npm run build -- --filter=!@vcad/docs
+        env:
+          VCAD_WASM_SKIP: '1'
       - run: npm test --workspaces --if-present
