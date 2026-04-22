@@ -118,7 +118,7 @@ jobs:
             --out-dir ../../packages/kernel-wasm/pkg \
             --features no-builtin-font
           cp packages/kernel-wasm/pkg/vcad_kernel_wasm* packages/kernel-wasm/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wasm-pkg
           path: |
