@@ -6,6 +6,14 @@ license.workspace = true
 repository.workspace = true
 description = "Tauri v2 desktop shell for vcad"
 
+# Override the binary name so the app appears as "vcad" in macOS activity
+# monitor / dev-run menus (the OS uses the binary name, not the Tauri
+# `productName`, while running via `cargo run`). Release bundles pick up
+# `productName` from tauri.conf.json and are unaffected.
+[[bin]]
+name = "vcad"
+path = "src/main.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
