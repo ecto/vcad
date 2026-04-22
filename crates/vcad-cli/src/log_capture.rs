@@ -120,8 +120,7 @@ fn redirect_stderr(tx: Sender<CapturedLine>) -> std::io::Result<std::os::fd::Own
     // success, but a bogus libc could leave an invalid descriptor in the
     // array. `OwnedFd::from_raw_fd` on a negative fd is UB, so bail out.
     if fds[0] < 0 || fds[1] < 0 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
+        return Err(std::io::Error::other(
             "pipe() returned invalid file descriptor",
         ));
     }

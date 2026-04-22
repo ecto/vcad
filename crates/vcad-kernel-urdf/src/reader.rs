@@ -102,7 +102,7 @@ fn contains_doctype(xml: &str) -> bool {
                     }
                     return false;
                 }
-                if bytes[i..].len() >= 9 && bytes[i..i + 9].eq_ignore_ascii_case(b"<!DOCTYPE") {
+                if bytes.len() - i >= 9 && bytes[i..i + 9].eq_ignore_ascii_case(b"<!DOCTYPE") {
                     return true;
                 }
                 return false;
