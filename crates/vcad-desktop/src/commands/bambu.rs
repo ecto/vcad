@@ -91,6 +91,21 @@ pub async fn bambu_connect(
     access_code: String,
     state: State<'_, BambuState>,
 ) -> Result<(), String> {
+    // Lightweight shape checks on caller-supplied fields. The only caller
+    // is the vcad webview today, but these bounds keep a renderer bug
+    // from shipping arbitrarily large blobs into the printer library.
+    if serial.len() > 64
+        || !serial
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err("invalid printer serial".into());
+    }
+    if !(6..=64).contains(&access_code.len())
+        || !access_code.chars().all(|c| c.is_ascii_alphanumeric())
+    {
+        return Err("invalid access code (expect 6..=64 ASCII alphanumeric)".into());
+    }
     let ip: IpAddr = ip
         .parse()
         .map_err(|e: std::net::AddrParseError| e.to_string())?;

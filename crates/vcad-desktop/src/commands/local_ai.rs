@@ -10,6 +10,13 @@ use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 
 const OLLAMA_BASE: &str = "http://127.0.0.1:11434";
+/// Hard bounds on caller-supplied IPC values. Tauri IPC is in-process so
+/// the webview is the only caller today, but enforcing these caps keeps a
+/// bug (or a future API change) from letting the renderer ship an
+/// arbitrarily large request to the local inference server.
+const MAX_MODEL_NAME_LEN: usize = 128;
+const MAX_MESSAGES: usize = 256;
+const MAX_MESSAGE_CONTENT_LEN: usize = 128 * 1024;
 
 #[derive(Serialize)]
 pub struct LocalAiProbe {
@@ -110,6 +117,31 @@ pub async fn local_ai_chat_stream(
     messages: Vec<LocalAiMessage>,
     on_event: Channel<LocalAiEvent>,
 ) -> Result<(), String> {
+    if model.is_empty() || model.len() > MAX_MODEL_NAME_LEN {
+        return Err(format!(
+            "invalid model name length (0 < len <= {MAX_MODEL_NAME_LEN})"
+        ));
+    }
+    if !model
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | ':'))
+    {
+        return Err("invalid characters in model name".into());
+    }
+    if messages.len() > MAX_MESSAGES {
+        return Err(format!("too many messages (max {MAX_MESSAGES})"));
+    }
+    for m in &messages {
+        if !matches!(m.role.as_str(), "system" | "user" | "assistant" | "tool") {
+            return Err(format!("invalid message role: {}", m.role));
+        }
+        if m.content.len() > MAX_MESSAGE_CONTENT_LEN {
+            return Err(format!(
+                "message content exceeds {MAX_MESSAGE_CONTENT_LEN} bytes"
+            ));
+        }
+    }
+
     let client = reqwest::Client::new();
 
     let body = serde_json::json!({
