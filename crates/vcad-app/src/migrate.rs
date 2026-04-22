@@ -207,10 +207,9 @@ fn migrate_node(
             twist_angle,
             scale_end,
         } => {
-            let depth = (direction.x * direction.x
-                + direction.y * direction.y
-                + direction.z * direction.z)
-                .sqrt();
+            let depth =
+                (direction.x * direction.x + direction.y * direction.y + direction.z * direction.z)
+                    .sqrt();
             if depth > 0.0 {
                 params.insert("depth".to_string(), Value::F64(depth));
                 params.insert(
@@ -413,10 +412,7 @@ fn migrate_assembly(crdt: &mut CrdtDocument, ctx: &mut MigrationCtx, doc: &Docum
                 continue;
             };
             let mut params = HashMap::new();
-            params.insert(
-                "part_def".to_string(),
-                Value::FeatureRef(pd_stable.clone()),
-            );
+            params.insert("part_def".to_string(), Value::FeatureRef(pd_stable.clone()));
             if let Some(n) = &inst.name {
                 params.insert("name".to_string(), Value::String(n.clone()));
             }
