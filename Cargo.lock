@@ -5994,10 +5994,14 @@ dependencies = [
 name = "vcad-desktop"
 version = "0.8.0"
 dependencies = [
+ "base64 0.22.1",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
+ "tokio",
+ "vcad-slicer-bambu",
 ]
 
 [[package]]

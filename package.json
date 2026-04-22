@@ -6,10 +6,14 @@
     "build": "turbo build",
     "test": "turbo test",
     "dev": "turbo dev",
+    "tauri": "cd crates/vcad-desktop && tauri",
+    "tauri:dev": "cd crates/vcad-desktop && tauri dev",
+    "tauri:build": "cd crates/vcad-desktop && tauri build",
     "version:sync": "node scripts/sync-version.mjs",
     "version:check": "node scripts/sync-version.mjs --check"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2",
     "turbo": "^2"
   },
   "overrides": {

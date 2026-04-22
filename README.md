@@ -86,6 +86,15 @@ cargo clippy --workspace -- -D warnings
 # TypeScript
 npm ci
 npm run dev -w @vcad/app   # Run web app locally
+
+# Desktop (optional — Tauri v2 shell)
+# Ubuntu/Debian system deps:
+#   sudo apt install libgtk-3-dev libwebkit2gtk-4.1-dev librsvg2-dev \
+#                    libsoup-3.0-dev libatk1.0-dev
+# macOS: Xcode command-line tools
+# Windows: WebView2 (shipped with Win11)
+npm run tauri:dev          # launches desktop window against the dev server
+npm run tauri:build        # produces a signed/unsigned installer
 ```
 
 ## License

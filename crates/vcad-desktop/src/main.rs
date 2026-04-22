@@ -4,8 +4,11 @@ mod commands;
 
 use tauri::Manager;
 
+use commands::{bambu, local_ai};
+
 fn main() {
     tauri::Builder::default()
+        .manage(bambu::BambuState::new())
         .setup(|app| {
             // macOS: activate the app so the window actually appears
             // (raw binaries launched from terminal aren't auto-activated)
@@ -20,15 +23,13 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::printer::discover_printers,
-            commands::printer::send_to_printer,
-            commands::files::open_native_file_dialog,
-            commands::files::read_file_bytes,
-            commands::files::write_file_bytes,
-            commands::files::get_recent_files,
-            commands::files::launch_external_slicer,
-            commands::system::get_platform_info,
-            commands::system::is_desktop,
+            bambu::bambu_discover,
+            bambu::bambu_connect,
+            bambu::bambu_status,
+            bambu::bambu_send_print,
+            bambu::bambu_control,
+            local_ai::local_ai_probe,
+            local_ai::local_ai_chat_stream,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
