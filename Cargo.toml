@@ -52,6 +52,61 @@ members = [
     "crates/vcad-tool-derive",
 ]
 
+# vcad-desktop pulls in tauri/gtk/atk which requires system dev libraries
+# on Linux. Keep it out of the default build set so bare `cargo build`,
+# `cargo test`, and `cargo clippy` work on stock dev boxes; CI or whoever
+# is actually working on the desktop shell opts in with `-p vcad-desktop`.
+default-members = [
+    "crates/vcad-ir",
+    "crates/vcad",
+    "crates/vcad-kernel-math",
+    "crates/vcad-kernel-topo",
+    "crates/vcad-kernel-geom",
+    "crates/vcad-kernel-primitives",
+    "crates/vcad-kernel-tessellate",
+    "crates/vcad-kernel-booleans",
+    "crates/vcad-kernel-nurbs",
+    "crates/vcad-kernel-fillet",
+    "crates/vcad-kernel-sketch",
+    "crates/vcad-kernel-text",
+    "crates/vcad-kernel-sweep",
+    "crates/vcad-kernel-shell",
+    "crates/vcad-kernel-step",
+    "crates/vcad-kernel",
+    "crates/vcad-kernel-constraints",
+    "crates/vcad-kernel-wasm",
+    "crates/vcad-kernel-drafting",
+    "crates/vcad-cli",
+    "crates/vcad-kernel-gpu",
+    "crates/vcad-kernel-raytrace",
+    "crates/vcad-kernel-urdf",
+    "crates/vcad-kernel-physics",
+    "crates/wasmosis",
+    "crates/wasmosis/wasmosis-macro",
+    "crates/vcad-slicer",
+    "crates/vcad-slicer-gcode",
+    "crates/vcad-slicer-bambu",
+    "crates/vcad-kernel-cam",
+    "crates/vcad-kernel-stocksim",
+    "crates/vcad-crdt",
+    "crates/vcad-app",
+    "crates/vcad-chat",
+    "crates/vcad-eval",
+    "crates/vcad-loon",
+    "crates/vcad-sim",
+    "crates/vcad-ecad-symbols",
+    "crates/vcad-ecad-schematic",
+    "crates/vcad-ecad-pcb",
+    "crates/vcad-ecad-export",
+    "crates/vcad-ecad-sim",
+    "crates/stepperoni",
+    "crates/termview",
+    "crates/vcad-embroidery",
+    "crates/vcad-embroidery-pes",
+    "crates/vcad-embroidery-dst",
+    "crates/vcad-tool-derive",
+]
+
 [workspace.package]
 version = "0.8.0"
 edition = "2021"
