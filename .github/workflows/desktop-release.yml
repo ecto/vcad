@@ -1,0 +1,152 @@
+name: Desktop Release
+
+# Phase 5 of the desktop plan. Builds vcad-desktop for macOS (universal),
+# Windows, and Linux, and (when triggered by a tag) publishes the
+# installers as a draft GitHub release. Signing/notarization only kicks
+# in when the relevant secrets are set — unsigned builds still succeed,
+# they just show OS warnings on first launch.
+#
+# Triggers
+#   - workflow_dispatch: ad-hoc matrix build; artifacts only, no release.
+#   - push of a `v*` tag: matrix build + draft release with installers.
+#
+# Adding a platform is a one-line change in the matrix.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write  # needed to create the draft release
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build (${{ matrix.label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS (universal)
+            platform: macos-latest
+            rust-target: aarch64-apple-darwin,x86_64-apple-darwin
+            tauri-args: --target universal-apple-darwin
+          - label: Windows (x64)
+            platform: windows-latest
+            rust-target: ''
+            tauri-args: ''
+          - label: Linux (x64)
+            platform: ubuntu-22.04
+            rust-target: ''
+            tauri-args: ''
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Path-dep sibling workspaces (mirrors ci.yml / agent.yml).
+      - name: Clone sibling repos
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/ecto/tang.git ../tang
+          git clone --depth 1 https://github.com/ecto/phyz.git ../phyz
+          git clone --depth 1 https://github.com/ecto/loon.git ../loon
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.rust-target != '' && format('{0},wasm32-unknown-unknown', matrix.rust-target) || 'wasm32-unknown-unknown' }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Keep the desktop crate's cache keyed per-platform so macOS and
+          # Linux builds don't stomp on each other.
+          key: ${{ matrix.platform }}
+          cache-workspace-crates: true
+
+      - name: Install Linux system deps
+        if: startsWith(matrix.platform, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            libatk1.0-dev \
+            libayatana-appindicator3-dev \
+            libcairo2-dev \
+            libjpeg-dev \
+            libpango1.0-dev \
+            libgif-dev \
+            rpm
+
+      - name: Install wasm-pack
+        shell: bash
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Install npm deps
+        run: npm ci --prefer-offline --no-audit --no-fund
+
+      # Warm up @vcad/app's workspace dependencies via turbo so tauri-action's
+      # subsequent beforeBuildCommand (which only runs the app's own build)
+      # finds @vcad/{core,engine,ir,auth,kernel-wasm} already built.
+      - name: Build @vcad/app
+        run: npm run build -- --filter=@vcad/app
+
+      - name: Build and publish desktop bundles
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Tauri updater signing — optional; tauri-action skips signing
+          # when the key is absent.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS code signing + notarization — all optional. Unsigned .dmg
+          # still builds; users will see a Gatekeeper warning.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: crates/vcad-desktop
+          # Only create a release when triggered by a tag push.
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+          releaseName: 'vcad ${{ github.ref_name }}'
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.tauri-args }}
+
+      # For workflow_dispatch runs (no tag), preserve the installers as
+      # workflow artifacts so a maintainer can inspect them without
+      # cutting a release.
+      - name: Upload artifacts (non-release runs)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: vcad-desktop-${{ matrix.platform }}
+          if-no-files-found: warn
+          path: |
+            target/release/bundle/**/*.dmg
+            target/release/bundle/**/*.app
+            target/release/bundle/**/*.msi
+            target/release/bundle/**/*.exe
+            target/release/bundle/**/*.AppImage
+            target/release/bundle/**/*.deb
+            target/release/bundle/**/*.rpm
+            target/universal-apple-darwin/release/bundle/**/*.dmg
+            target/universal-apple-darwin/release/bundle/**/*.app
