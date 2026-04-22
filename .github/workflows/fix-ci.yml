@@ -1,0 +1,219 @@
+name: Fix CI
+
+# Auto-fix failing CI on PRs. Budgeted: at most MAX_ATTEMPTS auto-fix
+# commits per PR branch. Opt out by adding the `no-auto-fix` label to
+# the PR.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: read
+
+concurrency:
+  # Serialize attempts per PR so we never have two fix-ci jobs racing
+  # to push to the same branch.
+  group: fix-ci-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+env:
+  # Ceiling on how many times the bot will try to fix the same PR.
+  MAX_ATTEMPTS: "3"
+  # Commit-subject prefix used both to author and to count auto-fix
+  # commits. Changing this breaks the attempt counter.
+  COMMIT_MARKER: "fix(ci-auto)"
+
+jobs:
+  fix:
+    # Only run on real CI failures that came from a PR.
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve PR number and branch
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          # workflow_run doesn't directly carry the PR number; look it up
+          # from the head SHA.
+          pr_json=$(gh api "repos/${{ github.repository }}/commits/${HEAD_SHA}/pulls" --jq '.[0] // empty')
+          if [ -z "$pr_json" ]; then
+            echo "No PR associated with ${HEAD_SHA}; skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          pr_number=$(echo "$pr_json" | jq -r '.number')
+          pr_branch=$(echo "$pr_json" | jq -r '.head.ref')
+          pr_repo=$(echo "$pr_json" | jq -r '.head.repo.full_name')
+          pr_labels=$(echo "$pr_json" | jq -r '[.labels[].name] | join(",")')
+
+          echo "pr_number=${pr_number}"   >> "$GITHUB_OUTPUT"
+          echo "pr_branch=${pr_branch}"   >> "$GITHUB_OUTPUT"
+          echo "pr_repo=${pr_repo}"       >> "$GITHUB_OUTPUT"
+          echo "pr_labels=${pr_labels}"   >> "$GITHUB_OUTPUT"
+
+          # Don't touch PRs opted out explicitly.
+          if echo "${pr_labels}" | tr ',' '\n' | grep -qx 'no-auto-fix'; then
+            echo "PR #${pr_number} has no-auto-fix label; skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Don't auto-fix PRs from forks — pushing to a fork's branch
+          # requires the forker's token, which we don't have.
+          if [ "${pr_repo}" != "${{ github.repository }}" ]; then
+            echo "PR #${pr_number} comes from fork ${pr_repo}; skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout PR branch
+        if: steps.pr.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.pr_branch }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check attempt budget
+        if: steps.pr.outputs.skip != 'true'
+        id: budget
+        run: |
+          set -euo pipefail
+          # Count auto-fix commits already on this branch since it
+          # diverged from main.
+          base=$(git merge-base origin/main HEAD)
+          attempts=$(git log --format='%s' "${base}..HEAD" \
+            | grep -c "^${COMMIT_MARKER}" || true)
+          echo "Found ${attempts} prior auto-fix commits on this branch."
+          echo "attempts=${attempts}" >> "$GITHUB_OUTPUT"
+          if [ "${attempts}" -ge "${MAX_ATTEMPTS}" ]; then
+            echo "over_budget=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "over_budget=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Comment and stop (over budget)
+        if: steps.pr.outputs.skip != 'true' && steps.budget.outputs.over_budget == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment "${{ steps.pr.outputs.pr_number }}" --repo "${{ github.repository }}" --body \
+            "🤖 auto-fix budget exhausted (${{ steps.budget.outputs.attempts }}/${{ env.MAX_ATTEMPTS }} attempts). Next step is manual — push a fix or re-run after resolving the failure root cause."
+
+      - name: Fetch failed CI logs
+        if: steps.pr.outputs.skip != 'true' && steps.budget.outputs.over_budget != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          mkdir -p .ci-fix
+          # `--log-failed` grabs stderr of only the failed steps, which
+          # keeps the payload small enough to fit in a prompt.
+          gh run view "${RUN_ID}" --repo "${{ github.repository }}" --log-failed > .ci-fix/failed.log || true
+          gh run view "${RUN_ID}" --repo "${{ github.repository }}" --json name,displayTitle,conclusion,jobs > .ci-fix/run.json
+          wc -l .ci-fix/failed.log
+
+      - name: Sibling repos (mirror ci.yml)
+        if: steps.pr.outputs.skip != 'true' && steps.budget.outputs.over_budget != 'true'
+        run: |
+          git clone --depth 1 https://github.com/ecto/tang.git ../tang
+          git clone --depth 1 https://github.com/ecto/phyz.git ../phyz
+          git clone --depth 1 https://github.com/ecto/loon.git ../loon
+
+      - uses: dtolnay/rust-toolchain@master
+        if: steps.pr.outputs.skip != 'true' && steps.budget.outputs.over_budget != 'true'
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        if: steps.pr.outputs.skip != 'true' && steps.budget.outputs.over_budget != 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.pr.outputs.skip != 'true' && steps.budget.outputs.over_budget != 'true'
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install wasm-pack
+        if: steps.pr.outputs.skip != 'true' && steps.budget.outputs.over_budget != 'true'
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Install apt deps
+        if: steps.pr.outputs.skip != 'true' && steps.budget.outputs.over_budget != 'true'
+        run: |
+          sudo apt-get update && sudo apt-get install -y \
+            libcairo2-dev libjpeg-dev libpango1.0-dev libgif-dev librsvg2-dev
+
+      - name: npm ci
+        if: steps.pr.outputs.skip != 'true' && steps.budget.outputs.over_budget != 'true'
+        run: npm ci
+
+      - name: Configure git
+        if: steps.pr.outputs.skip != 'true' && steps.budget.outputs.over_budget != 'true'
+        run: |
+          git config user.name  "vcad-agent[bot]"
+          git config user.email "vcad-agent@users.noreply.github.com"
+
+      - name: Run agent
+        if: steps.pr.outputs.skip != 'true' && steps.budget.outputs.over_budget != 'true'
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            You are fixing a failing CI run on pull request #${{ steps.pr.outputs.pr_number }}
+            (branch `${{ steps.pr.outputs.pr_branch }}`). Attempt ${{ steps.budget.outputs.attempts }}+1 of ${{ env.MAX_ATTEMPTS }}.
+
+            Read CLAUDE.md first for project conventions (Z-up coordinates,
+            workspace layout, commands CI runs).
+
+            The raw log of failed CI steps is at `.ci-fix/failed.log`.
+            The run metadata is at `.ci-fix/run.json`.
+
+            Your job:
+            1. Read `.ci-fix/failed.log` and identify the root cause of
+               every failed job. Multiple jobs can fail for unrelated
+               reasons — handle each.
+            2. Fix the root cause in source. Don't paper over real test
+               failures by disabling tests, loosening assertions, or adding
+               `--no-verify`. If a test is flaky, say so in the commit
+               message but still try a real fix first.
+            3. Run the exact commands that failed, locally, and confirm
+               they now pass. Use the sibling repos already cloned at
+               ../tang, ../phyz, ../loon. Apt deps are installed.
+               Typical commands to try:
+                 cargo fmt -p <crate> --check
+                 cargo clippy --workspace --exclude vcad-desktop --features vcad-kernel-text/no-builtin-font -- -D warnings
+                 cargo test  --workspace --exclude vcad-desktop --features vcad-kernel-text/no-builtin-font
+                 cargo build --workspace --exclude vcad-desktop --examples --features vcad-kernel-text/no-builtin-font
+                 cargo doc   --workspace --exclude vcad-desktop --no-deps --features vcad-kernel-text/no-builtin-font
+                 npm run build --workspaces
+                 npm test --workspaces --if-present
+            4. Delete `.ci-fix/` before committing so it never lands in
+               the tree.
+            5. Commit with subject prefix `${{ env.COMMIT_MARKER }}:` so
+               the attempt counter can find it. Include a short
+               description of what broke and what you changed.
+            6. Push to branch `${{ steps.pr.outputs.pr_branch }}`.
+
+            If you cannot fix the failure — it's genuinely ambiguous, the
+            test needs product input, or the fix is larger than a CI-fix
+            ought to be — do NOT commit. Instead leave a `gh pr comment`
+            on PR #${{ steps.pr.outputs.pr_number }} explaining what
+            broke, what you tried, and why it needs human attention.
