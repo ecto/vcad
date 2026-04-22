@@ -300,4 +300,16 @@ mod tests {
         // `save` still has its default.
         assert_eq!(reg.chord_for("save"), Some(Chord::primary(Key::Char('s'))),);
     }
+
+    #[test]
+    fn every_command_when_clause_parses() {
+        // Catches a malformed `when` string at CI time instead of at app
+        // startup (where KeybindingRegistry::new panics).
+        for cmd in all_commands() {
+            if let Some(src) = cmd.when {
+                WhenExpr::parse(src)
+                    .unwrap_or_else(|e| panic!("when clause on {} failed to parse: {e}", cmd.id));
+            }
+        }
+    }
 }
