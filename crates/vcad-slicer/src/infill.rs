@@ -191,7 +191,7 @@ fn generate_parallel_lines(boundaries: &[Polygon], spacing: f64, angle: f64) -> 
         let mut intersections = find_line_boundary_intersections(&line_origin, &dir, boundaries);
 
         // Sort by position along line
-        intersections.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        intersections.sort_by(|a, b| a.total_cmp(b));
 
         // Create line segments (pairs of intersections)
         for pair in intersections.chunks(2) {
