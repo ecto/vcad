@@ -76,9 +76,11 @@ jobs:
             packages/kernel-wasm/vcad_kernel_wasm.d.ts
             packages/kernel-wasm/vcad_kernel_wasm_bg.wasm
             packages/kernel-wasm/vcad_kernel_wasm_bg.wasm.d.ts
-          key: wasm-pkg-${{ runner.os }}-${{ hashFiles('crates/**/src/**', 'crates/**/Cargo.toml', 'Cargo.lock', 'Cargo.toml', '.sibling-sha/*') }}
+          # v2 in the key prefix forces eviction of --dev-profile entries
+          # from before we switched to --profiling.
+          key: wasm-pkg-v2-${{ runner.os }}-${{ hashFiles('crates/**/src/**', 'crates/**/Cargo.toml', 'Cargo.lock', 'Cargo.toml', '.sibling-sha/*') }}
           restore-keys: |
-            wasm-pkg-${{ runner.os }}-
+            wasm-pkg-v2-${{ runner.os }}-
       - uses: dtolnay/rust-toolchain@master
         if: steps.wasm-cache.outputs.cache-hit != 'true'
         with:
@@ -91,17 +93,19 @@ jobs:
       - name: Install wasm-pack
         if: steps.wasm-cache.outputs.cache-hit != 'true'
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-      # --dev skips wasm-opt (~2m) and uses cargo's dev profile (faster
-      # compile, larger/slower wasm — fine for CI tests, never shipped).
-      # Production wasm is built by Vercel, not this workflow.
+      # --profiling uses cargo release + light `-O` wasm-opt (configured
+      # in vcad-kernel-wasm/Cargo.toml). Saves ~2m vs default release
+      # (which runs full wasm-opt). We can't use --dev because the PWA
+      # plugin in @vcad/app caps precachable assets at 10 MB and
+      # dev-profile wasm is ~29 MB.
       #
       # `no-builtin-font` drops the include_bytes!() of
       # node_modules/next/.../noto-sans.ttf, which doesn't exist here
       # (this job doesn't run `npm ci`). Matches the Rust CI job.
-      - name: Build wasm (dev)
+      - name: Build wasm (profiling)
         if: steps.wasm-cache.outputs.cache-hit != 'true'
         run: |
-          wasm-pack build crates/vcad-kernel-wasm --dev --target web \
+          wasm-pack build crates/vcad-kernel-wasm --profiling --target web \
             --out-dir ../../packages/kernel-wasm/pkg \
             --features no-builtin-font
           cp packages/kernel-wasm/pkg/vcad_kernel_wasm* packages/kernel-wasm/
