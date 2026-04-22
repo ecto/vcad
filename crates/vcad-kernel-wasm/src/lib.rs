@@ -5215,14 +5215,12 @@ mod embroidery_wasm {
                         }
                         points.push([*x, *y]);
                     }
-                    StitchCommand::Trim | StitchCommand::End => {
-                        if !points.is_empty() {
-                            paths.push(StitchPathInfo {
-                                thread_index: group.thread_index,
-                                color: thread.color,
-                                points: std::mem::take(&mut points),
-                            });
-                        }
+                    StitchCommand::Trim | StitchCommand::End if !points.is_empty() => {
+                        paths.push(StitchPathInfo {
+                            thread_index: group.thread_index,
+                            color: thread.color,
+                            points: std::mem::take(&mut points),
+                        });
                     }
                     _ => {}
                 }

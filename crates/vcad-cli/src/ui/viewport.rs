@@ -85,14 +85,13 @@ pub fn render_viewport_braille(buf: &mut CellBuffer, render_buffer: &RenderBuffe
             }
 
             let ch = char::from_u32(0x2800 + dots as u32).unwrap_or(' ');
-            let color = if count > 0 {
-                Color::rgb(
-                    (total_r / count) as u8,
-                    (total_g / count) as u8,
-                    (total_b / count) as u8,
-                )
-            } else {
-                theme::BG()
+            let color = match (
+                total_r.checked_div(count),
+                total_g.checked_div(count),
+                total_b.checked_div(count),
+            ) {
+                (Some(r), Some(g), Some(b)) => Color::rgb(r as u8, g as u8, b as u8),
+                _ => theme::BG(),
             };
 
             if let Some(cell) = buf.cell_mut(area.x + col, area.y + row) {

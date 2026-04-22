@@ -575,10 +575,8 @@ fn handle_tool_input_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
                 app.process_command(&cmd)?;
             }
         }
-        KeyCode::Backspace => {
-            if ti.editing || ti.text_mode {
-                ti.edit_buf.pop();
-            }
+        KeyCode::Backspace if ti.editing || ti.text_mode => {
+            ti.edit_buf.pop();
         }
         KeyCode::Left => {
             if ti.text_mode {
@@ -711,15 +709,13 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
     // Welcome overlay intercepts all keys when visible
     if app.show_welcome {
         match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                if app.welcome_selected > 0 {
-                    app.welcome_selected -= 1;
-                }
+            KeyCode::Up | KeyCode::Char('k') if app.welcome_selected > 0 => {
+                app.welcome_selected -= 1;
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if app.welcome_selected + 1 < crate::ui::welcome::ITEM_COUNT {
-                    app.welcome_selected += 1;
-                }
+            KeyCode::Down | KeyCode::Char('j')
+                if app.welcome_selected + 1 < crate::ui::welcome::ITEM_COUNT =>
+            {
+                app.welcome_selected += 1;
             }
             KeyCode::Enter => {
                 let action = match app.welcome_selected {
@@ -793,10 +789,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
                 app.command_input.pop();
                 app.command_selected_index = 0;
             }
-            KeyCode::Up => {
-                if app.command_selected_index > 0 {
-                    app.command_selected_index -= 1;
-                }
+            KeyCode::Up if app.command_selected_index > 0 => {
+                app.command_selected_index -= 1;
             }
             KeyCode::Down => {
                 let items = crate::ui::command::build_command_items(&app.command_input);
@@ -815,11 +809,9 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
                 app.mode = TuiMode::Normal;
                 app.set_status("Exited sketch mode");
             }
-            KeyCode::Char(c) => {
-                if state.handle_key(c) {
-                    let name = state.tool_name().to_string();
-                    app.set_status(format!("Sketch tool: {}", name));
-                }
+            KeyCode::Char(c) if state.handle_key(c) => {
+                let name = state.tool_name().to_string();
+                app.set_status(format!("Sketch tool: {}", name));
             }
             _ => {}
         },
