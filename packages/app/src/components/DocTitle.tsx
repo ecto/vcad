@@ -90,12 +90,16 @@ export function DocTitle({ macOverlay }: { macOverlay?: boolean }) {
 
   // Select the whole name when edit mode opens so a single click + type
   // replaces it wholesale — the familiar Finder rename interaction.
+  // Depending on `draft !== null` (not `draft` itself) keeps the effect from
+  // re-firing on every keystroke — otherwise each new character re-selects
+  // the text and gets replaced by the next one.
+  const editing = draft !== null;
   useEffect(() => {
-    if (draft !== null) {
+    if (editing) {
       inputRef.current?.focus();
       inputRef.current?.select();
     }
-  }, [draft]);
+  }, [editing]);
 
   const startEdit = () => {
     if (readOnlyShare) return;
