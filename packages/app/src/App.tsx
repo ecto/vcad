@@ -83,7 +83,6 @@ import { bootstrap } from "@/lib/bootstrap";
 import { useBootStore } from "@/stores/boot-store";
 import { Splash } from "@/components/Splash";
 import { ErrorScreen } from "@/components/ErrorScreen";
-import { isTauri } from "@/lib/tauri";
 import { getProfileRouteUsername } from "@/lib/url-document";
 import {
   mergeMeshes,
@@ -166,7 +165,6 @@ export function App() {
     void bootstrap();
   }, []);
 
-  const desktopMode = isTauri();
   const isMobile = useIsMobile();
   const engineReady = useEngineStore((s) => s.engineReady);
   const error = useEngineStore((s) => s.error);
@@ -741,13 +739,10 @@ export function App() {
         </AppShell>
           )}
 
-        {/* Offline indicator (browser only — Tauri doesn't use PWA) */}
-        {!desktopMode && (
-          <Suspense fallback={null}>
-            <OfflineIndicator />
-            <UpdateNotification />
-          </Suspense>
-        )}
+        <Suspense fallback={null}>
+          <OfflineIndicator />
+          <UpdateNotification />
+        </Suspense>
 
         {/* Modals */}
         <AsyncBoundary region="modals" fallback={null}>

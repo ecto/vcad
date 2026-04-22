@@ -5,10 +5,12 @@
   "identifier": "com.vcad.desktop",
   "build": {
     "frontendDist": "../../packages/app/dist",
-    "devUrl": "http://localhost:5173"
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm --prefix ../../packages/app run dev",
+    "beforeBuildCommand": "npm --prefix ../../packages/app run build"
   },
   "app": {
-    "withGlobalTauri": true,
+    "withGlobalTauri": false,
     "windows": [
       {
         "title": "vcad",
