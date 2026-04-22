@@ -24,6 +24,13 @@ const bowlHeight = 70;      // Height of the bowl
 const wallThickness = 2;    // Thickness of the glass walls
 const rimRadius = 30;       // Radius at the rim (narrower than max)
 
+// Minimum distance of the profile from the revolution axis. The kernel's
+// revolve validator rejects profiles whose segment endpoints land exactly
+// on the axis (distance below the linear tolerance), so we keep the
+// innermost points a tenth of a millimetre out. The resulting "hole" is
+// not visible at wine-glass scale.
+const AXIS_EPS = 0.1;
+
 // Helper to create line segments for the profile
 // The profile traces the outer edge then inner edge (closed loop)
 function createWineGlassProfile(): SketchSegment2D[] {
@@ -36,7 +43,7 @@ function createWineGlassProfile(): SketchSegment2D[] {
   // 1. Base bottom - center to outer edge
   segments.push({
     type: "Line",
-    start: { x: 0, y: 0 },
+    start: { x: AXIS_EPS, y: 0 },
     end: { x: baseRadius, y: 0 },
   });
 
@@ -128,7 +135,10 @@ function createWineGlassProfile(): SketchSegment2D[] {
   prevX = innerRimRadius;
   prevY = rimOuterY;
 
-  for (let i = bowlSegments; i >= 1; i--) {
+  // Start from bowlSegments-1 so the first segment doesn't duplicate
+  // the (innerRimRadius, rimOuterY) endpoint that was just connected
+  // via the rim top edge above.
+  for (let i = bowlSegments - 1; i >= 1; i--) {
     const t = i / bowlSegments;
     const heightFrac = t;
     const y = bowlBottomY + 5 + (bowlHeight - 5) * heightFrac;
@@ -158,18 +168,23 @@ function createWineGlassProfile(): SketchSegment2D[] {
     end: { x: innerStemRadius + 3, y: bowlBottomY + 5 },
   });
 
-  // Inner cavity bottom (where wine sits)
+  // Inner cavity floor — radial segment from the bowl inner bottom
+  // across to the axis. We stop at AXIS_EPS because the kernel
+  // rejects profile endpoints that sit exactly on the axis.
   segments.push({
     type: "Line",
     start: { x: innerStemRadius + 3, y: bowlBottomY + 5 },
-    end: { x: 0, y: bowlBottomY + 5 },
+    end: { x: AXIS_EPS, y: bowlBottomY + 5 },
   });
 
-  // Close the profile - back to origin along the axis
+  // Close the profile along the axis back down to the base start. The
+  // small AXIS_EPS offset keeps the segment off the axis so the revolve
+  // check passes while staying well inside the stem (stem outer is at
+  // stemRadius=3).
   segments.push({
     type: "Line",
-    start: { x: 0, y: bowlBottomY + 5 },
-    end: { x: 0, y: 0 },
+    start: { x: AXIS_EPS, y: bowlBottomY + 5 },
+    end: { x: AXIS_EPS, y: 0 },
   });
 
   return segments;
