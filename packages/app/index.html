@@ -17,17 +17,6 @@
   </head>
   <body class="overflow-hidden">
     <div id="root"></div>
-    <script>
-      // Polyfill crypto.randomUUID for non-secure contexts (HTTP over LAN)
-      if (typeof crypto !== "undefined" && typeof crypto.randomUUID !== "function") {
-        console.warn("[vcad] crypto.randomUUID unavailable (non-secure context). Using polyfill — do NOT use in production.");
-        crypto.randomUUID = function() {
-          return "10000000-1000-4000-8000-100000000000".replace(/[018]/g, function(c) {
-            return (+c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (+c / 4)))).toString(16);
-          });
-        };
-      }
-    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
