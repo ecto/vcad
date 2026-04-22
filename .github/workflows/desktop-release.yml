@@ -106,22 +106,24 @@ jobs:
       - name: Build @vcad/app
         run: npm run build -- --filter=@vcad/app
 
+      # Only expose signing secrets to tauri-action when the workflow is
+      # running on a real release tag. On workflow_dispatch (ad-hoc runs
+      # from a branch) we build unsigned artifacts — a compromised branch
+      # should not be able to lift the signing/notarization keys into its
+      # build output. Dependabot (see .github/dependabot.yml) pins
+      # tauri-apps/tauri-action to a commit SHA on its first update.
       - name: Build and publish desktop bundles
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Tauri updater signing — optional; tauri-action skips signing
-          # when the key is absent.
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # macOS code signing + notarization — all optional. Unsigned .dmg
-          # still builds; users will see a Gatekeeper warning.
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ startsWith(github.ref, 'refs/tags/') && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/') && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+          APPLE_CERTIFICATE: ${{ startsWith(github.ref, 'refs/tags/') && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/') && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          APPLE_SIGNING_IDENTITY: ${{ startsWith(github.ref, 'refs/tags/') && secrets.APPLE_SIGNING_IDENTITY || '' }}
+          APPLE_ID: ${{ startsWith(github.ref, 'refs/tags/') && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/') && secrets.APPLE_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ startsWith(github.ref, 'refs/tags/') && secrets.APPLE_TEAM_ID || '' }}
         with:
           projectPath: crates/vcad-desktop
           # Only create a release when triggered by a tag push.
