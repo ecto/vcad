@@ -21,14 +21,25 @@ pub enum Value {
     Sketch(String),
 }
 
+/// CRDT-safe equality for `f64`: reflexive on NaN (two NaNs compare equal
+/// so `impl Eq for Value` stays lawful) but normalizes `+0.0 == -0.0` so a
+/// client that happens to produce `-0.0` by arithmetic isn't treated as
+/// divergent from one that kept `0.0`.
+#[inline]
+fn f64_crdt_eq(a: f64, b: f64) -> bool {
+    if a.is_nan() && b.is_nan() {
+        true
+    } else {
+        a == b
+    }
+}
+
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Value::F64(a), Value::F64(b)) => a.to_bits() == b.to_bits(),
+            (Value::F64(a), Value::F64(b)) => f64_crdt_eq(*a, *b),
             (Value::Vec3(a), Value::Vec3(b)) => {
-                a[0].to_bits() == b[0].to_bits()
-                    && a[1].to_bits() == b[1].to_bits()
-                    && a[2].to_bits() == b[2].to_bits()
+                f64_crdt_eq(a[0], b[0]) && f64_crdt_eq(a[1], b[1]) && f64_crdt_eq(a[2], b[2])
             }
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::String(a), Value::String(b)) => a == b,
@@ -54,6 +65,21 @@ mod tests {
         assert_eq!(Value::String("hello".into()), Value::String("hello".into()));
         assert_eq!(Value::Vec3([1.0, 2.0, 3.0]), Value::Vec3([1.0, 2.0, 3.0]));
         assert_ne!(Value::F64(1.0), Value::Bool(true));
+    }
+
+    #[test]
+    fn f64_crdt_eq_normalizes_zero_and_preserves_nan_reflexivity() {
+        // +0.0 and -0.0 must compare equal so a client normalizing one to the
+        // other doesn't cause spurious CRDT divergence.
+        assert_eq!(Value::F64(0.0), Value::F64(-0.0));
+        assert_eq!(
+            Value::Vec3([0.0, -0.0, 0.0]),
+            Value::Vec3([-0.0, 0.0, -0.0])
+        );
+
+        // NaN must compare equal to itself so `impl Eq for Value` remains
+        // lawful (required by e.g. HashMap<Value, _>).
+        assert_eq!(Value::F64(f64::NAN), Value::F64(f64::NAN));
     }
 
     #[test]
