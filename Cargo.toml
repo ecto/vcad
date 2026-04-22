@@ -118,6 +118,11 @@ vcad-embroidery-pes = { path = "crates/vcad-embroidery-pes" }
 vcad-embroidery-dst = { path = "crates/vcad-embroidery-dst" }
 vcad-tool-derive = { path = "crates/vcad-tool-derive" }
 
+# GPU stack — version-pin here, each consumer opts into the features it needs.
+wgpu = { version = "23" }
+bytemuck = { version = "1.14", features = ["derive"] }
+pollster = "0.4"
+
 # Unwinding panics let the evaluator catch a kernel assertion (e.g. the
 # add_loop invariant in vcad-kernel-topo) and turn it into a per-root
 # failure instead of aborting the whole WASM module with an `unreachable`

@@ -68,7 +68,7 @@ path = "../vcad-kernel-math"
 optional = true
 
 [dependencies.wgpu]
-version = "23"
+workspace = true
 optional = true
 
 [dependencies.vcad-kernel-physics]
