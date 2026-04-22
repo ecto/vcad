@@ -95,7 +95,10 @@ impl HeightField {
         let dx = self.dx();
         let dy = self.dy();
 
-        if dx == 0.0 || dy == 0.0 {
+        // Guard against a degenerate (zero-extent or near-zero) grid to
+        // avoid a divide-by-zero below. An exact `== 0.0` check would miss
+        // grids with subnormal-but-nonzero steps, which still blow up fx/fy.
+        if dx.abs() < f64::EPSILON || dy.abs() < f64::EPSILON {
             return Some(self.heights[0]);
         }
 

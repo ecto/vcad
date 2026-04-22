@@ -5266,7 +5266,7 @@ mod ts_tests {
     ///
     /// Run with: `cargo test --features ts-rs export_bindings -- --ignored`
     #[test]
-    #[ignore]
+    #[ignore = "requires --features ts-rs; produces bindings/ output, opt-in only"]
     fn export_bindings() {
         // Types are auto-exported via #[ts(export)] attribute
         // This test ensures all types compile correctly with ts-rs

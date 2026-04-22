@@ -122,7 +122,32 @@ impl Default for Transform {
     }
 }
 
-/// Tolerance constants for geometric comparisons.
+/// Named tolerance anchors for geometric comparisons.
+///
+/// These are the canonical scales we want call sites to reference when they
+/// represent one of the well-defined categories below. Algorithm-specific
+/// epsilons (squared thresholds, Newton convergence stop values, scale-adaptive
+/// tolerances) are intentionally *not* covered here — those should keep their
+/// local constants, since they are tuned to a particular numeric recipe.
+///
+/// Category guide:
+///
+/// - [`STRICT`] (`1e-12`) — robust geometric predicates, near-zero determinants,
+///   direction / normal length guards where the quantity is in absolute units.
+/// - [`GEOMETRIC`] (`1e-9`) — angular equality, tight degeneracy checks,
+///   surface-parameter (`u`/`v`) margins.
+/// - [`DEFAULT`] (`1e-6`) — general point/length equality in mm units, face
+///   sew / merge tolerances.
+/// - [`LOOSE`] (`1e-3`) — snap targets, UI-scale decisions, coarse curve
+///   sampling dedup.
+///
+/// Migration to these anchors is tracked in [issue #11](https://github.com/ecto/vcad/issues/11);
+/// most call sites still use bare literals today.
+///
+/// [`STRICT`]: Tolerance::STRICT
+/// [`GEOMETRIC`]: Tolerance::GEOMETRIC
+/// [`DEFAULT`]: Tolerance::DEFAULT
+/// [`LOOSE`]: Tolerance::LOOSE
 #[derive(Debug, Clone, Copy)]
 pub struct Tolerance {
     /// Linear distance tolerance in mm.
@@ -132,10 +157,34 @@ pub struct Tolerance {
 }
 
 impl Tolerance {
+    /// Strict tolerance anchor: `1e-12`.
+    ///
+    /// Use for robust geometric predicates, near-zero determinants, and
+    /// direction / normal length guards where any non-zero value should pass.
+    pub const STRICT: f64 = 1e-12;
+
+    /// Geometric tolerance anchor: `1e-9`.
+    ///
+    /// Use for angular equality (radians), tight degeneracy checks, and
+    /// surface parameter (`u`/`v`) margins.
+    pub const GEOMETRIC: f64 = 1e-9;
+
+    /// Default tolerance anchor: `1e-6`.
+    ///
+    /// Use for general point / length equality in mm units and face sew /
+    /// merge tolerances.
+    pub const DEFAULT_LINEAR: f64 = 1e-6;
+
+    /// Loose tolerance anchor: `1e-3`.
+    ///
+    /// Use for snap targets, UI-scale decisions, and coarse curve-sampling
+    /// dedup where we prefer false-positive merges over false negatives.
+    pub const LOOSE: f64 = 1e-3;
+
     /// Default CAD tolerances (1e-6 mm linear, 1e-9 rad angular).
     pub const DEFAULT: Self = Self {
-        linear: 1e-6,
-        angular: 1e-9,
+        linear: Self::DEFAULT_LINEAR,
+        angular: Self::GEOMETRIC,
     };
 
     /// Check if two points are coincident within tolerance.

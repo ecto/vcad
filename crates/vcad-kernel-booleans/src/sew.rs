@@ -374,21 +374,6 @@ fn copy_loop_with_he_map(
     target.add_loop(&hes)
 }
 
-/// Copy a loop from source to target topology (legacy version without he_map).
-///
-/// Returns the new LoopId in the target topology.
-#[allow(dead_code)]
-fn copy_loop(
-    source: &BRepSolid,
-    src_loop: vcad_kernel_topo::LoopId,
-    reverse: bool,
-    target: &mut Topology,
-    vertex_map: &mut HashMap<VertexPosKey, vcad_kernel_topo::VertexId>,
-) -> vcad_kernel_topo::LoopId {
-    let mut he_map = HashMap::new();
-    copy_loop_with_he_map(source, src_loop, reverse, target, vertex_map, &mut he_map)
-}
-
 /// Key for vertex position hashing (for deduplication).
 ///
 /// Uses quantized coordinates to handle floating-point imprecision.

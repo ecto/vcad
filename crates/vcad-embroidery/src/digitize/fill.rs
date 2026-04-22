@@ -128,7 +128,7 @@ pub fn fill_stitch_multi(regions: &[Path2D], params: &FillParams) -> Vec<StitchC
         for contour in &rotated_contours {
             scan_intersections_into(contour, scan_y, &mut xs);
         }
-        xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        xs.sort_by(|a, b| a.total_cmp(b));
 
         // Process pairs (even-odd rule: entry at even index, exit at odd).
         let mut pair_idx = 0;

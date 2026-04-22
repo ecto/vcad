@@ -378,7 +378,7 @@ impl Contour2D {
 
         // Sort tabs by position
         let mut sorted_tabs: Vec<_> = self.tabs.iter().collect();
-        sorted_tabs.sort_by(|a, b| a.position.partial_cmp(&b.position).unwrap());
+        sorted_tabs.sort_by(|a, b| a.position.total_cmp(&b.position));
 
         // Generate path with tabs
         let mut in_tab = false;
@@ -478,7 +478,7 @@ mod tests {
 
         // Should have at least two distinct Z values (cut depth and tab height)
         let mut unique_z: Vec<f64> = z_values.clone();
-        unique_z.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        unique_z.sort_by(|a, b| a.total_cmp(b));
         unique_z.dedup_by(|a, b| (*a - *b).abs() < 0.1);
         assert!(unique_z.len() >= 2);
     }

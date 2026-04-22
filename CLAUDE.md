@@ -8,6 +8,18 @@ vcad is an open-source parametric CAD system aiming to replace Fusion 360, Onsha
 
 **Live app:** https://vcad.io
 
+## Prerequisites
+
+vcad depends on the `tang` math workspace at a **sibling path** (`../tang`). Clone it
+next to vcad before running `cargo build`:
+
+```bash
+git clone git@github.com:ecto/tang.git ../tang
+```
+
+Cargo paths in the workspace (`tang`, `tang-la`, `tang-expr`) all point at
+`../tang/crates/*`.
+
 ## Commands
 
 ```bash
@@ -78,6 +90,9 @@ vcad/
 │   ├── vcad-ir/                   # Intermediate representation
 │   ├── vcad-cli/                  # CLI tool
 │   └── vcad/                      # Legacy CSG library (manifold-based)
+│
+│   # Work-in-progress crates (built but not yet wired to any consumer):
+│   # - vcad-kernel-stocksim     # CAM stock sim (octree SDF, marching cubes); no consumers yet
 ├── packages/                      # TypeScript workspace
 │   ├── app/                       # Web app (React + Three.js + Zustand)
 │   ├── engine/                    # WASM engine wrapper + physics
@@ -89,6 +104,8 @@ vcad/
 │   └── docs/                      # Documentation site
 ├── supabase/                      # Database migrations and config
 │   └── migrations/                # SQL migrations (pushed via `supabase db push`)
+├── cad-lib/                       # Loon stdlib for vcad modeling (`.loon` source)
+│   └── src/lib.loon               # bundled into crates/vcad-loon via include_str!
 ```
 
 ## Key Concepts

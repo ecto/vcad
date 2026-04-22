@@ -1225,7 +1225,9 @@ fn parse_joint(
                 state: 0.0,
             });
         }
-        _ => unreachable!(),
+        _ => unreachable!(
+            "parse_joint called with non-joint opcode {opcode:?}; parent dispatch is broken"
+        ),
     }
 
     Ok(())
@@ -1520,7 +1522,9 @@ fn parse_light(
                 cast_shadow: None,
             });
         }
-        _ => unreachable!(),
+        _ => unreachable!(
+            "parse_light called with non-light opcode {opcode:?}; parent dispatch is broken"
+        ),
     }
 
     Ok(())

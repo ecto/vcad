@@ -20,16 +20,16 @@ slotmap = { workspace = true }
 thiserror = { workspace = true }
 
 # GPU dependencies (optional)
-wgpu = { version = "23", features = ["webgpu", "webgl"], optional = true }
-bytemuck = { version = "1.14", features = ["derive"], optional = true }
-pollster = { version = "0.4", optional = true }
+wgpu = { workspace = true, features = ["webgpu", "webgl"], optional = true }
+bytemuck = { workspace = true, optional = true }
+pollster = { workspace = true, optional = true }
 
 [dev-dependencies]
 approx = "0.5"
 criterion = { version = "0.5", features = ["html_reports"] }
-wgpu = { version = "23", features = ["webgpu", "webgl"] }
-bytemuck = { version = "1.14", features = ["derive"] }
-pollster = "0.4"
+wgpu = { workspace = true, features = ["webgpu", "webgl"] }
+bytemuck = { workspace = true }
+pollster = { workspace = true }
 
 [[bench]]
 name = "jacobian"

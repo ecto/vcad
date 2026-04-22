@@ -1286,17 +1286,23 @@ fn get_bool(feature: &FeatureState, key: &str) -> Option<bool> {
 }
 
 /// Parse sketch data from a JSON string, falling back to an empty XY sketch.
+///
+/// An unparseable blob is treated the same as an empty sketch: the feature
+/// still materializes but renders as nothing until the user repairs it,
+/// rather than crashing the whole app on a corrupt or version-skewed `.vcad`.
 fn parse_sketch_str(data: &str) -> CsgOp {
     if data.is_empty() {
-        default_sketch()
-    } else {
-        serde_json::from_str::<CsgOp>(data).unwrap_or_else(|e| {
-            panic!(
-                "parse_sketch_str: failed to parse sketch JSON: {e}\ninput ({} bytes): {}",
-                data.len(),
-                data
+        return default_sketch();
+    }
+    match serde_json::from_str::<CsgOp>(data) {
+        Ok(op) => op,
+        Err(e) => {
+            eprintln!(
+                "[vcad] parse_sketch_str: failed to parse sketch JSON ({} bytes): {e}",
+                data.len()
             );
-        })
+            default_sketch()
+        }
     }
 }
 

@@ -12,7 +12,6 @@ path = "src/main.rs"
 
 [dependencies]
 # Core crates
-vcad = { path = "../vcad" }
 vcad-ir = { path = "../vcad-ir" }
 vcad-crdt = { path = "../vcad-crdt" }
 vcad-kernel = { path = "../vcad-kernel" }

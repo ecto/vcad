@@ -230,9 +230,9 @@ describe("CSG operations", () => {
     expect(scene.parts[0].mesh.indices.length).toBeGreaterThan(0);
   });
 
-  // TODO: scene.parts[0].solid is undefined after a difference of a cube and a
-  // cylinder. The current WASM kernel doesn't seem to expose the .solid field
-  // through this code path. Re-enable when the kernel surfaces it.
+  // TODO(#12): scene.parts[0].solid is undefined after a difference of a cube
+  // and a cylinder. The current WASM kernel doesn't seem to expose the .solid
+  // field through this code path. Re-enable when the kernel surfaces it.
   it.skip("preserves B-rep data for STEP export after difference", () => {
     const doc = singlePartDoc(
       [
@@ -249,7 +249,7 @@ describe("CSG operations", () => {
     expect(scene.parts[0].solid.canExportStep()).toBe(true);
   });
 
-  // TODO: same .solid undefined issue as the simpler difference test above.
+  // TODO(#12): same .solid undefined issue as the simpler difference test above.
   it.skip("preserves B-rep after complex chain like mounting plate", () => {
     // Mirrors the mounting plate structure: transforms -> difference -> cube minus union of holes
     const doc = singlePartDoc(
@@ -282,7 +282,7 @@ describe("CSG operations", () => {
     expect(scene.parts[0].solid.canExportStep()).toBe(true);
   });
 
-  // TODO: same .solid undefined issue as the simpler difference test above.
+  // TODO(#12): same .solid undefined issue as the simpler difference test above.
   it.skip("preserves B-rep for union of non-overlapping cylinders", () => {
     // Test if union of multiple non-overlapping solids preserves valid topology
     const doc = singlePartDoc(
@@ -302,9 +302,9 @@ describe("CSG operations", () => {
     expect(stepBuffer.length).toBeGreaterThan(0);
   });
 
-  // TODO: This test fails with "half-edge has no parent edge" - the topology repair
-  // works for simple cases but the 9-hole mounting plate has edge cases that still fail.
-  // The simpler 4-hole test above passes.
+  // TODO(#12): fails with "half-edge has no parent edge" — topology repair
+  // works for simple cases but the 9-hole mounting plate has edge cases
+  // that still fail. The simpler 4-hole test above passes.
   it.skip("preserves B-rep for exact mounting plate example structure", () => {
     // This is the EXACT document structure from the mounting plate example
     const doc = createDocument();
@@ -880,9 +880,10 @@ describe("Assembly evaluation", () => {
     expect(armInstance!.transform!.translation.x).toBe(10); // parentAnchor.x - childAnchor.x
   });
 
-  // TODO: scene.clashes is empty even when two instances overlap. Either the
-  // engine isn't running clash detection through this path or the kernel
-  // returns no positions. Re-enable when clash detection is wired up here.
+  // TODO(#12): scene.clashes is empty even when two instances overlap.
+  // Either the engine isn't running clash detection through this path or
+  // the kernel returns no positions. Re-enable when clash detection is
+  // wired up here.
   it.skip("detects clashes between overlapping instances", () => {
     const doc: Document = {
       version: "0.1",

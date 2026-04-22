@@ -30,7 +30,6 @@ members = [
     "crates/vcad-slicer",
     "crates/vcad-slicer-gcode",
     "crates/vcad-slicer-bambu",
-    "crates/vcad-slicer-wasm",
     "crates/vcad-kernel-cam",
     "crates/vcad-kernel-stocksim",
     "crates/vcad-crdt",
@@ -49,8 +48,62 @@ members = [
     "crates/vcad-embroidery",
     "crates/vcad-embroidery-pes",
     "crates/vcad-embroidery-dst",
-    "crates/vcad-embroidery-wasm",
     "crates/vcad-desktop",
+    "crates/vcad-tool-derive",
+]
+
+# vcad-desktop pulls in tauri/gtk/atk which requires system dev libraries
+# on Linux. Keep it out of the default build set so bare `cargo build`,
+# `cargo test`, and `cargo clippy` work on stock dev boxes; CI or whoever
+# is actually working on the desktop shell opts in with `-p vcad-desktop`.
+default-members = [
+    "crates/vcad-ir",
+    "crates/vcad",
+    "crates/vcad-kernel-math",
+    "crates/vcad-kernel-topo",
+    "crates/vcad-kernel-geom",
+    "crates/vcad-kernel-primitives",
+    "crates/vcad-kernel-tessellate",
+    "crates/vcad-kernel-booleans",
+    "crates/vcad-kernel-nurbs",
+    "crates/vcad-kernel-fillet",
+    "crates/vcad-kernel-sketch",
+    "crates/vcad-kernel-text",
+    "crates/vcad-kernel-sweep",
+    "crates/vcad-kernel-shell",
+    "crates/vcad-kernel-step",
+    "crates/vcad-kernel",
+    "crates/vcad-kernel-constraints",
+    "crates/vcad-kernel-wasm",
+    "crates/vcad-kernel-drafting",
+    "crates/vcad-cli",
+    "crates/vcad-kernel-gpu",
+    "crates/vcad-kernel-raytrace",
+    "crates/vcad-kernel-urdf",
+    "crates/vcad-kernel-physics",
+    "crates/wasmosis",
+    "crates/wasmosis/wasmosis-macro",
+    "crates/vcad-slicer",
+    "crates/vcad-slicer-gcode",
+    "crates/vcad-slicer-bambu",
+    "crates/vcad-kernel-cam",
+    "crates/vcad-kernel-stocksim",
+    "crates/vcad-crdt",
+    "crates/vcad-app",
+    "crates/vcad-chat",
+    "crates/vcad-eval",
+    "crates/vcad-loon",
+    "crates/vcad-sim",
+    "crates/vcad-ecad-symbols",
+    "crates/vcad-ecad-schematic",
+    "crates/vcad-ecad-pcb",
+    "crates/vcad-ecad-export",
+    "crates/vcad-ecad-sim",
+    "crates/stepperoni",
+    "crates/termview",
+    "crates/vcad-embroidery",
+    "crates/vcad-embroidery-pes",
+    "crates/vcad-embroidery-dst",
     "crates/vcad-tool-derive",
 ]
 
@@ -98,7 +151,6 @@ wasmosis-macro = { path = "crates/wasmosis/wasmosis-macro" }
 vcad-slicer = { path = "crates/vcad-slicer" }
 vcad-slicer-gcode = { path = "crates/vcad-slicer-gcode" }
 vcad-slicer-bambu = { path = "crates/vcad-slicer-bambu" }
-vcad-slicer-wasm = { path = "crates/vcad-slicer-wasm" }
 vcad-kernel-cam = { path = "crates/vcad-kernel-cam" }
 vcad-kernel-stocksim = { path = "crates/vcad-kernel-stocksim" }
 vcad-kernel-text = { path = "crates/vcad-kernel-text" }
@@ -119,8 +171,12 @@ termview = { path = "crates/termview" }
 vcad-embroidery = { path = "crates/vcad-embroidery" }
 vcad-embroidery-pes = { path = "crates/vcad-embroidery-pes" }
 vcad-embroidery-dst = { path = "crates/vcad-embroidery-dst" }
-vcad-embroidery-wasm = { path = "crates/vcad-embroidery-wasm" }
 vcad-tool-derive = { path = "crates/vcad-tool-derive" }
+
+# GPU stack — version-pin here, each consumer opts into the features it needs.
+wgpu = { version = "23" }
+bytemuck = { version = "1.14", features = ["derive"] }
+pollster = "0.4"
 
 # Unwinding panics let the evaluator catch a kernel assertion (e.g. the
 # add_loop invariant in vcad-kernel-topo) and turn it into a per-root

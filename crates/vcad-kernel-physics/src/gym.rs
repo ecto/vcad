@@ -96,9 +96,12 @@ impl RobotEnv {
     ///
     /// Returns the initial observation.
     pub fn reset(&mut self) -> Observation {
-        // Recreate physics world from initial document
-        self.world =
-            PhysicsWorld::from_document(&self.initial_doc).expect("Failed to reset physics world");
+        // Rebuild from `initial_doc`, which was already validated via `?` in
+        // `new()` and is never mutated afterwards — so this expect should be
+        // unreachable. A failure here would indicate an internal invariant
+        // violation (e.g. a non-deterministic bug in PhysicsWorld::from_document).
+        self.world = PhysicsWorld::from_document(&self.initial_doc)
+            .expect("gym reset: PhysicsWorld::from_document failed on a doc that was valid at construction — this should be unreachable");
         self.joint_ids = self.world.joint_ids();
         self.current_step = 0;
 

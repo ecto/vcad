@@ -186,6 +186,9 @@ impl ToolHolder {
 
     /// Get the radius at a given height from the tool tip.
     pub fn radius_at_height(&self, height: f64) -> f64 {
+        // `taper_angle == 0.0` is intentional: a straight-sided tool is
+        // configured by passing literal 0.0, not a near-zero value. The
+        // comparison is against a user-set constant, not a computed number.
         if height > self.length || self.taper_angle == 0.0 {
             self.diameter / 2.0
         } else {

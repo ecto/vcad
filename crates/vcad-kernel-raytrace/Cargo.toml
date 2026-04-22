@@ -13,8 +13,8 @@ vcad-kernel-geom = { path = "../vcad-kernel-geom" }
 vcad-kernel-primitives = { path = "../vcad-kernel-primitives" }
 vcad-kernel-booleans = { path = "../vcad-kernel-booleans" }
 vcad-kernel-gpu = { path = "../vcad-kernel-gpu", optional = true }
-wgpu = { version = "23", features = ["webgpu", "wgsl"], optional = true }
-bytemuck = { version = "1.14", features = ["derive"] }
+wgpu = { workspace = true, features = ["webgpu", "wgsl"], optional = true }
+bytemuck = { workspace = true }
 thiserror.workspace = true
 tang = { workspace = true }
 

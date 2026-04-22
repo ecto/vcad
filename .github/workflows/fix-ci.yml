@@ -14,6 +14,10 @@ permissions:
   pull-requests: write
   issues: write
   actions: read
+  # anthropics/claude-code-action@v1 mints an OIDC token to identify the
+  # runner to Anthropic's API; without id-token: write it fails with
+  # "Unable to get ACTIONS_ID_TOKEN_REQUEST_URL env variable".
+  id-token: write
 
 concurrency:
   # Serialize attempts per PR so we never have two fix-ci jobs racing

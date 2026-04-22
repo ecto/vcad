@@ -1886,7 +1886,7 @@ mod tests {
                     }
 
                     result.total_rays += 1;
-                    hits.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+                    hits.sort_by(|a, b| a.0.total_cmp(&b.0));
 
                     // Watertight check: must have even number of hits
                     if hits.len() % 2 != 0 {

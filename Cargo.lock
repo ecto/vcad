@@ -5962,7 +5962,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tower-http",
- "vcad",
  "vcad-app",
  "vcad-chat",
  "vcad-crdt",
@@ -6076,19 +6075,6 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "vcad-embroidery",
-]
-
-[[package]]
-name = "vcad-embroidery-wasm"
-version = "0.8.0"
-dependencies = [
- "console_error_panic_hook",
- "serde",
- "serde-wasm-bindgen",
- "serde_json",
- "vcad-embroidery",
- "vcad-embroidery-pes",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -6492,22 +6478,6 @@ dependencies = [
  "thiserror 2.0.18",
  "vcad-kernel-math",
  "vcad-slicer",
-]
-
-[[package]]
-name = "vcad-slicer-wasm"
-version = "0.8.0"
-dependencies = [
- "console_error_panic_hook",
- "js-sys",
- "serde",
- "serde-wasm-bindgen",
- "serde_json",
- "vcad-kernel-tessellate",
- "vcad-slicer",
- "vcad-slicer-gcode",
- "wasm-bindgen",
- "wasm-bindgen-futures",
 ]
 
 [[package]]

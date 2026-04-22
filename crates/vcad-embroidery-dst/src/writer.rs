@@ -157,7 +157,9 @@ fn encode_record(dx: i32, dy: i32, rec_type: RecordType) -> [u8; 3] {
         RecordType::ColorChange => {
             b[2] |= 0xC3;
         }
-        RecordType::End => unreachable!(),
+        RecordType::End => unreachable!(
+            "encode_record called with RecordType::End; End must be written via write_end_record"
+        ),
     }
 
     b

@@ -654,57 +654,6 @@ fn draw_tiny_char(buffer: &mut RenderBuffer, x: i32, y: i32, ch: char, color: [u
     }
 }
 
-#[allow(dead_code)]
-fn draw_grid(buffer: &mut RenderBuffer) {
-    let w = buffer.width;
-    let h = buffer.height;
-    let cx = w / 2;
-    let cy = h / 2;
-
-    // Draw crosshair
-    for x in 0..w {
-        let idx = (cy * w + x) as usize;
-        if idx < buffer.pixels.len() / 4 {
-            buffer.pixels[idx * 4] = 60;
-            buffer.pixels[idx * 4 + 1] = 60;
-            buffer.pixels[idx * 4 + 2] = 70;
-        }
-    }
-    for y in 0..h {
-        let idx = (y * w + cx) as usize;
-        if idx < buffer.pixels.len() / 4 {
-            buffer.pixels[idx * 4] = 60;
-            buffer.pixels[idx * 4 + 1] = 60;
-            buffer.pixels[idx * 4 + 2] = 70;
-        }
-    }
-
-    // Draw border
-    for x in 0..w {
-        buffer.pixels[(x * 4) as usize] = 80;
-        buffer.pixels[(x * 4 + 1) as usize] = 80;
-        buffer.pixels[(x * 4 + 2) as usize] = 90;
-        let bot = ((h - 1) * w + x) as usize * 4;
-        if bot + 2 < buffer.pixels.len() {
-            buffer.pixels[bot] = 80;
-            buffer.pixels[bot + 1] = 80;
-            buffer.pixels[bot + 2] = 90;
-        }
-    }
-    for y in 0..h {
-        let left = (y * w) as usize * 4;
-        buffer.pixels[left] = 80;
-        buffer.pixels[left + 1] = 80;
-        buffer.pixels[left + 2] = 90;
-        let right = (y * w + w - 1) as usize * 4;
-        if right + 2 < buffer.pixels.len() {
-            buffer.pixels[right] = 80;
-            buffer.pixels[right + 1] = 80;
-            buffer.pixels[right + 2] = 90;
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
