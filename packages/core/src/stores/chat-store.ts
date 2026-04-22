@@ -38,6 +38,32 @@ function persistAnonUsage(used: number): void {
 }
 
 // ---------------------------------------------------------------------------
+// Sidebar open/closed persistence
+// ---------------------------------------------------------------------------
+
+const OPEN_KEY = "vcad:chat:open";
+
+function loadOpen(): boolean {
+  if (typeof localStorage === "undefined") return true;
+  try {
+    const raw = localStorage.getItem(OPEN_KEY);
+    if (raw === null) return true;
+    return raw === "true";
+  } catch {
+    return true;
+  }
+}
+
+function persistOpen(open: boolean): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(OPEN_KEY, open ? "true" : "false");
+  } catch {
+    /* localStorage quota/privacy — non-fatal */
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -261,7 +287,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   threadId: null,
   hydrating: false,
   messages: [WELCOME_MESSAGE],
-  open: true,
+  open: loadOpen(),
   streaming: false,
   error: null,
   cancelRequested: false,
@@ -272,9 +298,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
   _abortController: null,
   locallyStreamingIds: new Set(),
 
-  setOpen: (open) => set({ open }),
+  setOpen: (open) => {
+    persistOpen(open);
+    set({ open });
+  },
 
-  toggleOpen: () => set((s) => ({ open: !s.open })),
+  toggleOpen: () =>
+    set((s) => {
+      const open = !s.open;
+      persistOpen(open);
+      return { open };
+    }),
 
   setThreadId: (id) => set({ threadId: id }),
 

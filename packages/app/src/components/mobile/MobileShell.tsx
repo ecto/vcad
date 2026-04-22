@@ -72,13 +72,15 @@ export function MobileShell({ onAboutOpen, onSave, onOpen, children }: MobileShe
   // Chat opens only on explicit action — dock button, ⌘K / F6 event, or
   // code that dispatches `vcad:open-chat`. Never mirrors the store's default
   // `open: true` (which is right for desktop sidebars, wrong for mobile sheets).
+  // We use setState directly (bypassing setOpen) so these mobile-only
+  // transitions don't overwrite the persisted desktop preference.
   const handleChatSheetChange = (next: boolean) => {
     setChatSheetOpen(next);
-    useChatStore.getState().setOpen(next);
+    useChatStore.setState({ open: next });
   };
   useEffect(() => {
     // Force the store closed on mount so the mobile shell starts with no sheet.
-    if (useChatStore.getState().open) useChatStore.getState().setOpen(false);
+    if (useChatStore.getState().open) useChatStore.setState({ open: false });
     const handleOpen = () => setChatSheetOpen(true);
     window.addEventListener("vcad:open-chat", handleOpen);
     return () => window.removeEventListener("vcad:open-chat", handleOpen);
