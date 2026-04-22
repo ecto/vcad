@@ -81,8 +81,6 @@ vcad/
 │
 │   # Work-in-progress crates (built but not yet wired to any consumer):
 │   # - vcad-kernel-stocksim     # CAM stock sim (octree SDF, marching cubes); no consumers yet
-│   # - vcad-slicer-wasm         # Standalone slicer wasm bindings; redundant with vcad-kernel-wasm `slicer` feature
-│   # - vcad-embroidery-wasm     # Standalone embroidery wasm bindings; redundant with vcad-kernel-wasm `embroidery` feature
 ├── packages/                      # TypeScript workspace
 │   ├── app/                       # Web app (React + Three.js + Zustand)
 │   ├── engine/                    # WASM engine wrapper + physics

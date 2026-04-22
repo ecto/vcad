@@ -30,7 +30,6 @@ members = [
     "crates/vcad-slicer",
     "crates/vcad-slicer-gcode",
     "crates/vcad-slicer-bambu",
-    "crates/vcad-slicer-wasm",
     "crates/vcad-kernel-cam",
     "crates/vcad-kernel-stocksim",
     "crates/vcad-crdt",
@@ -49,7 +48,6 @@ members = [
     "crates/vcad-embroidery",
     "crates/vcad-embroidery-pes",
     "crates/vcad-embroidery-dst",
-    "crates/vcad-embroidery-wasm",
     "crates/vcad-desktop",
     "crates/vcad-tool-derive",
 ]
@@ -98,7 +96,6 @@ wasmosis-macro = { path = "crates/wasmosis/wasmosis-macro" }
 vcad-slicer = { path = "crates/vcad-slicer" }
 vcad-slicer-gcode = { path = "crates/vcad-slicer-gcode" }
 vcad-slicer-bambu = { path = "crates/vcad-slicer-bambu" }
-vcad-slicer-wasm = { path = "crates/vcad-slicer-wasm" }
 vcad-kernel-cam = { path = "crates/vcad-kernel-cam" }
 vcad-kernel-stocksim = { path = "crates/vcad-kernel-stocksim" }
 vcad-kernel-text = { path = "crates/vcad-kernel-text" }
@@ -119,7 +116,6 @@ termview = { path = "crates/termview" }
 vcad-embroidery = { path = "crates/vcad-embroidery" }
 vcad-embroidery-pes = { path = "crates/vcad-embroidery-pes" }
 vcad-embroidery-dst = { path = "crates/vcad-embroidery-dst" }
-vcad-embroidery-wasm = { path = "crates/vcad-embroidery-wasm" }
 vcad-tool-derive = { path = "crates/vcad-tool-derive" }
 
 # Unwinding panics let the evaluator catch a kernel assertion (e.g. the
