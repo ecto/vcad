@@ -20,6 +20,22 @@ git clone git@github.com:ecto/tang.git ../tang
 Cargo paths in the workspace (`tang`, `tang-la`, `tang-expr`) all point at
 `../tang/crates/*`.
 
+**Fresh worktrees** (`.claude/worktrees/*`) start with no `node_modules` — run `npm ci`
+before any npm/tauri command. Tauri needs the `cargo-tauri` binary (installed globally
+via `cargo install tauri-cli`); the npm scripts invoke it as `cargo tauri`, so no local
+`tauri` on PATH is required.
+
+After `npm ci`, the app imports from `@vcad/core`, `@vcad/engine`, `@vcad/ir`, `@vcad/mcp`
+which all resolve to `dist/index.js` — so workspace packages must be built before
+`npm run dev` or `tauri:dev` will start. Fastest path:
+
+```bash
+VCAD_WASM_SKIP=1 npm run build --workspaces --if-present
+```
+
+`VCAD_WASM_SKIP=1` skips the wasm-pack rebuild when `packages/kernel-wasm/vcad_kernel_wasm*`
+artifacts are already checked in; drop it if you need a fresh kernel WASM.
+
 ## Commands
 
 ```bash
@@ -35,7 +51,8 @@ npm run build --workspaces         # build all TS packages
 npm test --workspaces --if-present # run tests
 
 # App
-npm run dev -w @vcad/app           # run web app locally
+npm run dev -w @vcad/app           # run web app locally (browser)
+npm run tauri:dev -w @vcad/app     # run desktop app (Tauri shell + Vite)
 
 # Supabase (database)
 supabase db push --dry-run         # preview migration changes
