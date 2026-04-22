@@ -559,7 +559,6 @@ mod tests {
         count
     }
 
-
     /// Test: Cylinder fully inside box (standard through-hole).
     /// The cylinder is completely contained within the box interior.
     #[test]

@@ -654,7 +654,6 @@ fn draw_tiny_char(buffer: &mut RenderBuffer, x: i32, y: i32, ch: char, color: [u
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
