@@ -11,6 +11,30 @@ interface ShareInput {
   name?: string;
 }
 
+/** Accept only http(s) URLs whose host is localhost, 127.0.0.1, or a
+ *  known vcad deployment. Anything else means the operator's env is
+ *  misconfigured; fall back to the canonical https://vcad.io. */
+function validateAppUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return "https://vcad.io";
+    }
+    const host = url.hostname;
+    const allowed =
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host === "vcad.io" ||
+      host.endsWith(".vcad.io");
+    if (!allowed) return "https://vcad.io";
+    // Drop any trailing slash so the `${baseUrl}/#/new?...` concatenation
+    // yields a well-formed URL.
+    return url.origin;
+  } catch {
+    return "https://vcad.io";
+  }
+}
+
 export const openInBrowserSchema = {
   type: "object" as const,
   properties: {
@@ -72,8 +96,10 @@ export function openInBrowser(
   // Compress for URL
   const encoded = compressForUrl(vcode);
 
-  // Build URL
-  const baseUrl = process.env.VCAD_APP_URL || "https://vcad.io";
+  // Build URL. VCAD_APP_URL is host-controlled (operator env var), but
+  // we still sanitize so a bad value produces a clear error rather than
+  // a phishing URL rendered to the user.
+  const baseUrl = validateAppUrl(process.env.VCAD_APP_URL || "https://vcad.io");
   const params = new URLSearchParams();
   params.set("doc", encoded);
   if (name) {
