@@ -112,6 +112,23 @@ export function InlineOnboarding({ visible }: InlineOnboardingProps) {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    // Guardrails for a user-selected file that we pass through to the
+    // .vcad parser. A 2 GB txt rename would otherwise pin the browser
+    // tab while FileReader slurped it; .exe/.zip would just fail later
+    // with a confusing JSON parse error.
+    const MAX_VCAD_BYTES = 64 * 1024 * 1024;
+    const name = file.name.toLowerCase();
+    if (!name.endsWith(".vcad")) {
+      console.error("Only .vcad files can be loaded here");
+      e.target.value = "";
+      return;
+    }
+    if (file.size > MAX_VCAD_BYTES) {
+      console.error(`File too large (>${MAX_VCAD_BYTES} bytes)`);
+      e.target.value = "";
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
