@@ -9,7 +9,7 @@
     "url": "https://github.com/ecto/vcad"
   },
   "scripts": {
-    "build": "wasm-pack build ../../crates/vcad-kernel-wasm --target web --out-dir ../../packages/kernel-wasm/pkg && cp pkg/vcad_kernel_wasm* ."
+    "build": "if [ -n \"$VCAD_WASM_SKIP\" ]; then echo \"wasm build skipped (VCAD_WASM_SKIP set, assuming pkg/ is already populated)\"; else wasm-pack build ../../crates/vcad-kernel-wasm --target web --out-dir ../../packages/kernel-wasm/pkg && cp pkg/vcad_kernel_wasm* .; fi"
   },
   "files": [
     "vcad_kernel_wasm_bg.wasm",

@@ -43,8 +43,11 @@ jobs:
       - run: cargo build --workspace --exclude vcad-desktop --examples --features vcad-kernel-text/no-builtin-font
       - run: cargo doc --workspace --exclude vcad-desktop --no-deps --features vcad-kernel-text/no-builtin-font
 
-  typescript:
-    name: TypeScript
+  # wasm-pack dominates the TS critical path (~3m23s of a 7m job), so it
+  # runs as its own job. The TS job starts in parallel and downloads the
+  # built pkg/ via artifact — no Rust toolchain needed there.
+  wasm:
+    name: WASM build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -53,50 +56,115 @@ jobs:
           git clone --depth 1 https://github.com/ecto/tang.git ../tang
           git clone --depth 1 https://github.com/ecto/phyz.git ../phyz
           git clone --depth 1 https://github.com/ecto/loon.git ../loon
-      - uses: actions/setup-node@v4
+      # Include sibling repo commits in the cache key so updates to
+      # tang/phyz/loon invalidate prebuilt wasm.
+      - name: Record sibling SHAs
+        run: |
+          mkdir -p .sibling-sha
+          git -C ../tang rev-parse HEAD > .sibling-sha/tang
+          git -C ../phyz rev-parse HEAD > .sibling-sha/phyz
+          git -C ../loon rev-parse HEAD > .sibling-sha/loon
+      # Cache the produced pkg/ directly, keyed on every source input that
+      # could change the wasm bytes. A hit skips the whole Rust build.
+      - name: Restore wasm pkg cache
+        id: wasm-cache
+        uses: actions/cache@v4
         with:
-          node-version: 22
-          cache: npm
-      # @vcad/kernel-wasm builds via wasm-pack, which needs the Rust
-      # toolchain + the wasm32-unknown-unknown target + wasm-pack itself.
+          path: |
+            packages/kernel-wasm/pkg
+            packages/kernel-wasm/vcad_kernel_wasm.js
+            packages/kernel-wasm/vcad_kernel_wasm.d.ts
+            packages/kernel-wasm/vcad_kernel_wasm_bg.wasm
+            packages/kernel-wasm/vcad_kernel_wasm_bg.wasm.d.ts
+          # v2 in the key prefix forces eviction of --dev-profile entries
+          # from before we switched to --profiling.
+          key: wasm-pkg-v2-${{ runner.os }}-${{ hashFiles('crates/**/src/**', 'crates/**/Cargo.toml', 'Cargo.lock', 'Cargo.toml', '.sibling-sha/*') }}
+          restore-keys: |
+            wasm-pkg-v2-${{ runner.os }}-
       - uses: dtolnay/rust-toolchain@master
+        if: steps.wasm-cache.outputs.cache-hit != 'true'
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
+        if: steps.wasm-cache.outputs.cache-hit != 'true'
         with:
-          # wasm-pack compiles vcad workspace crates into the wasm32
-          # target, so workspace-crate incremental artifacts are worth
-          # caching for PR re-runs that only touch TS.
           cache-workspace-crates: true
-      # Turbo local cache. Preserves per-task outputs (dist/, pkg/, wasm
-      # artifacts) across runs. Key bumps on any Rust or TS source change
-      # so we don't serve stale artifacts; a miss still falls back to a
-      # full rebuild.
+      - name: Install wasm-pack
+        if: steps.wasm-cache.outputs.cache-hit != 'true'
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      # --profiling uses cargo release + light `-O` wasm-opt (configured
+      # in vcad-kernel-wasm/Cargo.toml). Saves ~2m vs default release
+      # (which runs full wasm-opt). We can't use --dev because the PWA
+      # plugin in @vcad/app caps precachable assets at 10 MB and
+      # dev-profile wasm is ~29 MB.
+      #
+      # `no-builtin-font` drops the include_bytes!() of
+      # node_modules/next/.../noto-sans.ttf, which doesn't exist here
+      # (this job doesn't run `npm ci`). Matches the Rust CI job.
+      - name: Build wasm (profiling)
+        if: steps.wasm-cache.outputs.cache-hit != 'true'
+        run: |
+          wasm-pack build crates/vcad-kernel-wasm --profiling --target web \
+            --out-dir ../../packages/kernel-wasm/pkg \
+            --features no-builtin-font
+          cp packages/kernel-wasm/pkg/vcad_kernel_wasm* packages/kernel-wasm/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-pkg
+          path: |
+            packages/kernel-wasm/pkg
+            packages/kernel-wasm/vcad_kernel_wasm.js
+            packages/kernel-wasm/vcad_kernel_wasm.d.ts
+            packages/kernel-wasm/vcad_kernel_wasm_bg.wasm
+            packages/kernel-wasm/vcad_kernel_wasm_bg.wasm.d.ts
+          retention-days: 1
+          if-no-files-found: error
+
+  typescript:
+    name: TypeScript
+    runs-on: ubuntu-latest
+    needs: wasm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # Pull the wasm pkg built by the `wasm` job. Unpacks into
+      # packages/kernel-wasm/ (both pkg/ and the root-level copies).
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm-pkg
+          path: packages/kernel-wasm
+      # Turbo local cache. Primary key is the commit SHA (always unique,
+      # so we always save); restore-keys fall back to the most recent
+      # entry for the branch/OS. Turbo's own per-task hash determines
+      # what's reused vs rebuilt — no need to encode inputs in the key.
       - name: Restore turbo cache
         uses: actions/cache@v4
         with:
           path: node_modules/.cache/turbo
-          key: turbo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'package-lock.json', 'turbo.json') }}-${{ hashFiles('crates/**/src/**', 'crates/**/Cargo.toml', 'packages/**/src/**', 'packages/**/package.json', 'packages/**/tsconfig.json') }}
+          key: turbo-${{ runner.os }}-${{ github.sha }}
           restore-keys: |
-            turbo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'package-lock.json', 'turbo.json') }}-
             turbo-${{ runner.os }}-
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-      - run: sudo apt-get update && sudo apt-get install -y libcairo2-dev libjpeg-dev libpango1.0-dev libgif-dev librsvg2-dev
-      # --prefer-offline hits the npm module cache (restored by setup-node)
-      # before the network; --no-audit / --no-fund skip two network round-
-      # trips that have no effect on CI correctness.
-      - run: npm ci --prefer-offline --no-audit --no-fund
+      # --ignore-scripts skips the canvas native build (hf-space only).
+      # hf-space has no `build` or `test` task so CI never touches canvas
+      # at runtime, which lets us drop libcairo/libpango/librsvg apt deps
+      # (~23s) and the native compile step.
+      - run: npm ci --prefer-offline --no-audit --no-fund --ignore-scripts
       - run: npm run version:check
-      # Use turbo (npm run build) instead of `--workspaces --if-present` so
-      # workspace deps build before their consumers. The latter runs in
-      # alphabetical order (app < auth < core …) which fails on a clean
-      # checkout because @vcad/app builds before @vcad/{ir,engine,core}.
+      # VCAD_WASM_SKIP short-circuits vcad-kernel-wasm's build script
+      # (the `wasm` job already produced pkg/ via the artifact above).
+      # turbo's task graph still includes vcad-kernel-wasm#build as a
+      # dep of @vcad/engine#build, so we can't just filter it out —
+      # the script itself has to become a noop.
       #
       # @vcad/docs is excluded: it's a Next.js static-site build (~44s,
       # 303 pages) that deploys via its own Vercel project, not via CI
       # artifacts. Building it in the PR job adds latency without
       # exercising anything other code paths don't already cover.
       - run: npm run build -- --filter=!@vcad/docs
+        env:
+          VCAD_WASM_SKIP: '1'
       - run: npm test --workspaces --if-present

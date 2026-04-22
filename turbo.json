@@ -21,7 +21,8 @@
         "../../Cargo.toml",
         "../../Cargo.lock"
       ],
-      "outputs": ["pkg/**", "*.wasm", "*.js", "*.d.ts"]
+      "outputs": ["pkg/**", "*.wasm", "*.js", "*.d.ts"],
+      "env": ["VCAD_WASM_SKIP"]
     },
     "@vcad/engine#build": {
       "dependsOn": ["vcad-kernel-wasm#build", "^build"],
