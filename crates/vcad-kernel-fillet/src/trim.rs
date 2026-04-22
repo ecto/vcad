@@ -63,14 +63,28 @@ pub(crate) fn compute_trim_vertices(faces: &[FaceInfo], distance: f64) -> HashMa
             let cross_dirs = d_enter.cross(d_leave);
             let denom = cross_dirs.dot(normal);
 
-            if denom.abs() < 1e-15 {
+            // The two trim lines intersect at v_pos + distance*perp_enter + t1*d_enter
+            // where t1 = -(delta × d_leave) · normal / denom. `denom` is the
+            // signed sine of the exterior angle at this vertex, so when two
+            // edges are nearly collinear (as on a tessellated arc cap) denom
+            // → 0 and t1 blows up, pushing the trim point hundreds of units
+            // away from the actual vertex. That manifested as blend-face
+            // vertices flung far outside the B-rep ("pork-chop diverges"
+            // bug). Fall back to a tangent-bisector offset in both the
+            // strict-degenerate case and when the computed `t1` would push
+            // the trim further than a corner geometrically should support.
+            let cross_delta = delta.cross(d_leave);
+            let t1_safe_limit = d_enter_len.min(d_leave_len);
+            let t1 = if denom.abs() < 1e-12 {
+                f64::NAN
+            } else {
+                -cross_delta.dot(normal) / denom
+            };
+            if !t1.is_finite() || t1.abs() > t1_safe_limit {
                 let p = v_pos + distance * 0.5 * (perp_enter + perp_leave);
                 trims.insert((v_id, face.face_id), p);
                 continue;
             }
-
-            let cross_delta = delta.cross(d_leave);
-            let t1 = -cross_delta.dot(normal) / denom;
 
             let p1 = v_pos + distance * perp_enter;
             let trim_point = Point3::from(p1.to_vec() + t1 * d_enter);

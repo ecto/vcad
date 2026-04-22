@@ -212,7 +212,7 @@ fn is_fillet_safe(brep: &BRepSolid, faces: &[FaceInfo], edges: &[EdgeInfo]) -> b
         let Some(fb) = face_map.get(&edge.face_b) else {
             continue;
         };
-        let dot = fa.normal.dot(&fb.normal).clamp(-1.0, 1.0);
+        let dot = fa.normal.dot(fb.normal).clamp(-1.0, 1.0);
         // Dihedral angle between outward face normals. `acos(dot)` is 0
         // for identical normals and π for opposite normals. Two adjacent
         // faces of a convex solid have an outward dihedral < π (the

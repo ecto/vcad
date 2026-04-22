@@ -399,17 +399,31 @@ fn build_plane_cylinder_torus(
         Orientation::Reversed => -*plane.normal_dir.as_ref(),
     };
 
-    let to_plane = plane.signed_distance(&cyl.center);
+    // Project the plane onto the cylinder axis to get the intersection
+    // point, then step `radius` along the axis *inward* (away from the
+    // cap's outward normal). Previous code attempted this by moving
+    // along `plane_normal` directly which is wrong when plane_normal and
+    // axis point in opposite directions (e.g. the top cap of an
+    // arc-extruded cylinder), and produced torus centers sitting OUTSIDE
+    // the solid by 2*axial_offset.
     let plane_along_axis = plane_normal.dot(axis.as_ref());
+    if plane_along_axis.abs() < 1e-12 {
+        // Plane parallel to axis — no torus blend between them.
+        return None;
+    }
 
     let major_radius = cyl.radius + radius;
     if major_radius <= 0.0 {
         return None;
     }
 
-    let torus_center = cyl.center - (to_plane - radius * plane_along_axis.signum()) * plane_normal;
-    let axis_param = (torus_center - cyl.center).dot(axis.as_ref());
-    let center_on_axis = cyl.center + axis_param * axis.as_ref();
+    let to_plane = plane.signed_distance(&cyl.center);
+    let cap_t = -to_plane / plane_along_axis;
+    // Torus center sits on the cylinder axis, offset from the
+    // plane-axis intersection by `radius` toward the solid interior
+    // (opposite the plane's outward normal, projected onto the axis).
+    let torus_t = cap_t - plane_along_axis.signum() * radius;
+    let center_on_axis = cyl.center + torus_t * axis.as_ref();
 
     Some(TorusSurface {
         center: center_on_axis,

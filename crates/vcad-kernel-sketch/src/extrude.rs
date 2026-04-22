@@ -79,18 +79,17 @@ pub fn extrude(profile: &SketchProfile, direction: Vec3) -> Result<BRepSolid, Sk
         return Ok(extrude_full_circle_analytic(profile, fc, direction));
     }
 
-    // Arcs that aren't part of a full analytic circle are tessellated into
-    // short line segments. Without this, the generic polygonal path below
-    // would build each arc as a single planar quad — a 180° arc becomes a
-    // diameter-spanning rectangle, which is exactly the "circle sketches
-    // render as rectangles" bug this replaces.
-    let tessellated;
-    let profile = if profile.is_line_only() {
-        profile
-    } else {
-        tessellated = profile.tessellate(ExtrudeOptions::default().arc_segments as usize);
-        &tessellated
-    };
+    // Arcs that aren't a full analytic circle are extruded into analytic
+    // cylindrical lateral faces (one CylinderSurface per arc). The cap
+    // outlines get densified so the 3D cap polygons look like arcs instead
+    // of coarse chord polygons, and each cap vertex is shared with the
+    // lateral cylindrical face's rich outer loop so the half-edge topology
+    // twins correctly. Only arc-bearing profiles take the analytic path;
+    // pure polylines keep the simpler original build below.
+    if !profile.is_line_only() {
+        let arc_segs = ExtrudeOptions::default().arc_segments as usize;
+        return Ok(extrude_with_arcs(profile, direction, arc_segs));
+    }
 
     let mut topo = Topology::new();
     let mut geom = GeometryStore::new();
@@ -404,6 +403,248 @@ fn extrude_full_circle_analytic(
         geometry: geom,
         solid_id,
     }
+}
+
+/// Extrude a profile whose segments include non-full-circle arcs.
+///
+/// Each arc segment becomes one analytic `CylinderSurface` lateral face;
+/// each line segment becomes one `Plane` lateral face. The outer loop of
+/// every cylindrical face includes `arc_segs + 1` vertices along each of
+/// its top and bottom arc boundaries so the cap polygons stay faithful to
+/// the original profile and share their boundary vertices with the
+/// adjacent lateral faces (required for half-edge twin pairing).
+///
+/// This path is taken in preference to the generic polygonal builder
+/// whenever a profile contains any arc; it preserves the analytic surface
+/// type end-to-end (tessellator, booleans, STEP export, fillet) so
+/// downstream ops don't have to guess that a curved wall lurks inside a
+/// strip of thin near-coplanar quads.
+fn extrude_with_arcs(profile: &SketchProfile, direction: Vec3, arc_segs: usize) -> BRepSolid {
+    let arc_segs = arc_segs.max(2);
+
+    let mut topo = Topology::new();
+    let mut geom = GeometryStore::new();
+
+    let quantize_pt = |p: Point3| -> [i64; 3] {
+        [
+            (p.x * 1e9).round() as i64,
+            (p.y * 1e9).round() as i64,
+            (p.z * 1e9).round() as i64,
+        ]
+    };
+
+    let mut vertex_cache: HashMap<[i64; 3], VertexId> = HashMap::new();
+    let get_or_create =
+        |cache: &mut HashMap<[i64; 3], VertexId>, topo: &mut Topology, pos: Point3| -> VertexId {
+            let key = quantize_pt(pos);
+            *cache.entry(key).or_insert_with(|| topo.add_vertex(pos))
+        };
+
+    // Walk each segment, densifying arcs. Every tessellation point becomes a
+    // shared vertex pair (bot + top); lateral faces and cap faces both
+    // reference these so the half-edge twin pairing works. Each segment
+    // owns a contiguous slice of the chain, with its first vertex shared
+    // with the previous segment's last vertex.
+    let mut bot_chain: Vec<VertexId> = Vec::new();
+    let mut top_chain: Vec<VertexId> = Vec::new();
+    // Inclusive ranges: seg `i` spans chain[seg_first[i]..=seg_last[i]].
+    let mut seg_first: Vec<usize> = Vec::with_capacity(profile.segments.len());
+    let mut seg_last: Vec<usize> = Vec::with_capacity(profile.segments.len());
+
+    for (idx, seg) in profile.segments.iter().enumerate() {
+        let tess_points_2d: Vec<Point2> = match seg {
+            SketchSegment::Line { start, end } => {
+                if idx == 0 {
+                    vec![*start, *end]
+                } else {
+                    vec![*end]
+                }
+            }
+            SketchSegment::Arc {
+                start,
+                end,
+                center,
+                ccw,
+            } => {
+                let mut pts = sample_arc_2d(*start, *end, *center, *ccw, arc_segs);
+                if idx != 0 {
+                    pts.remove(0);
+                }
+                pts
+            }
+        };
+
+        // First index of this segment: either 0 (for seg 0) or the last
+        // index of the previous segment (shared endpoint).
+        let first = if idx == 0 {
+            0
+        } else {
+            *seg_last.last().unwrap()
+        };
+        seg_first.push(first);
+
+        for p2 in tess_points_2d {
+            let p3 = profile.to_3d(p2);
+            let bot_v = get_or_create(&mut vertex_cache, &mut topo, p3);
+            let top_v = get_or_create(&mut vertex_cache, &mut topo, p3 + direction);
+            bot_chain.push(bot_v);
+            top_chain.push(top_v);
+        }
+
+        seg_last.push(bot_chain.len() - 1);
+    }
+
+    let mut all_faces = Vec::new();
+    let mut he_map: HashMap<([i64; 3], [i64; 3]), HalfEdgeId> = HashMap::new();
+
+    // Build one lateral face per original segment.
+    for (idx, seg) in profile.segments.iter().enumerate() {
+        let start_idx = seg_first[idx];
+        let end_idx = seg_last[idx];
+        let slice_len = end_idx - start_idx + 1;
+        let bot_slice: Vec<VertexId> =
+            (0..slice_len).map(|k| bot_chain[start_idx + k]).collect();
+        let top_slice: Vec<VertexId> =
+            (0..slice_len).map(|k| top_chain[start_idx + k]).collect();
+
+        // Outer loop: bot_0 → ... → bot_k → top_k → top_{k-1} → ... → top_0.
+        // Each pair of consecutive vertices contributes one half-edge.
+        let mut loop_hes: Vec<HalfEdgeId> = Vec::with_capacity(2 * slice_len);
+        for w in bot_slice.windows(2) {
+            loop_hes.push(topo.add_half_edge(w[0]));
+            let _ = w[1];
+        }
+        loop_hes.push(topo.add_half_edge(bot_slice[slice_len - 1])); // right edge start
+        for w in top_slice.windows(2).rev() {
+            loop_hes.push(topo.add_half_edge(w[1]));
+            let _ = w[0];
+        }
+        loop_hes.push(topo.add_half_edge(top_slice[0])); // left edge start
+
+        // Surface
+        let surf_idx = match seg {
+            SketchSegment::Line { .. } => {
+                let p0 = topo.vertices[bot_slice[0]].point;
+                let p1 = topo.vertices[bot_slice[slice_len - 1]].point;
+                let x_dir = p1 - p0;
+                let y_dir = direction;
+                if x_dir.norm() > 1e-12 && y_dir.cross(x_dir).norm() > 1e-12 {
+                    geom.add_surface(Box::new(Plane::new(p0, x_dir, y_dir)))
+                } else {
+                    geom.add_surface(Box::new(Plane::from_normal(p0, y_dir.cross(x_dir))))
+                }
+            }
+            SketchSegment::Arc { start, center, .. } => {
+                let center_3d = profile.to_3d(*center);
+                let radius = (*start - *center).norm();
+                let axis = Dir3::new_normalize(direction);
+                let start_3d = topo.vertices[bot_slice[0]].point;
+                let radial = start_3d - center_3d;
+                let ref_dir = Dir3::new_normalize(
+                    radial - radial.dot(axis.as_ref()) * *axis.as_ref(),
+                );
+                let cyl = CylinderSurface {
+                    center: center_3d,
+                    axis,
+                    ref_dir,
+                    radius,
+                };
+                geom.add_surface(Box::new(cyl))
+            }
+        };
+
+        let loop_id = topo.add_loop(&loop_hes);
+        let face_id = topo.add_face(loop_id, surf_idx, Orientation::Forward);
+        all_faces.push(face_id);
+
+        // Record half-edges for twin pairing
+        for &he_id in &loop_hes {
+            let he = &topo.half_edges[he_id];
+            let origin = topo.vertices[he.origin].point;
+            let next = he.next.unwrap();
+            let dest = topo.vertices[topo.half_edges[next].origin].point;
+            he_map.insert((quantize_pt(origin), quantize_pt(dest)), he_id);
+        }
+    }
+
+    // Build cap faces. Drop the final duplicate (chains close with
+    // bot_chain[last] == bot_chain[first]) so caps become a single circular
+    // loop.
+    let n_chain = bot_chain.len();
+    let last_is_dup = bot_chain[n_chain - 1] == bot_chain[0];
+    let chain_len = if last_is_dup { n_chain - 1 } else { n_chain };
+    let cap_bot: Vec<VertexId> = (0..chain_len).map(|i| bot_chain[i]).collect();
+    let cap_top: Vec<VertexId> = (0..chain_len).map(|i| top_chain[i]).collect();
+
+    let bot_cap_face_id = build_cap_face(
+        &mut topo,
+        &mut geom,
+        &cap_bot,
+        &-*profile.normal.as_ref(),
+        true,
+        &mut he_map,
+        quantize_pt,
+    );
+    all_faces.push(bot_cap_face_id);
+
+    let top_cap_face_id = build_cap_face(
+        &mut topo,
+        &mut geom,
+        &cap_top,
+        profile.normal.as_ref(),
+        false,
+        &mut he_map,
+        quantize_pt,
+    );
+    all_faces.push(top_cap_face_id);
+
+    pair_twin_half_edges(&mut topo, &he_map);
+
+    let shell = topo.add_shell(all_faces, ShellType::Outer);
+    let solid_id = topo.add_solid(shell);
+
+    BRepSolid {
+        topology: topo,
+        geometry: geom,
+        solid_id,
+    }
+}
+
+/// Sample an arc from `start` to `end` with center `center`. Returns
+/// `arc_segs + 1` points in 2D sketch space including both endpoints.
+fn sample_arc_2d(
+    start: Point2,
+    end: Point2,
+    center: Point2,
+    ccw: bool,
+    arc_segs: usize,
+) -> Vec<Point2> {
+    let start_vec = start - center;
+    let end_vec = end - center;
+    let radius = start_vec.norm();
+    let start_angle = start_vec.y.atan2(start_vec.x);
+    let mut end_angle = end_vec.y.atan2(end_vec.x);
+    if ccw {
+        while end_angle <= start_angle {
+            end_angle += 2.0 * PI;
+        }
+    } else {
+        while end_angle >= start_angle {
+            end_angle -= 2.0 * PI;
+        }
+    }
+    let mut pts = Vec::with_capacity(arc_segs + 1);
+    pts.push(start);
+    for i in 1..arc_segs {
+        let t = i as f64 / arc_segs as f64;
+        let angle = start_angle + t * (end_angle - start_angle);
+        pts.push(Point2::new(
+            center.x + radius * angle.cos(),
+            center.y + radius * angle.sin(),
+        ));
+    }
+    pts.push(end);
+    pts
 }
 
 /// Extrude a closed profile with twist and/or scale (taper).
