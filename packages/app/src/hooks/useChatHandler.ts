@@ -24,6 +24,13 @@ import {
   AI_CAMERA_SYSTEM_PROMPT_APPENDIX,
   executeAiCamera,
 } from "@/lib/ai-camera-tools";
+import {
+  AI_DOCUMENT_TOOL_NAMES,
+  AI_DOCUMENT_SYSTEM_PROMPT_APPENDIX,
+  GET_DOCUMENT_NAME_TOOL,
+  SET_DOCUMENT_NAME_TOOL,
+  executeAiDocumentTool,
+} from "@/lib/ai-document-tools";
 
 /**
  * Parse a rate-limit error body emitted by streamChat with LIMIT_ERROR_PREFIX.
@@ -179,12 +186,18 @@ function runTurn(
     const toolCalls: ToolCall[] = [];
     let error: string | null = null;
 
-    const tools = [...commandRegistry.toAnthropicTools(), SCREENSHOT_VIEWPORT_TOOL];
+    const tools = [
+      ...commandRegistry.toAnthropicTools(),
+      SCREENSHOT_VIEWPORT_TOOL,
+      GET_DOCUMENT_NAME_TOOL,
+      SET_DOCUMENT_NAME_TOOL,
+    ];
     const systemPrompt =
       commandRegistry.buildSystemPrompt(getDocumentParts(), context) +
       HIGH_LEVEL_TOOLS_SYSTEM_PROMPT_APPENDIX +
       SCREENSHOT_SYSTEM_PROMPT_APPENDIX +
-      AI_CAMERA_SYSTEM_PROMPT_APPENDIX;
+      AI_CAMERA_SYSTEM_PROMPT_APPENDIX +
+      AI_DOCUMENT_SYSTEM_PROMPT_APPENDIX;
 
     streamChat(history, context, {
       onText: (t) => { text = t; onStreamText(t); },
@@ -490,6 +503,16 @@ export function useChatHandler() {
               }
             } else if (AI_CAMERA_TOOL_NAMES.has(tool.name)) {
               const exec = executeAiCamera(tool);
+              toolResults.push({ id: tool.id, content: exec.result, status: exec.status });
+              const entry = accumulatedToolCalls.find((t) => t.id === tool.id);
+              if (entry) {
+                entry.result = exec.result;
+                entry.status = exec.status;
+                entry.display = exec.display;
+                entry.duration = exec.duration;
+              }
+            } else if (AI_DOCUMENT_TOOL_NAMES.has(tool.name)) {
+              const exec = executeAiDocumentTool(tool);
               toolResults.push({ id: tool.id, content: exec.result, status: exec.status });
               const entry = accumulatedToolCalls.find((t) => t.id === tool.id);
               if (entry) {
