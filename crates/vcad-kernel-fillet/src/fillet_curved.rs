@@ -444,7 +444,10 @@ fn fillet_edges_detailed_inner(
 
 /// Result of classifying one candidate convex junction: everything
 /// downstream stages (trim override + sphere patch construction) need
-/// to know about the vertex.
+/// to know about the vertex. Some fields are unused by the current
+/// patch builder but retained for the WIP trim-unification path
+/// (see `snap_trims_at_junctions`, `build_cylinder_bridge_quads`).
+#[allow(dead_code)]
 struct JunctionPlan {
     vertex: VertexId,
     cap_face: FaceId,
@@ -742,6 +745,10 @@ fn build_spherical_vertex_blends_from_plans(
 /// vertex-equality early-out), so the net effect is that the cap-cyl
 /// arc is visually resampled to end at tan_cyl, without the pipeline
 /// needing any new "skip this segment" logic.
+///
+/// NOT YET WIRED into the main pipeline — retained for the trim-
+/// unification follow-up (see `.claude/handoff-porkchop-fillet.md`).
+#[allow(dead_code)]
 fn snap_trims_at_junctions(
     brep: &BRepSolid,
     plans: &[JunctionPlan],
@@ -837,6 +844,12 @@ fn snap_trims_at_junctions(
 ///     top_tan_cyl  (at cyl v_max)
 /// All four points lie on the cylinder's surface, so the quad re-uses
 /// the cylinder's CylinderSurface definition.
+///
+/// NOT YET WIRED — retained for the trim-unification follow-up (see
+/// `.claude/handoff-porkchop-fillet.md`); the current `fill_tiny_
+/// boundary_loops` post-weld path closes the same gaps at the mesh
+/// level instead.
+#[allow(dead_code)]
 fn build_cylinder_bridge_quads(
     brep: &BRepSolid,
     plans: &[JunctionPlan],
@@ -887,8 +900,16 @@ fn build_cylinder_bridge_quads(
         let top_plan = sorted[1];
 
         // Find which cyl index each plan is on for this cyl_face.
-        let bot_tan_idx = if bot_plan.cyl_faces[0] == *cyl_face { 0 } else { 1 };
-        let top_tan_idx = if top_plan.cyl_faces[0] == *cyl_face { 0 } else { 1 };
+        let bot_tan_idx = if bot_plan.cyl_faces[0] == *cyl_face {
+            0
+        } else {
+            1
+        };
+        let top_tan_idx = if top_plan.cyl_faces[0] == *cyl_face {
+            0
+        } else {
+            1
+        };
         let bot_tan = bot_plan.tan_cyls[bot_tan_idx];
         let top_tan = top_plan.tan_cyls[top_tan_idx];
 
@@ -1087,7 +1108,7 @@ fn build_blend_quad_surface(
         if let Some(ref cyl) = fi.cylinder {
             let axis = cyl.axis.normalize();
             let d = side_point - cyl.center;
-            let along = d.dot(&axis);
+            let along = d.dot(axis);
             let radial = d - axis * along;
             if radial.norm() > 1e-9 {
                 return radial.normalize();

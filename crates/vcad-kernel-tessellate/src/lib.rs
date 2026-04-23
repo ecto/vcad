@@ -324,6 +324,10 @@ pub fn tessellate_brep_by_face(
     out
 }
 
+/// Legacy solid tessellation entry point. Most callers should prefer
+/// `tessellate_brep` (which also runs armpit fan-fill). This path is
+/// retained for internal use by paths that don't need the post-weld
+/// fill (e.g. intermediate meshes produced during boolean operations).
 pub fn tessellate_solid(brep: &BRepSolid, params: &TessellationParams) -> TriangleMesh {
     let mut mesh = TriangleMesh::new();
     let solid = &brep.topology.solids[brep.solid_id];
@@ -600,11 +604,7 @@ fn fill_tiny_boundary_loops(
             nz += ex * fy - ey * fx;
         }
         let nlen = (nx * nx + ny * ny + nz * nz).sqrt();
-        if nlen > 1e-6 {
-            nx /= nlen;
-            ny /= nlen;
-            nz /= nlen;
-        } else {
+        if nlen < 1e-6 {
             continue;
         }
 
@@ -629,10 +629,8 @@ fn fill_tiny_boundary_loops(
         // doesn't depend on local face tessellation winding, which
         // can be counter-intuitive near fillet blends.
         let mut outward = [cx - scx, cy - scy, cz - scz];
-        let olen0 = (outward[0] * outward[0]
-            + outward[1] * outward[1]
-            + outward[2] * outward[2])
-            .sqrt();
+        let olen0 =
+            (outward[0] * outward[0] + outward[1] * outward[1] + outward[2] * outward[2]).sqrt();
         if olen0 > 1e-6 {
             outward[0] /= olen0;
             outward[1] /= olen0;
@@ -2110,7 +2108,7 @@ fn tessellate_cylindrical_face(
     let face = &topo.faces[face_id];
     let surface = &geom.surfaces[face.surface_index];
     let n_circ = params.circle_segments.max(3) as usize;
-    let mut n_height = params.height_segments.max(1) as usize;
+    let n_height = params.height_segments.max(1) as usize;
 
     // Determine the v (height) parameter range by projecting seam vertices
     // onto the cylinder axis. This works correctly after any transform.

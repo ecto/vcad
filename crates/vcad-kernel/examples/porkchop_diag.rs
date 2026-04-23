@@ -159,7 +159,10 @@ fn main() {
     println!("  faces:           {}", per_face.len());
     println!(
         "  total triangles: {}",
-        per_face.iter().map(|(_, _, m)| m.num_triangles()).sum::<usize>()
+        per_face
+            .iter()
+            .map(|(_, _, m)| m.num_triangles())
+            .sum::<usize>()
     );
     println!("  triangles-by-face-kind tag:");
     for (i, &n) in kind_counts.iter().enumerate() {
@@ -198,23 +201,26 @@ fn main() {
         let center = Point3::new((cx / n) as f64, (cy / n) as f64, (cz / n) as f64);
 
         // Rank faces by squared distance from their nearest vertex.
-        let mut ranked: Vec<(vcad_kernel::vcad_kernel_topo::FaceId, vcad_kernel_geom::SurfaceKind, f64)> =
-            per_face
-                .iter()
-                .map(|(fid, kind, mesh)| {
-                    let mut best = f64::INFINITY;
-                    for j in 0..mesh.num_vertices() {
-                        let dx = mesh.vertices[j * 3] as f64 - center.x;
-                        let dy = mesh.vertices[j * 3 + 1] as f64 - center.y;
-                        let dz = mesh.vertices[j * 3 + 2] as f64 - center.z;
-                        let d2 = dx * dx + dy * dy + dz * dz;
-                        if d2 < best {
-                            best = d2;
-                        }
+        let mut ranked: Vec<(
+            vcad_kernel::vcad_kernel_topo::FaceId,
+            vcad_kernel_geom::SurfaceKind,
+            f64,
+        )> = per_face
+            .iter()
+            .map(|(fid, kind, mesh)| {
+                let mut best = f64::INFINITY;
+                for j in 0..mesh.num_vertices() {
+                    let dx = mesh.vertices[j * 3] as f64 - center.x;
+                    let dy = mesh.vertices[j * 3 + 1] as f64 - center.y;
+                    let dz = mesh.vertices[j * 3 + 2] as f64 - center.z;
+                    let d2 = dx * dx + dy * dy + dz * dz;
+                    if d2 < best {
+                        best = d2;
                     }
-                    (*fid, *kind, best)
-                })
-                .collect();
+                }
+                (*fid, *kind, best)
+            })
+            .collect();
         ranked.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap());
         print!(
             "  loop {:2} [{} verts, center ({:.2},{:.2},{:.2})]  near:",
@@ -320,7 +326,9 @@ fn write_junctions_csv(path: &Path, trace: &vcad_kernel_fillet::FilletTrace) {
                 Some(tan_cyls[0]),
                 Some(tan_cyls[1]),
             ),
-            JunctionOutcome::SkippedWrongEdgeCount => ("SkippedWrongEdgeCount", None, None, None, None),
+            JunctionOutcome::SkippedWrongEdgeCount => {
+                ("SkippedWrongEdgeCount", None, None, None, None)
+            }
             JunctionOutcome::SkippedNotPlaneCylinder => {
                 ("SkippedNotPlaneCylinder", None, None, None, None)
             }

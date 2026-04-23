@@ -15,10 +15,7 @@ import {
   getProceduralShaderForMaterial,
 } from "@/shaders";
 import { useDebugOverlayStore } from "@/stores/debug-overlay-store";
-import {
-  FACE_KIND_NAMES,
-  inspectTriangleFromMesh as runInspectTriangle,
-} from "./TriangleInspector";
+import { inspectTriangleFromMesh as runInspectTriangle } from "./TriangleInspector";
 
 const HOVER_EMISSIVE = new THREE.Color(0xffb800); // neon amber
 const FACE_HIGHLIGHT_COLOR = new THREE.Color(0x00d4ff); // cyan for face selection
