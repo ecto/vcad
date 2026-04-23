@@ -1787,9 +1787,17 @@ fn tessellate_cylindrical_face(
     let effective_n_circ = u_samples.len() - 1;
 
     if let Some(radius) = radius {
-        let arc_length = radius * u_range;
-        if arc_length > 1e-9 {
-            let target = (height.abs() / arc_length) * effective_n_circ as f64;
+        // Drive n_height by arc length per "circumferential segment" of a
+        // full circle at this radius. Using `full_circle / n_circ` gives
+        // every cylinder face (regardless of its u-range) the SAME
+        // per-height density, so adjacent arc-extrude cylinder faces
+        // share v-sample positions along their shared vertical seam and
+        // the tessellation stitches watertight. The old formula
+        // (`effective_n_circ / arc_length`) scaled differently for each
+        // face and left ragged seams.
+        let step = (2.0 * PI * radius) / n_circ as f64;
+        if step > 1e-9 {
+            let target = height.abs() / step;
             n_height = n_height.max(target.ceil() as usize).max(1);
         }
     }
