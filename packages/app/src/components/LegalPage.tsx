@@ -202,7 +202,7 @@ export function LegalPage({ slug }: { slug: LegalSlug }) {
   }, [content.title]);
 
   return (
-    <div className="min-h-screen bg-bg text-text">
+    <div className="h-screen overflow-y-auto bg-bg text-text">
       <div className="mx-auto max-w-2xl px-6 py-16">
         <a
           href="/"
