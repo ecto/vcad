@@ -17,6 +17,15 @@ packages/app/dev-dist/
 .claude/worktrees/
 .claude/skills/
 .claude/*.lock
+.claude/launch.json
+.claude/settings.local.json
+.cursor/
+# wasm-pack output dumped into the crate directory
+# (canonical location is packages/kernel-wasm/)
+crates/vcad-kernel-wasm/vcad_kernel_wasm.js
+crates/vcad-kernel-wasm/vcad_kernel_wasm.d.ts
+crates/vcad-kernel-wasm/vcad_kernel_wasm_bg.wasm
+crates/vcad-kernel-wasm/vcad_kernel_wasm_bg.wasm.d.ts
 .ralph-tui/
 .superpowers/
 .agents/

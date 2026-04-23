@@ -391,6 +391,7 @@ mod tests {
             vertices,
             indices,
             normals: Vec::new(),
+            face_kinds: Vec::new(),
         }
     }
 

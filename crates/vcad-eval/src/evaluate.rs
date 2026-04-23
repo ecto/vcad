@@ -735,6 +735,7 @@ fn evaluate_op_timed(
                     vertices: all_verts,
                     indices: all_indices,
                     normals: vec![],
+                    face_kinds: vec![],
                 };
                 board_solid = Solid::from_mesh(merged);
             }
@@ -899,6 +900,7 @@ fn evaluate_text_extrude(
             vertices: all_vertices,
             indices: all_indices,
             normals: all_normals,
+            face_kinds: Vec::new(),
         };
         Some(Solid::from_mesh(merged))
     } else {
@@ -1033,6 +1035,7 @@ fn transform_imported_mesh(data: &ImportedMeshData) -> EvaluatedMesh {
         positions,
         indices: data.indices.clone(),
         normals,
+        face_kinds: None,
     }
 }
 
@@ -1439,6 +1442,11 @@ fn tri_to_evaluated(tri: &TriangleMesh) -> EvaluatedMesh {
             None
         } else {
             Some(tri.normals.clone())
+        },
+        face_kinds: if tri.face_kinds.len() == tri.indices.len() / 3 {
+            Some(tri.face_kinds.clone())
+        } else {
+            None
         },
     }
 }

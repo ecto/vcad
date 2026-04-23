@@ -6,6 +6,11 @@ export interface TriangleMesh {
   normals?: Float32Array;
   /** Optional per-vertex RGB colors (3 floats per vertex, 0–1 range). */
   colors?: Float32Array;
+  /** Optional per-triangle face-kind tag (one u8 per `indices / 3`).
+   *  Values: 0=Unknown, 1=Plane, 2=Cylinder, 3=Sphere, 4=Cone,
+   *  5=Bilinear, 6=Torus, 7=BSpline, 8=FanFill. Used by the viewport
+   *  click-to-inspect debugger. */
+  faceKinds?: Uint8Array;
 }
 
 /** A single evaluated part with its mesh and material key. */

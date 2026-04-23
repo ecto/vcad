@@ -750,6 +750,7 @@ fn slice_file(
         vertices: combined_verts,
         indices: combined_idxs,
         normals: Vec::new(),
+        face_kinds: Vec::new(),
     };
 
     // Resolve printer profile
