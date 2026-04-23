@@ -226,8 +226,9 @@ export {
   hitTestSegments,
   buildRectangle,
   buildCircle,
+  computeSketchBounds,
 } from "./sketch-math.js";
-export type { PlaneBasis, SnapOptions, SnapResult } from "./sketch-math.js";
+export type { PlaneBasis, SnapOptions, SnapResult, SketchBounds2D } from "./sketch-math.js";
 
 // Camera framing math (kernel Z-up)
 export {

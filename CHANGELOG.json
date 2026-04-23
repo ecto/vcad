@@ -2,6 +2,24 @@
   "$schema": "./changelog.schema.json",
   "entries": [
     {
+      "id": "2026-04-23-auto-zoom-sketch-viewport",
+      "version": "0.9.0",
+      "date": "2026-04-23",
+      "category": "feat",
+      "title": "Auto-zoom viewport to fit populated sketches on open",
+      "summary": "Opening a document that lands in sketch mode with existing segments now frames the sketch automatically instead of defaulting to a fixed 60 mm distance. Skipped when a share URL carries a ?at= viewer-state hint.",
+      "features": ["sketch", "viewport", "camera"]
+    },
+    {
+      "id": "2026-04-23-v0-9-0",
+      "version": "0.9.0",
+      "date": "2026-04-23",
+      "category": "feat",
+      "title": "v0.9.0",
+      "summary": "Boolean robustness (coplanar-coincident face detection, arc-split dedup) with an expanded degenerate-case test suite. Desktop updater banner now waits for tagged releases instead of every push. PWA precache cap raised to 12 MiB so large WASM assets ship to offline installs.",
+      "features": ["booleans", "desktop", "pwa"]
+    },
+    {
       "id": "2026-04-23-launch-prep-legal",
       "version": "0.8.0",
       "date": "2026-04-23",

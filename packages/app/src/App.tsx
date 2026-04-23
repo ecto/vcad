@@ -81,6 +81,7 @@ import { useCollabSync } from "@/hooks/useCollabSync";
 import { useChatHandler } from "@/hooks/useChatHandler";
 import { useChatHydration } from "@/hooks/useChatHydration";
 import { useUrlSync } from "@/hooks/useUrlSync";
+import { useSketchAutoFit } from "@/hooks/useSketchAutoFit";
 import { saveDocument } from "@/lib/save-load";
 import { bootstrap } from "@/lib/bootstrap";
 import { useBootStore } from "@/stores/boot-store";
@@ -173,6 +174,7 @@ export function App() {
   useChatHydration();
   useUrlSync();
   useOperationPreview();
+  useSketchAutoFit();
 
   const [aboutOpen, setAboutOpen] = useState(false);
   const [productOpen, setProductOpen] = useState(false);

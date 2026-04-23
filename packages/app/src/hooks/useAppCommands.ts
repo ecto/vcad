@@ -20,6 +20,7 @@ import { useSlicerStore } from "@/stores/slicer-store";
 import { useCamStore } from "@/stores/cam-store";
 import { useNotificationStore } from "@/stores/notification-store";
 import { downloadBlob } from "@/lib/download";
+import { newDocId } from "@/lib/doc-id";
 import { analytics } from "@/lib/analytics";
 
 export type CommandSurface = "palette" | "mobile-menu" | "desktop-menu";
@@ -126,7 +127,7 @@ export function useAppCommands({
         ) {
           return;
         }
-        useDocumentStore.getState().newDocument(crypto.randomUUID(), "Untitled");
+        useDocumentStore.getState().newDocument(newDocId(), "Untitled");
         onDismiss();
       },
       openFromCloud: () => {
