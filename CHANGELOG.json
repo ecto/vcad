@@ -2,6 +2,16 @@
   "$schema": "./changelog.schema.json",
   "entries": [
     {
+      "id": "2026-04-23-ai-chat-higher-level-tools",
+      "version": "0.8.0",
+      "date": "2026-04-23",
+      "category": "feat",
+      "title": "Higher-level tools for the AI chat",
+      "summary": "Added tube, polyline_tube, inspect_part, and place tools plus a pivot option on rotate (defaults to the part's bbox center) and a quad option on screenshot_viewport. Captures now suppress selection highlights and draw an XYZ axes gnomon so material colors and orientation read cleanly.",
+      "features": ["chat", "ai", "viewport"],
+      "mcpTools": ["tube", "polyline_tube", "inspect_part", "place"]
+    },
+    {
       "id": "2026-04-16-ai-as-participant",
       "version": "0.8.0",
       "date": "2026-04-16",

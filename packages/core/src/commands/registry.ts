@@ -272,6 +272,88 @@ export class CommandRegistry {
           required: ["name"],
         },
       },
+      {
+        name: "tube",
+        description:
+          "Create a cylindrical pipe/tube between two world-space points. One call, no trigonometry: pass start and end and radius, and the tube is created with correct orientation, length, and cross-section. Strongly preferred over manually building an extrude with perpendicular-basis vectors — this is the right tool for frame tubes, pipes, handlebars, axles, spindles, and similar segments.",
+        input_schema: {
+          type: "object",
+          properties: {
+            start: {
+              type: "object",
+              properties: { x: { type: "number" }, y: { type: "number" }, z: { type: "number" } },
+              description: "World-space start point of the tube centerline.",
+              required: ["x", "y", "z"],
+            },
+            end: {
+              type: "object",
+              properties: { x: { type: "number" }, y: { type: "number" }, z: { type: "number" } },
+              description: "World-space end point of the tube centerline.",
+              required: ["x", "y", "z"],
+            },
+            radius: { type: "number", description: "Tube radius in mm (default 5)." },
+            arc_segments: { type: "integer", description: "Circumferential resolution (default 16)." },
+            name: { type: "string", description: "Short descriptive name for the tube." },
+          },
+          required: ["start", "end"],
+        },
+      },
+      {
+        name: "polyline_tube",
+        description:
+          "Create a chain of tubes through a sequence of world-space points. Each consecutive pair of points becomes one tube segment (a separate part — not unioned). Perfect for bike frames, piping, cable runs, and any multi-segment pipe run where the joints are points rather than vectors.",
+        input_schema: {
+          type: "object",
+          properties: {
+            points: {
+              type: "array",
+              description: "Ordered list of world-space points the tube passes through. Must have ≥2 entries.",
+              items: {
+                type: "object",
+                properties: { x: { type: "number" }, y: { type: "number" }, z: { type: "number" } },
+                required: ["x", "y", "z"],
+              },
+            },
+            radius: { type: "number", description: "Tube radius in mm (default 5)." },
+            arc_segments: { type: "integer", description: "Circumferential resolution (default 16)." },
+            name: { type: "string", description: "Base name (segments named 'Base 1', 'Base 2', ...)." },
+          },
+          required: ["points"],
+        },
+      },
+      {
+        name: "inspect_part",
+        description:
+          "Read a part's current world-space geometry: bounding box, size, center, translate, rotation, material, and the set of named anchors (center/min/max/top/bottom/front/back/left/right) you can pass to `place`. Use this to verify what the scene looks like after a tool call without spending tokens on a screenshot — it's much cheaper than screenshot_viewport. Result is JSON.",
+        input_schema: {
+          type: "object",
+          properties: {
+            part_id: {
+              type: "string",
+              description: "The part ID to inspect.",
+            },
+          },
+          required: ["part_id"],
+        },
+      },
+      {
+        name: "place",
+        description:
+          "Position a part by anchor: moves the part so that its `from` anchor lands on the `to` anchor. Both anchors can be either a named anchor on this or another part (center/min/max/top/bottom/front/back/left/right), or an explicit world-space {x,y,z} point. Prefer this over manual translate/rotate when you're aligning to another part — it remains correct when upstream dimensions change.",
+        input_schema: {
+          type: "object",
+          properties: {
+            part_id: { type: "string", description: "The part to move." },
+            from: {
+              description: "The anchor on this part to place. Either a named anchor string, a {x,y,z} point, or {part, anchor}. Defaults to 'center'.",
+            },
+            to: {
+              description: "The destination. Either a named anchor string (resolved on this part), a {x,y,z} world point, or {part, anchor}.",
+            },
+          },
+          required: ["part_id", "to"],
+        },
+      },
     ];
   }
 

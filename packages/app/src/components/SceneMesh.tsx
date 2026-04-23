@@ -365,6 +365,11 @@ export const SceneMesh = memo(function SceneMesh({
 
   // Disable raycasting during orbit for performance
   const isOrbiting = useUiStore((s) => s.isOrbiting);
+  // During AI screenshot capture, suppress emissive tint so user-selected
+  // parts don't glow in the shot — the AI is verifying geometry/materials,
+  // not watching the user's cursor.
+  const captureMode = useUiStore((s) => s.captureMode);
+  const effectiveSelected = selected && !captureMode;
 
   // Use selectionId if provided, otherwise fall back to partInfo.id
   const effectiveSelectionId = selectionId ?? partInfo.id;
@@ -477,14 +482,14 @@ export const SceneMesh = memo(function SceneMesh({
 
   // Compute emissive state: selected > hovered > none (face highlight uses overlay)
   const emissiveColor = useMemo(() => {
-    if (selected) return materialColor.clone().multiplyScalar(0.3);
-    if (isHovered && !faceSelectionMode) return HOVER_EMISSIVE;
+    if (effectiveSelected) return materialColor.clone().multiplyScalar(0.3);
+    if (isHovered && !faceSelectionMode && !captureMode) return HOVER_EMISSIVE;
     return undefined;
-  }, [selected, isHovered, faceSelectionMode, materialColor]);
+  }, [effectiveSelected, isHovered, faceSelectionMode, captureMode, materialColor]);
 
-  const emissiveIntensity = selected
+  const emissiveIntensity = effectiveSelected
     ? 0.2
-    : isHovered && !faceSelectionMode
+    : isHovered && !faceSelectionMode && !captureMode
     ? 0.08
     : 0;
 
@@ -494,17 +499,17 @@ export const SceneMesh = memo(function SceneMesh({
     const uniforms = shaderMaterial.uniforms;
     if (!uniforms["uEmissive"] || !uniforms["uEmissiveIntensity"]) return;
 
-    if (selected) {
+    if (effectiveSelected) {
       uniforms["uEmissive"].value = materialColor.clone().multiplyScalar(0.3);
       uniforms["uEmissiveIntensity"].value = 0.2;
-    } else if (isHovered && !faceSelectionMode) {
+    } else if (isHovered && !faceSelectionMode && !captureMode) {
       uniforms["uEmissive"].value = HOVER_EMISSIVE;
       uniforms["uEmissiveIntensity"].value = 0.08;
     } else {
       uniforms["uEmissive"].value = new THREE.Color(0, 0, 0);
       uniforms["uEmissiveIntensity"].value = 0;
     }
-  }, [shaderMaterial, selected, isHovered, faceSelectionMode, materialColor]);
+  }, [shaderMaterial, effectiveSelected, isHovered, faceSelectionMode, captureMode, materialColor]);
 
   useEffect(() => {
     setDraftName(partInfo.name);
