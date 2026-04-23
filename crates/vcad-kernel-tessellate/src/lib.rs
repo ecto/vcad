@@ -618,14 +618,13 @@ fn fill_tiny_boundary_loops(
         }
         let _ = adj_count;
 
-        // Offset the centroid outward so fan triangles form a small
-        // outward bump; the vertex normal averages the neighbours'
-        // vertex normals so the shading blends. A larger offset moves
-        // cx clearly off the loop's supporting line, avoiding
-        // near-degenerate fan triangles when the loop centroid
-        // happens to be collinear with some loop edges (as with the
-        // V_axial column in an armpit hex).
-        let offset_scale = avg_edge * 1.0;
+        // Offset the centroid outward by a tiny amount so fan
+        // triangles avoid exact degeneracies (e.g. when the loop
+        // centroid sits on the V_axial column of an armpit hex).
+        // Kept small to avoid visible "fins" protruding from the
+        // filleted surface — big offsets made the fan look like
+        // spikes sticking out of each junction.
+        let offset_scale = avg_edge * 0.05;
         let cx_idx = (mesh.vertices.len() / 3) as u32;
         mesh.vertices.extend_from_slice(&[
             cx + outward[0] * offset_scale,
