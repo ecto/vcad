@@ -112,19 +112,18 @@ pub(crate) fn compute_trim_vertices(faces: &[FaceInfo], distance: f64) -> HashMa
     trims
 }
 
-/// Analytical trim for a cylindrical face. For every vertex on the
-/// cylinder's bottom arc (axial minimum), shift it axially +distance
-/// toward the face interior; for every vertex on the top arc (axial
-/// maximum), shift -distance.
+/// Analytical trim for a cylindrical face. Vertices on the cylinder's
+/// bottom arc (axial minimum) shift axially +distance toward the face
+/// interior; vertices on the top arc (axial maximum) shift -distance.
 ///
-/// We intentionally do NOT tangentially shift vertices at the face's
-/// u-extrema (the vertical seams between adjacent arc cylinders). The
-/// fillet pipeline treats cylinder-cylinder edges as unfilleted seams
-/// — a tangential shift there would move each cylinder's copy of the
-/// shared seam vertex in opposite directions, leaving a visible gap
-/// at every arc-to-arc junction (the "armpit hole" on the pork-chop).
-/// By keeping the axial-only shift, both cylinders' trimmed seam
-/// vertices land at the same 3D point and the junction welds cleanly.
+/// At arc-to-arc junction seams we keep axial-only shift: if we also
+/// shifted tangentially, each cylinder's copy of the shared junction
+/// vertex would move in opposite directions and the seam edge would
+/// split into two non-welding edges, leaving a visible rectangular
+/// gap at every junction. Keeping the shift axial-only lets both
+/// cylinders agree on the seam-vertex position and the weld closes
+/// the seam; the residual corner-blend gap between adjacent torus
+/// blends is smaller than the rectangular seam gap would be.
 fn trim_cylinder_face(
     face: &FaceInfo,
     cyl: &CylinderInfo,
