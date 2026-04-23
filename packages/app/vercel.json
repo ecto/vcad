@@ -1,5 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "cd ../.. && npm ci",
+  "buildCommand": "cd ../.. && npm run build -w @vcad/ir && npm run build -w @vcad/engine && npm run build -w @vcad/core && npm run build -w @vcad/mcp && npm run build -w @vcad/app",
+  "outputDirectory": "dist",
   "rewrites": [
     { "source": "/~(.*)", "destination": "/" },
     { "source": "/d/(.*)", "destination": "/" },
