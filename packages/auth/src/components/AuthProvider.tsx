@@ -152,10 +152,14 @@ export function AuthProvider({
           });
         }
 
-        // Check if this is a first-time sign-in celebration
-        if (!hasSeenCelebration && isNewUser(session.user.created_at)) {
+        const firstName = getFirstName(session.user);
+        const provider = session.user.app_metadata?.provider;
+        const isFirstTime = !hasSeenCelebration && isNewUser(session.user.created_at);
+
+        // Check if this is a first-time sign-in celebration. First-time users
+        // get the welcome toast instead of the generic "Signed in" toast.
+        if (isFirstTime) {
           markCelebrationSeen();
-          const firstName = getFirstName(session.user);
           // Dispatch celebration event for CelebrationOverlay
           window.dispatchEvent(new CustomEvent("vcad:celebrate-sign-in"));
           // Dispatch welcome event with user's name for toast
@@ -163,6 +167,19 @@ export function AuthProvider({
             new CustomEvent("vcad:welcome-sign-in", { detail: { firstName } })
           );
           onFirstSignIn?.(firstName);
+        } else {
+          // Notify listeners that a returning user has signed in. The app
+          // surfaces this as an in-app toast and (when backgrounded) an OS
+          // notification so users know when an account sign-in happens.
+          window.dispatchEvent(
+            new CustomEvent("vcad:sign-in-success", {
+              detail: {
+                firstName,
+                email: session.user.email,
+                provider,
+              },
+            }),
+          );
         }
 
         onSignIn?.();
@@ -171,6 +188,7 @@ export function AuthProvider({
         if (typeof posthog !== "undefined") {
           posthog.reset();
         }
+        window.dispatchEvent(new CustomEvent("vcad:sign-out"));
         onSignOut?.();
       }
     });

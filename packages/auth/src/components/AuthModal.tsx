@@ -38,6 +38,10 @@ export function AuthModal({ open, onOpenChange, feature }: AuthModalProps) {
     setLoading(true);
     setError(null);
 
+    window.dispatchEvent(
+      new CustomEvent("vcad:sign-in-attempt", { detail: { email } }),
+    );
+
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
@@ -47,8 +51,16 @@ export function AuthModal({ open, onOpenChange, feature }: AuthModalProps) {
 
     if (error) {
       setError(error.message);
+      window.dispatchEvent(
+        new CustomEvent("vcad:sign-in-attempt-failed", {
+          detail: { email, message: error.message },
+        }),
+      );
     } else {
       setSent(true);
+      window.dispatchEvent(
+        new CustomEvent("vcad:sign-in-attempt-sent", { detail: { email } }),
+      );
     }
     setLoading(false);
   };
