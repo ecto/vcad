@@ -185,6 +185,21 @@ fn fillet_edges_detailed_inner(
 
     let mut results = Vec::new();
     let trims = compute_trim_vertices(&faces, radius);
+
+    // Classify convex plane-cyl-cyl junctions up-front so downstream
+    // stages (sphere patch, and — in a follow-up — trim unification)
+    // share the same ball-center / tangent-point decisions.
+    //
+    // The naïve "insert tan_cap / tan_cyl as trim overrides" opens new
+    // holes: the cylinder face's outer loop carries ~16 intermediate
+    // arc-sample vertices whose trim is still axial-only, so shifting
+    // just the two junction endpoints to tan_cyl makes the cylinder
+    // tessellator's u-schedule disagree between the axial intermediates
+    // and the tangentially-offset endpoints. The larger reconciliation
+    // fix has to include the intermediates too. For now we leave trims
+    // alone and just drive patch construction from the plan.
+    let junction_plans = plan_convex_junction_blends(brep, &edges, &target_edges, radius);
+
     let face_map: HashMap<FaceId, &FaceInfo> = faces.iter().map(|f| (f.face_id, f)).collect();
 
     let mut vertex_edges: HashMap<VertexId, Vec<&EdgeInfo>> = HashMap::new();
@@ -401,22 +416,16 @@ fn fillet_edges_detailed_inner(
         &mut all_faces,
     );
 
-    // 3b. Spherical vertex blends at convex 3-edge junctions.
-    // At every vertex where two filleted plane-cylinder edges meet and the
-    // non-filleted third edge is a cylinder-cylinder seam (arc-extrude
-    // junction), Fusion / SolidWorks emit a spherical patch tangent to all
-    // three surfaces — the envelope of the rolling ball when it pivots at
-    // the junction. Without it the two adjacent torus blends leave a
-    // crescent gap where their interiors diverge. Build that patch as a
-    // standalone triangular face on a new `SphereSurface` so the tessellator
-    // renders the crescent.
-    build_spherical_vertex_blends(
-        brep,
-        &edges,
-        &target_edges,
+    // 3b. Spherical vertex blends at convex 3-edge junctions, using the
+    // same ball-center / tangent data that drove the trim overrides
+    // above. Each patch ends up topologically disconnected from its
+    // neighbors (we don't add explicit shared edges yet), but its
+    // three corners share `VertexId`s with the adjacent cylinder-face
+    // trim points and torus-blend quad corners via `vertex_cache`
+    // position keying, so the tessellated mesh is watertight.
+    build_spherical_vertex_blends_from_plans(
+        &junction_plans,
         &faces,
-        &trims,
-        radius,
         &mut vertex_cache,
         &mut new_topo,
         &mut new_geom,
@@ -438,50 +447,44 @@ fn fillet_edges_detailed_inner(
     )
 }
 
-/// Build spherical vertex-blend patches at every convex 3-edge junction.
-///
-/// A convex junction here is a vertex where two filleted plane-cylinder
-/// edges meet AND the non-filleted edge between the two cylinders is a
-/// seam of the arc-extrude profile (cylinder-cylinder with parallel
-/// axes, omitted from the fillet target list). At such a junction a
-/// ball of radius `r` is tangent to the cap plane and both cylinders
-/// simultaneously; its center plus three tangent points define the
-/// spherical patch that fills the crescent between the adjacent torus
-/// blends. We add each patch as a standalone triangular face on a new
-/// `SphereSurface` — topologically disconnected from the surrounding
-/// tori and cap, but positioned so the tessellated mesh covers the
-/// visible gap. (Full setback trimming so the faces share explicit
-/// edges with adjacent tori is a bigger surgery and can land on top of
-/// this without reworking the underlying blend plumbing.)
-#[allow(clippy::too_many_arguments)]
-fn build_spherical_vertex_blends(
+/// Result of classifying one candidate convex junction: everything
+/// downstream stages (trim override + sphere patch construction) need
+/// to know about the vertex.
+struct JunctionPlan {
+    vertex: VertexId,
+    cap_face: FaceId,
+    cyl_faces: [FaceId; 2],
+    ball_center: Point3,
+    tan_cap: Point3,
+    tan_cyls: [Point3; 2],
+    cap_outward_normal: Vec3,
+}
+
+/// Scan every candidate vertex and return the plans for those that
+/// qualify as convex plane-cyl-cyl junctions. Emits trace entries
+/// along the way if trace capture is active.
+fn plan_convex_junction_blends(
     brep: &BRepSolid,
     edges: &[EdgeInfo],
     target_edges: &[&EdgeInfo],
-    faces: &[FaceInfo],
-    _trims: &HashMap<TrimKey, Point3>,
     radius: f64,
-    vertex_cache: &mut HashMap<[i64; 3], VertexId>,
-    new_topo: &mut Topology,
-    new_geom: &mut GeometryStore,
-    all_faces: &mut Vec<FaceId>,
-) {
+) -> Vec<JunctionPlan> {
     let topo = &brep.topology;
     let geom = &brep.geometry;
 
-    // Index the target edges by each endpoint vertex.
     let mut target_by_vertex: HashMap<VertexId, Vec<&EdgeInfo>> = HashMap::new();
     for edge in target_edges {
         target_by_vertex.entry(edge.v_start).or_default().push(edge);
         target_by_vertex.entry(edge.v_end).or_default().push(edge);
     }
 
-    // Also index ALL edges (including non-target seams) by endpoint.
     let mut all_by_vertex: HashMap<VertexId, Vec<&EdgeInfo>> = HashMap::new();
     for edge in edges {
         all_by_vertex.entry(edge.v_start).or_default().push(edge);
         all_by_vertex.entry(edge.v_end).or_default().push(edge);
     }
+
+    let mut plans = Vec::new();
 
     for (v_id, tgt_edges) in &target_by_vertex {
         let v_pos_for_trace = topo.vertices[*v_id].point;
@@ -499,14 +502,11 @@ fn build_spherical_vertex_blends(
             }
         };
 
-        // Need exactly two filleted edges incident to this vertex.
         if tgt_edges.len() != 2 {
             emit(JunctionOutcome::SkippedWrongEdgeCount);
             continue;
         }
 
-        // Classify each filleted edge as plane-cylinder and extract the
-        // plane's outward normal + the cylinder.
         let mut plane_normal: Option<Vec3> = None;
         let mut cyls: Vec<CylinderSurface> = Vec::new();
         let mut cyl_faces: Vec<FaceId> = Vec::new();
@@ -568,12 +568,18 @@ fn build_spherical_vertex_blends(
                 continue;
             }
         };
-        if cyls.len() != 2 {
+        let cap_face = match cap_face_id {
+            Some(f) => f,
+            None => {
+                emit(JunctionOutcome::SkippedNotPlaneCylinder);
+                continue;
+            }
+        };
+        if cyls.len() != 2 || cyl_faces.len() != 2 {
             emit(JunctionOutcome::SkippedNotPlaneCylinder);
             continue;
         }
 
-        // Confirm the third incident edge is a cylinder-cylinder seam.
         let incident = match all_by_vertex.get(v_id) {
             Some(v) => v,
             None => {
@@ -650,33 +656,62 @@ fn build_spherical_vertex_blends(
             continue;
         }
 
+        emit(JunctionOutcome::BuiltPatch {
+            ball_center,
+            tan_cap,
+            tan_cyls: [tan_cyls[0], tan_cyls[1]],
+        });
+        plans.push(JunctionPlan {
+            vertex: *v_id,
+            cap_face,
+            cyl_faces: [cyl_faces[0], cyl_faces[1]],
+            ball_center,
+            tan_cap,
+            tan_cyls: [tan_cyls[0], tan_cyls[1]],
+            cap_outward_normal: plane_normal,
+        });
+    }
+
+    plans
+}
+
+/// Build spherical vertex-blend patches from the pre-classified plans.
+/// Uses the shared `vertex_cache` so each patch corner collapses to the
+/// same `VertexId` as the adjacent cylinder-face trim and torus-blend
+/// quad corner.
+fn build_spherical_vertex_blends_from_plans(
+    plans: &[JunctionPlan],
+    faces: &[FaceInfo],
+    vertex_cache: &mut HashMap<[i64; 3], VertexId>,
+    new_topo: &mut Topology,
+    new_geom: &mut GeometryStore,
+    all_faces: &mut Vec<FaceId>,
+) {
+    let solid_centroid = compute_centroid(faces);
+    for plan in plans {
         let get_or_create =
             |cache: &mut HashMap<[i64; 3], VertexId>, topo: &mut Topology, p: Point3| -> VertexId {
                 let key = quantize(p);
                 *cache.entry(key).or_insert_with(|| topo.add_vertex(p))
             };
-        let v_cap = get_or_create(vertex_cache, new_topo, tan_cap);
-        let v_c1 = get_or_create(vertex_cache, new_topo, tan_cyls[0]);
-        let v_c2 = get_or_create(vertex_cache, new_topo, tan_cyls[1]);
+        let v_cap = get_or_create(vertex_cache, new_topo, plan.tan_cap);
+        let v_c1 = get_or_create(vertex_cache, new_topo, plan.tan_cyls[0]);
+        let v_c2 = get_or_create(vertex_cache, new_topo, plan.tan_cyls[1]);
         if v_cap == v_c1 || v_c1 == v_c2 || v_cap == v_c2 {
-            emit(JunctionOutcome::SkippedDegenerateTriangle);
             continue;
         }
 
         let sphere = SphereSurface {
-            center: ball_center,
-            radius,
-            ref_dir: Dir3::new_normalize(tan_cap - ball_center),
-            axis: Dir3::new_normalize(-plane_normal),
+            center: plan.ball_center,
+            radius: (plan.tan_cap - plan.ball_center).norm(),
+            ref_dir: Dir3::new_normalize(plan.tan_cap - plan.ball_center),
+            axis: Dir3::new_normalize(-plan.cap_outward_normal),
         };
 
-        // Wind the triangle so its outward normal faces AWAY from the
-        // solid interior (i.e. roughly along the outward direction at
-        // the vertex).
-        let _ = cap_face_id;
-        let solid_exterior_hint = v_pos - compute_centroid(faces);
-        let e1 = tan_cyls[0] - tan_cap;
-        let e2 = tan_cyls[1] - tan_cap;
+        let v_pos = plan.tan_cap; // a point on the patch — use for winding hint.
+        let solid_exterior_hint = v_pos - solid_centroid;
+        let e1 = plan.tan_cyls[0] - plan.tan_cap;
+        let e2 = plan.tan_cyls[1] - plan.tan_cap;
         let n = e1.cross(e2);
         let verts: [VertexId; 3] = if n.dot(solid_exterior_hint) > 0.0 {
             [v_cap, v_c1, v_c2]
@@ -689,14 +724,9 @@ fn build_spherical_vertex_blends(
         let surf_idx = new_geom.add_surface(Box::new(sphere));
         let face_id = new_topo.add_face(loop_id, surf_idx, Orientation::Forward);
         all_faces.push(face_id);
-
-        emit(JunctionOutcome::BuiltPatch {
-            ball_center,
-            tan_cap,
-            tan_cyls: [tan_cyls[0], tan_cyls[1]],
-        });
     }
 }
+
 
 /// Solve for the point in a plane that lies at specified distances from
 /// two projected centers — used for placing the rolling ball at a
