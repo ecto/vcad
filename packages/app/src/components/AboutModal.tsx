@@ -143,7 +143,7 @@ export function AboutModal({
           {/* Footer links */}
           <div className="flex items-center justify-center gap-6 text-xs">
             <a
-              href="https://github.com/nicholaschuayunzhi/vcad"
+              href="https://github.com/ecto/vcad"
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-1.5 text-text-muted hover:text-text transition-colors"
@@ -179,6 +179,13 @@ export function AboutModal({
             >
               v{__APP_VERSION__}
             </button>
+          </div>
+
+          {/* Legal */}
+          <div className="mt-4 flex items-center justify-center gap-4 text-[11px] text-text-muted/60">
+            <a href="/privacy" className="hover:text-text-muted transition-colors">Privacy</a>
+            <a href="/terms" className="hover:text-text-muted transition-colors">Terms</a>
+            <a href="/security" className="hover:text-text-muted transition-colors">Security</a>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

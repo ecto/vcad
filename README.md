@@ -78,6 +78,14 @@ vcad/
 
 ## Development
 
+> **Heads up:** vcad depends on the `tang` math workspace at a **sibling path**
+> (`../tang`). Clone it next to vcad before any `cargo` command, or the
+> workspace will fail to resolve:
+>
+> ```bash
+> git clone git@github.com:ecto/tang.git ../tang
+> ```
+
 ```bash
 # Rust
 cargo test --workspace
@@ -99,4 +107,8 @@ npm run tauri:build        # produces a signed/unsigned installer
 
 ## License
 
-[MIT](LICENSE)
+Copyright © 2025–2026 Municipal Robotics, Inc.
+
+Licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for
+attributions. Contributions are accepted under the same license per the
+[Apache 2.0 Section 5](LICENSE) inbound-equals-outbound rule.

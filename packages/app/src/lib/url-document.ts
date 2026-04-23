@@ -111,18 +111,26 @@ export interface UrlDocumentResult {
   ownerUsername?: string;
 }
 
+/** Legal page slugs served from the SPA. */
+export type LegalSlug = "privacy" | "terms" | "security";
+
 /** Route type detected from the current pathname. */
 type UrlRoute =
   | { kind: "share-token"; token: string }
   | { kind: "public-doc"; username: string; slug: string }
   | { kind: "profile"; username: string }
   | { kind: "local-doc"; id: string }
+  | { kind: "legal"; slug: LegalSlug }
   | null;
 
 /** Parse the current pathname into a route. */
 function parseRoute(): UrlRoute {
   if (typeof window === "undefined") return null;
   const path = window.location.pathname;
+
+  // /privacy, /terms, /security
+  const legalMatch = path.match(/^\/(privacy|terms|security)\/?$/);
+  if (legalMatch?.[1]) return { kind: "legal", slug: legalMatch[1] as LegalSlug };
 
   // /view/<uuid-token>
   const shareMatch = path.match(/^\/view\/([0-9a-fA-F-]{8,64})\/?$/);
@@ -274,4 +282,13 @@ export function hasUrlDocument(): boolean {
 export function getProfileRouteUsername(): string | null {
   const route = parseRoute();
   return route?.kind === "profile" ? route.username : null;
+}
+
+/**
+ * Check if the current URL is a legal page (/privacy, /terms, /security).
+ * The app renders a LegalPage instead of the normal editor in this case.
+ */
+export function getLegalRouteSlug(): LegalSlug | null {
+  const route = parseRoute();
+  return route?.kind === "legal" ? route.slug : null;
 }
