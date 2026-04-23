@@ -223,6 +223,161 @@ fn weld_coincident_vertices(mesh: &mut TriangleMesh) {
     mesh.indices = new_indices;
 }
 
+#[allow(dead_code)] // kept for potential future use; see vertex-blend follow-up
+fn fill_boundary_loops(mesh: &mut TriangleMesh) {
+    let tri_count = mesh.indices.len() / 3;
+    if tri_count == 0 {
+        return;
+    }
+
+    // Build per-undirected-edge triangle count.
+    // For each directed edge (a,b) in a CCW triangle, its twin is (b,a)
+    // in the adjacent triangle. Boundary edges are those with no twin.
+    use std::collections::{HashMap, HashSet};
+    let mut dir_edges: HashMap<(u32, u32), u32> = HashMap::new();
+    for t in 0..tri_count {
+        let a = mesh.indices[3 * t];
+        let b = mesh.indices[3 * t + 1];
+        let c = mesh.indices[3 * t + 2];
+        for &(x, y) in &[(a, b), (b, c), (c, a)] {
+            *dir_edges.entry((x, y)).or_insert(0) += 1;
+        }
+    }
+
+    // Boundary directed edges: those without a reverse twin.
+    let mut boundary: HashMap<u32, u32> = HashMap::new();
+    for (&(a, b), _) in dir_edges.iter() {
+        if !dir_edges.contains_key(&(b, a)) {
+            boundary.insert(a, b);
+        }
+    }
+    if boundary.is_empty() {
+        return;
+    }
+
+    // Walk loops from each starting vertex.
+    let mut visited: HashSet<u32> = HashSet::new();
+    let mut loops: Vec<Vec<u32>> = Vec::new();
+    for &start in boundary.keys() {
+        if visited.contains(&start) {
+            continue;
+        }
+        let mut loop_verts = Vec::new();
+        let mut cur = start;
+        for _ in 0..boundary.len() + 1 {
+            if visited.contains(&cur) {
+                break;
+            }
+            visited.insert(cur);
+            loop_verts.push(cur);
+            match boundary.get(&cur) {
+                Some(&next) => cur = next,
+                None => break,
+            }
+            if cur == start {
+                break;
+            }
+        }
+        if loop_verts.len() >= 3 {
+            loops.push(loop_verts);
+        }
+    }
+
+    // Fill each loop with a fan from its centroid. Skip loops that are
+    // too big — those are probably genuine topology holes, not
+    // vertex-blend crescents. Threshold: the loop's bounding box must
+    // fit in a sphere of radius ≤ 4× the loop's average edge length
+    // (empirically separates vertex-blend crescents from large holes).
+    for loop_verts in &loops {
+        let n = loop_verts.len();
+        if n < 3 || n > 24 {
+            continue;
+        }
+        // Snapshot loop positions up front so we can mutate the mesh.
+        let positions: Vec<[f32; 3]> = loop_verts
+            .iter()
+            .map(|&v| {
+                [
+                    mesh.vertices[3 * v as usize],
+                    mesh.vertices[3 * v as usize + 1],
+                    mesh.vertices[3 * v as usize + 2],
+                ]
+            })
+            .collect();
+
+        let mut cx = 0.0_f32;
+        let mut cy = 0.0_f32;
+        let mut cz = 0.0_f32;
+        for p in &positions {
+            cx += p[0];
+            cy += p[1];
+            cz += p[2];
+        }
+        cx /= n as f32;
+        cy /= n as f32;
+        cz /= n as f32;
+
+        let mut max_r2 = 0.0_f32;
+        for p in &positions {
+            let dx = p[0] - cx;
+            let dy = p[1] - cy;
+            let dz = p[2] - cz;
+            let r2 = dx * dx + dy * dy + dz * dz;
+            if r2 > max_r2 {
+                max_r2 = r2;
+            }
+        }
+        let mut total_edge = 0.0_f32;
+        for i in 0..n {
+            let a = positions[i];
+            let b = positions[(i + 1) % n];
+            let dx = b[0] - a[0];
+            let dy = b[1] - a[1];
+            let dz = b[2] - a[2];
+            total_edge += (dx * dx + dy * dy + dz * dz).sqrt();
+        }
+        let avg_edge = total_edge / n as f32;
+        if max_r2.sqrt() > avg_edge * 6.0 {
+            continue;
+        }
+
+        let mut nx = 0.0_f32;
+        let mut ny = 0.0_f32;
+        let mut nz = 0.0_f32;
+        for i in 0..n {
+            let a = positions[i];
+            let b = positions[(i + 1) % n];
+            let ex = a[0] - cx;
+            let ey = a[1] - cy;
+            let ez = a[2] - cz;
+            let fx = b[0] - cx;
+            let fy = b[1] - cy;
+            let fz = b[2] - cz;
+            nx += ey * fz - ez * fy;
+            ny += ez * fx - ex * fz;
+            nz += ex * fy - ey * fx;
+        }
+        let nlen = (nx * nx + ny * ny + nz * nz).sqrt();
+        if nlen > 1e-6 {
+            nx /= nlen;
+            ny /= nlen;
+            nz /= nlen;
+        } else {
+            continue;
+        }
+
+        let cx_idx = (mesh.vertices.len() / 3) as u32;
+        mesh.vertices.extend_from_slice(&[cx, cy, cz]);
+        mesh.normals.extend_from_slice(&[nx, ny, nz]);
+
+        for i in 0..n {
+            let a = loop_verts[i];
+            let b = loop_verts[(i + 1) % n];
+            mesh.indices.extend_from_slice(&[cx_idx, a, b]);
+        }
+    }
+}
+
 /// Tessellate a single B-rep face.
 fn tessellate_face(
     topo: &Topology,
