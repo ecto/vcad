@@ -40,8 +40,7 @@ fn mesh_volume(mesh: &vcad_kernel_tessellate::TriangleMesh) -> f64 {
         let v0 = [verts[i0] as f64, verts[i0 + 1] as f64, verts[i0 + 2] as f64];
         let v1 = [verts[i1] as f64, verts[i1 + 1] as f64, verts[i1 + 2] as f64];
         let v2 = [verts[i2] as f64, verts[i2 + 1] as f64, verts[i2 + 2] as f64];
-        vol += v0[0] * (v1[1] * v2[2] - v2[1] * v1[2])
-            - v1[0] * (v0[1] * v2[2] - v2[1] * v0[2])
+        vol += v0[0] * (v1[1] * v2[2] - v2[1] * v1[2]) - v1[0] * (v0[1] * v2[2] - v2[1] * v0[2])
             + v2[0] * (v0[1] * v1[2] - v1[1] * v0[2]);
     }
     (vol / 6.0).abs()
