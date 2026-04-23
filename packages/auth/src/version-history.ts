@@ -1,5 +1,5 @@
 import { requireSupabase } from "./client";
-import { triggerSync, type StorageAdapter } from "./sync";
+import { triggerSync, cloudContentToVcadFile, type StorageAdapter } from "./sync";
 
 /**
  * Version history entry from cloud storage
@@ -159,9 +159,12 @@ export async function restoreVersion(
 ): Promise<void> {
   const storage = requireStorage();
 
-  // Update local document with version content
+  // Update local document with version content. The cloud version blob may
+  // be in any of our historical formats (raw Document IR, CRDT JSON, or loon
+  // envelope) — `cloudContentToVcadFile` normalizes to the tagged-union
+  // shape so the local `loadDocument` discriminator stays sound.
   await storage.updateDocument(localDocId, {
-    document: version.content,
+    document: cloudContentToVcadFile(version.content),
     modifiedAt: Date.now(),
     version: version.versionNumber + 1, // Increment to indicate change
     syncStatus: "pending", // Will sync the restored version

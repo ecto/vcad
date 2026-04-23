@@ -71,7 +71,6 @@ import {
   parseVcadFile,
   parseStl,
   logger,
-  type VcadFile,
 } from "@vcad/core";
 import { useEngine } from "@/hooks/useEngine";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
@@ -340,6 +339,8 @@ export function App() {
         // Add as a proper document part (not just a scene mesh)
         // This makes it selectable, deletable, and transformable
         useDocumentStore.getState().loadDocument({
+          kind: "legacy",
+          version: "0.1",
           document: { version: "1", nodes: {}, roots: [], materials: {}, part_materials: {} },
           parts: [],
           nextNodeId: 1,
@@ -394,6 +395,8 @@ export function App() {
         // Add as a proper document part (not just a scene mesh)
         // This makes it selectable, deletable, and exportable
         useDocumentStore.getState().loadDocument({
+          kind: "legacy",
+          version: "0.1",
           document: { version: "1", nodes: {}, roots: [], materials: {}, part_materials: {} },
           parts: [],
           nextNodeId: 1,
@@ -565,9 +568,12 @@ export function App() {
 
   // Listen for load-example events from the menu
   useEffect(() => {
-    const onLoadExample = (e: CustomEvent<{ file: VcadFile }>) => {
+    const onLoadExample = async (
+      e: CustomEvent<{ file: import("./data/examples").ExampleFile }>,
+    ) => {
       try {
-        useDocumentStore.getState().loadDocument(e.detail.file);
+        const { exampleToVcadFile } = await import("./data/examples");
+        useDocumentStore.getState().loadDocument(exampleToVcadFile(e.detail.file));
         useUiStore.getState().clearSelection();
       } catch (err) {
         console.error("Failed to load example:", err);
@@ -576,12 +582,12 @@ export function App() {
     };
     window.addEventListener(
       "vcad:load-example",
-      onLoadExample as EventListener,
+      onLoadExample as unknown as EventListener,
     );
     return () => {
       window.removeEventListener(
         "vcad:load-example",
-        onLoadExample as EventListener,
+        onLoadExample as unknown as EventListener,
       );
     };
   }, []);

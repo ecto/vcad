@@ -1,5 +1,5 @@
 import type { Document, NodeId, CsgOp, Node } from "@vcad/ir";
-import { toVCode, fromVCode, createDocument } from "@vcad/ir";
+import { fromVCode, createDocument } from "@vcad/ir";
 import type { PartInfo, PrimitiveKind } from "../types.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -18,65 +18,246 @@ async function loadWasm(): Promise<typeof wasmModule | null> {
 // Eagerly start loading
 loadWasm();
 
-export interface VcadFile {
-  version: string;
+/**
+ * A parsed `.vcad` file.
+ *
+ * CRDT is the canonical persistence format (v0.4). Legacy IR-JSON (v0.1) and
+ * VCode (v0.2) formats are still accepted for one-shot import, and Loon
+ * (v0.3) remains the declarative-authoring format. The tagged `kind` field
+ * forces every consumer to discriminate — preventing the silent-drop bugs
+ * that plagued the old undifferentiated shape (where CRDT params not
+ * surfaced by the materializer would vanish on save/load).
+ */
+export type VcadFile =
+  | VcadFileCrdt
+  | VcadFileLoon
+  | VcadFileLegacy;
+
+/** v0.4 — CRDT canonical format. The preferred shape for every new save. */
+export interface VcadFileCrdt {
+  kind: "crdt";
+  version: "0.4";
+  /** Raw output of `WasmDocumentEngine::save()` — JSON-encoded CRDT state. */
+  crdtBytes: Uint8Array;
+}
+
+/** v0.3 — Loon source text. The declarative-authoring format. */
+export interface VcadFileLoon {
+  kind: "loon";
+  version: "0.3";
+  loonSource: string;
+  document: Document;
+  parts: PartInfo[];
+  nextNodeId: number;
+  nextPartNum?: number;
+}
+
+/** v0.1 / v0.2 — legacy IR-JSON or VCode. Read-only; never written by new saves. */
+export interface VcadFileLegacy {
+  kind: "legacy";
+  version: "0.1" | "0.2";
   document: Document;
   parts: PartInfo[];
   consumedParts?: Record<string, PartInfo>;
   nextNodeId: number;
   nextPartNum?: number;
-  loonSource?: string | null;
 }
 
 /**
- * Serialize document — uses loon source if available, otherwise VCode.
+ * Return an IR `Document` for read-only display surfaces (thumbnails, header,
+ * search) when the caller doesn't have access to a live engine.
+ *
+ * For CRDT files there IS no pre-materialized document in the VcadFile — the
+ * caller must bring their own engine to materialize. Returns `null` in that
+ * case so UI surfaces can degrade gracefully (e.g. skip thumbnails until the
+ * engine finishes booting) rather than silently render an empty scene.
+ */
+export function getDocumentForDisplay(file: VcadFile): Document | null {
+  switch (file.kind) {
+    case "crdt":
+      return null;
+    case "loon":
+    case "legacy":
+      return file.document;
+  }
+}
+
+/**
+ * Minimal engine interface — just what we need to save bytes. Defined
+ * structurally so we don't take a hard dep on `@vcad/kernel-wasm` from here.
+ */
+export interface CrdtSaveableEngine {
+  save(): Uint8Array;
+}
+
+/**
+ * Build a canonical `VcadFile` from live store state. The sole entry point
+ * for writing a CRDT-kind file; callers should prefer this over constructing
+ * the union variant by hand so invariants (engine present, loon precedence)
+ * stay consistent across auto-save, manual save, sync, and backfill.
+ *
+ * Returns `null` if neither loon source nor a CRDT engine is available —
+ * callers should retry once the engine finishes booting.
+ */
+export function buildVcadFileFromState(state: {
+  loonSource?: string | null;
+  _crdtEngine?: CrdtSaveableEngine | null;
+  document?: Document;
+  parts?: PartInfo[];
+  nextNodeId?: number;
+}): VcadFile | null {
+  // Loon-authored docs keep loon as source of truth. The derived Document /
+  // parts snapshot rides along for consumers that want the materialized view
+  // without re-evaluating (e.g. thumbnails at bootstrap).
+  if (state.loonSource) {
+    return {
+      kind: "loon",
+      version: "0.3",
+      loonSource: state.loonSource,
+      document: state.document ?? createDocument(),
+      parts: state.parts ?? [],
+      nextNodeId: state.nextNodeId ?? 1,
+    };
+  }
+  if (state._crdtEngine) {
+    return {
+      kind: "crdt",
+      version: "0.4",
+      crdtBytes: state._crdtEngine.save(),
+    };
+  }
+  return null;
+}
+
+/**
+ * Serialize the live document state to text for on-disk / in-memory storage.
+ *
+ * Preference order:
+ *  1. `loonSource` — preserved verbatim so round-tripping loon docs stays
+ *     round-trippable at the source level.
+ *  2. `crdtBytes` (or `_crdtEngine.save()`) — CRDT JSON decoded as UTF-8.
+ *     This is the canonical path.
+ *
+ * VCode is NOT a serialization target — see `toVCode` for one-way export.
+ * Falling back to VCode on save was the class of bug we're removing.
  */
 export function serializeDocument(state: {
-  document: Document;
-  parts: PartInfo[];
-  consumedParts: Record<string, PartInfo>;
-  nextNodeId: number;
-  nextPartNum?: number;
+  crdtBytes?: Uint8Array | null;
+  _crdtEngine?: CrdtSaveableEngine | null;
   loonSource?: string | null;
 }): string {
   if (state.loonSource) return state.loonSource;
-  return toVCode(state.document);
+  const bytes =
+    state.crdtBytes && state.crdtBytes.byteLength > 0
+      ? state.crdtBytes
+      : state._crdtEngine?.save();
+  if (bytes && bytes.byteLength > 0) {
+    return new TextDecoder().decode(bytes);
+  }
+  throw new Error(
+    "serializeDocument: no CRDT bytes or loon source to serialize — engine not initialized?",
+  );
 }
 
 /**
- * Parse a .vcad file (supports JSON v0.1, compact v0.2, and loon v0.3 formats)
+ * Parse a `.vcad` file.
  *
- * Uses Rust WASM when available (includes built-in loon evaluator).
- * Falls back to TypeScript implementation.
+ * Format detection (in order):
+ *  - starts with `{"replica_id"...` → v0.4 CRDT bytes
+ *  - starts with `[` or `;` → v0.3 loon
+ *  - starts with `{` → v0.1 legacy IR JSON
+ *  - anything else → v0.2 VCode
  *
- * @param evalLoon - Optional callback to evaluate loon source → JSON Document string.
- *   Required for TS fallback when content is loon format.
+ * @param evalLoon - Required for loon format when WASM is unavailable.
  */
 export function parseVcadFile(
   content: string,
   evalLoon?: (source: string) => string,
 ): VcadFile {
-  // Try WASM path — bundles loon evaluator so no callback needed
+  const trimmed = content.trim();
+
+  // v0.4 CRDT — detect before other JSON shapes. This is a fast-path that
+  // avoids calling WASM's legacy parser (which would reject CRDT as invalid
+  // Document JSON).
+  if (isCrdtJson(trimmed)) {
+    return parseCrdtVcadFile(trimmed);
+  }
+
+  // Try WASM path for legacy formats — includes bundled loon evaluator.
   if (wasmModule?.parseVcadFile) {
     try {
-      const result = wasmModule.parseVcadFile(content) as VcadFile;
-      return result;
+      const result = wasmModule.parseVcadFile(trimmed) as unknown;
+      return wrapLegacyWasmResult(result);
     } catch (e) {
       console.warn("[CORE] WASM parseVcadFile failed, using TS fallback:", e);
     }
   }
 
-  return parseVcadFileTS(content, evalLoon);
+  return parseVcadFileTS(trimmed, evalLoon);
 }
 
-/** TypeScript fallback for parseVcadFile. */
+/**
+ * Quick-check whether a trimmed string looks like CRDT JSON. Cheaper than
+ * a full JSON parse; we accept a small false-positive risk for payloads that
+ * happen to contain `"replica_id"` and `"ops"` — those would fail the
+ * subsequent CRDT load and surface as an actionable error.
+ */
+function isCrdtJson(trimmed: string): boolean {
+  if (!trimmed.startsWith("{")) return false;
+  return trimmed.includes('"replica_id"') && trimmed.includes('"ops"');
+}
+
+/**
+ * Wrap a Rust-side WASM `parseVcadFile` result in the new tagged envelope.
+ *
+ * The Rust side hasn't been migrated to the tagged union yet; it still
+ * returns the flat legacy `{version, document, parts, ...}` shape.
+ */
+function wrapLegacyWasmResult(result: unknown): VcadFile {
+  if (!result || typeof result !== "object") {
+    throw new Error("Invalid .vcad file: WASM parser returned non-object");
+  }
+  const obj = result as Record<string, unknown>;
+  const loonSource = typeof obj.loonSource === "string" ? obj.loonSource : null;
+  const document = obj.document as Document;
+  const parts = (obj.parts ?? []) as PartInfo[];
+  const nextNodeId = typeof obj.nextNodeId === "number" ? obj.nextNodeId : 0;
+  const nextPartNum =
+    typeof obj.nextPartNum === "number" ? obj.nextPartNum : undefined;
+  const consumedParts =
+    (obj.consumedParts as Record<string, PartInfo> | undefined) ?? {};
+  const version = typeof obj.version === "string" ? obj.version : "0.1";
+
+  if (loonSource) {
+    return {
+      kind: "loon",
+      version: "0.3",
+      loonSource,
+      document,
+      parts,
+      nextNodeId,
+      nextPartNum,
+    };
+  }
+  return {
+    kind: "legacy",
+    version: (version === "0.2" ? "0.2" : "0.1") as "0.1" | "0.2",
+    document,
+    parts,
+    consumedParts,
+    nextNodeId,
+    nextPartNum,
+  };
+}
+
+/** TypeScript fallback for parseVcadFile (WASM unavailable). */
 function parseVcadFileTS(
   content: string,
   evalLoon?: (source: string) => string,
 ): VcadFile {
   const trimmed = content.trim();
 
-  // Detect format: JSON starts with '{', loon starts with '[' or ';'
+  // CRDT already handled upstream; this is the non-CRDT fallback.
   if (trimmed.startsWith("{")) {
     return parseJsonVcadFile(trimmed);
   }
@@ -101,10 +282,27 @@ function hasOwn(obj: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(obj, key);
 }
 
-/**
- * Parse legacy JSON format (v0.1)
- */
-function parseJsonVcadFile(json: string): VcadFile {
+/** Parse v0.4 CRDT bytes. Input is CRDT JSON text; we carry the bytes forward. */
+function parseCrdtVcadFile(json: string): VcadFileCrdt {
+  if (json.length > MAX_VCAD_BYTES) {
+    throw new Error("Invalid .vcad file: exceeds size limit");
+  }
+  // Pre-flight parse so we surface malformed JSON at parse time rather than
+  // downstream at engine.load(). Cheap compared to the actual CRDT load.
+  try {
+    JSON.parse(json);
+  } catch (e) {
+    throw new Error(`Invalid v0.4 .vcad file: ${(e as Error).message}`);
+  }
+  return {
+    kind: "crdt",
+    version: "0.4",
+    crdtBytes: new TextEncoder().encode(json),
+  };
+}
+
+/** Parse legacy JSON format (v0.1). */
+function parseJsonVcadFile(json: string): VcadFileLegacy {
   if (json.length > MAX_VCAD_BYTES) {
     throw new Error("Invalid .vcad file: exceeds size limit");
   }
@@ -153,16 +351,22 @@ function parseJsonVcadFile(json: string): VcadFile {
     throw new Error("Invalid .vcad file: missing or invalid nextNodeId");
   }
 
-  return obj as unknown as VcadFile;
+  return {
+    kind: "legacy",
+    version: "0.1",
+    document: document as Document,
+    parts: parts as PartInfo[],
+    consumedParts: (obj.consumedParts as Record<string, PartInfo> | undefined) ?? {},
+    nextNodeId,
+    nextPartNum: typeof obj.nextPartNum === "number" ? obj.nextPartNum : undefined,
+  };
 }
 
-/**
- * Parse loon format (v0.3)
- */
+/** Parse loon format (v0.3). */
 function parseLoonVcadFile(
   source: string,
   evalLoon?: (source: string) => string,
-): VcadFile {
+): VcadFileLoon {
   if (!evalLoon) {
     throw new Error("Loon format detected but no evaluator provided. Engine may not be ready.");
   }
@@ -172,25 +376,24 @@ function parseLoonVcadFile(
   const { nextNodeId, nextPartNum } = computeNextIds(document, parts);
 
   return {
+    kind: "loon",
     version: "0.3",
+    loonSource: source,
     document,
     parts,
-    consumedParts: {},
     nextNodeId,
     nextPartNum,
-    loonSource: source,
   };
 }
 
-/**
- * Parse VCode format (v0.2)
- */
-function parseVCodeFile(compact: string): VcadFile {
+/** Parse VCode format (v0.2). */
+function parseVCodeFile(compact: string): VcadFileLegacy {
   const document = fromVCode(compact);
   const parts = deriveParts(document);
   const { nextNodeId, nextPartNum } = computeNextIds(document, parts);
 
   return {
+    kind: "legacy",
     version: "0.2",
     document,
     parts,

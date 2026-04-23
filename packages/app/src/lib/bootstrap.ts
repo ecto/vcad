@@ -100,7 +100,31 @@ async function runBootstrap(): Promise<void> {
     void initGpuStack();
     loadToolSchemas(wasmModule);
     scheduleDeferredClash(engine);
+    void runIdbBackfillDeferred(wasmModule);
   });
+}
+
+/**
+ * Migrate any legacy-format IDB rows to the canonical CRDT v0.4 shape.
+ * Idempotent — already-migrated rows are skipped. Runs after the main
+ * boot finishes so the user's first frame isn't delayed by it.
+ */
+async function runIdbBackfillDeferred(
+  wasmModule: typeof import("@vcad/kernel-wasm"),
+): Promise<void> {
+  try {
+    const [{ runIdbBackfill }, { triggerSync }] = await Promise.all([
+      import("@/lib/backfill"),
+      import("@vcad/auth"),
+    ]);
+    await runIdbBackfill(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      wasmModule.WasmDocumentEngine as any,
+      () => triggerSync(),
+    );
+  } catch (e) {
+    logger.warn("app", `IDB backfill failed: ${e}`);
+  }
 }
 
 /**

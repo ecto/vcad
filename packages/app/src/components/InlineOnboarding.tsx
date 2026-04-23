@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils";
 import { useDocumentStore, useUiStore, useChatStore, parseVcadFile } from "@vcad/core";
 import { useAuth, isAuthEnabled, AuthModal } from "@vcad/auth";
 import { useOnboardingStore } from "@/stores/onboarding-store";
-import { examples } from "@/data/examples";
+import { examples, exampleToVcadFile } from "@/data/examples";
 import type { Example } from "@/data/examples";
 
 interface InlineOnboardingProps {
@@ -84,7 +84,7 @@ export function InlineOnboarding({ visible }: InlineOnboardingProps) {
 
   function handleOpenExample(example: Example) {
     incrementProjectsCreated();
-    loadDocument(example.file);
+    loadDocument(exampleToVcadFile(example.file));
     hide();
   }
 

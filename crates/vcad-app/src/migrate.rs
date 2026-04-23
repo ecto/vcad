@@ -110,6 +110,14 @@ fn migrate_node(
     }
 
     let leaf = doc.nodes.get(&current_id)?;
+    // The materializer writes feature names onto the core/leaf node
+    // (primitive, boolean, fillet, …), not the transform wrappers. Pick up
+    // the name here if the Translate/Rotate/Scale walk above didn't already.
+    if !params.contains_key("name") {
+        if let Some(name) = &leaf.name {
+            params.insert("name".to_string(), Value::String(name.clone()));
+        }
+    }
     let fid = match &leaf.op {
         CsgOp::Cube { size } => {
             params.insert("size_x".to_string(), Value::F64(size.x));
@@ -629,6 +637,78 @@ mod tests {
             f.params.get("offset").unwrap().0,
             Value::Vec3([5.0, 0.0, 0.0])
         );
+        assert_eq!(
+            f.params.get("name").map(|(v, _)| v),
+            Some(&Value::String("Cube 1".to_string())),
+        );
+    }
+
+    #[test]
+    fn test_migrate_name_on_leaf() {
+        // The materializer writes feature names onto the core/leaf node, not
+        // the translate wrapper. Reloading a saved document must still
+        // recover the name through migrate_v1.
+        let mut doc = Document::new();
+        let cube_id = 1;
+        doc.nodes.insert(
+            cube_id,
+            Node {
+                id: cube_id,
+                name: Some("MyCube".to_string()),
+                op: CsgOp::Cube {
+                    size: Vec3::new(10.0, 10.0, 10.0),
+                },
+            },
+        );
+        let scale_id = 2;
+        doc.nodes.insert(
+            scale_id,
+            Node {
+                id: scale_id,
+                name: None,
+                op: CsgOp::Scale {
+                    child: cube_id,
+                    factor: Vec3::new(1.0, 1.0, 1.0),
+                },
+            },
+        );
+        let rotate_id = 3;
+        doc.nodes.insert(
+            rotate_id,
+            Node {
+                id: rotate_id,
+                name: None,
+                op: CsgOp::Rotate {
+                    child: scale_id,
+                    angles: Vec3::new(0.0, 0.0, 0.0),
+                },
+            },
+        );
+        let translate_id = 4;
+        doc.nodes.insert(
+            translate_id,
+            Node {
+                id: translate_id,
+                name: None,
+                op: CsgOp::Translate {
+                    child: rotate_id,
+                    offset: Vec3::new(0.0, 0.0, 0.0),
+                },
+            },
+        );
+        doc.roots.push(SceneEntry {
+            root: translate_id,
+            material: "default".to_string(),
+            visible: None,
+        });
+
+        let crdt = migrate_v1(&doc);
+        let features = crdt.ordered_features();
+        assert_eq!(features.len(), 1);
+        assert_eq!(
+            features[0].1.params.get("name").map(|(v, _)| v),
+            Some(&Value::String("MyCube".to_string())),
+        );
     }
 
     #[test]
@@ -667,6 +747,41 @@ mod tests {
 
         assert_eq!(detect_format(b""), FileFormat::Unknown);
         assert_eq!(detect_format(b"garbage"), FileFormat::Unknown);
+    }
+
+    /// The raw CRDT save output must be routed through the CRDT loader
+    /// directly — not through `migrate_v1`. Running `migrate_v1` on a CRDT
+    /// document is the lossy path that dropped feature `name` (and would
+    /// drop any future param the materializer doesn't surface).
+    #[test]
+    fn test_crdt_bytes_detect_as_v2() {
+        use vcad_crdt::{CrdtDocument, FractionalIndex, ReplicaId, Value};
+
+        let mut crdt = CrdtDocument::new(ReplicaId(1));
+        crdt.create_feature(
+            "cube",
+            FractionalIndex::between(None, None),
+            std::collections::HashMap::from([
+                ("size_x".to_string(), Value::F64(10.0)),
+                ("name".to_string(), Value::String("MyCube".into())),
+            ]),
+        );
+        let bytes = crdt.save();
+        assert_eq!(
+            detect_format(&bytes),
+            FileFormat::V2Crdt,
+            "CRDT save output must route as V2Crdt, not V1Json (otherwise migrate_v1 would drop params)",
+        );
+
+        // Round-trip via CrdtDocument::load (the non-lossy path) and confirm
+        // the name survives — this is the contract this refactor protects.
+        let loaded = CrdtDocument::load(&bytes).expect("v2 bytes must load");
+        let features = loaded.ordered_features();
+        assert_eq!(features.len(), 1);
+        assert_eq!(
+            features[0].1.params.get("name").map(|(v, _)| v),
+            Some(&Value::String("MyCube".into())),
+        );
     }
 
     #[test]
