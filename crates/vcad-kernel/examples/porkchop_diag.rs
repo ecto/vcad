@@ -121,6 +121,58 @@ fn main() {
         full.num_triangles(),
         full.boundary_edges().len()
     );
+
+    // For each boundary loop centroid, print the nearest face(s) and
+    // their surface kinds. This immediately tells us which faces should
+    // be meeting at a given gap — e.g. "this triangular loop is between
+    // a Sphere patch, a Torus blend, and a Cylinder seam that don't
+    // share vertices".
+    println!();
+    println!("boundary-loop → nearest-face reconciliation:");
+    for (i, chain) in full.boundary_loops().iter().enumerate() {
+        let mut cx = 0.0_f32;
+        let mut cy = 0.0_f32;
+        let mut cz = 0.0_f32;
+        for &v in chain {
+            cx += full.vertices[v as usize * 3];
+            cy += full.vertices[v as usize * 3 + 1];
+            cz += full.vertices[v as usize * 3 + 2];
+        }
+        let n = chain.len() as f32;
+        let center = Point3::new((cx / n) as f64, (cy / n) as f64, (cz / n) as f64);
+
+        // Rank faces by squared distance from their nearest vertex.
+        let mut ranked: Vec<(vcad_kernel::vcad_kernel_topo::FaceId, vcad_kernel_geom::SurfaceKind, f64)> =
+            per_face
+                .iter()
+                .map(|(fid, kind, mesh)| {
+                    let mut best = f64::INFINITY;
+                    for j in 0..mesh.num_vertices() {
+                        let dx = mesh.vertices[j * 3] as f64 - center.x;
+                        let dy = mesh.vertices[j * 3 + 1] as f64 - center.y;
+                        let dz = mesh.vertices[j * 3 + 2] as f64 - center.z;
+                        let d2 = dx * dx + dy * dy + dz * dz;
+                        if d2 < best {
+                            best = d2;
+                        }
+                    }
+                    (*fid, *kind, best)
+                })
+                .collect();
+        ranked.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap());
+        print!(
+            "  loop {:2} [{} verts, center ({:.2},{:.2},{:.2})]  near:",
+            i,
+            chain.len(),
+            center.x,
+            center.y,
+            center.z
+        );
+        for (fid, kind, d2) in ranked.iter().take(4) {
+            print!(" {:?}/{:?} d={:.3}", fid, kind, d2.sqrt());
+        }
+        println!();
+    }
 }
 
 fn write_obj(
