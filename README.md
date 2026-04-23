@@ -107,7 +107,7 @@ npm run tauri:build        # produces a signed/unsigned installer
 
 ## License
 
-Copyright © 2025–2026 Municipal Robotics, Inc.
+Copyright © 2025–2026 Municipal Robotics Corporation
 
 Licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for
 attributions. Contributions are accepted under the same license per the

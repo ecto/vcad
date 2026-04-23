@@ -8,7 +8,7 @@ interface LegalContent {
 }
 
 const CONTACT_EMAIL = "info@muni.works";
-const COMPANY = "Municipal Robotics, Inc.";
+const COMPANY = "Municipal Robotics Corporation";
 const LAST_UPDATED = "April 23, 2026";
 
 const PRIVACY: LegalContent = {
