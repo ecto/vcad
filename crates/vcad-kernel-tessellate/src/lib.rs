@@ -14,6 +14,48 @@ use vcad_kernel_math::{Point2, Point3, Vec3};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_topo::{FaceId, Orientation, Topology};
 
+/// Per-triangle tag identifying which face kind the triangle came from.
+/// Encoded as a single byte per triangle; `FanFill` = 8 marks the
+/// synthetic armpit-fan triangles added post-weld.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FaceKindTag {
+    /// Default / unknown.
+    Unknown = 0,
+    /// Plane.
+    Plane = 1,
+    /// Cylinder.
+    Cylinder = 2,
+    /// Sphere.
+    Sphere = 3,
+    /// Cone.
+    Cone = 4,
+    /// Bilinear.
+    Bilinear = 5,
+    /// Torus.
+    Torus = 6,
+    /// B-spline surface.
+    BSpline = 7,
+    /// Synthetic fan-fill triangle (added post-weld in
+    /// `fill_tiny_boundary_loops` to close armpit gaps). Doesn't
+    /// correspond to a BRep face.
+    FanFill = 8,
+}
+
+impl From<SurfaceKind> for FaceKindTag {
+    fn from(kind: SurfaceKind) -> Self {
+        match kind {
+            SurfaceKind::Plane => FaceKindTag::Plane,
+            SurfaceKind::Cylinder => FaceKindTag::Cylinder,
+            SurfaceKind::Sphere => FaceKindTag::Sphere,
+            SurfaceKind::Cone => FaceKindTag::Cone,
+            SurfaceKind::Bilinear => FaceKindTag::Bilinear,
+            SurfaceKind::Torus => FaceKindTag::Torus,
+            SurfaceKind::BSpline => FaceKindTag::BSpline,
+        }
+    }
+}
+
 /// Output triangle mesh for rendering and export.
 #[derive(Debug, Clone)]
 pub struct TriangleMesh {
@@ -23,6 +65,11 @@ pub struct TriangleMesh {
     pub indices: Vec<u32>,
     /// Flat array of vertex normals: `[nx0, ny0, nz0, ...]` (f32). Same length as vertices.
     pub normals: Vec<f32>,
+    /// One byte per triangle (same length as `indices / 3`) tagging
+    /// which face kind contributed it. Populated by `tessellate_brep`
+    /// for debugging / inspection. Empty when the mesh was built
+    /// without tagging (legacy paths).
+    pub face_kinds: Vec<u8>,
 }
 
 impl TriangleMesh {
@@ -32,6 +79,7 @@ impl TriangleMesh {
             vertices: Vec::new(),
             indices: Vec::new(),
             normals: Vec::new(),
+            face_kinds: Vec::new(),
         }
     }
 
@@ -77,6 +125,21 @@ impl TriangleMesh {
         self.normals.extend_from_slice(&other.normals);
         self.indices
             .extend(other.indices.iter().map(|&i| i + offset));
+        // face_kinds is per-triangle (one u8 per 3 indices). Pad with
+        // Unknown when one side doesn't carry tags so the combined
+        // array stays in lockstep with `indices / 3`.
+        let self_tri_before = (self.indices.len() - other.indices.len()) / 3;
+        let other_tri = other.indices.len() / 3;
+        if !other.face_kinds.is_empty() {
+            while self.face_kinds.len() < self_tri_before {
+                self.face_kinds.push(FaceKindTag::Unknown as u8);
+            }
+            self.face_kinds.extend_from_slice(&other.face_kinds);
+        } else if !self.face_kinds.is_empty() {
+            for _ in 0..other_tri {
+                self.face_kinds.push(FaceKindTag::Unknown as u8);
+            }
+        }
     }
 
     /// Build a map of undirected edge `(min_idx, max_idx)` → number of
@@ -356,6 +419,12 @@ fn weld_coincident_vertices(mesh: &mut TriangleMesh) {
         *remap_i = idx;
     }
     let mut new_indices: Vec<u32> = Vec::with_capacity(mesh.indices.len());
+    let had_face_kinds = mesh.face_kinds.len() == mesh.indices.len() / 3;
+    let mut new_face_kinds: Vec<u8> = if had_face_kinds {
+        Vec::with_capacity(mesh.face_kinds.len())
+    } else {
+        Vec::new()
+    };
     let tri_count = mesh.indices.len() / 3;
     for t in 0..tri_count {
         let a = remap[mesh.indices[3 * t] as usize];
@@ -365,10 +434,16 @@ fn weld_coincident_vertices(mesh: &mut TriangleMesh) {
             continue; // degenerate after weld — drop
         }
         new_indices.extend_from_slice(&[a, b, c]);
+        if had_face_kinds {
+            new_face_kinds.push(mesh.face_kinds[t]);
+        }
     }
     mesh.vertices = new_vertices;
     mesh.normals = new_normals;
     mesh.indices = new_indices;
+    if had_face_kinds {
+        mesh.face_kinds = new_face_kinds;
+    }
 }
 
 /// Close any boundary loop with at most `max_verts` vertices that
@@ -680,6 +755,9 @@ fn fill_tiny_boundary_loops(
                 mesh.indices.extend_from_slice(&[cx_idx, a, b]);
             } else {
                 mesh.indices.extend_from_slice(&[cx_idx, b, a]);
+            }
+            if !mesh.face_kinds.is_empty() {
+                mesh.face_kinds.push(FaceKindTag::FanFill as u8);
             }
         }
     }
@@ -3389,6 +3467,8 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
             SurfaceKind::Sphere | SurfaceKind::Torus
         );
         let pre_face_verts = mesh.num_vertices();
+        let pre_face_tris = mesh.indices.len() / 3;
+        let face_kind_tag: u8 = FaceKindTag::from(surface.surface_type()) as u8;
 
         match surface.surface_type() {
             SurfaceKind::Plane => {
@@ -3571,6 +3651,20 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
                     (mesh.vertices[3 * vi + 2] as f64 * 1000.0).round() as i64,
                 ]);
             }
+        }
+
+        // Tag every triangle this face added with its surface kind.
+        // Use OVERWRITE (not just extend) because `mesh.merge` may
+        // have already padded these slots with Unknown when the face's
+        // sub-mesh didn't carry tags of its own (degenerate-cap path
+        // uses `tessellate_disk_general`, which returns an untagged
+        // mesh).
+        let post_face_tris = mesh.indices.len() / 3;
+        while mesh.face_kinds.len() < post_face_tris {
+            mesh.face_kinds.push(FaceKindTag::Unknown as u8);
+        }
+        for t in pre_face_tris..post_face_tris {
+            mesh.face_kinds[t] = face_kind_tag;
         }
     }
 

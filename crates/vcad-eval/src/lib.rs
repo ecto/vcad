@@ -131,6 +131,13 @@ pub struct EvaluatedMesh {
     /// Optional vertex normals.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub normals: Option<Vec<f32>>,
+    /// Optional per-triangle face-kind tag (one byte per `indices / 3`).
+    /// Used by the viewport click-to-inspect debugger to identify
+    /// which BRep face (or synthetic fan-fill) contributed each
+    /// triangle. Values: 0=Unknown, 1=Plane, 2=Cylinder, 3=Sphere,
+    /// 4=Cone, 5=Bilinear, 6=Torus, 7=BSpline, 8=FanFill.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub face_kinds: Option<Vec<u8>>,
 }
 
 impl EvaluatedMesh {
@@ -140,6 +147,7 @@ impl EvaluatedMesh {
             positions: Vec::new(),
             indices: Vec::new(),
             normals: None,
+            face_kinds: None,
         }
     }
 }

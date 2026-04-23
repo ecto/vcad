@@ -198,6 +198,7 @@ mod tests {
                 0, 3, 5, 0, 5, 4,
             ],
             normals: vec![],
+            face_kinds: Vec::new(),
         }
     }
 

@@ -20,6 +20,7 @@ import { GridPlane } from "./GridPlane";
 import { SceneMesh, ImportedMesh } from "./SceneMesh";
 import { BoundaryEdgeOverlay } from "./BoundaryEdgeOverlay";
 import { useDebugOverlayStore } from "../stores/debug-overlay-store";
+import { InspectedTriangleMarker } from "./TriangleInspector";
 import { ClashMesh } from "./ClashMesh";
 import { PreviewMesh } from "./PreviewMesh";
 import { SketchPlane3D } from "./SketchPlane3D";
@@ -254,6 +255,29 @@ function DebugBoundaryOverlays() {
       })}
     </>
   );
+}
+
+/** Triangle picker R3F component: registers the Ctrl+Shift+T hotkey and
+ *  renders the highlight marker inside the scene rotation group. The
+ *  DOM info panel lives outside the Canvas — see `TriangleInspectionPanel`
+ *  mounted in the Viewport parent. */
+function DebugTriangleInspector() {
+  const inspectEnabled = useDebugOverlayStore((s) => s.inspectTriangles);
+  const toggle = useDebugOverlayStore((s) => s.toggleInspectTriangles);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && (e.key === "T" || e.key === "t")) {
+        e.preventDefault();
+        toggle();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [toggle]);
+
+  if (!inspectEnabled) return null;
+  return <InspectedTriangleMarker />;
 }
 
 export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
@@ -1370,6 +1394,9 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
                   Toggle with Ctrl+Shift+B or
                   __VCAD_DEBUG_OVERLAY.getState().toggleBoundaryEdges() */}
               <DebugBoundaryOverlays />
+              {/* Debug: click-to-inspect triangle picker.
+                  Toggle with Ctrl+Shift+T. */}
+              <DebugTriangleInspector />
           {/* Clash visualization (zebra pattern on intersections) */}
           {scene?.clashes.map((clashMesh, idx) => (
             <ClashMesh key={`clash-${idx}`} mesh={clashMesh} />

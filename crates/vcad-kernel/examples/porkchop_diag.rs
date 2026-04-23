@@ -144,12 +144,29 @@ fn main() {
         .iter()
         .filter(|j| matches!(j.outcome, JunctionOutcome::BuiltPatch { .. }))
         .count();
+    // Summarize face_kinds tag distribution in the mesh
+    let mut kind_counts = [0usize; 9];
+    for &k in &full.face_kinds {
+        if (k as usize) < kind_counts.len() {
+            kind_counts[k as usize] += 1;
+        }
+    }
+    let kind_names = [
+        "Unknown", "Plane", "Cylinder", "Sphere", "Cone", "Bilinear", "Torus", "BSpline", "FanFill",
+    ];
+
     println!("wrote to {}", out_dir.display());
     println!("  faces:           {}", per_face.len());
     println!(
         "  total triangles: {}",
         per_face.iter().map(|(_, _, m)| m.num_triangles()).sum::<usize>()
     );
+    println!("  triangles-by-face-kind tag:");
+    for (i, &n) in kind_counts.iter().enumerate() {
+        if n > 0 {
+            println!("    {:10} : {}", kind_names[i], n);
+        }
+    }
     println!(
         "  junctions: {} considered, {} patches built",
         trace.junctions.len(),

@@ -125,6 +125,12 @@ pub struct WasmMesh {
     /// When present, these are analytical surface normals for moiré-free rendering.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub normals: Option<Vec<f32>>,
+    /// Optional per-triangle face-kind tag (same length as `indices / 3`).
+    /// Values: 0 = Unknown, 1 = Plane, 2 = Cylinder, 3 = Sphere,
+    /// 4 = Cone, 5 = Bilinear, 6 = Torus, 7 = BSpline, 8 = FanFill.
+    /// Used by the viewport's click-to-inspect debugger.
+    #[serde(rename = "faceKinds", skip_serializing_if = "Option::is_none")]
+    pub face_kinds: Option<Vec<u8>>,
 }
 
 /// A 2D sketch segment (line or arc) for WASM input.
@@ -879,10 +885,16 @@ impl Solid {
         } else {
             None
         };
+        let face_kinds = if mesh.face_kinds.len() == mesh.indices.len() / 3 {
+            Some(mesh.face_kinds)
+        } else {
+            None
+        };
         let wasm_mesh = WasmMesh {
             positions: mesh.vertices,
             indices: mesh.indices,
             normals,
+            face_kinds,
         };
         serde_wasm_bindgen::to_value(&wasm_mesh).unwrap_or(JsValue::NULL)
     }
@@ -1182,6 +1194,7 @@ impl Solid {
                 vertices: all_vertices,
                 indices: all_indices,
                 normals: all_normals,
+                face_kinds: Vec::new(),
             };
             Some(vcad_kernel::Solid::from_mesh(merged_mesh))
         } else {
@@ -1472,6 +1485,7 @@ pub fn section_mesh_wasm(
         vertices: mesh_data.positions,
         indices: mesh_data.indices,
         normals: Vec::new(),
+        face_kinds: Vec::new(),
     };
 
     // Parse plane
@@ -1513,6 +1527,7 @@ pub fn project_mesh_wasm(mesh_js: JsValue, view_direction: &str) -> JsValue {
         vertices: mesh_data.positions,
         indices: mesh_data.indices,
         normals: Vec::new(),
+        face_kinds: Vec::new(),
     };
 
     let view_dir = match view_direction.to_lowercase().as_str() {
@@ -1959,6 +1974,7 @@ pub fn import_step_buffer(data: &[u8]) -> Result<JsValue, JsError> {
                 positions: mesh.vertices,
                 indices: mesh.indices,
                 normals,
+                face_kinds: None,
             }
         })
         .collect();
@@ -3397,6 +3413,7 @@ mod slicer_wasm {
             vertices: vertices.to_vec(),
             indices: indices.to_vec(),
             normals: Vec::new(),
+            face_kinds: Vec::new(),
         };
 
         let slice_settings: SliceSettings = settings.clone().into();
@@ -4652,6 +4669,13 @@ fn mesh_to_js(mesh: &vcad_eval::EvaluatedMesh) -> JsValue {
             &obj,
             &"normals".into(),
             &js_sys::Float32Array::from(normals.as_slice()).into(),
+        );
+    }
+    if let Some(ref face_kinds) = mesh.face_kinds {
+        let _ = js_sys::Reflect::set(
+            &obj,
+            &"faceKinds".into(),
+            &js_sys::Uint8Array::from(face_kinds.as_slice()).into(),
         );
     }
     obj.into()

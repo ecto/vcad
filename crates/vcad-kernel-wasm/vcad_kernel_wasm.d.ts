@@ -292,16 +292,6 @@ export class Solid {
     free(): void;
     [Symbol.dispose](): void;
     /**
-     * Return mesh boundary edges as a flat float array
-     * `[x0, y0, z0, x1, y1, z1, ...]` with each pair of 3-component
-     * positions defining one edge segment. Used by the viewport's
-     * "show boundary edges" overlay to surface tessellation holes.
-     *
-     * Closed, manifold meshes return an empty array; each entry means
-     * there's a hole in the mesh.
-     */
-    boundaryEdges(segments?: number | null): Float32Array;
-    /**
      * Get the bounding box as [minX, minY, minZ, maxX, maxY, maxZ].
      */
     boundingBox(): Float64Array;
@@ -659,20 +649,12 @@ export class WasmCamSettings {
 /**
  * CRDT-backed document engine for WASM.
  *
- * Wraps a `DocumentApi` (which wraps a `CrdtDocument`) and exposes both
- * typed mutations via `add_feature(json)` and legacy low-level CRDT methods.
+ * Wraps a `CrdtDocument` and maintains cached materialized state.
+ * All mutations return the updated document + parts as a JS value.
  */
 export class WasmDocumentEngine {
     free(): void;
     [Symbol.dispose](): void;
-    /**
-     * Add a feature from a JSON-serialized `FeatureInput` discriminated union.
-     *
-     * Example: `{"type":"Cube","size_x":10,"size_y":20,"size_z":30}`
-     *
-     * Returns `{ document, parts, consumedPartIds, createdFeatureId }`.
-     */
-    add_feature(input_json: string): any;
     /**
      * Whether redo is available.
      */
@@ -683,6 +665,9 @@ export class WasmDocumentEngine {
     can_undo(): boolean;
     /**
      * Compute a FractionalIndex position between two neighbor feature IDs.
+     *
+     * Pass `before_id_json` and `after_id_json` as feature ID strings (or empty/"" for boundaries).
+     * Returns the FractionalIndex as a JSON string.
      */
     compute_position_between(before_id_json: string, after_id_json: string): string;
     /**
@@ -695,10 +680,6 @@ export class WasmDocumentEngine {
      * Delete a feature by ID (JSON string).
      */
     delete_feature(feature_id_json: string): any;
-    /**
-     * Delete a feature by stable ID.
-     */
-    delete_feature_by_id(stable_id: string): any;
     /**
      * Load a legacy v1 JSON document and migrate to CRDT.
      */
@@ -725,6 +706,9 @@ export class WasmDocumentEngine {
     get_sync_clock(): string;
     /**
      * Import IR JSON into the current document (e.g. AI-generated geometry).
+     *
+     * Parses the IR, migrates it to CRDT features, and merges the ops into
+     * this document. Returns the standard mutation result.
      */
     import_ir(ir_json: string): any;
     /**
@@ -751,209 +735,17 @@ export class WasmDocumentEngine {
      */
     redo(): any;
     /**
-     * Rename a feature.
-     */
-    rename_feature(stable_id: string, name: string): any;
-    /**
      * Save the document to bytes.
      */
     save(): Uint8Array;
-    /**
-     * Set joint state.
-     */
-    set_joint_state(stable_id: string, state: number): any;
-    /**
-     * Set material on a feature.
-     */
-    set_material(stable_id: string, material: string): any;
     /**
      * Set a parameter on a feature.
      */
     set_param(feature_id_json: string, key: string, value_json: string): any;
     /**
-     * Set rotation on a feature.
-     */
-    set_rotation(stable_id: string, x: number, y: number, z: number): any;
-    /**
-     * Set scale on a feature.
-     */
-    set_scale(stable_id: string, x: number, y: number, z: number): any;
-    /**
-     * Set translation on a feature.
-     */
-    set_translation(stable_id: string, x: number, y: number, z: number): any;
-    /**
-     * Set visibility on a feature.
-     */
-    set_visible(stable_id: string, visible: boolean): any;
-    /**
      * Undo the last action.
      */
     undo(): any;
-    /**
-     * Update a feature with new params from a JSON-serialized `FeatureInput`.
-     */
-    update_feature(stable_id: string, input_json: string): any;
-}
-
-export class WasmKeybindings {
-    free(): void;
-    [Symbol.dispose](): void;
-    /**
-     * Return the effective chord (user override or default) for a command
-     * id, or `None` if disabled / unbound.
-     */
-    chordFor(id: string): string | undefined;
-    /**
-     * Returns a JSON array describing every registered command. The TS UI
-     * (command palette, keyboard prefs) reads this once at startup.
-     *
-     * Each entry is a [`CommandView`] — a flattened, owned projection of
-     * `Command` that serde can serialize (the source struct uses `&'static
-     * str` and a non-serializable `ModeScope` enum).
-     */
-    commandsJson(): string;
-    /**
-     * Report binding conflicts in the given mode: pairs of commands that
-     * share the same chord. Returns a JSON array for the prefs UI to
-     * highlight.
-     */
-    conflictsJson(mode_name: string): string;
-    /**
-     * Load overrides previously returned by [`save_overrides`]. Malformed
-     * entries are skipped — the caller never sees a parse failure for
-     * stale config.
-     */
-    loadOverrides(json: string): boolean;
-    /**
-     * Construct a fresh registry with all default bindings.
-     */
-    constructor();
-    /**
-     * Clear all user overrides, restoring default bindings.
-     */
-    resetAll(): void;
-    /**
-     * Resolve a chord to a command id.
-     *
-     * - `chord_json` is the JSON-serialized [`Chord`] produced by the TS
-     *   adapter (`chord.ts` normalizes `KeyboardEvent` → `Chord`).
-     * - `mode_name` is one of `"Normal" | "Sketch" | "Assembly" | ...`
-     *   (see [`AppMode`]).
-     * - `ctx_bits` is the packed u32 from [`WhenContext::bits`].
-     *
-     * Returns the command id on match, or `None` — the TS side checks for
-     * `null` and falls through if nothing binds.
-     */
-    resolve(chord_json: string, mode_name: string, ctx_bits: number): string | undefined;
-    /**
-     * Serialize user overrides for persistence (e.g. localStorage).
-     */
-    saveOverrides(): string;
-    /**
-     * Rebind a command. Pass a JSON-encoded chord to set, or `None` to
-     * clear (disabling the binding).
-     */
-    setBinding(id: string, chord_json?: string | null): void;
-}
-
-/**
- * A sketch editing session bound to JavaScript. See module docs.
- */
-export class WasmSketchSession {
-    free(): void;
-    [Symbol.dispose](): void;
-    /**
-     * Add a full circle.
-     */
-    addCircle(cx: number, cy: number, radius: number): void;
-    /**
-     * Add a constraint from a JSON object matching the TypeScript
-     * `SketchConstraint` shape.
-     */
-    addConstraint(json: string): void;
-    /**
-     * Add a line directly (for scripted / MCP use).
-     */
-    addLine(x1: number, y1: number, x2: number, y2: number): void;
-    /**
-     * Add an axis-aligned rectangle between two corners.
-     */
-    addRectangle(x1: number, y1: number, x2: number, y2: number): void;
-    /**
-     * Clear pending input.
-     */
-    cancelPending(): void;
-    /**
-     * Clear every entity and constraint.
-     */
-    clear(): void;
-    /**
-     * Clear the selection.
-     */
-    clearSelection(): void;
-    /**
-     * Construct a new session on the given plane.
-     *
-     * `plane_json` is either a JSON string (`"XY"` / `"XZ"` / `"YZ"`) or a
-     * JSON object `{ origin, xDir, yDir }` for a custom plane.
-     */
-    constructor(plane_json: string);
-    /**
-     * Handle a primary-button click at the current cursor position. Returns
-     * a short outcome string: `"no-cursor"`, `"selection"`, `"pending"`, or
-     * `"committed"`.
-     */
-    onClick(): string;
-    /**
-     * Clear the cursor.
-     */
-    onCursorLeave(): void;
-    /**
-     * Update the cursor from a world-space ray (e.g. camera pick ray).
-     */
-    onCursorRay(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number): void;
-    /**
-     * Update the cursor directly from 2D sketch coordinates.
-     */
-    onCursorSketch(x: number, y: number): void;
-    /**
-     * Handle a double-click (closes a polyline for the line tool).
-     */
-    onDoubleClick(): void;
-    /**
-     * Redo the last undone mutation. Returns `true` if anything was redone.
-     */
-    redo(): boolean;
-    /**
-     * Remove the constraint at `index`.
-     */
-    removeConstraint(index: number): void;
-    /**
-     * Configure snapping behavior.
-     */
-    setSnap(grid_enabled: boolean, grid_size: number, point_enabled: boolean, point_tolerance: number): void;
-    /**
-     * Change the active drawing tool. Unknown names are ignored.
-     */
-    setTool(tool: string): void;
-    /**
-     * Return a JSON snapshot of the full session state. React can mirror
-     * this into its own store on every mutation.
-     */
-    snapshot(): string;
-    /**
-     * Run the constraint solver. Returns `true` if it converged.
-     */
-    solve(): boolean;
-    /**
-     * Test-select or deselect a segment.
-     */
-    toggleSelection(segment_index: number): void;
-    /**
-     * Undo the last mutation. Returns `true` if anything was undone.
-     */
-    undo(): boolean;
 }
 
 /**
@@ -963,21 +755,6 @@ export class WasmSketchSession {
  * Only works on solids with BRep data (primitives, not boolean results).
  */
 export function analyzeForPrinting(solid: Solid): any;
-
-/**
- * Build the system prompt sent with every `/api/chat` request.
- *
- * `parts_json` must deserialize into `Vec<vcad_chat::PartInfo>` (the TS
- * web caller already walks its own document store to build this shape,
- * so we accept it pre-built rather than reserializing the full Document
- * through the wasm boundary on every request). `selection_json` must
- * deserialize into `Vec<vcad_chat::SelectionInfo>`. Either defaults to
- * an empty array on parse failure.
- *
- * Returns the rendered prompt string — byte-identical to what the TUI
- * produces via `vcad_chat::build_system_prompt` for the same inputs.
- */
-export function build_chat_system_prompt(parts_json: string, selection_json: string): string;
 
 /**
  * Generate a height field from mesh using drop-cutter algorithm.
@@ -1365,6 +1142,20 @@ export function estimatePrintCost(volume_mm3: number, infill_density: number, wa
 export function evalVcadSource(source: string): any;
 
 /**
+ * Evaluate VCode and return a Solid for rendering.
+ *
+ * This is a convenience function that parses VCode and evaluates
+ * the geometry in a single step.
+ *
+ * # Arguments
+ * * `vcode` - The VCode text to evaluate
+ *
+ * # Returns
+ * A Solid object that can be rendered or queried.
+ */
+export function evaluateVCode(vcode: string): Solid;
+
+/**
  * Evaluate a full vcad document JSON into a serialized EvaluatedScene.
  *
  * This is the canonical Rust-side evaluator that handles all CsgOp variants
@@ -1381,20 +1172,6 @@ export function evalVcadSource(source: string): any;
  * A JsValue containing the serialized EvaluatedScene.
  */
 export function evaluateDocument(doc_json: string, skip_clash_detection: boolean): any;
-
-/**
- * Evaluate VCode and return a Solid for rendering.
- *
- * This is a convenience function that parses VCode and evaluates
- * the geometry in a single step.
- *
- * # Arguments
- * * `vcode` - The VCode text to evaluate
- *
- * # Returns
- * A Solid object that can be rendered or queried.
- */
-export function evaluateVCode(vcode: string): Solid;
 
 /**
  * Export a projected view to DXF format.
@@ -1427,28 +1204,11 @@ export function generateGcode(result: SliceResult, printer_profile: string, prin
 export function getSlicerPrinterProfiles(): any;
 
 /**
- * Get the five Anthropic CRUD tool definitions
- * (`create` / `read` / `update` / `delete` / `set_material`) as a JSON
- * array, with the `create` tool's `type` enum pre-populated from the
- * kernel's tool schema list. Consumers on the web (TypeScript
- * `CommandRegistry.toAnthropicTools`) and in the TUI (`vcad_chat::
- * anthropic_tools`) render byte-identical payloads — single source of
- * truth lives in `vcad-chat::tools`.
- */
-export function get_anthropic_tools_json(): string;
-
-/**
  * Get the kernel version string.
  * Use this in browser console to verify the correct WASM build is loaded:
  * `kernelWasm.get_kernel_version()` should return "2025-02-21-step-facebound-fix"
  */
 export function get_kernel_version(): string;
-
-/**
- * Get tool schema definitions for all CsgOp variants.
- * Returns JSON array of ToolSchemaEntry objects.
- */
-export function get_tool_schemas(): string;
 
 /**
  * Import solids from STEP file bytes.
@@ -1571,17 +1331,6 @@ export function op_sweep_helix(profile_json: string, radius: number, pitch: numb
 export function op_sweep_line(profile_json: string, start: Float64Array, end: Float64Array, twist_angle?: number | null, scale_start?: number | null, scale_end?: number | null, orientation?: number | null): Solid;
 
 /**
- * Parse a KiCad `.kicad_pcb` file content into a JSON-serialized `Pcb`.
- *
- * # Arguments
- * * `content` - The `.kicad_pcb` file content as a string
- *
- * # Returns
- * JSON-serialized `Pcb` struct as JsValue, or error.
- */
-export function parseKicadPcb(content: string): any;
-
-/**
  * Parse VCode text format into a vcad IR Document (JSON).
  *
  * The VCode format is a token-efficient text representation designed
@@ -1603,13 +1352,22 @@ export function parseKicadPcb(content: string): any;
 export function parseVCode(vcode: string): string;
 
 /**
- * Parse a .vcad file (JSON v0.1, VCode v0.2, or loon v0.3).
+ * Parse a KiCad `.kicad_pcb` file content into a JSON-serialized `Pcb`.
+ *
+ * # Arguments
+ * * `content` - The `.kicad_pcb` file content as a string
+ *
+ * # Returns
+ * JSON-serialized `Pcb` struct as JsValue, or error.
+ */
+export function parseKicadPcb(content: string): any;
+
+/**
+ * Parse a .vcad file (JSON v0.1, compact v0.2, or loon v0.3).
  *
  * Returns a JSON-serialized VcadFile with document, parts, and metadata.
  */
 export function parseVcadFile(content: string): any;
-
-export function plan_chat_tool(tool: string, args_json: string, doc_json: string): string;
 
 /**
  * Process geometry with GPU acceleration.
@@ -1674,57 +1432,6 @@ export function recommendPrintSettings(analysis_json: string, printer_profile: s
 export function sectionMesh(mesh_js: any, plane_json: string, hatch_json?: string | null): any;
 
 /**
- * Build an N-sided polygonal approximation of a circle as arc segments.
- * Returns a JSON array of `SketchSegment2D`.
- */
-export function sketchCircleSegments(cx: number, cy: number, radius: number, segments: number): string;
-
-/**
- * Find the segment-index closest to `(x, y)` within `tolerance`. Returns
- * `-1` if no segment is within reach.
- */
-export function sketchHitTest(segments_json: string, x: number, y: number, tolerance: number): number;
-
-/**
- * Return a plane's `{origin, xDir, yDir, normal}` as JSON. Accepts either a
- * named plane string or a custom-plane object (same shape as
- * [`WasmSketchSession`]'s constructor argument).
- */
-export function sketchPlaneBasis(plane_json: string): string;
-
-/**
- * Intersect a world-space ray with a plane and return the hit in 2D
- * sketch coordinates as `[x, y]` JSON, or the literal string `"null"` when
- * the ray is parallel to the plane.
- */
-export function sketchPlaneIntersectRay(plane_json: string, ox: number, oy: number, oz: number, dx: number, dy: number, dz: number): string;
-
-/**
- * Build the four line segments of an axis-aligned rectangle between two
- * opposite corners. Returns a JSON array of `SketchSegment2D`.
- */
-export function sketchRectangleSegments(p1x: number, p1y: number, p2x: number, p2y: number): string;
-
-/**
- * Snap a 2D point against a segment list with grid + vertex rules. Returns
- * `{x, y, snapTarget}` JSON — the snapped position plus (if a vertex snap
- * fired) the vertex that was matched.
- */
-export function sketchSnap(segments_json: string, x: number, y: number, grid_enabled: boolean, grid_size: number, point_enabled: boolean, point_tolerance: number): string;
-
-/**
- * Convert 2D sketch coordinates to a 3D world-space point, returning
- * `[x, y, z]` JSON.
- */
-export function sketchToWorld(plane_json: string, sx: number, sy: number): string;
-
-/**
- * Project a 3D world-space point onto a plane, returning 2D sketch
- * coordinates as `[x, y]` JSON.
- */
-export function sketchWorldToSketch(plane_json: string, wx: number, wy: number, wz: number): string;
-
-/**
  * Slice a mesh from vertices and indices.
  */
 export function sliceMesh(vertices: Float32Array, indices: Uint32Array, settings: SlicerSettings): SliceResult;
@@ -1746,18 +1453,6 @@ export function sliceSolid(solid: Solid, settings: SlicerSettings, segments?: nu
  * A JsValue containing a Map of instance_id -> Transform3D.
  */
 export function solveForwardKinematics(doc_json: string): any;
-
-/**
- * Solve a TS-shaped sketch in one call.
- *
- * Takes a JSON array of `SketchSegment2D` and a JSON array of
- * `SketchConstraint`, runs the Levenberg-Marquardt solver, and returns a
- * JSON object `{ segments, converged }` where `segments` is the solved
- * segment list in the same order as the input. Segments that don't belong
- * to the constraint system (e.g. circle-as-arcs that live purely for
- * rendering) pass through unchanged.
- */
-export function solveSketchSegments(segments_json: string, constraints_json: string): string;
 
 /**
  * Get the bounding box of rendered text.
@@ -1810,7 +1505,6 @@ export interface InitOutput {
     readonly __wbg_raytracer_free: (a: number, b: number) => void;
     readonly __wbg_solid_free: (a: number, b: number) => void;
     readonly __wbg_wasmannotationlayer_free: (a: number, b: number) => void;
-    readonly build_chat_system_prompt: (a: number, b: number, c: number, d: number) => [number, number];
     readonly computeCreasedNormalsGpu: (a: number, b: number, c: number, d: number, e: number) => any;
     readonly computeMeshVolume: (a: number, b: number, c: number, d: number) => number;
     readonly createDetailView: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
@@ -1818,12 +1512,10 @@ export interface InitOutput {
     readonly deriveParts: (a: number, b: number) => [number, number, number];
     readonly documentToLoon: (a: number, b: number) => [number, number, number, number];
     readonly evalVcadSource: (a: number, b: number) => [number, number, number];
-    readonly evaluateDocument: (a: number, b: number, c: number) => [number, number, number];
     readonly evaluateVCode: (a: number, b: number) => [number, number, number];
+    readonly evaluateDocument: (a: number, b: number, c: number) => [number, number, number];
     readonly exportProjectedViewToDxf: (a: number, b: number) => [number, number, number, number];
-    readonly get_anthropic_tools_json: () => [number, number];
     readonly get_kernel_version: () => [number, number];
-    readonly get_tool_schemas: () => [number, number];
     readonly importStepBuffer: (a: number, b: number) => [number, number, number];
     readonly init: () => void;
     readonly initGpu: () => any;
@@ -1850,7 +1542,6 @@ export interface InitOutput {
     readonly physicssim_stepPosition: (a: number, b: number, c: number) => any;
     readonly physicssim_stepTorque: (a: number, b: number, c: number) => any;
     readonly physicssim_stepVelocity: (a: number, b: number, c: number) => any;
-    readonly plan_chat_tool: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly processGeometryGpu: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
     readonly projectMesh: (a: any, b: number, c: number) => any;
     readonly raytracer_canRaytrace: (a: number) => number;
@@ -1867,7 +1558,6 @@ export interface InitOutput {
     readonly raytracer_setMaterial: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly raytracer_uploadSolid: (a: number, b: number) => [number, number];
     readonly sectionMesh: (a: any, b: number, c: number, d: number, e: number) => any;
-    readonly solid_boundaryEdges: (a: number, b: number) => [number, number];
     readonly solid_boundingBox: (a: number) => [number, number];
     readonly solid_centerOfMass: (a: number) => [number, number];
     readonly solid_cone: (a: number, b: number, c: number, d: number) => number;
@@ -1910,6 +1600,7 @@ export interface InitOutput {
     readonly wasmannotationlayer_isEmpty: (a: number) => number;
     readonly wasmannotationlayer_new: () => number;
     readonly wasmannotationlayer_renderAll: (a: number, b: number, c: number) => any;
+    readonly solid_revolve: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number];
     readonly physicssim_numJoints: (a: number) => number;
     readonly solid_linearPattern: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
     readonly solid_canExportStep: (a: number) => number;
@@ -1917,7 +1608,6 @@ export interface InitOutput {
     readonly solid_fillet: (a: number, b: number) => number;
     readonly solid_shell: (a: number, b: number) => number;
     readonly solid_circularPattern: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
-    readonly solid_revolve: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number];
     readonly __wbg_get_slicersettings_first_layer_height: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_density: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_pattern: (a: number) => number;
@@ -1938,9 +1628,25 @@ export interface InitOutput {
     readonly __wbg_set_slicersettings_wall_count: (a: number, b: number) => void;
     readonly __wbg_sliceresult_free: (a: number, b: number) => void;
     readonly __wbg_slicersettings_free: (a: number, b: number) => void;
-    readonly __wbg_wasmkeybindings_free: (a: number, b: number) => void;
     readonly analyzeForPrinting: (a: number) => [number, number, number];
     readonly checkPrintability: (a: number, b: number, c: number) => [number, number, number];
+    readonly estimatePrintCost: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly generate3mf: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly generateGcode: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly getSlicerPrinterProfiles: () => [number, number, number];
+    readonly isSlicerAvailable: () => number;
+    readonly recommendPrintSettings: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly sliceMesh: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
+    readonly sliceSolid: (a: number, b: number, c: number) => [number, number, number];
+    readonly sliceresult_filamentGrams: (a: number) => number;
+    readonly sliceresult_filamentMm: (a: number) => number;
+    readonly sliceresult_getLayerPreview: (a: number, b: number) => [number, number, number];
+    readonly sliceresult_layerCount: (a: number) => number;
+    readonly sliceresult_printTimeSeconds: (a: number) => number;
+    readonly sliceresult_statsJson: (a: number) => [number, number, number, number];
+    readonly slicersettings_fromJson: (a: number, b: number) => [number, number, number];
+    readonly slicersettings_new: () => number;
+    readonly __wbg_wasmdocumentengine_free: (a: number, b: number) => void;
     readonly ecadBuiltinSymbols: () => [number, number, number];
     readonly ecadCheckDrc: (a: number, b: number) => [number, number, number];
     readonly ecadCheckErc: (a: number, b: number) => [number, number, number];
@@ -1953,41 +1659,13 @@ export interface InitOutput {
     readonly ecadNetForWire: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly ecadRouteNet: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
     readonly ecadSnapToGridOrPin: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly estimatePrintCost: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly generate3mf: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly generateGcode: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
-    readonly getSlicerPrinterProfiles: () => [number, number, number];
     readonly isEcadAvailable: () => number;
     readonly parseKicadPcb: (a: number, b: number) => [number, number, number];
-    readonly recommendPrintSettings: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly sliceMesh: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
-    readonly sliceSolid: (a: number, b: number, c: number) => [number, number, number];
-    readonly sliceresult_filamentGrams: (a: number) => number;
-    readonly sliceresult_filamentMm: (a: number) => number;
-    readonly sliceresult_getLayerPreview: (a: number, b: number) => [number, number, number];
-    readonly sliceresult_layerCount: (a: number) => number;
-    readonly sliceresult_printTimeSeconds: (a: number) => number;
-    readonly sliceresult_statsJson: (a: number) => [number, number, number, number];
-    readonly slicersettings_fromJson: (a: number, b: number) => [number, number, number];
-    readonly slicersettings_new: () => number;
-    readonly wasmkeybindings_chordFor: (a: number, b: number, c: number) => [number, number];
-    readonly wasmkeybindings_commandsJson: (a: number) => [number, number];
-    readonly wasmkeybindings_conflictsJson: (a: number, b: number, c: number) => [number, number];
-    readonly wasmkeybindings_loadOverrides: (a: number, b: number, c: number) => number;
-    readonly wasmkeybindings_new: () => number;
-    readonly wasmkeybindings_resetAll: (a: number) => void;
-    readonly wasmkeybindings_resolve: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
-    readonly wasmkeybindings_saveOverrides: (a: number) => [number, number];
-    readonly wasmkeybindings_setBinding: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly isSlicerAvailable: () => number;
-    readonly __wbg_wasmdocumentengine_free: (a: number, b: number) => void;
-    readonly wasmdocumentengine_add_feature: (a: number, b: number, c: number) => any;
     readonly wasmdocumentengine_can_redo: (a: number) => number;
     readonly wasmdocumentengine_can_undo: (a: number) => number;
     readonly wasmdocumentengine_compute_position_between: (a: number, b: number, c: number, d: number, e: number) => [number, number];
     readonly wasmdocumentengine_create_feature: (a: number, b: number, c: number, d: number, e: number) => any;
     readonly wasmdocumentengine_delete_feature: (a: number, b: number, c: number) => any;
-    readonly wasmdocumentengine_delete_feature_by_id: (a: number, b: number, c: number) => any;
     readonly wasmdocumentengine_from_v1_json: (a: number, b: number) => [number, number, number];
     readonly wasmdocumentengine_get_document_json: (a: number) => [number, number];
     readonly wasmdocumentengine_get_ops_since: (a: number, b: number, c: number) => [number, number];
@@ -2000,48 +1678,9 @@ export interface InitOutput {
     readonly wasmdocumentengine_move_feature: (a: number, b: number, c: number, d: number, e: number) => any;
     readonly wasmdocumentengine_new: () => number;
     readonly wasmdocumentengine_redo: (a: number) => any;
-    readonly wasmdocumentengine_rename_feature: (a: number, b: number, c: number, d: number, e: number) => any;
     readonly wasmdocumentengine_save: (a: number) => [number, number];
-    readonly wasmdocumentengine_set_joint_state: (a: number, b: number, c: number, d: number) => any;
-    readonly wasmdocumentengine_set_material: (a: number, b: number, c: number, d: number, e: number) => any;
     readonly wasmdocumentengine_set_param: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
-    readonly wasmdocumentengine_set_rotation: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
-    readonly wasmdocumentengine_set_scale: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
-    readonly wasmdocumentengine_set_translation: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
-    readonly wasmdocumentengine_set_visible: (a: number, b: number, c: number, d: number) => any;
     readonly wasmdocumentengine_undo: (a: number) => any;
-    readonly wasmdocumentengine_update_feature: (a: number, b: number, c: number, d: number, e: number) => any;
-    readonly __wbg_wasmsketchsession_free: (a: number, b: number) => void;
-    readonly sketchCircleSegments: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly sketchHitTest: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
-    readonly sketchPlaneBasis: (a: number, b: number) => [number, number, number, number];
-    readonly sketchPlaneIntersectRay: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly sketchRectangleSegments: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly sketchSnap: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly sketchToWorld: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly sketchWorldToSketch: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
-    readonly solveSketchSegments: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly wasmsketchsession_addCircle: (a: number, b: number, c: number, d: number) => void;
-    readonly wasmsketchsession_addConstraint: (a: number, b: number, c: number) => [number, number];
-    readonly wasmsketchsession_addLine: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly wasmsketchsession_addRectangle: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly wasmsketchsession_cancelPending: (a: number) => void;
-    readonly wasmsketchsession_clear: (a: number) => void;
-    readonly wasmsketchsession_clearSelection: (a: number) => void;
-    readonly wasmsketchsession_new: (a: number, b: number) => [number, number, number];
-    readonly wasmsketchsession_onClick: (a: number) => [number, number];
-    readonly wasmsketchsession_onCursorLeave: (a: number) => void;
-    readonly wasmsketchsession_onCursorRay: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
-    readonly wasmsketchsession_onCursorSketch: (a: number, b: number, c: number) => void;
-    readonly wasmsketchsession_onDoubleClick: (a: number) => void;
-    readonly wasmsketchsession_redo: (a: number) => number;
-    readonly wasmsketchsession_removeConstraint: (a: number, b: number) => void;
-    readonly wasmsketchsession_setSnap: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly wasmsketchsession_setTool: (a: number, b: number, c: number) => void;
-    readonly wasmsketchsession_snapshot: (a: number) => [number, number, number, number];
-    readonly wasmsketchsession_solve: (a: number) => number;
-    readonly wasmsketchsession_toggleSelection: (a: number, b: number) => void;
-    readonly wasmsketchsession_undo: (a: number) => number;
     readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
     readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
     readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;
@@ -2067,21 +1706,21 @@ export interface InitOutput {
     readonly camGenerateRoughing3d: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
     readonly camGetDefaultTools: () => [number, number, number, number];
     readonly camToolpathStats: (a: number, b: number) => [number, number, number];
-    readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly isCamAvailable: () => number;
-    readonly readEmbroideryDst: (a: number, b: number) => [number, number, number, number];
-    readonly readEmbroideryPes: (a: number, b: number) => [number, number, number, number];
     readonly wasmcamsettings_fromJson: (a: number, b: number) => [number, number, number];
     readonly wasmcamsettings_new: () => number;
+    readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly isEmbroideryAvailable: () => number;
+    readonly readEmbroideryDst: (a: number, b: number) => [number, number, number, number];
+    readonly readEmbroideryPes: (a: number, b: number) => [number, number, number, number];
     readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
     readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
-    readonly isEmbroideryAvailable: () => number;
-    readonly wasm_bindgen__closure__destroy__hd298f46ef6753d27: (a: number, b: number) => void;
-    readonly wasm_bindgen__closure__destroy__h05cb0c14e4c64d12: (a: number, b: number) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h63f4e2fd076fb3c1: (a: number, b: number, c: any, d: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h7d640a285617a4e6: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__hb8699e4a26455b57: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__closure__destroy__hb866a658679f7c90: (a: number, b: number) => void;
+    readonly wasm_bindgen__closure__destroy__ha3f46f4f424453fe: (a: number, b: number) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h7fe4e9d895e0bfbd: (a: number, b: number, c: any, d: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__hd3174526aa1241bc: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h3b7e8ca02e296028: (a: number, b: number, c: any) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;

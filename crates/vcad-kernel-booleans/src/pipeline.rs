@@ -60,6 +60,7 @@ pub(crate) fn non_overlapping_boolean(
                 vertices: Vec::new(),
                 indices: Vec::new(),
                 normals: Vec::new(),
+                face_kinds: Vec::new(),
             })
         }
     }

@@ -74,6 +74,7 @@ fn make_bracket_mesh() -> TriangleMesh {
         vertices,
         indices,
         normals: Vec::new(),
+            face_kinds: Vec::new(),
     }
 }
 

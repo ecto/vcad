@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "vcad-app",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "set -a && source .env && set +a && TAURI_DEV=1 npm run dev -w @vcad/app"
+      ],
+      "port": 5173
+    }
+  ]
+}

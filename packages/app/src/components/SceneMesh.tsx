@@ -14,6 +14,11 @@ import {
   hasProceduralShader,
   getProceduralShaderForMaterial,
 } from "@/shaders";
+import { useDebugOverlayStore } from "@/stores/debug-overlay-store";
+import {
+  FACE_KIND_NAMES,
+  inspectTriangleFromMesh as runInspectTriangle,
+} from "./TriangleInspector";
 
 const HOVER_EMISSIVE = new THREE.Color(0xffb800); // neon amber
 const FACE_HIGHLIGHT_COLOR = new THREE.Color(0x00d4ff); // cyan for face selection
@@ -613,11 +618,25 @@ export const SceneMesh = memo(function SceneMesh({
     setIsRenaming(false);
   }, [partInfo.name]);
 
+  const inspectTriangles = useDebugOverlayStore((s) => s.inspectTriangles);
+  const setCurrentInspection = useDebugOverlayStore((s) => s.setCurrentInspection);
+
   const handleClick = useCallback(
     (e: ThreeEvent<MouseEvent>) => {
       // Ignore the click that fires after a camera rotate/pan gesture.
       if (viewportWasDrag()) return;
       e.stopPropagation();
+
+      // Debug triangle inspector: when enabled, show triangle info.
+      if (inspectTriangles && e.faceIndex != null) {
+        const result = runInspectTriangle(mesh, e.faceIndex);
+        if (result) {
+          setCurrentInspection(result);
+          // eslint-disable-next-line no-console
+          console.log("[triangle-inspector]", result);
+        }
+        return;
+      }
 
       // In face selection mode, select the face
       if (faceSelectionMode && e.faceIndex != null) {
@@ -633,7 +652,16 @@ export const SceneMesh = memo(function SceneMesh({
         select(partInfo.id);
       }
     },
-    [faceSelectionMode, mesh, partInfo.id, selectFace, toggleSelect, select],
+    [
+      faceSelectionMode,
+      mesh,
+      partInfo.id,
+      selectFace,
+      toggleSelect,
+      select,
+      inspectTriangles,
+      setCurrentInspection,
+    ],
   );
 
   const handlePointerMove = useCallback(
