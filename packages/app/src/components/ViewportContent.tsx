@@ -1,5 +1,5 @@
 import { useRef, useEffect, useMemo, useState, useCallback, Suspense } from "react";
-import { Spherical, Vector3, Box3, Plane, Raycaster, Vector2, Quaternion, Matrix4, Color, TOUCH, PerspectiveCamera, WebGLRenderTarget, SRGBColorSpace } from "three";
+import { Spherical, Vector3, Box3, Plane, Raycaster, Vector2, Quaternion, Matrix4, Color, TOUCH, PerspectiveCamera, WebGLRenderTarget, SRGBColorSpace, ACESFilmicToneMapping } from "three";
 
 const isCoarsePointer =
   typeof window !== "undefined" &&
@@ -970,14 +970,30 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
       tempCam.lookAt(tx, ty, tz);
       tempCam.updateMatrixWorld();
 
-      const rt = new WebGLRenderTarget(w, h, { samples: 4 });
-      rt.texture.colorSpace = SRGBColorSpace;
+      const rt = new WebGLRenderTarget(w, h, {
+        samples: 4,
+        colorSpace: SRGBColorSpace,
+      });
 
+      // EffectComposer/postprocessing passes mutate renderer state (tone
+      // mapping, output colorspace) while compositing. If the capture lands
+      // between those passes, the scene is rendered linearly but the 2D canvas
+      // interprets the bytes as sRGB, producing a green-tinted image. Pin the
+      // relevant state to known values here and restore after.
       const prevTarget = gl.getRenderTarget();
+      const prevToneMapping = gl.toneMapping;
+      const prevToneMappingExposure = gl.toneMappingExposure;
+      const prevOutputColorSpace = gl.outputColorSpace;
+      gl.toneMapping = ACESFilmicToneMapping;
+      gl.toneMappingExposure = 1.0;
+      gl.outputColorSpace = SRGBColorSpace;
       gl.setRenderTarget(rt);
       gl.clear();
       gl.render(r3fScene, tempCam);
       gl.setRenderTarget(prevTarget);
+      gl.toneMapping = prevToneMapping;
+      gl.toneMappingExposure = prevToneMappingExposure;
+      gl.outputColorSpace = prevOutputColorSpace;
 
       const buffer = new Uint8Array(w * h * 4);
       gl.readRenderTargetPixels(rt, 0, 0, w, h, buffer);
