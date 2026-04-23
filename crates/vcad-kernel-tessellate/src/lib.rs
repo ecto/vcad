@@ -14,6 +14,48 @@ use vcad_kernel_math::{Point2, Point3, Vec3};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_topo::{FaceId, Orientation, Topology};
 
+/// Per-triangle tag identifying which face kind the triangle came from.
+/// Encoded as a single byte per triangle; `FanFill` = 8 marks the
+/// synthetic armpit-fan triangles added post-weld.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FaceKindTag {
+    /// Default / unknown.
+    Unknown = 0,
+    /// Plane.
+    Plane = 1,
+    /// Cylinder.
+    Cylinder = 2,
+    /// Sphere.
+    Sphere = 3,
+    /// Cone.
+    Cone = 4,
+    /// Bilinear.
+    Bilinear = 5,
+    /// Torus.
+    Torus = 6,
+    /// B-spline surface.
+    BSpline = 7,
+    /// Synthetic fan-fill triangle (added post-weld in
+    /// `fill_tiny_boundary_loops` to close armpit gaps). Doesn't
+    /// correspond to a BRep face.
+    FanFill = 8,
+}
+
+impl From<SurfaceKind> for FaceKindTag {
+    fn from(kind: SurfaceKind) -> Self {
+        match kind {
+            SurfaceKind::Plane => FaceKindTag::Plane,
+            SurfaceKind::Cylinder => FaceKindTag::Cylinder,
+            SurfaceKind::Sphere => FaceKindTag::Sphere,
+            SurfaceKind::Cone => FaceKindTag::Cone,
+            SurfaceKind::Bilinear => FaceKindTag::Bilinear,
+            SurfaceKind::Torus => FaceKindTag::Torus,
+            SurfaceKind::BSpline => FaceKindTag::BSpline,
+        }
+    }
+}
+
 /// Output triangle mesh for rendering and export.
 #[derive(Debug, Clone)]
 pub struct TriangleMesh {
@@ -23,6 +65,11 @@ pub struct TriangleMesh {
     pub indices: Vec<u32>,
     /// Flat array of vertex normals: `[nx0, ny0, nz0, ...]` (f32). Same length as vertices.
     pub normals: Vec<f32>,
+    /// One byte per triangle (same length as `indices / 3`) tagging
+    /// which face kind contributed it. Populated by `tessellate_brep`
+    /// for debugging / inspection. Empty when the mesh was built
+    /// without tagging (legacy paths).
+    pub face_kinds: Vec<u8>,
 }
 
 impl TriangleMesh {
@@ -32,6 +79,7 @@ impl TriangleMesh {
             vertices: Vec::new(),
             indices: Vec::new(),
             normals: Vec::new(),
+            face_kinds: Vec::new(),
         }
     }
 
@@ -77,6 +125,143 @@ impl TriangleMesh {
         self.normals.extend_from_slice(&other.normals);
         self.indices
             .extend(other.indices.iter().map(|&i| i + offset));
+        // face_kinds is per-triangle (one u8 per 3 indices). Pad with
+        // Unknown when one side doesn't carry tags so the combined
+        // array stays in lockstep with `indices / 3`.
+        let self_tri_before = (self.indices.len() - other.indices.len()) / 3;
+        let other_tri = other.indices.len() / 3;
+        if !other.face_kinds.is_empty() {
+            while self.face_kinds.len() < self_tri_before {
+                self.face_kinds.push(FaceKindTag::Unknown as u8);
+            }
+            self.face_kinds.extend_from_slice(&other.face_kinds);
+        } else if !self.face_kinds.is_empty() {
+            for _ in 0..other_tri {
+                self.face_kinds.push(FaceKindTag::Unknown as u8);
+            }
+        }
+    }
+
+    /// Build a map of undirected edge `(min_idx, max_idx)` → number of
+    /// adjacent triangles. Used by boundary / non-manifold diagnostics.
+    fn edge_use_counts(&self) -> std::collections::HashMap<(u32, u32), u32> {
+        let mut counts: std::collections::HashMap<(u32, u32), u32> =
+            std::collections::HashMap::new();
+        let tri_count = self.indices.len() / 3;
+        for t in 0..tri_count {
+            let tri = [
+                self.indices[3 * t],
+                self.indices[3 * t + 1],
+                self.indices[3 * t + 2],
+            ];
+            for i in 0..3 {
+                let a = tri[i];
+                let b = tri[(i + 1) % 3];
+                let key = if a < b { (a, b) } else { (b, a) };
+                *counts.entry(key).or_insert(0) += 1;
+            }
+        }
+        counts
+    }
+
+    /// Find boundary edges: edges adjacent to exactly one triangle. In a
+    /// closed manifold mesh this vector is empty; any entry points at a
+    /// hole in the tessellation (e.g. the visible armpit gaps on the
+    /// pork-chop fillet).
+    ///
+    /// Returned as `(vertex_index_a, vertex_index_b)` with `a < b`.
+    pub fn boundary_edges(&self) -> Vec<(u32, u32)> {
+        self.edge_use_counts()
+            .into_iter()
+            .filter(|(_, n)| *n == 1)
+            .map(|(e, _)| e)
+            .collect()
+    }
+
+    /// Like `boundary_edges` but returns each edge as a pair of world-
+    /// space endpoints `[p_a, p_b]`. Convenient for dumping directly
+    /// into a visualizer or log.
+    pub fn boundary_edge_positions(&self) -> Vec<[[f32; 3]; 2]> {
+        self.boundary_edges()
+            .into_iter()
+            .map(|(a, b)| {
+                let ia = a as usize * 3;
+                let ib = b as usize * 3;
+                [
+                    [
+                        self.vertices[ia],
+                        self.vertices[ia + 1],
+                        self.vertices[ia + 2],
+                    ],
+                    [
+                        self.vertices[ib],
+                        self.vertices[ib + 1],
+                        self.vertices[ib + 2],
+                    ],
+                ]
+            })
+            .collect()
+    }
+
+    /// Find non-manifold edges: edges adjacent to 3 or more triangles.
+    /// A closed manifold mesh has none; any entry indicates a topology
+    /// bug (overlapping faces, welded seams crossing themselves, etc.).
+    pub fn non_manifold_edges(&self) -> Vec<(u32, u32, u32)> {
+        self.edge_use_counts()
+            .into_iter()
+            .filter(|(_, n)| *n >= 3)
+            .map(|((a, b), n)| (a, b, n))
+            .collect()
+    }
+
+    /// Group boundary edges into connected loops (chains of vertex
+    /// indices). Each loop should close on itself in a well-formed
+    /// hole; if it doesn't, the returned chain ends at the first
+    /// vertex that has no unvisited boundary neighbor.
+    pub fn boundary_loops(&self) -> Vec<Vec<u32>> {
+        let edges = self.boundary_edges();
+        if edges.is_empty() {
+            return Vec::new();
+        }
+        let mut adj: std::collections::HashMap<u32, Vec<u32>> = std::collections::HashMap::new();
+        for &(a, b) in &edges {
+            adj.entry(a).or_default().push(b);
+            adj.entry(b).or_default().push(a);
+        }
+        let mut visited_edges: std::collections::HashSet<(u32, u32)> =
+            std::collections::HashSet::new();
+        let ek = |a: u32, b: u32| if a < b { (a, b) } else { (b, a) };
+        let mut loops: Vec<Vec<u32>> = Vec::new();
+        for &(start_a, start_b) in &edges {
+            if visited_edges.contains(&ek(start_a, start_b)) {
+                continue;
+            }
+            visited_edges.insert(ek(start_a, start_b));
+            let mut chain = vec![start_a, start_b];
+            loop {
+                let cur = *chain.last().unwrap();
+                let prev = chain[chain.len() - 2];
+                let next = match adj.get(&cur) {
+                    Some(nbrs) => nbrs
+                        .iter()
+                        .copied()
+                        .find(|&n| n != prev && !visited_edges.contains(&ek(cur, n))),
+                    None => None,
+                };
+                match next {
+                    Some(n) => {
+                        visited_edges.insert(ek(cur, n));
+                        if n == start_a {
+                            break;
+                        }
+                        chain.push(n);
+                    }
+                    None => break,
+                }
+            }
+            loops.push(chain);
+        }
+        loops
     }
 }
 
@@ -119,6 +304,30 @@ impl TessellationParams {
 }
 
 /// Tessellate an entire B-rep solid into a triangle mesh.
+/// Tessellate each face independently, returning one mesh per face along
+/// with the face's id and surface kind. Useful for diagnostic overlays
+/// that color-code faces by surface type, and for the standalone fillet
+/// harness (dumps an OBJ where each face becomes a separate `g` group).
+pub fn tessellate_brep_by_face(
+    brep: &BRepSolid,
+    params: &TessellationParams,
+) -> Vec<(FaceId, SurfaceKind, TriangleMesh)> {
+    let solid = &brep.topology.solids[brep.solid_id];
+    let shell = &brep.topology.shells[solid.outer_shell];
+    let mut out = Vec::with_capacity(shell.faces.len());
+    for &face_id in &shell.faces {
+        let surface = &brep.geometry.surfaces[brep.topology.faces[face_id].surface_index];
+        let kind = surface.surface_type();
+        let face_mesh = tessellate_face(&brep.topology, &brep.geometry, face_id, params);
+        out.push((face_id, kind, face_mesh));
+    }
+    out
+}
+
+/// Legacy solid tessellation entry point. Most callers should prefer
+/// `tessellate_brep` (which also runs armpit fan-fill). This path is
+/// retained for internal use by paths that don't need the post-weld
+/// fill (e.g. intermediate meshes produced during boolean operations).
 pub fn tessellate_solid(brep: &BRepSolid, params: &TessellationParams) -> TriangleMesh {
     let mut mesh = TriangleMesh::new();
     let solid = &brep.topology.solids[brep.solid_id];
@@ -146,6 +355,19 @@ pub fn tessellate_solid(brep: &BRepSolid, params: &TessellationParams) -> Triang
         mesh.merge(&face_mesh);
     }
 
+    // Each face tessellates independently and `merge` concatenates without
+    // deduplicating vertices, so adjacent faces that share a 3D edge emit
+    // four boundary edges in the combined mesh instead of two shared ones
+    // — the "armpit hole" pattern visible on extruded multi-arc profiles.
+    // Weld coincident vertices so the shell is watertight at face seams.
+    weld_coincident_vertices(&mut mesh);
+
+    // NOTE: we don't run fill_tiny_boundary_loops here because this
+    // path doesn't track sphere-face vertex positions. The primary
+    // `tessellate_brep` entrypoint handles armpit-gap fill via the
+    // sphere-key gate, and this function is only reached via the
+    // legacy tessellate_solid entrypoint which doesn't need it.
+
     // Validate final mesh
     #[cfg(debug_assertions)]
     {
@@ -162,6 +384,381 @@ pub fn tessellate_solid(brep: &BRepSolid, params: &TessellationParams) -> Triang
     }
 
     mesh
+}
+
+/// Collapse mesh vertices that share a position to 3 decimal places.
+/// Indices are rewritten; positions kept from the first occurrence.
+/// Normals of the winning vertex are kept as-is — downstream smoothing is
+/// unchanged. Triangles whose three corners collapse to fewer than three
+/// distinct vertices are dropped (degenerate after weld).
+fn weld_coincident_vertices(mesh: &mut TriangleMesh) {
+    let n = mesh.num_vertices();
+    if n == 0 {
+        return;
+    }
+    // Spatial hash at 0.001 mm resolution — tight enough to only weld
+    // true coincidences, loose enough to absorb float drift between
+    // CylinderSurface::evaluate and our hand-computed arc sample points.
+    let key = |i: usize| -> [i64; 3] {
+        [
+            (mesh.vertices[3 * i] as f64 * 1000.0).round() as i64,
+            (mesh.vertices[3 * i + 1] as f64 * 1000.0).round() as i64,
+            (mesh.vertices[3 * i + 2] as f64 * 1000.0).round() as i64,
+        ]
+    };
+    let mut remap: Vec<u32> = vec![u32::MAX; n];
+    let mut dedup: std::collections::HashMap<[i64; 3], u32> = std::collections::HashMap::new();
+    let mut new_vertices: Vec<f32> = Vec::with_capacity(mesh.vertices.len());
+    let mut new_normals: Vec<f32> = Vec::with_capacity(mesh.normals.len());
+    for (i, remap_i) in remap.iter_mut().enumerate() {
+        let k = key(i);
+        let idx = *dedup.entry(k).or_insert_with(|| {
+            let new_i = (new_vertices.len() / 3) as u32;
+            new_vertices.extend_from_slice(&mesh.vertices[3 * i..3 * i + 3]);
+            if mesh.normals.len() >= 3 * i + 3 {
+                new_normals.extend_from_slice(&mesh.normals[3 * i..3 * i + 3]);
+            }
+            new_i
+        });
+        *remap_i = idx;
+    }
+    let mut new_indices: Vec<u32> = Vec::with_capacity(mesh.indices.len());
+    let had_face_kinds = mesh.face_kinds.len() == mesh.indices.len() / 3;
+    let mut new_face_kinds: Vec<u8> = if had_face_kinds {
+        Vec::with_capacity(mesh.face_kinds.len())
+    } else {
+        Vec::new()
+    };
+    let tri_count = mesh.indices.len() / 3;
+    for t in 0..tri_count {
+        let a = remap[mesh.indices[3 * t] as usize];
+        let b = remap[mesh.indices[3 * t + 1] as usize];
+        let c = remap[mesh.indices[3 * t + 2] as usize];
+        if a == b || b == c || c == a {
+            continue; // degenerate after weld — drop
+        }
+        new_indices.extend_from_slice(&[a, b, c]);
+        if had_face_kinds {
+            new_face_kinds.push(mesh.face_kinds[t]);
+        }
+    }
+    mesh.vertices = new_vertices;
+    mesh.normals = new_normals;
+    mesh.indices = new_indices;
+    if had_face_kinds {
+        mesh.face_kinds = new_face_kinds;
+    }
+}
+
+/// Close any boundary loop with at most `max_verts` vertices that
+/// touches a position from `sphere_keys` (a set of quantized positions
+/// of verts that came from Sphere faces) by fanning triangles from its
+/// centroid.
+///
+/// Gating on sphere-origin positions makes this selective to convex
+/// fillet vertex-blend armpit gaps (which are always adjacent to a
+/// sphere patch). Plate-with-hole / counterbore cutouts don't produce
+/// sphere faces, so their boundary loops are never touched even if
+/// they happen to have ≤ max_verts corners.
+fn fill_tiny_boundary_loops(
+    mesh: &mut TriangleMesh,
+    max_verts: usize,
+    sphere_keys: &std::collections::HashSet<[i64; 3]>,
+) {
+    if sphere_keys.is_empty() {
+        return;
+    }
+
+    // Undirected boundary loops are reliable. For each loop, check the
+    // existing adjacent triangle's vertex normals — use their average
+    // as the outward reference and flip the fan winding if needed.
+    use std::collections::{HashMap, HashSet};
+    let loops = mesh.boundary_loops();
+    if loops.is_empty() {
+        return;
+    }
+
+    // Solid centroid — average of all mesh vertex positions. Used as a
+    // robust outward reference: (loop_centroid - solid_centroid) is the
+    // outward direction at the loop.
+    let vert_count = mesh.num_vertices();
+    let mut scx = 0.0_f32;
+    let mut scy = 0.0_f32;
+    let mut scz = 0.0_f32;
+    for vi in 0..vert_count {
+        scx += mesh.vertices[3 * vi];
+        scy += mesh.vertices[3 * vi + 1];
+        scz += mesh.vertices[3 * vi + 2];
+    }
+    if vert_count > 0 {
+        scx /= vert_count as f32;
+        scy /= vert_count as f32;
+        scz /= vert_count as f32;
+    }
+
+    // Map each directed boundary edge (a, b) to the third corner of
+    // its adjacent triangle (there's exactly one). We use this third
+    // corner's outward-normal side as the "outside" reference.
+    let tri_count = mesh.indices.len() / 3;
+    let mut dir_counts: HashMap<(u32, u32), u32> = HashMap::new();
+    let mut tri_third: HashMap<(u32, u32), u32> = HashMap::new();
+    for t in 0..tri_count {
+        let a = mesh.indices[3 * t];
+        let b = mesh.indices[3 * t + 1];
+        let c = mesh.indices[3 * t + 2];
+        for &(x, y, z) in &[(a, b, c), (b, c, a), (c, a, b)] {
+            *dir_counts.entry((x, y)).or_insert(0) += 1;
+            tri_third.entry((x, y)).or_insert(z);
+        }
+    }
+    let is_boundary = |a: u32, b: u32| -> bool {
+        let fwd = dir_counts.get(&(a, b)).copied().unwrap_or(0);
+        let bwd = dir_counts.get(&(b, a)).copied().unwrap_or(0);
+        fwd + bwd == 1
+    };
+    let _ = is_boundary;
+    let _ = HashSet::<u32>::new();
+
+    for loop_verts in &loops {
+        let n = loop_verts.len();
+        // Skip 3-vert loops: those are the sphere vertex-blend patch
+        // triangles themselves — already a single face of the shell,
+        // just topologically isolated (all 3 edges unshared). They
+        // render fine as-is. Fan-filling them creates a coplanar
+        // double cover that causes z-fighting.
+        if !(4..=max_verts).contains(&n) {
+            continue;
+        }
+        let positions: Vec<[f32; 3]> = loop_verts
+            .iter()
+            .map(|&v| {
+                [
+                    mesh.vertices[3 * v as usize],
+                    mesh.vertices[3 * v as usize + 1],
+                    mesh.vertices[3 * v as usize + 2],
+                ]
+            })
+            .collect();
+        let touches_sphere = positions.iter().any(|p| {
+            let q = [
+                (p[0] as f64 * 1000.0).round() as i64,
+                (p[1] as f64 * 1000.0).round() as i64,
+                (p[2] as f64 * 1000.0).round() as i64,
+            ];
+            sphere_keys.contains(&q)
+        });
+        if !touches_sphere {
+            continue;
+        }
+
+        let mut cx = 0.0_f32;
+        let mut cy = 0.0_f32;
+        let mut cz = 0.0_f32;
+        for p in &positions {
+            cx += p[0];
+            cy += p[1];
+            cz += p[2];
+        }
+        cx /= n as f32;
+        cy /= n as f32;
+        cz /= n as f32;
+
+        let mut max_r2 = 0.0_f32;
+        for p in &positions {
+            let dx = p[0] - cx;
+            let dy = p[1] - cy;
+            let dz = p[2] - cz;
+            let r2 = dx * dx + dy * dy + dz * dz;
+            if r2 > max_r2 {
+                max_r2 = r2;
+            }
+        }
+        let mut total_edge = 0.0_f32;
+        for i in 0..n {
+            let a = positions[i];
+            let b = positions[(i + 1) % n];
+            let dx = b[0] - a[0];
+            let dy = b[1] - a[1];
+            let dz = b[2] - a[2];
+            total_edge += (dx * dx + dy * dy + dz * dz).sqrt();
+        }
+        let avg_edge = total_edge / n as f32;
+        if max_r2.sqrt() > avg_edge * 6.0 {
+            continue;
+        }
+
+        let mut nx = 0.0_f32;
+        let mut ny = 0.0_f32;
+        let mut nz = 0.0_f32;
+        for i in 0..n {
+            let a = positions[i];
+            let b = positions[(i + 1) % n];
+            let ex = a[0] - cx;
+            let ey = a[1] - cy;
+            let ez = a[2] - cz;
+            let fx = b[0] - cx;
+            let fy = b[1] - cy;
+            let fz = b[2] - cz;
+            nx += ey * fz - ez * fy;
+            ny += ez * fx - ex * fz;
+            nz += ex * fy - ey * fx;
+        }
+        let nlen = (nx * nx + ny * ny + nz * nz).sqrt();
+        if nlen < 1e-6 {
+            continue;
+        }
+
+        // Each edge of the loop may come from a different adjacent
+        // face with its own outward-CCW direction, so we make the
+        // winding choice per-edge rather than once for the whole fan.
+        // Record whether `(a, b)` or `(b, a)` is the existing boundary
+        // direction for each edge so we can emit the fan triangle with
+        // the opposite direction — that way the fan's CCW normal
+        // aligns with the adjacent existing triangle's outward CCW.
+        let mut edge_dirs: Vec<bool> = Vec::with_capacity(n); // true if (a,b) matches existing
+        for i in 0..n {
+            let a = loop_verts[i];
+            let b = loop_verts[(i + 1) % n];
+            let fwd = dir_counts.get(&(a, b)).copied().unwrap_or(0);
+            let bwd = dir_counts.get(&(b, a)).copied().unwrap_or(0);
+            edge_dirs.push(fwd >= bwd);
+        }
+
+        // Robust outward reference: direction from the solid centroid
+        // to the loop centroid. Works for any convex-ish solid and
+        // doesn't depend on local face tessellation winding, which
+        // can be counter-intuitive near fillet blends.
+        let mut outward = [cx - scx, cy - scy, cz - scz];
+        let olen0 =
+            (outward[0] * outward[0] + outward[1] * outward[1] + outward[2] * outward[2]).sqrt();
+        if olen0 > 1e-6 {
+            outward[0] /= olen0;
+            outward[1] /= olen0;
+            outward[2] /= olen0;
+        }
+
+        // Average the adjacent boundary triangles' VERTEX normals at
+        // a, b so cx shades consistently with its neighbours.
+        let mut cx_vnormal = [0.0_f32; 3];
+        let mut adj_count = 0usize;
+        for i in 0..n {
+            let a = loop_verts[i];
+            let b = loop_verts[(i + 1) % n];
+            let (ea, eb, ec) = if let Some(&c) = tri_third.get(&(a, b)) {
+                (a, b, c)
+            } else if let Some(&c) = tri_third.get(&(b, a)) {
+                (b, a, c)
+            } else {
+                continue;
+            };
+            let pa = [
+                mesh.vertices[3 * ea as usize],
+                mesh.vertices[3 * ea as usize + 1],
+                mesh.vertices[3 * ea as usize + 2],
+            ];
+            let pb = [
+                mesh.vertices[3 * eb as usize],
+                mesh.vertices[3 * eb as usize + 1],
+                mesh.vertices[3 * eb as usize + 2],
+            ];
+            let pc = [
+                mesh.vertices[3 * ec as usize],
+                mesh.vertices[3 * ec as usize + 1],
+                mesh.vertices[3 * ec as usize + 2],
+            ];
+            let _ = (pa, pb, pc);
+
+            if mesh.normals.len() >= 3 * ea as usize + 3 {
+                cx_vnormal[0] += mesh.normals[3 * ea as usize];
+                cx_vnormal[1] += mesh.normals[3 * ea as usize + 1];
+                cx_vnormal[2] += mesh.normals[3 * ea as usize + 2];
+                cx_vnormal[0] += mesh.normals[3 * eb as usize];
+                cx_vnormal[1] += mesh.normals[3 * eb as usize + 1];
+                cx_vnormal[2] += mesh.normals[3 * eb as usize + 2];
+            }
+            adj_count += 1;
+        }
+        let vnlen = (cx_vnormal[0] * cx_vnormal[0]
+            + cx_vnormal[1] * cx_vnormal[1]
+            + cx_vnormal[2] * cx_vnormal[2])
+            .sqrt();
+        if vnlen > 1e-6 {
+            cx_vnormal[0] /= vnlen;
+            cx_vnormal[1] /= vnlen;
+            cx_vnormal[2] /= vnlen;
+        } else {
+            cx_vnormal = outward;
+        }
+        let _ = adj_count;
+
+        // Offset the centroid outward by a tiny amount so fan
+        // triangles avoid exact degeneracies (e.g. when the loop
+        // centroid sits on the V_axial column of an armpit hex).
+        // Kept small to avoid visible "fins" protruding from the
+        // filleted surface — big offsets made the fan look like
+        // spikes sticking out of each junction.
+        let offset_scale = avg_edge * 0.05;
+        let cx_idx = (mesh.vertices.len() / 3) as u32;
+        mesh.vertices.extend_from_slice(&[
+            cx + outward[0] * offset_scale,
+            cy + outward[1] * offset_scale,
+            cz + outward[2] * offset_scale,
+        ]);
+        mesh.normals.extend_from_slice(&cx_vnormal);
+
+        // Emit each fan triangle with winding chosen so its CCW face
+        // normal points roughly outward (away from the solid
+        // centroid). For each edge we compute both candidate CCW
+        // normals — (cx, a, b) and (cx, b, a) — and pick whichever
+        // has a larger dot product with the LOCAL outward direction
+        // (fan-triangle-centroid − solid-centroid). This is stable
+        // even for non-planar loops where edges come from different
+        // adjacent faces with different local outward senses.
+        let cx_pos = [
+            mesh.vertices[3 * cx_idx as usize],
+            mesh.vertices[3 * cx_idx as usize + 1],
+            mesh.vertices[3 * cx_idx as usize + 2],
+        ];
+        for i in 0..n {
+            let a = loop_verts[i];
+            let b = loop_verts[(i + 1) % n];
+            let pa = [
+                mesh.vertices[3 * a as usize],
+                mesh.vertices[3 * a as usize + 1],
+                mesh.vertices[3 * a as usize + 2],
+            ];
+            let pb = [
+                mesh.vertices[3 * b as usize],
+                mesh.vertices[3 * b as usize + 1],
+                mesh.vertices[3 * b as usize + 2],
+            ];
+            // Triangle centroid (cx + a + b) / 3.
+            let tri_cx = (cx_pos[0] + pa[0] + pb[0]) / 3.0;
+            let tri_cy = (cx_pos[1] + pa[1] + pb[1]) / 3.0;
+            let tri_cz = (cx_pos[2] + pa[2] + pb[2]) / 3.0;
+            let local_outward = [tri_cx - scx, tri_cy - scy, tri_cz - scz];
+
+            // Fan CCW normal for (cx, a, b): (pa - cx) × (pb - cx).
+            let e1 = [pa[0] - cx_pos[0], pa[1] - cx_pos[1], pa[2] - cx_pos[2]];
+            let e2 = [pb[0] - cx_pos[0], pb[1] - cx_pos[1], pb[2] - cx_pos[2]];
+            let fan_n = [
+                e1[1] * e2[2] - e1[2] * e2[1],
+                e1[2] * e2[0] - e1[0] * e2[2],
+                e1[0] * e2[1] - e1[1] * e2[0],
+            ];
+            let dot = fan_n[0] * local_outward[0]
+                + fan_n[1] * local_outward[1]
+                + fan_n[2] * local_outward[2];
+            if dot >= 0.0 {
+                mesh.indices.extend_from_slice(&[cx_idx, a, b]);
+            } else {
+                mesh.indices.extend_from_slice(&[cx_idx, b, a]);
+            }
+            if !mesh.face_kinds.is_empty() {
+                mesh.face_kinds.push(FaceKindTag::FanFill as u8);
+            }
+        }
+    }
 }
 
 /// Tessellate a single B-rep face.
@@ -1511,7 +2108,7 @@ fn tessellate_cylindrical_face(
     let face = &topo.faces[face_id];
     let surface = &geom.surfaces[face.surface_index];
     let n_circ = params.circle_segments.max(3) as usize;
-    let mut n_height = params.height_segments.max(1) as usize;
+    let n_height = params.height_segments.max(1) as usize;
 
     // Determine the v (height) parameter range by projecting seam vertices
     // onto the cylinder axis. This works correctly after any transform.
@@ -1523,6 +2120,7 @@ fn tessellate_cylindrical_face(
     let mut radius = None;
     let mut u_min = 0.0;
     let mut u_max = 2.0 * PI;
+    let mut unique_angles: Vec<f64> = Vec::new();
     let (v_min, v_max) = if let Some(cyl) = surface
         .as_any()
         .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
@@ -1563,7 +2161,6 @@ fn tessellate_cylindrical_face(
         // Determine U range from the face vertices
         // For a partial face, we need to find the angular extent
         // Get unique angles (vertices at same angle but different heights)
-        let mut unique_angles: Vec<f64> = Vec::new();
         for &a in &angles {
             if !unique_angles.iter().any(|&ua| (ua - a).abs() < 0.01) {
                 unique_angles.push(a);
@@ -1645,34 +2242,111 @@ fn tessellate_cylindrical_face(
     let height = v_max - v_min;
     let u_range = u_max - u_min;
 
-    // Adjust segment count based on angular range
-    let effective_n_circ = if u_range < 2.0 * PI - 0.01 {
-        // Partial face - scale segments by angular fraction
-        let fraction = u_range / (2.0 * PI);
-        (n_circ as f64 * fraction).ceil().max(2.0) as usize
-    } else {
-        n_circ
-    };
+    // Compute the u-sample schedule for the grid. For a partial face
+    // (e.g. one arc-extrude cylinder per arc of a kidney profile) we
+    // anchor samples at every unique_angle on the face's outer loop so
+    // the lateral-face tessellation shares its boundary vertices with
+    // adjacent cap-face vertices at the exact same 3D points. Between
+    // consecutive anchor angles we subdivide to maintain the density
+    // the caller asked for (n_circ samples around a full 2π), keeping
+    // boolean-cut cylinder meshes from going coarse. Full cylinders
+    // keep the original evenly-spaced schedule.
+    let mut u_samples: Vec<f64> = Vec::new();
+    let is_partial = u_range < 2.0 * PI - 0.01;
+    if is_partial && unique_angles.len() >= 2 {
+        // Map unique angles into the (possibly wrap-extended) u range.
+        let offset = if u_max > 2.0 * PI { 2.0 * PI } else { 0.0 };
+        let mut anchors: Vec<f64> = Vec::new();
+        for a in &unique_angles {
+            let adj = if *a < u_min - 1e-6 { *a + offset } else { *a };
+            if adj >= u_min - 1e-6 && adj <= u_max + 1e-6 {
+                anchors.push(adj.clamp(u_min, u_max));
+            }
+        }
+        anchors.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        anchors.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+        if anchors.first().map(|&x| x - u_min > 1e-6).unwrap_or(true) {
+            anchors.insert(0, u_min);
+        }
+        if anchors.last().map(|&x| u_max - x > 1e-6).unwrap_or(true) {
+            anchors.push(u_max);
+        }
 
-    if let Some(radius) = radius {
-        let arc_length = radius * u_range;
-        if arc_length > 1e-9 {
-            let target = (height.abs() / arc_length) * effective_n_circ as f64;
-            n_height = n_height.max(target.ceil() as usize).max(1);
+        // Subdivide each anchor-to-anchor segment to maintain the
+        // caller's requested density across the full 2π circle — but
+        // only when the native anchor spacing is coarser than the
+        // target. Arc-extruded cylinder faces carry dense anchors along
+        // the bottom/top arcs (one per tessellation segment of the
+        // source arc); introducing subdivision samples there just
+        // creates new mid-edge vertices that aren't present on the cap
+        // boundary, breaking the weld at the cap-lateral seam. Faces
+        // with sparse anchors (e.g. a boolean-cut cylinder strip with
+        // only two endpoints) still get subdivided so the shell
+        // doesn't go visibly coarse.
+        let target_density = n_circ as f64 / (2.0 * PI);
+        let mean_span = u_range / ((anchors.len() - 1) as f64).max(1.0);
+        let anchor_density_ratio = if mean_span > 1e-12 {
+            (1.0 / mean_span) / target_density
+        } else {
+            0.0
+        };
+        // Even anchors that are almost-but-not-quite at target density
+        // are still preferable to subdividing, since the cap tessellation
+        // can only match samples at the anchor positions (anything in
+        // between creates an unweldable mid-edge vertex). Only subdivide
+        // when anchors are clearly sparse (e.g. a 2-vertex boolean-cut
+        // strip) rather than merely 5-10% below target.
+        let anchors_are_dense = anchor_density_ratio >= 0.5;
+        u_samples.push(anchors[0]);
+        for w in anchors.windows(2) {
+            let span = w[1] - w[0];
+            let subdivs = if anchors_are_dense {
+                1
+            } else {
+                ((span * target_density).ceil() as usize).max(1)
+            };
+            for i in 1..=subdivs {
+                u_samples.push(w[0] + span * (i as f64 / subdivs as f64));
+            }
         }
     }
+    if u_samples.len() < 2 {
+        // Evenly-spaced fallback (full cylinder or loop with <2 unique angles).
+        let effective_n_circ = if is_partial {
+            let fraction = u_range / (2.0 * PI);
+            (n_circ as f64 * fraction).ceil().max(2.0) as usize
+        } else {
+            n_circ
+        };
+        u_samples = (0..=effective_n_circ)
+            .map(|i| u_min + u_range * (i as f64 / effective_n_circ as f64))
+            .collect();
+    }
+    let effective_n_circ = u_samples.len() - 1;
+
+    // n_height stays at the caller's value (default 1). A cylinder is
+    // ruled in the v direction — no curvature, no shading benefit from
+    // intermediate v samples. The prior formula drove n_height from
+    // `2π·radius / n_circ`, which varies per cylinder: adjacent arc-
+    // extrude cylinders with different radii ended up with different
+    // n_height → different v samples along their shared vertical seam
+    // → the weld stage couldn't collapse the duplicate seam vertices,
+    // leaving a long strip hole in the middle of the pork-chop. Keeping
+    // n_height = 1 gives every cylinder the same {v_min, v_max} pair
+    // along the seam, which always welds.
+    let _ = radius;
 
     let mut mesh = TriangleMesh::new();
 
-    // Generate grid of vertices using surface.evaluate
-    // Respect the face's U range (angular extent)
+    // Generate grid of vertices using surface.evaluate. Each row shares
+    // its u-schedule with the face's outer loop boundary, so adjacent
+    // cap/lateral faces produce coincident seam vertices (welded away by
+    // `weld_coincident_vertices` in `tessellate_brep`).
     for j in 0..=n_height {
         let v = v_min + height * (j as f64 / n_height as f64);
-        for i in 0..=effective_n_circ {
-            // Map i to the face's U range, not full 2π
-            let u = u_min + u_range * (i as f64 / effective_n_circ as f64);
+        for u_raw in &u_samples {
             // Normalize u to [0, 2π) for surface evaluation
-            let u_eval = u % (2.0 * PI);
+            let u_eval = u_raw.rem_euclid(2.0 * PI);
             let uv = Point2::new(u_eval, v);
             let pt = surface.evaluate(uv);
             let normal = *surface.normal(uv);
@@ -1729,8 +2403,11 @@ fn tessellate_spherical_face(
         .map(|he| topo.vertices[topo.half_edges[he].origin].point)
         .collect();
 
-    // A normal sphere has exactly 4 edges from B-rep. Split caps have more.
-    if loop_verts.len() > 4 {
+    // A normal closed-sphere B-rep has exactly 4 edges (seam cycle).
+    // Faces with 3 or >4 loop vertices are partial spherical caps —
+    // either boolean-split caps or fillet vertex-blend patches — and
+    // should be tessellated as a bounded cap, not a full sphere.
+    if loop_verts.len() == 3 || loop_verts.len() > 4 {
         return tessellate_spherical_cap(surface.as_ref(), &loop_verts, reversed);
     }
 
@@ -2429,13 +3106,62 @@ fn tessellate_toroidal_face(
 ) -> TriangleMesh {
     let face = &topo.faces[face_id];
     let surface = &geom.surfaces[face.surface_index];
-    let n_u = params.circle_segments as usize;
-    let n_v = params.circle_segments as usize;
+    let n_circ = params.circle_segments.max(3) as usize;
 
     let mut mesh = TriangleMesh::new();
 
-    // Get UV domain
-    let ((u_min, u_max), (v_min, v_max)) = surface.domain();
+    // Derive the face's actual u/v range from its outer loop vertices
+    // instead of tessellating the entire torus donut. A plane↔cylinder
+    // fillet torus blend only covers a small rectangular patch in (u, v)
+    // space — rendering the full 2π×2π domain produced the overhanging
+    // ring we saw in the pork-chop render that poked 4 units above the
+    // top cap and below the bottom cap. Falls back to the full domain
+    // when the face doesn't expose a `TorusSurface` we can invert.
+    let ((default_u_min, default_u_max), (default_v_min, default_v_max)) = surface.domain();
+    let (u_min, u_max, v_min, v_max) = if let Some(torus) = surface
+        .as_any()
+        .downcast_ref::<vcad_kernel_geom::TorusSurface>(
+    ) {
+        let verts: Vec<_> = topo
+            .loop_half_edges(face.outer_loop)
+            .map(|he| topo.vertices[topo.half_edges[he].origin].point)
+            .collect();
+        let y = torus.axis.as_ref().cross(torus.ref_dir.as_ref());
+        let mut us = Vec::new();
+        let mut vs = Vec::new();
+        for pt in &verts {
+            let d = *pt - torus.center;
+            // u: angle around torus major axis from ref_dir → y
+            let ru = d.dot(torus.ref_dir.as_ref());
+            let yu = d.dot(y);
+            let u = yu.atan2(ru);
+            let u = if u < 0.0 { u + 2.0 * PI } else { u };
+            // v: angle around tube. project d onto (tube_center_dir, axis) plane.
+            let tube_dir = *torus.ref_dir.as_ref() * u.cos() + y * u.sin();
+            let in_tube_plane = d - tube_dir * torus.major_radius;
+            let cv = in_tube_plane.dot(tube_dir);
+            let sv = in_tube_plane.dot(torus.axis.as_ref());
+            let v = sv.atan2(cv);
+            let v = if v < 0.0 { v + 2.0 * PI } else { v };
+            us.push(u);
+            vs.push(v);
+        }
+        if us.len() >= 2 {
+            us.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            vs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            (us[0], us[us.len() - 1], vs[0], vs[vs.len() - 1])
+        } else {
+            (default_u_min, default_u_max, default_v_min, default_v_max)
+        }
+    } else {
+        (default_u_min, default_u_max, default_v_min, default_v_max)
+    };
+
+    // Scale n_u / n_v by the fraction of the full torus the face covers.
+    let u_frac = (u_max - u_min) / (2.0 * PI);
+    let v_frac = (v_max - v_min) / (2.0 * PI);
+    let n_u = ((n_circ as f64 * u_frac).ceil() as usize).max(2);
+    let n_v = ((n_circ as f64 * v_frac).ceil() as usize).max(2);
 
     // Generate grid of vertices with analytical normals
     for j in 0..=n_v {
@@ -2457,7 +3183,20 @@ fn tessellate_toroidal_face(
         }
     }
 
-    // Generate triangles
+    // Generate triangles with per-quad winding consistency: compare
+    // each quad's candidate CCW normal (from its own (bl, br, tl)
+    // vertex order in the generated mesh) against the torus surface's
+    // analytical outward normal at the quad's (u, v) midpoint. Flip
+    // the winding when they disagree. Needed for plane-cyl blend-torus
+    // faces near armpit junctions, where the torus's (u, v)
+    // parameterization winds CCW-inward in some u-ranges after trim
+    // snapping — the vertex normals are already outward (set from
+    // `surface.normal(uv)` in the loop above), but the face winding
+    // Three.js's `computeVertexNormals` derives for rendering would
+    // point the opposite way.
+    let torus_ref = surface
+        .as_any()
+        .downcast_ref::<vcad_kernel_geom::TorusSurface>();
     let stride = (n_u + 1) as u32;
     for j in 0..n_v {
         for i in 0..n_u {
@@ -2466,7 +3205,41 @@ fn tessellate_toroidal_face(
             let tl = bl + stride;
             let tr = tl + 1;
 
-            if reversed {
+            let mut flip = false;
+            if let Some(torus) = torus_ref {
+                let du = (u_max - u_min) / n_u as f64;
+                let dv = (v_max - v_min) / n_v as f64;
+                let u_mid = u_min + du * (i as f64 + 0.5);
+                let v_mid = v_min + dv * (j as f64 + 0.5);
+                let p_bl_x = mesh.vertices[3 * bl as usize] as f64;
+                let p_bl_y = mesh.vertices[3 * bl as usize + 1] as f64;
+                let p_bl_z = mesh.vertices[3 * bl as usize + 2] as f64;
+                let p_br_x = mesh.vertices[3 * br as usize] as f64;
+                let p_br_y = mesh.vertices[3 * br as usize + 1] as f64;
+                let p_br_z = mesh.vertices[3 * br as usize + 2] as f64;
+                let p_tl_x = mesh.vertices[3 * tl as usize] as f64;
+                let p_tl_y = mesh.vertices[3 * tl as usize + 1] as f64;
+                let p_tl_z = mesh.vertices[3 * tl as usize + 2] as f64;
+                let ex = p_br_x - p_bl_x;
+                let ey = p_br_y - p_bl_y;
+                let ez = p_br_z - p_bl_z;
+                let fx = p_tl_x - p_bl_x;
+                let fy = p_tl_y - p_bl_y;
+                let fz = p_tl_z - p_bl_z;
+                let nx = ey * fz - ez * fy;
+                let ny = ez * fx - ex * fz;
+                let nz = ex * fy - ey * fx;
+                let outward = *torus.normal(Point2::new(u_mid, v_mid));
+                let dot = nx * outward.x + ny * outward.y + nz * outward.z;
+                if reversed {
+                    flip = dot > 0.0;
+                } else {
+                    flip = dot < 0.0;
+                }
+            }
+
+            let effective_reversed = reversed ^ flip;
+            if effective_reversed {
                 mesh.indices.extend_from_slice(&[bl, tl, br, br, tl, tr]);
             } else {
                 mesh.indices.extend_from_slice(&[bl, br, tl, br, tr, tl]);
@@ -2716,12 +3489,31 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
     let shell = &brep.topology.shells[solid.outer_shell];
 
     let mut mesh = TriangleMesh::new();
+    // Positions (quantized to 0.001mm, same resolution as the welder)
+    // of every vertex contributed by a Sphere face. After post-weld
+    // fan-fill, we only fill boundary loops that touch at least one of
+    // these positions — this makes the fill selective to convex fillet
+    // vertex-blend armpit gaps, not e.g. plate-with-hole cutouts.
+    let mut sphere_vert_keys: std::collections::HashSet<[i64; 3]> =
+        std::collections::HashSet::new();
 
     for &face_id in &shell.faces {
         let face = &brep.topology.faces[face_id];
         let surface = &brep.geometry.surfaces[face.surface_index];
         let reversed = face.orientation == Orientation::Reversed;
         let loop_len = brep.topology.loop_len(face.outer_loop);
+        // Track sphere AND torus face vertex positions. Only loops that
+        // touch one of these get filled — enough to cover armpit gaps
+        // at filleted junctions (always near sphere + torus blend),
+        // while leaving plate-with-hole / boolean-cut rectangular
+        // cutouts alone (those have no sphere OR torus faces).
+        let is_fillet_face = matches!(
+            surface.surface_type(),
+            SurfaceKind::Sphere | SurfaceKind::Torus
+        );
+        let pre_face_verts = mesh.num_vertices();
+        let pre_face_tris = mesh.indices.len() / 3;
+        let face_kind_tag: u8 = FaceKindTag::from(surface.surface_type()) as u8;
 
         match surface.surface_type() {
             SurfaceKind::Plane => {
@@ -2894,8 +3686,35 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
                 mesh.merge(&face_mesh);
             }
         }
+
+        if is_fillet_face {
+            let n_verts = mesh.num_vertices();
+            for vi in pre_face_verts..n_verts {
+                sphere_vert_keys.insert([
+                    (mesh.vertices[3 * vi] as f64 * 1000.0).round() as i64,
+                    (mesh.vertices[3 * vi + 1] as f64 * 1000.0).round() as i64,
+                    (mesh.vertices[3 * vi + 2] as f64 * 1000.0).round() as i64,
+                ]);
+            }
+        }
+
+        // Tag every triangle this face added with its surface kind.
+        // Use OVERWRITE (not just extend) because `mesh.merge` may
+        // have already padded these slots with Unknown when the face's
+        // sub-mesh didn't carry tags of its own (degenerate-cap path
+        // uses `tessellate_disk_general`, which returns an untagged
+        // mesh).
+        let post_face_tris = mesh.indices.len() / 3;
+        while mesh.face_kinds.len() < post_face_tris {
+            mesh.face_kinds.push(FaceKindTag::Unknown as u8);
+        }
+        for t in pre_face_tris..post_face_tris {
+            mesh.face_kinds[t] = face_kind_tag;
+        }
     }
 
+    weld_coincident_vertices(&mut mesh);
+    fill_tiny_boundary_loops(&mut mesh, 6, &sphere_vert_keys);
     mesh
 }
 
@@ -2915,6 +3734,24 @@ mod tests {
             mesh.num_triangles()
         );
         assert!(mesh.num_vertices() > 0);
+    }
+
+    #[test]
+    fn test_closed_cube_has_no_boundary_edges() {
+        let brep = make_cube(10.0, 10.0, 10.0);
+        let mesh = tessellate_brep(&brep, 32);
+        let boundary = mesh.boundary_edges();
+        assert!(
+            boundary.is_empty(),
+            "closed cube should have zero boundary edges, got {}",
+            boundary.len()
+        );
+        let nm = mesh.non_manifold_edges();
+        assert!(
+            nm.is_empty(),
+            "closed cube should have zero non-manifold edges, got {}",
+            nm.len()
+        );
     }
 
     #[test]

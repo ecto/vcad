@@ -14,9 +14,11 @@ import { cn } from "@/lib/utils";
  * user's camera relates to the AI's.
  *
  *  - Free   : hide AI frustum + attention highlights; ignore AI camera.
- *  - Follow : show the AI camera as a frustum in-scene, user view
- *             untouched.
- *  - Lock   : lerp the user camera onto the AI's each frame.
+ *  - Follow : render the AI camera as a frustum in-scene and aim the
+ *             user's view at it. User stays put, but rotates to track
+ *             the frustum wireframe as it moves.
+ *  - Lock   : user camera matches the AI's exactly, in realtime —
+ *             "see through their eyes".
  *
  * Hidden entirely when no non-local participant has joined the document
  * yet — there's nothing to follow.
@@ -78,8 +80,8 @@ export function FollowModeToggle() {
       <div className="h-3 w-px bg-border/40" aria-hidden />
       <div className="flex items-center gap-0.5" role="group" aria-label="AI camera follow mode">
         {btn("free", "Free", "Free: ignore the AI camera")}
-        {btn("follow", "Follow", "Follow: show AI camera as a frustum in-scene")}
-        {btn("lock", "Lock", "Lock: see through the AI's camera")}
+        {btn("follow", "Follow", "Follow: aim your view at the AI's camera frustum")}
+        {btn("lock", "Lock", "Lock: see through the AI's camera in realtime")}
       </div>
     </div>
   );

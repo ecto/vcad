@@ -16,11 +16,13 @@ export type SidebarPane = "tree" | "inspector";
 
 /**
  * How the local user's camera relates to another participant's camera.
- * - "free": independent. The local camera is only moved by user input.
- * - "follow": user camera stays put, but the other participant's camera
- *             is rendered in-scene (frustum + attention highlight).
- * - "lock":  user camera lerps to match the followed participant's camera
- *             every frame — "see through their eyes".
+ * - "free":   independent. The local camera is only moved by user input.
+ * - "follow": other participant's camera is rendered in-scene (frustum +
+ *             attention highlight); the user's eye stays put but their
+ *             look-at target tracks the other participant's eye so the
+ *             frustum stays framed in the user's view.
+ * - "lock":   user camera matches the followed participant's camera
+ *             exactly every frame — "see through their eyes".
  */
 export type FollowMode = "free" | "follow" | "lock";
 

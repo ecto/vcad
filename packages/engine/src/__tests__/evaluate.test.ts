@@ -203,9 +203,15 @@ describe("CSG operations", () => {
 
     console.log(`BBox with transforms: (${minX.toFixed(2)}, ${minY.toFixed(2)}, ${minZ.toFixed(2)}) to (${maxX.toFixed(2)}, ${maxY.toFixed(2)}, ${maxZ.toFixed(2)})`);
 
-    // Should produce same result as without transforms
-    // Note: 220 triangles after conservative edge repair to fix STEP export
-    expect(tris).toBe(220);
+    // Should produce same result as without transforms.
+    // Triangle count depends on the cylinder tessellator's height
+    // segment count; after cylinder n_height fix (branch
+    // `nurbs-fillet-porkchop` / commit 90109a8, which pinned n_height
+    // to 1 so adjacent arc cylinders agree on their shared seam
+    // v-samples) this drops from 220 to 60. Shape is unchanged — only
+    // tessellation density — and the bbox assertions below still
+    // catch geometric regressions.
+    expect(tris).toBe(60);
     expect(minX).toBeGreaterThanOrEqual(-0.1);
     expect(minY).toBeGreaterThanOrEqual(-0.1);
   });

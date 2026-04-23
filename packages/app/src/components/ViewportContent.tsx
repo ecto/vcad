@@ -18,6 +18,9 @@ import { EffectComposer, N8AO, Vignette } from "@react-three/postprocessing";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { GridPlane } from "./GridPlane";
 import { SceneMesh, ImportedMesh } from "./SceneMesh";
+import { BoundaryEdgeOverlay } from "./BoundaryEdgeOverlay";
+import { useDebugOverlayStore } from "../stores/debug-overlay-store";
+import { InspectedTriangleMarker } from "./TriangleInspector";
 import { ClashMesh } from "./ClashMesh";
 import { PreviewMesh } from "./PreviewMesh";
 import { SketchPlane3D } from "./SketchPlane3D";
@@ -65,14 +68,16 @@ const INITIAL_POSITION_V = new Vector3(50, 50, 50);
 const INITIAL_TARGET_V = new Vector3(0, 0, 0);
 const INITIAL_DISTANCE_V = INITIAL_POSITION_V.distanceTo(INITIAL_TARGET_V);
 
-// Reused per-frame in the Lock-mode lerp hook.
-const _lockGoalPos = new Vector3();
-const _lockGoalTarget = new Vector3();
+// Reused per-frame in the participant-sync hook (Lock + Follow).
+const _syncGoalPos = new Vector3();
+const _syncGoalTarget = new Vector3();
 
 /**
  * Flip Lock mode back to Free when the user grabs the camera themselves.
- * Cheap to call on every orbit start / pointer down / wheel tick — noop
- * unless we're actually locked.
+ * Follow mode is intentionally *not* broken here — the user is supposed to
+ * be able to orbit around the followed participant's camera while still
+ * tracking it. Cheap to call on every orbit start / pointer down / wheel
+ * tick — noop unless we're actually locked.
  */
 function breakLockOnUserInput(): void {
   const ui = useUiStore.getState();
@@ -217,6 +222,64 @@ function computeLevelQuaternion(
   out.setFromRotationMatrix(_tempMatrix);
 
   return out;
+}
+
+/** Render boundary-edge overlays for every part's mesh when the debug
+ * flag is on. Registers Ctrl+Shift+B as a global toggle. */
+function DebugBoundaryOverlays() {
+  const show = useDebugOverlayStore((s) => s.showBoundaryEdges);
+  const toggle = useDebugOverlayStore((s) => s.toggleBoundaryEdges);
+  const scene = useEngineStore((s) => s.scene);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && (e.key === "B" || e.key === "b")) {
+        e.preventDefault();
+        toggle();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [toggle]);
+
+  if (!show || !scene) return null;
+  return (
+    <>
+      {scene.parts.map((p, i) => {
+        if (!p.mesh.positions.length) return null;
+        return (
+          <BoundaryEdgeOverlay
+            key={`boundary-${i}`}
+            positions={p.mesh.positions}
+            indices={p.mesh.indices}
+          />
+        );
+      })}
+    </>
+  );
+}
+
+/** Triangle picker R3F component: registers the Ctrl+Shift+T hotkey and
+ *  renders the highlight marker inside the scene rotation group. The
+ *  DOM info panel lives outside the Canvas — see `TriangleInspectionPanel`
+ *  mounted in the Viewport parent. */
+function DebugTriangleInspector() {
+  const inspectEnabled = useDebugOverlayStore((s) => s.inspectTriangles);
+  const toggle = useDebugOverlayStore((s) => s.toggleInspectTriangles);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && (e.key === "T" || e.key === "t")) {
+        e.preventDefault();
+        toggle();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [toggle]);
+
+  if (!inspectEnabled) return null;
+  return <InspectedTriangleMarker />;
 }
 
 export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
@@ -481,13 +544,15 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
   });
 
   // Demand rendering never kicks a frame on its own when the AI moves
-  // its camera while we're in Lock (we skip drawing the AI's frustum in
-  // that mode, so there's no other subscriber to invalidate for us).
-  // Subscribe to both stores and invalidate whenever a lock-relevant
-  // change lands — the useFrame below self-sustains after the first fire.
+  // its camera while we're in Follow/Lock (in Lock we skip drawing the
+  // AI's frustum, so there's no other subscriber to invalidate for us;
+  // in Follow the frustum overlay kicks itself but we still need a frame
+  // to re-aim the user camera). Subscribe to both stores and invalidate
+  // whenever a mode-relevant change lands — the useFrame below
+  // self-sustains after the first fire.
   useEffect(() => {
     const kick = () => {
-      if (useUiStore.getState().followMode === "lock") invalidate();
+      if (useUiStore.getState().followMode !== "free") invalidate();
     };
     const unsubUi = useUiStore.subscribe(kick);
     const unsubPart = useParticipantStore.subscribe(kick);
@@ -497,40 +562,56 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
     };
   }, [invalidate]);
 
-  // Lock mode: each frame, lerp the user's camera onto the followed
-  // participant's camera (kernel Z-up → display Y-up). Skip when the
-  // existing animation system is already driving the camera so we don't
-  // fight over it. Also skips when no participant is followed or the
-  // target participant has no camera opinion yet.
+  // Per-frame participant-camera sync (Follow + Lock).
+  //
+  //  - Lock   : hard-copy the followed participant's camera every frame
+  //             (kernel Z-up → display Y-up). No interpolation — the user
+  //             sees exactly what the AI sees. Preempts any in-flight
+  //             focus/snap animation so lock stays authoritative.
+  //  - Follow : keep the user's eye position; lerp the orbit target
+  //             toward the AI's eye position so the user's view rotates
+  //             to frame the AI's frustum wireframe. User keeps orbit +
+  //             zoom, but always rotates around / looks at the AI.
   useFrame(() => {
     const { followMode, followingParticipantId } = useUiStore.getState();
-    if (followMode !== "lock" || !followingParticipantId) return;
-    if (isAnimatingTargetRef.current) return;
+    if (followMode === "free" || !followingParticipantId) return;
     const participant =
       useParticipantStore.getState().participants.get(followingParticipantId);
     if (!participant?.camera) return;
 
     const [px, py, pz] = kernelToDisplay(participant.camera.position);
-    const [tx, ty, tz] = kernelToDisplay(participant.camera.target);
-    const goalPos = _lockGoalPos.set(px, py, pz);
-    const goalTarget = _lockGoalTarget.set(tx, ty, tz);
-    const lerp = 0.15;
-    camera.position.lerp(goalPos, lerp);
-    if (orbitRef.current) {
-      orbitRef.current.target.lerp(goalTarget, lerp);
-      orbitRef.current.update();
-    } else {
-      camera.lookAt(goalTarget);
+    const goalPos = _syncGoalPos.set(px, py, pz);
+
+    if (followMode === "lock") {
+      // Lock overrides any in-flight focus/snap animation.
+      if (isAnimatingTargetRef.current) cancelCameraAnimation();
+      const [tx, ty, tz] = kernelToDisplay(participant.camera.target);
+      const goalTarget = _syncGoalTarget.set(tx, ty, tz);
+      camera.position.copy(goalPos);
+      if (orbitRef.current) {
+        orbitRef.current.target.copy(goalTarget);
+        orbitRef.current.update();
+      } else {
+        camera.lookAt(goalTarget);
+      }
+      invalidate();
+      return;
     }
-    // Only keep the demand loop alive while we're still converging.
-    // Once we're within a tight tolerance of the goal, stop asking for
-    // frames — the store subscription above will kick us again the
-    // next time the AI moves its camera.
-    const posDelta = camera.position.distanceToSquared(goalPos);
-    const targetDelta = orbitRef.current
-      ? orbitRef.current.target.distanceToSquared(goalTarget)
-      : 0;
-    if (posDelta > 1e-4 || targetDelta > 1e-4) invalidate();
+
+    // Follow: aim the user's look-at at the AI's eye (frustum apex).
+    // Don't fight an in-flight focus animation the user explicitly
+    // triggered — let it finish, then follow resumes next frame.
+    if (isAnimatingTargetRef.current) return;
+    const lerp = 0.15;
+    if (orbitRef.current) {
+      orbitRef.current.target.lerp(goalPos, lerp);
+      orbitRef.current.update();
+      const targetDelta =
+        orbitRef.current.target.distanceToSquared(goalPos);
+      if (targetDelta > 1e-4) invalidate();
+    } else {
+      camera.lookAt(goalPos);
+    }
   });
 
   // Wheel handler with configurable control schemes
@@ -1355,6 +1436,14 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
                     />
                   );
                 })}
+
+              {/* Debug: mesh boundary edges (holes in tessellation).
+                  Toggle with Ctrl+Shift+B or
+                  __VCAD_DEBUG_OVERLAY.getState().toggleBoundaryEdges() */}
+              <DebugBoundaryOverlays />
+              {/* Debug: click-to-inspect triangle picker.
+                  Toggle with Ctrl+Shift+T. */}
+              <DebugTriangleInspector />
           {/* Clash visualization (zebra pattern on intersections) */}
           {scene?.clashes.map((clashMesh, idx) => (
             <ClashMesh key={`clash-${idx}`} mesh={clashMesh} />

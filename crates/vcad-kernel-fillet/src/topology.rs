@@ -16,6 +16,20 @@ pub(crate) struct FaceInfo {
     pub positions: Vec<Point3>,
     /// Outward face normal (from vertex winding).
     pub normal: Vec3,
+    /// When the face surface is a `CylinderSurface`, the cylinder's
+    /// analytic parameters. Trim-vertex computation uses these to move
+    /// cap-edge vertices axially into the face instead of relying on
+    /// Newell's method, which is only approximate on curved loops.
+    pub cylinder: Option<CylinderInfo>,
+}
+
+/// Analytic cylinder parameters captured alongside a cylindrical face.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CylinderInfo {
+    pub center: Point3,
+    pub axis: Vec3,
+    #[allow(dead_code)]
+    pub radius: f64,
 }
 
 /// Information about an edge.
@@ -49,18 +63,29 @@ pub(crate) struct CurvedFaceInfo {
 /// Extract face information from a B-rep solid.
 pub(crate) fn extract_faces(brep: &BRepSolid) -> Vec<FaceInfo> {
     let topo = &brep.topology;
+    let geom = &brep.geometry;
     let mut faces = Vec::new();
 
     for (face_id, face) in &topo.faces {
         let vertex_ids = topo.loop_vertices(face.outer_loop);
         let positions: Vec<Point3> = vertex_ids.iter().map(|&v| topo.vertices[v].point).collect();
         let normal = compute_face_normal(&positions);
+        let surface = &geom.surfaces[face.surface_index];
+        let cylinder = surface
+            .as_any()
+            .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
+            .map(|c| CylinderInfo {
+                center: c.center,
+                axis: *c.axis.as_ref(),
+                radius: c.radius,
+            });
 
         faces.push(FaceInfo {
             face_id,
             vertex_ids,
             positions,
             normal,
+            cylinder,
         });
     }
 

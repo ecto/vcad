@@ -292,6 +292,16 @@ export class Solid {
     free(): void;
     [Symbol.dispose](): void;
     /**
+     * Return mesh boundary edges as a flat float array
+     * `[x0, y0, z0, x1, y1, z1, ...]` with each pair of 3-component
+     * positions defining one edge segment. Used by the viewport's
+     * "show boundary edges" overlay to surface tessellation holes.
+     *
+     * Closed, manifold meshes return an empty array; each entry means
+     * there's a hole in the mesh.
+     */
+    boundaryEdges(segments?: number | null): Float32Array;
+    /**
      * Get the bounding box as [minX, minY, minZ, maxX, maxY, maxZ].
      */
     boundingBox(): Float64Array;
@@ -1599,24 +1609,6 @@ export function parseVCode(vcode: string): string;
  */
 export function parseVcadFile(content: string): any;
 
-/**
- * Plan a chat tool call against the current document snapshot.
- *
- * This is the web-side entry point for the Rust chat executor: the TS
- * web app serializes its current `Document`, hands it plus the tool
- * name and args to this function, and gets back a JSON
- * `PlannedResponse` that describes the mutation to perform. The TS
- * caller then dispatches the outcome through the CRDT engine's
- * existing methods (`add_feature` / `setFeatureParam` / `removePart` /
- * `setPartMaterial`) — which keeps CRDT op logs in sync and preserves
- * undo, while sharing the validation + argument parsing logic with
- * the TUI via `vcad_chat::plan_crud`.
- *
- * `doc_json` must deserialize into `vcad_ir::Document`; a parse
- * failure treats the doc as empty (an empty Document never validates
- * any id lookups, so planners that need to check part_id existence
- * will return a clean error).
- */
 export function plan_chat_tool(tool: string, args_json: string, doc_json: string): string;
 
 /**
@@ -1875,6 +1867,7 @@ export interface InitOutput {
     readonly raytracer_setMaterial: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly raytracer_uploadSolid: (a: number, b: number) => [number, number];
     readonly sectionMesh: (a: any, b: number, c: number, d: number, e: number) => any;
+    readonly solid_boundaryEdges: (a: number, b: number) => [number, number];
     readonly solid_boundingBox: (a: number) => [number, number];
     readonly solid_centerOfMass: (a: number) => [number, number];
     readonly solid_cone: (a: number, b: number, c: number, d: number) => number;
