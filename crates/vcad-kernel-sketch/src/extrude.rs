@@ -1018,8 +1018,6 @@ fn build_cap_face<F>(
 where
     F: Fn(Point3) -> [i64; 3],
 {
-    let n = verts.len();
-
     // Get positions
     let positions: Vec<Point3> = verts.iter().map(|&v| topo.vertices[v].point).collect();
 

@@ -195,7 +195,7 @@ fn weld_coincident_vertices(mesh: &mut TriangleMesh) {
     let mut dedup: std::collections::HashMap<[i64; 3], u32> = std::collections::HashMap::new();
     let mut new_vertices: Vec<f32> = Vec::with_capacity(mesh.vertices.len());
     let mut new_normals: Vec<f32> = Vec::with_capacity(mesh.normals.len());
-    for i in 0..n {
+    for (i, remap_i) in remap.iter_mut().enumerate() {
         let k = key(i);
         let idx = *dedup.entry(k).or_insert_with(|| {
             let new_i = (new_vertices.len() / 3) as u32;
@@ -205,7 +205,7 @@ fn weld_coincident_vertices(mesh: &mut TriangleMesh) {
             }
             new_i
         });
-        remap[i] = idx;
+        *remap_i = idx;
     }
     let mut new_indices: Vec<u32> = Vec::with_capacity(mesh.indices.len());
     let tri_count = mesh.indices.len() / 3;
@@ -290,7 +290,7 @@ fn fill_boundary_loops(mesh: &mut TriangleMesh) {
     // (empirically separates vertex-blend crescents from large holes).
     for loop_verts in &loops {
         let n = loop_verts.len();
-        if n < 3 || n > 24 {
+        if !(3..=24).contains(&n) {
             continue;
         }
         // Snapshot loop positions up front so we can mutate the mesh.
@@ -2024,8 +2024,11 @@ fn tessellate_spherical_face(
         .map(|he| topo.vertices[topo.half_edges[he].origin].point)
         .collect();
 
-    // A normal sphere has exactly 4 edges from B-rep. Split caps have more.
-    if loop_verts.len() > 4 {
+    // A normal closed-sphere B-rep has exactly 4 edges (seam cycle).
+    // Faces with 3 or >4 loop vertices are partial spherical caps —
+    // either boolean-split caps or fillet vertex-blend patches — and
+    // should be tessellated as a bounded cap, not a full sphere.
+    if loop_verts.len() == 3 || loop_verts.len() > 4 {
         return tessellate_spherical_cap(surface.as_ref(), &loop_verts, reversed);
     }
 
@@ -2751,13 +2754,13 @@ fn tessellate_toroidal_face(
             let d = *pt - torus.center;
             // u: angle around torus major axis from ref_dir → y
             let ru = d.dot(torus.ref_dir.as_ref());
-            let yu = d.dot(&y);
+            let yu = d.dot(y);
             let u = yu.atan2(ru);
             let u = if u < 0.0 { u + 2.0 * PI } else { u };
             // v: angle around tube. project d onto (tube_center_dir, axis) plane.
             let tube_dir = *torus.ref_dir.as_ref() * u.cos() + y * u.sin();
             let in_tube_plane = d - tube_dir * torus.major_radius;
-            let cv = in_tube_plane.dot(&tube_dir);
+            let cv = in_tube_plane.dot(tube_dir);
             let sv = in_tube_plane.dot(torus.axis.as_ref());
             let v = sv.atan2(cv);
             let v = if v < 0.0 { v + 2.0 * PI } else { v };

@@ -2283,6 +2283,105 @@ mod tests {
     }
 
     #[test]
+    fn test_fillet_arc_profile_has_sphere_vertex_blend_faces() {
+        // Regression: the spherical vertex-blend patches at arc-to-arc
+        // convex junctions should be present in the filleted BRep — one
+        // per junction on the bottom cap and one per junction on the top
+        // cap. Without them the fillet leaves a visible crescent gap
+        // between adjacent torus blends.
+        use vcad_kernel_sketch::{SketchProfile, SketchSegment};
+        let segments = vec![
+            SketchSegment::Arc {
+                start: vcad_kernel_math::Point2::new(45.0, 0.0),
+                end: vcad_kernel_math::Point2::new(20.0, 40.0),
+                center: vcad_kernel_math::Point2::new(10.0, 15.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: vcad_kernel_math::Point2::new(20.0, 40.0),
+                end: vcad_kernel_math::Point2::new(-30.0, 35.0),
+                center: vcad_kernel_math::Point2::new(-5.0, 25.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: vcad_kernel_math::Point2::new(-30.0, 35.0),
+                end: vcad_kernel_math::Point2::new(-50.0, 5.0),
+                center: vcad_kernel_math::Point2::new(-25.0, 15.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: vcad_kernel_math::Point2::new(-50.0, 5.0),
+                end: vcad_kernel_math::Point2::new(-35.0, -25.0),
+                center: vcad_kernel_math::Point2::new(-30.0, -5.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: vcad_kernel_math::Point2::new(-35.0, -25.0),
+                end: vcad_kernel_math::Point2::new(10.0, -30.0),
+                center: vcad_kernel_math::Point2::new(-10.0, -10.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: vcad_kernel_math::Point2::new(10.0, -30.0),
+                end: vcad_kernel_math::Point2::new(45.0, 0.0),
+                center: vcad_kernel_math::Point2::new(20.0, -10.0),
+                ccw: true,
+            },
+        ];
+        let profile = SketchProfile::new(
+            Point3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            segments,
+        )
+        .expect("valid profile");
+        let extruded =
+            Solid::extrude(profile, Vec3::new(0.0, 0.0, 18.0)).expect("extrude ok");
+        let filleted = extruded.fillet(4.0);
+
+        let (sphere_surfaces, sphere_faces, shell_face_count) = match &filleted.repr {
+            SolidRepr::BRep(b) => {
+                let sphere_surf_idxs: std::collections::HashSet<usize> = b
+                    .geometry
+                    .surfaces
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| s.surface_type() == vcad_kernel_geom::SurfaceKind::Sphere)
+                    .map(|(i, _)| i)
+                    .collect();
+                let shell = &b.topology.shells[b.topology.solids[b.solid_id].outer_shell];
+                let sphere_face_count = shell
+                    .faces
+                    .iter()
+                    .filter(|fid| sphere_surf_idxs.contains(&b.topology.faces[**fid].surface_index))
+                    .count();
+                (sphere_surf_idxs.len(), sphere_face_count, shell.faces.len())
+            }
+            _ => (0, 0, 0),
+        };
+        assert!(
+            sphere_surfaces > 0,
+            "expected sphere surfaces in the fillet output; got {sphere_surfaces}"
+        );
+        assert!(
+            sphere_faces > 0,
+            "sphere surfaces exist ({sphere_surfaces}) but no sphere face in the shell ({shell_face_count} total shell faces)"
+        );
+
+        // Tessellator must actually produce triangles for the sphere
+        // faces, not silently drop them. Baseline (no vertex blends) is
+        // 524 triangles; a single fan-triangulated 3-vertex sphere cap
+        // contributes at least one triangle, so any growth confirms
+        // the sphere faces are in the mesh.
+        let mesh = filleted.to_mesh(32);
+        assert!(
+            mesh.num_triangles() > 524,
+            "expected mesh to grow beyond 524 triangles from vertex-blend caps; got {}",
+            mesh.num_triangles()
+        );
+    }
+
+    #[test]
     fn test_fillet_on_extruded_arc_profile_produces_curved_blend() {
         // Regression for the "pork-chop sawtooth": extruding a sketch profile
         // containing arcs now produces analytic `CylinderSurface` side walls

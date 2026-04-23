@@ -139,7 +139,7 @@ fn trim_cylinder_face(
     let mut vs: Vec<f64> = Vec::with_capacity(n);
     for p in &face.positions {
         let d = *p - cyl.center;
-        vs.push(d.dot(&axis));
+        vs.push(d.dot(axis));
     }
     let v_min = vs.iter().cloned().fold(f64::INFINITY, f64::min);
     let v_max = vs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
@@ -147,10 +147,9 @@ fn trim_cylinder_face(
     let h = v_max - v_min;
     let eps_v = (h * 1e-4).max(1e-6);
 
-    for i in 0..n {
+    for (i, &v) in vs.iter().enumerate() {
         let v_id = face.vertex_ids[i];
         let v_pos = face.positions[i];
-        let v = vs[i];
 
         let mut shift = Vec3::zeros();
         if (v - v_min).abs() < eps_v {
