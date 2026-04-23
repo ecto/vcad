@@ -115,12 +115,16 @@ pub(crate) fn compute_trim_vertices(faces: &[FaceInfo], distance: f64) -> HashMa
 /// Analytical trim for a cylindrical face. For every vertex on the
 /// cylinder's bottom arc (axial minimum), shift it axially +distance
 /// toward the face interior; for every vertex on the top arc (axial
-/// maximum), shift -distance. Vertices at the face's u-extrema (the
-/// vertical seam edges at arc junctions) are additionally shifted
-/// along the arc tangent toward the face interior by the same
-/// distance, so the rectangular corner of the cylinder face (at the
-/// intersection of a cap edge and a vertical seam) gets a diagonal
-/// offset matching what the fillet pipeline expects.
+/// maximum), shift -distance.
+///
+/// We intentionally do NOT tangentially shift vertices at the face's
+/// u-extrema (the vertical seams between adjacent arc cylinders). The
+/// fillet pipeline treats cylinder-cylinder edges as unfilleted seams
+/// — a tangential shift there would move each cylinder's copy of the
+/// shared seam vertex in opposite directions, leaving a visible gap
+/// at every arc-to-arc junction (the "armpit hole" on the pork-chop).
+/// By keeping the axial-only shift, both cylinders' trimmed seam
+/// vertices land at the same 3D point and the junction welds cleanly.
 fn trim_cylinder_face(
     face: &FaceInfo,
     cyl: &CylinderInfo,
@@ -133,101 +137,27 @@ fn trim_cylinder_face(
     }
     let axis = cyl.axis.normalize();
 
-    // Signed v (axial) coordinate of each vertex, and a u angle
-    // around the cylinder from an arbitrary reference.
-    let ref_dir = {
-        let base = Vec3::new(1.0, 0.0, 0.0);
-        let proj = axis.dot(&base);
-        let r = base - axis * proj;
-        if r.norm() < 1e-6 {
-            let alt = Vec3::new(0.0, 1.0, 0.0);
-            let proj2 = axis.dot(&alt);
-            (alt - axis * proj2).normalize()
-        } else {
-            r.normalize()
-        }
-    };
-    let bidir = axis.cross(&ref_dir);
-
     let mut vs: Vec<f64> = Vec::with_capacity(n);
-    let mut us: Vec<f64> = Vec::with_capacity(n);
     for p in &face.positions {
         let d = *p - cyl.center;
         vs.push(d.dot(&axis));
-        let ru = d.dot(&ref_dir);
-        let bu = d.dot(&bidir);
-        us.push(bu.atan2(ru));
     }
     let v_min = vs.iter().cloned().fold(f64::INFINITY, f64::min);
     let v_max = vs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-    // Wrap-aware u span: sort and find the largest gap.
-    let (u_lo, u_hi) = {
-        let mut sorted: Vec<f64> = us.clone();
-        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        sorted.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
-        if sorted.len() < 2 {
-            (sorted.first().copied().unwrap_or(0.0),
-             sorted.first().copied().unwrap_or(0.0))
-        } else {
-            // Largest gap determines which side of the seam the face
-            // does NOT cover; u_lo/u_hi bracket the covered side.
-            let mut best_gap = 0.0_f64;
-            let mut best_idx = 0_usize;
-            for i in 0..sorted.len() - 1 {
-                let g = sorted[i + 1] - sorted[i];
-                if g > best_gap {
-                    best_gap = g;
-                    best_idx = i;
-                }
-            }
-            let wrap_gap = (sorted[0] + 2.0 * std::f64::consts::PI) - sorted[sorted.len() - 1];
-            if wrap_gap > best_gap {
-                (sorted[0], sorted[sorted.len() - 1])
-            } else {
-                (sorted[best_idx + 1], sorted[best_idx])
-            }
-        }
-    };
 
     let h = v_max - v_min;
     let eps_v = (h * 1e-4).max(1e-6);
-    let eps_u = 1e-3;
 
     for i in 0..n {
         let v_id = face.vertex_ids[i];
         let v_pos = face.positions[i];
         let v = vs[i];
-        let u = us[i];
 
         let mut shift = Vec3::zeros();
-
-        // Axial shift based on which cap edge this vertex lies on.
         if (v - v_min).abs() < eps_v {
             shift += axis * distance;
         } else if (v_max - v).abs() < eps_v {
             shift -= axis * distance;
-        }
-
-        // Tangential shift based on which seam edge this vertex lies on.
-        // At u_lo the face body is in the +u direction; at u_hi the
-        // face body is in the −u direction. Wrap-unaware comparison is
-        // fine because we normalized u via atan2 into [-π, π].
-        let at_lo = (u - u_lo).abs() < eps_u
-            || (u - u_lo - 2.0 * std::f64::consts::PI).abs() < eps_u
-            || (u - u_lo + 2.0 * std::f64::consts::PI).abs() < eps_u;
-        let at_hi = (u - u_hi).abs() < eps_u
-            || (u - u_hi - 2.0 * std::f64::consts::PI).abs() < eps_u
-            || (u - u_hi + 2.0 * std::f64::consts::PI).abs() < eps_u;
-        if at_lo || at_hi {
-            // Tangent to the cylinder at this point, in the face's
-            // circumferential direction.
-            let radial = v_pos - cyl.center - axis * v;
-            let tangent = axis.cross(&radial);
-            let tangent_len = tangent.norm();
-            if tangent_len > 1e-12 {
-                let t = tangent / tangent_len;
-                shift += if at_lo { t * distance } else { -t * distance };
-            }
         }
 
         trims.insert((v_id, face.face_id), v_pos + shift);
