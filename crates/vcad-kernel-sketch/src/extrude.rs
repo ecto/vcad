@@ -502,10 +502,8 @@ fn extrude_with_arcs(profile: &SketchProfile, direction: Vec3, arc_segs: usize) 
         let start_idx = seg_first[idx];
         let end_idx = seg_last[idx];
         let slice_len = end_idx - start_idx + 1;
-        let bot_slice: Vec<VertexId> =
-            (0..slice_len).map(|k| bot_chain[start_idx + k]).collect();
-        let top_slice: Vec<VertexId> =
-            (0..slice_len).map(|k| top_chain[start_idx + k]).collect();
+        let bot_slice: Vec<VertexId> = (0..slice_len).map(|k| bot_chain[start_idx + k]).collect();
+        let top_slice: Vec<VertexId> = (0..slice_len).map(|k| top_chain[start_idx + k]).collect();
 
         // Outer loop: bot_0 → ... → bot_k → top_k → top_{k-1} → ... → top_0.
         // Each pair of consecutive vertices contributes one half-edge.
@@ -540,9 +538,8 @@ fn extrude_with_arcs(profile: &SketchProfile, direction: Vec3, arc_segs: usize) 
                 let axis = Dir3::new_normalize(direction);
                 let start_3d = topo.vertices[bot_slice[0]].point;
                 let radial = start_3d - center_3d;
-                let ref_dir = Dir3::new_normalize(
-                    radial - radial.dot(axis.as_ref()) * *axis.as_ref(),
-                );
+                let ref_dir =
+                    Dir3::new_normalize(radial - radial.dot(axis.as_ref()) * *axis.as_ref());
                 let cyl = CylinderSurface {
                     center: center_3d,
                     axis,

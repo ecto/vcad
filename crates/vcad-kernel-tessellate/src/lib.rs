@@ -2083,21 +2083,17 @@ fn tessellate_cylindrical_face(
     }
     let effective_n_circ = u_samples.len() - 1;
 
-    if let Some(radius) = radius {
-        // Drive n_height by arc length per "circumferential segment" of a
-        // full circle at this radius. Using `full_circle / n_circ` gives
-        // every cylinder face (regardless of its u-range) the SAME
-        // per-height density, so adjacent arc-extrude cylinder faces
-        // share v-sample positions along their shared vertical seam and
-        // the tessellation stitches watertight. The old formula
-        // (`effective_n_circ / arc_length`) scaled differently for each
-        // face and left ragged seams.
-        let step = (2.0 * PI * radius) / n_circ as f64;
-        if step > 1e-9 {
-            let target = height.abs() / step;
-            n_height = n_height.max(target.ceil() as usize).max(1);
-        }
-    }
+    // n_height stays at the caller's value (default 1). A cylinder is
+    // ruled in the v direction — no curvature, no shading benefit from
+    // intermediate v samples. The prior formula drove n_height from
+    // `2π·radius / n_circ`, which varies per cylinder: adjacent arc-
+    // extrude cylinders with different radii ended up with different
+    // n_height → different v samples along their shared vertical seam
+    // → the weld stage couldn't collapse the duplicate seam vertices,
+    // leaving a long strip hole in the middle of the pork-chop. Keeping
+    // n_height = 1 gives every cylinder the same {v_min, v_max} pair
+    // along the seam, which always welds.
+    let _ = radius;
 
     let mut mesh = TriangleMesh::new();
 

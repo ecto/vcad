@@ -2379,16 +2379,31 @@ mod tests {
             "sphere surfaces exist ({sphere_surfaces}) but no sphere face in the shell ({shell_face_count} total shell faces)"
         );
 
-        // Tessellator must actually produce triangles for the sphere
-        // faces, not silently drop them. Baseline (no vertex blends) is
-        // 524 triangles; a single fan-triangulated 3-vertex sphere cap
-        // contributes at least one triangle, so any growth confirms
-        // the sphere faces are in the mesh.
-        let mesh = filleted.to_mesh(32);
+        // Tessellator must actually produce triangles from the sphere
+        // patches — tessellate the whole solid once, and separately
+        // tessellate each sphere face alone, confirming the per-face
+        // tessellator emits ≥1 triangle for each patch. Earlier
+        // versions of this regression used a hard-coded "total > 524"
+        // proxy, but that coupled the test to whatever the current
+        // cylinder n_height heuristic is. The per-face check is
+        // invariant to unrelated density changes.
+        use vcad_kernel_tessellate::{tessellate_brep_by_face, TessellationParams};
+        let params = TessellationParams::from_segments(32);
+        let per_face = tessellate_brep_by_face(
+            match &filleted.repr {
+                SolidRepr::BRep(b) => b.as_ref(),
+                _ => unreachable!(),
+            },
+            &params,
+        );
+        let sphere_tris: usize = per_face
+            .iter()
+            .filter(|(_, k, _)| *k == vcad_kernel_geom::SurfaceKind::Sphere)
+            .map(|(_, _, m)| m.num_triangles())
+            .sum();
         assert!(
-            mesh.num_triangles() > 524,
-            "expected mesh to grow beyond 524 triangles from vertex-blend caps; got {}",
-            mesh.num_triangles()
+            sphere_tris >= sphere_faces,
+            "expected at least {sphere_faces} sphere triangles (one per patch), got {sphere_tris}"
         );
     }
 

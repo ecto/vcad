@@ -672,6 +672,23 @@ export class Solid {
         wasm.__wbg_solid_free(ptr, 0);
     }
     /**
+     * Return mesh boundary edges as a flat float array
+     * `[x0, y0, z0, x1, y1, z1, ...]` with each pair of 3-component
+     * positions defining one edge segment. Used by the viewport's
+     * "show boundary edges" overlay to surface tessellation holes.
+     *
+     * Closed, manifold meshes return an empty array; each entry means
+     * there's a hole in the mesh.
+     * @param {number | null} [segments]
+     * @returns {Float32Array}
+     */
+    boundaryEdges(segments) {
+        const ret = wasm.solid_boundaryEdges(this.__wbg_ptr, isLikeNone(segments) ? 0x100000001 : (segments) >>> 0);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
      * Get the bounding box as [minX, minY, minZ, maxX, maxY, maxZ].
      * @returns {Float64Array}
      */
