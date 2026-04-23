@@ -387,6 +387,92 @@ export function buildRectangle(p1: Vec2, p2: Vec2): SketchSegment2D[] {
   ];
 }
 
+// ---------------------------------------------------------------------------
+// Bounds
+// ---------------------------------------------------------------------------
+
+/** 2D axis-aligned bounds in sketch-local (U/V) coordinates. */
+export interface SketchBounds2D {
+  minU: number;
+  maxU: number;
+  minV: number;
+  maxV: number;
+}
+
+/**
+ * Tight 2D bounds of a sketch in its plane-local coordinates. Line endpoints
+ * are included as-is; arcs also contribute any of the cardinal extremes
+ * (+/-U, +/-V relative to center) that the swept angle actually covers, so a
+ * quarter-arc doesn't get bounded by the full enclosing circle.
+ *
+ * Returns `null` for an empty segment list — callers should fall back to a
+ * default extent rather than fitting to nothing.
+ */
+export function computeSketchBounds(
+  segments: SketchSegment2D[],
+): SketchBounds2D | null {
+  if (segments.length === 0) return null;
+
+  let minU = Infinity;
+  let maxU = -Infinity;
+  let minV = Infinity;
+  let maxV = -Infinity;
+
+  const expand = (x: number, y: number) => {
+    if (x < minU) minU = x;
+    if (x > maxU) maxU = x;
+    if (y < minV) minV = y;
+    if (y > maxV) maxV = y;
+  };
+
+  for (const seg of segments) {
+    expand(seg.start.x, seg.start.y);
+    expand(seg.end.x, seg.end.y);
+
+    if (seg.type === "Arc") {
+      const r = Math.hypot(seg.start.x - seg.center.x, seg.start.y - seg.center.y);
+      const a0 = Math.atan2(seg.start.y - seg.center.y, seg.start.x - seg.center.x);
+      const a1 = Math.atan2(seg.end.y - seg.center.y, seg.end.x - seg.center.x);
+
+      // Resolve signed sweep for the direction flag, then check which of the
+      // four cardinal angles (0, π/2, π, -π/2) fall inside it.
+      let sweep = a1 - a0;
+      if (seg.ccw && sweep < 0) sweep += 2 * Math.PI;
+      if (!seg.ccw && sweep > 0) sweep -= 2 * Math.PI;
+
+      const cardinals = [0, Math.PI / 2, Math.PI, -Math.PI / 2];
+      for (const c of cardinals) {
+        // Distance from the start angle to this cardinal, in sweep direction.
+        let d = c - a0;
+        if (seg.ccw) {
+          while (d < 0) d += 2 * Math.PI;
+          while (d > 2 * Math.PI) d -= 2 * Math.PI;
+          if (d <= sweep) {
+            expand(
+              seg.center.x + r * Math.cos(c),
+              seg.center.y + r * Math.sin(c),
+            );
+          }
+        } else {
+          while (d > 0) d -= 2 * Math.PI;
+          while (d < -2 * Math.PI) d += 2 * Math.PI;
+          if (d >= sweep) {
+            expand(
+              seg.center.x + r * Math.cos(c),
+              seg.center.y + r * Math.sin(c),
+            );
+          }
+        }
+      }
+    }
+  }
+
+  if (!isFinite(minU) || !isFinite(maxU) || !isFinite(minV) || !isFinite(maxV)) {
+    return null;
+  }
+  return { minU, maxU, minV, maxV };
+}
+
 /** Build an N-sided polygonal approximation of a circle as arc segments. */
 export function buildCircle(
   center: Vec2,

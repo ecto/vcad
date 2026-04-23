@@ -1038,6 +1038,79 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
       );
   }, []);
 
+  // Fit-sketch view: position the camera perpendicular to the sketch plane at
+  // a distance that frames the sketch's U/V bounds in the current viewport.
+  const viewportAspect = useThree((s) => s.size.width / Math.max(1, s.size.height));
+  useEffect(() => {
+    const handleFitSketch = (
+      e: CustomEvent<{
+        // Kernel Z-up space (caller converts from sketch plane basis)
+        planeNormal: { x: number; y: number; z: number };
+        planeCenter: { x: number; y: number; z: number };
+        // Sketch-local bounds width (U) and height (V) in mm
+        width: number;
+        height: number;
+      }>,
+    ) => {
+      const { planeNormal, planeCenter, width, height } = e.detail;
+
+      // Kernel Z-up → display Y-up: (x, y, z) → (x, z, -y)
+      const [cx, cy, cz] = kernelToDisplay([
+        planeCenter.x,
+        planeCenter.y,
+        planeCenter.z,
+      ]);
+      const [nx, ny, nz] = kernelToDisplay([
+        planeNormal.x,
+        planeNormal.y,
+        planeNormal.z,
+      ]);
+      // Re-normalize to guard against any accumulated drift in the source basis.
+      const nLen = Math.hypot(nx, ny, nz) || 1;
+      const wNormal = new Vector3(nx / nLen, ny / nLen, nz / nLen);
+
+      // Fit distance for a Three.js perspective camera (vertical FOV). We
+      // check both the vertical and horizontal extent and pick whichever is
+      // tight; a 20% padding keeps the sketch off the viewport edges.
+      const perspective = camera as PerspectiveCamera;
+      const fovRad = (perspective.isPerspectiveCamera ? perspective.fov : 50) * (Math.PI / 180);
+      const aspect = perspective.isPerspectiveCamera
+        ? perspective.aspect
+        : viewportAspect;
+      const padding = 1.2;
+      const safeWidth = Math.max(width, 1);
+      const safeHeight = Math.max(height, 1);
+      const distV = (safeHeight / 2) / Math.tan(fovRad / 2);
+      const distH = (safeWidth / 2) / (aspect * Math.tan(fovRad / 2));
+      const viewDistance = Math.max(distV, distH, 10) * padding;
+
+      targetGoalRef.current.set(cx, cy, cz);
+      const cameraPos = new Vector3(
+        cx + wNormal.x * viewDistance,
+        cy + wNormal.y * viewDistance,
+        cz + wNormal.z * viewDistance,
+      );
+      cameraPositionGoalRef.current = cameraPos;
+      distanceGoalRef.current = viewDistance;
+
+      computeLevelQuaternion(cameraPos, targetGoalRef.current, goalQuatRef.current);
+
+      if (orbitRef.current) orbitRef.current.enabled = false;
+      isAnimatingTargetRef.current = true;
+      setIsCameraMoving(true);
+    };
+
+    window.addEventListener(
+      "vcad:fit-sketch",
+      handleFitSketch as EventListener,
+    );
+    return () =>
+      window.removeEventListener(
+        "vcad:fit-sketch",
+        handleFitSketch as EventListener,
+      );
+  }, [camera, viewportAspect]);
+
   // Offscreen render from the AI's camera goal. The AI's `screenshot_viewport`
   // tool calls `window.__vcadCaptureAiCamera(goal)` to grab a frame from the
   // AI's point of view WITHOUT disturbing the user's OrbitControls state.
