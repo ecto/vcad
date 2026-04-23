@@ -31,6 +31,7 @@ const GuidedFlowOverlay = lazyWithRetry(() => import("@/components/GuidedFlowOve
 const GhostPromptController = lazyWithRetry(() => import("@/components/GhostPromptController").then(m => ({ default: m.GhostPromptController })), "GhostPromptController");
 const CelebrationOverlay = lazyWithRetry(() => import("@/components/CelebrationOverlay").then(m => ({ default: m.CelebrationOverlay })), "CelebrationOverlay");
 const SignInDelight = lazyWithRetry(() => import("@/components/SignInDelight").then(m => ({ default: m.SignInDelight })), "SignInDelight");
+const LoginNotifications = lazyWithRetry(() => import("@/components/LoginNotifications").then(m => ({ default: m.LoginNotifications })), "LoginNotifications");
 const UpgradeDelight = lazyWithRetry(() => import("@/components/UpgradeDelight").then(m => ({ default: m.UpgradeDelight })), "UpgradeDelight");
 const AboutModal = lazyWithRetry(() => import("@/components/AboutModal").then(m => ({ default: m.AboutModal })), "AboutModal");
 const RecentFilesModal = lazyWithRetry(() => import("@/components/RecentFilesModal").then(m => ({ default: m.RecentFilesModal })), "RecentFilesModal");
@@ -721,6 +722,7 @@ export function App() {
         <GhostPromptController />
         <CelebrationOverlay />
         <SignInDelight />
+        <LoginNotifications />
         <UpgradeDelight />
       </Suspense>
 
