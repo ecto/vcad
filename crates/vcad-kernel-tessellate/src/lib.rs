@@ -533,24 +533,21 @@ fn fill_tiny_boundary_loops(
             continue;
         }
 
-        // Determine outward orientation by finding one edge in this
-        // loop that has a single directed use in the existing mesh —
-        // that direction is the exterior-CCW sense for that edge.
-        let mut outward_dir: Option<bool> = None; // true if loop's (a, b) matches (a, b) in mesh
+        // Each edge of the loop may come from a different adjacent
+        // face with its own outward-CCW direction, so we make the
+        // winding choice per-edge rather than once for the whole fan.
+        // Record whether `(a, b)` or `(b, a)` is the existing boundary
+        // direction for each edge so we can emit the fan triangle with
+        // the opposite direction — that way the fan's CCW normal
+        // aligns with the adjacent existing triangle's outward CCW.
+        let mut edge_dirs: Vec<bool> = Vec::with_capacity(n); // true if (a,b) matches existing
         for i in 0..n {
             let a = loop_verts[i];
             let b = loop_verts[(i + 1) % n];
             let fwd = dir_counts.get(&(a, b)).copied().unwrap_or(0);
             let bwd = dir_counts.get(&(b, a)).copied().unwrap_or(0);
-            if fwd == 1 && bwd == 0 {
-                outward_dir = Some(true);
-                break;
-            } else if bwd == 1 && fwd == 0 {
-                outward_dir = Some(false);
-                break;
-            }
+            edge_dirs.push(fwd >= bwd);
         }
-        let loop_matches_outward = outward_dir.unwrap_or(true);
 
         // Robust outward reference: direction from the solid centroid
         // to the loop centroid. Works for any convex-ish solid and
@@ -623,8 +620,12 @@ fn fill_tiny_boundary_loops(
 
         // Offset the centroid outward so fan triangles form a small
         // outward bump; the vertex normal averages the neighbours'
-        // vertex normals so the shading blends.
-        let offset_scale = avg_edge * 0.3;
+        // vertex normals so the shading blends. A larger offset moves
+        // cx clearly off the loop's supporting line, avoiding
+        // near-degenerate fan triangles when the loop centroid
+        // happens to be collinear with some loop edges (as with the
+        // V_axial column in an armpit hex).
+        let offset_scale = avg_edge * 1.0;
         let cx_idx = (mesh.vertices.len() / 3) as u32;
         mesh.vertices.extend_from_slice(&[
             cx + outward[0] * offset_scale,
@@ -633,25 +634,50 @@ fn fill_tiny_boundary_loops(
         ]);
         mesh.normals.extend_from_slice(&cx_vnormal);
 
-        // The manifold-correct winding `(cx, b, a)` makes each boundary
-        // edge `(a, b)` pair with its reverse, but its CCW normal
-        // points INWARD relative to the solid (the fan's apex `cx`
-        // sits on the INSIDE side of the existing boundary triangle's
-        // outward normal). Three.js's post-load `computeVertexNormals`
-        // derives per-vertex normals purely from winding, so an inward
-        // CCW renders DARK from outside.
-        //
-        // To render correctly we flip to the outward CCW winding
-        // `(cx, a, b)`. That leaves the boundary edge `(a, b)`
-        // appearing twice in the same direction (once in the existing
-        // boundary triangle, once in the fan). That's directed-non-
-        // manifold but the undirected edge count is still 2 — the
-        // mesh is watertight. Exports (STL, GLB) don't require
-        // directed-manifold, just watertightness.
+        // Emit each fan triangle with winding chosen so its CCW face
+        // normal points roughly outward (away from the solid
+        // centroid). For each edge we compute both candidate CCW
+        // normals — (cx, a, b) and (cx, b, a) — and pick whichever
+        // has a larger dot product with the LOCAL outward direction
+        // (fan-triangle-centroid − solid-centroid). This is stable
+        // even for non-planar loops where edges come from different
+        // adjacent faces with different local outward senses.
+        let cx_pos = [
+            mesh.vertices[3 * cx_idx as usize],
+            mesh.vertices[3 * cx_idx as usize + 1],
+            mesh.vertices[3 * cx_idx as usize + 2],
+        ];
         for i in 0..n {
             let a = loop_verts[i];
             let b = loop_verts[(i + 1) % n];
-            if loop_matches_outward {
+            let pa = [
+                mesh.vertices[3 * a as usize],
+                mesh.vertices[3 * a as usize + 1],
+                mesh.vertices[3 * a as usize + 2],
+            ];
+            let pb = [
+                mesh.vertices[3 * b as usize],
+                mesh.vertices[3 * b as usize + 1],
+                mesh.vertices[3 * b as usize + 2],
+            ];
+            // Triangle centroid (cx + a + b) / 3.
+            let tri_cx = (cx_pos[0] + pa[0] + pb[0]) / 3.0;
+            let tri_cy = (cx_pos[1] + pa[1] + pb[1]) / 3.0;
+            let tri_cz = (cx_pos[2] + pa[2] + pb[2]) / 3.0;
+            let local_outward = [tri_cx - scx, tri_cy - scy, tri_cz - scz];
+
+            // Fan CCW normal for (cx, a, b): (pa - cx) × (pb - cx).
+            let e1 = [pa[0] - cx_pos[0], pa[1] - cx_pos[1], pa[2] - cx_pos[2]];
+            let e2 = [pb[0] - cx_pos[0], pb[1] - cx_pos[1], pb[2] - cx_pos[2]];
+            let fan_n = [
+                e1[1] * e2[2] - e1[2] * e2[1],
+                e1[2] * e2[0] - e1[0] * e2[2],
+                e1[0] * e2[1] - e1[1] * e2[0],
+            ];
+            let dot = fan_n[0] * local_outward[0]
+                + fan_n[1] * local_outward[1]
+                + fan_n[2] * local_outward[2];
+            if dot >= 0.0 {
                 mesh.indices.extend_from_slice(&[cx_idx, a, b]);
             } else {
                 mesh.indices.extend_from_slice(&[cx_idx, b, a]);
