@@ -1282,6 +1282,14 @@ pub fn split_planar_face_by_arc(
         face2_points.push(*pt);
     }
 
+    // When the intersection circle passes through polygon vertices, the polygon walk
+    // includes the vertex AND the function then pushes the intersection point, creating
+    // a zero-length duplicate edge. Remove consecutive duplicates (including wrap-around)
+    // before validating and building faces.
+    let tolerance = 1e-6;
+    let face1_points = remove_consecutive_duplicates(&face1_points, tolerance);
+    let face2_points = remove_consecutive_duplicates(&face2_points, tolerance);
+
     // Validate faces have at least 3 vertices
     if face1_points.len() < 3 || face2_points.len() < 3 {
         return SplitResult {
@@ -1290,7 +1298,6 @@ pub fn split_planar_face_by_arc(
     }
 
     // Create the two new faces
-    let tolerance = 1e-6;
 
     // Face 1 (arc-bounded, inside circle)
     let face1_verts: Vec<_> = face1_points

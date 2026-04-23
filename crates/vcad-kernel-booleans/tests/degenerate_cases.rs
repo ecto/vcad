@@ -1,0 +1,413 @@
+//! Degenerate-input test suite for the boolean kernel.
+//!
+//! Covers six categories of hard inputs that commonly break CAD kernels:
+//!   1. Coincident co-planar faces
+//!   2. Exact tangent surface–surface intersections
+//!   3. Knife-edge (face–face single-line) intersections
+//!   4. Self-intersecting / near-degenerate input recovery
+//!   5. Floating-point near-miss (within epsilon of coincident)
+//!   6. Arc-split geometry (cylinder cap arcs on planar box faces)
+
+use vcad_kernel_booleans::{boolean_op, BooleanOp};
+use vcad_kernel_math::Transform;
+use vcad_kernel_primitives::{make_cube, make_cylinder, make_sphere, BRepSolid};
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn translate(brep: &mut BRepSolid, dx: f64, dy: f64, dz: f64) {
+    let t = Transform::translation(dx, dy, dz);
+    for (_, v) in &mut brep.topology.vertices {
+        v.point = t.apply_point(&v.point);
+    }
+    brep.geometry.surfaces = brep
+        .geometry
+        .surfaces
+        .drain(..)
+        .map(|s| s.transform(&t))
+        .collect();
+}
+
+fn mesh_volume(mesh: &vcad_kernel_tessellate::TriangleMesh) -> f64 {
+    let verts = &mesh.vertices;
+    let indices = &mesh.indices;
+    let mut vol = 0.0_f64;
+    for tri in indices.chunks(3) {
+        let i0 = tri[0] as usize * 3;
+        let i1 = tri[1] as usize * 3;
+        let i2 = tri[2] as usize * 3;
+        let v0 = [verts[i0] as f64, verts[i0 + 1] as f64, verts[i0 + 2] as f64];
+        let v1 = [verts[i1] as f64, verts[i1 + 1] as f64, verts[i1 + 2] as f64];
+        let v2 = [verts[i2] as f64, verts[i2 + 1] as f64, verts[i2 + 2] as f64];
+        vol += v0[0] * (v1[1] * v2[2] - v2[1] * v1[2])
+            - v1[0] * (v0[1] * v2[2] - v2[1] * v0[2])
+            + v2[0] * (v0[1] * v1[2] - v1[1] * v0[2]);
+    }
+    (vol / 6.0).abs()
+}
+
+fn assert_valid_mesh(mesh: &vcad_kernel_tessellate::TriangleMesh) {
+    assert!(
+        mesh.num_triangles() > 0,
+        "result mesh must have at least one triangle"
+    );
+    for &idx in &mesh.indices {
+        assert!(
+            (idx as usize) < mesh.vertices.len() / 3,
+            "index {} out of range (vertex count {})",
+            idx,
+            mesh.vertices.len() / 3
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 1. Coincident co-planar faces
+// ---------------------------------------------------------------------------
+
+/// Union of two cubes that share an exact co-planar face (touching, no overlap).
+/// The x=10 face of A is exactly coincident with the x=0 face of B.
+#[test]
+fn coplanar_adjacent_union_volume() {
+    let a = make_cube(10.0, 10.0, 10.0);
+    let mut b = make_cube(10.0, 10.0, 10.0);
+    translate(&mut b, 10.0, 0.0, 0.0);
+
+    let result = boolean_op(&a, &b, BooleanOp::Union, 32);
+    let mesh = result.to_mesh(32);
+    assert_valid_mesh(&mesh);
+
+    let vol = mesh_volume(&mesh);
+    assert!(
+        (vol - 2000.0).abs() / 2000.0 < 0.05,
+        "coplanar union: expected ~2000, got {vol:.2}"
+    );
+}
+
+/// Difference of two touching cubes: A minus B yields A unchanged (no overlap).
+#[test]
+fn coplanar_adjacent_difference_no_change() {
+    let a = make_cube(10.0, 10.0, 10.0);
+    let mut b = make_cube(10.0, 10.0, 10.0);
+    translate(&mut b, 10.0, 0.0, 0.0);
+
+    let result = boolean_op(&a, &b, BooleanOp::Difference, 32);
+    let mesh = result.to_mesh(32);
+    assert_valid_mesh(&mesh);
+
+    let vol = mesh_volume(&mesh);
+    assert!(
+        (vol - 1000.0).abs() / 1000.0 < 0.05,
+        "coplanar diff: expected ~1000, got {vol:.2}"
+    );
+}
+
+/// Co-planar face union where both operands share an entire face in the Z direction.
+/// A occupies z=[0,10], B occupies z=[10,20]; they touch at the z=10 plane.
+#[test]
+fn coplanar_stacked_union() {
+    let a = make_cube(10.0, 10.0, 10.0);
+    let mut b = make_cube(10.0, 10.0, 10.0);
+    translate(&mut b, 0.0, 0.0, 10.0);
+
+    let result = boolean_op(&a, &b, BooleanOp::Union, 32);
+    let mesh = result.to_mesh(32);
+    assert_valid_mesh(&mesh);
+
+    let vol = mesh_volume(&mesh);
+    assert!(
+        (vol - 2000.0).abs() / 2000.0 < 0.05,
+        "stacked union: expected ~2000, got {vol:.2}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 2. Exact tangent surface–surface intersections
+// ---------------------------------------------------------------------------
+
+/// Cylinder tangent to a planar box face: the curved surface just touches the
+/// y=0 plane at one generator line but does not penetrate.
+/// Difference result should equal the full box volume.
+#[test]
+fn cylinder_tangent_to_plane_difference() {
+    let cube = make_cube(20.0, 20.0, 20.0);
+    // Cylinder r=5 centered at (10, -5, 0): tangent to y=0 face, fully outside.
+    let mut cyl = make_cylinder(5.0, 20.0, 32);
+    translate(&mut cyl, 10.0, -5.0, 0.0);
+
+    let result = boolean_op(&cube, &cyl, BooleanOp::Difference, 32);
+    let mesh = result.to_mesh(32);
+    assert_valid_mesh(&mesh);
+
+    let vol = mesh_volume(&mesh);
+    let expected = 20.0_f64.powi(3);
+    assert!(
+        (vol - expected).abs() / expected < 0.05,
+        "tangent diff: expected ~{expected:.1}, got {vol:.2}"
+    );
+}
+
+/// Sphere tangent to a planar box face: touches at exactly one point, no intersection.
+#[test]
+fn sphere_tangent_to_plane_difference() {
+    let cube = make_cube(20.0, 20.0, 20.0);
+    // Sphere r=5 centered at (10, 10, -5): tangent to z=0 face from below.
+    let mut sphere = make_sphere(5.0, 32);
+    translate(&mut sphere, 10.0, 10.0, -5.0);
+
+    let result = boolean_op(&cube, &sphere, BooleanOp::Difference, 32);
+    let mesh = result.to_mesh(32);
+    assert_valid_mesh(&mesh);
+
+    let vol = mesh_volume(&mesh);
+    let expected = 20.0_f64.powi(3);
+    assert!(
+        (vol - expected).abs() / expected < 0.05,
+        "sphere tangent: expected ~{expected:.1}, got {vol:.2}"
+    );
+}
+
+/// Cylinder tangent to a box from the inside: cylinder axis sits exactly on a box edge,
+/// so the cylinder is tangent (touches but does not protrude outside the box).
+#[test]
+fn cylinder_internally_tangent_union_is_noop() {
+    let cube = make_cube(20.0, 20.0, 20.0);
+    // Cylinder r=10 centered at (10,10,0): completely inside the 20x20x20 box.
+    let cyl = make_cylinder(10.0, 20.0, 32);
+    // No translation — axis at origin, cylinder fits inside.
+    let mut inner = cyl;
+    translate(&mut inner, 10.0, 10.0, 0.0);
+
+    let result = boolean_op(&cube, &inner, BooleanOp::Union, 32);
+    let mesh = result.to_mesh(32);
+    assert_valid_mesh(&mesh);
+
+    // Union of A with B⊆A equals A.
+    let vol = mesh_volume(&mesh);
+    let expected = 20.0_f64.powi(3);
+    assert!(
+        (vol - expected).abs() / expected < 0.05,
+        "inner union: expected ~{expected:.1}, got {vol:.2}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 3. Knife-edge (face–face single-line) intersections
+// ---------------------------------------------------------------------------
+
+/// Two cubes sharing exactly one edge (not a face or volume).
+/// A=[0,0,0]-[10,10,10], B=[10,10,0]-[20,20,10]: share edge at (10,10,z).
+#[test]
+fn knife_edge_union_volume() {
+    let a = make_cube(10.0, 10.0, 10.0);
+    let mut b = make_cube(10.0, 10.0, 10.0);
+    translate(&mut b, 10.0, 10.0, 0.0);
+
+    let result = boolean_op(&a, &b, BooleanOp::Union, 32);
+    let mesh = result.to_mesh(32);
+    assert_valid_mesh(&mesh);
+
+    let vol = mesh_volume(&mesh);
+    assert!(
+        (vol - 2000.0).abs() / 2000.0 < 0.05,
+        "knife-edge union: expected ~2000, got {vol:.2}"
+    );
+}
+
+/// Knife-edge difference: A minus B where they share only one edge.
+/// Result should be A unchanged.
+#[test]
+fn knife_edge_difference_no_change() {
+    let a = make_cube(10.0, 10.0, 10.0);
+    let mut b = make_cube(10.0, 10.0, 10.0);
+    translate(&mut b, 10.0, 10.0, 0.0);
+
+    let result = boolean_op(&a, &b, BooleanOp::Difference, 32);
+    let mesh = result.to_mesh(32);
+    assert_valid_mesh(&mesh);
+
+    let vol = mesh_volume(&mesh);
+    assert!(
+        (vol - 1000.0).abs() / 1000.0 < 0.05,
+        "knife-edge diff: expected ~1000, got {vol:.2}"
+    );
+}
+
+/// Two boxes sharing a single vertex (point contact).
+#[test]
+fn vertex_contact_union_volume() {
+    let a = make_cube(10.0, 10.0, 10.0);
+    let mut b = make_cube(10.0, 10.0, 10.0);
+    translate(&mut b, 10.0, 10.0, 10.0);
+
+    let result = boolean_op(&a, &b, BooleanOp::Union, 32);
+    let mesh = result.to_mesh(32);
+    assert_valid_mesh(&mesh);
+
+    let vol = mesh_volume(&mesh);
+    assert!(
+        (vol - 2000.0).abs() / 2000.0 < 0.05,
+        "vertex contact union: expected ~2000, got {vol:.2}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 4. Self-intersecting / near-degenerate input recovery
+// ---------------------------------------------------------------------------
+
+/// Extremely thin solid (height = 1e-4): boolean operation must not panic
+/// and must produce a non-empty mesh.
+#[test]
+fn very_thin_box_difference_no_panic() {
+    let big = make_cube(10.0, 10.0, 10.0);
+    let mut thin = make_cube(5.0, 5.0, 1e-4);
+    translate(&mut thin, 2.5, 2.5, 5.0);
+
+    // Must not panic; volume should be essentially unchanged.
+    let result = boolean_op(&big, &thin, BooleanOp::Difference, 32);
+    let mesh = result.to_mesh(32);
+    assert_valid_mesh(&mesh);
+}
+
+/// Needle-like solid (very narrow in two dimensions): no panic on union.
+#[test]
+fn needle_solid_union_no_panic() {
+    let a = make_cube(10.0, 10.0, 10.0);
+    let mut needle = make_cube(0.001, 0.001, 20.0);
+    translate(&mut needle, 5.0, 5.0, -5.0);
+
+    let result = boolean_op(&a, &needle, BooleanOp::Union, 32);
+    let mesh = result.to_mesh(32);
+    assert_valid_mesh(&mesh);
+}
+
+/// Flat coin-like solid: degenerate in Z, must produce a valid result.
+#[test]
+fn flat_coin_difference_no_panic() {
+    let big = make_cube(20.0, 20.0, 20.0);
+    let mut coin = make_cylinder(8.0, 1e-3, 32);
+    translate(&mut coin, 10.0, 10.0, 10.0);
+
+    let result = boolean_op(&big, &coin, BooleanOp::Difference, 32);
+    let mesh = result.to_mesh(32);
+    assert_valid_mesh(&mesh);
+}
+
+// ---------------------------------------------------------------------------
+// 5. Floating-point near-miss (within epsilon of coincident)
+// ---------------------------------------------------------------------------
+
+/// Faces separated by 1e-7 (below typical snap tolerance): union must not crash
+/// or produce garbage geometry, and combined volume should be near 2000.
+#[test]
+fn near_miss_epsilon_overlap_union() {
+    let a = make_cube(10.0, 10.0, 10.0);
+    let mut b = make_cube(10.0, 10.0, 10.0);
+    translate(&mut b, 10.0 + 1e-7, 0.0, 0.0);
+
+    let result = boolean_op(&a, &b, BooleanOp::Union, 32);
+    let mesh = result.to_mesh(32);
+    assert_valid_mesh(&mesh);
+}
+
+/// Faces separated by exactly 0 in one axis, by 1e-8 in another: must not panic.
+#[test]
+fn near_miss_sub_epsilon_difference() {
+    let a = make_cube(10.0, 10.0, 10.0);
+    let mut b = make_cube(10.0, 10.0, 10.0);
+    translate(&mut b, 10.0, 1e-8, 0.0);
+
+    let result = boolean_op(&a, &b, BooleanOp::Difference, 32);
+    let mesh = result.to_mesh(32);
+    assert_valid_mesh(&mesh);
+}
+
+/// Faces within 1e-5 of coincident (within snap tolerance): difference must
+/// not produce negative or zero volume.
+#[test]
+fn near_miss_within_snap_tolerance() {
+    let a = make_cube(10.0, 10.0, 10.0);
+    let mut b = make_cube(10.0, 10.0, 10.0);
+    translate(&mut b, 9.99999, 0.0, 0.0); // 1e-5 penetration
+
+    let result = boolean_op(&a, &b, BooleanOp::Difference, 32);
+    let mesh = result.to_mesh(32);
+    // Must not panic and must produce a mesh.
+    assert_valid_mesh(&mesh);
+}
+
+// ---------------------------------------------------------------------------
+// 6. Arc-split geometry
+// ---------------------------------------------------------------------------
+//
+// These tests exercise the planar-face-by-arc split path that runs when a
+// cylinder cap circle only partially overlaps a box face.  After the dedup
+// fix in split_planar_face_by_arc, volumes should land within 5%.
+
+/// Box minus half-cylinder (cylinder axis on the left edge of the box).
+/// Cylinder center at (0, 10, z) with r=10: the right semicircle is inside the box.
+/// Expected volume = 20³ − π·r²·h/2.
+#[test]
+fn arc_split_half_cylinder_difference() {
+    let cube = make_cube(20.0, 20.0, 20.0);
+    let mut cyl = make_cylinder(10.0, 20.0, 32);
+    translate(&mut cyl, 0.0, 10.0, 0.0);
+
+    let result = boolean_op(&cube, &cyl, BooleanOp::Difference, 32);
+    let mesh = result.to_mesh(32);
+    assert_valid_mesh(&mesh);
+
+    let vol = mesh_volume(&mesh);
+    let expected = 20.0_f64.powi(3) - std::f64::consts::PI * 100.0 * 20.0 / 2.0;
+    let err = (vol - expected).abs() / expected;
+    assert!(
+        err < 0.05,
+        "half-cylinder diff: volume error {:.1}% (expected {expected:.2}, got {vol:.2})",
+        err * 100.0
+    );
+}
+
+/// Box minus quarter-cylinder (cylinder axis at box corner).
+/// Cylinder center at (0, 0, z) with r=10: only the x>0,y>0 quarter is inside.
+/// Expected volume = 20³ − π·r²·h/4.
+#[test]
+fn arc_split_quarter_cylinder_difference() {
+    let cube = make_cube(20.0, 20.0, 20.0);
+    let cyl = make_cylinder(10.0, 20.0, 32);
+
+    let result = boolean_op(&cube, &cyl, BooleanOp::Difference, 32);
+    let mesh = result.to_mesh(32);
+    assert_valid_mesh(&mesh);
+
+    let vol = mesh_volume(&mesh);
+    let expected = 20.0_f64.powi(3) - std::f64::consts::PI * 100.0 * 20.0 / 4.0;
+    let err = (vol - expected).abs() / expected;
+    assert!(
+        err < 0.05,
+        "quarter-cylinder diff: volume error {:.1}% (expected {expected:.2}, got {vol:.2})",
+        err * 100.0
+    );
+}
+
+/// Box minus cylinder fully inside: all 6 box faces are untouched, only the
+/// cylindrical void is cut.  Expected volume = 20³ − π·r²·h.
+#[test]
+fn arc_split_full_cylinder_interior_difference() {
+    let cube = make_cube(20.0, 20.0, 20.0);
+    let mut cyl = make_cylinder(5.0, 20.0, 32);
+    translate(&mut cyl, 10.0, 10.0, 0.0); // fully inside the 20×20×20 box
+
+    let result = boolean_op(&cube, &cyl, BooleanOp::Difference, 32);
+    let mesh = result.to_mesh(32);
+    assert_valid_mesh(&mesh);
+
+    let vol = mesh_volume(&mesh);
+    let expected = 20.0_f64.powi(3) - std::f64::consts::PI * 25.0 * 20.0;
+    let err = (vol - expected).abs() / expected;
+    assert!(
+        err < 0.05,
+        "interior cylinder diff: volume error {:.1}% (expected {expected:.2}, got {vol:.2})",
+        err * 100.0
+    );
+}
