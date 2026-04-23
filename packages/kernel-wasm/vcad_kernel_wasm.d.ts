@@ -2077,11 +2077,11 @@ export interface InitOutput {
     readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
     readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
     readonly isEmbroideryAvailable: () => number;
-    readonly wasm_bindgen__closure__destroy__hd298f46ef6753d27: (a: number, b: number) => void;
-    readonly wasm_bindgen__closure__destroy__h05cb0c14e4c64d12: (a: number, b: number) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h63f4e2fd076fb3c1: (a: number, b: number, c: any, d: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h7d640a285617a4e6: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__hb8699e4a26455b57: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__closure__destroy__ha8d4e097953964e6: (a: number, b: number) => void;
+    readonly wasm_bindgen__closure__destroy__hf40b7bdcf0d09ecb: (a: number, b: number) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h397719c423f4718e: (a: number, b: number, c: any, d: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h3c3248f38441540b: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__ha9bc019092e7ecae: (a: number, b: number, c: any) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;

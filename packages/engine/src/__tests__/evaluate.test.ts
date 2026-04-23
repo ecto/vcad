@@ -204,14 +204,16 @@ describe("CSG operations", () => {
     console.log(`BBox with transforms: (${minX.toFixed(2)}, ${minY.toFixed(2)}, ${minZ.toFixed(2)}) to (${maxX.toFixed(2)}, ${maxY.toFixed(2)}, ${maxZ.toFixed(2)})`);
 
     // Should produce same result as without transforms.
-    // Triangle count depends on the cylinder tessellator's height
-    // segment count; after cylinder n_height fix (branch
-    // `nurbs-fillet-porkchop` / commit 90109a8, which pinned n_height
-    // to 1 so adjacent arc cylinders agree on their shared seam
-    // v-samples) this drops from 220 to 60. Shape is unchanged — only
-    // tessellation density — and the bbox assertions below still
-    // catch geometric regressions.
-    expect(tris).toBe(60);
+    // Triangle count depends on kernel internals:
+    //   - cylinder n_height fix (90109a8) pinned the tessellator so
+    //     adjacent arc cylinders agree on their seam v-samples,
+    //     dropping 220 → 60.
+    //   - coplanar-coincidence classification (PR #73) drops the
+    //     redundant reversed cylinder-cap at z=20 whose region the
+    //     box-top annular already covers, 60 → 44.
+    // Shape is unchanged — only tessellation density — and the bbox
+    // assertions below still catch geometric regressions.
+    expect(tris).toBe(44);
     expect(minX).toBeGreaterThanOrEqual(-0.1);
     expect(minY).toBeGreaterThanOrEqual(-0.1);
   });
