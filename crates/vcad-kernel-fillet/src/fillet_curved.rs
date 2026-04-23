@@ -1056,10 +1056,58 @@ fn build_blend_quad_surface(
     }
 
     let surf_idx = new_geom.add_surface(surface);
-    let solid_center = compute_centroid(faces);
     let chamfer_center =
         Point3::from((pa_s.to_vec() + pa_e.to_vec() + pb_e.to_vec() + pb_s.to_vec()) * 0.25);
-    let outward = chamfer_center - solid_center;
+
+    // Outward reference for the blend quad. Previously we used
+    // `chamfer_center - solid_centroid`, which fails near armpit
+    // junctions: the junction's snapped trim points pull
+    // chamfer_center toward the solid centroid, so the vector flips
+    // away from true outward and the winding check picks the inward
+    // order for those quads (rendering them dark).
+    //
+    // Use the ADJACENT FACES' existing mesh triangles as the outward
+    // reference. `faces` contains the original faces (cap + cyl) that
+    // this blend sits between. Each face has `positions` + a `normal`
+    // (cap) or can provide a radial outward at the chamfer_center
+    // (cyl). Sum the outward-pointing directions from face_a and
+    // face_b at their sides of the blend — that's locally correct
+    // regardless of where the blend sits on the solid.
+    let face_a_info = faces.iter().find(|f| f.face_id == edge_info.face_a);
+    let face_b_info = faces.iter().find(|f| f.face_id == edge_info.face_b);
+    let side_outward = |face_info: Option<&FaceInfo>, side_point: Point3| -> Vec3 {
+        let Some(fi) = face_info else {
+            return Vec3::zeros();
+        };
+        // Planar face: its stored normal is outward.
+        if fi.normal.norm() > 1e-9 && fi.cylinder.is_none() {
+            return fi.normal;
+        }
+        // Cylindrical face: radial direction from axis to side_point.
+        if let Some(ref cyl) = fi.cylinder {
+            let axis = cyl.axis.normalize();
+            let d = side_point - cyl.center;
+            let along = d.dot(&axis);
+            let radial = d - axis * along;
+            if radial.norm() > 1e-9 {
+                return radial.normalize();
+            }
+        }
+        Vec3::zeros()
+    };
+    let out_a = side_outward(
+        face_a_info,
+        Point3::from((pa_s.to_vec() + pa_e.to_vec()) * 0.5),
+    );
+    let out_b = side_outward(
+        face_b_info,
+        Point3::from((pb_s.to_vec() + pb_e.to_vec()) * 0.5),
+    );
+    let outward = if (out_a + out_b).norm() > 1e-9 {
+        out_a + out_b
+    } else {
+        chamfer_center - compute_centroid(faces)
+    };
     let e1 = *pa_e - *pa_s;
     let e2 = *pb_s - *pa_s;
     let n = e1.cross(e2);

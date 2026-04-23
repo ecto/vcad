@@ -3185,7 +3185,20 @@ fn tessellate_toroidal_face(
         }
     }
 
-    // Generate triangles
+    // Generate triangles with per-quad winding consistency: compare
+    // each quad's candidate CCW normal (from its own (bl, br, tl)
+    // vertex order in the generated mesh) against the torus surface's
+    // analytical outward normal at the quad's (u, v) midpoint. Flip
+    // the winding when they disagree. Needed for plane-cyl blend-torus
+    // faces near armpit junctions, where the torus's (u, v)
+    // parameterization winds CCW-inward in some u-ranges after trim
+    // snapping — the vertex normals are already outward (set from
+    // `surface.normal(uv)` in the loop above), but the face winding
+    // Three.js's `computeVertexNormals` derives for rendering would
+    // point the opposite way.
+    let torus_ref = surface
+        .as_any()
+        .downcast_ref::<vcad_kernel_geom::TorusSurface>();
     let stride = (n_u + 1) as u32;
     for j in 0..n_v {
         for i in 0..n_u {
@@ -3194,7 +3207,41 @@ fn tessellate_toroidal_face(
             let tl = bl + stride;
             let tr = tl + 1;
 
-            if reversed {
+            let mut flip = false;
+            if let Some(torus) = torus_ref {
+                let du = (u_max - u_min) / n_u as f64;
+                let dv = (v_max - v_min) / n_v as f64;
+                let u_mid = u_min + du * (i as f64 + 0.5);
+                let v_mid = v_min + dv * (j as f64 + 0.5);
+                let p_bl_x = mesh.vertices[3 * bl as usize] as f64;
+                let p_bl_y = mesh.vertices[3 * bl as usize + 1] as f64;
+                let p_bl_z = mesh.vertices[3 * bl as usize + 2] as f64;
+                let p_br_x = mesh.vertices[3 * br as usize] as f64;
+                let p_br_y = mesh.vertices[3 * br as usize + 1] as f64;
+                let p_br_z = mesh.vertices[3 * br as usize + 2] as f64;
+                let p_tl_x = mesh.vertices[3 * tl as usize] as f64;
+                let p_tl_y = mesh.vertices[3 * tl as usize + 1] as f64;
+                let p_tl_z = mesh.vertices[3 * tl as usize + 2] as f64;
+                let ex = p_br_x - p_bl_x;
+                let ey = p_br_y - p_bl_y;
+                let ez = p_br_z - p_bl_z;
+                let fx = p_tl_x - p_bl_x;
+                let fy = p_tl_y - p_bl_y;
+                let fz = p_tl_z - p_bl_z;
+                let nx = ey * fz - ez * fy;
+                let ny = ez * fx - ex * fz;
+                let nz = ex * fy - ey * fx;
+                let outward = *torus.normal(Point2::new(u_mid, v_mid));
+                let dot = nx * outward.x + ny * outward.y + nz * outward.z;
+                if reversed {
+                    flip = dot > 0.0;
+                } else {
+                    flip = dot < 0.0;
+                }
+            }
+
+            let effective_reversed = reversed ^ flip;
+            if effective_reversed {
                 mesh.indices.extend_from_slice(&[bl, tl, br, br, tl, tr]);
             } else {
                 mesh.indices.extend_from_slice(&[bl, br, tl, br, tr, tl]);
