@@ -29,6 +29,7 @@ import {
   getStorageUsage,
   isDocumentLocked,
 } from "@/lib/storage";
+import { newDocId } from "@/lib/doc-id";
 
 function formatDate(timestamp: number): string {
   const date = new Date(timestamp);
@@ -305,7 +306,7 @@ export function DocumentPicker({
 
   const handleNewDocument = useCallback(async () => {
     const name = await generateDocumentName();
-    const id = crypto.randomUUID();
+    const id = newDocId();
     useDocumentStore.getState().newDocument(id, name);
     onOpenChange(false);
     useNotificationStore.getState().addToast(`Created "${name}"`, "success");

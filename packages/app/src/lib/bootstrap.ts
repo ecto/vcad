@@ -19,6 +19,7 @@ import {
 } from "@/lib/storage";
 import { loadDocumentFromUrl, getLocalDocRouteId } from "@/lib/url-document";
 import type { UrlDocumentResult } from "@/lib/url-document";
+import { newDocId } from "@/lib/doc-id";
 import { useNotificationStore } from "@/stores/notification-store";
 import { analytics } from "@/lib/analytics";
 
@@ -293,10 +294,10 @@ async function fetchDocumentData(): Promise<DocumentBootData> {
     }
 
     const name = await generateDocumentName();
-    return { kind: "new", id: crypto.randomUUID(), name };
+    return { kind: "new", id: newDocId(), name };
   } catch (err) {
     logger.warn("app", `Failed to resolve initial document: ${err}`);
-    return { kind: "new", id: crypto.randomUUID(), name: "Untitled" };
+    return { kind: "new", id: newDocId(), name: "Untitled" };
   }
 }
 
@@ -316,7 +317,7 @@ function applyDocumentData(data: DocumentBootData): void {
 
   // kind === "url"
   const { urlDoc } = data;
-  const id = crypto.randomUUID();
+  const id = newDocId();
   docStore.loadDocument(urlDoc.file);
   docStore.setDocumentMeta(id, urlDoc.name);
 

@@ -144,8 +144,9 @@ function parseRoute(): UrlRoute {
   const profileMatch = path.match(/^\/@([a-z0-9][a-z0-9-]*[a-z0-9])\/?$/);
   if (profileMatch?.[1]) return { kind: "profile", username: profileMatch[1] };
 
-  // /d/<uuid> — local IndexedDB document identity
-  const localMatch = path.match(/^\/d\/([0-9a-fA-F-]{8,64})\/?$/);
+  // /d/<id> — local IndexedDB document identity. Accepts both legacy UUIDs
+  // (hex + dashes) and short base62 nanoids minted by newDocId().
+  const localMatch = path.match(/^\/d\/([A-Za-z0-9_-]{8,64})\/?$/);
   if (localMatch?.[1]) return { kind: "local-doc", id: localMatch[1] };
 
   return null;
