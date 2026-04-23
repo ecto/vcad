@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from "react";
-import { useDocumentStore, useUiStore } from "@vcad/core";
+import { useDocumentStore, useUiStore, buildVcadFileFromState } from "@vcad/core";
 import { useNotificationStore } from "@/stores/notification-store";
 import {
   saveDocument,
@@ -50,12 +50,11 @@ export function useAutoSave() {
 
     try {
       const state = useDocumentStore.getState();
-      const vcadFile = {
-        document: state.document,
-        parts: state.parts,
-        consumedParts: state.consumedParts,
-        nextNodeId: state.nextNodeId,
-      };
+      const vcadFile = buildVcadFileFromState(state);
+      if (!vcadFile) {
+        // Engine not ready yet — skip this save cycle; next dirty tick retries.
+        return;
+      }
 
       await saveDocument(documentId, documentName, vcadFile);
       markSaved();

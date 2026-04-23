@@ -1,5 +1,7 @@
 import { openDB, type IDBPDatabase } from "idb";
-import type { VcadFile } from "@vcad/core";
+import type { VcadFile, VcadFileLegacy } from "@vcad/core";
+import type { Document } from "@vcad/ir";
+import type { PartInfo } from "@vcad/core";
 
 const DB_NAME = "vcad-documents";
 const DB_VERSION = 1;
@@ -86,7 +88,54 @@ export async function saveDocument(
 export async function loadDocument(id: string): Promise<StoredDocument | null> {
   const db = await getDb();
   const doc = await db.get(DOCUMENTS_STORE, id);
-  return doc ?? null;
+  if (!doc) return null;
+  return {
+    ...doc,
+    document: adoptPersistedVcadFile(doc.document),
+  };
+}
+
+/**
+ * Normalize a stored VcadFile to the current tagged-union shape.
+ *
+ * Pre-v0.4 IndexedDB rows were written as the flat legacy object
+ * (`{document, parts, nextNodeId, ...}` with no `kind` discriminator). This
+ * adapter tags them as `kind: "legacy"` at read time so the tagged-union
+ * type stays sound end-to-end. Rows with loonSource get tagged as `loon`.
+ * The backfill job rewrites them in-place to the new shape on next save.
+ */
+export function adoptPersistedVcadFile(persisted: unknown): VcadFile {
+  if (persisted && typeof persisted === "object") {
+    const obj = persisted as Record<string, unknown>;
+    if (typeof obj.kind === "string") {
+      // Already a tagged variant — trust the discriminator.
+      return persisted as VcadFile;
+    }
+    if (typeof obj.loonSource === "string" && obj.loonSource) {
+      return {
+        kind: "loon",
+        version: "0.3",
+        loonSource: obj.loonSource,
+        document: obj.document as Document,
+        parts: (obj.parts as PartInfo[] | undefined) ?? [],
+        nextNodeId: (obj.nextNodeId as number | undefined) ?? 1,
+        nextPartNum: obj.nextPartNum as number | undefined,
+      };
+    }
+    if (obj.document && typeof obj.document === "object") {
+      const legacy: VcadFileLegacy = {
+        kind: "legacy",
+        version: "0.1",
+        document: obj.document as Document,
+        parts: (obj.parts as PartInfo[] | undefined) ?? [],
+        consumedParts: obj.consumedParts as Record<string, PartInfo> | undefined,
+        nextNodeId: (obj.nextNodeId as number | undefined) ?? 1,
+        nextPartNum: obj.nextPartNum as number | undefined,
+      };
+      return legacy;
+    }
+  }
+  throw new Error("adoptPersistedVcadFile: unrecognized stored document shape");
 }
 
 export async function listDocuments(): Promise<DocumentMeta[]> {
@@ -146,7 +195,10 @@ export async function updateDocument(
 export async function getAllDocuments(): Promise<StoredDocument[]> {
   const db = await getDb();
   const docs = await db.getAll(DOCUMENTS_STORE);
-  return docs;
+  return docs.map((doc) => ({
+    ...doc,
+    document: adoptPersistedVcadFile(doc.document),
+  }));
 }
 
 /**

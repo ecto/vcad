@@ -929,6 +929,65 @@ mod tests {
         assert_eq!(f.params.get("size_x").unwrap().0, Value::F64(10.0));
     }
 
+    /// Regression: the IR-Document round-trip silently dropped any CRDT param
+    /// that the materializer didn't happen to surface (e.g. `name` was the
+    /// immediate bug). The raw CRDT bytes format MUST preserve every param
+    /// verbatim — this test locks that contract for future-added params.
+    #[test]
+    fn test_save_load_preserves_arbitrary_params() {
+        let mut doc = CrdtDocument::new(ReplicaId(7));
+        let (_fid, _) = doc.create_feature(
+            "cube",
+            FractionalIndex::between(None, None),
+            HashMap::from([
+                ("size_x".to_string(), Value::F64(10.0)),
+                ("size_y".to_string(), Value::F64(20.0)),
+                ("size_z".to_string(), Value::F64(30.0)),
+                ("name".to_string(), Value::String("MyCube".into())),
+                ("material".to_string(), Value::String("brass".into())),
+                ("visible".to_string(), Value::Bool(false)),
+                ("offset".to_string(), Value::Vec3([1.0, 2.0, 3.0])),
+                // A hypothetical future param the materializer doesn't know
+                // about — it must still survive a save/load cycle.
+                (
+                    "custom_future_param".to_string(),
+                    Value::String("hello".into()),
+                ),
+            ]),
+        );
+
+        let bytes = doc.save();
+        let loaded = CrdtDocument::load(&bytes).unwrap();
+        let features = loaded.ordered_features();
+        assert_eq!(features.len(), 1);
+        let f = features[0].1;
+        assert_eq!(f.kind, "cube");
+        assert_eq!(
+            f.params.get("name").map(|(v, _)| v),
+            Some(&Value::String("MyCube".into())),
+        );
+        assert_eq!(
+            f.params.get("material").map(|(v, _)| v),
+            Some(&Value::String("brass".into())),
+        );
+        assert_eq!(
+            f.params.get("visible").map(|(v, _)| v),
+            Some(&Value::Bool(false)),
+        );
+        assert_eq!(
+            f.params.get("offset").map(|(v, _)| v),
+            Some(&Value::Vec3([1.0, 2.0, 3.0])),
+        );
+        assert_eq!(
+            f.params.get("custom_future_param").map(|(v, _)| v),
+            Some(&Value::String("hello".into())),
+        );
+
+        // The op log must also survive so future sync / merge still works.
+        assert!(!loaded.ops.is_empty(), "op log must be preserved on load");
+        assert_eq!(loaded.clock(), doc.clock(), "vector clock must roundtrip");
+    }
+
     #[test]
     fn test_feature_ordering() {
         let mut doc = CrdtDocument::new(ReplicaId(1));

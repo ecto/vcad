@@ -3,6 +3,84 @@ import { useAuthStore } from "./stores/auth-store";
 import { useSyncStore } from "./stores/sync-store";
 
 /**
+ * Serialize a `VcadFile`-shaped local document to the JSON payload stored in
+ * Supabase's `documents.content` (jsonb) column.
+ *
+ *  - CRDT: the raw CRDT JSON object (same payload as a v0.4 `.vcad` file)
+ *  - Loon: `{loonSource}` envelope so round-tripping preserves the source
+ *  - Legacy: the raw IR Document (unchanged from the pre-refactor cloud
+ *            format — backfill rewrites these to CRDT)
+ *
+ * Accepts `unknown` at the type boundary because the StorageAdapter layer
+ * is intentionally decoupled from `@vcad/core`'s types.
+ */
+export function vcadFileToCloudContent(document: unknown): unknown {
+  if (!document || typeof document !== "object") return document;
+  const obj = document as Record<string, unknown>;
+  const kind = obj.kind;
+  if (kind === "crdt") {
+    const bytes = obj.crdtBytes;
+    if (bytes instanceof Uint8Array) {
+      try {
+        return JSON.parse(new TextDecoder().decode(bytes));
+      } catch {
+        return null;
+      }
+    }
+    if (Array.isArray(bytes)) {
+      // Stored as plain number array (e.g. after structuredClone cross-origin
+      // or IDB serialization without typed-array support).
+      try {
+        return JSON.parse(
+          new TextDecoder().decode(new Uint8Array(bytes as number[])),
+        );
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+  if (kind === "loon") {
+    return { loonSource: obj.loonSource };
+  }
+  if (kind === "legacy") {
+    return obj.document ?? null;
+  }
+  // Untagged legacy shape stored before the tagged-union migration —
+  // just pass the embedded Document through.
+  if (typeof obj.document === "object") return obj.document;
+  return document;
+}
+
+/**
+ * Inverse of `vcadFileToCloudContent` — wrap raw cloud `content` into the
+ * tagged-union shape the local storage expects. The discriminator is
+ * detected by payload shape (no explicit `kind` in cloud rows).
+ */
+export function cloudContentToVcadFile(content: unknown): unknown {
+  if (!content || typeof content !== "object") return content;
+  const obj = content as Record<string, unknown>;
+  if (typeof obj.replica_id !== "undefined" && Array.isArray(obj.ops)) {
+    const bytes = new TextEncoder().encode(JSON.stringify(content));
+    return { kind: "crdt", version: "0.4", crdtBytes: bytes };
+  }
+  if (typeof obj.loonSource === "string") {
+    return { kind: "loon", version: "0.3", loonSource: obj.loonSource };
+  }
+  if (obj.nodes && obj.roots) {
+    // Raw IR Document — wrap as legacy for consistency with local shape.
+    return {
+      kind: "legacy",
+      version: "0.1",
+      document: content,
+      parts: [],
+      nextNodeId: 1,
+    };
+  }
+  return content;
+}
+
+/**
  * Cloud document shape as stored in Supabase
  */
 export interface CloudDocument {
@@ -214,7 +292,7 @@ async function uploadDocument(doc: LocalDocument): Promise<void> {
       .from("documents")
       .update({
         name: doc.name,
-        content: doc.document,
+        content: vcadFileToCloudContent(doc.document),
         version: doc.version,
         device_modified_at: doc.modifiedAt,
       })
@@ -230,7 +308,7 @@ async function uploadDocument(doc: LocalDocument): Promise<void> {
         user_id: user.id,
         local_id: doc.id,
         name: doc.name,
-        content: doc.document,
+        content: vcadFileToCloudContent(doc.document),
         version: doc.version,
         device_modified_at: doc.modifiedAt,
       })
@@ -291,7 +369,7 @@ async function createDocumentFromCloud(cloudDoc: CloudDocument): Promise<void> {
   const newDoc: LocalDocument = {
     id: cloudDoc.local_id,
     name: cloudDoc.name,
-    document: cloudDoc.content,
+    document: cloudContentToVcadFile(cloudDoc.content),
     createdAt: new Date(cloudDoc.created_at).getTime(),
     modifiedAt: cloudDoc.device_modified_at,
     version: cloudDoc.version,
@@ -313,7 +391,7 @@ async function updateDocumentFromCloud(
 
   await storage.updateDocument(localId, {
     name: cloudDoc.name,
-    document: cloudDoc.content,
+    document: cloudContentToVcadFile(cloudDoc.content),
     modifiedAt: cloudDoc.device_modified_at,
     version: cloudDoc.version,
     syncStatus: "synced",
@@ -522,7 +600,7 @@ export async function fetchCloudDocument(cloudId: string): Promise<string> {
     // Update existing local document
     await storage.updateDocument(existingLocal.id, {
       name: doc.name,
-      document: doc.content,
+      document: cloudContentToVcadFile(doc.content),
       modifiedAt: doc.device_modified_at,
       version: doc.version,
       syncStatus: "synced",
@@ -534,7 +612,7 @@ export async function fetchCloudDocument(cloudId: string): Promise<string> {
   const newDoc: LocalDocument = {
     id: doc.local_id,
     name: doc.name,
-    document: doc.content,
+    document: cloudContentToVcadFile(doc.content),
     createdAt: new Date(doc.created_at).getTime(),
     modifiedAt: doc.device_modified_at,
     version: doc.version,

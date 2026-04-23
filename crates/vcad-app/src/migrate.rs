@@ -734,4 +734,39 @@ mod tests {
         assert_eq!(detect_format(b""), FileFormat::Unknown);
         assert_eq!(detect_format(b"garbage"), FileFormat::Unknown);
     }
+
+    /// The raw CRDT save output must be routed through the CRDT loader
+    /// directly — not through `migrate_v1`. Running `migrate_v1` on a CRDT
+    /// document is the lossy path that dropped feature `name` (and would
+    /// drop any future param the materializer doesn't surface).
+    #[test]
+    fn test_crdt_bytes_detect_as_v2() {
+        use vcad_crdt::{CrdtDocument, FractionalIndex, ReplicaId, Value};
+
+        let mut crdt = CrdtDocument::new(ReplicaId(1));
+        crdt.create_feature(
+            "cube",
+            FractionalIndex::between(None, None),
+            std::collections::HashMap::from([
+                ("size_x".to_string(), Value::F64(10.0)),
+                ("name".to_string(), Value::String("MyCube".into())),
+            ]),
+        );
+        let bytes = crdt.save();
+        assert_eq!(
+            detect_format(&bytes),
+            FileFormat::V2Crdt,
+            "CRDT save output must route as V2Crdt, not V1Json (otherwise migrate_v1 would drop params)",
+        );
+
+        // Round-trip via CrdtDocument::load (the non-lossy path) and confirm
+        // the name survives — this is the contract this refactor protects.
+        let loaded = CrdtDocument::load(&bytes).expect("v2 bytes must load");
+        let features = loaded.ordered_features();
+        assert_eq!(features.len(), 1);
+        assert_eq!(
+            features[0].1.params.get("name").map(|(v, _)| v),
+            Some(&Value::String("MyCube".into())),
+        );
+    }
 }
