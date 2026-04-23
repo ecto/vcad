@@ -387,11 +387,12 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
     box.getCenter(kernelCenter);
     const size = new Vector3();
     box.getSize(size);
-    const maxDim = Math.max(size.x, size.y, size.z);
+    // Bounding-sphere radius — independent of orbit angle, safe for any view.
+    const radius = Math.max(size.length() * 0.5, 1e-3);
     // Transform kernel Z-up center to Three.js Y-up world space
     // Rotation -90° around X: (x, y, z) → (x, z, -y)
     const center = new Vector3(kernelCenter.x, kernelCenter.z, -kernelCenter.y);
-    return { center, maxDim };
+    return { center, radius };
   }, [selectedPartIds, scene, parts, isPartSelected]);
 
   // Animate orbit target to selection center and zoom to fit
@@ -399,15 +400,25 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
   useEffect(() => {
     if (selectionInfo && !isDraggingGizmo) {
       targetGoalRef.current.copy(selectionInfo.center);
-      // Distance = 2.5x the max dimension, clamped to reasonable range
-      distanceGoalRef.current = Math.max(
-        30,
-        Math.min(300, selectionInfo.maxDim * 2.5),
-      );
+      // Fit the selection's bounding sphere to the viewport using the
+      // camera's actual FOV + aspect, so tiny features don't vanish and
+      // huge ones don't get clipped. Uses the more restrictive of the
+      // vertical/horizontal FOVs so the sphere fits in both directions.
+      const padding = 1.2;
+      if (camera instanceof PerspectiveCamera) {
+        const vFov = (camera.fov * Math.PI) / 180;
+        const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect);
+        const fitFov = Math.min(vFov, hFov);
+        const distance =
+          (selectionInfo.radius / Math.sin(fitFov / 2)) * padding;
+        distanceGoalRef.current = Math.max(camera.near * 2, distance);
+      } else {
+        distanceGoalRef.current = selectionInfo.radius * 3 * padding;
+      }
       isAnimatingTargetRef.current = true;
       setIsCameraMoving(true);
     }
-  }, [selectionInfo, isDraggingGizmo]);
+  }, [selectionInfo, isDraggingGizmo, camera]);
 
   // Smooth target and distance animation
   useFrame(() => {
