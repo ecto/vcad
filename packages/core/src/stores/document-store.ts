@@ -150,14 +150,13 @@ function crdtRef(v: string): CrdtValue {
   return { FeatureRef: v };
 }
 
-export interface VcadFile {
-  document: Document;
-  parts: PartInfo[];
-  consumedParts?: Record<string, PartInfo>;
-  nextNodeId: number;
-  nextPartNum?: number;
-  loonSource?: string | null;
-}
+/**
+ * Re-export the canonical `VcadFile` from `save-load` so existing imports of
+ * `VcadFile` from `@vcad/core` keep working. The old flat shape that used to
+ * live here is now the `VcadFileLegacy` variant of the tagged union.
+ */
+export type { VcadFile } from "../utils/save-load.js";
+import type { VcadFile } from "../utils/save-load.js";
 
 export interface PcbCreateOptions {
   width?: number;        // mm, default 50
@@ -986,7 +985,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   loadDocument: (file) => {
     const state = get();
-    if (!state._crdtEngineClass) return;
+    const EngineClass = state._crdtEngineClass;
+    if (!EngineClass) return;
 
     // Phase 1: build everything off the NEW engine in isolation. If any step
     // throws (migration panic, borrow-check failure inside wasm-bindgen), the
@@ -994,15 +994,30 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     // installed state.
     let newEngine: WasmDocumentEngine | null = null;
     let patch: Partial<DocumentState> | null = null;
+    let loonSource: string | null = null;
     try {
-      const irJson = JSON.stringify(file.document);
-      newEngine = state._crdtEngineClass.from_v1_json(irJson);
+      // Discriminate on `kind`:
+      //  - crdt   → load CRDT bytes directly (no migration, no param loss)
+      //  - loon   → seed the engine from the evaluated Document (loon is the
+      //             source of truth; the CRDT derives from it each load)
+      //  - legacy → run the v1 migration path (the bug-prone route — kept
+      //             only for reading old files, never written by new saves)
+      switch (file.kind) {
+        case "crdt":
+          newEngine = EngineClass.load(file.crdtBytes);
+          break;
+        case "loon":
+        case "legacy":
+          newEngine = EngineClass.from_v1_json(JSON.stringify(file.document));
+          break;
+      }
       const doc: Document = JSON.parse(newEngine.get_document_json());
       const parts: PartInfo[] = JSON.parse(newEngine.get_parts_json());
       patch = applyLegacyResult({ document: doc, parts });
+      loonSource = file.kind === "loon" ? file.loonSource : null;
     } catch (e) {
-      console.error("Failed to migrate legacy document to CRDT:", e);
-      // Clean up the half-constructed new engine if migration died mid-read.
+      console.error("[document-store] loadDocument failed:", e);
+      // Clean up the half-constructed new engine if load died mid-read.
       if (newEngine) {
         try {
           newEngine.free();
@@ -1024,7 +1039,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       ...patch,
       _crdtEngine: newEngine,
       isDirty: false,
-      loonSource: file.loonSource ?? null,
+      loonSource,
     });
     if (oldEngine) {
       try {

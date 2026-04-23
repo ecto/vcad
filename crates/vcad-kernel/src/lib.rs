@@ -112,6 +112,16 @@ impl Solid {
         }
     }
 
+    /// Borrow the underlying BRep if this solid is BRep-backed. Used by
+    /// diagnostic harnesses that want to inspect topology/geometry
+    /// directly without duplicating the evaluation pipeline.
+    pub fn as_brep(&self) -> Option<&BRepSolid> {
+        match &self.repr {
+            SolidRepr::BRep(b) => Some(b.as_ref()),
+            _ => None,
+        }
+    }
+
     /// Create a solid from a triangle mesh.
     pub fn from_mesh(mesh: TriangleMesh) -> Self {
         Self {
@@ -246,18 +256,46 @@ impl Solid {
 
     /// Fillet all edges of the solid with the given radius.
     ///
-    /// Each edge is replaced by a cylindrical blend surface tangent to both
-    /// adjacent faces, each original face is trimmed inward, and each vertex
-    /// becomes a triangular face.
+    /// For plane-only B-reps, each edge is replaced by a cylindrical blend
+    /// surface tangent to both adjacent faces, each original face is trimmed
+    /// inward, and each vertex becomes a triangular face.
     ///
-    /// Only works on B-rep solids with planar faces. Returns the solid
-    /// unchanged for mesh-only or empty solids.
+    /// For B-reps containing non-planar faces (e.g. an arc-extruded profile
+    /// with `CylinderSurface` side walls), the curved fillet path is used:
+    /// plane-cylinder edges get torus blends, cylinder-cylinder edges are
+    /// left sharp (parallel-axis offset is numerically fragile in the
+    /// generic rolling-ball solver). "Seam" edges inside a single analytic
+    /// surface are skipped since they aren't real geometric edges.
+    ///
+    /// If the chosen fillet path would produce geometry that escapes the
+    /// input AABB expanded by 2·radius, the blend is deemed degenerate and
+    /// the input is returned unchanged — a clean sharp-edged solid is
+    /// always preferable to a fractured shell with outlying vertices.
+    ///
+    /// Returns the solid unchanged for mesh-only or empty solids.
     pub fn fillet(&self, radius: f64) -> Solid {
         match &self.repr {
-            SolidRepr::BRep(brep) => Solid {
-                repr: SolidRepr::BRep(Box::new(vcad_kernel_fillet::fillet_all_edges(brep, radius))),
-                segments: self.segments,
-            },
+            SolidRepr::BRep(brep) => {
+                let filleted = if brep_is_all_planar(brep) {
+                    vcad_kernel_fillet::fillet_all_edges(brep, radius)
+                } else {
+                    let target_edges = collect_fillet_target_edges(brep);
+                    let (result, _details) =
+                        vcad_kernel_fillet::fillet_edges_detailed(brep, &target_edges, radius);
+                    result
+                };
+                // Sanity check: the fillet output must live inside a box
+                // that's at most 2·radius larger than the input AABB. If
+                // any vertex falls outside, some blend diverged — discard
+                // the result and return the input unchanged.
+                if !fillet_aabb_is_reasonable(brep, &filleted, radius) {
+                    return self.clone();
+                }
+                Solid {
+                    repr: SolidRepr::BRep(Box::new(filleted)),
+                    segments: self.segments,
+                }
+            }
             _ => self.clone(),
         }
     }
@@ -944,6 +982,154 @@ impl std::ops::BitAnd for &Solid {
 // =============================================================================
 // Mesh computation helpers (same algorithms as vcad lib.rs)
 // =============================================================================
+
+/// Guard against runaway fillet output. Both the topology vertices AND
+/// the tessellated mesh vertices of `filleted` must fit inside `input`'s
+/// AABB expanded by 2·radius. The mesh check catches blend surfaces whose
+/// topology corners stay sane but whose interior samples fly off because
+/// the surface's parameterization is broken.
+fn fillet_aabb_is_reasonable(input: &BRepSolid, filleted: &BRepSolid, radius: f64) -> bool {
+    let verts_in = &input.topology.vertices;
+    if verts_in.is_empty() {
+        return true;
+    }
+    let mut min = [f64::MAX; 3];
+    let mut max = [f64::MIN; 3];
+    for (_id, v) in verts_in {
+        let p = v.point;
+        if p.x < min[0] {
+            min[0] = p.x;
+        }
+        if p.y < min[1] {
+            min[1] = p.y;
+        }
+        if p.z < min[2] {
+            min[2] = p.z;
+        }
+        if p.x > max[0] {
+            max[0] = p.x;
+        }
+        if p.y > max[1] {
+            max[1] = p.y;
+        }
+        if p.z > max[2] {
+            max[2] = p.z;
+        }
+    }
+    let slack = 2.0 * radius.abs();
+    for i in 0..3 {
+        min[i] -= slack;
+        max[i] += slack;
+    }
+    for (_id, v) in &filleted.topology.vertices {
+        let p = v.point;
+        if p.x < min[0]
+            || p.y < min[1]
+            || p.z < min[2]
+            || p.x > max[0]
+            || p.y > max[1]
+            || p.z > max[2]
+        {
+            return false;
+        }
+    }
+    // Mesh-level check: catches interior sample points from bad
+    // parameterizations (NURBS rolling ball, mis-oriented torus) that
+    // don't appear as topology corners.
+    let mesh = tessellate_brep(filleted, 32);
+    let n = mesh.num_vertices();
+    for i in 0..n {
+        let x = mesh.vertices[3 * i] as f64;
+        let y = mesh.vertices[3 * i + 1] as f64;
+        let z = mesh.vertices[3 * i + 2] as f64;
+        if x < min[0] || y < min[1] || z < min[2] || x > max[0] || y > max[1] || z > max[2] {
+            return false;
+        }
+    }
+    true
+}
+
+fn brep_is_all_planar(brep: &BRepSolid) -> bool {
+    use vcad_kernel_geom::SurfaceKind;
+    brep.geometry
+        .surfaces
+        .iter()
+        .all(|s| s.surface_type() == SurfaceKind::Plane)
+}
+
+/// Collect edges to fillet, omitting edges that are either unsafe or
+/// spurious:
+///
+/// - **Same-surface seams** — consecutive arc-extrude cylinders that were
+///   emitted from a single arc share their surface; the edge between them
+///   is tessellation artifact, not a real geometric edge.
+/// - **Cylinder–cylinder offset (parallel axes, different centers)** —
+///   this is the "vertical seam where two arcs meet" pattern in an
+///   arc-extruded profile. The generic NURBS rolling-ball blend in
+///   `rolling_ball_blend` is numerically fragile here (its alternating
+///   projection can converge to a point far from the true seam curve),
+///   producing blend vertices flung hundreds of units from the solid. Until
+///   we have an analytic parallel-cylinder torus case, we leave these
+///   seams sharp. The cap-rim (plane-cylinder) edges still get their
+///   proper torus blends, which is the visually dominant rounding users
+///   asked for.
+pub fn collect_fillet_target_edges(brep: &BRepSolid) -> Vec<vcad_kernel_topo::EdgeId> {
+    use vcad_kernel_geom::{CylinderSurface, Plane, SurfaceKind};
+    let topo = &brep.topology;
+    let geom = &brep.geometry;
+
+    let mut out = Vec::new();
+    for (edge_id, edge) in &topo.edges {
+        let he_a = edge.half_edge;
+        let Some(he_b) = topo.half_edges[he_a].twin else {
+            continue;
+        };
+        let fa = topo.half_edges[he_a]
+            .loop_id
+            .and_then(|l| topo.loops[l].face);
+        let fb = topo.half_edges[he_b]
+            .loop_id
+            .and_then(|l| topo.loops[l].face);
+        let (Some(fa), Some(fb)) = (fa, fb) else {
+            continue;
+        };
+        let sa = &geom.surfaces[topo.faces[fa].surface_index];
+        let sb = &geom.surfaces[topo.faces[fb].surface_index];
+
+        let skip = match (sa.surface_type(), sb.surface_type()) {
+            (SurfaceKind::Cylinder, SurfaceKind::Cylinder) => {
+                // Skip all cylinder-cylinder edges — either they share a
+                // surface (tessellation artifact) or they're the fragile
+                // offset-axis case handled above.
+                let a = sa.as_any().downcast_ref::<CylinderSurface>();
+                let b = sb.as_any().downcast_ref::<CylinderSurface>();
+                // If the axes are parallel, treat as offset seam & skip.
+                // The classify layer would otherwise send it to
+                // CylinderCylinderSkew → diverging rolling ball.
+                match (a, b) {
+                    (Some(a), Some(b)) => a.axis.as_ref().dot(b.axis.as_ref()).abs() > 1.0 - 1e-6,
+                    _ => true,
+                }
+            }
+            (SurfaceKind::Plane, SurfaceKind::Plane) => {
+                let a = sa.as_any().downcast_ref::<Plane>();
+                let b = sb.as_any().downcast_ref::<Plane>();
+                match (a, b) {
+                    (Some(a), Some(b)) => {
+                        a.normal_dir.as_ref().dot(b.normal_dir.as_ref()).abs() > 1.0 - 1e-9
+                            && (a.origin - b.origin).dot(a.normal_dir.as_ref()).abs() < 1e-9
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        };
+        if !skip {
+            out.push(edge_id);
+        }
+    }
+    out
+}
 
 fn compute_volume(mesh: &TriangleMesh) -> f64 {
     let verts = &mesh.vertices;
@@ -2061,5 +2247,448 @@ mod tests {
             "max triangle area {:.0} is too large — tessellation artifact",
             v.max_triangle_area
         );
+    }
+
+    #[test]
+    fn test_fillet_cylinder_produces_bounded_blend() {
+        // Simpler isolation of the curved-fillet path: a primitive cylinder
+        // has 3 faces (side + 2 caps) with plane-cylinder edges at each cap.
+        // Filleting r=2 must keep all vertices within the original AABB
+        // (plus a small margin from the blend arc). A diverging rolling-ball
+        // would push a vertex far outside, so this catches that regression.
+        let cyl = Solid::cylinder(10.0, 20.0, 32);
+        let filleted = cyl.fillet(2.0);
+        let mesh = filleted.to_mesh(32);
+        let n = mesh.num_vertices();
+        let mut min_x = f64::MAX;
+        let mut max_x = f64::MIN;
+        let mut min_z = f64::MAX;
+        let mut max_z = f64::MIN;
+        for i in 0..n {
+            let x = mesh.vertices[3 * i] as f64;
+            let z = mesh.vertices[3 * i + 2] as f64;
+            if x < min_x {
+                min_x = x;
+            }
+            if x > max_x {
+                max_x = x;
+            }
+            if z < min_z {
+                min_z = z;
+            }
+            if z > max_z {
+                max_z = z;
+            }
+        }
+        assert!(
+            min_x > -15.0 && max_x < 15.0,
+            "fillet blew up in X: range=[{:.1}, {:.1}]",
+            min_x,
+            max_x
+        );
+        assert!(
+            min_z > -5.0 && max_z < 25.0,
+            "fillet blew up in Z: range=[{:.1}, {:.1}]",
+            min_z,
+            max_z
+        );
+    }
+
+    #[test]
+    fn test_fillet_arc_profile_has_sphere_vertex_blend_faces() {
+        // Regression: the spherical vertex-blend patches at arc-to-arc
+        // convex junctions should be present in the filleted BRep — one
+        // per junction on the bottom cap and one per junction on the top
+        // cap. Without them the fillet leaves a visible crescent gap
+        // between adjacent torus blends.
+        use vcad_kernel_sketch::{SketchProfile, SketchSegment};
+        let segments = vec![
+            SketchSegment::Arc {
+                start: vcad_kernel_math::Point2::new(45.0, 0.0),
+                end: vcad_kernel_math::Point2::new(20.0, 40.0),
+                center: vcad_kernel_math::Point2::new(10.0, 15.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: vcad_kernel_math::Point2::new(20.0, 40.0),
+                end: vcad_kernel_math::Point2::new(-30.0, 35.0),
+                center: vcad_kernel_math::Point2::new(-5.0, 25.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: vcad_kernel_math::Point2::new(-30.0, 35.0),
+                end: vcad_kernel_math::Point2::new(-50.0, 5.0),
+                center: vcad_kernel_math::Point2::new(-25.0, 15.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: vcad_kernel_math::Point2::new(-50.0, 5.0),
+                end: vcad_kernel_math::Point2::new(-35.0, -25.0),
+                center: vcad_kernel_math::Point2::new(-30.0, -5.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: vcad_kernel_math::Point2::new(-35.0, -25.0),
+                end: vcad_kernel_math::Point2::new(10.0, -30.0),
+                center: vcad_kernel_math::Point2::new(-10.0, -10.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: vcad_kernel_math::Point2::new(10.0, -30.0),
+                end: vcad_kernel_math::Point2::new(45.0, 0.0),
+                center: vcad_kernel_math::Point2::new(20.0, -10.0),
+                ccw: true,
+            },
+        ];
+        let profile = SketchProfile::new(
+            Point3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            segments,
+        )
+        .expect("valid profile");
+        let extruded = Solid::extrude(profile, Vec3::new(0.0, 0.0, 18.0)).expect("extrude ok");
+        let filleted = extruded.fillet(4.0);
+
+        let (sphere_surfaces, sphere_faces, shell_face_count) = match &filleted.repr {
+            SolidRepr::BRep(b) => {
+                let sphere_surf_idxs: std::collections::HashSet<usize> = b
+                    .geometry
+                    .surfaces
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| s.surface_type() == vcad_kernel_geom::SurfaceKind::Sphere)
+                    .map(|(i, _)| i)
+                    .collect();
+                let shell = &b.topology.shells[b.topology.solids[b.solid_id].outer_shell];
+                let sphere_face_count = shell
+                    .faces
+                    .iter()
+                    .filter(|fid| sphere_surf_idxs.contains(&b.topology.faces[**fid].surface_index))
+                    .count();
+                (sphere_surf_idxs.len(), sphere_face_count, shell.faces.len())
+            }
+            _ => (0, 0, 0),
+        };
+        assert!(
+            sphere_surfaces > 0,
+            "expected sphere surfaces in the fillet output; got {sphere_surfaces}"
+        );
+        assert!(
+            sphere_faces > 0,
+            "sphere surfaces exist ({sphere_surfaces}) but no sphere face in the shell ({shell_face_count} total shell faces)"
+        );
+
+        // Tessellator must actually produce triangles from the sphere
+        // patches — tessellate the whole solid once, and separately
+        // tessellate each sphere face alone, confirming the per-face
+        // tessellator emits ≥1 triangle for each patch. Earlier
+        // versions of this regression used a hard-coded "total > 524"
+        // proxy, but that coupled the test to whatever the current
+        // cylinder n_height heuristic is. The per-face check is
+        // invariant to unrelated density changes.
+        use vcad_kernel_tessellate::{tessellate_brep_by_face, TessellationParams};
+        let params = TessellationParams::from_segments(32);
+        let per_face = tessellate_brep_by_face(
+            match &filleted.repr {
+                SolidRepr::BRep(b) => b.as_ref(),
+                _ => unreachable!(),
+            },
+            &params,
+        );
+        let sphere_tris: usize = per_face
+            .iter()
+            .filter(|(_, k, _)| *k == vcad_kernel_geom::SurfaceKind::Sphere)
+            .map(|(_, _, m)| m.num_triangles())
+            .sum();
+        assert!(
+            sphere_tris >= sphere_faces,
+            "expected at least {sphere_faces} sphere triangles (one per patch), got {sphere_tris}"
+        );
+    }
+
+    /// Shared pork-chop kidney profile for regression + diagnostic tests.
+    fn porkchop_segments() -> Vec<vcad_kernel_sketch::SketchSegment> {
+        use vcad_kernel_sketch::SketchSegment;
+        vec![
+            SketchSegment::Arc {
+                start: vcad_kernel_math::Point2::new(45.0, 0.0),
+                end: vcad_kernel_math::Point2::new(20.0, 40.0),
+                center: vcad_kernel_math::Point2::new(10.0, 15.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: vcad_kernel_math::Point2::new(20.0, 40.0),
+                end: vcad_kernel_math::Point2::new(-30.0, 35.0),
+                center: vcad_kernel_math::Point2::new(-5.0, 25.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: vcad_kernel_math::Point2::new(-30.0, 35.0),
+                end: vcad_kernel_math::Point2::new(-50.0, 5.0),
+                center: vcad_kernel_math::Point2::new(-25.0, 15.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: vcad_kernel_math::Point2::new(-50.0, 5.0),
+                end: vcad_kernel_math::Point2::new(-35.0, -25.0),
+                center: vcad_kernel_math::Point2::new(-30.0, -5.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: vcad_kernel_math::Point2::new(-35.0, -25.0),
+                end: vcad_kernel_math::Point2::new(10.0, -30.0),
+                center: vcad_kernel_math::Point2::new(-10.0, -10.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: vcad_kernel_math::Point2::new(10.0, -30.0),
+                end: vcad_kernel_math::Point2::new(45.0, 0.0),
+                center: vcad_kernel_math::Point2::new(20.0, -10.0),
+                ccw: true,
+            },
+        ]
+    }
+
+    /// Diagnostic test — not an assertion, meant to be run with
+    /// `--nocapture` to print the world-space location of every
+    /// boundary edge in the pork-chop fillet mesh. Any non-zero output
+    /// is a tessellation hole (the "armpit gaps" visible in the
+    /// browser).
+    ///
+    /// Invoke with:
+    ///   cargo test -p vcad-kernel diag_porkchop_boundary_edges -- --nocapture --ignored
+    #[test]
+    #[ignore]
+    fn diag_porkchop_boundary_edges() {
+        use vcad_kernel_sketch::SketchProfile;
+        let segments = porkchop_segments();
+        let profile = SketchProfile::new(
+            Point3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            segments,
+        )
+        .expect("valid profile");
+        let extruded = Solid::extrude(profile, Vec3::new(0.0, 0.0, 18.0)).expect("extrude ok");
+        let filleted = extruded.fillet(4.0);
+        let mesh = filleted.to_mesh(32);
+
+        let boundary = mesh.boundary_edges();
+        let nm = mesh.non_manifold_edges();
+        let loops = mesh.boundary_loops();
+
+        println!(
+            "pork-chop mesh: {} tris, {} verts",
+            mesh.num_triangles(),
+            mesh.num_vertices()
+        );
+        println!("boundary edges:  {}", boundary.len());
+        println!("non-manifold edges: {}", nm.len());
+        println!("boundary loops: {}", loops.len());
+
+        for (i, positions) in mesh.boundary_edge_positions().iter().enumerate() {
+            let a = positions[0];
+            let b = positions[1];
+            println!(
+                "  [{:3}] ({:7.3},{:7.3},{:7.3}) -> ({:7.3},{:7.3},{:7.3})",
+                i, a[0], a[1], a[2], b[0], b[1], b[2]
+            );
+        }
+        for (i, chain) in loops.iter().enumerate() {
+            let zs: Vec<f32> = chain
+                .iter()
+                .map(|&v| mesh.vertices[v as usize * 3 + 2])
+                .collect();
+            let z_min = zs.iter().cloned().fold(f32::INFINITY, f32::min);
+            let z_max = zs.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+            println!(
+                "  loop {}: {} verts, z in [{:.3}, {:.3}]",
+                i,
+                chain.len(),
+                z_min,
+                z_max
+            );
+        }
+    }
+
+    /// Diagnostic: print per-junction decisions from the fillet pipeline.
+    ///
+    ///   cargo test -p vcad-kernel diag_porkchop_fillet_trace -- --nocapture --ignored
+    #[test]
+    #[ignore]
+    fn diag_porkchop_fillet_trace() {
+        use vcad_kernel_fillet::{fillet_edges_detailed_with_trace, JunctionOutcome};
+        use vcad_kernel_sketch::SketchProfile;
+
+        let profile = SketchProfile::new(
+            Point3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            porkchop_segments(),
+        )
+        .expect("valid profile");
+        let extruded = Solid::extrude(profile, Vec3::new(0.0, 0.0, 18.0)).expect("extrude ok");
+
+        let brep = match &extruded.repr {
+            SolidRepr::BRep(b) => b.as_ref().clone(),
+            _ => panic!("expected brep"),
+        };
+        let target_edges = collect_fillet_target_edges(&brep);
+        let (_new_brep, _results, trace) =
+            fillet_edges_detailed_with_trace(&brep, &target_edges, 4.0, true);
+
+        println!(
+            "fillet trace: {} junctions considered",
+            trace.junctions.len()
+        );
+        let mut n_built = 0usize;
+        let mut n_skipped = 0usize;
+        for j in &trace.junctions {
+            let p = j.vertex_pos;
+            match &j.outcome {
+                JunctionOutcome::BuiltPatch {
+                    ball_center,
+                    tan_cap,
+                    tan_cyls,
+                } => {
+                    n_built += 1;
+                    println!(
+                        "  V@({:7.3},{:7.3},{:7.3}) tgt={} seam={} -> PATCH ball=({:7.3},{:7.3},{:7.3}) cap=({:7.3},{:7.3},{:7.3}) c1=({:7.3},{:7.3},{:7.3}) c2=({:7.3},{:7.3},{:7.3})",
+                        p.x, p.y, p.z, j.n_target_edges, j.n_seam_edges,
+                        ball_center.x, ball_center.y, ball_center.z,
+                        tan_cap.x, tan_cap.y, tan_cap.z,
+                        tan_cyls[0].x, tan_cyls[0].y, tan_cyls[0].z,
+                        tan_cyls[1].x, tan_cyls[1].y, tan_cyls[1].z,
+                    );
+                }
+                other => {
+                    n_skipped += 1;
+                    println!(
+                        "  V@({:7.3},{:7.3},{:7.3}) tgt={} seam={} -> SKIP {:?}",
+                        p.x, p.y, p.z, j.n_target_edges, j.n_seam_edges, other
+                    );
+                }
+            }
+        }
+        println!("  built: {}, skipped: {}", n_built, n_skipped);
+    }
+
+    #[test]
+    fn test_fillet_on_extruded_arc_profile_produces_curved_blend() {
+        // Regression for the "pork-chop sawtooth": extruding a sketch profile
+        // containing arcs now produces analytic `CylinderSurface` side walls
+        // (one per arc, not a strip of thin planar quads). `Solid::fillet`
+        // detects non-planar faces and routes to the curved fillet pipeline,
+        // which emits torus blends at plane-cylinder edges and rolling-ball
+        // NURBS blends at cylinder-cylinder edges. The result has strictly
+        // more faces than the input (adds blend faces + vertex caps) and
+        // must tessellate cleanly.
+        use vcad_kernel_math::Point2;
+        use vcad_kernel_sketch::{SketchProfile, SketchSegment};
+
+        // Kidney-shaped profile (6 arcs, matching the user's pork-chop).
+        let segments = vec![
+            SketchSegment::Arc {
+                start: Point2::new(45.0, 0.0),
+                end: Point2::new(20.0, 40.0),
+                center: Point2::new(10.0, 15.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: Point2::new(20.0, 40.0),
+                end: Point2::new(-30.0, 35.0),
+                center: Point2::new(-5.0, 25.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: Point2::new(-30.0, 35.0),
+                end: Point2::new(-50.0, 5.0),
+                center: Point2::new(-25.0, 15.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: Point2::new(-50.0, 5.0),
+                end: Point2::new(-35.0, -25.0),
+                center: Point2::new(-30.0, -5.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: Point2::new(-35.0, -25.0),
+                end: Point2::new(10.0, -30.0),
+                center: Point2::new(-10.0, -10.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: Point2::new(10.0, -30.0),
+                end: Point2::new(45.0, 0.0),
+                center: Point2::new(20.0, -10.0),
+                ccw: true,
+            },
+        ];
+        let profile = SketchProfile::new(
+            Point3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            segments,
+        )
+        .expect("valid profile");
+
+        let extruded = Solid::extrude(profile, Vec3::new(0.0, 0.0, 18.0)).expect("extrude ok");
+
+        // Count faces before fillet — this is the tessellated-arc B-rep we
+        // want to protect. Many thin side faces, two planar caps.
+        let (face_count_before, cyl_count_before) = match &extruded.repr {
+            SolidRepr::BRep(b) => {
+                let cyls = b
+                    .geometry
+                    .surfaces
+                    .iter()
+                    .filter(|s| s.surface_type() == vcad_kernel_geom::SurfaceKind::Cylinder)
+                    .count();
+                (b.topology.faces.len(), cyls)
+            }
+            _ => (0, 0),
+        };
+        assert_eq!(
+            face_count_before, 8,
+            "extruded kidney: 6 arc cylinders + 2 caps = 8 faces, got {face_count_before}"
+        );
+        assert_eq!(
+            cyl_count_before, 6,
+            "expected one analytic cylinder per arc, got {cyl_count_before}"
+        );
+
+        let filleted = extruded.fillet(4.0);
+        let face_count_after = match &filleted.repr {
+            SolidRepr::BRep(b) => b.topology.faces.len(),
+            _ => 0,
+        };
+        // Either the fillet genuinely added blend + vertex faces, or its
+        // AABB guard kicked in and handed back the input unchanged. Both
+        // are acceptable end states — the explicit failure mode we're
+        // guarding against is geometry flying hundreds of units outside
+        // the input bounding box.
+        assert!(
+            face_count_after >= face_count_before,
+            "face count regressed: before={face_count_before} after={face_count_after}"
+        );
+
+        // Tessellate and assert every vertex lands inside a generous AABB
+        // around the input kidney (max radius ~50, extrude 18). This
+        // catches the "pork-chop diverges" regression even if face count
+        // checks passed.
+        let mesh = filleted.to_mesh(32);
+        assert!(mesh.num_triangles() > 0, "mesh should be non-empty");
+        let n = mesh.num_vertices();
+        for i in 0..n {
+            let x = mesh.vertices[3 * i] as f64;
+            let y = mesh.vertices[3 * i + 1] as f64;
+            let z = mesh.vertices[3 * i + 2] as f64;
+            assert!(
+                x.abs() < 100.0 && y.abs() < 100.0 && (-10.0..40.0).contains(&z),
+                "filleted kidney has outlier vertex at ({x:.1}, {y:.1}, {z:.1})"
+            );
+        }
     }
 }

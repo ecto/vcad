@@ -672,6 +672,23 @@ export class Solid {
         wasm.__wbg_solid_free(ptr, 0);
     }
     /**
+     * Return mesh boundary edges as a flat float array
+     * `[x0, y0, z0, x1, y1, z1, ...]` with each pair of 3-component
+     * positions defining one edge segment. Used by the viewport's
+     * "show boundary edges" overlay to surface tessellation holes.
+     *
+     * Closed, manifold meshes return an empty array; each entry means
+     * there's a hole in the mesh.
+     * @param {number | null} [segments]
+     * @returns {Float32Array}
+     */
+    boundaryEdges(segments) {
+        const ret = wasm.solid_boundaryEdges(this.__wbg_ptr, isLikeNone(segments) ? 0x100000001 : (segments) >>> 0);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
      * Get the bounding box as [minX, minY, minZ, maxX, maxY, maxZ].
      * @returns {Float64Array}
      */
@@ -3891,22 +3908,6 @@ export function parseVcadFile(content) {
 }
 
 /**
- * Plan a chat tool call against the current document snapshot.
- *
- * This is the web-side entry point for the Rust chat executor: the TS
- * web app serializes its current `Document`, hands it plus the tool
- * name and args to this function, and gets back a JSON
- * `PlannedResponse` that describes the mutation to perform. The TS
- * caller then dispatches the outcome through the CRDT engine's
- * existing methods (`add_feature` / `setFeatureParam` / `removePart` /
- * `setPartMaterial`) — which keeps CRDT op logs in sync and preserves
- * undo, while sharing the validation + argument parsing logic with
- * the TUI via `vcad_chat::plan_crud`.
- *
- * `doc_json` must deserialize into `vcad_ir::Document`; a parse
- * failure treats the doc as empty (an empty Document never validates
- * any id lookups, so planners that need to check part_id existence
- * will return a clean error).
  * @param {string} tool
  * @param {string} args_json
  * @param {string} doc_json

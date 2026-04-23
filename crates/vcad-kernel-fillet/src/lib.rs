@@ -19,7 +19,10 @@ mod trim;
 
 pub use chamfer::chamfer_all_edges;
 pub use closest_point::closest_point_uv;
-pub use fillet_curved::fillet_edges_detailed;
+pub use fillet_curved::{
+    fillet_edges_detailed, fillet_edges_detailed_with_trace, FilletTrace, JunctionOutcome,
+    JunctionTrace,
+};
 pub use fillet_planar::fillet_all_edges;
 pub use rolling_ball::rolling_ball_blend;
 

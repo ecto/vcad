@@ -15,8 +15,8 @@ use vcad_kernel_geom::{Curve3d, GeometryStore};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_topo::{EdgeId, HalfEdgeId, LoopId, Orientation, ShellType, Topology, VertexId};
 
-/// Number of intermediate points to sample along a circular arc edge.
-const ARC_SAMPLE_COUNT: usize = 8;
+/// Number of intermediate points to sample along a curved edge (arc or B-spline).
+const CURVE_SAMPLE_COUNT: usize = 8;
 
 /// Hard ceilings on how much topology we will try to parse from a single
 /// STEP solid. They exist purely to keep a malicious file from pinning the
@@ -87,9 +87,17 @@ pub fn read_step_from_buffer(data: &[u8]) -> Result<Vec<BRepSolid>, StepError> {
     reader.read_all_solids()
 }
 
+/// Read a single solid by its `MANIFOLD_SOLID_BREP` entity ID.
+///
+/// Creates a fresh reader state so maps from other solids don't bleed in.
+pub(crate) fn read_solid_from_file(file: &StepFile, solid_id: u64) -> Result<BRepSolid, StepError> {
+    let mut reader = StepReader::new(file);
+    reader.read_solid(solid_id)
+}
+
 /// Context for reading STEP files and building B-rep solids.
-struct StepReader<'a> {
-    file: &'a StepFile,
+pub(crate) struct StepReader<'a> {
+    pub(crate) file: &'a StepFile,
     /// Maps STEP vertex ID to vcad VertexId.
     vertex_map: HashMap<u64, VertexId>,
     /// Maps STEP edge ID to vcad EdgeId (pair of half-edges).
@@ -98,13 +106,13 @@ struct StepReader<'a> {
     half_edge_map: HashMap<(u64, bool), HalfEdgeId>,
     /// Maps STEP surface ID to vcad geometry store index.
     surface_map: HashMap<u64, usize>,
-    /// For subdivided circle edges: maps (STEP edge ID, orientation) to
+    /// For subdivided curved edges: maps (STEP edge ID, orientation) to
     /// an ordered chain of half-edge IDs that replace the single original.
     subdivided_edges: HashMap<(u64, bool), Vec<HalfEdgeId>>,
 }
 
 impl<'a> StepReader<'a> {
-    fn new(file: &'a StepFile) -> Self {
+    pub(crate) fn new(file: &'a StepFile) -> Self {
         Self {
             file,
             vertex_map: HashMap::new(),
@@ -137,7 +145,7 @@ impl<'a> StepReader<'a> {
         Ok(solids)
     }
 
-    fn read_solid(&mut self, solid_id: u64) -> Result<BRepSolid, StepError> {
+    pub(crate) fn read_solid(&mut self, solid_id: u64) -> Result<BRepSolid, StepError> {
         use std::collections::HashSet;
 
         let mut topo = Topology::new();
@@ -209,8 +217,8 @@ impl<'a> StepReader<'a> {
         }
 
         // Second pass: create half-edges and edges.
-        // For CIRCLE edges, sample intermediate points along the arc so that
-        // loops with only 2 vertices get enough points for tessellation.
+        // For CIRCLE edges, sample intermediate points along the arc.
+        // For B-spline/trimmed-curve edges, sample intermediate points too.
         for &face_id in &step_shell.face_ids {
             if skipped_faces.contains(&face_id) {
                 continue;
@@ -235,13 +243,19 @@ impl<'a> StepReader<'a> {
                         (edge.end_vertex_id, edge.start_vertex_id)
                     };
 
-                    // Try to parse the edge curve for arc sampling
+                    // Try to parse the edge curve
                     let curve = parse_curve(self.file, edge.curve_id).ok();
-                    let is_circle = matches!(&curve, Some(StepCurve::Circle(_)));
 
-                    if is_circle {
-                        // Subdivide this circle arc into multiple segments
-                        self.subdivide_circle_edge(
+                    // Determine whether this is a curved edge that needs subdivision
+                    let needs_subdivision = matches!(
+                        &curve,
+                        Some(StepCurve::Circle(_))
+                            | Some(StepCurve::BSpline(_))
+                            | Some(StepCurve::Trimmed(_))
+                    );
+
+                    if needs_subdivision {
+                        self.subdivide_curved_edge(
                             &mut topo,
                             &edge,
                             &oe,
@@ -294,7 +308,7 @@ impl<'a> StepReader<'a> {
                 }
 
                 // Collect half-edges for this loop.
-                // For subdivided circle edges, expand to the chain of sub-half-edges.
+                // For subdivided curved edges, expand to the chain of sub-half-edges.
                 let mut loop_hes = Vec::new();
                 for &oe_id in &loop_.edge_ids {
                     let oe = parse_oriented_edge(self.file, oe_id)?;
@@ -365,10 +379,10 @@ impl<'a> StepReader<'a> {
         })
     }
 
-    /// Subdivide a CIRCLE edge into multiple segments by sampling intermediate
-    /// points along the arc. This ensures loops with only 2 edges (2 vertices)
-    /// get enough vertices for proper tessellation.
-    fn subdivide_circle_edge(
+    /// Subdivide a curved edge (circle, B-spline, or trimmed variant) into multiple
+    /// segments by sampling intermediate points. This ensures loops with only 2
+    /// vertices get enough points for tessellation.
+    fn subdivide_curved_edge(
         &mut self,
         topo: &mut Topology,
         edge: &crate::entities::topology::StepEdge,
@@ -377,22 +391,105 @@ impl<'a> StepReader<'a> {
         start_v: u64,
         end_v: u64,
     ) {
-        let StepCurve::Circle(circle) = curve else {
-            return;
-        };
+        // Compute sample parameters [t_start, ..., t_end]
+        let mid_pts = self.sample_curve_intermediates(topo, curve, edge, oe, start_v, end_v);
 
+        let start_vid = self.vertex_map[&start_v];
+        let end_vid = self.vertex_map[&end_v];
+        let n = mid_pts.len();
+
+        // Build forward chain: start → m0 → m1 → ... → mn-1 → (end = next edge's start)
+        let mut fwd_origins = vec![start_vid];
+        fwd_origins.extend_from_slice(&mid_pts);
+
+        // Reverse chain: end → mn-1 → ... → m0 → (start = next edge's start)
+        let mut rev_origins = vec![end_vid];
+        for &vid in mid_pts.iter().rev() {
+            rev_origins.push(vid);
+        }
+
+        let mut fwd_chain = Vec::with_capacity(n + 1);
+        let mut rev_chain = Vec::with_capacity(n + 1);
+
+        for &origin in &fwd_origins {
+            let he = topo.add_half_edge(origin);
+            fwd_chain.push(he);
+        }
+        for &origin in &rev_origins {
+            let he = topo.add_half_edge(origin);
+            rev_chain.push(he);
+        }
+
+        // Pair forward[i] with reverse[n-i] into edges
+        for i in 0..fwd_chain.len() {
+            let fwd_he = fwd_chain[i];
+            let rev_he = rev_chain[fwd_chain.len() - 1 - i];
+            topo.add_edge(fwd_he, rev_he);
+        }
+
+        self.subdivided_edges
+            .insert((edge.id, oe.orientation), fwd_chain);
+        self.subdivided_edges
+            .insert((edge.id, !oe.orientation), rev_chain);
+    }
+
+    /// Compute intermediate 3D sample points along a curved edge.
+    ///
+    /// Returns a list of `VertexId`s (not including the start/end vertices)
+    /// ordered from start to end.
+    fn sample_curve_intermediates(
+        &mut self,
+        topo: &mut Topology,
+        curve: &StepCurve,
+        edge: &crate::entities::topology::StepEdge,
+        oe: &crate::entities::topology::StepOrientedEdge,
+        start_v: u64,
+        end_v: u64,
+    ) -> Vec<VertexId> {
+        let resolved = curve.resolve();
+        match resolved {
+            StepCurve::Circle(circle) => {
+                self.sample_circle_arc(topo, circle, curve, edge, oe, start_v, end_v)
+            }
+            StepCurve::BSpline(_) => self.sample_bspline(topo, curve, edge, oe),
+            // Line or other simple curves don't need intermediate points
+            _ => vec![],
+        }
+    }
+
+    /// Sample a circle arc using either trim parameters (if available via TRIMMED_CURVE)
+    /// or vertex endpoint projection.
+    #[allow(clippy::too_many_arguments)]
+    fn sample_circle_arc(
+        &mut self,
+        topo: &mut Topology,
+        circle: &vcad_kernel_geom::Circle3d,
+        curve: &StepCurve,
+        edge: &crate::entities::topology::StepEdge,
+        oe: &crate::entities::topology::StepOrientedEdge,
+        start_v: u64,
+        end_v: u64,
+    ) -> Vec<VertexId> {
         let start_pt = topo.vertices[self.vertex_map[&start_v]].point;
         let end_pt = topo.vertices[self.vertex_map[&end_v]].point;
 
-        // Compute angle parameters for start and end points on the circle
-        let t_start = point_angle_on_circle(circle, &start_pt);
-        let t_end = point_angle_on_circle(circle, &end_pt);
+        // Prefer explicit trim parameters from TRIMMED_CURVE wrapper
+        let (t_start, t_end, forward) = if let StepCurve::Trimmed(tc) = curve {
+            let fwd = oe.orientation == edge.same_sense;
+            if fwd == tc.sense_agreement {
+                (tc.trim1, tc.trim2, true)
+            } else {
+                (tc.trim2, tc.trim1, false)
+            }
+        } else {
+            // Fall back to projecting vertex endpoints onto the circle
+            let ts = point_angle_on_circle(circle, &start_pt);
+            let te = point_angle_on_circle(circle, &end_pt);
+            (ts, te, oe.orientation == edge.same_sense)
+        };
 
-        // Determine arc sweep: the EDGE_CURVE same_sense tells us if the
-        // curve parameter increases from start to end vertex. Combined with
-        // the oriented edge orientation, we know the arc direction.
-        let forward_on_curve = oe.orientation == edge.same_sense;
-        let sweep = if forward_on_curve {
+        // Compute the arc sweep (always in the direction of traversal)
+        let sweep = if forward {
             let mut s = t_end - t_start;
             if s <= 1e-10 {
                 s += std::f64::consts::TAU;
@@ -406,8 +503,7 @@ impl<'a> StepReader<'a> {
             -s
         };
 
-        let n = ARC_SAMPLE_COUNT;
-        // Sample intermediate points (not including endpoints)
+        let n = CURVE_SAMPLE_COUNT;
         let mut mid_vids = Vec::with_capacity(n);
         for i in 1..=n {
             let frac = i as f64 / (n + 1) as f64;
@@ -416,46 +512,28 @@ impl<'a> StepReader<'a> {
             let vid = topo.add_vertex(pt);
             mid_vids.push(vid);
         }
+        mid_vids
+    }
 
-        // Build forward chain: start → m0 → m1 → ... → mn → (end is next edge's start)
-        let start_vid = self.vertex_map[&start_v];
-        let end_vid = self.vertex_map[&end_v];
-
-        let mut fwd_chain = Vec::with_capacity(n + 1);
-        let mut rev_chain = Vec::with_capacity(n + 1);
-
-        // Forward: start, m0, m1, ..., mn — each is origin of a half-edge
-        let mut fwd_origins = vec![start_vid];
-        fwd_origins.extend_from_slice(&mid_vids);
-
-        // Reverse: end, mn, mn-1, ..., m0 — each is origin of a half-edge
-        let mut rev_origins = vec![end_vid];
-        for &vid in mid_vids.iter().rev() {
-            rev_origins.push(vid);
+    /// Sample a B-spline (or trimmed B-spline) curve at `CURVE_SAMPLE_COUNT` points.
+    fn sample_bspline(
+        &mut self,
+        topo: &mut Topology,
+        curve: &StepCurve,
+        _edge: &crate::entities::topology::StepEdge,
+        _oe: &crate::entities::topology::StepOrientedEdge,
+    ) -> Vec<VertexId> {
+        let (t_min, t_max) = curve.domain();
+        let n = CURVE_SAMPLE_COUNT;
+        let mut mid_vids = Vec::with_capacity(n);
+        for i in 1..=n {
+            let frac = i as f64 / (n + 1) as f64;
+            let t = t_min + (t_max - t_min) * frac;
+            let pt = curve.evaluate(t);
+            let vid = topo.add_vertex(pt);
+            mid_vids.push(vid);
         }
-
-        for &origin in &fwd_origins {
-            let he = topo.add_half_edge(origin);
-            fwd_chain.push(he);
-        }
-        for &origin in &rev_origins {
-            let he = topo.add_half_edge(origin);
-            rev_chain.push(he);
-        }
-
-        // Create edges pairing forward[i] with reverse[n-i]
-        for i in 0..fwd_chain.len() {
-            let fwd_he = fwd_chain[i];
-            let rev_he = rev_chain[fwd_chain.len() - 1 - i];
-            topo.add_edge(fwd_he, rev_he);
-        }
-
-        // Store the chains for loop building.
-        // The oriented edge orientation determines which chain to use.
-        self.subdivided_edges
-            .insert((edge.id, oe.orientation), fwd_chain);
-        self.subdivided_edges
-            .insert((edge.id, !oe.orientation), rev_chain);
+        mid_vids
     }
 }
 

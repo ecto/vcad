@@ -62,6 +62,7 @@ export const raytracer_setEdgeDetection: (a: number, b: number, c: number, d: nu
 export const raytracer_setMaterial: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
 export const raytracer_uploadSolid: (a: number, b: number) => [number, number];
 export const sectionMesh: (a: any, b: number, c: number, d: number, e: number) => any;
+export const solid_boundaryEdges: (a: number, b: number) => [number, number];
 export const solid_boundingBox: (a: number) => [number, number];
 export const solid_centerOfMass: (a: number) => [number, number];
 export const solid_cone: (a: number, b: number, c: number, d: number) => number;

@@ -6,7 +6,7 @@ use vcad_kernel_math::{Point3, Vec3};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_topo::{FaceId, HalfEdgeId, Orientation, Topology, VertexId};
 
-use crate::topology::{compute_centroid, quantize, EdgeInfo, FaceInfo};
+use crate::topology::{compute_centroid, quantize, CylinderInfo, EdgeInfo, FaceInfo};
 
 /// Key for a trim vertex: (original_vertex, face_id).
 pub(crate) type TrimKey = (VertexId, FaceId);
@@ -22,6 +22,23 @@ pub(crate) fn compute_trim_vertices(faces: &[FaceInfo], distance: f64) -> HashMa
 
     for face in faces {
         let n = face.vertex_ids.len();
+
+        // For cylindrical faces, Newell's method on the rich arc-
+        // sampled outer loop only gives an average "outward radial"
+        // that's imprecise for off-center vertices; the trim formula
+        // then misbehaves and produces vertices outside the solid
+        // (the z=-2/z=22 overhang in the pork-chop render). Compute
+        // cylinder-face trim analytically: for a vertex on a cap-edge
+        // (at the v_min or v_max extremum along the cylinder axis),
+        // move it axially toward the face interior by `distance`.
+        // For a vertex on a vertical seam, move it along the arc
+        // tangent toward the interior. Both use the exact cylinder
+        // parameters rather than the approximate face normal.
+        if let Some(cyl) = face.cylinder {
+            trim_cylinder_face(face, &cyl, distance, &mut trims);
+            continue;
+        }
+
         let normal = face.normal;
 
         for i in 0..n {
@@ -63,14 +80,28 @@ pub(crate) fn compute_trim_vertices(faces: &[FaceInfo], distance: f64) -> HashMa
             let cross_dirs = d_enter.cross(d_leave);
             let denom = cross_dirs.dot(normal);
 
-            if denom.abs() < 1e-15 {
+            // The two trim lines intersect at v_pos + distance*perp_enter + t1*d_enter
+            // where t1 = -(delta × d_leave) · normal / denom. `denom` is the
+            // signed sine of the exterior angle at this vertex, so when two
+            // edges are nearly collinear (as on a tessellated arc cap) denom
+            // → 0 and t1 blows up, pushing the trim point hundreds of units
+            // away from the actual vertex. That manifested as blend-face
+            // vertices flung far outside the B-rep ("pork-chop diverges"
+            // bug). Fall back to a tangent-bisector offset in both the
+            // strict-degenerate case and when the computed `t1` would push
+            // the trim further than a corner geometrically should support.
+            let cross_delta = delta.cross(d_leave);
+            let t1_safe_limit = d_enter_len.min(d_leave_len);
+            let t1 = if denom.abs() < 1e-12 {
+                f64::NAN
+            } else {
+                -cross_delta.dot(normal) / denom
+            };
+            if !t1.is_finite() || t1.abs() > t1_safe_limit {
                 let p = v_pos + distance * 0.5 * (perp_enter + perp_leave);
                 trims.insert((v_id, face.face_id), p);
                 continue;
             }
-
-            let cross_delta = delta.cross(d_leave);
-            let t1 = -cross_delta.dot(normal) / denom;
 
             let p1 = v_pos + distance * perp_enter;
             let trim_point = Point3::from(p1.to_vec() + t1 * d_enter);
@@ -79,6 +110,56 @@ pub(crate) fn compute_trim_vertices(faces: &[FaceInfo], distance: f64) -> HashMa
     }
 
     trims
+}
+
+/// Analytical trim for a cylindrical face. Vertices on the cylinder's
+/// bottom arc (axial minimum) shift axially +distance toward the face
+/// interior; vertices on the top arc (axial maximum) shift -distance.
+///
+/// At arc-to-arc junction seams we keep axial-only shift: if we also
+/// shifted tangentially, each cylinder's copy of the shared junction
+/// vertex would move in opposite directions and the seam edge would
+/// split into two non-welding edges, leaving a visible rectangular
+/// gap at every junction. Keeping the shift axial-only lets both
+/// cylinders agree on the seam-vertex position and the weld closes
+/// the seam; the residual corner-blend gap between adjacent torus
+/// blends is smaller than the rectangular seam gap would be.
+fn trim_cylinder_face(
+    face: &FaceInfo,
+    cyl: &CylinderInfo,
+    distance: f64,
+    trims: &mut HashMap<TrimKey, Point3>,
+) {
+    let n = face.vertex_ids.len();
+    if n == 0 {
+        return;
+    }
+    let axis = cyl.axis.normalize();
+
+    let mut vs: Vec<f64> = Vec::with_capacity(n);
+    for p in &face.positions {
+        let d = *p - cyl.center;
+        vs.push(d.dot(axis));
+    }
+    let v_min = vs.iter().cloned().fold(f64::INFINITY, f64::min);
+    let v_max = vs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+
+    let h = v_max - v_min;
+    let eps_v = (h * 1e-4).max(1e-6);
+
+    for (i, &v) in vs.iter().enumerate() {
+        let v_id = face.vertex_ids[i];
+        let v_pos = face.positions[i];
+
+        let mut shift = Vec3::zeros();
+        if (v - v_min).abs() < eps_v {
+            shift += axis * distance;
+        } else if (v_max - v).abs() < eps_v {
+            shift -= axis * distance;
+        }
+
+        trims.insert((v_id, face.face_id), v_pos + shift);
+    }
 }
 
 /// Build vertex faces for all vertices where >=3 edges meet.

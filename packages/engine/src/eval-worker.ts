@@ -22,6 +22,7 @@ interface WasmMesh {
   positions: Float32Array | number[];
   indices: Uint32Array | number[];
   normals?: Float32Array | number[];
+  faceKinds?: Uint8Array | number[];
 }
 
 interface WasmEvaluatedScene {
@@ -61,6 +62,7 @@ function collectTransferables(scene: EvaluatedScene): ArrayBuffer[] {
     buffers.push(m.indices.buffer as ArrayBuffer);
     if (m.normals) buffers.push(m.normals.buffer as ArrayBuffer);
     if (m.colors) buffers.push(m.colors.buffer as ArrayBuffer);
+    if (m.faceKinds) buffers.push(m.faceKinds.buffer as ArrayBuffer);
   };
 
   for (const p of scene.parts) collectMesh(p.mesh);
@@ -78,6 +80,9 @@ function wasmResultToScene(result: WasmEvaluatedScene): EvaluatedScene {
     indices: m.indices instanceof Uint32Array ? m.indices : new Uint32Array(m.indices),
     normals: m.normals
       ? m.normals instanceof Float32Array ? m.normals : new Float32Array(m.normals)
+      : undefined,
+    faceKinds: m.faceKinds
+      ? m.faceKinds instanceof Uint8Array ? m.faceKinds : new Uint8Array(m.faceKinds)
       : undefined,
   });
 

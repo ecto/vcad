@@ -41,6 +41,8 @@ const VersionHistoryModal = lazyWithRetry(() => import("@/components/VersionHist
 const ForkPromptModal = lazyWithRetry(() => import("@/components/ForkPromptModal").then(m => ({ default: m.ForkPromptModal })), "ForkPromptModal");
 const ReadOnlyBanner = lazyWithRetry(() => import("@/components/ReadOnlyBanner").then(m => ({ default: m.ReadOnlyBanner })), "ReadOnlyBanner");
 const ProfilePage = lazyWithRetry(() => import("@/components/ProfilePage").then(m => ({ default: m.ProfilePage })), "ProfilePage");
+const LegalPage = lazyWithRetry(() => import("@/components/LegalPage").then(m => ({ default: m.LegalPage })), "LegalPage");
+const TermsGate = lazyWithRetry(() => import("@/components/TermsGate").then(m => ({ default: m.TermsGate })), "TermsGate");
 // UsernamePickerModal is lazy-loaded inside ShareDialog, not here.
 const CommandPalette = lazyWithRetry(() => import("@/components/CommandPalette").then(m => ({ default: m.CommandPalette })), "CommandPalette");
 const SketchToolbar = lazyWithRetry(() => import("@/components/SketchToolbar").then(m => ({ default: m.SketchToolbar })), "SketchToolbar");
@@ -71,7 +73,6 @@ import {
   parseVcadFile,
   parseStl,
   logger,
-  type VcadFile,
 } from "@vcad/core";
 import { useEngine } from "@/hooks/useEngine";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
@@ -86,7 +87,7 @@ import { bootstrap } from "@/lib/bootstrap";
 import { useBootStore } from "@/stores/boot-store";
 import { Splash } from "@/components/Splash";
 import { ErrorScreen } from "@/components/ErrorScreen";
-import { getProfileRouteUsername } from "@/lib/url-document";
+import { getProfileRouteUsername, getLegalRouteSlug } from "@/lib/url-document";
 import {
   mergeMeshes,
 } from "@vcad/engine";
@@ -340,6 +341,8 @@ export function App() {
         // Add as a proper document part (not just a scene mesh)
         // This makes it selectable, deletable, and transformable
         useDocumentStore.getState().loadDocument({
+          kind: "legacy",
+          version: "0.1",
           document: { version: "1", nodes: {}, roots: [], materials: {}, part_materials: {} },
           parts: [],
           nextNodeId: 1,
@@ -394,6 +397,8 @@ export function App() {
         // Add as a proper document part (not just a scene mesh)
         // This makes it selectable, deletable, and exportable
         useDocumentStore.getState().loadDocument({
+          kind: "legacy",
+          version: "0.1",
           document: { version: "1", nodes: {}, roots: [], materials: {}, part_materials: {} },
           parts: [],
           nextNodeId: 1,
@@ -565,9 +570,12 @@ export function App() {
 
   // Listen for load-example events from the menu
   useEffect(() => {
-    const onLoadExample = (e: CustomEvent<{ file: VcadFile }>) => {
+    const onLoadExample = async (
+      e: CustomEvent<{ file: import("./data/examples").ExampleFile }>,
+    ) => {
       try {
-        useDocumentStore.getState().loadDocument(e.detail.file);
+        const { exampleToVcadFile } = await import("./data/examples");
+        useDocumentStore.getState().loadDocument(exampleToVcadFile(e.detail.file));
         useUiStore.getState().clearSelection();
       } catch (err) {
         console.error("Failed to load example:", err);
@@ -576,12 +584,12 @@ export function App() {
     };
     window.addEventListener(
       "vcad:load-example",
-      onLoadExample as EventListener,
+      onLoadExample as unknown as EventListener,
     );
     return () => {
       window.removeEventListener(
         "vcad:load-example",
-        onLoadExample as EventListener,
+        onLoadExample as unknown as EventListener,
       );
     };
   }, []);
@@ -687,6 +695,23 @@ export function App() {
     );
   }
 
+  // /privacy, /terms, /security — render static legal content.
+  const legalSlug = getLegalRouteSlug();
+  if (legalSlug) {
+    return (
+      <AsyncBoundary
+        region="legal-page"
+        fallback={
+          <div className="flex h-screen items-center justify-center bg-bg text-text-muted text-sm">
+            Loading…
+          </div>
+        }
+      >
+        <LegalPage slug={legalSlug} />
+      </AsyncBoundary>
+    );
+  }
+
   const viewportStack = (
     <>
       <Viewport />
@@ -767,6 +792,9 @@ export function App() {
   return (
     <ErrorBoundary>
       <TooltipProvider>
+        <Suspense fallback={null}>
+          <TermsGate />
+        </Suspense>
         <div
           className="contents"
           onDragOver={handleDragOver}

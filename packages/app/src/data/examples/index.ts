@@ -1,4 +1,20 @@
-import type { VcadFile } from "@vcad/core";
+import type { VcadFile, VcadFileLegacy } from "@vcad/core";
+import type { Document } from "@vcad/ir";
+import type { PartInfo } from "@vcad/core";
+
+/**
+ * Examples ship the legacy v0.1 IR-JSON shape inline — they predate the
+ * CRDT format and there's no value in migrating the source checked-in data
+ * since it gets run through `migrate_v1` on load anyway. `toVcadFile` wraps
+ * them as the `legacy` variant of the tagged union.
+ */
+export interface ExampleFile {
+  document: Document;
+  parts: PartInfo[];
+  consumedParts?: Record<string, PartInfo>;
+  nextNodeId: number;
+  nextPartNum?: number;
+}
 
 export interface Example {
   id: string;
@@ -8,7 +24,21 @@ export interface Example {
   thumbnail?: string;
   features?: string[];
   unlockAfter?: number;
-  file: VcadFile;
+  file: ExampleFile;
+}
+
+/** Wrap an inline example in the canonical tagged-union `VcadFile` shape. */
+export function exampleToVcadFile(file: ExampleFile): VcadFile {
+  const legacy: VcadFileLegacy = {
+    kind: "legacy",
+    version: "0.1",
+    document: file.document,
+    parts: file.parts,
+    consumedParts: file.consumedParts,
+    nextNodeId: file.nextNodeId,
+    nextPartNum: file.nextPartNum,
+  };
+  return legacy;
 }
 
 import { plateExample } from "./plate.vcad";

@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { Canvas, useThree } from "@react-three/fiber";
 import { ViewportContent } from "./ViewportContent";
 import { DrawingView } from "./DrawingView";
+import { TriangleInspectionPanel } from "./TriangleInspector";
 import { RayTracedViewportOverlay } from "./RayTracedViewport";
 import { FollowModeToggle } from "./FollowModeToggle";
 import {
@@ -326,6 +327,9 @@ export function Viewport() {
       {!electronicsActive && renderMode === "raytrace" && raytraceAvailable && (
         <RayTracedViewportOverlay />
       )}
+
+      {/* Debug triangle inspector panel (DOM, lives outside Canvas). */}
+      <TriangleInspectionPanel />
 
       {/* Presence bar: who else is in this document, plus follow/lock controls.
           Pointer-events none on the wrapper so the canvas still receives orbit

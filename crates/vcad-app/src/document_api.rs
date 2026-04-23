@@ -541,6 +541,79 @@ mod tests {
     }
 
     #[test]
+    fn test_pork_chop_fillet_chat_flow_produces_single_root() {
+        // End-to-end regression through the high-level DocumentApi — exactly
+        // the path the TS side exercises via `engine.add_feature(JSON)`. A
+        // fillet's input-consumption logic must ensure only the fillet, not
+        // its pre-fillet extrude source, ends up in `doc.roots`. Otherwise
+        // both near-identical shells render and z-fight ("the pork-chop
+        // sawtooth").
+        let sketch_json = serde_json::to_string(&vcad_ir::CsgOp::Sketch2D {
+            origin: vcad_ir::Vec3::new(0.0, 0.0, 0.0),
+            x_dir: vcad_ir::Vec3::new(1.0, 0.0, 0.0),
+            y_dir: vcad_ir::Vec3::new(0.0, 1.0, 0.0),
+            segments: vec![
+                vcad_ir::SketchSegment2D::Line {
+                    start: vcad_ir::Vec2 { x: 0.0, y: 0.0 },
+                    end: vcad_ir::Vec2 { x: 10.0, y: 0.0 },
+                },
+                vcad_ir::SketchSegment2D::Line {
+                    start: vcad_ir::Vec2 { x: 10.0, y: 0.0 },
+                    end: vcad_ir::Vec2 { x: 10.0, y: 10.0 },
+                },
+                vcad_ir::SketchSegment2D::Line {
+                    start: vcad_ir::Vec2 { x: 10.0, y: 10.0 },
+                    end: vcad_ir::Vec2 { x: 0.0, y: 10.0 },
+                },
+                vcad_ir::SketchSegment2D::Line {
+                    start: vcad_ir::Vec2 { x: 0.0, y: 10.0 },
+                    end: vcad_ir::Vec2 { x: 0.0, y: 0.0 },
+                },
+            ],
+        })
+        .unwrap();
+
+        let mut api = test_api();
+
+        // 1. Extrude the sketch ("Chop Meat").
+        let r1 = api.add_feature(FeatureInput::Extrude {
+            sketch: sketch_json.clone(),
+            depth: 20.0,
+            direction: [0.0, 0.0, 1.0],
+            twist_angle: None,
+            scale_end: None,
+        });
+        let extrude_id = r1.created_feature_id.clone().unwrap();
+
+        // 2. Fillet that extrude ("Meat Rounding") — chat path passes the
+        //    stable id of the extrude as `input`.
+        let r2 = api.add_feature(FeatureInput::Fillet {
+            input: extrude_id.clone(),
+            radius: 5.0,
+        });
+
+        // Extrude is reported as consumed.
+        assert!(
+            r2.consumed_part_ids.contains(&extrude_id),
+            "fillet must report its source as consumed; got consumed={:?}",
+            r2.consumed_part_ids
+        );
+
+        // 3. Set material on the pre-fillet extrude (as the AI did).
+        let r3 = api.set_material(&extrude_id, "abs-red");
+
+        // The document after all of this must have exactly ONE scene root —
+        // the fillet. The pre-fillet extrude is consumed and not rooted.
+        assert_eq!(
+            r3.document.roots.len(),
+            1,
+            "expected exactly 1 root (fillet); got {} roots: {:#?}",
+            r3.document.roots.len(),
+            r3.document.roots
+        );
+    }
+
+    #[test]
     fn test_update_feature() {
         let mut api = test_api();
         let r = api.add_feature(FeatureInput::Cube {

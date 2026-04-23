@@ -42,7 +42,7 @@ import { useUiStore, useDocumentStore, parseVcadFile, useChatStore } from "@vcad
 import type { SelectionContext } from "@vcad/core";
 import { useAppCommands } from "@/hooks/useAppCommands";
 import { cn } from "@/lib/utils";
-import { examples, type Example } from "@/data/examples";
+import { examples, exampleToVcadFile, type Example } from "@/data/examples";
 
 const ICONS: Record<string, typeof Cube> = {
   Cube,
@@ -326,7 +326,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
 
   // Handle example load
   const handleOpenExample = useCallback((example: Example) => {
-    loadDocument(example.file);
+    loadDocument(exampleToVcadFile(example.file));
     onOpenChange(false);
   }, [loadDocument, onOpenChange]);
 

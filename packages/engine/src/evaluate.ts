@@ -57,6 +57,7 @@ interface WasmMesh {
   positions: number[];
   indices: number[];
   normals?: number[];
+  faceKinds?: number[] | Uint8Array;
 }
 
 /** Convert a WASM mesh to a TriangleMesh (typed arrays). */
@@ -65,6 +66,7 @@ function wasmMeshToTriangleMesh(m: WasmMesh): TriangleMesh {
     positions: new Float32Array(m.positions),
     indices: new Uint32Array(m.indices),
     normals: m.normals ? new Float32Array(m.normals) : undefined,
+    faceKinds: m.faceKinds ? new Uint8Array(m.faceKinds) : undefined,
   };
 }
 
