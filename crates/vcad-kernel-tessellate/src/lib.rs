@@ -295,6 +295,12 @@ pub fn tessellate_solid(brep: &BRepSolid, params: &TessellationParams) -> Triang
     // Weld coincident vertices so the shell is watertight at face seams.
     weld_coincident_vertices(&mut mesh);
 
+    // NOTE: we don't run fill_tiny_boundary_loops here because this
+    // path doesn't track sphere-face vertex positions. The primary
+    // `tessellate_brep` entrypoint handles armpit-gap fill via the
+    // sphere-key gate, and this function is only reached via the
+    // legacy tessellate_solid entrypoint which doesn't need it.
+
     // Validate final mesh
     #[cfg(debug_assertions)]
     {
@@ -365,77 +371,67 @@ fn weld_coincident_vertices(mesh: &mut TriangleMesh) {
     mesh.indices = new_indices;
 }
 
-#[allow(dead_code)] // kept for potential future use; see vertex-blend follow-up
-fn fill_boundary_loops(mesh: &mut TriangleMesh) {
-    let tri_count = mesh.indices.len() / 3;
-    if tri_count == 0 {
+/// Close any boundary loop with at most `max_verts` vertices that
+/// touches a position from `sphere_keys` (a set of quantized positions
+/// of verts that came from Sphere faces) by fanning triangles from its
+/// centroid.
+///
+/// Gating on sphere-origin positions makes this selective to convex
+/// fillet vertex-blend armpit gaps (which are always adjacent to a
+/// sphere patch). Plate-with-hole / counterbore cutouts don't produce
+/// sphere faces, so their boundary loops are never touched even if
+/// they happen to have ≤ max_verts corners.
+fn fill_tiny_boundary_loops(
+    mesh: &mut TriangleMesh,
+    max_verts: usize,
+    sphere_keys: &std::collections::HashSet<[i64; 3]>,
+) {
+    if sphere_keys.is_empty() {
         return;
     }
 
-    // Build per-undirected-edge triangle count.
-    // For each directed edge (a,b) in a CCW triangle, its twin is (b,a)
-    // in the adjacent triangle. Boundary edges are those with no twin.
+    // Undirected boundary loops are reliable. For each loop, check the
+    // existing adjacent triangle's vertex normals — use their average
+    // as the outward reference and flip the fan winding if needed.
     use std::collections::{HashMap, HashSet};
-    let mut dir_edges: HashMap<(u32, u32), u32> = HashMap::new();
+    let loops = mesh.boundary_loops();
+    if loops.is_empty() {
+        return;
+    }
+
+    // Map each directed boundary edge (a, b) to the third corner of
+    // its adjacent triangle (there's exactly one). We use this third
+    // corner's outward-normal side as the "outside" reference.
+    let tri_count = mesh.indices.len() / 3;
+    let mut dir_counts: HashMap<(u32, u32), u32> = HashMap::new();
+    let mut tri_third: HashMap<(u32, u32), u32> = HashMap::new();
     for t in 0..tri_count {
         let a = mesh.indices[3 * t];
         let b = mesh.indices[3 * t + 1];
         let c = mesh.indices[3 * t + 2];
-        for &(x, y) in &[(a, b), (b, c), (c, a)] {
-            *dir_edges.entry((x, y)).or_insert(0) += 1;
+        for &(x, y, z) in &[(a, b, c), (b, c, a), (c, a, b)] {
+            *dir_counts.entry((x, y)).or_insert(0) += 1;
+            tri_third.entry((x, y)).or_insert(z);
         }
     }
+    let is_boundary = |a: u32, b: u32| -> bool {
+        let fwd = dir_counts.get(&(a, b)).copied().unwrap_or(0);
+        let bwd = dir_counts.get(&(b, a)).copied().unwrap_or(0);
+        fwd + bwd == 1
+    };
+    let _ = is_boundary;
+    let _ = HashSet::<u32>::new();
 
-    // Boundary directed edges: those without a reverse twin.
-    let mut boundary: HashMap<u32, u32> = HashMap::new();
-    for (&(a, b), _) in dir_edges.iter() {
-        if !dir_edges.contains_key(&(b, a)) {
-            boundary.insert(a, b);
-        }
-    }
-    if boundary.is_empty() {
-        return;
-    }
-
-    // Walk loops from each starting vertex.
-    let mut visited: HashSet<u32> = HashSet::new();
-    let mut loops: Vec<Vec<u32>> = Vec::new();
-    for &start in boundary.keys() {
-        if visited.contains(&start) {
-            continue;
-        }
-        let mut loop_verts = Vec::new();
-        let mut cur = start;
-        for _ in 0..boundary.len() + 1 {
-            if visited.contains(&cur) {
-                break;
-            }
-            visited.insert(cur);
-            loop_verts.push(cur);
-            match boundary.get(&cur) {
-                Some(&next) => cur = next,
-                None => break,
-            }
-            if cur == start {
-                break;
-            }
-        }
-        if loop_verts.len() >= 3 {
-            loops.push(loop_verts);
-        }
-    }
-
-    // Fill each loop with a fan from its centroid. Skip loops that are
-    // too big — those are probably genuine topology holes, not
-    // vertex-blend crescents. Threshold: the loop's bounding box must
-    // fit in a sphere of radius ≤ 4× the loop's average edge length
-    // (empirically separates vertex-blend crescents from large holes).
     for loop_verts in &loops {
         let n = loop_verts.len();
-        if !(3..=24).contains(&n) {
+        // Skip 3-vert loops: those are the sphere vertex-blend patch
+        // triangles themselves — already a single face of the shell,
+        // just topologically isolated (all 3 edges unshared). They
+        // render fine as-is. Fan-filling them creates a coplanar
+        // double cover that causes z-fighting.
+        if !(4..=max_verts).contains(&n) {
             continue;
         }
-        // Snapshot loop positions up front so we can mutate the mesh.
         let positions: Vec<[f32; 3]> = loop_verts
             .iter()
             .map(|&v| {
@@ -446,6 +442,17 @@ fn fill_boundary_loops(mesh: &mut TriangleMesh) {
                 ]
             })
             .collect();
+        let touches_sphere = positions.iter().any(|p| {
+            let q = [
+                (p[0] as f64 * 1000.0).round() as i64,
+                (p[1] as f64 * 1000.0).round() as i64,
+                (p[2] as f64 * 1000.0).round() as i64,
+            ];
+            sphere_keys.contains(&q)
+        });
+        if !touches_sphere {
+            continue;
+        }
 
         let mut cx = 0.0_f32;
         let mut cy = 0.0_f32;
@@ -508,14 +515,96 @@ fn fill_boundary_loops(mesh: &mut TriangleMesh) {
             continue;
         }
 
+        // Determine outward orientation by finding one edge in this
+        // loop that has a single directed use in the existing mesh —
+        // that direction is the exterior-CCW sense for that edge.
+        let mut outward_dir: Option<bool> = None; // true if loop's (a, b) matches (a, b) in mesh
+        for i in 0..n {
+            let a = loop_verts[i];
+            let b = loop_verts[(i + 1) % n];
+            let fwd = dir_counts.get(&(a, b)).copied().unwrap_or(0);
+            let bwd = dir_counts.get(&(b, a)).copied().unwrap_or(0);
+            if fwd == 1 && bwd == 0 {
+                outward_dir = Some(true);
+                break;
+            } else if bwd == 1 && fwd == 0 {
+                outward_dir = Some(false);
+                break;
+            }
+        }
+        let loop_matches_outward = outward_dir.unwrap_or(true);
+
         let cx_idx = (mesh.vertices.len() / 3) as u32;
         mesh.vertices.extend_from_slice(&[cx, cy, cz]);
-        mesh.normals.extend_from_slice(&[nx, ny, nz]);
+        // Flip the Newell normal if it points INWARD relative to the
+        // existing adjacent boundary triangle (whose third corner we
+        // look up via `tri_third`). That third corner sits on the
+        // INTERIOR side of the boundary edge, so "outward direction"
+        // = cross(edge_dir, corner_to_edge).
+        let mut outward = [nx, ny, nz];
+        let mut ref_edge: Option<(u32, u32)> = None;
+        for i in 0..n {
+            let a = loop_verts[i];
+            let b = loop_verts[(i + 1) % n];
+            if tri_third.contains_key(&(a, b)) {
+                ref_edge = Some((a, b));
+                break;
+            } else if tri_third.contains_key(&(b, a)) {
+                ref_edge = Some((b, a));
+                break;
+            }
+        }
+        if let Some((a, b)) = ref_edge {
+            let c = tri_third[&(a, b)];
+            // Reference outward: on the existing boundary triangle,
+            // (a, b, c) are CCW viewed from outside, so outward ≈
+            // (b - a) × (c - a).
+            let pa = [
+                mesh.vertices[3 * a as usize],
+                mesh.vertices[3 * a as usize + 1],
+                mesh.vertices[3 * a as usize + 2],
+            ];
+            let pb = [
+                mesh.vertices[3 * b as usize],
+                mesh.vertices[3 * b as usize + 1],
+                mesh.vertices[3 * b as usize + 2],
+            ];
+            let pc = [
+                mesh.vertices[3 * c as usize],
+                mesh.vertices[3 * c as usize + 1],
+                mesh.vertices[3 * c as usize + 2],
+            ];
+            let ex = pb[0] - pa[0];
+            let ey = pb[1] - pa[1];
+            let ez = pb[2] - pa[2];
+            let fx = pc[0] - pa[0];
+            let fy = pc[1] - pa[1];
+            let fz = pc[2] - pa[2];
+            let refx = ey * fz - ez * fy;
+            let refy = ez * fx - ex * fz;
+            let refz = ex * fy - ey * fx;
+            if outward[0] * refx + outward[1] * refy + outward[2] * refz < 0.0 {
+                outward = [-outward[0], -outward[1], -outward[2]];
+            }
+        }
+
+        // Offset the centroid outward so the fan triangles form a
+        // small "bump" protruding outside the solid, with consistent
+        // outward-facing CCW normals.
+        let offset_scale = avg_edge * 0.5;
+        mesh.vertices[3 * cx_idx as usize] = cx + outward[0] * offset_scale;
+        mesh.vertices[3 * cx_idx as usize + 1] = cy + outward[1] * offset_scale;
+        mesh.vertices[3 * cx_idx as usize + 2] = cz + outward[2] * offset_scale;
+        mesh.normals.extend_from_slice(&outward);
 
         for i in 0..n {
             let a = loop_verts[i];
             let b = loop_verts[(i + 1) % n];
-            mesh.indices.extend_from_slice(&[cx_idx, a, b]);
+            if loop_matches_outward {
+                mesh.indices.extend_from_slice(&[cx_idx, b, a]);
+            } else {
+                mesh.indices.extend_from_slice(&[cx_idx, a, b]);
+            }
         }
     }
 }
@@ -3201,12 +3290,29 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
     let shell = &brep.topology.shells[solid.outer_shell];
 
     let mut mesh = TriangleMesh::new();
+    // Positions (quantized to 0.001mm, same resolution as the welder)
+    // of every vertex contributed by a Sphere face. After post-weld
+    // fan-fill, we only fill boundary loops that touch at least one of
+    // these positions — this makes the fill selective to convex fillet
+    // vertex-blend armpit gaps, not e.g. plate-with-hole cutouts.
+    let mut sphere_vert_keys: std::collections::HashSet<[i64; 3]> =
+        std::collections::HashSet::new();
 
     for &face_id in &shell.faces {
         let face = &brep.topology.faces[face_id];
         let surface = &brep.geometry.surfaces[face.surface_index];
         let reversed = face.orientation == Orientation::Reversed;
         let loop_len = brep.topology.loop_len(face.outer_loop);
+        // Track sphere AND torus face vertex positions. Only loops that
+        // touch one of these get filled — enough to cover armpit gaps
+        // at filleted junctions (always near sphere + torus blend),
+        // while leaving plate-with-hole / boolean-cut rectangular
+        // cutouts alone (those have no sphere OR torus faces).
+        let is_fillet_face = matches!(
+            surface.surface_type(),
+            SurfaceKind::Sphere | SurfaceKind::Torus
+        );
+        let pre_face_verts = mesh.num_vertices();
 
         match surface.surface_type() {
             SurfaceKind::Plane => {
@@ -3379,9 +3485,21 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
                 mesh.merge(&face_mesh);
             }
         }
+
+        if is_fillet_face {
+            let n_verts = mesh.num_vertices();
+            for vi in pre_face_verts..n_verts {
+                sphere_vert_keys.insert([
+                    (mesh.vertices[3 * vi] as f64 * 1000.0).round() as i64,
+                    (mesh.vertices[3 * vi + 1] as f64 * 1000.0).round() as i64,
+                    (mesh.vertices[3 * vi + 2] as f64 * 1000.0).round() as i64,
+                ]);
+            }
+        }
     }
 
     weld_coincident_vertices(&mut mesh);
+    fill_tiny_boundary_loops(&mut mesh, 6, &sphere_vert_keys);
     mesh
 }
 

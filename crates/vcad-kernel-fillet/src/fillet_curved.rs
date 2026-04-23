@@ -187,17 +187,7 @@ fn fillet_edges_detailed_inner(
     let trims = compute_trim_vertices(&faces, radius);
 
     // Classify convex plane-cyl-cyl junctions up-front so downstream
-    // stages (sphere patch, and — in a follow-up — trim unification)
-    // share the same ball-center / tangent-point decisions.
-    //
-    // The naïve "insert tan_cap / tan_cyl as trim overrides" opens new
-    // holes: the cylinder face's outer loop carries ~16 intermediate
-    // arc-sample vertices whose trim is still axial-only, so shifting
-    // just the two junction endpoints to tan_cyl makes the cylinder
-    // tessellator's u-schedule disagree between the axial intermediates
-    // and the tangentially-offset endpoints. The larger reconciliation
-    // fix has to include the intermediates too. For now we leave trims
-    // alone and just drive patch construction from the plan.
+    // stages share a single source of truth for patch tangent points.
     let junction_plans = plan_convex_junction_blends(brep, &edges, &target_edges, radius);
 
     let face_map: HashMap<FaceId, &FaceInfo> = faces.iter().map(|f| (f.face_id, f)).collect();
@@ -732,6 +722,102 @@ fn build_spherical_vertex_blends_from_plans(
     }
 }
 
+/// For every junction plan, rewrite the trim table so all participating
+/// faces resolve V — and any intermediate arc-sample vertex in the
+/// "clip wedge" near V — to the rolling-ball tangent points.
+///
+/// An intermediate is in the clip wedge when its angle on the cylinder
+/// lies strictly between `tan_cyl_angle` and `V_angle` (short arc).
+/// Those intermediates' trims for THIS cylinder face and the SHARED
+/// cap face both get snapped to the tangent endpoints — collapsing
+/// the sliver of arc beyond tan_cyl into a zero-width region. The
+/// two-three micro torus-blend segments that live there produce
+/// degenerate quads that `build_blend_quad` rejects (via the
+/// vertex-equality early-out), so the net effect is that the cap-cyl
+/// arc is visually resampled to end at tan_cyl, without the pipeline
+/// needing any new "skip this segment" logic.
+fn snap_trims_at_junctions(
+    brep: &BRepSolid,
+    plans: &[JunctionPlan],
+    trims: &mut HashMap<TrimKey, Point3>,
+) {
+    let topo = &brep.topology;
+    let geom = &brep.geometry;
+
+    // `(u, v)` of a 3D point on a cylinder's surface.
+    let uv_on = |pt: Point3, cyl: &CylinderSurface| -> (f64, f64) {
+        let axis = *cyl.axis.as_ref();
+        let ref_dir = *cyl.ref_dir.as_ref();
+        let y_dir = axis.cross(ref_dir);
+        let d = pt - cyl.center;
+        let u = d.dot(y_dir).atan2(d.dot(ref_dir));
+        let u = if u < 0.0 {
+            u + 2.0 * std::f64::consts::PI
+        } else {
+            u
+        };
+        (u, d.dot(axis))
+    };
+
+    // Shortest signed arc from `a` to `b` in `(-π, π]`.
+    let signed_arc = |a: f64, b: f64| -> f64 {
+        let mut d = b - a;
+        while d > std::f64::consts::PI {
+            d -= 2.0 * std::f64::consts::PI;
+        }
+        while d <= -std::f64::consts::PI {
+            d += 2.0 * std::f64::consts::PI;
+        }
+        d
+    };
+
+    for plan in plans {
+        // Override V's own trim for all three participating faces.
+        trims.insert((plan.vertex, plan.cap_face), plan.tan_cap);
+        trims.insert((plan.vertex, plan.cyl_faces[0]), plan.tan_cyls[0]);
+        trims.insert((plan.vertex, plan.cyl_faces[1]), plan.tan_cyls[1]);
+
+        let v_pos = topo.vertices[plan.vertex].point;
+
+        for (idx, &cyl_face) in plan.cyl_faces.iter().enumerate() {
+            let surf = &geom.surfaces[topo.faces[cyl_face].surface_index];
+            let cyl = match surf.as_any().downcast_ref::<CylinderSurface>() {
+                Some(c) => c,
+                None => continue,
+            };
+
+            let (tan_u, _) = uv_on(plan.tan_cyls[idx], cyl);
+            let (v_u, _) = uv_on(v_pos, cyl);
+            let clip_span = signed_arc(tan_u, v_u);
+            if clip_span.abs() < 1e-6 {
+                continue;
+            }
+
+            let outer_loop = topo.faces[cyl_face].outer_loop;
+            for he in topo.loop_half_edges(outer_loop) {
+                let vid = topo.half_edges[he].origin;
+                if vid == plan.vertex {
+                    continue;
+                }
+                let vpos = topo.vertices[vid].point;
+                let (vu, _) = uv_on(vpos, cyl);
+                let offset = signed_arc(tan_u, vu);
+                if offset.signum() == clip_span.signum()
+                    && offset.abs() > 1e-6
+                    && offset.abs() < clip_span.abs() - 1e-6
+                {
+                    // Snap BOTH the cyl-face trim (to tan_cyl) and the
+                    // shared cap-face trim (to tan_cap). Both tan points
+                    // share the cap's z; consecutive clipped ints all
+                    // collapse to the same VertexId via the cache.
+                    trims.insert((vid, cyl_face), plan.tan_cyls[idx]);
+                    trims.insert((vid, plan.cap_face), plan.tan_cap);
+                }
+            }
+        }
+    }
+}
+
 /// Close the hexagonal armpit gap at every convex junction by adding
 /// a quad face on each cylinder's surface between the sphere-patch
 /// tan_cyl column and the original V_axial seam column.
@@ -955,6 +1041,13 @@ fn build_blend_quad_surface(
     let pa_e = trims.get(&(edge_info.v_end, edge_info.face_a))?;
     let pb_s = trims.get(&(edge_info.v_start, edge_info.face_b))?;
     let pb_e = trims.get(&(edge_info.v_end, edge_info.face_b))?;
+
+    // Reject degenerate quads where both start- or end-side corners
+    // have collapsed to the same position (happens by design at
+    // clipped junction sliver segments — see `snap_trims_at_junctions`).
+    if (*pa_s - *pa_e).norm() < 1e-6 && (*pb_s - *pb_e).norm() < 1e-6 {
+        return Some(());
+    }
 
     let surf_idx = new_geom.add_surface(surface);
     let solid_center = compute_centroid(faces);
