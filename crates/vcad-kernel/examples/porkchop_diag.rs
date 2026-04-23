@@ -16,6 +16,45 @@
 //! Iteration loop is tight: edit, `cargo run --example porkchop_diag`,
 //! re-open `/tmp/diag/porkchop.obj` in MeshLab — ≈3s per cycle vs. ≈45s
 //! for cargo + wasm-pack + browser reload.
+//!
+//! # Current state of the remaining holes (diagnosed via this harness)
+//!
+//! After the cylinder-seam weld fix, the pork-chop has 18 boundary
+//! loops (72 boundary edges) of two kinds, which this harness's
+//! loop-to-face reconciliation pinpointed:
+//!
+//! **Type A — 12 sphere-patch triangles (loops with 3 verts, Sphere as
+//! nearest face at d≈1mm).** Each loop's 3 verts are exactly the
+//! patch's (tan_cap, tan_cyl_A, tan_cyl_B). The sphere patch is a
+//! free-floating triangle with all 3 edges unshared. For the loop to
+//! close, each edge needs a neighbor:
+//!   - (tan_cap, tan_cyl_A) should share with torus_A's V-end edge,
+//!     which today is (V_cap_planar_trim, V_cyl_axial_trim) — wrong
+//!     xy/z. Needs the trim at junction V to use (tan_cap, tan_cyl_A)
+//!     instead.
+//!   - (tan_cap, tan_cyl_B) same story for torus_B.
+//!   - (tan_cyl_A, tan_cyl_B) has no natural neighbor in the current
+//!     topology — needs either (a) a small synthetic triangle at the
+//!     seam base joining to V_axial, or (b) the sphere patch extended
+//!     with V_axial as a 4th corner.
+//!
+//! **Type B — 6 hexagonal strip loops (6 verts each, toruses as
+//! nearest faces at d≈1-5mm).** Each loop has 3 xy columns — tan_cyl_A,
+//! V_axial (original profile corner), tan_cyl_B — at both z-trim
+//! levels. This is the gap between each cylinder's V-side boundary
+//! (still at V_axial xy) and the sphere patch's tan_cyl corners
+//! (shifted tangentially). Fix: extend each cylinder face's outer
+//! loop to include tan_cyl_A/B at its junction end, so the boundary
+//! column sits at the sphere's tangent position instead of V_axial.
+//! This is topology surgery on cyl face outer loops plus a
+//! corresponding change in how the cylinder tessellator derives its
+//! u-schedule so the intermediate arc samples stay consistent.
+//!
+//! The fix for Type B inherently fixes Type A edge 1 and 2 — once the
+//! cylinder face boundary ends at tan_cyl_A, the torus_A blend's V-end
+//! trim also resolves to tan_cyl_A (they share the (V, cyl_A_face)
+//! trim entry). Only edge 3 of Type A (tan_cyl_A, tan_cyl_B) needs
+//! the synthetic-triangle-at-seam-base patch.
 
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
@@ -172,6 +211,16 @@ fn main() {
             print!(" {:?}/{:?} d={:.3}", fid, kind, d2.sqrt());
         }
         println!();
+        // Print every vertex, not just small loops.
+        for &v in chain {
+            println!(
+                "      v{:<4} ({:.3},{:.3},{:.3})",
+                v,
+                full.vertices[v as usize * 3],
+                full.vertices[v as usize * 3 + 1],
+                full.vertices[v as usize * 3 + 2],
+            );
+        }
     }
 }
 

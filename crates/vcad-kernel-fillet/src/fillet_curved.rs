@@ -416,13 +416,18 @@ fn fillet_edges_detailed_inner(
         &mut all_faces,
     );
 
-    // 3b. Spherical vertex blends at convex 3-edge junctions, using the
-    // same ball-center / tangent data that drove the trim overrides
-    // above. Each patch ends up topologically disconnected from its
-    // neighbors (we don't add explicit shared edges yet), but its
-    // three corners share `VertexId`s with the adjacent cylinder-face
-    // trim points and torus-blend quad corners via `vertex_cache`
-    // position keying, so the tessellated mesh is watertight.
+    // 3b. Spherical vertex blends at convex 3-edge junctions.
+    //
+    // Patches are currently topology-isolated (3 floating edges per
+    // patch + 6-vert hex loop at each junction that the harness's
+    // loop-to-face reconciliation traces to the tan_cyl / V_axial
+    // mismatch on each cylinder). The fix has to shift the cylinder
+    // face outer loop to END at tan_cyl instead of V_axial — a naïve
+    // "add a bridge quad on the cylinder surface" approach does NOT
+    // work because the existing cylinder face already claims the
+    // V_axial seam column, so the bridge overlaps and the tessellator
+    // produces non-manifold edges / bigger holes. The correct fix is
+    // topology surgery on the cylinder face's outer loop; deferred.
     build_spherical_vertex_blends_from_plans(
         &junction_plans,
         &faces,
@@ -727,6 +732,125 @@ fn build_spherical_vertex_blends_from_plans(
     }
 }
 
+/// Close the hexagonal armpit gap at every convex junction by adding
+/// a quad face on each cylinder's surface between the sphere-patch
+/// tan_cyl column and the original V_axial seam column.
+///
+/// The junction has a "bottom" plan (V on the z=0 cap) and a "top"
+/// plan (V on the z=h cap) that share the same (cyl_face, V.xy). We
+/// pair them and emit one quad per cylinder with corners:
+///     bot_tan_cyl  (at cyl v_min)
+///     bot_V_axial  (at cyl v_min, axial-shifted from V)
+///     top_V_axial  (at cyl v_max)
+///     top_tan_cyl  (at cyl v_max)
+/// All four points lie on the cylinder's surface, so the quad re-uses
+/// the cylinder's CylinderSurface definition.
+fn build_cylinder_bridge_quads(
+    brep: &BRepSolid,
+    plans: &[JunctionPlan],
+    radius: f64,
+    vertex_cache: &mut HashMap<[i64; 3], VertexId>,
+    new_topo: &mut Topology,
+    new_geom: &mut GeometryStore,
+    all_faces: &mut Vec<FaceId>,
+) {
+    // Group plans by (cyl_face, quantized V.xy). Each group should end
+    // up with exactly two entries — bottom junction + top junction.
+    type Key = (FaceId, [i64; 2]);
+    let mut groups: HashMap<Key, Vec<&JunctionPlan>> = HashMap::new();
+    for plan in plans {
+        let v_pos = brep.topology.vertices[plan.vertex].point;
+        let xy_key = [
+            (v_pos.x * 1000.0).round() as i64,
+            (v_pos.y * 1000.0).round() as i64,
+        ];
+        for (cyl_idx, &cyl_face) in plan.cyl_faces.iter().enumerate() {
+            let _ = cyl_idx;
+            groups.entry((cyl_face, xy_key)).or_default().push(plan);
+        }
+    }
+
+    for ((cyl_face, _xy_key), group) in &groups {
+        if group.len() != 2 {
+            continue;
+        }
+        // Pull the cylinder surface + its axis so we know which way
+        // is "up" along the axis and can project z-levels correctly.
+        let surf = &brep.geometry.surfaces[brep.topology.faces[*cyl_face].surface_index];
+        let cyl = match surf.as_any().downcast_ref::<CylinderSurface>() {
+            Some(c) => c.clone(),
+            None => continue,
+        };
+        let axis = *cyl.axis.as_ref();
+
+        // Order the two plans by axial position of their vertex —
+        // smaller axial = v_min side, larger = v_max side.
+        let mut sorted: Vec<&&JunctionPlan> = group.iter().collect();
+        sorted.sort_by(|a, b| {
+            let va = (brep.topology.vertices[a.vertex].point - cyl.center).dot(axis);
+            let vb = (brep.topology.vertices[b.vertex].point - cyl.center).dot(axis);
+            va.partial_cmp(&vb).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let bot_plan = sorted[0];
+        let top_plan = sorted[1];
+
+        // Find which cyl index each plan is on for this cyl_face.
+        let bot_tan_idx = if bot_plan.cyl_faces[0] == *cyl_face { 0 } else { 1 };
+        let top_tan_idx = if top_plan.cyl_faces[0] == *cyl_face { 0 } else { 1 };
+        let bot_tan = bot_plan.tan_cyls[bot_tan_idx];
+        let top_tan = top_plan.tan_cyls[top_tan_idx];
+
+        // V axial positions: the cylinder face's trim shifts V by
+        // ±radius along the axis. bot's V goes +axis·r (toward
+        // interior), top's goes -axis·r.
+        let bot_v_pos = brep.topology.vertices[bot_plan.vertex].point;
+        let top_v_pos = brep.topology.vertices[top_plan.vertex].point;
+        let bot_v_axial = bot_v_pos + axis * radius;
+        let top_v_axial = top_v_pos - axis * radius;
+
+        let get_or_create =
+            |cache: &mut HashMap<[i64; 3], VertexId>, topo: &mut Topology, p: Point3| -> VertexId {
+                let key = quantize(p);
+                *cache.entry(key).or_insert_with(|| topo.add_vertex(p))
+            };
+        let v_bt = get_or_create(vertex_cache, new_topo, bot_tan);
+        let v_bv = get_or_create(vertex_cache, new_topo, bot_v_axial);
+        let v_tv = get_or_create(vertex_cache, new_topo, top_v_axial);
+        let v_tt = get_or_create(vertex_cache, new_topo, top_tan);
+
+        if v_bt == v_bv || v_bv == v_tv || v_tv == v_tt || v_tt == v_bt {
+            continue;
+        }
+
+        // Winding: the solid is inside the cylinder (convex arc, so
+        // solid center is on the axis side). Outward normal of this
+        // quad should point AWAY from the axis — i.e. radially
+        // outward at the quad's centroid.
+        let centroid = Point3::from(
+            (bot_tan.to_vec() + bot_v_axial.to_vec() + top_v_axial.to_vec() + top_tan.to_vec())
+                * 0.25,
+        );
+        let radial = {
+            let d = centroid - cyl.center;
+            let along = d.dot(axis);
+            d - axis * along
+        };
+        let e1 = bot_v_axial - bot_tan;
+        let e2 = top_tan - bot_tan;
+        let n = e1.cross(e2);
+        let verts: [VertexId; 4] = if n.dot(radial) > 0.0 {
+            [v_bt, v_bv, v_tv, v_tt]
+        } else {
+            [v_bt, v_tt, v_tv, v_bv]
+        };
+
+        let surf_idx = new_geom.add_surface(Box::new(cyl));
+        let hes: Vec<HalfEdgeId> = verts.iter().map(|&v| new_topo.add_half_edge(v)).collect();
+        let loop_id = new_topo.add_loop(&hes);
+        let face_id = new_topo.add_face(loop_id, surf_idx, Orientation::Forward);
+        all_faces.push(face_id);
+    }
+}
 
 /// Solve for the point in a plane that lies at specified distances from
 /// two projected centers — used for placing the rolling ball at a
