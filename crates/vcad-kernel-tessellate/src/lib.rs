@@ -241,6 +241,26 @@ impl TessellationParams {
 }
 
 /// Tessellate an entire B-rep solid into a triangle mesh.
+/// Tessellate each face independently, returning one mesh per face along
+/// with the face's id and surface kind. Useful for diagnostic overlays
+/// that color-code faces by surface type, and for the standalone fillet
+/// harness (dumps an OBJ where each face becomes a separate `g` group).
+pub fn tessellate_brep_by_face(
+    brep: &BRepSolid,
+    params: &TessellationParams,
+) -> Vec<(FaceId, SurfaceKind, TriangleMesh)> {
+    let solid = &brep.topology.solids[brep.solid_id];
+    let shell = &brep.topology.shells[solid.outer_shell];
+    let mut out = Vec::with_capacity(shell.faces.len());
+    for &face_id in &shell.faces {
+        let surface = &brep.geometry.surfaces[brep.topology.faces[face_id].surface_index];
+        let kind = surface.surface_type();
+        let face_mesh = tessellate_face(&brep.topology, &brep.geometry, face_id, params);
+        out.push((face_id, kind, face_mesh));
+    }
+    out
+}
+
 pub fn tessellate_solid(brep: &BRepSolid, params: &TessellationParams) -> TriangleMesh {
     let mut mesh = TriangleMesh::new();
     let solid = &brep.topology.solids[brep.solid_id];

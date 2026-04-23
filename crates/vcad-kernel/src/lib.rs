@@ -112,6 +112,16 @@ impl Solid {
         }
     }
 
+    /// Borrow the underlying BRep if this solid is BRep-backed. Used by
+    /// diagnostic harnesses that want to inspect topology/geometry
+    /// directly without duplicating the evaluation pipeline.
+    pub fn as_brep(&self) -> Option<&BRepSolid> {
+        match &self.repr {
+            SolidRepr::BRep(b) => Some(b.as_ref()),
+            _ => None,
+        }
+    }
+
     /// Create a solid from a triangle mesh.
     pub fn from_mesh(mesh: TriangleMesh) -> Self {
         Self {
@@ -1063,7 +1073,7 @@ fn brep_is_all_planar(brep: &BRepSolid) -> bool {
 ///   seams sharp. The cap-rim (plane-cylinder) edges still get their
 ///   proper torus blends, which is the visually dominant rounding users
 ///   asked for.
-fn collect_fillet_target_edges(brep: &BRepSolid) -> Vec<vcad_kernel_topo::EdgeId> {
+pub fn collect_fillet_target_edges(brep: &BRepSolid) -> Vec<vcad_kernel_topo::EdgeId> {
     use vcad_kernel_geom::{CylinderSurface, Plane, SurfaceKind};
     let topo = &brep.topology;
     let geom = &brep.geometry;

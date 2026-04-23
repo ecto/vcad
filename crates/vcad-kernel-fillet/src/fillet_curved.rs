@@ -47,7 +47,11 @@ pub enum JunctionOutcome {
     /// Skipped — third edge wasn't a cylinder-cylinder seam.
     SkippedNoCylCylSeam,
     /// Skipped — one of the cylinder radii was ≤ fillet radius.
-    SkippedCylRadiusTooSmall { radii: Vec<f64> },
+    SkippedCylRadiusTooSmall {
+        /// The (cyl.radius - fillet_radius) values for each cylinder;
+        /// any ≤ 0 entry triggers the skip.
+        radii: Vec<f64>,
+    },
     /// Skipped — the two offset circles don't intersect.
     SkippedCirclesDisjoint,
     /// Skipped — ball is coincident with a cylinder axis (radial undefined).
