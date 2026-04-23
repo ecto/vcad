@@ -18,6 +18,8 @@ import { EffectComposer, N8AO, Vignette } from "@react-three/postprocessing";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { GridPlane } from "./GridPlane";
 import { SceneMesh, ImportedMesh } from "./SceneMesh";
+import { BoundaryEdgeOverlay } from "./BoundaryEdgeOverlay";
+import { useDebugOverlayStore } from "../stores/debug-overlay-store";
 import { ClashMesh } from "./ClashMesh";
 import { PreviewMesh } from "./PreviewMesh";
 import { SketchPlane3D } from "./SketchPlane3D";
@@ -217,6 +219,41 @@ function computeLevelQuaternion(
   out.setFromRotationMatrix(_tempMatrix);
 
   return out;
+}
+
+/** Render boundary-edge overlays for every part's mesh when the debug
+ * flag is on. Registers Ctrl+Shift+B as a global toggle. */
+function DebugBoundaryOverlays() {
+  const show = useDebugOverlayStore((s) => s.showBoundaryEdges);
+  const toggle = useDebugOverlayStore((s) => s.toggleBoundaryEdges);
+  const scene = useEngineStore((s) => s.scene);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && (e.key === "B" || e.key === "b")) {
+        e.preventDefault();
+        toggle();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [toggle]);
+
+  if (!show || !scene) return null;
+  return (
+    <>
+      {scene.parts.map((p, i) => {
+        if (!p.mesh.positions.length) return null;
+        return (
+          <BoundaryEdgeOverlay
+            key={`boundary-${i}`}
+            positions={p.mesh.positions}
+            indices={p.mesh.indices}
+          />
+        );
+      })}
+    </>
+  );
 }
 
 export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
@@ -1328,6 +1365,11 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
                     />
                   );
                 })}
+
+              {/* Debug: mesh boundary edges (holes in tessellation).
+                  Toggle with Ctrl+Shift+B or
+                  __VCAD_DEBUG_OVERLAY.getState().toggleBoundaryEdges() */}
+              <DebugBoundaryOverlays />
           {/* Clash visualization (zebra pattern on intersections) */}
           {scene?.clashes.map((clashMesh, idx) => (
             <ClashMesh key={`clash-${idx}`} mesh={clashMesh} />

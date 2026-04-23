@@ -919,6 +919,25 @@ impl Solid {
         self.inner.num_triangles()
     }
 
+    /// Return mesh boundary edges as a flat float array
+    /// `[x0, y0, z0, x1, y1, z1, ...]` with each pair of 3-component
+    /// positions defining one edge segment. Used by the viewport's
+    /// "show boundary edges" overlay to surface tessellation holes.
+    ///
+    /// Closed, manifold meshes return an empty array; each entry means
+    /// there's a hole in the mesh.
+    #[wasm_bindgen(js_name = boundaryEdges)]
+    pub fn boundary_edges(&self, segments: Option<u32>) -> Vec<f32> {
+        let mesh = self.inner.to_mesh(segments.unwrap_or(32));
+        let positions = mesh.boundary_edge_positions();
+        let mut out = Vec::with_capacity(positions.len() * 6);
+        for [a, b] in positions {
+            out.extend_from_slice(&a);
+            out.extend_from_slice(&b);
+        }
+        out
+    }
+
     /// Generate a section view by cutting the solid with a plane.
     ///
     /// # Arguments
