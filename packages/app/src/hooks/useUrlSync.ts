@@ -14,15 +14,16 @@ function isInspectValue(v: string | null): v is InspectValue {
 
 /**
  * Returns the pathname the URL should carry for a given `documentId`, or null
- * to leave the pathname alone. We only own the `/d/<id>` and `/` prefixes —
- * any other path (share token, public slug, profile page) is another
- * subsystem's to manage.
+ * to leave the pathname alone. We only own the `/~<id>` (and legacy `/d/<id>`)
+ * and `/` prefixes — any other path (share token, public slug, profile page)
+ * is another subsystem's to manage.
  */
 function desiredPathname(documentId: string | null): string | null {
   const path = window.location.pathname;
-  const ownedByDocSync = path === "/" || /^\/d\//.test(path);
+  const ownedByDocSync =
+    path === "/" || path.startsWith("/~") || /^\/d\//.test(path);
   if (!ownedByDocSync) return null;
-  return documentId ? `/d/${documentId}` : "/";
+  return documentId ? `/~${documentId}` : "/";
 }
 
 /**
@@ -114,7 +115,7 @@ export function useUrlSync() {
     }
 
     const next = params.toString();
-    // The pathname is either the `/d/<id>` we want (local doc), or we leave
+    // The pathname is either the `/~<id>` we want (local doc), or we leave
     // it alone (share token / public slug / profile page).
     const pathname =
       desiredPathname(documentId) ?? window.location.pathname;

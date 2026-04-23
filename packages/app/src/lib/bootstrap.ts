@@ -263,7 +263,7 @@ async function fetchDocumentData(): Promise<DocumentBootData> {
     const urlDoc = await loadDocumentFromUrl();
     if (urlDoc) return { kind: "url", urlDoc };
 
-    // `/d/<localId>` — URL carries the exact local doc to open. If the doc
+    // `/~<localId>` — URL carries the exact local doc to open. If the doc
     // doesn't exist on this device, fall through to the most-recent flow
     // rather than crash; the URL is replaced by the mirror after loading.
     const routedId = getLocalDocRouteId();
