@@ -41,6 +41,8 @@ const VersionHistoryModal = lazyWithRetry(() => import("@/components/VersionHist
 const ForkPromptModal = lazyWithRetry(() => import("@/components/ForkPromptModal").then(m => ({ default: m.ForkPromptModal })), "ForkPromptModal");
 const ReadOnlyBanner = lazyWithRetry(() => import("@/components/ReadOnlyBanner").then(m => ({ default: m.ReadOnlyBanner })), "ReadOnlyBanner");
 const ProfilePage = lazyWithRetry(() => import("@/components/ProfilePage").then(m => ({ default: m.ProfilePage })), "ProfilePage");
+const LegalPage = lazyWithRetry(() => import("@/components/LegalPage").then(m => ({ default: m.LegalPage })), "LegalPage");
+const TermsGate = lazyWithRetry(() => import("@/components/TermsGate").then(m => ({ default: m.TermsGate })), "TermsGate");
 // UsernamePickerModal is lazy-loaded inside ShareDialog, not here.
 const CommandPalette = lazyWithRetry(() => import("@/components/CommandPalette").then(m => ({ default: m.CommandPalette })), "CommandPalette");
 const SketchToolbar = lazyWithRetry(() => import("@/components/SketchToolbar").then(m => ({ default: m.SketchToolbar })), "SketchToolbar");
@@ -85,7 +87,7 @@ import { bootstrap } from "@/lib/bootstrap";
 import { useBootStore } from "@/stores/boot-store";
 import { Splash } from "@/components/Splash";
 import { ErrorScreen } from "@/components/ErrorScreen";
-import { getProfileRouteUsername } from "@/lib/url-document";
+import { getProfileRouteUsername, getLegalRouteSlug } from "@/lib/url-document";
 import {
   mergeMeshes,
 } from "@vcad/engine";
@@ -693,6 +695,23 @@ export function App() {
     );
   }
 
+  // /privacy, /terms, /security — render static legal content.
+  const legalSlug = getLegalRouteSlug();
+  if (legalSlug) {
+    return (
+      <AsyncBoundary
+        region="legal-page"
+        fallback={
+          <div className="flex h-screen items-center justify-center bg-bg text-text-muted text-sm">
+            Loading…
+          </div>
+        }
+      >
+        <LegalPage slug={legalSlug} />
+      </AsyncBoundary>
+    );
+  }
+
   const viewportStack = (
     <>
       <Viewport />
@@ -773,6 +792,9 @@ export function App() {
   return (
     <ErrorBoundary>
       <TooltipProvider>
+        <Suspense fallback={null}>
+          <TermsGate />
+        </Suspense>
         <div
           className="contents"
           onDragOver={handleDragOver}

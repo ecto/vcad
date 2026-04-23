@@ -253,6 +253,12 @@ export function UserMenu({
             </span>
           </label>
 
+          <div className="border-t border-border px-3 py-2 flex gap-3 text-[10px] text-text-muted">
+            <a href="/privacy" className="hover:text-text transition-colors">Privacy</a>
+            <a href="/terms" className="hover:text-text transition-colors">Terms</a>
+            <a href="/security" className="hover:text-text transition-colors">Security</a>
+          </div>
+
           <button
             onClick={handleSignOut}
             className="w-full px-3 py-2 text-left text-xs text-danger hover:bg-border/50 border-t border-border"
