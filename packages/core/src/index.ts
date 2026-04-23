@@ -81,8 +81,8 @@ export type {
   FollowMode,
 } from "./stores/ui-store.js";
 
-export { useSketchStore } from "./stores/sketch-store.js";
-export type { SketchStore, ProfileSnapshot, SketchExitStatus } from "./stores/sketch-store.js";
+export { useSketchStore, defaultPendingOperation } from "./stores/sketch-store.js";
+export type { SketchStore, ProfileSnapshot, SketchExitStatus, PendingOperation } from "./stores/sketch-store.js";
 
 export { useEngineStore } from "./stores/engine-store.js";
 export type { EngineState } from "./stores/engine-store.js";

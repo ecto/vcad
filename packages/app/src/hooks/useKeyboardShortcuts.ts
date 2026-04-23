@@ -308,7 +308,7 @@ export function useKeyboardShortcuts() {
           if (exited) {
             useNotificationStore.getState().addToast("Sketch cancelled", "info");
           }
-          // If not exited, confirmation dialog will show in SketchToolbar
+          // If not exited, confirmation dialog will show in SketchConfirmationCorner
         } else {
           clearSelection();
         }

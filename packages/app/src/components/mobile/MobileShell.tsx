@@ -8,6 +8,7 @@ import { ArrowClockwise } from "@phosphor-icons/react/dist/ssr/ArrowClockwise";
 import {
   useDocumentStore,
   useUiStore,
+  useSketchStore,
   useChatStore,
   COMMAND_CATEGORIES,
   CATEGORY_LABELS,
@@ -56,8 +57,13 @@ export function MobileShell({ onAboutOpen, onSave, onOpen, children }: MobileShe
   // via getState() inside the useAppCommands actions.
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
   const parts = useDocumentStore((s) => s.parts);
+  const sketchActive = useSketchStore((s) => s.active);
   const unreadChangelog = useChangelogStore((s) => s.getUnreadCount());
   const selection = selectedPartIds.size;
+  // While a sketch is open, the property sheet acts as the SketchPropertyManager
+  // and must be persistently visible (matches the SolidWorks "always-on dock"
+  // behaviour) regardless of how many parts are selected.
+  const propertySheetVisible = selection > 0 || sketchActive;
   void parts;
 
   const dismissMenu = useCallback(() => setMenuOpen(false), []);
@@ -158,10 +164,17 @@ export function MobileShell({ onAboutOpen, onSave, onOpen, children }: MobileShe
       <div className="relative flex-1 min-h-0">
         {children}
 
-        {/* Selection property sheet — always mounted, auto-shows when selection > 0. */}
-        {selection > 0 && (
+        {/* Property sheet — auto-shows when something is selected OR while a
+            sketch is open. Sketch makes it persistent so tools/op-params/entity
+            editing stay reachable without an extra tap. */}
+        {propertySheetVisible && (
           <div className="pointer-events-none fixed inset-x-0 bottom-[calc(56px+env(safe-area-inset-bottom))] z-30 flex justify-center">
-            <div className="pointer-events-auto w-full max-h-[55dvh] bg-surface border-t border-border/40 shadow-[0_-4px_16px_rgba(0,0,0,0.3)] flex flex-col">
+            <div
+              className={cn(
+                "pointer-events-auto w-full bg-surface border-t border-border/40 shadow-[0_-4px_16px_rgba(0,0,0,0.3)] flex flex-col",
+                sketchActive ? "max-h-[40dvh]" : "max-h-[55dvh]",
+              )}
+            >
               <Suspense fallback={null}>
                 <PropertyPanel />
               </Suspense>

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Circle } from "@phosphor-icons/react/dist/ssr/Circle";
 import { Terminal } from "@phosphor-icons/react/dist/ssr/Terminal";
-import { useDocumentStore, useUiStore, type LogLevelName } from "@vcad/core";
+import { PencilSimple } from "@phosphor-icons/react/dist/ssr/PencilSimple";
+import { useDocumentStore, useUiStore, useSketchStore, type LogLevelName } from "@vcad/core";
 import { useLogStore, getFilteredEntries } from "@/stores/log-store";
 import { cn } from "@/lib/utils";
 
@@ -36,6 +37,19 @@ export function StatusBar() {
   const parts = useDocumentStore((s) => s.parts);
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
   const cursorWorld = useUiStore((s) => s.cursorWorld);
+
+  // Sketch state — only rendered while sketch is active. Each subscription is
+  // cheap (primitives or shallow length), so the subscriber count overhead is
+  // a non-issue.
+  const sketchActive = useSketchStore((s) => s.active);
+  const sketchPlane = useSketchStore((s) => s.plane);
+  const sketchCursor = useSketchStore((s) => s.cursorSketchPos);
+  const sketchSnap = useSketchStore((s) => s.snapTarget);
+  const sketchSegmentCount = useSketchStore((s) => s.segments.length);
+  const sketchConstraintCount = useSketchStore((s) => s.constraints.length);
+  const sketchStatus = useSketchStore((s) => s.constraintStatus);
+  const gridSnap = useUiStore((s) => s.gridSnap);
+  const pointSnap = useUiStore((s) => s.pointSnap);
 
   // Subscribe to the pieces of the log store the ticker actually needs so we
   // re-render only when filtered output changes.
@@ -131,11 +145,51 @@ export function StatusBar() {
         )}
       </button>
 
+      {/* Sketch ribbon — only when active. Surfaces live cursor, snap state,
+          entity/constraint counts, and constraint solver status. */}
+      {sketchActive && (
+        <div
+          className={cn(
+            "flex items-center gap-2 px-3 border-l border-border/40",
+            "text-amber-400 tabular-nums whitespace-pre",
+          )}
+        >
+          <PencilSimple size={11} className="shrink-0" />
+          <span className="font-medium">SKETCH</span>
+          <span className="text-text-muted">
+            {typeof sketchPlane === "string" ? sketchPlane : "face"}
+          </span>
+          {sketchCursor && (
+            <span className="hidden md:inline text-text-muted">
+              ({sketchCursor.x.toFixed(1)}, {sketchCursor.y.toFixed(1)})
+            </span>
+          )}
+          <span className="hidden lg:inline text-text-muted">
+            snap: {sketchSnap ? "POINT" : gridSnap ? "GRID" : pointSnap ? "PT" : "OFF"}
+          </span>
+          <span className="text-text-muted">
+            {sketchSegmentCount} ent · {sketchConstraintCount} con
+          </span>
+          <span
+            className={cn(
+              "uppercase",
+              sketchStatus === "solved" && "text-emerald-400",
+              sketchStatus === "error" && "text-red-400",
+              sketchStatus === "over" && "text-orange-400",
+              sketchStatus === "under" && "text-yellow-400",
+            )}
+          >
+            [{sketchStatus}]
+          </span>
+        </div>
+      )}
+
       {/* Middle: live cursor world coords (Z-up, mm) */}
       <div
         className={cn(
           "hidden sm:flex items-center gap-2 px-3 border-l border-border/40",
           "text-text-muted tabular-nums whitespace-pre",
+          sketchActive && "hidden lg:flex",
         )}
         title="Cursor position on ground plane (mm)"
       >

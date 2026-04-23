@@ -45,8 +45,6 @@ const LegalPage = lazyWithRetry(() => import("@/components/LegalPage").then(m =>
 const TermsGate = lazyWithRetry(() => import("@/components/TermsGate").then(m => ({ default: m.TermsGate })), "TermsGate");
 // UsernamePickerModal is lazy-loaded inside ShareDialog, not here.
 const CommandPalette = lazyWithRetry(() => import("@/components/CommandPalette").then(m => ({ default: m.CommandPalette })), "CommandPalette");
-const SketchToolbar = lazyWithRetry(() => import("@/components/SketchToolbar").then(m => ({ default: m.SketchToolbar })), "SketchToolbar");
-const SketchStatusPanel = lazyWithRetry(() => import("@/components/SketchStatusPanel").then(m => ({ default: m.SketchStatusPanel })), "SketchStatusPanel");
 const DrawingToolbar = lazyWithRetry(() => import("@/components/DrawingToolbar").then(m => ({ default: m.DrawingToolbar })), "DrawingToolbar");
 const FaceSelectionOverlay = lazyWithRetry(() => import("@/components/FaceSelectionOverlay").then(m => ({ default: m.FaceSelectionOverlay })), "FaceSelectionOverlay");
 const QuotePanel = lazyWithRetry(() => import("@/components/QuotePanel").then(m => ({ default: m.QuotePanel })), "QuotePanel");
@@ -77,6 +75,7 @@ import {
 import { useEngine } from "@/hooks/useEngine";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useKeybindingDispatcher } from "@/hooks/useKeybindingDispatcher";
+import { useOperationPreview } from "@/hooks/useOperationPreview";
 import { useAutoSave } from "@/hooks/useAutoSave";
 import { useCollabSync } from "@/hooks/useCollabSync";
 import { useChatHandler } from "@/hooks/useChatHandler";
@@ -141,11 +140,15 @@ async function syncNativeWindowTheme(theme: "light" | "dark") {
 function FeatureTreeSlot({ sketchActive }: { sketchActive: boolean }) {
   const sidebarPane = useUiStore((s) => s.sidebarPane);
   const inspectorTarget = useUiStore((s) => s.inspectorTarget);
-  if (sketchActive) return null;
+  // While a sketch is open, the LEFT sidebar always shows the FeatureTree
+  // (which gains sketch entity/constraint branches via SketchTreeSection).
+  // The RIGHT sidebar takes over for the SketchPropertyPanel — splitting
+  // navigator and inspector matches the SolidWorks layout we're emulating.
+  const showTree = sketchActive || sidebarPane === "tree";
   return (
     <div className="flex h-full w-full flex-col min-h-0">
       <div className="flex-1 min-h-0 overflow-hidden">
-        {sidebarPane === "tree" ? (
+        {showTree ? (
           <FeatureTree />
         ) : inspectorTarget?.kind === "scene" ? (
           <AsyncBoundary region="scene-inspector" fallback={null}>
@@ -169,6 +172,7 @@ export function App() {
   useChatHandler();
   useChatHydration();
   useUrlSync();
+  useOperationPreview();
 
   const [aboutOpen, setAboutOpen] = useState(false);
   const [productOpen, setProductOpen] = useState(false);
@@ -726,8 +730,6 @@ export function App() {
       </div>
 
       <Suspense fallback={null}>
-        <SketchToolbar />
-        <SketchStatusPanel />
         <DrawingToolbar />
         <FaceSelectionOverlay />
       </Suspense>
@@ -821,10 +823,10 @@ export function App() {
                 onShareOpen={() => setShareOpen(true)}
                 onVersionHistoryOpen={() => setVersionHistoryOpen(true)}
               >
-                {!sketchActive && <ToolPalette />}
+                <ToolPalette />
               </Header>
             )}
-            leftSidebar={!electronicsActive && !sketchActive && !showOnboarding && featureTreeOpen && (
+            leftSidebar={!electronicsActive && !showOnboarding && featureTreeOpen && (
               <FeatureTreeSlot sketchActive={sketchActive} />
             )}
             rightSidebar={!electronicsActive && !showOnboarding && chatOpen && (

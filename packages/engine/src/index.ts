@@ -635,4 +635,125 @@ export class Engine {
       return null;
     }
   }
+
+  /**
+   * Evaluate a preview sweep without adding to the document. Mirrors the
+   * shape of `evaluateExtrudePreview` so the new continuous-preview hook can
+   * dispatch by op kind. The path discriminant matches `addSweep`'s
+   * `PathCurve` shape so callers can pass the same value to both.
+   */
+  evaluateSweepPreview(
+    origin: Vec3,
+    xDir: Vec3,
+    yDir: Vec3,
+    segments: SketchSegment2D[],
+    path:
+      | { type: "Line"; start: Vec3; end: Vec3 }
+      | { type: "Helix"; radius: number; pitch: number; height: number; turns: number },
+  ): TriangleMesh | null {
+    if (segments.length === 0) return null;
+
+    try {
+      const profile = {
+        origin: [origin.x, origin.y, origin.z],
+        x_dir: [xDir.x, xDir.y, xDir.z],
+        y_dir: [yDir.x, yDir.y, yDir.z],
+        segments: segments.map((seg) => {
+          if (seg.type === "Line") {
+            return {
+              type: "Line" as const,
+              start: [seg.start.x, seg.start.y],
+              end: [seg.end.x, seg.end.y],
+            };
+          } else {
+            return {
+              type: "Arc" as const,
+              start: [seg.start.x, seg.start.y],
+              end: [seg.end.x, seg.end.y],
+              center: [seg.center.x, seg.center.y],
+              ccw: seg.ccw,
+            };
+          }
+        }),
+      };
+
+      const profileJson = JSON.stringify(profile);
+      const solid =
+        path.type === "Line"
+          ? this.kernel.Solid.sweepLine(
+              profileJson,
+              new Float64Array([path.start.x, path.start.y, path.start.z]),
+              new Float64Array([path.end.x, path.end.y, path.end.z]),
+            )
+          : this.kernel.Solid.sweepHelix(
+              profileJson,
+              path.radius,
+              path.pitch,
+              path.height,
+              path.turns,
+            );
+      const meshData = solid.getMesh();
+
+      return {
+        positions: new Float32Array(meshData.positions),
+        indices: new Uint32Array(meshData.indices),
+      };
+    } catch (e) {
+      // See evaluateExtrudePreview — silent catches here poison wasm borrows.
+      console.warn("[engine] evaluateSweepPreview failed:", e);
+      return null;
+    }
+  }
+
+  /**
+   * Evaluate a preview loft across a list of profiles. Mirrors `addLoft`'s
+   * profile shape so the continuous-preview hook can pass the same array.
+   */
+  evaluateLoftPreview(
+    profiles: Array<{
+      plane: { x_dir: Vec3; y_dir: Vec3 };
+      origin: Vec3;
+      segments: SketchSegment2D[];
+    }>,
+    closed?: boolean,
+  ): TriangleMesh | null {
+    if (profiles.length < 2) return null;
+
+    try {
+      const profileObjs = profiles.map((p) => ({
+        origin: [p.origin.x, p.origin.y, p.origin.z],
+        x_dir: [p.plane.x_dir.x, p.plane.x_dir.y, p.plane.x_dir.z],
+        y_dir: [p.plane.y_dir.x, p.plane.y_dir.y, p.plane.y_dir.z],
+        segments: p.segments.map((seg) => {
+          if (seg.type === "Line") {
+            return {
+              type: "Line" as const,
+              start: [seg.start.x, seg.start.y],
+              end: [seg.end.x, seg.end.y],
+            };
+          } else {
+            return {
+              type: "Arc" as const,
+              start: [seg.start.x, seg.start.y],
+              end: [seg.end.x, seg.end.y],
+              center: [seg.center.x, seg.center.y],
+              ccw: seg.ccw,
+            };
+          }
+        }),
+      }));
+
+      const solid = this.kernel.Solid.loft(JSON.stringify(profileObjs), closed ?? false);
+      const meshData = solid.getMesh();
+
+      return {
+        positions: new Float32Array(meshData.positions),
+        indices: new Uint32Array(meshData.indices),
+      };
+    } catch (e) {
+      // See evaluateExtrudePreview — silent catches here poison wasm borrows.
+      console.warn("[engine] evaluateLoftPreview failed:", e);
+      return null;
+    }
+  }
 }

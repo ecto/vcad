@@ -48,7 +48,9 @@ import { Scissors } from "@phosphor-icons/react/dist/ssr/Scissors";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ContextMenu } from "@/components/ContextMenu";
-import { useDocumentStore, useUiStore, isBooleanPart, isPrimitivePart, isSweepPart, isExtrudePart, isRevolvePart, isFilletPart, isChamferPart, isShellPart, isEmbroideryPatternPart, isStitchPart, isPcbBoardPart } from "@vcad/core";
+import { useDocumentStore, useUiStore, useSketchStore, isBooleanPart, isPrimitivePart, isSweepPart, isExtrudePart, isRevolvePart, isFilletPart, isChamferPart, isShellPart, isEmbroideryPatternPart, isStitchPart, isPcbBoardPart } from "@vcad/core";
+import { useNotificationStore } from "@/stores/notification-store";
+import { SketchPropertyPanel } from "@/components/SketchPropertyPanel";
 import { useElectronicsStore } from "@/stores/electronics-store";
 import { useEmbroideryStore } from "@/stores/embroidery-store";
 import type { PrimitiveKind, PartInfo, BooleanPartInfo, PrimitivePartInfo, SweepPartInfo, ExtrudePartInfo, RevolvePartInfo, FilletPartInfo, ChamferPartInfo, ShellPartInfo } from "@vcad/core";
@@ -82,6 +84,221 @@ function SceneTreeRow() {
       <Globe size={13} className={active ? "text-brand" : "text-text-muted"} />
       <span className="font-medium">Scene</span>
     </button>
+  );
+}
+
+/**
+ * In-tree summary of the active sketch. The single home for everything sketch:
+ *   - Finish ✓ / Cancel × header (replaces the old floating corner overlay)
+ *   - SketchPropertyPanel (operation params + tool/entity/constraint editor)
+ *   - Entities / Constraints / Profiles trees
+ *
+ * Renders nothing when sketch is inactive — the tree falls back to its
+ * normal Scene + Parts content. Living in the FeatureTree means the right
+ * sidebar stays free for ChatSidebar.
+ */
+function SketchTreeSection() {
+  const active = useSketchStore((s) => s.active);
+  const segments = useSketchStore((s) => s.segments);
+  const constraints = useSketchStore((s) => s.constraints);
+  const constraintStatus = useSketchStore((s) => s.constraintStatus);
+  const profiles = useSketchStore((s) => s.profiles);
+  const loftMode = useSketchStore((s) => s.loftMode);
+  const pendingExit = useSketchStore((s) => s.pendingExit);
+  const pendingOperation = useSketchStore((s) => s.pendingOperation);
+  const selectedSegments = useSketchStore((s) => s.selectedSegments);
+  const selectedConstraintIndex = useSketchStore((s) => s.selectedConstraintIndex);
+  const toggleSegmentSelection = useSketchStore((s) => s.toggleSegmentSelection);
+  const setSelectedConstraint = useSketchStore((s) => s.setSelectedConstraint);
+  const removeConstraint = useSketchStore((s) => s.removeConstraint);
+  const requestExit = useSketchStore((s) => s.requestExit);
+  const confirmExit = useSketchStore((s) => s.confirmExit);
+  const cancelExit = useSketchStore((s) => s.cancelExit);
+  const addToast = useNotificationStore((s) => s.addToast);
+  const [entitiesOpen, setEntitiesOpen] = useState(true);
+  const [constraintsOpen, setConstraintsOpen] = useState(true);
+  const [profilesOpen, setProfilesOpen] = useState(true);
+
+  if (!active) return null;
+
+  const hasSegments = segments.length > 0;
+  const finishLabel = pendingOperation
+    ? pendingOperation.kind.charAt(0).toUpperCase() + pendingOperation.kind.slice(1)
+    : "Finish";
+  const finishEnabled = hasSegments || pendingOperation?.kind === "loft";
+
+  return (
+    <div className="border border-amber-500/30 bg-amber-500/5 mt-1 mb-2">
+      <div className="flex items-center justify-between gap-2 px-2 py-1.5 border-b border-amber-500/20 bg-amber-500/5">
+        <span className="text-[10px] font-medium uppercase tracking-wider text-amber-400">
+          Sketch
+        </span>
+        <span
+          className={cn(
+            "text-[9px] uppercase tracking-wide tabular-nums",
+            constraintStatus === "solved" && "text-emerald-400",
+            constraintStatus === "error" && "text-red-400",
+            constraintStatus === "over" && "text-orange-400",
+            constraintStatus === "under" && "text-yellow-400/70",
+          )}
+          title={`${constraints.length} constraint${constraints.length === 1 ? "" : "s"} · ${constraintStatus}`}
+        >
+          {constraints.length}c · {constraintStatus}
+        </span>
+      </div>
+      <div className="flex gap-1 px-2 py-1.5 border-b border-amber-500/20">
+        <button
+          type="button"
+          onClick={() => window.dispatchEvent(new CustomEvent("vcad:sketch-commit"))}
+          disabled={!finishEnabled}
+          className={cn(
+            "flex-1 flex items-center justify-center gap-1 px-2 py-1 text-xs font-medium",
+            finishEnabled
+              ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+              : "bg-hover/40 text-text-muted cursor-not-allowed",
+          )}
+          title={pendingOperation ? `Apply ${finishLabel}` : "Finish sketch"}
+        >
+          <span>✓</span>
+          <span>{finishLabel}</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            const exited = requestExit();
+            if (exited) addToast("Sketch cancelled", "info");
+          }}
+          className="px-2 py-1 text-xs text-text-muted hover:text-text hover:bg-hover/60"
+          title="Cancel sketch (Esc)"
+        >
+          ×
+        </button>
+      </div>
+
+      {pendingExit && (
+        <div className="px-2 py-2 border-b border-amber-500/20 bg-red-500/10 text-xs">
+          <div className="flex items-center gap-1 text-amber-300 mb-1">
+            <span>⚠</span>
+            <span className="font-medium">Discard sketch?</span>
+          </div>
+          <div className="text-[11px] text-text-muted mb-2">
+            You have unsaved geometry.
+          </div>
+          <div className="flex gap-1">
+            <button
+              type="button"
+              onClick={() => {
+                confirmExit();
+                addToast("Sketch discarded", "info");
+              }}
+              className="flex-1 px-2 py-1 text-xs bg-red-600 hover:bg-red-700 text-white"
+            >
+              Discard
+            </button>
+            <button
+              type="button"
+              onClick={cancelExit}
+              className="flex-1 px-2 py-1 text-xs hover:bg-hover/60"
+            >
+              Keep editing
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Operation params + tool/entity/constraint editor — same component as
+          before, just rendered inline inside the card. */}
+      <SketchPropertyPanel />
+
+      <div className="space-y-0.5 pb-1 border-t border-amber-500/20">
+        <button
+          onClick={() => setEntitiesOpen((o) => !o)}
+          className="flex w-full items-center gap-1 px-2 h-6 text-[11px] text-text-muted hover:text-text"
+        >
+          <span className="font-mono">{entitiesOpen ? "▾" : "▸"}</span>
+          <span>Entities ({segments.length})</span>
+        </button>
+        {entitiesOpen &&
+          segments.map((seg, i) => (
+            <button
+              key={i}
+              onClick={() => toggleSegmentSelection(i)}
+              className={cn(
+                "flex w-full items-center gap-2 pl-6 pr-2 h-6 text-[11px]",
+                selectedSegments.includes(i)
+                  ? "bg-amber-500/20 text-amber-300"
+                  : "text-text-muted hover:bg-hover hover:text-text",
+              )}
+            >
+              <span className="font-mono">{seg.type === "Line" ? "—" : "◜"}</span>
+              <span>
+                {seg.type} {i + 1}
+              </span>
+            </button>
+          ))}
+
+        <button
+          onClick={() => setConstraintsOpen((o) => !o)}
+          className="flex w-full items-center gap-1 px-2 h-6 text-[11px] text-text-muted hover:text-text"
+        >
+          <span className="font-mono">{constraintsOpen ? "▾" : "▸"}</span>
+          <span>Constraints ({constraints.length})</span>
+        </button>
+        {constraintsOpen &&
+          constraints.map((c, i) => (
+            <div
+              key={i}
+              className={cn(
+                "flex items-center gap-2 pl-6 pr-2 h-6 text-[11px]",
+                selectedConstraintIndex === i
+                  ? "bg-amber-500/20 text-amber-300"
+                  : "text-text-muted hover:bg-hover hover:text-text",
+              )}
+            >
+              <button
+                onClick={() => setSelectedConstraint(i)}
+                className="flex-1 text-left flex items-center gap-2"
+              >
+                <span className="font-mono">⌐</span>
+                <span>{c.type}</span>
+              </button>
+              <button
+                onClick={() => {
+                  removeConstraint(i);
+                  if (selectedConstraintIndex === i) setSelectedConstraint(null);
+                }}
+                className="text-text-muted hover:text-red-400"
+                title="Delete constraint"
+                aria-label="Delete constraint"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+
+        {loftMode && (
+          <>
+            <button
+              onClick={() => setProfilesOpen((o) => !o)}
+              className="flex w-full items-center gap-1 px-2 h-6 text-[11px] text-text-muted hover:text-text"
+            >
+              <span className="font-mono">{profilesOpen ? "▾" : "▸"}</span>
+              <span>Profiles ({profiles.length})</span>
+            </button>
+            {profilesOpen &&
+              profiles.map((p, i) => (
+                <div
+                  key={p.id}
+                  className="flex items-center gap-2 pl-6 pr-2 h-6 text-[11px] text-text-muted"
+                >
+                  <span className="font-mono">≡</span>
+                  <span>Profile {i + 1}</span>
+                </div>
+              ))}
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -949,6 +1166,9 @@ export function FeatureTree() {
           <div className="space-y-0.5">
             {/* Scene row — drill into inspector to edit env / background / lights */}
             <SceneTreeRow />
+
+            {/* Sketch entities / constraints — only while sketching */}
+            <SketchTreeSection />
 
             {/* Empty state when no parts/instances yet */}
             {!hasGeometry && <FeatureTreeEmptyState />}

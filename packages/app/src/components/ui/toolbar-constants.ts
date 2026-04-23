@@ -12,16 +12,7 @@ export const TAB_COLORS: Record<ToolbarTab, string> = {
   assembly: "text-rose-400",
   simulate: "text-cyan-400",
   build: "text-slate-400",
-};
-
-// Sketch toolbar tab types
-export type SketchTab = "draw" | "constrain" | "finish";
-
-// Tab colors for sketch toolbar
-export const SKETCH_TAB_COLORS: Record<SketchTab, string> = {
-  draw: "text-emerald-400",
-  constrain: "text-amber-400",
-  finish: "text-rose-400",
+  sketch: "text-amber-400",
 };
 
 // Electronics toolbar tab types
