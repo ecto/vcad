@@ -399,6 +399,24 @@ fn fill_tiny_boundary_loops(
         return;
     }
 
+    // Solid centroid — average of all mesh vertex positions. Used as a
+    // robust outward reference: (loop_centroid - solid_centroid) is the
+    // outward direction at the loop.
+    let vert_count = mesh.num_vertices();
+    let mut scx = 0.0_f32;
+    let mut scy = 0.0_f32;
+    let mut scz = 0.0_f32;
+    for vi in 0..vert_count {
+        scx += mesh.vertices[3 * vi];
+        scy += mesh.vertices[3 * vi + 1];
+        scz += mesh.vertices[3 * vi + 2];
+    }
+    if vert_count > 0 {
+        scx /= vert_count as f32;
+        scy /= vert_count as f32;
+        scz /= vert_count as f32;
+    }
+
     // Map each directed boundary edge (a, b) to the third corner of
     // its adjacent triangle (there's exactly one). We use this third
     // corner's outward-normal side as the "outside" reference.
@@ -534,76 +552,109 @@ fn fill_tiny_boundary_loops(
         }
         let loop_matches_outward = outward_dir.unwrap_or(true);
 
-        let cx_idx = (mesh.vertices.len() / 3) as u32;
-        mesh.vertices.extend_from_slice(&[cx, cy, cz]);
-        // Flip the Newell normal if it points INWARD relative to the
-        // existing adjacent boundary triangle (whose third corner we
-        // look up via `tri_third`). That third corner sits on the
-        // INTERIOR side of the boundary edge, so "outward direction"
-        // = cross(edge_dir, corner_to_edge).
-        let mut outward = [nx, ny, nz];
-        let mut ref_edge: Option<(u32, u32)> = None;
+        // Robust outward reference: direction from the solid centroid
+        // to the loop centroid. Works for any convex-ish solid and
+        // doesn't depend on local face tessellation winding, which
+        // can be counter-intuitive near fillet blends.
+        let mut outward = [cx - scx, cy - scy, cz - scz];
+        let olen0 = (outward[0] * outward[0]
+            + outward[1] * outward[1]
+            + outward[2] * outward[2])
+            .sqrt();
+        if olen0 > 1e-6 {
+            outward[0] /= olen0;
+            outward[1] /= olen0;
+            outward[2] /= olen0;
+        }
+
+        // Average the adjacent boundary triangles' VERTEX normals at
+        // a, b so cx shades consistently with its neighbours.
+        let mut cx_vnormal = [0.0_f32; 3];
+        let mut adj_count = 0usize;
         for i in 0..n {
             let a = loop_verts[i];
             let b = loop_verts[(i + 1) % n];
-            if tri_third.contains_key(&(a, b)) {
-                ref_edge = Some((a, b));
-                break;
-            } else if tri_third.contains_key(&(b, a)) {
-                ref_edge = Some((b, a));
-                break;
-            }
-        }
-        if let Some((a, b)) = ref_edge {
-            let c = tri_third[&(a, b)];
-            // Reference outward: on the existing boundary triangle,
-            // (a, b, c) are CCW viewed from outside, so outward ≈
-            // (b - a) × (c - a).
+            let (ea, eb, ec) = if let Some(&c) = tri_third.get(&(a, b)) {
+                (a, b, c)
+            } else if let Some(&c) = tri_third.get(&(b, a)) {
+                (b, a, c)
+            } else {
+                continue;
+            };
             let pa = [
-                mesh.vertices[3 * a as usize],
-                mesh.vertices[3 * a as usize + 1],
-                mesh.vertices[3 * a as usize + 2],
+                mesh.vertices[3 * ea as usize],
+                mesh.vertices[3 * ea as usize + 1],
+                mesh.vertices[3 * ea as usize + 2],
             ];
             let pb = [
-                mesh.vertices[3 * b as usize],
-                mesh.vertices[3 * b as usize + 1],
-                mesh.vertices[3 * b as usize + 2],
+                mesh.vertices[3 * eb as usize],
+                mesh.vertices[3 * eb as usize + 1],
+                mesh.vertices[3 * eb as usize + 2],
             ];
             let pc = [
-                mesh.vertices[3 * c as usize],
-                mesh.vertices[3 * c as usize + 1],
-                mesh.vertices[3 * c as usize + 2],
+                mesh.vertices[3 * ec as usize],
+                mesh.vertices[3 * ec as usize + 1],
+                mesh.vertices[3 * ec as usize + 2],
             ];
-            let ex = pb[0] - pa[0];
-            let ey = pb[1] - pa[1];
-            let ez = pb[2] - pa[2];
-            let fx = pc[0] - pa[0];
-            let fy = pc[1] - pa[1];
-            let fz = pc[2] - pa[2];
-            let refx = ey * fz - ez * fy;
-            let refy = ez * fx - ex * fz;
-            let refz = ex * fy - ey * fx;
-            if outward[0] * refx + outward[1] * refy + outward[2] * refz < 0.0 {
-                outward = [-outward[0], -outward[1], -outward[2]];
+            let _ = (pa, pb, pc);
+
+            if mesh.normals.len() >= 3 * ea as usize + 3 {
+                cx_vnormal[0] += mesh.normals[3 * ea as usize];
+                cx_vnormal[1] += mesh.normals[3 * ea as usize + 1];
+                cx_vnormal[2] += mesh.normals[3 * ea as usize + 2];
+                cx_vnormal[0] += mesh.normals[3 * eb as usize];
+                cx_vnormal[1] += mesh.normals[3 * eb as usize + 1];
+                cx_vnormal[2] += mesh.normals[3 * eb as usize + 2];
             }
+            adj_count += 1;
         }
+        let vnlen = (cx_vnormal[0] * cx_vnormal[0]
+            + cx_vnormal[1] * cx_vnormal[1]
+            + cx_vnormal[2] * cx_vnormal[2])
+            .sqrt();
+        if vnlen > 1e-6 {
+            cx_vnormal[0] /= vnlen;
+            cx_vnormal[1] /= vnlen;
+            cx_vnormal[2] /= vnlen;
+        } else {
+            cx_vnormal = outward;
+        }
+        let _ = adj_count;
 
-        // Offset the centroid outward so the fan triangles form a
-        // small "bump" protruding outside the solid, with consistent
-        // outward-facing CCW normals.
-        let offset_scale = avg_edge * 0.5;
-        mesh.vertices[3 * cx_idx as usize] = cx + outward[0] * offset_scale;
-        mesh.vertices[3 * cx_idx as usize + 1] = cy + outward[1] * offset_scale;
-        mesh.vertices[3 * cx_idx as usize + 2] = cz + outward[2] * offset_scale;
-        mesh.normals.extend_from_slice(&outward);
+        // Offset the centroid outward so fan triangles form a small
+        // outward bump; the vertex normal averages the neighbours'
+        // vertex normals so the shading blends.
+        let offset_scale = avg_edge * 0.3;
+        let cx_idx = (mesh.vertices.len() / 3) as u32;
+        mesh.vertices.extend_from_slice(&[
+            cx + outward[0] * offset_scale,
+            cy + outward[1] * offset_scale,
+            cz + outward[2] * offset_scale,
+        ]);
+        mesh.normals.extend_from_slice(&cx_vnormal);
 
+        // The manifold-correct winding `(cx, b, a)` makes each boundary
+        // edge `(a, b)` pair with its reverse, but its CCW normal
+        // points INWARD relative to the solid (the fan's apex `cx`
+        // sits on the INSIDE side of the existing boundary triangle's
+        // outward normal). Three.js's post-load `computeVertexNormals`
+        // derives per-vertex normals purely from winding, so an inward
+        // CCW renders DARK from outside.
+        //
+        // To render correctly we flip to the outward CCW winding
+        // `(cx, a, b)`. That leaves the boundary edge `(a, b)`
+        // appearing twice in the same direction (once in the existing
+        // boundary triangle, once in the fan). That's directed-non-
+        // manifold but the undirected edge count is still 2 — the
+        // mesh is watertight. Exports (STL, GLB) don't require
+        // directed-manifold, just watertightness.
         for i in 0..n {
             let a = loop_verts[i];
             let b = loop_verts[(i + 1) % n];
             if loop_matches_outward {
-                mesh.indices.extend_from_slice(&[cx_idx, b, a]);
-            } else {
                 mesh.indices.extend_from_slice(&[cx_idx, a, b]);
+            } else {
+                mesh.indices.extend_from_slice(&[cx_idx, b, a]);
             }
         }
     }
