@@ -1074,8 +1074,12 @@ fn collect_fillet_target_edges(brep: &BRepSolid) -> Vec<vcad_kernel_topo::EdgeId
         let Some(he_b) = topo.half_edges[he_a].twin else {
             continue;
         };
-        let fa = topo.half_edges[he_a].loop_id.and_then(|l| topo.loops[l].face);
-        let fb = topo.half_edges[he_b].loop_id.and_then(|l| topo.loops[l].face);
+        let fa = topo.half_edges[he_a]
+            .loop_id
+            .and_then(|l| topo.loops[l].face);
+        let fb = topo.half_edges[he_b]
+            .loop_id
+            .and_then(|l| topo.loops[l].face);
         let (Some(fa), Some(fb)) = (fa, fb) else {
             continue;
         };
@@ -1093,9 +1097,7 @@ fn collect_fillet_target_edges(brep: &BRepSolid) -> Vec<vcad_kernel_topo::EdgeId
                 // The classify layer would otherwise send it to
                 // CylinderCylinderSkew → diverging rolling ball.
                 match (a, b) {
-                    (Some(a), Some(b)) => {
-                        a.axis.as_ref().dot(b.axis.as_ref()).abs() > 1.0 - 1e-6
-                    }
+                    (Some(a), Some(b)) => a.axis.as_ref().dot(b.axis.as_ref()).abs() > 1.0 - 1e-6,
                     _ => true,
                 }
             }
@@ -2335,8 +2337,7 @@ mod tests {
             segments,
         )
         .expect("valid profile");
-        let extruded =
-            Solid::extrude(profile, Vec3::new(0.0, 0.0, 18.0)).expect("extrude ok");
+        let extruded = Solid::extrude(profile, Vec3::new(0.0, 0.0, 18.0)).expect("extrude ok");
         let filleted = extruded.fillet(4.0);
 
         let (sphere_surfaces, sphere_faces, shell_face_count) = match &filleted.repr {
@@ -2381,6 +2382,105 @@ mod tests {
         );
     }
 
+    /// Diagnostic test — not an assertion, meant to be run with
+    /// `--nocapture` to print the world-space location of every
+    /// boundary edge in the pork-chop fillet mesh. Any non-zero output
+    /// is a tessellation hole (the "armpit gaps" visible in the
+    /// browser).
+    ///
+    /// Invoke with:
+    ///   cargo test -p vcad-kernel diag_porkchop_boundary_edges -- --nocapture --ignored
+    #[test]
+    #[ignore]
+    fn diag_porkchop_boundary_edges() {
+        use vcad_kernel_sketch::{SketchProfile, SketchSegment};
+        let segments = vec![
+            SketchSegment::Arc {
+                start: vcad_kernel_math::Point2::new(45.0, 0.0),
+                end: vcad_kernel_math::Point2::new(20.0, 40.0),
+                center: vcad_kernel_math::Point2::new(10.0, 15.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: vcad_kernel_math::Point2::new(20.0, 40.0),
+                end: vcad_kernel_math::Point2::new(-30.0, 35.0),
+                center: vcad_kernel_math::Point2::new(-5.0, 25.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: vcad_kernel_math::Point2::new(-30.0, 35.0),
+                end: vcad_kernel_math::Point2::new(-50.0, 5.0),
+                center: vcad_kernel_math::Point2::new(-25.0, 15.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: vcad_kernel_math::Point2::new(-50.0, 5.0),
+                end: vcad_kernel_math::Point2::new(-35.0, -25.0),
+                center: vcad_kernel_math::Point2::new(-30.0, -5.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: vcad_kernel_math::Point2::new(-35.0, -25.0),
+                end: vcad_kernel_math::Point2::new(10.0, -30.0),
+                center: vcad_kernel_math::Point2::new(-10.0, -10.0),
+                ccw: true,
+            },
+            SketchSegment::Arc {
+                start: vcad_kernel_math::Point2::new(10.0, -30.0),
+                end: vcad_kernel_math::Point2::new(45.0, 0.0),
+                center: vcad_kernel_math::Point2::new(20.0, -10.0),
+                ccw: true,
+            },
+        ];
+        let profile = SketchProfile::new(
+            Point3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            segments,
+        )
+        .expect("valid profile");
+        let extruded = Solid::extrude(profile, Vec3::new(0.0, 0.0, 18.0)).expect("extrude ok");
+        let filleted = extruded.fillet(4.0);
+        let mesh = filleted.to_mesh(32);
+
+        let boundary = mesh.boundary_edges();
+        let nm = mesh.non_manifold_edges();
+        let loops = mesh.boundary_loops();
+
+        println!(
+            "pork-chop mesh: {} tris, {} verts",
+            mesh.num_triangles(),
+            mesh.num_vertices()
+        );
+        println!("boundary edges:  {}", boundary.len());
+        println!("non-manifold edges: {}", nm.len());
+        println!("boundary loops: {}", loops.len());
+
+        for (i, positions) in mesh.boundary_edge_positions().iter().enumerate() {
+            let a = positions[0];
+            let b = positions[1];
+            println!(
+                "  [{:3}] ({:7.3},{:7.3},{:7.3}) -> ({:7.3},{:7.3},{:7.3})",
+                i, a[0], a[1], a[2], b[0], b[1], b[2]
+            );
+        }
+        for (i, chain) in loops.iter().enumerate() {
+            let zs: Vec<f32> = chain
+                .iter()
+                .map(|&v| mesh.vertices[v as usize * 3 + 2])
+                .collect();
+            let z_min = zs.iter().cloned().fold(f32::INFINITY, f32::min);
+            let z_max = zs.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+            println!(
+                "  loop {}: {} verts, z in [{:.3}, {:.3}]",
+                i,
+                chain.len(),
+                z_min,
+                z_max
+            );
+        }
+    }
+
     #[test]
     fn test_fillet_on_extruded_arc_profile_produces_curved_blend() {
         // Regression for the "pork-chop sawtooth": extruding a sketch profile
@@ -2391,8 +2491,8 @@ mod tests {
         // NURBS blends at cylinder-cylinder edges. The result has strictly
         // more faces than the input (adds blend faces + vertex caps) and
         // must tessellate cleanly.
-        use vcad_kernel_sketch::{SketchProfile, SketchSegment};
         use vcad_kernel_math::Point2;
+        use vcad_kernel_sketch::{SketchProfile, SketchSegment};
 
         // Kidney-shaped profile (6 arcs, matching the user's pork-chop).
         let segments = vec![
@@ -2451,9 +2551,7 @@ mod tests {
                     .geometry
                     .surfaces
                     .iter()
-                    .filter(|s| {
-                        s.surface_type() == vcad_kernel_geom::SurfaceKind::Cylinder
-                    })
+                    .filter(|s| s.surface_type() == vcad_kernel_geom::SurfaceKind::Cylinder)
                     .count();
                 (b.topology.faces.len(), cyls)
             }

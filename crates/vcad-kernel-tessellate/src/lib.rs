@@ -78,6 +78,128 @@ impl TriangleMesh {
         self.indices
             .extend(other.indices.iter().map(|&i| i + offset));
     }
+
+    /// Build a map of undirected edge `(min_idx, max_idx)` → number of
+    /// adjacent triangles. Used by boundary / non-manifold diagnostics.
+    fn edge_use_counts(&self) -> std::collections::HashMap<(u32, u32), u32> {
+        let mut counts: std::collections::HashMap<(u32, u32), u32> =
+            std::collections::HashMap::new();
+        let tri_count = self.indices.len() / 3;
+        for t in 0..tri_count {
+            let tri = [
+                self.indices[3 * t],
+                self.indices[3 * t + 1],
+                self.indices[3 * t + 2],
+            ];
+            for i in 0..3 {
+                let a = tri[i];
+                let b = tri[(i + 1) % 3];
+                let key = if a < b { (a, b) } else { (b, a) };
+                *counts.entry(key).or_insert(0) += 1;
+            }
+        }
+        counts
+    }
+
+    /// Find boundary edges: edges adjacent to exactly one triangle. In a
+    /// closed manifold mesh this vector is empty; any entry points at a
+    /// hole in the tessellation (e.g. the visible armpit gaps on the
+    /// pork-chop fillet).
+    ///
+    /// Returned as `(vertex_index_a, vertex_index_b)` with `a < b`.
+    pub fn boundary_edges(&self) -> Vec<(u32, u32)> {
+        self.edge_use_counts()
+            .into_iter()
+            .filter(|(_, n)| *n == 1)
+            .map(|(e, _)| e)
+            .collect()
+    }
+
+    /// Like `boundary_edges` but returns each edge as a pair of world-
+    /// space endpoints `[p_a, p_b]`. Convenient for dumping directly
+    /// into a visualizer or log.
+    pub fn boundary_edge_positions(&self) -> Vec<[[f32; 3]; 2]> {
+        self.boundary_edges()
+            .into_iter()
+            .map(|(a, b)| {
+                let ia = a as usize * 3;
+                let ib = b as usize * 3;
+                [
+                    [
+                        self.vertices[ia],
+                        self.vertices[ia + 1],
+                        self.vertices[ia + 2],
+                    ],
+                    [
+                        self.vertices[ib],
+                        self.vertices[ib + 1],
+                        self.vertices[ib + 2],
+                    ],
+                ]
+            })
+            .collect()
+    }
+
+    /// Find non-manifold edges: edges adjacent to 3 or more triangles.
+    /// A closed manifold mesh has none; any entry indicates a topology
+    /// bug (overlapping faces, welded seams crossing themselves, etc.).
+    pub fn non_manifold_edges(&self) -> Vec<(u32, u32, u32)> {
+        self.edge_use_counts()
+            .into_iter()
+            .filter(|(_, n)| *n >= 3)
+            .map(|((a, b), n)| (a, b, n))
+            .collect()
+    }
+
+    /// Group boundary edges into connected loops (chains of vertex
+    /// indices). Each loop should close on itself in a well-formed
+    /// hole; if it doesn't, the returned chain ends at the first
+    /// vertex that has no unvisited boundary neighbor.
+    pub fn boundary_loops(&self) -> Vec<Vec<u32>> {
+        let edges = self.boundary_edges();
+        if edges.is_empty() {
+            return Vec::new();
+        }
+        let mut adj: std::collections::HashMap<u32, Vec<u32>> = std::collections::HashMap::new();
+        for &(a, b) in &edges {
+            adj.entry(a).or_default().push(b);
+            adj.entry(b).or_default().push(a);
+        }
+        let mut visited_edges: std::collections::HashSet<(u32, u32)> =
+            std::collections::HashSet::new();
+        let ek = |a: u32, b: u32| if a < b { (a, b) } else { (b, a) };
+        let mut loops: Vec<Vec<u32>> = Vec::new();
+        for &(start_a, start_b) in &edges {
+            if visited_edges.contains(&ek(start_a, start_b)) {
+                continue;
+            }
+            visited_edges.insert(ek(start_a, start_b));
+            let mut chain = vec![start_a, start_b];
+            loop {
+                let cur = *chain.last().unwrap();
+                let prev = chain[chain.len() - 2];
+                let next = match adj.get(&cur) {
+                    Some(nbrs) => nbrs
+                        .iter()
+                        .copied()
+                        .find(|&n| n != prev && !visited_edges.contains(&ek(cur, n))),
+                    None => None,
+                };
+                match next {
+                    Some(n) => {
+                        visited_edges.insert(ek(cur, n));
+                        if n == start_a {
+                            break;
+                        }
+                        chain.push(n);
+                    }
+                    None => break,
+                }
+            }
+            loops.push(chain);
+        }
+        loops
+    }
 }
 
 impl Default for TriangleMesh {
@@ -2741,8 +2863,8 @@ fn tessellate_toroidal_face(
     let ((default_u_min, default_u_max), (default_v_min, default_v_max)) = surface.domain();
     let (u_min, u_max, v_min, v_max) = if let Some(torus) = surface
         .as_any()
-        .downcast_ref::<vcad_kernel_geom::TorusSurface>()
-    {
+        .downcast_ref::<vcad_kernel_geom::TorusSurface>(
+    ) {
         let verts: Vec<_> = topo
             .loop_half_edges(face.outer_loop)
             .map(|he| topo.vertices[topo.half_edges[he].origin].point)
@@ -2772,20 +2894,10 @@ fn tessellate_toroidal_face(
             vs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
             (us[0], us[us.len() - 1], vs[0], vs[vs.len() - 1])
         } else {
-            (
-                default_u_min,
-                default_u_max,
-                default_v_min,
-                default_v_max,
-            )
+            (default_u_min, default_u_max, default_v_min, default_v_max)
         }
     } else {
-        (
-            default_u_min,
-            default_u_max,
-            default_v_min,
-            default_v_max,
-        )
+        (default_u_min, default_u_max, default_v_min, default_v_max)
     };
 
     // Scale n_u / n_v by the fraction of the full torus the face covers.
@@ -3273,6 +3385,24 @@ mod tests {
             mesh.num_triangles()
         );
         assert!(mesh.num_vertices() > 0);
+    }
+
+    #[test]
+    fn test_closed_cube_has_no_boundary_edges() {
+        let brep = make_cube(10.0, 10.0, 10.0);
+        let mesh = tessellate_brep(&brep, 32);
+        let boundary = mesh.boundary_edges();
+        assert!(
+            boundary.is_empty(),
+            "closed cube should have zero boundary edges, got {}",
+            boundary.len()
+        );
+        let nm = mesh.non_manifold_edges();
+        assert!(
+            nm.is_empty(),
+            "closed cube should have zero non-manifold edges, got {}",
+            nm.len()
+        );
     }
 
     #[test]
