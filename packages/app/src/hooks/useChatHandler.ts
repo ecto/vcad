@@ -8,6 +8,7 @@ import {
   AI_PARTICIPANT_ID,
   commandRegistry,
   executeCrud,
+  HIGH_LEVEL_TOOLS_SYSTEM_PROMPT_APPENDIX,
 } from "@vcad/core";
 import type { SelectionContext, ToolCallInfo, MessagePart, ExecutionResult, ChatUsageError, ChatAttachment, ChatMessage } from "@vcad/core";
 import { persistToolResult, useAuthStore } from "@vcad/auth";
@@ -172,6 +173,7 @@ function runTurn(
     const tools = [...commandRegistry.toAnthropicTools(), SCREENSHOT_VIEWPORT_TOOL];
     const systemPrompt =
       commandRegistry.buildSystemPrompt(getDocumentParts(), context) +
+      HIGH_LEVEL_TOOLS_SYSTEM_PROMPT_APPENDIX +
       SCREENSHOT_SYSTEM_PROMPT_APPENDIX +
       AI_CAMERA_SYSTEM_PROMPT_APPENDIX;
 

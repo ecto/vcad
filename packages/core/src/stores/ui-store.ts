@@ -41,6 +41,13 @@ export interface UiState {
   theme: Theme;
   isDraggingGizmo: boolean;
   isOrbiting: boolean;
+  /** True while ai-screenshot.ts is capturing an off-screen frame from the
+   *  AI's camera. Overlays (selection highlights, participant attention
+   *  rings) should suppress themselves when this is set so the screenshot
+   *  reflects material colors rather than UI chrome. An axes gnomon is
+   *  rendered in this mode so the AI can orient itself without guessing
+   *  which direction is "right" or "front". Always false in normal use. */
+  captureMode: boolean;
   showWireframe: boolean;
   gridSnap: boolean;
   pointSnap: boolean;
@@ -97,6 +104,7 @@ export interface UiState {
   setSnapIncrement: (value: number) => void;
   setDraggingGizmo: (dragging: boolean) => void;
   setOrbiting: (orbiting: boolean) => void;
+  setCaptureMode: (on: boolean) => void;
   copyToClipboard: (partIds: string[]) => void;
   showDeleteConfirm: (partIds: string[]) => void;
   hideDeleteConfirm: () => void;
@@ -170,6 +178,7 @@ export const useUiStore = create<UiState>((set) => ({
   theme: "system",
   isDraggingGizmo: false,
   isOrbiting: false,
+  captureMode: false,
   showWireframe: false,
   gridSnap: true,
   pointSnap: true,
@@ -253,6 +262,8 @@ export const useUiStore = create<UiState>((set) => ({
   setDraggingGizmo: (dragging) => set({ isDraggingGizmo: dragging }),
 
   setOrbiting: (orbiting) => set({ isOrbiting: orbiting }),
+
+  setCaptureMode: (on) => set({ captureMode: on }),
 
   copyToClipboard: (partIds) => set({ clipboard: partIds }),
 

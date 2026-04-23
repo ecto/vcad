@@ -182,7 +182,7 @@ export {
 } from "./keybindings/index.js";
 
 // AI Tool Registry (CRUD)
-export { commandRegistry, executeCrud } from "./commands/index.js";
+export { commandRegistry, executeCrud, HIGH_LEVEL_TOOLS_SYSTEM_PROMPT_APPENDIX } from "./commands/index.js";
 export type { ToolSchemaEntry, ExecutionResult, ExecutionDisplay, SummarySegment, AnthropicTool } from "./commands/index.js";
 
 // Part labels

@@ -4,11 +4,15 @@ import {
   frameBbox,
   isSnapView,
   useParticipantStore,
+  useUiStore,
 } from "@vcad/core";
 import type { AnthropicTool, CameraGoal, SnapView } from "@vcad/core";
 import { computeSceneBbox, setAiCamera } from "@/lib/ai-camera-tools";
 
-/** Named camera presets the screenshot tool can target. Subset of SnapView. */
+/** Named camera presets the screenshot tool can target. Subset of SnapView,
+ *  plus a `quad` pseudo-view that composes iso + front + right + top into a
+ *  single 2×2 image. Quad mode is the fastest way for the AI to verify a
+ *  multi-part assembly — one tool call instead of four. */
 export const SCREENSHOT_VIEW_NAMES = [
   "front",
   "back",
@@ -18,13 +22,19 @@ export const SCREENSHOT_VIEW_NAMES = [
   "bottom",
   "iso",
   "hero",
+  "quad",
 ] as const;
 export type ScreenshotView = (typeof SCREENSHOT_VIEW_NAMES)[number];
+
+/** The four views composed into a quad screenshot. Chosen so the AI sees an
+ *  orthographic top-down plus two side elevations plus an isometric — enough
+ *  to disambiguate most positional errors at a glance. */
+const QUAD_VIEWS: SnapView[] = ["iso", "front", "right", "top"];
 
 export const SCREENSHOT_VIEWPORT_TOOL: AnthropicTool = {
   name: "screenshot_viewport",
   description:
-    "Capture a screenshot from YOUR camera (not the user's) so you can visually verify your work. The user's viewport is not disturbed — they see this angle as your wireframe frustum if they're watching. Pass an optional `view` (front/back/left/right/top/bottom/iso/hero) to reframe your camera first; omit it to shoot from wherever you last aimed your camera with set_view / frame_all / focus_part. Each screenshot costs tokens, so don't spam — one iso shot after a multi-step task is usually enough.",
+    "Capture a screenshot from YOUR camera (not the user's) so you can visually verify your work. The user's viewport is not disturbed — they see this angle as your wireframe frustum if they're watching. Pass an optional `view` (front/back/left/right/top/bottom/iso/hero) to reframe your camera first; omit it to shoot from wherever you last aimed your camera with set_view / frame_all / focus_part. Use `quad` to capture iso+front+right+top as a single 2×2 image — the fastest way to verify a multi-part assembly from one tool call. Each screenshot costs tokens, so don't spam — one iso or quad shot after a multi-step task is usually enough. Material colors will show correctly in the shot (no selection highlights), and a small XYZ gnomon at the origin marks the axes (X red, Y green, Z blue).",
   input_schema: {
     type: "object",
     properties: {
@@ -32,7 +42,7 @@ export const SCREENSHOT_VIEWPORT_TOOL: AnthropicTool = {
         type: "string",
         enum: [...SCREENSHOT_VIEW_NAMES],
         description:
-          "Optional named camera angle. If provided, your camera is reframed to this angle (fitted to the scene) before the shot. If omitted, your camera stays where set_view / frame_all / focus_part left it.",
+          "Optional named camera angle. If provided, your camera is reframed to this angle (fitted to the scene) before the shot. Pass `quad` for a 2×2 iso+front+right+top composite. If omitted, your camera stays where set_view / frame_all / focus_part left it.",
       },
     },
   },
@@ -182,6 +192,45 @@ function getCaptureFn(): CaptureFn | null {
   return win.__vcadCaptureAiCamera ?? null;
 }
 
+/** Render a single snap view at full viewport resolution. Returns the raw
+ *  canvas ready for composition or encoding. Caller is responsible for
+ *  toggling capture mode around the call. */
+function captureSnapView(view: SnapView, capture: CaptureFn): HTMLCanvasElement | null {
+  const bbox = computeSceneBbox();
+  const goal = bbox ? frameBbox(bbox, { view }) : defaultCameraGoal();
+  return capture(goal);
+}
+
+/** Compose a 2×2 grid of canvases into a single labeled canvas. Used for
+ *  the `view: "quad"` screenshot mode — one tool call, four angles. */
+function composeQuad(
+  shots: Array<{ canvas: HTMLCanvasElement; label: string }>,
+): HTMLCanvasElement {
+  const tileW = shots[0]!.canvas.width;
+  const tileH = shots[0]!.canvas.height;
+  const out = document.createElement("canvas");
+  out.width = tileW * 2;
+  out.height = tileH * 2;
+  const ctx = out.getContext("2d");
+  if (!ctx) throw new Error("2D context unavailable");
+  ctx.fillStyle = "#1a1a1a";
+  ctx.fillRect(0, 0, out.width, out.height);
+  for (let i = 0; i < shots.length; i++) {
+    const col = i % 2;
+    const row = Math.floor(i / 2);
+    const x = col * tileW;
+    const y = row * tileH;
+    ctx.drawImage(shots[i]!.canvas, x, y);
+    // Label in the top-left of each tile so the AI can match tile to view.
+    ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+    ctx.fillRect(x + 8, y + 8, 80, 28);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 16px -apple-system, system-ui, sans-serif";
+    ctx.fillText(shots[i]!.label, x + 16, y + 28);
+  }
+  return out;
+}
+
 export async function executeScreenshotViewport(
   args: Record<string, unknown>,
 ): Promise<ScreenshotExecutionResult> {
@@ -208,7 +257,55 @@ export async function executeScreenshotViewport(
     };
   }
 
+  // Toggle capture mode so the SelectionOverlay skips selection / participant
+  // rings and draws a labeled XYZ gnomon instead. Materials then show up
+  // faithfully in the shot rather than being washed out by highlight bboxes.
+  const uiStore = useUiStore.getState();
+  const prevCaptureMode = uiStore.captureMode;
+  uiStore.setCaptureMode(true);
+
   try {
+    // A couple of frames for the capture-mode change to propagate into the
+    // R3F scene graph (overlay removal + gnomon mount).
+    await nextFrame();
+    await nextFrame();
+
+    if (viewArg === "quad") {
+      const shots: Array<{ canvas: HTMLCanvasElement; label: string }> = [];
+      for (const v of QUAD_VIEWS) {
+        const rendered = captureSnapView(v, capture);
+        if (!rendered) {
+          return {
+            status: "error",
+            result: `screenshot_viewport: quad capture failed at ${v}`,
+            toolResultContent: null,
+            imageDataUrl: null,
+            duration: performance.now() - t0,
+          };
+        }
+        shots.push({ canvas: rendered, label: v.toUpperCase() });
+        await nextFrame();
+      }
+      const composed = composeQuad(shots);
+      const { base64, mediaType, dataUrl, width, height } = encodeCanvasAsJpeg(composed);
+      return {
+        status: "success",
+        result: `Captured quad view (${width}×${height}, ${QUAD_VIEWS.join(" / ")})`,
+        toolResultContent: [
+          {
+            type: "image",
+            source: { type: "base64", media_type: mediaType, data: base64 },
+          },
+          {
+            type: "text",
+            text: `Quad screenshot — 2×2 grid of iso / front / right / top. Top-left = ISO, top-right = FRONT (looking down -Y), bottom-left = RIGHT (looking down -X), bottom-right = TOP (looking down -Z). The small red/green/blue axes at the origin mark +X / +Y / +Z in the kernel Z-up frame.`,
+          },
+        ],
+        imageDataUrl: dataUrl,
+        duration: performance.now() - t0,
+      };
+    }
+
     const goal = resolveGoal(viewArg as ScreenshotView | undefined);
 
     // Small settle window so the user's frustum overlay starts moving before
@@ -243,7 +340,7 @@ export async function executeScreenshotViewport(
         },
         {
           type: "text",
-          text: `Screenshot from your camera (${viewLabel}). This is YOUR view; the user's viewport is unchanged but they see this angle as your frustum overlay. Use this to verify the document state and then continue.`,
+          text: `Screenshot from your camera (${viewLabel}). The small red/green/blue axes at the origin mark +X / +Y / +Z. Material colors are faithful — selection highlights are suppressed during capture.`,
         },
       ],
       imageDataUrl: dataUrl,
@@ -257,5 +354,7 @@ export async function executeScreenshotViewport(
       imageDataUrl: null,
       duration: performance.now() - t0,
     };
+  } finally {
+    useUiStore.getState().setCaptureMode(prevCaptureMode);
   }
 }

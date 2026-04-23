@@ -175,9 +175,48 @@ function ParticipantSelection({ ids, color }: { ids: Set<string>; color: string 
   return <BoundingBoxLines box={box} color={color} opacity={0.7} />;
 }
 
+/** Labeled axis gnomon at the world origin, only visible during
+ *  ai-screenshot.ts's capture window. Gives the AI an unambiguous reference
+ *  for "which way is +X / +Y / +Z" in the captured image, so it doesn't have
+ *  to guess from scene context whether the bike is laid out along X or Y.
+ *  The scene is kernel Z-up but gets wrapped in a -90° X rotation by the
+ *  viewport geometry group; this axes helper lives inside the same group so
+ *  the labels match the kernel frame (X red, Y green, Z blue). */
+function CaptureAxesGnomon() {
+  const scene = useEngineStore((s) => s.scene);
+  // Scale the gnomon with the scene so it's readable regardless of zoom.
+  const size = useMemo(() => {
+    let maxDim = 100;
+    if (scene?.parts) {
+      for (const p of scene.parts) {
+        const pos = p.mesh.positions;
+        for (let i = 0; i < pos.length; i += 3) {
+          maxDim = Math.max(maxDim, Math.abs(pos[i]!), Math.abs(pos[i + 1]!), Math.abs(pos[i + 2]!));
+        }
+      }
+    }
+    return maxDim * 0.25;
+  }, [scene]);
+
+  return (
+    <group>
+      <Line points={[[0, 0, 0], [size, 0, 0]]} color="#ff3b30" lineWidth={3} />
+      <Line points={[[0, 0, 0], [0, size, 0]]} color="#34c759" lineWidth={3} />
+      <Line points={[[0, 0, 0], [0, 0, size]]} color="#0a84ff" lineWidth={3} />
+    </group>
+  );
+}
+
 export function SelectionOverlay() {
   const isDraggingGizmo = useUiStore((s) => s.isDraggingGizmo);
   const isOrbiting = useUiStore((s) => s.isOrbiting);
+  const captureMode = useUiStore((s) => s.captureMode);
+
+  // During an AI screenshot, swap the usual selection/attention overlays
+  // for a clean axes gnomon. This is the single feedback channel the model
+  // uses to verify work, so it should show material colors — not participant
+  // bbox rings that happen to dominate the frame.
+  if (captureMode) return <CaptureAxesGnomon />;
 
   // Skip rendering during orbit for performance.
   if (isOrbiting || isDraggingGizmo) return null;
