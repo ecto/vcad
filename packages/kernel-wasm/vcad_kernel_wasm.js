@@ -5765,12 +5765,12 @@ function __wbg_get_imports() {
             const ret = arg0.next;
             return ret;
         },
-        __wbg_now_a3af9a2f4bbaa4d1: function() {
-            const ret = Date.now();
+        __wbg_now_73d406b8795c2240: function() {
+            const ret = performance.now();
             return ret;
         },
-        __wbg_now_b8bae8295f608868: function() {
-            const ret = performance.now();
+        __wbg_now_a3af9a2f4bbaa4d1: function() {
+            const ret = Date.now();
             return ret;
         },
         __wbg_of_f915f7cd925b21a5: function(arg0) {
