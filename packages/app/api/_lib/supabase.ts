@@ -47,26 +47,51 @@ export async function getUserIdFromAuth(
   }
 }
 
-/** Extract both the uid and whether the session is anonymous. Use this
- *  when you need to differentiate between "no session", "anon session",
- *  and "permanent session" — for example, the chat endpoint stores rows
- *  under the anon uid but applies the anonymous rate-limit tier. */
+/** Result of resolving the Bearer token on a request.
+ *
+ *  `tokenStatus` lets callers distinguish three cases that are otherwise
+ *  collapsed into "userId is null":
+ *    * `"missing"` — no Authorization header (a true anonymous caller — e.g.
+ *      the marketing site, a CLI without `vcad login`, the `/api/chat` flow
+ *      that explicitly supports anonymous use).
+ *    * `"valid"`   — a token was sent and Supabase accepted it. `userId` is
+ *      populated with the resolved auth.uid().
+ *    * `"invalid"` — a token was sent but Supabase rejected it (expired,
+ *      malformed, revoked, network blip on getUser). The caller should
+ *      respond with 401 so the client can refresh its session and retry,
+ *      rather than silently downgrading the request to the anonymous tier
+ *      and producing a misleading "free chat limit reached" error. */
+export interface AuthDetail {
+  userId: string | null;
+  isAnonymous: boolean;
+  tokenStatus: "missing" | "valid" | "invalid";
+}
+
+/** Extract the uid, anonymity flag, and token-validation status from a
+ *  request's Bearer token. See `AuthDetail` for the three-way distinction
+ *  callers need when a logged-in user's token is rejected. */
 export async function getAuthDetail(
   req: VercelRequest,
   admin: SupabaseClient | null,
-): Promise<{ userId: string | null; isAnonymous: boolean }> {
-  if (!admin) return { userId: null, isAnonymous: false };
+): Promise<AuthDetail> {
+  if (!admin) return { userId: null, isAnonymous: false, tokenStatus: "missing" };
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return { userId: null, isAnonymous: false };
+    return { userId: null, isAnonymous: false, tokenStatus: "missing" };
   }
   const token = authHeader.slice(7);
   try {
     const { data, error } = await admin.auth.getUser(token);
-    if (error || !data.user) return { userId: null, isAnonymous: false };
-    return { userId: data.user.id, isAnonymous: !!data.user.is_anonymous };
+    if (error || !data.user) {
+      return { userId: null, isAnonymous: false, tokenStatus: "invalid" };
+    }
+    return {
+      userId: data.user.id,
+      isAnonymous: !!data.user.is_anonymous,
+      tokenStatus: "valid",
+    };
   } catch {
-    return { userId: null, isAnonymous: false };
+    return { userId: null, isAnonymous: false, tokenStatus: "invalid" };
   }
 }
 

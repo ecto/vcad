@@ -426,7 +426,7 @@ export function ChatSidebar() {
   const anonUsage = useChatStore((s) => s.anonUsage);
   const usageError = useChatStore((s) => s.usageError);
   const setUsageError = useChatStore((s) => s.setUsageError);
-  const { user } = useAuth();
+  const { user, isAuthenticated } = useAuth();
 
   // Derive a short display name for the IRC-style role prefix. Prefer the
   // user's first name, then the email prefix, then fall back to "you" for
@@ -463,14 +463,17 @@ export function ChatSidebar() {
   }, []);
 
   // Route each kind of usage error to the right modal: anon → sign in,
-  // monthly → upgrade plan.
+  // monthly → upgrade plan. Guard the anon path against authenticated users
+  // — receiving `anon_limit` while signed-in means the request was treated
+  // as anonymous on the server (typically a stale token), and popping the
+  // sign-in modal at that point would be both confusing and useless.
   useEffect(() => {
-    if (usageError?.kind === "anon_limit") {
+    if (usageError?.kind === "anon_limit" && !isAuthenticated) {
       setShowAuthModal(true);
     } else if (usageError?.kind === "monthly_limit") {
       setShowUpgradeModal(true);
     }
-  }, [usageError]);
+  }, [usageError, isAuthenticated]);
 
   const sendMessage = useCallback(
     (content: string, attachments?: ChatAttachment[]) => {
@@ -610,13 +613,19 @@ export function ChatSidebar() {
             <ConversationScrollButton />
           </Conversation>
 
-          {/* Signed-in: live usage meter drives the "approaching limit" UX. */}
-          {user && (
+          {/* Signed-in (permanent identity): live usage meter drives the
+              "approaching limit" UX. ChatUsageMeter itself bails out for
+              anonymous Supabase sessions, but we also gate it here so the
+              footer doesn't reserve layout space for them. */}
+          {isAuthenticated && (
             <ChatUsageMeter onUpgradeClick={() => setShowUpgradeModal(true)} />
           )}
 
-          {/* Anon: unchanged — sign-in banner since they have no meter. */}
-          {usageError?.kind === "anon_limit" && (
+          {/* Anon-only sign-in banner. The `!isAuthenticated` guard is what
+              keeps a signed-in user from seeing "Free chat limit reached"
+              if a stale-token request gets routed to the anon rate limit
+              before the auto-refresh kicks in. */}
+          {usageError?.kind === "anon_limit" && !isAuthenticated && (
             <div className="shrink-0 bg-brand/10 px-4 py-2 text-[10px] text-text">
               <div className="mb-0.5 font-semibold text-brand">Free chat limit reached</div>
               <div className="text-text-muted">{usageError.message}</div>
@@ -628,7 +637,7 @@ export function ChatSidebar() {
               </button>
             </div>
           )}
-          {!user && anonUsage.used > 0 && !usageError && (
+          {!isAuthenticated && anonUsage.used > 0 && !usageError && (
             <div className="shrink-0 px-4 py-1 text-center text-[9px] text-text-muted">
               {Math.min(anonUsage.used, anonUsage.limit)}/{anonUsage.limit} free chat messages used
             </div>

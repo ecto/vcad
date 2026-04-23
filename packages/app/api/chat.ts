@@ -607,6 +607,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // auth.uid() (including anon) — used for chat_threads ownership so anon
   // users still get their conversation persisted under a stable id.
   const auth = await getAuthDetail(req, admin);
+
+  // If the client sent a Bearer token but Supabase rejected it (typical
+  // cause: an access token that expired between auto-refreshes, or a
+  // transient `getUser` blip), don't silently treat the caller as
+  // anonymous — that path applies the IP-based 3-msg/day cap and
+  // surfaces a misleading "Free chat limit reached" banner to a user
+  // who is, in fact, signed in with credits. Return 401 instead so the
+  // client can refresh the session and retry the same request.
+  if (auth.tokenStatus === "invalid") {
+    console.warn("[chat] rejected request with invalid bearer token");
+    res.status(401).json({
+      error: "auth_invalid",
+      message: "Your sign-in session expired. Refreshing and retrying...",
+    });
+    return;
+  }
+
   const userId = auth.isAnonymous ? null : auth.userId;
   const persistUserId = auth.userId;
   const ip = getClientIp(req);

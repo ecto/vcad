@@ -2,6 +2,15 @@
   "$schema": "./changelog.schema.json",
   "entries": [
     {
+      "id": "2026-04-23-fix-chat-free-limit-when-signed-in",
+      "version": "0.8.0",
+      "date": "2026-04-23",
+      "category": "fix",
+      "title": "Stop showing 'Free chat limit reached' to signed-in users",
+      "summary": "Signed-in users with credits no longer see the anon free-tier banner when their access token momentarily fails to validate — the chat client now refreshes the Supabase session and retries, and the banner is gated to truly anonymous sessions.",
+      "features": ["chat", "auth"]
+    },
+    {
       "id": "2026-04-23-ai-chat-higher-level-tools",
       "version": "0.8.0",
       "date": "2026-04-23",

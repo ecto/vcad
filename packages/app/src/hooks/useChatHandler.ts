@@ -27,30 +27,39 @@ import {
 
 /**
  * Parse a rate-limit error body emitted by streamChat with LIMIT_ERROR_PREFIX.
- * Returns null if the string isn't a rate-limit error.
+ * Returns null if the string isn't a rate-limit error or if the embedded
+ * `error` field isn't a known kind. Unknown kinds previously fell through
+ * to "anon_limit" and were rendered as "Free chat limit reached", which
+ * masked auth/server errors as a sign-in problem.
  */
 function parseLimitError(err: string): ChatUsageError | null {
   if (!err.startsWith(LIMIT_ERROR_PREFIX)) return null;
   const json = err.slice(LIMIT_ERROR_PREFIX.length);
+  let parsed: {
+    error?: string;
+    message?: string;
+    usage?: number;
+    limit?: number;
+    resets_at?: string;
+  };
   try {
-    const parsed = JSON.parse(json) as {
-      error?: string;
-      message?: string;
-      usage?: number;
-      limit?: number;
-      resets_at?: string;
-    };
-    const kind = parsed.error === "monthly_limit" ? "monthly_limit" : "anon_limit";
-    return {
-      kind,
-      message: parsed.message ?? (kind === "monthly_limit" ? "Monthly limit reached." : "Free limit reached."),
-      usage: parsed.usage,
-      limit: parsed.limit,
-      resetsAt: parsed.resets_at,
-    };
+    parsed = JSON.parse(json);
   } catch {
     return null;
   }
+  if (parsed.error !== "monthly_limit" && parsed.error !== "anon_limit") {
+    return null;
+  }
+  const kind = parsed.error;
+  return {
+    kind,
+    message:
+      parsed.message ??
+      (kind === "monthly_limit" ? "Monthly limit reached." : "Free limit reached."),
+    usage: parsed.usage,
+    limit: parsed.limit,
+    resetsAt: parsed.resets_at,
+  };
 }
 
 /**
@@ -406,6 +415,20 @@ export function useChatHandler() {
             // usageError state (which the sidebar turns into a banner / modal
             // trigger) instead of showing a generic error message.
             const limit = parseLimitError(error);
+            // Defense-in-depth: an `anon_limit` reply for a permanently
+            // signed-in user means the request was treated as anonymous on
+            // the server (almost always a stale token or transient auth
+            // blip). The misleading "Free chat limit reached / Sign in"
+            // banner is the wrong UX for an authed user — surface it as a
+            // generic error so they retry instead.
+            if (limit && limit.kind === "anon_limit" && !isAnon) {
+              const msg = "Authentication issue — please retry in a moment.";
+              parts.push({ type: "text", text: `Error: ${msg}` });
+              fullText += `\n\nError: ${msg}`;
+              useChatStore.getState().setError(msg);
+              updateUI();
+              break;
+            }
             if (limit) {
               useChatStore.getState().setUsageError(limit);
               // Don't pollute the chat with an Error: line — the banner shows.
