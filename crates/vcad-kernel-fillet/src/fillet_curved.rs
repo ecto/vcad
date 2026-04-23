@@ -703,12 +703,18 @@ fn build_spherical_vertex_blends_from_plans(
             axis: Dir3::new_normalize(-plan.cap_outward_normal),
         };
 
-        let v_pos = plan.tan_cap; // a point on the patch — use for winding hint.
-        let solid_exterior_hint = v_pos - solid_centroid;
+        // Winding: the sphere patch sits on the cap's outward side,
+        // so its CCW normal must point in the same direction as the
+        // cap's outward normal. Compare the candidate CCW against
+        // `plan.cap_outward_normal` directly (the cap face's true
+        // outward) rather than `v_pos - solid_centroid`, which mixes
+        // in the radial direction and flips the decision for patches
+        // near the solid's center of mass.
+        let _ = solid_centroid;
         let e1 = plan.tan_cyls[0] - plan.tan_cap;
         let e2 = plan.tan_cyls[1] - plan.tan_cap;
         let n = e1.cross(e2);
-        let verts: [VertexId; 3] = if n.dot(solid_exterior_hint) > 0.0 {
+        let verts: [VertexId; 3] = if n.dot(plan.cap_outward_normal) > 0.0 {
             [v_cap, v_c1, v_c2]
         } else {
             [v_cap, v_c2, v_c1]
