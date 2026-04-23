@@ -5,13 +5,14 @@
 //! operation then selects which sub-faces to keep.
 
 use vcad_kernel_geom::SurfaceKind;
-use vcad_kernel_math::Point3;
+use vcad_kernel_math::{Point3, Vec3};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_tessellate::{tessellate_brep, TriangleMesh};
 use vcad_kernel_topo::FaceId;
 
 use crate::point_in_mesh;
 use crate::split::point_to_segment_dist_2d;
+use crate::trim::point_in_face;
 use crate::BooleanOp;
 
 /// Classification of a face relative to another solid.
@@ -697,68 +698,240 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
     }
 }
 
-/// Classify a face of one solid relative to another solid.
+/// Compute the outward-pointing normal for a face.
 ///
-/// The `other_mesh` is the tessellated mesh of the other solid, used
-/// for point-in-solid testing.
-pub fn classify_face(
-    brep: &BRepSolid,
-    face_id: FaceId,
-    other_mesh: &TriangleMesh,
-) -> FaceClassification {
-    let sample = face_sample_point(brep, face_id);
-
-    // Offset the sample point slightly along the face normal
-    // to avoid landing exactly on the boundary
+/// Prefers the loop-winding convention (v1-v0) × (v2-v0), falling back to
+/// surface_normal × orientation when the loop is degenerate.
+fn face_oriented_normal(brep: &BRepSolid, face_id: FaceId) -> Vec3 {
     let face = &brep.topology.faces[face_id];
     let surface = &brep.geometry.surfaces[face.surface_index];
-
-    // Compute the outward normal from the loop vertex winding.
-    // By B-rep convention, loop vertices are ordered so that (v1-v0) × (v2-v0)
-    // points outward from the solid. This is more reliable than using the
-    // surface normal + orientation, which may not correctly indicate outward.
     let outer_verts: Vec<Point3> = brep
         .topology
         .loop_half_edges(face.outer_loop)
         .map(|he_id| brep.topology.vertices[brep.topology.half_edges[he_id].origin].point)
         .collect();
 
-    let oriented_normal = if outer_verts.len() >= 3 {
+    if outer_verts.len() >= 3 {
         let e1 = outer_verts[1] - outer_verts[0];
         let e2 = outer_verts[2] - outer_verts[0];
         let n = e1.cross(e2);
         if n.norm() > 1e-15 {
-            n.normalize()
-        } else {
-            // Degenerate polygon — fall back to surface normal with orientation
-            let sn = surface.normal(vcad_kernel_math::Point2::origin());
-            let normal = *sn.as_ref();
-            match face.orientation {
-                vcad_kernel_topo::Orientation::Forward => normal,
-                vcad_kernel_topo::Orientation::Reversed => -normal,
-            }
+            return n.normalize();
         }
-    } else {
-        // Too few vertices — fall back to surface normal with orientation
-        let sn = surface.normal(vcad_kernel_math::Point2::origin());
-        let normal = *sn.as_ref();
-        match face.orientation {
-            vcad_kernel_topo::Orientation::Forward => normal,
-            vcad_kernel_topo::Orientation::Reversed => -normal,
-        }
+    }
+    let sn = surface.normal(vcad_kernel_math::Point2::origin());
+    let normal = *sn.as_ref();
+    match face.orientation {
+        vcad_kernel_topo::Orientation::Forward => normal,
+        vcad_kernel_topo::Orientation::Reversed => -normal,
+    }
+}
+
+/// Detect whether `face_id` in `brep` is coincident-coplanar with any face of `other`.
+///
+/// Returns `OnSame` when the other face overlaps at `sample` and faces the same
+/// direction, `OnOpposite` when it faces the opposite direction, and `None` when
+/// no coincident face is found.
+///
+/// This only considers planar-vs-planar coincidence, which covers the common
+/// case of cylinder/prism caps sitting on box faces.
+fn find_coincident_classification(
+    brep: &BRepSolid,
+    face_id: FaceId,
+    probes: &[Point3],
+    other: &BRepSolid,
+) -> Option<FaceClassification> {
+    if probes.is_empty() {
+        return None;
+    }
+    let face = &brep.topology.faces[face_id];
+    let surface = &brep.geometry.surfaces[face.surface_index];
+    if surface.surface_type() != SurfaceKind::Plane {
+        return None;
+    }
+
+    // For planar faces, derive the outward normal from the plane's own
+    // `normal_dir` flipped by the face's orientation. This is more reliable
+    // than winding for sub-faces produced by splits, whose loop vertices may
+    // be oriented opposite to the face's intended outward direction.
+    let self_plane = surface.as_any().downcast_ref::<vcad_kernel_geom::Plane>()?;
+    let self_normal = match face.orientation {
+        vcad_kernel_topo::Orientation::Forward => *self_plane.normal_dir.as_ref(),
+        vcad_kernel_topo::Orientation::Reversed => -*self_plane.normal_dir.as_ref(),
     };
 
-    // Test the sample point offset slightly inward (negative normal)
-    let eps = 1e-4;
-    let inward_point = sample - eps * oriented_normal;
+    const PLANE_TOL: f64 = 1e-6;
+    const ANGLE_TOL: f64 = 1e-4;
 
-    let is_inside = point_in_mesh(&inward_point, other_mesh);
+    for (other_fid, other_face) in &other.topology.faces {
+        let other_surf = &other.geometry.surfaces[other_face.surface_index];
+        if other_surf.surface_type() != SurfaceKind::Plane {
+            continue;
+        }
+        let other_plane = match other_surf
+            .as_any()
+            .downcast_ref::<vcad_kernel_geom::Plane>()
+        {
+            Some(p) => p,
+            None => continue,
+        };
 
-    if is_inside {
-        FaceClassification::Inside
-    } else {
-        FaceClassification::Outside
+        // Build a 3D AABB for the other face's polygon — cheap prefilter that
+        // distinguishes coplanar-coincident from coplanar-disjoint faces.
+        // Cylinder/cone caps store a degenerate outer loop with a single seam
+        // vertex; for those we expand the bbox with the cap radius inferred
+        // from the plane origin and the seam vertex.
+        let other_outer_verts: Vec<Point3> = other
+            .topology
+            .loop_half_edges(other_face.outer_loop)
+            .map(|he_id| other.topology.vertices[other.topology.half_edges[he_id].origin].point)
+            .collect();
+        if other_outer_verts.is_empty() {
+            continue;
+        }
+        let mut min_p = other_outer_verts[0];
+        let mut max_p = other_outer_verts[0];
+        for v in &other_outer_verts[1..] {
+            min_p.x = min_p.x.min(v.x);
+            min_p.y = min_p.y.min(v.y);
+            min_p.z = min_p.z.min(v.z);
+            max_p.x = max_p.x.max(v.x);
+            max_p.y = max_p.y.max(v.y);
+            max_p.z = max_p.z.max(v.z);
+        }
+        if other_outer_verts.len() == 1 {
+            // Degenerate outer loop: treat as a disk centered on the plane
+            // origin with radius equal to the distance to the seam vertex.
+            let to_seam = other_outer_verts[0] - other_plane.origin;
+            let r = to_seam.norm();
+            let c = other_plane.origin;
+            min_p.x = (c.x - r).min(min_p.x);
+            min_p.y = (c.y - r).min(min_p.y);
+            min_p.z = (c.z - r).min(min_p.z);
+            max_p.x = (c.x + r).max(max_p.x);
+            max_p.y = (c.y + r).max(max_p.y);
+            max_p.z = (c.z + r).max(max_p.z);
+        }
+
+        let other_normal = *other_plane.normal_dir.as_ref();
+        const BBOX_TOL: f64 = 1e-4;
+
+        // Every probe point that actually lies on the self face must also lie
+        // on the other face. A sub-face from an arc split may have a centroid
+        // that accidentally lands inside a coplanar disk; the extra probes
+        // guard against that false match by requiring the *whole* sub-face
+        // to be contained. Probes that fall off the self face (which happens
+        // for non-convex polygons whose centroid lies outside their boundary)
+        // are ignored so they don't bias the verdict in either direction.
+        let mut checked = 0u32;
+        let mut fully_coincident = true;
+        for p in probes {
+            if !point_in_face(brep, face_id, p) {
+                continue;
+            }
+            checked += 1;
+            if (*p - other_plane.origin).dot(other_normal).abs() > PLANE_TOL {
+                fully_coincident = false;
+                break;
+            }
+            if p.x < min_p.x - BBOX_TOL
+                || p.x > max_p.x + BBOX_TOL
+                || p.y < min_p.y - BBOX_TOL
+                || p.y > max_p.y + BBOX_TOL
+                || p.z < min_p.z - BBOX_TOL
+                || p.z > max_p.z + BBOX_TOL
+            {
+                fully_coincident = false;
+                break;
+            }
+            if !point_in_face(other, other_fid, p) {
+                fully_coincident = false;
+                break;
+            }
+        }
+        if checked == 0 || !fully_coincident {
+            continue;
+        }
+
+        // Compare oriented normals — faces are coincident, check direction.
+        let other_normal = match other_face.orientation {
+            vcad_kernel_topo::Orientation::Forward => other_normal,
+            vcad_kernel_topo::Orientation::Reversed => -other_normal,
+        };
+        let dot = self_normal.dot(other_normal);
+        if dot > 1.0 - ANGLE_TOL {
+            return Some(FaceClassification::OnSame);
+        } else if dot < -1.0 + ANGLE_TOL {
+            return Some(FaceClassification::OnOpposite);
+        }
     }
+    None
+}
+
+/// Generate additional probe points on a face for robust classification.
+///
+/// The primary centroid-like sample can land on a tangent line between two
+/// solids (e.g. box face tangent to an inscribed cylinder), which makes a
+/// single-point test ambiguous. Supplementary probes — edge midpoints nudged
+/// toward the centroid — let us tell tangent-touch from full-containment.
+fn extra_probe_points(brep: &BRepSolid, face_id: FaceId, centroid: Point3) -> Vec<Point3> {
+    let face = &brep.topology.faces[face_id];
+    let outer_verts: Vec<Point3> = brep
+        .topology
+        .loop_half_edges(face.outer_loop)
+        .map(|he_id| brep.topology.vertices[brep.topology.half_edges[he_id].origin].point)
+        .collect();
+    if outer_verts.len() < 3 {
+        return Vec::new();
+    }
+    let n = outer_verts.len();
+    let mut probes = Vec::with_capacity(n);
+    for i in 0..n {
+        let a = outer_verts[i];
+        let b = outer_verts[(i + 1) % n];
+        let mid = Point3::new(0.5 * (a.x + b.x), 0.5 * (a.y + b.y), 0.5 * (a.z + b.z));
+        // Nudge 20% toward centroid to land strictly inside the face.
+        let dir = centroid - mid;
+        probes.push(mid + 0.2 * dir);
+    }
+    probes
+}
+
+/// Classify a face of one solid relative to another solid.
+///
+/// Uses coincidence detection (`OnSame`/`OnOpposite`) for coplanar-coincident
+/// faces, and point-in-solid ray casting (`Inside`/`Outside`) otherwise.
+///
+/// Ray-casting uses multiple probe points and classifies as `Inside` only
+/// when *every* probe lands inside the other solid. This makes the verdict
+/// robust against tangent configurations where the centroid happens to fall
+/// on the boundary of the other solid.
+pub fn classify_face(
+    brep: &BRepSolid,
+    face_id: FaceId,
+    other: &BRepSolid,
+    other_mesh: &TriangleMesh,
+) -> FaceClassification {
+    let sample = face_sample_point(brep, face_id);
+    let oriented_normal = face_oriented_normal(brep, face_id);
+    let mut probes = vec![sample];
+    probes.extend(extra_probe_points(brep, face_id, sample));
+
+    if let Some(c) = find_coincident_classification(brep, face_id, &probes, other) {
+        return c;
+    }
+
+    // Test every probe: classify `Inside` only when *every* probe's
+    // interior-side offset lies inside the other solid; any `Outside` probe
+    // implies the face has material on the result's boundary.
+    let eps = 1e-4;
+    for p in &probes {
+        let inward = *p - eps * oriented_normal;
+        if !point_in_mesh(&inward, other_mesh) {
+            return FaceClassification::Outside;
+        }
+    }
+    FaceClassification::Inside
 }
 
 /// Classify all faces of a solid relative to another solid.
@@ -768,7 +941,7 @@ pub fn classify_all_faces(
     segments: u32,
 ) -> Vec<(FaceId, FaceClassification)> {
     let other_mesh = tessellate_brep(other, segments);
-    classify_all_faces_with_mesh(brep, &other_mesh)
+    classify_all_faces_with_mesh(brep, other, &other_mesh)
 }
 
 /// Classify all faces of a solid against a pre-tessellated mesh of the other solid.
@@ -776,13 +949,14 @@ pub fn classify_all_faces(
 /// This avoids re-tessellating when the same mesh is needed for multiple calls.
 pub fn classify_all_faces_with_mesh(
     brep: &BRepSolid,
+    other: &BRepSolid,
     other_mesh: &TriangleMesh,
 ) -> Vec<(FaceId, FaceClassification)> {
     brep.topology
         .faces
         .iter()
         .map(|(face_id, _)| {
-            let class = classify_face(brep, face_id, other_mesh);
+            let class = classify_face(brep, face_id, other, other_mesh);
             (face_id, class)
         })
         .collect()

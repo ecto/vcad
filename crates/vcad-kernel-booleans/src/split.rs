@@ -879,7 +879,12 @@ fn circle_fully_inside_polygon(polygon: &[Point3], circle: &vcad_kernel_geom::Ci
     }
 
     // Check that the circle doesn't cross any polygon edge
-    // i.e., distance from center to each edge must be > radius
+    // i.e., distance from center to each edge must be > radius.
+    // A circle tangent to a polygon edge (distance ≈ radius) also disqualifies
+    // it from the "strictly inside" path: splitting a face whose inner hole
+    // touches its outer boundary produces degenerate tessellation, and the
+    // inscribed cylinder case is handled correctly by leaving the face whole
+    // and relying on coincidence-based classification.
     let n = poly_2d.len();
     for i in 0..n {
         let j = (i + 1) % n;
@@ -887,8 +892,7 @@ fn circle_fully_inside_polygon(polygon: &[Point3], circle: &vcad_kernel_geom::Ci
         let (x2, y2) = poly_2d[j];
 
         let dist = point_to_segment_dist_2d(cx, cy, x1, y1, x2, y2);
-        if dist < circle.radius - 1e-6 {
-            // Circle crosses this edge - not fully inside
+        if dist < circle.radius + 1e-6 {
             return false;
         }
     }
@@ -1232,16 +1236,22 @@ pub fn split_planar_face_by_arc(
     // Build Face 1: the inside-circle portion
     // Walk polygon from inside_end edge to inside_start edge, then add arc back
     let n = loop_verts.len();
+    let same_edge = inside_start.edge_index == inside_end.edge_index;
     let mut face1_points: Vec<Point3> = Vec::new();
 
     // Start at inside_end intersection
     face1_points.push(inside_end.point);
 
-    // Walk polygon from inside_end edge to inside_start edge
-    let mut idx = (inside_end.edge_index + 1) % n;
-    while idx != (inside_start.edge_index + 1) % n {
-        face1_points.push(loop_verts[idx]);
-        idx = (idx + 1) % n;
+    // Walk polygon from inside_end edge to inside_start edge. When both
+    // intersections lie on the same polygon edge, the inside-circle piece
+    // is bounded by only the arc and the chord segment on that edge — no
+    // polygon vertices are traversed.
+    if !same_edge {
+        let mut idx = (inside_end.edge_index + 1) % n;
+        while idx != (inside_start.edge_index + 1) % n {
+            face1_points.push(loop_verts[idx]);
+            idx = (idx + 1) % n;
+        }
     }
 
     // Add inside_start intersection
@@ -1265,11 +1275,22 @@ pub fn split_planar_face_by_arc(
     // Start at inside_start intersection
     face2_points.push(inside_start.point);
 
-    // Walk polygon from inside_start edge to inside_end edge
-    idx = (inside_start.edge_index + 1) % n;
-    while idx != (inside_end.edge_index + 1) % n {
-        face2_points.push(loop_verts[idx]);
-        idx = (idx + 1) % n;
+    // Walk polygon from inside_start edge to inside_end edge. In the same-edge
+    // case, the outside-circle piece encloses the *entire* polygon apart from
+    // the chord segment, so we walk all n polygon vertices starting after
+    // inside_start's edge.
+    if same_edge {
+        let mut idx = (inside_start.edge_index + 1) % n;
+        for _ in 0..n {
+            face2_points.push(loop_verts[idx]);
+            idx = (idx + 1) % n;
+        }
+    } else {
+        let mut idx = (inside_start.edge_index + 1) % n;
+        while idx != (inside_end.edge_index + 1) % n {
+            face2_points.push(loop_verts[idx]);
+            idx = (idx + 1) % n;
+        }
     }
 
     // Add inside_end intersection
@@ -1282,6 +1303,14 @@ pub fn split_planar_face_by_arc(
         face2_points.push(*pt);
     }
 
+    // When the intersection circle passes through polygon vertices, the polygon walk
+    // includes the vertex AND the function then pushes the intersection point, creating
+    // a zero-length duplicate edge. Remove consecutive duplicates (including wrap-around)
+    // before validating and building faces.
+    let tolerance = 1e-6;
+    let face1_points = remove_consecutive_duplicates(&face1_points, tolerance);
+    let face2_points = remove_consecutive_duplicates(&face2_points, tolerance);
+
     // Validate faces have at least 3 vertices
     if face1_points.len() < 3 || face2_points.len() < 3 {
         return SplitResult {
@@ -1290,7 +1319,6 @@ pub fn split_planar_face_by_arc(
     }
 
     // Create the two new faces
-    let tolerance = 1e-6;
 
     // Face 1 (arc-bounded, inside circle)
     let face1_verts: Vec<_> = face1_points

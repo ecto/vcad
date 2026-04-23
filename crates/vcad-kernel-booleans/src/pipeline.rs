@@ -651,8 +651,8 @@ pub(crate) fn brep_boolean(
     // Tessellate each solid once and reuse for classification
     let mesh_b = tessellate_brep(&b, segments);
     let mesh_a = tessellate_brep(&a, segments);
-    let classes_a = classify::classify_all_faces_with_mesh(&a, &mesh_b);
-    let classes_b = classify::classify_all_faces_with_mesh(&b, &mesh_a);
+    let classes_a = classify::classify_all_faces_with_mesh(&a, &b, &mesh_b);
+    let classes_b = classify::classify_all_faces_with_mesh(&b, &a, &mesh_a);
 
     debug_bool!("\nClassification of A faces:");
     for (fid, _class) in &classes_a {

@@ -728,10 +728,9 @@ mod tests {
             expected_vol, actual_vol
         );
         let vol_error = ((actual_vol - expected_vol) / expected_vol).abs();
-        // TODO: Tighten this to 5% once arc-split geometry is fixed
         assert!(
-            vol_error < 0.25,
-            "Volume error {:.1}% exceeds 25% tolerance (expected {:.2}, got {:.2})",
+            vol_error < 0.05,
+            "Volume error {:.1}% exceeds 5% tolerance (expected {:.2}, got {:.2})",
             vol_error * 100.0,
             expected_vol,
             actual_vol
@@ -980,10 +979,9 @@ mod tests {
             expected_vol, actual_vol
         );
         let vol_error = ((actual_vol - expected_vol) / expected_vol).abs();
-        // TODO: Tighten this to 5% once arc-split geometry is fixed
         assert!(
-            vol_error < 0.10,
-            "Volume error {:.1}% exceeds 10% tolerance",
+            vol_error < 0.05,
+            "Volume error {:.1}% exceeds 5% tolerance",
             vol_error * 100.0
         );
     }
