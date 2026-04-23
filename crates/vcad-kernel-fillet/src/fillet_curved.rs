@@ -1,5 +1,6 @@
 //! Curved fillet support — torus blends for plane-cylinder and coaxial cylinder cases.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use vcad_kernel_geom::{
     CylinderSurface, GeometryStore, Plane, SphereSurface, Surface, SurfaceKind, TorusSurface,
@@ -17,6 +18,76 @@ use crate::topology::{
 use crate::trim::{build_vertex_faces, compute_trim_vertices, TrimKey};
 use crate::{classify_fillet_case, FilletCase, FilletResult};
 
+/// What happened at a single candidate junction during vertex-blend
+/// construction. Emitted one-per-vertex that `build_spherical_vertex_blends`
+/// considered.
+#[derive(Debug, Clone)]
+pub struct JunctionTrace {
+    /// The BRep vertex at the junction.
+    pub vertex: VertexId,
+    /// World-space position of the vertex.
+    pub vertex_pos: Point3,
+    /// Number of target (to-be-filleted) edges incident to this vertex.
+    pub n_target_edges: usize,
+    /// Number of non-target edges incident (typically seams).
+    pub n_seam_edges: usize,
+    /// Outcome: why the patch was built, or why it was rejected.
+    pub outcome: JunctionOutcome,
+}
+
+/// Outcome of attempting to build a spherical vertex blend at one junction.
+#[derive(Debug, Clone)]
+pub enum JunctionOutcome {
+    /// Skipped — not exactly 2 filleted edges at this vertex.
+    SkippedWrongEdgeCount,
+    /// Skipped — one or both filleted edges wasn't plane-cylinder.
+    SkippedNotPlaneCylinder,
+    /// Skipped — the two cap faces disagreed (mixed cap normal).
+    SkippedMixedCapNormal,
+    /// Skipped — third edge wasn't a cylinder-cylinder seam.
+    SkippedNoCylCylSeam,
+    /// Skipped — one of the cylinder radii was ≤ fillet radius.
+    SkippedCylRadiusTooSmall { radii: Vec<f64> },
+    /// Skipped — the two offset circles don't intersect.
+    SkippedCirclesDisjoint,
+    /// Skipped — ball is coincident with a cylinder axis (radial undefined).
+    SkippedRadialDegenerate,
+    /// Skipped — two of the three tangent points collapsed to the same vertex.
+    SkippedDegenerateTriangle,
+    /// Successfully built a spherical patch.
+    BuiltPatch {
+        /// Rolling ball center.
+        ball_center: Point3,
+        /// Tangent point on the cap plane.
+        tan_cap: Point3,
+        /// Tangent points on the two cylinder surfaces.
+        tan_cyls: [Point3; 2],
+    },
+}
+
+/// A collected trace of every junction considered during one fillet call.
+#[derive(Debug, Default, Clone)]
+pub struct FilletTrace {
+    /// Per-junction entries, in no particular order.
+    pub junctions: Vec<JunctionTrace>,
+}
+
+thread_local! {
+    static TRACE: RefCell<Option<FilletTrace>> = const { RefCell::new(None) };
+}
+
+fn trace_enabled() -> bool {
+    TRACE.with(|t| t.borrow().is_some())
+}
+
+fn trace_push(entry: JunctionTrace) {
+    TRACE.with(|t| {
+        if let Some(trace) = t.borrow_mut().as_mut() {
+            trace.junctions.push(entry);
+        }
+    })
+}
+
 /// Fillet specific edges of a B-rep solid, supporting curved faces.
 ///
 /// This is the extended fillet API that handles plane-cylinder, coaxial cylinder,
@@ -32,6 +103,36 @@ use crate::{classify_fillet_case, FilletCase, FilletResult};
 ///
 /// A new `BRepSolid` and a vector of per-edge results indicating success or failure.
 pub fn fillet_edges_detailed(
+    brep: &BRepSolid,
+    edge_ids: &[EdgeId],
+    radius: f64,
+) -> (BRepSolid, Vec<FilletResult>) {
+    let (brep, results, _) = fillet_edges_detailed_with_trace(brep, edge_ids, radius, false);
+    (brep, results)
+}
+
+/// Like `fillet_edges_detailed`, but also returns a per-junction trace
+/// when `capture_trace` is true. Used by diagnostics and tests to inspect
+/// what happened at each convex arc-to-arc junction. Pass `false` for the
+/// normal path — the trace buffer isn't allocated.
+pub fn fillet_edges_detailed_with_trace(
+    brep: &BRepSolid,
+    edge_ids: &[EdgeId],
+    radius: f64,
+    capture_trace: bool,
+) -> (BRepSolid, Vec<FilletResult>, FilletTrace) {
+    let trace_slot = if capture_trace {
+        Some(FilletTrace::default())
+    } else {
+        None
+    };
+    TRACE.with(|t| *t.borrow_mut() = trace_slot);
+    let (brep, results) = fillet_edges_detailed_inner(brep, edge_ids, radius);
+    let trace = TRACE.with(|t| t.borrow_mut().take()).unwrap_or_default();
+    (brep, results, trace)
+}
+
+fn fillet_edges_detailed_inner(
     brep: &BRepSolid,
     edge_ids: &[EdgeId],
     radius: f64,
@@ -379,8 +480,24 @@ fn build_spherical_vertex_blends(
     }
 
     for (v_id, tgt_edges) in &target_by_vertex {
+        let v_pos_for_trace = topo.vertices[*v_id].point;
+        let incident_count = all_by_vertex.get(v_id).map(|v| v.len()).unwrap_or(0);
+        let seam_count = incident_count.saturating_sub(tgt_edges.len());
+        let emit = |outcome: JunctionOutcome| {
+            if trace_enabled() {
+                trace_push(JunctionTrace {
+                    vertex: *v_id,
+                    vertex_pos: v_pos_for_trace,
+                    n_target_edges: tgt_edges.len(),
+                    n_seam_edges: seam_count,
+                    outcome,
+                });
+            }
+        };
+
         // Need exactly two filleted edges incident to this vertex.
         if tgt_edges.len() != 2 {
+            emit(JunctionOutcome::SkippedWrongEdgeCount);
             continue;
         }
 
@@ -390,32 +507,30 @@ fn build_spherical_vertex_blends(
         let mut cyls: Vec<CylinderSurface> = Vec::new();
         let mut cyl_faces: Vec<FaceId> = Vec::new();
         let mut cap_face_id: Option<FaceId> = None;
-        let mut ok = true;
+        let mut skip_reason: Option<JunctionOutcome> = None;
         for e in tgt_edges {
             let sa = &geom.surfaces[topo.faces[e.face_a].surface_index];
             let sb = &geom.surfaces[topo.faces[e.face_b].surface_index];
-            let (plane_face, plane_surf, cyl_face, cyl_surf) = match (
-                sa.surface_type(),
-                sb.surface_type(),
-            ) {
-                (SurfaceKind::Plane, SurfaceKind::Cylinder) => (e.face_a, sa, e.face_b, sb),
-                (SurfaceKind::Cylinder, SurfaceKind::Plane) => (e.face_b, sb, e.face_a, sa),
-                _ => {
-                    ok = false;
-                    break;
-                }
-            };
+            let (plane_face, plane_surf, cyl_face, cyl_surf) =
+                match (sa.surface_type(), sb.surface_type()) {
+                    (SurfaceKind::Plane, SurfaceKind::Cylinder) => (e.face_a, sa, e.face_b, sb),
+                    (SurfaceKind::Cylinder, SurfaceKind::Plane) => (e.face_b, sb, e.face_a, sa),
+                    _ => {
+                        skip_reason = Some(JunctionOutcome::SkippedNotPlaneCylinder);
+                        break;
+                    }
+                };
             let plane = match plane_surf.as_any().downcast_ref::<Plane>() {
                 Some(p) => p,
                 None => {
-                    ok = false;
+                    skip_reason = Some(JunctionOutcome::SkippedNotPlaneCylinder);
                     break;
                 }
             };
             let cyl = match cyl_surf.as_any().downcast_ref::<CylinderSurface>() {
                 Some(c) => c.clone(),
                 None => {
-                    ok = false;
+                    skip_reason = Some(JunctionOutcome::SkippedNotPlaneCylinder);
                     break;
                 }
             };
@@ -429,9 +544,8 @@ fn build_spherical_vertex_blends(
                     cap_face_id = Some(plane_face);
                 }
                 Some(n) => {
-                    // Both target edges must share the same cap plane.
                     if n.dot(outward) < 1.0 - 1e-6 {
-                        ok = false;
+                        skip_reason = Some(JunctionOutcome::SkippedMixedCapNormal);
                         break;
                     }
                 }
@@ -439,53 +553,49 @@ fn build_spherical_vertex_blends(
             cyls.push(cyl);
             cyl_faces.push(cyl_face);
         }
-        if !ok {
+        if let Some(r) = skip_reason {
+            emit(r);
             continue;
         }
         let plane_normal = match plane_normal {
             Some(n) => n,
-            None => continue,
+            None => {
+                emit(JunctionOutcome::SkippedNotPlaneCylinder);
+                continue;
+            }
         };
         if cyls.len() != 2 {
+            emit(JunctionOutcome::SkippedNotPlaneCylinder);
             continue;
         }
 
-        // Confirm the third incident edge is a cylinder-cylinder seam
-        // (non-filleted) between the two cylinders we found. Otherwise
-        // this isn't an arc-extrude convex junction we can blend.
+        // Confirm the third incident edge is a cylinder-cylinder seam.
         let incident = match all_by_vertex.get(v_id) {
             Some(v) => v,
-            None => continue,
+            None => {
+                emit(JunctionOutcome::SkippedNoCylCylSeam);
+                continue;
+            }
         };
         if incident.len() < 3 {
+            emit(JunctionOutcome::SkippedNoCylCylSeam);
             continue;
         }
-        let is_target = |e: &&EdgeInfo| {
-            tgt_edges.iter().any(|t| t.edge_id == e.edge_id)
-        };
-        let seam_edges: Vec<&&EdgeInfo> =
-            incident.iter().filter(|e| !is_target(e)).collect();
+        let is_target = |e: &&EdgeInfo| tgt_edges.iter().any(|t| t.edge_id == e.edge_id);
+        let seam_edges: Vec<&&EdgeInfo> = incident.iter().filter(|e| !is_target(e)).collect();
         let seam_connects_cyls = seam_edges.iter().any(|e| {
             let sa = &geom.surfaces[topo.faces[e.face_a].surface_index];
             let sb = &geom.surfaces[topo.faces[e.face_b].surface_index];
-            sa.surface_type() == SurfaceKind::Cylinder
-                && sb.surface_type() == SurfaceKind::Cylinder
+            sa.surface_type() == SurfaceKind::Cylinder && sb.surface_type() == SurfaceKind::Cylinder
         });
         if !seam_connects_cyls {
+            emit(JunctionOutcome::SkippedNoCylCylSeam);
             continue;
         }
 
-        // Solve for the rolling ball center. The ball must sit at
-        // distance r from the cap plane on the interior side, and at
-        // distance `R_i − r` from each cylinder's axis (convex arc →
-        // solid lies inside the cylinder's radius). Interior direction
-        // = -outward_plane_normal.
         let v_pos = topo.vertices[*v_id].point;
         let cap_center_t = v_pos + (-plane_normal) * radius;
 
-        // Project the two cylinder axes onto the cap plane. For a Z-up
-        // extrude all of this is trivially in the XY plane, but we keep
-        // the full projection so arbitrary cap orientations also work.
         let offset_centers: Vec<Point3> = cyls
             .iter()
             .map(|c| {
@@ -496,6 +606,9 @@ fn build_spherical_vertex_blends(
             .collect();
         let offset_radii: Vec<f64> = cyls.iter().map(|c| c.radius - radius).collect();
         if offset_radii.iter().any(|r| *r <= 0.0) {
+            emit(JunctionOutcome::SkippedCylRadiusTooSmall {
+                radii: offset_radii.clone(),
+            });
             continue;
         }
 
@@ -507,13 +620,12 @@ fn build_spherical_vertex_blends(
             &v_pos,
         ) {
             Some(p) => p,
-            None => continue,
+            None => {
+                emit(JunctionOutcome::SkippedCirclesDisjoint);
+                continue;
+            }
         };
 
-        // Tangent points: sphere meets cap at ball_center + r *
-        // -outward_normal (closest point on sphere to cap plane;
-        // radially OUTWARD from sphere toward plane). Sphere meets cyl_i
-        // at the point on cyl_i's surface closest to ball_center.
         let tan_cap = ball_center + plane_normal * radius;
         let mut tan_cyls = Vec::with_capacity(2);
         for (c, r) in cyls.iter().zip(offset_radii.iter()) {
@@ -526,28 +638,24 @@ fn build_spherical_vertex_blends(
                 break;
             }
             let radial_unit = radial / radial_len;
-            // Ball is INSIDE cylinder at distance r-radius from axis
-            // on surface at the full cyl radius (R = r + radius).
             tan_cyls.push(c.center + *c.axis.as_ref() * along + radial_unit * c.radius);
             let _ = r;
         }
         if tan_cyls.len() != 2 {
+            emit(JunctionOutcome::SkippedRadialDegenerate);
             continue;
         }
 
-        // Build the patch: a triangular face on a new SphereSurface with
-        // vertices at the three tangent points.
-        let get_or_create = |cache: &mut HashMap<[i64; 3], VertexId>,
-                             topo: &mut Topology,
-                             p: Point3|
-         -> VertexId {
-            let key = quantize(p);
-            *cache.entry(key).or_insert_with(|| topo.add_vertex(p))
-        };
+        let get_or_create =
+            |cache: &mut HashMap<[i64; 3], VertexId>, topo: &mut Topology, p: Point3| -> VertexId {
+                let key = quantize(p);
+                *cache.entry(key).or_insert_with(|| topo.add_vertex(p))
+            };
         let v_cap = get_or_create(vertex_cache, new_topo, tan_cap);
         let v_c1 = get_or_create(vertex_cache, new_topo, tan_cyls[0]);
         let v_c2 = get_or_create(vertex_cache, new_topo, tan_cyls[1]);
         if v_cap == v_c1 || v_c1 == v_c2 || v_cap == v_c2 {
+            emit(JunctionOutcome::SkippedDegenerateTriangle);
             continue;
         }
 
@@ -577,6 +685,12 @@ fn build_spherical_vertex_blends(
         let surf_idx = new_geom.add_surface(Box::new(sphere));
         let face_id = new_topo.add_face(loop_id, surf_idx, Orientation::Forward);
         all_faces.push(face_id);
+
+        emit(JunctionOutcome::BuiltPatch {
+            ball_center,
+            tan_cap,
+            tan_cyls: [tan_cyls[0], tan_cyls[1]],
+        });
     }
 }
 
@@ -635,13 +749,11 @@ fn solve_two_circles_in_plane(
         (mid_x - h * rx, mid_y - h * ry),
     ];
     let (hx, hy) = project(*near_hint);
-    let best = candidates
-        .iter()
-        .min_by(|a, b| {
-            let da = (a.0 - hx).powi(2) + (a.1 - hy).powi(2);
-            let db = (b.0 - hx).powi(2) + (b.1 - hy).powi(2);
-            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
-        })?;
+    let best = candidates.iter().min_by(|a, b| {
+        let da = (a.0 - hx).powi(2) + (a.1 - hy).powi(2);
+        let db = (b.0 - hx).powi(2) + (b.1 - hy).powi(2);
+        da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+    })?;
     Some(*plane_origin + u_axis * best.0 + v_axis * best.1)
 }
 

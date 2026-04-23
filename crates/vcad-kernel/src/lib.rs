@@ -2382,19 +2382,10 @@ mod tests {
         );
     }
 
-    /// Diagnostic test — not an assertion, meant to be run with
-    /// `--nocapture` to print the world-space location of every
-    /// boundary edge in the pork-chop fillet mesh. Any non-zero output
-    /// is a tessellation hole (the "armpit gaps" visible in the
-    /// browser).
-    ///
-    /// Invoke with:
-    ///   cargo test -p vcad-kernel diag_porkchop_boundary_edges -- --nocapture --ignored
-    #[test]
-    #[ignore]
-    fn diag_porkchop_boundary_edges() {
-        use vcad_kernel_sketch::{SketchProfile, SketchSegment};
-        let segments = vec![
+    /// Shared pork-chop kidney profile for regression + diagnostic tests.
+    fn porkchop_segments() -> Vec<vcad_kernel_sketch::SketchSegment> {
+        use vcad_kernel_sketch::SketchSegment;
+        vec![
             SketchSegment::Arc {
                 start: vcad_kernel_math::Point2::new(45.0, 0.0),
                 end: vcad_kernel_math::Point2::new(20.0, 40.0),
@@ -2431,7 +2422,22 @@ mod tests {
                 center: vcad_kernel_math::Point2::new(20.0, -10.0),
                 ccw: true,
             },
-        ];
+        ]
+    }
+
+    /// Diagnostic test — not an assertion, meant to be run with
+    /// `--nocapture` to print the world-space location of every
+    /// boundary edge in the pork-chop fillet mesh. Any non-zero output
+    /// is a tessellation hole (the "armpit gaps" visible in the
+    /// browser).
+    ///
+    /// Invoke with:
+    ///   cargo test -p vcad-kernel diag_porkchop_boundary_edges -- --nocapture --ignored
+    #[test]
+    #[ignore]
+    fn diag_porkchop_boundary_edges() {
+        use vcad_kernel_sketch::SketchProfile;
+        let segments = porkchop_segments();
         let profile = SketchProfile::new(
             Point3::new(0.0, 0.0, 0.0),
             Vec3::new(1.0, 0.0, 0.0),
@@ -2479,6 +2485,68 @@ mod tests {
                 z_max
             );
         }
+    }
+
+    /// Diagnostic: print per-junction decisions from the fillet pipeline.
+    ///
+    ///   cargo test -p vcad-kernel diag_porkchop_fillet_trace -- --nocapture --ignored
+    #[test]
+    #[ignore]
+    fn diag_porkchop_fillet_trace() {
+        use vcad_kernel_fillet::{fillet_edges_detailed_with_trace, JunctionOutcome};
+        use vcad_kernel_sketch::SketchProfile;
+
+        let profile = SketchProfile::new(
+            Point3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            porkchop_segments(),
+        )
+        .expect("valid profile");
+        let extruded = Solid::extrude(profile, Vec3::new(0.0, 0.0, 18.0)).expect("extrude ok");
+
+        let brep = match &extruded.repr {
+            SolidRepr::BRep(b) => b.as_ref().clone(),
+            _ => panic!("expected brep"),
+        };
+        let target_edges = collect_fillet_target_edges(&brep);
+        let (_new_brep, _results, trace) =
+            fillet_edges_detailed_with_trace(&brep, &target_edges, 4.0, true);
+
+        println!(
+            "fillet trace: {} junctions considered",
+            trace.junctions.len()
+        );
+        let mut n_built = 0usize;
+        let mut n_skipped = 0usize;
+        for j in &trace.junctions {
+            let p = j.vertex_pos;
+            match &j.outcome {
+                JunctionOutcome::BuiltPatch {
+                    ball_center,
+                    tan_cap,
+                    tan_cyls,
+                } => {
+                    n_built += 1;
+                    println!(
+                        "  V@({:7.3},{:7.3},{:7.3}) tgt={} seam={} -> PATCH ball=({:7.3},{:7.3},{:7.3}) cap=({:7.3},{:7.3},{:7.3}) c1=({:7.3},{:7.3},{:7.3}) c2=({:7.3},{:7.3},{:7.3})",
+                        p.x, p.y, p.z, j.n_target_edges, j.n_seam_edges,
+                        ball_center.x, ball_center.y, ball_center.z,
+                        tan_cap.x, tan_cap.y, tan_cap.z,
+                        tan_cyls[0].x, tan_cyls[0].y, tan_cyls[0].z,
+                        tan_cyls[1].x, tan_cyls[1].y, tan_cyls[1].z,
+                    );
+                }
+                other => {
+                    n_skipped += 1;
+                    println!(
+                        "  V@({:7.3},{:7.3},{:7.3}) tgt={} seam={} -> SKIP {:?}",
+                        p.x, p.y, p.z, j.n_target_edges, j.n_seam_edges, other
+                    );
+                }
+            }
+        }
+        println!("  built: {}, skipped: {}", n_built, n_skipped);
     }
 
     #[test]
