@@ -1,5 +1,5 @@
 import type { SelectionContext, AnthropicTool } from "@vcad/core";
-import { useAuthStore } from "@vcad/auth";
+import { getSupabase, useAuthStore } from "@vcad/auth";
 
 /**
  * Prefix used to signal a rate-limit error payload to the chat handler.
@@ -7,6 +7,36 @@ import { useAuthStore } from "@vcad/auth";
  * of showing a generic error.
  */
 export const LIMIT_ERROR_PREFIX = "LIMIT:";
+
+/**
+ * Ask Supabase to refresh the current session so we get a new access token.
+ * The auth-state-change listener in AuthProvider picks up the new session
+ * and writes it into useAuthStore — so a subsequent read of
+ * `useAuthStore.getState().session.access_token` returns the fresh token.
+ *
+ * Returns the new access token, or null if no Supabase client is configured
+ * or the refresh failed (no active refresh token, network error, etc).
+ */
+async function refreshAccessToken(): Promise<string | null> {
+  const supabase = getSupabase();
+  if (!supabase) return null;
+  try {
+    const { data, error } = await supabase.auth.refreshSession();
+    if (error || !data.session) return null;
+    return data.session.access_token;
+  } catch {
+    return null;
+  }
+}
+
+/** Build the Authorization header from the current store session. Returns
+ *  an empty record when there's no session — callers are anonymous in that
+ *  case and the server applies the anon-tier rate limits. */
+function authHeaders(): Record<string, string> {
+  const session = useAuthStore.getState().session;
+  if (!session?.access_token) return {};
+  return { Authorization: `Bearer ${session.access_token}` };
+}
 
 export interface ChatRequestMessage {
   role: "user" | "assistant";
@@ -58,32 +88,56 @@ export async function streamChat(
   }));
 
   try {
+    const { apiUrl } = await import("@/lib/api-origin");
+    const url = apiUrl("/api/chat");
+    const requestBody = JSON.stringify({
+      messages,
+      context: { selectedParts },
+      tools: options?.tools,
+      systemPrompt: options?.systemPrompt,
+      thread_id: options?.threadId ?? null,
+      document_id: options?.documentId ?? null,
+      user_message_id: options?.userMessageId ?? null,
+      parent_message_id: options?.parentMessageId ?? null,
+      assistant_message_id: options?.assistantMessageId ?? null,
+    });
+
     // Attach the Supabase access token if the user is signed in (including
     // anonymous sessions), so the backend can scope persistence rows to
     // their auth.uid() and apply the right rate-limit tier.
-    const session = useAuthStore.getState().session;
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (session?.access_token) {
-      headers.Authorization = `Bearer ${session.access_token}`;
+    const post = (extraHeaders: Record<string, string>) =>
+      fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...extraHeaders,
+        },
+        body: requestBody,
+        signal: options?.signal,
+      });
+
+    let response = await post(authHeaders());
+
+    // The server returns 401 with `error: "auth_invalid"` when a Bearer
+    // token was sent but Supabase rejected it (typically: the access token
+    // expired between the auto-refresh and this send). Refresh the session
+    // once and retry the same request — without this, the user would see a
+    // misleading "Free chat limit reached" banner because the server would
+    // have routed the orphaned request through the anon IP rate limit.
+    if (response.status === 401 && useAuthStore.getState().session) {
+      const newToken = await refreshAccessToken();
+      if (newToken) {
+        response = await post({ Authorization: `Bearer ${newToken}` });
+      }
     }
 
-    const { apiUrl } = await import("@/lib/api-origin");
-    const response = await fetch(apiUrl("/api/chat"), {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        messages,
-        context: { selectedParts },
-        tools: options?.tools,
-        systemPrompt: options?.systemPrompt,
-        thread_id: options?.threadId ?? null,
-        document_id: options?.documentId ?? null,
-        user_message_id: options?.userMessageId ?? null,
-        parent_message_id: options?.parentMessageId ?? null,
-        assistant_message_id: options?.assistantMessageId ?? null,
-      }),
-      signal: options?.signal,
-    });
+    if (response.status === 401) {
+      callbacks.onError(
+        "Sign-in session expired. Please sign in again to continue.",
+      );
+      callbacks.onFinish();
+      return;
+    }
 
     if (response.status === 429) {
       // Rate limit hit — pass the full JSON body through with a prefix so
