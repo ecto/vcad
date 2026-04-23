@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import { TIERS } from "@vcad/core";
 import {
   applyCors,
@@ -107,25 +107,13 @@ function getClientIp(req: VercelRequest): string {
   return req.socket?.remoteAddress ?? "unknown";
 }
 
-let devSaltCache: string | null = null;
-function getDevSalt(): string {
-  if (!devSaltCache) {
-    devSaltCache = randomBytes(32).toString("hex");
-    console.warn("[chat] IP_HASH_SALT not set — using ephemeral random salt (dev only)");
-  }
-  return devSaltCache;
-}
-
 function hashIp(ip: string): string {
-  let salt = process.env.IP_HASH_SALT;
+  const salt = process.env.IP_HASH_SALT;
   if (!salt || salt.length < 16) {
-    if (process.env.NODE_ENV === "production") {
-      // Fail closed: without a strong, deployment-specific salt the "hashed
-      // IP" values used for anon rate-limiting collapse to a known mapping
-      // that any caller can precompute.
-      throw new Error("IP_HASH_SALT is not set or is too short (>= 16 chars required)");
-    }
-    salt = getDevSalt();
+    // Fail closed: without a strong, deployment-specific salt the "hashed
+    // IP" values used for anon rate-limiting collapse to a known mapping
+    // that any caller can precompute.
+    throw new Error("IP_HASH_SALT is not set or is too short (>= 16 chars required)");
   }
   return createHash("sha256").update(`${salt}:${ip}`).digest("hex");
 }
