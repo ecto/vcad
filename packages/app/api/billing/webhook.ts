@@ -15,6 +15,7 @@ import { tierFromStripeLookupKey, type TierId } from "@vcad/core";
 import { getSupabaseAdmin } from "../_lib/supabase.js";
 import { getStripe } from "../_lib/stripe.js";
 import { sendEmail, upgradeWelcomeEmail } from "../_lib/email.js";
+import { maskEmail, notifyDiscord } from "../_lib/discord.js";
 
 export const config = {
   api: {
@@ -106,6 +107,7 @@ async function markSubscriptionCanceled(
 ): Promise<void> {
   const userId = await resolveUserId(admin, sub);
   if (!userId) return;
+  const priorTier = tierFromSubscription(sub);
   const { error } = await admin
     .from("subscriptions")
     .update({
@@ -116,7 +118,25 @@ async function markSubscriptionCanceled(
       cancel_at_period_end: false,
     })
     .eq("user_id", userId);
-  if (error) console.error("[webhook] cancel update failed:", error);
+  if (error) {
+    console.error("[webhook] cancel update failed:", error);
+    return;
+  }
+  void (async () => {
+    try {
+      const { data: authUser } = await admin.auth.admin.getUserById(userId);
+      await notifyDiscord({
+        kind: "billing",
+        title: "Subscription canceled",
+        fields: [
+          { name: "was", value: priorTier, inline: true },
+          { name: "email", value: maskEmail(authUser?.user?.email), inline: true },
+        ],
+      });
+    } catch (err) {
+      console.error("[webhook] cancel notify failed:", err);
+    }
+  })();
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -186,6 +206,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   })();
                   const msg = upgradeWelcomeEmail({ firstName, tier });
                   await sendEmail({ to: email, ...msg });
+                  void notifyDiscord({
+                    kind: "billing",
+                    title: `New ${tier} subscriber`,
+                    fields: [
+                      { name: "tier", value: tier, inline: true },
+                      { name: "email", value: maskEmail(email), inline: true },
+                    ],
+                  });
                 } catch (err) {
                   console.error("[webhook] welcome email failed:", err);
                 }
