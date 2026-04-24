@@ -441,6 +441,29 @@ export interface EmbroideryPatternOp {
   design: EmbroideryDesign;
 }
 
+/**
+ * Parametric reference to a library part (stdlib or user-published).
+ *
+ * The engine resolves this node at evaluation time:
+ * - `std:<category>.<slug>` → compiled-in Rust builder exported by
+ *   the WASM kernel via `buildPart`.
+ * - `@<username>/<slug>` → Loon source fetched from the social layer
+ *   (Phase 2).
+ *
+ * The sub-graph produced by the resolver replaces this node during
+ * meshing, but the `PartInstance` itself is preserved in the document
+ * so parameters remain editable.
+ */
+export interface PartInstanceOp {
+  type: "PartInstance";
+  /** Part source path (e.g. `"std:fastener.bolt.socket-head"`). */
+  path: string;
+  /** Pinned version string (e.g. `"1.0"`). Immutable once published. */
+  version: string;
+  /** Parameter name → JSON value map passed to the part's builder. */
+  params: Record<string, unknown>;
+}
+
 /** CSG operation — the core building block of the IR DAG. */
 export type CsgOp =
   | CubeOp
@@ -467,7 +490,8 @@ export type CsgOp =
   | LoftOp
   | ImportedMeshOp
   | PcbBoardOp
-  | EmbroideryPatternOp;
+  | EmbroideryPatternOp
+  | PartInstanceOp;
 
 /** A node in the IR graph. */
 export interface Node {

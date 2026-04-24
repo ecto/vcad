@@ -12,6 +12,7 @@ import type {
   ImportedMeshOp,
   PcbBoardOp,
   EmbroideryPatternOp,
+  PartInstanceOp,
 } from "@vcad/ir";
 import { resolveDocument } from "./expressions.js";
 import type {
@@ -36,6 +37,8 @@ export interface EvaluateOptions {
 interface KernelModule {
   Solid: typeof Solid;
   evaluateDocument?: (docJson: string, skipClashDetection: boolean) => unknown;
+  /** Resolve a stdlib part → sub-document JSON. */
+  buildPart?: (path: string, paramsJson: string) => string;
 }
 
 /** Shape of the WASM evaluator result */
@@ -93,6 +96,12 @@ export function evaluateDocument(
   // that inspect the raw CsgOp see concrete f64 values.
   const resolved = resolveDocument(doc);
   doc = resolved.doc;
+
+  // Expand any PartInstance nodes next. Both the Rust WASM evaluator and
+  // the TS fallback only understand regular CsgOps; parts are a reference
+  // layer that lives above eval. Runs after parameter resolution so parts
+  // see concrete f64s for any parameter-bound fields in their params map.
+  doc = expandPartInstances(doc, kernel);
 
   // Try the Rust WASM evaluator first
   if (kernel.evaluateDocument) {
@@ -827,5 +836,134 @@ function evaluateOp(
 
     case "EmbroideryPattern":
       return Solid.empty();
+
+    case "PartInstance":
+      // PartInstance nodes are expanded before evaluation via
+      // `expandPartInstances`. If one slips through, treat as empty to
+      // avoid crashing the evaluator — the warning has already been
+      // logged during expansion.
+      return Solid.empty();
   }
+}
+
+
+/**
+ * Expand every `PartInstance` node in the document by resolving it through
+ * the kernel's `buildPart` export and splicing the resulting sub-document
+ * into the parent. The `PartInstance` node itself is replaced with a
+ * `Translate` wrapper pointing at the sub-doc's root, so parent references
+ * by NodeId continue to resolve.
+ *
+ * Sub-document NodeIds are remapped to a fresh disjoint range so they
+ * don't collide with the parent document's ids.
+ */
+function expandPartInstances(doc: Document, kernel: KernelModule): Document {
+  const build = kernel.buildPart;
+  if (typeof build !== "function") return doc;
+
+  const hasAny = Object.values(doc.nodes).some(
+    (n) => n.op.type === "PartInstance",
+  );
+  if (!hasAny) return doc;
+
+  const out: Document = JSON.parse(JSON.stringify(doc));
+  const existingIds = Object.keys(out.nodes).map(Number);
+  let nextId = (existingIds.length > 0 ? Math.max(...existingIds) : 0) + 1;
+
+  for (const [idStr, node] of Object.entries(out.nodes)) {
+    if (node.op.type !== "PartInstance") continue;
+    const op = node.op as PartInstanceOp;
+
+    let subJson: string;
+    try {
+      subJson = build(op.path, JSON.stringify(op.params ?? {}));
+    } catch (err) {
+      console.warn(`[parts] failed to build ${op.path}:`, err);
+      node.op = { type: "Empty" };
+      continue;
+    }
+
+    let subDoc: Document;
+    try {
+      subDoc = JSON.parse(subJson) as Document;
+    } catch (err) {
+      console.warn(`[parts] invalid sub-doc from ${op.path}:`, err);
+      node.op = { type: "Empty" };
+      continue;
+    }
+
+    const rootEntry = subDoc.roots[0];
+    if (!rootEntry) {
+      console.warn(`[parts] ${op.path} produced no scene root`);
+      node.op = { type: "Empty" };
+      continue;
+    }
+
+    // Remap sub-doc NodeIds into a fresh range.
+    const idMap = new Map<number, number>();
+    for (const subId of Object.keys(subDoc.nodes).map(Number)) {
+      idMap.set(subId, nextId++);
+    }
+
+    for (const [subIdStr, subNode] of Object.entries(subDoc.nodes)) {
+      const subId = Number(subIdStr);
+      const newId = idMap.get(subId)!;
+      const remapped = remapNodeIds(subNode as Node, idMap);
+      remapped.id = newId;
+      out.nodes[String(newId)] = remapped;
+    }
+
+    const newRootId = idMap.get(rootEntry.root);
+    if (newRootId === undefined) {
+      console.warn(`[parts] ${op.path} root id not in remap table`);
+      node.op = { type: "Empty" };
+      continue;
+    }
+
+    // Replace the PartInstance with a transparent Translate wrapper so the
+    // parent's NodeId keeps pointing at valid geometry without changing its
+    // own id. `idStr` stays as the node key in the document.
+    void idStr;
+    node.op = {
+      type: "Translate",
+      child: newRootId,
+      offset: { x: 0, y: 0, z: 0 },
+    };
+  }
+
+  return out;
+}
+
+function remapNodeIds(node: Node, idMap: Map<number, number>): Node {
+  const m = (id: number) => idMap.get(id) ?? id;
+  const op = node.op;
+  let newOp: CsgOp = op;
+  switch (op.type) {
+    case "Union":
+    case "Difference":
+    case "Intersection":
+      newOp = { ...op, left: m(op.left), right: m(op.right) };
+      break;
+    case "Translate":
+    case "Rotate":
+    case "Scale":
+    case "LinearPattern":
+    case "CircularPattern":
+    case "Shell":
+    case "Fillet":
+    case "Chamfer":
+      newOp = { ...op, child: m(op.child) };
+      break;
+    case "Extrude":
+    case "Revolve":
+    case "Sweep":
+      newOp = { ...op, sketch: m(op.sketch) };
+      break;
+    case "Loft":
+      newOp = { ...op, sketches: op.sketches.map(m) };
+      break;
+    default:
+      newOp = op;
+  }
+  return { ...node, op: newOp };
 }

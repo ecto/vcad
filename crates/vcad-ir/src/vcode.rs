@@ -2484,6 +2484,11 @@ fn format_op(
             line: 0,
             message: "EmbroideryPattern not supported in VCode format".to_string(),
         }),
+
+        CsgOp::PartInstance { .. } => Err(VCodeParseError {
+            line: 0,
+            message: "PartInstance not supported in VCode format".to_string(),
+        }),
     }
 }
 

@@ -72,7 +72,8 @@ fn validate_op(doc: &Document, node_id: NodeId, op: &CsgOp) -> Result<(), EvalEr
         | CsgOp::ImportedMesh { .. }
         | CsgOp::StepImport { .. }
         | CsgOp::PcbBoard { .. }
-        | CsgOp::EmbroideryPattern { .. } => {}
+        | CsgOp::EmbroideryPattern { .. }
+        | CsgOp::PartInstance { .. } => {}
     }
 
     Ok(())
@@ -121,6 +122,7 @@ fn csg_op_name(op: &CsgOp) -> &'static str {
         CsgOp::StepImport { .. } => "StepImport",
         CsgOp::PcbBoard { .. } => "PcbBoard",
         CsgOp::EmbroideryPattern { .. } => "EmbroideryPattern",
+        CsgOp::PartInstance { .. } => "PartInstance",
     }
 }
 

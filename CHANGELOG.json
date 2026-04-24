@@ -2,6 +2,16 @@
   "$schema": "./changelog.schema.json",
   "entries": [
     {
+      "id": "2026-04-23-stdlib-parts-library",
+      "version": "0.9.0",
+      "date": "2026-04-23",
+      "category": "feat",
+      "title": "Stdlib parts library (fasteners + bearings)",
+      "summary": "New parametric parts library: bolts (M2–M12 ISO 4762), hex nuts, flat washers, 608 skate bearings. Parts remain editable after insertion and round-trip through save/load. McMaster, ISO, and DIN catalog numbers cross-referenced on every part. New chat + MCP tools `search_parts` and `place_part`.",
+      "features": ["parts", "fasteners", "bearings", "chat", "mcp"],
+      "mcpTools": ["search_parts", "place_part"]
+    },
+    {
       "id": "2026-04-24-parametric-bike-models",
       "version": "0.9.0",
       "date": "2026-04-24",

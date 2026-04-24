@@ -5,9 +5,12 @@
  * at the repository root.
  */
 
-// Note: CHANGELOG.json is copied to dist/ during build
-// @ts-expect-error JSON import (path resolves correctly at runtime)
-import changelogData from "../CHANGELOG.json" with { type: "json" };
+// In dev the app resolves `@vcad/core` to `src/index.ts`, which pulls
+// `../CHANGELOG.json` through the symlink → repo root. In prod, tsc
+// compiles against the same path and the build step copies
+// CHANGELOG.json into `dist/` next to the compiled JS. Same relative
+// import works in both worlds.
+import changelogData from "../CHANGELOG.json";
 
 export type ChangelogCategory = "feat" | "fix" | "breaking" | "perf" | "docs";
 
@@ -24,13 +27,23 @@ export interface ChangelogEntry {
   breaking?: { description: string; migration?: string };
 }
 
+/** Matches the on-disk shape of `CHANGELOG.json`. */
 export interface Changelog {
-  version: string;
+  /** JSON Schema reference (optional, ignored at runtime). */
+  $schema?: string;
+  /** Entries in reverse-chronological order — newest first. */
   entries: ChangelogEntry[];
 }
 
-export const changelog: Changelog = changelogData as Changelog;
-export const CURRENT_VERSION = changelog.version;
+export const changelog: Changelog = changelogData as unknown as Changelog;
+
+/**
+ * Semver of the most recent changelog entry. The JSON is kept in
+ * newest-first order by convention (see the `Adding a changelog
+ * entry` section of CLAUDE.md), so the first entry is "current."
+ */
+export const CURRENT_VERSION: string =
+  changelog.entries[0]?.version ?? "0.0.0";
 
 /**
  * Get changelog entries newer than a given version.

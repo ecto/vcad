@@ -96,7 +96,7 @@ pub fn evaluate_document(
                                 nt.mesh_ms = ms;
                             }
                         }
-                        Ok((tri_to_evaluated(&tri), Some(s)))
+                        Ok((tri_to_evaluated_render(tri), Some(s)))
                     }
                     None => Ok((EvaluatedMesh::empty(), None)),
                 }
@@ -169,7 +169,7 @@ pub fn evaluate_document(
                                 if let Some(t0) = t_mesh {
                                     tessellate_ms += clock.unwrap().now_ms() - t0;
                                 }
-                                Ok(tri_to_evaluated(&tri))
+                                Ok(tri_to_evaluated_render(tri))
                             }
                             None => Ok(EvaluatedMesh::empty()),
                         }
@@ -763,6 +763,13 @@ fn evaluate_op_timed(
             // Embroidery is 2D — no 3D solid.
             Ok(None)
         }
+
+        CsgOp::PartInstance { .. } => {
+            // PartInstance is expanded by the engine (TS) before kernel evaluation.
+            // If we see one here it's a usage error, not an internal invariant —
+            // surface nothing rather than crashing so the kernel can still partially evaluate.
+            Ok(None)
+        }
     }
 }
 
@@ -1084,6 +1091,7 @@ fn op_name(op: &CsgOp) -> String {
         CsgOp::StepImport { .. } => "StepImport",
         CsgOp::PcbBoard { .. } => "PcbBoard",
         CsgOp::EmbroideryPattern { .. } => "EmbroideryPattern",
+        CsgOp::PartInstance { .. } => "PartInstance",
     }
     .to_string()
 }
@@ -1461,6 +1469,33 @@ fn tri_to_evaluated(tri: &TriangleMesh) -> EvaluatedMesh {
         },
         face_kinds: if tri.face_kinds.len() == tri.indices.len() / 3 {
             Some(tri.face_kinds.clone())
+        } else {
+            None
+        },
+    }
+}
+
+/// Convert kernel TriangleMesh to EvaluatedMesh after running the
+/// render-bake pipeline.
+///
+/// Use this at every call site that produces a mesh for the renderer,
+/// STL/GLB export, or the ray tracer so they all receive a single
+/// consistent shading pipeline (crease-aware vertex normals today, more
+/// render-only transforms in the future) independent of which tessellator
+/// produced the mesh. The output is unindexed.
+fn tri_to_evaluated_render(mut tri: TriangleMesh) -> EvaluatedMesh {
+    vcad_kernel_tessellate::render_bake_default(&mut tri);
+    let tri_count = tri.indices.len() / 3;
+    EvaluatedMesh {
+        positions: tri.vertices,
+        indices: tri.indices,
+        normals: if tri.normals.is_empty() {
+            None
+        } else {
+            Some(tri.normals)
+        },
+        face_kinds: if tri.face_kinds.len() == tri_count {
+            Some(tri.face_kinds)
         } else {
             None
         },

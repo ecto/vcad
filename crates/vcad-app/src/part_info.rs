@@ -348,6 +348,26 @@ pub enum PartInfo {
         /// Source filename.
         source: Option<String>,
     },
+    /// Stdlib or user-published part instance.
+    #[serde(rename = "part-instance", rename_all = "camelCase")]
+    PartInstance {
+        /// Part identifier.
+        id: String,
+        /// Human-readable name.
+        name: String,
+        /// Part source path, e.g. `"std:fastener.bolt.socket-head"`.
+        path: String,
+        /// Pinned version.
+        version: String,
+        /// The PartInstance IR node.
+        part_node_id: NodeId,
+        /// Scale transform node.
+        scale_node_id: NodeId,
+        /// Rotation transform node.
+        rotate_node_id: NodeId,
+        /// Translation transform node.
+        translate_node_id: NodeId,
+    },
 }
 
 impl PartInfo {
@@ -372,7 +392,8 @@ impl PartInfo {
             | PartInfo::Text { id, .. }
             | PartInfo::ImportedMesh { id, .. }
             | PartInfo::PcbBoard { id, .. }
-            | PartInfo::EmbroideryPattern { id, .. } => id,
+            | PartInfo::EmbroideryPattern { id, .. }
+            | PartInfo::PartInstance { id, .. } => id,
         }
     }
 
@@ -434,6 +455,9 @@ impl PartInfo {
                 translate_node_id, ..
             }
             | PartInfo::EmbroideryPattern {
+                translate_node_id, ..
+            }
+            | PartInfo::PartInstance {
                 translate_node_id, ..
             } => *translate_node_id,
         }

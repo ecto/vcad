@@ -36,6 +36,12 @@ import {
 } from "./tools/gym.js";
 import { getChangelog, getChangelogSchema } from "./tools/changelog.js";
 import {
+  searchPartsTool,
+  searchPartsSchema,
+  placePartTool,
+  placePartSchema,
+} from "./tools/parts.js";
+import {
   createSchematic,
   createSchematicSchema,
   placeComponents,
@@ -99,6 +105,18 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
   // List available tools
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
+      {
+        name: "search_parts",
+        description:
+          "Search the stdlib parts library (fasteners, bearings, …). Matches across name, category, synonyms, and catalog part numbers (McMaster / ISO / DIN). Returns an array of {id, name, category, params, xrefs, synonyms} — use `id` with `place_part`. Part numbers like '91290A320' or 'ISO 4762' match directly.",
+        inputSchema: searchPartsSchema,
+      },
+      {
+        name: "place_part",
+        description:
+          "Insert a stdlib part into a document. Takes the part `path` (from `search_parts.id`) and an optional `params` map; missing params use declared defaults. Returns the updated document JSON. The part remains parametric — end users can edit its params from the feature tree.",
+        inputSchema: placePartSchema,
+      },
       {
         name: "create_cad_document",
         description:
@@ -329,6 +347,14 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
       let result: { content: Array<{ type: string; text: string; annotations?: unknown }> };
 
       switch (name) {
+        case "search_parts":
+          result = searchPartsTool(args, engine);
+          break;
+
+        case "place_part":
+          result = placePartTool(args, engine);
+          break;
+
         case "create_cad_document":
           result = createCadDocument(args);
           break;

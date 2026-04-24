@@ -297,6 +297,11 @@ export function Viewport() {
           logarithmicDepthBuffer: true,
           toneMapping: THREE.ACESFilmicToneMapping,
           toneMappingExposure: 1.0,
+          // Pin sRGB output so color-graded assets and procedural HDR
+          // panels round-trip the way ACES expects. R3F defaults to sRGB
+          // on modern versions; making it explicit here prevents a silent
+          // regression if the default ever flips.
+          outputColorSpace: THREE.SRGBColorSpace,
           preserveDrawingBuffer: true,
         }}
         style={{ background: canvasBg }}

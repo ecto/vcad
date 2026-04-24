@@ -83,6 +83,16 @@ export type {
   FilledZoneResult,
 } from "./ecad.js";
 
+// Parts library
+export {
+  loadPartsManifest,
+  clearPartsManifestCache,
+  defaultParamsFor,
+  searchParts,
+  buildPartDocument,
+} from "./parts.js";
+export type { PartManifestEntry, PartParam, PartXref } from "./parts.js";
+
 // Physics simulation
 export { PhysicsEnv, isPhysicsAvailable } from "./physics.js";
 export type {
@@ -155,6 +165,10 @@ export interface KernelModule {
   evaluateDocument?: (docJson: string, skipClashDetection: boolean) => unknown;
   /** Evaluate loon source → JSON-serialized Document. */
   evalVcadSource?: (source: string) => string;
+  /** JSON-serialized parts manifest for the stdlib. */
+  getPartsManifest?: () => string;
+  /** Build a stdlib part's sub-document given path and params JSON. */
+  buildPart?: (path: string, paramsJson: string) => string;
 }
 
 /** Rendered dimension types from the annotation layer */
@@ -329,6 +343,8 @@ export class Engine {
       createDetailView: wasmModule.createDetailView,
       evaluateDocument: (wasmModule as Record<string, unknown>).evaluateDocument as KernelModule["evaluateDocument"],
       evalVcadSource: (wasmModule as Record<string, unknown>).evalVcadSource as KernelModule["evalVcadSource"],
+      getPartsManifest: (wasmModule as Record<string, unknown>).getPartsManifest as KernelModule["getPartsManifest"],
+      buildPart: (wasmModule as Record<string, unknown>).buildPart as KernelModule["buildPart"],
     }, compiledWasmModule);
   }
 

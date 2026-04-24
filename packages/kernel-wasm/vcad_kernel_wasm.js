@@ -857,6 +857,12 @@ export class Solid {
      * Get the triangle mesh representation.
      *
      * Returns a JS object with `positions` (Float32Array) and `indices` (Uint32Array).
+     *
+     * Runs the tessellator output through
+     * [`vcad_kernel_tessellate::render_bake`] so the emitted mesh carries
+     * angle-based creased vertex normals. Every downstream renderer —
+     * three.js today, wgpu / STL / GLB / ray tracer later — consumes this
+     * same attribute layout without recomputing anything.
      * @param {number | null} [segments]
      * @returns {any}
      */
@@ -2362,6 +2368,40 @@ export function analyzeForPrinting(solid) {
 }
 
 /**
+ * Build a built-in part's sub-document given its path and params JSON.
+ *
+ * `path` is either a bare id (`"fastener.bolt.socket-head"`) or prefixed
+ * with `std:`. `params_json` is a JSON object whose keys are parameter
+ * names. Returns a JSON-serialized [`vcad_ir::Document`] that the engine
+ * can splice into the parent document.
+ * @param {string} path
+ * @param {string} params_json
+ * @returns {string}
+ */
+export function buildPart(path, params_json) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(path, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.buildPart(ptr0, len0, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
  * Build the system prompt sent with every `/api/chat` request.
  *
  * `parts_json` must deserialize into `Vec<vcad_chat::PartInfo>` (the TS
@@ -3482,6 +3522,26 @@ export function generateGcode(result, printer_profile, print_temp, bed_temp) {
 }
 
 /**
+ * Return the full parts manifest JSON for the built-in stdlib.
+ *
+ * The app consumes this on boot to populate the palette's Parts tab and
+ * the Cmd+K search index.
+ * @returns {string}
+ */
+export function getPartsManifest() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.getPartsManifest();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
  * Get available printer profiles.
  * @returns {any}
  */
@@ -4054,6 +4114,43 @@ export function recommendPrintSettings(analysis_json, printer_profile) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Run the render-bake pipeline on a raw triangle mesh.
+ *
+ * Used by the imported-mesh path (STL / STEP drops) so meshes that arrive
+ * from outside the kernel get the same post-processing as kernel-emitted
+ * meshes: angle-based creased vertex normals today, tangent generation and
+ * LOD baking later. Positions and indices may be duplicated (the mesh
+ * becomes unindexed) so downstream consumers just upload the returned
+ * arrays.
+ *
+ * Input is `{ positions: Float32Array, indices: Uint32Array, crease_angle_rad?: f64 }`
+ * encoded as JSON. Returns `{ positions, indices, normals }` with the same
+ * encoding.
+ * @param {string} input_json
+ * @returns {string}
+ */
+export function renderBakeMesh(input_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(input_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.renderBakeMesh(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
 }
 
 /**
@@ -5714,7 +5811,7 @@ function __wbg_get_imports() {
                     const a = state0.a;
                     state0.a = 0;
                     try {
-                        return wasm_bindgen__convert__closures_____invoke__h61f848611b9bfd22(a, state0.b, arg0, arg1);
+                        return wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(a, state0.b, arg0, arg1);
                     } finally {
                         state0.a = a;
                     }
@@ -6299,13 +6396,13 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 1294, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1295, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h29172bbcd065953b, wasm_bindgen__convert__closures_____invoke__h409646c44a6f7cf4);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 1321, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1322, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2079, function: Function { arguments: [Externref], shim_idx: 2080, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h6ed7eb1128abde65, wasm_bindgen__convert__closures_____invoke__h53e1d5f5246c70f9);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2106, function: Function { arguments: [Externref], shim_idx: 2107, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
             return ret;
         },
         __wbindgen_cast_0000000000000003: function(arg0) {
@@ -6393,16 +6490,16 @@ function __wbg_get_imports() {
     };
 }
 
-function wasm_bindgen__convert__closures_____invoke__h409646c44a6f7cf4(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h409646c44a6f7cf4(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h53e1d5f5246c70f9(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h53e1d5f5246c70f9(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h61f848611b9bfd22(arg0, arg1, arg2, arg3) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h61f848611b9bfd22(arg0, arg1, arg2, arg3);
+function wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(arg0, arg1, arg2, arg3) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(arg0, arg1, arg2, arg3);
 }
 
 

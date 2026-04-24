@@ -7068,6 +7068,7 @@ dependencies = [
  "vcad-kernel-tessellate",
  "vcad-kernel-topo",
  "vcad-loon",
+ "vcad-parts",
  "vcad-slicer",
  "vcad-slicer-bambu",
  "vcad-slicer-gcode",
@@ -7083,6 +7084,15 @@ name = "vcad-loon"
 version = "0.9.0"
 dependencies = [
  "loon-lang",
+ "serde_json",
+ "vcad-ir",
+]
+
+[[package]]
+name = "vcad-parts"
+version = "0.9.0"
+dependencies = [
+ "serde",
  "serde_json",
  "vcad-ir",
 ]

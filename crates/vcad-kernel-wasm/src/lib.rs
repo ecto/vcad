@@ -853,9 +853,16 @@ impl Solid {
     /// Get the triangle mesh representation.
     ///
     /// Returns a JS object with `positions` (Float32Array) and `indices` (Uint32Array).
+    ///
+    /// Runs the tessellator output through
+    /// [`vcad_kernel_tessellate::render_bake`] so the emitted mesh carries
+    /// angle-based creased vertex normals. Every downstream renderer —
+    /// three.js today, wgpu / STL / GLB / ray tracer later — consumes this
+    /// same attribute layout without recomputing anything.
     #[wasm_bindgen(js_name = getMesh)]
     pub fn get_mesh(&self, segments: Option<u32>) -> JsValue {
-        let mesh = self.inner.to_mesh(segments.unwrap_or(32));
+        let mut mesh = self.inner.to_mesh(segments.unwrap_or(32));
+        vcad_kernel_tessellate::render_bake_default(&mut mesh);
         let num_verts = mesh.vertices.len() / 3;
 
         // Validate indices - check for out-of-bounds references
@@ -3231,6 +3238,10 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
         vcad_ir::CsgOp::EmbroideryPattern { .. } => Err(JsError::new(
             "EmbroideryPattern not supported in VCode evaluation - use evaluateDocument",
         )),
+
+        vcad_ir::CsgOp::PartInstance { .. } => Err(JsError::new(
+            "PartInstance must be expanded by the engine before VCode evaluation",
+        )),
     }
 }
 
@@ -4679,6 +4690,83 @@ fn mesh_to_js(mesh: &vcad_eval::EvaluatedMesh) -> JsValue {
         );
     }
     obj.into()
+}
+
+/// Run the render-bake pipeline on a raw triangle mesh.
+///
+/// Used by the imported-mesh path (STL / STEP drops) so meshes that arrive
+/// from outside the kernel get the same post-processing as kernel-emitted
+/// meshes: angle-based creased vertex normals today, tangent generation and
+/// LOD baking later. Positions and indices may be duplicated (the mesh
+/// becomes unindexed) so downstream consumers just upload the returned
+/// arrays.
+///
+/// Input is `{ positions: Float32Array, indices: Uint32Array, crease_angle_rad?: f64 }`
+/// encoded as JSON. Returns `{ positions, indices, normals }` with the same
+/// encoding.
+#[wasm_bindgen(js_name = renderBakeMesh)]
+pub fn render_bake_mesh_wasm(input_json: &str) -> Result<String, JsError> {
+    #[derive(serde::Deserialize)]
+    struct Input {
+        positions: Vec<f32>,
+        indices: Vec<u32>,
+        #[serde(default)]
+        crease_angle_rad: Option<f64>,
+    }
+    #[derive(serde::Serialize)]
+    struct Output {
+        positions: Vec<f32>,
+        indices: Vec<u32>,
+        normals: Vec<f32>,
+    }
+    let input: Input = serde_json::from_str(input_json)
+        .map_err(|e| JsError::new(&format!("invalid input JSON: {e}")))?;
+    let mut mesh = vcad_kernel_tessellate::TriangleMesh {
+        vertices: input.positions,
+        indices: input.indices,
+        normals: Vec::new(),
+        face_kinds: Vec::new(),
+    };
+    let opts = vcad_kernel_tessellate::RenderBakeOptions {
+        crease_angle_rad: input
+            .crease_angle_rad
+            .unwrap_or(vcad_kernel_tessellate::DEFAULT_CREASE_ANGLE_RAD),
+    };
+    vcad_kernel_tessellate::render_bake(&mut mesh, opts);
+    let out = Output {
+        positions: mesh.vertices,
+        indices: mesh.indices,
+        normals: mesh.normals,
+    };
+    serde_json::to_string(&out).map_err(|e| JsError::new(&format!("serialize failed: {e}")))
+}
+
+// ============================================================================
+// Parts library (stdlib)
+// ============================================================================
+
+/// Return the full parts manifest JSON for the built-in stdlib.
+///
+/// The app consumes this on boot to populate the palette's Parts tab and
+/// the Cmd+K search index.
+#[wasm_bindgen(js_name = getPartsManifest)]
+pub fn get_parts_manifest() -> String {
+    vcad_parts::manifest_json()
+}
+
+/// Build a built-in part's sub-document given its path and params JSON.
+///
+/// `path` is either a bare id (`"fastener.bolt.socket-head"`) or prefixed
+/// with `std:`. `params_json` is a JSON object whose keys are parameter
+/// names. Returns a JSON-serialized [`vcad_ir::Document`] that the engine
+/// can splice into the parent document.
+#[wasm_bindgen(js_name = buildPart)]
+pub fn build_part(path: &str, params_json: &str) -> Result<String, JsError> {
+    let params: std::collections::HashMap<String, serde_json::Value> =
+        serde_json::from_str(params_json)
+            .map_err(|e| JsError::new(&format!("invalid params JSON: {e}")))?;
+    let doc = vcad_parts::build_part(path, &params).map_err(|e| JsError::new(&e))?;
+    serde_json::to_string(&doc).map_err(|e| JsError::new(&format!("serialize failed: {e}")))
 }
 
 /// Evaluate a loon source string and return a JSON-serialized vcad Document.

@@ -19,6 +19,7 @@ vcad-app = { workspace = true }
 vcad-chat = { path = "../vcad-chat", default-features = false }
 vcad-eval = { workspace = true }
 vcad-loon = { workspace = true }
+vcad-parts = { workspace = true }
 wasmosis = { workspace = true }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"

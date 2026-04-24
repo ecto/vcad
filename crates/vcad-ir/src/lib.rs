@@ -795,6 +795,24 @@ pub enum CsgOp {
         /// The embroidery design data.
         design: Box<EmbroideryDesign>,
     },
+    #[tool(hidden)]
+    /// Parametric, versioned reference to a library part (stdlib or user-published).
+    ///
+    /// Resolved by the engine at evaluation time:
+    /// - `std:<category>.<slug>` dispatches to a compiled-in Rust builder in
+    ///   [`vcad-parts`](../vcad-parts).
+    /// - `@<username>/<slug>` evaluates Loon source fetched from the social layer.
+    ///
+    /// The resulting sub-graph replaces this node during meshing but the
+    /// `PartInstance` is preserved in the document so parameters remain editable.
+    PartInstance {
+        /// Path identifying the part source (e.g. `"std:fastener.bolt.socket-head"`).
+        path: String,
+        /// Pinned version of the part (e.g. `"1.0"`). Immutable once published.
+        version: String,
+        /// Parameter name → JSON value map, passed to the part's build function.
+        params: HashMap<String, serde_json::Value>,
+    },
 }
 
 /// A node in the IR graph.

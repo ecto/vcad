@@ -14,6 +14,14 @@ use vcad_kernel_math::{Point2, Point3, Vec3};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_topo::{FaceId, Orientation, Topology};
 
+mod creased_normals;
+mod render_bake;
+
+pub use creased_normals::{
+    apply_creased_normals, apply_default_creased_normals, DEFAULT_CREASE_ANGLE_RAD,
+};
+pub use render_bake::{render_bake, render_bake_default, RenderBakeOptions};
+
 /// Per-triangle tag identifying which face kind the triangle came from.
 /// Encoded as a single byte per triangle; `FanFill` = 8 marks the
 /// synthetic armpit-fan triangles added post-weld.

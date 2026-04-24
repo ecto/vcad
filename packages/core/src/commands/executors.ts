@@ -6,6 +6,12 @@ import { useEngineStore } from "../stores/engine-store.js";
 import { useUiStore } from "../stores/ui-store.js";
 import { vec3Cross, vec3Normalize } from "@vcad/ir";
 import type { Vec3, PathCurve } from "@vcad/ir";
+import {
+  loadPartsManifest as loadPartsManifestFromEngine,
+  searchParts as searchPartsFromEngine,
+  defaultParamsFor as defaultParamsForEngine,
+  type PartManifestEntry,
+} from "@vcad/engine";
 import { expandBboxFromPositions, type Bbox } from "../camera-framing.js";
 
 type DocStore = ReturnType<typeof useDocumentStore.getState>;
@@ -496,6 +502,10 @@ function executeCrudInner(
         docStore,
         uiStore,
       );
+    case "search_parts":
+      return executeSearchParts(args, docStore);
+    case "place_part":
+      return executePlacePart(args, docStore, uiStore);
     default:
       return { status: "error", result: `Unknown tool: ${tool}` };
   }
@@ -1752,4 +1762,123 @@ function executeDelete(
   } catch (err) {
     return { status: "error", result: err instanceof Error ? err.message : "Delete failed" };
   }
+}
+
+
+// ---------------------------------------------------------------------------
+// search_parts / place_part — stdlib parts library integration.
+// ---------------------------------------------------------------------------
+
+/**
+ * Pull the parts manifest from the running engine's kernel module. Returns
+ * null if the engine hasn't booted yet (searching before init just yields an
+ * empty list to the model).
+ */
+function getPartsManifest(): PartManifestEntry[] | null {
+  try {
+    const engineState = useEngineStore.getState() as unknown as {
+      kernel?: Parameters<typeof loadPartsManifestFromEngine>[0];
+      engine?: { kernel?: Parameters<typeof loadPartsManifestFromEngine>[0] };
+    };
+    const kernel = engineState.kernel ?? engineState.engine?.kernel;
+    if (!kernel) return null;
+    return loadPartsManifestFromEngine(kernel);
+  } catch (err) {
+    console.warn("[executors] parts manifest unavailable:", err);
+    return null;
+  }
+}
+
+function executeSearchParts(
+  args: Record<string, unknown>,
+  _docStore: DocStore,
+): ExecutionResult {
+  const manifest = getPartsManifest();
+  if (!manifest || manifest.length === 0) {
+    return {
+      status: "success",
+      result: JSON.stringify({ results: [], note: "parts library not loaded or empty" }),
+    };
+  }
+  const query = typeof args.query === "string" ? args.query : "";
+  const category = typeof args.category === "string" ? args.category : undefined;
+  const limit = typeof args.limit === "number" ? args.limit : 10;
+  const hits = searchPartsFromEngine(manifest, { query, category, limit });
+  const results = hits.map((p) => ({
+    id: `std:${p.id}`,
+    name: p.name,
+    category: p.category,
+    description: p.description,
+    version: p.version,
+    params: p.params,
+    xrefs: p.xrefs,
+  }));
+  return {
+    status: "success",
+    result: JSON.stringify({ results, count: results.length }),
+    display: {
+      summary: [text(`🔍 search_parts: ${results.length} match${results.length === 1 ? "" : "es"} for "${query}"`)],
+      fields: results.slice(0, 5).map((r) => ({ label: r.id, value: r.name })),
+      affectedPartIds: [],
+    },
+  };
+}
+
+function executePlacePart(
+  args: Record<string, unknown>,
+  docStore: DocStore,
+  uiStore: UiStore,
+): ExecutionResult {
+  const path = typeof args.path === "string" ? args.path : null;
+  if (!path) {
+    return { status: "error", result: "place_part: missing `path` argument" };
+  }
+  const manifest = getPartsManifest();
+  if (!manifest) {
+    return { status: "error", result: "parts library not loaded yet — retry after init" };
+  }
+  const idLookup = path.startsWith("std:") ? path.slice(4) : path;
+  const entry = manifest.find((p) => p.id === idLookup);
+  if (!entry) {
+    return { status: "error", result: `place_part: unknown part "${path}"` };
+  }
+  const userParams = (args.params && typeof args.params === "object")
+    ? (args.params as Record<string, unknown>)
+    : {};
+  const params = { ...defaultParamsForEngine(entry), ...userParams };
+  const version = entry.version;
+
+  const partId = docStore.addPartInstance(path, version, params);
+  if (!partId) {
+    return { status: "error", result: "place_part: document store refused insertion" };
+  }
+
+  // Apply optional position after insertion.
+  const position = args.position as Vec3 | undefined;
+  if (position && typeof position === "object") {
+    const offset: Vec3 = {
+      x: typeof position.x === "number" ? position.x : 0,
+      y: typeof position.y === "number" ? position.y : 0,
+      z: typeof position.z === "number" ? position.z : 0,
+    };
+    docStore.setTranslation(partId, offset);
+  }
+
+  const displayName = typeof args.name === "string" ? args.name : entry.name;
+  applyName(docStore, partId, displayName);
+  uiStore.select(partId);
+
+  return {
+    status: "success",
+    result: `Placed part ${path} with id: ${partId}`,
+    partId,
+    display: {
+      summary: [text(`+ ${entry.name} (${entry.category}) `), link(partId, docStore)],
+      fields: Object.entries(params).map(([k, v]) => ({
+        label: k,
+        value: String(v),
+      })),
+      affectedPartIds: [partId],
+    },
+  };
 }

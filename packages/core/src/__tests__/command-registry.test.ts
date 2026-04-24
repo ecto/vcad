@@ -189,6 +189,8 @@ describe("CommandRegistry", () => {
         "inspect_part",
         "place",
         "describe_scene",
+        "search_parts",
+        "place_part",
       ]);
     });
 
@@ -316,8 +318,9 @@ describe("CommandRegistry", () => {
       fresh.loadSchemas("[]");
       const tools = fresh.toAnthropicTools();
       // 5 CRUD/material + 3 AI camera tools + 4 high-level tools
-      // (tube, polyline_tube, inspect_part, place) + describe_scene.
-      expect(tools).toHaveLength(13);
+      // (tube, polyline_tube, inspect_part, place) + describe_scene
+      // + 2 stdlib-parts tools (search_parts, place_part).
+      expect(tools).toHaveLength(15);
       const create = tools[0]!;
       const typeEnum = (create.input_schema.properties as Record<string, Record<string, unknown>>)
         .type.enum as string[];
