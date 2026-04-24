@@ -1,5 +1,5 @@
-import { useState, type ReactNode } from "react";
-import { useUiStore, type ToolbarTab } from "@vcad/core";
+import { useEffect, useState, type ReactNode } from "react";
+import { useSketchStore, useUiStore, type ToolbarTab } from "@vcad/core";
 import { BottomSheet } from "./BottomSheet";
 import { TAB_COLORS } from "@/components/ui/toolbar-constants";
 import { cn } from "@/lib/utils";
@@ -19,8 +19,15 @@ import {
 export function MobileToolPalette() {
   const toolbarTab = useUiStore((s) => s.toolbarTab);
   const setToolbarTab = useUiStore((s) => s.setToolbarTab);
+  const sketchActive = useSketchStore((s) => s.active);
   const { byTab, renderSimulateExtras } = useToolDefinitions();
   const [sheetTab, setSheetTab] = useState<ToolbarTab | null>(null);
+
+  // Sketch tab is permanent in ALL_TABS. Auto-select it whenever sketch
+  // becomes active so the relevant tools are at hand.
+  useEffect(() => {
+    if (sketchActive) setToolbarTab("sketch");
+  }, [sketchActive, setToolbarTab]);
 
   const handleTap = (tab: ToolbarTab) => {
     setToolbarTab(tab);
@@ -30,6 +37,7 @@ export function MobileToolPalette() {
   const activeTab = sheetTab;
   const activeMeta = activeTab ? ALL_TABS.find((t) => t.id === activeTab) : null;
   const activeDefs = activeTab ? byTab[activeTab] : [];
+  const effectiveActiveTab: ToolbarTab = toolbarTab;
 
   return (
     <>
@@ -41,7 +49,7 @@ export function MobileToolPalette() {
         )}
       >
         {ALL_TABS.map(({ id, label, icon: Icon }) => {
-          const isActive = toolbarTab === id;
+          const isActive = effectiveActiveTab === id;
           return (
             <button
               key={id}

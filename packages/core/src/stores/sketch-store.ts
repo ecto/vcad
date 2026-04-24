@@ -15,6 +15,24 @@ export interface ProfileSnapshot {
 
 export type SketchExitStatus = "cancelled" | "empty" | "has_segments";
 
+/**
+ * The downstream operation a user is building toward — set by `beginOperation`
+ * before or during a sketch. The PropertyManager renders these params live and
+ * the live-preview hook reads them on every sketch edit. `commitOperation`
+ * runs the actual `addExtrude` / `addRevolve` / etc. call on the document.
+ */
+export type PendingOperation =
+  | { kind: "extrude"; depth: number; flip: boolean; twistDeg: number; scaleEnd: number }
+  | { kind: "revolve"; angleDeg: number; flip: boolean }
+  | {
+      kind: "sweep";
+      pathType: "line" | "helix";
+      height: number;
+      radius: number;
+      turns: number;
+    }
+  | { kind: "loft"; closed: boolean };
+
 /** Undo snapshot for sketch-local history — captured before each mutation. */
 interface SketchSnapshot {
   segments: SketchSegment2D[];
@@ -44,6 +62,15 @@ export interface SketchStore extends SketchState {
   cursorWorldPos: Vec3 | null;
   cursorSketchPos: Vec2 | null;
   snapTarget: Vec2 | null;
+
+  // Selection of a single sketch entity (segment or constraint) for the
+  // PropertyManager. `null` when the panel should show tool-default content.
+  selectedConstraintIndex: number | null;
+
+  // The downstream operation the user is building toward, if any. Drives the
+  // operation params section of the PropertyManager *and* the continuous
+  // downstream preview hook.
+  pendingOperation: PendingOperation | null;
 
   // Actions
   undoSketch: () => void;
@@ -88,7 +115,20 @@ export interface SketchStore extends SketchState {
   exitLoftMode: () => ProfileSnapshot[] | null;
   // 3D cursor actions
   setCursorPos: (world: Vec3 | null, sketch: Vec2 | null, snap: Vec2 | null) => void;
+  // PropertyManager focus
+  setSelectedConstraint: (index: number | null) => void;
+  // Pending downstream operation (Extrude / Revolve / Sweep / Loft)
+  beginOperation: (op: PendingOperation) => void;
+  updateOperation: (patch: Partial<PendingOperation>) => void;
+  clearOperation: () => void;
 }
+
+const DEFAULT_PENDING_OPERATION: Record<PendingOperation["kind"], PendingOperation> = {
+  extrude: { kind: "extrude", depth: 20, flip: false, twistDeg: 0, scaleEnd: 1.0 },
+  revolve: { kind: "revolve", angleDeg: 360, flip: false },
+  sweep: { kind: "sweep", pathType: "line", height: 20, radius: 10, turns: 2 },
+  loft: { kind: "loft", closed: false },
+};
 
 // Shape builders are delegated to `@vcad/core/sketch-math` so the web
 // app, the TUI, and the WASM SketchSession all generate identical
@@ -167,6 +207,8 @@ export const useSketchStore = create<SketchStore>((set, get) => {
   cursorWorldPos: null,
   cursorSketchPos: null,
   snapTarget: null,
+  selectedConstraintIndex: null,
+  pendingOperation: null,
 
   undoSketch: () => {
     const state = get();
@@ -306,6 +348,10 @@ export const useSketchStore = create<SketchStore>((set, get) => {
       faceSelectionMode: false,
       hoveredFace: null,
       selectedFace: null,
+      selectedConstraintIndex: null,
+      // pendingOperation deliberately NOT reset here — operations-as-entry
+      // sets it before calling enterSketchMode and we want it preserved
+      // through the sketch open. exitSketchMode handles the cleanup.
     });
 
     // Dispatch event to trigger camera swing to face the plane
@@ -337,6 +383,8 @@ export const useSketchStore = create<SketchStore>((set, get) => {
       faceSelectionMode: false,
       hoveredFace: null,
       selectedFace: null,
+      selectedConstraintIndex: null,
+      pendingOperation: null,
     });
     return hasSegments ? "has_segments" : "empty";
   },
@@ -696,5 +744,42 @@ export const useSketchStore = create<SketchStore>((set, get) => {
   setCursorPos: (world, sketch, snap) => {
     set({ cursorWorldPos: world, cursorSketchPos: sketch, snapTarget: snap });
   },
+
+  setSelectedConstraint: (index) => {
+    set({ selectedConstraintIndex: index });
+  },
+
+  beginOperation: (op) => {
+    // Replace any prior pending op outright — switching from Extrude to
+    // Revolve mid-sketch should swap params cleanly. Caller is responsible
+    // for picking the right kind; we trust the discriminated union.
+    set({ pendingOperation: op });
+  },
+
+  updateOperation: (patch) => {
+    const current = get().pendingOperation;
+    if (!current) return;
+    // Patch must match the current discriminant — TS keeps callers honest;
+    // at runtime we fall back to silently ignoring kind mismatches so a
+    // stale slider event can't corrupt state when the user has just
+    // switched ops.
+    if ("kind" in patch && patch.kind !== current.kind) return;
+    set({ pendingOperation: { ...current, ...patch } as PendingOperation });
+  },
+
+  clearOperation: () => {
+    set({ pendingOperation: null });
+  },
   };
 });
+
+/**
+ * Default params for each pending operation kind. UI calls
+ * `beginOperation(defaultPendingOperation('extrude'))` rather than
+ * literal-coding the params at every call site.
+ */
+export function defaultPendingOperation<K extends PendingOperation["kind"]>(
+  kind: K,
+): Extract<PendingOperation, { kind: K }> {
+  return DEFAULT_PENDING_OPERATION[kind] as Extract<PendingOperation, { kind: K }>;
+}

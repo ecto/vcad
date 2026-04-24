@@ -31,6 +31,17 @@ import { Path } from "@phosphor-icons/react/dist/ssr/Path";
 import { Circuitry } from "@phosphor-icons/react/dist/ssr/Circuitry";
 import { Scissors } from "@phosphor-icons/react/dist/ssr/Scissors";
 import { TextT } from "@phosphor-icons/react/dist/ssr/TextT";
+import { ArrowUp } from "@phosphor-icons/react/dist/ssr/ArrowUp";
+import { Spiral } from "@phosphor-icons/react/dist/ssr/Spiral";
+import { Stack } from "@phosphor-icons/react/dist/ssr/Stack";
+import { LineSegment } from "@phosphor-icons/react/dist/ssr/LineSegment";
+import { Rectangle } from "@phosphor-icons/react/dist/ssr/Rectangle";
+import { ArrowsVertical } from "@phosphor-icons/react/dist/ssr/ArrowsVertical";
+import { Ruler } from "@phosphor-icons/react/dist/ssr/Ruler";
+import { GitBranch } from "@phosphor-icons/react/dist/ssr/GitBranch";
+import { Equals } from "@phosphor-icons/react/dist/ssr/Equals";
+import { GridFour } from "@phosphor-icons/react/dist/ssr/GridFour";
+import { Crosshair } from "@phosphor-icons/react/dist/ssr/Crosshair";
 
 import {
   useDocumentStore,
@@ -43,9 +54,11 @@ import {
   exportStepBlob,
   isStitchEligible,
   getPcbNodeIds,
+  defaultPendingOperation,
   type ToolbarTab,
   type PrimitiveKind,
   type BooleanType,
+  type PendingOperation,
 } from "@vcad/core";
 import { TAB_COLORS } from "@/components/ui/toolbar-constants";
 import { useDrawingStore } from "@/stores/drawing-store";
@@ -91,6 +104,7 @@ export interface ToolTabMeta {
 
 export const ALL_TABS: ToolTabMeta[] = [
   { id: "create", label: "Create", icon: Cube },
+  { id: "sketch", label: "Sketch", icon: PencilSimple },
   { id: "transform", label: "Transform", icon: ArrowsOutCardinal },
   { id: "combine", label: "Combine", icon: Unite },
   { id: "modify", label: "Modify", icon: Circle },
@@ -154,6 +168,27 @@ export function useToolDefinitions(): {
   const enterFaceSelectionMode = useSketchStore((s) => s.enterFaceSelectionMode);
   const sketchActive = useSketchStore((s) => s.active);
   const faceSelectionMode = useSketchStore((s) => s.faceSelectionMode);
+  const sketchTool = useSketchStore((s) => s.tool);
+  const sketchConstraintTool = useSketchStore((s) => s.constraintTool);
+  const sketchSegmentCount = useSketchStore((s) => s.segments.length);
+  const sketchConstraintCount = useSketchStore((s) => s.constraints.length);
+  const sketchSelectedSegments = useSketchStore((s) => s.selectedSegments);
+  const sketchPendingOp = useSketchStore((s) => s.pendingOperation);
+  const sketchLoftMode = useSketchStore((s) => s.loftMode);
+  const setSketchTool = useSketchStore((s) => s.setTool);
+  const setSketchConstraintTool = useSketchStore((s) => s.setConstraintTool);
+  const sketchClearSelection = useSketchStore((s) => s.clearSelection);
+  const sketchBeginOperation = useSketchStore((s) => s.beginOperation);
+  const sketchSolve = useSketchStore((s) => s.solveSketch);
+  const sketchApplyHorizontal = useSketchStore((s) => s.applyHorizontal);
+  const sketchApplyVertical = useSketchStore((s) => s.applyVertical);
+  const sketchApplyParallel = useSketchStore((s) => s.applyParallel);
+  const sketchApplyPerpendicular = useSketchStore((s) => s.applyPerpendicular);
+  const sketchApplyEqual = useSketchStore((s) => s.applyEqual);
+  const gridSnap = useUiStore((s) => s.gridSnap);
+  const pointSnap = useUiStore((s) => s.pointSnap);
+  const toggleGridSnap = useUiStore((s) => s.toggleGridSnap);
+  const togglePointSnap = useUiStore((s) => s.togglePointSnap);
 
   // Drawing
   const viewMode = useDrawingStore((s) => s.viewMode);
@@ -663,6 +698,277 @@ export function useToolDefinitions(): {
       },
     ];
 
+    // ---------------------------------------------------------------------
+    // Sketch tab — visible only while a sketch is active. Operations come
+    // first (they're the verbs people usually start with) followed by draw
+    // primitives, constraints, and snap toggles. Confirmation/cancel live
+    // in the dedicated SketchConfirmationCorner overlay, not here.
+    // ---------------------------------------------------------------------
+    function handleBeginOperation(kind: PendingOperation["kind"]) {
+      // If we're already mid-sketch, swap params; otherwise stash the op
+      // and route the user through face-selection. The per-face entry hook
+      // (selectFace -> enterSketchMode) preserves pendingOperation across
+      // the transition.
+      sketchBeginOperation(defaultPendingOperation(kind));
+      if (!sketchActive) {
+        if (parts.length > 0) enterFaceSelectionMode();
+        else enterSketchMode("XY");
+      }
+    }
+
+    const opActive = (kind: PendingOperation["kind"]) =>
+      sketchPendingOp?.kind === kind;
+
+    const sketchOps: ToolDef[] = [
+      {
+        id: "sketch-extrude",
+        tab: "sketch",
+        label: "Extrude",
+        tooltip: "Extrude profile (E)",
+        icon: ArrowUp,
+        shortcut: "E",
+        enabled: true,
+        active: opActive("extrude"),
+        iconColor: color("sketch"),
+        onClick: () => handleBeginOperation("extrude"),
+      },
+      {
+        id: "sketch-revolve",
+        tab: "sketch",
+        label: "Revolve",
+        tooltip: "Revolve profile",
+        icon: ArrowsClockwise,
+        enabled: true,
+        active: opActive("revolve"),
+        iconColor: color("sketch"),
+        onClick: () => handleBeginOperation("revolve"),
+      },
+      {
+        id: "sketch-sweep",
+        tab: "sketch",
+        label: "Sweep",
+        tooltip: "Sweep profile",
+        icon: Spiral,
+        enabled: true,
+        active: opActive("sweep"),
+        iconColor: color("sketch"),
+        onClick: () => handleBeginOperation("sweep"),
+      },
+      {
+        id: "sketch-loft",
+        tab: "sketch",
+        label: "Loft",
+        tooltip: "Loft profiles",
+        icon: Stack,
+        enabled: true,
+        active: opActive("loft") || sketchLoftMode,
+        iconColor: color("sketch"),
+        onClick: () => handleBeginOperation("loft"),
+      },
+    ];
+
+    const sketchDraw: ToolDef[] = [
+      {
+        id: "sketch-line",
+        tab: "sketch",
+        label: "Line",
+        tooltip: "Line (L)",
+        icon: LineSegment,
+        shortcut: "L",
+        enabled: sketchActive,
+        active: sketchActive && sketchTool === "line" && sketchConstraintTool === "none",
+        iconColor: color("sketch"),
+        onClick: () => {
+          sketchClearSelection();
+          setSketchTool("line");
+        },
+      },
+      {
+        id: "sketch-rectangle",
+        tab: "sketch",
+        label: "Rect",
+        tooltip: "Rectangle (R)",
+        icon: Rectangle,
+        shortcut: "R",
+        enabled: sketchActive,
+        active: sketchActive && sketchTool === "rectangle" && sketchConstraintTool === "none",
+        iconColor: color("sketch"),
+        onClick: () => {
+          sketchClearSelection();
+          setSketchTool("rectangle");
+        },
+      },
+      {
+        id: "sketch-circle",
+        tab: "sketch",
+        label: "Circle",
+        tooltip: "Circle (C)",
+        icon: Circle,
+        shortcut: "C",
+        enabled: sketchActive,
+        active: sketchActive && sketchTool === "circle" && sketchConstraintTool === "none",
+        iconColor: color("sketch"),
+        onClick: () => {
+          sketchClearSelection();
+          setSketchTool("circle");
+        },
+      },
+    ];
+
+    const sketchConstrain: ToolDef[] = [
+      {
+        id: "sketch-c-horizontal",
+        tab: "sketch",
+        label: "Horiz",
+        tooltip: "Horizontal — select 1 segment",
+        icon: ArrowsHorizontal,
+        enabled: sketchActive && sketchSegmentCount > 0,
+        active: sketchConstraintTool === "horizontal",
+        iconColor: color("sketch"),
+        onClick: () => {
+          if (sketchConstraintTool === "horizontal") {
+            // Apply if ready, otherwise toggle off
+            if (sketchSelectedSegments.length === 1) sketchApplyHorizontal();
+            else sketchClearSelection();
+          } else {
+            setSketchConstraintTool("horizontal");
+          }
+        },
+      },
+      {
+        id: "sketch-c-vertical",
+        tab: "sketch",
+        label: "Vert",
+        tooltip: "Vertical — select 1 segment",
+        icon: ArrowsVertical,
+        enabled: sketchActive && sketchSegmentCount > 0,
+        active: sketchConstraintTool === "vertical",
+        iconColor: color("sketch"),
+        onClick: () => {
+          if (sketchConstraintTool === "vertical") {
+            if (sketchSelectedSegments.length === 1) sketchApplyVertical();
+            else sketchClearSelection();
+          } else {
+            setSketchConstraintTool("vertical");
+          }
+        },
+      },
+      {
+        id: "sketch-c-length",
+        tab: "sketch",
+        label: "Length",
+        tooltip: "Length — select 1 segment",
+        icon: Ruler,
+        enabled: sketchActive && sketchSegmentCount > 0,
+        active: sketchConstraintTool === "length",
+        iconColor: color("sketch"),
+        onClick: () => {
+          if (sketchConstraintTool === "length") sketchClearSelection();
+          else setSketchConstraintTool("length");
+        },
+      },
+      {
+        id: "sketch-c-parallel",
+        tab: "sketch",
+        label: "Para",
+        tooltip: "Parallel — select 2 segments",
+        icon: GitBranch,
+        enabled: sketchActive && sketchSegmentCount > 0,
+        active: sketchConstraintTool === "parallel",
+        iconColor: color("sketch"),
+        onClick: () => {
+          if (sketchConstraintTool === "parallel") {
+            if (sketchSelectedSegments.length === 2) sketchApplyParallel();
+            else sketchClearSelection();
+          } else {
+            setSketchConstraintTool("parallel");
+          }
+        },
+      },
+      {
+        id: "sketch-c-perp",
+        tab: "sketch",
+        label: "Perp",
+        tooltip: "Perpendicular — select 2 segments",
+        icon: GitBranch,
+        enabled: sketchActive && sketchSegmentCount > 0,
+        active: sketchConstraintTool === "perpendicular",
+        iconColor: color("sketch"),
+        onClick: () => {
+          if (sketchConstraintTool === "perpendicular") {
+            if (sketchSelectedSegments.length === 2) sketchApplyPerpendicular();
+            else sketchClearSelection();
+          } else {
+            setSketchConstraintTool("perpendicular");
+          }
+        },
+      },
+      {
+        id: "sketch-c-equal",
+        tab: "sketch",
+        label: "Equal",
+        tooltip: "Equal length — select 2 segments",
+        icon: Equals,
+        enabled: sketchActive && sketchSegmentCount > 0,
+        active: sketchConstraintTool === "equal",
+        iconColor: color("sketch"),
+        onClick: () => {
+          if (sketchConstraintTool === "equal") {
+            if (sketchSelectedSegments.length === 2) sketchApplyEqual();
+            else sketchClearSelection();
+          } else {
+            setSketchConstraintTool("equal");
+          }
+        },
+      },
+      {
+        id: "sketch-solve",
+        tab: "sketch",
+        label: "Solve",
+        tooltip: "Solve constraints",
+        icon: Play,
+        enabled: sketchActive && sketchConstraintCount > 0,
+        iconColor: color("sketch"),
+        onClick: sketchSolve,
+      },
+    ];
+
+    const sketchSnap: ToolDef[] = [
+      {
+        id: "sketch-snap-grid",
+        tab: "sketch",
+        label: "Grid",
+        tooltip: "Toggle grid snap (G)",
+        icon: GridFour,
+        shortcut: "G",
+        enabled: sketchActive,
+        active: gridSnap,
+        iconColor: gridSnap ? "text-cyan-400" : color("sketch"),
+        onClick: toggleGridSnap,
+      },
+      {
+        id: "sketch-snap-point",
+        tab: "sketch",
+        label: "Point",
+        tooltip: "Toggle point snap (P)",
+        icon: Crosshair,
+        shortcut: "P",
+        enabled: sketchActive,
+        active: pointSnap,
+        iconColor: pointSnap ? "text-green-400" : color("sketch"),
+        onClick: togglePointSnap,
+      },
+    ];
+
+    // When the user is not yet sketching, the Sketch tab is just a verb
+    // launcher (Extrude/Revolve/Sweep/Loft each enter face-selection then
+    // start the sketch). Only once a sketch is open do the draw/constrain/
+    // snap tools become relevant — adding them when disabled would clutter
+    // the toolbar with greyed-out icons.
+    const sketch: ToolDef[] = sketchActive
+      ? [...sketchOps, ...sketchDraw, ...sketchConstrain, ...sketchSnap]
+      : sketchOps;
+
     return {
       create,
       transform,
@@ -671,6 +977,7 @@ export function useToolDefinitions(): {
       assembly,
       simulate,
       build,
+      sketch,
     };
   }, [
     addPrimitive,
@@ -708,6 +1015,27 @@ export function useToolDefinitions(): {
     transformMode,
     viewMode,
     buildTooltip,
+    sketchTool,
+    sketchConstraintTool,
+    sketchSegmentCount,
+    sketchConstraintCount,
+    sketchSelectedSegments,
+    sketchPendingOp,
+    sketchLoftMode,
+    setSketchTool,
+    setSketchConstraintTool,
+    sketchClearSelection,
+    sketchBeginOperation,
+    sketchSolve,
+    sketchApplyHorizontal,
+    sketchApplyVertical,
+    sketchApplyParallel,
+    sketchApplyPerpendicular,
+    sketchApplyEqual,
+    gridSnap,
+    pointSnap,
+    toggleGridSnap,
+    togglePointSnap,
   ]);
 
   const renderSimulateExtras = (opts?: { compact?: boolean }): ReactNode => {

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { ToolbarButton, MoreDropdown } from "@/components/ui/toolbar";
 import { TAB_COLORS, MOBILE_BREAKPOINT } from "@/components/ui/toolbar-constants";
-import { useDocumentStore, useUiStore, type ToolbarTab } from "@vcad/core";
+import { useDocumentStore, useUiStore, useSketchStore, type ToolbarTab } from "@vcad/core";
 import { useDrawingStore } from "@/stores/drawing-store";
 import { useOnboardingStore } from "@/stores/onboarding-store";
 import { cn } from "@/lib/utils";
@@ -43,8 +43,13 @@ export function ToolPalette() {
     return () => window.removeEventListener("resize", calculateVisibleTabs);
   }, []);
 
+  // Sketch tab is permanent in ALL_TABS. When sketch becomes active,
+  // autoSwitchTab pins toolbarTab to "sketch" so the relevant tools are
+  // in front; users can still click any other tab.
+  const sketchActive = useSketchStore((s) => s.active);
+  const visibleTabs = ALL_TABS.slice(0, visibleTabCount);
   const overflowTabs = ALL_TABS.slice(visibleTabCount);
-  const displayedTab = toolbarTab;
+  const displayedTab: ToolbarTab = toolbarTab;
 
   // Track manual tab clicks to temporarily disable auto-switch
   const manualOverrideRef = useRef(false);
@@ -64,7 +69,9 @@ export function ToolPalette() {
     [setToolbarTab],
   );
 
-  // Keyboard shortcuts: 1-7 to switch tabs
+  // Keyboard shortcuts: 1-7 to switch tabs. Stay enabled during sketch so the
+  // user can still browse Create/Transform/etc. while drawing — the sketch
+  // tab itself is reachable via the tab strip or by re-entering sketch mode.
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)
@@ -98,6 +105,12 @@ export function ToolPalette() {
 
   const autoSwitchTab = useCallback(() => {
     if (guidedFlowActive || manualOverrideRef.current) return;
+    // Sketch wins over selection-driven defaults — once sketch is open we
+    // pin the toolbar to the sketch tab regardless of what's selected.
+    if (sketchActive) {
+      setToolbarTab("sketch");
+      return;
+    }
 
     if (viewMode === "2d") {
       setToolbarTab("build");
@@ -125,6 +138,7 @@ export function ToolPalette() {
     }
   }, [
     guidedFlowActive,
+    sketchActive,
     viewMode,
     hasInstanceSelected,
     isAssemblyMode,
@@ -163,7 +177,7 @@ export function ToolPalette() {
     >
       {/* Row 1: tab strip */}
       <div className="flex h-7 items-stretch border-b border-border/40">
-        {ALL_TABS.slice(0, visibleTabCount).map(({ id, label, icon: Icon }, index) => {
+        {visibleTabs.map(({ id, label, icon: Icon }, index) => {
           const isActive = displayedTab === id;
           return (
             <button

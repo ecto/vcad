@@ -7,10 +7,12 @@ import {
   useEngineStore,
   useChatStore,
   useSketchStore,
+  defaultPendingOperation,
   exportStlBlob,
   exportGltfBlob,
   exportStepBlob,
   type CommandRegistry,
+  type PendingOperation,
 } from "@vcad/core";
 import { useChangelogStore } from "@/stores/changelog-store";
 import { useLogStore } from "@/stores/log-store";
@@ -345,6 +347,138 @@ export function useAppCommands({
         onDismiss();
       },
     });
+
+    // -----------------------------------------------------------------
+    // Sketch verbs — appended outside the core registry. These read
+    // useSketchStore directly so the action stays referentially stable
+    // and the surface (palette / mobile menu) can call them without
+    // additional plumbing. Every verb is gated on `enabled()` reading
+    // sketch.active, so the palette correctly grays them out when sketch
+    // mode isn't open. Operations (extrude/revolve/sweep/loft) work both
+    // mid-sketch (swap pendingOperation) and from no sketch (start one).
+    // -----------------------------------------------------------------
+    const sketchActiveCheck = () => useSketchStore.getState().active;
+    const startOrSwap = (kind: PendingOperation["kind"]) => {
+      const sk = useSketchStore.getState();
+      sk.beginOperation(defaultPendingOperation(kind));
+      if (!sk.active) {
+        const parts = useDocumentStore.getState().parts;
+        if (parts.length > 0) sk.enterFaceSelectionMode();
+        else sk.enterSketchMode("XY");
+      }
+      onDismiss();
+    };
+    const sketchCommands: CommandRegistry = [
+      {
+        id: "sketch-extrude",
+        label: "Sketch: Extrude",
+        icon: "ArrowUp",
+        keywords: ["extrude", "sketch", "pull", "push"],
+        shortcut: "E",
+        action: () => startOrSwap("extrude"),
+        category: "create",
+      },
+      {
+        id: "sketch-revolve",
+        label: "Sketch: Revolve",
+        icon: "ArrowsClockwise",
+        keywords: ["revolve", "sketch", "lathe", "spin"],
+        action: () => startOrSwap("revolve"),
+        category: "create",
+      },
+      {
+        id: "sketch-sweep",
+        label: "Sketch: Sweep",
+        icon: "Spiral",
+        keywords: ["sweep", "sketch", "follow", "path"],
+        action: () => startOrSwap("sweep"),
+        category: "create",
+      },
+      {
+        id: "sketch-loft",
+        label: "Sketch: Loft",
+        icon: "Stack",
+        keywords: ["loft", "sketch", "blend", "skin"],
+        action: () => startOrSwap("loft"),
+        category: "create",
+      },
+      {
+        id: "sketch-line",
+        label: "Sketch: Line tool",
+        icon: "ArrowsHorizontal",
+        keywords: ["line", "sketch", "draw"],
+        action: () => {
+          useSketchStore.getState().setTool("line");
+          onDismiss();
+        },
+        enabled: sketchActiveCheck,
+        category: "edit",
+      },
+      {
+        id: "sketch-rect",
+        label: "Sketch: Rectangle tool",
+        icon: "Cube",
+        keywords: ["rectangle", "rect", "sketch", "draw", "box"],
+        action: () => {
+          useSketchStore.getState().setTool("rectangle");
+          onDismiss();
+        },
+        enabled: sketchActiveCheck,
+        category: "edit",
+      },
+      {
+        id: "sketch-circle",
+        label: "Sketch: Circle tool",
+        icon: "Globe",
+        keywords: ["circle", "sketch", "draw"],
+        action: () => {
+          useSketchStore.getState().setTool("circle");
+          onDismiss();
+        },
+        enabled: sketchActiveCheck,
+        category: "edit",
+      },
+      {
+        id: "sketch-solve",
+        label: "Sketch: Solve constraints",
+        icon: "ArrowClockwise",
+        keywords: ["solve", "sketch", "constraints", "fit"],
+        action: () => {
+          useSketchStore.getState().solveSketch();
+          onDismiss();
+        },
+        enabled: sketchActiveCheck,
+        category: "edit",
+      },
+      {
+        id: "sketch-finish",
+        label: "Sketch: Finish",
+        icon: "Cube",
+        keywords: ["finish", "sketch", "commit", "done", "ok"],
+        action: () => {
+          window.dispatchEvent(new CustomEvent("vcad:sketch-commit"));
+          onDismiss();
+        },
+        enabled: sketchActiveCheck,
+        category: "edit",
+      },
+      {
+        id: "sketch-cancel",
+        label: "Sketch: Cancel",
+        icon: "X",
+        keywords: ["cancel", "sketch", "exit", "abort"],
+        action: () => {
+          const ok = useSketchStore.getState().requestExit();
+          if (ok) {
+            useNotificationStore.getState().addToast("Sketch cancelled", "info");
+          }
+          onDismiss();
+        },
+        enabled: sketchActiveCheck,
+        category: "edit",
+      },
+    ];
+    registry.push(...sketchCommands);
 
     // Wrap every command.action in a telemetry + safety shim. This is the
     // single place where we instrument command usage AND defend against
