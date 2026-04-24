@@ -184,6 +184,13 @@ export interface DocumentState {
   /** Whether a parametric drag is in progress (enables LOD mode) */
   isParameterDragging: boolean;
 
+  /** Whether a transient batch of mutations is in progress (e.g. an AI is
+   *  streaming a sequence of tool calls). When true, evals skip clash
+   *  detection so the viewport paints in ~30ms instead of waiting for the
+   *  O(n²) clash loop. A refinement pass with full clash runs ~100ms after
+   *  this flips back to false. */
+  isTransientEval: boolean;
+
   /** Loon source code — non-null when document was loaded from loon format. */
   loonSource: string | null;
 
@@ -382,6 +389,7 @@ export interface DocumentState {
   // Incremental evaluation actions (no-ops — CRDT replaces document wholesale)
   clearDirtyNodes: () => Set<NodeId>;
   setParameterDragging: (dragging: boolean) => void;
+  setTransientEval: (active: boolean) => void;
   // Visibility toggle
   setPartVisible: (partId: string, visible: boolean) => void;
   // Reorder parts in tree
@@ -731,6 +739,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   documentName: "Untitled",
   lastSavedAt: null,
   isParameterDragging: false,
+  isTransientEval: false,
   loonSource: null,
 
   // CRDT bridge state
@@ -1653,6 +1662,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         documentName: name,
         lastSavedAt: null,
         isParameterDragging: false,
+        isTransientEval: false,
         loonSource: null,
         _crdtEngine: engine,
       });
@@ -1668,6 +1678,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         documentName: name,
         lastSavedAt: null,
         isParameterDragging: false,
+        isTransientEval: false,
         loonSource: null,
       });
     }
@@ -1680,6 +1691,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   setParameterDragging: (dragging) => {
     set({ isParameterDragging: dragging });
+  },
+
+  setTransientEval: (active) => {
+    set({ isTransientEval: active });
   },
 
   setPartVisible: (partId, visible) => {

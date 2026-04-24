@@ -37,6 +37,21 @@ they're much less error-prone than the long form.
   cheaper in tokens. Especially useful after creating a tube or extrude to
   confirm it landed where intended.
 
+- **circular_pattern(child, axis_origin, axis_dir, count, angle_deg)** —
+  repeat a part around an axis. ALWAYS use this for spokes, bolt circles,
+  fan blades, gear teeth, anything radial. Do NOT manually create N copies.
+  Example for 16 spokes on a wheel centered at the front hub (axis along Y):
+  \`circular_pattern({ child: spokeId, axis_origin: {x:720, y:0, z:350},
+  axis_dir: {x:0, y:1, z:0}, count: 16, angle_deg: 360 })\` — one call,
+  one part, one eval cost. Edits to the source spoke propagate to all 16.
+
+- **linear_pattern(child, direction, count, spacing)** — repeat a part along
+  a direction. Use for stair treads, fence posts, louver fins, anything in
+  a row. Same one-call principle.
+
+- **mirror(child, plane)** — mirror a part across "XY", "XZ", or "YZ".
+  Use for left/right handed pairs (crank arms, fork blades, chainstays).
+
 ## rotate: in-place by default
 
 \`rotate(child, angles)\` rotates around the part's current bbox center by
@@ -67,9 +82,13 @@ Instead of extruding each tube with perpendicular-basis math, do this:
 2. \`tube({ start: headTubeTop, end: headTubeBottom, radius: 16, name: "Head Tube" })\`
 3. \`tube({ start: headTubeBottom, end: frontHub, radius: 12, name: "Fork" })\`
 4. \`cylinder\` for wheels, \`place\` each to its hub.
-5. \`tube\` for handlebar, seat post, crank arm.
-6. \`set_material\` on each part.
-7. \`screenshot_viewport({ view: "quad" })\` to verify.
+5. For spokes: \`tube\` ONE spoke, then
+   \`circular_pattern({ child: spokeId, axis_origin: hub, axis_dir: {x:0,y:1,z:0}, count: 16, angle_deg: 360 })\`.
+   NEVER create N spokes by hand.
+6. \`tube\` for handlebar, seat post; \`mirror\` for crank arms.
+7. Bulk-color: \`set_material({ selector: { by: "tag", value: "frame" } }, "abs-red")\` etc.
+8. \`screenshot_viewport({ view: "quad" })\` to verify.
 
 This pattern generalizes: whenever you'd be tempted to compute perpendicular
-vectors or tube lengths by hand, stop and use tube / polyline_tube instead.`;
+vectors or tube lengths by hand, stop and use tube / polyline_tube instead.
+Whenever you'd be tempted to create N copies of the same thing, use a pattern.`;

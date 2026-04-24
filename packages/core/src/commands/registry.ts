@@ -216,20 +216,43 @@ export class CommandRegistry {
       },
       {
         name: "set_material",
-        description: "Set the material/color of a part. Use one of the preset material keys listed in the system prompt.",
+        description:
+          "Set the material/color of one OR MANY parts in a single call. " +
+          "Provide ONE of: `part_id` (single), `part_ids` (explicit array), or " +
+          "`selector` (match by kind/name). Prefer the bulk forms — assigning " +
+          "the same material to 18 parts via 18 calls is wasteful when one " +
+          "selector call would do it.",
         input_schema: {
           type: "object",
           properties: {
             part_id: {
               type: "string",
-              description: "The part ID to set the material on.",
+              description: "Single part ID to set the material on.",
+            },
+            part_ids: {
+              type: "array",
+              items: { type: "string" },
+              description: "Array of part IDs — applies the material to each.",
+            },
+            selector: {
+              type: "object",
+              description:
+                "Match many parts at once. `by` is one of: 'kind' | 'name_prefix' | 'name_contains' | 'name_equals'. `value` is matched case-insensitively. Example: { by: 'name_prefix', value: 'Spoke' }.",
+              properties: {
+                by: {
+                  type: "string",
+                  enum: ["kind", "name_prefix", "name_contains", "name_equals"],
+                },
+                value: { type: "string" },
+              },
+              required: ["by", "value"],
             },
             material: {
               type: "string",
               description: "Material preset key (e.g. 'aluminum', 'gold', 'oak', 'abs-red').",
             },
           },
-          required: ["part_id", "material"],
+          required: ["material"],
         },
       },
       {
@@ -352,6 +375,25 @@ export class CommandRegistry {
             },
           },
           required: ["part_id", "to"],
+        },
+      },
+      {
+        name: "describe_scene",
+        description:
+          "One-call snapshot of the whole scene (or a subset of parts): each part's world-space bbox, center, translate, rotate, and material as JSON. Use this INSTEAD of a chain of `inspect_part` calls when you need positions for several parts at once — one turn, no round-trips. Also use it after a batch of edits to verify where everything ended up.",
+        input_schema: {
+          type: "object",
+          properties: {
+            part_ids: {
+              type: "array",
+              items: { type: "string" },
+              description: "Optional list of part IDs to describe. Omit to describe every part.",
+            },
+            limit: {
+              type: "integer",
+              description: "Cap the number of parts returned when no part_ids are provided (default 100).",
+            },
+          },
         },
       },
     ];
