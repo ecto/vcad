@@ -25,9 +25,42 @@ export function useEngine() {
       const engine = useEngineStore.getState().engine;
       if (!engine) return;
 
+      const docChanged = state.document !== prevState?.document;
+      const transientEnded =
+        !!prevState?.isTransientEval && !state.isTransientEval;
+      const dragEnded =
+        !!prevState?.isParameterDragging && !state.isParameterDragging;
+
+      // Handle "transient batch just ended without another doc change" by
+      // scheduling a refinement pass with full clash detection. This is
+      // how the viewport's clash highlights catch up after the AI stops
+      // calling tools, or after the user releases a drag whose final
+      // position equals the last LOD eval.
+      if (!docChanged && (transientEnded || dragEnded)) {
+        if (refinementTimeout) {
+          clearTimeout(refinementTimeout);
+        }
+        refinementTimeout = setTimeout(() => {
+          const refGen = ++evalGeneration;
+          const doc = useDocumentStore.getState().document;
+          engine
+            .evaluateAsync(doc, { skipClashDetection: false })
+            .then((refinedScene) => {
+              if (refGen !== evalGeneration) return;
+              useEngineStore.getState().setScene(refinedScene);
+            })
+            .catch((e) => {
+              if (refGen !== evalGeneration) return;
+              useEngineStore.getState().setError(String(e));
+            });
+          refinementTimeout = null;
+        }, 100);
+        return;
+      }
+
       // Only re-evaluate if the actual document content changed
       // Skip metadata-only changes (isDirty, lastSavedAt, etc.)
-      if (state.document === prevState?.document) {
+      if (!docChanged) {
         return;
       }
 
@@ -55,8 +88,16 @@ export function useEngine() {
           }
         }
 
-        // During parameter dragging: skip clash detection for faster updates
-        const isDragging = state.isParameterDragging;
+        // Skip clash detection for transient updates (user drag, AI tool
+        // call batches). Clash is O(n²) pairwise boolean intersections and
+        // dominates large-scene eval cost (~9s on a 53-part bike). Painting
+        // the viewport within one animation frame is worth deferring the
+        // overlap highlights until the batch quiesces.
+        const isTransient =
+          state.isParameterDragging || state.isTransientEval;
+        const wasTransient =
+          (prevState?.isParameterDragging ?? false) ||
+          (prevState?.isTransientEval ?? false);
 
         const dirtyNodes = state.clearDirtyNodes();
         if (dirtyNodes.size > 0) {
@@ -65,7 +106,7 @@ export function useEngine() {
 
         const gen = ++evalGeneration;
         engine
-          .evaluateAsync(state.document, { skipClashDetection: isDragging })
+          .evaluateAsync(state.document, { skipClashDetection: isTransient })
           .then((scene) => {
             if (gen !== evalGeneration) return;
             useEngineStore.getState().setScene(scene);
@@ -75,8 +116,9 @@ export function useEngine() {
             useEngineStore.getState().setError(String(e));
           });
 
-        // If dragging just ended, schedule a refinement pass with clash detection
-        if (prevState?.isParameterDragging && !isDragging) {
+        // If the transient batch just ended, schedule a refinement pass with
+        // full clash detection.
+        if (wasTransient && !isTransient) {
           if (refinementTimeout) {
             clearTimeout(refinementTimeout);
           }

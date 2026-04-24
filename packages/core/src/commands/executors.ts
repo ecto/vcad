@@ -38,6 +38,95 @@ function computePartWorldBbox(partId: string, docStore: DocStore): Bbox | null {
   return null;
 }
 
+/** Try to read a part's world AABB; if the scene is stale (the part was
+ *  just created and the RAF-debounced eval hasn't fired yet), force a
+ *  synchronous evaluation of the current document and retry once. This
+ *  removes the most common cause of the cryptic "scene may not be evaluated
+ *  yet" error from the AI's path: it lets the AI chain `tube` → `place`
+ *  in the same turn without waiting for the next animation frame.
+ *
+ *  Force-eval is bounded — it skips clash detection (the O(n²) cost) and
+ *  reads the existing scene cache when possible, so the worst case on a
+ *  large scene is a single tessellation pass on the dirty subgraph. */
+function computePartWorldBboxForceEval(
+  partId: string,
+  docStore: DocStore,
+): Bbox | null {
+  const first = computePartWorldBbox(partId, docStore);
+  if (first) return first;
+  const engineStore = useEngineStore.getState();
+  const engine = engineStore.engine;
+  if (!engine || typeof engine.evaluate !== "function") return null;
+  try {
+    const scene = engine.evaluate(docStore.document, { skipClashDetection: true });
+    engineStore.setScene(scene);
+  } catch {
+    return null;
+  }
+  return computePartWorldBbox(partId, docStore);
+}
+
+/** Build a structured-error JSON string the AI can act on. Keeping it as
+ *  a single line keeps it cheap to emit from any executor while still
+ *  giving the model enough handles to recover (a code, hints about what
+ *  was looked up, and an explicit suggestion). */
+function structuredError(
+  code: string,
+  message: string,
+  details?: Record<string, unknown>,
+): string {
+  return JSON.stringify({ ok: false, code, message, ...(details ?? {}) });
+}
+
+/** Build a compact JSON summary for successful CRUD operations. Gives the
+ *  model enough information to decide what to do next (bbox for placing,
+ *  resulting transform for chaining, material for bulk ops) without a
+ *  follow-up `inspect_part` round-trip. Force-evaluates if the scene is
+ *  stale so fresh parts report real coordinates, not zeros. */
+function buildPartSnapshot(
+  partId: string,
+  docStore: DocStore,
+  extra?: Record<string, unknown>,
+): Record<string, unknown> {
+  const part = docStore.partIndex.get(partId);
+  const translate = getCurrentOffset(partId, docStore);
+  const rotate = getCurrentAngles(partId, docStore);
+  const doc = docStore.document as unknown as {
+    partMaterials?: Record<string, string>;
+  };
+  const material = doc.partMaterials?.[partId] ?? null;
+  const snapshot: Record<string, unknown> = {
+    ok: true,
+    part_id: partId,
+    name: part?.name ?? null,
+    kind: part?.kind ?? null,
+    translate,
+    rotate,
+    material,
+    ...(extra ?? {}),
+  };
+  const bbox = computePartWorldBboxForceEval(partId, docStore);
+  if (bbox) {
+    const center = bboxCenter(bbox);
+    const size = bboxSize(bbox);
+    snapshot.bbox = {
+      min: { x: bbox.min[0], y: bbox.min[1], z: bbox.min[2] },
+      max: { x: bbox.max[0], y: bbox.max[1], z: bbox.max[2] },
+      center,
+      size,
+    };
+  }
+  return snapshot;
+}
+
+function snapshotJson(
+  partId: string,
+  docStore: DocStore,
+  extra?: Record<string, unknown>,
+): string {
+  return JSON.stringify(buildPartSnapshot(partId, docStore, extra));
+}
+
 function bboxCenter(b: Bbox): Vec3 {
   return {
     x: (b.min[0] + b.max[0]) / 2,
@@ -241,6 +330,32 @@ function tryExecuteViaWasm(
   // mutation, and the planner would just return a no-outcome
   // PlannedResponse we'd still have to translate.
   if (tool === "read") return null;
+  // Skip set_material when bulk inputs are present — the Rust planner only
+  // knows the single-part shape and would reject `part_ids` / `selector`
+  // with an error before TS got a chance.
+  if (
+    tool === "set_material" &&
+    (args.selector !== undefined || Array.isArray(args.part_ids))
+  ) {
+    return null;
+  }
+  // Skip tools the Rust planner doesn't know about. Without this, an AI
+  // call like `circular_pattern(...)` short-circuits with the planner's
+  // "unknown tool" error before the TS dispatch can route it. Keep this
+  // list in sync with the top-level tools handled in `executeCrudInner`
+  // that aren't in the Rust planner's match.
+  const TS_ONLY_TOOLS = new Set([
+    "tube",
+    "polyline_tube",
+    "linear_pattern",
+    "circular_pattern",
+    "mirror",
+    "inspect_part",
+    "place",
+    "describe_scene",
+    "batch",
+  ]);
+  if (TS_ONLY_TOOLS.has(tool)) return null;
 
   const docJson = JSON.stringify(docStore.document);
   const planned: PlannedResponse | null = commandRegistry.planCrud(
@@ -338,11 +453,13 @@ function executeCrudInner(
     case "delete":
       return executeDelete(args.part_id as string, docStore, uiStore);
     case "set_material":
-      return executeSetMaterial(args.part_id as string, args.material as string, docStore);
+      return executeSetMaterial(args, docStore);
     case "inspect_part":
       return executeInspectPart(args.part_id as string, docStore);
     case "place":
       return executePlace(args, docStore);
+    case "describe_scene":
+      return executeDescribeScene(args, docStore);
     case "tube":
       return executeCreateWithName(
         tool,
@@ -363,6 +480,22 @@ function executeCrudInner(
         docStore,
         uiStore,
       );
+    case "linear_pattern":
+    case "circular_pattern":
+      // Pattern primitives are advertised as top-level tools in
+      // static-schemas.ts; route them through executeCreate so the AI can
+      // call either `circular_pattern(...)` or `create(type:"circular_pattern",
+      // params:...)` and get the same result. Without this case, the AI
+      // gets `Unknown tool: circular_pattern` and falls back to manually
+      // unrolling the pattern (e.g. 16 separate spoke tubes).
+      return executeCreateWithName(
+        tool,
+        args as Record<string, unknown>,
+        undefined,
+        args.name as string | undefined,
+        docStore,
+        uiStore,
+      );
     default:
       return { status: "error", result: `Unknown tool: ${tool}` };
   }
@@ -380,7 +513,11 @@ function executeInspectPart(partId: string, docStore: DocStore): ExecutionResult
     const err = validatePartId(partId, docStore, "inspect_part part_id");
     return err ?? { status: "error", result: `Part ${partId} not found` };
   }
-  const bbox = computePartWorldBbox(partId, docStore);
+  // Force-eval if the scene is stale (e.g. this part was just created
+  // within the same AI turn). This was the #1 source of failed `inspect`
+  // calls: the AI would create a tube, then immediately ask to inspect it,
+  // and the RAF-debounced eval hadn't fired yet.
+  const bbox = computePartWorldBboxForceEval(partId, docStore);
   const offset = getCurrentOffset(partId, docStore);
   const angles = getCurrentAngles(partId, docStore);
   const kind = part.kind;
@@ -436,6 +573,59 @@ function executeInspectPart(partId: string, docStore: DocStore): ExecutionResult
 }
 
 // ---------------------------------------------------------------------------
+// describe_scene — one-call snapshot of every part's position, bbox, and
+// material. Replaces the AI's habit of calling `inspect_part` 8× in a row
+// while debugging coordinate drift. Accepts optional `part_ids` to scope
+// the response, and `limit` to cap output. Force-evaluates the scene once
+// at the start so positions are fresh.
+// ---------------------------------------------------------------------------
+function executeDescribeScene(
+  args: Record<string, unknown>,
+  docStore: DocStore,
+): ExecutionResult {
+  const requestedIds = args.part_ids as string[] | undefined;
+  const limit = (args.limit as number | undefined) ?? 100;
+  // Force one eval up front so every snapshot below can reuse the fresh
+  // scene cache without N separate force-eval calls.
+  const engineStore = useEngineStore.getState();
+  const engine = engineStore.engine;
+  if (engine && (!engineStore.scene || docStore.parts.length > 0)) {
+    try {
+      const scene = engine.evaluate(docStore.document, { skipClashDetection: true });
+      engineStore.setScene(scene);
+    } catch {
+      // If eval fails, fall through — we'll emit whatever we have.
+    }
+  }
+  const ids = requestedIds && requestedIds.length > 0
+    ? requestedIds
+    : docStore.parts.map((p) => p.id).slice(0, limit);
+  const missing: string[] = [];
+  const parts: Array<Record<string, unknown>> = [];
+  for (const id of ids) {
+    const part = docStore.partIndex.get(id);
+    if (!part) {
+      missing.push(id);
+      continue;
+    }
+    parts.push(buildPartSnapshot(id, docStore));
+  }
+  return {
+    status: "success",
+    result: JSON.stringify({
+      ok: true,
+      part_count: parts.length,
+      parts,
+      missing: missing.length > 0 ? missing : undefined,
+    }),
+    display: {
+      summary: [text(`⌕ Describe scene (${parts.length} parts)`)],
+      affectedPartIds: [],
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // place — anchor-based positioning. Translates a part so that its `from`
 // anchor lands on the world-space `to` point (or another part's anchor).
 // Optional `align` rotates the part so an axis on it matches a world-space
@@ -457,7 +647,7 @@ function resolveAnchorOnPart(
   anchor: AnchorName,
   docStore: DocStore,
 ): Vec3 | null {
-  const bbox = computePartWorldBbox(partId, docStore);
+  const bbox = computePartWorldBboxForceEval(partId, docStore);
   if (!bbox) return null;
   const c = bboxCenter(bbox);
   switch (anchor) {
@@ -472,6 +662,10 @@ function resolveAnchorOnPart(
     case "right":  return { x: bbox.max[0], y: c.y, z: c.z };
   }
 }
+
+const ANCHOR_NAMES: AnchorName[] = [
+  "center", "min", "max", "top", "bottom", "front", "back", "left", "right",
+];
 
 function resolveAnchor(
   ref: AnchorRef | undefined,
@@ -505,9 +699,38 @@ function executePlace(
   if (!to) return { status: "error", result: "place requires a `to` anchor (Vec3, named anchor, or {part,anchor})" };
 
   const fromWorld = resolveAnchor(from, partId, docStore);
-  if (!fromWorld) return { status: "error", result: "place: could not resolve `from` anchor — the scene may not be evaluated yet" };
+  if (!fromWorld) {
+    return {
+      status: "error",
+      result: structuredError(
+        "ANCHOR_UNRESOLVED",
+        "place: could not resolve `from` anchor",
+        {
+          part_id: partId,
+          from,
+          available_anchors: ANCHOR_NAMES,
+          suggestion:
+            "If you just created this part, the scene is still evaluating. Try `inspect_part` first, or pass `from` as an explicit Vec3 (e.g. {x,y,z}).",
+        },
+      ),
+    };
+  }
   const toWorld = resolveAnchor(to, partId, docStore);
-  if (!toWorld) return { status: "error", result: "place: could not resolve `to` anchor" };
+  if (!toWorld) {
+    return {
+      status: "error",
+      result: structuredError(
+        "ANCHOR_UNRESOLVED",
+        "place: could not resolve `to` anchor",
+        {
+          to,
+          available_anchors: ANCHOR_NAMES,
+          suggestion:
+            "If `to` references another part, that part may not exist or may not yet be evaluated. Try `inspect_part` on it first, or pass `to` as an explicit Vec3.",
+        },
+      ),
+    };
+  }
 
   const currentOffset = getCurrentOffset(partId, docStore);
   const newOffset = {
@@ -519,7 +742,11 @@ function executePlace(
 
   return {
     status: "success",
-    result: `Placed ${partId} so that ${JSON.stringify(from)} → (${toWorld.x.toFixed(1)}, ${toWorld.y.toFixed(1)}, ${toWorld.z.toFixed(1)})`,
+    result: snapshotJson(partId, docStore, {
+      applied: "place",
+      from_world: fromWorld,
+      to_world: toWorld,
+    }),
     partId,
     display: {
       summary: [
@@ -536,34 +763,113 @@ function executePlace(
   };
 }
 
+/** Resolve a part-id selector to a concrete list of ids. Selectors let the
+ *  AI assign a material to many parts in one call (e.g. all spokes, all
+ *  parts whose name starts with "Frame") instead of issuing N separate
+ *  `set_material` calls — which is what produced the 18-call material run
+ *  in the bicycle transcript. */
+function resolveSelector(
+  selector: unknown,
+  docStore: DocStore,
+): string[] {
+  if (!selector || typeof selector !== "object") return [];
+  const sel = selector as { by?: string; value?: string };
+  if (!sel.by || sel.value == null) return [];
+  const value = String(sel.value).toLowerCase();
+  const ids: string[] = [];
+  for (const p of docStore.parts) {
+    let match = false;
+    switch (sel.by) {
+      case "kind":
+        match = p.kind?.toLowerCase() === value;
+        break;
+      case "name_prefix":
+        match = !!p.name && p.name.toLowerCase().startsWith(value);
+        break;
+      case "name_contains":
+        match = !!p.name && p.name.toLowerCase().includes(value);
+        break;
+      case "name_equals":
+        match = !!p.name && p.name.toLowerCase() === value;
+        break;
+    }
+    if (match) ids.push(p.id);
+  }
+  return ids;
+}
+
 function executeSetMaterial(
-  partId: string,
-  materialKey: string,
+  args: Record<string, unknown>,
   docStore: DocStore,
 ): ExecutionResult {
-  if (!partId) return { status: "error", result: "set_material requires part_id" };
+  const materialKey = args.material as string | undefined;
   if (!materialKey) return { status: "error", result: "set_material requires material key" };
-  const err = validatePartId(partId, docStore, "set_material part_id");
-  if (err) return err;
-  try {
-    docStore.setPartMaterial(partId, materialKey);
-    return {
-      status: "success",
-      result: `Set ${partId} material to ${materialKey}`,
-      partId,
-      display: {
-        summary: [
-          text("⬤ Material "),
-          link(partId, docStore),
-          text(` = ${materialKey}`),
-        ],
-        fields: [{ label: "material", value: materialKey }],
-        affectedPartIds: [partId],
-      },
-    };
-  } catch (e) {
-    return { status: "error", result: e instanceof Error ? e.message : "set_material failed" };
+
+  // Resolve the target list. Three input shapes are accepted:
+  //   { part_id: "p1", material: "..." }              — one part
+  //   { part_ids: ["p1","p2","p3"], material: "..." } — explicit batch
+  //   { selector: { by, value }, material: "..." }    — match by kind/name
+  // Falling back to single-part keeps the old call sites working.
+  let targetIds: string[] = [];
+  const partIds = args.part_ids as string[] | undefined;
+  const partId = args.part_id as string | undefined;
+  const selector = args.selector;
+  if (Array.isArray(partIds) && partIds.length > 0) {
+    targetIds = partIds.slice();
+  } else if (partId) {
+    targetIds = [partId];
+  } else if (selector) {
+    targetIds = resolveSelector(selector, docStore);
+    if (targetIds.length === 0) {
+      return {
+        status: "error",
+        result: structuredError(
+          "SELECTOR_EMPTY",
+          "set_material: selector matched zero parts",
+          { selector, suggestion: "Inspect the scene snapshot to confirm the selector value (case-insensitive)." },
+        ),
+      };
+    }
+  } else {
+    return { status: "error", result: "set_material requires one of: part_id, part_ids[], or selector{by,value}" };
   }
+
+  const succeeded: string[] = [];
+  const failed: Array<{ id: string; reason: string }> = [];
+  for (const id of targetIds) {
+    const err = validatePartId(id, docStore, "set_material part_id");
+    if (err) {
+      failed.push({ id, reason: typeof err.result === "string" ? err.result : "invalid id" });
+      continue;
+    }
+    try {
+      docStore.setPartMaterial(id, materialKey);
+      succeeded.push(id);
+    } catch (e) {
+      failed.push({ id, reason: e instanceof Error ? e.message : "set_material failed" });
+    }
+  }
+
+  return {
+    status: failed.length > 0 && succeeded.length === 0 ? "error" : "success",
+    result: JSON.stringify({
+      ok: failed.length === 0,
+      applied: "set_material",
+      material: materialKey,
+      part_ids: succeeded,
+      failed: failed.length > 0 ? failed : undefined,
+    }),
+    partId: succeeded[0],
+    display: {
+      summary: [
+        text("⬤ Material"),
+        ...(targetIds.length === 1 ? [text(" "), link(targetIds[0]!, docStore)] : [text(` ×${succeeded.length}`)]),
+        text(` = ${materialKey}`),
+      ],
+      fields: [{ label: "material", value: materialKey }],
+      affectedPartIds: succeeded,
+    },
+  };
 }
 
 /** Apply a user-provided name to a freshly created part, if any. */
@@ -659,7 +965,7 @@ function executeCreate(
 
         return {
           status: "success",
-          result: `Created ${type} with id: ${partId}`,
+          result: snapshotJson(partId, docStore, { created: type }),
           partId,
           display: {
             summary: [text(`+ ${capitalized}${sizeSuffix} `), link(partId, docStore)],
@@ -713,7 +1019,11 @@ function executeCreate(
         uiStore.select(partId);
         return {
           status: "success",
-          result: `Created tube with id: ${partId}`,
+          result: snapshotJson(partId, docStore, {
+            created: "tube",
+            radius,
+            length,
+          }),
           partId,
           display: {
             summary: [
@@ -786,6 +1096,131 @@ function executeCreate(
         };
       }
 
+      case "linear_pattern": {
+        // Repeat a child part along a direction. Vastly preferable to the AI
+        // manually creating N copies because the kernel evaluates the pattern
+        // as one node (cheap re-eval) and edits to the source propagate to
+        // every instance.
+        const child = params.child as string;
+        const direction = params.direction as Vec3 | undefined;
+        const count = params.count as number | undefined;
+        const spacing = params.spacing as number | undefined;
+        if (!child) return { status: "error", result: "linear_pattern requires child part_id" };
+        if (!direction) return { status: "error", result: "linear_pattern requires direction (Vec3)" };
+        if (!count || count < 1) return { status: "error", result: "linear_pattern requires count ≥ 1" };
+        if (spacing == null) return { status: "error", result: "linear_pattern requires spacing" };
+        const err = validatePartId(child, docStore, "linear_pattern child");
+        if (err) return err;
+        const partId = docStore.addLinearPattern(child, direction, count, spacing);
+        if (!partId) return { status: "error", result: "linear_pattern failed" };
+        uiStore.select(partId);
+        return {
+          status: "success",
+          result: snapshotJson(partId, docStore, {
+            created: "linear_pattern",
+            child,
+            count,
+            spacing,
+            direction,
+          }),
+          partId,
+          display: {
+            summary: [
+              text(`▦ Linear pattern ×${count} → `),
+              link(partId, docStore),
+            ],
+            fields: [
+              { label: "child", value: child },
+              { label: "direction", value: `(${direction.x}, ${direction.y}, ${direction.z})` },
+              { label: "count", value: `${count}` },
+              { label: "spacing", value: `${spacing} mm` },
+            ],
+            affectedPartIds: [partId],
+          },
+        };
+      }
+
+      case "circular_pattern": {
+        // Repeat a child part around an axis. Use this for spokes, bolt
+        // circles, fan blades — any radial array. One node, one eval cost,
+        // identical instances.
+        const child = params.child as string;
+        const axisOrigin = params.axis_origin as Vec3 | undefined;
+        const axisDir = params.axis_dir as Vec3 | undefined;
+        const count = params.count as number | undefined;
+        const angleDeg = params.angle_deg as number | undefined;
+        if (!child) return { status: "error", result: "circular_pattern requires child part_id" };
+        if (!axisOrigin) return { status: "error", result: "circular_pattern requires axis_origin (Vec3)" };
+        if (!axisDir) return { status: "error", result: "circular_pattern requires axis_dir (Vec3)" };
+        if (!count || count < 1) return { status: "error", result: "circular_pattern requires count ≥ 1" };
+        if (angleDeg == null) return { status: "error", result: "circular_pattern requires angle_deg" };
+        const err = validatePartId(child, docStore, "circular_pattern child");
+        if (err) return err;
+        const partId = docStore.addCircularPattern(child, axisOrigin, axisDir, count, angleDeg);
+        if (!partId) return { status: "error", result: "circular_pattern failed" };
+        uiStore.select(partId);
+        return {
+          status: "success",
+          result: snapshotJson(partId, docStore, {
+            created: "circular_pattern",
+            child,
+            count,
+            angle_deg: angleDeg,
+            axis_origin: axisOrigin,
+            axis_dir: axisDir,
+          }),
+          partId,
+          display: {
+            summary: [
+              text(`◯ Circular pattern ×${count} → `),
+              link(partId, docStore),
+            ],
+            fields: [
+              { label: "child", value: child },
+              { label: "axis_origin", value: `(${axisOrigin.x}, ${axisOrigin.y}, ${axisOrigin.z})` },
+              { label: "axis_dir", value: `(${axisDir.x}, ${axisDir.y}, ${axisDir.z})` },
+              { label: "count", value: `${count}` },
+              { label: "angle_deg", value: `${angleDeg}°` },
+            ],
+            affectedPartIds: [partId],
+          },
+        };
+      }
+
+      case "mirror": {
+        const child = params.child as string;
+        const plane = params.plane as "XY" | "XZ" | "YZ" | undefined;
+        if (!child) return { status: "error", result: "mirror requires child part_id" };
+        if (plane !== "XY" && plane !== "XZ" && plane !== "YZ") {
+          return { status: "error", result: "mirror requires plane: 'XY' | 'XZ' | 'YZ'" };
+        }
+        const err = validatePartId(child, docStore, "mirror child");
+        if (err) return err;
+        const partId = docStore.addMirror(child, plane);
+        if (!partId) return { status: "error", result: "mirror failed" };
+        uiStore.select(partId);
+        return {
+          status: "success",
+          result: snapshotJson(partId, docStore, {
+            created: "mirror",
+            child,
+            plane,
+          }),
+          partId,
+          display: {
+            summary: [
+              text(`⇋ Mirror ${plane} → `),
+              link(partId, docStore),
+            ],
+            fields: [
+              { label: "child", value: child },
+              { label: "plane", value: plane },
+            ],
+            affectedPartIds: [partId],
+          },
+        };
+      }
+
       case "translate": {
         const child = params.child as string;
         const offset = params.offset as { x: number; y: number; z: number };
@@ -795,7 +1230,10 @@ function executeCreate(
         docStore.setTranslation(child, offset);
         return {
           status: "success",
-          result: `Translated ${child} by (${offset.x}, ${offset.y}, ${offset.z})`,
+          result: snapshotJson(child, docStore, {
+            applied: "translate",
+            offset,
+          }),
           partId: child,
           display: {
             summary: [
@@ -867,7 +1305,11 @@ function executeCreate(
               : "";
         return {
           status: "success",
-          result: `Rotated ${child}`,
+          result: snapshotJson(child, docStore, {
+            applied: "rotate",
+            angles,
+            pivot: pivot ?? "origin",
+          }),
           partId: child,
           display: {
             summary: [
@@ -894,7 +1336,10 @@ function executeCreate(
         docStore.setScale(child, factor);
         return {
           status: "success",
-          result: `Scaled ${child}`,
+          result: snapshotJson(child, docStore, {
+            applied: "scale",
+            factor,
+          }),
           partId: child,
           display: {
             summary: [

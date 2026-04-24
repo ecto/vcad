@@ -188,6 +188,7 @@ describe("CommandRegistry", () => {
         "polyline_tube",
         "inspect_part",
         "place",
+        "describe_scene",
       ]);
     });
 
@@ -206,13 +207,17 @@ describe("CommandRegistry", () => {
       }
     });
 
-    it("set_material tool has part_id and material params", () => {
+    it("set_material tool supports single-part, batch, and selector inputs", () => {
       const tools = registry.toAnthropicTools();
       const setMaterial = tools.find((t) => t.name === "set_material")!;
       const props = setMaterial.input_schema.properties as Record<string, unknown>;
       expect(props.part_id).toBeDefined();
+      expect(props.part_ids).toBeDefined();
+      expect(props.selector).toBeDefined();
       expect(props.material).toBeDefined();
-      expect((setMaterial.input_schema.required as string[])).toEqual(["part_id", "material"]);
+      // Only `material` is required now — the target is chosen between
+      // part_id / part_ids / selector at execution time.
+      expect((setMaterial.input_schema.required as string[])).toEqual(["material"]);
     });
   });
 
@@ -310,8 +315,9 @@ describe("CommandRegistry", () => {
       const fresh = new CommandRegistry();
       fresh.loadSchemas("[]");
       const tools = fresh.toAnthropicTools();
-      // 5 CRUD/material + 3 AI camera tools.
-      expect(tools).toHaveLength(12);
+      // 5 CRUD/material + 3 AI camera tools + 4 high-level tools
+      // (tube, polyline_tube, inspect_part, place) + describe_scene.
+      expect(tools).toHaveLength(13);
       const create = tools[0]!;
       const typeEnum = (create.input_schema.properties as Record<string, Record<string, unknown>>)
         .type.enum as string[];

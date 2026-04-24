@@ -2,6 +2,7 @@ import { useEffect, useCallback, useRef } from "react";
 import {
   useChatStore,
   useDocumentStore,
+  useEngineStore,
   useUiStore,
   useParticipantStore,
   ensureAiParticipant,
@@ -164,6 +165,61 @@ function getDocumentParts(): Array<{ id: string; name: string; kind: string }> {
 }
 
 /**
+ * Build a compact human-readable scene snapshot for the AI: each part with
+ * its world position, size, and material. Cheap to emit, very high value
+ * — the alternative is the AI calling `inspect_part` repeatedly to learn
+ * where things ended up. Capped at 60 parts to bound token cost; beyond
+ * that the AI is told to use describe_scene/inspect_part for detail.
+ */
+function buildSceneSnapshot(): string {
+  const docStore = useDocumentStore.getState();
+  const scene = useEngineStore.getState().scene;
+  const doc = docStore.document as unknown as {
+    partMaterials?: Record<string, string>;
+  };
+  const parts = docStore.parts;
+  if (parts.length === 0) return "";
+  const MAX = 60;
+  const lines: string[] = [];
+  const visible = parts.slice(0, MAX);
+  for (let i = 0; i < visible.length; i++) {
+    const p = visible[i]!;
+    let bboxStr = "";
+    let centerStr = "";
+    if (scene) {
+      const ep = scene.parts[i];
+      if (ep) {
+        const positions = ep.mesh.positions;
+        if (positions && positions.length >= 3) {
+          let minX = Infinity, minY = Infinity, minZ = Infinity;
+          let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+          for (let j = 0; j < positions.length; j += 3) {
+            const x = positions[j]!;
+            const y = positions[j + 1]!;
+            const z = positions[j + 2]!;
+            if (x < minX) minX = x; if (x > maxX) maxX = x;
+            if (y < minY) minY = y; if (y > maxY) maxY = y;
+            if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+          }
+          const cx = (minX + maxX) / 2;
+          const cy = (minY + maxY) / 2;
+          const cz = (minZ + maxZ) / 2;
+          centerStr = ` @(${cx.toFixed(0)},${cy.toFixed(0)},${cz.toFixed(0)})`;
+          bboxStr = ` ${(maxX - minX).toFixed(0)}×${(maxY - minY).toFixed(0)}×${(maxZ - minZ).toFixed(0)}mm`;
+        }
+      }
+    }
+    const material = doc.partMaterials?.[p.id];
+    const matStr = material ? ` [${material}]` : "";
+    lines.push(`- ${p.id} "${p.name}" (${p.kind})${centerStr}${bboxStr}${matStr}`);
+  }
+  if (parts.length > MAX) {
+    lines.push(`- … ${parts.length - MAX} more parts (use inspect_part or describe_scene for detail)`);
+  }
+  return `\n\n## Scene snapshot (world coordinates, mm)\n\n${lines.join("\n")}\n`;
+}
+
+/**
  * Run a streaming chat turn. Returns the text content and any tool calls.
  * Tool calls are returned but NOT executed — caller decides when.
  */
@@ -197,7 +253,8 @@ function runTurn(
       HIGH_LEVEL_TOOLS_SYSTEM_PROMPT_APPENDIX +
       SCREENSHOT_SYSTEM_PROMPT_APPENDIX +
       AI_CAMERA_SYSTEM_PROMPT_APPENDIX +
-      AI_DOCUMENT_SYSTEM_PROMPT_APPENDIX;
+      AI_DOCUMENT_SYSTEM_PROMPT_APPENDIX +
+      buildSceneSnapshot();
 
     streamChat(history, context, {
       onText: (t) => { text = t; onStreamText(t); },
@@ -361,6 +418,14 @@ export function useChatHandler() {
       // those as user messages (results live on chat_tool_calls rows).
       let nextUserMessageId = firstUserMessageId;
       let nextAssistantMessageId: string = firstAssistantMessageId;
+
+      // Mark the document store as being in a transient-eval batch for the
+      // duration of the AI turn. useEngine reads this flag and skips clash
+      // detection (O(n²) pairwise boolean intersections) while the flag is
+      // set, then runs a single refinement pass ~100ms after it flips back
+      // to false. Without this, a 53-part bike build blocks the viewport
+      // for ~9s per tool call waiting on clash.
+      useDocumentStore.getState().setTransientEval(true);
 
       try {
         while (true) {
@@ -608,6 +673,9 @@ export function useChatHandler() {
         // future Realtime updates (e.g. server marking it interrupted via
         // a sweep) actually take effect.
         useChatStore.getState().unmarkLocallyStreaming(nextAssistantMessageId);
+        // Flip the transient-eval flag off; useEngine will schedule a
+        // refinement pass with full clash detection ~100ms later.
+        useDocumentStore.getState().setTransientEval(false);
       }
     },
     [],
