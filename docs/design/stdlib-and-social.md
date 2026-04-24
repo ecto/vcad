@@ -31,13 +31,36 @@ Exactly one primitive: a **part**.
 
 Two distribution channels share this one contract:
 
-| Kind       | Lives in                        | Addressable as                       |
-|------------|---------------------------------|--------------------------------------|
-| Built-in   | `cad-lib/parts/**` in the repo  | `std:<category>.<slug>@<ver>`        |
-| User       | Supabase (published by a user)  | `@<username>/<slug>@<ver>`           |
+| Kind       | Implementation              | Lives in                            | Addressable as                  |
+|------------|-----------------------------|-------------------------------------|---------------------------------|
+| Built-in   | Rust fn returning `Document`| `crates/vcad-parts/` in the repo    | `std:<category>.<slug>@<ver>`   |
+| User       | Loon source evaluated at use| Supabase (published by a user)      | `@<username>/<slug>@<ver>`      |
 
 Both resolve to the same `PartInstance` IR node. The feature tree, chat tools,
-and MCP server treat them identically.
+and MCP server treat them identically. Only the resolver differs by path
+prefix: `std:` dispatches to a compiled-in Rust function, `@user/` evaluates
+Loon source fetched from Supabase.
+
+### Why Rust for built-ins, Loon for user parts
+
+Phase 1 built-ins ship as Rust fns because:
+
+- no Loon extensions needed (full `std::f64` math, incl. trig, comes free)
+- compile-time type safety on params
+- faster eval, easier golden tests
+- no user-code sandbox concerns for shipped parts
+
+Phase 2 user-published parts run as Loon because:
+
+- shippable as source without recompiling the kernel
+- fork/remix flows stay simple (copy the source, edit, publish)
+- sandboxable — Loon has no file or network access
+
+The shared contract — `PartInstance` node, `part.toml` metadata, parameter
+schema, `search_parts` / `place_part` tools — is identical across both
+worlds. Users who want to contribute a part to the built-in stdlib submit a
+PR with a Rust implementation; users who want to distribute a part without
+a vcad release publish it as Loon through the social layer.
 
 ## Preflight verification
 
@@ -57,17 +80,45 @@ before designing around them.
 
 ### File format
 
-One directory per part:
+**Built-in parts** live under `crates/vcad-parts/src/<category>/<slug>.rs`.
+Each file declares the part's metadata as a `const` and exports a `build`
+function:
+
+```rust
+pub const METADATA: PartMetadata = PartMetadata {
+    id:       "fastener.bolt.socket-head",
+    name:     "Bolt (ISO 4762)",
+    category: "Fasteners",
+    params:   &[
+        Param::enum_("size", &["M3","M4","M5","M6","M8","M10","M12"], "M6"),
+        Param::length("length", 4.0, 200.0, 20.0, "mm"),
+    ],
+    xrefs:    &[
+        Xref { params: &[("size","M6"),("length","20")],
+               mcmaster: Some("91290A115"), iso: Some("ISO 4762"), din: Some("DIN 912") },
+    ],
+    thumb:    include_bytes!("bolt-socket-head.svg"),
+    synonyms: &["SHCS","allen bolt","cap screw"],
+    version:  "1.0",
+};
+
+pub fn build(p: &Params) -> Document { … }
+```
+
+The `parts-manifest.json` consumed by the palette and Cmd+K is generated
+from these `METADATA` declarations at build time — no TOML files for
+built-ins.
+
+**User-published parts** (Phase 2) use a directory layout:
 
 ```
-cad-lib/parts/fasteners/bolt-socket-head/
-├── part.loon     ; [defn bolt [size length thread material] …]
+~/.vcad/drafts/fancy-bracket/
+├── part.loon     ; [defn fancy-bracket [height width] …]
 ├── part.toml     ; id, category, params, xrefs, thumb path
 └── thumb.svg     ; 48×48 palette icon
 ```
 
-`part.toml` is what the app reads to build UI. `part.loon` is only touched by
-the evaluator. This split lets the palette render without running Loon.
+The TOML form lets users author parts without recompiling the kernel.
 
 Example `part.toml`:
 
@@ -114,13 +165,15 @@ PartInstance {
 }
 ```
 
-Evaluation in `packages/engine/src/evaluate.ts`:
+Evaluation in `packages/engine/src/evaluate.ts` resolves by path prefix:
 
-1. resolve `path` → source (bundled TOML+loon for `std:`, cached fetch for
-   `@user/`)
-2. invoke the loon `entry` function with `params`
-3. wrap the resulting Solid subtree so selection and the feature tree treat
-   the part as one node, not its expansion
+1. `std:` → call WASM-exported `vcad_parts_build(path, params_json)` →
+   returns a sub-`Document`
+2. `@user/` → fetch Loon source for the pinned version → evaluate via
+   `vcad_loon::eval_vcad` with params injected into the environment →
+   returns a sub-`Document`
+3. wrap the returned subtree so selection and the feature tree treat the
+   part as one node, not its expansion
 
 Editing a param re-evaluates. The subtree never bakes into the parent doc.
 Save/load serializes only `path + version + params + name` — geometry is
@@ -129,22 +182,24 @@ regenerated on load.
 Feature tree shows one line per instance with inline param scrubbers, the
 same affordance as a sketched extrude today.
 
-### Loon capability audit
+### Loon capability audit (for Phase 2 user parts only)
 
-Before writing Phase-1 parts, confirm the Loon evaluator supports:
+Phase 1 built-ins are Rust so this audit is deferred to Phase 2. Current
+findings from a read of `loon_lang::interp::builtins`:
 
-- numeric math (trig, sqrt, pow — frame geometry, spoke layout)
-- circular and linear patterns callable inside a `defn`
-- material assignment per sub-solid (saddle wants black rubber top + steel rails)
-- named sub-parts within a part (so `inspect_part` on `crank-set` surfaces arms,
-  spider, BB)
-- keyword args with defaults (`[bolt :size "M6" :length 20]`) — required for UX
-- nested part calls (`crank-set` calls `bolt` internally)
-- conditionals / pattern matching on enum params
+- **present**: `+ - * / %`, comparison ops, `sqrt pow abs min max`,
+  `map filter fold range zip flatten reverse`, `if` / `cond` / `match`
+  (language keywords), closures via `fn`, let bindings, ADTs via `type`
+- **missing**: `sin`, `cos`, `tan`, `atan2`, `PI`, `TAU` — required for
+  parts with circular geometry (spoked-wheel, helical patterns, hex heads
+  built from flats)
+- **missing**: keyword args with defaults — callable parts pass params as
+  a map, but `[defn bolt {:keys [size length :or {length 20}]}]` isn't
+  supported today. Workaround for Phase 2: pass params as a single map
+  arg, part extracts keys with `get` + defaults.
 
-Any missing item becomes a Loon extension landed before the parts that need
-it. A part written against a half-capable language rots fast. Gaps and fixes
-get documented in this section as audit findings during Phase 1.
+Phase 2 blockers: add trig + `PI`/`TAU` to loon builtins before opening
+user-published parts that model circular geometry.
 
 ### Versioning
 
@@ -208,8 +263,11 @@ drawing does.
 
 ### Build pipeline
 
-At `cad-lib` build time, walk `parts/**/part.toml` and emit
-`parts-manifest.json` bundled with the app:
+A `build.rs` in `vcad-parts` walks each `src/<category>/<slug>.rs`,
+invokes a `fn manifest_entry() -> ManifestEntry` from each module, and
+emits `parts-manifest.json` at compile time. The JSON is bundled into
+the WASM kernel and exported via `get_parts_manifest() -> String`. The
+app reads it on boot.
 
 ```
 {

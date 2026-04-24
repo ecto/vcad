@@ -3231,6 +3231,10 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
         vcad_ir::CsgOp::EmbroideryPattern { .. } => Err(JsError::new(
             "EmbroideryPattern not supported in VCode evaluation - use evaluateDocument",
         )),
+
+        vcad_ir::CsgOp::PartInstance { .. } => Err(JsError::new(
+            "PartInstance must be expanded by the engine before VCode evaluation",
+        )),
     }
 }
 
@@ -4679,6 +4683,34 @@ fn mesh_to_js(mesh: &vcad_eval::EvaluatedMesh) -> JsValue {
         );
     }
     obj.into()
+}
+
+// ============================================================================
+// Parts library (stdlib)
+// ============================================================================
+
+/// Return the full parts manifest JSON for the built-in stdlib.
+///
+/// The app consumes this on boot to populate the palette's Parts tab and
+/// the Cmd+K search index.
+#[wasm_bindgen(js_name = getPartsManifest)]
+pub fn get_parts_manifest() -> String {
+    vcad_parts::manifest_json()
+}
+
+/// Build a built-in part's sub-document given its path and params JSON.
+///
+/// `path` is either a bare id (`"fastener.bolt.socket-head"`) or prefixed
+/// with `std:`. `params_json` is a JSON object whose keys are parameter
+/// names. Returns a JSON-serialized [`vcad_ir::Document`] that the engine
+/// can splice into the parent document.
+#[wasm_bindgen(js_name = buildPart)]
+pub fn build_part(path: &str, params_json: &str) -> Result<String, JsError> {
+    let params: std::collections::HashMap<String, serde_json::Value> =
+        serde_json::from_str(params_json)
+            .map_err(|e| JsError::new(&format!("invalid params JSON: {e}")))?;
+    let doc = vcad_parts::build_part(path, &params).map_err(|e| JsError::new(&e))?;
+    serde_json::to_string(&doc).map_err(|e| JsError::new(&format!("serialize failed: {e}")))
 }
 
 /// Evaluate a loon source string and return a JSON-serialized vcad Document.

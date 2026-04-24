@@ -437,6 +437,37 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> Option<String> {
         CsgOp::EmbroideryPattern { .. } => {
             Some("; TODO: EmbroideryPattern — not yet supported in loon".to_string())
         }
+
+        CsgOp::PartInstance {
+            path,
+            version,
+            params,
+        } => {
+            let mut kv: Vec<(String, String)> = params
+                .iter()
+                .map(|(k, v)| (k.clone(), fmt_json_value(v)))
+                .collect();
+            kv.sort_by(|a, b| a.0.cmp(&b.0));
+            let params_str = kv
+                .iter()
+                .map(|(k, v)| format!(":{k} {v}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            Some(format!(
+                "[part-instance {:?} {:?} #{{{}}}]",
+                path, version, params_str
+            ))
+        }
+    }
+}
+
+fn fmt_json_value(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => format!("{s:?}"),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Null => "nil".to_string(),
+        _ => format!("{:?}", v.to_string()),
     }
 }
 

@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/vcad-ir",
+    "crates/vcad-parts",
     "crates/vcad",
     "crates/vcad-kernel-math",
     "crates/vcad-kernel-topo",
@@ -58,6 +59,7 @@ members = [
 # is actually working on the desktop shell opts in with `-p vcad-desktop`.
 default-members = [
     "crates/vcad-ir",
+    "crates/vcad-parts",
     "crates/vcad",
     "crates/vcad-kernel-math",
     "crates/vcad-kernel-topo",
@@ -127,6 +129,7 @@ gltf = { version = "1.4" }
 base64 = { version = "0.22" }
 opencascade = { version = "0.2" }
 vcad-ir = { path = "crates/vcad-ir" }
+vcad-parts = { path = "crates/vcad-parts" }
 vcad-kernel = { path = "crates/vcad-kernel" }
 vcad-kernel-math = { path = "crates/vcad-kernel-math" }
 vcad-kernel-topo = { path = "crates/vcad-kernel-topo" }

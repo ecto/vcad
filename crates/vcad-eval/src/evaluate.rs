@@ -763,6 +763,13 @@ fn evaluate_op_timed(
             // Embroidery is 2D — no 3D solid.
             Ok(None)
         }
+
+        CsgOp::PartInstance { .. } => {
+            // PartInstance is expanded by the engine (TS) before kernel evaluation.
+            // If we see one here it's a usage error, not an internal invariant —
+            // surface nothing rather than crashing so the kernel can still partially evaluate.
+            Ok(None)
+        }
     }
 }
 
@@ -1084,6 +1091,7 @@ fn op_name(op: &CsgOp) -> String {
         CsgOp::StepImport { .. } => "StepImport",
         CsgOp::PcbBoard { .. } => "PcbBoard",
         CsgOp::EmbroideryPattern { .. } => "EmbroideryPattern",
+        CsgOp::PartInstance { .. } => "PartInstance",
     }
     .to_string()
 }

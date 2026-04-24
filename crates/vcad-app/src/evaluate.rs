@@ -172,7 +172,8 @@ fn evaluate_node(doc: &Document, node_id: NodeId) -> Result<Option<Solid>> {
         | CsgOp::Loft { .. }
         | CsgOp::ImportedMesh { .. }
         | CsgOp::PcbBoard { .. }
-        | CsgOp::EmbroideryPattern { .. } => None,
+        | CsgOp::EmbroideryPattern { .. }
+        | CsgOp::PartInstance { .. } => None,
     };
 
     Ok(solid)
