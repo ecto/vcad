@@ -2,6 +2,15 @@
   "$schema": "./changelog.schema.json",
   "entries": [
     {
+      "id": "2026-04-24-v0-9-2-desktop-release-fixes",
+      "version": "0.9.2",
+      "date": "2026-04-24",
+      "category": "fix",
+      "title": "Desktop release pipeline fixes (Windows + macOS)",
+      "summary": "Cross-platform Node wrapper for @vcad/kernel-wasm build so Windows no longer chokes on bash-only script syntax. macOS codesign step now skips cleanly when Apple secrets aren't configured instead of piping empty data into `security import`.",
+      "features": ["desktop", "ci"]
+    },
+    {
       "id": "2026-04-24-v0-9-1",
       "version": "0.9.1",
       "date": "2026-04-24",

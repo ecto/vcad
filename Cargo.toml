@@ -112,7 +112,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.9.1"
+version = "0.9.2"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/ecto/vcad"
