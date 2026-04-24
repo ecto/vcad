@@ -4,6 +4,7 @@
 
 import {
   changelog,
+  CURRENT_VERSION,
   type ChangelogEntry,
   type ChangelogCategory,
 } from "@vcad/core";
@@ -135,7 +136,7 @@ export function getChangelog(
     content: [
       {
         type: "text",
-        text: `# vcad Changelog\n\nCurrent version: ${changelog.version}\n\n${text}`,
+        text: `# vcad Changelog\n\nCurrent version: ${CURRENT_VERSION}\n\n${text}`,
       },
     ],
   };
