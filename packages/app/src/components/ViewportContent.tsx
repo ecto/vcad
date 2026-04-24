@@ -1,5 +1,5 @@
 import { useRef, useEffect, useMemo, useState, useCallback, Suspense } from "react";
-import { Spherical, Vector3, Box3, Plane, Raycaster, Vector2, Quaternion, Matrix4, Color, TOUCH, PerspectiveCamera, WebGLRenderTarget, SRGBColorSpace, ACESFilmicToneMapping, BackSide } from "three";
+import { Spherical, Vector3, Box3, Plane, Raycaster, Vector2, Quaternion, Matrix4, Color, TOUCH, PerspectiveCamera, WebGLRenderTarget, SRGBColorSpace, ACESFilmicToneMapping } from "three";
 
 const isCoarsePointer =
   typeof window !== "undefined" &&
@@ -1371,39 +1371,24 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
           behind the camera. Colored subtly rather than pure white so
           metallic reflections pick up the temperature shift the way they
           do in a real product shot. Reflections are modulated down at
-          the ground to avoid a flat mirrored floor look. Only active
+          the ground to avoid a flat mirrored floor look.
+
+          Resolution stays at 256 because PMREMGenerator runs the
+          prefilter synchronously on the main thread; 512 quadruples
+          that cost and froze the render loop for ~10s on boot. 256 is
+          still plenty for a smooth prefiltered reflection because
+          roughness 0.1+ reads from higher mips anyway. Only active
           when the user hasn't selected an explicit environment preset. */}
       {!isPcbMode && !environmentPreset && (
-        <Environment resolution={512} frames={1} background={false}>
-          {/* Backdrop: warm-to-cool vertical gradient. Dark theme puts
-              the horizon near black with a subtle cool cast; light theme
-              reads as a soft studio wall. */}
-          <mesh scale={[100, 100, 100]}>
-            <sphereGeometry args={[1, 32, 16]} />
-            <shaderMaterial
-              side={BackSide}
-              uniforms={{
-                uTop: { value: new Color(isDark ? 0.025 : 0.72) },
-                uBottom: { value: new Color(isDark ? 0.01 : 0.48) },
-              }}
-              vertexShader={`
-                varying vec3 vWorldDir;
-                void main() {
-                  vWorldDir = normalize(position);
-                  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-                }
-              `}
-              fragmentShader={`
-                uniform vec3 uTop;
-                uniform vec3 uBottom;
-                varying vec3 vWorldDir;
-                void main() {
-                  float t = clamp(vWorldDir.y * 0.5 + 0.5, 0.0, 1.0);
-                  gl_FragColor = vec4(mix(uBottom, uTop, pow(t, 1.4)), 1.0);
-                }
-              `}
-            />
-          </mesh>
+        <Environment resolution={256} frames={1} background={false}>
+          {/* Backdrop: near-black in dark theme, warm studio wall in
+              light theme. Kept as a flat color (not a shader gradient)
+              so PMREMGenerator doesn't hit a custom-shader compile on
+              boot — that was the source of the ~10s first-paint stall. */}
+          <color
+            attach="background"
+            args={isDark ? [0.018, 0.02, 0.024] : [0.62, 0.6, 0.58]}
+          />
 
           {/* Key light — cool-white ceiling softbox, tilted forward so
               it reads as "camera-left overhead" rather than a flat
