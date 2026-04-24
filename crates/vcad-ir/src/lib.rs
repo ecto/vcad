@@ -10,9 +10,16 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub mod ecad;
+pub mod expr_parser;
 pub mod file_io;
+pub mod parameters;
 pub mod to_loon;
 pub mod vcode;
+
+pub use parameters::{
+    resolve_binding, resolve_parameters, validate_bindings, BindingKey, Bindings, Expr, Parameter,
+    ResolveError,
+};
 
 pub use vcad_tool_derive::ToolSchema;
 
@@ -1126,6 +1133,17 @@ pub struct Document {
     /// Legacy PCB field — migrated to PcbBoard node on load.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pcb: Option<ecad::Pcb>,
+
+    // Parameterization (optional, zero-cost when empty)
+    /// Named parameters that drive bound fields via expressions. Evaluated
+    /// in dependency order on resolve.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub parameters: HashMap<String, Parameter>,
+    /// Sidecar map from (node id, dotted field path) → expression. Applied
+    /// to concrete `f64`/`Vec3` fields on the kernel-facing side during
+    /// resolve, so the kernel never sees expressions.
+    #[serde(default, skip_serializing_if = "Bindings::is_empty")]
+    pub bindings: Bindings,
 }
 
 impl Default for Document {
@@ -1143,6 +1161,8 @@ impl Default for Document {
             ground_instance_id: None,
             schematic: None,
             pcb: None,
+            parameters: HashMap::new(),
+            bindings: Bindings::new(),
         }
     }
 }

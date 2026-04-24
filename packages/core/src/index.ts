@@ -69,6 +69,11 @@ export { useCrdtDocumentStore, f64, vec3, bool, str, featureRef } from "./stores
 export type { CrdtDocumentState, CrdtValue } from "./stores/crdt-document-store.js";
 
 export { useUiStore } from "./stores/ui-store.js";
+export {
+  useParametersStore,
+  mergeParametersIntoDocument,
+} from "./stores/parameters-store.js";
+export type { ParametersState } from "./stores/parameters-store.js";
 export type {
   UiState,
   MaterialPreview,

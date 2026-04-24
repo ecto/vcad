@@ -2,6 +2,16 @@
   "$schema": "./changelog.schema.json",
   "entries": [
     {
+      "id": "2026-04-24-parametric-bike-models",
+      "version": "0.9.0",
+      "date": "2026-04-24",
+      "category": "feat",
+      "title": "Parametric documents — named parameters and expression bindings",
+      "summary": "Documents can now declare named parameters (wheelbase, headAngle...) and bind op fields to expressions via a sidecar. AI-generated models come back parametric — scrub a parameter, the whole bike updates. Powered by a new tang-expr string parser shared by the Rust kernel and the TS engine.",
+      "features": ["parameters", "expressions", "ai", "mcp"],
+      "mcpTools": ["create_cad_document"]
+    },
+    {
       "id": "2026-04-24-chat-image-drop",
       "version": "0.9.0",
       "date": "2026-04-24",

@@ -2,9 +2,11 @@ import {
   Engine,
   useDocumentStore,
   useEngineStore,
+  useParametersStore,
   useUiStore,
   logger,
   commandRegistry,
+  mergeParametersIntoDocument,
   primeKernelWasm,
   type VcadFile,
 } from "@vcad/core";
@@ -406,7 +408,7 @@ async function evaluateInitialScene(engine: Engine): Promise<void> {
   const doc = useDocumentStore.getState().document;
   if (doc.roots.length === 0) return;
   try {
-    const scene = await engine.evaluateAsync(doc, {
+    const scene = await engine.evaluateAsync(withParameters(doc), {
       skipClashDetection: true,
     });
     useEngineStore.getState().setScene(scene);
@@ -423,11 +425,17 @@ function scheduleDeferredClash(engine: Engine): void {
   const doc = useDocumentStore.getState().document;
   if (doc.roots.length === 0) return;
   try {
-    const scene = engine.evaluate(doc, { skipClashDetection: false });
+    const scene = engine.evaluate(withParameters(doc), { skipClashDetection: false });
     useEngineStore.getState().setScene(scene);
   } catch (e) {
     useEngineStore.getState().setError(String(e));
   }
+}
+
+/** Snapshot parameters store and merge onto doc. */
+function withParameters(doc: import("@vcad/ir").Document): import("@vcad/ir").Document {
+  const { parameters, bindings } = useParametersStore.getState();
+  return mergeParametersIntoDocument(doc, parameters, bindings);
 }
 
 function scheduleIdle(fn: () => void): void {

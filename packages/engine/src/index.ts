@@ -47,6 +47,21 @@ export { MeshCache } from "./mesh-cache.js";
 export { DependencyGraph } from "./dependency-graph.js";
 export type { EvaluateOptions } from "./evaluate.js";
 
+// Parametric expressions
+export {
+  parse as parseExpression,
+  evaluate as evaluateExpression,
+  evalAst,
+  evalExprSafe,
+  freeVars as expressionFreeVars,
+  resolveDocument,
+  resolveParameters,
+  parseBindingKey,
+  ParseError as ExpressionParseError,
+  EvalError as ExpressionEvalError,
+} from "./expressions.js";
+export type { Ast as ExpressionAst } from "./expressions.js";
+
 // ECAD (Electronics)
 export {
   isEcadAvailable,

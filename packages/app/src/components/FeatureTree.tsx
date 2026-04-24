@@ -22,6 +22,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { Cube } from "@phosphor-icons/react/dist/ssr/Cube";
 import { Cylinder } from "@phosphor-icons/react/dist/ssr/Cylinder";
 import { Globe } from "@phosphor-icons/react/dist/ssr/Globe";
+import { Sliders } from "@phosphor-icons/react/dist/ssr/Sliders";
 import { Trash } from "@phosphor-icons/react/dist/ssr/Trash";
 import { Intersect } from "@phosphor-icons/react/dist/ssr/Intersect";
 import { CaretRight } from "@phosphor-icons/react/dist/ssr/CaretRight";
@@ -48,7 +49,7 @@ import { Scissors } from "@phosphor-icons/react/dist/ssr/Scissors";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ContextMenu } from "@/components/ContextMenu";
-import { useDocumentStore, useUiStore, useSketchStore, isBooleanPart, isPrimitivePart, isSweepPart, isExtrudePart, isRevolvePart, isFilletPart, isChamferPart, isShellPart, isEmbroideryPatternPart, isStitchPart, isPcbBoardPart } from "@vcad/core";
+import { useDocumentStore, useUiStore, useSketchStore, useParametersStore, isBooleanPart, isPrimitivePart, isSweepPart, isExtrudePart, isRevolvePart, isFilletPart, isChamferPart, isShellPart, isEmbroideryPatternPart, isStitchPart, isPcbBoardPart } from "@vcad/core";
 import { useNotificationStore } from "@/stores/notification-store";
 import { SketchPropertyPanel } from "@/components/SketchPropertyPanel";
 import { useElectronicsStore } from "@/stores/electronics-store";
@@ -83,6 +84,33 @@ function SceneTreeRow() {
     >
       <Globe size={13} className={active ? "text-brand" : "text-text-muted"} />
       <span className="font-medium">Scene</span>
+    </button>
+  );
+}
+
+function ParametersTreeRow() {
+  const setSidebarPane = useUiStore((s) => s.setSidebarPane);
+  const setInspectorTarget = useUiStore((s) => s.setInspectorTarget);
+  const parameterCount = useParametersStore((s) => Object.keys(s.parameters).length);
+  return (
+    <button
+      onClick={() => {
+        setInspectorTarget(null);
+        setSidebarPane("parameters");
+      }}
+      className={cn(
+        "flex w-full items-center gap-2 px-2 h-7 text-xs",
+        "hover:bg-hover text-text",
+      )}
+      title="Edit document parameters (drive bound fields via expressions)"
+    >
+      <Sliders size={13} className="text-text-muted" />
+      <span className="font-medium">Parameters</span>
+      {parameterCount > 0 && (
+        <span className="text-[10px] text-text-muted tabular-nums">
+          {parameterCount}
+        </span>
+      )}
     </button>
   );
 }
@@ -1166,6 +1194,9 @@ export function FeatureTree() {
           <div className="space-y-0.5">
             {/* Scene row — drill into inspector to edit env / background / lights */}
             <SceneTreeRow />
+
+            {/* Parameters row — document-level named parameters for expression bindings */}
+            <ParametersTreeRow />
 
             {/* Sketch entities / constraints — only while sketching */}
             <SketchTreeSection />

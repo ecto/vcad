@@ -2,8 +2,19 @@ import { useEffect, useRef } from "react";
 import {
   useDocumentStore,
   useEngineStore,
+  useParametersStore,
   useSimulationStore,
+  mergeParametersIntoDocument,
 } from "@vcad/core";
+import type { Document } from "@vcad/ir";
+
+/** Snapshot parameters + bindings and merge them onto `doc` so the engine
+ * sees a parametric document. Cheap — one object spread when both sidecars
+ * are empty. */
+function docWithParameters(doc: Document): Document {
+  const { parameters, bindings } = useParametersStore.getState();
+  return mergeParametersIntoDocument(doc, parameters, bindings);
+}
 
 /** Debounce timeout for full-quality re-render after drag ends */
 let refinementTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -44,7 +55,7 @@ export function useEngine() {
           const refGen = ++evalGeneration;
           const doc = useDocumentStore.getState().document;
           engine
-            .evaluateAsync(doc, { skipClashDetection: false })
+            .evaluateAsync(docWithParameters(doc), { skipClashDetection: false })
             .then((refinedScene) => {
               if (refGen !== evalGeneration) return;
               useEngineStore.getState().setScene(refinedScene);
@@ -106,7 +117,7 @@ export function useEngine() {
 
         const gen = ++evalGeneration;
         engine
-          .evaluateAsync(state.document, { skipClashDetection: isTransient })
+          .evaluateAsync(docWithParameters(state.document), { skipClashDetection: isTransient })
           .then((scene) => {
             if (gen !== evalGeneration) return;
             useEngineStore.getState().setScene(scene);
@@ -126,7 +137,7 @@ export function useEngine() {
             const refGen = ++evalGeneration;
             const doc = useDocumentStore.getState().document;
             engine
-              .evaluateAsync(doc, { skipClashDetection: false })
+              .evaluateAsync(docWithParameters(doc), { skipClashDetection: false })
               .then((refinedScene) => {
                 if (refGen !== evalGeneration) return;
                 useEngineStore.getState().setScene(refinedScene);
@@ -141,8 +152,34 @@ export function useEngine() {
       });
     });
 
+    // Re-evaluate when the user edits a parameter value or a binding.
+    // Reuse the same RAF-debounced path as document changes.
+    const unsubParams = useParametersStore.subscribe((next, prev) => {
+      if (next.parameters === prev.parameters && next.bindings === prev.bindings) return;
+      const engine = useEngineStore.getState().engine;
+      if (!engine) return;
+      const simMode = useSimulationStore.getState().mode;
+      if (simMode !== "off") return;
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = requestAnimationFrame(() => {
+        const doc = useDocumentStore.getState().document;
+        const gen = ++evalGeneration;
+        engine
+          .evaluateAsync(docWithParameters(doc), { skipClashDetection: true })
+          .then((scene) => {
+            if (gen !== evalGeneration) return;
+            useEngineStore.getState().setScene(scene);
+          })
+          .catch((e) => {
+            if (gen !== evalGeneration) return;
+            useEngineStore.getState().setError(String(e));
+          });
+      });
+    });
+
     return () => {
       unsub();
+      unsubParams();
       cancelAnimationFrame(rafRef.current);
       if (refinementTimeout) {
         clearTimeout(refinementTimeout);

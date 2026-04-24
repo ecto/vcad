@@ -247,6 +247,8 @@ interface AssemblyInput {
 interface CreateInput {
   parts: PartInput[];
   assembly?: AssemblyInput;
+  parameters?: Record<string, import("@vcad/ir").Parameter>;
+  bindings?: Record<string, import("@vcad/ir").Expr>;
   format?: "json" | "vcode";
 }
 
@@ -818,6 +820,47 @@ export const createCadDocumentSchema = {
         },
       },
       required: ["instances", "joints"],
+    },
+    parameters: {
+      type: "object" as const,
+      description:
+        "Document-level named parameters that drive bound fields through expressions. Prefer declaring parameters when multiple values derive from the same design intent — users get live scrub sliders for free, and the model stays parametric. Reference other parameters in formulas. Example: { wheelbase: { value: 1000, unit: 'mm' }, bbDrop: { value: 'wheelbase * 0.05', unit: 'mm' } }.",
+      additionalProperties: {
+        type: "object" as const,
+        properties: {
+          value: {
+            oneOf: [
+              { type: "number" as const },
+              {
+                type: "string" as const,
+                description:
+                  "Expression referencing other parameters (e.g. 'wheelbase * 0.5').",
+              },
+            ],
+            description:
+              "Literal number or expression. Expressions may reference other parameters and use + - * / % ^, sin/cos/tan, sqrt, abs, min/max, pi/tau/e.",
+          },
+          unit: {
+            type: "string" as const,
+            description: "Display unit, e.g. 'mm' or 'deg'.",
+          },
+          min: { type: "number" as const },
+          max: { type: "number" as const },
+          description: { type: "string" as const },
+        },
+        required: ["value"],
+      },
+    },
+    bindings: {
+      type: "object" as const,
+      description:
+        "Sidecar bindings from '{nodeId}:{dotted.field.path}' → literal number or expression string. Use to drive primitive / transform fields off declared parameters. Field paths: 'size.x' for Cube, 'radius'/'height'/'segments' for Cylinder, 'offset.z' for Translate, 'angles.y' for Rotate, 'axis_dir.z'/'angle_deg' for Revolve, etc. Node ids must match the ids you emitted under `parts`.",
+      additionalProperties: {
+        oneOf: [
+          { type: "number" as const },
+          { type: "string" as const },
+        ],
+      },
     },
   },
   required: ["parts"],
@@ -1457,6 +1500,16 @@ export function createCadDocument(
 
     // In assembly mode, clear roots (instances take over)
     doc.roots = [];
+  }
+
+  // Attach parameters / bindings directly to the Document. Downstream the
+  // app merges them into the live parameters store at import time.
+  const { parameters, bindings } = input as CreateInput;
+  if (parameters && Object.keys(parameters).length > 0) {
+    doc.parameters = parameters;
+  }
+  if (bindings && Object.keys(bindings).length > 0) {
+    doc.bindings = bindings;
   }
 
   // Format output (default to compact for token efficiency)
