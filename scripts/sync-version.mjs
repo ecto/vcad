@@ -65,6 +65,39 @@ function updatePackageJson(path, version) {
   return { path, changed: true, oldVersion, newVersion: version };
 }
 
+// Update the Tauri desktop app version. Tauri writes this into the signed
+// latest.json manifest the updater consumes, so leaving it stale makes the
+// updater lie about the version. Uses a targeted regex instead of
+// JSON.stringify to avoid reformatting unrelated arrays.
+function updateTauriConf(version) {
+  const path = join(root, 'crates/vcad-desktop/tauri.conf.json');
+  let content = readFileSync(path, 'utf8');
+
+  // Match the top-level "version": "..." — anchored after the opening brace
+  // and before "identifier" so we don't accidentally match a nested field.
+  const versionRegex = /^(\s*"version"\s*:\s*)"([^"]+)"/m;
+  const match = content.match(versionRegex);
+
+  if (!match) {
+    console.error('Error: Could not find version in tauri.conf.json');
+    process.exit(1);
+  }
+
+  const oldVersion = match[2];
+
+  if (oldVersion === version) {
+    return { path, changed: false, oldVersion };
+  }
+
+  if (checkOnly) {
+    return { path, changed: true, oldVersion, newVersion: version };
+  }
+
+  content = content.replace(versionRegex, `$1"${version}"`);
+  writeFileSync(path, content);
+  return { path, changed: true, oldVersion, newVersion: version };
+}
+
 // Update Cargo.toml workspace version
 function updateCargoToml(version) {
   const cargoPath = join(root, 'Cargo.toml');
@@ -106,6 +139,9 @@ for (const path of getPackageJsonPaths()) {
 
 // Update Cargo.toml
 results.push(updateCargoToml(version));
+
+// Update Tauri desktop config (drives latest.json's version field)
+results.push(updateTauriConf(version));
 
 // Report results
 const changed = results.filter(r => r.changed);

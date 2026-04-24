@@ -13,6 +13,7 @@
     "version:check": "node scripts/sync-version.mjs --check"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.88.0",
     "@tauri-apps/cli": "^2",
     "turbo": "^2"
   },
