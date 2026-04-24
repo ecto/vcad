@@ -124,6 +124,7 @@
   "menu.help.vcad_pro": "vcad Pro",
 
   "toolbar.tab.create": "Create",
+  "toolbar.tab.sketch": "Sketch",
   "toolbar.tab.transform": "Transform",
   "toolbar.tab.combine": "Combine",
   "toolbar.tab.modify": "Modify",

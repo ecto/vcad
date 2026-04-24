@@ -55,11 +55,13 @@ import {
   isStitchEligible,
   getPcbNodeIds,
   defaultPendingOperation,
+  t,
   type ToolbarTab,
   type PrimitiveKind,
   type BooleanType,
   type PendingOperation,
 } from "@vcad/core";
+import { useLocaleStore } from "@/stores/locale-store";
 import { TAB_COLORS } from "@/components/ui/toolbar-constants";
 import { useDrawingStore } from "@/stores/drawing-store";
 import { useSlicerStore } from "@/stores/slicer-store";
@@ -102,16 +104,21 @@ export interface ToolTabMeta {
   icon: ToolIcon;
 }
 
-export const ALL_TABS: ToolTabMeta[] = [
-  { id: "create", label: "Create", icon: Cube },
-  { id: "sketch", label: "Sketch", icon: PencilSimple },
-  { id: "transform", label: "Transform", icon: ArrowsOutCardinal },
-  { id: "combine", label: "Combine", icon: Unite },
-  { id: "modify", label: "Modify", icon: Circle },
-  { id: "assembly", label: "Assembly", icon: Package },
-  { id: "simulate", label: "Simulate", icon: Play },
-  { id: "build", label: "Export", icon: Export },
-];
+export function getAllTabs(): ToolTabMeta[] {
+  return [
+    { id: "create", label: t("toolbar.tab.create"), icon: Cube },
+    { id: "sketch", label: t("toolbar.tab.sketch"), icon: PencilSimple },
+    { id: "transform", label: t("toolbar.tab.transform"), icon: ArrowsOutCardinal },
+    { id: "combine", label: t("toolbar.tab.combine"), icon: Unite },
+    { id: "modify", label: t("toolbar.tab.modify"), icon: Circle },
+    { id: "assembly", label: t("toolbar.tab.assembly"), icon: Package },
+    { id: "simulate", label: t("toolbar.tab.simulate"), icon: Play },
+    { id: "build", label: t("toolbar.tab.export"), icon: Export },
+  ];
+}
+
+/** @deprecated Use getAllTabs() for i18n support */
+export const ALL_TABS: ToolTabMeta[] = getAllTabs();
 
 const PRIMITIVES: { kind: PrimitiveKind; icon: ToolIcon; label: string }[] = [
   { kind: "cube", icon: Cube, label: "Box" },
@@ -150,6 +157,8 @@ export function useToolDefinitions(): {
   tabs: ToolTabMeta[];
   renderSimulateExtras: (opts?: { compact?: boolean }) => ReactNode;
 } {
+  useLocaleStore((s) => s.locale);
+
   // Document
   const addPrimitive = useDocumentStore((s) => s.addPrimitive);
   const applyBoolean = useDocumentStore((s) => s.applyBoolean);
@@ -1068,7 +1077,7 @@ export function useToolDefinitions(): {
 
   return {
     byTab,
-    tabs: ALL_TABS,
+    tabs: getAllTabs(),
     renderSimulateExtras,
   };
 }

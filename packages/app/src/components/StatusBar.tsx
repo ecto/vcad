@@ -2,9 +2,18 @@ import { useEffect, useMemo, useState } from "react";
 import { Circle } from "@phosphor-icons/react/dist/ssr/Circle";
 import { Terminal } from "@phosphor-icons/react/dist/ssr/Terminal";
 import { PencilSimple } from "@phosphor-icons/react/dist/ssr/PencilSimple";
+import { GlobeSimple } from "@phosphor-icons/react/dist/ssr/GlobeSimple";
+import { Check } from "@phosphor-icons/react/dist/ssr/Check";
+import * as Popover from "@radix-ui/react-popover";
 import { useDocumentStore, useUiStore, useSketchStore, t, tFmt, type LogLevelName } from "@vcad/core";
+import { useLocaleStore, supportedLocales, type SupportedLocale } from "@/stores/locale-store";
 import { useLogStore, getFilteredEntries } from "@/stores/log-store";
 import { cn } from "@/lib/utils";
+
+const LOCALE_LABELS: Record<string, string> = {
+  en: "English",
+  es: "Español",
+};
 
 const LEVEL_COLOR: Record<LogLevelName, string> = {
   DEBUG: "text-text-muted",
@@ -37,6 +46,7 @@ export function StatusBar() {
   const parts = useDocumentStore((s) => s.parts);
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
   const cursorWorld = useUiStore((s) => s.cursorWorld);
+  useLocaleStore((s) => s.locale);
 
   // Sketch state — only rendered while sketch is active. Each subscription is
   // cheap (primitives or shallow length), so the subscriber count overhead is
@@ -233,6 +243,63 @@ export function StatusBar() {
           </span>
         )}
       </div>
+
+      <LocalePicker />
     </div>
+  );
+}
+
+function LocalePicker() {
+  const locale = useLocaleStore((s) => s.locale);
+  const setLoc = useLocaleStore((s) => s.setLocale);
+  const locales = supportedLocales();
+
+  return (
+    <Popover.Root>
+      <Popover.Trigger asChild>
+        <button
+          type="button"
+          className={cn(
+            "flex items-center gap-1 px-2 border-l border-border/40",
+            "text-text-muted hover:text-text hover:bg-hover transition-colors",
+          )}
+          title="Language"
+        >
+          <GlobeSimple size={11} className="shrink-0" />
+          <span className="uppercase tracking-wide">{locale}</span>
+        </button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          side="top"
+          align="end"
+          sideOffset={4}
+          className={cn(
+            "z-50 min-w-[140px] rounded-md border border-border bg-surface p-1 shadow-lg",
+            "animate-in fade-in slide-in-from-bottom-2 duration-150",
+            "text-[11px] font-mono",
+          )}
+        >
+          {locales.map((loc) => (
+            <button
+              key={loc}
+              type="button"
+              onClick={() => setLoc(loc as SupportedLocale)}
+              className={cn(
+                "flex w-full items-center gap-2 rounded px-2 py-1",
+                "hover:bg-hover transition-colors",
+                loc === locale ? "text-text" : "text-text-muted",
+              )}
+            >
+              <span className="w-3">
+                {loc === locale && <Check size={10} weight="bold" className="text-brand" />}
+              </span>
+              <span className="uppercase tracking-wide w-5">{loc}</span>
+              <span className="text-text-muted">{LOCALE_LABELS[loc] ?? loc}</span>
+            </button>
+          ))}
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
