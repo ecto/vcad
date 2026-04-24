@@ -223,6 +223,19 @@ export interface DocumentState {
 
   // mutations
   addPrimitive: (kind: PrimitiveKind) => string;
+  /**
+   * Insert a stdlib or user-published part instance.
+   *
+   * @param path    Part source path, e.g. `"std:fastener.bolt.socket-head"`.
+   * @param version Pinned version string, e.g. `"1.0"`.
+   * @param params  Parameter name → value map.
+   * @returns       The created part id, or empty string on failure.
+   */
+  addPartInstance: (
+    path: string,
+    version: string,
+    params: Record<string, unknown>,
+  ) => string;
   removePart: (partId: string) => void;
   setTranslation: (partId: string, offset: Vec3, skipUndo?: boolean) => void;
   setRotation: (partId: string, angles: Vec3, skipUndo?: boolean) => void;
@@ -849,6 +862,30 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       return result.createdFeatureId ?? "";
     } catch (e) {
       console.error("[document-store] addPrimitive crashed:", e);
+      return "";
+    }
+  },
+
+  addPartInstance: (path, version, params) => {
+    const engine = get()._crdtEngine;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (!engine || (engine as any).__wbg_ptr === 0) {
+      console.warn("[document-store] addPartInstance: engine is null/freed");
+      return "";
+    }
+    try {
+      const result = engine.add_feature(
+        JSON.stringify({
+          type: "PartInstance",
+          path,
+          version,
+          params_json: JSON.stringify(params),
+        }),
+      );
+      set(applyApiResult(result));
+      return result.createdFeatureId ?? "";
+    } catch (e) {
+      console.error("[document-store] addPartInstance crashed:", e);
       return "";
     }
   },

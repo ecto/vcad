@@ -396,6 +396,61 @@ export class CommandRegistry {
           },
         },
       },
+      {
+        name: "search_parts",
+        description:
+          "Search the stdlib parts library (fasteners, bearings, …) for parts matching a query. Free-text matches across name, category, synonyms, and catalog part numbers (McMaster / ISO / DIN). Returns an array of {id, name, category, params, xrefs} — use the `id` with `place_part`. Part numbers like `91290A320` or `ISO 4762` match directly.",
+        input_schema: {
+          type: "object",
+          properties: {
+            query: {
+              type: "string",
+              description: "Free-text search query (part name, McMaster number, ISO/DIN reference, synonym, or category).",
+            },
+            category: {
+              type: "string",
+              description: "Optional category filter (e.g. 'Fasteners', 'Bearings').",
+            },
+            limit: {
+              type: "integer",
+              description: "Maximum number of results (default 10).",
+            },
+          },
+        },
+      },
+      {
+        name: "place_part",
+        description:
+          "Insert a stdlib part into the document, returning its new part id. The part remains parametric — users can edit its params from the feature tree. Use `search_parts` first to discover the `path` and valid `params`. Applies an optional position to the part after insertion.",
+        input_schema: {
+          type: "object",
+          properties: {
+            path: {
+              type: "string",
+              description: "Part source path from `search_parts.id`, e.g. 'std:fastener.bolt.socket-head'.",
+            },
+            params: {
+              type: "object",
+              description: "Parameter name → value map. Missing params take the part's declared defaults.",
+              additionalProperties: true,
+            },
+            position: {
+              type: "object",
+              description: "Optional world-space position {x, y, z} to place the part. Defaults to origin.",
+              properties: {
+                x: { type: "number" },
+                y: { type: "number" },
+                z: { type: "number" },
+              },
+            },
+            name: {
+              type: "string",
+              description: "Optional display name override for the feature tree.",
+            },
+          },
+          required: ["path"],
+        },
+      },
     ];
   }
 

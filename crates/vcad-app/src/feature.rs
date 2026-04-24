@@ -249,6 +249,19 @@ pub enum FeatureInput {
         #[serde(skip_serializing_if = "Option::is_none")]
         source: Option<String>,
     },
+    /// Stdlib or user-published part instance.
+    ///
+    /// Materializes to [`vcad_ir::CsgOp::PartInstance`] with the same
+    /// path / version / params. The engine expands the node at
+    /// evaluation time by calling the kernel's `buildPart` export.
+    PartInstance {
+        /// Part source path, e.g. `"std:fastener.bolt.socket-head"`.
+        path: String,
+        /// Pinned version string, e.g. `"1.0"`.
+        version: String,
+        /// Parameters as a JSON-serialized object.
+        params_json: String,
+    },
     /// Assembly: part definition.
     PartDef {
         /// Source feature ID that defines the geometry.
@@ -343,6 +356,7 @@ impl FeatureInput {
             Self::ImportedMesh { .. } => "imported-mesh",
             Self::PcbBoard { .. } => "pcb-board",
             Self::EmbroideryPattern { .. } => "embroidery-pattern",
+            Self::PartInstance { .. } => "part-instance",
             Self::PartDef { .. } => "part-def",
             Self::Instance { .. } => "instance",
             Self::Joint { .. } => "joint",
@@ -561,6 +575,15 @@ impl FeatureInput {
                     p.insert("source".into(), Value::String(v.clone()));
                 }
             }
+            Self::PartInstance {
+                path,
+                version,
+                params_json,
+            } => {
+                p.insert("path".into(), Value::String(path.clone()));
+                p.insert("version".into(), Value::String(version.clone()));
+                p.insert("params_json".into(), Value::String(params_json.clone()));
+            }
             Self::PartDef {
                 source_feature,
                 name,
@@ -765,6 +788,11 @@ impl FeatureInput {
             "embroidery-pattern" => Self::EmbroideryPattern {
                 design: get_str(params, "design"),
                 source: get_str(params, "source"),
+            },
+            "part-instance" => Self::PartInstance {
+                path: get_str(params, "path").unwrap_or_default(),
+                version: get_str(params, "version").unwrap_or_else(|| "1.0".into()),
+                params_json: get_str(params, "params_json").unwrap_or_else(|| "{}".into()),
             },
             "part-def" => Self::PartDef {
                 source_feature: get_str(params, "source_feature").unwrap_or_default(),

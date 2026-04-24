@@ -1057,6 +1057,53 @@ fn materialize_feature(
                 translate_id,
             ))
         }
+        FeatureInput::PartInstance {
+            path,
+            version,
+            params_json,
+        } => {
+            let part_id = ctx.alloc();
+            let scale_id = ctx.alloc();
+            let rotate_id = ctx.alloc();
+            let translate_id = ctx.alloc();
+
+            let params_map: std::collections::HashMap<String, serde_json::Value> =
+                serde_json::from_str(&params_json).unwrap_or_default();
+
+            insert_node(
+                doc,
+                part_id,
+                &name,
+                CsgOp::PartInstance {
+                    path: path.clone(),
+                    version: version.clone(),
+                    params: params_map,
+                },
+            );
+            insert_transform_chain(
+                doc,
+                ctx,
+                feature,
+                part_id,
+                scale_id,
+                rotate_id,
+                translate_id,
+            );
+
+            Some((
+                PartInfo::PartInstance {
+                    id: id_str,
+                    name,
+                    path,
+                    version,
+                    part_node_id: part_id,
+                    scale_node_id: scale_id,
+                    rotate_node_id: rotate_id,
+                    translate_node_id: translate_id,
+                },
+                translate_id,
+            ))
+        }
         // Non-geometry variants already filtered above.
         _ => None,
     }
