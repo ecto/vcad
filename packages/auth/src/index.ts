@@ -1,5 +1,19 @@
 // Client
-export { ensureSession, getSupabase, isAuthEnabled, requireSupabase } from "./client";
+export {
+  ensureSession,
+  getAuthRedirectUrl,
+  getSupabase,
+  isAuthEnabled,
+  isTauriRuntime,
+  requireSupabase,
+} from "./client";
+
+// Desktop deep-link auth bridge
+export {
+  handleAuthDeepLink,
+  isAuthDeepLink,
+  type AuthDeepLinkResult,
+} from "./auth-deep-link";
 
 // Stores
 export { useAuthStore } from "./stores/auth-store";
