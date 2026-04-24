@@ -240,7 +240,7 @@ pub fn build_command_items(query: &str) -> Vec<CommandItem> {
         .map(|cmd| CommandItem {
             id: cmd.id.to_string(),
             icon: cmd.icon.to_string(),
-            label: cmd.label.to_string(),
+            label: cmd.label().to_string(),
             description: cmd.shortcut.unwrap_or("").to_string(),
         })
         .collect()

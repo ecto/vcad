@@ -1,6 +1,9 @@
 import "./lib/crypto-polyfill";
+import { setLocale, detectLocale } from "@vcad/core";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+
+setLocale(detectLocale());
 
 // Unregister service workers in dev mode to prevent stale cache issues
 if (import.meta.env.DEV && "serviceWorker" in navigator) {

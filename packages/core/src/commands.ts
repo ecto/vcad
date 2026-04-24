@@ -1,5 +1,6 @@
 import type { PrimitiveKind, BooleanType, TransformMode } from "./types.js";
 import type { JointKind } from "@vcad/ir";
+import { t } from "./i18n/index.js";
 
 /**
  * Grouping buckets used by surfaces that render the command registry as a
@@ -53,6 +54,21 @@ export const COMMAND_CATEGORIES: CommandCategory[] = [
   "help",
 ];
 
+export function getCategoryLabel(cat: CommandCategory): string {
+  const keys: Record<CommandCategory, string> = {
+    file: "menu.file",
+    edit: "menu.edit",
+    create: "toolbar.tab.create",
+    modify: "toolbar.tab.modify",
+    assembly: "toolbar.tab.assembly",
+    view: "menu.view",
+    tools: "menu.tools",
+    help: "menu.help",
+  };
+  return t(keys[cat] as Parameters<typeof t>[0]);
+}
+
+/** @deprecated Use getCategoryLabel() for i18n support */
 export const CATEGORY_LABELS: Record<CommandCategory, string> = {
   file: "File",
   edit: "Edit",

@@ -6583,6 +6583,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "vcad-crdt",
+ "vcad-i18n",
  "vcad-ir",
  "vcad-kernel",
  "vcad-kernel-math",
@@ -6627,6 +6628,7 @@ dependencies = [
  "vcad-chat",
  "vcad-crdt",
  "vcad-eval",
+ "vcad-i18n",
  "vcad-ir",
  "vcad-kernel",
  "vcad-kernel-cam",
@@ -6667,6 +6669,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tauri-plugin-window-state",
  "tokio",
+ "vcad-i18n",
  "vcad-slicer-bambu",
  "window-vibrancy",
 ]
@@ -6760,6 +6763,14 @@ dependencies = [
  "vcad-kernel-sweep",
  "vcad-kernel-tessellate",
  "vcad-kernel-text",
+]
+
+[[package]]
+name = "vcad-i18n"
+version = "0.9.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

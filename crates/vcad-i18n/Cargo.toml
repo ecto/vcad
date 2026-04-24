@@ -1,0 +1,11 @@
+[package]
+name = "vcad-i18n"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Internationalization for vcad — shared translations for TUI, web, and desktop"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

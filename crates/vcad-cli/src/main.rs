@@ -215,6 +215,7 @@ enum BooleanOp {
 }
 
 fn main() -> Result<()> {
+    vcad_i18n::init(&vcad_i18n::Locale::from_env());
     let cli = Cli::parse();
 
     match cli.command {
