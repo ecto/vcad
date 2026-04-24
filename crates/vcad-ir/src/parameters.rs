@@ -482,9 +482,9 @@ pub fn referenced_parameter_names(bindings: &Bindings) -> HashSet<String> {
     out
 }
 
-// Re-export the tang-expr parser under a nicer alias locally.
+// Local alias so parameter resolution code stays readable.
 mod tang_expr_parser {
-    pub use tang_expr::parser::{eval, free_vars, parse, Ast};
+    pub use crate::expr_parser::{eval, free_vars, parse, Ast};
 }
 
 // ============================================================================

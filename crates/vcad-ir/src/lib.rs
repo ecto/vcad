@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub mod ecad;
+pub mod expr_parser;
 pub mod file_io;
 pub mod parameters;
 pub mod to_loon;
