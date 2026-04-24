@@ -52,9 +52,9 @@ struct MenuCommand<'a> {
     id: &'a str,
 }
 
-/// Item spec: `(id, label, accelerator)`. `accelerator` follows Tauri's
-/// `CmdOrCtrl+...` grammar — the menu system translates it to the platform
-/// modifier (⌘ on macOS, Ctrl elsewhere).
+/// Item spec: `(id, label_key, accelerator)`. `label_key` is an i18n key
+/// resolved via `vcad_i18n::t()` at menu construction time. `accelerator`
+/// follows Tauri's `CmdOrCtrl+...` grammar.
 type Item<'a> = (&'a str, &'a str, Option<&'a str>);
 
 /// One group of items in a submenu, rendered with a trailing separator.
@@ -62,81 +62,88 @@ type Group<'a> = &'a [Item<'a>];
 
 const FILE_GROUPS: &[Group] = &[
     &[
-        ("new-document", "New", Some("CmdOrCtrl+N")),
-        ("open", "Open…", Some("CmdOrCtrl+O")),
-        ("open-recent", "Open Recent…", Some("CmdOrCtrl+Shift+O")),
-        ("open-cloud", "Open from Cloud…", None),
+        ("new-document", "menu.file.new", Some("CmdOrCtrl+N")),
+        ("open", "menu.file.open", Some("CmdOrCtrl+O")),
+        (
+            "open-recent",
+            "desktop.menu.open_recent",
+            Some("CmdOrCtrl+Shift+O"),
+        ),
+        ("open-cloud", "desktop.menu.open_cloud", None),
     ],
-    &[("save", "Save", Some("CmdOrCtrl+S"))],
+    &[("save", "menu.file.save", Some("CmdOrCtrl+S"))],
 ];
 
 const EDIT_GROUPS: &[Group] = &[
     &[
-        ("undo", "Undo", Some("CmdOrCtrl+Z")),
-        ("redo", "Redo", Some("CmdOrCtrl+Shift+Z")),
+        ("undo", "menu.edit.undo", Some("CmdOrCtrl+Z")),
+        ("redo", "menu.edit.redo", Some("CmdOrCtrl+Shift+Z")),
     ],
     &[
-        ("copy", "Copy", Some("CmdOrCtrl+C")),
-        ("paste", "Paste", Some("CmdOrCtrl+V")),
-        ("duplicate", "Duplicate", Some("CmdOrCtrl+D")),
-        ("delete", "Delete", None),
+        ("copy", "cmd.copy.label", Some("CmdOrCtrl+C")),
+        ("paste", "cmd.paste.label", Some("CmdOrCtrl+V")),
+        ("duplicate", "menu.edit.duplicate", Some("CmdOrCtrl+D")),
+        ("delete", "menu.edit.delete", None),
     ],
     &[
-        ("select-all", "Select All", Some("CmdOrCtrl+A")),
-        ("deselect", "Deselect", None),
+        ("select-all", "menu.edit.select_all", Some("CmdOrCtrl+A")),
+        ("deselect", "menu.edit.deselect", None),
     ],
 ];
 
 const VIEW_GROUPS: &[Group] = &[
     &[
-        ("toggle-sidebar", "Toggle Sidebar", None),
-        ("toggle-chat", "Toggle Chat", None),
-        ("toggle-status-bar", "Toggle Status Bar", None),
-        ("toggle-devtools", "Toggle DevTools", None),
+        ("toggle-sidebar", "menu.view.toggle_sidebar", None),
+        ("toggle-chat", "menu.view.toggle_chat", None),
+        ("toggle-status-bar", "desktop.menu.toggle_status_bar", None),
+        ("toggle-devtools", "cmd.toggle_devtools.label", None),
     ],
     &[
-        ("camera-isometric", "Isometric", None),
-        ("camera-top", "Top", None),
-        ("camera-front", "Front", None),
-        ("camera-right", "Right", None),
-        ("camera-fit", "Fit to Selection", Some("F")),
+        ("camera-isometric", "desktop.menu.camera_iso", None),
+        ("camera-top", "desktop.menu.camera_top", None),
+        ("camera-front", "desktop.menu.camera_front", None),
+        ("camera-right", "desktop.menu.camera_right", None),
+        ("camera-fit", "desktop.menu.camera_fit", Some("F")),
     ],
     &[
-        ("toggle-wireframe", "Toggle Wireframe", None),
-        ("toggle-grid-snap", "Toggle Grid Snap", None),
+        ("toggle-wireframe", "cmd.toggle_wireframe.label", None),
+        ("toggle-grid-snap", "desktop.menu.toggle_grid_snap", None),
     ],
-    &[("cycle-theme", "Cycle Theme", None)],
+    &[("cycle-theme", "cmd.cycle_theme.label", None)],
 ];
 
 const TOOLS_GROUPS: &[Group] = &[
-    &[("command-palette", "Command Palette…", Some("CmdOrCtrl+K"))],
-    &[("new-sketch", "New Sketch", None)],
-    &[("open-slicer", "Slicer", None), ("open-cam", "CAM", None)],
+    &[("command-palette", "menu.tools.palette", Some("CmdOrCtrl+K"))],
+    &[("new-sketch", "menu.tools.sketch", None)],
+    &[
+        ("open-slicer", "desktop.menu.slicer", None),
+        ("open-cam", "desktop.menu.cam", None),
+    ],
 ];
 
 const HELP_GROUPS: &[Group] = &[
     &[
-        ("about", "About vcad", None),
-        ("check-for-updates", "Check for Updates…", None),
-        ("whats-new", "What's New", None),
+        ("about", "menu.help.about", None),
+        ("check-for-updates", "desktop.menu.check_for_updates", None),
+        ("whats-new", "desktop.menu.whats_new", None),
     ],
     &[
-        ("open-docs", "Documentation", None),
-        ("open-github", "GitHub", None),
-        ("open-discord", "Discord", None),
+        ("open-docs", "desktop.menu.documentation", None),
+        ("open-github", "menu.help.github", None),
+        ("open-discord", "menu.help.discord", None),
     ],
 ];
 
 fn build_submenu<R: Runtime>(
     app: &AppHandle<R>,
     state: &MenuState<R>,
-    label: &str,
+    label_key: &str,
     groups: &[Group],
 ) -> tauri::Result<tauri::menu::Submenu<R>> {
-    let mut sub = SubmenuBuilder::new(app, label);
+    let mut sub = SubmenuBuilder::new(app, vcad_i18n::t(label_key));
     for (gi, group) in groups.iter().enumerate() {
-        for (id, label, accel) in group.iter() {
-            let mut b = MenuItemBuilder::with_id(*id, *label);
+        for (id, label_key, accel) in group.iter() {
+            let mut b = MenuItemBuilder::with_id(*id, vcad_i18n::t(label_key));
             if let Some(a) = accel {
                 b = b.accelerator(*a);
             }
@@ -177,11 +184,11 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         .item(&PredefinedMenuItem::quit(app, None)?)
         .build()?;
 
-    let file = build_submenu(app, &state, "File", FILE_GROUPS)?;
-    let edit = build_submenu(app, &state, "Edit", EDIT_GROUPS)?;
-    let view = build_submenu(app, &state, "View", VIEW_GROUPS)?;
-    let tools = build_submenu(app, &state, "Tools", TOOLS_GROUPS)?;
-    let help = build_submenu(app, &state, "Help", HELP_GROUPS)?;
+    let file = build_submenu(app, &state, "menu.file", FILE_GROUPS)?;
+    let edit = build_submenu(app, &state, "menu.edit", EDIT_GROUPS)?;
+    let view = build_submenu(app, &state, "menu.view", VIEW_GROUPS)?;
+    let tools = build_submenu(app, &state, "menu.tools", TOOLS_GROUPS)?;
+    let help = build_submenu(app, &state, "menu.help", HELP_GROUPS)?;
 
     // Window submenu (minimize / zoom / close) — expected by macOS users.
     let window = SubmenuBuilder::new(app, "Window")

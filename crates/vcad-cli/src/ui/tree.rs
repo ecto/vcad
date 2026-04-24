@@ -5,6 +5,7 @@ use vcad_ir::NodeId;
 
 use super::buffer::{set_char, CellBuffer, Color, Rect};
 use super::theme;
+use vcad_i18n::t;
 
 /// Draw the floating parts sidebar.
 pub fn draw_sidebar(
@@ -100,7 +101,8 @@ fn render_sidebar(
     }
 
     // Header: "─ PARTS ─"
-    let header = " PARTS ";
+    let header_word = t("tree.header");
+    let header = format!(" {} ", header_word);
     let hx = left + 1;
     set_char(buf, hx, top, '\u{2500}', theme::BORDER(), theme::SURFACE());
     for (i, ch) in header.chars().enumerate() {
@@ -116,7 +118,7 @@ fn render_sidebar(
     let inner_width = (right - left - 1) as usize;
 
     if parts.is_empty() {
-        let msg = "No parts";
+        let msg = t("tree.empty");
         for (i, ch) in msg.chars().enumerate() {
             let x = left + 2 + i as u16;
             if x < right {

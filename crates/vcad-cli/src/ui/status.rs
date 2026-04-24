@@ -15,6 +15,7 @@ use std::time::Instant;
 
 use super::buffer::{set_char, set_string, CellBuffer, Rect};
 use super::theme;
+use vcad_i18n::t_fmt;
 
 use crate::app::{App, LogLevel};
 
@@ -74,7 +75,7 @@ fn draw_ticker_segment(buf: &mut CellBuffer, app: &App, x_start: u16, x_end: u16
             buf,
             x_start,
             y,
-            "console empty",
+            vcad_i18n::t("status.console_empty"),
             theme::TEXT_MUTED(),
             theme::SURFACE(),
         );
@@ -219,19 +220,27 @@ fn draw_right_segment(buf: &mut CellBuffer, app: &App, area: Rect, y: u16) -> u1
     // Build text pieces.
     let parts_count = app.get_parts().len();
     let sel_count = app.selected.len();
-    let save_label = if app.is_dirty() { "modified" } else { "saved" };
+    let save_label = vcad_i18n::t(if app.is_dirty() {
+        "status.modified"
+    } else {
+        "status.saved"
+    });
     let save_color = if app.is_dirty() {
         theme::ACCENT()
     } else {
         theme::TEXT_MUTED()
     };
 
-    let parts_text = format!(
-        "{parts_count} {}",
-        if parts_count == 1 { "part" } else { "parts" }
-    );
+    let count_str = parts_count.to_string();
+    let parts_key = if parts_count == 1 {
+        "status.part"
+    } else {
+        "status.parts"
+    };
+    let parts_text = t_fmt(parts_key, &[("count", &count_str)]);
     let sel_text = if sel_count > 0 {
-        format!("{sel_count} sel")
+        let sel_str = sel_count.to_string();
+        t_fmt("status.sel", &[("count", &sel_str)])
     } else {
         String::new()
     };

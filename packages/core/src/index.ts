@@ -155,11 +155,16 @@ export type {
   ElectronicsSelection,
 } from "./stores/electronics-store.js";
 
+// i18n
+export { t, tFmt, setLocale, getLocale, detectLocale, supportedLocales } from "./i18n/index.js";
+export type { TranslationKey, SupportedLocale } from "./i18n/index.js";
+
 // Commands (palette / menus)
 export {
   createCommandRegistry,
   COMMAND_CATEGORIES,
   CATEGORY_LABELS,
+  getCategoryLabel,
   CATEGORY_ICON_COLORS,
 } from "./commands.js";
 export type { Command, CommandRegistry, CommandActions, CommandCategory } from "./commands.js";

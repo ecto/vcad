@@ -5,6 +5,7 @@
 
 use super::buffer::{set_char, set_string, CellBuffer, Rect};
 use super::theme;
+use vcad_i18n::t;
 
 /// Selected action in the welcome overlay.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,8 +75,8 @@ fn render_card(buf: &mut CellBuffer, area: Rect, selected: usize) {
     row += 1;
 
     // Tagline
-    let tagline = "free parametric cad for everyone";
-    let tag_x = left + (area.width.saturating_sub(tagline.len() as u16)) / 2;
+    let tagline = t("welcome.tagline");
+    let tag_x = left + (area.width.saturating_sub(tagline.chars().count() as u16)) / 2;
     set_string(buf, tag_x, row, tagline, theme::TEXT_MUTED(), bg);
     row += 2;
 
@@ -87,14 +88,16 @@ fn render_card(buf: &mut CellBuffer, area: Rect, selected: usize) {
     set_char(buf, right, row, '\u{2524}', theme::BORDER(), bg);
     row += 1;
 
-    // Menu items
+    // Menu items: (icon, label_key, hint_key)
     let items: &[(&str, &str, &str)] = &[
-        ("\u{25B6}", "New Project", "guided tutorial"),
-        ("+", "Blank Project", "empty canvas"),
-        ("\u{2192}", "Open File", ":open"),
+        ("\u{25B6}", "welcome.new_project", "welcome.hint.new"),
+        ("+", "welcome.blank_project", "welcome.hint.blank"),
+        ("\u{2192}", "welcome.open_file", "welcome.hint.open"),
     ];
 
-    for (i, (icon, label, hint)) in items.iter().enumerate() {
+    for (i, (icon, label_key, hint_key)) in items.iter().enumerate() {
+        let label = t(label_key);
+        let hint = t(hint_key);
         let is_selected = i == selected;
         let row_bg = if is_selected { theme::CARD() } else { bg };
 
@@ -144,7 +147,7 @@ fn render_card(buf: &mut CellBuffer, area: Rect, selected: usize) {
     row += 1;
 
     // Footer hint
-    let footer = "\u{2191}\u{2193} navigate  enter select  esc dismiss";
+    let footer = t("welcome.footer");
     let footer_x = left + (area.width.saturating_sub(footer.chars().count() as u16)) / 2;
     if row < bot {
         set_string(buf, footer_x, row, footer, theme::TEXT_MUTED(), bg);

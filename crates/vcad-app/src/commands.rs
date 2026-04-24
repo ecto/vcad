@@ -46,7 +46,7 @@ pub enum CommandCategory {
 #[derive(Debug, Clone)]
 pub struct Command {
     pub id: &'static str,
-    pub label: &'static str,
+    pub label_key: &'static str,
     pub keywords: &'static [&'static str],
     pub icon: &'static str,
     /// Legacy display-only shortcut string kept for backward compatibility
@@ -67,11 +67,18 @@ pub struct Command {
     pub target: Target,
 }
 
+impl Command {
+    /// Resolved display label for the current locale.
+    pub fn label(&self) -> &str {
+        vcad_i18n::t(self.label_key)
+    }
+}
+
 /// Default values for new metadata fields — spread with `..CMD_DEFAULTS` so
 /// individual entries only declare the fields they care about.
 const CMD_DEFAULTS: Command = Command {
     id: "",
-    label: "",
+    label_key: "",
     keywords: &[],
     icon: "",
     shortcut: None,
@@ -99,7 +106,7 @@ pub fn find_commands(query: &str) -> Vec<&'static Command> {
         .iter()
         .filter(|cmd| {
             cmd.id.to_lowercase().contains(&q)
-                || cmd.label.to_lowercase().contains(&q)
+                || cmd.label().to_lowercase().contains(&q)
                 || cmd.keywords.iter().any(|k| k.to_lowercase().contains(&q))
         })
         .collect()
@@ -109,7 +116,7 @@ static COMMANDS: &[Command] = &[
     // ── Create ───────────────────────────────────────────────────────
     Command {
         id: "cube",
-        label: "Add Cube",
+        label_key: "cmd.cube.label",
         keywords: &["box", "rectangular", "prism"],
         icon: "\u{25A0}",
         tab: ToolbarTab::Create,
@@ -119,7 +126,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "cylinder",
-        label: "Add Cylinder",
+        label_key: "cmd.cylinder.label",
         keywords: &["cyl", "tube", "pipe"],
         icon: "\u{25CB}",
         tab: ToolbarTab::Create,
@@ -129,7 +136,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "sphere",
-        label: "Add Sphere",
+        label_key: "cmd.sphere.label",
         keywords: &["ball", "globe"],
         icon: "\u{25CF}",
         tab: ToolbarTab::Create,
@@ -139,7 +146,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "cone",
-        label: "Add Cone",
+        label_key: "cmd.cone.label",
         keywords: &["conical", "taper"],
         icon: "\u{25B2}",
         tab: ToolbarTab::Create,
@@ -150,7 +157,7 @@ static COMMANDS: &[Command] = &[
     // ── Transform ────────────────────────────────────────────────────
     Command {
         id: "translate",
-        label: "Move",
+        label_key: "cmd.translate.label",
         keywords: &["translate", "position", "offset"],
         shortcut: Some("G"),
         icon: "\u{2194}",
@@ -163,7 +170,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "rotate",
-        label: "Rotate",
+        label_key: "cmd.rotate.label",
         keywords: &["spin", "turn", "orientation"],
         shortcut: Some("R"),
         icon: "\u{21BB}",
@@ -176,7 +183,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "scale",
-        label: "Scale",
+        label_key: "cmd.scale.label",
         keywords: &["resize", "size"],
         shortcut: Some("Shift+S"),
         icon: "\u{2922}",
@@ -189,7 +196,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "mirror",
-        label: "Mirror",
+        label_key: "cmd.mirror.label",
         keywords: &["flip", "reflect", "symmetry"],
         icon: "\u{2016}",
         tab: ToolbarTab::Transform,
@@ -201,7 +208,7 @@ static COMMANDS: &[Command] = &[
     // ── Combine (booleans) ───────────────────────────────────────────
     Command {
         id: "union",
-        label: "Union",
+        label_key: "cmd.union.label",
         keywords: &["add", "join", "merge", "combine"],
         shortcut: Some("Cmd+Shift+U"),
         icon: "\u{222A}",
@@ -214,7 +221,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "difference",
-        label: "Difference",
+        label_key: "cmd.difference.label",
         keywords: &["subtract", "cut", "remove"],
         shortcut: Some("Cmd+Shift+D"),
         icon: "\u{2216}",
@@ -227,7 +234,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "intersection",
-        label: "Intersection",
+        label_key: "cmd.intersection.label",
         keywords: &["intersect", "common", "overlap"],
         shortcut: Some("Cmd+Shift+I"),
         icon: "\u{2229}",
@@ -241,7 +248,7 @@ static COMMANDS: &[Command] = &[
     // ── Modify ───────────────────────────────────────────────────────
     Command {
         id: "fillet",
-        label: "Fillet",
+        label_key: "cmd.fillet.label",
         keywords: &["round", "radius", "smooth"],
         icon: "\u{25E0}",
         tab: ToolbarTab::Modify,
@@ -252,7 +259,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "chamfer",
-        label: "Chamfer",
+        label_key: "cmd.chamfer.label",
         keywords: &["bevel", "edge"],
         icon: "\u{25FA}",
         tab: ToolbarTab::Modify,
@@ -263,7 +270,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "shell",
-        label: "Shell",
+        label_key: "cmd.shell.label",
         keywords: &["hollow", "thin", "wall"],
         icon: "\u{25A1}",
         tab: ToolbarTab::Modify,
@@ -274,7 +281,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "linear_pattern",
-        label: "Linear Pattern",
+        label_key: "cmd.linear_pattern.label",
         keywords: &["array", "repeat", "linear"],
         icon: "\u{2026}",
         tab: ToolbarTab::Modify,
@@ -285,7 +292,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "circular_pattern",
-        label: "Circular Pattern",
+        label_key: "cmd.circular_pattern.label",
         keywords: &["radial", "polar", "array"],
         icon: "\u{25CE}",
         tab: ToolbarTab::Modify,
@@ -297,7 +304,7 @@ static COMMANDS: &[Command] = &[
     // ── Edit ─────────────────────────────────────────────────────────
     Command {
         id: "delete",
-        label: "Delete",
+        label_key: "cmd.delete.label",
         keywords: &["remove", "erase", "del"],
         shortcut: Some("Delete"),
         icon: "\u{2715}",
@@ -310,7 +317,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "undo",
-        label: "Undo",
+        label_key: "cmd.undo.label",
         keywords: &["back", "revert"],
         shortcut: Some("Cmd+Z"),
         icon: "\u{21B6}",
@@ -323,7 +330,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "redo",
-        label: "Redo",
+        label_key: "cmd.redo.label",
         keywords: &["forward"],
         shortcut: Some("Cmd+Shift+Z"),
         icon: "\u{21B7}",
@@ -336,7 +343,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "copy",
-        label: "Copy",
+        label_key: "cmd.copy.label",
         keywords: &["clipboard", "yank"],
         shortcut: Some("Cmd+C"),
         icon: "\u{29C9}",
@@ -349,7 +356,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "paste",
-        label: "Paste",
+        label_key: "cmd.paste.label",
         keywords: &["clipboard"],
         shortcut: Some("Cmd+V"),
         icon: "\u{2398}",
@@ -362,7 +369,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "duplicate",
-        label: "Duplicate",
+        label_key: "cmd.duplicate.label",
         keywords: &["clone", "copy"],
         shortcut: Some("Cmd+D"),
         icon: "\u{29C9}",
@@ -375,7 +382,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "select_all",
-        label: "Select All",
+        label_key: "cmd.select_all.label",
         keywords: &["all", "everything"],
         shortcut: Some("Cmd+A"),
         icon: "\u{25A3}",
@@ -388,7 +395,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "deselect",
-        label: "Deselect",
+        label_key: "cmd.deselect.label",
         keywords: &["clear", "none"],
         shortcut: Some("Esc"),
         icon: "\u{25A1}",
@@ -404,7 +411,7 @@ static COMMANDS: &[Command] = &[
     // ── File ─────────────────────────────────────────────────────────
     Command {
         id: "new",
-        label: "New Document",
+        label_key: "cmd.new.label",
         keywords: &["empty", "clear", "start"],
         shortcut: Some("Cmd+N"),
         icon: "+",
@@ -416,7 +423,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "open",
-        label: "Open…",
+        label_key: "cmd.open.label",
         keywords: &["load", "file", "import"],
         shortcut: Some("Cmd+O"),
         icon: "\u{2198}",
@@ -428,7 +435,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "save",
-        label: "Save",
+        label_key: "cmd.save.label",
         keywords: &["write", "store"],
         shortcut: Some("Cmd+S"),
         icon: "S",
@@ -440,7 +447,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "export_stl",
-        label: "Export STL",
+        label_key: "cmd.export_stl.label",
         keywords: &["stl", "mesh", "3d print"],
         icon: "\u{2197}",
         tab: ToolbarTab::Export,
@@ -451,7 +458,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "export_glb",
-        label: "Export GLB",
+        label_key: "cmd.export_glb.label",
         keywords: &["glb", "gltf", "mesh", "web"],
         icon: "\u{2197}",
         tab: ToolbarTab::Export,
@@ -462,7 +469,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "export_step",
-        label: "Export STEP",
+        label_key: "cmd.export_step.label",
         keywords: &["step", "stp", "cad"],
         icon: "\u{2197}",
         tab: ToolbarTab::Export,
@@ -473,7 +480,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "quit",
-        label: "Quit",
+        label_key: "cmd.quit.label",
         keywords: &["exit", "close", "q"],
         shortcut: Some("Cmd+Q"),
         icon: "\u{2715}",
@@ -486,7 +493,7 @@ static COMMANDS: &[Command] = &[
     // ── View ─────────────────────────────────────────────────────────
     Command {
         id: "toggle_sidebar",
-        label: "Toggle Sidebar",
+        label_key: "cmd.toggle_sidebar.label",
         keywords: &["tree", "panel", "parts", "hide"],
         shortcut: Some("\\"),
         icon: "\u{2630}",
@@ -499,7 +506,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "toggle_chat",
-        label: "Toggle Chat",
+        label_key: "cmd.toggle_chat.label",
         keywords: &["ai", "assistant", "panel"],
         shortcut: Some("F6"),
         icon: "\u{2726}",
@@ -511,7 +518,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "toggle_devtools",
-        label: "Toggle DevTools",
+        label_key: "cmd.toggle_devtools.label",
         keywords: &["console", "log", "debug", "devtools"],
         shortcut: Some("`"),
         icon: "\u{25AE}",
@@ -523,7 +530,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "toggle_wireframe",
-        label: "Toggle Wireframe",
+        label_key: "cmd.toggle_wireframe.label",
         keywords: &["edges", "mesh", "view"],
         shortcut: Some("X"),
         icon: "\u{25C7}",
@@ -536,7 +543,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "toggle_grid_snap",
-        label: "Toggle Grid Snap",
+        label_key: "cmd.toggle_grid_snap.label",
         keywords: &["snap", "grid", "align"],
         shortcut: Some("G"),
         icon: "\u{25A6}",
@@ -552,7 +559,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "cycle_theme",
-        label: "Cycle Theme",
+        label_key: "cmd.cycle_theme.label",
         keywords: &["dark", "light", "appearance"],
         icon: "\u{25D0}",
         tab: ToolbarTab::Create,
@@ -562,7 +569,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "camera_iso",
-        label: "Isometric View",
+        label_key: "cmd.camera_iso.label",
         keywords: &["camera", "iso", "3d", "default"],
         shortcut: Some("7"),
         icon: "\u{25C6}",
@@ -575,7 +582,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "camera_top",
-        label: "Top View",
+        label_key: "cmd.camera_top.label",
         keywords: &["camera", "plan", "down"],
         shortcut: Some("8"),
         icon: "\u{25AB}",
@@ -588,7 +595,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "camera_front",
-        label: "Front View",
+        label_key: "cmd.camera_front.label",
         keywords: &["camera", "elevation"],
         shortcut: Some("9"),
         icon: "\u{25A1}",
@@ -601,7 +608,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "camera_right",
-        label: "Right View",
+        label_key: "cmd.camera_right.label",
         keywords: &["camera", "side", "profile"],
         shortcut: Some("0"),
         icon: "\u{25A1}",
@@ -614,7 +621,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "camera_fit",
-        label: "Fit to Screen",
+        label_key: "cmd.camera_fit.label",
         keywords: &["camera", "zoom", "frame", "home"],
         shortcut: Some("F"),
         icon: "\u{2922}",
@@ -628,7 +635,7 @@ static COMMANDS: &[Command] = &[
     // ── Tools ────────────────────────────────────────────────────────
     Command {
         id: "palette",
-        label: "Command Palette",
+        label_key: "cmd.palette.label",
         keywords: &["search", "command", "palette", "jump"],
         shortcut: Some("Cmd+K"),
         icon: "\u{2318}",
@@ -640,7 +647,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "sketch",
-        label: "New Sketch",
+        label_key: "cmd.sketch.label",
         keywords: &["2d", "draw", "profile"],
         icon: "\u{270E}",
         tab: ToolbarTab::Create,
@@ -651,7 +658,7 @@ static COMMANDS: &[Command] = &[
     // ── Help ─────────────────────────────────────────────────────────
     Command {
         id: "about",
-        label: "About vcad",
+        label_key: "cmd.about.label",
         keywords: &["info", "version", "credits"],
         shortcut: Some("F1"),
         icon: "\u{2139}",
@@ -663,7 +670,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "open_docs",
-        label: "Open Docs",
+        label_key: "cmd.open_docs.label",
         keywords: &["help", "manual", "guide"],
         icon: "\u{1F4D6}",
         tab: ToolbarTab::Create,
@@ -673,7 +680,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "open_github",
-        label: "GitHub",
+        label_key: "cmd.open_github.label",
         keywords: &["source", "repo", "code"],
         icon: "\u{2756}",
         tab: ToolbarTab::Create,
@@ -683,7 +690,7 @@ static COMMANDS: &[Command] = &[
     },
     Command {
         id: "open_discord",
-        label: "Discord",
+        label_key: "cmd.open_discord.label",
         keywords: &["chat", "community", "help"],
         icon: "\u{25CD}",
         tab: ToolbarTab::Create,

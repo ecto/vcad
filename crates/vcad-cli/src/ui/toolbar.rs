@@ -502,9 +502,9 @@ fn render_tool_input_flush(
 
     // Right-aligned hint.
     let hint = if ti.text_mode {
-        "Enter:apply  Esc:cancel"
+        vcad_i18n::t("toolbar.hint.text")
     } else {
-        "\u{2190}\u{2192}:scrub  Enter:apply  Esc:cancel"
+        vcad_i18n::t("toolbar.hint.numeric")
     };
     let hint_w = hint.chars().count() as u16;
     if right_edge >= hint_w + LEFT_PAD {

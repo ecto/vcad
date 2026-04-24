@@ -16,6 +16,7 @@ vcad-ir = { path = "../vcad-ir" }
 vcad-crdt = { path = "../vcad-crdt" }
 vcad-kernel = { path = "../vcad-kernel" }
 vcad-app = { path = "../vcad-app" }
+vcad-i18n = { path = "../vcad-i18n" }
 vcad-chat = { path = "../vcad-chat" }
 vcad-eval = { path = "../vcad-eval" }
 vcad-kernel-urdf = { path = "../vcad-kernel-urdf" }

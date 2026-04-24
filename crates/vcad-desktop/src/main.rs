@@ -9,6 +9,7 @@ use tauri::Manager;
 use commands::{bambu, local_ai};
 
 fn main() {
+    vcad_i18n::init(&vcad_i18n::Locale::from_env());
     tauri::Builder::default()
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_notification::init())
