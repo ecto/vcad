@@ -356,7 +356,7 @@ export function ImportedMesh({ mesh, materialKey }: ImportedMeshProps) {
         color={materialColor}
         metalness={materialDef?.metallic ?? 0.0}
         roughness={materialDef?.roughness ?? 0.7}
-        envMapIntensity={0.8}
+        envMapIntensity={1.0}
         flatShading={false}
         side={THREE.DoubleSide}
       />
@@ -774,7 +774,7 @@ export const SceneMesh = memo(function SceneMesh({
           emissiveIntensity={emissiveIntensity}
           metalness={materialDef?.metallic ?? 0.0}
           roughness={materialDef?.roughness ?? 0.7}
-          envMapIntensity={0.8}
+          envMapIntensity={1.0}
           flatShading={false}
           side={THREE.DoubleSide}
         />

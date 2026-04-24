@@ -1,5 +1,5 @@
 import { useRef, useEffect, useMemo, useState, useCallback, Suspense } from "react";
-import { Spherical, Vector3, Box3, Plane, Raycaster, Vector2, Quaternion, Matrix4, Color, TOUCH, PerspectiveCamera, WebGLRenderTarget, SRGBColorSpace, ACESFilmicToneMapping } from "three";
+import { Spherical, Vector3, Box3, Plane, Raycaster, Vector2, Quaternion, Matrix4, Color, TOUCH, PerspectiveCamera, WebGLRenderTarget, SRGBColorSpace, ACESFilmicToneMapping, BackSide } from "three";
 
 const isCoarsePointer =
   typeof window !== "undefined" &&
@@ -1235,7 +1235,10 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
   const environmentIntensity = useMemo(() => {
     const env = sceneSettings.environment;
     if (env.type === "None") return 0;
-    return env.intensity ?? 0.4;
+    // Default 1.0 gives a full-strength IBL out of the box — metals look
+    // like metals (Fusion / Onshape studio look). Docs that need a calmer
+    // scene override with env.intensity.
+    return env.intensity ?? 1.0;
   }, [sceneSettings.environment]);
 
   return (
@@ -1362,58 +1365,103 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
         </Suspense>
       )}
 
-      {/* Default procedural room IBL — provides reflections for
-          metallic materials without loading an HDR preset. Only active
-          when the user has no explicit environment preset selected.
-          The interior is near-black so that metallic reflections read
-          as bright studio panels against a dark backdrop, Fusion-style. */}
+      {/* Default procedural studio IBL — three-point rig baked into a
+          PMREM cubemap. Reads as a photography studio: a cool-white key
+          softbox above, warmer fill panels, and a brighter rim panel
+          behind the camera. Colored subtly rather than pure white so
+          metallic reflections pick up the temperature shift the way they
+          do in a real product shot. Reflections are modulated down at
+          the ground to avoid a flat mirrored floor look. Only active
+          when the user hasn't selected an explicit environment preset. */}
       {!isPcbMode && !environmentPreset && (
-        <Environment resolution={256} frames={1} background={false}>
-          <color
-            attach="background"
-            args={isDark ? [0.015, 0.02, 0.03] : [0.58, 0.6, 0.62]}
-          />
-          {/* Ceiling panel — main highlight source */}
+        <Environment resolution={512} frames={1} background={false}>
+          {/* Backdrop: warm-to-cool vertical gradient. Dark theme puts
+              the horizon near black with a subtle cool cast; light theme
+              reads as a soft studio wall. */}
+          <mesh scale={[100, 100, 100]}>
+            <sphereGeometry args={[1, 32, 16]} />
+            <shaderMaterial
+              side={BackSide}
+              uniforms={{
+                uTop: { value: new Color(isDark ? 0.025 : 0.72) },
+                uBottom: { value: new Color(isDark ? 0.01 : 0.48) },
+              }}
+              vertexShader={`
+                varying vec3 vWorldDir;
+                void main() {
+                  vWorldDir = normalize(position);
+                  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+              `}
+              fragmentShader={`
+                uniform vec3 uTop;
+                uniform vec3 uBottom;
+                varying vec3 vWorldDir;
+                void main() {
+                  float t = clamp(vWorldDir.y * 0.5 + 0.5, 0.0, 1.0);
+                  gl_FragColor = vec4(mix(uBottom, uTop, pow(t, 1.4)), 1.0);
+                }
+              `}
+            />
+          </mesh>
+
+          {/* Key light — cool-white ceiling softbox, tilted forward so
+              it reads as "camera-left overhead" rather than a flat
+              ceiling. This is the dominant highlight on the top of
+              parts. */}
           <Lightformer
             form="rect"
-            intensity={isDark ? 2.5 : 4}
-            color="white"
-            position={[0, 10, 0]}
-            rotation={[-Math.PI / 2, 0, 0]}
-            scale={[20, 20, 1]}
+            intensity={isDark ? 3.2 : 5.5}
+            color={[1.0, 0.99, 0.97]}
+            position={[3, 9, 3]}
+            rotation={[-Math.PI / 2 + 0.25, 0, 0.2]}
+            scale={[18, 14, 1]}
           />
-          {/* Four softer side panels for even wrap-around fill */}
+
+          {/* Fill — warmer, camera-right, lower. Fills shadows with a
+              slight amber cast, the way a bounce card warms up the
+              shadow side of a product shot. */}
           <Lightformer
             form="rect"
-            intensity={isDark ? 0.9 : 1.5}
-            color="white"
-            position={[10, 2, 0]}
-            rotation={[0, -Math.PI / 2, 0]}
-            scale={[10, 8, 1]}
+            intensity={isDark ? 1.3 : 2.2}
+            color={[1.0, 0.94, 0.86]}
+            position={[10, 2, 4]}
+            rotation={[0, -Math.PI / 2, 0.1]}
+            scale={[12, 8, 1]}
           />
+
+          {/* Opposite-side fill — slightly cooler, keeps the left side
+              from going too dark. */}
           <Lightformer
             form="rect"
-            intensity={isDark ? 0.9 : 1.5}
-            color="white"
+            intensity={isDark ? 0.9 : 1.6}
+            color={[0.96, 0.98, 1.0]}
             position={[-10, 2, 0]}
-            rotation={[0, Math.PI / 2, 0]}
-            scale={[10, 8, 1]}
+            rotation={[0, Math.PI / 2, -0.1]}
+            scale={[12, 8, 1]}
           />
+
+          {/* Rim — bright narrow strip behind the camera to carve the
+              silhouette on metallic edges. This is the source of the
+              sharp highlight line on the far side of polished parts. */}
           <Lightformer
             form="rect"
-            intensity={isDark ? 0.9 : 1.5}
-            color="white"
-            position={[0, 2, 10]}
-            rotation={[0, Math.PI, 0]}
-            scale={[10, 8, 1]}
-          />
-          <Lightformer
-            form="rect"
-            intensity={isDark ? 0.9 : 1.5}
-            color="white"
-            position={[0, 2, -10]}
+            intensity={isDark ? 2.2 : 3.6}
+            color={[0.98, 1.0, 1.0]}
+            position={[0, 4, -12]}
             rotation={[0, 0, 0]}
-            scale={[10, 8, 1]}
+            scale={[14, 5, 1]}
+          />
+
+          {/* Faint floor bounce — keeps undersides from reading
+              completely black on metals. Dim by design. */}
+          <Lightformer
+            form="rect"
+            intensity={isDark ? 0.25 : 0.5}
+            color={[0.92, 0.94, 0.96]}
+            position={[0, -8, 0]}
+            rotation={[Math.PI / 2, 0, 0]}
+            scale={[20, 20, 1]}
           />
         </Environment>
       )}
