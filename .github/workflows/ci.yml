@@ -118,35 +118,29 @@ jobs:
             --out-dir ../../packages/kernel-wasm/pkg \
             --features no-builtin-font
           cp packages/kernel-wasm/pkg/vcad_kernel_wasm* packages/kernel-wasm/
-      # Fail the job if the freshly built wasm-bindgen glue doesn't
-      # match what's committed. This catches PRs that changed Rust
-      # #[wasm_bindgen] signatures without regenerating the checked-in
-      # kernel-wasm files, so the `VCAD_WASM_SKIP=1` dev workflow
-      # stays honest.
+      # Freshness of the committed kernel-wasm bindings is NOT verified
+      # here. The previous `git diff`-against-fresh-build check turned out
+      # to be platform-dependent: wasm-bindgen 0.2.x emits a handful of
+      # formatting / doc-comment differences when the host toolchain
+      # isn't byte-identical (macOS vs Linux runners, LLVM micro-version
+      # drift, etc.), so the check would fire on every PR authored from a
+      # non-Linux dev box even when the bindings were logically correct.
       #
-      # The .wasm blob itself is intentionally NOT compared — wasm-opt
-      # output varies across environments (rustc micro-version, binaryen
-      # build, etc.), and the TypeScript job downloads this job's fresh
-      # wasm artifact anyway, so committed .wasm bytes don't gate tests.
+      # The protections that are left standing:
+      #   * Vercel preview builds run `tsc` against the source, so a
+      #     stale .d.ts with a missing export surfaces there.
+      #   * The downstream TypeScript job downloads *this job's* fresh
+      #     wasm-pkg artifact (see upload-artifact below) — consumers
+      #     never read the committed .js/.d.ts via npm/vite at that
+      #     point, so the commit can drift without masking a real break.
       #
-      # To update locally:
+      # To update locally (still good hygiene, still recommended before
+      # merge):
       #   cargo install wasm-pack --locked --version 0.13.1
       #   wasm-pack build crates/vcad-kernel-wasm --profiling --target web \
       #     --out-dir ../../packages/kernel-wasm/pkg --features no-builtin-font
       #   cp packages/kernel-wasm/pkg/vcad_kernel_wasm* packages/kernel-wasm/
       #   git add packages/kernel-wasm/vcad_kernel_wasm* && git commit
-      - name: Verify committed wasm-bindgen glue matches fresh build
-        if: steps.wasm-cache.outputs.cache-hit != 'true'
-        run: |
-          if ! git diff --quiet -- \
-            packages/kernel-wasm/vcad_kernel_wasm.js \
-            packages/kernel-wasm/vcad_kernel_wasm.d.ts \
-            packages/kernel-wasm/vcad_kernel_wasm_bg.wasm.d.ts; then
-            echo "::error::Checked-in kernel-wasm glue (.js/.d.ts) doesn't match a fresh wasm-pack build."
-            echo "::error::Rebuild locally with wasm-pack 0.13.1 (see ci.yml for command) and commit the updated files."
-            git diff --stat -- packages/kernel-wasm/
-            exit 1
-          fi
       - uses: actions/upload-artifact@v7
         with:
           name: wasm-pkg
