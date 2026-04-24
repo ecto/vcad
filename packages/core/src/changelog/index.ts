@@ -10,7 +10,7 @@
 // compiles against the same path and the build step copies
 // CHANGELOG.json into `dist/` next to the compiled JS. Same relative
 // import works in both worlds.
-import changelogData from "../CHANGELOG.json";
+import changelogData from "../CHANGELOG.json" with { type: "json" };
 
 export type ChangelogCategory = "feat" | "fix" | "breaking" | "perf" | "docs";
 
