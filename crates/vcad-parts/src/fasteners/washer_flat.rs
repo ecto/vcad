@@ -2,11 +2,13 @@
 //!
 //! Geometry: a thin disc with a concentric hole, centered at origin, axis = Z.
 
-use crate::types::{Param, PartEntry, PartMetadata, Params, Xref};
+use crate::types::{Param, Params, PartEntry, PartMetadata, Xref};
 use crate::Builder;
 use vcad_ir::Document;
 
-const SIZES: &[&str] = &["M2", "M3", "M4", "M5", "M6", "M8", "M10", "M12", "M16", "M20"];
+const SIZES: &[&str] = &[
+    "M2", "M3", "M4", "M5", "M6", "M8", "M10", "M12", "M16", "M20",
+];
 
 /// Registry entry.
 pub const ENTRY: PartEntry = PartEntry {
@@ -54,7 +56,9 @@ fn build(p: &Params) -> Result<Document, String> {
     let thickness = super::washer_thickness(&size);
 
     if outer <= inner {
-        return Err(format!("washer: inner diameter exceeds outer for size {size}"));
+        return Err(format!(
+            "washer: inner diameter exceeds outer for size {size}"
+        ));
     }
 
     let mut b = Builder::new();

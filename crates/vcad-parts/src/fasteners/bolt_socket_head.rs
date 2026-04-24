@@ -4,7 +4,7 @@
 //! extending downward along −Z from the head underside. Centered on the Z
 //! axis; the head's top face sits at Z=0.
 
-use crate::types::{Param, PartEntry, PartMetadata, Params, Xref};
+use crate::types::{Param, Params, PartEntry, PartMetadata, Xref};
 use crate::Builder;
 use vcad_ir::{Document, Vec3};
 

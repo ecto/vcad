@@ -70,8 +70,7 @@ pub fn apply_creased_normals(mesh: &mut TriangleMesh, crease_angle_rad: f64) {
     }
 
     // --- Step 2: group corners by welded position.
-    let mut groups: std::collections::HashMap<u64, Vec<u32>> =
-        std::collections::HashMap::new();
+    let mut groups: std::collections::HashMap<u64, Vec<u32>> = std::collections::HashMap::new();
     for (corner_idx, &key) in corner_keys.iter().enumerate() {
         groups.entry(key).or_default().push(corner_idx as u32);
     }
@@ -190,8 +189,7 @@ mod tests {
             // Triangle B: wall (y=0), normal = -Y
             vertices: vec![
                 // A (on z=0 plane)
-                0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 10.0, 10.0, 0.0,
-                // B (on y=0 plane)
+                0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 10.0, 10.0, 0.0, // B (on y=0 plane)
                 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 10.0, 0.0, 10.0,
             ],
             indices: vec![0, 1, 2, 3, 4, 5],
@@ -208,12 +206,23 @@ mod tests {
         for tri in 0..2 {
             for corner in 0..3 {
                 let n_idx = (tri * 3 + corner) * 3;
-                let n = [mesh.normals[n_idx], mesh.normals[n_idx + 1], mesh.normals[n_idx + 2]];
-                let expected = if tri == 0 { [0.0, 0.0, 1.0] } else { [0.0, -1.0, 0.0] };
+                let n = [
+                    mesh.normals[n_idx],
+                    mesh.normals[n_idx + 1],
+                    mesh.normals[n_idx + 2],
+                ];
+                let expected = if tri == 0 {
+                    [0.0, 0.0, 1.0]
+                } else {
+                    [0.0, -1.0, 0.0]
+                };
                 let diff = (n[0] - expected[0]).abs()
                     + (n[1] - expected[1]).abs()
                     + (n[2] - expected[2]).abs();
-                assert!(diff < 1e-5, "tri {tri} corner {corner}: got {n:?} want {expected:?}");
+                assert!(
+                    diff < 1e-5,
+                    "tri {tri} corner {corner}: got {n:?} want {expected:?}"
+                );
             }
         }
     }
@@ -225,8 +234,8 @@ mod tests {
     fn smooths_coplanar_edge() {
         let mut mesh = TriangleMesh {
             vertices: vec![
-                0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 10.0, 10.0, 0.0,
-                0.0, 0.0, 0.0, 10.0, 10.0, 0.0, 0.0, 10.0, 0.0,
+                0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 10.0, 10.0, 0.0, 0.0, 0.0, 0.0, 10.0, 10.0, 0.0,
+                0.0, 10.0, 0.0,
             ],
             indices: vec![0, 1, 2, 3, 4, 5],
             normals: Vec::new(),
@@ -237,7 +246,11 @@ mod tests {
 
         for corner in 0..6 {
             let n_idx = corner * 3;
-            let n = [mesh.normals[n_idx], mesh.normals[n_idx + 1], mesh.normals[n_idx + 2]];
+            let n = [
+                mesh.normals[n_idx],
+                mesh.normals[n_idx + 1],
+                mesh.normals[n_idx + 2],
+            ];
             let expected = [0.0, 0.0, 1.0];
             let diff = (n[0] - expected[0]).abs()
                 + (n[1] - expected[1]).abs()
@@ -256,9 +269,8 @@ mod tests {
         let tilt = 0.15_f32; // small tilt in x; roughly 8.5°
         let mut mesh = TriangleMesh {
             vertices: vec![
-                0.0, 0.0, 0.0, 1.0, 0.0, tilt, 0.5, 1.0, 0.0,
-                0.0, 0.0, 0.0, 0.5, 1.0, 0.0, -1.0, 0.0, -tilt,
-                0.0, 0.0, 0.0, -1.0, 0.0, -tilt, 1.0, 0.0, tilt,
+                0.0, 0.0, 0.0, 1.0, 0.0, tilt, 0.5, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 0.0, -1.0,
+                0.0, -tilt, 0.0, 0.0, 0.0, -1.0, 0.0, -tilt, 1.0, 0.0, tilt,
             ],
             indices: vec![0, 1, 2, 3, 4, 5, 6, 7, 8],
             normals: Vec::new(),
@@ -275,7 +287,10 @@ mod tests {
         let n6 = [mesh.normals[18], mesh.normals[19], mesh.normals[20]];
         for (i, n) in [n0, n3, n6].iter().enumerate() {
             let diff = (n[0] - n0[0]).abs() + (n[1] - n0[1]).abs() + (n[2] - n0[2]).abs();
-            assert!(diff < 1e-5, "copy {i} normal differs from others: {n:?} vs {n0:?}");
+            assert!(
+                diff < 1e-5,
+                "copy {i} normal differs from others: {n:?} vs {n0:?}"
+            );
         }
     }
 }

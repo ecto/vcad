@@ -30,14 +30,7 @@ impl Builder {
     fn add(&mut self, op: CsgOp) -> NodeId {
         let id = self.next_id;
         self.next_id += 1;
-        self.doc.nodes.insert(
-            id,
-            Node {
-                id,
-                name: None,
-                op,
-            },
-        );
+        self.doc.nodes.insert(id, Node { id, name: None, op });
         id
     }
 
@@ -116,13 +109,7 @@ impl Builder {
     }
 
     /// Linear pattern along a direction.
-    pub fn linear_pattern(
-        &mut self,
-        child: NodeId,
-        dir: Vec3,
-        count: u32,
-        spacing: f64,
-    ) -> NodeId {
+    pub fn linear_pattern(&mut self, child: NodeId, dir: Vec3, count: u32, spacing: f64) -> NodeId {
         self.add(CsgOp::LinearPattern {
             child,
             direction: dir,

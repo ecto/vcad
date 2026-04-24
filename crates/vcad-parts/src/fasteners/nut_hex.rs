@@ -2,11 +2,13 @@
 //!
 //! Geometry: six-sided prism with a threaded-through bore, centered at origin.
 
-use crate::types::{Param, PartEntry, PartMetadata, Params, Xref};
+use crate::types::{Param, Params, PartEntry, PartMetadata, Xref};
 use crate::Builder;
 use vcad_ir::Document;
 
-const SIZES: &[&str] = &["M2", "M3", "M4", "M5", "M6", "M8", "M10", "M12", "M16", "M20"];
+const SIZES: &[&str] = &[
+    "M2", "M3", "M4", "M5", "M6", "M8", "M10", "M12", "M16", "M20",
+];
 
 /// Registry entry.
 pub const ENTRY: PartEntry = PartEntry {

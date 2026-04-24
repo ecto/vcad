@@ -4,7 +4,7 @@
 //! consumers of a "608" just need the envelope for a shaft pass-through and
 //! a housing bore.
 
-use crate::types::{Param, PartEntry, PartMetadata, Params, Xref};
+use crate::types::{Param, Params, PartEntry, PartMetadata, Xref};
 use crate::Builder;
 use vcad_ir::Document;
 

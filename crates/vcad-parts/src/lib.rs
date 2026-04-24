@@ -19,7 +19,7 @@ pub mod bearings;
 pub mod fasteners;
 
 pub use builder::Builder;
-pub use types::{BuildFn, Param, PartEntry, PartMetadata, Params, Xref};
+pub use types::{BuildFn, Param, Params, PartEntry, PartMetadata, Xref};
 
 use vcad_ir::Document;
 
