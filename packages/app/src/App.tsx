@@ -26,6 +26,7 @@ import { lazyWithRetry } from "@/lib/lazy-with-retry";
 // chunk errors are handled globally in bootstrap.ts via `vite:preloadError`.
 const PropertyPanel = lazyWithRetry(() => import("@/components/PropertyPanel").then(m => ({ default: m.PropertyPanel })), "PropertyPanel");
 const SceneInspector = lazyWithRetry(() => import("@/components/SceneInspector").then(m => ({ default: m.SceneInspector })), "SceneInspector");
+const ParametersPanel = lazyWithRetry(() => import("@/components/ParametersPanel").then(m => ({ default: m.ParametersPanel })), "ParametersPanel");
 const InlineOnboarding = lazyWithRetry(() => import("@/components/InlineOnboarding").then(m => ({ default: m.InlineOnboarding })), "InlineOnboarding");
 const GuidedFlowOverlay = lazyWithRetry(() => import("@/components/GuidedFlowOverlay").then(m => ({ default: m.GuidedFlowOverlay })), "GuidedFlowOverlay");
 const GhostPromptController = lazyWithRetry(() => import("@/components/GhostPromptController").then(m => ({ default: m.GhostPromptController })), "GhostPromptController");
@@ -146,11 +147,16 @@ function FeatureTreeSlot({ sketchActive }: { sketchActive: boolean }) {
   // The RIGHT sidebar takes over for the SketchPropertyPanel — splitting
   // navigator and inspector matches the SolidWorks layout we're emulating.
   const showTree = sketchActive || sidebarPane === "tree";
+  const showParameters = !sketchActive && sidebarPane === "parameters";
   return (
     <div className="flex h-full w-full flex-col min-h-0">
       <div className="flex-1 min-h-0 overflow-hidden">
         {showTree ? (
           <FeatureTree />
+        ) : showParameters ? (
+          <AsyncBoundary region="parameters-panel" fallback={null}>
+            <ParametersPanel />
+          </AsyncBoundary>
         ) : inspectorTarget?.kind === "scene" ? (
           <AsyncBoundary region="scene-inspector" fallback={null}>
             <SceneInspector />

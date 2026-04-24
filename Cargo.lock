@@ -6768,6 +6768,7 @@ version = "0.9.0"
 dependencies = [
  "serde",
  "serde_json",
+ "tang-expr",
  "vcad-tool-derive",
 ]
 

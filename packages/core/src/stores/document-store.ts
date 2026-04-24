@@ -1,7 +1,10 @@
 import { create } from "zustand";
 import type {
+  Bindings,
   Document,
+  Expr,
   NodeId,
+  Parameter,
   Vec3,
   SketchSegment2D,
   PathCurve,
@@ -49,6 +52,7 @@ import {
   getSketchPlaneDirections,
 } from "../types.js";
 import { useUiStore } from "./ui-store.js";
+import { useParametersStore } from "./parameters-store.js";
 
 // ---------------------------------------------------------------------------
 // CRDT bridge types
@@ -1057,6 +1061,17 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         console.warn("Failed to free previous engine (leaked):", e);
       }
     }
+    // Seed the parameters store from the raw file (parameters/bindings are
+    // outside the CRDT schema for now; we persist them as top-level JSON).
+    try {
+      const src = file.kind === "crdt" ? patch?.document : file.document;
+      useParametersStore.getState().reset({
+        parameters: (src?.parameters as Record<string, Parameter>) ?? {},
+        bindings: (src?.bindings as Bindings) ?? {},
+      });
+    } catch {
+      useParametersStore.getState().reset();
+    }
   },
 
   addFromIR: (generatedDoc, name) => {
@@ -1072,6 +1087,24 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const irJson = JSON.stringify(generatedDoc);
     const result = engine.import_ir(irJson);
     set({ ...applyLegacyResult(result), isDirty: true });
+    // Merge any parameters / bindings from the generated doc into the
+    // parameters store (AI-emitted parametric models flow through here).
+    if (generatedDoc.parameters || generatedDoc.bindings) {
+      const store = useParametersStore.getState();
+      for (const [pname, param] of Object.entries(generatedDoc.parameters ?? {})) {
+        store.setParameter(pname, param as Parameter);
+      }
+      for (const [key, expr] of Object.entries(generatedDoc.bindings ?? {})) {
+        const colon = key.indexOf(":");
+        if (colon > 0) {
+          store.setBinding(
+            key.slice(0, colon),
+            key.slice(colon + 1),
+            expr as Expr,
+          );
+        }
+      }
+    }
     return null;
   },
 

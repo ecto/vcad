@@ -23,12 +23,28 @@ use crate::{
 };
 
 /// Evaluate a full document into an EvaluatedScene.
+///
+/// If the document declares `parameters` or `bindings`, the pre-pass
+/// [`crate::resolve::resolve_document_cloned`] is invoked to produce a
+/// concretized copy before the kernel walk begins.
 pub fn evaluate_document(
     doc: &Document,
     options: &EvalOptions,
 ) -> Result<EvaluatedScene, EvalError> {
     let clock = options.clock.as_deref();
     let t_start = clock.map(|c| c.now_ms());
+
+    // Resolve parameters + bindings into concrete numeric fields. When the
+    // doc has no parameters or bindings this is a cheap no-op.
+    let resolved_owned;
+    let doc: &Document = if doc.parameters.is_empty() && doc.bindings.is_empty() {
+        doc
+    } else {
+        let (d, _env) = crate::resolve::resolve_document_cloned(doc)
+            .map_err(|e| EvalError::ResolveBindings(e.to_string()))?;
+        resolved_owned = d;
+        &resolved_owned
+    };
 
     let mut cache: HashMap<NodeId, Option<Solid>> = HashMap::new();
     let mut node_timings: HashMap<String, NodeTiming> = HashMap::new();

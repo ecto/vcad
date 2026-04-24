@@ -993,6 +993,45 @@ export interface MeanderSegment {
   segment_index: number;
 }
 
+/**
+ * An expression value: either a literal number or a formula string.
+ *
+ * Formulas are evaluated lazily against a parameter environment at resolve
+ * time. Serialization is an untagged union — a bare number is a literal,
+ * a string is a formula.
+ */
+export type Expr = number | string;
+
+/**
+ * A document-level named parameter.
+ *
+ * Simple parameters use a number for `value`; derived parameters use an
+ * expression string that may reference other parameters. Evaluation order
+ * is determined by topological sort at resolve time.
+ */
+export interface Parameter {
+  /** Literal value or formula. */
+  value: Expr;
+  /** Optional unit for display (e.g. "mm", "deg"). */
+  unit?: string;
+  /** Optional lower bound for scrub input. */
+  min?: number;
+  /** Optional upper bound for scrub input. */
+  max?: number;
+  /** Optional description shown in the parameters panel. */
+  description?: string;
+}
+
+/**
+ * Bindings sidecar: map from `"{nodeId}:{dotted.field.path}"` to Expr.
+ *
+ * Example keys:
+ * - `"1:size.x"` — x component of Cube.size
+ * - `"7:radius"` — Cylinder.radius
+ * - `"12:offset.z"` — Translate.offset.z
+ */
+export type Bindings = Record<string, Expr>;
+
 /** A vcad document — the `.vcad` file format. */
 export interface Document {
   version: string;
@@ -1014,6 +1053,10 @@ export interface Document {
   schematic?: SchematicSheet;
   /** @deprecated Legacy PCB field — migrated to PcbBoard node on load. */
   pcb?: Pcb;
+  /** Named parameters driving expression-bound fields. */
+  parameters?: Record<string, Parameter>;
+  /** Sidecar bindings that patch concrete fields at resolve time. */
+  bindings?: Bindings;
 }
 
 /** Create a new empty document. */

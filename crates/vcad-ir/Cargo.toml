@@ -9,4 +9,5 @@ repository.workspace = true
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
+tang-expr = { workspace = true }
 vcad-tool-derive = { workspace = true }

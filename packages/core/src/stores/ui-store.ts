@@ -12,7 +12,7 @@ export type RaytraceDebugMode = "off" | "normals" | "face-id" | "lighting" | "or
 
 export type ToolbarTab = "create" | "transform" | "combine" | "modify" | "assembly" | "simulate" | "build" | "sketch";
 
-export type SidebarPane = "tree" | "inspector";
+export type SidebarPane = "tree" | "inspector" | "parameters";
 
 /**
  * How the local user's camera relates to another participant's camera.

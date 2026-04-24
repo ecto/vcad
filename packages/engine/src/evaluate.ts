@@ -13,6 +13,7 @@ import type {
   PcbBoardOp,
   EmbroideryPatternOp,
 } from "@vcad/ir";
+import { resolveDocument } from "./expressions.js";
 import type {
   EvaluatedScene,
   EvaluatedPartDef,
@@ -86,6 +87,13 @@ export function evaluateDocument(
   kernel: KernelModule,
   options: EvaluateOptions = {},
 ): EvaluatedScene {
+  // Resolve parameters + bindings before either backend sees the doc.
+  // The Rust WASM evaluator also performs this internally, but applying it
+  // here means the TS fallback, clash meshes, and any downstream consumers
+  // that inspect the raw CsgOp see concrete f64 values.
+  const resolved = resolveDocument(doc);
+  doc = resolved.doc;
+
   // Try the Rust WASM evaluator first
   if (kernel.evaluateDocument) {
     try {

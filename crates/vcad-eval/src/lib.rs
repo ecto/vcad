@@ -19,6 +19,7 @@
 pub mod convert;
 pub mod evaluate;
 pub mod kinematics;
+pub mod resolve;
 pub mod validate;
 
 use std::collections::HashMap;
@@ -30,6 +31,7 @@ use vcad_kernel::Solid;
 // Re-export main entry points
 pub use evaluate::{evaluate_document, evaluate_node};
 pub use kinematics::solve_forward_kinematics;
+pub use resolve::{resolve_document, resolve_document_cloned, ResolvePatchError};
 pub use validate::validate_document;
 
 /// Platform-agnostic clock for timing instrumentation.
@@ -119,6 +121,10 @@ pub enum EvalError {
     /// Unknown font name.
     #[error("unknown font: {0}")]
     UnknownFont(String),
+
+    /// Parameter / binding resolution failed before kernel evaluation.
+    #[error("parameter resolution failed: {0}")]
+    ResolveBindings(String),
 }
 
 /// Triangle mesh output from evaluation.
@@ -505,6 +511,148 @@ mod tests {
         assert!(scene.instances.is_some());
         assert_eq!(scene.instances.as_ref().unwrap().len(), 1);
         assert_eq!(scene.instances.as_ref().unwrap()[0].material, "steel");
+    }
+
+    #[test]
+    fn parametric_bike_skeleton_resolves_and_evaluates() {
+        // A miniature bike-like document: two wheels and a frame tube, all
+        // driven off named parameters. Changing `wheelbase` at resolve time
+        // shifts the rear wheel; the frame tube length derives from it.
+        use vcad_ir::{BindingKey, Expr, Parameter};
+
+        let mut doc = Document::new();
+        doc.parameters
+            .insert("wheelbase".into(), Parameter::literal(1000.0));
+        doc.parameters
+            .insert("wheel_radius".into(), Parameter::literal(350.0));
+        doc.parameters.insert(
+            "tube_thickness".into(),
+            Parameter::derived("wheel_radius * 0.08"),
+        );
+
+        // Front wheel cylinder (static at origin)
+        doc.nodes.insert(
+            1,
+            Node {
+                id: 1,
+                name: Some("front_wheel".into()),
+                op: CsgOp::Cylinder {
+                    radius: 0.0,
+                    height: 40.0,
+                    segments: 32,
+                },
+            },
+        );
+        // Rear wheel cylinder (translated by wheelbase)
+        doc.nodes.insert(
+            2,
+            Node {
+                id: 2,
+                name: Some("rear_wheel".into()),
+                op: CsgOp::Cylinder {
+                    radius: 0.0,
+                    height: 40.0,
+                    segments: 32,
+                },
+            },
+        );
+        doc.nodes.insert(
+            3,
+            Node {
+                id: 3,
+                name: Some("rear_wheel_placed".into()),
+                op: CsgOp::Translate {
+                    child: 2,
+                    offset: Vec3::new(0.0, 0.0, 0.0),
+                },
+            },
+        );
+        // Frame tube (cube sized to wheelbase)
+        doc.nodes.insert(
+            4,
+            Node {
+                id: 4,
+                name: Some("top_tube".into()),
+                op: CsgOp::Cube {
+                    size: Vec3::new(0.0, 0.0, 0.0),
+                },
+            },
+        );
+
+        doc.bindings
+            .bind(BindingKey::new(1, "radius"), Expr::formula("wheel_radius"));
+        doc.bindings
+            .bind(BindingKey::new(2, "radius"), Expr::formula("wheel_radius"));
+        doc.bindings
+            .bind(BindingKey::new(3, "offset.x"), Expr::formula("wheelbase"));
+        doc.bindings.bind(
+            BindingKey::new(4, "size.x"),
+            Expr::formula("wheelbase * 0.7"),
+        );
+        doc.bindings.bind(
+            BindingKey::new(4, "size.y"),
+            Expr::formula("tube_thickness"),
+        );
+        doc.bindings.bind(
+            BindingKey::new(4, "size.z"),
+            Expr::formula("tube_thickness"),
+        );
+
+        for (root, mat) in [(1, "default"), (3, "default"), (4, "default")] {
+            doc.roots.push(SceneEntry {
+                root,
+                material: mat.into(),
+                visible: None,
+            });
+        }
+        doc.materials.insert(
+            "default".into(),
+            MaterialDef {
+                name: "default".into(),
+                color: [0.8, 0.8, 0.8],
+                metallic: 0.0,
+                roughness: 0.5,
+                density: None,
+                friction: None,
+            },
+        );
+
+        // Resolve and peek at concrete numbers.
+        let (resolved, env) = crate::resolve_document_cloned(&doc).unwrap();
+        assert_eq!(env["wheelbase"], 1000.0);
+        assert_eq!(env["wheel_radius"], 350.0);
+        assert_eq!(env["tube_thickness"], 28.0);
+        match &resolved.nodes[&4].op {
+            CsgOp::Cube { size } => {
+                assert_eq!(size.x, 700.0);
+                assert_eq!(size.y, 28.0);
+                assert_eq!(size.z, 28.0);
+            }
+            _ => panic!(),
+        }
+        match &resolved.nodes[&3].op {
+            CsgOp::Translate { offset, .. } => assert_eq!(offset.x, 1000.0),
+            _ => panic!(),
+        }
+
+        // Evaluating via evaluate_document picks up the pre-pass and produces
+        // non-empty geometry for all three parts.
+        let scene = evaluate_document(&doc, &EvalOptions::default()).unwrap();
+        assert_eq!(scene.parts.len(), 3);
+        for p in &scene.parts {
+            assert!(!p.mesh.positions.is_empty(), "every part tessellates");
+        }
+        assert!(scene.failures.is_empty());
+
+        // Changing a parameter reshapes the document.
+        let mut doc2 = doc.clone();
+        doc2.parameters
+            .insert("wheelbase".into(), Parameter::literal(1400.0));
+        let (resolved2, _) = crate::resolve_document_cloned(&doc2).unwrap();
+        match &resolved2.nodes[&4].op {
+            CsgOp::Cube { size } => assert!((size.x - 980.0).abs() < 1e-9),
+            _ => panic!(),
+        }
     }
 
     #[test]
