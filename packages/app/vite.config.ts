@@ -285,7 +285,10 @@ export default defineConfig(({ mode }) => {
 
   return {
     server: {
-      allowedHosts: ["mew"],
+      // CLAUDE_PREVIEW: served behind a cloud reverse proxy (Claude Code on
+      // the web) — bind all hostnames since the inbound Host header is
+      // generated per-session. Local dev keeps the existing "mew" entry.
+      allowedHosts: process.env.CLAUDE_PREVIEW === "1" ? true : ["mew"],
     },
     envDir: "../../",
     define: {
@@ -293,7 +296,10 @@ export default defineConfig(({ mode }) => {
       __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
     },
     plugins: [
-      !process.env.TAURI_DEV && basicSsl(),
+      // basicSsl produces a self-signed cert for local HTTPS dev. Skip it under
+      // TAURI_DEV (Tauri provides its own webview) and CLAUDE_PREVIEW (cloud
+      // proxy terminates TLS upstream and rejects self-signed certs).
+      !process.env.TAURI_DEV && process.env.CLAUDE_PREVIEW !== "1" && basicSsl(),
       devApiPlugin(env),
       preloadKernelWasmPlugin(),
       react(),
