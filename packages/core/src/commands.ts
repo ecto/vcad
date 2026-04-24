@@ -180,7 +180,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
     // Primitives
     {
       id: "add-box",
-      label: "Add Box",
+      label: t("cmd.add_box.label"),
       icon: "Cube",
       keywords: ["box", "cube", "primitive", "create", "add"],
       action: () => actions.addPrimitive("cube"),
@@ -188,7 +188,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
     },
     {
       id: "add-cylinder",
-      label: "Add Cylinder",
+      label: t("cmd.cylinder.label"),
       icon: "Cylinder",
       keywords: ["cylinder", "primitive", "create", "add", "tube"],
       action: () => actions.addPrimitive("cylinder"),
@@ -196,7 +196,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
     },
     {
       id: "add-sphere",
-      label: "Add Sphere",
+      label: t("cmd.sphere.label"),
       icon: "Globe",
       keywords: ["sphere", "ball", "primitive", "create", "add"],
       action: () => actions.addPrimitive("sphere"),
@@ -206,7 +206,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
     // Booleans
     {
       id: "boolean-union",
-      label: "Union",
+      label: t("cmd.union.label"),
       icon: "Unite",
       keywords: ["union", "combine", "add", "boolean", "merge"],
       shortcut: "Ctrl+Shift+U",
@@ -216,7 +216,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
     },
     {
       id: "boolean-difference",
-      label: "Difference",
+      label: t("cmd.difference.label"),
       icon: "Subtract",
       keywords: ["difference", "subtract", "cut", "boolean", "minus"],
       shortcut: "Ctrl+Shift+D",
@@ -226,7 +226,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
     },
     {
       id: "boolean-intersection",
-      label: "Intersection",
+      label: t("cmd.intersection.label"),
       icon: "Intersect",
       keywords: ["intersection", "intersect", "boolean", "and"],
       shortcut: "Ctrl+Shift+I",
@@ -238,7 +238,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
     // Transform modes
     {
       id: "mode-move",
-      label: "Move Mode",
+      label: t("cmd.move_mode.label"),
       icon: "ArrowsOutCardinal",
       keywords: ["move", "translate", "position", "transform"],
       shortcut: "M",
@@ -247,7 +247,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
     },
     {
       id: "mode-rotate",
-      label: "Rotate Mode",
+      label: t("cmd.rotate_mode.label"),
       icon: "ArrowClockwise",
       keywords: ["rotate", "spin", "turn", "transform"],
       shortcut: "R",
@@ -256,7 +256,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
     },
     {
       id: "mode-scale",
-      label: "Scale Mode",
+      label: t("cmd.scale_mode.label"),
       icon: "ArrowsOut",
       keywords: ["scale", "resize", "size", "transform"],
       shortcut: "Shift+S",
@@ -267,7 +267,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
     // Edit operations
     {
       id: "undo",
-      label: "Undo",
+      label: t("cmd.undo.label"),
       icon: "ArrowCounterClockwise",
       keywords: ["undo", "back", "revert"],
       shortcut: "Ctrl+Z",
@@ -277,7 +277,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
     },
     {
       id: "redo",
-      label: "Redo",
+      label: t("cmd.redo.label"),
       icon: "ArrowClockwise",
       keywords: ["redo", "forward"],
       shortcut: "Ctrl+Shift+Z",
@@ -287,7 +287,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
     },
     {
       id: "delete",
-      label: "Delete Selected",
+      label: t("cmd.delete_selected.label"),
       icon: "Trash",
       keywords: ["delete", "remove", "trash"],
       shortcut: "Backspace",
@@ -297,7 +297,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
     },
     {
       id: "duplicate",
-      label: "Duplicate",
+      label: t("cmd.duplicate.label"),
       icon: "Copy",
       keywords: ["duplicate", "copy", "clone"],
       shortcut: "Ctrl+D",
@@ -307,7 +307,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
     },
     {
       id: "deselect",
-      label: "Deselect All",
+      label: t("cmd.deselect_all.label"),
       icon: "X",
       keywords: ["deselect", "clear", "none"],
       shortcut: "Esc",
@@ -318,7 +318,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
     // View toggles
     {
       id: "toggle-wireframe",
-      label: "Toggle Wireframe",
+      label: t("cmd.toggle_wireframe.label"),
       icon: "CubeTransparent",
       keywords: ["wireframe", "edges", "view"],
       shortcut: "X",
@@ -328,7 +328,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
     },
     {
       id: "toggle-grid-snap",
-      label: "Toggle Grid Snap",
+      label: t("cmd.toggle_grid_snap.label"),
       icon: "GridFour",
       keywords: ["snap", "grid", "align"],
       shortcut: "G",
@@ -338,7 +338,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
     },
     {
       id: "toggle-sidebar",
-      label: "Toggle Feature Tree",
+      label: t("cmd.toggle_feature_tree.label"),
       icon: "SidebarSimple",
       keywords: ["sidebar", "panel", "tree", "features"],
       action: actions.toggleFeatureTree,
@@ -348,7 +348,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
     // File operations
     {
       id: "save",
-      label: "Save",
+      label: t("cmd.save.label"),
       icon: "FloppyDisk",
       keywords: ["save", "export", "file"],
       shortcut: "Ctrl+S",
@@ -357,7 +357,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
     },
     {
       id: "open",
-      label: "Open",
+      label: t("cmd.open.label"),
       icon: "FolderOpen",
       keywords: ["open", "load", "file", "import"],
       shortcut: "Ctrl+O",
@@ -366,7 +366,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
     },
     {
       id: "export-stl",
-      label: "Export STL",
+      label: t("cmd.export_stl.label"),
       icon: "Export",
       keywords: ["export", "stl", "mesh", "3d print"],
       action: actions.exportStl,
@@ -375,7 +375,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
     },
     {
       id: "export-glb",
-      label: "Export GLB",
+      label: t("cmd.export_glb.label"),
       icon: "Export",
       keywords: ["export", "glb", "gltf", "mesh"],
       action: actions.exportGlb,
@@ -386,7 +386,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
     // Help
     {
       id: "about",
-      label: "About vcad",
+      label: t("cmd.about.label"),
       icon: "Info",
       keywords: ["about", "help", "info", "version"],
       action: actions.openAbout,
@@ -398,7 +398,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.newDocument) {
     cmds.push({
       id: "new-document",
-      label: "New",
+      label: t("cmd.new_short.label"),
       icon: "FilePlus",
       keywords: ["new", "document", "blank", "fresh"],
       shortcut: "Ctrl+N",
@@ -409,7 +409,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.openFromCloud) {
     cmds.push({
       id: "open-cloud",
-      label: "Open from Cloud…",
+      label: t("cmd.open_cloud.label"),
       icon: "CloudArrowDown",
       keywords: ["open", "cloud", "load", "sync", "remote"],
       shortcut: "Ctrl+Shift+O",
@@ -420,7 +420,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.exportStep) {
     cmds.push({
       id: "export-step",
-      label: "Export STEP",
+      label: t("cmd.export_step.label"),
       icon: "Export",
       keywords: ["export", "step", "cad", "solidworks", "fusion"],
       action: actions.exportStep,
@@ -433,7 +433,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.copy) {
     cmds.push({
       id: "copy",
-      label: "Copy",
+      label: t("cmd.copy.label"),
       icon: "Copy",
       keywords: ["copy", "clipboard"],
       shortcut: "Ctrl+C",
@@ -445,7 +445,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.paste) {
     cmds.push({
       id: "paste",
-      label: "Paste",
+      label: t("cmd.paste.label"),
       icon: "ClipboardText",
       keywords: ["paste", "clipboard"],
       shortcut: "Ctrl+V",
@@ -456,7 +456,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.selectAll) {
     cmds.push({
       id: "select-all",
-      label: "Select All",
+      label: t("cmd.select_all.label"),
       icon: "Selection",
       keywords: ["select", "all", "everything"],
       shortcut: "Ctrl+A",
@@ -469,7 +469,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.cameraFit) {
     cmds.push({
       id: "camera-fit",
-      label: "Fit to View",
+      label: t("cmd.fit_to_view.label"),
       icon: "ArrowsOutCardinal",
       keywords: ["fit", "zoom", "frame", "view", "camera"],
       shortcut: "F",
@@ -482,7 +482,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
     cmds.push(
       {
         id: "camera-isometric",
-        label: "Isometric View",
+        label: t("cmd.camera_iso.label"),
         icon: "Cube",
         keywords: ["isometric", "iso", "view", "camera", "angle"],
         action: () => preset("isometric"),
@@ -490,7 +490,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       },
       {
         id: "camera-top",
-        label: "Top View",
+        label: t("cmd.camera_top.label"),
         icon: "ArrowUp",
         keywords: ["top", "view", "camera", "angle", "plan"],
         action: () => preset("top"),
@@ -498,7 +498,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       },
       {
         id: "camera-front",
-        label: "Front View",
+        label: t("cmd.camera_front.label"),
         icon: "ArrowRight",
         keywords: ["front", "view", "camera", "angle"],
         action: () => preset("front"),
@@ -506,7 +506,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       },
       {
         id: "camera-right",
-        label: "Right View",
+        label: t("cmd.camera_right.label"),
         icon: "ArrowRight",
         keywords: ["right", "side", "view", "camera", "angle"],
         action: () => preset("right"),
@@ -517,7 +517,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.toggleChatSidebar) {
     cmds.push({
       id: "toggle-chat",
-      label: "Toggle Chat",
+      label: t("cmd.toggle_chat.label"),
       icon: "ChatDots",
       keywords: ["chat", "sidebar", "ai", "assistant"],
       shortcut: "F6",
@@ -528,7 +528,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.toggleStatusBar) {
     cmds.push({
       id: "toggle-status-bar",
-      label: "Toggle Status Bar",
+      label: t("cmd.toggle_status_bar.label"),
       icon: "Terminal",
       keywords: ["status", "bar", "toggle", "view"],
       action: actions.toggleStatusBar,
@@ -538,7 +538,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.toggleDevTools) {
     cmds.push({
       id: "toggle-devtools",
-      label: "Toggle DevTools",
+      label: t("cmd.toggle_devtools.label"),
       icon: "Terminal",
       keywords: ["devtools", "console", "log", "debug"],
       shortcut: "`",
@@ -549,7 +549,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.cycleTheme) {
     cmds.push({
       id: "cycle-theme",
-      label: "Cycle Theme",
+      label: t("cmd.cycle_theme.label"),
       icon: "Sun",
       keywords: ["theme", "dark", "light", "system", "mode"],
       action: actions.cycleTheme,
@@ -563,7 +563,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.openCommandPalette) {
     cmds.push({
       id: "command-palette",
-      label: "Command Palette…",
+      label: t("cmd.palette_dots.label"),
       icon: "Command",
       keywords: ["command", "palette", "search", "go"],
       shortcut: "Ctrl+K",
@@ -574,7 +574,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.newSketch) {
     cmds.push({
       id: "new-sketch",
-      label: "New Sketch…",
+      label: t("cmd.sketch_dots.label"),
       icon: "Pencil",
       keywords: ["sketch", "2d", "draw", "profile"],
       action: actions.newSketch,
@@ -584,7 +584,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.openSlicer) {
     cmds.push({
       id: "open-slicer",
-      label: "Print (Slicer)…",
+      label: t("cmd.slicer.label"),
       icon: "Printer",
       keywords: ["print", "slicer", "3d", "gcode"],
       action: actions.openSlicer,
@@ -595,7 +595,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.openCam) {
     cmds.push({
       id: "open-cam",
-      label: "CAM (Toolpath)…",
+      label: t("cmd.cam.label"),
       icon: "Wrench",
       keywords: ["cam", "toolpath", "mill", "cnc"],
       action: actions.openCam,
@@ -608,7 +608,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.openWhatsNew) {
     cmds.push({
       id: "whats-new",
-      label: "What's New",
+      label: t("cmd.whats_new.label"),
       icon: "Rocket",
       keywords: ["changelog", "whats", "new", "release", "updates"],
       action: actions.openWhatsNew,
@@ -618,7 +618,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.openDocs) {
     cmds.push({
       id: "open-docs",
-      label: "Documentation",
+      label: t("cmd.documentation.label"),
       icon: "BookOpen",
       keywords: ["docs", "documentation", "help", "manual", "guide"],
       action: actions.openDocs,
@@ -628,7 +628,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.openGithub) {
     cmds.push({
       id: "open-github",
-      label: "GitHub",
+      label: t("cmd.open_github.label"),
       icon: "GithubLogo",
       keywords: ["github", "source", "code", "repo"],
       action: actions.openGithub,
@@ -638,7 +638,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.openDiscord) {
     cmds.push({
       id: "open-discord",
-      label: "Discord",
+      label: t("cmd.open_discord.label"),
       icon: "DiscordLogo",
       keywords: ["discord", "chat", "community"],
       action: actions.openDiscord,
@@ -650,7 +650,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.createPartDef) {
     cmds.push({
       id: "create-part-def",
-      label: "Create Part Definition",
+      label: t("cmd.create_part_def.label"),
       icon: "Package",
       keywords: ["part", "definition", "assembly", "create", "convert"],
       action: actions.createPartDef,
@@ -661,7 +661,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.insertInstance) {
     cmds.push({
       id: "insert-instance",
-      label: "Insert Instance",
+      label: t("cmd.insert_instance.label"),
       icon: "PlusSquare",
       keywords: ["insert", "instance", "assembly", "add", "part"],
       action: actions.insertInstance,
@@ -675,7 +675,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
     cmds.push(
       {
         id: "add-fixed-joint",
-        label: "Add Fixed Joint",
+        label: t("cmd.add_fixed_joint.label"),
         icon: "Anchor",
         keywords: ["joint", "fixed", "assembly", "connect", "weld"],
         action: () => addJoint({ type: "Fixed" }),
@@ -684,7 +684,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       },
       {
         id: "add-revolute-joint",
-        label: "Add Revolute Joint",
+        label: t("cmd.add_revolute_joint.label"),
         icon: "ArrowsClockwise",
         keywords: ["joint", "revolute", "hinge", "assembly", "rotate"],
         action: () => addJoint({ type: "Revolute", axis: { x: 0, y: 0, z: 1 } }),
@@ -693,7 +693,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       },
       {
         id: "add-slider-joint",
-        label: "Add Slider Joint",
+        label: t("cmd.add_slider_joint.label"),
         icon: "ArrowsHorizontal",
         keywords: ["joint", "slider", "prismatic", "assembly", "slide"],
         action: () => addJoint({ type: "Slider", axis: { x: 0, y: 0, z: 1 } }),
@@ -705,7 +705,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.setGroundInstance) {
     cmds.push({
       id: "set-ground",
-      label: "Set as Ground",
+      label: t("cmd.set_ground.label"),
       icon: "Anchor",
       keywords: ["ground", "fix", "base", "assembly", "anchor"],
       action: actions.setGroundInstance,
@@ -719,7 +719,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.applyFillet) {
     cmds.push({
       id: "apply-fillet",
-      label: "Fillet",
+      label: t("cmd.fillet.label"),
       icon: "Circle",
       keywords: ["fillet", "round", "radius", "edge"],
       action: actions.applyFillet,
@@ -730,7 +730,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.applyChamfer) {
     cmds.push({
       id: "apply-chamfer",
-      label: "Chamfer",
+      label: t("cmd.chamfer.label"),
       icon: "Octagon",
       keywords: ["chamfer", "bevel", "edge", "corner"],
       action: actions.applyChamfer,
@@ -741,7 +741,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.applyShell) {
     cmds.push({
       id: "apply-shell",
-      label: "Shell",
+      label: t("cmd.shell.label"),
       icon: "Cube",
       keywords: ["shell", "hollow", "thickness", "wall"],
       action: actions.applyShell,
@@ -752,7 +752,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.applyLinearPattern) {
     cmds.push({
       id: "apply-linear-pattern",
-      label: "Linear Pattern",
+      label: t("cmd.linear_pattern.label"),
       icon: "DotsThree",
       keywords: ["pattern", "linear", "array", "repeat", "copy"],
       action: actions.applyLinearPattern,
@@ -763,7 +763,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.applyCircularPattern) {
     cmds.push({
       id: "apply-circular-pattern",
-      label: "Circular Pattern",
+      label: t("cmd.circular_pattern.label"),
       icon: "CircleNotch",
       keywords: ["pattern", "circular", "radial", "array", "repeat"],
       action: actions.applyCircularPattern,
@@ -774,7 +774,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.applyMirror) {
     cmds.push({
       id: "apply-mirror",
-      label: "Mirror",
+      label: t("cmd.mirror.label"),
       icon: "ArrowsHorizontal",
       keywords: ["mirror", "reflect", "flip", "symmetry"],
       action: actions.applyMirror,
@@ -785,7 +785,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.applyStitch) {
     cmds.push({
       id: "apply-stitch",
-      label: "Stitch",
+      label: t("cmd.stitch.label"),
       icon: "Scissors",
       keywords: ["stitch", "embroidery", "sew", "embroider"],
       action: actions.applyStitch,
@@ -798,7 +798,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.enterElectronics) {
     cmds.push({
       id: "enter-electronics",
-      label: "Open Electronics",
+      label: t("cmd.enter_electronics.label"),
       icon: "CircuitBoard",
       keywords: ["electronics", "pcb", "schematic", "board", "ecad"],
       action: actions.enterElectronics,
@@ -809,7 +809,7 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
   if (actions.exitElectronics) {
     cmds.push({
       id: "exit-electronics",
-      label: "Close Electronics",
+      label: t("cmd.exit_electronics.label"),
       icon: "X",
       keywords: ["electronics", "close", "exit", "pcb"],
       action: actions.exitElectronics,

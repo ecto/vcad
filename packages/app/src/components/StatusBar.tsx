@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Circle } from "@phosphor-icons/react/dist/ssr/Circle";
 import { Terminal } from "@phosphor-icons/react/dist/ssr/Terminal";
 import { PencilSimple } from "@phosphor-icons/react/dist/ssr/PencilSimple";
-import { useDocumentStore, useUiStore, useSketchStore, type LogLevelName } from "@vcad/core";
+import { useDocumentStore, useUiStore, useSketchStore, t, tFmt, type LogLevelName } from "@vcad/core";
 import { useLogStore, getFilteredEntries } from "@/stores/log-store";
 import { cn } from "@/lib/utils";
 
@@ -19,10 +19,10 @@ function formatCoord(n: number): string {
 
 function formatAgo(ts: number, now: number): string {
   const diff = Math.max(0, now - ts);
-  if (diff < 2000) return "now";
-  if (diff < 60_000) return `${Math.floor(diff / 1000)}s`;
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m`;
-  return `${Math.floor(diff / 3_600_000)}h`;
+  if (diff < 2000) return t("status.ago.now");
+  if (diff < 60_000) return tFmt("status.ago.seconds", { count: String(Math.floor(diff / 1000)) });
+  if (diff < 3_600_000) return tFmt("status.ago.minutes", { count: String(Math.floor(diff / 60_000)) });
+  return tFmt("status.ago.hours", { count: String(Math.floor(diff / 3_600_000)) });
 }
 
 /**
@@ -223,10 +223,14 @@ export function StatusBar() {
         )}
       >
         <span className="tabular-nums">
-          {parts.length} {parts.length === 1 ? "part" : "parts"}
+          {tFmt(parts.length === 1 ? "status.part" : "status.parts", {
+            count: String(parts.length),
+          })}
         </span>
         {selCount > 0 && (
-          <span className="text-brand tabular-nums">{selCount} sel</span>
+          <span className="text-brand tabular-nums">
+            {tFmt("status.sel", { count: String(selCount) })}
+          </span>
         )}
       </div>
     </div>
