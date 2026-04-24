@@ -301,6 +301,18 @@ export function App() {
   const processFile = useCallback(async (file: File) => {
     const ext = file.name.split(".").pop()?.toLowerCase();
 
+    // Images dropped onto the viewport go to the AI chat as attachments —
+    // the user can then ask it to build something from the image. The bridge
+    // inside ChatSidebar's PromptInput drains pendingAttachments on mount
+    // (handles the case where the sidebar was closed and is lazy-loaded by
+    // setOpen), and also picks up subsequent queued pushes.
+    if (file.type.startsWith("image/")) {
+      useChatStore.getState().queuePendingAttachments([file]);
+      useChatStore.getState().setOpen(true);
+      window.dispatchEvent(new Event("vcad:focus-chat-input"));
+      return;
+    }
+
     // Handle STEP files
     if (ext === "step" || ext === "stp") {
       try {

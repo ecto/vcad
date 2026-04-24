@@ -190,6 +190,11 @@ export interface ChatState {
    * Realtime updates for these ids are ignored by useChatHydration so the
    * local SSE-driven render isn't overwritten by the slower DB roundtrip. */
   locallyStreamingIds: Set<string>;
+  /** Files queued to be dropped into the chat composer's attachment list as
+   * soon as the ChatSidebar (lazy-loaded, gated on `open`) mounts. Used by
+   * the viewport image-drop flow, where the sender doesn't have direct
+   * access to the PromptInput's attachment context. */
+  pendingAttachments: File[];
 
   // Visibility
   setOpen: (open: boolean) => void;
@@ -254,6 +259,10 @@ export interface ChatState {
   markLocallyStreaming: (id: string) => void;
   unmarkLocallyStreaming: (id: string) => void;
 
+  // Pending composer attachments (see field comment).
+  queuePendingAttachments: (files: File[]) => void;
+  consumePendingAttachments: () => File[];
+
   // Usage tracking
   incAnonUsage: () => void;
   setUsageError: (err: ChatUsageError | null) => void;
@@ -297,6 +306,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   _hydrateHandler: null,
   _abortController: null,
   locallyStreamingIds: new Set(),
+  pendingAttachments: [],
 
   setOpen: (open) => {
     persistOpen(open);
@@ -428,6 +438,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return { locallyStreamingIds: next };
     }),
 
+  queuePendingAttachments: (files) =>
+    set((s) => ({ pendingAttachments: [...s.pendingAttachments, ...files] })),
+  consumePendingAttachments: () => {
+    const files = get().pendingAttachments;
+    if (files.length > 0) set({ pendingAttachments: [] });
+    return files;
+  },
+
   incAnonUsage: () => set((s) => {
     const used = s.anonUsage.used + 1;
     persistAnonUsage(used);
@@ -451,5 +469,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     error: null,
     cancelRequested: false,
     usageError: null,
+    pendingAttachments: [],
   }),
 }));
