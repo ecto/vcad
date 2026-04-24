@@ -853,9 +853,16 @@ impl Solid {
     /// Get the triangle mesh representation.
     ///
     /// Returns a JS object with `positions` (Float32Array) and `indices` (Uint32Array).
+    ///
+    /// Runs the tessellator output through
+    /// [`vcad_kernel_tessellate::render_bake`] so the emitted mesh carries
+    /// angle-based creased vertex normals. Every downstream renderer —
+    /// three.js today, wgpu / STL / GLB / ray tracer later — consumes this
+    /// same attribute layout without recomputing anything.
     #[wasm_bindgen(js_name = getMesh)]
     pub fn get_mesh(&self, segments: Option<u32>) -> JsValue {
-        let mesh = self.inner.to_mesh(segments.unwrap_or(32));
+        let mut mesh = self.inner.to_mesh(segments.unwrap_or(32));
+        vcad_kernel_tessellate::render_bake_default(&mut mesh);
         let num_verts = mesh.vertices.len() / 3;
 
         // Validate indices - check for out-of-bounds references
@@ -4683,6 +4690,55 @@ fn mesh_to_js(mesh: &vcad_eval::EvaluatedMesh) -> JsValue {
         );
     }
     obj.into()
+}
+
+/// Run the render-bake pipeline on a raw triangle mesh.
+///
+/// Used by the imported-mesh path (STL / STEP drops) so meshes that arrive
+/// from outside the kernel get the same post-processing as kernel-emitted
+/// meshes: angle-based creased vertex normals today, tangent generation and
+/// LOD baking later. Positions and indices may be duplicated (the mesh
+/// becomes unindexed) so downstream consumers just upload the returned
+/// arrays.
+///
+/// Input is `{ positions: Float32Array, indices: Uint32Array, crease_angle_rad?: f64 }`
+/// encoded as JSON. Returns `{ positions, indices, normals }` with the same
+/// encoding.
+#[wasm_bindgen(js_name = renderBakeMesh)]
+pub fn render_bake_mesh_wasm(input_json: &str) -> Result<String, JsError> {
+    #[derive(serde::Deserialize)]
+    struct Input {
+        positions: Vec<f32>,
+        indices: Vec<u32>,
+        #[serde(default)]
+        crease_angle_rad: Option<f64>,
+    }
+    #[derive(serde::Serialize)]
+    struct Output {
+        positions: Vec<f32>,
+        indices: Vec<u32>,
+        normals: Vec<f32>,
+    }
+    let input: Input = serde_json::from_str(input_json)
+        .map_err(|e| JsError::new(&format!("invalid input JSON: {e}")))?;
+    let mut mesh = vcad_kernel_tessellate::TriangleMesh {
+        vertices: input.positions,
+        indices: input.indices,
+        normals: Vec::new(),
+        face_kinds: Vec::new(),
+    };
+    let opts = vcad_kernel_tessellate::RenderBakeOptions {
+        crease_angle_rad: input
+            .crease_angle_rad
+            .unwrap_or(vcad_kernel_tessellate::DEFAULT_CREASE_ANGLE_RAD),
+    };
+    vcad_kernel_tessellate::render_bake(&mut mesh, opts);
+    let out = Output {
+        positions: mesh.vertices,
+        indices: mesh.indices,
+        normals: mesh.normals,
+    };
+    serde_json::to_string(&out).map_err(|e| JsError::new(&format!("serialize failed: {e}")))
 }
 
 // ============================================================================

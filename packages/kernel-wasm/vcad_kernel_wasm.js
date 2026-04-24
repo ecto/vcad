@@ -857,6 +857,12 @@ export class Solid {
      * Get the triangle mesh representation.
      *
      * Returns a JS object with `positions` (Float32Array) and `indices` (Uint32Array).
+     *
+     * Runs the tessellator output through
+     * [`vcad_kernel_tessellate::render_bake`] so the emitted mesh carries
+     * angle-based creased vertex normals. Every downstream renderer —
+     * three.js today, wgpu / STL / GLB / ray tracer later — consumes this
+     * same attribute layout without recomputing anything.
      * @param {number | null} [segments]
      * @returns {any}
      */
@@ -4111,6 +4117,43 @@ export function recommendPrintSettings(analysis_json, printer_profile) {
 }
 
 /**
+ * Run the render-bake pipeline on a raw triangle mesh.
+ *
+ * Used by the imported-mesh path (STL / STEP drops) so meshes that arrive
+ * from outside the kernel get the same post-processing as kernel-emitted
+ * meshes: angle-based creased vertex normals today, tangent generation and
+ * LOD baking later. Positions and indices may be duplicated (the mesh
+ * becomes unindexed) so downstream consumers just upload the returned
+ * arrays.
+ *
+ * Input is `{ positions: Float32Array, indices: Uint32Array, crease_angle_rad?: f64 }`
+ * encoded as JSON. Returns `{ positions, indices, normals }` with the same
+ * encoding.
+ * @param {string} input_json
+ * @returns {string}
+ */
+export function renderBakeMesh(input_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(input_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.renderBakeMesh(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Generate a section view from a triangle mesh.
  *
  * # Arguments
@@ -6353,12 +6396,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 1365, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1366, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 1369, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1370, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hd298f46ef6753d27, wasm_bindgen__convert__closures_____invoke__h7d640a285617a4e6);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2079, function: Function { arguments: [Externref], shim_idx: 2080, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2083, function: Function { arguments: [Externref], shim_idx: 2084, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h05cb0c14e4c64d12, wasm_bindgen__convert__closures_____invoke__hb8699e4a26455b57);
             return ret;
         },

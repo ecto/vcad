@@ -1,6 +1,5 @@
 import { memo, useEffect, useRef, useMemo, useCallback, useState } from "react";
 import * as THREE from "three";
-import { toCreasedNormals } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { Edges, Html } from "@react-three/drei";
 import type { TriangleMesh, PartInfo, FaceInfo } from "@vcad/core";
 import { useUiStore, useDocumentStore, useSketchStore, isPcbBoardPart, isStitchPart, isEmbroideryPatternPart } from "@vcad/core";
@@ -276,33 +275,59 @@ export function ImportedMesh({ mesh, materialKey }: ImportedMeshProps) {
     const geo = geoRef.current;
     if (!geo) return;
 
-    // Clone arrays to avoid issues with transferred/shared buffers
-    const positions = new Float32Array(mesh.positions);
-    const indices = new Uint32Array(mesh.indices);
+    // Imported meshes arrive without kernel-emitted normals. Route them
+    // through the WASM render-bake pipeline so the attribute layout is
+    // identical to everything else the renderer consumes — no three.js-only
+    // `toCreasedNormals` dependency, no fallback path that silently
+    // disagrees with the primary render pipeline.
+    let disposed = false;
+    (async () => {
+      const { getKernelWasmSync } = await import("@vcad/engine");
+      const kernel = getKernelWasmSync() as unknown as {
+        renderBakeMesh?: (inputJson: string) => string;
+      } | null;
+      if (disposed) return;
 
-    // Create temp geometry
-    const tempGeo = new THREE.BufferGeometry();
-    tempGeo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    tempGeo.setIndex(new THREE.BufferAttribute(indices, 1));
+      const positions = new Float32Array(mesh.positions);
+      const indices = new Uint32Array(mesh.indices);
+      let bakedPositions: Float32Array;
+      let bakedIndices: Uint32Array;
+      let bakedNormals: Float32Array;
 
-    // Use toCreasedNormals for angle-based normal computation
-    const creasedGeo = toCreasedNormals(tempGeo, Math.PI / 6);
+      if (kernel?.renderBakeMesh) {
+        const out = JSON.parse(
+          kernel.renderBakeMesh(
+            JSON.stringify({
+              positions: Array.from(positions),
+              indices: Array.from(indices),
+            }),
+          ),
+        ) as { positions: number[]; indices: number[]; normals: number[] };
+        bakedPositions = new Float32Array(out.positions);
+        bakedIndices = new Uint32Array(out.indices);
+        bakedNormals = new Float32Array(out.normals);
+      } else {
+        // Kernel WASM not booted yet — fall back to bare positions.
+        // The consumer will retriangulate next effect tick.
+        bakedPositions = positions;
+        bakedIndices = indices;
+        bakedNormals = new Float32Array(0);
+      }
 
-    // Copy data to our geometry
-    geo.setAttribute("position", creasedGeo.getAttribute("position"));
-    geo.setAttribute("normal", creasedGeo.getAttribute("normal"));
-    if (creasedGeo.index) {
-      geo.setIndex(creasedGeo.index);
-    }
-    geo.computeBoundingSphere();
-    geo.computeBoundingBox();
-    setGeoReady(true);
-
-    // Cleanup temp geometry
-    tempGeo.dispose();
-    creasedGeo.dispose();
+      geo.setAttribute("position", new THREE.BufferAttribute(bakedPositions, 3));
+      geo.setIndex(new THREE.BufferAttribute(bakedIndices, 1));
+      if (bakedNormals.length === bakedPositions.length) {
+        geo.setAttribute("normal", new THREE.BufferAttribute(bakedNormals, 3));
+      } else {
+        geo.computeVertexNormals();
+      }
+      geo.computeBoundingSphere();
+      geo.computeBoundingBox();
+      setGeoReady(true);
+    })();
 
     return () => {
+      disposed = true;
       geo.dispose();
     };
   }, [mesh]);
@@ -535,12 +560,19 @@ export const SceneMesh = memo(function SceneMesh({
     geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     geo.setIndex(new THREE.BufferAttribute(indices, 1));
 
-    // Use analytical surface normals from kernel when available (moiré-free),
-    // fall back to computed vertex normals otherwise
+    // Kernel emits crease-aware vertex normals as part of the render-ready
+    // mesh (see `apply_default_creased_normals` in vcad-kernel-tessellate).
+    // Every Solid.getMesh() path carries them, so this attribute is always
+    // present. The fallback `computeVertexNormals` path was removed so
+    // shading stays identical across primitives, extrudes, revolves, and
+    // any future renderer.
     if (mesh.normals && mesh.normals.length === positions.length) {
       const normals = new Float32Array(mesh.normals);
       geo.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
     } else {
+      console.warn(
+        "[SceneMesh] kernel emitted mesh without normals — rebuild @vcad/kernel-wasm; falling back to computed normals",
+      );
       geo.computeVertexNormals();
     }
 

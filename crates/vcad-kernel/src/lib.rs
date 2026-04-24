@@ -638,6 +638,16 @@ impl Solid {
     }
 
     /// Get the triangle mesh representation.
+    ///
+    /// Returns an **indexed** mesh (shared vertices across adjacent triangles).
+    /// Used for analysis — volume, surface area, boundary edges, and boolean
+    /// fallbacks all expect shared vertices.
+    ///
+    /// **For meshes heading to the renderer, STL/GLB export, or the ray
+    /// tracer**, run the result through
+    /// [`vcad_kernel_tessellate::render_bake`]. That module is the single
+    /// canonical "prepare for rendering" entry point and its output is an
+    /// unindexed mesh with crease-aware vertex normals baked in.
     pub fn to_mesh(&self, segments: u32) -> TriangleMesh {
         match &self.repr {
             SolidRepr::Empty => TriangleMesh::new(),

@@ -372,6 +372,12 @@ export class Solid {
      * Get the triangle mesh representation.
      *
      * Returns a JS object with `positions` (Float32Array) and `indices` (Uint32Array).
+     *
+     * Runs the tessellator output through
+     * [`vcad_kernel_tessellate::render_bake`] so the emitted mesh carries
+     * angle-based creased vertex normals. Every downstream renderer —
+     * three.js today, wgpu / STL / GLB / ray tracer later — consumes this
+     * same attribute layout without recomputing anything.
      */
     getMesh(segments?: number | null): any;
     /**
@@ -1679,6 +1685,22 @@ export function readEmbroideryPes(data: Uint8Array): string;
 export function recommendPrintSettings(analysis_json: string, printer_profile: string): any;
 
 /**
+ * Run the render-bake pipeline on a raw triangle mesh.
+ *
+ * Used by the imported-mesh path (STL / STEP drops) so meshes that arrive
+ * from outside the kernel get the same post-processing as kernel-emitted
+ * meshes: angle-based creased vertex normals today, tangent generation and
+ * LOD baking later. Positions and indices may be duplicated (the mesh
+ * becomes unindexed) so downstream consumers just upload the returned
+ * arrays.
+ *
+ * Input is `{ positions: Float32Array, indices: Uint32Array, crease_angle_rad?: f64 }`
+ * encoded as JSON. Returns `{ positions, indices, normals }` with the same
+ * encoding.
+ */
+export function renderBakeMesh(input_json: string): string;
+
+/**
  * Generate a section view from a triangle mesh.
  *
  * # Arguments
@@ -1886,6 +1908,7 @@ export interface InitOutput {
     readonly raytracer_setEdgeDetection: (a: number, b: number, c: number, d: number) => void;
     readonly raytracer_setMaterial: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly raytracer_uploadSolid: (a: number, b: number) => [number, number];
+    readonly renderBakeMesh: (a: number, b: number) => [number, number, number, number];
     readonly sectionMesh: (a: any, b: number, c: number, d: number, e: number) => any;
     readonly solid_boundaryEdges: (a: number, b: number) => [number, number];
     readonly solid_boundingBox: (a: number) => [number, number];
@@ -2000,6 +2023,41 @@ export interface InitOutput {
     readonly wasmdocumentengine_set_visible: (a: number, b: number, c: number, d: number) => any;
     readonly wasmdocumentengine_undo: (a: number) => any;
     readonly wasmdocumentengine_update_feature: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_safe_z: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_spindle_rpm: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_stepdown: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_stepover: (a: number) => number;
+    readonly __wbg_set_wasmcamsettings_feed_rate: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_plunge_rate: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_retract_z: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_safe_z: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_spindle_rpm: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_stepdown: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_stepover: (a: number, b: number) => void;
+    readonly __wbg_wasmcamsettings_free: (a: number, b: number) => void;
+    readonly camDropCutter: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
+    readonly camExportGcode: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+    readonly camExportLinuxCnc: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly camGenerateCircularPocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+    readonly camGenerateContour: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number, number, number];
+    readonly camGenerateFace: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly camGeneratePocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly camGenerateRoughing3d: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
+    readonly camGetDefaultTools: () => [number, number, number, number];
+    readonly camToolpathStats: (a: number, b: number) => [number, number, number];
+    readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly isCamAvailable: () => number;
+    readonly readEmbroideryDst: (a: number, b: number) => [number, number, number, number];
+    readonly readEmbroideryPes: (a: number, b: number) => [number, number, number, number];
+    readonly wasmcamsettings_fromJson: (a: number, b: number) => [number, number, number];
+    readonly wasmcamsettings_new: () => number;
+    readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
+    readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
+    readonly isEmbroideryAvailable: () => number;
     readonly __wbg_get_slicersettings_first_layer_height: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_density: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_pattern: (a: number) => number;
@@ -2062,41 +2120,6 @@ export interface InitOutput {
     readonly wasmkeybindings_saveOverrides: (a: number) => [number, number];
     readonly wasmkeybindings_setBinding: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly isSlicerAvailable: () => number;
-    readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_safe_z: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_spindle_rpm: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_stepdown: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_stepover: (a: number) => number;
-    readonly __wbg_set_wasmcamsettings_feed_rate: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_plunge_rate: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_retract_z: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_safe_z: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_spindle_rpm: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_stepdown: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_stepover: (a: number, b: number) => void;
-    readonly __wbg_wasmcamsettings_free: (a: number, b: number) => void;
-    readonly camDropCutter: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
-    readonly camExportGcode: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
-    readonly camExportLinuxCnc: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly camGenerateCircularPocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
-    readonly camGenerateContour: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number, number, number];
-    readonly camGenerateFace: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly camGeneratePocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly camGenerateRoughing3d: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
-    readonly camGetDefaultTools: () => [number, number, number, number];
-    readonly camToolpathStats: (a: number, b: number) => [number, number, number];
-    readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
-    readonly isCamAvailable: () => number;
-    readonly readEmbroideryDst: (a: number, b: number) => [number, number, number, number];
-    readonly readEmbroideryPes: (a: number, b: number) => [number, number, number, number];
-    readonly wasmcamsettings_fromJson: (a: number, b: number) => [number, number, number];
-    readonly wasmcamsettings_new: () => number;
-    readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
-    readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
-    readonly isEmbroideryAvailable: () => number;
     readonly wasm_bindgen__closure__destroy__hd298f46ef6753d27: (a: number, b: number) => void;
     readonly wasm_bindgen__closure__destroy__h05cb0c14e4c64d12: (a: number, b: number) => void;
     readonly wasm_bindgen__convert__closures_____invoke__h63f4e2fd076fb3c1: (a: number, b: number, c: any, d: any) => void;
