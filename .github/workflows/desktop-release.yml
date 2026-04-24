@@ -29,8 +29,50 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Generate the Markdown body once per release so all three matrix builds
+  # upload the same signed latest.json with matching `notes`, and the GitHub
+  # release page shows a single coherent write-up instead of whichever
+  # platform's tauri-action won the create race.
+  notes:
+    name: Release notes
+    runs-on: ubuntu-latest
+    outputs:
+      body: ${{ steps.gen.outputs.body }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Enough history for release-notes.mjs to pull recent commit
+          # subjects as flavor for the humanized summary.
+          fetch-depth: 100
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install npm deps
+        # Only need the root workspace for the script + @anthropic-ai/sdk;
+        # skip workspace postinstall scripts to keep this fast.
+        run: npm ci --prefer-offline --no-audit --no-fund --ignore-scripts
+
+      - name: Generate release notes
+        id: gen
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          notes=$(node scripts/release-notes.mjs)
+          {
+            echo 'body<<RELEASE_NOTES_EOF'
+            echo "$notes"
+            echo 'RELEASE_NOTES_EOF'
+          } >> "$GITHUB_OUTPUT"
+
   build:
     name: Build (${{ matrix.label }})
+    needs: notes
     strategy:
       fail-fast: false
       matrix:
@@ -129,6 +171,11 @@ jobs:
           # Only create a release when triggered by a tag push.
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
           releaseName: 'vcad ${{ github.ref_name }}'
+          # Markdown body generated once in the notes job. tauri-action forwards
+          # this verbatim to the GitHub release AND to latest.json's `notes`
+          # field, so the desktop updater and web banner can show the same
+          # write-up to users deciding whether to install.
+          releaseBody: ${{ needs.notes.outputs.body }}
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.tauri-args }}
