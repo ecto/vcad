@@ -66,7 +66,7 @@ impl WasmKeybindings {
                 let effective = self.inner.chord_for(cmd.id);
                 CommandView {
                     id: cmd.id,
-                    label: cmd.label,
+                    label: cmd.label(),
                     keywords: cmd.keywords,
                     icon: cmd.icon,
                     category: cmd.category.as_ref().map(|c| match c {

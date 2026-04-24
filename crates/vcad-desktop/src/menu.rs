@@ -64,7 +64,11 @@ const FILE_GROUPS: &[Group] = &[
     &[
         ("new-document", "menu.file.new", Some("CmdOrCtrl+N")),
         ("open", "menu.file.open", Some("CmdOrCtrl+O")),
-        ("open-recent", "desktop.menu.open_recent", Some("CmdOrCtrl+Shift+O")),
+        (
+            "open-recent",
+            "desktop.menu.open_recent",
+            Some("CmdOrCtrl+Shift+O"),
+        ),
         ("open-cloud", "desktop.menu.open_cloud", None),
     ],
     &[("save", "menu.file.save", Some("CmdOrCtrl+S"))],
@@ -111,7 +115,10 @@ const VIEW_GROUPS: &[Group] = &[
 const TOOLS_GROUPS: &[Group] = &[
     &[("command-palette", "menu.tools.palette", Some("CmdOrCtrl+K"))],
     &[("new-sketch", "menu.tools.sketch", None)],
-    &[("open-slicer", "desktop.menu.slicer", None), ("open-cam", "desktop.menu.cam", None)],
+    &[
+        ("open-slicer", "desktop.menu.slicer", None),
+        ("open-cam", "desktop.menu.cam", None),
+    ],
 ];
 
 const HELP_GROUPS: &[Group] = &[

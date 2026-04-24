@@ -32,10 +32,7 @@ impl Locale {
 
         // Split on '-' (BCP 47) or '_' (POSIX)
         let mut parts = base.split(['-', '_']);
-        let language = parts
-            .next()
-            .unwrap_or("en")
-            .to_ascii_lowercase();
+        let language = parts.next().unwrap_or("en").to_ascii_lowercase();
         let region = parts.next().map(|r| r.to_ascii_uppercase());
 
         Self { language, region }
