@@ -154,18 +154,50 @@ jobs:
       # should not be able to lift the signing/notarization keys into its
       # build output. Dependabot (see .github/dependabot.yml) pins
       # tauri-apps/tauri-action to a commit SHA on its first update.
+      #
+      # Apple codesign env vars are gated on APPLE_CERTIFICATE actually being
+      # set (not just "we're on a tag") because `env:` can't distinguish an
+      # unset secret from an empty-string secret — any non-null value lands
+      # as "" in the action, which then pipes an empty blob into
+      # `security import` and fails with SecKeychainItemImport. We set the
+      # vars here via $GITHUB_ENV only when the cert secret is non-empty;
+      # absent that, tauri-action builds unsigned bundles. Users get a
+      # Gatekeeper warning on first open but install works; when the Apple
+      # secrets are added to the repo, signing lights up automatically.
+      - name: Configure Apple code signing
+        if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+          CERT_PW: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID_IN: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD_IN: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID_IN: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -z "$CERT" ]; then
+            echo "APPLE_CERTIFICATE secret not set; building macOS bundles unsigned."
+            exit 0
+          fi
+          {
+            echo "APPLE_CERTIFICATE=$CERT"
+            echo "APPLE_CERTIFICATE_PASSWORD=$CERT_PW"
+            echo "APPLE_SIGNING_IDENTITY=$IDENTITY"
+            echo "APPLE_ID=$APPLE_ID_IN"
+            echo "APPLE_PASSWORD=$APPLE_PASSWORD_IN"
+            echo "APPLE_TEAM_ID=$APPLE_TEAM_ID_IN"
+          } >> "$GITHUB_ENV"
+          echo "Apple codesign env configured from repo secrets."
+
       - name: Build and publish desktop bundles
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ startsWith(github.ref, 'refs/tags/') && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/') && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
-          APPLE_CERTIFICATE: ${{ startsWith(github.ref, 'refs/tags/') && secrets.APPLE_CERTIFICATE || '' }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/') && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
-          APPLE_SIGNING_IDENTITY: ${{ startsWith(github.ref, 'refs/tags/') && secrets.APPLE_SIGNING_IDENTITY || '' }}
-          APPLE_ID: ${{ startsWith(github.ref, 'refs/tags/') && secrets.APPLE_ID || '' }}
-          APPLE_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/') && secrets.APPLE_PASSWORD || '' }}
-          APPLE_TEAM_ID: ${{ startsWith(github.ref, 'refs/tags/') && secrets.APPLE_TEAM_ID || '' }}
+          # APPLE_* env vars are set by the preceding "Configure Apple code
+          # signing" step (only when APPLE_CERTIFICATE is truly populated), so
+          # no placeholder empty strings leak into tauri-action here.
         with:
           projectPath: crates/vcad-desktop
           # Only create a release when triggered by a tag push.
