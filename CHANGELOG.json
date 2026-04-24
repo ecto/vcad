@@ -2,6 +2,15 @@
   "$schema": "./changelog.schema.json",
   "entries": [
     {
+      "id": "2026-04-24-chat-image-drop",
+      "version": "0.9.0",
+      "date": "2026-04-24",
+      "category": "feat",
+      "title": "Drop images into the AI chat",
+      "summary": "Dragging an image onto the chat sidebar attaches it to the composer, and dropping an image on the viewport now opens the chat and attaches it there instead of failing. Ask the AI to build CAD from the picture.",
+      "features": ["chat", "ai"]
+    },
+    {
       "id": "2026-04-23-auto-zoom-sketch-viewport",
       "version": "0.9.0",
       "date": "2026-04-23",

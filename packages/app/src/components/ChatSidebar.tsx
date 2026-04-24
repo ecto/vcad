@@ -77,6 +77,31 @@ function AttachViewportButton() {
   );
 }
 
+// Bridge that lets callers outside the PromptInput (the chat sidebar's
+// whole-pane drop zone, or an image dropped on the 3D viewport) push files
+// into the PromptInput's attachment list. Drains chat-store.pendingAttachments
+// on mount (covers the viewport case, where the sidebar is lazy-mounted after
+// the drop) and subscribes for subsequent pushes.
+// Must render inside a <PromptInput> to access the local attachments context.
+function ChatAttachmentBridge() {
+  const attachments = usePromptInputAttachments();
+  useEffect(() => {
+    // Drain anything queued before this component mounted.
+    const queued = useChatStore.getState().consumePendingAttachments();
+    if (queued.length > 0) attachments.add(queued);
+
+    // Then stay subscribed for any future queued files while the sidebar is open.
+    const unsub = useChatStore.subscribe((s, prev) => {
+      if (s.pendingAttachments !== prev.pendingAttachments && s.pendingAttachments.length > 0) {
+        const files = useChatStore.getState().consumePendingAttachments();
+        if (files.length > 0) attachments.add(files);
+      }
+    });
+    return unsub;
+  }, [attachments]);
+  return null;
+}
+
 // Render the current attachment list as a thumbnail strip above the textarea.
 // Users can click a thumbnail to remove it.
 function AttachmentPreviewStrip() {
@@ -443,7 +468,54 @@ export function ChatSidebar() {
   const [selectionContext, removeContextPart] = useSelectionContext();
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [isDraggingImage, setIsDraggingImage] = useState(false);
+  const dragDepthRef = useRef(0);
   const inputWrapRef = useRef<HTMLDivElement>(null);
+
+  // Whole-pane image drop. PromptInput already handles drops on its own form,
+  // so we forward only drops that land outside the input wrap (messages area,
+  // header, etc.) by pushing them onto chat-store.pendingAttachments, which
+  // the ChatAttachmentBridge inside the PromptInput subscribes to.
+  const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    if (!e.dataTransfer?.types?.includes("Files")) return;
+    dragDepthRef.current += 1;
+    setIsDraggingImage(true);
+  }, []);
+
+  const handleDragLeave = useCallback(() => {
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setIsDraggingImage(false);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    if (e.dataTransfer?.types?.includes("Files")) {
+      e.preventDefault();
+    }
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    dragDepthRef.current = 0;
+    setIsDraggingImage(false);
+
+    // Drops on the PromptInput form are handled by the form's own native
+    // listener — don't double-add. Still stop propagation so App's
+    // viewport-level drop handler doesn't try to parse the image as a .vcad.
+    const target = e.target as Node | null;
+    if (target && inputWrapRef.current?.contains(target)) {
+      e.stopPropagation();
+      return;
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const files = [...(e.dataTransfer?.files ?? [])].filter((f) =>
+      f.type.startsWith("image/"),
+    );
+    if (files.length === 0) return;
+
+    useChatStore.getState().queuePendingAttachments(files);
+  }, []);
 
   // External callers (e.g. the welcome overlay's "Build with AI" action)
   // can dispatch `vcad:focus-chat-input` to jump cursor to the textarea.
@@ -541,10 +613,21 @@ export function ChatSidebar() {
   return (
     <div
       className={cn(
-        "flex h-full w-full flex-col",
+        "relative flex h-full w-full flex-col",
         "bg-surface",
       )}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
     >
+      {isDraggingImage && (
+        <div className="pointer-events-none absolute inset-2 z-20 flex items-center justify-center rounded-lg border-2 border-dashed border-brand/60 bg-brand/10">
+          <div className="text-[11px] font-semibold text-brand">
+            Drop image to attach
+          </div>
+        </div>
+      )}
       {/* Header with tabs */}
       <div className="flex items-center gap-1 px-2 py-1.5 border-b border-border/40 shrink-0">
         <button
@@ -653,6 +736,7 @@ export function ChatSidebar() {
 
             <div ref={inputWrapRef}>
               <PromptInput onSubmit={handlePromptSubmit} accept="image/*">
+                <ChatAttachmentBridge />
                 {selectionContext.length > 0 && (
                   <PromptInputHeader>
                     {selectionContext.map((ctx) => (
