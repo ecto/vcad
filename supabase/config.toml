@@ -33,6 +33,13 @@ additional_redirect_urls = [
   "http://localhost:5173/**",
 ]
 
+# Anonymous sign-ins are required by the app: client.ts/ensureSession
+# creates an anon session for every visitor so RLS predicates of the
+# form `auth.uid() = user_id` hold uniformly across logged-in and
+# logged-out users. Pinning this here so `supabase config push` can't
+# silently revert the project to the CLI default of `false`.
+enable_anonymous_sign_ins = true
+
 # OAuth providers (configured in Supabase dashboard)
 # [auth.external.google]
 # enabled = true
@@ -44,8 +51,19 @@ additional_redirect_urls = [
 # client_id = "env(GITHUB_CLIENT_ID)"
 # secret = "env(GITHUB_CLIENT_SECRET)"
 
+# Match the production project's hardened email settings so a future
+# `supabase config push` doesn't drift them back to CLI defaults.
 [auth.email]
-# Enable magic link sign in
 enable_signup = true
 double_confirm_changes = true
 enable_confirmations = true
+# 1-minute rate limit on magic-link / OTP emails (CLI default is 1s).
+max_frequency = "1m0s"
+# 8-digit OTP (CLI default is 6).
+otp_length = 8
+
+# Production has TOTP MFA enrollment + verification on. Don't let a
+# config push flip it off.
+[auth.mfa.totp]
+enroll_enabled = true
+verify_enabled = true
