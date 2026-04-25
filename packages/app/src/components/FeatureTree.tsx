@@ -1186,7 +1186,7 @@ export function FeatureTree() {
         // Sidebar pane — fills its grid slot
         "h-full w-full",
         "flex flex-col",
-        "p-2",
+        "p-2 select-none",
       )}
     >
       <div className="overflow-y-auto scrollbar-thin flex-1">

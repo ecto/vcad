@@ -548,9 +548,10 @@ export function UpgradeModal({ open, onOpenChange, reason }: UpgradeModalProps) 
         />
         <Dialog.Content
           aria-describedby={undefined}
+          data-tauri-drag-region=""
           className={cn(
             "upgrade-content fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2",
-            "border border-border bg-card/95 backdrop-blur-md shadow-2xl focus:outline-none",
+            "border border-border bg-card/95 backdrop-blur-md shadow-2xl focus:outline-none select-none",
             isLimitReached
               ? "w-[min(540px,94vw)]"
               : "w-[min(720px,92vw)]",

@@ -60,10 +60,13 @@ export function RecentFilesModal() {
       onClick={() => setOpen(false)}
     >
       <div
-        className="w-[480px] max-w-[90vw] rounded-md border border-border/60 bg-surface shadow-xl"
+        className="w-[480px] max-w-[90vw] rounded-md border border-border/60 bg-surface shadow-xl select-none"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-border/40 px-3 py-2">
+        <div
+          data-tauri-drag-region=""
+          className="flex items-center justify-between border-b border-border/40 px-3 py-2"
+        >
           <span className="text-xs font-medium text-text-muted">
             Recent Files
           </span>

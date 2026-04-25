@@ -32,13 +32,16 @@ export function DialogContent({
       <RadixDialog.Content
         className={cn(
           "fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2",
-          "w-full max-w-md",
+          "w-full max-w-md select-none",
           "border border-border bg-surface shadow-xl",
           "focus:outline-none",
           className,
         )}
       >
-        <div className="flex h-10 items-center justify-between border-b border-border/40 px-4">
+        <div
+          data-tauri-drag-region=""
+          className="flex h-10 items-center justify-between border-b border-border/40 px-4"
+        >
           <RadixDialog.Title className="text-sm font-medium text-text">
             {title}
           </RadixDialog.Title>

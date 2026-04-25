@@ -60,9 +60,10 @@ export function VersionHistoryModal({
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm" />
         <Dialog.Content
+          data-tauri-drag-region=""
           className={cn(
             "fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2",
-            "bg-surface shadow-2xl focus:outline-none max-h-[80vh] overflow-auto",
+            "bg-surface shadow-2xl focus:outline-none max-h-[80vh] overflow-auto select-none",
           )}
         >
           <Dialog.Close className="absolute right-3 top-3 p-1.5 text-text-muted hover:text-text transition-colors cursor-pointer">

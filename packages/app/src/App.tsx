@@ -19,6 +19,7 @@ import { Viewport } from "@/components/Viewport";
 import { FeatureTree } from "@/components/FeatureTree";
 import { MobileShell } from "@/components/mobile/MobileShell";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { useNativeWindowDrag } from "@/hooks/useNativeWindowDrag";
 import { lazyWithRetry } from "@/lib/lazy-with-retry";
 
 // Lazy-loaded components (behind user actions, modals, or conditional renders).
@@ -208,6 +209,7 @@ export function App() {
   }, []);
 
   const isMobile = useIsMobile();
+  useNativeWindowDrag();
   const engineReady = useEngineStore((s) => s.engineReady);
   const error = useEngineStore((s) => s.error);
   const sketchActive = useSketchStore((s) => s.active);

@@ -382,7 +382,13 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
   };
 
   return (
-    <div className="flex flex-col bg-surface">
+    <div
+      data-tauri-drag-region={macOverlay ? "" : undefined}
+      className={cn(
+        "flex flex-col bg-surface select-none",
+        macOverlay && "relative z-[60] pointer-events-auto",
+      )}
+    >
       {/* ─────────────────────────────────────────────────────── */}
       {/* Row 1: menu bar (logo + File/Edit/View/Tools/Help)     */}
       {/* ─────────────────────────────────────────────────────── */}

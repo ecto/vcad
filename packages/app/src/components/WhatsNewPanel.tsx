@@ -73,12 +73,15 @@ export function WhatsNewPanel() {
           className={cn(
             "fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2",
             "w-full max-w-md max-h-[70vh]",
-            "bg-surface shadow-2xl flex flex-col",
+            "bg-surface shadow-2xl flex flex-col select-none",
             "focus:outline-none",
           )}
         >
           {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
+          <div
+            data-tauri-drag-region=""
+            className="flex items-center justify-between px-4 py-3 border-b border-border/40"
+          >
             <Dialog.Title className="text-sm font-bold text-text flex items-center gap-2">
               <Rocket size={16} className="text-brand" />
               What's New
