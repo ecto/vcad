@@ -9,6 +9,30 @@ port = 5432
 # Enable/disable email auth
 enabled = true
 
+# Where Supabase sends users after auth. The site URL is the canonical
+# web home; additional_redirect_urls is the allow-list of every other
+# URL that the magic-link / OAuth flows are allowed to redirect to.
+#
+# - https://vcad.io/auth/desktop is the static bridge page that forwards
+#   a completed magic-link to the vcad:// custom scheme so the Tauri
+#   desktop app can complete sign-in. See
+#   packages/auth/src/auth-deep-link.ts and
+#   packages/app/public/auth/desktop.html.
+# - http://localhost:5173 lets `npm run dev -w @vcad/app` complete a
+#   sign-in against the production Supabase project during local
+#   development.
+#
+# Apply with `supabase config push` (the linked project's allow-list
+# is the source of truth at runtime; this file just keeps the desired
+# state in source control).
+site_url = "https://vcad.io"
+additional_redirect_urls = [
+  "https://vcad.io/**",
+  "https://vcad.io/auth/desktop",
+  "http://localhost:5173",
+  "http://localhost:5173/**",
+]
+
 # OAuth providers (configured in Supabase dashboard)
 # [auth.external.google]
 # enabled = true
