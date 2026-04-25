@@ -1,0 +1,12 @@
+{
+  "id": "2026-04-25-feedback-button",
+  "version": "0.9.3",
+  "date": "2026-04-25",
+  "category": "feat",
+  "title": "Header feedback button",
+  "summary": "A megaphone button in the header's top-right opens a quick feedback dialog. Submitting opens a prefilled GitHub issue so you can tell us what's working and what isn't.",
+  "features": [
+    "header",
+    "feedback"
+  ]
+}
