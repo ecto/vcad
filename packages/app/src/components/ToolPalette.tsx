@@ -5,7 +5,8 @@ import { useDocumentStore, useUiStore, useSketchStore, type ToolbarTab } from "@
 import { useDrawingStore } from "@/stores/drawing-store";
 import { useOnboardingStore } from "@/stores/onboarding-store";
 import { cn } from "@/lib/utils";
-import { useToolDefinitions, ALL_TABS, type ToolDef } from "@/hooks/useToolDefinitions";
+import { useToolDefinitions, getAllTabs, type ToolDef } from "@/hooks/useToolDefinitions";
+import { useLocaleStore } from "@/stores/locale-store";
 
 // Responsive breakpoints and widths
 const TAB_WIDTH_DESKTOP = 95;
@@ -18,8 +19,10 @@ export function ToolPalette() {
   const toolbarExpanded = useUiStore((s) => s.toolbarExpanded);
   const toolbarTab = useUiStore((s) => s.toolbarTab);
   const setToolbarTab = useUiStore((s) => s.setToolbarTab);
+  useLocaleStore((s) => s.locale);
 
   const { byTab, renderSimulateExtras } = useToolDefinitions();
+  const ALL_TABS = getAllTabs();
 
   // Responsive toolbar — track how many tabs fit
   const [visibleTabCount, setVisibleTabCount] = useState(ALL_TABS.length);

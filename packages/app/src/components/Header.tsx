@@ -19,6 +19,7 @@ import {
   CATEGORY_ICON_COLORS,
   TIERS,
   useBillingStore,
+  t,
   type Command,
 } from "@vcad/core";
 import { openCustomerPortal } from "@/lib/billing-api";
@@ -234,17 +235,32 @@ function RayTracingSubmenu() {
 
   if (!raytraceAvailable) return null;
 
+  const qualityLabel = (q: "draft" | "standard" | "high") =>
+    t(
+      q === "draft"
+        ? "menu.view.ray_tracing.draft"
+        : q === "standard"
+          ? "menu.view.ray_tracing.standard"
+          : "menu.view.ray_tracing.high",
+    );
+
   return (
     <Submenu
-      label="Ray Tracing"
+      label={t("menu.view.ray_tracing")}
       icon={Sparkle}
       iconClassName={renderMode === "raytrace" ? "text-brand" : "text-text-muted"}
-      hint={renderMode === "raytrace" ? raytraceQuality : "Off"}
+      hint={
+        renderMode === "raytrace"
+          ? qualityLabel(raytraceQuality)
+          : t("menu.view.ray_tracing.off")
+      }
     >
       <MenuItem
         onSelect={() => { if (renderMode === "raytrace") toggleRenderMode(); }}
       >
-        <span className={renderMode === "standard" ? "text-brand" : "text-text"}>Off</span>
+        <span className={renderMode === "standard" ? "text-brand" : "text-text"}>
+          {t("menu.view.ray_tracing.off")}
+        </span>
       </MenuItem>
       {(["draft", "standard", "high"] as const).map((q) => (
         <MenuItem
@@ -259,14 +275,16 @@ function RayTracingSubmenu() {
               renderMode === "raytrace" && raytraceQuality === q ? "text-brand" : "text-text"
             }
           >
-            {q.charAt(0).toUpperCase() + q.slice(1)}
+            {qualityLabel(q)}
           </span>
         </MenuItem>
       ))}
       <MenuSeparator />
       <MenuItem onSelect={() => setRaytraceEdgesEnabled(!raytraceEdgesEnabled)}>
         <span className={raytraceEdgesEnabled ? "text-brand" : "text-text"}>
-          Edges {raytraceEdgesEnabled ? "On" : "Off"}
+          {raytraceEdgesEnabled
+            ? t("menu.view.ray_tracing.edges_on")
+            : t("menu.view.ray_tracing.edges_off")}
         </span>
       </MenuItem>
     </Submenu>
@@ -406,7 +424,7 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
         >
           <Menubar.Menu value="file">
             <Menubar.Trigger className={TRIGGER_CLASS}>
-              <TriggerLabel label="File" />
+              <TriggerLabel label={t("menu.file")} />
             </Menubar.Trigger>
             <Menubar.Portal>
               <Menubar.Content
@@ -427,23 +445,23 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
                   iconClassName="text-sky-400"
                   disabled={!isSignedIn}
                 >
-                  Share link…
+                  {t("menu.file.share_link")}
                 </MenuItem>
                 <MenuItem
                   onSelect={onVersionHistoryOpen}
                   disabled={!isSignedIn}
                 >
-                  Version history…
+                  {t("menu.file.version_history")}
                 </MenuItem>
                 <MenuSeparator />
-                <Submenu label="Export" icon={Export} iconClassName="text-sky-400">
+                <Submenu label={t("menu.file.export")} icon={Export} iconClassName="text-sky-400">
                   <MenuItem onSelect={() => handleExport("stl")}>STL</MenuItem>
                   <MenuItem onSelect={() => handleExport("glb")}>GLB</MenuItem>
                   <MenuItem onSelect={() => handleExport("step")}>STEP</MenuItem>
                 </Submenu>
                 <MenuSeparator />
                 <Submenu
-                  label="Examples"
+                  label={t("menu.file.examples")}
                   icon={BookOpen}
                   iconClassName="text-sky-400"
                   contentClassName="min-w-[200px] max-h-[60vh] overflow-y-auto"
@@ -463,7 +481,7 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
 
           <Menubar.Menu value="edit">
             <Menubar.Trigger className={TRIGGER_CLASS}>
-              <TriggerLabel label="Edit" />
+              <TriggerLabel label={t("menu.edit")} />
             </Menubar.Trigger>
             <Menubar.Portal>
               <Menubar.Content
@@ -489,7 +507,7 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
 
           <Menubar.Menu value="view">
             <Menubar.Trigger className={TRIGGER_CLASS}>
-              <TriggerLabel label="View" />
+              <TriggerLabel label={t("menu.view")} />
             </Menubar.Trigger>
             <Menubar.Portal>
               <Menubar.Content
@@ -518,7 +536,7 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
                   icon={Mouse}
                   onSelect={() => setInputPrefsOpen(true)}
                 >
-                  Input Preferences…
+                  {t("menu.view.input_preferences")}
                 </MenuItem>
                 <MenuSeparator />
                 <CommandMenuItem id="cycle-theme" commands={commands} />
@@ -528,7 +546,7 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
 
           <Menubar.Menu value="tools">
             <Menubar.Trigger className={TRIGGER_CLASS}>
-              <TriggerLabel label="Tools" />
+              <TriggerLabel label={t("menu.tools")} />
             </Menubar.Trigger>
             <Menubar.Portal>
               <Menubar.Content
@@ -550,7 +568,7 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
 
           <Menubar.Menu value="help">
             <Menubar.Trigger className={TRIGGER_CLASS}>
-              <TriggerLabel label="Help" />
+              <TriggerLabel label={t("menu.help")} />
             </Menubar.Trigger>
             <Menubar.Portal>
               <Menubar.Content
@@ -565,7 +583,7 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
                   className={ITEM_CLASS}
                   onSelect={() => onProductOpen()}
                 >
-                  vcad Pro
+                  {t("menu.help.vcad_pro")}
                 </Menubar.Item>
                 <CommandMenuItem
                   id="whats-new"
