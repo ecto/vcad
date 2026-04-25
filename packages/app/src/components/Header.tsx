@@ -6,6 +6,7 @@ import { CaretRight } from "@phosphor-icons/react/dist/ssr/CaretRight";
 import { Export } from "@phosphor-icons/react/dist/ssr/Export";
 import { MagnifyingGlass } from "@phosphor-icons/react/dist/ssr/MagnifyingGlass";
 import { Bell } from "@phosphor-icons/react/dist/ssr/Bell";
+import { Megaphone } from "@phosphor-icons/react/dist/ssr/Megaphone";
 import { Link as LinkIcon } from "@phosphor-icons/react/dist/ssr/Link";
 import { DocTitle } from "@/components/DocTitle";
 import * as Menubar from "@radix-ui/react-menubar";
@@ -41,6 +42,10 @@ const InputPreferencesDialog = lazy(() =>
   import("./InputPreferencesDialog").then((m) => ({
     default: m.InputPreferencesDialog,
   })),
+);
+
+const FeedbackModal = lazy(() =>
+  import("./FeedbackModal").then((m) => ({ default: m.FeedbackModal })),
 );
 
 interface HeaderProps {
@@ -299,6 +304,7 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
   const billingTier = useBillingStore((s) => s.snapshot?.tier ?? null);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [inputPrefsOpen, setInputPrefsOpen] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [menuValue, setMenuValue] = useState("");
   const unreadChangelog = useChangelogStore((s) => s.getUnreadCount());
   const openChangelogPanel = useChangelogStore((s) => s.openPanel);
@@ -649,6 +655,18 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
             />
           )}
         </button>
+        <button
+          type="button"
+          onClick={() => setFeedbackOpen(true)}
+          title="Send feedback"
+          aria-label="Send feedback"
+          className={cn(
+            "relative flex items-center justify-center w-6 h-6",
+            "text-text-muted hover:text-text hover:bg-hover transition-colors",
+          )}
+        >
+          <Megaphone size={13} />
+        </button>
         <SignInButton
           variant="icon-text"
           className={cn(
@@ -683,6 +701,11 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
           open={inputPrefsOpen}
           onOpenChange={setInputPrefsOpen}
         />
+      </Suspense>
+      <Suspense fallback={null}>
+        {feedbackOpen && (
+          <FeedbackModal open={feedbackOpen} onOpenChange={setFeedbackOpen} />
+        )}
       </Suspense>
 
       {/* ─────────────────────────────────────────────────────── */}
