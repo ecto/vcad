@@ -34,3 +34,7 @@ skills-lock.json
 supabase/.temp/
 tasks/
 *.patch
+# CHANGELOG.json is generated from changelog/entries/*.json by
+# scripts/build-changelog.mjs (postinstall + @vcad/core build).
+# Keeping it out of git eliminates merge conflicts on concurrent PRs.
+/CHANGELOG.json

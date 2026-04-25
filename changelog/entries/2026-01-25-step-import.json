@@ -1,0 +1,17 @@
+{
+  "id": "2026-01-25-step-import",
+  "version": "0.7.3",
+  "date": "2026-01-25",
+  "category": "feat",
+  "title": "STEP File Import",
+  "summary": "Import AP203/AP214 STEP files from Fusion 360, SolidWorks, Onshape, and more.",
+  "details": "## What's New\n\n- **Drag-and-drop import** - Drop .step or .stp files onto the canvas\n- **File picker support** - Use Open dialog or Cmd+O\n- **Multi-solid support** - Import assemblies with multiple parts\n- **GPU mesh processing** - Fast normal computation with creased edges",
+  "features": [
+    "import",
+    "step",
+    "interop"
+  ],
+  "mcpTools": [
+    "import_step"
+  ]
+}

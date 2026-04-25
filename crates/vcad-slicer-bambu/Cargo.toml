@@ -20,6 +20,7 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 quick-xml = { version = "0.36", features = ["serialize"] }
 base64 = { workspace = true }
 uuid = { version = "1", features = ["v4", "js"] }
+md5 = "0.7"
 
 [dependencies.tokio]
 version = "1"

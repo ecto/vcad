@@ -15,7 +15,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc && cp ../../CHANGELOG.json dist/",
+    "build": "node ../../scripts/build-changelog.mjs && tsc && cp ../../CHANGELOG.json dist/",
     "test": "vitest run"
   },
   "dependencies": {

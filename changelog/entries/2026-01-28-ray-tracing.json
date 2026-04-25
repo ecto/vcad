@@ -1,0 +1,14 @@
+{
+  "id": "2026-01-28-ray-tracing",
+  "version": "0.7.4",
+  "date": "2026-01-28",
+  "category": "feat",
+  "title": "Direct BRep Ray Tracing",
+  "summary": "Pixel-perfect rendering without tessellation. Toggle between standard and ray-traced modes.",
+  "details": "## What's New\n\n- **Analytic ray-surface intersection** for all surface types\n- **WebGPU compute shader pipeline** for real-time performance\n- **BVH acceleration** with SAH construction\n- **Trimmed surface handling** for complex geometry\n- **Debug modes** - View normals, face IDs, lighting",
+  "features": [
+    "rendering",
+    "raytrace",
+    "gpu"
+  ]
+}

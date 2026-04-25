@@ -1,0 +1,14 @@
+{
+  "id": "2026-02-02-whats-new-panel",
+  "version": "0.8.0",
+  "date": "2026-02-02",
+  "category": "feat",
+  "title": "What's New Panel",
+  "summary": "Stay up to date with new features via the changelog panel.",
+  "details": "## What's New\n\n- **Auto-notification** - Badge appears when new features ship\n- **Simple list** - See all updates at a glance\n- **Detailed descriptions** - Learn what changed and why",
+  "features": [
+    "changelog",
+    "onboarding",
+    "ux"
+  ]
+}

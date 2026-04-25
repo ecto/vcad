@@ -1,0 +1,14 @@
+{
+  "id": "2026-02-02-ai-text-to-cad",
+  "version": "0.8.0",
+  "date": "2026-02-02",
+  "category": "feat",
+  "title": "AI Text-to-CAD",
+  "summary": "Describe what you want to build in plain English. Generate 3D models with cad0.",
+  "details": "## What's New\n\n- **Chat interface** - Describe parts in natural language\n- **Browser inference** - Run cad0-mini locally for privacy\n- **Server fallback** - Use cloud inference for complex requests\n- **Iterative refinement** - Add to existing models with follow-up prompts\n- **Rating feedback** - Help improve the model with thumbs up/down",
+  "features": [
+    "ai",
+    "chat",
+    "generation"
+  ]
+}

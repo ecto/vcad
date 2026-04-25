@@ -1,0 +1,22 @@
+{
+  "id": "2026-02-01-physics-simulation",
+  "version": "0.8.0",
+  "date": "2026-02-01",
+  "category": "feat",
+  "title": "Physics Simulation",
+  "summary": "Simulate assemblies with Rapier3D physics. Train RL agents via gym-style MCP interface.",
+  "details": "## What's New\n\n- **Rigid body dynamics** - Parts become physical objects with mass and inertia\n- **Joint support** - Revolute, prismatic, cylindrical, ball, and fixed joints\n- **Gym-style RL interface** - `reset()`, `step(action)`, `observe()` for training\n- **Three action types** - Torque, position targets, velocity targets\n- **MCP integration** - Full programmatic control via MCP tools",
+  "features": [
+    "physics",
+    "assembly",
+    "mcp",
+    "simulation"
+  ],
+  "mcpTools": [
+    "create_robot_env",
+    "gym_step",
+    "gym_reset",
+    "gym_observe",
+    "gym_close"
+  ]
+}

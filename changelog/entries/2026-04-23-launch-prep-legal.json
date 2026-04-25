@@ -1,0 +1,13 @@
+{
+  "id": "2026-04-23-launch-prep-legal",
+  "version": "0.8.0",
+  "date": "2026-04-23",
+  "category": "feat",
+  "title": "Privacy, terms, and a proper license",
+  "summary": "Privacy policy, terms of service, and security pages are live at /privacy, /terms, and /security, linked from the account menu. New users see a brief acceptance prompt on first load. vcad is now licensed under Apache 2.0 with Municipal Robotics Corporation as the copyright holder.",
+  "features": [
+    "legal",
+    "onboarding",
+    "licensing"
+  ]
+}

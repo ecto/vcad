@@ -11,20 +11,21 @@
 import { readFileSync, writeFileSync, readdirSync, statSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { loadEntries } from './build-changelog.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, '..');
 
 const checkOnly = process.argv.includes('--check');
 
-// Read version from CHANGELOG.json (first entry's version)
+// Read version from the newest changelog entry under changelog/entries/.
 function getVersion() {
-  const changelog = JSON.parse(readFileSync(join(root, 'CHANGELOG.json'), 'utf8'));
-  if (!changelog.entries || changelog.entries.length === 0) {
-    console.error('Error: CHANGELOG.json has no entries');
+  const entries = loadEntries();
+  if (entries.length === 0) {
+    console.error('Error: changelog/entries/ has no entries');
     process.exit(1);
   }
-  return changelog.entries[0].version;
+  return entries[0].version;
 }
 
 // Find all package.json files in packages/
@@ -128,7 +129,7 @@ function updateCargoToml(version) {
 
 // Main
 const version = getVersion();
-console.log(`Version from CHANGELOG.json: ${version}\n`);
+console.log(`Version from changelog/entries: ${version}\n`);
 
 const results = [];
 

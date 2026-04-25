@@ -1,0 +1,12 @@
+{
+  "id": "2026-04-25-desktop-magic-link-signin",
+  "version": "0.9.3",
+  "date": "2026-04-25",
+  "category": "feat",
+  "title": "Desktop magic-link sign-in",
+  "summary": "Sign in to vcad from the Tauri desktop app. Magic-link clicks now route through https://vcad.io/auth/desktop and back to the app via the vcad:// custom scheme, completing the Supabase session in-process. Password-recovery and email-change links use the same bridge.",
+  "features": [
+    "auth",
+    "desktop"
+  ]
+}

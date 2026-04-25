@@ -1,0 +1,14 @@
+{
+  "id": "2026-02-01-print-slicing",
+  "version": "0.8.0",
+  "date": "2026-02-01",
+  "category": "feat",
+  "title": "3D Print Slicing",
+  "summary": "Slice models for 3D printing directly in the browser with integrated WASM slicer.",
+  "details": "## What's New\n\n- **Browser-based slicing** - No external software needed\n- **Layer preview** - Visualize toolpaths before printing\n- **Print settings** - Layer height, infill, supports\n- **G-code export** - Download ready-to-print files",
+  "features": [
+    "printing",
+    "slicer",
+    "manufacturing"
+  ]
+}

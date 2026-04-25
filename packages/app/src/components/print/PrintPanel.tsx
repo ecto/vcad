@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { X } from "@phosphor-icons/react/dist/ssr/X";
 import { Printer } from "@phosphor-icons/react/dist/ssr/Printer";
 import { Gear } from "@phosphor-icons/react/dist/ssr/Gear";
@@ -6,7 +6,7 @@ import { Eye } from "@phosphor-icons/react/dist/ssr/Eye";
 import { Export } from "@phosphor-icons/react/dist/ssr/Export";
 import { Spinner } from "@phosphor-icons/react/dist/ssr/Spinner";
 import { useSlicerStore, formatDuration, infillPatternToId, type SliceResult } from "@/stores/slicer-store";
-import { usePrinterStore } from "@/stores/printer-store";
+import { usePrinterStore, type PrinterStatus as PrinterStatusData } from "@/stores/printer-store";
 import { useEngineStore } from "@vcad/core";
 import { useNotificationStore } from "@/stores/notification-store";
 import { SlicerSettings } from "./SlicerSettings";
@@ -14,6 +14,7 @@ import { PrinterSelect } from "./PrinterSelect";
 import { PrinterStatus } from "./PrinterStatus";
 import { PrintPreview } from "./PrintPreview";
 import { downloadBlob } from "@/lib/download";
+import { sendPrint, getPrinterStatus } from "@/lib/print-relay";
 
 type Tab = "settings" | "preview" | "printer";
 
@@ -224,15 +225,102 @@ export function PrintPanel() {
     }
   }, [scene, slicerSettings, printTemp, bedTemp, addToast]);
 
+  const selectedProfile = usePrinterStore((s) => s.selectedProfile);
+  const setStatus = usePrinterStore((s) => s.setStatus);
+  const [isPrinting, setIsPrinting] = useState(false);
+
   async function handleStartPrint() {
     if (!selectedPrinter || connectionState !== "connected") {
       addToast("No printer connected", "error");
       return;
     }
+    const result = sliceResultRef.current;
+    if (!result || !scene?.parts?.length) {
+      addToast("Slice the model first", "error");
+      return;
+    }
 
-    // In production, this would send the print job to the printer
-    addToast("Print job sent to printer", "success");
+    setIsPrinting(true);
+    try {
+      const wasm = await loadSlicerWasm();
+      if (!wasm) throw new Error("Slicer not available");
+
+      const slicerWasm = wasm as typeof wasm & {
+        generateGcode: (result: SliceResult, profile: string, printTemp: number, bedTemp: number) => string;
+        generate3mfWithGcode: (
+          name: string,
+          vertices: Float32Array,
+          indices: Uint32Array,
+          gcode: Uint8Array,
+          settingsJson: string
+        ) => Uint8Array;
+      };
+
+      const gcodeText = slicerWasm.generateGcode(result, selectedProfile, printTemp, bedTemp);
+      const gcodeBytes = new TextEncoder().encode(gcodeText);
+
+      const { vertices, indices } = collectMeshData(scene);
+      const settingsJson = JSON.stringify({
+        layer_height: slicerSettings.layerHeight,
+        first_layer_height: slicerSettings.firstLayerHeight,
+        wall_count: slicerSettings.wallCount,
+        infill_density: slicerSettings.infillDensity,
+        print_temp: printTemp,
+        bed_temp: bedTemp,
+      });
+
+      const threemfBytes = slicerWasm.generate3mfWithGcode(
+        "vcad_print",
+        vertices,
+        indices,
+        gcodeBytes,
+        settingsJson
+      );
+
+      await sendPrint(threemfBytes, "vcad_print.gcode.3mf");
+      addToast("Print job sent to printer", "success");
+      setActiveTab("printer");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Print failed";
+      console.error("Print failed:", err);
+      addToast(message, "error");
+    } finally {
+      setIsPrinting(false);
+    }
   }
+
+  // Poll printer status while connected so PrinterStatus stays live.
+  useEffect(() => {
+    if (connectionState !== "connected") return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const s = await getPrinterStatus();
+        if (cancelled) return;
+        setStatus({
+          state: s.state as PrinterStatusData["state"],
+          progressPercent: s.progress_percent,
+          layerCurrent: s.layer_current,
+          layerTotal: s.layer_total,
+          timeRemainingMin: s.time_remaining_min,
+          timeElapsedMin: 0,
+          nozzleTemp: s.nozzle_temp,
+          nozzleTarget: s.nozzle_target,
+          bedTemp: s.bed_temp,
+          bedTarget: s.bed_target,
+          filename: s.filename,
+        });
+      } catch {
+        // Ignore transient errors; the next tick will retry.
+      }
+    };
+    tick();
+    const id = window.setInterval(tick, 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [connectionState, setStatus]);
 
   return (
     <div className="fixed top-16 right-4 w-80 bg-surface border border-border rounded-lg shadow-lg z-30 flex flex-col max-h-[calc(100vh-5rem)]">
@@ -406,11 +494,20 @@ export function PrintPanel() {
             </button>
             <button
               onClick={handleStartPrint}
-              disabled={!selectedPrinter || connectionState !== "connected"}
+              disabled={!selectedPrinter || connectionState !== "connected" || isPrinting}
               className="flex-1 flex items-center justify-center gap-1 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded text-sm"
             >
-              <Printer size={16} />
-              Print
+              {isPrinting ? (
+                <>
+                  <Spinner className="animate-spin" size={16} />
+                  Sending
+                </>
+              ) : (
+                <>
+                  <Printer size={16} />
+                  Print
+                </>
+              )}
             </button>
           </div>
         )}
