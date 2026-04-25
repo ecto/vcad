@@ -1,0 +1,23 @@
+{
+  "id": "2026-04-25-12-language-translations",
+  "version": "0.9.3",
+  "date": "2026-04-25",
+  "category": "feat",
+  "title": "12 new UI languages",
+  "summary": "Added German, Japanese, Simplified Chinese, Traditional Chinese, Korean, Brazilian Portuguese, Italian, Russian, Polish, Turkish, Dutch, and Czech translations using industry-standard CAD terminology (e.g. Verrundung, フィレット, 圆角, Raccordo).",
+  "features": [
+    "i18n",
+    "de",
+    "ja",
+    "zh",
+    "zh-tw",
+    "ko",
+    "pt",
+    "it",
+    "ru",
+    "pl",
+    "tr",
+    "nl",
+    "cs"
+  ]
+}
