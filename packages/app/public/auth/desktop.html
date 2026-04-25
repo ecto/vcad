@@ -7,59 +7,139 @@
     <meta name="robots" content="noindex" />
     <link rel="icon" href="/favicon.ico" />
     <style>
-      :root { color-scheme: light dark; }
+      @font-face {
+        font-family: "Berkeley Mono";
+        font-weight: 400;
+        font-display: swap;
+        src: url("/fonts/BerkeleyMono-Regular.otf") format("opentype");
+      }
+      @font-face {
+        font-family: "Berkeley Mono";
+        font-weight: 700;
+        font-display: swap;
+        src: url("/fonts/BerkeleyMono-Bold.otf") format("opentype");
+      }
+
+      /* Monokai Soda dark theme — matches packages/app/src/index.css. */
+      :root {
+        color-scheme: dark;
+        --bg: #222222;
+        --surface: #2a2a2a;
+        --border: #444444;
+        --text: #F8F8F2;
+        --text-muted: #75715E;
+        --hover: rgba(255, 255, 255, 0.1);
+        --brand: #F92672;
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          color-scheme: light;
+          --bg: #e8eaec;
+          --surface: #dde0e3;
+          --border: #c4c8cc;
+          --text: #1d1f23;
+          --text-muted: #6e7278;
+          --hover: rgba(0, 0, 0, 0.05);
+          --brand: #F92672;
+        }
+      }
+
       html, body {
         margin: 0;
         height: 100%;
-        font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI",
-          Roboto, system-ui, sans-serif;
-        background: #fafaf9;
-        color: #1c1917;
+        font: 12px/1.5 "Berkeley Mono", ui-monospace, monospace;
+        background: var(--bg);
+        color: var(--text);
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
       }
-      @media (prefers-color-scheme: dark) {
-        html, body { background: #0c0a09; color: #f5f5f4; }
-      }
+
       main {
+        min-height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1.5rem;
+        box-sizing: border-box;
+      }
+
+      .card {
+        width: 100%;
         max-width: 28rem;
-        margin: 0 auto;
-        padding: 4rem 1.5rem;
-        text-align: center;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        padding: 1.5rem;
       }
-      h1 { font-size: 1.5rem; font-weight: 700; margin: 0 0 0.5rem; letter-spacing: -0.02em; }
-      h1 span { color: #f97316; }
-      p { color: #57534e; margin: 0.5rem 0; }
-      @media (prefers-color-scheme: dark) {
-        p { color: #a8a29e; }
+
+      .header {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
       }
-      .actions { margin-top: 2rem; display: flex; flex-direction: column; gap: 0.5rem; align-items: center; }
-      a { color: inherit; }
+      .logo {
+        font-size: 14px;
+        font-weight: 700;
+        letter-spacing: -0.05em;
+        color: var(--text);
+      }
+      .logo .dot { color: var(--brand); }
+      .label { font-size: 12px; color: var(--text-muted); }
+
+      p { margin: 0 0 0.75rem; font-size: 12px; color: var(--text); }
+      p.muted { color: var(--text-muted); }
+
+      .actions {
+        margin-top: 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+
       button, .btn {
-        padding: 0.625rem 1rem;
-        border: 1px solid currentColor;
-        background: transparent;
-        color: inherit;
+        height: 2rem;
+        padding: 0 0.75rem;
+        border: 1px solid var(--border);
+        background: var(--bg);
+        color: var(--text);
         font: inherit;
+        font-size: 12px;
         cursor: pointer;
         text-decoration: none;
-        display: inline-block;
-        min-width: 12rem;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        box-sizing: border-box;
       }
-      button:hover, .btn:hover { background: rgba(127, 127, 127, 0.1); }
+      button:hover, .btn:hover { background: var(--hover); }
+      button:focus-visible, .btn:focus-visible {
+        outline: 2px solid var(--brand);
+        outline-offset: -2px;
+      }
+
       .hide { display: none; }
     </style>
   </head>
   <body>
     <main>
-      <h1>vcad<span>.</span></h1>
-      <p id="status">Opening the desktop app…</p>
-      <div class="actions">
-        <button id="retry" class="hide" type="button">Open vcad</button>
-        <a id="web" class="btn hide" href="https://vcad.io/">Continue in browser</a>
+      <div class="card">
+        <div class="header">
+          <span class="logo">vcad<span class="dot">.</span></span>
+          <span class="label">Desktop sign-in</span>
+        </div>
+        <p id="status" class="muted">Opening the desktop app…</p>
+        <div class="actions">
+          <button id="retry" class="hide" type="button">Open vcad</button>
+          <a id="web" class="btn hide" href="https://vcad.io/">Continue in browser</a>
+        </div>
+        <noscript>
+          <p class="muted">
+            Enable JavaScript to complete sign-in, or open this link on the
+            device where vcad is installed.
+          </p>
+        </noscript>
       </div>
-      <noscript>
-        <p>Enable JavaScript to complete sign-in, or open this link on the
-          device where vcad is installed.</p>
-      </noscript>
     </main>
     <script src="/auth/desktop.js"></script>
   </body>
