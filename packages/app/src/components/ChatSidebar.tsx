@@ -39,7 +39,6 @@ import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { VcadToolCard } from "@/components/chat/VcadToolCard";
 import { CadSuggestions } from "@/components/chat/CadSuggestions";
-import { ChatUsageMeter } from "@/components/ChatUsageMeter";
 import { UpgradeModal } from "@/components/UpgradeModal";
 import { captureViewportAsFile } from "@/lib/ai-screenshot";
 
@@ -695,14 +694,6 @@ export function ChatSidebar() {
             </ConversationContent>
             <ConversationScrollButton />
           </Conversation>
-
-          {/* Signed-in (permanent identity): live usage meter drives the
-              "approaching limit" UX. ChatUsageMeter itself bails out for
-              anonymous Supabase sessions, but we also gate it here so the
-              footer doesn't reserve layout space for them. */}
-          {isAuthenticated && (
-            <ChatUsageMeter onUpgradeClick={() => setShowUpgradeModal(true)} />
-          )}
 
           {/* Anon-only sign-in banner. The `!isAuthenticated` guard is what
               keeps a signed-in user from seeing "Free chat limit reached"
