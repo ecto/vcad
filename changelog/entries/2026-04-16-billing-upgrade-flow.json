@@ -1,0 +1,14 @@
+{
+  "id": "2026-04-16-billing-upgrade-flow",
+  "version": "0.8.0",
+  "date": "2026-04-16",
+  "category": "feat",
+  "title": "Pro and Max plans are live",
+  "summary": "If you're hitting the limits of the free tier, you can now upgrade to Pro or Max through Stripe. There's a usage meter in the sidebar so you can see how much you've burned through, and yes, there is confetti when you subscribe. Free tier's still got 500k tokens a month — no change there.",
+  "features": [
+    "billing",
+    "chat",
+    "stripe",
+    "ux"
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "id": "2026-04-24-spanish-ui-translation",
+  "version": "0.9.2",
+  "date": "2026-04-24",
+  "category": "fix",
+  "title": "Spanish UI translation now applies across menus and commands",
+  "summary": "Wired command registry, header menu bar, ray-tracing submenu, and status bar through the i18n system. Filled in missing Spanish translations so menus, command palette entries, and status text render in Spanish when the browser locale is set to es.",
+  "features": [
+    "i18n",
+    "spanish"
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "id": "2026-04-25-macos-first-launch-docs",
+  "version": "0.9.3",
+  "date": "2026-04-25",
+  "category": "docs",
+  "title": "macOS first-launch bypass instructions",
+  "summary": "Until releases are Apple-notarized, opening the macOS .dmg trips a Gatekeeper warning. README and every GitHub release page now spell out the three ways past it: System Settings → Privacy & Security → Open Anyway, right-click → Open, or `xattr -d com.apple.quarantine /Applications/vcad.app`.",
+  "features": [
+    "desktop",
+    "docs"
+  ]
+}

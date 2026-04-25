@@ -1,0 +1,14 @@
+{
+  "id": "2026-04-15-splash-screen-unified-boot",
+  "version": "0.8.0",
+  "date": "2026-04-15",
+  "category": "feat",
+  "title": "A real splash screen, finally",
+  "summary": "Boot used to flicker on fast connections and leave you staring at nothing on slow ones. Now there's a proper splash: you can watch the kernel download byte-by-byte, catch a rotating tip while you wait, and we quietly check for service worker updates in the background.",
+  "features": [
+    "app",
+    "ux",
+    "boot",
+    "pwa"
+  ]
+}

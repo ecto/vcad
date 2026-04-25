@@ -94,7 +94,7 @@ The CI enforces `cargo clippy --workspace -- -D warnings`. A single warning will
 
 ## Changelog
 
-The changelog lives at `/CHANGELOG.json` (not markdown). Add entries for user-facing features (`feat`), bug fixes (`fix`), breaking changes (`breaking`), and significant performance improvements (`perf`). Skip entries for internal refactors, test-only changes, and dependency bumps. See the [Changelog](/architecture/changelog) page for format details.
+The changelog lives in `changelog/entries/` (one JSON file per entry — no markdown, and no shared array to fight over). Add a file for user-facing features (`feat`), bug fixes (`fix`), breaking changes (`breaking`), and significant performance improvements (`perf`). Skip entries for internal refactors, test-only changes, and dependency bumps. See the [Changelog](/architecture/changelog) page for format details.
 
 ## PR Process
 

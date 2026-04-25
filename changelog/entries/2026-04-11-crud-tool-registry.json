@@ -1,0 +1,20 @@
+{
+  "id": "2026-04-11-crud-tool-registry",
+  "version": "0.8.0",
+  "date": "2026-04-11",
+  "category": "feat",
+  "title": "CRUD tool registry for AI chat",
+  "summary": "Replaced 8 hand-wired chat tools with kernel-driven CRUD registry. AI can now create, read, update, and delete any CAD feature with full document awareness.",
+  "features": [
+    "ai",
+    "chat",
+    "tools",
+    "registry"
+  ],
+  "mcpTools": [
+    "create",
+    "read",
+    "update",
+    "delete"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "id": "2026-01-15-assembly-joints",
+  "version": "0.7.1",
+  "date": "2026-01-15",
+  "category": "feat",
+  "title": "Assembly Mode with Joints",
+  "summary": "Create assemblies with instances and kinematic joints for motion simulation.",
+  "details": "## What's New\n\n- **Part instances** - Reference parts multiple times with different transforms\n- **Joint types** - Revolute, prismatic, cylindrical, ball, fixed\n- **Forward kinematics** - Scrub joint values to preview motion\n- **Feature tree integration** - Hierarchical view of parts, instances, joints",
+  "features": [
+    "assembly",
+    "joints",
+    "kinematics"
+  ]
+}

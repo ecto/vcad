@@ -3637,11 +3637,33 @@ mod slicer_wasm {
         indices: &[u32],
         settings_json: &str,
     ) -> Result<Vec<u8>, JsError> {
+        build_threemf(name, vertices, indices, settings_json, None)
+    }
+
+    /// Generate a Bambu sliced `.gcode.3mf` containing the mesh and the
+    /// pre-generated G-code, ready to send to a Bambu printer over LAN.
+    #[wasm_bindgen(js_name = generate3mfWithGcode)]
+    pub fn generate_3mf_with_gcode(
+        name: &str,
+        vertices: &[f32],
+        indices: &[u32],
+        gcode: &[u8],
+        settings_json: &str,
+    ) -> Result<Vec<u8>, JsError> {
+        build_threemf(name, vertices, indices, settings_json, Some(gcode.to_vec()))
+    }
+
+    fn build_threemf(
+        name: &str,
+        vertices: &[f32],
+        indices: &[u32],
+        settings_json: &str,
+        gcode: Option<Vec<u8>>,
+    ) -> Result<Vec<u8>, JsError> {
         use vcad_slicer_bambu::{PrintSettings, ThreeMfModel};
 
         let mut model = ThreeMfModel::new(name.to_string(), vertices.to_vec(), indices.to_vec());
 
-        // Parse optional settings
         if !settings_json.is_empty() {
             #[derive(Deserialize)]
             struct ThreeMfSettings {
@@ -3666,6 +3688,10 @@ mod slicer_wasm {
                     filament_type: s.filament_type.unwrap_or(defaults.filament_type),
                 };
             }
+        }
+
+        if let Some(g) = gcode {
+            model = model.with_gcode(g);
         }
 
         model.to_bytes().map_err(|e| JsError::new(&e.to_string()))

@@ -1,0 +1,18 @@
+{
+  "id": "2026-03-27-mcp-apps-viewer",
+  "version": "0.8.0",
+  "date": "2026-03-27",
+  "category": "feat",
+  "title": "MCP Apps: Inline 3D Viewer",
+  "summary": "Geometry tools now return an interactive 3D viewport via MCP Apps, rendering models inline in Claude Desktop, ChatGPT, and other MCP clients.",
+  "features": [
+    "mcp",
+    "viewer",
+    "mcp-apps"
+  ],
+  "mcpTools": [
+    "create_cad_document",
+    "create_cad_loon",
+    "import_step"
+  ]
+}

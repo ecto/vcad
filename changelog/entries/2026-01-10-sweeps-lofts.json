@@ -1,0 +1,14 @@
+{
+  "id": "2026-01-10-sweeps-lofts",
+  "version": "0.7.0",
+  "date": "2026-01-10",
+  "category": "feat",
+  "title": "Sweep and Loft Operations",
+  "summary": "Create complex geometry by sweeping sketches along paths or interpolating between profiles.",
+  "details": "## What's New\n\n- **Sweep** - Extrude sketches along line or helix paths\n- **Loft** - Interpolate between multiple sketch profiles\n- **Path control** - Define custom sweep trajectories\n- **Profile alignment** - Automatic orientation along paths",
+  "features": [
+    "sweep",
+    "loft",
+    "modeling"
+  ]
+}

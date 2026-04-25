@@ -1,9 +1,13 @@
 import { useMemo } from "react";
 import { Grid, Line } from "@react-three/drei";
 import { useTheme } from "@/hooks/useTheme";
+import { useDocumentStore, useUiStore } from "@vcad/core";
 
 export function GridPlane() {
   const { isDark } = useTheme();
+  const isOrbiting = useUiStore((s) => s.isOrbiting);
+  const hasParts = useDocumentStore((s) => s.parts.length > 0);
+  const showAxes = isOrbiting || !hasParts;
 
   // Axis lines at origin - RGB convention (X=red, Y=green, Z=blue)
   // Grid is outside the Z-up rotation group, so we draw in Three.js Y-up space
@@ -51,39 +55,40 @@ export function GridPlane() {
         fadeStrength={1}
         infiniteGrid
       />
-      {/* X axis - red */}
-      <Line
-        points={xAxisPoints}
-        color={isDark ? "#e06c75" : "#c94f4f"}
-        lineWidth={1.5}
-        transparent
-        opacity={0.7}
-        depthWrite={false}
-        depthTest={false}
-        renderOrder={1}
-      />
-      {/* Y axis - green */}
-      <Line
-        points={yAxisPoints}
-        color={isDark ? "#98c379" : "#5a9a4a"}
-        lineWidth={1.5}
-        transparent
-        opacity={0.7}
-        depthWrite={false}
-        depthTest={false}
-        renderOrder={1}
-      />
-      {/* Z axis - blue */}
-      <Line
-        points={zAxisPoints}
-        color={isDark ? "#61afef" : "#4a7dc9"}
-        lineWidth={1.5}
-        transparent
-        opacity={0.7}
-        depthWrite={false}
-        depthTest={false}
-        renderOrder={1}
-      />
+      {showAxes && (
+        <>
+          {/* X axis - red */}
+          <Line
+            points={xAxisPoints}
+            color={isDark ? "#e06c75" : "#c94f4f"}
+            lineWidth={1.5}
+            transparent
+            opacity={0.7}
+            depthWrite={false}
+            renderOrder={-1}
+          />
+          {/* Y axis - green */}
+          <Line
+            points={yAxisPoints}
+            color={isDark ? "#98c379" : "#5a9a4a"}
+            lineWidth={1.5}
+            transparent
+            opacity={0.7}
+            depthWrite={false}
+            renderOrder={-1}
+          />
+          {/* Z axis - blue */}
+          <Line
+            points={zAxisPoints}
+            color={isDark ? "#61afef" : "#4a7dc9"}
+            lineWidth={1.5}
+            transparent
+            opacity={0.7}
+            depthWrite={false}
+            renderOrder={-1}
+          />
+        </>
+      )}
     </>
   );
 }

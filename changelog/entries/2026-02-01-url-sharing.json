@@ -1,0 +1,14 @@
+{
+  "id": "2026-02-01-url-sharing",
+  "version": "0.8.0",
+  "date": "2026-02-01",
+  "category": "feat",
+  "title": "URL Sharing",
+  "summary": "Share models instantly via URL. VCode encoding fits entire designs in a link.",
+  "details": "## What's New\n\n- **?ir= parameter** - Entire model encoded in URL\n- **Gzip compression** - Keeps URLs reasonably short\n- **One-click sharing** - Copy link from share menu\n- **No account required** - Recipients can view without signing in",
+  "features": [
+    "sharing",
+    "collaboration",
+    "export"
+  ]
+}

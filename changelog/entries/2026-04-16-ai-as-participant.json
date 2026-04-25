@@ -1,0 +1,19 @@
+{
+  "id": "2026-04-16-ai-as-participant",
+  "version": "0.8.0",
+  "date": "2026-04-16",
+  "category": "feat",
+  "title": "The AI is in the room with you",
+  "summary": "The chat AI now shows up in your viewport as its own little camera — you can see where it's looking and what it's selecting, same as if it were another person on the call. Pick whether your view follows along, locks to it, or does its own thing. Also: no more getting yanked back to the AI's camera mid-drag.",
+  "features": [
+    "chat",
+    "viewport",
+    "collab",
+    "ux"
+  ],
+  "mcpTools": [
+    "focus_part",
+    "frame_all",
+    "set_view"
+  ]
+}

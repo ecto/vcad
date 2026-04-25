@@ -19,6 +19,10 @@ pub struct ThreeMfModel {
     pub plate: PlateConfig,
     /// Print settings.
     pub settings: PrintSettings,
+    /// Optional sliced G-code embedded as `Metadata/plate_1.gcode`.
+    /// When present, the output becomes a Bambu sliced `.gcode.3mf` the
+    /// printer can print directly without on-device slicing.
+    pub gcode: Option<Vec<u8>>,
 }
 
 /// Plate (build plate) configuration.
@@ -81,7 +85,15 @@ impl ThreeMfModel {
             indices,
             plate: PlateConfig::default(),
             settings: PrintSettings::default(),
+            gcode: None,
         }
+    }
+
+    /// Attach pre-sliced G-code so the output is a Bambu `.gcode.3mf` the
+    /// printer can print directly.
+    pub fn with_gcode(mut self, gcode: Vec<u8>) -> Self {
+        self.gcode = Some(gcode);
+        self
     }
 
     /// Generate 3MF file as bytes.
@@ -128,6 +140,24 @@ impl ThreeMfModel {
         zip.write_all(self.slice_info_xml().as_bytes())
             .map_err(|e| BambuError::ThreeMfError(e.to_string()))?;
 
+        // When a sliced G-code is attached, write the Bambu plate gcode
+        // entries. The printer firmware looks for `Metadata/plate_1.gcode`
+        // and validates it against `Metadata/plate_1.gcode.md5` (uppercase
+        // hex).
+        if let Some(gcode) = self.gcode.as_deref() {
+            let md5_hex = format!("{:X}", md5::compute(gcode));
+
+            zip.start_file("Metadata/plate_1.gcode", options)
+                .map_err(|e| BambuError::ThreeMfError(e.to_string()))?;
+            zip.write_all(gcode)
+                .map_err(|e| BambuError::ThreeMfError(e.to_string()))?;
+
+            zip.start_file("Metadata/plate_1.gcode.md5", options)
+                .map_err(|e| BambuError::ThreeMfError(e.to_string()))?;
+            zip.write_all(md5_hex.as_bytes())
+                .map_err(|e| BambuError::ThreeMfError(e.to_string()))?;
+        }
+
         zip.finish()
             .map_err(|e| BambuError::ThreeMfError(e.to_string()))?;
 
@@ -135,12 +165,17 @@ impl ThreeMfModel {
     }
 
     fn content_types_xml(&self) -> String {
+        // The `gcode` and `md5` extensions are only meaningful for Bambu
+        // sliced 3MFs but advertising them unconditionally is harmless for
+        // mesh-only files.
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
     <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
     <Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>
     <Default Extension="json" ContentType="application/json"/>
     <Default Extension="config" ContentType="text/xml"/>
+    <Default Extension="gcode" ContentType="text/x.gcode"/>
+    <Default Extension="md5" ContentType="text/plain"/>
 </Types>"#.to_string()
     }
 
@@ -226,6 +261,18 @@ impl ThreeMfModel {
     }
 
     fn slice_info_xml(&self) -> String {
+        // When G-code is attached, advertise the plate's gcode filename and
+        // md5 so the printer firmware can locate and verify it.
+        let gcode_metadata = match self.gcode.as_deref() {
+            Some(gcode) => {
+                let md5_hex = format!("{:X}", md5::compute(gcode));
+                format!(
+                    "        <metadata key=\"gcode_file\" value=\"Metadata/plate_1.gcode\"/>\n        <metadata key=\"gcode_md5\" value=\"{md5_hex}\"/>\n"
+                )
+            }
+            None => String::new(),
+        };
+
         format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <config>
@@ -238,7 +285,7 @@ impl ThreeMfModel {
         <metadata key="nozzle_temperature" value="{}"/>
         <metadata key="bed_temperature" value="{}"/>
         <metadata key="filament_type" value="{}"/>
-    </plate>
+{}    </plate>
 </config>"#,
             self.plate.index,
             self.settings.layer_height,
@@ -247,7 +294,8 @@ impl ThreeMfModel {
             (self.settings.infill_density * 100.0) as u32,
             self.settings.print_temp,
             self.settings.bed_temp,
-            self.settings.filament_type
+            self.settings.filament_type,
+            gcode_metadata
         )
     }
 }
@@ -268,5 +316,39 @@ mod tests {
         // Should be a valid ZIP file
         assert!(bytes.len() > 100);
         assert_eq!(&bytes[0..2], b"PK"); // ZIP magic number
+    }
+
+    #[test]
+    fn test_threemf_with_gcode_embeds_plate_and_md5() {
+        let vertices = vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.5, 1.0, 0.0];
+        let indices = vec![0, 1, 2];
+        let gcode = b"G28\nG1 Z5 F500\n".to_vec();
+        let expected_md5 = format!("{:X}", md5::compute(&gcode));
+
+        let model = ThreeMfModel::new("test".into(), vertices, indices).with_gcode(gcode.clone());
+        let bytes = model.to_bytes().unwrap();
+
+        let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+
+        // Plate G-code is present and matches input bytes.
+        let mut gcode_entry = zip.by_name("Metadata/plate_1.gcode").unwrap();
+        let mut gcode_bytes = Vec::new();
+        std::io::Read::read_to_end(&mut gcode_entry, &mut gcode_bytes).unwrap();
+        assert_eq!(gcode_bytes, gcode);
+        drop(gcode_entry);
+
+        // MD5 file is uppercase hex of the gcode bytes.
+        let mut md5_entry = zip.by_name("Metadata/plate_1.gcode.md5").unwrap();
+        let mut md5_bytes = Vec::new();
+        std::io::Read::read_to_end(&mut md5_entry, &mut md5_bytes).unwrap();
+        assert_eq!(String::from_utf8(md5_bytes).unwrap(), expected_md5);
+        drop(md5_entry);
+
+        // slice_info.config references the gcode file and md5.
+        let mut slice_info = zip.by_name("Metadata/slice_info.config").unwrap();
+        let mut slice_info_str = String::new();
+        std::io::Read::read_to_string(&mut slice_info, &mut slice_info_str).unwrap();
+        assert!(slice_info_str.contains("Metadata/plate_1.gcode"));
+        assert!(slice_info_str.contains(&expected_md5));
     }
 }
