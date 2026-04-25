@@ -8,6 +8,7 @@ import * as Popover from "@radix-ui/react-popover";
 import { useDocumentStore, useUiStore, useSketchStore, t, tFmt, type LogLevelName } from "@vcad/core";
 import { useLocaleStore, supportedLocales, type SupportedLocale } from "@/stores/locale-store";
 import { useLogStore, getFilteredEntries } from "@/stores/log-store";
+import { FooterUsageMeter } from "@/components/FooterUsageMeter";
 import { cn } from "@/lib/utils";
 
 const LOCALE_LABELS: Record<string, string> = {
@@ -244,6 +245,8 @@ export function StatusBar() {
           </span>
         )}
       </div>
+
+      <FooterUsageMeter />
 
       <LocalePicker />
     </div>
