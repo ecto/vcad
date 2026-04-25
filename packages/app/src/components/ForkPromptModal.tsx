@@ -3,7 +3,8 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "@phosphor-icons/react/dist/ssr/X";
 import { GitFork } from "@phosphor-icons/react/dist/ssr/GitFork";
 import { AuthModal, useAuthStore } from "@vcad/auth";
-import { useUiStore } from "@vcad/core";
+import { useUiStore, t } from "@vcad/core";
+import { useLocaleStore } from "@/stores/locale-store";
 import { cn } from "@/lib/utils";
 
 /**
@@ -31,6 +32,7 @@ export function ForkPromptModal() {
   const isSignedIn = !!user && !isAnonymous;
   const readOnlyShare = useUiStore((s) => s.readOnlyShare);
   const setReadOnlyShare = useUiStore((s) => s.setReadOnlyShare);
+  useLocaleStore((s) => s.locale);
 
   // Listen for fork-prompt events from anywhere in the app.
   useEffect(() => {
@@ -89,11 +91,10 @@ export function ForkPromptModal() {
               </div>
               <div className="min-w-0">
                 <Dialog.Title className="text-sm font-semibold text-text">
-                  This document is read-only
+                  {t("modal.fork.title")}
                 </Dialog.Title>
                 <Dialog.Description className="mt-1 text-xs text-text-muted leading-relaxed">
-                  Sign in to create your own editable copy. Your edits won't
-                  touch the original — you'll get a fresh fork in your account.
+                  {t("modal.fork.description")}
                 </Dialog.Description>
               </div>
             </div>
@@ -107,7 +108,7 @@ export function ForkPromptModal() {
                   "text-text-muted hover:text-text hover:bg-hover transition-colors",
                 )}
               >
-                Keep viewing
+                {t("modal.fork.keep_viewing")}
               </button>
               <button
                 type="button"
@@ -117,7 +118,7 @@ export function ForkPromptModal() {
                   "bg-brand text-white hover:bg-brand/90 transition-colors",
                 )}
               >
-                Sign in to fork
+                {t("modal.fork.signin")}
               </button>
             </div>
           </Dialog.Content>

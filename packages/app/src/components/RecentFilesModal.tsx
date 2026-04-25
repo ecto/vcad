@@ -17,10 +17,13 @@ import {
   type RecentFile,
 } from "@/lib/native-file";
 import { useNotificationStore } from "@/stores/notification-store";
+import { t, tFmt } from "@vcad/core";
+import { useLocaleStore } from "@/stores/locale-store";
 
 export function RecentFilesModal() {
   const [open, setOpen] = useState(false);
   const [recents, setRecents] = useState<RecentFile[]>([]);
+  useLocaleStore((s) => s.locale);
 
   useEffect(() => {
     const reload = () => setRecents(getRecentFiles());
@@ -41,7 +44,7 @@ export function RecentFilesModal() {
     if (!result) {
       useNotificationStore
         .getState()
-        .addToast(`Could not open ${file.name}`, "error");
+        .addToast(tFmt("modal.recents.cant_open", { name: file.name }), "error");
       return;
     }
     // Hand back to the main pipeline as if the user had dropped this file.
@@ -68,7 +71,7 @@ export function RecentFilesModal() {
           className="flex items-center justify-between border-b border-border/40 px-3 py-2"
         >
           <span className="text-xs font-medium text-text-muted">
-            Recent Files
+            {t("modal.recents.title")}
           </span>
           {recents.length > 0 && (
             <button
@@ -77,15 +80,15 @@ export function RecentFilesModal() {
                 setRecents([]);
               }}
               className="flex items-center gap-1 text-[10px] text-text-muted hover:text-text"
-              title="Clear recent files"
+              title={t("modal.recents.clear_tooltip")}
             >
-              <Trash size={11} /> Clear
+              <Trash size={11} /> {t("modal.recents.clear")}
             </button>
           )}
         </div>
         {recents.length === 0 ? (
           <div className="px-3 py-6 text-center text-xs text-text-muted">
-            No recent files yet.
+            {t("modal.recents.empty")}
           </div>
         ) : (
           <ul className="max-h-[60vh] overflow-y-auto">

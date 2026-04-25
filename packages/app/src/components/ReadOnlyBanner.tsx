@@ -1,5 +1,6 @@
 import { Eye } from "@phosphor-icons/react/dist/ssr/Eye";
-import { useUiStore } from "@vcad/core";
+import { useUiStore, t, tFmt } from "@vcad/core";
+import { useLocaleStore } from "@/stores/locale-store";
 import { cn } from "@/lib/utils";
 
 /**
@@ -9,6 +10,7 @@ import { cn } from "@/lib/utils";
  */
 export function ReadOnlyBanner() {
   const readOnly = useUiStore((s) => s.readOnlyShare);
+  useLocaleStore((s) => s.locale);
   if (!readOnly) return null;
 
   const handleForkClick = () => {
@@ -16,6 +18,13 @@ export function ReadOnlyBanner() {
       new CustomEvent("vcad:fork-prompt", { detail: readOnly }),
     );
   };
+
+  // Split the formatted banner around {name} so the document name keeps its
+  // bold styling. The marker token is unlikely to appear in any translation.
+  const MARKER = "__DOCNAME__";
+  const parts = tFmt("banner.readonly.viewing", { name: MARKER }).split(MARKER);
+  const before = parts[0] ?? "";
+  const after = parts[1] ?? "";
 
   return (
     <div
@@ -28,7 +37,9 @@ export function ReadOnlyBanner() {
     >
       <Eye size={13} className="text-brand shrink-0" />
       <span>
-        Viewing <span className="font-medium">{readOnly.docName}</span> (read-only)
+        {before}
+        <span className="font-medium">{readOnly.docName}</span>
+        {after}
       </span>
       <span className="text-text-muted">·</span>
       <button
@@ -36,7 +47,7 @@ export function ReadOnlyBanner() {
         onClick={handleForkClick}
         className="text-brand hover:underline focus:outline-none"
       >
-        Sign in to fork
+        {t("banner.readonly.fork")}
       </button>
     </div>
   );

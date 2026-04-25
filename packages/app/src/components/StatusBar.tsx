@@ -120,7 +120,7 @@ export function StatusBar() {
           "focus:outline-none focus-visible:bg-hover",
           "transition-colors",
         )}
-        title={latest ? "Open console (~)" : "Console (empty)"}
+        title={latest ? t("status.console_open") : t("status.console_empty_title")}
       >
         <Terminal size={11} className="shrink-0 opacity-60" />
         {latest ? (
@@ -207,7 +207,7 @@ export function StatusBar() {
           "text-text-muted tabular-nums whitespace-pre",
           sketchActive && "hidden lg:flex",
         )}
-        title="Cursor position on ground plane (mm)"
+        title={t("status.cursor_pos")}
       >
         {cursorWorld ? (
           <>
@@ -271,7 +271,7 @@ function LocalePicker() {
             "flex items-center gap-1 px-2 border-l border-border/40",
             "text-text-muted hover:text-text hover:bg-hover transition-colors",
           )}
-          title="Language"
+          title={t("status.language")}
         >
           <GlobeSimple size={11} className="shrink-0" />
           <span className="uppercase tracking-wide">{locale}</span>

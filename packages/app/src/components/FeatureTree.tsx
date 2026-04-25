@@ -49,7 +49,8 @@ import { Scissors } from "@phosphor-icons/react/dist/ssr/Scissors";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { ContextMenu } from "@/components/ContextMenu";
-import { useDocumentStore, useUiStore, useSketchStore, useParametersStore, isBooleanPart, isPrimitivePart, isSweepPart, isExtrudePart, isRevolvePart, isFilletPart, isChamferPart, isShellPart, isEmbroideryPatternPart, isStitchPart, isPcbBoardPart } from "@vcad/core";
+import { useDocumentStore, useUiStore, useSketchStore, useParametersStore, isBooleanPart, isPrimitivePart, isSweepPart, isExtrudePart, isRevolvePart, isFilletPart, isChamferPart, isShellPart, isEmbroideryPatternPart, isStitchPart, isPcbBoardPart, t, tFmt } from "@vcad/core";
+import { useLocaleStore } from "@/stores/locale-store";
 import { useNotificationStore } from "@/stores/notification-store";
 import { SketchPropertyPanel } from "@/components/SketchPropertyPanel";
 import { useElectronicsStore } from "@/stores/electronics-store";
@@ -67,6 +68,7 @@ function SceneTreeRow() {
   const setInspectorTarget = useUiStore((s) => s.setInspectorTarget);
   const setSidebarPane = useUiStore((s) => s.setSidebarPane);
   const clearSelection = useUiStore((s) => s.clearSelection);
+  useLocaleStore((s) => s.locale);
   const active = inspectorTarget?.kind === "scene";
   return (
     <button
@@ -80,10 +82,10 @@ function SceneTreeRow() {
         "hover:bg-hover",
         active ? "text-brand bg-brand/10" : "text-text",
       )}
-      title="Inspect scene (background, environment, lights)"
+      title={t("tree.scene_tooltip")}
     >
       <Globe size={13} className={active ? "text-brand" : "text-text-muted"} />
-      <span className="font-medium">Scene</span>
+      <span className="font-medium">{t("tree.scene")}</span>
     </button>
   );
 }
@@ -92,6 +94,7 @@ function ParametersTreeRow() {
   const setSidebarPane = useUiStore((s) => s.setSidebarPane);
   const setInspectorTarget = useUiStore((s) => s.setInspectorTarget);
   const parameterCount = useParametersStore((s) => Object.keys(s.parameters).length);
+  useLocaleStore((s) => s.locale);
   return (
     <button
       onClick={() => {
@@ -102,10 +105,10 @@ function ParametersTreeRow() {
         "flex w-full items-center gap-2 px-2 h-7 text-xs",
         "hover:bg-hover text-text",
       )}
-      title="Edit document parameters (drive bound fields via expressions)"
+      title={t("tree.parameters_tooltip")}
     >
       <Sliders size={13} className="text-text-muted" />
-      <span className="font-medium">Parameters</span>
+      <span className="font-medium">{t("tree.parameters")}</span>
       {parameterCount > 0 && (
         <span className="text-[10px] text-text-muted tabular-nums">
           {parameterCount}
@@ -146,20 +149,21 @@ function SketchTreeSection() {
   const [entitiesOpen, setEntitiesOpen] = useState(true);
   const [constraintsOpen, setConstraintsOpen] = useState(true);
   const [profilesOpen, setProfilesOpen] = useState(true);
+  useLocaleStore((s) => s.locale);
 
   if (!active) return null;
 
   const hasSegments = segments.length > 0;
   const finishLabel = pendingOperation
     ? pendingOperation.kind.charAt(0).toUpperCase() + pendingOperation.kind.slice(1)
-    : "Finish";
+    : t("tree.sketch.finish");
   const finishEnabled = hasSegments || pendingOperation?.kind === "loft";
 
   return (
     <div className="border border-amber-500/30 bg-amber-500/5 mt-1 mb-2">
       <div className="flex items-center justify-between gap-2 px-2 py-1.5 border-b border-amber-500/20 bg-amber-500/5">
         <span className="text-[10px] font-medium uppercase tracking-wider text-amber-400">
-          Sketch
+          {t("tree.sketch.label")}
         </span>
         <span
           className={cn(
@@ -185,7 +189,7 @@ function SketchTreeSection() {
               ? "bg-emerald-600 hover:bg-emerald-700 text-white"
               : "bg-hover/40 text-text-muted cursor-not-allowed",
           )}
-          title={pendingOperation ? `Apply ${finishLabel}` : "Finish sketch"}
+          title={pendingOperation ? tFmt("tree.sketch.apply_tooltip", { label: finishLabel }) : t("tree.sketch.finish_tooltip")}
         >
           <span>✓</span>
           <span>{finishLabel}</span>
@@ -194,10 +198,10 @@ function SketchTreeSection() {
           type="button"
           onClick={() => {
             const exited = requestExit();
-            if (exited) addToast("Sketch cancelled", "info");
+            if (exited) addToast(t("tree.sketch.cancelled"), "info");
           }}
           className="px-2 py-1 text-xs text-text-muted hover:text-text hover:bg-hover/60"
-          title="Cancel sketch (Esc)"
+          title={t("tree.sketch.cancel_tooltip")}
         >
           ×
         </button>
@@ -207,28 +211,28 @@ function SketchTreeSection() {
         <div className="px-2 py-2 border-b border-amber-500/20 bg-red-500/10 text-xs">
           <div className="flex items-center gap-1 text-amber-300 mb-1">
             <span>⚠</span>
-            <span className="font-medium">Discard sketch?</span>
+            <span className="font-medium">{t("tree.sketch.discard_title")}</span>
           </div>
           <div className="text-[11px] text-text-muted mb-2">
-            You have unsaved geometry.
+            {t("tree.sketch.discard_msg")}
           </div>
           <div className="flex gap-1">
             <button
               type="button"
               onClick={() => {
                 confirmExit();
-                addToast("Sketch discarded", "info");
+                addToast(t("tree.sketch.discarded"), "info");
               }}
               className="flex-1 px-2 py-1 text-xs bg-red-600 hover:bg-red-700 text-white"
             >
-              Discard
+              {t("tree.sketch.discard")}
             </button>
             <button
               type="button"
               onClick={cancelExit}
               className="flex-1 px-2 py-1 text-xs hover:bg-hover/60"
             >
-              Keep editing
+              {t("tree.sketch.keep_editing")}
             </button>
           </div>
         </div>
@@ -244,7 +248,7 @@ function SketchTreeSection() {
           className="flex w-full items-center gap-1 px-2 h-6 text-[11px] text-text-muted hover:text-text"
         >
           <span className="font-mono">{entitiesOpen ? "▾" : "▸"}</span>
-          <span>Entities ({segments.length})</span>
+          <span>{tFmt("tree.sketch.entities", { count: String(segments.length) })}</span>
         </button>
         {entitiesOpen &&
           segments.map((seg, i) => (
@@ -270,7 +274,7 @@ function SketchTreeSection() {
           className="flex w-full items-center gap-1 px-2 h-6 text-[11px] text-text-muted hover:text-text"
         >
           <span className="font-mono">{constraintsOpen ? "▾" : "▸"}</span>
-          <span>Constraints ({constraints.length})</span>
+          <span>{tFmt("tree.sketch.constraints", { count: String(constraints.length) })}</span>
         </button>
         {constraintsOpen &&
           constraints.map((c, i) => (
@@ -296,8 +300,8 @@ function SketchTreeSection() {
                   if (selectedConstraintIndex === i) setSelectedConstraint(null);
                 }}
                 className="text-text-muted hover:text-red-400"
-                title="Delete constraint"
-                aria-label="Delete constraint"
+                title={t("tree.sketch.delete_constraint")}
+                aria-label={t("tree.sketch.delete_constraint")}
               >
                 ×
               </button>
@@ -311,7 +315,7 @@ function SketchTreeSection() {
               className="flex w-full items-center gap-1 px-2 h-6 text-[11px] text-text-muted hover:text-text"
             >
               <span className="font-mono">{profilesOpen ? "▾" : "▸"}</span>
-              <span>Profiles ({profiles.length})</span>
+              <span>{tFmt("tree.sketch.profiles", { count: String(profiles.length) })}</span>
             </button>
             {profilesOpen &&
               profiles.map((p, i) => (
@@ -320,7 +324,7 @@ function SketchTreeSection() {
                   className="flex items-center gap-2 pl-6 pr-2 h-6 text-[11px] text-text-muted"
                 >
                   <span className="font-mono">≡</span>
-                  <span>Profile {i + 1}</span>
+                  <span>{tFmt("tree.sketch.profile", { n: String(i + 1) })}</span>
                 </div>
               ))}
           </>

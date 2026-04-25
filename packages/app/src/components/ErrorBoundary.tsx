@@ -1,4 +1,5 @@
 import { Component, type ReactNode } from "react";
+import { t } from "@vcad/core";
 
 interface Props {
   children: ReactNode;
@@ -43,18 +44,18 @@ export class ErrorBoundary extends Component<Props, State> {
       return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg">
           <div className="flex max-w-md flex-col items-center gap-4 p-8 text-center">
-            <div className="text-sm font-bold text-danger">something went wrong</div>
+            <div className="text-sm font-bold text-danger">{t("error.boundary.title")}</div>
             <div className="text-xs text-text-muted">
-              {this.state.error?.message || "An unexpected error occurred"}
+              {this.state.error?.message || t("error.boundary.unexpected")}
             </div>
             <button
               onClick={this.handleReload}
               className="mt-2 rounded bg-brand px-4 py-2 text-sm text-white hover:bg-brand/90"
             >
-              Reload App
+              {t("error.boundary.reload")}
             </button>
             <div className="mt-4 text-xs text-text-muted/60">
-              If this keeps happening, try clearing your browser cache.
+              {t("error.boundary.cache_hint")}
             </div>
           </div>
         </div>
