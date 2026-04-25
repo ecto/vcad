@@ -1,0 +1,13 @@
+{
+  "id": "2026-04-12-rich-tool-chips",
+  "version": "0.8.0",
+  "date": "2026-04-12",
+  "category": "feat",
+  "title": "Rich AI chat tool call chips",
+  "summary": "Tool call chips now show action sentences with clickable part links, human-readable field lists, and per-message operation summaries.",
+  "features": [
+    "ai",
+    "chat",
+    "ux"
+  ]
+}

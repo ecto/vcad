@@ -1,0 +1,14 @@
+{
+  "id": "2026-04-25-bambu-printer-support",
+  "version": "0.9.3",
+  "date": "2026-04-25",
+  "category": "feat",
+  "title": "One-click print to Bambu P1S over LAN",
+  "summary": "Print directly from vcad to a Bambu P1S/X1/A1 over the local network. Discover the printer, enter its access code (cached locally per serial), then Slice and Print to send a sliced .gcode.3mf the printer can run as-is. Live status polled every 2.5s.",
+  "features": [
+    "printing",
+    "bambu",
+    "slicer",
+    "3mf"
+  ]
+}

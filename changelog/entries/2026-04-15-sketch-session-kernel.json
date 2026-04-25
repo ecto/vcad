@@ -1,0 +1,15 @@
+{
+  "id": "2026-04-15-sketch-session-kernel",
+  "version": "0.8.0",
+  "date": "2026-04-15",
+  "category": "feat",
+  "title": "Unified sketch session in kernel",
+  "summary": "New SketchSession in vcad-kernel-constraints owns tool state, snapping, hit-testing, undo/redo and the LM solver; web app and TUI share it via WASM.",
+  "features": [
+    "sketch",
+    "kernel",
+    "constraints",
+    "tui",
+    "wasm"
+  ]
+}

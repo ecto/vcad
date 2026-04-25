@@ -17,10 +17,10 @@
  *   node scripts/release-notes.mjs --json       # emit { version, notes } JSON
  */
 
-import { readFileSync } from 'fs';
 import { execSync } from 'child_process';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { loadEntries } from './build-changelog.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, '..');
@@ -62,16 +62,12 @@ function parseArgs(argv) {
   return args;
 }
 
-function readChangelog() {
-  return JSON.parse(readFileSync(join(root, 'CHANGELOG.json'), 'utf8'));
+function entriesForVersion(entries, version) {
+  return entries.filter((e) => e.version === version);
 }
 
-function entriesForVersion(changelog, version) {
-  return changelog.entries.filter((e) => e.version === version);
-}
-
-function previousVersion(changelog, version) {
-  for (const e of changelog.entries) {
+function previousVersion(entries, version) {
+  for (const e of entries) {
     if (e.version !== version) return e.version;
   }
   return null;
@@ -179,19 +175,19 @@ async function humanize({ version, entries, commits, prevVersion }) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const changelog = readChangelog();
-  const version = args.version ?? changelog.entries[0]?.version;
+  const allEntries = loadEntries();
+  const version = args.version ?? allEntries[0]?.version;
   if (!version) {
-    console.error('Could not determine version; CHANGELOG.json has no entries.');
+    console.error('Could not determine version; changelog/entries/ has no entries.');
     process.exit(1);
   }
-  const entries = entriesForVersion(changelog, version);
+  const entries = entriesForVersion(allEntries, version);
   if (!entries.length) {
     console.error(`No changelog entries for v${version}.`);
     process.exit(1);
   }
 
-  const prev = previousVersion(changelog, version);
+  const prev = previousVersion(allEntries, version);
   const commits = recentCommitSubjects(50);
 
   let notes = null;

@@ -1,0 +1,14 @@
+{
+  "id": "2026-01-20-sketch-constraints",
+  "version": "0.7.2",
+  "date": "2026-01-20",
+  "category": "feat",
+  "title": "Sketch Constraints",
+  "summary": "Full parametric sketching with geometric constraints and automatic solving.",
+  "details": "## What's New\n\n- **12 constraint types** - Coincident, horizontal, vertical, parallel, perpendicular, tangent, distance, length, radius, angle, equal length, fixed\n- **Levenberg-Marquardt solver** with adaptive damping\n- **Visual feedback** - Green when fully constrained, yellow when under-constrained\n- **Dimension editing** - Click constraints to modify values",
+  "features": [
+    "sketch",
+    "constraints",
+    "parametric"
+  ]
+}

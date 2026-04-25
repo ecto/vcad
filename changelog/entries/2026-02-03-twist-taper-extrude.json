@@ -1,0 +1,14 @@
+{
+  "id": "2026-02-03-twist-taper-extrude",
+  "version": "0.8.0",
+  "date": "2026-02-03",
+  "category": "feat",
+  "title": "Twist & Taper Extrude",
+  "summary": "Add twist angle and taper draft to extrusions for more expressive geometry.",
+  "details": "## What's New\n\n- **Twist angle** - Rotate the profile as it extrudes for helical shapes\n- **Taper draft** - Add draft angle for molding and casting\n- **Combined effects** - Use both twist and taper together\n- **Live preview** - See changes in real-time as you adjust parameters",
+  "features": [
+    "extrude",
+    "modeling",
+    "parametric"
+  ]
+}

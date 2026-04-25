@@ -4,11 +4,25 @@ description: "Entry format, when to add entries, schema validation"
 order: 12
 ---
 
-The vcad changelog lives at `/CHANGELOG.json` in the repository root. It uses a structured JSON format rather than markdown, making it machine-readable for the documentation site, release tooling, and the app's "What's New" display.
+The vcad changelog lives in `changelog/entries/` at the repository root, with one JSON file per entry. A small aggregator (`scripts/build-changelog.mjs`) rolls them up into a generated `CHANGELOG.json` (gitignored) that the docs site, release tooling, and the app's "What's New" display read. One file per entry means concurrent PRs never collide on the changelog.
+
+## Adding an Entry
+
+Drop a new file in `changelog/entries/` named `<id>.json`, where the id is the same as the entry's `id` field:
+
+```bash
+changelog/entries/2025-03-15-fillet-chamfer.json
+```
+
+The aggregator runs automatically as a `postinstall` step (and again as part of `@vcad/core`'s build), so the rolled-up `CHANGELOG.json` stays current without any manual step. You can also rebuild it explicitly:
+
+```bash
+npm run changelog:build
+```
 
 ## Entry Format
 
-Each entry is a JSON object with these fields:
+Each file is a single JSON object with these fields:
 
 ```json
 {
@@ -56,8 +70,8 @@ Skip changelog entries for:
 - Dependency bumps
 - Code formatting changes
 
-<Callout type="tip" title="Placement">
-New entries go at the **top** of the `entries` array in `CHANGELOG.json`. The most recent change should always be the first entry. This makes it easy to see what changed last and keeps the file in reverse chronological order.
+<Callout type="tip" title="Ordering">
+Order is derived from each entry's `date` and `id` field — the aggregator sorts newest first automatically. You don't have to think about placement; just give the file a date-prefixed id.
 </Callout>
 
 ## Schema Validation
@@ -71,9 +85,10 @@ The file `/changelog.schema.json` in the repository root defines the JSON Schema
 - Date is in ISO 8601 format
 - Features and mcpTools are arrays of strings
 
-CI can validate the changelog against this schema to catch formatting errors before merge. You can also validate locally with any JSON Schema tool:
+CI can validate each entry against this schema to catch formatting errors before merge. You can also validate locally with any JSON Schema tool:
 
 ```bash
+npm run changelog:build
 npx ajv-cli validate -s changelog.schema.json -d CHANGELOG.json
 ```
 

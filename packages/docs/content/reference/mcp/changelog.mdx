@@ -124,4 +124,4 @@ Each changelog entry in the underlying data has this structure:
 
 ## Data Source
 
-The changelog data is loaded from `/CHANGELOG.json` at the repository root. This file follows the schema defined in `/changelog.schema.json` and is updated when user-facing features, bug fixes, or breaking changes are shipped. Internal refactors, test changes, and dependency bumps are not recorded in the changelog.
+The changelog data is sourced from one JSON file per entry under `changelog/entries/` at the repository root. A small aggregator (`scripts/build-changelog.mjs`) rolls them up into a generated `CHANGELOG.json` validated against `/changelog.schema.json`. Entries are added when user-facing features, bug fixes, or breaking changes are shipped. Internal refactors, test changes, and dependency bumps are not recorded in the changelog.

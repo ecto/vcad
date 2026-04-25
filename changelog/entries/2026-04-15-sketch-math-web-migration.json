@@ -1,0 +1,14 @@
+{
+  "id": "2026-04-15-sketch-math-web-migration",
+  "version": "0.8.0",
+  "date": "2026-04-15",
+  "category": "feat",
+  "title": "Web sketch math routed through kernel",
+  "summary": "Plane projection, snap, hit-test, and rectangle/circle builders now come from @vcad/core/sketch-math, a kernel-backed WASM wrapper — SketchPlane3D.tsx and sketch-store.ts no longer own duplicate copies.",
+  "features": [
+    "sketch",
+    "kernel",
+    "wasm",
+    "web"
+  ]
+}

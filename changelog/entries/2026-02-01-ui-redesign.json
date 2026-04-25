@@ -1,0 +1,14 @@
+{
+  "id": "2026-02-01-ui-redesign",
+  "version": "0.8.0",
+  "date": "2026-02-01",
+  "category": "feat",
+  "title": "Redesigned Interface",
+  "summary": "New floating toolbar and inline feature tree. Drag to reorder operations.",
+  "details": "## What's New\n\n- **Floating toolbar** - Tab-based UI with hover-to-open dropdowns\n- **Inline feature tree** - See your model history at a glance\n- **Drag to reorder** - Reorganize operations by dragging\n- **Mobile improvements** - Better touch targets and responsive layout\n- **Adaptive colors** - UI adjusts to background for readability",
+  "features": [
+    "ui",
+    "ux",
+    "toolbar"
+  ]
+}

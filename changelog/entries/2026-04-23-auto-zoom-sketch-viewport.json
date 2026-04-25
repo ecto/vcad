@@ -1,0 +1,13 @@
+{
+  "id": "2026-04-23-auto-zoom-sketch-viewport",
+  "version": "0.9.1",
+  "date": "2026-04-23",
+  "category": "feat",
+  "title": "Auto-zoom viewport to fit populated sketches on open",
+  "summary": "Opening a document that lands in sketch mode with existing segments now frames the sketch automatically instead of defaulting to a fixed 60 mm distance. Skipped when a share URL carries a ?at= viewer-state hint.",
+  "features": [
+    "sketch",
+    "viewport",
+    "camera"
+  ]
+}

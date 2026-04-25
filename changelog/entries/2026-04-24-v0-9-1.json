@@ -1,0 +1,13 @@
+{
+  "id": "2026-04-24-v0-9-1",
+  "version": "0.9.1",
+  "date": "2026-04-24",
+  "category": "feat",
+  "title": "v0.9.1",
+  "summary": "Unified lighting: studio IBL + ACES tonemapping through a canonical render_bake shading path. Sketch mode now lives inside the Builder shell. Short /~<id> doc URLs via nanoid.",
+  "features": [
+    "lighting",
+    "sketch",
+    "app"
+  ]
+}

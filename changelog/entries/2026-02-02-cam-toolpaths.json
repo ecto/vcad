@@ -1,0 +1,14 @@
+{
+  "id": "2026-02-02-cam-toolpaths",
+  "version": "0.8.0",
+  "date": "2026-02-02",
+  "category": "feat",
+  "title": "CAM Toolpath Generation",
+  "summary": "Generate CNC toolpaths for milling. Supports 2D contouring, 3D roughing, and stock simulation.",
+  "details": "## What's New\n\n- **2D contouring** - Profile and pocket operations\n- **3D roughing** - Adaptive clearing with waterline passes\n- **Stock simulation** - Visualize material removal in real-time\n- **Tool library** - Flat, ball, and bull endmills with custom parameters\n- **G-code export** - Ready for your CNC machine",
+  "features": [
+    "cam",
+    "cnc",
+    "manufacturing"
+  ]
+}

@@ -3,9 +3,11 @@
   "packageManager": "npm@10.8.2",
   "workspaces": ["packages/*"],
   "scripts": {
+    "postinstall": "node scripts/build-changelog.mjs",
     "build": "turbo build",
     "test": "turbo test",
     "dev": "turbo dev",
+    "changelog:build": "node scripts/build-changelog.mjs",
     "tauri": "cd crates/vcad-desktop && tauri",
     "tauri:dev": "cd crates/vcad-desktop && tauri dev",
     "tauri:build": "cd crates/vcad-desktop && tauri build",
