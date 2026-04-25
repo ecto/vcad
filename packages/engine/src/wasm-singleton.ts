@@ -83,7 +83,7 @@ async function loadAndInit(): Promise<WasmModule> {
     bindgenStarted = true;
     const hint = wasmInputHint;
     wasmInputHint = undefined;
-    await mod.default(hint);
+    await mod.default(hint ? { module_or_path: hint } : undefined);
   }
 
   wasmModule = mod;

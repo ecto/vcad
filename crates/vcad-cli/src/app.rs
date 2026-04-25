@@ -1259,6 +1259,48 @@ pub fn evaluate_document(doc: &Document) -> Result<Vec<EvaluatedMesh>> {
         .collect())
 }
 
+/// `vcad_eval::Clock` impl backed by `std::time::Instant`. Lives in the CLI
+/// rather than `vcad-eval` so that crate stays free of `std::time` to keep
+/// its WASM build clean.
+struct NativeClock {
+    start: Instant,
+}
+
+impl vcad_eval::Clock for NativeClock {
+    fn now_ms(&self) -> f64 {
+        self.start.elapsed().as_secs_f64() * 1000.0
+    }
+}
+
+/// Evaluate with timing instrumentation. Mirrors the per-node + per-phase
+/// breakdown the browser worker already collects, but headless.
+pub fn evaluate_document_timed(
+    doc: &Document,
+    skip_clash_detection: bool,
+) -> Result<(Vec<EvaluatedMesh>, vcad_eval::EvalTiming)> {
+    let clock: Box<dyn vcad_eval::Clock> = Box::new(NativeClock {
+        start: Instant::now(),
+    });
+    let opts = vcad_eval::EvalOptions {
+        skip_clash_detection,
+        clock: Some(clock),
+    };
+    let scene = vcad_eval::evaluate_document(doc, &opts).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let timing = scene
+        .timing
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("eval did not return timing data"))?;
+    let meshes = scene
+        .parts
+        .into_iter()
+        .map(|p| EvaluatedMesh {
+            vertices: p.mesh.positions,
+            indices: p.mesh.indices,
+        })
+        .collect();
+    Ok((meshes, timing))
+}
+
 /// Run the TUI application.
 pub fn run_tui(file: Option<PathBuf>) -> Result<()> {
     crate::ui::theme::init();

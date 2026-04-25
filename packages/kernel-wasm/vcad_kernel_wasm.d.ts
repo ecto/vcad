@@ -1438,6 +1438,14 @@ export function generate3mf(name: string, vertices: Float32Array, indices: Uint3
 export function generateGcode(result: SliceResult, printer_profile: string, print_temp: number, bed_temp: number): string;
 
 /**
+ * Returns the `WebAssembly.Module` instance backing this kernel-wasm
+ * import. Workers can pass this to `wasm.default({ module_or_path })`
+ * to skip the multi-second recompile of a fresh fetch — see
+ * `packages/engine/src/eval-worker.ts` for the consumer.
+ */
+export function getCompiledModule(): any;
+
+/**
  * Return the full parts manifest JSON for the built-in stdlib.
  *
  * The app consumes this on boot to populate the palette's Parts tab and
@@ -1961,6 +1969,7 @@ export interface InitOutput {
     readonly solid_chamfer: (a: number, b: number) => number;
     readonly solid_fillet: (a: number, b: number) => number;
     readonly solid_shell: (a: number, b: number) => number;
+    readonly getCompiledModule: () => any;
     readonly __wbg_get_slicersettings_first_layer_height: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_density: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_pattern: (a: number) => number;

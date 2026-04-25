@@ -15,7 +15,9 @@ import { Header } from "@/components/Header";
 import { StatusBar } from "@/components/StatusBar";
 import { ToolPalette } from "@/components/ToolPalette";
 import { ToolDialogs } from "@/components/ToolDialogs";
-import { Viewport } from "@/components/Viewport";
+// Viewport is the heaviest module in the bundle (~1MB after gzip): it pulls in
+// three, @react-three/fiber, and @react-three/drei. Lazy-loading it lets the
+// splash render and WASM start fetching before we pay the parse cost.
 import { FeatureTree } from "@/components/FeatureTree";
 import { MobileShell } from "@/components/mobile/MobileShell";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -62,6 +64,7 @@ const WhatsNewPanel = lazyWithRetry(() => import("@/components/WhatsNewPanel").t
 const ElectronicsToolbar = lazyWithRetry(() => import("@/components/electronics/ElectronicsToolbar").then(m => ({ default: m.ElectronicsToolbar })), "ElectronicsToolbar");
 const ElectronicsStatusPanel = lazyWithRetry(() => import("@/components/electronics/ElectronicsStatusPanel").then(m => ({ default: m.ElectronicsStatusPanel })), "ElectronicsStatusPanel");
 const EmbroideryPanel = lazyWithRetry(() => import("@/components/embroidery").then(m => ({ default: m.EmbroideryPanel })), "EmbroideryPanel");
+const Viewport = lazyWithRetry(() => import("@/components/Viewport").then(m => ({ default: m.Viewport })), "Viewport");
 
 import {
   useSketchStore,
@@ -740,7 +743,9 @@ export function App() {
 
   const viewportStack = (
     <>
-      <Viewport />
+      <Suspense fallback={null}>
+        <Viewport />
+      </Suspense>
 
       {/* Read-only share banner — fixed to the top of the viewport region */}
       <div className="absolute inset-x-0 top-0 z-30 pointer-events-none">

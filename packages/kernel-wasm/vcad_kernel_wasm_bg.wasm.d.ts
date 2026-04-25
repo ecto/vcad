@@ -116,6 +116,7 @@ export const solid_circularPattern: (a: number, b: number, c: number, d: number,
 export const solid_chamfer: (a: number, b: number) => number;
 export const solid_fillet: (a: number, b: number) => number;
 export const solid_shell: (a: number, b: number) => number;
+export const getCompiledModule: () => any;
 export const __wbg_get_slicersettings_first_layer_height: (a: number) => number;
 export const __wbg_get_slicersettings_infill_density: (a: number) => number;
 export const __wbg_get_slicersettings_infill_pattern: (a: number) => number;
