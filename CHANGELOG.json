@@ -2,6 +2,15 @@
   "$schema": "./changelog.schema.json",
   "entries": [
     {
+      "id": "2026-04-25-i18n-coverage-expansion",
+      "version": "0.9.3",
+      "date": "2026-04-25",
+      "category": "feat",
+      "title": "Expanded i18n coverage across modals, panels, and tutorials",
+      "summary": "About modal, guided tutorial, error screens, offline indicator, fork prompt, recent files, command palette, property panel, and feature tree now route through i18n. English, Spanish, and French translations were added for all newly-covered strings.",
+      "features": ["i18n", "spanish", "french"]
+    },
+    {
       "id": "2026-04-25-french-ui-translation",
       "version": "0.9.3",
       "date": "2026-04-25",

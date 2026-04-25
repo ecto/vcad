@@ -2,32 +2,34 @@ import { X } from "@phosphor-icons/react/dist/ssr/X";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useOnboardingStore, type GuidedFlowStep } from "@/stores/onboarding-store";
+import { t, type TranslationKey } from "@vcad/core";
+import { useLocaleStore } from "@/stores/locale-store";
 
 interface StepInfo {
-  instruction: string;
-  detail?: string;
+  instructionKey: TranslationKey;
+  detailKey?: TranslationKey;
 }
 
 const STEP_INFO: Record<Exclude<GuidedFlowStep, null>, StepInfo> = {
   "add-cube": {
-    instruction: "Open Create → click Box",
-    detail: "Add your first shape to the scene",
+    instructionKey: "tutorial.add_cube.instruction",
+    detailKey: "tutorial.add_cube.detail",
   },
   "add-cylinder": {
-    instruction: "Open Create → add a Cylinder",
-    detail: "We'll subtract this from the cube",
+    instructionKey: "tutorial.add_cylinder.instruction",
+    detailKey: "tutorial.add_cylinder.detail",
   },
   "position-cylinder": {
-    instruction: "Move the cylinder up",
-    detail: "Drag the green arrow on the gizmo",
+    instructionKey: "tutorial.position_cylinder.instruction",
+    detailKey: "tutorial.position_cylinder.detail",
   },
   subtract: {
-    instruction: "Open Combine → click Difference",
-    detail: "Select both parts first (⌘-click or drag)",
+    instructionKey: "tutorial.subtract.instruction",
+    detailKey: "tutorial.subtract.detail",
   },
   celebrate: {
-    instruction: "You made your first part!",
-    detail: "You've learned the CSG workflow",
+    instructionKey: "tutorial.celebrate.instruction",
+    detailKey: "tutorial.celebrate.detail",
   },
 };
 
@@ -44,6 +46,7 @@ export function GuidedFlowOverlay() {
   const guidedFlowStep = useOnboardingStore((s) => s.guidedFlowStep);
   const skipGuidedFlow = useOnboardingStore((s) => s.skipGuidedFlow);
   const completeGuidedFlow = useOnboardingStore((s) => s.completeGuidedFlow);
+  useLocaleStore((s) => s.locale);
 
   if (!guidedFlowActive || !guidedFlowStep) return null;
 
@@ -68,7 +71,7 @@ export function GuidedFlowOverlay() {
           <button
             onClick={skipGuidedFlow}
             className="absolute right-2 top-2 p-1 text-text-muted hover:text-text"
-            aria-label="Skip tutorial"
+            aria-label={t("tutorial.skip")}
           >
             <X size={12} />
           </button>
@@ -76,9 +79,9 @@ export function GuidedFlowOverlay() {
 
         {/* Instruction */}
         <div className="text-center">
-          <p className="text-sm font-medium text-text">{stepInfo.instruction}</p>
-          {stepInfo.detail && (
-            <p className="text-xs text-text-muted mt-0.5">{stepInfo.detail}</p>
+          <p className="text-sm font-medium text-text">{t(stepInfo.instructionKey)}</p>
+          {stepInfo.detailKey && (
+            <p className="text-xs text-text-muted mt-0.5">{t(stepInfo.detailKey)}</p>
           )}
         </div>
 
@@ -103,7 +106,7 @@ export function GuidedFlowOverlay() {
         {isCelebrate && (
           <div className="flex gap-2 mt-1">
             <Button size="sm" onClick={completeGuidedFlow}>
-              Start Building
+              {t("tutorial.start_building")}
             </Button>
           </div>
         )}
@@ -114,7 +117,7 @@ export function GuidedFlowOverlay() {
             onClick={skipGuidedFlow}
             className="text-[10px] text-text-muted hover:text-text"
           >
-            skip tutorial
+            {t("tutorial.skip_short")}
           </button>
         )}
       </div>

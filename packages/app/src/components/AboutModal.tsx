@@ -8,45 +8,52 @@ import { GithubLogo } from "@phosphor-icons/react/dist/ssr/GithubLogo";
 import { Book } from "@phosphor-icons/react/dist/ssr/Book";
 import { ChatCircle } from "@phosphor-icons/react/dist/ssr/ChatCircle";
 import { cn } from "@/lib/utils";
-import { useDocumentStore, useSketchStore, useUiStore } from "@vcad/core";
+import { useDocumentStore, useSketchStore, useUiStore, t, type TranslationKey } from "@vcad/core";
+import { useLocaleStore } from "@/stores/locale-store";
 import { useChangelogStore } from "@/stores/changelog-store";
 
-const QUICK_ACTIONS = [
+const QUICK_ACTIONS: {
+  id: string;
+  icon: typeof Cube;
+  labelKey: TranslationKey;
+  descKey: TranslationKey;
+  color: string;
+}[] = [
   {
     id: "primitive",
     icon: Cube,
-    label: "Add a shape",
-    desc: "Box, cylinder, sphere",
+    labelKey: "modal.about.action.shape",
+    descKey: "modal.about.action.shape_desc",
     color: "text-emerald-400",
   },
   {
     id: "sketch",
     icon: PencilSimple,
-    label: "Start a sketch",
-    desc: "Draw 2D → extrude to 3D",
+    labelKey: "modal.about.action.sketch",
+    descKey: "modal.about.action.sketch_desc",
     color: "text-blue-400",
   },
   {
     id: "open",
     icon: FolderOpen,
-    label: "Open file",
-    desc: ".vcad, .step, .stl",
+    labelKey: "modal.about.action.open",
+    descKey: "modal.about.action.open_desc",
     color: "text-amber-400",
   },
   {
     id: "tutorial",
     icon: Play,
-    label: "Quick tutorial",
-    desc: "Learn the basics",
+    labelKey: "modal.about.action.tutorial",
+    descKey: "modal.about.action.tutorial_desc",
     color: "text-violet-400",
   },
 ];
 
-const KEY_HINTS = [
-  { keys: "⌘K", desc: "Chat & commands" },
-  { keys: "1-7", desc: "Switch toolbar tabs" },
-  { keys: "M R S", desc: "Move, Rotate, Scale" },
-  { keys: "⌘⇧U D I", desc: "Boolean ops (2 selected)" },
+const KEY_HINTS: { keys: string; descKey: TranslationKey }[] = [
+  { keys: "⌘K", descKey: "modal.about.keyhint.palette" },
+  { keys: "1-7", descKey: "modal.about.keyhint.tabs" },
+  { keys: "M R S", descKey: "modal.about.keyhint.transform" },
+  { keys: "⌘⇧U D I", descKey: "modal.about.keyhint.boolean" },
 ];
 
 export function AboutModal({
@@ -61,6 +68,7 @@ export function AboutModal({
   const setTransformMode = useUiStore((s) => s.setTransformMode);
   const enterSketchMode = useSketchStore((s) => s.enterSketchMode);
   const openWhatsNew = useChangelogStore((s) => s.openPanel);
+  useLocaleStore((s) => s.locale);
 
   function handleAction(id: string) {
     onOpenChange(false);
@@ -106,7 +114,7 @@ export function AboutModal({
               vcad<span className="text-brand">.</span>
             </Dialog.Title>
             <p className="text-sm text-text-muted">
-              Parametric CAD for everyone
+              {t("modal.about.tagline")}
             </p>
           </div>
 
@@ -122,8 +130,8 @@ export function AboutModal({
                 )}
               >
                 <action.icon size={20} className={action.color} />
-                <span className="text-sm font-medium text-text">{action.label}</span>
-                <span className="text-xs text-text-muted">{action.desc}</span>
+                <span className="text-sm font-medium text-text">{t(action.labelKey)}</span>
+                <span className="text-xs text-text-muted">{t(action.descKey)}</span>
               </button>
             ))}
           </div>
@@ -135,7 +143,7 @@ export function AboutModal({
                 <kbd className="px-1.5 py-0.5 bg-bg text-[10px] font-mono">
                   {hint.keys}
                 </kbd>
-                <span>{hint.desc}</span>
+                <span>{t(hint.descKey)}</span>
               </div>
             ))}
           </div>
@@ -158,7 +166,7 @@ export function AboutModal({
               className="flex items-center gap-1.5 text-text-muted hover:text-text transition-colors"
             >
               <Book size={14} />
-              <span>Docs</span>
+              <span>{t("modal.about.docs")}</span>
             </a>
             <a
               href="https://discord.gg/vcad"
@@ -175,7 +183,7 @@ export function AboutModal({
                 onOpenChange(false);
               }}
               className="text-text-muted/50 hover:text-brand transition-colors"
-              title="What's new"
+              title={t("modal.about.whats_new")}
             >
               v{__APP_VERSION__}
             </button>
@@ -183,9 +191,9 @@ export function AboutModal({
 
           {/* Legal */}
           <div className="mt-4 flex items-center justify-center gap-4 text-[11px] text-text-muted/60">
-            <a href="/privacy" className="hover:text-text-muted transition-colors">Privacy</a>
-            <a href="/terms" className="hover:text-text-muted transition-colors">Terms</a>
-            <a href="/security" className="hover:text-text-muted transition-colors">Security</a>
+            <a href="/privacy" className="hover:text-text-muted transition-colors">{t("footer.privacy")}</a>
+            <a href="/terms" className="hover:text-text-muted transition-colors">{t("footer.terms")}</a>
+            <a href="/security" className="hover:text-text-muted transition-colors">{t("footer.security")}</a>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

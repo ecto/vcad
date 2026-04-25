@@ -8,8 +8,8 @@ function BackButton() {
     <button
       onClick={() => setSidebarPane("tree")}
       className="flex h-6 w-6 -ml-1 shrink-0 items-center justify-center text-text-muted hover:text-text hover:bg-hover"
-      aria-label="Back to tree"
-      title="Back to tree"
+      aria-label={t("panel.back_to_tree")}
+      title={t("panel.back_to_tree")}
     >
       <CaretLeft size={14} />
     </button>
@@ -17,7 +17,8 @@ function BackButton() {
 }
 import { Tooltip } from "@/components/ui/tooltip";
 import { ScrubInput } from "@/components/ui/scrub-input";
-import { useDocumentStore, useUiStore, isPrimitivePart, isBooleanPart, isSweepPart, isEmbroideryPatternPart, isStitchPart, isPcbBoardPart, isExtrudePart, isRevolvePart, isFilletPart, isChamferPart, isShellPart, isLinearPatternPart, isCircularPatternPart, isLoftPart, isTextPart, isMirrorPart, f64, vec3, bool } from "@vcad/core";
+import { useDocumentStore, useUiStore, isPrimitivePart, isBooleanPart, isSweepPart, isEmbroideryPatternPart, isStitchPart, isPcbBoardPart, isExtrudePart, isRevolvePart, isFilletPart, isChamferPart, isShellPart, isLinearPatternPart, isCircularPatternPart, isLoftPart, isTextPart, isMirrorPart, f64, vec3, bool, t, tFmt } from "@vcad/core";
+import { useLocaleStore } from "@/stores/locale-store";
 import { useElectronicsStore } from "@/stores/electronics-store";
 import { useEmbroideryStore } from "@/stores/embroidery-store";
 import type { PartInfo, PrimitivePartInfo, BooleanPartInfo, BooleanType, SweepPartInfo, ExtrudePartInfo, RevolvePartInfo, FilletPartInfo, ChamferPartInfo, ShellPartInfo, LinearPatternPartInfo, CircularPatternPartInfo, LoftPartInfo, TextPartInfo, MirrorPartInfo } from "@vcad/core";
@@ -72,7 +73,7 @@ function MaterialPicker({ partId }: { partId: string }) {
 
   return (
     <div>
-      <SectionHeader tooltip="Assign a material to this part">Material</SectionHeader>
+      <SectionHeader tooltip={t("panel.tooltip.material")}>{t("panel.section.material")}</SectionHeader>
       <MaterialSelector
         partId={partId}
         currentMaterialKey={currentMaterial}
@@ -93,7 +94,7 @@ function PositionSection({
 
   return (
     <div>
-      <SectionHeader tooltip="Position offset from origin (mm)">Position</SectionHeader>
+      <SectionHeader tooltip={t("panel.tooltip.position")}>{t("panel.section.position")}</SectionHeader>
       <div className="space-y-0.5">
         <ScrubInput
           label="X"
@@ -129,7 +130,7 @@ function RotationSection({
 
   return (
     <div>
-      <SectionHeader tooltip="Rotation angles around each axis (degrees)">Rotation</SectionHeader>
+      <SectionHeader tooltip={t("panel.tooltip.rotation")}>{t("panel.section.rotation")}</SectionHeader>
       <div className="space-y-0.5">
         <ScrubInput
           label="X"
@@ -168,7 +169,7 @@ function ScaleSection({
 
   return (
     <div>
-      <SectionHeader tooltip="Scale factor along each axis">Scale</SectionHeader>
+      <SectionHeader tooltip={t("panel.tooltip.scale")}>{t("panel.section.scale")}</SectionHeader>
       <div className="space-y-0.5">
         <ScrubInput
           label="X"
@@ -204,7 +205,7 @@ function CubeDimensions({ part }: { part: PrimitivePartInfo }) {
 
   return (
     <div>
-      <SectionHeader tooltip="Width, height, and depth of the box (mm)">Dimensions</SectionHeader>
+      <SectionHeader tooltip={t("panel.tooltip.dimensions_box")}>{t("panel.section.dimensions")}</SectionHeader>
       <div className="space-y-0.5">
         <ScrubInput
           label="W"
@@ -249,7 +250,7 @@ function CylinderDimensions({ part }: { part: PrimitivePartInfo }) {
 
   return (
     <div>
-      <SectionHeader tooltip="Radius and height of the cylinder (mm)">Dimensions</SectionHeader>
+      <SectionHeader tooltip={t("panel.tooltip.dimensions_cylinder")}>{t("panel.section.dimensions")}</SectionHeader>
       <div className="space-y-0.5">
         <ScrubInput
           label="R"
@@ -281,7 +282,7 @@ function SphereDimensions({ part }: { part: PrimitivePartInfo }) {
 
   return (
     <div>
-      <SectionHeader tooltip="Radius of the sphere (mm)">Dimensions</SectionHeader>
+      <SectionHeader tooltip={t("panel.tooltip.dimensions_sphere")}>{t("panel.section.dimensions")}</SectionHeader>
       <div className="space-y-0.5">
         <ScrubInput
           label="R"
@@ -484,15 +485,15 @@ function BooleanProperties({ part }: { part: BooleanPartInfo }) {
 
   return (
     <div>
-      <SectionHeader>Operation</SectionHeader>
+      <SectionHeader>{t("panel.section.operation")}</SectionHeader>
       <select
         value={part.booleanType}
         onChange={(e) => updateBooleanType(part.id, e.target.value as BooleanType)}
         className="w-full text-xs bg-hover border border-border rounded px-2 py-1 text-text focus:outline-none focus:border-brand"
       >
-        <option value="union">Union</option>
-        <option value="difference">Difference</option>
-        <option value="intersection">Intersection</option>
+        <option value="union">{t("bool.union")}</option>
+        <option value="difference">{t("bool.difference")}</option>
+        <option value="intersection">{t("bool.intersection")}</option>
       </select>
     </div>
   );
@@ -513,7 +514,7 @@ function ExtrudeProperties({ part }: { part: ExtrudePartInfo }) {
   return (
     <div className="space-y-3">
       <div>
-        <SectionHeader tooltip="Extrusion depth along direction vector">Depth</SectionHeader>
+        <SectionHeader tooltip="Extrusion depth along direction vector">{t("panel.section.depth")}</SectionHeader>
         <ScrubInput
           label="Depth"
           value={depth}
@@ -525,7 +526,7 @@ function ExtrudeProperties({ part }: { part: ExtrudePartInfo }) {
       </div>
 
       <div>
-        <SectionHeader tooltip="Twist the profile along the extrusion axis">Twist</SectionHeader>
+        <SectionHeader tooltip="Twist the profile along the extrusion axis">{t("panel.section.twist")}</SectionHeader>
         <ScrubInput
           label="Angle"
           value={(op.twist_angle ?? 0) * (180 / Math.PI)}
@@ -537,7 +538,7 @@ function ExtrudeProperties({ part }: { part: ExtrudePartInfo }) {
       </div>
 
       <div>
-        <SectionHeader tooltip="Scale factor at end of extrusion (1.0 = no taper)">Taper</SectionHeader>
+        <SectionHeader tooltip="Scale factor at end of extrusion (1.0 = no taper)">{t("panel.section.taper")}</SectionHeader>
         <ScrubInput
           label="Scale"
           value={op.scale_end ?? 1}
@@ -564,7 +565,7 @@ function RevolveProperties({ part }: { part: RevolvePartInfo }) {
   return (
     <div className="space-y-3">
       <div>
-        <SectionHeader tooltip="Angle of revolution (degrees)">Angle</SectionHeader>
+        <SectionHeader tooltip="Angle of revolution (degrees)">{t("panel.section.angle")}</SectionHeader>
         <ScrubInput
           label="Angle"
           value={op.angle_deg}
@@ -578,7 +579,7 @@ function RevolveProperties({ part }: { part: RevolvePartInfo }) {
       </div>
 
       <div>
-        <SectionHeader tooltip="Editing not yet supported">Axis</SectionHeader>
+        <SectionHeader tooltip={t("panel.tooltip.mirror_readonly")}>{t("panel.section.axis")}</SectionHeader>
         <div className="space-y-0.5">
           <ReadOnlyParam label="X" value={op.axis_dir.x.toFixed(2)} tooltip="Editing not yet supported" />
           <ReadOnlyParam label="Y" value={op.axis_dir.y.toFixed(2)} tooltip="Editing not yet supported" />
@@ -599,7 +600,7 @@ function FilletProperties({ part }: { part: FilletPartInfo }) {
 
   return (
     <div>
-      <SectionHeader tooltip="Fillet radius (mm)">Radius</SectionHeader>
+      <SectionHeader tooltip={t("panel.tooltip.fillet_radius")}>{t("panel.section.radius")}</SectionHeader>
       <ScrubInput
         label="R"
         value={node.op.radius}
@@ -623,7 +624,7 @@ function ChamferProperties({ part }: { part: ChamferPartInfo }) {
 
   return (
     <div>
-      <SectionHeader tooltip="Chamfer distance (mm)">Distance</SectionHeader>
+      <SectionHeader tooltip={t("panel.tooltip.chamfer_distance")}>{t("panel.section.distance")}</SectionHeader>
       <ScrubInput
         label="D"
         value={node.op.distance}
@@ -647,7 +648,7 @@ function ShellProperties({ part }: { part: ShellPartInfo }) {
 
   return (
     <div>
-      <SectionHeader tooltip="Wall thickness (mm)">Thickness</SectionHeader>
+      <SectionHeader tooltip={t("panel.tooltip.shell_thickness")}>{t("panel.section.thickness")}</SectionHeader>
       <ScrubInput
         label="T"
         value={node.op.thickness}
@@ -675,7 +676,7 @@ function LinearPatternProperties({ part }: { part: LinearPatternPartInfo }) {
   return (
     <div className="space-y-3">
       <div>
-        <SectionHeader tooltip="Direction vector for the pattern">Direction</SectionHeader>
+        <SectionHeader tooltip="Direction vector for the pattern">{t("panel.section.direction")}</SectionHeader>
         <div className="space-y-0.5">
           <ScrubInput
             label="X"
@@ -702,7 +703,7 @@ function LinearPatternProperties({ part }: { part: LinearPatternPartInfo }) {
       </div>
 
       <div>
-        <SectionHeader tooltip="Number of copies in the pattern">Count</SectionHeader>
+        <SectionHeader tooltip="Number of copies in the pattern">{t("panel.section.count")}</SectionHeader>
         <ScrubInput
           label="N"
           value={op.count}
@@ -715,7 +716,7 @@ function LinearPatternProperties({ part }: { part: LinearPatternPartInfo }) {
       </div>
 
       <div>
-        <SectionHeader tooltip="Distance between copies (mm)">Spacing</SectionHeader>
+        <SectionHeader tooltip="Distance between copies (mm)">{t("panel.section.spacing")}</SectionHeader>
         <ScrubInput
           label="S"
           value={op.spacing}
@@ -743,7 +744,7 @@ function CircularPatternProperties({ part }: { part: CircularPatternPartInfo }) 
   return (
     <div className="space-y-3">
       <div>
-        <SectionHeader tooltip="Number of copies around the axis">Count</SectionHeader>
+        <SectionHeader tooltip="Number of copies around the axis">{t("panel.section.count")}</SectionHeader>
         <ScrubInput
           label="N"
           value={op.count}
@@ -756,7 +757,7 @@ function CircularPatternProperties({ part }: { part: CircularPatternPartInfo }) 
       </div>
 
       <div>
-        <SectionHeader tooltip="Total angle of the circular pattern (degrees)">Angle</SectionHeader>
+        <SectionHeader tooltip="Total angle of the circular pattern (degrees)">{t("panel.section.angle")}</SectionHeader>
         <ScrubInput
           label="Angle"
           value={op.angle_deg}
@@ -770,7 +771,7 @@ function CircularPatternProperties({ part }: { part: CircularPatternPartInfo }) 
       </div>
 
       <div>
-        <SectionHeader tooltip="Point on the rotation axis">Axis Origin</SectionHeader>
+        <SectionHeader tooltip="Point on the rotation axis">{t("panel.section.axis_origin")}</SectionHeader>
         <div className="space-y-0.5">
           <ScrubInput
             label="X"
@@ -797,7 +798,7 @@ function CircularPatternProperties({ part }: { part: CircularPatternPartInfo }) 
       </div>
 
       <div>
-        <SectionHeader tooltip="Direction of the rotation axis">Axis Direction</SectionHeader>
+        <SectionHeader tooltip="Direction of the rotation axis">{t("panel.section.axis_dir")}</SectionHeader>
         <div className="space-y-0.5">
           <ScrubInput
             label="X"
@@ -839,7 +840,7 @@ function LoftProperties({ part }: { part: LoftPartInfo }) {
     <div className="space-y-3">
       {/* Profile sketch references */}
       <div>
-        <SectionHeader tooltip="Loft connects multiple sketch profiles">Profiles</SectionHeader>
+        <SectionHeader tooltip="Loft connects multiple sketch profiles">{t("panel.section.profiles")}</SectionHeader>
         <div className="space-y-0.5">
           {op.sketches.map((sketchId, i) => (
             <ReadOnlyParam
@@ -854,7 +855,7 @@ function LoftProperties({ part }: { part: LoftPartInfo }) {
 
       {/* Closed toggle */}
       <div>
-        <SectionHeader tooltip="Connect last profile back to first">Closed</SectionHeader>
+        <SectionHeader tooltip="Connect last profile back to first">{t("panel.section.closed")}</SectionHeader>
         <label className="flex items-center gap-2 text-xs text-text cursor-pointer">
           <input
             type="checkbox"
@@ -893,12 +894,12 @@ function TextProperties({ part }: { part: TextPartInfo }) {
   return (
     <div className="space-y-3">
       <div>
-        <SectionHeader tooltip="The text content">Text</SectionHeader>
+        <SectionHeader tooltip="The text content">{t("panel.section.text")}</SectionHeader>
         <ReadOnlyParam label="" value={op.text} tooltip="Editing not yet supported" />
       </div>
 
       <div>
-        <SectionHeader tooltip="Text height in mm">Size</SectionHeader>
+        <SectionHeader tooltip="Text height in mm">{t("panel.section.size")}</SectionHeader>
         <ScrubInput
           label="H"
           value={op.height}
@@ -912,7 +913,7 @@ function TextProperties({ part }: { part: TextPartInfo }) {
 
       {extrudeOp && (
         <div>
-          <SectionHeader tooltip="Extrusion depth (mm)">Depth</SectionHeader>
+          <SectionHeader tooltip="Extrusion depth (mm)">{t("panel.section.depth")}</SectionHeader>
           <ScrubInput
             label="D"
             value={depth}
@@ -926,7 +927,7 @@ function TextProperties({ part }: { part: TextPartInfo }) {
       )}
 
       <div>
-        <SectionHeader tooltip="Spacing between letters">Spacing</SectionHeader>
+        <SectionHeader tooltip="Spacing between letters">{t("panel.section.spacing")}</SectionHeader>
         <ScrubInput
           label="Letter"
           value={op.letter_spacing ?? 1}
@@ -938,7 +939,7 @@ function TextProperties({ part }: { part: TextPartInfo }) {
       </div>
 
       <div>
-        <SectionHeader>Font</SectionHeader>
+        <SectionHeader>{t("panel.section.font")}</SectionHeader>
         <ReadOnlyParam label="" value={op.font} tooltip="Editing not yet supported" />
       </div>
     </div>
@@ -949,8 +950,8 @@ function MirrorProperties(props: { part: MirrorPartInfo }) {
   void props.part;
   return (
     <div>
-      <SectionHeader tooltip="Editing not yet supported">Mirror</SectionHeader>
-      <div className="text-xs text-text-muted">Mirror plane parameters are read-only</div>
+      <SectionHeader tooltip={t("panel.tooltip.mirror_readonly")}>{t("panel.section.mirror")}</SectionHeader>
+      <div className="text-xs text-text-muted">{t("panel.mirror_readonly")}</div>
     </div>
   );
 }
@@ -972,7 +973,7 @@ function InstanceMaterialPicker({ instanceId }: { instanceId: string }) {
   // The selector will call setInstanceMaterial internally when detecting an instance ID pattern
   return (
     <div>
-      <SectionHeader tooltip="Assign a material to this instance">Material</SectionHeader>
+      <SectionHeader tooltip={t("panel.tooltip.material_instance")}>{t("panel.section.material")}</SectionHeader>
       <InstanceMaterialSelector
         instanceId={instanceId}
         currentMaterialKey={currentMaterial}
@@ -983,28 +984,28 @@ function InstanceMaterialPicker({ instanceId }: { instanceId: string }) {
 
 function InstancePositionSection({ instance }: { instance: PartInstance }) {
   const setInstanceTransform = useDocumentStore((s) => s.setInstanceTransform);
-  const t = instance.transform ?? identityTransform();
+  const xform = instance.transform ?? identityTransform();
 
   return (
     <div>
-      <SectionHeader tooltip="Position in world space (mm)">Position</SectionHeader>
+      <SectionHeader tooltip={t("panel.tooltip.position_world")}>{t("panel.section.position")}</SectionHeader>
       <div className="space-y-0.5">
         <ScrubInput
           label="X"
-          value={t.translation.x}
-          onChange={(v) => setInstanceTransform(instance.id, { ...t, translation: { ...t.translation, x: v } })}
+          value={xform.translation.x}
+          onChange={(v) => setInstanceTransform(instance.id, { ...xform, translation: { ...xform.translation, x: v } })}
           unit="mm"
         />
         <ScrubInput
           label="Y"
-          value={t.translation.y}
-          onChange={(v) => setInstanceTransform(instance.id, { ...t, translation: { ...t.translation, y: v } })}
+          value={xform.translation.y}
+          onChange={(v) => setInstanceTransform(instance.id, { ...xform, translation: { ...xform.translation, y: v } })}
           unit="mm"
         />
         <ScrubInput
           label="Z"
-          value={t.translation.z}
-          onChange={(v) => setInstanceTransform(instance.id, { ...t, translation: { ...t.translation, z: v } })}
+          value={xform.translation.z}
+          onChange={(v) => setInstanceTransform(instance.id, { ...xform, translation: { ...xform.translation, z: v } })}
           unit="mm"
         />
       </div>
@@ -1014,31 +1015,31 @@ function InstancePositionSection({ instance }: { instance: PartInstance }) {
 
 function InstanceRotationSection({ instance }: { instance: PartInstance }) {
   const setInstanceTransform = useDocumentStore((s) => s.setInstanceTransform);
-  const t = instance.transform ?? identityTransform();
+  const xform = instance.transform ?? identityTransform();
 
   return (
     <div>
-      <SectionHeader tooltip="Rotation angles in world space (degrees)">Rotation</SectionHeader>
+      <SectionHeader tooltip={t("panel.tooltip.rotation_world")}>{t("panel.section.rotation")}</SectionHeader>
       <div className="space-y-0.5">
         <ScrubInput
           label="X"
-          value={t.rotation.x}
+          value={xform.rotation.x}
           step={1}
-          onChange={(v) => setInstanceTransform(instance.id, { ...t, rotation: { ...t.rotation, x: v } })}
+          onChange={(v) => setInstanceTransform(instance.id, { ...xform, rotation: { ...xform.rotation, x: v } })}
           unit="°"
         />
         <ScrubInput
           label="Y"
-          value={t.rotation.y}
+          value={xform.rotation.y}
           step={1}
-          onChange={(v) => setInstanceTransform(instance.id, { ...t, rotation: { ...t.rotation, y: v } })}
+          onChange={(v) => setInstanceTransform(instance.id, { ...xform, rotation: { ...xform.rotation, y: v } })}
           unit="°"
         />
         <ScrubInput
           label="Z"
-          value={t.rotation.z}
+          value={xform.rotation.z}
           step={1}
-          onChange={(v) => setInstanceTransform(instance.id, { ...t, rotation: { ...t.rotation, z: v } })}
+          onChange={(v) => setInstanceTransform(instance.id, { ...xform, rotation: { ...xform.rotation, z: v } })}
           unit="°"
         />
       </div>
@@ -1083,7 +1084,7 @@ function InstancePropertiesPanel({ instance }: { instance: PartInstance }) {
       <div className="flex-1 overflow-y-auto p-3 space-y-1 scrollbar-thin">
         {/* Part definition (read-only) */}
         <div>
-          <SectionHeader>Part Definition</SectionHeader>
+          <SectionHeader>{t("panel.section.part_def")}</SectionHeader>
           <div className="text-xs text-text">{partDef?.name ?? instance.partDefId}</div>
         </div>
         <Divider />
@@ -1102,11 +1103,11 @@ function InstancePropertiesPanel({ instance }: { instance: PartInstance }) {
 
 function getJointTypeLabel(kind: JointKind): string {
   switch (kind.type) {
-    case "Fixed": return "Fixed";
-    case "Revolute": return "Revolute";
-    case "Slider": return "Slider";
-    case "Cylindrical": return "Cylindrical";
-    case "Ball": return "Ball";
+    case "Fixed": return t("joint.fixed");
+    case "Revolute": return t("joint.revolute");
+    case "Slider": return t("joint.slider");
+    case "Cylindrical": return t("joint.cylindrical");
+    case "Ball": return t("joint.ball");
   }
 }
 
@@ -1146,7 +1147,7 @@ function JointStateSlider({ joint }: { joint: Joint }) {
 
   return (
     <div>
-      <SectionHeader tooltip="Current joint state value">State</SectionHeader>
+      <SectionHeader tooltip="Current joint state value">{t("panel.section.state")}</SectionHeader>
       <div className="flex items-center gap-2">
         <input
           type="range"
@@ -1182,10 +1183,10 @@ function JointPropertiesPanel({ joint }: { joint: Joint }) {
 
   const parentName = joint.parentInstanceId
     ? instancesById.get(joint.parentInstanceId)?.name ?? joint.parentInstanceId
-    : "Ground";
+    : t("panel.ground");
   const childInstance = instancesById.get(joint.childInstanceId);
   const childName = childInstance?.name ?? joint.childInstanceId;
-  const displayName = joint.name ?? `${getJointTypeLabel(joint.kind)} Joint`;
+  const displayName = joint.name ?? `${getJointTypeLabel(joint.kind)} ${t("joint.suffix")}`;
 
   return (
     <div
@@ -1217,19 +1218,19 @@ function JointPropertiesPanel({ joint }: { joint: Joint }) {
       <div className="flex-1 overflow-y-auto p-3 space-y-1 scrollbar-thin">
         {/* Joint type (read-only) */}
         <div>
-          <SectionHeader>Type</SectionHeader>
+          <SectionHeader>{t("panel.section.type")}</SectionHeader>
           <div className="text-xs text-text">{getJointTypeLabel(joint.kind)}</div>
         </div>
         <Divider />
 
         {/* Connection info */}
         <div>
-          <SectionHeader>Connection</SectionHeader>
+          <SectionHeader>{t("panel.section.connection")}</SectionHeader>
           <div className="text-xs text-text">
-            <span className="text-text-muted">Parent:</span> {parentName}
+            <span className="text-text-muted">{t("panel.parent")}</span> {parentName}
           </div>
           <div className="text-xs text-text">
-            <span className="text-text-muted">Child:</span> {childName}
+            <span className="text-text-muted">{t("panel.child")}</span> {childName}
           </div>
         </div>
         <Divider />
@@ -1251,6 +1252,7 @@ export function PropertyPanel() {
   const parts = useDocumentStore((s) => s.parts);
   const document = useDocumentStore((s) => s.document);
   const panelRef = useRef<HTMLDivElement>(null);
+  useLocaleStore((s) => s.locale);
 
   // Close panel on Escape
   useEffect(() => {
@@ -1299,7 +1301,7 @@ export function PropertyPanel() {
           <div className="flex items-center gap-2 min-w-0">
             <BackButton />
             <span className="text-xs font-medium text-text">
-              {selectedPartIds.size} parts selected
+              {tFmt("panel.parts_selected", { count: String(selectedPartIds.size) })}
             </span>
           </div>
           <button
@@ -1310,7 +1312,7 @@ export function PropertyPanel() {
           </button>
         </div>
         <div className="p-3 text-[10px] text-text-muted">
-          Select a single part to edit properties
+          {t("panel.select_single")}
         </div>
       </div>
     );
@@ -1494,7 +1496,7 @@ export function PropertyPanel() {
                 bg-brand/10 text-brand border border-brand/30
                 hover:bg-brand/20 transition-colors"
             >
-              Edit Circuit
+              {t("panel.edit_circuit")}
             </button>
             <Divider />
           </>
@@ -1510,7 +1512,7 @@ export function PropertyPanel() {
                 bg-brand/10 text-brand border border-brand/30
                 hover:bg-brand/20 transition-colors"
             >
-              Open Embroidery Panel
+              {t("panel.open_embroidery")}
             </button>
             <EmbroideryProperties part={part} />
             <Divider />

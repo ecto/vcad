@@ -38,8 +38,9 @@ import { useNotificationStore } from "@/stores/notification-store";
 import { useRequireAuth, AuthModal, useAuthStore } from "@vcad/auth";
 import { useOnboardingStore } from "@/stores/onboarding-store";
 import type { Command } from "@vcad/core";
-import { useUiStore, useDocumentStore, parseVcadFile, useChatStore } from "@vcad/core";
+import { useUiStore, useDocumentStore, parseVcadFile, useChatStore, t } from "@vcad/core";
 import type { SelectionContext } from "@vcad/core";
+import { useLocaleStore } from "@/stores/locale-store";
 import { useAppCommands } from "@/hooks/useAppCommands";
 import { cn } from "@/lib/utils";
 import { examples, exampleToVcadFile, type Example } from "@/data/examples";
@@ -163,6 +164,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
   const select = useUiStore((s) => s.select);
   const setTransformMode = useUiStore((s) => s.setTransformMode);
+  useLocaleStore((s) => s.locale);
 
   const dismissPalette = useCallback(() => onOpenChange(false), [onOpenChange]);
   const commands = useAppCommands({
@@ -317,7 +319,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
         onOpenChange(false);
       } catch (err) {
         console.error("Failed to parse file:", err);
-        useNotificationStore.getState().addToast("Failed to load file", "error");
+        useNotificationStore.getState().addToast(t("palette.failed_to_load"), "error");
       }
     };
     reader.readAsText(file);
@@ -428,7 +430,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
           aria-describedby={undefined}
         >
           <VisuallyHidden>
-            <Dialog.Title>Command Palette</Dialog.Title>
+            <Dialog.Title>{t("palette.title")}</Dialog.Title>
           </VisuallyHidden>
           <div className="flex items-center gap-2 border-b border-border px-3 py-2">
             <MagnifyingGlass size={16} className="text-text-muted" />
@@ -437,7 +439,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Type a command or describe what to create..."
+              placeholder={t("palette.placeholder")}
               className="flex-1 bg-transparent text-sm text-text outline-none placeholder:text-text-muted"
               autoFocus
             />
@@ -457,7 +459,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
             {aiGenerating && (
               <div className="flex items-center gap-3 px-3 py-4 border-b border-border mb-1">
                 <SpinnerGap size={16} className="text-brand animate-spin" />
-                <span className="text-sm text-text-muted">{aiStatus || "Generating..."}</span>
+                <span className="text-sm text-text-muted">{aiStatus || t("palette.generating")}</span>
               </div>
             )}
 
@@ -470,14 +472,14 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
                     vcad<span className="text-brand">.</span>
                   </h1>
                   <p className="text-[10px] text-text-muted">
-                    free parametric cad for everyone
+                    {t("welcome.tagline")}
                   </p>
                 </div>
 
                 {/* Quick actions */}
                 <div className="px-3 py-1.5">
                   <span className="text-[10px] font-medium text-text-muted uppercase tracking-wider">
-                    Get Started
+                    {t("palette.section.get_started")}
                   </span>
                 </div>
                 <button
@@ -485,23 +487,23 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
                   className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-border/30"
                 >
                   <Plus size={16} className="shrink-0 text-brand" />
-                  <span className="flex-1">New Project</span>
-                  <span className="text-[10px] text-text-muted">guided tutorial</span>
+                  <span className="flex-1">{t("palette.action.new_project")}</span>
+                  <span className="text-[10px] text-text-muted">{t("palette.action.new_project_hint")}</span>
                 </button>
                 <button
                   onClick={handleSkipTutorial}
                   className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-border/30"
                 >
                   <Cube size={16} className="shrink-0 text-text-muted" />
-                  <span className="flex-1">Blank Project</span>
-                  <span className="text-[10px] text-text-muted">skip tutorial</span>
+                  <span className="flex-1">{t("palette.action.blank_project")}</span>
+                  <span className="text-[10px] text-text-muted">{t("palette.action.blank_project_hint")}</span>
                 </button>
                 <button
                   onClick={handleOpenFile}
                   className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-border/30"
                 >
                   <FolderOpen size={16} className="shrink-0 text-text-muted" />
-                  <span className="flex-1">Open File</span>
+                  <span className="flex-1">{t("palette.action.open_file")}</span>
                   <kbd className="bg-border/50 px-1.5 py-0.5 text-[10px] text-text-muted">⌘O</kbd>
                 </button>
 
@@ -509,7 +511,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
                 <div className="border-t border-border my-1" />
                 <div className="px-3 py-1.5">
                   <span className="text-[10px] font-medium text-text-muted uppercase tracking-wider">
-                    Examples
+                    {t("palette.section.examples")}
                   </span>
                 </div>
                 {examples.map((example) => (
@@ -527,7 +529,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
                 <div className="border-t border-border my-1" />
                 <div className="px-3 py-1.5">
                   <span className="text-[10px] font-medium text-text-muted uppercase tracking-wider">
-                    Or describe what to create
+                    {t("palette.section.ask_ai_inline")}
                   </span>
                 </div>
                 {aiSuggestions.map((suggestion) => (
@@ -585,7 +587,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
                 )}
                 <div className="px-3 py-1.5">
                   <span className="text-[10px] font-medium text-text-muted uppercase tracking-wider">
-                    Ask AI
+                    {t("palette.section.ask_ai")}
                   </span>
                 </div>
 
@@ -602,10 +604,10 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
                   >
                     <Sparkle size={16} className="shrink-0 text-brand" />
                     <span className="flex-1">
-                      Generate: <span className="text-brand">{aiPrompt}</span>
+                      {t("palette.generate_label")} <span className="text-brand">{aiPrompt}</span>
                     </span>
                     <kbd className="bg-border/50 px-1.5 py-0.5 text-[10px] text-text-muted">
-                      server
+                      {t("palette.kbd_server")}
                     </kbd>
                   </button>
                 )}
@@ -630,7 +632,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
             {/* Empty state - hide in welcome mode */}
             {!aiGenerating && !isWelcomeMode && filteredCommands.length === 0 && !showAISection && (
               <div className="px-3 py-6 text-center text-xs text-text-muted">
-                No commands found
+                {t("palette.empty")}
               </div>
             )}
           </div>
