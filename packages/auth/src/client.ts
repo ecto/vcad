@@ -1,3 +1,34 @@
+/**
+ * True when running inside the Tauri desktop shell. Detected via the
+ * runtime global the @tauri-apps/api `isTauri()` helper checks for, so
+ * we don't need to take a hard dep on tauri from the auth package
+ * (which is also consumed by the pure-web bundle).
+ */
+export function isTauriRuntime(): boolean {
+  if (typeof window === "undefined") return false;
+  return "__TAURI_INTERNALS__" in window;
+}
+
+/**
+ * Where Supabase should redirect the magic-link click. On web this is
+ * the current origin (Supabase strips its tokens out of the URL via
+ * `detectSessionInUrl`). On desktop the magic-link arrives in the
+ * user's external browser, which can't hand tokens back to the Tauri
+ * window directly — so we route through a static bridge page on
+ * vcad.io that JS-redirects to the `vcad://auth/callback` deep link.
+ *
+ * The bridge page does NOT load supabase-js (which would auto-verify
+ * the one-shot token_hash and prevent the desktop from completing the
+ * sign-in). It only forwards the URL's query + fragment unchanged, so
+ * the desktop can call `verifyOtp` / `setSession` itself.
+ */
+export function getAuthRedirectUrl(): string {
+  if (isTauriRuntime()) {
+    return "https://vcad.io/auth/desktop";
+  }
+  return typeof window !== "undefined" ? window.location.origin : "";
+}
+
 import {
   createClient,
   type Session as SupabaseSession,

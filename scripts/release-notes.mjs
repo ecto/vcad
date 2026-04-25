@@ -34,6 +34,22 @@ const CATEGORY_LABELS = {
 };
 const CATEGORY_ORDER = ['breaking', 'feat', 'fix', 'perf', 'docs'];
 
+// Until the macOS build is notarized with an Apple Developer ID, the
+// downloaded .app is unsigned and Gatekeeper blocks first launch with
+// "Apple could not verify 'vcad.app' is free of malware". Append the
+// bypass to every release page so users hitting that dialog don't have
+// to dig through the README. Drop this once Apple signing is wired up.
+const MACOS_FIRST_LAUNCH_FOOTER = `### Installing on macOS
+
+This build is not yet Apple-notarized, so first launch shows
+*"Apple could not verify 'vcad.app' is free of malware"*. To open it:
+
+- **macOS 15+** — System Settings → Privacy & Security → "Open Anyway".
+- **Earlier macOS** — right-click \`vcad.app\` in /Applications → Open.
+- **Terminal** — \`xattr -d com.apple.quarantine /Applications/vcad.app\`.
+
+You only need to do this once per install.`;
+
 function parseArgs(argv) {
   const args = { version: null, json: false, raw: false };
   for (let i = 0; i < argv.length; i++) {
@@ -189,6 +205,8 @@ async function main() {
     }
   }
   if (!notes) notes = renderDeterministic(entries, version);
+
+  notes = notes.trimEnd() + '\n\n' + MACOS_FIRST_LAUNCH_FOOTER + '\n';
 
   if (args.json) {
     process.stdout.write(JSON.stringify({ version, notes }) + '\n');

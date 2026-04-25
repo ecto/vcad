@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { X, EnvelopeSimple } from "@phosphor-icons/react";
-import { getSupabase } from "../client";
+import { getAuthRedirectUrl, getSupabase } from "../client";
 import type { GatedFeature } from "../hooks/useRequireAuth";
 
 interface AuthModalProps {
@@ -45,7 +45,7 @@ export function AuthModal({ open, onOpenChange, feature }: AuthModalProps) {
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
-        emailRedirectTo: window.location.origin,
+        emailRedirectTo: getAuthRedirectUrl(),
       },
     });
 

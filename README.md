@@ -26,6 +26,29 @@ Open-source parametric CAD for the AI era.
 
 Visit [vcad.io](https://vcad.io) — no install required.
 
+### Desktop App
+
+Download the installer for your platform from the [latest release](https://github.com/ecto/vcad/releases/latest):
+
+- **macOS** — universal `.dmg` (Intel + Apple Silicon)
+- **Windows** — `.msi` installer
+- **Linux** — `.AppImage`, `.deb`, or `.rpm`
+
+#### First launch on macOS
+
+Releases are not yet notarized with Apple, so on first launch macOS shows
+*"Apple could not verify 'vcad.app' is free of malware"*. To open it:
+
+- **macOS 15+** — open **System Settings → Privacy & Security**, scroll to the
+  "vcad was blocked" notice, click **Open Anyway**, then re-launch vcad.
+- **Earlier macOS** — right-click `vcad.app` in `/Applications` and choose
+  **Open**, then **Open** in the confirmation dialog.
+- **From Terminal** — `xattr -d com.apple.quarantine /Applications/vcad.app`
+  removes the quarantine flag so the app launches normally.
+
+You only need to do this once per install. We'll remove this step once
+Apple Developer signing is set up.
+
 ### CLI
 
 ```bash
