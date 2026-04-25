@@ -618,14 +618,15 @@ fn show_info(file: &PathBuf) -> Result<()> {
         }
     }
 
-    // Evaluate and show mesh stats
-    match crate::app::evaluate_document(&doc) {
-        Ok(meshes) => {
+    // Evaluate with timing and show mesh stats + breakdown.
+    match crate::app::evaluate_document_timed(&doc, false) {
+        Ok((meshes, timing)) => {
             let total_tris: usize = meshes.iter().map(|m| m.indices.len() / 3).sum();
             let total_verts: usize = meshes.iter().map(|m| m.vertices.len() / 3).sum();
             println!("\nMesh stats:");
             println!("  Total triangles: {}", total_tris);
             println!("  Total vertices: {}", total_verts);
+            print_timing(&timing);
         }
         Err(e) => {
             println!("\nFailed to evaluate: {}", e);
@@ -633,6 +634,50 @@ fn show_info(file: &PathBuf) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Print an `EvalTiming` breakdown that mirrors the JS `Engine.logTiming`
+/// formatter ([packages/engine/src/index.ts:221]). Phase summary line
+/// followed by a per-node line sorted by `eval_ms` desc, filtered to
+/// `eval_ms > 1ms`.
+fn print_timing(timing: &vcad_eval::EvalTiming) {
+    println!("\nTiming:");
+    let mut summary = vec![format!("total:{:.0}ms", timing.total_ms)];
+    if let Some(p) = timing.parse_ms {
+        summary.push(format!("parse:{:.0}ms", p));
+    }
+    summary.push(format!("tess:{:.0}ms", timing.tessellate_ms));
+    if let Some(s) = timing.serialize_ms {
+        summary.push(format!("ser:{:.0}ms", s));
+    }
+    if timing.clash_ms > 0.5 {
+        summary.push(format!("clash:{:.0}ms", timing.clash_ms));
+    }
+    if timing.assembly_ms > 0.5 {
+        summary.push(format!("asm:{:.0}ms", timing.assembly_ms));
+    }
+    println!("  [TIMING] {}", summary.join(" "));
+
+    let mut nodes: Vec<(&String, &vcad_eval::NodeTiming)> = timing.nodes.iter().collect();
+    nodes.sort_by(|a, b| {
+        b.1.eval_ms
+            .partial_cmp(&a.1.eval_ms)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let hot: Vec<String> = nodes
+        .iter()
+        .filter(|(_, n)| n.eval_ms > 1.0)
+        .map(|(id, n)| {
+            if n.mesh_ms > 0.5 {
+                format!("{}#{}:{:.0}ms(mesh:{:.0})", n.op, id, n.eval_ms, n.mesh_ms)
+            } else {
+                format!("{}#{}:{:.0}ms", n.op, id, n.eval_ms)
+            }
+        })
+        .collect();
+    if !hot.is_empty() {
+        println!("           {}", hot.join(" > "));
+    }
 }
 
 fn import_urdf(input: &PathBuf, output: &PathBuf) -> Result<()> {

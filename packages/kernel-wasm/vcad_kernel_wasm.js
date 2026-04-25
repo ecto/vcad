@@ -3522,6 +3522,18 @@ export function generateGcode(result, printer_profile, print_temp, bed_temp) {
 }
 
 /**
+ * Returns the `WebAssembly.Module` instance backing this kernel-wasm
+ * import. Workers can pass this to `wasm.default({ module_or_path })`
+ * to skip the multi-second recompile of a fresh fetch — see
+ * `packages/engine/src/eval-worker.ts` for the consumer.
+ * @returns {any}
+ */
+export function getCompiledModule() {
+    const ret = wasm.getCompiledModule();
+    return ret;
+}
+
+/**
  * Return the full parts manifest JSON for the built-in stdlib.
  *
  * The app consumes this on boot to populate the palette's Parts tab and
@@ -4672,6 +4684,10 @@ function __wbg_get_imports() {
         },
         __wbg___wbindgen_jsval_loose_eq_9dd77d8cd6671811: function(arg0, arg1) {
             const ret = arg0 == arg1;
+            return ret;
+        },
+        __wbg___wbindgen_module_f6b8052d79c1cc16: function() {
+            const ret = wasmModule;
             return ret;
         },
         __wbg___wbindgen_number_get_8ff4255516ccad3e: function(arg0, arg1) {
@@ -5862,12 +5878,12 @@ function __wbg_get_imports() {
             const ret = arg0.next;
             return ret;
         },
-        __wbg_now_73d406b8795c2240: function() {
-            const ret = performance.now();
-            return ret;
-        },
         __wbg_now_a3af9a2f4bbaa4d1: function() {
             const ret = Date.now();
+            return ret;
+        },
+        __wbg_now_bfba22bb5ecf3c79: function() {
+            const ret = performance.now();
             return ret;
         },
         __wbg_of_f915f7cd925b21a5: function(arg0) {

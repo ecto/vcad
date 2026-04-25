@@ -4503,6 +4503,15 @@ impl vcad_eval::Clock for WasmClock {
     }
 }
 
+/// Returns the `WebAssembly.Module` instance backing this kernel-wasm
+/// import. Workers can pass this to `wasm.default({ module_or_path })`
+/// to skip the multi-second recompile of a fresh fetch — see
+/// `packages/engine/src/eval-worker.ts` for the consumer.
+#[wasm_bindgen(js_name = getCompiledModule)]
+pub fn get_compiled_module() -> JsValue {
+    wasm_bindgen::module()
+}
+
 /// Evaluate a full vcad document JSON into a serialized EvaluatedScene.
 ///
 /// This is the canonical Rust-side evaluator that handles all CsgOp variants

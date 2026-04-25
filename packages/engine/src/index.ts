@@ -268,6 +268,15 @@ export class Engine {
   /** Resolves when the worker has finished WASM init */
   private workerReady: Promise<void> | null = null;
 
+  /**
+   * Resolves once the eval worker's WASM init is done (or the worker path is
+   * unavailable). Bootstrap awaits this before transitioning to the
+   * "evaluating" phase so the splash doesn't lie about what's happening.
+   */
+  whenWorkerReady(): Promise<void> {
+    return this.workerReady ?? Promise.resolve();
+  }
+
   /** Document-level scene cache (keyed by doc hash + options) */
   private sceneCache = new Map<string, EvaluatedScene>();
 

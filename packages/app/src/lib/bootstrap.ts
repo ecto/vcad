@@ -80,6 +80,11 @@ async function runBootstrap(): Promise<void> {
   useBootStore.getState().setPhase("starting-engine");
   const wasmModule = await import("@vcad/kernel-wasm");
   initCrdt(wasmModule);
+  // Wait for the eval worker's WASM init to finish before promising eval.
+  // Without this, the splash flips to "Evaluating scene…" while the worker
+  // is actually still compiling kernel WASM — confusing if anything stalls.
+  // A failed worker init is non-fatal: evaluateAsync falls back to sync.
+  await engine.whenWorkerReady().catch(() => {});
 
   useBootStore.getState().setPhase("loading-document");
   applyDocumentData(await docDataReady);

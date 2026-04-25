@@ -314,10 +314,19 @@ export default defineConfig(({ mode }) => {
         includeAssets: ["fonts/**/*", "assets/**/*"],
         manifest: false,
         workbox: {
-          globPatterns: ["**/*.{js,css,html,woff,woff2,otf,wasm}"],
-          globIgnores: ["**/ort-*.wasm"],
+          // wasm is intentionally excluded from precache: the 10.6 MB kernel
+          // wasm is fetched explicitly during boot (see bootstrap.ts) and the
+          // browser caches it like any other asset. Precaching duplicated the
+          // download with the runtime fetch, freezing the main thread.
+          globPatterns: ["**/*.{js,css,html,woff,woff2,otf}"],
           maximumFileSizeToCacheInBytes: 12 * 1024 * 1024,
           runtimeCaching: [
+            {
+              urlPattern: ({ request, url }) =>
+                request.destination === "" && url.pathname.endsWith(".wasm"),
+              handler: "CacheFirst",
+              options: { cacheName: "wasm-cache", expiration: { maxEntries: 5, maxAgeSeconds: 60 * 60 * 24 * 30 } },
+            },
             {
               urlPattern: /\.(woff|woff2|otf|ttf)$/,
               handler: "CacheFirst",
