@@ -1,11 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MagnifyingGlass } from "@phosphor-icons/react/dist/ssr/MagnifyingGlass";
 import { Spinner } from "@phosphor-icons/react/dist/ssr/Spinner";
 import { WifiHigh } from "@phosphor-icons/react/dist/ssr/WifiHigh";
 import { WifiSlash } from "@phosphor-icons/react/dist/ssr/WifiSlash";
 import { usePrinterStore } from "@/stores/printer-store";
-import { isRelayAvailable, discoverPrinters } from "@/lib/print-relay";
+import { isRelayAvailable, discoverPrinters, connectPrinter } from "@/lib/print-relay";
 import { useNotificationStore } from "@/stores/notification-store";
+
+const ACCESS_CODE_KEY_PREFIX = "bambu-access-code:";
 
 export function PrinterSelect() {
   const isDiscovering = usePrinterStore((s) => s.isDiscovering);
@@ -15,11 +17,47 @@ export function PrinterSelect() {
   const selectPrinter = usePrinterStore((s) => s.selectPrinter);
   const setDiscovering = usePrinterStore((s) => s.setDiscovering);
   const setDiscoveredPrinters = usePrinterStore((s) => s.setDiscoveredPrinters);
+  const setConnectionState = usePrinterStore((s) => s.setConnectionState);
+  const setConnectionError = usePrinterStore((s) => s.setConnectionError);
   const profiles = usePrinterStore((s) => s.profiles);
   const selectedProfile = usePrinterStore((s) => s.selectedProfile);
   const setSelectedProfile = usePrinterStore((s) => s.setSelectedProfile);
   const addToast = useNotificationStore((s) => s.addToast);
   const [relayAvailable, setRelayAvailable] = useState<boolean | null>(null);
+  const [accessCode, setAccessCode] = useState("");
+
+  // Pre-fill access code from localStorage when a printer is selected.
+  useEffect(() => {
+    if (!selectedPrinter) {
+      setAccessCode("");
+      return;
+    }
+    const stored = localStorage.getItem(ACCESS_CODE_KEY_PREFIX + selectedPrinter.serial);
+    setAccessCode(stored ?? "");
+  }, [selectedPrinter]);
+
+  async function handleConnect() {
+    if (!selectedPrinter) return;
+    const code = accessCode.trim();
+    if (code.length === 0) {
+      addToast("Enter the printer's access code", "error");
+      return;
+    }
+
+    setConnectionState("connecting");
+    setConnectionError(null);
+    try {
+      await connectPrinter(selectedPrinter.ip, selectedPrinter.serial, code);
+      localStorage.setItem(ACCESS_CODE_KEY_PREFIX + selectedPrinter.serial, code);
+      setConnectionState("connected");
+      addToast(`Connected to ${selectedPrinter.name}`, "success");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Connect failed";
+      setConnectionState("error");
+      setConnectionError(message);
+      addToast(message, "error");
+    }
+  }
 
   async function handleDiscover() {
     setDiscovering(true);
@@ -136,6 +174,42 @@ export function PrinterSelect() {
         {!isDiscovering && discoveredPrinters.length === 0 && relayAvailable !== false && (
           <div className="text-xs text-text-muted text-center py-2">
             No printers found. Make sure your printer is on the same network.
+          </div>
+        )}
+
+        {/* Access code + Connect for the selected printer */}
+        {selectedPrinter && (
+          <div className="mt-3 space-y-2">
+            <label className="block text-xs text-text-muted">
+              Access Code
+              <span className="ml-1 opacity-70">(Settings → WLAN on the printer)</span>
+            </label>
+            <input
+              type="text"
+              inputMode="numeric"
+              autoComplete="off"
+              maxLength={16}
+              value={accessCode}
+              onChange={(e) => setAccessCode(e.target.value)}
+              placeholder="12345678"
+              className="w-full h-8 px-2 text-sm bg-surface border border-border rounded text-text font-mono"
+            />
+            <button
+              onClick={handleConnect}
+              disabled={connectionState === "connecting" || accessCode.trim().length === 0}
+              className="w-full flex items-center justify-center gap-2 py-2 bg-brand hover:bg-brand/90 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded text-sm"
+            >
+              {connectionState === "connecting" ? (
+                <>
+                  <Spinner className="animate-spin" size={14} />
+                  Connecting...
+                </>
+              ) : connectionState === "connected" ? (
+                "Reconnect"
+              ) : (
+                "Connect"
+              )}
+            </button>
           </div>
         )}
       </div>
