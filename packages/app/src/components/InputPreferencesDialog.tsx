@@ -39,12 +39,15 @@ export function InputPreferencesDialog({
           className={cn(
             "fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2",
             "w-[640px] max-w-[92vw] h-[560px] max-h-[88vh]",
-            "flex flex-col bg-surface shadow-2xl border border-border",
+            "flex flex-col bg-surface shadow-2xl border border-border select-none",
             "focus:outline-none",
           )}
         >
           {/* Header — title + tabs + close */}
-          <div className="flex items-center justify-between px-4 h-10 border-b border-border">
+          <div
+            data-tauri-drag-region=""
+            className="flex items-center justify-between px-4 h-10 border-b border-border"
+          >
             <Dialog.Title className="text-sm font-medium text-text">
               Input Preferences
             </Dialog.Title>

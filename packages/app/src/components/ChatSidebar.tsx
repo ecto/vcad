@@ -628,7 +628,7 @@ export function ChatSidebar() {
         </div>
       )}
       {/* Header with tabs */}
-      <div className="flex items-center gap-1 px-2 py-1.5 border-b border-border/40 shrink-0">
+      <div className="flex items-center gap-1 px-2 py-1.5 border-b border-border/40 shrink-0 select-none">
         <button
           onClick={() => setActiveTab("chat")}
           className={cn(

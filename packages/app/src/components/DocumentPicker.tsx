@@ -452,12 +452,15 @@ export function DocumentPicker({
           className={cn(
             "fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2",
             "border border-border bg-card shadow-2xl",
-            "max-h-[85vh] flex flex-col",
+            "max-h-[85vh] flex flex-col select-none",
             "focus:outline-none"
           )}
         >
           {/* Header */}
-          <div className="flex items-center justify-between p-4 border-b border-border">
+          <div
+            data-tauri-drag-region=""
+            className="flex items-center justify-between p-4 border-b border-border"
+          >
             <div className="flex items-center gap-2">
               <Dialog.Title className="text-sm font-bold text-text">
                 Documents

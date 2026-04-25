@@ -10,6 +10,7 @@ import { useLocaleStore, supportedLocales, type SupportedLocale } from "@/stores
 import { useLogStore, getFilteredEntries } from "@/stores/log-store";
 import { FooterUsageMeter } from "@/components/FooterUsageMeter";
 import { cn } from "@/lib/utils";
+import { useCapabilities } from "@/lib/capabilities";
 
 const LOCALE_LABELS: Record<string, string> = {
   en: "English",
@@ -98,9 +99,12 @@ export function StatusBar() {
   const selCount = selectedPartIds.size;
   const fresh = latest && now - latest.timestamp < 3000;
   const levelColor = latest ? LEVEL_COLOR[latest.level] : "";
+  const { tauri, platform } = useCapabilities();
+  const macOverlay = tauri && platform === "mac";
 
   return (
     <div
+      data-tauri-drag-region={macOverlay ? "" : undefined}
       className={cn(
         "flex h-6 items-stretch bg-surface text-[10px] font-mono select-none",
         "border-t border-border/40",
