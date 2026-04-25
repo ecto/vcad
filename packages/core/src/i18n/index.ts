@@ -32,8 +32,10 @@ export function tFmt(key: TranslationKey, args: Record<string, string>): string 
 
 export function detectLocale(): SupportedLocale {
   if (typeof navigator === "undefined") return "en";
-  const lang = navigator.language.split("-")[0];
-  if (lang && lang in translations) return lang as SupportedLocale;
+  const full = navigator.language.toLowerCase();
+  if (full in translations) return full as SupportedLocale;
+  const prefix = full.split("-")[0];
+  if (prefix && prefix in translations) return prefix as SupportedLocale;
   return "en";
 }
 
