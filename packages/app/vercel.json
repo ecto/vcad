@@ -4,6 +4,7 @@
   "buildCommand": "cd ../.. && npm run build -w @vcad/ir && npm run build -w @vcad/engine && npm run build -w @vcad/core && npm run build -w @vcad/mcp && npm run build -w @vcad/app",
   "outputDirectory": "dist",
   "rewrites": [
+    { "source": "/auth/desktop", "destination": "/auth/desktop.html" },
     { "source": "/~(.*)", "destination": "/" },
     { "source": "/d/(.*)", "destination": "/" },
     { "source": "/view/(.*)", "destination": "/" },

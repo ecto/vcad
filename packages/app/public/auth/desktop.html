@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sign in to vcad — Desktop</title>
+    <meta name="robots" content="noindex" />
+    <link rel="icon" href="/favicon.ico" />
+    <style>
+      :root { color-scheme: light dark; }
+      html, body {
+        margin: 0;
+        height: 100%;
+        font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI",
+          Roboto, system-ui, sans-serif;
+        background: #fafaf9;
+        color: #1c1917;
+      }
+      @media (prefers-color-scheme: dark) {
+        html, body { background: #0c0a09; color: #f5f5f4; }
+      }
+      main {
+        max-width: 28rem;
+        margin: 0 auto;
+        padding: 4rem 1.5rem;
+        text-align: center;
+      }
+      h1 { font-size: 1.5rem; font-weight: 700; margin: 0 0 0.5rem; letter-spacing: -0.02em; }
+      h1 span { color: #f97316; }
+      p { color: #57534e; margin: 0.5rem 0; }
+      @media (prefers-color-scheme: dark) {
+        p { color: #a8a29e; }
+      }
+      .actions { margin-top: 2rem; display: flex; flex-direction: column; gap: 0.5rem; align-items: center; }
+      a { color: inherit; }
+      button, .btn {
+        padding: 0.625rem 1rem;
+        border: 1px solid currentColor;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+        text-decoration: none;
+        display: inline-block;
+        min-width: 12rem;
+      }
+      button:hover, .btn:hover { background: rgba(127, 127, 127, 0.1); }
+      .hide { display: none; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>vcad<span>.</span></h1>
+      <p id="status">Opening the desktop app…</p>
+      <div class="actions">
+        <button id="retry" class="hide" type="button">Open vcad</button>
+        <a id="web" class="btn hide" href="https://vcad.io/">Continue in browser</a>
+      </div>
+      <noscript>
+        <p>Enable JavaScript to complete sign-in, or open this link on the
+          device where vcad is installed.</p>
+      </noscript>
+    </main>
+    <script src="/auth/desktop.js"></script>
+  </body>
+</html>
