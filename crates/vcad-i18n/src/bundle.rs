@@ -63,6 +63,7 @@ fn interpolate(template: &str, args: &[(&str, &str)]) -> String {
 fn load_locale(language: &str) -> HashMap<String, String> {
     let json = match language {
         "es" => Some(include_str!("../locales/es.json")),
+        "fr" => Some(include_str!("../locales/fr.json")),
         _ => None,
     };
     match json {
