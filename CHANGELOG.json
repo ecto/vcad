@@ -2,6 +2,15 @@
   "$schema": "./changelog.schema.json",
   "entries": [
     {
+      "id": "2026-04-25-french-ui-translation",
+      "version": "0.9.3",
+      "date": "2026-04-25",
+      "category": "feat",
+      "title": "French UI translation",
+      "summary": "Added French (fr) to the i18n bundle. Menus, command palette, toolbar, status bar, and welcome screen now render in French when selected from the locale picker or detected from the browser language.",
+      "features": ["i18n", "french"]
+    },
+    {
       "id": "2026-04-25-desktop-magic-link-signin",
       "version": "0.9.3",
       "date": "2026-04-25",

@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 const LOCALE_LABELS: Record<string, string> = {
   en: "English",
   es: "Español",
+  fr: "Français",
 };
 
 const LEVEL_COLOR: Record<LogLevelName, string> = {
