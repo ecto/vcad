@@ -247,7 +247,7 @@ function SketchTreeSection() {
           onClick={() => setEntitiesOpen((o) => !o)}
           className="flex w-full items-center gap-1 px-2 h-6 text-[11px] text-text-muted hover:text-text"
         >
-          <span className="font-mono">{entitiesOpen ? "▾" : "▸"}</span>
+          {entitiesOpen ? <CaretDown size={10} /> : <CaretRight size={10} />}
           <span>{tFmt("tree.sketch.entities", { count: String(segments.length) })}</span>
         </button>
         {entitiesOpen &&
@@ -262,7 +262,7 @@ function SketchTreeSection() {
                   : "text-text-muted hover:bg-hover hover:text-text",
               )}
             >
-              <span className="font-mono">{seg.type === "Line" ? "—" : "◜"}</span>
+              <span className="text-text-muted/60">{seg.type === "Line" ? "—" : "◜"}</span>
               <span>
                 {seg.type} {i + 1}
               </span>
@@ -273,7 +273,7 @@ function SketchTreeSection() {
           onClick={() => setConstraintsOpen((o) => !o)}
           className="flex w-full items-center gap-1 px-2 h-6 text-[11px] text-text-muted hover:text-text"
         >
-          <span className="font-mono">{constraintsOpen ? "▾" : "▸"}</span>
+          {constraintsOpen ? <CaretDown size={10} /> : <CaretRight size={10} />}
           <span>{tFmt("tree.sketch.constraints", { count: String(constraints.length) })}</span>
         </button>
         {constraintsOpen &&
@@ -291,7 +291,7 @@ function SketchTreeSection() {
                 onClick={() => setSelectedConstraint(i)}
                 className="flex-1 text-left flex items-center gap-2"
               >
-                <span className="font-mono">⌐</span>
+                <span className="text-text-muted/60">⌐</span>
                 <span>{c.type}</span>
               </button>
               <button
@@ -314,7 +314,7 @@ function SketchTreeSection() {
               onClick={() => setProfilesOpen((o) => !o)}
               className="flex w-full items-center gap-1 px-2 h-6 text-[11px] text-text-muted hover:text-text"
             >
-              <span className="font-mono">{profilesOpen ? "▾" : "▸"}</span>
+              {profilesOpen ? <CaretDown size={10} /> : <CaretRight size={10} />}
               <span>{tFmt("tree.sketch.profiles", { count: String(profiles.length) })}</span>
             </button>
             {profilesOpen &&
@@ -323,7 +323,7 @@ function SketchTreeSection() {
                   key={p.id}
                   className="flex items-center gap-2 pl-6 pr-2 h-6 text-[11px] text-text-muted"
                 >
-                  <span className="font-mono">≡</span>
+                  <span className="text-text-muted/60">≡</span>
                   <span>{tFmt("tree.sketch.profile", { n: String(i + 1) })}</span>
                 </div>
               ))}

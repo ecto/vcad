@@ -138,7 +138,7 @@ function SymbolIcon({ id }: { id: string }) {
         </svg>
       );
     default:
-      return <span className="text-xs font-mono">{id[0]?.toUpperCase()}</span>;
+      return <span className="text-xs font-bold">{id[0]?.toUpperCase()}</span>;
   }
 }
 

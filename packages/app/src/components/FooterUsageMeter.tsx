@@ -135,7 +135,7 @@ export function FooterUsageMeter() {
           align="end"
           sideOffset={6}
           className={cn(
-            "w-64 p-3 font-mono text-[11px] border-border bg-surface",
+            "w-64 p-3 text-[11px] border-border bg-surface",
           )}
         >
           <div className="flex items-center justify-between gap-2">

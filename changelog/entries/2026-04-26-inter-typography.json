@@ -1,0 +1,12 @@
+{
+  "id": "2026-04-26-inter-typography",
+  "version": "0.9.3",
+  "date": "2026-04-26",
+  "category": "feat",
+  "title": "Inter typography for native desktop feel",
+  "summary": "The UI now reads as Inter (self-hosted, variable). Berkeley Mono is reserved for code-shaped surfaces — formulas, coordinates, hex values, kbd shortcuts, logs — so panels and dialogs feel like a real desktop app instead of a code editor.",
+  "features": [
+    "typography",
+    "design"
+  ]
+}

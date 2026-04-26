@@ -187,7 +187,7 @@ function LimitReachedView({
           aria-hidden
           className="inline-block h-1.5 w-1.5 animate-pulse bg-danger"
         />
-        <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-danger">
+        <span className="text-[9px] font-semibold uppercase tracking-[0.12em] text-danger">
           Monthly limit reached
         </span>
       </div>
@@ -230,7 +230,7 @@ function LimitReachedView({
           action with all the conversion levers in one place. */}
       <div className="mx-7 mb-3">
         <div className="relative border border-brand/70 bg-brand/[0.06] p-5 ring-1 ring-brand/20">
-          <div className="absolute -top-[9px] left-4 flex items-center gap-1 bg-brand px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-white">
+          <div className="absolute -top-[9px] left-4 flex items-center gap-1 bg-brand px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em] text-white">
             <Lightning size={9} weight="fill" />
             Recommended
           </div>
@@ -282,7 +282,7 @@ function LimitReachedView({
             onClick={() => onCheckout(recommendedId)}
             className={cn(
               "upgrade-cta group mt-5 flex h-11 w-full items-center justify-center gap-2",
-              "bg-brand font-mono text-[12px] font-bold uppercase tracking-[0.12em] text-white",
+              "bg-brand text-[12px] font-bold uppercase tracking-[0.12em] text-white",
               "transition-[background-color,transform,box-shadow] duration-150",
               "hover:bg-brand-hover hover:shadow-[0_8px_24px_-8px_rgba(249,38,114,0.6)]",
               "active:translate-y-[1px]",
@@ -313,7 +313,7 @@ function LimitReachedView({
             type="button"
             disabled={busy !== null}
             onClick={() => onCheckout("max")}
-            className="font-mono text-[10px] text-text-muted transition-colors hover:text-text disabled:opacity-40"
+            className="text-[10px] text-text-muted transition-colors hover:text-text disabled:opacity-40"
           >
             Need more? Upgrade to{" "}
             <span className="text-text">{max.name}</span> —{" "}
@@ -324,14 +324,14 @@ function LimitReachedView({
 
       {/* Trust + soft ejector row. Respects user autonomy. */}
       <div className="mt-2 flex items-center justify-between gap-3 border-t border-border bg-bg/40 px-7 py-3">
-        <div className="flex items-center gap-1.5 font-mono text-[9px] text-text-muted">
+        <div className="flex items-center gap-1.5 text-[9px] text-text-muted">
           <LockSimple size={10} weight="fill" />
           <span>Secure · Stripe · Cancel anytime</span>
         </div>
         <button
           type="button"
           onClick={onDismiss}
-          className="font-mono text-[9px] text-text-muted transition-colors hover:text-text"
+          className="text-[9px] text-text-muted transition-colors hover:text-text"
         >
           I'll wait until {resetDate}
         </button>
@@ -400,7 +400,7 @@ function ManualView({ snapshot, busy, onCheckout, onPortal }: ManualViewProps) {
               )}
             >
               {isRecommended && (
-                <div className="absolute -top-[9px] left-4 bg-brand px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-white">
+                <div className="absolute -top-[9px] left-4 bg-brand px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em] text-white">
                   Recommended
                 </div>
               )}
@@ -409,7 +409,7 @@ function ManualView({ snapshot, busy, onCheckout, onPortal }: ManualViewProps) {
                   {tier.name}
                 </h3>
                 {isCurrent && (
-                  <span className="bg-brand/15 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wider text-brand">
+                  <span className="bg-brand/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-brand">
                     Current
                   </span>
                 )}
@@ -448,7 +448,7 @@ function ManualView({ snapshot, busy, onCheckout, onPortal }: ManualViewProps) {
                   isCurrent || isDowngrade ? onPortal() : onCheckout(tierId)
                 }
                 className={cn(
-                  "mt-4 h-9 font-mono text-[11px] font-bold uppercase tracking-[0.12em]",
+                  "mt-4 h-9 text-[11px] font-bold uppercase tracking-[0.12em]",
                   "transition-[background-color,transform,box-shadow] duration-150",
                   "disabled:cursor-not-allowed disabled:opacity-40",
                   "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand",

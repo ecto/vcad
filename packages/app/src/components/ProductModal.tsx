@@ -144,7 +144,7 @@ export function ProductModal({
             <div className="mb-8">
               <div className="flex items-center gap-3 mb-4">
                 <div className="h-px flex-1 bg-border" />
-                <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-text-muted">
+                <span className="text-[9px] font-semibold uppercase tracking-[0.14em] text-text-muted">
                   Unlock more with Pro
                 </span>
                 <div className="h-px flex-1 bg-border" />
@@ -167,7 +167,7 @@ export function ProductModal({
                       )}
                     >
                       {isRecommended && (
-                        <div className="absolute -top-[9px] left-3 bg-brand px-1.5 py-0.5 font-mono text-[8px] font-bold uppercase tracking-[0.14em] text-white">
+                        <div className="absolute -top-[9px] left-3 bg-brand px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-[0.14em] text-white">
                           Popular
                         </div>
                       )}
@@ -176,7 +176,7 @@ export function ProductModal({
                           {tier.name}
                         </span>
                         {isCurrent && (
-                          <span className="bg-brand/15 px-1 py-0.5 font-mono text-[7px] font-bold uppercase tracking-wider text-brand">
+                          <span className="bg-brand/15 px-1 py-0.5 text-[7px] font-bold uppercase tracking-wider text-brand">
                             Current
                           </span>
                         )}
@@ -208,7 +208,7 @@ export function ProductModal({
                         onClick={() => handleCheckout(tierId)}
                         className={cn(
                           "group flex h-8 items-center justify-center gap-1.5",
-                          "font-mono text-[10px] font-bold uppercase tracking-[0.1em]",
+                          "text-[10px] font-bold uppercase tracking-[0.1em]",
                           "transition-[background-color,transform,box-shadow] duration-150",
                           "disabled:cursor-not-allowed disabled:opacity-40",
                           "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand",
@@ -237,7 +237,7 @@ export function ProductModal({
                 })}
               </div>
 
-              <p className="mt-3 text-center font-mono text-[9px] text-text-muted">
+              <p className="mt-3 text-center text-[9px] text-text-muted">
                 Free tier includes {formatTokens(TIERS.free.monthlyTokenLimit)} chat
                 tokens/mo · All CAD tools are always free · Cancel anytime
               </p>

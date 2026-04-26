@@ -255,7 +255,7 @@ function VcadMessage({ msg, userName }: { msg: ChatMessage; userName: string }) 
     <Message from={isUser ? "user" : "assistant"}>
       <div
         className={cn(
-          "font-mono text-[9px] uppercase tracking-wider select-none",
+          "text-[9px] uppercase tracking-wider select-none",
           roleClass,
         )}
       >

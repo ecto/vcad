@@ -1,5 +1,26 @@
 @import "tailwindcss";
 
+/* Inter Variable (v4) — UI body font. Self-hosted, full 100..900 weight axis
+   plus the `opsz` axis (we engage it via `font-optical-sizing: auto` on body
+   so glyphs visibly tighten at small sizes and open up in headings).
+   `font-display: swap` keeps first paint snappy on cold loads. */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/InterVariable.woff2") format("woff2-variations");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/InterVariable-Italic.woff2") format("woff2-variations");
+}
+
+/* Berkeley Mono — kept for code-shaped surfaces only (expression inputs, hex
+   values, coordinates, kbd labels, log output). Body UI uses Inter. */
 @font-face {
   font-family: "Berkeley Mono";
   font-weight: 400;
@@ -13,7 +34,8 @@
 
 @theme {
   --font-mono: "Berkeley Mono", ui-monospace, monospace;
-  --font-sans: "Berkeley Mono", ui-monospace, monospace;
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
 
   /* These get overridden by .light class below */
   --color-bg: var(--bg);
@@ -123,13 +145,59 @@
   --hover: rgba(0, 0, 0, 0.05);
 }
 
+/* Body typography. Three deliberate calls here, in order of importance:
+ *
+ *  1. `font-optical-sizing: auto` — engages Inter v4's `opsz` axis. Inter then
+ *     uses tighter, more compact glyphs at small UI sizes and opens letters up
+ *     at heading sizes, instead of one shape stretched to every size.
+ *
+ *  2. `letter-spacing: -0.011em` — modest negative tracking on the body. Inter
+ *     ships slightly wide by default for a UI font; this shadcn-style nudge
+ *     tightens labels and prose without making it feel cramped. Headings can
+ *     go further (-0.02em / -0.025em) per-component if needed.
+ *
+ *  3. Font smoothing is theme-conditional, NOT a blanket `antialiased`:
+ *
+ *       Dark mode  → `-webkit-font-smoothing: antialiased`
+ *           Light text on a dark background renders thick under macOS's
+ *           default subpixel rendering ("halation"). Antialiased thins the
+ *           strokes back down to look as designed.
+ *
+ *       Light mode → `-webkit-font-smoothing: auto` (= subpixel-antialiased)
+ *           Dark text on a light background reads sharper with subpixel
+ *           rendering. Forcing `antialiased` here is the most common
+ *           "everything looks blurry on my Mac" mistake — we don't want that.
+ *
+ *     `-moz-osx-font-smoothing: grayscale` only fires on Firefox/macOS and
+ *     pairs with the dark-mode `antialiased` to keep both engines consistent.
+ */
 body {
   margin: 0;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
+  font-optical-sizing: auto;
+  letter-spacing: -0.011em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
   background: var(--bg);
   color: var(--text);
+}
+
+:root.light body {
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
+}
+
+/* Mono surfaces (kbd, code, hex, coords, log lines) keep their own letter
+ * spacing — Berkeley Mono is already designed for tabular alignment, and the
+ * body's negative tracking would break the grid. Reset it everywhere mono
+ * is applied. */
+.font-mono,
+kbd,
+code,
+pre,
+samp {
+  letter-spacing: 0;
 }
 
 /* vcad design system: flatten Tailwind's static `rounded-full` utility.
