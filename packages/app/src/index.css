@@ -145,18 +145,13 @@
   --hover: rgba(0, 0, 0, 0.05);
 }
 
-/* Body typography. Three deliberate calls here, in order of importance:
+/* Body typography. Two deliberate calls here, in order of importance:
  *
  *  1. `font-optical-sizing: auto` — engages Inter v4's `opsz` axis. Inter then
  *     uses tighter, more compact glyphs at small UI sizes and opens letters up
  *     at heading sizes, instead of one shape stretched to every size.
  *
- *  2. `letter-spacing: -0.011em` — modest negative tracking on the body. Inter
- *     ships slightly wide by default for a UI font; this shadcn-style nudge
- *     tightens labels and prose without making it feel cramped. Headings can
- *     go further (-0.02em / -0.025em) per-component if needed.
- *
- *  3. Font smoothing is theme-conditional, NOT a blanket `antialiased`:
+ *  2. Font smoothing is theme-conditional, NOT a blanket `antialiased`:
  *
  *       Dark mode  → `-webkit-font-smoothing: antialiased`
  *           Light text on a dark background renders thick under macOS's
@@ -170,12 +165,16 @@
  *
  *     `-moz-osx-font-smoothing: grayscale` only fires on Firefox/macOS and
  *     pairs with the dark-mode `antialiased` to keep both engines consistent.
+ *
+ *  We deliberately do NOT apply a global negative letter-spacing. Inter's
+ *  default tracking is correct at small UI sizes; shrinking it makes labels
+ *  feel cramped. Headings that genuinely want tighter tracking can opt in
+ *  per-component (e.g. `tracking-tight`).
  */
 body {
   margin: 0;
   font-family: var(--font-sans);
   font-optical-sizing: auto;
-  letter-spacing: -0.011em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
@@ -186,18 +185,6 @@ body {
 :root.light body {
   -webkit-font-smoothing: auto;
   -moz-osx-font-smoothing: auto;
-}
-
-/* Mono surfaces (kbd, code, hex, coords, log lines) keep their own letter
- * spacing — Berkeley Mono is already designed for tabular alignment, and the
- * body's negative tracking would break the grid. Reset it everywhere mono
- * is applied. */
-.font-mono,
-kbd,
-code,
-pre,
-samp {
-  letter-spacing: 0;
 }
 
 /* vcad design system: flatten Tailwind's static `rounded-full` utility.

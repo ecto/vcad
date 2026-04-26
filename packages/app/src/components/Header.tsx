@@ -70,25 +70,28 @@ interface HeaderProps {
 // ---------------------------------------------------------------------------
 
 const TRIGGER_CLASS = cn(
-  "h-6 px-2 text-xs text-text outline-none cursor-default select-none",
-  "hover:bg-hover data-[state=open]:bg-hover transition-colors",
+  "h-6 px-2 text-[11px] font-medium text-text outline-none cursor-default select-none",
+  "hover:bg-hover data-[state=open]:bg-hover",
 );
 
 const CONTENT_CLASS =
-  "z-50 min-w-[180px] border border-border bg-surface shadow-lg py-1";
+  "z-50 min-w-[200px] border border-border/80 bg-surface py-1 shadow-md";
 
 const ITEM_CLASS = cn(
-  "flex w-full items-center gap-2 px-3 py-1 text-xs text-text outline-none cursor-default select-none",
+  "flex w-full items-center gap-2 px-2.5 py-1 text-[11px] text-text outline-none cursor-default select-none",
   "data-[highlighted]:bg-hover data-[disabled]:opacity-40 data-[disabled]:cursor-not-allowed",
 );
 
 /** Renders a top-level trigger label with the first letter underlined as a
  * typeahead hint — once the menubar has focus, pressing that letter jumps
- * to the corresponding menu. */
+ * to the corresponding menu. The underline is muted so it reads as a hint,
+ * not as emphasis. */
 function TriggerLabel({ label }: { label: string }) {
   return (
     <>
-      <span className="underline">{label[0]}</span>
+      <span className="underline decoration-text-muted/40 underline-offset-2">
+        {label[0]}
+      </span>
       {label.slice(1)}
     </>
   );
@@ -117,20 +120,24 @@ function MenuItem({
       onSelect={onSelect}
       className={ITEM_CLASS}
     >
-      {Icon && <Icon size={13} className={iconClassName ?? "text-text-muted"} />}
+      {Icon && <Icon size={12} className={iconClassName ?? "text-text-muted"} />}
       <span className="flex-1 text-left">{children}</span>
       {badge !== undefined && badge > 0 && (
-        <span className="min-w-[18px] rounded-full bg-brand px-1.5 py-0.5 text-center text-[10px] font-bold text-white">
+        <span className="min-w-[16px] rounded-sm bg-brand px-1 text-center text-[9px] font-bold text-white">
           {badge}
         </span>
       )}
-      {shortcut && <span className="text-text-muted text-[10px]">{shortcut}</span>}
+      {shortcut && (
+        <span className="ml-2 text-[10px] font-mono text-text-muted/40">
+          {shortcut}
+        </span>
+      )}
     </Menubar.Item>
   );
 }
 
 function MenuSeparator() {
-  return <Menubar.Separator className="my-1 border-t border-border/40" />;
+  return <Menubar.Separator className="my-1 border-t border-border/30" />;
 }
 
 /** A submenu that opens on hover/right-arrow. Menubar.Sub handles all the
@@ -153,17 +160,19 @@ function Submenu({
   return (
     <Menubar.Sub>
       <Menubar.SubTrigger className={ITEM_CLASS}>
-        {Icon && <Icon size={13} className={iconClassName ?? "text-text-muted"} />}
+        {Icon && <Icon size={12} className={iconClassName ?? "text-text-muted"} />}
         <span className="flex-1 text-left">{label}</span>
-        {hint && <span className="text-text-muted text-[10px]">{hint}</span>}
-        <CaretRight size={10} className="text-text-muted" />
+        {hint && (
+          <span className="ml-2 text-[10px] text-text-muted/60">{hint}</span>
+        )}
+        <CaretRight size={10} className="text-text-muted/60" />
       </Menubar.SubTrigger>
       <Menubar.Portal>
         <Menubar.SubContent
           sideOffset={0}
           alignOffset={-5}
           className={cn(
-            "z-50 min-w-[160px] border border-border bg-surface shadow-lg py-1",
+            "z-50 min-w-[180px] border border-border/80 bg-surface py-1 shadow-md",
             contentClassName,
           )}
         >
@@ -405,12 +414,12 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
       <div
         data-tauri-drag-region={macOverlay ? "" : undefined}
         className={cn(
-          "relative flex items-center gap-0 px-2 border-b border-border/40",
+          "relative flex items-center gap-0 px-1 border-b border-border/30",
           macOverlay ? "h-9 pl-[78px]" : "h-7",
         )}
       >
         <div
-          className="flex items-center gap-1 pr-3"
+          className="flex items-center pr-2 pl-1"
           data-tauri-drag-region={macOverlay ? "" : undefined}
         >
           <button
@@ -418,7 +427,7 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
             onClick={onAboutOpen}
             title="About vcad"
             aria-label="About vcad"
-            className="text-sm font-bold tracking-tighter text-text hover:text-brand transition-colors cursor-default outline-none"
+            className="text-[13px] font-semibold text-text hover:text-brand transition-colors cursor-default outline-none"
           >
             vcad<span className="text-brand">.</span>
           </button>
@@ -628,8 +637,8 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
           title="Search or ask AI… (⌘K)"
           aria-label="Search or ask AI"
           className={cn(
-            "relative shrink-0 hidden sm:flex items-center justify-center w-6 h-6",
-            "text-text-muted hover:text-text hover:bg-hover transition-colors",
+            "relative shrink-0 hidden sm:flex items-center justify-center w-7 h-6",
+            "text-text-muted hover:text-text hover:bg-hover",
           )}
         >
           <MagnifyingGlass size={13} />
@@ -648,14 +657,14 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
               : "What's new"
           }
           className={cn(
-            "relative shrink-0 hidden md:flex items-center justify-center w-6 h-6",
-            "text-text-muted hover:text-text hover:bg-hover transition-colors",
+            "relative shrink-0 hidden md:flex items-center justify-center w-7 h-6",
+            "text-text-muted hover:text-text hover:bg-hover",
           )}
         >
           <Bell size={13} weight={unreadChangelog > 0 ? "fill" : "regular"} />
           {unreadChangelog > 0 && (
             <span
-              className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-brand"
+              className="absolute top-1 right-1.5 w-1.5 h-1.5 rounded-full bg-brand"
               aria-hidden="true"
             />
           )}
@@ -666,8 +675,8 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
           title="Send feedback"
           aria-label="Send feedback"
           className={cn(
-            "relative flex items-center justify-center w-6 h-6",
-            "text-text-muted hover:text-text hover:bg-hover transition-colors",
+            "relative flex items-center justify-center w-7 h-6",
+            "text-text-muted hover:text-text hover:bg-hover",
           )}
         >
           <Megaphone size={13} />
@@ -675,7 +684,7 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
         <SignInButton
           variant="icon-text"
           className={cn(
-            "shrink-0 flex items-center justify-center gap-1.5 h-6 px-2 text-[10px] font-medium",
+            "shrink-0 flex items-center justify-center gap-1.5 h-6 px-2 text-[11px] font-medium",
             "text-text-muted hover:text-text hover:bg-hover",
           )}
         />
