@@ -6,6 +6,10 @@
 //   DISCORD_WEBHOOK_URL_<KIND> — optional per-kind override (e.g.
 //   DISCORD_WEBHOOK_URL_BILLING). Falls back to DISCORD_WEBHOOK_URL.
 //
+// Only fires from production deploys — VERCEL_ENV must be "production".
+// Preview deployments and local dev are silenced so test events don't spam
+// the channel. Set DISCORD_FORCE=1 to override (useful for debugging).
+//
 // Failures are logged but never thrown — Discord being down must never break
 // a user-facing request.
 
@@ -36,6 +40,7 @@ function resolveWebhook(kind: EventKind): string | null {
 }
 
 export async function notifyDiscord(opts: NotifyOpts): Promise<void> {
+  if (process.env.VERCEL_ENV !== "production" && process.env.DISCORD_FORCE !== "1") return;
   const webhook = resolveWebhook(opts.kind);
   if (!webhook) return;
 

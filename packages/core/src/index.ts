@@ -73,6 +73,15 @@ export type { CrdtDocumentState, CrdtValue } from "./stores/crdt-document-store.
 
 export { useUiStore } from "./stores/ui-store.js";
 export {
+  LENGTH_UNITS,
+  UNIT_LABEL,
+  fromMm,
+  toMm,
+  nextUnit,
+  formatLength,
+} from "./utils/length.js";
+export type { LengthUnit } from "./utils/length.js";
+export {
   useParametersStore,
   mergeParametersIntoDocument,
 } from "./stores/parameters-store.js";
@@ -95,6 +104,9 @@ export type { SketchStore, ProfileSnapshot, SketchExitStatus, PendingOperation }
 
 export { useEngineStore } from "./stores/engine-store.js";
 export type { EngineState } from "./stores/engine-store.js";
+
+export { useJobsStore, runJob } from "./stores/jobs-store.js";
+export type { Job, JobsState } from "./stores/jobs-store.js";
 
 export { useSimulationStore } from "./stores/simulation-store.js";
 export type {

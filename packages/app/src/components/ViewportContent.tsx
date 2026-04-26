@@ -68,11 +68,6 @@ import { PcbScene } from "./electronics/pcb3d/PcbScene";
 import { usePcbCamera } from "./electronics/pcb3d/usePcbCamera";
 import { BG_DARK, BG_LIGHT } from "./Viewport";
 
-// Initial camera state for reset (module-scope so refs are stable)
-const INITIAL_POSITION_V = new Vector3(50, 50, 50);
-const INITIAL_TARGET_V = new Vector3(0, 0, 0);
-const INITIAL_DISTANCE_V = INITIAL_POSITION_V.distanceTo(INITIAL_TARGET_V);
-
 // Reused per-frame in the participant-sync hook (Lock + Follow).
 const _syncGoalPos = new Vector3();
 const _syncGoalTarget = new Vector3();
@@ -362,10 +357,6 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
     if (orbitRef.current) orbitRef.current.enabled = true;
     setIsCameraMoving(false);
   }, []);
-
-  // Initial camera state for reset (stable refs across renders)
-  const INITIAL_TARGET = INITIAL_TARGET_V;
-  const INITIAL_DISTANCE = INITIAL_DISTANCE_V;
 
   // Build mapping from root index to instance ID (for assembly mode rendering with legacy parts)
   const rootIndexToInstanceId = useMemo(() => {
@@ -942,27 +933,25 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
     };
   }, [setOrbiting, cancelCameraAnimation]);
 
-  // Double-click on empty canvas resets camera to initial position
+  // Double-click on empty canvas: fit camera to the scene (same handler as
+  // boot's auto-fit + the View → Fit menu). Was previously "reset to the
+  // hardcoded initial pose," which would hide the model whenever the
+  // geometry didn't live near (0, 0, 0).
   useEffect(() => {
     const controls = orbitRef.current;
     const domElement = controls?.domElement;
     if (!domElement) return;
 
     const handleDoubleClick = () => {
-      // Only reset when nothing is selected
+      // Only fit when nothing is selected — with selection, the existing
+      // selection-fit useEffect already does the right thing on the click.
       if (useUiStore.getState().selectedPartIds.size > 0) return;
-
-      // Animate to initial position
-      targetGoalRef.current.copy(INITIAL_TARGET);
-      distanceGoalRef.current = INITIAL_DISTANCE;
-      cameraPositionGoalRef.current = null; // Clear any position goal
-      isAnimatingTargetRef.current = true;
-      setIsCameraMoving(true);
+      window.dispatchEvent(new CustomEvent("vcad:camera-fit"));
     };
 
     domElement.addEventListener("dblclick", handleDoubleClick);
     return () => domElement.removeEventListener("dblclick", handleDoubleClick);
-  }, [INITIAL_DISTANCE, INITIAL_TARGET]);
+  }, []);
 
   // Publish cursor world position (Z-up) to UiStore for the status bar readout.
   // Raycasts pointer against the ground plane (kernel Z=0, display Y=0) via the
@@ -1021,37 +1010,75 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
     };
   }, [camera]);
 
-  // Face selection: swing camera to view face flat
+  // Face selection: swing camera perpendicular to the face, framing its
+  // actual extent instead of a fixed-distance fallback.
   useEffect(() => {
     const handleFaceSelected = (
       e: CustomEvent<{
         normal: { x: number; y: number; z: number };
         centroid: { x: number; y: number; z: number };
+        vertices?: { x: number; y: number; z: number }[];
       }>,
     ) => {
-      const { normal, centroid } = e.detail;
+      const { normal, centroid, vertices } = e.detail;
 
-      // centroid is in world space (from Three.js e.point), but normal is in
-      // kernel Z-up space — transform normal: (nx, ny, nz) → (nx, nz, -ny)
-      const wNormal = new Vector3(normal.x, normal.z, -normal.y);
+      // Both centroid and normal arrive in kernel (Z-up) space. The camera
+      // and OrbitControls live in display (Y-up) space — convert both via
+      // the (x, y, z) → (x, z, -y) mapping that the scene's rotation group
+      // applies to geometry.
+      const wNormal = new Vector3(normal.x, normal.z, -normal.y).normalize();
+      const wCentroid = new Vector3(centroid.x, centroid.z, -centroid.y);
 
-      // Set target to face centroid (already world space)
-      targetGoalRef.current.set(centroid.x, centroid.y, centroid.z);
+      // Pick view distance from the face's actual U/V extent when we have
+      // vertices, using the camera FOV so the face fills the viewport with
+      // a 20% padding. Falls back to 60mm when vertices weren't supplied
+      // (e.g. axis-aligned plane gizmo entry).
+      let viewDistance = 60;
+      if (vertices && vertices.length >= 3) {
+        // Build an orthonormal U/V basis on the face.
+        const tmp = new Vector3(0, 1, 0);
+        if (Math.abs(wNormal.dot(tmp)) > 0.95) tmp.set(1, 0, 0);
+        const uDir = new Vector3().crossVectors(tmp, wNormal).normalize();
+        const vDir = new Vector3().crossVectors(wNormal, uDir).normalize();
+        let minU = Infinity, maxU = -Infinity;
+        let minV = Infinity, maxV = -Infinity;
+        const offset = new Vector3();
+        for (const k of vertices) {
+          const wp = new Vector3(k.x, k.z, -k.y);
+          offset.subVectors(wp, wCentroid);
+          const u = offset.dot(uDir);
+          const v = offset.dot(vDir);
+          if (u < minU) minU = u;
+          if (u > maxU) maxU = u;
+          if (v < minV) minV = v;
+          if (v > maxV) maxV = v;
+        }
+        const width = Math.max(1, maxU - minU);
+        const height = Math.max(1, maxV - minV);
+        const padding = 1.2;
+        if (camera instanceof PerspectiveCamera) {
+          const vFov = (camera.fov * Math.PI) / 180;
+          const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect);
+          const distV = (height / 2) / Math.tan(vFov / 2);
+          const distH = (width / 2) / Math.tan(hFov / 2);
+          viewDistance = Math.max(distV, distH, 10) * padding;
+        } else {
+          viewDistance = Math.max(width, height, 10) * padding;
+        }
+      }
 
-      // Camera should be positioned along the positive normal (in front of the face, looking at it)
-      // Distance of 60mm for a good view
-      const viewDistance = 60;
       const cameraPos = new Vector3(
-        centroid.x + wNormal.x * viewDistance,
-        centroid.y + wNormal.y * viewDistance,
-        centroid.z + wNormal.z * viewDistance,
+        wCentroid.x + wNormal.x * viewDistance,
+        wCentroid.y + wNormal.y * viewDistance,
+        wCentroid.z + wNormal.z * viewDistance,
       );
+
+      targetGoalRef.current.copy(wCentroid);
       cameraPositionGoalRef.current = cameraPos;
       distanceGoalRef.current = viewDistance;
 
       // Compute goal quaternion for smooth orientation interpolation (zero roll)
-      const targetVec = new Vector3(centroid.x, centroid.y, centroid.z);
-      computeLevelQuaternion(cameraPos, targetVec, goalQuatRef.current);
+      computeLevelQuaternion(cameraPos, wCentroid, goalQuatRef.current);
 
       // Disable OrbitControls during animation so it doesn't fight with our quaternion
       if (orbitRef.current) orbitRef.current.enabled = false;
@@ -1068,7 +1095,7 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
         "vcad:face-selected",
         handleFaceSelected as EventListener,
       );
-  }, []);
+  }, [camera]);
 
   // Snap view: animate camera to predefined positions
   useEffect(() => {
@@ -1292,6 +1319,86 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
     window.addEventListener("vcad:hero-view", handleHeroView);
     return () => window.removeEventListener("vcad:hero-view", handleHeroView);
   }, []);
+
+  // Pan camera target to a kernel-space point. Triggered by the StatusBar
+  // cursor-coord chip when the user types a value and presses Enter. Keeps
+  // the camera position and zoom; only the look-at target moves.
+  useEffect(() => {
+    const handler = (
+      e: CustomEvent<{ x: number; y: number; z: number }>,
+    ) => {
+      const { x, y, z } = e.detail;
+      const [dx, dy, dz] = kernelToDisplay([x, y, z]);
+      targetGoalRef.current.set(dx, dy, dz);
+      cameraPositionGoalRef.current = null;
+      distanceGoalRef.current = null;
+      if (orbitRef.current) orbitRef.current.enabled = false;
+      isAnimatingTargetRef.current = true;
+      setIsCameraMoving(true);
+    };
+    window.addEventListener("vcad:focus-point", handler as EventListener);
+    return () =>
+      window.removeEventListener("vcad:focus-point", handler as EventListener);
+  }, []);
+
+  // Animated camera-fit. Boot's auto-fit takes the snap path inside
+  // useCameraControls so the user doesn't watch a sweep on every reload;
+  // this listener handles the user-driven dispatches (View → Fit menu,
+  // double-click on empty canvas) and flies the camera into place via the
+  // standard target+position+quaternion lerp.
+  useEffect(() => {
+    const handler = () => {
+      const scene = useEngineStore.getState().scene;
+      if (!scene || scene.parts.length === 0) return;
+
+      const box = new Box3();
+      const tmp = new Vector3();
+      let hasPoints = false;
+      for (const p of scene.parts) {
+        const pos = p.mesh.positions;
+        for (let i = 0; i < pos.length; i += 3) {
+          tmp.set(pos[i] ?? 0, pos[i + 1] ?? 0, pos[i + 2] ?? 0);
+          box.expandByPoint(tmp);
+          hasPoints = true;
+        }
+      }
+      if (!hasPoints) return;
+
+      const kernelCenter = new Vector3();
+      box.getCenter(kernelCenter);
+      const size = new Vector3();
+      box.getSize(size);
+      const dist = Math.max(size.x, size.y, size.z, 50) * 2;
+      // Kernel (Z-up) → display (Y-up).
+      const displayCenter = new Vector3(
+        kernelCenter.x,
+        kernelCenter.z,
+        -kernelCenter.y,
+      );
+
+      // Preserve the current view direction; fall back to isometric when
+      // camera and target coincide (shouldn't happen, but defensive).
+      const currentTarget =
+        orbitRef.current?.target ?? new Vector3();
+      const dir = new Vector3().copy(camera.position).sub(currentTarget);
+      if (dir.lengthSq() < 1e-6) dir.set(1, 1, 1);
+      dir.normalize();
+
+      const cameraPos = new Vector3()
+        .copy(displayCenter)
+        .addScaledVector(dir, dist);
+
+      targetGoalRef.current.copy(displayCenter);
+      cameraPositionGoalRef.current = cameraPos;
+      distanceGoalRef.current = dist;
+      computeLevelQuaternion(cameraPos, displayCenter, goalQuatRef.current);
+      if (orbitRef.current) orbitRef.current.enabled = false;
+      isAnimatingTargetRef.current = true;
+      setIsCameraMoving(true);
+    };
+    window.addEventListener("vcad:camera-fit", handler);
+    return () => window.removeEventListener("vcad:camera-fit", handler);
+  }, [camera]);
 
   // Get effective scene settings
   const sceneSettings = useMemo(

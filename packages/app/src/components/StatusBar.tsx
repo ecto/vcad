@@ -4,18 +4,38 @@ import { Terminal } from "@phosphor-icons/react/dist/ssr/Terminal";
 import { PencilSimple } from "@phosphor-icons/react/dist/ssr/PencilSimple";
 import { GlobeSimple } from "@phosphor-icons/react/dist/ssr/GlobeSimple";
 import { Check } from "@phosphor-icons/react/dist/ssr/Check";
+import { CrosshairSimple } from "@phosphor-icons/react/dist/ssr/CrosshairSimple";
 import * as Popover from "@radix-ui/react-popover";
 import { useDocumentStore, useUiStore, useSketchStore, t, tFmt, type LogLevelName, type SelectionFilter } from "@vcad/core";
 import { useLocaleStore, supportedLocales, type SupportedLocale } from "@/stores/locale-store";
+import { useDrawingStore } from "@/stores/drawing-store";
 import { useLogStore, getFilteredEntries } from "@/stores/log-store";
 import { FooterUsageMeter } from "@/components/FooterUsageMeter";
+import { FooterChip, FooterChipButton } from "@/components/footer/FooterChip";
+import { CursorCoordChip } from "@/components/footer/CursorCoordChip";
+import { KernelPulseChip } from "@/components/footer/KernelPulseChip";
+import { JobsChip } from "@/components/footer/JobsChip";
+import { KoanChip } from "@/components/footer/KoanChip";
+import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useCapabilities } from "@/lib/capabilities";
 
 const LOCALE_LABELS: Record<string, string> = {
+  cs: "Čeština",
+  de: "Deutsch",
   en: "English",
   es: "Español",
   fr: "Français",
+  it: "Italiano",
+  ja: "日本語",
+  ko: "한국어",
+  nl: "Nederlands",
+  pl: "Polski",
+  pt: "Português",
+  ru: "Русский",
+  tr: "Türkçe",
+  zh: "中文",
+  "zh-tw": "繁體中文",
 };
 
 const LEVEL_COLOR: Record<LogLevelName, string> = {
@@ -24,10 +44,6 @@ const LEVEL_COLOR: Record<LogLevelName, string> = {
   WARN: "text-yellow-400",
   ERROR: "text-red-400",
 };
-
-function formatCoord(n: number): string {
-  return n.toFixed(1).padStart(8, " ");
-}
 
 function formatAgo(ts: number, now: number): string {
   const diff = Math.max(0, now - ts);
@@ -40,23 +56,25 @@ function formatAgo(ts: number, now: number): string {
 /**
  * Ambient status bar.
  *
- * Left: live ticker of the most recent console log entry matching the current
- * filters. Slides in on change, click opens the full Console panel. Middle:
- * live cursor world position from the viewport raycast. Right: compact doc
- * metrics — dirty dot, part count, selection count.
+ * Composed from FooterChip primitives. Left → right:
+ * - Koan slot: selection summary, doc stats, or rotating idle koan.
+ * - Console ticker (expands to fill): latest log entry, click opens panel.
+ * - Sketch ribbon (when active): plane, cursor, snap, counts, solver state.
+ * - Cursor world coords (Z-up, with click-to-cycle unit and click-to-pan).
+ * - Active job (when running) → usage meter → locale picker.
+ * - Kernel pulse + frame-ms sparkline (rightmost, system telemetry).
  */
 export function StatusBar() {
   const parts = useDocumentStore((s) => s.parts);
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
   const selection = useUiStore((s) => s.selection);
-  const cursorWorld = useUiStore((s) => s.cursorWorld);
   useLocaleStore((s) => s.locale);
 
-  // Sketch state — only rendered while sketch is active. Each subscription is
-  // cheap (primitives or shallow length), so the subscriber count overhead is
-  // a non-issue.
   const sketchActive = useSketchStore((s) => s.active);
   const sketchPlane = useSketchStore((s) => s.plane);
+  const drafting2d = useDrawingStore((s) => s.viewMode === "2d");
+  const renderMode = useUiStore((s) => s.renderMode);
+  const toolbarTab = useUiStore((s) => s.toolbarTab);
   const sketchCursor = useSketchStore((s) => s.cursorSketchPos);
   const sketchSnap = useSketchStore((s) => s.snapTarget);
   const sketchSegmentCount = useSketchStore((s) => s.segments.length);
@@ -65,16 +83,12 @@ export function StatusBar() {
   const gridSnap = useUiStore((s) => s.gridSnap);
   const pointSnap = useUiStore((s) => s.pointSnap);
 
-  // Subscribe to the pieces of the log store the ticker actually needs so we
-  // re-render only when filtered output changes.
   const entries = useLogStore((s) => s.entries);
   const minLevel = useLogStore((s) => s.minLevel);
   const enabledSources = useLogStore((s) => s.enabledSources);
   const togglePanel = useLogStore((s) => s.togglePanel);
 
   const latest = useMemo(() => {
-    // getFilteredEntries wants the whole state shape but only reads these
-    // four fields; the rest are never touched by the filter.
     const filtered = getFilteredEntries({
       entries,
       minLevel,
@@ -90,15 +104,14 @@ export function StatusBar() {
     return filtered.length > 0 ? filtered[filtered.length - 1] : null;
   }, [entries, minLevel, enabledSources]);
 
-  // Tick for "Ns ago" readout and to re-key the slide-in animation.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, []);
 
-  const selCount = selectedPartIds.size;
   const fresh = latest && now - latest.timestamp < 3000;
+  const selCount = selectedPartIds.size;
 
   /**
    * One-line summary of what's currently selected. Prefers sub-feature
@@ -138,22 +151,76 @@ export function StatusBar() {
     <div
       data-tauri-drag-region={macOverlay ? "" : undefined}
       className={cn(
-        "flex h-6 items-stretch bg-surface text-[10px] font-mono select-none",
+        "vcad-footer flex h-6 items-stretch bg-surface select-none",
         "border-t border-border/40",
       )}
     >
-      {/* Left: console ticker — click to open the full console panel */}
-      <button
-        type="button"
-        onClick={togglePanel}
-        className={cn(
-          "flex items-center gap-2 px-3 min-w-0 flex-1",
-          "text-text-muted hover:bg-hover hover:text-text",
-          "focus:outline-none focus-visible:bg-hover",
-          "transition-colors",
-        )}
-        title={latest ? t("status.console_open") : t("status.console_empty_title")}
+      {/* Leftmost slot: sketch ribbon when sketching, koan / mode badge
+          otherwise. Both share the no-leading-divider position so the
+          chrome stays consistent regardless of mode. */}
+      {sketchActive ? (
+        <Tooltip
+          side="top"
+          content="Active sketch — plane, cursor, snap, entity / constraint counts, solver state"
+        >
+          <FooterChip
+            divider={false}
+            severity="warn"
+            className="tabular-nums"
+          >
+            <PencilSimple size={11} className="shrink-0" />
+            <span className="font-medium">SKETCH</span>
+            <span className="text-text-muted">
+              {typeof sketchPlane === "string" ? sketchPlane : "face"}
+            </span>
+            {sketchCursor && (
+              <span className="hidden md:inline text-text-muted">
+                ({sketchCursor.x.toFixed(1)}, {sketchCursor.y.toFixed(1)})
+              </span>
+            )}
+            <span className="hidden lg:inline text-text-muted">
+              snap: {sketchSnap ? "POINT" : gridSnap ? "GRID" : pointSnap ? "PT" : "OFF"}
+            </span>
+            <span className="text-text-muted">
+              {sketchSegmentCount} ent · {sketchConstraintCount} con
+            </span>
+            <span
+              className={cn(
+                "uppercase",
+                sketchStatus === "solved" && "text-emerald-400",
+                sketchStatus === "error" && "text-red-400",
+                sketchStatus === "over" && "text-orange-400",
+                sketchStatus === "under" && "text-yellow-400",
+              )}
+            >
+              [{sketchStatus}]
+            </span>
+          </FooterChip>
+        </Tooltip>
+      ) : (
+        <KoanChip
+          divider={false}
+          mode={
+            drafting2d
+              ? "drafting"
+              : renderMode === "raytrace"
+                ? "raytrace"
+                : toolbarTab === "assembly"
+                  ? "assembly"
+                  : null
+          }
+        />
+      )}
+
+      <Tooltip
+        side="top"
+        content={
+          latest
+            ? "Latest console message — click to open the panel"
+            : "Console is empty — click to open the panel"
+        }
       >
+      <FooterChipButton flex onClick={togglePanel}>
         <Terminal size={11} className="shrink-0 opacity-60" />
         {latest ? (
           <>
@@ -165,7 +232,7 @@ export function StatusBar() {
             >
               {latest.level}
             </span>
-            <span className="shrink-0 text-text-muted/70">
+            <span className="hidden md:inline shrink-0 text-text-muted/70">
               {latest.source}
             </span>
             <span
@@ -191,85 +258,14 @@ export function StatusBar() {
         ) : (
           <span className="text-text-muted/60">console empty</span>
         )}
-      </button>
+      </FooterChipButton>
+      </Tooltip>
 
-      {/* Sketch ribbon — only when active. Surfaces live cursor, snap state,
-          entity/constraint counts, and constraint solver status. */}
-      {sketchActive && (
-        <div
-          className={cn(
-            "flex items-center gap-2 px-3 border-l border-border/40",
-            "text-amber-400 tabular-nums whitespace-pre",
-          )}
-        >
-          <PencilSimple size={11} className="shrink-0" />
-          <span className="font-medium">SKETCH</span>
-          <span className="text-text-muted">
-            {typeof sketchPlane === "string" ? sketchPlane : "face"}
-          </span>
-          {sketchCursor && (
-            <span className="hidden md:inline text-text-muted">
-              ({sketchCursor.x.toFixed(1)}, {sketchCursor.y.toFixed(1)})
-            </span>
-          )}
-          <span className="hidden lg:inline text-text-muted">
-            snap: {sketchSnap ? "POINT" : gridSnap ? "GRID" : pointSnap ? "PT" : "OFF"}
-          </span>
-          <span className="text-text-muted">
-            {sketchSegmentCount} ent · {sketchConstraintCount} con
-          </span>
-          <span
-            className={cn(
-              "uppercase",
-              sketchStatus === "solved" && "text-emerald-400",
-              sketchStatus === "error" && "text-red-400",
-              sketchStatus === "over" && "text-orange-400",
-              sketchStatus === "under" && "text-yellow-400",
-            )}
-          >
-            [{sketchStatus}]
-          </span>
-        </div>
-      )}
+      <CursorCoordChip className={cn(sketchActive && "hidden lg:flex")} />
 
-      {/* Middle: live cursor world coords (Z-up, mm) */}
-      <div
-        className={cn(
-          "hidden sm:flex items-center gap-2 px-3 border-l border-border/40",
-          "text-text-muted tabular-nums whitespace-pre",
-          sketchActive && "hidden lg:flex",
-        )}
-        title={t("status.cursor_pos")}
-      >
-        {cursorWorld ? (
-          <>
-            <span>
-              <span className="text-brand">x</span>
-              {formatCoord(cursorWorld.x)}
-            </span>
-            <span>
-              <span className="text-brand">y</span>
-              {formatCoord(cursorWorld.y)}
-            </span>
-            <span>
-              <span className="text-brand">z</span>
-              {formatCoord(cursorWorld.z)}
-            </span>
-          </>
-        ) : (
-          <span className="opacity-40">
-            x       — y       — z       —
-          </span>
-        )}
-      </div>
+      <JobsChip />
 
-      {/* Right: doc metrics — save state now lives in the titlebar's DocTitle */}
-      <div
-        className={cn(
-          "flex items-center gap-3 px-3 border-l border-border/40",
-          "text-text-muted",
-        )}
-      >
+      <FooterChip className="gap-3">
         <span className="tabular-nums">
           {tFmt(parts.length === 1 ? "status.part" : "status.parts", {
             count: String(parts.length),
@@ -283,57 +279,101 @@ export function StatusBar() {
         {subFeatureLabel && (
           <span className="text-brand">{subFeatureLabel}</span>
         )}
-      </div>
+      </FooterChip>
 
       <SelectionFilterChips />
 
       <FooterUsageMeter />
 
       <LocalePicker />
+
+      <KernelPulseChip className="hidden md:flex" />
     </div>
   );
 }
 
-const FILTER_OPTIONS: Array<{ value: SelectionFilter; label: string; key: string }> = [
-  { value: "auto", label: "Auto", key: "0" },
-  { value: "body", label: "Body", key: "1" },
-  { value: "face", label: "Face", key: "2" },
-  { value: "edge", label: "Edge", key: "3" },
-  { value: "vertex", label: "Vertex", key: "4" },
+const FILTER_OPTIONS: Array<{ value: SelectionFilter; label: string; hint: string }> = [
+  { value: "auto", label: "Auto", hint: "Pick whatever's most specific under the cursor" },
+  { value: "body", label: "Body", hint: "Always select the whole part" },
+  { value: "face", label: "Face", hint: "Snap selection to the nearest face" },
+  { value: "edge", label: "Edge", hint: "Snap selection to the nearest edge" },
+  { value: "vertex", label: "Vertex", hint: "Snap selection to the nearest vertex" },
 ];
 
 /**
- * Selection filter chip cluster — restricts what `pickSubFeature` returns
- * on the next pointer event. Hotkeys 0/1/2/3/4 in the viewport zone
- * cycle to the same filter; the chips also show the current binding so
- * the shortcut is discoverable.
+ * Selection filter chip — single popover that shows the current pick mode
+ * (auto / body / face / edge / vertex) and lets you switch without taking
+ * over a digit hotkey. The toolbar tab strip owns 1–7, so we don't fight
+ * for them here.
  */
 function SelectionFilterChips() {
   const filter = useUiStore((s) => s.selectionFilter);
   const setFilter = useUiStore((s) => s.setSelectionFilter);
+  const current = FILTER_OPTIONS.find((o) => o.value === filter) ?? FILTER_OPTIONS[0]!;
   return (
-    <div className="hidden md:flex items-stretch border-l border-border/40">
-      {FILTER_OPTIONS.map(({ value, label, key }) => {
-        const active = filter === value;
-        return (
-          <button
-            key={value}
-            onClick={() => setFilter(value)}
-            title={`${label} (${key})`}
-            className={cn(
-              "px-2 text-[10px] uppercase tracking-wide transition-colors",
-              "border-r border-border/40 last:border-r-0",
-              active
-                ? "text-brand bg-brand/10"
-                : "text-text-muted hover:text-text hover:bg-hover",
-            )}
-          >
-            {label}
-            <span className="ml-1 text-text-muted/60 font-mono">{key}</span>
-          </button>
-        );
-      })}
-    </div>
+    <Popover.Root>
+      <Tooltip side="top" content="Pick mode — what hover and click target">
+        <Popover.Trigger asChild>
+          <FooterChipButton className="gap-1 px-2">
+            <CrosshairSimple size={11} className="shrink-0" />
+            <span className="uppercase tracking-wide">{current.label}</span>
+          </FooterChipButton>
+        </Popover.Trigger>
+      </Tooltip>
+      <Popover.Portal>
+        <Popover.Content
+          side="top"
+          align="end"
+          sideOffset={6}
+          collisionPadding={8}
+          className={cn(
+            "z-50 w-[260px]",
+            "rounded-md border border-border/60 bg-surface/95 backdrop-blur-md",
+            "p-1 shadow-xl",
+            "animate-in fade-in slide-in-from-bottom-2 duration-150",
+            "text-[11px]",
+          )}
+        >
+          <div className="px-2 pt-1 pb-1.5 text-text-muted/60 uppercase tracking-[0.15em] text-[9px]">
+            Pick mode
+          </div>
+          {FILTER_OPTIONS.map(({ value, label, hint }) => {
+            const active = filter === value;
+            return (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setFilter(value)}
+                className={cn(
+                  "flex w-full items-start gap-2 rounded-sm px-2 py-1.5 text-left",
+                  "transition-colors",
+                  active
+                    ? "bg-brand/15 text-text"
+                    : "text-text-muted hover:bg-hover hover:text-text",
+                )}
+              >
+                <span className="flex-1">
+                  <span
+                    className={cn(
+                      "block uppercase tracking-wide text-[10px]",
+                      active ? "text-brand" : "text-text",
+                    )}
+                  >
+                    {label}
+                  </span>
+                  <span className="block text-[10px] text-text-muted/70">
+                    {hint}
+                  </span>
+                </span>
+                {active && (
+                  <Check size={11} weight="bold" className="mt-0.5 shrink-0 text-brand" />
+                )}
+              </button>
+            );
+          })}
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
 
@@ -344,48 +384,63 @@ function LocalePicker() {
 
   return (
     <Popover.Root>
-      <Popover.Trigger asChild>
-        <button
-          type="button"
-          className={cn(
-            "flex items-center gap-1 px-2 border-l border-border/40",
-            "text-text-muted hover:text-text hover:bg-hover transition-colors",
-          )}
-          title={t("status.language")}
-        >
-          <GlobeSimple size={11} className="shrink-0" />
-          <span className="uppercase tracking-wide">{locale}</span>
-        </button>
-      </Popover.Trigger>
+      <Tooltip side="top" content="Display language — click to switch">
+        <Popover.Trigger asChild>
+          <FooterChipButton className="gap-1 px-2">
+            <GlobeSimple size={11} className="shrink-0" />
+            <span className="uppercase tracking-wide">{locale}</span>
+          </FooterChipButton>
+        </Popover.Trigger>
+      </Tooltip>
       <Popover.Portal>
         <Popover.Content
           side="top"
           align="end"
-          sideOffset={4}
+          sideOffset={6}
+          collisionPadding={8}
           className={cn(
-            "z-50 min-w-[140px] rounded-md border border-border bg-surface p-1 shadow-lg",
+            "z-50 w-[200px] max-h-[60vh] overflow-y-auto",
+            "rounded-md border border-border/60 bg-surface/95 backdrop-blur-md",
+            "p-1 shadow-xl",
             "animate-in fade-in slide-in-from-bottom-2 duration-150",
             "text-[11px] font-mono",
           )}
         >
-          {locales.map((loc) => (
-            <button
-              key={loc}
-              type="button"
-              onClick={() => setLoc(loc as SupportedLocale)}
-              className={cn(
-                "flex w-full items-center gap-2 rounded px-2 py-1",
-                "hover:bg-hover transition-colors",
-                loc === locale ? "text-text" : "text-text-muted",
-              )}
-            >
-              <span className="w-3">
-                {loc === locale && <Check size={10} weight="bold" className="text-brand" />}
-              </span>
-              <span className="uppercase tracking-wide w-5">{loc}</span>
-              <span className="text-text-muted">{LOCALE_LABELS[loc] ?? loc}</span>
-            </button>
-          ))}
+          <div className="px-2 pt-1 pb-1.5 text-text-muted/60 uppercase tracking-[0.15em] text-[9px]">
+            {t("status.language")}
+          </div>
+          {locales.map((loc) => {
+            const isActive = loc === locale;
+            return (
+              <button
+                key={loc}
+                type="button"
+                onClick={() => setLoc(loc as SupportedLocale)}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-sm px-2 py-1.5",
+                  "transition-colors",
+                  isActive
+                    ? "bg-brand/15 text-text"
+                    : "text-text-muted hover:bg-hover hover:text-text",
+                )}
+              >
+                <span
+                  className={cn(
+                    "shrink-0 w-7 text-[10px] uppercase tracking-wide tabular-nums",
+                    isActive ? "text-brand" : "text-text-muted/70",
+                  )}
+                >
+                  {loc}
+                </span>
+                <span className="flex-1 text-left whitespace-nowrap">
+                  {LOCALE_LABELS[loc] ?? loc}
+                </span>
+                {isActive && (
+                  <Check size={11} weight="bold" className="shrink-0 text-brand" />
+                )}
+              </button>
+            );
+          })}
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>

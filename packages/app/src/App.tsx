@@ -77,6 +77,7 @@ import {
   parseVcadFile,
   parseStl,
   logger,
+  runJob,
 } from "@vcad/core";
 import { useEngine } from "@/hooks/useEngine";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
@@ -368,7 +369,10 @@ export function App() {
         logger.info("step", `Buffer size: ${buffer.byteLength}`);
 
         logger.info("step", "Calling engine.importStep...");
-        const rawMeshes = engine.importStep(buffer);
+        const rawMeshes = await runJob(
+          { verb: `Importing ${file.name}` },
+          () => engine.importStep(buffer),
+        );
         logger.info("step", `Got meshes: ${rawMeshes.length}`);
 
         if (rawMeshes.length === 0) {

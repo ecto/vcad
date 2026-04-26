@@ -77,18 +77,6 @@
   --color-input: var(--border);
   --color-ring: #F92672;
 
-  /* vcad design system: zero border radius. Override Tailwind's default radius
-     scale so every `rounded-*` utility resolves to 0. `rounded-full` is a
-     static utility (not token-driven), so it's flattened in @layer below. */
-  --radius: 0;
-  --radius-xs: 0;
-  --radius-sm: 0;
-  --radius-md: 0;
-  --radius-lg: 0;
-  --radius-xl: 0;
-  --radius-2xl: 0;
-  --radius-3xl: 0;
-  --radius-4xl: 0;
 }
 
 /* shadcn token aliases — these need to live in :root (not @theme) so they
@@ -145,18 +133,13 @@
   --hover: rgba(0, 0, 0, 0.05);
 }
 
-/* Body typography. Three deliberate calls here, in order of importance:
+/* Body typography. Two deliberate calls here, in order of importance:
  *
  *  1. `font-optical-sizing: auto` — engages Inter v4's `opsz` axis. Inter then
  *     uses tighter, more compact glyphs at small UI sizes and opens letters up
  *     at heading sizes, instead of one shape stretched to every size.
  *
- *  2. `letter-spacing: -0.011em` — modest negative tracking on the body. Inter
- *     ships slightly wide by default for a UI font; this shadcn-style nudge
- *     tightens labels and prose without making it feel cramped. Headings can
- *     go further (-0.02em / -0.025em) per-component if needed.
- *
- *  3. Font smoothing is theme-conditional, NOT a blanket `antialiased`:
+ *  2. Font smoothing is theme-conditional, NOT a blanket `antialiased`:
  *
  *       Dark mode  → `-webkit-font-smoothing: antialiased`
  *           Light text on a dark background renders thick under macOS's
@@ -170,12 +153,16 @@
  *
  *     `-moz-osx-font-smoothing: grayscale` only fires on Firefox/macOS and
  *     pairs with the dark-mode `antialiased` to keep both engines consistent.
+ *
+ *  We deliberately do NOT apply a global negative letter-spacing. Inter's
+ *  default tracking is correct at small UI sizes; shrinking it makes labels
+ *  feel cramped. Headings that genuinely want tighter tracking can opt in
+ *  per-component (e.g. `tracking-tight`).
  */
 body {
   margin: 0;
   font-family: var(--font-sans);
   font-optical-sizing: auto;
-  letter-spacing: -0.011em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
@@ -186,26 +173,6 @@ body {
 :root.light body {
   -webkit-font-smoothing: auto;
   -moz-osx-font-smoothing: auto;
-}
-
-/* Mono surfaces (kbd, code, hex, coords, log lines) keep their own letter
- * spacing — Berkeley Mono is already designed for tabular alignment, and the
- * body's negative tracking would break the grid. Reset it everywhere mono
- * is applied. */
-.font-mono,
-kbd,
-code,
-pre,
-samp {
-  letter-spacing: 0;
-}
-
-/* vcad design system: flatten Tailwind's static `rounded-full` utility.
-   The `--radius-*` tokens above handle the rest of the rounded-* scale. */
-@layer utilities {
-  .rounded-full {
-    border-radius: 0;
-  }
 }
 
 /* Global scrollbar styling */
@@ -249,6 +216,55 @@ samp {
     box-shadow: 0 0 0 4px var(--color-brand), 0 0 12px var(--color-brand);
   }
 }
+
+/* Footer kernel-pulse — heartbeat dot whose duration is set inline by the
+   KernelPulseChip based on smoothed FPS and engine.loading. */
+@keyframes vcad-pulse {
+  0%, 100% {
+    opacity: 0.55;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+/* Sliding indeterminate progress bar used by the JobsChip when a job has no
+   reportable progress. The 1/3-width inner bar slides full-width left→right. */
+@keyframes vcad-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+.vcad-job-indeterminate {
+  animation: vcad-indeterminate 1.2s linear infinite;
+}
+
+/* ─── Footer chrome ──────────────────────────────────────────────────────
+   Boot sequence — chips fade up left→right when the footer first mounts.
+   Re-fires whenever a chip later mounts (sketch ribbon, jobs chip), which
+   is the right behavior — the new chip "introduces itself" the same way. */
+@keyframes vcad-chip-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.vcad-footer > * {
+  animation: vcad-chip-in 0.35s ease-out backwards;
+}
+.vcad-footer > *:nth-child(1) { animation-delay: 0.05s; }
+.vcad-footer > *:nth-child(2) { animation-delay: 0.10s; }
+.vcad-footer > *:nth-child(3) { animation-delay: 0.15s; }
+.vcad-footer > *:nth-child(4) { animation-delay: 0.20s; }
+.vcad-footer > *:nth-child(5) { animation-delay: 0.25s; }
+.vcad-footer > *:nth-child(6) { animation-delay: 0.30s; }
+.vcad-footer > *:nth-child(7) { animation-delay: 0.35s; }
+.vcad-footer > *:nth-child(8) { animation-delay: 0.40s; }
 
 /* Changelog tooltip */
 .changelog-tooltip {
