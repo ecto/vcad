@@ -1,6 +1,6 @@
-import { useRef, useMemo, useCallback } from "react";
+import { useRef, useMemo, useCallback, type ReactNode } from "react";
 import * as THREE from "three";
-import { useThree, ThreeEvent } from "@react-three/fiber";
+import { useThree, useFrame, ThreeEvent } from "@react-three/fiber";
 import { Line, Html } from "@react-three/drei";
 import {
   useSketchStore,
@@ -20,6 +20,47 @@ const POINT_SNAP_TOLERANCE = 5; // mm
 /** Convert a Vec3 to Three.js Vector3 */
 function toVec3(v: Vec3): THREE.Vector3 {
   return new THREE.Vector3(v.x, v.y, v.z);
+}
+
+/**
+ * Wraps children in a group that maintains a fixed pixel size as the camera
+ * moves. Pass `screenPx=1` and use unit-pixel-sized geometry — e.g.,
+ * `<ringGeometry args={[8, 10, 16]} />` will render as 8-10 pixels regardless
+ * of zoom.
+ *
+ * For perspective cameras: world-units per screen pixel is
+ *   (2 · distance · tan(fov / 2)) / viewport-height
+ * we apply that as the group's uniform scale every frame.
+ */
+function ScreenScaledGroup({
+  position,
+  screenPx = 1,
+  children,
+}: {
+  position: THREE.Vector3 | [number, number, number];
+  screenPx?: number;
+  children: ReactNode;
+}) {
+  const ref = useRef<THREE.Group>(null);
+  const { camera, size } = useThree();
+  const tmpV = useRef(new THREE.Vector3());
+
+  useFrame(() => {
+    const g = ref.current;
+    if (!g) return;
+    const p = Array.isArray(position) ? tmpV.current.fromArray(position) : position;
+    const cam = camera as THREE.PerspectiveCamera;
+    const dist = cam.position.distanceTo(p);
+    const fovRad = ((cam.fov ?? 50) * Math.PI) / 180;
+    const worldPerPx = (2 * dist * Math.tan(fovRad / 2)) / size.height;
+    g.scale.setScalar(Math.max(1e-4, screenPx * worldPerPx));
+  });
+
+  return (
+    <group ref={ref} position={position}>
+      {children}
+    </group>
+  );
 }
 
 /**
@@ -456,20 +497,24 @@ function SketchGeometry3D({
         />
       ))}
 
-      {/* Vertices */}
+      {/* Vertices — fixed 4px screen radius */}
       {vertices.map((v, i) => (
-        <mesh key={i} position={v}>
-          <sphereGeometry args={[0.8, 12, 12]} />
-          <meshBasicMaterial color={isDark ? "#00d4ff" : "#0891b2"} />
-        </mesh>
+        <ScreenScaledGroup key={i} position={v}>
+          <mesh>
+            <sphereGeometry args={[4, 12, 12]} />
+            <meshBasicMaterial color={isDark ? "#00d4ff" : "#0891b2"} />
+          </mesh>
+        </ScreenScaledGroup>
       ))}
 
-      {/* Pending points (during shape creation) */}
+      {/* Pending points (during shape creation) — fixed 5px screen radius */}
       {pendingPoints3D.map((pt, i) => (
-        <mesh key={`pending-${i}`} position={pt}>
-          <sphereGeometry args={[1.2, 12, 12]} />
-          <meshBasicMaterial color="#f59e0b" />
-        </mesh>
+        <ScreenScaledGroup key={`pending-${i}`} position={pt}>
+          <mesh>
+            <sphereGeometry args={[5, 12, 12]} />
+            <meshBasicMaterial color="#f59e0b" />
+          </mesh>
+        </ScreenScaledGroup>
       ))}
 
       {/* Constraint labels */}
@@ -517,34 +562,26 @@ function SketchCursor3D({
     () => (cursorWorldPos ? toVec3(cursorWorldPos) : null),
     [cursorWorldPos],
   );
-  const crosshairSize = 3;
+  // Crosshair points are expressed in local frame (centered at origin) and
+  // wrapped in a ScreenScaledGroup so they render at a fixed pixel size at
+  // any zoom. CROSSHAIR_PX is the half-length in pixels.
+  const CROSSHAIR_PX = 14;
 
-  // Crosshair lines
   const xCross = useMemo(() => {
-    if (!cursorPos) return null;
     const x = toVec3(xDir);
-    const start = cursorPos
-      .clone()
-      .sub(x.clone().multiplyScalar(crosshairSize));
-    const end = cursorPos.clone().add(x.clone().multiplyScalar(crosshairSize));
     return [
-      [start.x, start.y, start.z],
-      [end.x, end.y, end.z],
+      [-x.x * CROSSHAIR_PX, -x.y * CROSSHAIR_PX, -x.z * CROSSHAIR_PX],
+      [x.x * CROSSHAIR_PX, x.y * CROSSHAIR_PX, x.z * CROSSHAIR_PX],
     ] as [number, number, number][];
-  }, [cursorPos, xDir]);
+  }, [xDir]);
 
   const yCross = useMemo(() => {
-    if (!cursorPos) return null;
     const y = toVec3(yDir);
-    const start = cursorPos
-      .clone()
-      .sub(y.clone().multiplyScalar(crosshairSize));
-    const end = cursorPos.clone().add(y.clone().multiplyScalar(crosshairSize));
     return [
-      [start.x, start.y, start.z],
-      [end.x, end.y, end.z],
+      [-y.x * CROSSHAIR_PX, -y.y * CROSSHAIR_PX, -y.z * CROSSHAIR_PX],
+      [y.x * CROSSHAIR_PX, y.y * CROSSHAIR_PX, y.z * CROSSHAIR_PX],
     ] as [number, number, number][];
-  }, [cursorPos, yDir]);
+  }, [yDir]);
 
   // Preview line
   const previewLinePoints = useMemo(() => {
@@ -610,19 +647,22 @@ function SketchCursor3D({
 
   return (
     <group>
-      {/* Crosshair - cyan when grid snap active */}
-      <Line
-        points={xCross}
-        color={gridSnap && !snapTarget ? "#06b6d4" : "rgba(255,255,255,0.5)"}
-        lineWidth={gridSnap && !snapTarget ? 1.5 : 1}
-        depthWrite={false}
-      />
-      <Line
-        points={yCross}
-        color={gridSnap && !snapTarget ? "#06b6d4" : "rgba(255,255,255,0.5)"}
-        lineWidth={gridSnap && !snapTarget ? 1.5 : 1}
-        depthWrite={false}
-      />
+      {/* Crosshair - cyan when grid snap active. Pixel-sized so it stays
+          legible at any zoom level. */}
+      <ScreenScaledGroup position={cursorPos}>
+        <Line
+          points={xCross}
+          color={gridSnap && !snapTarget ? "#06b6d4" : "rgba(255,255,255,0.5)"}
+          lineWidth={gridSnap && !snapTarget ? 1.5 : 1}
+          depthWrite={false}
+        />
+        <Line
+          points={yCross}
+          color={gridSnap && !snapTarget ? "#06b6d4" : "rgba(255,255,255,0.5)"}
+          lineWidth={gridSnap && !snapTarget ? 1.5 : 1}
+          depthWrite={false}
+        />
+      </ScreenScaledGroup>
 
       {/* Preview line (dashed) */}
       {previewLinePoints && (
@@ -663,18 +703,18 @@ function SketchCursor3D({
         />
       )}
 
-      {/* Point snap indicator (green) */}
+      {/* Point snap indicator (green) — fixed pixel size at any zoom level */}
       {snapPos && (
-        <>
-          <mesh position={snapPos}>
-            <ringGeometry args={[2, 2.5, 16]} />
+        <ScreenScaledGroup position={snapPos}>
+          <mesh>
+            <ringGeometry args={[8, 10, 24]} />
             <meshBasicMaterial color="#22c55e" side={THREE.DoubleSide} />
           </mesh>
-          <mesh position={snapPos}>
-            <sphereGeometry args={[0.8, 12, 12]} />
+          <mesh>
+            <sphereGeometry args={[3, 12, 12]} />
             <meshBasicMaterial color="#22c55e" />
           </mesh>
-        </>
+        </ScreenScaledGroup>
       )}
 
       {/* Coordinate label */}

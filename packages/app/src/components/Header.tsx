@@ -21,6 +21,7 @@ import {
   TIERS,
   useBillingStore,
   t,
+  runJob,
   type Command,
 } from "@vcad/core";
 import { openCustomerPortal } from "@/lib/billing-api";
@@ -361,17 +362,20 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
     useUiStore.getState().setCommandPaletteOpen(true);
   };
 
-  const handleExport = (format: "stl" | "glb" | "step") => {
+  const handleExport = async (format: "stl" | "glb" | "step") => {
     const scene = useEngineStore.getState().scene;
     if (!scene) {
       useNotificationStore.getState().addToast("Nothing to export", "info");
       return;
     }
     try {
-      const blob =
-        format === "stl" ? exportStlBlob(scene)
-        : format === "glb" ? exportGltfBlob(scene)
-        : exportStepBlob(scene);
+      const blob = await runJob(
+        { verb: `Exporting ${format.toUpperCase()}` },
+        () =>
+          format === "stl" ? exportStlBlob(scene)
+          : format === "glb" ? exportGltfBlob(scene)
+          : exportStepBlob(scene),
+      );
       downloadBlob(blob, `model.${format}`);
     } catch (err) {
       useNotificationStore
@@ -430,7 +434,7 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
           onValueChange={setMenuValue}
           loop
           className={cn(
-            "flex items-center gap-0",
+            "flex items-center gap-0 min-w-0 overflow-x-auto no-scrollbar",
             nativeMenu && "hidden",
           )}
         >
@@ -616,14 +620,15 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
           data-tauri-drag-region={macOverlay ? "" : undefined}
         />
 
-        {/* Right cluster: search · changelog bell · auth */}
+        {/* Right cluster: search · changelog bell · auth. Search drops below
+            sm; bell drops below md. Auth/user always present. */}
         <button
           type="button"
           onClick={handleCommandPalette}
           title="Search or ask AI… (⌘K)"
           aria-label="Search or ask AI"
           className={cn(
-            "relative flex items-center justify-center w-6 h-6",
+            "relative shrink-0 hidden sm:flex items-center justify-center w-6 h-6",
             "text-text-muted hover:text-text hover:bg-hover transition-colors",
           )}
         >
@@ -643,7 +648,7 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
               : "What's new"
           }
           className={cn(
-            "relative flex items-center justify-center w-6 h-6",
+            "relative shrink-0 hidden md:flex items-center justify-center w-6 h-6",
             "text-text-muted hover:text-text hover:bg-hover transition-colors",
           )}
         >
@@ -670,7 +675,7 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
         <SignInButton
           variant="icon-text"
           className={cn(
-            "flex items-center justify-center gap-1.5 h-6 px-2 text-[10px] font-medium",
+            "shrink-0 flex items-center justify-center gap-1.5 h-6 px-2 text-[10px] font-medium",
             "text-text-muted hover:text-text hover:bg-hover",
           )}
         />

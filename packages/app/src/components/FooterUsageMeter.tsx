@@ -11,6 +11,7 @@ import {
 import { useAuth } from "@vcad/auth";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/shadcn/hover-card";
 import { UpgradeModal } from "@/components/UpgradeModal";
+import { FooterChipButton } from "@/components/footer/FooterChip";
 import { cn } from "@/lib/utils";
 import { refreshUsage } from "@/lib/billing-api";
 
@@ -83,15 +84,10 @@ export function FooterUsageMeter() {
     <>
       <HoverCard openDelay={120} closeDelay={80}>
         <HoverCardTrigger asChild>
-          <button
-            type="button"
+          <FooterChipButton
             onClick={() => setUpgradeOpen(true)}
             aria-label={`${tier.name} plan — ${formatTokens(used)} of ${formatTokens(snapshot.limit)} tokens used. Click to upgrade.`}
-            className={cn(
-              "group flex items-center gap-2 px-3 border-l border-border/40",
-              "text-text-muted hover:text-text hover:bg-hover transition-colors",
-              "focus:outline-none focus-visible:bg-hover",
-            )}
+            className="group"
           >
             <span
               className={cn(
@@ -121,14 +117,14 @@ export function FooterUsageMeter() {
             {statusLabel && (
               <span
                 className={cn(
-                  "uppercase tracking-wide hidden md:inline",
+                  "uppercase tracking-wide hidden xl:inline",
                   severity === "critical" ? "text-danger" : "text-amber-500",
                 )}
               >
                 {statusLabel}
               </span>
             )}
-          </button>
+          </FooterChipButton>
         </HoverCardTrigger>
         <HoverCardContent
           side="top"

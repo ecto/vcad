@@ -7,9 +7,9 @@ import type {
   TransformMode,
 } from "../types.js";
 import { selectionItemsEqual } from "../types.js";
+import type { LengthUnit } from "../utils/length.js";
+import { LENGTH_UNITS, nextUnit } from "../utils/length.js";
 
-/** Project a selection list down to the part IDs it covers, preserving the
- *  Set-shaped contract historical callers expect from `selectedPartIds`. */
 function deriveSelectedPartIds(items: readonly SelectionItem[]): Set<string> {
   const out = new Set<string>();
   for (const item of items) {
@@ -18,8 +18,6 @@ function deriveSelectedPartIds(items: readonly SelectionItem[]): Set<string> {
   return out;
 }
 
-/** `hoveredPartId` mirror of `hoveredItem`, kept around so existing readers
- *  (FeatureTree, SceneMesh) don't need to know about the item union yet. */
 function deriveHoveredPartId(item: SelectionItem | null): string | null {
   return item && item.kind === "part" ? item.id : null;
 }
@@ -127,6 +125,10 @@ export interface UiState {
   followingParticipantId: string | null;
   // Live cursor position in world space (Z-up), null when pointer is off the viewport
   cursorWorld: { x: number; y: number; z: number } | null;
+  // Display unit for length-bearing values in the footer (and any other
+  // chrome that reads it). Kernel storage is always millimeters; this only
+  // affects how numbers are shown / typed.
+  lengthUnit: LengthUnit;
   // Read-only share session. When set, the app is viewing a public share link;
   // every persistent-state mutation is blocked and redirected to the fork prompt.
   readOnlyShare: { token: string; docName: string } | null;
@@ -195,6 +197,9 @@ export interface UiState {
   // Keyboard cursor in the feature tree (part id, or null for no cursor)
   treeFocusedPartId: string | null;
   setTreeFocusedPartId: (id: string | null) => void;
+  // Length unit (mm, cm, in)
+  setLengthUnit: (unit: LengthUnit) => void;
+  cycleLengthUnit: () => void;
 }
 
 // Load persisted material preferences from localStorage
@@ -227,8 +232,22 @@ function loadToolbarExpanded(): boolean {
   }
 }
 
+function loadLengthUnit(): LengthUnit {
+  if (typeof window === "undefined") return "mm";
+  try {
+    const stored = localStorage.getItem("vcad:lengthUnit");
+    if (stored && (LENGTH_UNITS as readonly string[]).includes(stored)) {
+      return stored as LengthUnit;
+    }
+  } catch {
+    // ignore
+  }
+  return "mm";
+}
+
 const persistedMaterials = loadPersistedMaterials();
 const persistedToolbarExpanded = loadToolbarExpanded();
+const persistedLengthUnit = loadLengthUnit();
 
 export const useUiStore = create<UiState>((set) => ({
   selectedPartIds: new Set(),
@@ -263,6 +282,7 @@ export const useUiStore = create<UiState>((set) => ({
   inspectorTarget: null as InspectorTarget,
   statusBarVisible: true,
   cursorWorld: null,
+  lengthUnit: persistedLengthUnit,
   readOnlyShare: null,
   followMode: "free",
   followingParticipantId: null,
@@ -463,4 +483,24 @@ export const useUiStore = create<UiState>((set) => ({
   setFocusZone: (zone) => set({ focusZone: zone }),
 
   setTreeFocusedPartId: (id) => set({ treeFocusedPartId: id }),
+
+  setLengthUnit: (unit) => {
+    try {
+      if (typeof window !== "undefined") localStorage.setItem("vcad:lengthUnit", unit);
+    } catch {
+      // ignore
+    }
+    set({ lengthUnit: unit });
+  },
+
+  cycleLengthUnit: () =>
+    set((s) => {
+      const next = nextUnit(s.lengthUnit);
+      try {
+        if (typeof window !== "undefined") localStorage.setItem("vcad:lengthUnit", next);
+      } catch {
+        // ignore
+      }
+      return { lengthUnit: next };
+    }),
 }));

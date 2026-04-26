@@ -308,11 +308,17 @@ export const useSketchStore = create<SketchStore>((set, get) => {
       future: [],
     });
 
-    // Dispatch event to trigger camera swing to face the plane
+    // Dispatch event to trigger camera swing to face the plane. Pass the
+    // face vertices along so the camera can fit the face's actual extent
+    // instead of a hardcoded distance.
     if (typeof window !== "undefined") {
       window.dispatchEvent(
         new CustomEvent("vcad:face-selected", {
-          detail: { normal: face.normal, centroid: face.centroid },
+          detail: {
+            normal: face.normal,
+            centroid: face.centroid,
+            vertices: face.vertices,
+          },
         })
       );
     }

@@ -216,8 +216,15 @@ export function ToolPalette() {
         <div className="flex-1" />
       </div>
 
-      {/* Row 2: active tab content — same horizontal rhythm as the tab strip */}
-      <div className="flex items-center h-8 px-1">
+      {/* Row 2: active tab content — same horizontal rhythm as the tab strip,
+          with horizontal scroll + soft right-edge fade when tools overflow. */}
+      <div
+        className={cn(
+          "flex items-center h-8 px-1",
+          "overflow-x-auto no-scrollbar",
+          "[mask-image:linear-gradient(to_right,black_calc(100%-24px),transparent_100%)]",
+        )}
+      >
         {renderTabContent(displayedTab)}
       </div>
     </div>

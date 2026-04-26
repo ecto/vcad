@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { useEngineStore, useUiStore, useDocumentStore } from "@vcad/core";
@@ -8,6 +8,7 @@ export function useCameraControls() {
   const controls = useThree(
     (s) => s.controls as THREE.EventDispatcher & { target?: THREE.Vector3 } | null,
   );
+  const fittedForDocRef = useRef<string | null>(null);
 
   useEffect(() => {
     function handleFocusSelection() {
@@ -98,15 +99,25 @@ export function useCameraControls() {
 
     function handleCameraFit() {
       const box = getSceneBoundingBox();
-      const center = new THREE.Vector3();
+      const kernelCenter = new THREE.Vector3();
       let dist = 150;
 
       if (box) {
-        box.getCenter(center);
+        box.getCenter(kernelCenter);
         const size = new THREE.Vector3();
         box.getSize(size);
         dist = Math.max(size.x, size.y, size.z, 50) * 2;
       }
+
+      // The bounding box is in kernel (Z-up) space because the meshes are
+      // stored that way and rendered through the -90°X rotation group. The
+      // camera and OrbitControls live outside that rotation group, so we
+      // need the display-space (Y-up) center: (x, y, z) → (x, z, -y).
+      const displayCenter = new THREE.Vector3(
+        kernelCenter.x,
+        kernelCenter.z,
+        -kernelCenter.y,
+      );
 
       // Preserve current direction when there's already a meaningful target;
       // otherwise fall back to an isometric angle so pressing Fit on an empty
@@ -121,9 +132,9 @@ export function useCameraControls() {
       }
       dir.normalize();
 
-      camera.position.copy(center).addScaledVector(dir, dist);
+      camera.position.copy(displayCenter).addScaledVector(dir, dist);
       if (controls && "target" in controls && controls.target) {
-        controls.target.copy(center);
+        controls.target.copy(displayCenter);
       }
     }
 
@@ -186,18 +197,53 @@ export function useCameraControls() {
 
     window.addEventListener("vcad:focus-selection", handleFocusSelection);
     window.addEventListener("vcad:camera-isometric", handleCameraIsometric);
-    window.addEventListener("vcad:camera-fit", handleCameraFit);
+    // `vcad:camera-fit` is handled by ViewportContent's animated variant, so
+    // double-click / View → Fit fly into place. Boot's auto-fit (below) calls
+    // handleCameraFit() directly and stays as a snap so the user doesn't
+    // watch a sweep on every reload.
     window.addEventListener("vcad:camera-top", handleCameraTop);
     window.addEventListener("vcad:camera-front", handleCameraFront);
     window.addEventListener("vcad:camera-right", handleCameraRight);
 
+    // Auto-fit on document load: subscribe to (documentId, scene) inside R3F
+    // so camera + controls are guaranteed mounted by the time the fit runs.
+    // Keyed by documentId so opening a new doc refits but in-doc edits don't.
+    // Skipped when `?at=` is present (share URL with captured viewer state).
+    const tryAutoFit = () => {
+      // Wait until OrbitControls is actually mounted — `controls` arrives a
+      // tick after `camera` because the OrbitControls component mounts as a
+      // child of Canvas. Without it, the fit would land on the camera but
+      // OrbitControls would re-target to its old (default) target on the
+      // next frame, snapping the view back.
+      if (!controls || !("target" in controls) || !controls.target) return;
+      if (typeof window !== "undefined") {
+        const params = new URLSearchParams(window.location.search);
+        if (params.has("at")) return;
+      }
+      const docId = useDocumentStore.getState().documentId;
+      const scene = useEngineStore.getState().scene;
+      if (!docId) return;
+      if (fittedForDocRef.current === docId) return;
+      const hasGeom =
+        !!scene &&
+        (scene.parts.some((p) => p.mesh.indices.length > 0) ||
+          (scene.instances?.some((i) => i.mesh.indices.length > 0) ?? false));
+      if (!hasGeom) return;
+      fittedForDocRef.current = docId;
+      handleCameraFit();
+    };
+    tryAutoFit();
+    const unsubDoc = useDocumentStore.subscribe(tryAutoFit);
+    const unsubEng = useEngineStore.subscribe(tryAutoFit);
+
     return () => {
       window.removeEventListener("vcad:focus-selection", handleFocusSelection);
       window.removeEventListener("vcad:camera-isometric", handleCameraIsometric);
-      window.removeEventListener("vcad:camera-fit", handleCameraFit);
       window.removeEventListener("vcad:camera-top", handleCameraTop);
       window.removeEventListener("vcad:camera-front", handleCameraFront);
       window.removeEventListener("vcad:camera-right", handleCameraRight);
+      unsubDoc();
+      unsubEng();
     };
   }, [camera, controls]);
 }
