@@ -4,6 +4,7 @@ import { Terminal } from "@phosphor-icons/react/dist/ssr/Terminal";
 import { PencilSimple } from "@phosphor-icons/react/dist/ssr/PencilSimple";
 import { GlobeSimple } from "@phosphor-icons/react/dist/ssr/GlobeSimple";
 import { Check } from "@phosphor-icons/react/dist/ssr/Check";
+import { CrosshairSimple } from "@phosphor-icons/react/dist/ssr/CrosshairSimple";
 import * as Popover from "@radix-ui/react-popover";
 import { useDocumentStore, useUiStore, useSketchStore, t, tFmt, type LogLevelName, type SelectionFilter } from "@vcad/core";
 import { useLocaleStore, supportedLocales, type SupportedLocale } from "@/stores/locale-store";
@@ -291,46 +292,88 @@ export function StatusBar() {
   );
 }
 
-const FILTER_OPTIONS: Array<{ value: SelectionFilter; label: string; key: string }> = [
-  { value: "auto", label: "Auto", key: "0" },
-  { value: "body", label: "Body", key: "1" },
-  { value: "face", label: "Face", key: "2" },
-  { value: "edge", label: "Edge", key: "3" },
-  { value: "vertex", label: "Vertex", key: "4" },
+const FILTER_OPTIONS: Array<{ value: SelectionFilter; label: string; hint: string }> = [
+  { value: "auto", label: "Auto", hint: "Pick whatever's most specific under the cursor" },
+  { value: "body", label: "Body", hint: "Always select the whole part" },
+  { value: "face", label: "Face", hint: "Snap selection to the nearest face" },
+  { value: "edge", label: "Edge", hint: "Snap selection to the nearest edge" },
+  { value: "vertex", label: "Vertex", hint: "Snap selection to the nearest vertex" },
 ];
 
 /**
- * Selection filter chip cluster — restricts what `pickSubFeature` returns
- * on the next pointer event. Hotkeys 0/1/2/3/4 in the viewport zone
- * cycle to the same filter; the chips also show the current binding so
- * the shortcut is discoverable.
+ * Selection filter chip — single popover that shows the current pick mode
+ * (auto / body / face / edge / vertex) and lets you switch without taking
+ * over a digit hotkey. The toolbar tab strip owns 1–7, so we don't fight
+ * for them here.
  */
 function SelectionFilterChips() {
   const filter = useUiStore((s) => s.selectionFilter);
   const setFilter = useUiStore((s) => s.setSelectionFilter);
+  const current = FILTER_OPTIONS.find((o) => o.value === filter) ?? FILTER_OPTIONS[0]!;
   return (
-    <div className="hidden md:flex items-stretch border-l border-border/40">
-      {FILTER_OPTIONS.map(({ value, label, key }) => {
-        const active = filter === value;
-        return (
-          <button
-            key={value}
-            onClick={() => setFilter(value)}
-            title={`${label} (${key})`}
-            className={cn(
-              "px-2 text-[10px] uppercase tracking-wide transition-colors",
-              "border-r border-border/40 last:border-r-0",
-              active
-                ? "text-brand bg-brand/10"
-                : "text-text-muted hover:text-text hover:bg-hover",
-            )}
-          >
-            {label}
-            <span className="ml-1 text-text-muted/60 font-mono">{key}</span>
-          </button>
-        );
-      })}
-    </div>
+    <Popover.Root>
+      <Tooltip side="top" content="Pick mode — what hover and click target">
+        <Popover.Trigger asChild>
+          <FooterChipButton className="gap-1 px-2">
+            <CrosshairSimple size={11} className="shrink-0" />
+            <span className="uppercase tracking-wide">{current.label}</span>
+          </FooterChipButton>
+        </Popover.Trigger>
+      </Tooltip>
+      <Popover.Portal>
+        <Popover.Content
+          side="top"
+          align="end"
+          sideOffset={6}
+          collisionPadding={8}
+          className={cn(
+            "z-50 w-[260px]",
+            "rounded-md border border-border/60 bg-surface/95 backdrop-blur-md",
+            "p-1 shadow-xl",
+            "animate-in fade-in slide-in-from-bottom-2 duration-150",
+            "text-[11px]",
+          )}
+        >
+          <div className="px-2 pt-1 pb-1.5 text-text-muted/60 uppercase tracking-[0.15em] text-[9px]">
+            Pick mode
+          </div>
+          {FILTER_OPTIONS.map(({ value, label, hint }) => {
+            const active = filter === value;
+            return (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setFilter(value)}
+                className={cn(
+                  "flex w-full items-start gap-2 rounded-sm px-2 py-1.5 text-left",
+                  "transition-colors",
+                  active
+                    ? "bg-brand/15 text-text"
+                    : "text-text-muted hover:bg-hover hover:text-text",
+                )}
+              >
+                <span className="flex-1">
+                  <span
+                    className={cn(
+                      "block uppercase tracking-wide text-[10px]",
+                      active ? "text-brand" : "text-text",
+                    )}
+                  >
+                    {label}
+                  </span>
+                  <span className="block text-[10px] text-text-muted/70">
+                    {hint}
+                  </span>
+                </span>
+                {active && (
+                  <Check size={11} weight="bold" className="mt-0.5 shrink-0 text-brand" />
+                )}
+              </button>
+            );
+          })}
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
 
