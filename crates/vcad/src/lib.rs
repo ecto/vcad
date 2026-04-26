@@ -62,6 +62,7 @@ fn alloc_node_id() -> NodeId {
 /// A triangle mesh with vertices and indices.
 ///
 /// This is the common mesh type used by all export formats.
+#[derive(Clone)]
 pub struct PartMesh {
     verts: Vec<f32>,
     idxs: Vec<u32>,
@@ -95,6 +96,7 @@ impl PartMesh {
 ///
 /// Each Part carries an IR subtree recording its parametric construction
 /// history. Extract it with [`Part::to_document`].
+#[derive(Clone)]
 pub struct Part {
     /// Human-readable name for this part (used in export filenames and scene graphs).
     pub name: String,
@@ -1057,6 +1059,19 @@ mod tests {
         let restored = Document::from_json(&json).expect("deserialize");
         assert_eq!(doc, restored);
         assert_eq!(restored.nodes.len(), 3);
+    }
+
+    #[test]
+    fn test_clone() {
+        let cube = Part::cube("cube", 10.0, 10.0, 10.0);
+        let cloned = cube.clone();
+        assert_eq!(cloned.name, cube.name);
+        assert!(!cloned.is_empty());
+        // Cloned part is independent — operations on clone don't affect original
+        let moved = cloned.translate(100.0, 0.0, 0.0);
+        let (orig_min, _) = cube.bounding_box();
+        let (moved_min, _) = moved.bounding_box();
+        assert!(moved_min[0] > orig_min[0] + 50.0);
     }
 
     #[test]

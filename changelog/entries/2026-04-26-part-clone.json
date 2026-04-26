@@ -1,0 +1,9 @@
+{
+  "id": "2026-04-26-part-clone",
+  "version": "0.9.3",
+  "date": "2026-04-26",
+  "category": "feat",
+  "title": "Part and PartMesh now implement Clone",
+  "summary": "Added Clone derivation to Part and PartMesh, enabling copy-free duplication of parts in Rust modeling scripts.",
+  "features": ["api", "modeling"]
+}
