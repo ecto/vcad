@@ -140,6 +140,12 @@ body {
   }
 }
 
+/* Global scrollbar styling */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: gray transparent;
+}
+
 /* Thin scrollbar utility */
 .scrollbar-thin {
   scrollbar-width: thin;
