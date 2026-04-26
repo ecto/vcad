@@ -7,6 +7,19 @@ use crate::camera::Camera;
 use crate::evaluate::{evaluate_document, EvaluatedScene};
 use crate::selection::Selection;
 
+/// Logical keyboard focus zone, mirroring the web app's `FocusZone` type.
+///
+/// The viewport is the default target; other zones are summoned via Tab or
+/// selection-primed shortcuts and released by Esc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FocusZone {
+    #[default]
+    Viewport,
+    Tree,
+    Property,
+    Command,
+}
+
 /// Central application engine owning all document state.
 pub struct DocumentEngine {
     document: Document,
@@ -17,6 +30,10 @@ pub struct DocumentEngine {
     next_node_id: NodeId,
     dirty: bool,
     scene: EvaluatedScene,
+    /// Logical keyboard focus zone (matches the web app's focusZone store).
+    pub focus_zone: FocusZone,
+    /// ID of the part currently highlighted by keyboard cursor in the tree.
+    pub tree_focused_part_id: Option<String>,
 }
 
 impl DocumentEngine {
@@ -34,6 +51,8 @@ impl DocumentEngine {
             next_node_id: 1,
             dirty: false,
             scene,
+            focus_zone: FocusZone::Viewport,
+            tree_focused_part_id: None,
         }
     }
 
@@ -50,6 +69,8 @@ impl DocumentEngine {
             next_node_id: next_id,
             dirty: false,
             scene,
+            focus_zone: FocusZone::Viewport,
+            tree_focused_part_id: None,
         })
     }
 

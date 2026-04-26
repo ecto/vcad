@@ -84,6 +84,7 @@ export type {
   SidebarPane,
   InspectorTarget,
   FollowMode,
+  FocusZone,
 } from "./stores/ui-store.js";
 
 export { useSketchStore, defaultPendingOperation } from "./stores/sketch-store.js";

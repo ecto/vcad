@@ -15,6 +15,16 @@ export type ToolbarTab = "create" | "transform" | "combine" | "modify" | "assemb
 export type SidebarPane = "tree" | "inspector" | "parameters";
 
 /**
+ * Logical keyboard focus zone. The viewport is the default; other zones are
+ * summoned via Tab or selection-primed shortcuts and released by Esc.
+ * - "viewport": 3D canvas + transform gizmo
+ * - "tree":     feature/part tree list (j/k navigation)
+ * - "property": property panel inputs
+ * - "command":  command palette / inline command line
+ */
+export type FocusZone = "viewport" | "tree" | "property" | "command";
+
+/**
  * How the local user's camera relates to another participant's camera.
  * - "free":   independent. The local camera is only moved by user input.
  * - "follow": other participant's camera is rendered in-scene (frustum +
@@ -135,6 +145,12 @@ export interface UiState {
   setReadOnlyShare: (share: { token: string; docName: string } | null) => void;
   setFollowMode: (mode: FollowMode) => void;
   setFollowingParticipant: (participantId: string | null) => void;
+  // Focus zone — logical keyboard target region
+  focusZone: FocusZone;
+  setFocusZone: (zone: FocusZone) => void;
+  // Keyboard cursor in the feature tree (part id, or null for no cursor)
+  treeFocusedPartId: string | null;
+  setTreeFocusedPartId: (id: string | null) => void;
 }
 
 // Load persisted material preferences from localStorage
@@ -206,6 +222,8 @@ export const useUiStore = create<UiState>((set) => ({
   readOnlyShare: null,
   followMode: "free",
   followingParticipantId: null,
+  focusZone: "viewport" as FocusZone,
+  treeFocusedPartId: null,
 
   select: (partId) =>
     set({ selectedPartIds: partId ? new Set([partId]) : new Set() }),
@@ -358,4 +376,8 @@ export const useUiStore = create<UiState>((set) => ({
   setFollowMode: (mode) => set({ followMode: mode }),
 
   setFollowingParticipant: (participantId) => set({ followingParticipantId: participantId }),
+
+  setFocusZone: (zone) => set({ focusZone: zone }),
+
+  setTreeFocusedPartId: (id) => set({ treeFocusedPartId: id }),
 }));

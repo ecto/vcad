@@ -488,6 +488,7 @@ function TreeNode({
 }: TreeNodeProps) {
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
   const hoveredPartId = useUiStore((s) => s.hoveredPartId);
+  const treeFocusedPartId = useUiStore((s) => s.treeFocusedPartId);
   const setHoveredPartId = useUiStore((s) => s.setHoveredPartId);
   const select = useUiStore((s) => s.select);
   const toggleSelect = useUiStore((s) => s.toggleSelect);
@@ -499,6 +500,7 @@ function TreeNode({
   const Icon = getPartIcon(part);
   const isSelected = selectedPartIds.has(part.id);
   const isHovered = hoveredPartId === part.id;
+  const isTreeFocused = treeFocusedPartId === part.id;
   const isRenaming = renamingId === part.id;
 
   const isBoolean = isBooleanPart(part);
@@ -582,6 +584,7 @@ function TreeNode({
             : isHovered
             ? "bg-surface/80 text-text backdrop-blur-sm"
             : "text-text-muted/90 hover:bg-surface/60 hover:text-text hover:backdrop-blur-sm",
+          isTreeFocused && !isSelected && "ring-1 ring-inset ring-brand/40",
           depth > 0 && "opacity-70",
           !isVisible && "opacity-40",
           isDragging && "opacity-50",
