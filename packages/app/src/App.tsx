@@ -245,16 +245,19 @@ export function App() {
 
   // Auto-drill the left sidebar into the inspector when something is selected,
   // and back to the tree when selection clears. Selecting a part also clears
-  // the scene inspector target so the scene doesn't shadow the part.
+  // the scene inspector target so the scene doesn't shadow the part. Watches
+  // the full selection length so sub-feature picks (face / edge / vertex)
+  // open the inspector too.
+  const selectionLen = useUiStore((s) => s.selection.length);
   useEffect(() => {
     const { setSidebarPane, setInspectorTarget } = useUiStore.getState();
-    if (selIds.size >= 1) {
+    if (selectionLen >= 1) {
       setInspectorTarget(null);
       setSidebarPane("inspector");
     } else if (useUiStore.getState().inspectorTarget == null) {
       setSidebarPane("tree");
     }
-  }, [selIds]);
+  }, [selectionLen]);
 
   const handleSave = useCallback(() => {
     const state = useDocumentStore.getState();

@@ -5,7 +5,7 @@ import { PencilSimple } from "@phosphor-icons/react/dist/ssr/PencilSimple";
 import { GlobeSimple } from "@phosphor-icons/react/dist/ssr/GlobeSimple";
 import { Check } from "@phosphor-icons/react/dist/ssr/Check";
 import * as Popover from "@radix-ui/react-popover";
-import { useDocumentStore, useUiStore, useSketchStore, t, tFmt, type LogLevelName } from "@vcad/core";
+import { useDocumentStore, useUiStore, useSketchStore, t, tFmt, type LogLevelName, type SelectionFilter } from "@vcad/core";
 import { useLocaleStore, supportedLocales, type SupportedLocale } from "@/stores/locale-store";
 import { useLogStore, getFilteredEntries } from "@/stores/log-store";
 import { FooterUsageMeter } from "@/components/FooterUsageMeter";
@@ -48,6 +48,7 @@ function formatAgo(ts: number, now: number): string {
 export function StatusBar() {
   const parts = useDocumentStore((s) => s.parts);
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
+  const selection = useUiStore((s) => s.selection);
   const cursorWorld = useUiStore((s) => s.cursorWorld);
   useLocaleStore((s) => s.locale);
 
@@ -98,6 +99,37 @@ export function StatusBar() {
 
   const selCount = selectedPartIds.size;
   const fresh = latest && now - latest.timestamp < 3000;
+
+  /**
+   * One-line summary of what's currently selected. Prefers sub-feature
+   * detail (face / edge / vertex) over a raw part count when the user
+   * has picked something more specific. Shown in the right-edge cluster
+   * so the existing parts-stat copy keeps its place.
+   */
+  const subFeatureLabel = (() => {
+    const subItems = selection.filter(
+      (it) => it.kind === "face" || it.kind === "edge" || it.kind === "vertex",
+    );
+    if (subItems.length === 0) return null;
+    if (subItems.length === 1) {
+      const it = subItems[0]!;
+      const partName =
+        parts.find((p) => p.id === (it as { partId: string }).partId)?.name ??
+        "part";
+      if (it.kind === "face") return `face on ${partName}`;
+      if (it.kind === "edge") return `edge on ${partName}`;
+      if (it.kind === "vertex") return `vertex on ${partName}`;
+    }
+    // Multi-select — name the kinds.
+    const counts = { face: 0, edge: 0, vertex: 0 };
+    for (const it of subItems) {
+      counts[it.kind as "face" | "edge" | "vertex"]++;
+    }
+    const parts2 = (Object.entries(counts) as [keyof typeof counts, number][])
+      .filter(([, n]) => n > 0)
+      .map(([k, n]) => `${n} ${k}${n === 1 ? "" : "s"}`);
+    return parts2.join(", ");
+  })();
   const levelColor = latest ? LEVEL_COLOR[latest.level] : "";
   const { tauri, platform } = useCapabilities();
   const macOverlay = tauri && platform === "mac";
@@ -248,11 +280,59 @@ export function StatusBar() {
             {tFmt("status.sel", { count: String(selCount) })}
           </span>
         )}
+        {subFeatureLabel && (
+          <span className="text-brand">{subFeatureLabel}</span>
+        )}
       </div>
+
+      <SelectionFilterChips />
 
       <FooterUsageMeter />
 
       <LocalePicker />
+    </div>
+  );
+}
+
+const FILTER_OPTIONS: Array<{ value: SelectionFilter; label: string; key: string }> = [
+  { value: "auto", label: "Auto", key: "0" },
+  { value: "body", label: "Body", key: "1" },
+  { value: "face", label: "Face", key: "2" },
+  { value: "edge", label: "Edge", key: "3" },
+  { value: "vertex", label: "Vertex", key: "4" },
+];
+
+/**
+ * Selection filter chip cluster — restricts what `pickSubFeature` returns
+ * on the next pointer event. Hotkeys 0/1/2/3/4 in the viewport zone
+ * cycle to the same filter; the chips also show the current binding so
+ * the shortcut is discoverable.
+ */
+function SelectionFilterChips() {
+  const filter = useUiStore((s) => s.selectionFilter);
+  const setFilter = useUiStore((s) => s.setSelectionFilter);
+  return (
+    <div className="hidden md:flex items-stretch border-l border-border/40">
+      {FILTER_OPTIONS.map(({ value, label, key }) => {
+        const active = filter === value;
+        return (
+          <button
+            key={value}
+            onClick={() => setFilter(value)}
+            title={`${label} (${key})`}
+            className={cn(
+              "px-2 text-[10px] uppercase tracking-wide transition-colors",
+              "border-r border-border/40 last:border-r-0",
+              active
+                ? "text-brand bg-brand/10"
+                : "text-text-muted hover:text-text hover:bg-hover",
+            )}
+          >
+            {label}
+            <span className="ml-1 text-text-muted/60 font-mono">{key}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }
