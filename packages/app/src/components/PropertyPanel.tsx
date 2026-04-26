@@ -1317,17 +1317,10 @@ function SubFeatureInspector({
   return (
     <div className={cn("w-full flex flex-col bg-surface", "h-full")}>
       <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border/40 px-3">
-        <div className="flex items-center gap-2 min-w-0">
-          <BackButton />
-          <span className="text-xs font-medium text-text capitalize">
-            {item.kind}
-          </span>
-          {part?.name && (
-            <span className="text-xs text-text-muted truncate">
-              on {part.name}
-            </span>
-          )}
-        </div>
+        <Breadcrumb
+          item={item}
+          partName={part?.name}
+        />
         <button
           onClick={clearSelection}
           className="flex h-6 w-6 items-center justify-center text-text-muted hover:text-text hover:bg-hover"
@@ -1380,6 +1373,87 @@ function Row({ label, value }: { label: string; value: string }) {
       <span className="tabular-nums">{value}</span>
     </div>
   );
+}
+
+/**
+ * Breadcrumb in inspector headers — `Document ▸ Part ▸ face` etc.
+ * Each crumb is a click target that steps the selection up to that level:
+ *   - Document → clearSelection
+ *   - Part     → select(partId)
+ *   - Sub-feature → terminal (no further nav)
+ *
+ * Used by both the part inspector and the SubFeatureInspector so
+ * navigation feels uniform.
+ */
+function Breadcrumb({
+  item,
+  partName,
+}: {
+  item: SelectionItem;
+  partName?: string;
+}) {
+  const docName = useDocumentStore((s) => s.documentName) ?? "Document";
+  const select = useUiStore((s) => s.select);
+  const clearSelection = useUiStore((s) => s.clearSelection);
+
+  const subKind =
+    item.kind === "face" || item.kind === "edge" || item.kind === "vertex"
+      ? item.kind
+      : null;
+  const partId =
+    item.kind === "part"
+      ? item.id
+      : (item as { partId?: string }).partId ?? null;
+
+  return (
+    <div className="flex min-w-0 items-center gap-1 text-xs">
+      <BackButton />
+      <Crumb label={docName} onClick={clearSelection} />
+      {partId && (
+        <>
+          <Separator />
+          <Crumb
+            label={partName ?? partId}
+            onClick={subKind ? () => select(partId) : undefined}
+          />
+        </>
+      )}
+      {subKind && (
+        <>
+          <Separator />
+          <span className="text-text capitalize">{subKind}</span>
+        </>
+      )}
+    </div>
+  );
+}
+
+function Crumb({
+  label,
+  onClick,
+}: {
+  label: string;
+  onClick?: () => void;
+}) {
+  if (!onClick) {
+    return (
+      <span className="truncate text-text-muted/80 max-w-[12ch]">{label}</span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="truncate max-w-[12ch] text-text-muted hover:text-text hover:underline underline-offset-2 decoration-text-muted/40 transition-colors"
+      title={label}
+    >
+      {label}
+    </button>
+  );
+}
+
+function Separator() {
+  return <span className="text-text-muted/40 shrink-0">›</span>;
 }
 
 export function PropertyPanel() {
@@ -1505,13 +1579,10 @@ export function PropertyPanel() {
     >
       {/* Mobile drag handle */}
 
-      {/* Header */}
+      {/* Header — breadcrumb + part-kind badge + close. */}
       <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border/40 px-3">
         <div className="flex items-center gap-2 min-w-0">
-          <BackButton />
-          <span className="text-xs font-medium text-text truncate">
-            {part.name}
-          </span>
+          <Breadcrumb item={{ kind: "part", id: part.id }} partName={part.name} />
           <PartTypeBadge kind={part.kind} />
         </div>
         <button
