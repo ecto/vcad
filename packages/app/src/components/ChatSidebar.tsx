@@ -136,19 +136,58 @@ function AttachmentPreviewStrip() {
 // ---------------------------------------------------------------------------
 
 function useSelectionContext(): [SelectionContext[], (partId: string) => void] {
+  const selection = useUiStore((s) => s.selection);
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
   const partIndex = useDocumentStore((s) => s.partIndex);
 
+  // Walk the full selection union — surface sub-feature picks (face / edge
+  // / vertex) so the AI can act on exactly what the user has selected.
+  // The historical part-only path still works because part items emit
+  // geometryType: "part".
   const contexts: SelectionContext[] = [];
-  for (const partId of selectedPartIds) {
-    const part = partIndex.get(partId);
-    if (part) {
-      contexts.push({
-        partId,
-        partName: part.name,
-        geometryType: "part",
-      });
+  for (const item of selection) {
+    if (item.kind === "part") {
+      const part = partIndex.get(item.id);
+      if (part) {
+        contexts.push({
+          partId: item.id,
+          partName: part.name,
+          geometryType: "part",
+        });
+      }
+    } else if (item.kind === "face") {
+      const part = partIndex.get(item.partId);
+      if (part) {
+        contexts.push({
+          partId: item.partId,
+          partName: part.name,
+          geometryType: "face",
+          faceIndex: item.faceIndex,
+        });
+      }
+    } else if (item.kind === "edge") {
+      const part = partIndex.get(item.partId);
+      if (part) {
+        contexts.push({
+          partId: item.partId,
+          partName: part.name,
+          geometryType: "edge",
+          dimensions: { edgeId: item.edgeId },
+        });
+      }
+    } else if (item.kind === "vertex") {
+      const part = partIndex.get(item.partId);
+      if (part) {
+        contexts.push({
+          partId: item.partId,
+          partName: part.name,
+          geometryType: "vertex",
+          dimensions: { vertexId: item.vertexId },
+        });
+      }
     }
+    // segment / constraint — sketch-mode entities, not surfaced to chat
+    // here since the AI's CAD tools don't operate on those yet.
   }
 
   const removeContext = useCallback(
