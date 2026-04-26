@@ -1,5 +1,28 @@
 import { create } from "zustand";
-import type { Theme, ToolMode, TransformMode } from "../types.js";
+import type {
+  SelectionFilter,
+  SelectionItem,
+  Theme,
+  ToolMode,
+  TransformMode,
+} from "../types.js";
+import { selectionItemsEqual } from "../types.js";
+
+/** Project a selection list down to the part IDs it covers, preserving the
+ *  Set-shaped contract historical callers expect from `selectedPartIds`. */
+function deriveSelectedPartIds(items: readonly SelectionItem[]): Set<string> {
+  const out = new Set<string>();
+  for (const item of items) {
+    if (item.kind === "part") out.add(item.id);
+  }
+  return out;
+}
+
+/** `hoveredPartId` mirror of `hoveredItem`, kept around so existing readers
+ *  (FeatureTree, SceneMesh) don't need to know about the item union yet. */
+function deriveHoveredPartId(item: SelectionItem | null): string | null {
+  return item && item.kind === "part" ? item.id : null;
+}
 
 export interface MaterialPreview {
   partId: string;
@@ -44,7 +67,18 @@ export type FollowMode = "free" | "follow" | "lock";
 export type InspectorTarget = { kind: "scene" } | null;
 
 export interface UiState {
+  /** Tagged-union selection — parts, faces, edges, vertices, segments,
+   *  constraints. Source of truth for everything selected. */
+  selection: SelectionItem[];
+  /** Hovered item (any kind). Source of truth for hover. */
+  hoveredItem: SelectionItem | null;
+  /** Restricts what `pickSubFeature` will return on the next pointer event. */
+  selectionFilter: SelectionFilter;
+  /** Derived: part IDs in `selection`. Kept in sync with every selection
+   *  write so historical callers (`.has` / `.size` / `Array.from`) keep
+   *  working unchanged. */
   selectedPartIds: Set<string>;
+  /** Derived: hovered part ID when `hoveredItem.kind === "part"`. */
   hoveredPartId: string | null;
   commandPaletteOpen: boolean;
   toolMode: ToolMode;
@@ -102,6 +136,16 @@ export interface UiState {
   selectMultiple: (partIds: string[]) => void;
   clearSelection: () => void;
   setHoveredPartId: (partId: string | null) => void;
+  /** Replace selection with a single tagged item, or clear (null). */
+  selectItem: (item: SelectionItem | null) => void;
+  /** Toggle a tagged item in/out of the current selection. */
+  toggleItem: (item: SelectionItem) => void;
+  /** Replace the entire selection list. */
+  selectItems: (items: SelectionItem[]) => void;
+  /** Set the hovered item (any kind, or null for no hover). */
+  setHoveredItem: (item: SelectionItem | null) => void;
+  /** Set the selection filter — restricts what `pickSubFeature` will return. */
+  setSelectionFilter: (filter: SelectionFilter) => void;
   toggleCommandPalette: () => void;
   setCommandPaletteOpen: (open: boolean) => void;
   setToolMode: (mode: ToolMode) => void;
@@ -224,27 +268,66 @@ export const useUiStore = create<UiState>((set) => ({
   followingParticipantId: null,
   focusZone: "viewport" as FocusZone,
   treeFocusedPartId: null,
+  selection: [],
+  hoveredItem: null,
+  selectionFilter: "auto" as SelectionFilter,
 
-  select: (partId) =>
-    set({ selectedPartIds: partId ? new Set([partId]) : new Set() }),
+  select: (partId) => {
+    const selection: SelectionItem[] = partId ? [{ kind: "part", id: partId }] : [];
+    set({ selection, selectedPartIds: deriveSelectedPartIds(selection) });
+  },
 
   toggleSelect: (partId) =>
     set((s) => {
-      const next = new Set(s.selectedPartIds);
-      if (next.has(partId)) {
-        next.delete(partId);
-      } else {
-        next.add(partId);
-      }
-      return { selectedPartIds: next };
+      const idx = s.selection.findIndex(
+        (it) => it.kind === "part" && it.id === partId,
+      );
+      const selection =
+        idx >= 0
+          ? s.selection.filter((_, i) => i !== idx)
+          : [...s.selection, { kind: "part" as const, id: partId }];
+      return { selection, selectedPartIds: deriveSelectedPartIds(selection) };
     }),
 
-  selectMultiple: (partIds) =>
-    set({ selectedPartIds: new Set(partIds) }),
+  selectMultiple: (partIds) => {
+    const selection: SelectionItem[] = partIds.map((id) => ({ kind: "part", id }));
+    set({ selection, selectedPartIds: deriveSelectedPartIds(selection) });
+  },
 
-  clearSelection: () => set({ selectedPartIds: new Set() }),
+  clearSelection: () =>
+    set({ selection: [], selectedPartIds: new Set() }),
 
-  setHoveredPartId: (partId) => set({ hoveredPartId: partId }),
+  setHoveredPartId: (partId) => {
+    const hoveredItem: SelectionItem | null = partId
+      ? { kind: "part", id: partId }
+      : null;
+    set({ hoveredItem, hoveredPartId: partId });
+  },
+
+  selectItem: (item) => {
+    const selection: SelectionItem[] = item ? [item] : [];
+    set({ selection, selectedPartIds: deriveSelectedPartIds(selection) });
+  },
+
+  toggleItem: (item) =>
+    set((s) => {
+      const idx = s.selection.findIndex((existing) =>
+        selectionItemsEqual(existing, item),
+      );
+      const selection =
+        idx >= 0
+          ? s.selection.filter((_, i) => i !== idx)
+          : [...s.selection, item];
+      return { selection, selectedPartIds: deriveSelectedPartIds(selection) };
+    }),
+
+  selectItems: (items) =>
+    set({ selection: [...items], selectedPartIds: deriveSelectedPartIds(items) }),
+
+  setHoveredItem: (item) =>
+    set({ hoveredItem: item, hoveredPartId: deriveHoveredPartId(item) }),
+
+  setSelectionFilter: (filter) => set({ selectionFilter: filter }),
 
   toggleCommandPalette: () =>
     set((s) => ({ commandPaletteOpen: !s.commandPaletteOpen })),

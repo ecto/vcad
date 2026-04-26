@@ -31,6 +31,58 @@ export interface FaceInfo {
   vertices?: Vec3[];
 }
 
+/**
+ * Tagged selection item — anything the user can hover or click on.
+ *
+ * Replaces the historical "selection = Set of part IDs" model. Existing call
+ * sites that only care about parts read through the `selectedPartIds`
+ * derived getter on `useUiStore`, which filters items where `kind === "part"`.
+ *
+ * Sub-feature kinds (face / edge / vertex) carry mesh-relative IDs and are
+ * intentionally tied to a single evaluation: re-evaluation that changes a
+ * part's topology drops sub-feature selections on that part.
+ */
+export type SelectionItem =
+  | { kind: "part"; id: string }
+  | { kind: "face"; partId: string; faceIndex: number }
+  | { kind: "edge"; partId: string; edgeId: number }
+  | { kind: "vertex"; partId: string; vertexId: number }
+  | { kind: "segment"; sketchId: string; index: number }
+  | { kind: "constraint"; sketchId: string; index: number };
+
+/** Selection filter — restricts what `pickSubFeature` will return. */
+export type SelectionFilter = "auto" | "body" | "face" | "edge" | "vertex";
+
+/** Whether two SelectionItems point at the same thing. Useful for hover/select diffing. */
+export function selectionItemsEqual(a: SelectionItem, b: SelectionItem): boolean {
+  if (a.kind !== b.kind) return false;
+  switch (a.kind) {
+    case "part":
+      return a.id === (b as { id: string }).id;
+    case "face":
+      return (
+        a.partId === (b as { partId: string }).partId &&
+        a.faceIndex === (b as { faceIndex: number }).faceIndex
+      );
+    case "edge":
+      return (
+        a.partId === (b as { partId: string }).partId &&
+        a.edgeId === (b as { edgeId: number }).edgeId
+      );
+    case "vertex":
+      return (
+        a.partId === (b as { partId: string }).partId &&
+        a.vertexId === (b as { vertexId: number }).vertexId
+      );
+    case "segment":
+    case "constraint":
+      return (
+        a.sketchId === (b as { sketchId: string }).sketchId &&
+        a.index === (b as { index: number }).index
+      );
+  }
+}
+
 export interface PrimitivePartInfo {
   id: string;
   name: string;
