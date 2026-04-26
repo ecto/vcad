@@ -70,7 +70,11 @@ impl Selection {
 
     /// Add a part to the selection.
     pub fn select_add(&mut self, id: NodeId) {
-        if !self.items.iter().any(|it| matches!(it, SelectionItem::Part(p) if *p == id)) {
+        if !self
+            .items
+            .iter()
+            .any(|it| matches!(it, SelectionItem::Part(p) if *p == id))
+        {
             self.items.push(SelectionItem::Part(id));
         }
     }
