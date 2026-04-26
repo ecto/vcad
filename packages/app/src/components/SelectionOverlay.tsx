@@ -1,14 +1,30 @@
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import * as THREE from "three";
 import { Line } from "@react-three/drei";
+import { useFrame, useThree } from "@react-three/fiber";
 import {
   useUiStore,
   useDocumentStore,
   useEngineStore,
   useParticipantStore,
+  selectionItemsEqual,
+  type SelectionItem,
   LOCAL_PARTICIPANT_ID,
 } from "@vcad/core";
 import { useTheme } from "@/hooks/useTheme";
+import {
+  buildFaceHighlightGeometry,
+  findCoplanarTriangles,
+  getEdgeEndpoints,
+  getVertex,
+} from "@/lib/sub-feature-geometry";
+
+const SUB_HOVER_OPACITY = 0.4;
+const SUB_SELECTED_OPACITY = 0.85;
+const FACE_HOVER_COLOR = new THREE.Color(0x00d4ff);
+const FACE_SELECTED_COLOR = new THREE.Color(0xf92672);
+const SUB_HOVER_LINE_COLOR = "#00d4ff";
+const SUB_SELECTED_LINE_COLOR = "#f92672";
 
 const ACCENT_DARK = "#6b8fa3";
 const ACCENT_LIGHT = "#4a7080";
@@ -207,6 +223,174 @@ function CaptureAxesGnomon() {
   );
 }
 
+/** Look up a part's mesh from the engine scene. */
+function usePartMesh(partId: string) {
+  const scene = useEngineStore((s) => s.scene);
+  const parts = useDocumentStore((s) => s.parts);
+  return useMemo(() => {
+    if (!scene) return null;
+    const idx = parts.findIndex((p) => p.id === partId);
+    if (idx < 0) return null;
+    return scene.parts[idx]?.mesh ?? null;
+  }, [scene, parts, partId]);
+}
+
+function FaceHighlight({
+  item,
+  variant,
+}: {
+  item: Extract<SelectionItem, { kind: "face" }>;
+  variant: "hover" | "selected";
+}) {
+  const mesh = usePartMesh(item.partId);
+  const geometry = useMemo(() => {
+    if (!mesh) return null;
+    const tris = findCoplanarTriangles(mesh, item.faceIndex);
+    if (tris.length === 0) return null;
+    return buildFaceHighlightGeometry(mesh, tris);
+  }, [mesh, item.faceIndex]);
+
+  useEffect(() => {
+    return () => {
+      geometry?.dispose();
+    };
+  }, [geometry]);
+
+  if (!geometry) return null;
+  const color = variant === "selected" ? FACE_SELECTED_COLOR : FACE_HOVER_COLOR;
+  const opacity = variant === "selected" ? SUB_SELECTED_OPACITY : SUB_HOVER_OPACITY;
+  return (
+    <mesh geometry={geometry} renderOrder={998}>
+      <meshBasicMaterial
+        color={color}
+        transparent
+        opacity={opacity}
+        depthWrite={false}
+        depthTest={false}
+        side={THREE.DoubleSide}
+      />
+    </mesh>
+  );
+}
+
+function EdgeHighlight({
+  item,
+  variant,
+}: {
+  item: Extract<SelectionItem, { kind: "edge" }>;
+  variant: "hover" | "selected";
+}) {
+  const mesh = usePartMesh(item.partId);
+  const points = useMemo(() => {
+    if (!mesh) return null;
+    const { a, b } = getEdgeEndpoints(mesh, item.edgeId);
+    return [
+      [a.x, a.y, a.z],
+      [b.x, b.y, b.z],
+    ] as [number, number, number][];
+  }, [mesh, item.edgeId]);
+  if (!points) return null;
+  const color =
+    variant === "selected" ? SUB_SELECTED_LINE_COLOR : SUB_HOVER_LINE_COLOR;
+  return (
+    <Line
+      points={points}
+      color={color}
+      lineWidth={variant === "selected" ? 3 : 2}
+      transparent
+      opacity={variant === "selected" ? 1.0 : 0.7}
+      depthWrite={false}
+      depthTest={false}
+      renderOrder={998}
+    />
+  );
+}
+
+function VertexHighlight({
+  item,
+  variant,
+}: {
+  item: Extract<SelectionItem, { kind: "vertex" }>;
+  variant: "hover" | "selected";
+}) {
+  const mesh = usePartMesh(item.partId);
+  const position = useMemo(() => {
+    if (!mesh) return null;
+    return getVertex(mesh, item.vertexId);
+  }, [mesh, item.vertexId]);
+  const meshRef = useRef<THREE.Mesh>(null);
+  const { camera, size } = useThree();
+
+  useFrame(() => {
+    if (!meshRef.current || !position) return;
+    const cam = camera as THREE.PerspectiveCamera;
+    // Vertex is in kernel space; the parent rotation group applies -90°X,
+    // so the camera-distance read uses the rotated (display) position.
+    const wp = new THREE.Vector3(position.x, position.z, -position.y);
+    const dist = cam.position.distanceTo(wp);
+    const fovRad = ((cam.fov ?? 50) * Math.PI) / 180;
+    const worldPerPx = (2 * dist * Math.tan(fovRad / 2)) / size.height;
+    const screenPx = variant === "selected" ? 6 : 5;
+    meshRef.current.scale.setScalar(Math.max(1e-4, screenPx * worldPerPx));
+  });
+
+  if (!position) return null;
+  const color =
+    variant === "selected" ? SUB_SELECTED_LINE_COLOR : SUB_HOVER_LINE_COLOR;
+  return (
+    <mesh ref={meshRef} position={position} renderOrder={999}>
+      <sphereGeometry args={[1, 12, 12]} />
+      <meshBasicMaterial
+        color={color}
+        transparent
+        opacity={variant === "selected" ? 1.0 : 0.85}
+        depthWrite={false}
+        depthTest={false}
+      />
+    </mesh>
+  );
+}
+
+/** Per-item dispatcher — picks the right highlight component per kind. */
+function ItemHighlight({
+  item,
+  variant,
+}: {
+  item: SelectionItem;
+  variant: "hover" | "selected";
+}) {
+  if (item.kind === "face") return <FaceHighlight item={item} variant={variant} />;
+  if (item.kind === "edge") return <EdgeHighlight item={item} variant={variant} />;
+  if (item.kind === "vertex") return <VertexHighlight item={item} variant={variant} />;
+  // part / segment / constraint are handled by other renderers.
+  return null;
+}
+
+/** Renders all face / edge / vertex highlights for the current selection
+ *  + hover. Mounted alongside the part-bbox outlines below. */
+function SubFeatureHighlights() {
+  const selection = useUiStore((s) => s.selection);
+  const hoveredItem = useUiStore((s) => s.hoveredItem);
+
+  // Skip the hover render if the same item is already selected, to avoid
+  // drawing the highlight twice.
+  const hovered = useMemo(() => {
+    if (!hoveredItem || hoveredItem.kind === "part") return null;
+    return selection.some((it) => selectionItemsEqual(it, hoveredItem))
+      ? null
+      : hoveredItem;
+  }, [hoveredItem, selection]);
+
+  return (
+    <>
+      {selection.map((item, i) => (
+        <ItemHighlight key={`sel-${i}`} item={item} variant="selected" />
+      ))}
+      {hovered && <ItemHighlight item={hovered} variant="hover" />}
+    </>
+  );
+}
+
 export function SelectionOverlay() {
   const isDraggingGizmo = useUiStore((s) => s.isDraggingGizmo);
   const isOrbiting = useUiStore((s) => s.isOrbiting);
@@ -225,6 +409,7 @@ export function SelectionOverlay() {
     <>
       <LocalSelection />
       <ParticipantAttention />
+      <SubFeatureHighlights />
     </>
   );
 }
