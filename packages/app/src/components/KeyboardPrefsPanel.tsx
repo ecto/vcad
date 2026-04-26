@@ -144,7 +144,7 @@ export function KeyboardPrefsPanel({ className }: KeyboardPrefsPanelProps) {
           className={cn(
             "h-7 px-2 flex items-center gap-1",
             "border border-border bg-bg",
-            "text-[10px] font-mono uppercase tracking-wider text-text-muted",
+            "text-[10px] uppercase tracking-wider text-text-muted",
           )}
           title="Conflicts and mode-scoped bindings are evaluated for this mode"
         >

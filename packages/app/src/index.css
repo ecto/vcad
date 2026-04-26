@@ -1,5 +1,26 @@
 @import "tailwindcss";
 
+/* Inter Variable — UI body font. Weight 100..900 covered by the variable axis,
+   so we declare a single @font-face per style. `font-display: swap` lets the
+   system fallback render immediately and reflow when Inter loads, which keeps
+   first paint snappy on cold loads. */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/InterVariable.woff2") format("woff2-variations");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/InterVariable-Italic.woff2") format("woff2-variations");
+}
+
+/* Berkeley Mono — kept for code-shaped surfaces only (expression inputs, hex
+   values, coordinates, kbd labels, log output). Body UI uses Inter. */
 @font-face {
   font-family: "Berkeley Mono";
   font-weight: 400;
@@ -13,7 +34,8 @@
 
 @theme {
   --font-mono: "Berkeley Mono", ui-monospace, monospace;
-  --font-sans: "Berkeley Mono", ui-monospace, monospace;
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
 
   /* These get overridden by .light class below */
   --color-bg: var(--bg);
@@ -125,9 +147,11 @@
 
 body {
   margin: 0;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
+  font-feature-settings: "cv11", "ss01", "ss03"; /* Inter: single-storey a, alt 1/4/6/9, curved tail l */
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
   background: var(--bg);
   color: var(--text);
 }
