@@ -7,6 +7,11 @@ const isCoarsePointer =
   window.matchMedia("(pointer: coarse)").matches;
 import { useThree, useFrame } from "@react-three/fiber";
 import {
+  findCoplanarTriangles,
+  getEdgeEndpoints,
+  getVertex,
+} from "@/lib/sub-feature-geometry";
+import {
   OrbitControls,
   GizmoHelper,
   GizmoViewport,
@@ -302,6 +307,7 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
   const docScene = useDocumentStore((s) => s.document.scene);
 
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
+  const selection = useUiStore((s) => s.selection);
   const isDraggingGizmo = useUiStore((s) => s.isDraggingGizmo);
   const setOrbiting = useUiStore((s) => s.setOrbiting);
   const renderMode = useUiStore((s) => s.renderMode);
@@ -397,52 +403,105 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
     [selectedPartIds, rootIndexToInstanceId],
   );
 
-  // Calculate center and size of selected parts/instances
+  // Calculate center and size of the current selection — handles parts,
+  // instances, and sub-features (face / edge / vertex). Returns null when
+  // the selection is empty or none of its items resolve to geometry.
   const selectionInfo = useMemo(() => {
-    if (selectedPartIds.size === 0 || !scene) return null;
+    if (selection.length === 0 || !scene) return null;
 
     const box = new Box3();
     const tempVec = new Vector3();
     let hasPoints = false;
 
-    // Assembly mode: check instances
-    if (scene.instances && scene.instances.length > 0) {
-      for (const inst of scene.instances) {
-        const instanceSelectionId = getInstanceSelectionId(inst);
-        if (!instanceSelectionId || !selectedPartIds.has(instanceSelectionId))
-          continue;
+    /** Look up an EvaluatedPart's mesh by partId. */
+    const meshFor = (partId: string) => {
+      const idx = parts.findIndex((p) => p.id === partId);
+      if (idx < 0) return null;
+      return scene.parts[idx]?.mesh ?? null;
+    };
 
-        const positions = inst.mesh.positions;
-        const t = inst.transform ?? {
-          translation: { x: 0, y: 0, z: 0 },
-          rotation: { x: 0, y: 0, z: 0 },
-          scale: { x: 1, y: 1, z: 1 },
-        };
-        for (let i = 0; i < positions.length; i += 3) {
-          // Apply instance transform to positions for accurate bounding box
-          tempVec.set(
-            positions[i]! * t.scale.x + t.translation.x,
-            positions[i + 1]! * t.scale.y + t.translation.y,
-            positions[i + 2]! * t.scale.z + t.translation.z,
-          );
-          box.expandByPoint(tempVec);
-          hasPoints = true;
+    for (const item of selection) {
+      switch (item.kind) {
+        case "part": {
+          // Assembly path: instance with this id.
+          if (scene.instances && scene.instances.length > 0) {
+            for (const inst of scene.instances) {
+              const instanceSelectionId = getInstanceSelectionId(inst);
+              if (instanceSelectionId !== item.id) continue;
+              const positions = inst.mesh.positions;
+              const t = inst.transform ?? {
+                translation: { x: 0, y: 0, z: 0 },
+                rotation: { x: 0, y: 0, z: 0 },
+                scale: { x: 1, y: 1, z: 1 },
+              };
+              for (let i = 0; i < positions.length; i += 3) {
+                tempVec.set(
+                  positions[i]! * t.scale.x + t.translation.x,
+                  positions[i + 1]! * t.scale.y + t.translation.y,
+                  positions[i + 2]! * t.scale.z + t.translation.z,
+                );
+                box.expandByPoint(tempVec);
+                hasPoints = true;
+              }
+            }
+          }
+          // Legacy path: full part mesh. Also covers instances exposed as
+          // parts via isPartSelected — keep the existing index-based walk
+          // so the same id can match either path.
+          parts.forEach((part, index) => {
+            if (!isPartSelected(part.id, index)) return;
+            if (part.id !== item.id) return;
+            const evalPart = scene.parts[index];
+            if (!evalPart) return;
+            const positions = evalPart.mesh.positions;
+            for (let i = 0; i < positions.length; i += 3) {
+              tempVec.set(positions[i]!, positions[i + 1]!, positions[i + 2]!);
+              box.expandByPoint(tempVec);
+              hasPoints = true;
+            }
+          });
+          break;
         }
+        case "face": {
+          const mesh = meshFor(item.partId);
+          if (!mesh) break;
+          const tris = findCoplanarTriangles(mesh, item.faceIndex);
+          for (const t of tris) {
+            for (let v = 0; v < 3; v++) {
+              const idx = mesh.indices[t * 3 + v]!;
+              tempVec.set(
+                mesh.positions[idx * 3]!,
+                mesh.positions[idx * 3 + 1]!,
+                mesh.positions[idx * 3 + 2]!,
+              );
+              box.expandByPoint(tempVec);
+              hasPoints = true;
+            }
+          }
+          break;
+        }
+        case "edge": {
+          const mesh = meshFor(item.partId);
+          if (!mesh) break;
+          const { a, b } = getEdgeEndpoints(mesh, item.edgeId);
+          box.expandByPoint(a);
+          box.expandByPoint(b);
+          hasPoints = true;
+          break;
+        }
+        case "vertex": {
+          const mesh = meshFor(item.partId);
+          if (!mesh) break;
+          const p = getVertex(mesh, item.vertexId);
+          box.expandByPoint(p);
+          hasPoints = true;
+          break;
+        }
+        case "segment":
+        case "constraint":
+          // Sketch-mode entities have their own framing path; skip here.
+          break;
       }
-    } else {
-      // Legacy mode: check parts (also handles instance IDs via isPartSelected)
-      parts.forEach((part, index) => {
-        if (!isPartSelected(part.id, index)) return;
-        const evalPart = scene.parts[index];
-        if (!evalPart) return;
-
-        const positions = evalPart.mesh.positions;
-        for (let i = 0; i < positions.length; i += 3) {
-          tempVec.set(positions[i]!, positions[i + 1]!, positions[i + 2]!);
-          box.expandByPoint(tempVec);
-          hasPoints = true;
-        }
-      });
     }
 
     if (!hasPoints) return null;
@@ -450,13 +509,14 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
     box.getCenter(kernelCenter);
     const size = new Vector3();
     box.getSize(size);
-    // Bounding-sphere radius — independent of orbit angle, safe for any view.
-    const radius = Math.max(size.length() * 0.5, 1e-3);
-    // Transform kernel Z-up center to Three.js Y-up world space
-    // Rotation -90° around X: (x, y, z) → (x, z, -y)
+    // Bounding-sphere radius — independent of orbit angle, safe for any
+    // view. Single-vertex selections have zero size; clamp to 1mm so the
+    // camera doesn't dive in until the near-plane clips.
+    const radius = Math.max(size.length() * 0.5, 1);
+    // Kernel Z-up center → display Y-up: (x, y, z) → (x, z, -y).
     const center = new Vector3(kernelCenter.x, kernelCenter.z, -kernelCenter.y);
     return { center, radius };
-  }, [selectedPartIds, scene, parts, isPartSelected]);
+  }, [selection, scene, parts, isPartSelected]);
 
   // Animate orbit target to selection center and zoom to fit
   // Skip during gizmo drag to avoid fighting with the user's transform
