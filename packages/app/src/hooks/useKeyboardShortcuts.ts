@@ -176,6 +176,31 @@ export function useKeyboardShortcuts() {
         return;
       }
 
+      // Selection-filter shortcuts: 0=Auto, 1=Body, 2=Face, 3=Edge, 4=Vertex.
+      // Only when in the viewport zone — the same digits in the tree zone
+      // would conflict with future tree-shortcuts and in property zone with
+      // numeric input. Skipped in sketch mode to avoid stealing tool keys.
+      if (
+        !mod &&
+        !e.shiftKey &&
+        !e.altKey &&
+        !useSketchStore.getState().active &&
+        useUiStore.getState().focusZone === "viewport"
+      ) {
+        const filterMap: Record<string, "auto" | "body" | "face" | "edge" | "vertex"> = {
+          "0": "auto",
+          "1": "body",
+          "2": "face",
+          "3": "edge",
+          "4": "vertex",
+        };
+        const f = filterMap[e.key];
+        if (f) {
+          e.preventDefault();
+          useUiStore.getState().setSelectionFilter(f);
+          return;
+        }
+      }
 
       // Toggle feature tree: Cmd+1
       if (mod && e.key === "1") {

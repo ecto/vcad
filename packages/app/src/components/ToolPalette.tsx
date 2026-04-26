@@ -179,7 +179,7 @@ export function ToolPalette() {
       className={cn("tool-palette flex flex-col", "bg-surface")}
     >
       {/* Row 1: tab strip */}
-      <div className="flex h-7 items-stretch border-b border-border/40">
+      <div className="flex h-8 items-stretch border-b border-border/30 px-1">
         {visibleTabs.map(({ id, label, icon: Icon }, index) => {
           const isActive = displayedTab === id;
           return (
@@ -187,17 +187,17 @@ export function ToolPalette() {
               key={id}
               onClick={() => handleTabClick(id)}
               className={cn(
-                "flex items-center gap-1.5 px-3 text-[11px] font-medium border-b-2",
+                "flex items-center gap-1.5 px-2 text-[11px] font-medium border-b-2 -mb-px",
                 "transition-colors",
                 isActive
-                  ? cn("border-brand text-text bg-hover/30")
+                  ? "border-brand text-text"
                   : "border-transparent text-text-muted hover:text-text hover:bg-hover/20",
               )}
               title={`${index + 1}. ${label}`}
             >
-              <Icon size={13} className={cn(isActive && TAB_COLORS[id])} />
+              <Icon size={14} className={cn(isActive && TAB_COLORS[id])} />
               <span>{label}</span>
-              <span className="ml-1 text-[9px] text-text-muted/60 font-mono hidden sm:inline">
+              <span className="ml-0.5 text-[10px] font-mono text-text-muted/40 hidden sm:inline">
                 {index + 1}
               </span>
             </button>
@@ -216,8 +216,8 @@ export function ToolPalette() {
         <div className="flex-1" />
       </div>
 
-      {/* Row 2: active tab content — rendered inline, not in a popover */}
-      <div className="flex items-center gap-0.5 px-2 h-7">
+      {/* Row 2: active tab content — same horizontal rhythm as the tab strip */}
+      <div className="flex items-center h-8 px-1">
         {renderTabContent(displayedTab)}
       </div>
     </div>

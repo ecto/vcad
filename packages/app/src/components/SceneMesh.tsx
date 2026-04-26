@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useMemo, useCallback, useState } from "react";
 import * as THREE from "three";
 import { Edges, Html } from "@react-three/drei";
+import { useThree } from "@react-three/fiber";
 import type { TriangleMesh, PartInfo, FaceInfo } from "@vcad/core";
 import { useUiStore, useDocumentStore, useSketchStore, isPcbBoardPart, isStitchPart, isEmbroideryPatternPart } from "@vcad/core";
 import { useElectronicsStore } from "@/stores/electronics-store";
@@ -15,6 +16,7 @@ import {
 } from "@/shaders";
 import { useDebugOverlayStore } from "@/stores/debug-overlay-store";
 import { inspectTriangleFromMesh as runInspectTriangle } from "./TriangleInspector";
+import { pickSubFeature } from "@/lib/sub-feature-picking";
 
 const HOVER_EMISSIVE = new THREE.Color(0xffb800); // neon amber
 const FACE_HIGHLIGHT_COLOR = new THREE.Color(0x00d4ff); // cyan for face selection
@@ -378,9 +380,15 @@ export const SceneMesh = memo(function SceneMesh({
   const [geoReady, setGeoReady] = useState(false);
   const select = useUiStore((s) => s.select);
   const toggleSelect = useUiStore((s) => s.toggleSelect);
+  const selectItem = useUiStore((s) => s.selectItem);
+  const toggleItem = useUiStore((s) => s.toggleItem);
+  const setHoveredItem = useUiStore((s) => s.setHoveredItem);
+  const selectionFilter = useUiStore((s) => s.selectionFilter);
   const showWireframe = useUiStore((s) => s.showWireframe);
   const hoveredPartId = useUiStore((s) => s.hoveredPartId);
   const setHoveredPartId = useUiStore((s) => s.setHoveredPartId);
+  const camera = useThree((s) => s.camera);
+  const viewportSize = useThree((s) => s.size);
   const materials = useDocumentStore((s) => s.document.materials);
   const renamePart = useDocumentStore((s) => s.renamePart);
 
@@ -679,7 +687,31 @@ export const SceneMesh = memo(function SceneMesh({
         return;
       }
 
-      // Normal click behavior
+      // Sub-feature picker: vertex / edge / face / body, gated by the
+      // current selectionFilter. Falls through to body-only behavior when
+      // the filter is "auto" and there's no candidate within threshold,
+      // or when the filter is explicitly "body".
+      if (e.faceIndex != null) {
+        const item = pickSubFeature({
+          triIndex: e.faceIndex,
+          hitPoint: e.point,
+          mesh,
+          partId: partInfo.id,
+          filter: selectionFilter,
+          camera,
+          viewport: viewportSize,
+        });
+        if (item) {
+          if (e.nativeEvent.shiftKey) {
+            toggleItem(item);
+          } else {
+            selectItem(item);
+          }
+          return;
+        }
+      }
+
+      // Filter narrowed too far / fallback to part-level select.
       if (e.nativeEvent.shiftKey) {
         toggleSelect(partInfo.id);
       } else {
@@ -693,6 +725,11 @@ export const SceneMesh = memo(function SceneMesh({
       selectFace,
       toggleSelect,
       select,
+      selectItem,
+      toggleItem,
+      selectionFilter,
+      camera,
+      viewportSize,
       inspectTriangles,
       setCurrentInspection,
     ],
@@ -706,9 +743,40 @@ export const SceneMesh = memo(function SceneMesh({
         e.stopPropagation();
         const faceInfo = computeFaceInfo(mesh, e.faceIndex, partInfo.id);
         setHoveredFace(faceInfo);
+        return;
+      }
+      // Outside face-selection mode, drive the unified hovered item via
+      // the sub-feature picker. The filter restricts what kinds get
+      // picked; "auto" prefers vertex > edge > face. Falls back to body.
+      if (e.faceIndex != null) {
+        e.stopPropagation();
+        const item = pickSubFeature({
+          triIndex: e.faceIndex,
+          hitPoint: e.point,
+          mesh,
+          partId: partInfo.id,
+          filter: selectionFilter,
+          camera,
+          viewport: viewportSize,
+        });
+        if (item) {
+          setHoveredItem(item);
+        } else {
+          setHoveredItem({ kind: "part", id: partInfo.id });
+        }
       }
     },
-    [isOrbiting, faceSelectionMode, mesh, partInfo.id, setHoveredFace],
+    [
+      isOrbiting,
+      faceSelectionMode,
+      mesh,
+      partInfo.id,
+      setHoveredFace,
+      setHoveredItem,
+      selectionFilter,
+      camera,
+      viewportSize,
+    ],
   );
 
   const handlePointerOver = useCallback(

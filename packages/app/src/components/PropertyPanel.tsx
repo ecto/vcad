@@ -17,7 +17,10 @@ function BackButton() {
 }
 import { Tooltip } from "@/components/ui/tooltip";
 import { ScrubInput } from "@/components/ui/scrub-input";
-import { useDocumentStore, useUiStore, isPrimitivePart, isBooleanPart, isSweepPart, isEmbroideryPatternPart, isStitchPart, isPcbBoardPart, isExtrudePart, isRevolvePart, isFilletPart, isChamferPart, isShellPart, isLinearPatternPart, isCircularPatternPart, isLoftPart, isTextPart, isMirrorPart, f64, vec3, bool, t, tFmt } from "@vcad/core";
+import { useDocumentStore, useUiStore, useEngineStore, isPrimitivePart, isBooleanPart, isSweepPart, isEmbroideryPatternPart, isStitchPart, isPcbBoardPart, isExtrudePart, isRevolvePart, isFilletPart, isChamferPart, isShellPart, isLinearPatternPart, isCircularPatternPart, isLoftPart, isTextPart, isMirrorPart, f64, vec3, bool, t, tFmt } from "@vcad/core";
+import type { SelectionItem } from "@vcad/core";
+import { Vector3 } from "three";
+import { findCoplanarTriangles, getEdgeEndpoints, getVertex } from "@/lib/sub-feature-geometry";
 import { useLocaleStore } from "@/stores/locale-store";
 import { useElectronicsStore } from "@/stores/electronics-store";
 import { useEmbroideryStore } from "@/stores/embroidery-store";
@@ -1258,8 +1261,204 @@ function JointPropertiesPanel({ joint }: { joint: Joint }) {
   );
 }
 
+/**
+ * Inspector panel for a single face / edge / vertex selection. Read-only —
+ * shows derived measurements (face area, edge length, vertex coords) and
+ * the owning part's name. Vertex coords are typeable; in this PR they're
+ * read-only because applying a vertex move requires kernel-side support.
+ */
+function SubFeatureInspector({
+  item,
+}: {
+  item: Extract<SelectionItem, { kind: "face" | "edge" | "vertex" }>;
+}) {
+  const parts = useDocumentStore((s) => s.parts);
+  const scene = useEngineStore((s) => s.scene);
+  const clearSelection = useUiStore((s) => s.clearSelection);
+  useLocaleStore((s) => s.locale);
+
+  const part = parts.find((p) => p.id === item.partId);
+  const partIdx = parts.findIndex((p) => p.id === item.partId);
+  const mesh = partIdx >= 0 ? scene?.parts[partIdx]?.mesh : null;
+
+  const stats = useMemo(() => {
+    if (!mesh) return null;
+    if (item.kind === "face") {
+      const tris = findCoplanarTriangles(mesh, item.faceIndex);
+      let area = 0;
+      const _e1 = new Vector3();
+      const _e2 = new Vector3();
+      const _v0 = new Vector3();
+      const _v1 = new Vector3();
+      const _v2 = new Vector3();
+      for (const t of tris) {
+        const i0 = mesh.indices[t * 3]!;
+        const i1 = mesh.indices[t * 3 + 1]!;
+        const i2 = mesh.indices[t * 3 + 2]!;
+        _v0.set(mesh.positions[i0 * 3]!, mesh.positions[i0 * 3 + 1]!, mesh.positions[i0 * 3 + 2]!);
+        _v1.set(mesh.positions[i1 * 3]!, mesh.positions[i1 * 3 + 1]!, mesh.positions[i1 * 3 + 2]!);
+        _v2.set(mesh.positions[i2 * 3]!, mesh.positions[i2 * 3 + 1]!, mesh.positions[i2 * 3 + 2]!);
+        _e1.subVectors(_v1, _v0);
+        _e2.subVectors(_v2, _v0);
+        area += _e1.cross(_e2).length() * 0.5;
+      }
+      return { kind: "face" as const, area, triCount: tris.length };
+    }
+    if (item.kind === "edge") {
+      const { a, b } = getEdgeEndpoints(mesh, item.edgeId);
+      const length = a.distanceTo(b);
+      return { kind: "edge" as const, length, a, b };
+    }
+    // vertex
+    const p = getVertex(mesh, item.vertexId);
+    return { kind: "vertex" as const, position: p };
+  }, [mesh, item]);
+
+  return (
+    <div className={cn("w-full flex flex-col bg-surface", "h-full")}>
+      <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border/40 px-3">
+        <Breadcrumb
+          item={item}
+          partName={part?.name}
+        />
+        <button
+          onClick={clearSelection}
+          className="flex h-6 w-6 items-center justify-center text-text-muted hover:text-text hover:bg-hover"
+          aria-label="Clear selection"
+        >
+          <X size={12} />
+        </button>
+      </div>
+
+      <div className="px-3 py-2 space-y-2 text-xs text-text">
+        {!stats && <span className="text-text-muted">Mesh not available.</span>}
+        {stats && stats.kind === "face" && item.kind === "face" && (
+          <>
+            <Row label="Area" value={`${stats.area.toFixed(2)} mm²`} />
+            <Row label="Triangles" value={String(stats.triCount)} />
+            <Row label="Face index" value={String(item.faceIndex)} />
+          </>
+        )}
+        {stats && stats.kind === "edge" && (
+          <>
+            <Row label="Length" value={`${stats.length.toFixed(2)} mm`} />
+            <Row
+              label="From"
+              value={`(${stats.a.x.toFixed(1)}, ${stats.a.y.toFixed(1)}, ${stats.a.z.toFixed(1)})`}
+            />
+            <Row
+              label="To"
+              value={`(${stats.b.x.toFixed(1)}, ${stats.b.y.toFixed(1)}, ${stats.b.z.toFixed(1)})`}
+            />
+          </>
+        )}
+        {stats && stats.kind === "vertex" && (
+          <>
+            <Row label="X" value={`${stats.position.x.toFixed(2)} mm`} />
+            <Row label="Y" value={`${stats.position.y.toFixed(2)} mm`} />
+            <Row label="Z" value={`${stats.position.z.toFixed(2)} mm`} />
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <span className="text-text-muted uppercase tracking-wider text-[10px]">
+        {label}
+      </span>
+      <span className="tabular-nums">{value}</span>
+    </div>
+  );
+}
+
+/**
+ * Breadcrumb in inspector headers — `Document ▸ Part ▸ face` etc.
+ * Each crumb is a click target that steps the selection up to that level:
+ *   - Document → clearSelection
+ *   - Part     → select(partId)
+ *   - Sub-feature → terminal (no further nav)
+ *
+ * Used by both the part inspector and the SubFeatureInspector so
+ * navigation feels uniform.
+ */
+function Breadcrumb({
+  item,
+  partName,
+}: {
+  item: SelectionItem;
+  partName?: string;
+}) {
+  const docName = useDocumentStore((s) => s.documentName) ?? "Document";
+  const select = useUiStore((s) => s.select);
+  const clearSelection = useUiStore((s) => s.clearSelection);
+
+  const subKind =
+    item.kind === "face" || item.kind === "edge" || item.kind === "vertex"
+      ? item.kind
+      : null;
+  const partId =
+    item.kind === "part"
+      ? item.id
+      : (item as { partId?: string }).partId ?? null;
+
+  return (
+    <div className="flex min-w-0 items-center gap-1 text-xs">
+      <BackButton />
+      <Crumb label={docName} onClick={clearSelection} />
+      {partId && (
+        <>
+          <Separator />
+          <Crumb
+            label={partName ?? partId}
+            onClick={subKind ? () => select(partId) : undefined}
+          />
+        </>
+      )}
+      {subKind && (
+        <>
+          <Separator />
+          <span className="text-text capitalize">{subKind}</span>
+        </>
+      )}
+    </div>
+  );
+}
+
+function Crumb({
+  label,
+  onClick,
+}: {
+  label: string;
+  onClick?: () => void;
+}) {
+  if (!onClick) {
+    return (
+      <span className="truncate text-text-muted/80 max-w-[12ch]">{label}</span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="truncate max-w-[12ch] text-text-muted hover:text-text hover:underline underline-offset-2 decoration-text-muted/40 transition-colors"
+      title={label}
+    >
+      {label}
+    </button>
+  );
+}
+
+function Separator() {
+  return <span className="text-text-muted/40 shrink-0">›</span>;
+}
+
 export function PropertyPanel() {
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
+  const selection = useUiStore((s) => s.selection);
   const clearSelection = useUiStore((s) => s.clearSelection);
   const parts = useDocumentStore((s) => s.parts);
   const document = useDocumentStore((s) => s.document);
@@ -1269,13 +1468,30 @@ export function PropertyPanel() {
   // Close panel on Escape
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape" && selectedPartIds.size > 0) {
+      if (e.key === "Escape" && selection.length > 0) {
         clearSelection();
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedPartIds.size, clearSelection]);
+  }, [selection.length, clearSelection]);
+
+  if (selection.length === 0) return null;
+
+  // Sub-feature dispatcher: when the first selected item is a face / edge /
+  // vertex, render the corresponding inspector instead of the part panel.
+  // Multi-select of sub-features falls through to the part panel below
+  // (which collapses to "N parts selected" anyway).
+  const firstItem = selection[0];
+  if (
+    selection.length === 1 &&
+    firstItem &&
+    (firstItem.kind === "face" ||
+      firstItem.kind === "edge" ||
+      firstItem.kind === "vertex")
+  ) {
+    return <SubFeatureInspector item={firstItem} />;
+  }
 
   if (selectedPartIds.size === 0) return null;
 
@@ -1363,13 +1579,10 @@ export function PropertyPanel() {
     >
       {/* Mobile drag handle */}
 
-      {/* Header */}
+      {/* Header — breadcrumb + part-kind badge + close. */}
       <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border/40 px-3">
         <div className="flex items-center gap-2 min-w-0">
-          <BackButton />
-          <span className="text-xs font-medium text-text truncate">
-            {part.name}
-          </span>
+          <Breadcrumb item={{ kind: "part", id: part.id }} partName={part.name} />
           <PartTypeBadge kind={part.kind} />
         </div>
         <button

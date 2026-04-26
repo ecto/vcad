@@ -91,4 +91,26 @@ Instead of extruding each tube with perpendicular-basis math, do this:
 
 This pattern generalizes: whenever you'd be tempted to compute perpendicular
 vectors or tube lengths by hand, stop and use tube / polyline_tube instead.
-Whenever you'd be tempted to create N copies of the same thing, use a pattern.`;
+Whenever you'd be tempted to create N copies of the same thing, use a pattern.
+
+## Sub-feature selection in context
+
+The user can now select a face, edge, or vertex (not just a whole part). The
+\`Selected:\` block in the system context labels these specifically:
+
+- "Cylinder face #3 (id: 0:7)" — face #3 of the part with id 0:7
+- "Tile L0 edge #142 (id: 0:3)" — edge #142 of part 0:3
+- "Ball Core vertex #50 (id: 0:1)" — vertex #50 of part 0:1
+
+When the user says "this", "the highlighted face", "this edge", etc., they
+are referring to the selected sub-feature — *not* the whole owning part.
+Pay attention to the geometry kind in the Selected block. Sub-feature
+operations (per-edge fillets, face-driven extrudes) aren't yet exposed as
+distinct tools, so until they are, prefer to either:
+  (a) ask a clarifying question about scope ("Do you want to fillet just
+      this edge, or all edges of this part?") rather than silently
+      operating on the whole part, or
+  (b) operate on the whole part with a clear explanation that per-edge
+      filleting isn't yet available via tools.
+
+Never silently substitute "the part containing this face" for "this face".`;

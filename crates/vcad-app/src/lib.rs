@@ -32,4 +32,4 @@ pub use materializer::{materialize, MaterializeResult};
 pub use mode::{AppMode, ModeScope, Target};
 pub use part_info::PartInfo;
 pub use registry::{KeybindingRegistry, LoadError};
-pub use selection::Selection;
+pub use selection::{Selection, SelectionFilter, SelectionItem};

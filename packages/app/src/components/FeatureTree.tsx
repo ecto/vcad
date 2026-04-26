@@ -487,7 +487,9 @@ function TreeNode({
   isDragging,
 }: TreeNodeProps) {
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
+  const selection = useUiStore((s) => s.selection);
   const hoveredPartId = useUiStore((s) => s.hoveredPartId);
+  const hoveredItem = useUiStore((s) => s.hoveredItem);
   const treeFocusedPartId = useUiStore((s) => s.treeFocusedPartId);
   const setHoveredPartId = useUiStore((s) => s.setHoveredPartId);
   const select = useUiStore((s) => s.select);
@@ -499,7 +501,26 @@ function TreeNode({
 
   const Icon = getPartIcon(part);
   const isSelected = selectedPartIds.has(part.id);
-  const isHovered = hoveredPartId === part.id;
+  // "Indirect" selection — the user picked a face / edge / vertex *on* this
+  // part. The tree row stays visible so the user can see where they are
+  // in the hierarchy, with a softer brand pulse instead of full selection
+  // styling.
+  const hasSubFeatureSelection =
+    !isSelected &&
+    selection.some(
+      (it) =>
+        (it.kind === "face" ||
+          it.kind === "edge" ||
+          it.kind === "vertex") &&
+        it.partId === part.id,
+    );
+  const hasSubFeatureHover =
+    hoveredItem != null &&
+    (hoveredItem.kind === "face" ||
+      hoveredItem.kind === "edge" ||
+      hoveredItem.kind === "vertex") &&
+    hoveredItem.partId === part.id;
+  const isHovered = hoveredPartId === part.id || hasSubFeatureHover;
   const isTreeFocused = treeFocusedPartId === part.id;
   const isRenaming = renamingId === part.id;
 
@@ -581,6 +602,8 @@ function TreeNode({
           "group flex items-center gap-1 px-2 py-1 text-xs cursor-pointer rounded",
           isSelected
             ? "bg-brand/20 text-brand backdrop-blur-sm"
+            : hasSubFeatureSelection
+            ? "bg-brand/[0.08] text-brand/90 backdrop-blur-sm"
             : isHovered
             ? "bg-surface/80 text-text backdrop-blur-sm"
             : "text-text-muted/90 hover:bg-surface/60 hover:text-text hover:backdrop-blur-sm",

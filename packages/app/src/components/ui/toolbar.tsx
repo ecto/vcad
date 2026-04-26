@@ -38,10 +38,12 @@ export function ToolbarButton({
     <Tooltip content={tooltip} side="top">
       <button
         className={cn(
-          "flex items-center justify-center relative gap-1",
+          "flex items-center justify-center relative gap-1.5",
           "h-10 min-w-[40px] px-1.5",
-          "md:h-6 md:min-w-0",
-          expanded ? "md:px-1.5" : "md:px-1",
+          "md:h-8 md:min-w-0 md:px-2 md:rounded-sm",
+          "transition-colors",
+          !disabled && "md:hover:bg-hover/20",
+          active && "md:bg-hover/20",
           "disabled:opacity-30 disabled:cursor-not-allowed",
           pulse && "animate-pulse",
           className,
@@ -49,22 +51,21 @@ export function ToolbarButton({
         disabled={disabled}
         onClick={onClick}
       >
-        <span className={cn(
-          iconColor,
-          "transition-transform",
-          active && "scale-110",
-          !disabled && "hover:scale-110"
-        )}>
+        <span className={cn(iconColor, active ? "text-text" : "text-text-muted")}>
           {children}
         </span>
         {expanded && label && (
           <span className={cn(
-            "hidden md:inline text-[10px] whitespace-nowrap",
+            "hidden md:inline text-[11px] font-medium whitespace-nowrap",
             active ? "text-text" : "text-text-muted",
             labelClassName
           )}>
             {label}
-            {shortcut && <span className="ml-1 opacity-60">{shortcut}</span>}
+            {shortcut && (
+              <span className="ml-1 text-[10px] font-mono text-text-muted/40">
+                {shortcut}
+              </span>
+            )}
           </span>
         )}
       </button>

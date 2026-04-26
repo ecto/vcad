@@ -6,6 +6,8 @@ export type {
   AxisAlignedPlane,
   ArbitraryPlane,
   FaceInfo,
+  SelectionItem,
+  SelectionFilter,
   PrimitivePartInfo,
   BooleanPartInfo,
   ExtrudePartInfo,
@@ -57,6 +59,7 @@ export {
   getSketchPlaneName,
   formatDirection,
   negateDirection,
+  selectionItemsEqual,
 } from "./types.js";
 
 // Stores

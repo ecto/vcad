@@ -7,6 +7,7 @@ import {
   Suspense,
 } from "react";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 import { NotificationContainer } from "@/components/ui/notifications";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AsyncBoundary } from "@/components/AsyncBoundary";
@@ -142,35 +143,61 @@ async function syncNativeWindowTheme(theme: "light" | "dark") {
   }
 }
 
-/** Left sidebar: tree by default, drills into inspector when something is selected. */
+/** Left sidebar: feature tree on top + contextual inspector below.
+ *  The tree is the source of truth for navigation and stays visible even
+ *  when the user drills into a part / sub-feature; the inspector slides
+ *  in below as a separate pane sharing the sidebar height.
+ *
+ *  Two cases skip the split:
+ *  - Sketch mode: tree-only (it gains sketch entity branches and the
+ *    sketch property manager lives on the right).
+ *  - Parameters pane: parameters-only (deliberate user switch via the
+ *    sidebarPane store; user wants the full pane). */
 function FeatureTreeSlot({ sketchActive }: { sketchActive: boolean }) {
   const sidebarPane = useUiStore((s) => s.sidebarPane);
   const inspectorTarget = useUiStore((s) => s.inspectorTarget);
-  // While a sketch is open, the LEFT sidebar always shows the FeatureTree
-  // (which gains sketch entity/constraint branches via SketchTreeSection).
-  // The RIGHT sidebar takes over for the SketchPropertyPanel — splitting
-  // navigator and inspector matches the SolidWorks layout we're emulating.
-  const showTree = sketchActive || sidebarPane === "tree";
+  const selectionLen = useUiStore((s) => s.selection.length);
+
   const showParameters = !sketchActive && sidebarPane === "parameters";
+  const hasInspectorContent =
+    inspectorTarget?.kind === "scene" || selectionLen > 0;
+  const showInspector = !sketchActive && !showParameters && hasInspectorContent;
+
   return (
     <div className="flex h-full w-full flex-col min-h-0">
-      <div className="flex-1 min-h-0 overflow-hidden">
-        {showTree ? (
-          <FeatureTree />
-        ) : showParameters ? (
+      {/* Top: tree (or parameters panel when the user explicitly switched).
+          Tree always visible during sketch — it gains sketch sections. */}
+      <div
+        className={cn(
+          "min-h-0 overflow-hidden",
+          showInspector ? "flex-[3]" : "flex-1",
+        )}
+      >
+        {showParameters ? (
           <AsyncBoundary region="parameters-panel" fallback={null}>
             <ParametersPanel />
           </AsyncBoundary>
-        ) : inspectorTarget?.kind === "scene" ? (
-          <AsyncBoundary region="scene-inspector" fallback={null}>
-            <SceneInspector />
-          </AsyncBoundary>
         ) : (
-          <AsyncBoundary region="property-panel" fallback={null}>
-            <PropertyPanel />
-          </AsyncBoundary>
+          <FeatureTree />
         )}
       </div>
+
+      {/* Bottom: contextual inspector. Slides in when the user selects
+          something or pins the scene inspector. Border-top separates it
+          from the tree above. */}
+      {showInspector && (
+        <div className="flex-[2] min-h-0 overflow-hidden border-t border-border/40">
+          {inspectorTarget?.kind === "scene" ? (
+            <AsyncBoundary region="scene-inspector" fallback={null}>
+              <SceneInspector />
+            </AsyncBoundary>
+          ) : (
+            <AsyncBoundary region="property-panel" fallback={null}>
+              <PropertyPanel />
+            </AsyncBoundary>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -245,16 +272,19 @@ export function App() {
 
   // Auto-drill the left sidebar into the inspector when something is selected,
   // and back to the tree when selection clears. Selecting a part also clears
-  // the scene inspector target so the scene doesn't shadow the part.
+  // the scene inspector target so the scene doesn't shadow the part. Watches
+  // the full selection length so sub-feature picks (face / edge / vertex)
+  // open the inspector too.
+  const selectionLen = useUiStore((s) => s.selection.length);
   useEffect(() => {
     const { setSidebarPane, setInspectorTarget } = useUiStore.getState();
-    if (selIds.size >= 1) {
+    if (selectionLen >= 1) {
       setInspectorTarget(null);
       setSidebarPane("inspector");
     } else if (useUiStore.getState().inspectorTarget == null) {
       setSidebarPane("tree");
     }
-  }, [selIds]);
+  }, [selectionLen]);
 
   const handleSave = useCallback(() => {
     const state = useDocumentStore.getState();

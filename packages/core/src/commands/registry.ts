@@ -620,7 +620,26 @@ segments: [
 
     if (selection?.length) {
       const selList = selection
-        .map((s) => `- ${s.partName} (${s.geometryType}, id: ${s.partId})`)
+        .map((s) => {
+          // Surface sub-feature specifics so the AI can act on the exact
+          // thing the user picked: a face index, an edge id, a vertex id.
+          // Falls back to the part name + id for plain part selections.
+          let detail = `${s.partName} (${s.geometryType}, id: ${s.partId})`;
+          if (s.geometryType === "face" && s.faceIndex !== undefined) {
+            detail = `${s.partName} face #${s.faceIndex} (id: ${s.partId})`;
+          } else if (
+            s.geometryType === "edge" &&
+            s.dimensions?.edgeId !== undefined
+          ) {
+            detail = `${s.partName} edge #${s.dimensions.edgeId} (id: ${s.partId})`;
+          } else if (
+            s.geometryType === "vertex" &&
+            s.dimensions?.vertexId !== undefined
+          ) {
+            detail = `${s.partName} vertex #${s.dimensions.vertexId} (id: ${s.partId})`;
+          }
+          return `- ${detail}`;
+        })
         .join("\n");
       sections.push(`Selected:\n${selList}`);
     }
