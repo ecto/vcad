@@ -248,6 +248,50 @@ export function debouncedSync(delay = 5000): void {
 }
 
 /**
+ * Fork a document whose local edits conflict with a newer cloud version.
+ *
+ * Creates a new local document named "<original> (local conflict - date)"
+ * with syncStatus='pending' so it uploads on the next sync pass. The
+ * original document is left to be overwritten by the cloud version during
+ * downloadCloudDocuments. A conflict record is appended to the sync store so
+ * the UI can surface a notification.
+ */
+async function forkConflictingDocument(doc: LocalDocument): Promise<void> {
+  const storage = requireStorage();
+  const { addConflict } = useSyncStore.getState();
+
+  const dateLabel = new Date().toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+  const forkName = `${doc.name} (local conflict - ${dateLabel})`;
+  const forkId = crypto.randomUUID();
+
+  const forkDoc: LocalDocument = {
+    ...doc,
+    id: forkId,
+    name: forkName,
+    cloudId: undefined,
+    syncStatus: "pending",
+  };
+
+  await storage.saveDocument(forkDoc);
+
+  addConflict({
+    originalId: doc.id,
+    forkId,
+    forkName,
+    detectedAt: Date.now(),
+  });
+
+  console.info(
+    `[sync] Conflict on "${doc.name}" (${doc.id}): cloud is newer. ` +
+      `Local edits forked as "${forkName}" (${forkId}).`
+  );
+}
+
+/**
  * Upload documents where syncStatus='pending'
  */
 async function uploadPendingDocuments(): Promise<void> {
@@ -279,11 +323,10 @@ async function uploadDocument(doc: LocalDocument): Promise<void> {
   if (existing) {
     // Document exists in cloud - check for conflict
     if (existing.device_modified_at > doc.modifiedAt) {
-      // Cloud is newer - conflict! For now, last-write-wins (cloud).
-      // TODO(#13): prompt user or hand off to CRDT merge strategy.
-      console.warn(
-        `Conflict on ${doc.id}: cloud is newer, keeping cloud version`
-      );
+      // Cloud is newer. Auto-fork the local edits into a new document so no
+      // work is silently lost; the original will be overwritten by the cloud
+      // version during the subsequent downloadCloudDocuments pass.
+      await forkConflictingDocument(doc);
       return;
     }
 

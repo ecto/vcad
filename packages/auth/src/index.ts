@@ -17,7 +17,11 @@ export {
 
 // Stores
 export { useAuthStore } from "./stores/auth-store";
-export { useSyncStore, type SyncStatus } from "./stores/sync-store";
+export {
+  useSyncStore,
+  type SyncStatus,
+  type SyncConflict,
+} from "./stores/sync-store";
 export { useSignInDelightStore } from "./stores/sign-in-delight-store";
 
 // Hooks
