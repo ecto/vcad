@@ -427,7 +427,7 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
             onClick={onAboutOpen}
             title="About vcad"
             aria-label="About vcad"
-            className="text-[13px] font-semibold text-text hover:text-brand transition-colors cursor-default outline-none"
+            className="font-mono text-[13px] font-semibold text-text hover:text-brand transition-colors cursor-default outline-none"
           >
             vcad<span className="text-brand">.</span>
           </button>
