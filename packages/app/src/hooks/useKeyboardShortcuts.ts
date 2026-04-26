@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import { useUiStore, useDocumentStore, useSketchStore, useChatStore } from "@vcad/core";
+import { useUiStore, useDocumentStore, useSketchStore, useChatStore, isPrimitivePart } from "@vcad/core";
+import type { FocusZone } from "@vcad/core";
 import { useElectronicsStore } from "../stores/electronics-store";
 import { useNotificationStore } from "../stores/notification-store";
 import { useLogStore } from "../stores/log-store";
@@ -20,12 +21,91 @@ export function useKeyboardShortcuts() {
 
       // Ignore when typing in inputs
       const target = e.target as HTMLElement;
-      if (
+      const inInput =
         target.tagName === "INPUT" ||
         target.tagName === "TEXTAREA" ||
-        target.isContentEditable
-      ) {
+        target.isContentEditable;
+      if (inInput) {
         return;
+      }
+
+      const mod = e.ctrlKey || e.metaKey;
+
+      // ── Focus zone navigation ────────────────────────────────────────
+      // Tab / Shift+Tab: cycle keyboard focus zones.
+      // Esc: always return to viewport (layered on top of sketch Esc below).
+      if (e.key === "Tab" && !mod && !e.altKey) {
+        e.preventDefault();
+        const ui = useUiStore.getState();
+        const { focusZone, featureTreeOpen, selectedPartIds } = ui;
+        const zones: FocusZone[] = ["viewport"];
+        if (featureTreeOpen) zones.push("tree");
+        if (selectedPartIds.size > 0) zones.push("property");
+        const cur = zones.indexOf(focusZone as FocusZone);
+        const nextIdx = e.shiftKey
+          ? (cur - 1 + zones.length) % zones.length
+          : (cur + 1) % zones.length;
+        ui.setFocusZone(zones[nextIdx]!);
+        return;
+      }
+
+      // ── Feature tree keyboard navigation ────────────────────────────
+      // j / k / ↑ / ↓ walk the parts list when not in property zone.
+      // Enter selects the focused part; Space toggles tree expand;
+      // Backspace deletes; e enters sketch on the focused part.
+      const { focusZone } = useUiStore.getState();
+      if (
+        (e.key === "j" || e.key === "k" ||
+         e.key === "ArrowDown" || e.key === "ArrowUp") &&
+        !mod && !e.shiftKey && !e.altKey &&
+        focusZone !== "property"
+      ) {
+        const { parts } = useDocumentStore.getState();
+        if (parts.length === 0) {
+          // Nothing to navigate — fall through
+        } else {
+          const { treeFocusedPartId, setTreeFocusedPartId, setFocusZone, featureTreeOpen } = useUiStore.getState();
+          if (!featureTreeOpen) {
+            // Tree is hidden — skip tree nav
+          } else {
+            const isDown = e.key === "j" || e.key === "ArrowDown";
+            const curIdx = parts.findIndex((p) => p.id === treeFocusedPartId);
+            let nextIdx: number;
+            if (curIdx === -1) {
+              nextIdx = isDown ? 0 : parts.length - 1;
+            } else {
+              nextIdx = isDown
+                ? Math.min(curIdx + 1, parts.length - 1)
+                : Math.max(curIdx - 1, 0);
+            }
+            setTreeFocusedPartId(parts[nextIdx]!.id);
+            setFocusZone("tree");
+            e.preventDefault();
+            return;
+          }
+        }
+      }
+
+      // Enter: select the tree-focused part and return to viewport.
+      if (e.key === "Enter" && !mod && focusZone === "tree") {
+        const { treeFocusedPartId, select, setFocusZone } = useUiStore.getState();
+        if (treeFocusedPartId) {
+          select(treeFocusedPartId);
+          setFocusZone("viewport");
+          e.preventDefault();
+          return;
+        }
+      }
+
+      // Backspace / Delete: delete the tree-focused part when in tree zone.
+      // (Delete in viewport is handled by the registry dispatcher.)
+      if ((e.key === "Backspace" || e.key === "Delete") && focusZone === "tree" && !mod) {
+        const { treeFocusedPartId } = useUiStore.getState();
+        if (treeFocusedPartId) {
+          useUiStore.getState().showDeleteConfirm([treeFocusedPartId]);
+          e.preventDefault();
+          return;
+        }
       }
 
       // Electronics mode has its own keyboard handler — only allow
@@ -70,8 +150,6 @@ export function useKeyboardShortcuts() {
         toggleFeatureTree,
       } = useUiStore.getState();
       const { undo, redo } = useDocumentStore.getState();
-
-      const mod = e.ctrlKey || e.metaKey;
 
       // ── Borland-style function key bindings (alt paths kept here) ───
       // F1/F6/Cmd+K/Cmd+S/Cmd+O are now claimed by the Rust registry via
@@ -192,6 +270,41 @@ export function useKeyboardShortcuts() {
         }
       }
 
+      // ── Selection-primed property entry ──────────────────────────────
+      // When a primitive part is selected and the user presses a known
+      // parameter key (R, H, W, D), focus the matching ScrubInput in the
+      // property panel and enter edit mode — no mouse needed.
+      if (!mod && !e.shiftKey && !e.altKey && !useSketchStore.getState().active) {
+        const key = e.key.toUpperCase();
+        if (key === "R" || key === "H" || key === "W" || key === "D") {
+          const ui = useUiStore.getState();
+          if (ui.selectedPartIds.size === 1 && ui.focusZone !== "property") {
+            const partId = Array.from(ui.selectedPartIds)[0]!;
+            const parts = useDocumentStore.getState().parts;
+            const part = parts.find((p) => p.id === partId);
+            if (part && isPrimitivePart(part)) {
+              const kind = part.kind;
+              const validKeys: Record<string, string[]> = {
+                Sphere: ["R"],
+                Cylinder: ["R", "H"],
+                Cube: ["W", "H", "D"],
+                Cone: ["R", "H"],
+              };
+              if (validKeys[kind]?.includes(key)) {
+                e.preventDefault();
+                // Show the property panel if not already visible
+                ui.setSidebarPane("inspector");
+                ui.setFocusZone("property");
+                window.dispatchEvent(
+                  new CustomEvent("vcad:prime-property-input", { detail: { param: key } })
+                );
+                return;
+              }
+            }
+          }
+        }
+      }
+
       // Transform modes (only outside sketch mode — those keys mean
       // "pick a drawing tool" while sketching).
       if ((e.key === "m" || e.key === "M") && !useSketchStore.getState().active) {
@@ -279,6 +392,7 @@ export function useKeyboardShortcuts() {
             exitSketchMode();
             cancelFaceSelection();
             useNotificationStore.getState().addToast("Sketch cancelled", "info");
+            useUiStore.getState().setFocusZone("viewport");
             return;
           }
         }
@@ -287,6 +401,7 @@ export function useKeyboardShortcuts() {
         if (faceSelectionMode) {
           cancelFaceSelection();
           useNotificationStore.getState().addToast("Face selection cancelled", "info");
+          useUiStore.getState().setFocusZone("viewport");
           return;
         }
 
@@ -312,6 +427,8 @@ export function useKeyboardShortcuts() {
         } else {
           clearSelection();
         }
+        // Always return keyboard focus to viewport on Esc
+        useUiStore.getState().setFocusZone("viewport");
         return;
       }
     }

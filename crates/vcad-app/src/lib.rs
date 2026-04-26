@@ -24,7 +24,7 @@ pub use camera::Camera;
 pub use commands::{Command, CommandCategory, ToolbarTab};
 pub use context::{WhenContext, WhenExpr, WhenParseError};
 pub use document_api::{ApiResult, DocumentApi, StableIdMap};
-pub use engine::DocumentEngine;
+pub use engine::{DocumentEngine, FocusZone};
 pub use evaluate::{EvaluatedMesh, EvaluatedScene};
 pub use feature::{BooleanType, FeatureInput};
 pub use keybinding::{Chord, ChordParseError, Key};

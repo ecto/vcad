@@ -1,0 +1,9 @@
+{
+  "id": "2026-04-26-keyboard-focus-zones",
+  "version": "0.9.3",
+  "date": "2026-04-26",
+  "category": "feat",
+  "title": "Fully keyboardable CAD: focus zones and tree nav",
+  "summary": "Tab cycles focus between viewport, tree, and property panel; j/k navigate the part tree; R/H/W/D prime the matching property input from the keyboard.",
+  "features": ["keyboard", "accessibility", "feature-tree", "property-panel"]
+}

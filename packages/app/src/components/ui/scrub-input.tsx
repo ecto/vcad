@@ -36,6 +36,14 @@ interface ScrubInputProps {
   onScrubStart?: () => void;
   /** Called when scrub drag ends */
   onScrubEnd?: () => void;
+  /**
+   * Selection-primed entry key. When set, this input listens for
+   * `vcad:prime-property-input` events and enters edit mode when the
+   * event's `param` matches this value (e.g. "R", "H", "W", "D").
+   */
+  primeKey?: string;
+  /** Called after the user commits a value (Enter/blur) while editing. */
+  onCommit?: () => void;
 }
 
 export function ScrubInput({
@@ -51,6 +59,8 @@ export function ScrubInput({
   tooltip,
   onScrubStart,
   onScrubEnd,
+  primeKey,
+  onCommit,
 }: ScrubInputProps) {
   const [text, setText] = useState(String(round(value)));
   const [isEditing, setIsEditing] = useState(false);
@@ -75,6 +85,7 @@ export function ScrubInput({
       setText(String(round(value)));
     }
     setIsEditing(false);
+    onCommit?.();
   }
 
   const handlePointerDown = useCallback(
@@ -138,6 +149,22 @@ export function ScrubInput({
       };
     }
   }, [isScrubbing, handlePointerMove, handlePointerUp]);
+
+  // Selection-primed entry: listen for vcad:prime-property-input events
+  useEffect(() => {
+    if (!primeKey) return;
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ param: string }>).detail;
+      if (detail?.param === primeKey) {
+        setIsEditing(true);
+        setTimeout(() => {
+          inputRef.current?.select();
+        }, 0);
+      }
+    };
+    window.addEventListener("vcad:prime-property-input", handler);
+    return () => window.removeEventListener("vcad:prime-property-input", handler);
+  }, [primeKey]);
 
   function handleDoubleClick() {
     setIsEditing(true);

@@ -209,29 +209,35 @@ function CubeDimensions({ part }: { part: PrimitivePartInfo }) {
       <div className="space-y-0.5">
         <ScrubInput
           label="W"
+          primeKey="W"
           value={size.x}
           min={0.1}
           onChange={(v) =>
             updatePrimitiveOp(part.id, { type: "Cube", size: { ...size, x: v } })
           }
+          onCommit={() => useUiStore.getState().setFocusZone("viewport")}
           unit="mm"
         />
         <ScrubInput
           label="H"
+          primeKey="H"
           value={size.y}
           min={0.1}
           onChange={(v) =>
             updatePrimitiveOp(part.id, { type: "Cube", size: { ...size, y: v } })
           }
+          onCommit={() => useUiStore.getState().setFocusZone("viewport")}
           unit="mm"
         />
         <ScrubInput
           label="D"
+          primeKey="D"
           value={size.z}
           min={0.1}
           onChange={(v) =>
             updatePrimitiveOp(part.id, { type: "Cube", size: { ...size, z: v } })
           }
+          onCommit={() => useUiStore.getState().setFocusZone("viewport")}
           unit="mm"
         />
       </div>
@@ -254,16 +260,20 @@ function CylinderDimensions({ part }: { part: PrimitivePartInfo }) {
       <div className="space-y-0.5">
         <ScrubInput
           label="R"
+          primeKey="R"
           value={op.radius}
           min={0.1}
           onChange={(v) => updatePrimitiveOp(part.id, { ...op, radius: v })}
+          onCommit={() => useUiStore.getState().setFocusZone("viewport")}
           unit="mm"
         />
         <ScrubInput
           label="H"
+          primeKey="H"
           value={op.height}
           min={0.1}
           onChange={(v) => updatePrimitiveOp(part.id, { ...op, height: v })}
+          onCommit={() => useUiStore.getState().setFocusZone("viewport")}
           unit="mm"
         />
       </div>
@@ -286,9 +296,11 @@ function SphereDimensions({ part }: { part: PrimitivePartInfo }) {
       <div className="space-y-0.5">
         <ScrubInput
           label="R"
+          primeKey="R"
           value={op.radius}
           min={0.1}
           onChange={(v) => updatePrimitiveOp(part.id, { ...op, radius: v })}
+          onCommit={() => useUiStore.getState().setFocusZone("viewport")}
           unit="mm"
         />
       </div>
