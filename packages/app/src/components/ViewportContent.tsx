@@ -406,8 +406,20 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
   // Calculate center and size of the current selection — handles parts,
   // instances, and sub-features (face / edge / vertex). Returns null when
   // the selection is empty or none of its items resolve to geometry.
+  //
+  // Two modes:
+  //   "fit"      — frame the bbox by the current FOV (existing behavior).
+  //   "pan-only" — re-target to the center but keep the current zoom.
+  //                Used for sub-feature selections so a vertex pick on a
+  //                big sphere doesn't dive into a 1mm close-up that loses
+  //                all context. The highlight + property panel are the
+  //                primary feedback there; the camera just centers it.
   const selectionInfo = useMemo(() => {
     if (selection.length === 0 || !scene) return null;
+
+    const hasSubFeature = selection.some(
+      (it) => it.kind === "face" || it.kind === "edge" || it.kind === "vertex",
+    );
 
     const box = new Box3();
     const tempVec = new Vector3();
@@ -515,28 +527,33 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
     const radius = Math.max(size.length() * 0.5, 1);
     // Kernel Z-up center → display Y-up: (x, y, z) → (x, z, -y).
     const center = new Vector3(kernelCenter.x, kernelCenter.z, -kernelCenter.y);
-    return { center, radius };
+    const mode: "fit" | "pan-only" = hasSubFeature ? "pan-only" : "fit";
+    return { center, radius, mode };
   }, [selection, scene, parts, isPartSelected]);
 
-  // Animate orbit target to selection center and zoom to fit
-  // Skip during gizmo drag to avoid fighting with the user's transform
+  // Animate orbit target to selection center. For part selections we also
+  // tighten distance to fit the bounding sphere; for sub-features we keep
+  // the current zoom — picking a vertex on a sphere shouldn't bury you in
+  // a 1mm close-up that loses all context.
   useEffect(() => {
     if (selectionInfo && !isDraggingGizmo) {
       targetGoalRef.current.copy(selectionInfo.center);
-      // Fit the selection's bounding sphere to the viewport using the
-      // camera's actual FOV + aspect, so tiny features don't vanish and
-      // huge ones don't get clipped. Uses the more restrictive of the
-      // vertical/horizontal FOVs so the sphere fits in both directions.
-      const padding = 1.2;
-      if (camera instanceof PerspectiveCamera) {
-        const vFov = (camera.fov * Math.PI) / 180;
-        const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect);
-        const fitFov = Math.min(vFov, hFov);
-        const distance =
-          (selectionInfo.radius / Math.sin(fitFov / 2)) * padding;
-        distanceGoalRef.current = Math.max(camera.near * 2, distance);
+      if (selectionInfo.mode === "fit") {
+        const padding = 1.2;
+        if (camera instanceof PerspectiveCamera) {
+          const vFov = (camera.fov * Math.PI) / 180;
+          const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect);
+          const fitFov = Math.min(vFov, hFov);
+          const distance =
+            (selectionInfo.radius / Math.sin(fitFov / 2)) * padding;
+          distanceGoalRef.current = Math.max(camera.near * 2, distance);
+        } else {
+          distanceGoalRef.current = selectionInfo.radius * 3 * padding;
+        }
       } else {
-        distanceGoalRef.current = selectionInfo.radius * 3 * padding;
+        // pan-only — leave the distance goal untouched. The lerp loop
+        // honors a null distanceGoal by skipping its update.
+        distanceGoalRef.current = null;
       }
       isAnimatingTargetRef.current = true;
       setIsCameraMoving(true);
