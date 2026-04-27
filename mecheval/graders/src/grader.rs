@@ -1,0 +1,255 @@
+//! Top-level grader entry point.
+//!
+//! Loads a task and a candidate `.vcad` file, dispatches each check, and
+//! returns a [`RunBlob`]. v0.0 skeleton: every kernel-dependent check
+//! returns [`CheckOutcome::NotImplemented`]. Wiring the dispatch to the
+//! `vcad-kernel-*` crates is the next step.
+
+use crate::blob::{CheckOutcome, CheckRecord, RunBlob, Summary, SCHEMA_VERSION};
+use crate::check::CheckSpec;
+use crate::task::Task;
+use serde_json::json;
+use std::path::Path;
+use thiserror::Error;
+
+/// Errors the grader can surface to its caller.
+#[derive(Debug, Error)]
+pub enum GraderError {
+    /// Candidate `.vcad` file could not be read.
+    #[error("could not read .vcad: {0}")]
+    Io(#[from] std::io::Error),
+    /// Candidate `.vcad` is not valid JSON.
+    #[error("malformed .vcad: {0}")]
+    Vcad(#[from] serde_json::Error),
+    /// Task JSON could not be hashed.
+    #[error("task hash failed: {0}")]
+    HashFailed(String),
+}
+
+/// Grade a candidate `.vcad` file against a task.
+///
+/// `task_json_bytes` is the raw bytes of the task JSON the grader was loaded
+/// from — used to compute `task_sha256` for forensic traceability. (We hash
+/// the bytes the grader actually saw, not the file at re-read time, to
+/// avoid a TOCTOU window.)
+pub fn grade(
+    task: &Task,
+    task_json_bytes: &[u8],
+    candidate_vcad: &Path,
+) -> Result<RunBlob, GraderError> {
+    // Read + sanity-check the candidate. We don't yet open it through
+    // vcad-kernel — that's the wiring step. For now we just confirm it
+    // parses as JSON.
+    let candidate_raw = std::fs::read_to_string(candidate_vcad)?;
+    let _candidate_value: serde_json::Value = serde_json::from_str(&candidate_raw)?;
+
+    let mut records: Vec<CheckRecord> = Vec::with_capacity(task.checks.len());
+    for (n, spec) in task.checks.iter().enumerate() {
+        let (outcome, details) = run_check(spec, &candidate_raw);
+        records.push(CheckRecord {
+            n,
+            r#type: spec.kind().to_string(),
+            params: spec.clone(),
+            result: outcome,
+            details,
+        });
+    }
+
+    // Anti-cheese + limits enforcement is wired by the harness, which
+    // sees token counts, tool-call counts, and wall-clock. The grader
+    // proper just receives that as input later. v0.0 reports "not yet
+    // checked" — false here so it doesn't force a fail.
+    let anti_cheese_violated = false;
+    let limits_exceeded: Vec<String> = Vec::new();
+
+    let summary = Summary::from_records(&records, anti_cheese_violated, limits_exceeded);
+    let task_sha256 = sha256_hex(task_json_bytes);
+
+    Ok(RunBlob {
+        schema_version: SCHEMA_VERSION,
+        task_id: task.id.clone(),
+        task_sha256,
+        checks: records,
+        summary,
+    })
+}
+
+/// Dispatch one check. v0.0: every kernel-dependent variant returns
+/// `NotImplemented`. As individual checks land they replace their arm here.
+fn run_check(spec: &CheckSpec, _candidate_vcad_raw: &str) -> (CheckOutcome, serde_json::Value) {
+    let stub_reason = "skeleton — kernel wiring pending";
+    match spec {
+        // Suite A / B checks
+        CheckSpec::ValidSolid
+        | CheckSpec::Bbox { .. }
+        | CheckSpec::MassProps { .. }
+        | CheckSpec::HoleCount { .. }
+        | CheckSpec::HolePositions { .. }
+        | CheckSpec::FilletRadius { .. }
+        | CheckSpec::StepRoundtrip { .. }
+        | CheckSpec::DrcClean
+        | CheckSpec::ErcClean
+        | CheckSpec::Dfm { .. }
+        | CheckSpec::RefactorInvariant { .. } => (
+            CheckOutcome::NotImplemented,
+            json!({ "reason": stub_reason }),
+        ),
+        // Suite C checks
+        CheckSpec::BodyValid
+        | CheckSpec::FkReaches { .. }
+        | CheckSpec::TorqueBudget { .. }
+        | CheckSpec::StableDuringRollout { .. }
+        | CheckSpec::TaskSuccess { .. } => (
+            CheckOutcome::NotImplemented,
+            json!({ "reason": stub_reason, "needs": "vcad-gym (phyz + tang)" }),
+        ),
+    }
+}
+
+/// SHA-256 hex of arbitrary bytes. Tiny pure-Rust implementation so we
+/// don't pull in a crypto crate just for this.
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = sha256(bytes);
+    let mut s = String::with_capacity(64);
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(s, "{:02x}", byte);
+    }
+    s
+}
+
+// Minimal in-tree SHA-256 to avoid a crypto dep in v0.0. Replace with
+// a vetted crate (`sha2`) once the grader gains real wiring.
+fn sha256(input: &[u8]) -> [u8; 32] {
+    const K: [u32; 64] = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
+        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
+        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
+        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
+        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+        0xc67178f2,
+    ];
+    let mut h: [u32; 8] = [
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+        0x5be0cd19,
+    ];
+    let bit_len = (input.len() as u64).wrapping_mul(8);
+    let mut msg = input.to_vec();
+    msg.push(0x80);
+    while msg.len() % 64 != 56 {
+        msg.push(0);
+    }
+    msg.extend_from_slice(&bit_len.to_be_bytes());
+    for chunk in msg.chunks_exact(64) {
+        let mut w = [0u32; 64];
+        for (i, word) in chunk.chunks_exact(4).enumerate() {
+            w[i] = u32::from_be_bytes(word.try_into().unwrap());
+        }
+        for i in 16..64 {
+            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16]
+                .wrapping_add(s0)
+                .wrapping_add(w[i - 7])
+                .wrapping_add(s1);
+        }
+        let mut a = h[0];
+        let mut b = h[1];
+        let mut c = h[2];
+        let mut d = h[3];
+        let mut e = h[4];
+        let mut f = h[5];
+        let mut g = h[6];
+        let mut hh = h[7];
+        for i in 0..64 {
+            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+            let ch = (e & f) ^ ((!e) & g);
+            let t1 = hh
+                .wrapping_add(s1)
+                .wrapping_add(ch)
+                .wrapping_add(K[i])
+                .wrapping_add(w[i]);
+            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+            let maj = (a & b) ^ (a & c) ^ (b & c);
+            let t2 = s0.wrapping_add(maj);
+            hh = g;
+            g = f;
+            f = e;
+            e = d.wrapping_add(t1);
+            d = c;
+            c = b;
+            b = a;
+            a = t1.wrapping_add(t2);
+        }
+        h[0] = h[0].wrapping_add(a);
+        h[1] = h[1].wrapping_add(b);
+        h[2] = h[2].wrapping_add(c);
+        h[3] = h[3].wrapping_add(d);
+        h[4] = h[4].wrapping_add(e);
+        h[5] = h[5].wrapping_add(f);
+        h[6] = h[6].wrapping_add(g);
+        h[7] = h[7].wrapping_add(hh);
+    }
+    let mut out = [0u8; 32];
+    for (i, word) in h.iter().enumerate() {
+        out[i * 4..i * 4 + 4].copy_from_slice(&word.to_be_bytes());
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sha256_matches_known_vector() {
+        assert_eq!(
+            sha256_hex(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn skeleton_run_returns_not_implemented_for_every_check() {
+        let task = Task {
+            id: "test-1".into(),
+            suite: crate::task::Suite::A,
+            tier: "A1".into(),
+            title: "t".into(),
+            prompt: "p".into(),
+            inputs: vec![],
+            checks: vec![
+                CheckSpec::ValidSolid,
+                CheckSpec::Bbox {
+                    min: [0.0; 3],
+                    max: [1.0; 3],
+                    tolerance_mm: 0.1,
+                },
+            ],
+            anti_cheese: Default::default(),
+            limits: Default::default(),
+            pass_k: 5,
+            tags: vec![],
+        };
+        let task_bytes = serde_json::to_vec(&task).unwrap();
+        let tmp = std::env::temp_dir().join("mecheval-skeleton-test.vcad");
+        std::fs::write(&tmp, "{}").unwrap();
+        let blob = grade(&task, &task_bytes, &tmp).expect("grade");
+        assert_eq!(blob.checks.len(), 2);
+        assert!(blob
+            .checks
+            .iter()
+            .all(|r| r.result == CheckOutcome::NotImplemented));
+        assert!(!blob.summary.passed);
+        assert_eq!(blob.summary.score, 0.0);
+        assert_eq!(blob.task_sha256.len(), 64);
+    }
+}

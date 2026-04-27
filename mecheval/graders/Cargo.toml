@@ -1,0 +1,16 @@
+[package]
+name = "mecheval-grader"
+version = "0.0.1"
+edition = "2021"
+publish = false
+description = "MechEval grader — loads task JSON, dispatches checks against a .vcad file, emits a run blob"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+[[bin]]
+name = "mecheval-grade"
+path = "src/bin/grade.rs"
