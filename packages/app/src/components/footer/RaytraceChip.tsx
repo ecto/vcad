@@ -57,10 +57,6 @@ export function RaytraceChip({ className }: { className?: string }) {
               weight="fill"
               className="shrink-0 text-violet-400"
             />
-            <span className="uppercase tracking-[0.15em] font-medium text-violet-400">
-              ray-traced
-            </span>
-            <span className="text-text-muted/60">·</span>
             <span className="uppercase tracking-wide tabular-nums text-text-muted">
               {QUALITY_SHORT[raytraceQuality]}
             </span>
