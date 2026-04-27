@@ -6,7 +6,9 @@ import { Unite } from "@phosphor-icons/react/dist/ssr/Unite";
 import { Subtract } from "@phosphor-icons/react/dist/ssr/Subtract";
 import { Intersect } from "@phosphor-icons/react/dist/ssr/Intersect";
 import { Circuitry } from "@phosphor-icons/react/dist/ssr/Circuitry";
-import { useDocumentStore, useUiStore, useEngineStore } from "@vcad/core";
+import { CrosshairSimple } from "@phosphor-icons/react/dist/ssr/CrosshairSimple";
+import { Check } from "@phosphor-icons/react/dist/ssr/Check";
+import { useDocumentStore, useUiStore, useEngineStore, SELECTION_FILTER_OPTIONS } from "@vcad/core";
 import type { ReactNode } from "react";
 
 function MenuItem({
@@ -41,6 +43,8 @@ export function ContextMenu({ children }: { children: ReactNode }) {
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
   const clearSelection = useUiStore((s) => s.clearSelection);
   const select = useUiStore((s) => s.select);
+  const selectionFilter = useUiStore((s) => s.selectionFilter);
+  const setSelectionFilter = useUiStore((s) => s.setSelectionFilter);
   const removePart = useDocumentStore((s) => s.removePart);
   const duplicateParts = useDocumentStore((s) => s.duplicateParts);
   const applyBoolean = useDocumentStore((s) => s.applyBoolean);
@@ -96,6 +100,46 @@ export function ContextMenu({ children }: { children: ReactNode }) {
             disabled={!hasSelection}
             onClick={handleDelete}
           />
+
+          <RadixContextMenu.Separator className="my-1 h-px bg-border" />
+
+          <RadixContextMenu.Sub>
+            <RadixContextMenu.SubTrigger className="group flex items-center gap-2  px-2 py-1.5 text-xs text-text outline-none cursor-pointer data-[highlighted]:bg-brand/20 data-[highlighted]:text-brand data-[state=open]:bg-brand/20 data-[state=open]:text-brand">
+              <CrosshairSimple size={14} className="shrink-0" />
+              <span className="flex-1">Selection priority</span>
+              <span className="ml-4 text-[10px] text-text-muted uppercase tracking-wide">
+                {SELECTION_FILTER_OPTIONS.find((o) => o.value === selectionFilter)?.label ?? "Auto"}
+              </span>
+            </RadixContextMenu.SubTrigger>
+            <RadixContextMenu.Portal>
+              <RadixContextMenu.SubContent
+                className="z-50 min-w-[200px] border border-border bg-card p-1 shadow-xl"
+                sideOffset={2}
+                alignOffset={-4}
+              >
+                {SELECTION_FILTER_OPTIONS.map(({ value, label, hotkey }) => {
+                  const active = selectionFilter === value;
+                  return (
+                    <RadixContextMenu.Item
+                      key={value}
+                      className="group flex items-center gap-2 px-2 py-1.5 text-xs text-text outline-none cursor-pointer data-[highlighted]:bg-brand/20 data-[highlighted]:text-brand"
+                      onClick={() => setSelectionFilter(value)}
+                    >
+                      {active ? (
+                        <Check size={14} weight="bold" className="shrink-0 text-brand" />
+                      ) : (
+                        <span className="w-[14px] shrink-0" />
+                      )}
+                      <span className="flex-1">{label}</span>
+                      {hotkey && (
+                        <span className="ml-4 text-[10px] text-text-muted">{hotkey}</span>
+                      )}
+                    </RadixContextMenu.Item>
+                  );
+                })}
+              </RadixContextMenu.SubContent>
+            </RadixContextMenu.Portal>
+          </RadixContextMenu.Sub>
 
           <RadixContextMenu.Separator className="my-1 h-px bg-border" />
 
