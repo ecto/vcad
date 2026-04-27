@@ -425,16 +425,27 @@ async function evaluateInitialScene(engine: Engine): Promise<void> {
 /**
  * Schedule a clash-detection pass off the critical path once the main
  * scene has rendered.
+ *
+ * Clash is O(n²) pairwise boolean intersections — ~9s on a 50-part
+ * assembly. Run it through the eval worker so the main thread stays
+ * responsive immediately after first paint; otherwise the user sees the
+ * UI render and then lock for the duration of the clash pass. If the
+ * document changes (or another evaluation lands) while we're computing,
+ * drop the stale result rather than overwrite the fresher scene.
  */
 function scheduleDeferredClash(engine: Engine): void {
-  const doc = useDocumentStore.getState().document;
-  if (doc.roots.length === 0) return;
-  try {
-    const scene = engine.evaluate(withParameters(doc), { skipClashDetection: false });
-    useEngineStore.getState().setScene(scene);
-  } catch (e) {
-    useEngineStore.getState().setError(String(e));
-  }
+  const docBefore = useDocumentStore.getState().document;
+  if (docBefore.roots.length === 0) return;
+  engine
+    .evaluateAsync(withParameters(docBefore), { skipClashDetection: false })
+    .then((scene) => {
+      if (useDocumentStore.getState().document !== docBefore) return;
+      useEngineStore.getState().setScene(scene);
+    })
+    .catch((e) => {
+      if (useDocumentStore.getState().document !== docBefore) return;
+      useEngineStore.getState().setError(String(e));
+    });
 }
 
 /** Snapshot parameters store and merge onto doc. */

@@ -11,6 +11,7 @@ import { HardDrives } from "@phosphor-icons/react/dist/ssr/HardDrives";
 import { SpinnerGap } from "@phosphor-icons/react/dist/ssr/SpinnerGap";
 import { WifiSlash } from "@phosphor-icons/react/dist/ssr/WifiSlash";
 import { cn } from "@/lib/utils";
+import { Tooltip } from "@/components/ui/tooltip";
 import { useEffect, useState, useCallback } from "react";
 import { useDocumentStore } from "@vcad/core";
 import {
@@ -163,27 +164,29 @@ function DocumentRow({
           <span className="text-[10px] text-text-muted px-2">Click to download</span>
         ) : (
           <>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setEditName(doc.name);
-                setIsEditing(true);
-              }}
-              className="p-1 text-text-muted hover:text-text hover:bg-border/50 transition-colors"
-              title="Rename"
-            >
-              <Pencil size={14} />
-            </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete();
-              }}
-              className="p-1 text-text-muted hover:text-danger hover:bg-border/50 transition-colors"
-              title="Delete"
-            >
-              <Trash size={14} />
-            </button>
+            <Tooltip content="Rename" side="top">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setEditName(doc.name);
+                  setIsEditing(true);
+                }}
+                className="p-1 text-text-muted hover:text-text hover:bg-border/50 transition-colors"
+              >
+                <Pencil size={14} />
+              </button>
+            </Tooltip>
+            <Tooltip content="Delete" side="top">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete();
+                }}
+                className="p-1 text-text-muted hover:text-danger hover:bg-border/50 transition-colors"
+              >
+                <Trash size={14} />
+              </button>
+            </Tooltip>
           </>
         )}
       </div>

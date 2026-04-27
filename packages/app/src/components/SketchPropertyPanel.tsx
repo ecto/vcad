@@ -4,6 +4,7 @@ import { Plus } from "@phosphor-icons/react/dist/ssr/Plus";
 import { ScrubInput } from "@/components/ui/scrub-input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { Tooltip } from "@/components/ui/tooltip";
 import {
   useSketchStore,
   useDocumentStore,
@@ -377,15 +378,16 @@ function ConstraintSection({
     <div className="space-y-1">
       <div className="flex items-center justify-between text-[11px]">
         <span className="text-text">{constraint.type} {index + 1}</span>
-        <button
-          type="button"
-          onClick={() => onRemove(index)}
-          className="text-text-muted hover:text-red-400 flex items-center gap-1"
-          title="Delete constraint"
-        >
-          <Trash size={10} />
-          delete
-        </button>
+        <Tooltip content="Delete constraint" side="top">
+          <button
+            type="button"
+            onClick={() => onRemove(index)}
+            className="text-text-muted hover:text-red-400 flex items-center gap-1"
+          >
+            <Trash size={10} />
+            delete
+          </button>
+        </Tooltip>
       </div>
       <pre className="text-[9px] text-text-muted whitespace-pre-wrap leading-tight">
         {JSON.stringify(constraint, null, 2)}
