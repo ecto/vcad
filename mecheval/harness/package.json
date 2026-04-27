@@ -1,0 +1,27 @@
+{
+  "name": "@mecheval/harness",
+  "version": "0.0.1",
+  "private": true,
+  "description": "MechEval harness — drives a solver against a task, calls the grader, writes a run blob.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "mecheval-run": "dist/cli.js"
+  },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5.4",
+    "vitest": "^1"
+  }
+}

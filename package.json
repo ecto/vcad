@@ -1,7 +1,7 @@
 {
   "private": true,
   "packageManager": "npm@10.8.2",
-  "workspaces": ["packages/*"],
+  "workspaces": ["packages/*", "mecheval/harness", "mecheval/leaderboard"],
   "scripts": {
     "postinstall": "node scripts/build-changelog.mjs",
     "build": "turbo build",

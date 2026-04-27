@@ -8,6 +8,9 @@ out/
 .env
 __pycache__/
 packages/app/dev-dist/
+mecheval/harness/dist/
+mecheval/leaderboard/dist/
+mecheval/private/
 .turbo
 .env.local
 .vercel
