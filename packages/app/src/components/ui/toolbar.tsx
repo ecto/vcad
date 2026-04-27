@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { DotsThree } from "@phosphor-icons/react/dist/ssr/DotsThree";
 import * as Popover from "@radix-ui/react-popover";
-import { Tooltip } from "@/components/ui/tooltip";
+import { RichTooltip, Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { MOBILE_BREAKPOINT } from "./toolbar-constants";
 
@@ -11,6 +11,10 @@ export interface ToolbarButtonProps {
   disabled?: boolean;
   onClick?: () => void;
   tooltip: string;
+  /** Optional secondary line shown beneath the title in the rich tooltip. */
+  tooltipDescription?: string;
+  /** `bg-…` class used for the tooltip accent stripe (matches the tool color). */
+  tooltipAccent?: string;
   pulse?: boolean;
   expanded?: boolean;
   label?: string;
@@ -26,6 +30,8 @@ export function ToolbarButton({
   disabled,
   onClick,
   tooltip,
+  tooltipDescription,
+  tooltipAccent,
   pulse,
   expanded,
   label,
@@ -35,15 +41,21 @@ export function ToolbarButton({
   labelClassName,
 }: ToolbarButtonProps) {
   return (
-    <Tooltip content={tooltip} side="top">
+    <RichTooltip
+      title={tooltip}
+      description={tooltipDescription}
+      shortcut={shortcut}
+      accent={tooltipAccent}
+      side="top"
+    >
       <button
         className={cn(
-          "flex items-center justify-center relative gap-1.5",
+          "group flex items-center justify-center relative gap-1.5",
           "h-10 min-w-[40px] px-1.5",
           "md:h-8 md:min-w-0 md:px-2 md:rounded-sm",
           "transition-colors",
-          !disabled && "md:hover:bg-hover/20",
-          active && "md:bg-hover/20",
+          !disabled && !active && "md:hover:bg-hover/30",
+          active && "md:bg-hover/40",
           "disabled:opacity-30 disabled:cursor-not-allowed",
           pulse && "animate-pulse",
           className,
@@ -51,25 +63,33 @@ export function ToolbarButton({
         disabled={disabled}
         onClick={onClick}
       >
-        <span className={cn(iconColor, active ? "text-text" : "text-text-muted")}>
+        <span
+          className={cn(
+            "transition-opacity",
+            iconColor,
+            active ? "opacity-100" : "opacity-70 group-hover:opacity-100",
+          )}
+        >
           {children}
         </span>
         {expanded && label && (
-          <span className={cn(
-            "hidden md:inline text-[11px] font-medium whitespace-nowrap",
-            active ? "text-text" : "text-text-muted",
-            labelClassName
-          )}>
+          <span
+            className={cn(
+              "hidden md:inline text-[11px] font-medium whitespace-nowrap transition-colors",
+              active ? "text-text" : "text-text-muted group-hover:text-text",
+              labelClassName,
+            )}
+          >
             {label}
             {shortcut && (
-              <span className="ml-1 text-[10px] font-mono text-text-muted/40">
+              <span className="ml-1 text-[10px] font-mono text-text-muted/40 group-hover:text-text-muted/70 transition-colors">
                 {shortcut}
               </span>
             )}
           </span>
         )}
       </button>
-    </Tooltip>
+    </RichTooltip>
   );
 }
 

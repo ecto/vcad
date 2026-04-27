@@ -1,6 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { ToolbarButton, MoreDropdown } from "@/components/ui/toolbar";
-import { TAB_COLORS, MOBILE_BREAKPOINT } from "@/components/ui/toolbar-constants";
+import { RichTooltip } from "@/components/ui/tooltip";
+import {
+  TAB_COLORS,
+  TAB_THEMES,
+  TAB_DESCRIPTIONS,
+  MOBILE_BREAKPOINT,
+} from "@/components/ui/toolbar-constants";
 import { useDocumentStore, useUiStore, useSketchStore, type ToolbarTab } from "@vcad/core";
 import { useDrawingStore } from "@/stores/drawing-store";
 import { useOnboardingStore } from "@/stores/onboarding-store";
@@ -182,25 +188,47 @@ export function ToolPalette() {
       <div className="flex h-8 items-stretch border-b border-border/30 px-1">
         {visibleTabs.map(({ id, label, icon: Icon }, index) => {
           const isActive = displayedTab === id;
+          const theme = TAB_THEMES[id];
           return (
-            <button
+            <RichTooltip
               key={id}
-              onClick={() => handleTabClick(id)}
-              className={cn(
-                "flex items-center gap-1.5 px-2 text-[11px] font-medium border-b-2 -mb-px",
-                "transition-colors",
-                isActive
-                  ? "border-brand text-text"
-                  : "border-transparent text-text-muted hover:text-text hover:bg-hover/20",
-              )}
-              title={`${index + 1}. ${label}`}
+              title={label}
+              description={TAB_DESCRIPTIONS[id]}
+              shortcut={String(index + 1)}
+              accent={theme.accent}
+              side="bottom"
             >
-              <Icon size={14} className={cn(isActive && TAB_COLORS[id])} />
-              <span>{label}</span>
-              <span className="ml-0.5 text-[10px] font-mono text-text-muted/40 hidden sm:inline">
-                {index + 1}
-              </span>
-            </button>
+              <button
+                onClick={() => handleTabClick(id)}
+                className={cn(
+                  "group flex items-center gap-1.5 px-2 text-[11px] font-medium border-b-2 -mb-px",
+                  "transition-colors",
+                  isActive
+                    ? cn("border-brand", theme.bg)
+                    : cn("border-transparent", theme.hoverBg),
+                )}
+              >
+                <Icon
+                  size={14}
+                  className={cn(
+                    "transition-colors",
+                    isActive ? theme.text : "text-text-muted",
+                    !isActive && theme.groupHoverText,
+                  )}
+                />
+                <span
+                  className={cn(
+                    "transition-colors",
+                    isActive ? "text-text" : "text-text-muted group-hover:text-text",
+                  )}
+                >
+                  {label}
+                </span>
+                <span className="ml-0.5 text-[10px] font-mono text-text-muted/40 hidden sm:inline">
+                  {index + 1}
+                </span>
+              </button>
+            </RichTooltip>
           );
         })}
         {overflowTabs.length > 0 && (
@@ -243,9 +271,11 @@ function ToolPaletteButton({ def, expanded }: { def: ToolDef; expanded: boolean 
     }
     def.onClick();
   };
+  const accent = TAB_THEMES[def.tab]?.accent;
   return (
     <ToolbarButton
       tooltip={readOnlyShare ? "Sign in to fork — this doc is read-only" : def.tooltip}
+      tooltipAccent={accent}
       active={def.active}
       disabled={!def.enabled}
       onClick={handleClick}
