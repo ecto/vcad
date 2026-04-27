@@ -1162,12 +1162,63 @@ fn shade_ground(p: vec3<f32>, dir: vec3<f32>, fade: f32, pixel: vec2<u32>) -> ve
     return vec4<f32>(color, 1.0);
 }
 
-// PBR shading with Cook-Torrance BRDF, soft shadow rays, AO, and
-// sky-sampled IBL ambient + reflections. Z-up world (kernel space).
+// Direct-only shading used as the *bounce hit* color for one-bounce GI.
+// Returns LINEAR radiance (no tonemap, no gamma) so it can be added to
+// the primary hit's lo before the final tonemap. Skips IBL, AO, and
+// recursive bounces — those are the things that would cause cost
+// blow-up or recursion (which WGSL forbids).
+fn shade_direct(hit: RayHit, origin: vec3<f32>, dir: vec3<f32>, pixel: vec2<u32>) -> vec3<f32> {
+    if hit.face_idx == 0xFFFFFFFFu {
+        return sky_color(dir);
+    }
+
+    let sun = sun_direction();
+    let view_dir = -dir;
+
+    if hit.face_idx == FACE_IDX_GROUND {
+        let p = origin + dir * hit.t;
+        let normal = vec3<f32>(0.0, 0.0, 1.0);
+        let albedo = vec3<f32>(0.22, 0.21, 0.20);
+        let ambient = vec3<f32>(0.22, 0.22, 0.23) * albedo;
+        var lo = vec3<f32>(0.0);
+        if !in_shadow(p, sun, MAX_T) {
+            // Lambertian — single light, no fresnel/specular.
+            let n_dot_l = max(dot(normal, sun), 0.0);
+            lo += albedo / PI * vec3<f32>(1.0, 0.96, 0.88) * 2.4 * n_dot_l;
+        }
+        return ambient + lo;
+    }
+
+    let face = faces[hit.face_idx];
+    let mat = materials[face.material_idx];
+    let albedo = mat.color.rgb;
+    let metallic = mat.metallic;
+    let roughness = max(mat.roughness, 0.04);
+    let normal = compute_normal(hit);
+    let p = origin + dir * hit.t;
+    let f0 = mix(vec3<f32>(0.04, 0.04, 0.04), albedo, metallic);
+
+    var lo = vec3<f32>(0.0);
+    let sun_color = vec3<f32>(1.0, 0.96, 0.88) * 2.6;
+    if !in_shadow(p, sun, MAX_T) {
+        lo += brdf_direct(normal, view_dir, sun, albedo, metallic, roughness, f0) * sun_color;
+    }
+    let fill_dir = normalize(vec3<f32>(-0.4, 0.5, 0.6));
+    let fill_color = vec3<f32>(0.7, 0.8, 1.0) * 0.45;
+    if !in_shadow(p, fill_dir, MAX_T) {
+        lo += brdf_direct(normal, view_dir, fill_dir, albedo, metallic, roughness, f0) * fill_color;
+    }
+    // Cheap hemisphere ambient — no AO/sky-blend, just a flat tint.
+    lo += albedo * 0.08;
+    return lo;
+}
+
+// PBR shading with Cook-Torrance BRDF, soft shadow rays, AO, one-bounce
+// indirect (GI), and HDR env IBL. Z-up world (kernel space).
 //
-// Stochastic terms (soft shadows, AO, env-spec jitter) are decorrelated
-// per-pixel and per-frame so progressive accumulation across multiple
-// frames at the same camera state averages out the noise.
+// Stochastic terms (soft shadows, AO, env-spec jitter, GI bounce) are
+// decorrelated per-pixel and per-frame so progressive accumulation
+// converges to a noise-free image.
 fn shade(hit: RayHit, origin: vec3<f32>, dir: vec3<f32>, pixel: vec2<u32>) -> vec4<f32> {
     if hit.face_idx == 0xFFFFFFFFu {
         // Background — render the sky directly.
@@ -1239,7 +1290,26 @@ fn shade(hit: RayHit, origin: vec3<f32>, dir: vec3<f32>, pixel: vec2<u32>) -> ve
     let env_dir = jitter_direction(reflect_dir, roughness * 0.4, env_jitter);
     let env_specular = sky_color(env_dir) * f_ambient * (1.0 - roughness * 0.85);
 
-    var color = ambient + lo + env_specular;
+    // One-bounce indirect (GI). Cosine-weighted hemisphere sample, traced
+    // against BVH + ground; the bounce hit is shaded with shade_direct
+    // (no recursion). For a Lambertian + cosine-weighted sample, the brdf
+    // and pdf factors cancel to just `albedo`, so the contribution is
+    // `albedo * incoming_radiance`. Skipped for metals (they have no
+    // Lambertian diffuse bounce — their indirect comes through env_specular).
+    let bounce_jitter = rand_uniform2(pixel, 41u);
+    let bounce_dir = sample_hemisphere_cosine(normal, bounce_jitter);
+    let bounce_origin = p + normal * 0.001;
+    var bounce_hit = trace_bvh(bounce_origin, bounce_dir);
+    let bounce_ground = intersect_ground(bounce_origin, bounce_dir);
+    if bounce_ground.t < bounce_hit.t {
+        bounce_hit.t = bounce_ground.t;
+        bounce_hit.face_idx = FACE_IDX_GROUND;
+        bounce_hit.uv = vec2<f32>(bounce_ground.fade, 0.0);
+    }
+    let indirect_radiance = shade_direct(bounce_hit, bounce_origin, bounce_dir, pixel);
+    let indirect = albedo * (1.0 - metallic) * indirect_radiance * 0.7;
+
+    var color = ambient + lo + env_specular + indirect;
 
     color = tonemap_aces(color);
     color = pow(color, vec3<f32>(1.0 / 2.2));
