@@ -713,6 +713,110 @@ impl GpuScene {
         })
     }
 
+    /// Merge another GpuScene into this one. Combines surfaces, faces,
+    /// materials, trim verts, inner-loop descriptors, and BVH nodes.
+    ///
+    /// All `other`'s indices into the various buffers are offset by the
+    /// current sizes of `self`'s buffers. The two BVH trees are unified
+    /// under a new root node whose AABB is the union of both old roots'
+    /// AABBs — this keeps traversal a single root-to-leaf walk in the
+    /// shader without changes there.
+    pub fn merge(mut self, other: Self) -> Self {
+        let surface_offset = self.surfaces.len() as u32;
+        let face_offset = self.faces.len() as u32;
+        let material_offset = self.materials.len() as u32;
+        let bvh_offset = self.bvh_nodes.len() as u32;
+        let trim_offset = self.trim_verts.len() as u32;
+        let inner_desc_offset = self.inner_loop_descs.len() as u32;
+
+        // Adjust other's faces — every cross-buffer index needs a shift.
+        let adjusted_faces: Vec<GpuFace> = other
+            .faces
+            .iter()
+            .map(|f| {
+                let mut nf = *f;
+                nf.surface_idx += surface_offset;
+                nf.material_idx += material_offset;
+                nf.trim_start += trim_offset;
+                nf.inner_start += trim_offset;
+                nf.inner_desc_start += inner_desc_offset;
+                nf
+            })
+            .collect();
+
+        // Adjust other's BVH nodes:
+        //   - leaf nodes: left_or_first is a face index in `faces`
+        //   - internal nodes: both left_or_first and right_or_count are
+        //     child node indices in bvh_nodes
+        // After the merge below we'll prepend a new root, so internal-node
+        // child indices need an extra +1 on top of the per-tree offset.
+        let adjusted_nodes: Vec<GpuBvhNode> = other
+            .bvh_nodes
+            .iter()
+            .map(|n| {
+                let mut nn = *n;
+                if nn.is_leaf == 1 {
+                    nn.left_or_first += face_offset;
+                    // right_or_count is a count, not an index — leave alone.
+                } else {
+                    nn.left_or_first += bvh_offset + 1;
+                    nn.right_or_count += bvh_offset + 1;
+                }
+                nn
+            })
+            .collect();
+
+        // Self's existing internal nodes need +1 for the new root we'll prepend.
+        for n in self.bvh_nodes.iter_mut() {
+            if n.is_leaf == 0 {
+                n.left_or_first += 1;
+                n.right_or_count += 1;
+            } else {
+                // Leaf face indices stay correct (faces are appended after).
+            }
+        }
+
+        // New root spans both trees. Children: self's old root (now at 1),
+        // other's old root (at 1 + self.bvh_nodes.len()).
+        let self_root_min = self.bvh_nodes[0].aabb_min;
+        let self_root_max = self.bvh_nodes[0].aabb_max;
+        let other_root_min = adjusted_nodes[0].aabb_min;
+        let other_root_max = adjusted_nodes[0].aabb_max;
+        let new_root = GpuBvhNode {
+            aabb_min: [
+                self_root_min[0].min(other_root_min[0]),
+                self_root_min[1].min(other_root_min[1]),
+                self_root_min[2].min(other_root_min[2]),
+                0.0,
+            ],
+            aabb_max: [
+                self_root_max[0].max(other_root_max[0]),
+                self_root_max[1].max(other_root_max[1]),
+                self_root_max[2].max(other_root_max[2]),
+                0.0,
+            ],
+            left_or_first: 1,
+            right_or_count: bvh_offset + 1,
+            is_leaf: 0,
+            _pad: 0,
+        };
+
+        let mut merged_bvh =
+            Vec::with_capacity(1 + self.bvh_nodes.len() + adjusted_nodes.len());
+        merged_bvh.push(new_root);
+        merged_bvh.extend(self.bvh_nodes);
+        merged_bvh.extend(adjusted_nodes);
+
+        self.surfaces.extend(other.surfaces);
+        self.faces.extend(adjusted_faces);
+        self.materials.extend(other.materials);
+        self.bvh_nodes = merged_bvh;
+        self.trim_verts.extend(other.trim_verts);
+        self.inner_loop_descs.extend(other.inner_loop_descs);
+
+        self
+    }
+
     /// Set the material for all faces in the scene.
     ///
     /// This replaces the default gray material with the specified color.

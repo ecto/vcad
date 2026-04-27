@@ -80,38 +80,42 @@ export function RayTracedViewportSync() {
       return;
     }
 
-    // Try to upload first part with a solid
+    // Clear any previously-uploaded scene then merge each part's solid in.
+    // The WASM accumulates surfaces/faces/BVH across uploads under a unified
+    // root, so multi-part documents render in a single ray-trace pass.
+    const rt = rayTracer as {
+      clearScene?: () => void;
+      uploadSolid: (s: unknown) => void;
+      setMaterial: (r: number, g: number, b: number, m: number, ro: number) => void;
+    };
+    rt.clearScene?.();
+
     let uploaded = false;
-    let materialKey: string | undefined;
+    let firstMaterialKey: string | undefined;
     for (const p of solidScene.parts) {
       const solid = (p as { solid?: unknown }).solid;
       if (!solid) continue;
 
       try {
-        rayTracer.uploadSolid(solid);
-        materialKey = p.material;
+        rt.uploadSolid(solid);
+        if (firstMaterialKey === undefined) firstMaterialKey = p.material;
         uploaded = true;
-        break;
       } catch (e) {
         logger.debug("gpu", `uploadSolid failed: ${e}`);
-        // Try next solid
+        // Skip this part, keep trying the rest.
       }
     }
 
     // Apply material — document overrides take precedence, fall back to preset library.
-    if (uploaded && materialKey) {
-      const docMat = document.materials[materialKey];
-      const preset = docMat ? null : getMaterialByKey(materialKey);
+    // For now we apply one material to the whole merged scene; per-part materials
+    // would need a setMaterialAt(idx, ...) on the WASM side.
+    if (uploaded && firstMaterialKey) {
+      const docMat = document.materials[firstMaterialKey];
+      const preset = docMat ? null : getMaterialByKey(firstMaterialKey);
       const mat = docMat ?? preset;
       if (mat) {
         try {
-          rayTracer.setMaterial(
-            mat.color[0],
-            mat.color[1],
-            mat.color[2],
-            mat.metallic,
-            mat.roughness
-          );
+          rt.setMaterial(mat.color[0], mat.color[1], mat.color[2], mat.metallic, mat.roughness);
         } catch (e) {
           logger.debug("gpu", `Failed to set material: ${e}`);
         }

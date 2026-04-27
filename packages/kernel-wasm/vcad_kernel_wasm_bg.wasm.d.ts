@@ -51,6 +51,7 @@ export const plan_chat_tool: (a: number, b: number, c: number, d: number, e: num
 export const processGeometryGpu: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
 export const projectMesh: (a: any, b: number, c: number) => any;
 export const raytracer_canRaytrace: (a: number) => number;
+export const raytracer_clearScene: (a: number) => void;
 export const raytracer_create: () => [number, number, number];
 export const raytracer_getDebugMode: (a: number) => number;
 export const raytracer_getEdgeDetectionEnabled: (a: number) => number;
