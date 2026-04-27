@@ -189,6 +189,7 @@ export function ToolPalette() {
         {visibleTabs.map(({ id, label, icon: Icon }, index) => {
           const isActive = displayedTab === id;
           const theme = TAB_THEMES[id];
+          const tabTools = byTab[id];
           return (
             <RichTooltip
               key={id}
@@ -196,7 +197,36 @@ export function ToolPalette() {
               description={TAB_DESCRIPTIONS[id]}
               shortcut={String(index + 1)}
               accent={theme.accent}
-              side="bottom"
+              icon={<Icon size={18} className={theme.text} />}
+              preview={
+                tabTools.length > 0 ? (
+                  <div className="flex flex-wrap gap-x-2 gap-y-1">
+                    {tabTools.map((t) => {
+                      const TIcon = t.icon;
+                      return (
+                        <span
+                          key={t.id}
+                          className={cn(
+                            "inline-flex items-center gap-1 text-[10px] leading-none",
+                            t.enabled ? "text-text-muted" : "text-text-muted/40",
+                          )}
+                        >
+                          <TIcon
+                            size={11}
+                            className={cn(
+                              t.iconColor,
+                              !t.enabled && "opacity-40",
+                            )}
+                          />
+                          <span>{t.label}</span>
+                        </span>
+                      );
+                    })}
+                  </div>
+                ) : undefined
+              }
+              tip={isActive ? undefined : `Press ${index + 1} or click to switch`}
+              side="top"
             >
               <button
                 onClick={() => handleTabClick(id)}
@@ -259,6 +289,32 @@ export function ToolPalette() {
   );
 }
 
+/**
+ * Split a tooltip string like "Move (M)" or "Move (select a part)" into a
+ * clean title and a status/description tail. Keeps the existing tooltip
+ * data in useToolDefinitions usable as a richer two-line layout without
+ * having to thread a new `description` field through every tool.
+ *
+ * Trailing single-token parens (e.g. "(M)") are shortcut hints that the
+ * dedicated shortcut chip already shows — stripped from the title.
+ * Multi-word parens (e.g. "select a part") and explicit " — " separators
+ * become the description line.
+ */
+function splitTooltip(s: string): { title: string; description?: string } {
+  const dashIdx = s.indexOf(" — ");
+  if (dashIdx > 0) {
+    return { title: s.slice(0, dashIdx), description: s.slice(dashIdx + 3) };
+  }
+  const parenMatch = s.match(/^(.*?)\s*\(([^)]+)\)\s*$/);
+  if (parenMatch) {
+    const head = parenMatch[1]!;
+    const inner = parenMatch[2]!;
+    if (inner.includes(" ")) return { title: head, description: inner };
+    return { title: head };
+  }
+  return { title: s };
+}
+
 function ToolPaletteButton({ def, expanded }: { def: ToolDef; expanded: boolean }) {
   const Icon = def.icon;
   const readOnlyShare = useUiStore((s) => s.readOnlyShare);
@@ -272,10 +328,17 @@ function ToolPaletteButton({ def, expanded }: { def: ToolDef; expanded: boolean 
     def.onClick();
   };
   const accent = TAB_THEMES[def.tab]?.accent;
+  const tooltipText = readOnlyShare
+    ? "Sign in to fork — this doc is read-only"
+    : def.tooltip;
+  const { title, description } = splitTooltip(tooltipText);
   return (
     <ToolbarButton
-      tooltip={readOnlyShare ? "Sign in to fork — this doc is read-only" : def.tooltip}
+      tooltip={title}
+      tooltipDescription={description}
       tooltipAccent={accent}
+      tooltipIcon={<Icon size={20} className={def.iconColor} />}
+      tooltipSide="bottom"
       active={def.active}
       disabled={!def.enabled}
       onClick={handleClick}

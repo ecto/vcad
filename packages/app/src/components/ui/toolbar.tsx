@@ -15,6 +15,13 @@ export interface ToolbarButtonProps {
   tooltipDescription?: string;
   /** `bg-…` class used for the tooltip accent stripe (matches the tool color). */
   tooltipAccent?: string;
+  /** Hero icon rendered in the tooltip header — typically a larger version of the button's icon. */
+  tooltipIcon?: React.ReactNode;
+  /** Optional pro-tip line rendered at the bottom of the tooltip in italic muted type. */
+  tooltipTip?: string;
+  /** Which side the tooltip opens on. Defaults to "top" (good for bottom-anchored toolbars).
+   * The main ToolPalette overrides this to "bottom" so tooltips don't cover the tabs above. */
+  tooltipSide?: "top" | "bottom" | "left" | "right";
   pulse?: boolean;
   expanded?: boolean;
   label?: string;
@@ -32,6 +39,9 @@ export function ToolbarButton({
   tooltip,
   tooltipDescription,
   tooltipAccent,
+  tooltipIcon,
+  tooltipTip,
+  tooltipSide = "top",
   pulse,
   expanded,
   label,
@@ -46,7 +56,9 @@ export function ToolbarButton({
       description={tooltipDescription}
       shortcut={shortcut}
       accent={tooltipAccent}
-      side="top"
+      icon={tooltipIcon}
+      tip={tooltipTip}
+      side={tooltipSide}
     >
       <button
         className={cn(
