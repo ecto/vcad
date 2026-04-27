@@ -251,15 +251,11 @@ mod tests {
         let expected_with_sphere_corners =
             l * l * l - 12.0 * r * r * (1.0 - pi / 4.0) * (l - 2.0 * r) - 8.0 * r * r * r * (1.0 - pi / 6.0);
 
-        // With sphere octants at corners, the tessellated volume should
-        // hit within ~15 mm³ of the closed-form value (cube corners use
-        // a 3-triangle fan that under-approximates the round octant by
-        // ~1.4 mm³ each, total ~11 mm³). The main thing this is
-        // guarding against is the sign-error regression that placed
-        // cylinders outside the solid — that produces volumes near l³
-        // (no material removed).
+        // With ring-subdivided sphere octants at corners (4 rings × 12
+        // longs), the tessellated volume tracks the closed form to a
+        // few mm³ — well inside the chamfer test's 5 mm³ bar.
         assert!(
-            (vol - expected_with_sphere_corners).abs() < 15.0,
+            (vol - expected_with_sphere_corners).abs() < 5.0,
             "filleted cube volume: expected ~{:.1}, got {:.1} (Δ={:.2})",
             expected_with_sphere_corners,
             vol,

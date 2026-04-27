@@ -1,0 +1,9 @@
+{
+  "id": "2026-04-27-fillet-corner-tessellation",
+  "version": "0.9.3",
+  "date": "2026-04-27",
+  "category": "fix",
+  "title": "Fillet corner spheres now tessellate as smooth domes, not 3-tri fans",
+  "summary": "tessellate_small_spherical_cap fanned the cap pole directly to its boundary verts — fine for full spheres with many boundary samples, but for cube-corner fillet blends (3 boundary verts) it produced a visible 3-facet diamond. Switch to ring-subdivided latitude/longitude tessellation (4 rings × 12 longitudes), giving a smooth dome that matches the surrounding cylinders.",
+  "features": ["fillet", "tessellation"]
+}

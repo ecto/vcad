@@ -2583,7 +2583,12 @@ fn tessellate_spherical_cap(
     }
 }
 
-/// Tessellate a small spherical cap using fan triangulation from the cap pole.
+/// Tessellate a small spherical cap with latitude rings between the cap
+/// pole and the boundary loop. A 3-vertex boundary (cube-corner fillet
+/// blend) used to fan to a single triangle per pair, producing the
+/// visible 3-facet "diamond" at every corner. The ring-based path
+/// gives a smooth dome and stitches to the boundary the same way the
+/// large-cap path does.
 fn tessellate_small_spherical_cap(
     loop_verts: &[Point3],
     center: Point3,
@@ -2593,7 +2598,6 @@ fn tessellate_small_spherical_cap(
 ) -> TriangleMesh {
     let mut mesh = TriangleMesh::new();
 
-    // Helper to compute sphere normal at a point
     let sphere_normal = |pt: Point3| -> Vec3 {
         let n = (pt - center).normalize();
         if reversed {
@@ -2603,7 +2607,7 @@ fn tessellate_small_spherical_cap(
         }
     };
 
-    // Cap pole (point on sphere in cap direction)
+    // Cap pole — the outermost point of the cap along cap_dir.
     let pole = center + radius * cap_dir;
     mesh.vertices.push(pole.x as f32);
     mesh.vertices.push(pole.y as f32);
@@ -2612,7 +2616,59 @@ fn tessellate_small_spherical_cap(
     mesh.normals
         .extend_from_slice(&[n.x as f32, n.y as f32, n.z as f32]);
 
-    // Add boundary vertices
+    // Local frame around cap_dir for parameterizing the rings.
+    let up = cap_dir;
+    let right = if up.x.abs() < 0.9 {
+        vcad_kernel_math::Vec3::new(1.0, 0.0, 0.0)
+            .cross(up)
+            .normalize()
+    } else {
+        vcad_kernel_math::Vec3::new(0.0, 1.0, 0.0)
+            .cross(up)
+            .normalize()
+    };
+    let forward = up.cross(right);
+
+    // Largest angle from pole to any boundary vertex — defines how
+    // far down the rings need to go.
+    let max_angle = loop_verts
+        .iter()
+        .map(|p| {
+            let v = (*p - center).normalize();
+            v.dot(cap_dir).clamp(-1.0, 1.0).acos()
+        })
+        .fold(0.0_f64, f64::max);
+
+    // Rings between pole and boundary. n_rings=4 gives a clearly round
+    // dome on cube corners; n_lon=12 around so each ring has 12 wedges.
+    let n_rings: usize = 4;
+    let n_lon: usize = 12;
+
+    // Stop slightly inside the boundary so the stitch step has clean
+    // triangles to fan from. Boundary verts are added separately and
+    // stitched with stitch_ring_to_boundary.
+    let ring_stop = max_angle * 0.92;
+    for ring in 1..=n_rings {
+        let t = ring as f64 / (n_rings + 1) as f64;
+        let angle_from_pole = ring_stop * t;
+        let sin_a = angle_from_pole.sin();
+        let cos_a = angle_from_pole.cos();
+
+        for i in 0..=n_lon {
+            let lon = 2.0 * PI * (i as f64 / n_lon as f64);
+            let local = right * (sin_a * lon.cos()) + forward * (sin_a * lon.sin()) + up * cos_a;
+            let pt = center + radius * local;
+            mesh.vertices.push(pt.x as f32);
+            mesh.vertices.push(pt.y as f32);
+            mesh.vertices.push(pt.z as f32);
+            let n = sphere_normal(pt);
+            mesh.normals
+                .extend_from_slice(&[n.x as f32, n.y as f32, n.z as f32]);
+        }
+    }
+
+    // Boundary vertices last.
+    let boundary_start = mesh.num_vertices() as u32;
     for p in loop_verts {
         mesh.vertices.push(p.x as f32);
         mesh.vertices.push(p.y as f32);
@@ -2622,18 +2678,70 @@ fn tessellate_small_spherical_cap(
             .extend_from_slice(&[n.x as f32, n.y as f32, n.z as f32]);
     }
 
-    // Fan triangulation from pole to boundary
     let pole_idx = 0u32;
-    let n = loop_verts.len();
-    for i in 0..n {
-        let v1 = 1 + i as u32;
-        let v2 = 1 + ((i + 1) % n) as u32;
+    let stride = (n_lon + 1) as u32;
+    let first_ring_start = 1u32;
+
+    // Pole fan to first ring. Going pole→boundary along +cap_dir, the
+    // visible (outward-facing) triangle is pole→v1→v2 in CCW order
+    // when looked at from outside the sphere along -cap_dir. The
+    // `reversed` arg flips for inverted topology.
+    for i in 0..n_lon {
+        let v1 = first_ring_start + i as u32;
+        let v2 = first_ring_start + (i + 1) as u32;
         if reversed {
             mesh.indices.extend_from_slice(&[pole_idx, v2, v1]);
         } else {
             mesh.indices.extend_from_slice(&[pole_idx, v1, v2]);
         }
     }
+
+    // Bands between rings — `tl`/`tr` is the ring further from pole.
+    // For outward-facing triangles, quad → bl, tl, tr and bl, tr, br.
+    for ring in 0..(n_rings - 1) {
+        let ring_start = 1 + ring as u32 * stride;
+        let next_ring_start = ring_start + stride;
+        for i in 0..n_lon {
+            let bl = ring_start + i as u32;
+            let br = ring_start + (i + 1) as u32;
+            let tl = next_ring_start + i as u32;
+            let tr = next_ring_start + (i + 1) as u32;
+            if reversed {
+                mesh.indices.extend_from_slice(&[bl, tr, tl]);
+                mesh.indices.extend_from_slice(&[bl, br, tr]);
+            } else {
+                mesh.indices.extend_from_slice(&[bl, tl, tr]);
+                mesh.indices.extend_from_slice(&[bl, tr, br]);
+            }
+        }
+    }
+
+    // Stitch the last ring to the boundary using the same angle-based
+    // matcher the large-cap path uses.
+    let last_ring_start = 1 + (n_rings - 1) as u32 * stride;
+    let last_ring_angles: Vec<f64> = (0..=n_lon)
+        .map(|i| 2.0 * PI * (i as f64 / n_lon as f64))
+        .collect();
+    let boundary_angles: Vec<f64> = loop_verts
+        .iter()
+        .map(|p| {
+            let v = (*p - center).normalize();
+            let x = v.dot(right);
+            let y = v.dot(forward);
+            y.atan2(x).rem_euclid(2.0 * PI)
+        })
+        .collect();
+
+    stitch_ring_to_boundary(
+        &mut mesh,
+        last_ring_start,
+        n_lon,
+        &last_ring_angles,
+        boundary_start,
+        loop_verts.len(),
+        &boundary_angles,
+        reversed,
+    );
 
     mesh
 }
