@@ -324,8 +324,10 @@ pub struct GpuRenderState {
     pub edge_normal_threshold: f32,
     /// Debug render mode: 0=normal, 1=show normals, 2=show face_id, 3=show n_dot_l, 4=show orientation.
     pub debug_mode: u32,
-    /// Padding for 16-byte alignment.
-    pub _pad: f32,
+    /// Theme: 0 = dark (default), 1 = light. Drives the visible background
+    /// palette in `sky_color`; the IBL panels and direct lighting stay
+    /// constant across themes so the model itself looks the same.
+    pub theme: u32,
 }
 
 impl GpuRenderState {
@@ -340,7 +342,7 @@ impl GpuRenderState {
             edge_depth_threshold: 0.1,
             edge_normal_threshold: 30.0, // degrees
             debug_mode: 0,               // Normal rendering by default
-            _pad: 0.0,
+            theme: 0,
         }
     }
 
@@ -367,6 +369,25 @@ impl GpuRenderState {
         edge_depth_threshold: f32,
         edge_normal_threshold: f32,
     ) -> Self {
+        Self::with_full_settings(
+            frame_index,
+            debug_mode,
+            enable_edges,
+            edge_depth_threshold,
+            edge_normal_threshold,
+            0,
+        )
+    }
+
+    /// Create a render state with all settings including theme.
+    pub fn with_full_settings(
+        frame_index: u32,
+        debug_mode: u32,
+        enable_edges: bool,
+        edge_depth_threshold: f32,
+        edge_normal_threshold: f32,
+        theme: u32,
+    ) -> Self {
         let (jitter_x, jitter_y) = halton_2_3(frame_index);
         Self {
             frame_index,
@@ -376,7 +397,7 @@ impl GpuRenderState {
             edge_depth_threshold,
             edge_normal_threshold,
             debug_mode,
-            _pad: 0.0,
+            theme,
         }
     }
 }

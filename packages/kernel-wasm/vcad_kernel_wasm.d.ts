@@ -189,6 +189,12 @@ export class RayTracer {
      */
     setMaterial(r: number, g: number, b: number, metallic: number, roughness: number): void;
     /**
+     * Set the visible-background theme. 0 = dark (default), 1 = light.
+     * IBL panels and direct lighting stay constant across themes — this
+     * only swaps the atmospheric backdrop and ground tint.
+     */
+    setTheme(theme: number): void;
+    /**
      * Upload a solid's BRep representation for ray tracing.
      *
      * This extracts the BRep surfaces and builds the GPU scene data.
@@ -1921,6 +1927,7 @@ export interface InitOutput {
     readonly raytracer_setDebugMode: (a: number, b: number) => void;
     readonly raytracer_setEdgeDetection: (a: number, b: number, c: number, d: number) => void;
     readonly raytracer_setMaterial: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
+    readonly raytracer_setTheme: (a: number, b: number) => void;
     readonly raytracer_uploadSolid: (a: number, b: number) => [number, number];
     readonly renderBakeMesh: (a: number, b: number) => [number, number, number, number];
     readonly sectionMesh: (a: any, b: number, c: number, d: number, e: number) => any;

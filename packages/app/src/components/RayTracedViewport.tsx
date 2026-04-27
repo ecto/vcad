@@ -3,6 +3,7 @@ import { useThree, useFrame } from "@react-three/fiber";
 import { useEngineStore, useDocumentStore, useUiStore, logger } from "@vcad/core";
 import { getRayTracer } from "@vcad/engine";
 import { getMaterialByKey } from "@/data/materials";
+import { useTheme } from "@/hooks/useTheme";
 import type { PerspectiveCamera } from "three";
 
 // Store for syncing camera state from R3F to external overlay
@@ -257,6 +258,7 @@ export function RayTracedViewportOverlay() {
   const raytraceEdgeDepthThreshold = useUiStore((s) => s.raytraceEdgeDepthThreshold);
   const raytraceEdgeNormalThreshold = useUiStore((s) => s.raytraceEdgeNormalThreshold);
   const rayTracer = getRayTracer();
+  const { isDark } = useTheme();
 
   // Track last debug mode to detect changes
   const lastDebugModeRef = useRef<string>("off");
@@ -485,6 +487,18 @@ export function RayTracedViewportOverlay() {
       doRender(lastCameraStateRef.current);
     }
   }, [raytraceQuality, doRender]);
+
+  // Push theme into the WASM ray tracer when it flips, then kick a fresh
+  // render. `setTheme` resets accumulation internally so the new background
+  // palette appears cleanly without ghosting.
+  useEffect(() => {
+    if (!rayTracer) return;
+    const rt = rayTracer as { setTheme?: (n: number) => void };
+    rt.setTheme?.(isDark ? 0 : 1);
+    if (lastCameraStateRef.current) {
+      doRender(lastCameraStateRef.current);
+    }
+  }, [isDark, rayTracer, doRender]);
 
   // Apply debug mode changes to raytracer
   useEffect(() => {

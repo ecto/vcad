@@ -2228,6 +2228,8 @@ pub struct RayTracer {
     edge_depth_threshold: f32,
     /// Edge normal threshold (degrees).
     edge_normal_threshold: f32,
+    /// Theme: 0 = dark, 1 = light. Drives the visible background palette.
+    theme: u32,
 }
 
 #[cfg(feature = "raytrace")]
@@ -2260,7 +2262,18 @@ impl RayTracer {
             enable_edges: true,
             edge_depth_threshold: 0.1,
             edge_normal_threshold: 30.0,
+            theme: 0,
         })
+    }
+
+    /// Set the visible-background theme. 0 = dark (default), 1 = light.
+    /// IBL panels and direct lighting stay constant across themes — this
+    /// only swaps the atmospheric backdrop and ground tint.
+    #[wasm_bindgen(js_name = setTheme)]
+    pub fn set_theme(&mut self, theme: u32) {
+        self.theme = theme;
+        self.frame_index = 0;
+        self.accum_buffer = None;
     }
 
     /// Reset the progressive accumulation (call when camera moves).
@@ -2556,6 +2569,7 @@ impl RayTracer {
                 self.enable_edges,
                 self.edge_depth_threshold,
                 self.edge_normal_threshold,
+                self.theme,
             )
             .await
             .map_err(|e| JsError::new(&format!("Render failed: {}", e)))?;

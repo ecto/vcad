@@ -62,6 +62,7 @@ export const raytracer_resetAccumulation: (a: number) => void;
 export const raytracer_setDebugMode: (a: number, b: number) => void;
 export const raytracer_setEdgeDetection: (a: number, b: number, c: number, d: number) => void;
 export const raytracer_setMaterial: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
+export const raytracer_setTheme: (a: number, b: number) => void;
 export const raytracer_uploadSolid: (a: number, b: number) => [number, number];
 export const renderBakeMesh: (a: number, b: number) => [number, number, number, number];
 export const sectionMesh: (a: any, b: number, c: number, d: number, e: number) => any;

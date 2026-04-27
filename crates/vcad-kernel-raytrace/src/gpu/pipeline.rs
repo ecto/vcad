@@ -259,6 +259,7 @@ impl RayTracePipeline {
             true,
             0.1,
             30.0,
+            0,
         )
         .await
     }
@@ -284,6 +285,7 @@ impl RayTracePipeline {
         enable_edges: bool,
         edge_depth_threshold: f32,
         edge_normal_threshold: f32,
+        theme: u32,
     ) -> Result<(Vec<u8>, wgpu::Buffer), GpuError> {
         use wgpu::util::DeviceExt;
 
@@ -297,12 +299,13 @@ impl RayTracePipeline {
             });
 
         // Create render state buffer
-        let render_state = GpuRenderState::with_edge_settings(
+        let render_state = GpuRenderState::with_full_settings(
             frame_index,
             debug_mode,
             enable_edges,
             edge_depth_threshold,
             edge_normal_threshold,
+            theme,
         );
         let render_state_buffer =
             ctx.device

@@ -81,7 +81,8 @@ struct RenderState {
     edge_normal_threshold: f32,
     /// Debug render mode: 0=normal, 1=show normals as RGB, 2=show face_id, 3=show n_dot_l
     debug_mode: u32,
-    _pad: f32,
+    /// 0 = dark theme (cool low-key background), 1 = light theme (bright neutral background).
+    theme: u32,
 }
 
 struct RayHit {
@@ -805,11 +806,25 @@ const FACE_IDX_GROUND: u32 = 0xFFFFFFFEu;
 fn sky_color(dir: vec3<f32>) -> vec3<f32> {
     let z = dir.z;
 
-    // Atmospheric backdrop (low dynamic range — the panels supply the
-    // brightness, this is just for variety and the visible background).
-    let zenith = vec3<f32>(0.35, 0.55, 0.95);
-    let horizon = vec3<f32>(0.78, 0.84, 0.92);
-    let below = vec3<f32>(0.18, 0.18, 0.20);
+    // Atmospheric backdrop. Two palettes — dark and light — selected by
+    // render_state.theme. The IBL panels below stay the same in both so
+    // the model's lighting is theme-independent.
+    var zenith: vec3<f32>;
+    var horizon: vec3<f32>;
+    var below: vec3<f32>;
+    if render_state.theme == 1u {
+        // Light theme — bright neutral with the faintest cool tint at the
+        // top so it doesn't read as flat paper-white.
+        zenith = vec3<f32>(0.93, 0.95, 1.00);
+        horizon = vec3<f32>(0.96, 0.97, 0.99);
+        below = vec3<f32>(0.86, 0.86, 0.88);
+    } else {
+        // Dark theme — moody studio backdrop, cool blues fading into a
+        // dim "below horizon" band.
+        zenith = vec3<f32>(0.35, 0.55, 0.95);
+        horizon = vec3<f32>(0.78, 0.84, 0.92);
+        below = vec3<f32>(0.18, 0.18, 0.20);
+    }
 
     var col: vec3<f32>;
     if z >= 0.0 {
@@ -1129,21 +1144,30 @@ fn brdf_direct(
 fn shade_ground(p: vec3<f32>, dir: vec3<f32>, fade: f32, pixel: vec2<u32>) -> vec4<f32> {
     let normal = vec3<f32>(0.0, 0.0, 1.0);
     let view_dir = -dir;
-    let albedo = vec3<f32>(0.22, 0.21, 0.20);
+    // Ground albedo follows theme: warm gray on dark, near-white on light.
+    var albedo: vec3<f32>;
+    var ambient_factor: vec3<f32>;
+    var fade_target: vec3<f32>;
+    if render_state.theme == 1u {
+        albedo = vec3<f32>(0.78, 0.78, 0.79);
+        ambient_factor = vec3<f32>(0.55, 0.55, 0.57);
+        fade_target = vec3<f32>(0.96, 0.97, 0.99);
+    } else {
+        albedo = vec3<f32>(0.22, 0.21, 0.20);
+        ambient_factor = vec3<f32>(0.22, 0.22, 0.23);
+        fade_target = vec3<f32>(0.80, 0.85, 0.92);
+    }
     let roughness = 0.92;
     let metallic = 0.0;
     let f0 = vec3<f32>(0.04);
 
-    let ambient_base = vec3<f32>(0.22, 0.22, 0.23) * albedo;
+    let ambient_base = ambient_factor * albedo;
     let ao = ambient_occlusion(p, normal, pixel);
     let ambient = ambient_base * ao;
 
     var lo = vec3<f32>(0.0);
     let sun = sun_direction();
     let sun_color = vec3<f32>(1.0, 0.96, 0.88) * 2.4;
-    // Soft sun shadow: jitter the sun direction within a small cone so the
-    // shadow edge softens over accumulated frames. Single ray per frame —
-    // the smoothing is supplied by progressive accumulation.
     let shadow_jitter = rand_uniform2(pixel, 13u);
     let sun_jittered = jitter_direction(sun, 0.025, shadow_jitter);
     let shadowed = in_shadow(p, sun_jittered, MAX_T);
@@ -1155,9 +1179,7 @@ fn shade_ground(p: vec3<f32>, dir: vec3<f32>, fade: f32, pixel: vec2<u32>) -> ve
     color = tonemap_aces(color);
     color = pow(color, vec3<f32>(1.0 / 2.2));
 
-    // Fade to sky horizon so the plane dissolves at distance.
-    let sky_horizon = vec3<f32>(0.80, 0.85, 0.92);
-    let sky_tonemapped = pow(tonemap_aces(sky_horizon), vec3<f32>(1.0 / 2.2));
+    let sky_tonemapped = pow(tonemap_aces(fade_target), vec3<f32>(1.0 / 2.2));
     color = mix(sky_tonemapped, color, fade);
     return vec4<f32>(color, 1.0);
 }

@@ -360,6 +360,15 @@ export class RayTracer {
         }
     }
     /**
+     * Set the visible-background theme. 0 = dark (default), 1 = light.
+     * IBL panels and direct lighting stay constant across themes — this
+     * only swaps the atmospheric backdrop and ground tint.
+     * @param {number} theme
+     */
+    setTheme(theme) {
+        wasm.raytracer_setTheme(this.__wbg_ptr, theme);
+    }
+    /**
      * Upload a solid's BRep representation for ray tracing.
      *
      * This extracts the BRep surfaces and builds the GPU scene data.
