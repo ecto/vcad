@@ -251,19 +251,13 @@ mod tests {
         let expected_with_sphere_corners =
             l * l * l - 12.0 * r * r * (1.0 - pi / 4.0) * (l - 2.0 * r) - 8.0 * r * r * r * (1.0 - pi / 6.0);
 
-        // With ring-subdivided sphere octants at corners, the
-        // tessellated volume tracks the closed form to within ~15 mm³.
-        // The remaining gap is mostly from the dense ring stitched
-        // to a sparse 3-vertex boundary — adjacent ring verts that
-        // map to the same boundary vert produce slightly oversized
-        // stitch triangles. Fixing that means denser boundary
-        // sampling, which is its own follow-up.
-        //
-        // The main thing this still guards against is the sign-error
-        // regression (cylinder centers placed outside the solid)
-        // which produces volumes near l³ — way past this tolerance.
+        // With boundary-shaped rings (every ring shares the boundary's
+        // topology, no stitch step), the tessellation tracks the
+        // closed form within a couple mm³. Tight tolerance both
+        // documents that the corner geometry is right AND catches
+        // any future regression in the sphere-octant placement.
         assert!(
-            (vol - expected_with_sphere_corners).abs() < 15.0,
+            (vol - expected_with_sphere_corners).abs() < 5.0,
             "filleted cube volume: expected ~{:.1}, got {:.1} (Δ={:.2})",
             expected_with_sphere_corners,
             vol,
