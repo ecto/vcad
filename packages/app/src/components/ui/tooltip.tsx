@@ -62,13 +62,13 @@ export function RichTooltip({
   tip,
   side = "top",
   align = "center",
-  delayDuration = 250,
+  delayDuration = 0,
 }: {
   children: ReactNode;
   title: string;
   description?: string;
   shortcut?: string;
-  /** A `bg-…` Tailwind class used for the left accent stripe and brand hairline. */
+  /** A `bg-…` Tailwind class used for the brand-color top hairline. */
   accent?: string;
   /** Optional hero icon rendered in a framed block on the left of the header. */
   icon?: ReactNode;
@@ -78,8 +78,7 @@ export function RichTooltip({
   tip?: string;
   side?: "top" | "bottom" | "left" | "right";
   align?: "start" | "center" | "end";
-  /** Override the global Provider delay (default 250ms — a small grace period
-   * so brushing the cursor past a control doesn't summon the tooltip). */
+  /** Override the per-tooltip delay. Defaults to 0 — instant. */
   delayDuration?: number;
 }) {
   return (
@@ -100,45 +99,42 @@ export function RichTooltip({
             "data-[state=closed]:animate-out data-[state=closed]:fade-out-0",
           )}
         >
-          {/* Brand hairline accent at the top edge, color-matched to the tab. */}
+          {/* Brand hairline at the top edge, color-matched to the tab. */}
           {accent && <div className={cn("h-[2px] w-full", accent)} />}
-          <div className="flex items-stretch">
-            {accent && <div className={cn("w-[3px] shrink-0 opacity-60", accent)} />}
-            <div className="flex-1 px-3 py-2">
-              <div className="flex items-start gap-2.5">
-                {icon && (
-                  <div
-                    className={cn(
-                      "flex items-center justify-center shrink-0",
-                      "w-7 h-7 border border-border/60 bg-surface/60",
-                    )}
-                  >
-                    {icon}
-                  </div>
-                )}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-baseline justify-between gap-3">
-                    <span className="text-[12px] font-semibold tracking-tight truncate">
-                      {title}
-                    </span>
-                    {shortcut && <KbdChip>{shortcut}</KbdChip>}
-                  </div>
-                  {description && (
-                    <p className="mt-0.5 text-[10.5px] text-text-muted leading-snug">
-                      {description}
-                    </p>
+          <div className="px-3 py-2">
+            <div className="flex items-start gap-2.5">
+              {icon && (
+                <div
+                  className={cn(
+                    "flex items-center justify-center shrink-0",
+                    "w-7 h-7 border border-border/60 bg-surface/60",
                   )}
+                >
+                  {icon}
                 </div>
+              )}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="text-[12px] font-semibold tracking-tight truncate">
+                    {title}
+                  </span>
+                  {shortcut && <KbdChip>{shortcut}</KbdChip>}
+                </div>
+                {description && (
+                  <p className="mt-0.5 text-[10.5px] text-text-muted leading-snug">
+                    {description}
+                  </p>
+                )}
               </div>
-              {preview && (
-                <div className="mt-2 pt-2 border-t border-border/40">{preview}</div>
-              )}
-              {tip && (
-                <p className="mt-2 text-[10px] text-text-muted/80 italic leading-snug">
-                  {tip}
-                </p>
-              )}
             </div>
+            {preview && (
+              <div className="mt-2 pt-2 border-t border-border/40">{preview}</div>
+            )}
+            {tip && (
+              <p className="mt-2 text-[10px] text-text-muted/80 italic leading-snug">
+                {tip}
+              </p>
+            )}
           </div>
         </TooltipPrimitive.Content>
       </TooltipPrimitive.Portal>
