@@ -1,0 +1,9 @@
+{
+  "id": "2026-04-27-fillet-cylinder-center-fix",
+  "version": "0.9.3",
+  "date": "2026-04-27",
+  "category": "fix",
+  "title": "Fillet edges no longer explode on cube/box geometry",
+  "summary": "The planar fillet placed every edge cylinder on the *outside* of the solid instead of inside, so trim points sat at distance ≠ radius from the cylinder axis and the rendered surface separated into floating disconnected faces. Cylinder centers now use the inward bisector with sin²(θ/2) scaling, valid for any dihedral angle.",
+  "features": ["fillet", "kernel"]
+}

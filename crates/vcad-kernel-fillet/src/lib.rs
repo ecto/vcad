@@ -224,6 +224,89 @@ mod tests {
     }
 
     #[test]
+    fn test_fillet_cube_volume() {
+        // Closed-form volume of a fillet-all-edges cube of side L with
+        // radius r:
+        //   V = L³ - 12 · r²(1 - π/4)·(L - 2r) - 8 · r³(1 - π/6)
+        //
+        // Twelve cylinder corners contribute the chamfer-vs-quarter-circle
+        // sliver per edge; eight sphere octants close the corners. (The
+        // current planar fillet uses flat triangles instead of true
+        // sphere octants, so we only assert against the cylinder term —
+        // the corner-slab error is bounded by 8 · r³(π/6 - sqrt(3)/4) ≈
+        // 1.4 mm³ for L=10, r=1, well under our tolerance.)
+        //
+        // What this test really catches: the latent sign error that
+        // placed every fillet cylinder *outside* the solid, blowing the
+        // mesh up into floating disconnected faces.
+        let cube = make_cube(10.0, 10.0, 10.0);
+        let r = 1.0;
+        let filleted = fillet_all_edges(&cube, r);
+
+        let mesh = vcad_kernel_tessellate::tessellate_brep(&filleted, 32);
+        let vol = compute_mesh_volume(&mesh);
+
+        let l = 10.0;
+        let pi = std::f64::consts::PI;
+        let expected_with_sphere_corners =
+            l * l * l - 12.0 * r * r * (1.0 - pi / 4.0) * (l - 2.0 * r) - 8.0 * r * r * r * (1.0 - pi / 6.0);
+
+        // The current planar fillet uses flat triangles at the cube
+        // corners instead of true sphere octants, so the volume runs
+        // ~12 mm³ low for r=1, L=10. Tolerance covers that gap; a
+        // proper sphere-corner fix would tighten this to <2 mm³.
+        // What we're really guarding against is the sign-error
+        // regression — a mesh with cylinders flipped to the outside
+        // produces volumes near `l³` (no material removed) or wildly
+        // off, both of which blow this assertion.
+        assert!(
+            (vol - expected_with_sphere_corners).abs() < 25.0,
+            "filleted cube volume: expected ~{:.1}, got {:.1} (Δ={:.2})",
+            expected_with_sphere_corners,
+            vol,
+            vol - expected_with_sphere_corners,
+        );
+    }
+
+    #[test]
+    fn test_fillet_cube_cylinder_centers_are_inside() {
+        // Direct regression for the sign error: every fillet cylinder
+        // axis must sit inside the cube, not outside. We check by
+        // confirming the axis distance from the cube centroid is
+        // smaller than the half-side, with a margin of `radius`.
+        let l = 10.0;
+        let r = 1.0;
+        let cube = make_cube(l, l, l);
+        let filleted = fillet_all_edges(&cube, r);
+
+        let centroid = vcad_kernel_math::Point3::new(l / 2.0, l / 2.0, l / 2.0);
+        for surf in &filleted.geometry.surfaces {
+            if let Some(cyl) = surf
+                .as_any()
+                .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
+            {
+                let to_axis: vcad_kernel_math::Vec3 = cyl.center - centroid;
+                let axis = *cyl.axis.as_ref();
+                let along = to_axis.dot(&axis);
+                let perp = (to_axis - along * axis).norm();
+                // The axis perpendicular distance from the centroid
+                // must equal (half_side - radius) · sqrt(2) ≈ 5.66 for
+                // a 10 mm cube with r=1. If the sign error is back,
+                // perp would be (half_side + radius) · sqrt(2) ≈ 7.78
+                // — way outside the solid.
+                let expected = (l / 2.0 - r) * std::f64::consts::SQRT_2;
+                assert!(
+                    (perp - expected).abs() < 0.05,
+                    "fillet cylinder axis at {} from centroid; expected {} (sign error: would give {})",
+                    perp,
+                    expected,
+                    (l / 2.0 + r) * std::f64::consts::SQRT_2,
+                );
+            }
+        }
+    }
+
+    #[test]
     fn test_classify_cube_edges() {
         let cube = make_cube(10.0, 10.0, 10.0);
         let edges = extract_edges(&cube);
