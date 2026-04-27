@@ -10,7 +10,7 @@ use crate::topology::{
     compute_centroid, extract_edges, extract_faces, pair_twin_half_edges, quantize, EdgeInfo,
     FaceInfo,
 };
-use crate::trim::{build_vertex_faces, compute_trim_vertices, TrimKey};
+use crate::trim::{build_vertex_faces, compute_trim_vertices, CornerBlend, TrimKey};
 
 /// Dihedral angle threshold (radians) above which two adjacent faces count
 /// as "nearly coplanar". Extruding an arc profile produces a strip of thin,
@@ -190,12 +190,15 @@ pub fn fillet_all_edges(brep: &BRepSolid, radius: f64) -> BRepSolid {
         }
     }
 
-    // 3. Build vertex faces
+    // 3. Build vertex faces — sphere octants where the corner has 3
+    // orthogonal faces (cubes), planar fallback elsewhere.
     build_vertex_faces(
         &faces,
         &vertex_edges,
         &trims,
         brep,
+        radius,
+        CornerBlend::SphereWhenCube,
         &mut vertex_cache,
         &mut new_topo,
         &mut new_geom,

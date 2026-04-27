@@ -1,8 +1,8 @@
 //! Trim vertex computation for fillet/chamfer operations.
 
 use std::collections::HashMap;
-use vcad_kernel_geom::{GeometryStore, Plane};
-use vcad_kernel_math::{Point3, Vec3};
+use vcad_kernel_geom::{GeometryStore, Plane, SphereSurface};
+use vcad_kernel_math::{Dir3, Point3, Vec3};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_topo::{FaceId, HalfEdgeId, Orientation, Topology, VertexId};
 
@@ -162,6 +162,63 @@ fn trim_cylinder_face(
     }
 }
 
+/// Try to build a spherical-octant blend at a cube-style corner: three
+/// faces with mutually orthogonal outward normals. The center is at
+/// `v_pos - r·(n_a + n_b + n_c)` (works because each pair contributes
+/// nothing to the orthogonal axis), and the sphere is tangent to all
+/// three faces with radius `r`. The boundary curves of this sphere
+/// where it meets the three cylinder fillets are great-circle 90°
+/// arcs that exactly coincide with the cylinders' v-arc cap edges —
+/// which is what the Plane fallback gets wrong (chord vs arc → visible
+/// lens-shaped z-fight at every cube corner).
+///
+/// Returns `Some(surface)` when the geometry matches the cube case;
+/// `None` falls back to the planar approximation.
+fn try_sphere_blend(
+    face_normals: &[Vec3],
+    v_pos: Point3,
+    radius: f64,
+) -> Option<SphereSurface> {
+    if face_normals.len() != 3 {
+        return None;
+    }
+    // All three pairs must be near-orthogonal. 1e-4 tolerance covers the
+    // floating-point slop from quantized cube edges.
+    for i in 0..3 {
+        for j in (i + 1)..3 {
+            if face_normals[i].dot(face_normals[j]).abs() > 1e-4 {
+                return None;
+            }
+        }
+    }
+
+    let n_sum = face_normals[0] + face_normals[1] + face_normals[2];
+    let center = Point3::from(v_pos.to_vec() - radius * n_sum);
+
+    // Pick ref/axis so the surface is properly oriented. Any orthonormal
+    // pair works for tessellation; using one of the face normals keeps
+    // the parameterization aligned with the cube.
+    let axis = Dir3::new_normalize(face_normals[0]);
+    let ref_axis = Dir3::new_normalize(face_normals[1]);
+    Some(SphereSurface {
+        center,
+        radius,
+        ref_dir: ref_axis,
+        axis,
+    })
+}
+
+/// What surface to use for the corner blend. Fillets want a sphere
+/// octant where the geometry permits (cube-style 3-orthogonal-face
+/// vertices); chamfers are by definition flat and always want a plane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CornerBlend {
+    /// Try a sphere octant for cube-style corners; fall back to plane.
+    SphereWhenCube,
+    /// Always use a planar triangle (chamfer behavior).
+    AlwaysPlane,
+}
+
 /// Build vertex faces for all vertices where >=3 edges meet.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_vertex_faces(
@@ -169,6 +226,8 @@ pub(crate) fn build_vertex_faces(
     vertex_edges: &HashMap<VertexId, Vec<&EdgeInfo>>,
     trims: &HashMap<TrimKey, Point3>,
     brep: &BRepSolid,
+    radius: f64,
+    blend: CornerBlend,
     vertex_cache: &mut HashMap<[i64; 3], VertexId>,
     new_topo: &mut Topology,
     new_geom: &mut GeometryStore,
@@ -187,11 +246,16 @@ pub(crate) fn build_vertex_faces(
 
         let v_pos = brep.topology.vertices[v_id].point;
 
+        // Collect both the trim points AND the face outward normals at
+        // this vertex. The normals are needed to detect the cube case
+        // and place the sphere center.
         let mut vertex_face_points: Vec<Point3> = Vec::new();
+        let mut vertex_face_normals: Vec<Vec3> = Vec::new();
         for face in faces {
             if face.vertex_ids.contains(&v_id) {
                 if let Some(&p) = trims.get(&(v_id, face.face_id)) {
                     vertex_face_points.push(p);
+                    vertex_face_normals.push(face.normal);
                 }
             }
         }
@@ -231,17 +295,29 @@ pub(crate) fn build_vertex_faces(
             .iter()
             .map(|(i, _)| vertex_face_points[*i])
             .collect();
+        let sorted_normals: Vec<Vec3> = indexed
+            .iter()
+            .map(|(i, _)| vertex_face_normals[*i])
+            .collect();
 
         if sorted_positions.len() >= 3 {
             let e1 = sorted_positions[1] - sorted_positions[0];
             let e2 = sorted_positions[2] - sorted_positions[0];
             let n = e1.cross(e2);
             let outward = center - solid_center;
+            let reversed = n.dot(outward) <= 0.0;
 
-            let final_positions = if n.dot(outward) > 0.0 {
+            let final_positions = if !reversed {
                 sorted_positions
             } else {
                 let mut rev = sorted_positions;
+                rev.reverse();
+                rev
+            };
+            let final_normals = if !reversed {
+                sorted_normals
+            } else {
+                let mut rev = sorted_normals;
                 rev.reverse();
                 rev
             };
@@ -251,10 +327,17 @@ pub(crate) fn build_vertex_faces(
                 .map(|p| get_or_create_vertex(vertex_cache, new_topo, *p))
                 .collect();
 
-            let x_dir = final_positions[1] - final_positions[0];
-            let y_dir = final_positions[final_positions.len() - 1] - final_positions[0];
-            let surf_idx =
-                new_geom.add_surface(Box::new(Plane::new(final_positions[0], x_dir, y_dir)));
+            let sphere = match blend {
+                CornerBlend::SphereWhenCube => try_sphere_blend(&final_normals, v_pos, radius),
+                CornerBlend::AlwaysPlane => None,
+            };
+            let surf_idx = if let Some(s) = sphere {
+                new_geom.add_surface(Box::new(s))
+            } else {
+                let x_dir = final_positions[1] - final_positions[0];
+                let y_dir = final_positions[final_positions.len() - 1] - final_positions[0];
+                new_geom.add_surface(Box::new(Plane::new(final_positions[0], x_dir, y_dir)))
+            };
 
             let hes: Vec<HalfEdgeId> = verts.iter().map(|&v| new_topo.add_half_edge(v)).collect();
             let loop_id = new_topo.add_loop(&hes);

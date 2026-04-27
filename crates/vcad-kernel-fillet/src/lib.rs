@@ -251,20 +251,41 @@ mod tests {
         let expected_with_sphere_corners =
             l * l * l - 12.0 * r * r * (1.0 - pi / 4.0) * (l - 2.0 * r) - 8.0 * r * r * r * (1.0 - pi / 6.0);
 
-        // The current planar fillet uses flat triangles at the cube
-        // corners instead of true sphere octants, so the volume runs
-        // ~12 mm³ low for r=1, L=10. Tolerance covers that gap; a
-        // proper sphere-corner fix would tighten this to <2 mm³.
-        // What we're really guarding against is the sign-error
-        // regression — a mesh with cylinders flipped to the outside
-        // produces volumes near `l³` (no material removed) or wildly
-        // off, both of which blow this assertion.
+        // With sphere octants at corners, the tessellated volume should
+        // hit within ~15 mm³ of the closed-form value (cube corners use
+        // a 3-triangle fan that under-approximates the round octant by
+        // ~1.4 mm³ each, total ~11 mm³). The main thing this is
+        // guarding against is the sign-error regression that placed
+        // cylinders outside the solid — that produces volumes near l³
+        // (no material removed).
         assert!(
-            (vol - expected_with_sphere_corners).abs() < 25.0,
+            (vol - expected_with_sphere_corners).abs() < 15.0,
             "filleted cube volume: expected ~{:.1}, got {:.1} (Δ={:.2})",
             expected_with_sphere_corners,
             vol,
             vol - expected_with_sphere_corners,
+        );
+    }
+
+    #[test]
+    fn test_fillet_cube_has_sphere_corners() {
+        // Cube fillet should have 8 spherical corner blends — one per
+        // cube vertex — so the rendered corners are smooth instead of
+        // showing the lens-shaped z-fight between flat triangles and
+        // their adjacent cylinder fillet caps.
+        let cube = make_cube(10.0, 10.0, 10.0);
+        let filleted = fillet_all_edges(&cube, 1.0);
+
+        let n_sphere = filleted
+            .geometry
+            .surfaces
+            .iter()
+            .filter(|s| s.surface_type() == vcad_kernel_geom::SurfaceKind::Sphere)
+            .count();
+        assert_eq!(
+            n_sphere, 8,
+            "filleted cube should have 8 spherical corner blends, got {}",
+            n_sphere
         );
     }
 

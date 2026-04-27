@@ -1,0 +1,9 @@
+{
+  "id": "2026-04-27-fillet-sphere-corners",
+  "version": "0.9.3",
+  "date": "2026-04-27",
+  "category": "fix",
+  "title": "Fillet corners on cubes now use sphere octants",
+  "summary": "build_vertex_faces emitted a flat planar triangle at each corner where 3 cylinder fillets meet — the chord vs adjacent cylinder arc mismatch produced a visible lens-shaped z-fight at every cube corner. Cube-style corners (3 mutually orthogonal faces) now get a true SphereSurface tangent to all 3 faces; the boundary great circles match the cylinders' v-arc caps.",
+  "features": ["fillet", "kernel"]
+}

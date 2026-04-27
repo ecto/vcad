@@ -9,7 +9,7 @@ use vcad_kernel_topo::{HalfEdgeId, Orientation, ShellType, Topology, VertexId};
 use crate::topology::{
     compute_centroid, extract_edges, extract_faces, pair_twin_half_edges, quantize,
 };
-use crate::trim::{build_vertex_faces, compute_trim_vertices};
+use crate::trim::{build_vertex_faces, compute_trim_vertices, CornerBlend};
 
 /// Chamfer all edges of a B-rep solid by the given distance.
 ///
@@ -128,12 +128,14 @@ pub fn chamfer_all_edges(brep: &BRepSolid, distance: f64) -> BRepSolid {
         }
     }
 
-    // 3. Build vertex faces
+    // 3. Build vertex faces — chamfer corners are flat by definition.
     build_vertex_faces(
         &faces,
         &vertex_edges,
         &trims,
         brep,
+        0.0, // unused with AlwaysPlane
+        CornerBlend::AlwaysPlane,
         &mut vertex_cache,
         &mut new_topo,
         &mut new_geom,

@@ -15,7 +15,7 @@ use crate::topology::{
     compute_centroid, compute_face_normal, extract_edges, extract_faces, pair_twin_half_edges,
     quantize, CurvedFaceInfo, EdgeInfo, FaceInfo,
 };
-use crate::trim::{build_vertex_faces, compute_trim_vertices, TrimKey};
+use crate::trim::{build_vertex_faces, compute_trim_vertices, CornerBlend, TrimKey};
 use crate::{classify_fillet_case, FilletCase, FilletResult};
 
 /// What happened at a single candidate junction during vertex-blend
@@ -400,6 +400,8 @@ fn fillet_edges_detailed_inner(
         &target_vertex_edges,
         &trims,
         brep,
+        radius,
+        CornerBlend::SphereWhenCube,
         &mut vertex_cache,
         &mut new_topo,
         &mut new_geom,
