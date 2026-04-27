@@ -10,6 +10,7 @@ import {
   useEngineStore,
   parseVcadFile,
   documentToLoon,
+  formatTokens,
 } from "@vcad/core";
 import type {
   SelectionContext,
@@ -360,10 +361,65 @@ function VcadMessage({ msg, userName }: { msg: ChatMessage; userName: string }) 
               <VcadToolCard key={call.id} call={call} />
             ))}
             {msg.content && <MessageResponse>{msg.content}</MessageResponse>}
+            {(isInterrupted || isErrored) && (
+              <p className="text-[9px] italic text-text-muted">
+                {isInterrupted
+                  ? "— interrupted before completing —"
+                  : "— turn errored out —"}
+              </p>
+            )}
           </>
         )}
       </MessageContent>
     </Message>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// AnonTrialBar — token-budget progress bar shown above the composer for
+// signed-out users. Mirrors the FooterUsageMeter visual language so the
+// upgrade nudge feels consistent across the app.
+// ---------------------------------------------------------------------------
+
+function AnonTrialBar({ used, limit }: { used: number; limit: number }) {
+  const frac = limit > 0 ? Math.min(1, used / limit) : 0;
+  const pct = frac * 100;
+  const severity = frac >= 0.95 ? "critical" : frac >= 0.75 ? "warn" : "ok";
+  const barColor =
+    severity === "critical"
+      ? "bg-danger"
+      : severity === "warn"
+        ? "bg-amber-500"
+        : "bg-brand";
+  const labelColor =
+    severity === "critical"
+      ? "text-danger"
+      : severity === "warn"
+        ? "text-amber-500"
+        : "text-text-muted";
+  return (
+    <div
+      className="shrink-0 flex items-center gap-2 px-3 py-1.5 text-[9px]"
+      role="status"
+      aria-label={`Free trial: ${formatTokens(used)} of ${formatTokens(limit)} tokens used`}
+    >
+      <span className={cn("uppercase tracking-wider", labelColor)}>
+        free trial
+      </span>
+      <div
+        className="h-1 flex-1 overflow-hidden bg-border/40"
+        aria-hidden
+      >
+        <div
+          className={cn("h-full transition-all duration-500 ease-out", barColor)}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <span className="tabular-nums text-text-muted">
+        {formatTokens(Math.min(used, limit))}
+        <span className="text-text-muted/60">/{formatTokens(limit)}</span>
+      </span>
+    </div>
   );
 }
 
@@ -740,7 +796,7 @@ export function ChatSidebar() {
               before the auto-refresh kicks in. */}
           {usageError?.kind === "anon_limit" && !isAuthenticated && (
             <div className="shrink-0 bg-brand/10 px-4 py-2 text-[10px] text-text">
-              <div className="mb-0.5 font-semibold text-brand">Free chat limit reached</div>
+              <div className="mb-0.5 font-semibold text-brand">Free trial limit reached</div>
               <div className="text-text-muted">{usageError.message}</div>
               <button
                 onClick={() => setShowAuthModal(true)}
@@ -751,9 +807,7 @@ export function ChatSidebar() {
             </div>
           )}
           {!isAuthenticated && anonUsage.used > 0 && !usageError && (
-            <div className="shrink-0 px-4 py-1 text-center text-[9px] text-text-muted">
-              {Math.min(anonUsage.used, anonUsage.limit)}/{anonUsage.limit} free chat messages used
-            </div>
+            <AnonTrialBar used={anonUsage.used} limit={anonUsage.limit} />
           )}
 
           {/* Compose dock — suggestions + input grouped in one padded surface,

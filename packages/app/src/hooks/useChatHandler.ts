@@ -262,6 +262,11 @@ function runTurn(
       onError: (err) => { error = err; },
       onFinish: () => { resolve({ text, toolCalls, error }); },
       onMeta,
+      onUsage: (u) => {
+        if (typeof u.anonUsed === "number") {
+          useChatStore.getState().setAnonUsage(u.anonUsed, u.anonLimit);
+        }
+      },
     }, {
       tools,
       systemPrompt,
@@ -318,7 +323,7 @@ export function useChatHandler() {
       if (isAnon && store.anonUsage.used >= store.anonUsage.limit) {
         store.setUsageError({
           kind: "anon_limit",
-          message: `You've used your ${store.anonUsage.limit} free chat messages. Sign in for more.`,
+          message: `You've used your ${store.anonUsage.limit.toLocaleString()} free trial tokens. Sign in for more.`,
           limit: store.anonUsage.limit,
           usage: store.anonUsage.used,
         });
@@ -393,11 +398,9 @@ export function useChatHandler() {
         uiState.setFollowingParticipant(AI_PARTICIPANT_ID);
       }
 
-      // Count the send against the local anon badge as soon as it leaves the
-      // client. The server is the source of truth; this is just the UX hint.
-      if (isAnon) {
-        store.incAnonUsage();
-      }
+      // Anon usage is now token-based and updated from the server's `usage`
+      // SSE event after each turn (see runTurn / onUsage). Nothing to do here
+      // pre-flight — the bar shows whatever was last reported.
 
       const accumulatedToolCalls: ToolCallInfo[] = [];
       const parts: MessagePart[] = [];
@@ -501,10 +504,10 @@ export function useChatHandler() {
             // generic error so they retry instead.
             if (limit && limit.kind === "anon_limit" && !isAnon) {
               const msg = "Authentication issue — please retry in a moment.";
-              parts.push({ type: "text", text: `Error: ${msg}` });
-              fullText += `\n\nError: ${msg}`;
               useChatStore.getState().setError(msg);
-              updateUI();
+              useChatStore
+                .getState()
+                .updateLastAssistant(fullText, accumulatedToolCalls, [...parts], "error");
               break;
             }
             if (limit) {
@@ -513,10 +516,10 @@ export function useChatHandler() {
               updateUI();
               break;
             }
-            parts.push({ type: "text", text: `Error: ${error}` });
-            fullText += `\n\nError: ${error}`;
             useChatStore.getState().setError(error);
-            updateUI();
+            useChatStore
+              .getState()
+              .updateLastAssistant(fullText, accumulatedToolCalls, [...parts], "error");
             break;
           }
 
