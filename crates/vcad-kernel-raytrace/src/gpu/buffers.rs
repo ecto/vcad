@@ -801,8 +801,7 @@ impl GpuScene {
             _pad: 0,
         };
 
-        let mut merged_bvh =
-            Vec::with_capacity(1 + self.bvh_nodes.len() + adjusted_nodes.len());
+        let mut merged_bvh = Vec::with_capacity(1 + self.bvh_nodes.len() + adjusted_nodes.len());
         merged_bvh.push(new_root);
         merged_bvh.extend(self.bvh_nodes);
         merged_bvh.extend(adjusted_nodes);
