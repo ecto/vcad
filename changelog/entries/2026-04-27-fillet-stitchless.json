@@ -1,9 +1,0 @@
-{
-  "id": "2026-04-27-fillet-stitchless",
-  "version": "0.9.3",
-  "date": "2026-04-27",
-  "category": "fix",
-  "title": "Fillet corner caps tessellate without a stitch step",
-  "summary": "stitch_ring_to_boundary matched dense ring vertices to the dense great-circle boundary by their angle around cap_dir, but the boundary isn't constant-latitude — it's three arcs that dip closer to the pole between the trim points. The angular match left zigzag stitch slivers and confused face-pick. Replace the constant-latitude rings + stitch with rings whose topology mirrors the boundary's: every interior ring is the boundary slerped toward the pole, so the cap is one clean quad-strip stack from pole to boundary with no stitch step.",
-  "features": ["fillet", "tessellation", "selection"]
-}

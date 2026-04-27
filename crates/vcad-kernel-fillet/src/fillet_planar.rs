@@ -136,7 +136,7 @@ pub fn fillet_all_edges(brep: &BRepSolid, radius: f64) -> BRepSolid {
             // bisector. Using the identity sin²(θ/2) = (1 + n_a·n_b) / 2
             // for outward unit normals lets us write the offset purely in
             // terms of the dotted normals, with no trig calls.
-            let normal_dot = fa.normal.dot(&fb.normal);
+            let normal_dot = fa.normal.dot(fb.normal);
             let sin2_half = (1.0 + normal_dot) * 0.5;
             if sin2_half < 1e-9 {
                 // Faces nearly coplanar at this edge; fillet is
@@ -292,7 +292,7 @@ pub(crate) fn build_plane_plane_blend(
     // Same convex-edge cylinder placement as in fillet_all_edges — see the
     // comment there for the geometry. Inward bisector offset of
     // `r / sin(θ/2)`, written via the (1 + n_a·n_b)/2 identity.
-    let normal_dot = fa.normal.dot(&fb.normal);
+    let normal_dot = fa.normal.dot(fb.normal);
     let sin2_half = (1.0 + normal_dot) * 0.5;
     if sin2_half < 1e-9 {
         return false;

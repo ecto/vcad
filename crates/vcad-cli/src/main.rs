@@ -598,8 +598,8 @@ fn import_step(input: &PathBuf, output: &PathBuf, name: Option<String>) -> Resul
 /// Auto-detects CRDT (v0.4) vs legacy v1 JSON shapes.
 fn load_vcad_document(file: &PathBuf) -> Result<vcad_ir::Document> {
     use std::fs;
-    use vcad_app::migrate::{detect_format, FileFormat};
     use vcad_app::materializer::materialize;
+    use vcad_app::migrate::{detect_format, FileFormat};
     use vcad_crdt::CrdtDocument;
 
     let bytes = fs::read(file)?;

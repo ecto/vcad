@@ -174,11 +174,7 @@ fn trim_cylinder_face(
 ///
 /// Returns `Some(surface)` when the geometry matches the cube case;
 /// `None` falls back to the planar approximation.
-fn try_sphere_blend(
-    face_normals: &[Vec3],
-    v_pos: Point3,
-    radius: f64,
-) -> Option<SphereSurface> {
+fn try_sphere_blend(face_normals: &[Vec3], v_pos: Point3, radius: f64) -> Option<SphereSurface> {
     if face_normals.len() != 3 {
         return None;
     }

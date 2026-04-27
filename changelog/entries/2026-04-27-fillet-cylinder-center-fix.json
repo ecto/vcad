@@ -3,7 +3,7 @@
   "version": "0.9.3",
   "date": "2026-04-27",
   "category": "fix",
-  "title": "Fillet edges no longer explode on cube/box geometry",
-  "summary": "The planar fillet placed every edge cylinder on the *outside* of the solid instead of inside, so trim points sat at distance ≠ radius from the cylinder axis and the rendered surface separated into floating disconnected faces. Cylinder centers now use the inward bisector with sin²(θ/2) scaling, valid for any dihedral angle.",
-  "features": ["fillet", "kernel"]
+  "title": "Fillet corners on cubes render smoothly end-to-end",
+  "summary": "End-to-end rebuild of cube-fillet rendering: cylinder centers now sit inside the solid (was sign-flipped, producing exploded panels), corners use spherical octants with boundary-shaped rings (was flat triangles + 3-tri fans), and sphere/cylinder boundaries weld at matching great-circle samples so creased_normals smooths the tangent edge cleanly.",
+  "features": ["fillet", "kernel", "tessellation"]
 }

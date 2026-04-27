@@ -2681,8 +2681,10 @@ fn tessellate_small_spherical_cap(
     let n_rings = ((params.latitude_segments as usize) / 2).max(3);
 
     // Boundary directions and their angular distance from the pole.
-    let boundary_dirs: Vec<vcad_kernel_math::Vec3> =
-        loop_verts.iter().map(|p| (*p - center).normalize()).collect();
+    let boundary_dirs: Vec<vcad_kernel_math::Vec3> = loop_verts
+        .iter()
+        .map(|p| (*p - center).normalize())
+        .collect();
     let boundary_phis: Vec<f64> = boundary_dirs
         .iter()
         .map(|d| d.dot(cap_dir).clamp(-1.0, 1.0).acos())

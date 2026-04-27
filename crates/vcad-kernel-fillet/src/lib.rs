@@ -248,8 +248,9 @@ mod tests {
 
         let l = 10.0;
         let pi = std::f64::consts::PI;
-        let expected_with_sphere_corners =
-            l * l * l - 12.0 * r * r * (1.0 - pi / 4.0) * (l - 2.0 * r) - 8.0 * r * r * r * (1.0 - pi / 6.0);
+        let expected_with_sphere_corners = l * l * l
+            - 12.0 * r * r * (1.0 - pi / 4.0) * (l - 2.0 * r)
+            - 8.0 * r * r * r * (1.0 - pi / 6.0);
 
         // With boundary-shaped rings (every ring shares the boundary's
         // topology, no stitch step), the tessellation tracks the
