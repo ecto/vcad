@@ -1,0 +1,50 @@
+{
+  "id": "a1-plate-01",
+  "suite": "A",
+  "tier": "A1",
+  "title": "Drilled plate",
+  "prompt": "Make a 50mm × 30mm × 10mm rectangular plate centered on the origin. Drill four cylindrical through-holes of diameter 3mm, axes parallel to Z, positioned 5mm in from each corner of the top face.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-25, -15, 0],
+      "max": [25, 15, 10],
+      "tolerance_mm": 0.1
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 14717.3,
+      "tolerance_pct": 0.5
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 3.0,
+      "expected": 4,
+      "diameter_tolerance_mm": 0.05
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 3.0,
+      "positions": [
+        [20, 10, 0],
+        [-20, 10, 0],
+        [-20, -10, 0],
+        [20, -10, 0]
+      ],
+      "tolerance_mm": 0.1
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 0.1 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 50000,
+    "max_wallclock_sec": 300,
+    "max_tool_calls": 50
+  },
+  "pass_k": 5,
+  "tags": ["primitives", "boolean", "holes"]
+}

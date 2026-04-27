@@ -33,6 +33,7 @@ crates/vcad-kernel-wasm/vcad_kernel_wasm_bg.wasm.d.ts
 skills-lock.json
 supabase/.temp/
 tasks/
+!mecheval/tasks/
 *.patch
 # CHANGELOG.json is generated from changelog/entries/*.json by
 # scripts/build-changelog.mjs (postinstall + @vcad/core build).
