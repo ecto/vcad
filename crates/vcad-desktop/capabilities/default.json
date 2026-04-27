@@ -18,6 +18,7 @@
     "dialog:default",
     "fs:default",
     "updater:default",
-    "deep-link:default"
+    "deep-link:default",
+    "opener:default"
   ]
 }

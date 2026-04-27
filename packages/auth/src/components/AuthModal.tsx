@@ -6,7 +6,7 @@ import {
   GoogleLogo,
   GithubLogo,
 } from "@phosphor-icons/react";
-import { getAuthRedirectUrl, getSupabase } from "../client";
+import { getAuthRedirectUrl, getSupabase, isTauriRuntime } from "../client";
 import type { GatedFeature } from "../hooks/useRequireAuth";
 
 type OAuthProvider = "google" | "github";
@@ -48,23 +48,53 @@ export function AuthModal({ open, onOpenChange, feature }: AuthModalProps) {
       new CustomEvent("vcad:sign-in-attempt", { detail: { provider } }),
     );
 
-    const { error } = await supabase.auth.signInWithOAuth({
+    const tauri = isTauriRuntime();
+
+    const { data, error } = await supabase.auth.signInWithOAuth({
       provider,
       options: {
         redirectTo: getAuthRedirectUrl(),
+        // On desktop we hand the URL to the OS browser ourselves so
+        // Google/GitHub don't reject the embedded webview as "insecure".
+        skipBrowserRedirect: tauri,
       },
     });
 
-    if (error) {
-      setError(error.message);
+    const reportFailure = (message: string) => {
+      setError(message);
       window.dispatchEvent(
         new CustomEvent("vcad:sign-in-attempt-failed", {
-          detail: { provider, message: error.message },
+          detail: { provider, message },
         }),
       );
       setLoading(false);
+    };
+
+    if (error) {
+      reportFailure(error.message);
+      return;
     }
-    // On success Supabase navigates away; leave `loading` set so the
+
+    if (tauri) {
+      if (!data?.url) {
+        reportFailure("OAuth provider did not return a redirect URL");
+        return;
+      }
+      try {
+        const { openUrl } = await import("@tauri-apps/plugin-opener");
+        await openUrl(data.url);
+        // Browser is launched; auth completes via the deep-link handler
+        // and AuthProvider closes the modal. Re-enable the form so the
+        // user can retry if they cancel in the browser.
+        setLoading(false);
+      } catch (err) {
+        reportFailure(
+          err instanceof Error ? err.message : "Failed to open browser",
+        );
+      }
+      return;
+    }
+    // On web Supabase already navigated; leave `loading` set so the
     // form doesn't flash active mid-redirect.
   };
 
