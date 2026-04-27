@@ -21,8 +21,8 @@ export interface Tier {
   priceMonthlyUsd: number | null;
   /** Monthly token budget (input + output summed). Zero for anon. */
   monthlyTokenLimit: number;
-  /** Anon tier only: max messages per rolling 24h window. */
-  anonDailyMessageLimit?: number;
+  /** Anon tier only: max chat tokens (input + output) per rolling 24h window. */
+  anonDailyTokenLimit?: number;
   /** Stripe price lookup_key — set manually in the Stripe dashboard. */
   stripeLookupKey?: string;
   /** Bullet-point feature list for the upgrade modal. */
@@ -36,8 +36,8 @@ export const TIERS: Record<TierId, Tier> = {
     tagline: "Try vcad without signing in.",
     priceMonthlyUsd: null,
     monthlyTokenLimit: 0,
-    anonDailyMessageLimit: 3,
-    perks: ["3 free chat messages per day", "No account required"],
+    anonDailyTokenLimit: 10_000,
+    perks: ["10,000 free chat tokens per day", "No account required"],
   },
   free: {
     id: "free",

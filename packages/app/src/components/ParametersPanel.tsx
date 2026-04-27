@@ -13,18 +13,20 @@ import {
   resolveParameters,
 } from "@vcad/engine";
 import { cn } from "@/lib/utils";
+import { Tooltip } from "@/components/ui/tooltip";
 
 function BackButton() {
   const setSidebarPane = useUiStore((s) => s.setSidebarPane);
   return (
-    <button
-      onClick={() => setSidebarPane("tree")}
-      className="flex h-6 w-6 -ml-1 shrink-0 items-center justify-center text-text-muted hover:text-text hover:bg-hover"
-      aria-label="Back to tree"
-      title="Back to tree"
-    >
-      <CaretLeft size={14} />
-    </button>
+    <Tooltip content="Back to tree" side="bottom">
+      <button
+        onClick={() => setSidebarPane("tree")}
+        className="flex h-6 w-6 -ml-1 shrink-0 items-center justify-center text-text-muted hover:text-text hover:bg-hover"
+        aria-label="Back to tree"
+      >
+        <CaretLeft size={14} />
+      </button>
+    </Tooltip>
   );
 }
 
@@ -260,15 +262,16 @@ export function ParametersPanel() {
         <span className="flex-1 text-xs font-medium uppercase tracking-wider text-text-muted">
           Parameters
         </span>
-        <button
-          type="button"
-          onClick={addParameter}
-          className="flex h-6 w-6 items-center justify-center text-text-muted hover:text-text hover:bg-hover"
-          aria-label="Add parameter"
-          title="Add parameter"
-        >
-          <Plus size={14} />
-        </button>
+        <Tooltip content="Add parameter" side="bottom">
+          <button
+            type="button"
+            onClick={addParameter}
+            className="flex h-6 w-6 items-center justify-center text-text-muted hover:text-text hover:bg-hover"
+            aria-label="Add parameter"
+          >
+            <Plus size={14} />
+          </button>
+        </Tooltip>
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto px-2 pb-4">
         {names.length === 0 ? (

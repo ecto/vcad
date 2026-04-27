@@ -30,7 +30,7 @@ import { sendEmail, usageAlertEmail } from "./_lib/email.js";
 const FALLBACK_SYSTEM_PROMPT =
   "You are vcad's AI assistant — a parametric CAD copilot. Coordinate system: Z-up (X right, Y forward, Z up). Units: millimeters. Be concise.";
 
-const ANON_DAILY_LIMIT = TIERS.anon.anonDailyMessageLimit ?? 3;
+const ANON_DAILY_TOKEN_LIMIT = TIERS.anon.anonDailyTokenLimit ?? 10_000;
 const ANTHROPIC_MODEL = "claude-opus-4-7";
 const ANTHROPIC_SAFETY_MODEL = "claude-haiku-4-5";
 const ANTHROPIC_MAX_TOKENS = 8192;
@@ -118,19 +118,23 @@ function hashIp(ip: string): string {
   return createHash("sha256").update(`${salt}:${ip}`).digest("hex");
 }
 
-async function countAnonMessages(admin: SupabaseClient, ipHash: string): Promise<number> {
+async function sumAnonTokens(admin: SupabaseClient, ipHash: string): Promise<number> {
   const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const { count, error } = await admin
+  const { data, error } = await admin
     .from("inference_logs")
-    .select("id", { count: "exact", head: true })
+    .select("tokens")
     .eq("ip_hash", ipHash)
     .eq("kind", "chat")
     .gte("created_at", oneDayAgo);
   if (error) {
-    console.error("[chat] countAnonMessages error:", error);
+    console.error("[chat] sumAnonTokens error:", error);
     return 0;
   }
-  return count ?? 0;
+  let total = 0;
+  for (const row of (data ?? []) as Array<{ tokens: number | null }>) {
+    if (typeof row.tokens === "number") total += row.tokens;
+  }
+  return total;
 }
 
 // ---------------------------------------------------------------------------
@@ -638,6 +642,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Rate limit check — authed users go through entitlements, anon through the
   // IP-hash rolling daily counter.
   let entitlement: Entitlement | null = null;
+  // Track anon usage at the start of this turn so we can emit a `usage` SSE
+  // event with the post-turn cumulative total once Anthropic finishes.
+  let anonTokensUsedBefore = 0;
   if (admin) {
     if (userId) {
       entitlement = await getEntitlement(admin, userId);
@@ -654,13 +661,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return;
       }
     } else {
-      const used = await countAnonMessages(admin, ipHash);
-      if (used >= ANON_DAILY_LIMIT) {
+      anonTokensUsedBefore = await sumAnonTokens(admin, ipHash);
+      if (anonTokensUsedBefore >= ANON_DAILY_TOKEN_LIMIT) {
         res.status(429).json({
           error: "anon_limit",
-          message: `You've used your ${ANON_DAILY_LIMIT} free chat messages. Sign in for more.`,
-          usage: used,
-          limit: ANON_DAILY_LIMIT,
+          message: `You've used your ${ANON_DAILY_TOKEN_LIMIT.toLocaleString()} free trial tokens. Sign in for more.`,
+          usage: anonTokensUsedBefore,
+          limit: ANON_DAILY_TOKEN_LIMIT,
         });
         return;
       }
@@ -878,6 +885,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       (chunk) => res.write(chunk),
       persistence,
     );
+
+    // Emit a usage event so the client can update its in-chat progress bar
+    // without polling. For anon users we report the rolling 24h total
+    // *including this turn*; authed users get nothing here (the FooterUsageMeter
+    // re-fetches /api/usage when streaming flips to false).
+    if (userId === null) {
+      const turnTokens = inputTokens + outputTokens;
+      const anonUsedAfter = anonTokensUsedBefore + turnTokens;
+      try {
+        res.write(
+          `data: ${JSON.stringify({
+            type: "usage",
+            input_tokens: inputTokens,
+            output_tokens: outputTokens,
+            anon_used: anonUsedAfter,
+            anon_limit: ANON_DAILY_TOKEN_LIMIT,
+          })}\n\n`,
+        );
+      } catch {
+        /* client may have disconnected — non-fatal */
+      }
+    }
     res.end();
 
     if (admin && persistedTurn) {

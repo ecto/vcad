@@ -25,6 +25,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-deep-link = "2"
+tauri-plugin-opener = "2"
 serde.workspace = true
 serde_json.workspace = true
 base64.workspace = true

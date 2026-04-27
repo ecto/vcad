@@ -2416,7 +2416,7 @@ fn tessellate_spherical_face(
     // either boolean-split caps or fillet vertex-blend patches — and
     // should be tessellated as a bounded cap, not a full sphere.
     if loop_verts.len() == 3 || loop_verts.len() > 4 {
-        return tessellate_spherical_cap(surface.as_ref(), &loop_verts, reversed);
+        return tessellate_spherical_cap(surface.as_ref(), &loop_verts, params, reversed);
     }
 
     let n_lon = params.circle_segments as usize;
@@ -2520,6 +2520,7 @@ fn tessellate_spherical_face(
 fn tessellate_spherical_cap(
     surface: &dyn vcad_kernel_geom::Surface,
     loop_verts: &[Point3],
+    params: &TessellationParams,
     reversed: bool,
 ) -> TriangleMesh {
     use vcad_kernel_geom::SphereSurface;
@@ -2579,21 +2580,26 @@ fn tessellate_spherical_cap(
     if is_large_cap {
         tessellate_large_spherical_cap(loop_verts, center, radius, cap_dir, min_angle, reversed)
     } else {
-        tessellate_small_spherical_cap(loop_verts, center, radius, cap_dir, reversed)
+        tessellate_small_spherical_cap(loop_verts, center, radius, cap_dir, params, reversed)
     }
 }
 
-/// Tessellate a small spherical cap using fan triangulation from the cap pole.
+/// Tessellate a small spherical cap with latitude rings between the cap
+/// pole and the boundary loop. A 3-vertex boundary (cube-corner fillet
+/// blend) used to fan to a single triangle per pair, producing the
+/// visible 3-facet "diamond" at every corner. The ring-based path
+/// gives a smooth dome and stitches to the boundary the same way the
+/// large-cap path does.
 fn tessellate_small_spherical_cap(
     loop_verts: &[Point3],
     center: Point3,
     radius: f64,
     cap_dir: vcad_kernel_math::Vec3,
+    params: &TessellationParams,
     reversed: bool,
 ) -> TriangleMesh {
     let mut mesh = TriangleMesh::new();
 
-    // Helper to compute sphere normal at a point
     let sphere_normal = |pt: Point3| -> Vec3 {
         let n = (pt - center).normalize();
         if reversed {
@@ -2603,7 +2609,55 @@ fn tessellate_small_spherical_cap(
         }
     };
 
-    // Cap pole (point on sphere in cap direction)
+    // Densify the boundary along great-circle arcs so the sphere's
+    // boundary samples match the adjacent cylinder fillets' v-arc
+    // cap samples 3D-point-for-3D-point. When the kernel welds
+    // identical positions, the cylinder/sphere seam disappears and
+    // computeVertexNormals averages cleanly across the boundary.
+    //
+    // `samples_per_arc` follows `circle_segments`: a 90° great-circle
+    // (cube case) gets `circle_segments / 4` segments, which is the
+    // same density a cylinder fillet uses around its 90° v-arc cap.
+    let dense_loop_verts: Vec<Point3> = if loop_verts.len() >= 3 {
+        let n = loop_verts.len();
+        let mut out: Vec<Point3> = Vec::new();
+        for i in 0..n {
+            let p_i = loop_verts[i];
+            let p_j = loop_verts[(i + 1) % n];
+            let v_i = (p_i - center).normalize();
+            let v_j = (p_j - center).normalize();
+            let cos_theta = v_i.dot(v_j).clamp(-1.0, 1.0);
+            let theta = cos_theta.acos();
+            // Per-arc sample count scales with the arc angle so a 90°
+            // boundary gets ~circle_segments/4, a 180° boundary
+            // ~circle_segments/2, etc.
+            let segments = ((params.circle_segments as f64) * theta / (2.0 * PI))
+                .ceil()
+                .max(1.0) as usize;
+            out.push(p_i);
+            if theta < 1e-9 {
+                continue;
+            }
+            let v_perp_raw = v_j - v_i * cos_theta;
+            let v_perp_len = v_perp_raw.norm();
+            if v_perp_len < 1e-9 {
+                continue;
+            }
+            let v_perp = v_perp_raw / v_perp_len;
+            for k in 1..segments {
+                let alpha = k as f64 * theta / segments as f64;
+                let dir = v_i * alpha.cos() + v_perp * alpha.sin();
+                out.push(center + radius * dir);
+            }
+        }
+        out
+    } else {
+        loop_verts.to_vec()
+    };
+    let loop_verts = dense_loop_verts.as_slice();
+    let boundary_count = loop_verts.len();
+
+    // Cap pole — the outermost point of the cap along cap_dir.
     let pole = center + radius * cap_dir;
     mesh.vertices.push(pole.x as f32);
     mesh.vertices.push(pole.y as f32);
@@ -2612,26 +2666,99 @@ fn tessellate_small_spherical_cap(
     mesh.normals
         .extend_from_slice(&[n.x as f32, n.y as f32, n.z as f32]);
 
-    // Add boundary vertices
-    for p in loop_verts {
-        mesh.vertices.push(p.x as f32);
-        mesh.vertices.push(p.y as f32);
-        mesh.vertices.push(p.z as f32);
-        let n = sphere_normal(*p);
-        mesh.normals
-            .extend_from_slice(&[n.x as f32, n.y as f32, n.z as f32]);
+    // Boundary-shaped rings: each interior ring has the SAME topology
+    // as the boundary loop — vertex i of every ring is the slerp of
+    // the corresponding boundary vertex toward the pole. This means
+    // the boundary's wavy "spherical-triangle" shape (3 great-circle
+    // arcs that dip closer to the pole between the trim points) is
+    // preserved at every depth, so the band stitch between adjacent
+    // rings is a clean quad strip with no angle-match slivers.
+    //
+    // It's the same idea Catia/NX use for their N-sided patches:
+    // walk the cap inward following the boundary's parameterization
+    // instead of imposing a constant-latitude grid that has to be
+    // reconciled with the outline.
+    let n_rings = ((params.latitude_segments as usize) / 2).max(3);
+
+    // Boundary directions and their angular distance from the pole.
+    let boundary_dirs: Vec<vcad_kernel_math::Vec3> = loop_verts
+        .iter()
+        .map(|p| (*p - center).normalize())
+        .collect();
+    let boundary_phis: Vec<f64> = boundary_dirs
+        .iter()
+        .map(|d| d.dot(cap_dir).clamp(-1.0, 1.0).acos())
+        .collect();
+
+    let pole_idx = 0u32;
+    let stride = boundary_count as u32;
+
+    // Generate `n_rings` interior rings + the boundary itself as the
+    // outermost ring (so `n_rings + 1` total rings of `boundary_count`
+    // vertices each, after the pole). Ring r ∈ [1, n_rings] sits at
+    // fraction r / n_rings along the slerp from pole to boundary.
+    for ring in 1..=n_rings {
+        let t = ring as f64 / n_rings as f64;
+        for (i, &b_dir) in boundary_dirs.iter().enumerate() {
+            let dir = if t >= 1.0 {
+                // Last ring IS the boundary — use the exact boundary
+                // position so weld/normal-smoothing match the cylinder.
+                b_dir
+            } else {
+                // Slerp(pole, boundary_i, t).
+                let phi = boundary_phis[i];
+                if phi < 1e-9 {
+                    cap_dir
+                } else {
+                    let s = phi.sin();
+                    (cap_dir * ((1.0 - t) * phi).sin() + b_dir * (t * phi).sin()) / s
+                }
+            };
+            let pt = if t >= 1.0 {
+                loop_verts[i]
+            } else {
+                center + radius * dir
+            };
+            mesh.vertices.push(pt.x as f32);
+            mesh.vertices.push(pt.y as f32);
+            mesh.vertices.push(pt.z as f32);
+            let n = sphere_normal(pt);
+            mesh.normals
+                .extend_from_slice(&[n.x as f32, n.y as f32, n.z as f32]);
+        }
     }
 
-    // Fan triangulation from pole to boundary
-    let pole_idx = 0u32;
-    let n = loop_verts.len();
-    for i in 0..n {
-        let v1 = 1 + i as u32;
-        let v2 = 1 + ((i + 1) % n) as u32;
+    let first_ring_start = 1u32;
+
+    // Pole fan to the first interior ring.
+    for i in 0..boundary_count {
+        let v1 = first_ring_start + i as u32;
+        let v2 = first_ring_start + ((i + 1) % boundary_count) as u32;
         if reversed {
             mesh.indices.extend_from_slice(&[pole_idx, v2, v1]);
         } else {
             mesh.indices.extend_from_slice(&[pole_idx, v1, v2]);
+        }
+    }
+
+    // Bands between consecutive rings (last band lands on the
+    // boundary, since the boundary IS the last ring).
+    for ring in 0..(n_rings - 1) {
+        let ring_start = 1 + ring as u32 * stride;
+        let next_ring_start = ring_start + stride;
+        for i in 0..boundary_count {
+            let i_next = (i + 1) % boundary_count;
+            let bl = ring_start + i as u32;
+            let br = ring_start + i_next as u32;
+            let tl = next_ring_start + i as u32;
+            let tr = next_ring_start + i_next as u32;
+            if reversed {
+                mesh.indices.extend_from_slice(&[bl, tr, tl]);
+                mesh.indices.extend_from_slice(&[bl, br, tr]);
+            } else {
+                mesh.indices.extend_from_slice(&[bl, tl, tr]);
+                mesh.indices.extend_from_slice(&[bl, tr, br]);
+            }
         }
     }
 

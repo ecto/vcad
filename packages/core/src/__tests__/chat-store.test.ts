@@ -174,17 +174,24 @@ describe("useChatStore", () => {
   });
 
   describe("anonUsage / usageError", () => {
-    it("initial anonUsage is zero with limit 3", () => {
+    it("initial anonUsage is zero with token-based limit", () => {
       const s = useChatStore.getState();
       expect(s.anonUsage.used).toBe(0);
-      expect(s.anonUsage.limit).toBe(3);
+      expect(s.anonUsage.limit).toBeGreaterThan(100);
     });
 
-    it("incAnonUsage bumps the counter", () => {
-      useChatStore.getState().incAnonUsage();
-      expect(useChatStore.getState().anonUsage.used).toBe(1);
-      useChatStore.getState().incAnonUsage();
-      expect(useChatStore.getState().anonUsage.used).toBe(2);
+    it("addAnonTokens accumulates the counter", () => {
+      useChatStore.getState().addAnonTokens(1500);
+      expect(useChatStore.getState().anonUsage.used).toBe(1500);
+      useChatStore.getState().addAnonTokens(2300);
+      expect(useChatStore.getState().anonUsage.used).toBe(3800);
+    });
+
+    it("setAnonUsage replaces the counter with an absolute value", () => {
+      useChatStore.getState().setAnonUsage(7000);
+      expect(useChatStore.getState().anonUsage.used).toBe(7000);
+      useChatStore.getState().setAnonUsage(2000);
+      expect(useChatStore.getState().anonUsage.used).toBe(2000);
     });
 
     it("setUsageError / clear on reset", () => {

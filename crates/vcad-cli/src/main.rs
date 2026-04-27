@@ -594,11 +594,34 @@ fn import_step(input: &PathBuf, output: &PathBuf, name: Option<String>) -> Resul
     Ok(())
 }
 
-fn show_info(file: &PathBuf) -> Result<()> {
+/// Read a .vcad file and return the materialized IR document.
+/// Auto-detects CRDT (v0.4) vs legacy v1 JSON shapes.
+fn load_vcad_document(file: &PathBuf) -> Result<vcad_ir::Document> {
     use std::fs;
+    use vcad_app::materializer::materialize;
+    use vcad_app::migrate::{detect_format, FileFormat};
+    use vcad_crdt::CrdtDocument;
 
-    let json = fs::read_to_string(file)?;
-    let doc = vcad_ir::Document::from_json(&json)?;
+    let bytes = fs::read(file)?;
+    match detect_format(&bytes) {
+        FileFormat::V2Crdt => {
+            let crdt = CrdtDocument::load(&bytes)
+                .map_err(|e| anyhow::anyhow!("CRDT load failed: {}", e))?;
+            Ok(materialize(&crdt).document)
+        }
+        FileFormat::V1Json => {
+            let json = std::str::from_utf8(&bytes)
+                .map_err(|e| anyhow::anyhow!("invalid utf-8 in v1 JSON: {}", e))?;
+            Ok(vcad_ir::Document::from_json(json)?)
+        }
+        FileFormat::Unknown => {
+            anyhow::bail!("unrecognized .vcad file format")
+        }
+    }
+}
+
+fn show_info(file: &PathBuf) -> Result<()> {
+    let doc = load_vcad_document(file)?;
 
     println!("vcad document: {}", file.display());
     println!("  Version: {}", doc.version);

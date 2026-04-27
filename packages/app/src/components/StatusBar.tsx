@@ -6,7 +6,7 @@ import { GlobeSimple } from "@phosphor-icons/react/dist/ssr/GlobeSimple";
 import { Check } from "@phosphor-icons/react/dist/ssr/Check";
 import { CrosshairSimple } from "@phosphor-icons/react/dist/ssr/CrosshairSimple";
 import * as Popover from "@radix-ui/react-popover";
-import { useDocumentStore, useUiStore, useSketchStore, t, tFmt, type LogLevelName, type SelectionFilter } from "@vcad/core";
+import { useDocumentStore, useUiStore, useSketchStore, t, tFmt, type LogLevelName, SELECTION_FILTER_OPTIONS } from "@vcad/core";
 import { useLocaleStore, supportedLocales, type SupportedLocale } from "@/stores/locale-store";
 import { useDrawingStore } from "@/stores/drawing-store";
 import { useLogStore, getFilteredEntries } from "@/stores/log-store";
@@ -292,24 +292,17 @@ export function StatusBar() {
   );
 }
 
-const FILTER_OPTIONS: Array<{ value: SelectionFilter; label: string; hint: string }> = [
-  { value: "auto", label: "Auto", hint: "Pick whatever's most specific under the cursor" },
-  { value: "body", label: "Body", hint: "Always select the whole part" },
-  { value: "face", label: "Face", hint: "Snap selection to the nearest face" },
-  { value: "edge", label: "Edge", hint: "Snap selection to the nearest edge" },
-  { value: "vertex", label: "Vertex", hint: "Snap selection to the nearest vertex" },
-];
-
 /**
  * Selection filter chip — single popover that shows the current pick mode
  * (auto / body / face / edge / vertex) and lets you switch without taking
  * over a digit hotkey. The toolbar tab strip owns 1–7, so we don't fight
- * for them here.
+ * for them here. Options come from `SELECTION_FILTER_OPTIONS` in core so the
+ * right-click context menu and any future surface stay in sync.
  */
 function SelectionFilterChips() {
   const filter = useUiStore((s) => s.selectionFilter);
   const setFilter = useUiStore((s) => s.setSelectionFilter);
-  const current = FILTER_OPTIONS.find((o) => o.value === filter) ?? FILTER_OPTIONS[0]!;
+  const current = SELECTION_FILTER_OPTIONS.find((o) => o.value === filter) ?? SELECTION_FILTER_OPTIONS[0]!;
   return (
     <Popover.Root>
       <Tooltip side="top" content="Pick mode — what hover and click target">
@@ -337,7 +330,7 @@ function SelectionFilterChips() {
           <div className="px-2 pt-1 pb-1.5 text-text-muted/60 uppercase tracking-[0.15em] text-[9px]">
             Pick mode
           </div>
-          {FILTER_OPTIONS.map(({ value, label, hint }) => {
+          {SELECTION_FILTER_OPTIONS.map(({ value, label, hint, hotkey }) => {
             const active = filter === value;
             return (
               <button
@@ -365,6 +358,17 @@ function SelectionFilterChips() {
                     {hint}
                   </span>
                 </span>
+                {hotkey && (
+                  <kbd
+                    className={cn(
+                      "mt-0.5 shrink-0 rounded-sm border border-border/60 bg-surface px-1 py-px",
+                      "font-mono text-[9px] uppercase tracking-wide",
+                      active ? "text-brand" : "text-text-muted/70",
+                    )}
+                  >
+                    {hotkey}
+                  </kbd>
+                )}
                 {active && (
                   <Check size={11} weight="bold" className="mt-0.5 shrink-0 text-brand" />
                 )}

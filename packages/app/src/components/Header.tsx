@@ -9,6 +9,7 @@ import { Bell } from "@phosphor-icons/react/dist/ssr/Bell";
 import { Megaphone } from "@phosphor-icons/react/dist/ssr/Megaphone";
 import { Link as LinkIcon } from "@phosphor-icons/react/dist/ssr/Link";
 import { DocTitle } from "@/components/DocTitle";
+import { Tooltip } from "@/components/ui/tooltip";
 import * as Menubar from "@radix-ui/react-menubar";
 import {
   useDocumentStore,
@@ -422,15 +423,16 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
           className="flex items-center pr-2 pl-1"
           data-tauri-drag-region={macOverlay ? "" : undefined}
         >
-          <button
-            type="button"
-            onClick={onAboutOpen}
-            title="About vcad"
-            aria-label="About vcad"
-            className="font-mono text-[13px] font-semibold text-text hover:text-brand transition-colors cursor-default outline-none"
-          >
-            vcad<span className="text-brand">.</span>
-          </button>
+          <Tooltip content="About vcad" side="bottom">
+            <button
+              type="button"
+              onClick={onAboutOpen}
+              aria-label="About vcad"
+              className="font-mono text-[13px] font-semibold text-text hover:text-brand transition-colors cursor-default outline-none"
+            >
+              vcad<span className="text-brand">.</span>
+            </button>
+          </Tooltip>
         </div>
 
         {/* Centered document-identity strip — filename, save state, scope breadcrumb */}
@@ -631,56 +633,62 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
 
         {/* Right cluster: search · changelog bell · auth. Search drops below
             sm; bell drops below md. Auth/user always present. */}
-        <button
-          type="button"
-          onClick={handleCommandPalette}
-          title="Search or ask AI… (⌘K)"
-          aria-label="Search or ask AI"
-          className={cn(
-            "relative shrink-0 hidden sm:flex items-center justify-center w-7 h-6",
-            "text-text-muted hover:text-text hover:bg-hover",
-          )}
-        >
-          <MagnifyingGlass size={13} />
-        </button>
-        <button
-          type="button"
-          onClick={openChangelogPanel}
-          title={
+        <Tooltip content="Search or ask AI… (⌘K)" side="bottom">
+          <button
+            type="button"
+            onClick={handleCommandPalette}
+            aria-label="Search or ask AI"
+            className={cn(
+              "relative shrink-0 hidden sm:flex items-center justify-center w-7 h-6",
+              "text-text-muted hover:text-text hover:bg-hover",
+            )}
+          >
+            <MagnifyingGlass size={13} />
+          </button>
+        </Tooltip>
+        <Tooltip
+          content={
             unreadChangelog > 0
               ? `What's new — ${unreadChangelog} unread`
               : "What's new"
           }
-          aria-label={
-            unreadChangelog > 0
-              ? `What's new — ${unreadChangelog} unread`
-              : "What's new"
-          }
-          className={cn(
-            "relative shrink-0 hidden md:flex items-center justify-center w-7 h-6",
-            "text-text-muted hover:text-text hover:bg-hover",
-          )}
+          side="bottom"
         >
-          <Bell size={13} weight={unreadChangelog > 0 ? "fill" : "regular"} />
-          {unreadChangelog > 0 && (
-            <span
-              className="absolute top-1 right-1.5 w-1.5 h-1.5 rounded-full bg-brand"
-              aria-hidden="true"
-            />
-          )}
-        </button>
-        <button
-          type="button"
-          onClick={() => setFeedbackOpen(true)}
-          title="Send feedback"
-          aria-label="Send feedback"
-          className={cn(
-            "relative flex items-center justify-center w-7 h-6",
-            "text-text-muted hover:text-text hover:bg-hover",
-          )}
-        >
-          <Megaphone size={13} />
-        </button>
+          <button
+            type="button"
+            onClick={openChangelogPanel}
+            aria-label={
+              unreadChangelog > 0
+                ? `What's new — ${unreadChangelog} unread`
+                : "What's new"
+            }
+            className={cn(
+              "relative shrink-0 hidden md:flex items-center justify-center w-7 h-6",
+              "text-text-muted hover:text-text hover:bg-hover",
+            )}
+          >
+            <Bell size={13} weight={unreadChangelog > 0 ? "fill" : "regular"} />
+            {unreadChangelog > 0 && (
+              <span
+                className="absolute top-1 right-1.5 w-1.5 h-1.5 rounded-full bg-brand"
+                aria-hidden="true"
+              />
+            )}
+          </button>
+        </Tooltip>
+        <Tooltip content="Send feedback" side="bottom">
+          <button
+            type="button"
+            onClick={() => setFeedbackOpen(true)}
+            aria-label="Send feedback"
+            className={cn(
+              "relative flex items-center justify-center w-7 h-6",
+              "text-text-muted hover:text-text hover:bg-hover",
+            )}
+          >
+            <Megaphone size={13} />
+          </button>
+        </Tooltip>
         <SignInButton
           variant="icon-text"
           className={cn(

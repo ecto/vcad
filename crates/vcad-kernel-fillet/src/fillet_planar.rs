@@ -10,7 +10,7 @@ use crate::topology::{
     compute_centroid, extract_edges, extract_faces, pair_twin_half_edges, quantize, EdgeInfo,
     FaceInfo,
 };
-use crate::trim::{build_vertex_faces, compute_trim_vertices, TrimKey};
+use crate::trim::{build_vertex_faces, compute_trim_vertices, CornerBlend, TrimKey};
 
 /// Dihedral angle threshold (radians) above which two adjacent faces count
 /// as "nearly coplanar". Extruding an arc profile produces a strip of thin,
@@ -121,7 +121,30 @@ pub fn fillet_all_edges(brep: &BRepSolid, radius: f64) -> BRepSolid {
             }
             let edge_unit = edge_dir / edge_len;
 
-            let center_offset = radius * (fa.normal + fb.normal);
+            // Cylinder fillet center for the convex edge between two planar
+            // faces. The axis is parallel to the edge, at distance `radius`
+            // from each face along the *inward* normal — i.e. the side
+            // where the solid lives. The original code had this with the
+            // sign flipped (placing the center *outside* the solid), which
+            // made every trim point sit at distance ≠ radius from the
+            // resulting axis; the tessellator then drew a cylinder that
+            // didn't connect to the trimmed face boundaries, producing
+            // the disconnected "exploded box" rendering.
+            //
+            // For a dihedral angle θ (interior) between the two faces, the
+            // edge → axis offset is `r / sin(θ/2)` along the inward
+            // bisector. Using the identity sin²(θ/2) = (1 + n_a·n_b) / 2
+            // for outward unit normals lets us write the offset purely in
+            // terms of the dotted normals, with no trig calls.
+            let normal_dot = fa.normal.dot(fb.normal);
+            let sin2_half = (1.0 + normal_dot) * 0.5;
+            if sin2_half < 1e-9 {
+                // Faces nearly coplanar at this edge; fillet is
+                // ill-defined. Skip — `is_fillet_safe` should already
+                // have caught this for the whole solid.
+                continue;
+            }
+            let center_offset = -radius * (fa.normal + fb.normal) / (2.0 * sin2_half);
             let center_start = v_start_pos + center_offset;
 
             let to_tangent_a = pa_s - center_start;
@@ -167,12 +190,15 @@ pub fn fillet_all_edges(brep: &BRepSolid, radius: f64) -> BRepSolid {
         }
     }
 
-    // 3. Build vertex faces
+    // 3. Build vertex faces — sphere octants where the corner has 3
+    // orthogonal faces (cubes), planar fallback elsewhere.
     build_vertex_faces(
         &faces,
         &vertex_edges,
         &trims,
         brep,
+        radius,
+        CornerBlend::SphereWhenCube,
         &mut vertex_cache,
         &mut new_topo,
         &mut new_geom,
@@ -263,7 +289,15 @@ pub(crate) fn build_plane_plane_blend(
     }
     let edge_unit = edge_dir / edge_len;
 
-    let center_offset = radius * (fa.normal + fb.normal);
+    // Same convex-edge cylinder placement as in fillet_all_edges — see the
+    // comment there for the geometry. Inward bisector offset of
+    // `r / sin(θ/2)`, written via the (1 + n_a·n_b)/2 identity.
+    let normal_dot = fa.normal.dot(fb.normal);
+    let sin2_half = (1.0 + normal_dot) * 0.5;
+    if sin2_half < 1e-9 {
+        return false;
+    }
+    let center_offset = -radius * (fa.normal + fb.normal) / (2.0 * sin2_half);
     let center_start = v_start_pos + center_offset;
 
     let to_tangent_a = pa_s - center_start;
