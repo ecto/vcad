@@ -1,8 +1,15 @@
 import { useState, type FormEvent } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { X, EnvelopeSimple } from "@phosphor-icons/react";
+import {
+  X,
+  EnvelopeSimple,
+  GoogleLogo,
+  GithubLogo,
+} from "@phosphor-icons/react";
 import { getAuthRedirectUrl, getSupabase } from "../client";
 import type { GatedFeature } from "../hooks/useRequireAuth";
+
+type OAuthProvider = "google" | "github";
 
 interface AuthModalProps {
   open: boolean;
@@ -21,7 +28,7 @@ const featureMessages: Record<GatedFeature, string> = {
 
 /**
  * Modal dialog for user authentication.
- * Supports magic link sign-in via email.
+ * Supports Google / GitHub OAuth and email magic link.
  */
 export function AuthModal({ open, onOpenChange, feature }: AuthModalProps) {
   const [email, setEmail] = useState("");
@@ -30,6 +37,36 @@ export function AuthModal({ open, onOpenChange, feature }: AuthModalProps) {
   const [error, setError] = useState<string | null>(null);
 
   const supabase = getSupabase();
+
+  const signInWithProvider = async (provider: OAuthProvider) => {
+    if (!supabase) return;
+
+    setLoading(true);
+    setError(null);
+
+    window.dispatchEvent(
+      new CustomEvent("vcad:sign-in-attempt", { detail: { provider } }),
+    );
+
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: {
+        redirectTo: getAuthRedirectUrl(),
+      },
+    });
+
+    if (error) {
+      setError(error.message);
+      window.dispatchEvent(
+        new CustomEvent("vcad:sign-in-attempt-failed", {
+          detail: { provider, message: error.message },
+        }),
+      );
+      setLoading(false);
+    }
+    // On success Supabase navigates away; leave `loading` set so the
+    // form doesn't flash active mid-redirect.
+  };
 
   const signInWithEmail = async (e: FormEvent) => {
     e.preventDefault();
@@ -120,8 +157,32 @@ export function AuthModal({ open, onOpenChange, feature }: AuthModalProps) {
                 </button>
               </div>
             ) : (
-              <div className="w-64">
-                {/* Email form */}
+              <div className="w-64 flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => signInWithProvider("google")}
+                  disabled={loading}
+                  className="w-full h-9 border border-border text-xs text-text hover:bg-border/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+                >
+                  <GoogleLogo size={14} weight="bold" />
+                  Continue with Google
+                </button>
+                <button
+                  type="button"
+                  onClick={() => signInWithProvider("github")}
+                  disabled={loading}
+                  className="w-full h-9 border border-border text-xs text-text hover:bg-border/50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+                >
+                  <GithubLogo size={14} weight="fill" />
+                  Continue with GitHub
+                </button>
+
+                <div className="flex items-center gap-2 my-1">
+                  <div className="flex-1 h-px bg-border" />
+                  <span className="text-[10px] text-text-muted uppercase tracking-wider">or</span>
+                  <div className="flex-1 h-px bg-border" />
+                </div>
+
                 <form onSubmit={signInWithEmail} className="flex flex-col gap-2">
                   <input
                     type="email"
@@ -131,7 +192,6 @@ export function AuthModal({ open, onOpenChange, feature }: AuthModalProps) {
                     className="w-full h-9 px-3 bg-transparent border border-border text-xs text-text placeholder-text-muted/50 focus:outline-none focus:border-brand transition-colors"
                     disabled={loading}
                     autoComplete="email"
-                    autoFocus
                   />
                   <button
                     type="submit"
