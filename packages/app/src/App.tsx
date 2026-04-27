@@ -220,6 +220,7 @@ export function App() {
   const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
   const [documentPickerOpen, setDocumentPickerOpen] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [isDraggingImage, setIsDraggingImage] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const bootPhase = useBootStore((s) => s.phase);
@@ -578,22 +579,47 @@ export function App() {
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(true);
+    const items = e.dataTransfer?.items;
+    const hasImage = items
+      ? Array.from(items).some((it) => it.kind === "file" && it.type.startsWith("image/"))
+      : false;
+    setIsDraggingImage(hasImage);
   }, []);
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
+    setIsDraggingImage(false);
   }, []);
 
   const handleDrop = useCallback(
     async (e: React.DragEvent) => {
       e.preventDefault();
       setIsDragging(false);
+      setIsDraggingImage(false);
       const file = e.dataTransfer.files[0];
       if (file) await processFile(file);
     },
     [processFile],
   );
+
+  // Window-level reset: any drop or drag cancel anywhere on the page always
+  // clears the overlay, even when a child handler called stopPropagation
+  // (e.g. ChatSidebar swallows image drops so App doesn't try to parse them
+  // as .vcad files — synthetic React propagation stops, but the native window
+  // event still fires).
+  useEffect(() => {
+    const reset = () => {
+      setIsDragging(false);
+      setIsDraggingImage(false);
+    };
+    window.addEventListener("drop", reset);
+    window.addEventListener("dragend", reset);
+    return () => {
+      window.removeEventListener("drop", reset);
+      window.removeEventListener("dragend", reset);
+    };
+  }, []);
 
   const handleOpenDocuments = useCallback(() => {
     setDocumentPickerOpen(true);
@@ -846,8 +872,14 @@ export function App() {
   const dragOverlay = isDragging && (
     <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-brand/10 backdrop-blur-sm">
       <div className="rounded-lg border-2 border-dashed border-brand bg-bg/90 px-8 py-6 text-center">
-        <div className="text-lg font-medium text-text">Drop file to import</div>
-        <div className="mt-1 text-sm text-text-muted">.vcad, .loon, .stl, .step, .pes, .dst</div>
+        <div className="text-lg font-medium text-text">
+          {isDraggingImage ? "Drop image to send to AI" : "Drop file to import"}
+        </div>
+        <div className="mt-1 text-sm text-text-muted">
+          {isDraggingImage
+            ? "I'll attach it to chat — describe what you want me to build"
+            : ".vcad, .loon, .stl, .step, .pes, .dst"}
+        </div>
       </div>
     </div>
   );
