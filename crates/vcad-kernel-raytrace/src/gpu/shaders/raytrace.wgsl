@@ -789,29 +789,66 @@ fn trace_bvh(origin: vec3<f32>, dir: vec3<f32>) -> RayHit {
 // 0xFFFFFFFFu = ray miss (background), 0xFFFFFFFEu = ground plane hit.
 const FACE_IDX_GROUND: u32 = 0xFFFFFFFEu;
 
-// Procedural sky in Z-up world space. Returns radiance for a given ray
-// direction; used both for ray misses and for ambient/IBL sampling.
+// Procedural HDR environment in Z-up world space. Returns radiance for a
+// given ray direction — used both for ray misses (visible background) and
+// for ambient + IBL specular sampling.
+//
+// Modeled as a "studio environment": dim atmospheric backdrop plus a few
+// high-luminance soft panels at fixed directions (key, fill, rim, top
+// fill). The panels carry HDR values (luminance > 1) so reflections on
+// metals get hot specular highlights that ACES rolls off into clean
+// blown-white spots — the same look you get sampling a real HDRI.
+//
+// Stays in shader code rather than uploading a baked HDR texture; the
+// binding plumbing isn't worth it for a single environment, and tuning
+// in WGSL is faster than re-baking an exr.
 fn sky_color(dir: vec3<f32>) -> vec3<f32> {
     let z = dir.z;
+
+    // Atmospheric backdrop (low dynamic range — the panels supply the
+    // brightness, this is just for variety and the visible background).
     let zenith = vec3<f32>(0.35, 0.55, 0.95);
-    let horizon = vec3<f32>(0.80, 0.85, 0.92);
+    let horizon = vec3<f32>(0.78, 0.84, 0.92);
+    let below = vec3<f32>(0.18, 0.18, 0.20);
 
     var col: vec3<f32>;
     if z >= 0.0 {
-        col = mix(horizon, zenith, smoothstep(0.0, 0.5, z));
+        col = mix(horizon, zenith, smoothstep(0.0, 0.55, z));
     } else {
-        // Below horizon — let the ground plane handle this. Returning the
-        // horizon band keeps a tight transition for any unblocked downward
-        // rays (e.g. when ground.fade goes to 0 at extreme distances).
-        col = horizon;
+        col = mix(horizon, below, smoothstep(0.0, -0.4, z));
     }
 
-    // Sun disk + soft glow.
-    let sun_dir = sun_direction();
-    let sun_dot = dot(dir, sun_dir);
-    let disk = smoothstep(0.9985, 0.9995, sun_dot) * 18.0;
-    let glow = pow(max(sun_dot, 0.0), 96.0) * 0.6;
-    col += vec3<f32>(1.0, 0.94, 0.82) * (disk + glow);
+    // Helper to add a soft directional panel. `tightness` controls disc
+    // size (higher = tighter, more sun-like; lower = broader, softer
+    // panel). HDR-valued so reflections on shiny surfaces blow out
+    // through ACES into clean specular highlights.
+    // Using inline pow() since WGSL has no closures or generics.
+
+    // Primary key — sun. Tight & hot.
+    let sun = sun_direction();
+    let sun_dot = dot(dir, sun);
+    let sun_disk = smoothstep(0.998, 0.9995, sun_dot) * 35.0;
+    let sun_glow = pow(max(sun_dot, 0.0), 96.0) * 1.0;
+    col += vec3<f32>(1.00, 0.94, 0.82) * (sun_disk + sun_glow);
+
+    // Warm fill from upper-front-right. Broader, lower luminance —
+    // simulates a softbox.
+    let fill = normalize(vec3<f32>(0.55, -0.3, 0.7));
+    let fill_dot = max(dot(dir, fill), 0.0);
+    col += vec3<f32>(1.00, 0.88, 0.72) * pow(fill_dot, 18.0) * 6.0;
+
+    // Cool rim from behind/below — gives metals a clean blue-tinged
+    // back-rim highlight.
+    let rim = normalize(vec3<f32>(0.2, 0.85, -0.15));
+    let rim_dot = max(dot(dir, rim), 0.0);
+    col += vec3<f32>(0.55, 0.72, 1.00) * pow(rim_dot, 28.0) * 4.5;
+
+    // Top diffuse panel — broad cool light from straight up. Acts like
+    // a studio ceiling and provides the dominant ambient term for the
+    // tops of objects.
+    let top = vec3<f32>(0.0, 0.0, 1.0);
+    let top_dot = max(dot(dir, top), 0.0);
+    col += vec3<f32>(0.95, 0.97, 1.00) * pow(top_dot, 6.0) * 1.8;
 
     return col;
 }
