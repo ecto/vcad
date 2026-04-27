@@ -3,6 +3,7 @@ import { X } from "@phosphor-icons/react/dist/ssr/X";
 import { Plus } from "@phosphor-icons/react/dist/ssr/Plus";
 import { Camera } from "@phosphor-icons/react/dist/ssr/Camera";
 import { cn } from "@/lib/utils";
+import { Tooltip } from "@/components/ui/tooltip";
 import {
   useChatStore,
   useUiStore,
@@ -692,22 +693,24 @@ export function ChatSidebar() {
         </button>
         <div className="flex-1" />
         {activeTab === "chat" && (
-          <button
-            onClick={clearThread}
-            className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-text-muted hover:text-text hover:bg-hover rounded transition-colors"
-            title="New thread"
-          >
-            <Plus size={11} />
-            New
-          </button>
+          <Tooltip content="New thread" side="bottom">
+            <button
+              onClick={clearThread}
+              className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-text-muted hover:text-text hover:bg-hover rounded transition-colors"
+            >
+              <Plus size={11} />
+              New
+            </button>
+          </Tooltip>
         )}
-        <button
-          onClick={() => setOpen(false)}
-          className="flex h-5 w-5 items-center justify-center text-text-muted hover:text-text hover:bg-hover rounded transition-colors"
-          title="Close"
-        >
-          <X size={13} />
-        </button>
+        <Tooltip content="Close" side="bottom">
+          <button
+            onClick={() => setOpen(false)}
+            className="flex h-5 w-5 items-center justify-center text-text-muted hover:text-text hover:bg-hover rounded transition-colors"
+          >
+            <X size={13} />
+          </button>
+        </Tooltip>
       </div>
 
       {/* Source tab content */}
