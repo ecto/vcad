@@ -1,0 +1,48 @@
+{
+  "id": "a2-l-bracket-01",
+  "suite": "A",
+  "tier": "A2",
+  "title": "L-bracket with mounting holes",
+  "prompt": "Make an L-shaped mounting bracket. The base lies in the XY plane, occupying x in [0, 50], y in [0, 30], z in [0, 4] (50mm long, 30mm wide, 4mm thick). A vertical wall stands on the +X edge: x in [46, 50], y in [0, 30], z in [4, 30] (4mm thick, 30mm wide, rising to z = 30). Two through-holes of diameter 5mm pierce the base parallel to Z, centered at (10, 15) and (35, 15) on the top face. Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [0, 0, 0],
+      "max": [50, 30, 30],
+      "tolerance_mm": 0.1
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 8962.92,
+      "tolerance_pct": 0.5
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 5.0,
+      "expected": 2,
+      "diameter_tolerance_mm": 0.05
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 5.0,
+      "positions": [
+        [10, 15, 0],
+        [35, 15, 0]
+      ],
+      "tolerance_mm": 0.1
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 0.1 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 60000,
+    "max_wallclock_sec": 300,
+    "max_tool_calls": 50
+  },
+  "pass_k": 5,
+  "tags": ["bracket", "boolean", "holes", "asymmetric"]
+}

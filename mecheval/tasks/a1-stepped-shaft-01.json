@@ -1,0 +1,33 @@
+{
+  "id": "a1-stepped-shaft-01",
+  "suite": "A",
+  "tier": "A1",
+  "title": "Stepped shaft",
+  "prompt": "Make a stepped shaft along the Z axis: a base cylinder of diameter 40mm and height 10mm sitting on the XY plane (z = 0 to z = 10), with a smaller coaxial cylinder of diameter 20mm and height 15mm stacked directly on top (z = 10 to z = 25). The result is a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-20, -20, 0],
+      "max": [20, 20, 25],
+      "tolerance_mm": 0.1
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 17278.76,
+      "tolerance_pct": 0.5
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 0.1 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 30000,
+    "max_wallclock_sec": 180,
+    "max_tool_calls": 30
+  },
+  "pass_k": 5,
+  "tags": ["primitives", "boolean", "axisymmetric"]
+}
