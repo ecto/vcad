@@ -1,0 +1,9 @@
+{
+  "id": "2026-04-27-fillet-corner-seam",
+  "version": "0.9.3",
+  "date": "2026-04-27",
+  "category": "fix",
+  "title": "Fillet corner sphere/cylinder boundaries weld cleanly",
+  "summary": "tessellate_small_spherical_cap took the topology's 3-vertex boundary loop literally — its first ring stitched to those 3 chord endpoints while the adjacent cylinder caps sampled their v-arc at ~9 points around the same 90° great circle. The mismatched sample positions stayed un-welded and creased_normals couldn't average normals across the seam. Densify the sphere cap's boundary along its great-circle arcs at circle_segments density first, so cylinder cap samples and sphere boundary samples land on identical 3D points and the smoothing pass averages cleanly across the tangent edge.",
+  "features": ["fillet", "tessellation"]
+}

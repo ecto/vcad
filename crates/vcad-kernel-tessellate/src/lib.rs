@@ -2609,6 +2609,53 @@ fn tessellate_small_spherical_cap(
         }
     };
 
+    // Densify the boundary along great-circle arcs so the sphere's
+    // boundary samples match the adjacent cylinder fillets' v-arc
+    // cap samples 3D-point-for-3D-point. When the kernel welds
+    // identical positions, the cylinder/sphere seam disappears and
+    // computeVertexNormals averages cleanly across the boundary.
+    //
+    // `samples_per_arc` follows `circle_segments`: a 90° great-circle
+    // (cube case) gets `circle_segments / 4` segments, which is the
+    // same density a cylinder fillet uses around its 90° v-arc cap.
+    let dense_loop_verts: Vec<Point3> = if loop_verts.len() >= 3 {
+        let n = loop_verts.len();
+        let mut out: Vec<Point3> = Vec::new();
+        for i in 0..n {
+            let p_i = loop_verts[i];
+            let p_j = loop_verts[(i + 1) % n];
+            let v_i = (p_i - center).normalize();
+            let v_j = (p_j - center).normalize();
+            let cos_theta = v_i.dot(v_j).clamp(-1.0, 1.0);
+            let theta = cos_theta.acos();
+            // Per-arc sample count scales with the arc angle so a 90°
+            // boundary gets ~circle_segments/4, a 180° boundary
+            // ~circle_segments/2, etc.
+            let segments = ((params.circle_segments as f64) * theta / (2.0 * PI))
+                .ceil()
+                .max(1.0) as usize;
+            out.push(p_i);
+            if theta < 1e-9 {
+                continue;
+            }
+            let v_perp_raw = v_j - v_i * cos_theta;
+            let v_perp_len = v_perp_raw.norm();
+            if v_perp_len < 1e-9 {
+                continue;
+            }
+            let v_perp = v_perp_raw / v_perp_len;
+            for k in 1..segments {
+                let alpha = k as f64 * theta / segments as f64;
+                let dir = v_i * alpha.cos() + v_perp * alpha.sin();
+                out.push(center + radius * dir);
+            }
+        }
+        out
+    } else {
+        loop_verts.to_vec()
+    };
+    let loop_verts = dense_loop_verts.as_slice();
+
     // Cap pole — the outermost point of the cap along cap_dir.
     let pole = center + radius * cap_dir;
     mesh.vertices.push(pole.x as f32);
