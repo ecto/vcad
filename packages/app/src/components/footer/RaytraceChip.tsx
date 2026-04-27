@@ -25,10 +25,12 @@ const QUALITY_SHORT: Record<RaytraceQuality, string> = {
 /**
  * Render-mode pill for the footer.
  *
- * Visible only when raytracing is active and the WebGPU init succeeded.
- * Opens a popover with quality preset, edge-detection toggle, and a way
- * to drop back to standard rendering — mirrors View → Ray Tracing so the
- * user doesn't have to climb back up to the menubar.
+ * Always visible when WebGPU ray tracing is supported (regardless of
+ * whether raytrace mode is currently active) — acts as a quick toggle
+ * plus the controls popover. Hidden entirely if WebGPU init failed.
+ *
+ * When raytrace is OFF the icon dims and the readout reads "OFF"; when
+ * ON the icon glows violet and the readout shows the active tier.
  */
 export function RaytraceChip({ className }: { className?: string }) {
   const renderMode = useUiStore((s) => s.renderMode);
@@ -39,11 +41,16 @@ export function RaytraceChip({ className }: { className?: string }) {
   const setRaytraceQuality = useUiStore((s) => s.setRaytraceQuality);
   const setRaytraceEdgesEnabled = useUiStore((s) => s.setRaytraceEdgesEnabled);
 
-  if (renderMode !== "raytrace" || !raytraceAvailable) return null;
+  if (!raytraceAvailable) return null;
+
+  const isOn = renderMode === "raytrace";
 
   return (
     <Popover.Root>
-      <Tooltip side="top" content="Ray-tracing — quality, edges, turn off">
+      <Tooltip
+        side="top"
+        content={isOn ? "Ray-tracing — quality, edges, turn off" : "Ray-tracing — turn on, quality, edges"}
+      >
         <Popover.Trigger asChild>
           <FooterChipButton
             className={cn(
@@ -55,10 +62,18 @@ export function RaytraceChip({ className }: { className?: string }) {
             <Sparkle
               size={11}
               weight="fill"
-              className="shrink-0 text-violet-400"
+              className={cn(
+                "shrink-0 transition-colors",
+                isOn ? "text-violet-400" : "text-text-muted/50",
+              )}
             />
-            <span className="uppercase tracking-wide tabular-nums text-text-muted">
-              {QUALITY_SHORT[raytraceQuality]}
+            <span
+              className={cn(
+                "uppercase tracking-wide tabular-nums transition-colors",
+                isOn ? "text-text-muted" : "text-text-muted/60",
+              )}
+            >
+              {isOn ? QUALITY_SHORT[raytraceQuality] : "OFF"}
             </span>
           </FooterChipButton>
         </Popover.Trigger>
@@ -154,11 +169,16 @@ export function RaytraceChip({ className }: { className?: string }) {
               "text-text-muted hover:bg-hover hover:text-text",
             )}
           >
-            <span className="flex-1 uppercase tracking-wide text-[10px] text-text">
-              Turn off
+            <span
+              className={cn(
+                "flex-1 uppercase tracking-wide text-[10px]",
+                isOn ? "text-text" : "text-brand",
+              )}
+            >
+              {isOn ? "Turn off" : "Turn on"}
             </span>
             <span className="uppercase tracking-wide text-[10px] text-text-muted/60">
-              standard render
+              {isOn ? "standard render" : "ray-trace this scene"}
             </span>
           </button>
         </Popover.Content>
