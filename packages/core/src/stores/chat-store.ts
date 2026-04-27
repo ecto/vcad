@@ -1,25 +1,29 @@
 import { create } from "zustand";
 import type { ExecutionDisplay } from "../commands/types.js";
+import { TIERS } from "../billing/tiers.js";
 
 // ---------------------------------------------------------------------------
 // Anon usage persistence
 // ---------------------------------------------------------------------------
 
-const ANON_USAGE_KEY = "vcad:chat-anon-usage";
-const ANON_FREE_LIMIT = 3;
+const ANON_USAGE_KEY = "vcad:chat-anon-tokens";
+const ANON_TOKEN_LIMIT = TIERS.anon.anonDailyTokenLimit ?? 10_000;
 
-/** Load anon message counter from localStorage. Resets if 24h have elapsed. */
+/** Load anon token counter from localStorage. Resets if 24h have elapsed.
+ * Counter is tokens (input + output) used in the rolling 24h window;
+ * the server is the source of truth, this is just the local mirror that
+ * drives the in-chat progress bar. */
 function loadAnonUsage(): { used: number; limit: number } {
-  if (typeof localStorage === "undefined") return { used: 0, limit: ANON_FREE_LIMIT };
+  if (typeof localStorage === "undefined") return { used: 0, limit: ANON_TOKEN_LIMIT };
   try {
     const raw = localStorage.getItem(ANON_USAGE_KEY);
-    if (!raw) return { used: 0, limit: ANON_FREE_LIMIT };
+    if (!raw) return { used: 0, limit: ANON_TOKEN_LIMIT };
     const parsed = JSON.parse(raw) as { used: number; firstAt: number };
     const age = Date.now() - (parsed.firstAt ?? 0);
-    if (age > 24 * 60 * 60 * 1000) return { used: 0, limit: ANON_FREE_LIMIT };
-    return { used: parsed.used ?? 0, limit: ANON_FREE_LIMIT };
+    if (age > 24 * 60 * 60 * 1000) return { used: 0, limit: ANON_TOKEN_LIMIT };
+    return { used: parsed.used ?? 0, limit: ANON_TOKEN_LIMIT };
   } catch {
-    return { used: 0, limit: ANON_FREE_LIMIT };
+    return { used: 0, limit: ANON_TOKEN_LIMIT };
   }
 }
 
@@ -174,7 +178,8 @@ export interface ChatState {
   error: string | null;
   /** True while the user has requested cancellation of the current response. */
   cancelRequested: boolean;
-  /** Anon message count (from localStorage) with rolling 24h window. */
+  /** Anon token usage (input + output, from localStorage) with rolling 24h
+   * window. Server is the source of truth; this drives the in-chat bar. */
   anonUsage: { used: number; limit: number };
   /** Server-rejected rate limit for the most recent send attempt. */
   usageError: ChatUsageError | null;
@@ -264,7 +269,11 @@ export interface ChatState {
   consumePendingAttachments: () => File[];
 
   // Usage tracking
-  incAnonUsage: () => void;
+  /** Add `tokens` (input + output for one turn) to the anon counter. */
+  addAnonTokens: (tokens: number) => void;
+  /** Set the anon counter to an absolute server-reported value. Used after
+   * each successful turn — the server's `usage` SSE event is authoritative. */
+  setAnonUsage: (used: number, limit?: number) => void;
   setUsageError: (err: ChatUsageError | null) => void;
 
   // Thread management
@@ -446,10 +455,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     return files;
   },
 
-  incAnonUsage: () => set((s) => {
-    const used = s.anonUsage.used + 1;
+  addAnonTokens: (tokens) => set((s) => {
+    if (!Number.isFinite(tokens) || tokens <= 0) return s;
+    const used = s.anonUsage.used + Math.round(tokens);
     persistAnonUsage(used);
     return { anonUsage: { used, limit: s.anonUsage.limit } };
+  }),
+  setAnonUsage: (used, limit) => set((s) => {
+    const safeUsed = Number.isFinite(used) && used >= 0 ? Math.round(used) : s.anonUsage.used;
+    const safeLimit = limit && limit > 0 ? limit : s.anonUsage.limit;
+    persistAnonUsage(safeUsed);
+    return { anonUsage: { used: safeUsed, limit: safeLimit } };
   }),
   setUsageError: (err) => set({ usageError: err }),
 

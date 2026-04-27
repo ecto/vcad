@@ -59,6 +59,15 @@ export interface ChatStreamCallbacks {
    * lazily server-side). The caller uses this to reconcile its in-memory
    * placeholder with the persisted row. */
   onMeta?: (meta: { threadId: string; assistantMessageId: string }) => void;
+  /** Emitted once per turn after Anthropic finishes. Carries the per-turn
+   * token split and (for anon users) the rolling 24h total + limit so the
+   * sidebar progress bar can update without polling. */
+  onUsage?: (usage: {
+    inputTokens: number;
+    outputTokens: number;
+    anonUsed?: number;
+    anonLimit?: number;
+  }) => void;
 }
 
 export async function streamChat(
@@ -217,6 +226,14 @@ export async function streamChat(
                 currentToolName = "";
                 currentToolJson = "";
               }
+              break;
+            case "usage":
+              callbacks.onUsage?.({
+                inputTokens: typeof event.input_tokens === "number" ? event.input_tokens : 0,
+                outputTokens: typeof event.output_tokens === "number" ? event.output_tokens : 0,
+                anonUsed: typeof event.anon_used === "number" ? event.anon_used : undefined,
+                anonLimit: typeof event.anon_limit === "number" ? event.anon_limit : undefined,
+              });
               break;
             case "done":
               break;
