@@ -2416,7 +2416,7 @@ fn tessellate_spherical_face(
     // either boolean-split caps or fillet vertex-blend patches — and
     // should be tessellated as a bounded cap, not a full sphere.
     if loop_verts.len() == 3 || loop_verts.len() > 4 {
-        return tessellate_spherical_cap(surface.as_ref(), &loop_verts, reversed);
+        return tessellate_spherical_cap(surface.as_ref(), &loop_verts, params, reversed);
     }
 
     let n_lon = params.circle_segments as usize;
@@ -2520,6 +2520,7 @@ fn tessellate_spherical_face(
 fn tessellate_spherical_cap(
     surface: &dyn vcad_kernel_geom::Surface,
     loop_verts: &[Point3],
+    params: &TessellationParams,
     reversed: bool,
 ) -> TriangleMesh {
     use vcad_kernel_geom::SphereSurface;
@@ -2579,7 +2580,7 @@ fn tessellate_spherical_cap(
     if is_large_cap {
         tessellate_large_spherical_cap(loop_verts, center, radius, cap_dir, min_angle, reversed)
     } else {
-        tessellate_small_spherical_cap(loop_verts, center, radius, cap_dir, reversed)
+        tessellate_small_spherical_cap(loop_verts, center, radius, cap_dir, params, reversed)
     }
 }
 
@@ -2594,6 +2595,7 @@ fn tessellate_small_spherical_cap(
     center: Point3,
     radius: f64,
     cap_dir: vcad_kernel_math::Vec3,
+    params: &TessellationParams,
     reversed: bool,
 ) -> TriangleMesh {
     let mut mesh = TriangleMesh::new();
@@ -2639,10 +2641,13 @@ fn tessellate_small_spherical_cap(
         })
         .fold(0.0_f64, f64::max);
 
-    // Rings between pole and boundary. n_rings=4 gives a clearly round
-    // dome on cube corners; n_lon=12 around so each ring has 12 wedges.
-    let n_rings: usize = 4;
-    let n_lon: usize = 12;
+    // Rings between pole and boundary. Match `circle_segments` so the
+    // cap's curvature density tracks the adjacent cylinder fillets'
+    // v-arc cap density (otherwise the silhouette shows obvious facets
+    // around each corner). `latitude_segments / 2` rings is enough
+    // detail from pole to boundary for any cap up to a hemisphere.
+    let n_lon = (params.circle_segments as usize).max(8);
+    let n_rings = ((params.latitude_segments as usize) / 2).max(3);
 
     // Stop slightly inside the boundary so the stitch step has clean
     // triangles to fan from. Boundary verts are added separately and
@@ -2683,9 +2688,9 @@ fn tessellate_small_spherical_cap(
     let first_ring_start = 1u32;
 
     // Pole fan to first ring. Going pole→boundary along +cap_dir, the
-    // visible (outward-facing) triangle is pole→v1→v2 in CCW order
-    // when looked at from outside the sphere along -cap_dir. The
-    // `reversed` arg flips for inverted topology.
+    // visible (outward-facing) triangle is `pole → v_i → v_(i+1)` so
+    // CCW around the outward normal. The `reversed` flag flips for
+    // inverted topology.
     for i in 0..n_lon {
         let v1 = first_ring_start + i as u32;
         let v2 = first_ring_start + (i + 1) as u32;
@@ -2697,7 +2702,8 @@ fn tessellate_small_spherical_cap(
     }
 
     // Bands between rings — `tl`/`tr` is the ring further from pole.
-    // For outward-facing triangles, quad → bl, tl, tr and bl, tr, br.
+    // For outward-facing triangles, the quad → bl, tl, tr and bl, tr,
+    // br (mirrors the pole-fan winding above).
     for ring in 0..(n_rings - 1) {
         let ring_start = 1 + ring as u32 * stride;
         let next_ring_start = ring_start + stride;
