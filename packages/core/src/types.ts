@@ -53,6 +53,28 @@ export type SelectionItem =
 /** Selection filter — restricts what `pickSubFeature` will return. */
 export type SelectionFilter = "auto" | "body" | "face" | "edge" | "vertex";
 
+/**
+ * Display metadata for each selection priority. Single source of truth for
+ * the footer popover, the right-click submenu, and any future surfaces that
+ * need to render the priority list. `hotkey` is the single-letter shortcut
+ * (or null when none is bound — Face is intentionally unbound because `F`
+ * is reserved for focus-camera).
+ */
+export interface SelectionFilterOption {
+  value: SelectionFilter;
+  label: string;
+  hint: string;
+  hotkey: string | null;
+}
+
+export const SELECTION_FILTER_OPTIONS: readonly SelectionFilterOption[] = [
+  { value: "auto", label: "Auto", hint: "Pick whatever's most specific under the cursor", hotkey: "A" },
+  { value: "body", label: "Body", hint: "Always select the whole part", hotkey: "B" },
+  { value: "face", label: "Face", hint: "Snap selection to the nearest face", hotkey: null },
+  { value: "edge", label: "Edge", hint: "Snap selection to the nearest edge", hotkey: "E" },
+  { value: "vertex", label: "Vertex", hint: "Snap selection to the nearest vertex", hotkey: "V" },
+];
+
 /** Whether two SelectionItems point at the same thing. Useful for hover/select diffing. */
 export function selectionItemsEqual(a: SelectionItem, b: SelectionItem): boolean {
   if (a.kind !== b.kind) return false;

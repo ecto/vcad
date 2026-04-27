@@ -8,6 +8,7 @@ export type {
   FaceInfo,
   SelectionItem,
   SelectionFilter,
+  SelectionFilterOption,
   PrimitivePartInfo,
   BooleanPartInfo,
   ExtrudePartInfo,
@@ -60,6 +61,7 @@ export {
   formatDirection,
   negateDirection,
   selectionItemsEqual,
+  SELECTION_FILTER_OPTIONS,
 } from "./types.js";
 
 // Stores

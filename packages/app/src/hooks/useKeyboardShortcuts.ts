@@ -176,7 +176,6 @@ export function useKeyboardShortcuts() {
         return;
       }
 
-      // Selection-filter shortcuts: 0=Auto, 1=Body, 2=Face, 3=Edge, 4=Vertex.
       // Toggle feature tree: Cmd+1
       if (mod && e.key === "1") {
         e.preventDefault();
@@ -359,6 +358,26 @@ export function useKeyboardShortcuts() {
           window.dispatchEvent(new CustomEvent("vcad:focus-selection"));
         }
         return;
+      }
+
+      // ── Selection priority (pick-mode) hotkeys ─────────────────────────
+      // A=Auto, B=Body, V=Vertex, E=Edge. Match Fusion 360: pressing the key
+      // for the active priority returns to Auto. Skip when sketching — the
+      // sketch-extrude binding above already handled E in that case.
+      if (!mod && !e.shiftKey && !e.altKey && !useSketchStore.getState().active) {
+        const key = e.key.toLowerCase();
+        let target: "auto" | "body" | "vertex" | "edge" | null = null;
+        if (key === "a") target = "auto";
+        else if (key === "b") target = "body";
+        else if (key === "v") target = "vertex";
+        else if (key === "e") target = "edge";
+        if (target) {
+          e.preventDefault();
+          const { selectionFilter, setSelectionFilter } = useUiStore.getState();
+          const next = selectionFilter === target && target !== "auto" ? "auto" : target;
+          setSelectionFilter(next);
+          return;
+        }
       }
 
       // Delete (Delete/Backspace) is now handled by the registry dispatcher
