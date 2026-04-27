@@ -1380,6 +1380,82 @@ fn trace_depth_normal(pixel: vec2<u32>) -> vec4<f32> {
     return vec4<f32>(normal, hit.t);
 }
 
+// Edge-aware bilateral spatial filter for denoising stochastic noise
+// (soft shadows, AO, GI bounce). Reads accum_buffer at neighbor pixels
+// weighted by depth + normal similarity, returning a smoothed color
+// that respects geometric edges.
+//
+// The filter strength scales DOWN with accumulation: at frame 1 (DRAFT)
+// it provides aggressive smoothing of single-sample noise; at frame 24+
+// (HIGH after settle) it has nearly no effect since the temporal average
+// is already clean.
+//
+// Note: reads accum_buffer at neighbor positions which may have either
+// "this frame's value" or "previous frame's value" depending on workgroup
+// scheduling. In practice the neighbors' running averages are close
+// enough that the bilateral converges correctly.
+fn denoise(pixel_coord: vec2<i32>, center_color: vec4<f32>, center_depth_normal: vec4<f32>) -> vec4<f32> {
+    let frame_idx = render_state.frame_index;
+    if frame_idx > 32u {
+        return center_color;
+    }
+    // Strength: 1.0 at frame 1, decays to ~0 by frame 32.
+    let strength = clamp(1.0 - f32(frame_idx) / 32.0, 0.0, 1.0);
+
+    let center_normal = center_depth_normal.xyz;
+    let center_depth = center_depth_normal.w;
+    let is_background = center_depth >= MAX_T - 1.0;
+
+    // 5x5 box of neighbors (skip center, included separately).
+    var sum = center_color.rgb;
+    var weight_sum = 1.0;
+
+    for (var dy: i32 = -2; dy <= 2; dy++) {
+        for (var dx: i32 = -2; dx <= 2; dx++) {
+            if dx == 0 && dy == 0 { continue; }
+
+            let n_coord = pixel_coord + vec2<i32>(dx, dy);
+            if n_coord.x < 0 || n_coord.x >= i32(camera.width) ||
+               n_coord.y < 0 || n_coord.y >= i32(camera.height) {
+                continue;
+            }
+
+            let n_dn = depth_normal_buffer[pixel_index_i32(n_coord)];
+            let n_normal = n_dn.xyz;
+            let n_depth = n_dn.w;
+            let n_is_bg = n_depth >= MAX_T - 1.0;
+
+            // Hard reject across silhouettes — never blur foreground into
+            // background or vice versa.
+            if is_background != n_is_bg { continue; }
+
+            var w = 1.0;
+            if !is_background {
+                // Depth weight: similar depth → high weight.
+                let depth_diff = abs(center_depth - n_depth) / max(center_depth, 0.1);
+                w *= exp(-depth_diff * 8.0);
+
+                // Normal weight: similar normal → high weight.
+                if length(center_normal) > 0.5 && length(n_normal) > 0.5 {
+                    let n_dot = max(dot(normalize(center_normal), normalize(n_normal)), 0.0);
+                    w *= pow(n_dot, 6.0);
+                }
+            }
+
+            // Spatial falloff (Gaussian-ish).
+            let r2 = f32(dx * dx + dy * dy);
+            w *= exp(-r2 * 0.25);
+
+            let n_color = accum_buffer[pixel_index_i32(n_coord)].rgb;
+            sum += n_color * w;
+            weight_sum += w;
+        }
+    }
+
+    let blurred = sum / weight_sum;
+    return vec4<f32>(mix(center_color.rgb, blurred, strength), center_color.a);
+}
+
 // Detect edges based on depth and normal discontinuity
 fn detect_edge(pixel_coord: vec2<i32>, center_depth_normal: vec4<f32>) -> f32 {
     let depth_threshold = render_state.edge_depth_threshold;
@@ -1490,15 +1566,25 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         accumulated = mix(prev, new_color, weight);
     }
 
-    // Apply edge detection on later frames (when we have stable depth/normal data)
+    // Spatial denoise — bilateral filter that smooths within similar
+    // depth/normal regions, scaled down with accumulation count so it
+    // mostly affects DRAFT/STANDARD tiers and fades out as HIGH settles.
+    // Has to run before edge detection so edges are drawn on the
+    // denoised image.
     var final_color = accumulated;
+    if render_state.frame_index >= 2u {
+        let stored_dn = depth_normal_buffer[pixel_index_i32(pixel_coord)];
+        final_color = denoise(pixel_coord, accumulated, stored_dn);
+    }
+
+    // Apply edge detection on later frames (when we have stable depth/normal data)
     if render_state.enable_edges == 1u && render_state.frame_index >= 2u {
         let stored_depth_normal = depth_normal_buffer[pixel_index_i32(pixel_coord)];
         let edge = detect_edge(pixel_coord, stored_depth_normal);
         if edge > 0.1 {
             // Darken edges
             let edge_color = vec4<f32>(0.1, 0.1, 0.12, 1.0);
-            final_color = mix(accumulated, edge_color, edge * 0.8);
+            final_color = mix(final_color, edge_color, edge * 0.8);
         }
     }
 
