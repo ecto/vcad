@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sign in to vcad</title>
+    <meta name="robots" content="noindex" />
+    <link rel="icon" href="/favicon.ico" />
+    <style>
+      @font-face {
+        font-family: "Berkeley Mono";
+        font-weight: 400;
+        font-display: swap;
+        src: url("/fonts/BerkeleyMono-Regular.otf") format("opentype");
+      }
+      @font-face {
+        font-family: "Berkeley Mono";
+        font-weight: 700;
+        font-display: swap;
+        src: url("/fonts/BerkeleyMono-Bold.otf") format("opentype");
+      }
+
+      :root {
+        color-scheme: dark;
+        --bg: #222222;
+        --surface: #2a2a2a;
+        --border: #444444;
+        --text: #f8f8f2;
+        --text-muted: #75715e;
+        --hover: rgba(255, 255, 255, 0.1);
+        --brand: #f92672;
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          color-scheme: light;
+          --bg: #e8eaec;
+          --surface: #dde0e3;
+          --border: #c4c8cc;
+          --text: #1d1f23;
+          --text-muted: #6e7278;
+          --hover: rgba(0, 0, 0, 0.05);
+          --brand: #f92672;
+        }
+      }
+
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        font: 12px/1.5 "Berkeley Mono", ui-monospace, monospace;
+        background: var(--bg);
+        color: var(--text);
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+
+      main {
+        min-height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1.5rem;
+        box-sizing: border-box;
+      }
+
+      .card {
+        width: 100%;
+        max-width: 24rem;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        padding: 1.5rem;
+      }
+
+      .header {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+      }
+      .logo {
+        font-size: 14px;
+        font-weight: 700;
+        letter-spacing: -0.05em;
+        color: var(--text);
+      }
+      .logo .dot {
+        color: var(--brand);
+      }
+      .label {
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+
+      p {
+        margin: 0 0 0.75rem;
+        font-size: 12px;
+        color: var(--text);
+      }
+      p.muted {
+        color: var(--text-muted);
+      }
+
+      .actions {
+        margin-top: 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+
+      .btn {
+        height: 2rem;
+        padding: 0 0.75rem;
+        border: 1px solid var(--border);
+        background: var(--bg);
+        color: var(--text);
+        font: inherit;
+        font-size: 12px;
+        cursor: pointer;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        box-sizing: border-box;
+      }
+      .btn:hover {
+        background: var(--hover);
+      }
+
+      .hide {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="card">
+        <div class="header">
+          <span class="logo">vcad<span class="dot">.</span></span>
+          <span class="label">Sign-in</span>
+        </div>
+        <p id="status" class="muted">Completing sign-in…</p>
+        <div class="actions">
+          <a id="continue" class="btn hide" href="/">Continue to vcad</a>
+        </div>
+        <noscript>
+          <p class="muted">
+            Enable JavaScript to complete sign-in.
+          </p>
+        </noscript>
+      </div>
+    </main>
+    <script>
+      (function () {
+        var status = document.getElementById("status");
+        var continueLink = document.getElementById("continue");
+
+        try {
+          if (window.opener && !window.opener.closed) {
+            // Same-origin opener — postMessage the full URL so it can
+            // run the PKCE / OTP exchange against its own Supabase
+            // client (which holds the code verifier in localStorage).
+            window.opener.postMessage(
+              { type: "vcad:oauth-callback", url: window.location.href },
+              window.location.origin,
+            );
+            status.textContent = "Done. You can close this window.";
+            // Give the opener a tick to ack before closing — some
+            // browsers race the close against the message delivery.
+            setTimeout(function () {
+              try {
+                window.close();
+              } catch (_) {
+                /* user closes it manually */
+              }
+            }, 50);
+            return;
+          }
+        } catch (_) {
+          // Cross-origin or detached opener — fall through to the
+          // standalone path below.
+        }
+
+        // No opener (user pasted the URL into a fresh tab, or the
+        // browser killed the reference). Show a button back to the app.
+        status.textContent = "Sign-in complete.";
+        continueLink.classList.remove("hide");
+      })();
+    </script>
+  </body>
+</html>

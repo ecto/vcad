@@ -10,10 +10,18 @@ export {
 
 // Desktop deep-link auth bridge
 export {
+  applyAuthCallback,
   handleAuthDeepLink,
   isAuthDeepLink,
   type AuthDeepLinkResult,
 } from "./auth-deep-link";
+
+// Web popup OAuth flow
+export {
+  signInWithOAuthPopup,
+  type OAuthPopupProvider,
+  type OAuthPopupResult,
+} from "./oauth-popup";
 
 // Stores
 export { useAuthStore } from "./stores/auth-store";

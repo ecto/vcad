@@ -47,11 +47,18 @@ export function isAuthDeepLink(url: string): boolean {
 }
 
 /**
- * Materialize a Supabase session from a `vcad://auth/callback` URL.
+ * Materialize a Supabase session from any auth callback URL — used by
+ * both the desktop deep-link bridge and the web popup flow. Handles
+ * three shapes Supabase can return:
+ *
+ *   - `?code=…`            PKCE / OAuth code exchange
+ *   - `#access_token=…`    implicit-flow token pair
+ *   - `?token_hash=…&type` magic-link OTP
+ *
  * Returns `{ ok: true }` when a session was established; `AuthProvider`
  * will pick it up via its `onAuthStateChange` subscription.
  */
-export async function handleAuthDeepLink(
+export async function applyAuthCallback(
   url: string,
 ): Promise<AuthDeepLinkResult> {
   const supabase = getSupabase();
@@ -86,8 +93,8 @@ export async function handleAuthDeepLink(
   const query = parsed.searchParams;
 
   // PKCE / OAuth code exchange. Note this only succeeds when the
-  // desktop is the same client that initiated the sign-in (the code
-  // verifier lives in the app's localStorage).
+  // exchanging client is the same one that initiated the sign-in — the
+  // code verifier lives in the app's localStorage.
   const code = query.get("code");
   if (code) {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
@@ -126,4 +133,14 @@ export async function handleAuthDeepLink(
   }
 
   return { ok: false, error: "Callback URL had no auth parameters" };
+}
+
+/**
+ * Materialize a Supabase session from a `vcad://auth/callback` URL.
+ * Thin wrapper over `applyAuthCallback` retained for API stability.
+ */
+export async function handleAuthDeepLink(
+  url: string,
+): Promise<AuthDeepLinkResult> {
+  return applyAuthCallback(url);
 }
