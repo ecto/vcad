@@ -5,7 +5,9 @@ use mecheval_grader::eval::evaluate_vcad;
 use vcad_kernel_geom::SurfaceKind;
 
 fn main() {
-    let path = std::env::args().nth(1).expect("usage: inspect-topo <file.vcad>");
+    let path = std::env::args()
+        .nth(1)
+        .expect("usage: inspect-topo <file.vcad>");
     let raw = std::fs::read_to_string(&path).expect("read");
     let snap = evaluate_vcad(&raw);
     if let Some(err) = &snap.fatal {
@@ -36,11 +38,8 @@ fn main() {
                 .map(|s| s.surface_type())
                 .unwrap_or(SurfaceKind::Plane);
             let outer_len = topo.loop_len(face.outer_loop);
-            let inner_lens: Vec<usize> = face
-                .inner_loops
-                .iter()
-                .map(|&l| topo.loop_len(l))
-                .collect();
+            let inner_lens: Vec<usize> =
+                face.inner_loops.iter().map(|&l| topo.loop_len(l)).collect();
             println!(
                 "  {:?}: surf={:?} outer={}vts inner={:?} orient={:?}",
                 face_id, surf, outer_len, inner_lens, face.orientation

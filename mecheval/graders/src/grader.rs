@@ -334,7 +334,11 @@ fn check_mass_props(
 
         match snap.aggregate_center_of_mass() {
             Some(actual) => {
-                let dev = [actual[0] - spec[0], actual[1] - spec[1], actual[2] - spec[2]];
+                let dev = [
+                    actual[0] - spec[0],
+                    actual[1] - spec[1],
+                    actual[2] - spec[2],
+                ];
                 let max_abs = dev.iter().fold(0.0_f64, |a, d| a.max(d.abs()));
                 let pass = max_abs <= com_tol_mm;
                 all_pass &= pass;
@@ -371,7 +375,11 @@ fn check_mass_props(
     }
 
     (
-        if all_pass { CheckOutcome::Pass } else { CheckOutcome::Fail },
+        if all_pass {
+            CheckOutcome::Pass
+        } else {
+            CheckOutcome::Fail
+        },
         serde_json::Value::Object(details),
     )
 }
@@ -557,7 +565,11 @@ fn check_step_roundtrip(
     details.insert("tolerance_pct".into(), json!(tolerance_pct));
 
     (
-        if all_pass { CheckOutcome::Pass } else { CheckOutcome::Fail },
+        if all_pass {
+            CheckOutcome::Pass
+        } else {
+            CheckOutcome::Fail
+        },
         serde_json::Value::Object(details),
     )
 }
@@ -681,13 +693,7 @@ fn check_hole_positions(
     let unmatched_extras: Vec<_> = holes
         .iter()
         .zip(matched.iter())
-        .filter_map(|(h, &m)| {
-            if !m {
-                Some(json!([h.x, h.y]))
-            } else {
-                None
-            }
-        })
+        .filter_map(|(h, &m)| if !m { Some(json!([h.x, h.y])) } else { None })
         .collect();
 
     let outcome = if all_matched {
@@ -907,7 +913,12 @@ mod tests {
         }]);
         let tmp = write_tmp_vcad("mecheval-bbox-pass.vcad", &cube_vcad(10.0));
         let blob = grade(&task, &task_bytes, &tmp).expect("grade");
-        assert_eq!(blob.checks[0].result, CheckOutcome::Pass, "{:?}", blob.checks[0].details);
+        assert_eq!(
+            blob.checks[0].result,
+            CheckOutcome::Pass,
+            "{:?}",
+            blob.checks[0].details
+        );
     }
 
     #[test]
@@ -921,7 +932,9 @@ mod tests {
         let tmp = write_tmp_vcad("mecheval-bbox-fail.vcad", &cube_vcad(10.0));
         let blob = grade(&task, &task_bytes, &tmp).expect("grade");
         assert_eq!(blob.checks[0].result, CheckOutcome::Fail);
-        let dev = blob.checks[0].details["max_abs_deviation_mm"].as_f64().unwrap();
+        let dev = blob.checks[0].details["max_abs_deviation_mm"]
+            .as_f64()
+            .unwrap();
         assert!(dev > 30.0, "expected large deviation, got {}", dev);
     }
 
@@ -936,7 +949,12 @@ mod tests {
         }]);
         let tmp = write_tmp_vcad("mecheval-mp-vol-pass.vcad", &cube_vcad(10.0));
         let blob = grade(&task, &task_bytes, &tmp).expect("grade");
-        assert_eq!(blob.checks[0].result, CheckOutcome::Pass, "{:?}", blob.checks[0].details);
+        assert_eq!(
+            blob.checks[0].result,
+            CheckOutcome::Pass,
+            "{:?}",
+            blob.checks[0].details
+        );
     }
 
     #[test]
@@ -963,7 +981,12 @@ mod tests {
         }]);
         let tmp = write_tmp_vcad("mecheval-mp-com-pass.vcad", &cube_vcad(10.0));
         let blob = grade(&task, &task_bytes, &tmp).expect("grade");
-        assert_eq!(blob.checks[0].result, CheckOutcome::Pass, "{:?}", blob.checks[0].details);
+        assert_eq!(
+            blob.checks[0].result,
+            CheckOutcome::Pass,
+            "{:?}",
+            blob.checks[0].details
+        );
     }
 
     #[test]
@@ -977,17 +1000,25 @@ mod tests {
         }]);
         let tmp = write_tmp_vcad("mecheval-mp-combo.vcad", &cube_vcad(10.0));
         let blob = grade(&task, &task_bytes, &tmp).expect("grade");
-        assert_eq!(blob.checks[0].result, CheckOutcome::Pass, "{:?}", blob.checks[0].details);
+        assert_eq!(
+            blob.checks[0].result,
+            CheckOutcome::Pass,
+            "{:?}",
+            blob.checks[0].details
+        );
     }
 
     #[test]
     fn step_roundtrip_passes_for_a_cube() {
-        let (task, task_bytes) = task_with(vec![CheckSpec::StepRoundtrip {
-            tolerance_pct: 1.0,
-        }]);
+        let (task, task_bytes) = task_with(vec![CheckSpec::StepRoundtrip { tolerance_pct: 1.0 }]);
         let tmp = write_tmp_vcad("mecheval-step-cube.vcad", &cube_vcad(20.0));
         let blob = grade(&task, &task_bytes, &tmp).expect("grade");
-        assert_eq!(blob.checks[0].result, CheckOutcome::Pass, "{:?}", blob.checks[0].details);
+        assert_eq!(
+            blob.checks[0].result,
+            CheckOutcome::Pass,
+            "{:?}",
+            blob.checks[0].details
+        );
     }
 
     #[test]

@@ -67,7 +67,9 @@ pub fn find_z_holes(
     let mut holes: Vec<Hole> = Vec::new();
 
     for solid in &snap.solids {
-        let Some(brep) = solid.as_brep() else { continue };
+        let Some(brep) = solid.as_brep() else {
+            continue;
+        };
         for (_face_id, face) in &brep.topology.faces {
             // Only count concave (inward-facing) cylindrical faces.
             if face.orientation != Orientation::Reversed {
@@ -184,7 +186,11 @@ mod tests {
         let snap = evaluate_vcad(vcad);
         assert!(snap.fatal.is_none(), "fatal: {:?}", snap.fatal);
         let holes = find_z_holes(&snap, 3.0, 0.1);
-        assert!(holes.is_empty(), "protrusion was misdetected as hole: {:?}", holes);
+        assert!(
+            holes.is_empty(),
+            "protrusion was misdetected as hole: {:?}",
+            holes
+        );
     }
 
     /// A cylinder DIFFERENCED out of a plate is a real hole. Same

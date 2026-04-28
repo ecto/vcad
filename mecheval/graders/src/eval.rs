@@ -160,7 +160,11 @@ pub fn evaluate_vcad(raw_vcad: &str) -> EvalSnapshot {
     };
 
     let doc = parsed.document;
-    let root_count = doc.roots.iter().filter(|r| r.visible != Some(false)).count();
+    let root_count = doc
+        .roots
+        .iter()
+        .filter(|r| r.visible != Some(false))
+        .count();
 
     let scene = match catch_unwind(AssertUnwindSafe(|| {
         evaluate_document(&doc, &EvalOptions::default())

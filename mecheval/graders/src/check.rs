@@ -75,22 +75,13 @@ pub enum CheckSpec {
     BodyValid,
 
     /// Suite C: forward kinematics reaches target under joint limits.
-    FkReaches {
-        target: [f64; 3],
-        tolerance_m: f64,
-    },
+    FkReaches { target: [f64; 3], tolerance_m: f64 },
 
     /// Suite C: per-joint torque budget covers gravity + payload.
-    TorqueBudget {
-        payload_kg: f64,
-        safety_factor: f64,
-    },
+    TorqueBudget { payload_kg: f64, safety_factor: f64 },
 
     /// Suite C: COM stays inside support polygon during a rollout.
-    StableDuringRollout {
-        rollout: String,
-        min_margin_mm: f64,
-    },
+    StableDuringRollout { rollout: String, min_margin_mm: f64 },
 
     /// Suite C: gym rollout completes the named task.
     TaskSuccess {

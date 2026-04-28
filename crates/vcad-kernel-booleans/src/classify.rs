@@ -134,9 +134,9 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
             // Promote those holes' far edge into concentric_inner_r so
             // the sampling band is correctly the annular region.
             for hole in &holes {
-                let dist_to_origin =
-                    (hole.center_2d.0 * hole.center_2d.0 + hole.center_2d.1 * hole.center_2d.1)
-                        .sqrt();
+                let dist_to_origin = (hole.center_2d.0 * hole.center_2d.0
+                    + hole.center_2d.1 * hole.center_2d.1)
+                    .sqrt();
                 if dist_to_origin < hole.radius + 1e-6 {
                     // Face center is inside this hole — sampling must go
                     // beyond the hole's far edge.

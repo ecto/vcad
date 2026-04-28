@@ -46,7 +46,9 @@ pub fn find_non_z_cylinders(
 ) -> Vec<Fillet> {
     let mut out: Vec<Fillet> = Vec::new();
     for solid in &snap.solids {
-        let Some(brep) = solid.as_brep() else { continue };
+        let Some(brep) = solid.as_brep() else {
+            continue;
+        };
         for (_face_id, face) in &brep.topology.faces {
             let Some(surface) = brep.geometry.surfaces.get(face.surface_index) else {
                 continue;
@@ -82,8 +84,7 @@ fn same_fillet(a: &Fillet, b: &Fillet, tol: f64) -> bool {
         return false;
     }
     // Axes parallel (sign-invariant): |a · b| close to 1.
-    let dot =
-        a.axis[0] * b.axis[0] + a.axis[1] * b.axis[1] + a.axis[2] * b.axis[2];
+    let dot = a.axis[0] * b.axis[0] + a.axis[1] * b.axis[1] + a.axis[2] * b.axis[2];
     if dot.abs() < 0.99 {
         return false;
     }

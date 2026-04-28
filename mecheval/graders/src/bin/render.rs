@@ -62,18 +62,25 @@ struct Args {
 
 fn parse_args() -> Result<Args, String> {
     let mut args = std::env::args().skip(1);
-    let path = args.next().ok_or("usage: mecheval-render <path.vcad> [--scale N]")?;
+    let path = args
+        .next()
+        .ok_or("usage: mecheval-render <path.vcad> [--scale N]")?;
     let mut scale = DEFAULT_SCALE;
     while let Some(flag) = args.next() {
         match flag.as_str() {
             "--scale" => {
                 let v = args.next().ok_or("--scale needs a value")?;
-                scale = v.parse().map_err(|e: std::num::ParseFloatError| e.to_string())?;
+                scale = v
+                    .parse()
+                    .map_err(|e: std::num::ParseFloatError| e.to_string())?;
             }
             other => return Err(format!("unknown flag: {}", other)),
         }
     }
-    Ok(Args { path: PathBuf::from(path), scale })
+    Ok(Args {
+        path: PathBuf::from(path),
+        scale,
+    })
 }
 
 // ─── projection ───────────────────────────────────────────────────────────
@@ -338,8 +345,16 @@ fn main() -> ExitCode {
     }
 
     // Painter's algorithm — back-to-front.
-    polys.sort_by(|a, b| a.depth.partial_cmp(&b.depth).unwrap_or(std::cmp::Ordering::Equal));
-    edges.sort_by(|a, b| a.depth.partial_cmp(&b.depth).unwrap_or(std::cmp::Ordering::Equal));
+    polys.sort_by(|a, b| {
+        a.depth
+            .partial_cmp(&b.depth)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    edges.sort_by(|a, b| {
+        a.depth
+            .partial_cmp(&b.depth)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     // BBox over polygons + edges.
     let mut min_x = f64::INFINITY;
@@ -348,18 +363,34 @@ fn main() -> ExitCode {
     let mut max_y = f64::NEG_INFINITY;
     for p in &polys {
         for &(x, y) in &p.s {
-            if x < min_x { min_x = x; }
-            if y < min_y { min_y = y; }
-            if x > max_x { max_x = x; }
-            if y > max_y { max_y = y; }
+            if x < min_x {
+                min_x = x;
+            }
+            if y < min_y {
+                min_y = y;
+            }
+            if x > max_x {
+                max_x = x;
+            }
+            if y > max_y {
+                max_y = y;
+            }
         }
     }
     for e in &edges {
         for &(x, y) in &[e.a, e.b] {
-            if x < min_x { min_x = x; }
-            if y < min_y { min_y = y; }
-            if x > max_x { max_x = x; }
-            if y > max_y { max_y = y; }
+            if x < min_x {
+                min_x = x;
+            }
+            if y < min_y {
+                min_y = y;
+            }
+            if x > max_x {
+                max_x = x;
+            }
+            if y > max_y {
+                max_y = y;
+            }
         }
     }
     let w = (max_x - min_x) + 2.0 * PADDING_PX;
@@ -383,10 +414,7 @@ fn main() -> ExitCode {
             p.s[2].0 - min_x + PADDING_PX,
             p.s[2].1 - min_y + PADDING_PX,
         );
-        out.push_str(&format!(
-            r#"<polygon points="{}" fill="{}"/>"#,
-            pts, p.fill,
-        ));
+        out.push_str(&format!(r#"<polygon points="{}" fill="{}"/>"#, pts, p.fill,));
     }
     out.push_str("</g>");
 
