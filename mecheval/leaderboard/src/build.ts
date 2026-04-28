@@ -394,6 +394,13 @@ const STYLES = `
     font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; font-size: 10px;
   }
   .matrix td.row-h { text-align: left; font-weight: 500; background: rgba(14,57,96,0.04); }
+  .matrix td.row-ref {
+    width: 80px; min-width: 80px; padding: 4px;
+    background: rgba(14,57,96,0.02); vertical-align: middle;
+  }
+  .matrix .matrix-ref { display: flex; align-items: center; justify-content: center; height: 64px; }
+  .matrix .matrix-ref svg { max-width: 72px; max-height: 60px; height: auto; width: auto; }
+  .matrix .matrix-ref-empty { color: var(--ink-soft); font-size: 11px; text-align: center; }
   .matrix td a { display: block; }
 
   .checkrow { display: grid; grid-template-columns: 28px 180px 80px 1fr; gap: 10px; padding: 7px 0; border-bottom: 1px dotted var(--soft); }
@@ -727,6 +734,7 @@ function matrix(
   modelIds: string[],
   byPair: Map<string, PassKEntry>,
   k: number,
+  taskRefSvgs: Map<string, string | null>,
 ): string {
   const head = modelIds
     .map(
@@ -742,11 +750,19 @@ function matrix(
           return `<td>${passKBadge(entry, k)} <small>${fmtNum(entry.mean_score_recent_k)}</small></td>`;
         })
         .join("");
-      return `<tr><td class="row-h"><a href="task/${encodeURIComponent(tid)}.html">${escape(tid)}</a></td>${cells}</tr>`;
+      const refSvg = taskRefSvgs.get(tid) ?? null;
+      const refHtml = refSvg
+        ? `<div class="matrix-ref">${refSvg}</div>`
+        : `<div class="matrix-ref-empty">—</div>`;
+      return `<tr>
+        <td class="row-ref">${refHtml}</td>
+        <td class="row-h"><a href="task/${encodeURIComponent(tid)}.html">${escape(tid)}</a></td>
+        ${cells}
+      </tr>`;
     })
     .join("");
   return `<div class="matrix scroll-x"><table>
-    <thead><tr><th class="left">task ↓ · model →</th>${head}</tr></thead>
+    <thead><tr><th class="left">expected</th><th class="left">task ↓ · model →</th>${head}</tr></thead>
     <tbody>${body}</tbody>
   </table></div>`;
 }
@@ -928,6 +944,7 @@ function indexPage(
   taskIds: string[],
   k: number,
   operatorSvg: string | null,
+  taskRefSvgs: Map<string, string | null>,
 ): string {
   const byPair = new Map<string, PassKEntry>();
   for (const e of entries) byPair.set(`${e.model_id}::${e.task_id}`, e);
@@ -977,7 +994,7 @@ function indexPage(
     ${models.length ? modelTable(models, k) : `<div class="nodata">no run blobs found under <code>mecheval/runs/</code> — OPERATOR is alone in here</div>`}
 
     <h2>Task × model matrix</h2>
-    ${taskIds.length && modelIds.length ? matrix(taskIds, modelIds, byPair, k) : `<div class="nodata">no entries</div>`}
+    ${taskIds.length && modelIds.length ? matrix(taskIds, modelIds, byPair, k, taskRefSvgs) : `<div class="nodata">no entries</div>`}
 
     <h2>Cost · score Pareto</h2>
     ${entries.length ? paretoScatter(entries, "tokens") : `<div class="nodata">no points</div>`}
@@ -1302,12 +1319,6 @@ async function main(): Promise<void> {
     );
   }
 
-  // Index.
-  await writePage(
-    "index.html",
-    indexPage(runs, entries, models, [...seenTaskIds].sort(), PASS_K, operatorSvg),
-  );
-
   // Pre-render every run artifact once into a shared map. Used by both
   // run detail pages and task-page galleries. Keyed by
   // "task::model::run" so a single lookup surface is reused everywhere.
@@ -1320,6 +1331,45 @@ async function main(): Promise<void> {
       : null;
     runSvgs.set(`${r.task_id}::${r.model_id}::${r.run_id}`, svg);
   }
+
+  // Per-task reference SVG for the matrix's "expected" column. Picks the
+  // most-recent passing run by run_id (any model). Falls back to the most
+  // recent run with any usable SVG. Returns null if nothing renders.
+  const taskRefSvgs = new Map<string, string | null>();
+  for (const tid of seenTaskIds) {
+    const taskRuns = runs
+      .filter((r) => r.task_id === tid)
+      .slice()
+      .sort((a, b) => b.run_id.localeCompare(a.run_id));
+    const pick =
+      taskRuns.find((r) => {
+        if (!r.passed) return false;
+        const svg = runSvgs.get(`${r.task_id}::${r.model_id}::${r.run_id}`);
+        return svg != null;
+      }) ??
+      taskRuns.find((r) => {
+        const svg = runSvgs.get(`${r.task_id}::${r.model_id}::${r.run_id}`);
+        return svg != null;
+      });
+    const svg = pick
+      ? runSvgs.get(`${pick.task_id}::${pick.model_id}::${pick.run_id}`) ?? null
+      : null;
+    taskRefSvgs.set(tid, svg);
+  }
+
+  // Index.
+  await writePage(
+    "index.html",
+    indexPage(
+      runs,
+      entries,
+      models,
+      [...seenTaskIds].sort(),
+      PASS_K,
+      operatorSvg,
+      taskRefSvgs,
+    ),
+  );
 
   // Task pages.
   for (const tid of seenTaskIds) {
