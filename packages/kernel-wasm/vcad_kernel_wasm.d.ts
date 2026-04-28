@@ -101,6 +101,12 @@ export class RayTracer {
      */
     static canRaytrace(solid: Solid): boolean;
     /**
+     * Clear all uploaded geometry. Call before re-uploading a fresh
+     * scene; subsequent `upload_solid` calls will accumulate into a
+     * new merged scene.
+     */
+    clearScene(): void;
+    /**
      * Create a new ray tracer.
      *
      * Requires WebGPU to be available and initialized.
@@ -189,9 +195,18 @@ export class RayTracer {
      */
     setMaterial(r: number, g: number, b: number, metallic: number, roughness: number): void;
     /**
+     * Set the visible-background theme. 0 = dark (default), 1 = light.
+     * IBL panels and direct lighting stay constant across themes — this
+     * only swaps the atmospheric backdrop and ground tint.
+     */
+    setTheme(theme: number): void;
+    /**
      * Upload a solid's BRep representation for ray tracing.
      *
-     * This extracts the BRep surfaces and builds the GPU scene data.
+     * First call after clearScene seeds the GPU scene. Subsequent calls
+     * merge into the existing scene — surfaces/faces/BVH from each new
+     * solid are unified under a fresh root, so multi-part scenes render
+     * in a single ray-trace pass.
      */
     uploadSolid(solid: Solid): void;
 }
@@ -1910,6 +1925,7 @@ export interface InitOutput {
     readonly processGeometryGpu: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
     readonly projectMesh: (a: any, b: number, c: number) => any;
     readonly raytracer_canRaytrace: (a: number) => number;
+    readonly raytracer_clearScene: (a: number) => void;
     readonly raytracer_create: () => [number, number, number];
     readonly raytracer_getDebugMode: (a: number) => number;
     readonly raytracer_getEdgeDetectionEnabled: (a: number) => number;
@@ -1921,6 +1937,7 @@ export interface InitOutput {
     readonly raytracer_setDebugMode: (a: number, b: number) => void;
     readonly raytracer_setEdgeDetection: (a: number, b: number, c: number, d: number) => void;
     readonly raytracer_setMaterial: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
+    readonly raytracer_setTheme: (a: number, b: number) => void;
     readonly raytracer_uploadSolid: (a: number, b: number) => [number, number];
     readonly renderBakeMesh: (a: number, b: number) => [number, number, number, number];
     readonly sectionMesh: (a: any, b: number, c: number, d: number, e: number) => any;

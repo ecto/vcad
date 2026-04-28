@@ -2228,6 +2228,8 @@ pub struct RayTracer {
     edge_depth_threshold: f32,
     /// Edge normal threshold (degrees).
     edge_normal_threshold: f32,
+    /// Theme: 0 = dark, 1 = light. Drives the visible background palette.
+    theme: u32,
 }
 
 #[cfg(feature = "raytrace")]
@@ -2260,7 +2262,18 @@ impl RayTracer {
             enable_edges: true,
             edge_depth_threshold: 0.1,
             edge_normal_threshold: 30.0,
+            theme: 0,
         })
+    }
+
+    /// Set the visible-background theme. 0 = dark (default), 1 = light.
+    /// IBL panels and direct lighting stay constant across themes — this
+    /// only swaps the atmospheric backdrop and ground tint.
+    #[wasm_bindgen(js_name = setTheme)]
+    pub fn set_theme(&mut self, theme: u32) {
+        self.theme = theme;
+        self.frame_index = 0;
+        self.accum_buffer = None;
     }
 
     /// Reset the progressive accumulation (call when camera moves).
@@ -2331,9 +2344,22 @@ impl RayTracer {
         self.enable_edges
     }
 
+    /// Clear all uploaded geometry. Call before re-uploading a fresh
+    /// scene; subsequent `upload_solid` calls will accumulate into a
+    /// new merged scene.
+    #[wasm_bindgen(js_name = clearScene)]
+    pub fn clear_scene(&mut self) {
+        self.scene = None;
+        self.frame_index = 0;
+        self.accum_buffer = None;
+    }
+
     /// Upload a solid's BRep representation for ray tracing.
     ///
-    /// This extracts the BRep surfaces and builds the GPU scene data.
+    /// First call after clearScene seeds the GPU scene. Subsequent calls
+    /// merge into the existing scene — surfaces/faces/BVH from each new
+    /// solid are unified under a fresh root, so multi-part scenes render
+    /// in a single ray-trace pass.
     #[wasm_bindgen(js_name = uploadSolid)]
     pub fn upload_solid(&mut self, solid: &Solid) -> Result<(), JsError> {
         use vcad_kernel_raytrace::gpu::GpuScene;
@@ -2344,9 +2370,15 @@ impl RayTracer {
             .brep()
             .ok_or_else(|| JsError::new("Solid has no BRep representation (mesh-only)"))?;
 
-        // Build GPU scene from BRep
-        let scene = GpuScene::from_brep(brep)
+        // Build GPU scene from this BRep, then merge into the existing
+        // scene (or seed if this is the first upload).
+        let new_scene = GpuScene::from_brep(brep)
             .map_err(|e| JsError::new(&format!("Failed to build GPU scene: {}", e)))?;
+
+        let scene = match self.scene.take() {
+            Some(existing) => existing.merge(new_scene),
+            None => new_scene,
+        };
 
         let num_faces = scene.faces.len();
         let num_surfaces = scene.surfaces.len();
@@ -2556,6 +2588,7 @@ impl RayTracer {
                 self.enable_edges,
                 self.edge_depth_threshold,
                 self.edge_normal_threshold,
+                self.theme,
             )
             .await
             .map_err(|e| JsError::new(&format!("Render failed: {}", e)))?;

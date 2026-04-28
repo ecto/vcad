@@ -81,7 +81,8 @@ struct RenderState {
     edge_normal_threshold: f32,
     /// Debug render mode: 0=normal, 1=show normals as RGB, 2=show face_id, 3=show n_dot_l
     debug_mode: u32,
-    _pad: f32,
+    /// 0 = dark theme (cool low-key background), 1 = light theme (bright neutral background).
+    theme: u32,
 }
 
 struct RayHit {
@@ -785,6 +786,206 @@ fn trace_bvh(origin: vec3<f32>, dir: vec3<f32>) -> RayHit {
     return best_hit;
 }
 
+// Sentinel face_idx values used by the shader to tag non-BRep hits.
+// 0xFFFFFFFFu = ray miss (background), 0xFFFFFFFEu = ground plane hit.
+const FACE_IDX_GROUND: u32 = 0xFFFFFFFEu;
+
+// Procedural HDR environment in Z-up world space. Returns radiance for a
+// given ray direction — used both for ray misses (visible background) and
+// for ambient + IBL specular sampling.
+//
+// Modeled as a "studio environment": dim atmospheric backdrop plus a few
+// high-luminance soft panels at fixed directions (key, fill, rim, top
+// fill). The panels carry HDR values (luminance > 1) so reflections on
+// metals get hot specular highlights that ACES rolls off into clean
+// blown-white spots — the same look you get sampling a real HDRI.
+//
+// Stays in shader code rather than uploading a baked HDR texture; the
+// binding plumbing isn't worth it for a single environment, and tuning
+// in WGSL is faster than re-baking an exr.
+fn sky_color(dir: vec3<f32>) -> vec3<f32> {
+    let z = dir.z;
+
+    // Atmospheric backdrop. Two palettes — dark and light — selected by
+    // render_state.theme. The IBL panels below stay the same in both so
+    // the model's lighting is theme-independent.
+    var zenith: vec3<f32>;
+    var horizon: vec3<f32>;
+    var below: vec3<f32>;
+    if render_state.theme == 1u {
+        // Light theme — bright neutral with the faintest cool tint at the
+        // top so it doesn't read as flat paper-white.
+        zenith = vec3<f32>(0.93, 0.95, 1.00);
+        horizon = vec3<f32>(0.96, 0.97, 0.99);
+        below = vec3<f32>(0.86, 0.86, 0.88);
+    } else {
+        // Dark theme — moody studio backdrop, cool blues fading into a
+        // dim "below horizon" band.
+        zenith = vec3<f32>(0.35, 0.55, 0.95);
+        horizon = vec3<f32>(0.78, 0.84, 0.92);
+        below = vec3<f32>(0.18, 0.18, 0.20);
+    }
+
+    var col: vec3<f32>;
+    if z >= 0.0 {
+        col = mix(horizon, zenith, smoothstep(0.0, 0.55, z));
+    } else {
+        col = mix(horizon, below, smoothstep(0.0, -0.4, z));
+    }
+
+    // Helper to add a soft directional panel. `tightness` controls disc
+    // size (higher = tighter, more sun-like; lower = broader, softer
+    // panel). HDR-valued so reflections on shiny surfaces blow out
+    // through ACES into clean specular highlights.
+    // Using inline pow() since WGSL has no closures or generics.
+
+    // Primary key — sun. Tight & hot.
+    let sun = sun_direction();
+    let sun_dot = dot(dir, sun);
+    let sun_disk = smoothstep(0.998, 0.9995, sun_dot) * 35.0;
+    let sun_glow = pow(max(sun_dot, 0.0), 96.0) * 1.0;
+    col += vec3<f32>(1.00, 0.94, 0.82) * (sun_disk + sun_glow);
+
+    // Warm fill from upper-front-right. Broader, lower luminance —
+    // simulates a softbox.
+    let fill = normalize(vec3<f32>(0.55, -0.3, 0.7));
+    let fill_dot = max(dot(dir, fill), 0.0);
+    col += vec3<f32>(1.00, 0.88, 0.72) * pow(fill_dot, 18.0) * 6.0;
+
+    // Cool rim from behind/below — gives metals a clean blue-tinged
+    // back-rim highlight.
+    let rim = normalize(vec3<f32>(0.2, 0.85, -0.15));
+    let rim_dot = max(dot(dir, rim), 0.0);
+    col += vec3<f32>(0.55, 0.72, 1.00) * pow(rim_dot, 28.0) * 4.5;
+
+    // Top diffuse panel — broad cool light from straight up. Acts like
+    // a studio ceiling and provides the dominant ambient term for the
+    // tops of objects.
+    let top = vec3<f32>(0.0, 0.0, 1.0);
+    let top_dot = max(dot(dir, top), 0.0);
+    col += vec3<f32>(0.95, 0.97, 1.00) * pow(top_dot, 6.0) * 1.8;
+
+    return col;
+}
+
+// Primary key-light direction in kernel (Z-up) space. Upper-back-left so
+// the camera, which typically sits in the +x/-y/+z octant, sees a clear
+// lit/shadow split rather than backlight.
+fn sun_direction() -> vec3<f32> {
+    return normalize(vec3<f32>(-0.35, 0.55, 0.75));
+}
+
+// Implicit ground plane at z=0 (kernel space). The plane is always full
+// opacity — fade-to-sky is applied by `shade_ground` based on horizontal
+// distance from the world origin (where models typically sit), so that
+// the model stays grounded regardless of camera distance.
+struct GroundHit {
+    t: f32,
+    point: vec3<f32>,
+    fade: f32,
+}
+
+fn intersect_ground(origin: vec3<f32>, dir: vec3<f32>) -> GroundHit {
+    var hit: GroundHit;
+    hit.t = MAX_T;
+    hit.fade = 0.0;
+
+    if abs(dir.z) < EPSILON {
+        return hit;
+    }
+    let t = -origin.z / dir.z;
+    if t < 0.001 {
+        return hit;
+    }
+    let p = origin + dir * t;
+
+    // fade is computed against the world origin (where the model usually
+    // sits) so the ground reads as "platform under the model" rather than
+    // "puddle around the camera".
+    let horizontal_from_origin = length(p.xy);
+    let fade = 1.0 - smoothstep(100.0, 1500.0, horizontal_from_origin);
+    if fade <= 0.0 {
+        return hit;
+    }
+
+    hit.t = t;
+    hit.point = p;
+    hit.fade = fade;
+    return hit;
+}
+
+// Cheap shadow test: reuse trace_bvh and check if the closest hit lies
+// before the light. WGSL doesn't allow recursion or function pointers, so
+// this is the simplest correct path; an "any-hit" early-exit traversal
+// would be ~30% faster but isn't needed for current scene complexity.
+fn in_shadow(p: vec3<f32>, light_dir: vec3<f32>, max_t: f32) -> bool {
+    let bias = 0.0015;
+    let origin = p + light_dir * bias;
+    let hit = trace_bvh(origin, light_dir);
+    return hit.face_idx != 0xFFFFFFFFu && hit.t < max_t;
+}
+
+// PCG hash → uniform [0, 1) noise. Per-pixel + per-frame seed so the noise
+// decorrelates across pixels (prevents banding) and animates per frame
+// (so progressive accumulation averages out).
+fn rand_uniform(pixel: vec2<u32>, sample_idx: u32) -> f32 {
+    var state = pixel.x * 1973u + pixel.y * 9277u + sample_idx * 26699u + render_state.frame_index * 12345u + 1u;
+    state = state * 747796405u + 2891336453u;
+    let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    let r = (word >> 22u) ^ word;
+    return f32(r) / 4294967296.0;
+}
+
+fn rand_uniform2(pixel: vec2<u32>, sample_idx: u32) -> vec2<f32> {
+    return vec2<f32>(rand_uniform(pixel, sample_idx * 2u), rand_uniform(pixel, sample_idx * 2u + 1u));
+}
+
+// Build a tangent frame around a normal so we can sample directions in its
+// hemisphere. Choose a stable tangent reference axis based on the normal's
+// dominant component.
+fn build_tangent_frame(normal: vec3<f32>) -> mat3x3<f32> {
+    let up_ref = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), abs(normal.y) > 0.95);
+    let tangent = normalize(cross(up_ref, normal));
+    let bitangent = cross(normal, tangent);
+    return mat3x3<f32>(tangent, bitangent, normal);
+}
+
+// Cosine-weighted hemisphere sample around `normal`. Uses Malley's method
+// (sample disc, project to hemisphere) for cosine weighting.
+fn sample_hemisphere_cosine(normal: vec3<f32>, u: vec2<f32>) -> vec3<f32> {
+    let r = sqrt(u.x);
+    let theta = 2.0 * PI * u.y;
+    let local = vec3<f32>(r * cos(theta), r * sin(theta), sqrt(max(0.0, 1.0 - u.x)));
+    return build_tangent_frame(normal) * local;
+}
+
+// Jitter a direction within a small cone for soft area-light shadows.
+// `cone_radius` is the tangent of the cone half-angle (small ≈ small angle).
+fn jitter_direction(dir: vec3<f32>, cone_radius: f32, u: vec2<f32>) -> vec3<f32> {
+    let angle = 2.0 * PI * u.x;
+    let r = cone_radius * sqrt(u.y);
+    let offset = vec3<f32>(cos(angle) * r, sin(angle) * r, 0.0);
+    return normalize(build_tangent_frame(dir) * vec3<f32>(offset.x, offset.y, 1.0));
+}
+
+// Ambient occlusion via a single short hemisphere ray per pixel. Accumulation
+// across frames averages out the noise — at 1 sample per frame and ~8-16
+// frames at HIGH quality, the result settles into clean soft contact
+// shadows.
+fn ambient_occlusion(p: vec3<f32>, normal: vec3<f32>, pixel: vec2<u32>) -> f32 {
+    let bias = 0.001;
+    let max_dist = 6.0;
+    let u = rand_uniform2(pixel, 7u);
+    let dir = sample_hemisphere_cosine(normal, u);
+    let origin = p + normal * bias;
+    let hit = trace_bvh(origin, dir);
+    if hit.face_idx == 0xFFFFFFFFu || hit.t > max_dist {
+        return 1.0;
+    }
+    // Linear falloff with hit distance — close hits darken more than far hits.
+    return clamp(hit.t / max_dist, 0.0, 1.0);
+}
+
 // Compute surface normal at hit point
 fn compute_normal(hit: RayHit) -> vec3<f32> {
     let face = faces[hit.face_idx];
@@ -896,101 +1097,243 @@ fn geometry_smith(n_dot_v: f32, n_dot_l: f32, roughness: f32) -> f32 {
     return ggx_v * ggx_l;
 }
 
-// PBR shading with Cook-Torrance BRDF
-fn shade(hit: RayHit, dir: vec3<f32>) -> vec4<f32> {
-    if hit.face_idx == 0xFFFFFFFFu {
-        // Background color (sky blue gradient)
-        let t = dir.y * 0.5 + 0.5;
-        return mix(vec4<f32>(0.3, 0.4, 0.5, 1.0), vec4<f32>(0.6, 0.7, 0.9, 1.0), t);
+// ACES Narkowicz tonemap. Cleaner highlights and richer mids than Reinhard.
+fn tonemap_aces(x: vec3<f32>) -> vec3<f32> {
+    let a = 2.51;
+    let b = 0.03;
+    let c = 2.43;
+    let d = 0.59;
+    let e = 0.14;
+    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+// Evaluate Cook-Torrance BRDF for one light direction. Returns the
+// radiance contribution (already weighted by n_dot_l).
+fn brdf_direct(
+    normal: vec3<f32>,
+    view_dir: vec3<f32>,
+    light_dir: vec3<f32>,
+    albedo: vec3<f32>,
+    metallic: f32,
+    roughness: f32,
+    f0: vec3<f32>,
+) -> vec3<f32> {
+    let n_dot_l = max(dot(normal, light_dir), 0.0);
+    if n_dot_l <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+    let halfway = normalize(view_dir + light_dir);
+    let n_dot_v = max(dot(normal, view_dir), 0.001);
+    let n_dot_h = max(dot(normal, halfway), 0.0);
+    let h_dot_v = max(dot(halfway, view_dir), 0.0);
+
+    let d = distribution_ggx(n_dot_h, roughness);
+    let g = geometry_smith(n_dot_v, n_dot_l, roughness);
+    let f = fresnel_schlick(h_dot_v, f0);
+
+    let specular = (d * g * f) / (4.0 * n_dot_v * n_dot_l + 0.001);
+    let kd = (1.0 - f) * (1.0 - metallic);
+    let diffuse = kd * albedo / PI;
+    return (diffuse + specular) * n_dot_l;
+}
+
+// Shade the implicit ground plane. Warm-tinted matte so models read as
+// sitting on a platform rather than floating in sky. Casts soft contact
+// shadows (jittered shadow ray accumulating across frames) and gets AO
+// for proper grounding under the model.
+fn shade_ground(p: vec3<f32>, dir: vec3<f32>, fade: f32, pixel: vec2<u32>) -> vec4<f32> {
+    let normal = vec3<f32>(0.0, 0.0, 1.0);
+    let view_dir = -dir;
+    // Ground albedo follows theme: warm gray on dark, near-white on light.
+    var albedo: vec3<f32>;
+    var ambient_factor: vec3<f32>;
+    var fade_target: vec3<f32>;
+    if render_state.theme == 1u {
+        albedo = vec3<f32>(0.78, 0.78, 0.79);
+        ambient_factor = vec3<f32>(0.55, 0.55, 0.57);
+        fade_target = vec3<f32>(0.96, 0.97, 0.99);
+    } else {
+        albedo = vec3<f32>(0.22, 0.21, 0.20);
+        ambient_factor = vec3<f32>(0.22, 0.22, 0.23);
+        fade_target = vec3<f32>(0.80, 0.85, 0.92);
+    }
+    let roughness = 0.92;
+    let metallic = 0.0;
+    let f0 = vec3<f32>(0.04);
+
+    let ambient_base = ambient_factor * albedo;
+    let ao = ambient_occlusion(p, normal, pixel);
+    let ambient = ambient_base * ao;
+
+    var lo = vec3<f32>(0.0);
+    let sun = sun_direction();
+    let sun_color = vec3<f32>(1.0, 0.96, 0.88) * 2.4;
+    let shadow_jitter = rand_uniform2(pixel, 13u);
+    let sun_jittered = jitter_direction(sun, 0.025, shadow_jitter);
+    let shadowed = in_shadow(p, sun_jittered, MAX_T);
+    if !shadowed {
+        lo += brdf_direct(normal, view_dir, sun, albedo, metallic, roughness, f0) * sun_color;
     }
 
-    // Get material
+    var color = ambient + lo;
+    color = tonemap_aces(color);
+    color = pow(color, vec3<f32>(1.0 / 2.2));
+
+    let sky_tonemapped = pow(tonemap_aces(fade_target), vec3<f32>(1.0 / 2.2));
+    color = mix(sky_tonemapped, color, fade);
+    return vec4<f32>(color, 1.0);
+}
+
+// Direct-only shading used as the *bounce hit* color for one-bounce GI.
+// Returns LINEAR radiance (no tonemap, no gamma) so it can be added to
+// the primary hit's lo before the final tonemap. Skips IBL, AO, and
+// recursive bounces — those are the things that would cause cost
+// blow-up or recursion (which WGSL forbids).
+fn shade_direct(hit: RayHit, origin: vec3<f32>, dir: vec3<f32>, pixel: vec2<u32>) -> vec3<f32> {
+    if hit.face_idx == 0xFFFFFFFFu {
+        return sky_color(dir);
+    }
+
+    let sun = sun_direction();
+    let view_dir = -dir;
+
+    if hit.face_idx == FACE_IDX_GROUND {
+        let p = origin + dir * hit.t;
+        let normal = vec3<f32>(0.0, 0.0, 1.0);
+        let albedo = vec3<f32>(0.22, 0.21, 0.20);
+        let ambient = vec3<f32>(0.22, 0.22, 0.23) * albedo;
+        var lo = vec3<f32>(0.0);
+        if !in_shadow(p, sun, MAX_T) {
+            // Lambertian — single light, no fresnel/specular.
+            let n_dot_l = max(dot(normal, sun), 0.0);
+            lo += albedo / PI * vec3<f32>(1.0, 0.96, 0.88) * 2.4 * n_dot_l;
+        }
+        return ambient + lo;
+    }
+
     let face = faces[hit.face_idx];
     let mat = materials[face.material_idx];
     let albedo = mat.color.rgb;
     let metallic = mat.metallic;
-    let roughness = max(mat.roughness, 0.04); // Avoid division by zero
-
-    // Compute normal and view direction
+    let roughness = max(mat.roughness, 0.04);
     let normal = compute_normal(hit);
-    let view_dir = -dir;
-
-    // Light setup (two lights for better coverage)
-    let light_dir1 = normalize(vec3<f32>(0.5, 0.8, 0.3));
-    let light_dir2 = normalize(vec3<f32>(-0.3, 0.4, -0.5));
-    let light_color = vec3<f32>(1.0, 0.98, 0.95); // Warm white
-    let light_intensity1 = 1.0;
-    let light_intensity2 = 0.3;
-
-    // F0 for Fresnel (0.04 for dielectrics, albedo for metals)
+    let p = origin + dir * hit.t;
     let f0 = mix(vec3<f32>(0.04, 0.04, 0.04), albedo, metallic);
 
-    // Ambient term (simple hemisphere)
-    let ambient_sky = vec3<f32>(0.4, 0.45, 0.5);
-    let ambient_ground = vec3<f32>(0.15, 0.12, 0.1);
-    let ambient_factor = normal.y * 0.5 + 0.5;
-    let ambient = mix(ambient_ground, ambient_sky, ambient_factor) * albedo * 0.2;
+    var lo = vec3<f32>(0.0);
+    let sun_color = vec3<f32>(1.0, 0.96, 0.88) * 2.6;
+    if !in_shadow(p, sun, MAX_T) {
+        lo += brdf_direct(normal, view_dir, sun, albedo, metallic, roughness, f0) * sun_color;
+    }
+    let fill_dir = normalize(vec3<f32>(-0.4, 0.5, 0.6));
+    let fill_color = vec3<f32>(0.7, 0.8, 1.0) * 0.45;
+    if !in_shadow(p, fill_dir, MAX_T) {
+        lo += brdf_direct(normal, view_dir, fill_dir, albedo, metallic, roughness, f0) * fill_color;
+    }
+    // Cheap hemisphere ambient — no AO/sky-blend, just a flat tint.
+    lo += albedo * 0.08;
+    return lo;
+}
+
+// PBR shading with Cook-Torrance BRDF, soft shadow rays, AO, one-bounce
+// indirect (GI), and HDR env IBL. Z-up world (kernel space).
+//
+// Stochastic terms (soft shadows, AO, env-spec jitter, GI bounce) are
+// decorrelated per-pixel and per-frame so progressive accumulation
+// converges to a noise-free image.
+fn shade(hit: RayHit, origin: vec3<f32>, dir: vec3<f32>, pixel: vec2<u32>) -> vec4<f32> {
+    if hit.face_idx == 0xFFFFFFFFu {
+        // Background — render the sky directly.
+        let sky = sky_color(dir);
+        let mapped = tonemap_aces(sky);
+        return vec4<f32>(pow(mapped, vec3<f32>(1.0 / 2.2)), 1.0);
+    }
+
+    if hit.face_idx == FACE_IDX_GROUND {
+        let p = origin + dir * hit.t;
+        return shade_ground(p, dir, hit.uv.x, pixel);
+    }
+
+    let face = faces[hit.face_idx];
+    let mat = materials[face.material_idx];
+    let albedo = mat.color.rgb;
+    let metallic = mat.metallic;
+    let roughness = max(mat.roughness, 0.04);
+
+    let normal = compute_normal(hit);
+    let view_dir = -dir;
+    let p = origin + dir * hit.t;
+
+    let f0 = mix(vec3<f32>(0.04, 0.04, 0.04), albedo, metallic);
+
+    // Hemisphere ambient blend, modulated by AO for clean contact darkening.
+    let sky_up = mix(vec3<f32>(0.40, 0.42, 0.46), sky_color(normal), 0.3);
+    let sky_down = vec3<f32>(0.30, 0.27, 0.24);
+    let hemi_factor = max(normal.z, 0.0) * 0.5 + 0.5;
+    let ao = ambient_occlusion(p, normal, pixel);
+    let ambient = mix(sky_down, sky_up, hemi_factor) * albedo * 0.30 * ao;
 
     var lo = vec3<f32>(0.0);
 
-    // First light
-    {
-        let halfway = normalize(view_dir + light_dir1);
-        let n_dot_v = max(dot(normal, view_dir), 0.001);
-        let n_dot_l = max(dot(normal, light_dir1), 0.0);
-        let n_dot_h = max(dot(normal, halfway), 0.0);
-        let h_dot_v = max(dot(halfway, view_dir), 0.0);
-
-        // Cook-Torrance BRDF
-        let d = distribution_ggx(n_dot_h, roughness);
-        let g = geometry_smith(n_dot_v, n_dot_l, roughness);
-        let f = fresnel_schlick(h_dot_v, f0);
-
-        let specular = (d * g * f) / (4.0 * n_dot_v * n_dot_l + 0.001);
-        let kd = (1.0 - f) * (1.0 - metallic);
-        let diffuse = kd * albedo / PI;
-
-        lo += (diffuse + specular) * light_color * light_intensity1 * n_dot_l;
+    // Soft sun shadow — single jittered ray per frame, smoothed by accumulation.
+    let sun = sun_direction();
+    let sun_color = vec3<f32>(1.0, 0.96, 0.88) * 2.6;
+    let sun_jitter = rand_uniform2(pixel, 17u);
+    let sun_jittered = jitter_direction(sun, 0.025, sun_jitter);
+    if !in_shadow(p, sun_jittered, MAX_T) {
+        lo += brdf_direct(normal, view_dir, sun, albedo, metallic, roughness, f0) * sun_color;
     }
 
-    // Second light (fill)
-    {
-        let halfway = normalize(view_dir + light_dir2);
-        let n_dot_v = max(dot(normal, view_dir), 0.001);
-        let n_dot_l = max(dot(normal, light_dir2), 0.0);
-        let n_dot_h = max(dot(normal, halfway), 0.0);
-        let h_dot_v = max(dot(halfway, view_dir), 0.0);
-
-        let d = distribution_ggx(n_dot_h, roughness);
-        let g = geometry_smith(n_dot_v, n_dot_l, roughness);
-        let f = fresnel_schlick(h_dot_v, f0);
-
-        let specular = (d * g * f) / (4.0 * n_dot_v * n_dot_l + 0.001);
-        let kd = (1.0 - f) * (1.0 - metallic);
-        let diffuse = kd * albedo / PI;
-
-        lo += (diffuse + specular) * light_color * light_intensity2 * n_dot_l;
+    // Soft fill from upper-back. Wider cone since fill lights are physically
+    // larger / softer than the sun.
+    let fill_dir = normalize(vec3<f32>(-0.4, 0.5, 0.6));
+    let fill_color = vec3<f32>(0.7, 0.8, 1.0) * 0.45;
+    let fill_jitter = rand_uniform2(pixel, 23u);
+    let fill_jittered = jitter_direction(fill_dir, 0.08, fill_jitter);
+    if !in_shadow(p, fill_jittered, MAX_T) {
+        lo += brdf_direct(normal, view_dir, fill_dir, albedo, metallic, roughness, f0) * fill_color;
     }
 
-    // Camera-relative fill light (ensures faces pointing toward camera get light)
+    // Camera-relative wrap fill: cheap, no shadow test, keeps near-camera
+    // faces readable when both directional lights are occluded.
     {
-        let camera_fill_intensity = 0.25;
         let n_dot_v = max(dot(normal, view_dir), 0.0);
-
-        // Simple Lambertian fill from camera direction
         let kd = (1.0 - metallic);
         let diffuse = kd * albedo / PI;
-
-        lo += diffuse * light_color * camera_fill_intensity * n_dot_v;
+        lo += diffuse * vec3<f32>(0.85, 0.88, 0.95) * 0.18 * n_dot_v;
     }
 
-    // Combine ambient and direct lighting
-    var color = ambient + lo;
+    // Specular IBL: jitter the reflection direction within a roughness-sized
+    // cone so glossy reflections soften over accumulation rather than ringing.
+    let n_dot_v_amb = max(dot(normal, view_dir), 0.0);
+    let f_ambient = fresnel_schlick(n_dot_v_amb, f0);
+    let reflect_dir = reflect(dir, normal);
+    let env_jitter = rand_uniform2(pixel, 31u);
+    let env_dir = jitter_direction(reflect_dir, roughness * 0.4, env_jitter);
+    let env_specular = sky_color(env_dir) * f_ambient * (1.0 - roughness * 0.85);
 
-    // Tone mapping (simple Reinhard)
-    color = color / (color + vec3<f32>(1.0));
+    // One-bounce indirect (GI). Cosine-weighted hemisphere sample, traced
+    // against BVH + ground; the bounce hit is shaded with shade_direct
+    // (no recursion). For a Lambertian + cosine-weighted sample, the brdf
+    // and pdf factors cancel to just `albedo`, so the contribution is
+    // `albedo * incoming_radiance`. Skipped for metals (they have no
+    // Lambertian diffuse bounce — their indirect comes through env_specular).
+    let bounce_jitter = rand_uniform2(pixel, 41u);
+    let bounce_dir = sample_hemisphere_cosine(normal, bounce_jitter);
+    let bounce_origin = p + normal * 0.001;
+    var bounce_hit = trace_bvh(bounce_origin, bounce_dir);
+    let bounce_ground = intersect_ground(bounce_origin, bounce_dir);
+    if bounce_ground.t < bounce_hit.t {
+        bounce_hit.t = bounce_ground.t;
+        bounce_hit.face_idx = FACE_IDX_GROUND;
+        bounce_hit.uv = vec2<f32>(bounce_ground.fade, 0.0);
+    }
+    let indirect_radiance = shade_direct(bounce_hit, bounce_origin, bounce_dir, pixel);
+    let indirect = albedo * (1.0 - metallic) * indirect_radiance * 0.7;
 
-    // Gamma correction
+    var color = ambient + lo + env_specular + indirect;
+
+    color = tonemap_aces(color);
     color = pow(color, vec3<f32>(1.0 / 2.2));
 
     return vec4<f32>(color, 1.0);
@@ -1035,6 +1378,82 @@ fn trace_depth_normal(pixel: vec2<u32>) -> vec4<f32> {
 
     let normal = compute_normal(hit);
     return vec4<f32>(normal, hit.t);
+}
+
+// Edge-aware bilateral spatial filter for denoising stochastic noise
+// (soft shadows, AO, GI bounce). Reads accum_buffer at neighbor pixels
+// weighted by depth + normal similarity, returning a smoothed color
+// that respects geometric edges.
+//
+// The filter strength scales DOWN with accumulation: at frame 1 (DRAFT)
+// it provides aggressive smoothing of single-sample noise; at frame 24+
+// (HIGH after settle) it has nearly no effect since the temporal average
+// is already clean.
+//
+// Note: reads accum_buffer at neighbor positions which may have either
+// "this frame's value" or "previous frame's value" depending on workgroup
+// scheduling. In practice the neighbors' running averages are close
+// enough that the bilateral converges correctly.
+fn denoise(pixel_coord: vec2<i32>, center_color: vec4<f32>, center_depth_normal: vec4<f32>) -> vec4<f32> {
+    let frame_idx = render_state.frame_index;
+    if frame_idx > 32u {
+        return center_color;
+    }
+    // Strength: 1.0 at frame 1, decays to ~0 by frame 32.
+    let strength = clamp(1.0 - f32(frame_idx) / 32.0, 0.0, 1.0);
+
+    let center_normal = center_depth_normal.xyz;
+    let center_depth = center_depth_normal.w;
+    let is_background = center_depth >= MAX_T - 1.0;
+
+    // 5x5 box of neighbors (skip center, included separately).
+    var sum = center_color.rgb;
+    var weight_sum = 1.0;
+
+    for (var dy: i32 = -2; dy <= 2; dy++) {
+        for (var dx: i32 = -2; dx <= 2; dx++) {
+            if dx == 0 && dy == 0 { continue; }
+
+            let n_coord = pixel_coord + vec2<i32>(dx, dy);
+            if n_coord.x < 0 || n_coord.x >= i32(camera.width) ||
+               n_coord.y < 0 || n_coord.y >= i32(camera.height) {
+                continue;
+            }
+
+            let n_dn = depth_normal_buffer[pixel_index_i32(n_coord)];
+            let n_normal = n_dn.xyz;
+            let n_depth = n_dn.w;
+            let n_is_bg = n_depth >= MAX_T - 1.0;
+
+            // Hard reject across silhouettes — never blur foreground into
+            // background or vice versa.
+            if is_background != n_is_bg { continue; }
+
+            var w = 1.0;
+            if !is_background {
+                // Depth weight: similar depth → high weight.
+                let depth_diff = abs(center_depth - n_depth) / max(center_depth, 0.1);
+                w *= exp(-depth_diff * 8.0);
+
+                // Normal weight: similar normal → high weight.
+                if length(center_normal) > 0.5 && length(n_normal) > 0.5 {
+                    let n_dot = max(dot(normalize(center_normal), normalize(n_normal)), 0.0);
+                    w *= pow(n_dot, 6.0);
+                }
+            }
+
+            // Spatial falloff (Gaussian-ish).
+            let r2 = f32(dx * dx + dy * dy);
+            w *= exp(-r2 * 0.25);
+
+            let n_color = accum_buffer[pixel_index_i32(n_coord)].rgb;
+            sum += n_color * w;
+            weight_sum += w;
+        }
+    }
+
+    let blurred = sum / weight_sum;
+    return vec4<f32>(mix(center_color.rgb, blurred, strength), center_color.a);
 }
 
 // Detect edges based on depth and normal discontinuity
@@ -1105,15 +1524,25 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let origin = ray[0];
     let dir = ray[1];
 
-    // Trace ray using BVH acceleration
-    let hit = trace_bvh(origin, dir);
-    let new_color = shade(hit, dir);
+    // Trace ray using BVH acceleration, then test the implicit ground
+    // plane and pick whichever is closer.
+    var hit = trace_bvh(origin, dir);
+    let ground = intersect_ground(origin, dir);
+    if ground.t < hit.t {
+        hit.t = ground.t;
+        hit.face_idx = FACE_IDX_GROUND;
+        hit.uv = vec2<f32>(ground.fade, 0.0);
+    }
+    let new_color = shade(hit, origin, dir, pixel);
 
-    // Store depth and normal for edge detection
+    // Store depth and normal for edge detection. Ground hits get a normal
+    // so silhouettes against the ground get drawn just like real faces.
     let pixel_coord = vec2<i32>(pixel);
     var depth_normal: vec4<f32>;
     if hit.face_idx == 0xFFFFFFFFu {
         depth_normal = vec4<f32>(0.0, 0.0, 0.0, MAX_T);
+    } else if hit.face_idx == FACE_IDX_GROUND {
+        depth_normal = vec4<f32>(0.0, 0.0, 1.0, hit.t);
     } else {
         let normal = compute_normal(hit);
         depth_normal = vec4<f32>(normal, hit.t);
@@ -1137,20 +1566,33 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         accumulated = mix(prev, new_color, weight);
     }
 
-    // Apply edge detection on later frames (when we have stable depth/normal data)
+    // Spatial denoise — bilateral filter that smooths within similar
+    // depth/normal regions, scaled down with accumulation count so it
+    // mostly affects DRAFT/STANDARD tiers and fades out as HIGH settles.
+    // Has to run before edge detection so edges are drawn on the
+    // denoised image.
     var final_color = accumulated;
+    if render_state.frame_index >= 2u {
+        let stored_dn = depth_normal_buffer[pixel_index_i32(pixel_coord)];
+        final_color = denoise(pixel_coord, accumulated, stored_dn);
+    }
+
+    // Apply edge detection on later frames (when we have stable depth/normal data)
     if render_state.enable_edges == 1u && render_state.frame_index >= 2u {
         let stored_depth_normal = depth_normal_buffer[pixel_index_i32(pixel_coord)];
         let edge = detect_edge(pixel_coord, stored_depth_normal);
         if edge > 0.1 {
             // Darken edges
             let edge_color = vec4<f32>(0.1, 0.1, 0.12, 1.0);
-            final_color = mix(accumulated, edge_color, edge * 0.8);
+            final_color = mix(final_color, edge_color, edge * 0.8);
         }
     }
 
-    // Apply debug visualization if enabled
-    if render_state.debug_mode > 0u && hit.face_idx != 0xFFFFFFFFu {
+    // Apply debug visualization if enabled. Skip ground/miss sentinels
+    // because compute_normal() would index a real face buffer.
+    if render_state.debug_mode > 0u
+        && hit.face_idx != 0xFFFFFFFFu
+        && hit.face_idx != FACE_IDX_GROUND {
         let normal = compute_normal(hit);
 
         if render_state.debug_mode == 1u {

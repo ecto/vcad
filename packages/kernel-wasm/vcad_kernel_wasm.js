@@ -192,6 +192,14 @@ export class RayTracer {
         return ret !== 0;
     }
     /**
+     * Clear all uploaded geometry. Call before re-uploading a fresh
+     * scene; subsequent `upload_solid` calls will accumulate into a
+     * new merged scene.
+     */
+    clearScene() {
+        wasm.raytracer_clearScene(this.__wbg_ptr);
+    }
+    /**
      * Create a new ray tracer.
      *
      * Requires WebGPU to be available and initialized.
@@ -360,9 +368,21 @@ export class RayTracer {
         }
     }
     /**
+     * Set the visible-background theme. 0 = dark (default), 1 = light.
+     * IBL panels and direct lighting stay constant across themes — this
+     * only swaps the atmospheric backdrop and ground tint.
+     * @param {number} theme
+     */
+    setTheme(theme) {
+        wasm.raytracer_setTheme(this.__wbg_ptr, theme);
+    }
+    /**
      * Upload a solid's BRep representation for ray tracing.
      *
-     * This extracts the BRep surfaces and builds the GPU scene data.
+     * First call after clearScene seeds the GPU scene. Subsequent calls
+     * merge into the existing scene — surfaces/faces/BVH from each new
+     * solid are unified under a fresh root, so multi-part scenes render
+     * in a single ray-trace pass.
      * @param {Solid} solid
      */
     uploadSolid(solid) {

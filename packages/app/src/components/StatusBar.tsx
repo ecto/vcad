@@ -16,6 +16,7 @@ import { CursorCoordChip } from "@/components/footer/CursorCoordChip";
 import { KernelPulseChip } from "@/components/footer/KernelPulseChip";
 import { JobsChip } from "@/components/footer/JobsChip";
 import { KoanChip } from "@/components/footer/KoanChip";
+import { RaytraceChip } from "@/components/footer/RaytraceChip";
 import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useCapabilities } from "@/lib/capabilities";
@@ -73,7 +74,6 @@ export function StatusBar() {
   const sketchActive = useSketchStore((s) => s.active);
   const sketchPlane = useSketchStore((s) => s.plane);
   const drafting2d = useDrawingStore((s) => s.viewMode === "2d");
-  const renderMode = useUiStore((s) => s.renderMode);
   const toolbarTab = useUiStore((s) => s.toolbarTab);
   const sketchCursor = useSketchStore((s) => s.cursorSketchPos);
   const sketchSnap = useSketchStore((s) => s.snapTarget);
@@ -203,11 +203,9 @@ export function StatusBar() {
           mode={
             drafting2d
               ? "drafting"
-              : renderMode === "raytrace"
-                ? "raytrace"
-                : toolbarTab === "assembly"
-                  ? "assembly"
-                  : null
+              : toolbarTab === "assembly"
+                ? "assembly"
+                : null
           }
         />
       )}
@@ -264,6 +262,8 @@ export function StatusBar() {
       <CursorCoordChip className={cn(sketchActive && "hidden lg:flex")} />
 
       <JobsChip />
+
+      <RaytraceChip />
 
       <FooterChip className="gap-3">
         <span className="tabular-nums">
