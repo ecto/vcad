@@ -2222,7 +2222,7 @@ pub struct RayTracer {
     last_height: u32,
     /// Debug render mode: 0=normal, 1=show normals, 2=show face_id, 3=show n_dot_l, 4=orientation.
     debug_mode: u32,
-    /// Enable edge detection overlay.
+    /// Enable edge detection overlay (master switch).
     enable_edges: bool,
     /// Edge depth threshold.
     edge_depth_threshold: f32,
@@ -2230,6 +2230,17 @@ pub struct RayTracer {
     edge_normal_threshold: f32,
     /// Theme: 0 = dark, 1 = light. Drives the visible background palette.
     theme: u32,
+    // Per-type edge style
+    enable_silhouette: bool,
+    enable_crease: bool,
+    enable_boundary: bool,
+    silhouette_color: [f32; 4],
+    crease_color: [f32; 4],
+    boundary_color: [f32; 4],
+    silhouette_width: f32,
+    crease_width: f32,
+    boundary_width: f32,
+    edge_softness: f32,
 }
 
 #[cfg(feature = "raytrace")]
@@ -2263,6 +2274,16 @@ impl RayTracer {
             edge_depth_threshold: 0.1,
             edge_normal_threshold: 30.0,
             theme: 0,
+            enable_silhouette: true,
+            enable_crease: true,
+            enable_boundary: true,
+            silhouette_color: [0.08, 0.08, 0.10, 1.0],
+            crease_color: [0.12, 0.12, 0.14, 1.0],
+            boundary_color: [0.06, 0.06, 0.08, 1.0],
+            silhouette_width: 1.0,
+            crease_width: 0.75,
+            boundary_width: 1.25,
+            edge_softness: 1.5,
         })
     }
 
@@ -2342,6 +2363,48 @@ impl RayTracer {
     #[wasm_bindgen(js_name = getEdgeDetectionEnabled)]
     pub fn get_edge_detection_enabled(&self) -> bool {
         self.enable_edges
+    }
+
+    /// Set per-type edge style (colors, widths, softness, and individual toggles).
+    ///
+    /// Colors are RGBA in linear space (0–1). Width 1.0 = one pixel; softness controls
+    /// the sub-pixel anti-aliasing transition width.
+    #[wasm_bindgen(js_name = setEdgeStyle)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_edge_style(
+        &mut self,
+        enable_silhouette: bool,
+        enable_crease: bool,
+        enable_boundary: bool,
+        silhouette_r: f32,
+        silhouette_g: f32,
+        silhouette_b: f32,
+        silhouette_a: f32,
+        crease_r: f32,
+        crease_g: f32,
+        crease_b: f32,
+        crease_a: f32,
+        boundary_r: f32,
+        boundary_g: f32,
+        boundary_b: f32,
+        boundary_a: f32,
+        silhouette_width: f32,
+        crease_width: f32,
+        boundary_width: f32,
+        edge_softness: f32,
+    ) {
+        self.enable_silhouette = enable_silhouette;
+        self.enable_crease = enable_crease;
+        self.enable_boundary = enable_boundary;
+        self.silhouette_color = [silhouette_r, silhouette_g, silhouette_b, silhouette_a];
+        self.crease_color = [crease_r, crease_g, crease_b, crease_a];
+        self.boundary_color = [boundary_r, boundary_g, boundary_b, boundary_a];
+        self.silhouette_width = silhouette_width;
+        self.crease_width = crease_width;
+        self.boundary_width = boundary_width;
+        self.edge_softness = edge_softness;
+        self.frame_index = 0;
+        self.accum_buffer = None;
     }
 
     /// Clear all uploaded geometry. Call before re-uploading a fresh
@@ -2574,21 +2637,46 @@ impl RayTracer {
         let ctx =
             vcad_kernel_gpu::GpuContext::get().ok_or_else(|| JsError::new("GPU context lost"))?;
 
+        // Build per-type enable flags (bit 0 = silhouette, bit 1 = crease, bit 2 = boundary).
+        let render_state = {
+            let (s, c, b) = if self.enable_edges {
+                (
+                    self.enable_silhouette,
+                    self.enable_crease,
+                    self.enable_boundary,
+                )
+            } else {
+                (false, false, false)
+            };
+            vcad_kernel_raytrace::gpu::GpuRenderState::new_styled(
+                self.frame_index,
+                self.debug_mode,
+                s,
+                c,
+                b,
+                self.edge_depth_threshold,
+                self.edge_normal_threshold,
+                self.theme,
+                self.silhouette_color,
+                self.crease_color,
+                self.boundary_color,
+                self.silhouette_width,
+                self.crease_width,
+                self.boundary_width,
+                self.edge_softness,
+            )
+        };
+
         let (pixels, new_accum) = self
             .pipeline
-            .render_with_full_settings(
+            .render_with_render_state(
                 ctx,
                 scene,
                 &gpu_camera,
                 width,
                 height,
-                self.frame_index,
                 self.accum_buffer.take(),
-                self.debug_mode,
-                self.enable_edges,
-                self.edge_depth_threshold,
-                self.edge_normal_threshold,
-                self.theme,
+                render_state,
             )
             .await
             .map_err(|e| JsError::new(&format!("Render failed: {}", e)))?;

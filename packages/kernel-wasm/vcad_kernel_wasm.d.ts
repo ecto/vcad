@@ -186,6 +186,13 @@ export class RayTracer {
      */
     setEdgeDetection(enabled: boolean, depth_threshold: number, normal_threshold: number): void;
     /**
+     * Set per-type edge style (colors, widths, softness, and individual toggles).
+     *
+     * Colors are RGBA in linear space (0–1). Width 1.0 = one pixel; softness controls
+     * the sub-pixel anti-aliasing transition width.
+     */
+    setEdgeStyle(enable_silhouette: boolean, enable_crease: boolean, enable_boundary: boolean, silhouette_r: number, silhouette_g: number, silhouette_b: number, silhouette_a: number, crease_r: number, crease_g: number, crease_b: number, crease_a: number, boundary_r: number, boundary_g: number, boundary_b: number, boundary_a: number, silhouette_width: number, crease_width: number, boundary_width: number, edge_softness: number): void;
+    /**
      * Set the material for all faces in the scene.
      *
      * # Arguments
@@ -1936,6 +1943,7 @@ export interface InitOutput {
     readonly raytracer_resetAccumulation: (a: number) => void;
     readonly raytracer_setDebugMode: (a: number, b: number) => void;
     readonly raytracer_setEdgeDetection: (a: number, b: number, c: number, d: number) => void;
+    readonly raytracer_setEdgeStyle: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number, t: number) => void;
     readonly raytracer_setMaterial: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly raytracer_setTheme: (a: number, b: number) => void;
     readonly raytracer_uploadSolid: (a: number, b: number) => [number, number];
@@ -2153,11 +2161,11 @@ export interface InitOutput {
     readonly slicersettings_fromJson: (a: number, b: number) => [number, number, number];
     readonly slicersettings_new: () => number;
     readonly isSlicerAvailable: () => number;
-    readonly wasm_bindgen__closure__destroy__h30743bca3150d93c: (a: number, b: number) => void;
-    readonly wasm_bindgen__closure__destroy__hfdadf281ff0f1c56: (a: number, b: number) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e: (a: number, b: number, c: any, d: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__closure__destroy__h29172bbcd065953b: (a: number, b: number) => void;
+    readonly wasm_bindgen__closure__destroy__h6ed7eb1128abde65: (a: number, b: number) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h61f848611b9bfd22: (a: number, b: number, c: any, d: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h409646c44a6f7cf4: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h53e1d5f5246c70f9: (a: number, b: number, c: any) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;

@@ -160,6 +160,17 @@ impl RayTracePipeline {
                             },
                             count: None,
                         },
+                        // Feature ID buffer (per-pixel face_idx for analytic crease detection)
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 11,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
                     ],
                 });
 
@@ -264,13 +275,7 @@ impl RayTracePipeline {
         .await
     }
 
-    /// Render a scene with full control over all settings.
-    ///
-    /// # Arguments
-    /// * Same as render_progressive_with_debug, plus:
-    /// * `enable_edges` - Whether to show edge detection overlay
-    /// * `edge_depth_threshold` - Depth discontinuity threshold for edges
-    /// * `edge_normal_threshold` - Normal angle threshold (degrees) for edges
+    /// Render a scene with full control over all settings (backward-compat wrapper).
     #[allow(clippy::too_many_arguments)]
     pub async fn render_with_full_settings(
         &self,
@@ -287,6 +292,38 @@ impl RayTracePipeline {
         edge_normal_threshold: f32,
         theme: u32,
     ) -> Result<(Vec<u8>, wgpu::Buffer), GpuError> {
+        let render_state = GpuRenderState::with_full_settings(
+            frame_index,
+            debug_mode,
+            enable_edges,
+            edge_depth_threshold,
+            edge_normal_threshold,
+            theme,
+        );
+        self.render_with_render_state(
+            ctx,
+            scene,
+            camera,
+            width,
+            height,
+            accum_buffer,
+            render_state,
+        )
+        .await
+    }
+
+    /// Render with a fully-constructed `GpuRenderState` (supports per-type edge style).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn render_with_render_state(
+        &self,
+        ctx: &GpuContext,
+        scene: &GpuScene,
+        camera: &GpuCamera,
+        width: u32,
+        height: u32,
+        accum_buffer: Option<wgpu::Buffer>,
+        render_state: GpuRenderState,
+    ) -> Result<(Vec<u8>, wgpu::Buffer), GpuError> {
         use wgpu::util::DeviceExt;
 
         // Create camera buffer
@@ -299,14 +336,6 @@ impl RayTracePipeline {
             });
 
         // Create render state buffer
-        let render_state = GpuRenderState::with_full_settings(
-            frame_index,
-            debug_mode,
-            enable_edges,
-            edge_depth_threshold,
-            edge_normal_threshold,
-            theme,
-        );
         let render_state_buffer =
             ctx.device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -422,10 +451,20 @@ impl RayTracePipeline {
             })
         });
 
-        // Create depth/normal buffer for edge detection (4 floats per pixel: depth, nx, ny, nz)
+        // Depth/normal buffer for edge detection (vec4 per pixel: normal.xyz, depth).
         let depth_normal_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Depth Normal Buffer"),
             size: accum_buf_size,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+
+        // Feature ID buffer: one u32 per pixel storing face_idx (0xFFFFFFFF = background).
+        // Written at frame 1 and reused by the crease detector on subsequent frames.
+        let feature_id_buf_size = (width * height * 4) as u64;
+        let feature_id_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Feature ID Buffer"),
+            size: feature_id_buf_size,
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
@@ -488,6 +527,10 @@ impl RayTracePipeline {
                 wgpu::BindGroupEntry {
                     binding: 10,
                     resource: depth_normal_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: feature_id_buffer.as_entire_binding(),
                 },
             ],
         });

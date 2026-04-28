@@ -349,6 +349,34 @@ export class RayTracer {
         wasm.raytracer_setEdgeDetection(this.__wbg_ptr, enabled, depth_threshold, normal_threshold);
     }
     /**
+     * Set per-type edge style (colors, widths, softness, and individual toggles).
+     *
+     * Colors are RGBA in linear space (0–1). Width 1.0 = one pixel; softness controls
+     * the sub-pixel anti-aliasing transition width.
+     * @param {boolean} enable_silhouette
+     * @param {boolean} enable_crease
+     * @param {boolean} enable_boundary
+     * @param {number} silhouette_r
+     * @param {number} silhouette_g
+     * @param {number} silhouette_b
+     * @param {number} silhouette_a
+     * @param {number} crease_r
+     * @param {number} crease_g
+     * @param {number} crease_b
+     * @param {number} crease_a
+     * @param {number} boundary_r
+     * @param {number} boundary_g
+     * @param {number} boundary_b
+     * @param {number} boundary_a
+     * @param {number} silhouette_width
+     * @param {number} crease_width
+     * @param {number} boundary_width
+     * @param {number} edge_softness
+     */
+    setEdgeStyle(enable_silhouette, enable_crease, enable_boundary, silhouette_r, silhouette_g, silhouette_b, silhouette_a, crease_r, crease_g, crease_b, crease_a, boundary_r, boundary_g, boundary_b, boundary_a, silhouette_width, crease_width, boundary_width, edge_softness) {
+        wasm.raytracer_setEdgeStyle(this.__wbg_ptr, enable_silhouette, enable_crease, enable_boundary, silhouette_r, silhouette_g, silhouette_b, silhouette_a, crease_r, crease_g, crease_b, crease_a, boundary_r, boundary_g, boundary_b, boundary_a, silhouette_width, crease_width, boundary_width, edge_softness);
+    }
+    /**
      * Set the material for all faces in the scene.
      *
      * # Arguments
@@ -5877,7 +5905,7 @@ function __wbg_get_imports() {
                     const a = state0.a;
                     state0.a = 0;
                     try {
-                        return wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(a, state0.b, arg0, arg1);
+                        return wasm_bindgen__convert__closures_____invoke__h61f848611b9bfd22(a, state0.b, arg0, arg1);
                     } finally {
                         state0.a = a;
                     }
@@ -6463,12 +6491,12 @@ function __wbg_get_imports() {
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
             // Cast intrinsic for `Closure(Closure { dtor_idx: 1233, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1234, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h29172bbcd065953b, wasm_bindgen__convert__closures_____invoke__h409646c44a6f7cf4);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
             // Cast intrinsic for `Closure(Closure { dtor_idx: 2020, function: Function { arguments: [Externref], shim_idx: 2021, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h6ed7eb1128abde65, wasm_bindgen__convert__closures_____invoke__h53e1d5f5246c70f9);
             return ret;
         },
         __wbindgen_cast_0000000000000003: function(arg0) {
@@ -6556,16 +6584,16 @@ function __wbg_get_imports() {
     };
 }
 
-function wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h409646c44a6f7cf4(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h409646c44a6f7cf4(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h53e1d5f5246c70f9(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h53e1d5f5246c70f9(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(arg0, arg1, arg2, arg3) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(arg0, arg1, arg2, arg3);
+function wasm_bindgen__convert__closures_____invoke__h61f848611b9bfd22(arg0, arg1, arg2, arg3) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h61f848611b9bfd22(arg0, arg1, arg2, arg3);
 }
 
 

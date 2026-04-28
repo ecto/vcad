@@ -37,9 +37,23 @@ export function RaytraceChip({ className }: { className?: string }) {
   const raytraceAvailable = useUiStore((s) => s.raytraceAvailable);
   const raytraceQuality = useUiStore((s) => s.raytraceQuality);
   const raytraceEdgesEnabled = useUiStore((s) => s.raytraceEdgesEnabled);
+  const raytraceEdgeSilhouetteEnabled = useUiStore((s) => s.raytraceEdgeSilhouetteEnabled);
+  const raytraceEdgeCreaseEnabled = useUiStore((s) => s.raytraceEdgeCreaseEnabled);
+  const raytraceEdgeBoundaryEnabled = useUiStore((s) => s.raytraceEdgeBoundaryEnabled);
+  const raytraceEdgeSilhouetteWidth = useUiStore((s) => s.raytraceEdgeSilhouetteWidth);
+  const raytraceEdgeCreaseWidth = useUiStore((s) => s.raytraceEdgeCreaseWidth);
+  const raytraceEdgeBoundaryWidth = useUiStore((s) => s.raytraceEdgeBoundaryWidth);
+  const raytraceEdgeSoftness = useUiStore((s) => s.raytraceEdgeSoftness);
   const toggleRenderMode = useUiStore((s) => s.toggleRenderMode);
   const setRaytraceQuality = useUiStore((s) => s.setRaytraceQuality);
   const setRaytraceEdgesEnabled = useUiStore((s) => s.setRaytraceEdgesEnabled);
+  const setRaytraceEdgeSilhouetteEnabled = useUiStore((s) => s.setRaytraceEdgeSilhouetteEnabled);
+  const setRaytraceEdgeCreaseEnabled = useUiStore((s) => s.setRaytraceEdgeCreaseEnabled);
+  const setRaytraceEdgeBoundaryEnabled = useUiStore((s) => s.setRaytraceEdgeBoundaryEnabled);
+  const setRaytraceEdgeSilhouetteWidth = useUiStore((s) => s.setRaytraceEdgeSilhouetteWidth);
+  const setRaytraceEdgeCreaseWidth = useUiStore((s) => s.setRaytraceEdgeCreaseWidth);
+  const setRaytraceEdgeBoundaryWidth = useUiStore((s) => s.setRaytraceEdgeBoundaryWidth);
+  const setRaytraceEdgeSoftness = useUiStore((s) => s.setRaytraceEdgeSoftness);
 
   if (!raytraceAvailable) return null;
 
@@ -136,6 +150,7 @@ export function RaytraceChip({ className }: { className?: string }) {
 
           <div className="my-1 border-t border-border/40" />
 
+          {/* Master edges toggle */}
           <button
             type="button"
             onClick={() => setRaytraceEdgesEnabled(!raytraceEdgesEnabled)}
@@ -157,6 +172,80 @@ export function RaytraceChip({ className }: { className?: string }) {
               {raytraceEdgesEnabled ? "on" : "off"}
             </span>
           </button>
+
+          {/* Per-type edge controls (visible when edges are on) */}
+          {raytraceEdgesEnabled && (
+            <div className="ml-2 mt-0.5 space-y-0.5">
+              {([
+                {
+                  label: "Silhouette",
+                  enabled: raytraceEdgeSilhouetteEnabled,
+                  setEnabled: setRaytraceEdgeSilhouetteEnabled,
+                  width: raytraceEdgeSilhouetteWidth,
+                  setWidth: setRaytraceEdgeSilhouetteWidth,
+                },
+                {
+                  label: "Crease",
+                  enabled: raytraceEdgeCreaseEnabled,
+                  setEnabled: setRaytraceEdgeCreaseEnabled,
+                  width: raytraceEdgeCreaseWidth,
+                  setWidth: setRaytraceEdgeCreaseWidth,
+                },
+                {
+                  label: "Boundary",
+                  enabled: raytraceEdgeBoundaryEnabled,
+                  setEnabled: setRaytraceEdgeBoundaryEnabled,
+                  width: raytraceEdgeBoundaryWidth,
+                  setWidth: setRaytraceEdgeBoundaryWidth,
+                },
+              ] as const).map(({ label, enabled, setEnabled, width, setWidth }) => (
+                <div key={label} className="flex items-center gap-2 px-2 py-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setEnabled(!enabled)}
+                    className={cn(
+                      "w-14 text-left uppercase tracking-wide text-[9px]",
+                      "transition-colors",
+                      enabled ? "text-text" : "text-text-muted/50",
+                    )}
+                  >
+                    {label}
+                  </button>
+                  <input
+                    type="range"
+                    min={0.25}
+                    max={3}
+                    step={0.25}
+                    value={width}
+                    disabled={!enabled}
+                    onChange={(e) => setWidth(Number(e.target.value))}
+                    className="flex-1 h-1 accent-brand disabled:opacity-40"
+                  />
+                  <span className="w-6 text-right text-[9px] tabular-nums text-text-muted/60">
+                    {width.toFixed(2)}
+                  </span>
+                </div>
+              ))}
+              {/* Softness (AA falloff) */}
+              <div className="flex items-center gap-2 px-2 py-0.5">
+                <span className="w-14 uppercase tracking-wide text-[9px] text-text-muted/70">
+                  Softness
+                </span>
+                <input
+                  type="range"
+                  min={0.5}
+                  max={4}
+                  step={0.5}
+                  value={raytraceEdgeSoftness}
+                  onChange={(e) => setRaytraceEdgeSoftness(Number(e.target.value))}
+                  className="flex-1 h-1 accent-brand"
+                />
+                <span className="w-6 text-right text-[9px] tabular-nums text-text-muted/60">
+                  {raytraceEdgeSoftness.toFixed(1)}
+                </span>
+              </div>
+            </div>
+          )}
 
           <div className="my-1 border-t border-border/40" />
 
