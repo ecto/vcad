@@ -31,6 +31,8 @@ import {
   saveCompleteDocument,
   updateDocument,
 } from "./lib/storage";
+import { installLastOpenedTracker } from "./lib/last-opened";
+import { useBootStore } from "./stores/boot-store";
 
 // Configure storage adapter for auth/sync
 const storageAdapter: StorageAdapter = {
@@ -84,6 +86,37 @@ const storageAdapter: StorageAdapter = {
 configureStorage(storageAdapter);
 configureVersionHistoryStorage(storageAdapter);
 initSyncListeners();
+installLastOpenedTracker();
+
+/**
+ * Defer the first sync until bootstrap finishes.
+ *
+ * On cold-start, AuthProvider's `ensureSession()` resolves quickly with the
+ * cached session and fires `onSignIn` while `bootstrap()` is still resolving
+ * the document. The original handler called `triggerSync()` immediately,
+ * which raced our IDB read in `fetchDocumentData()` — sync's downloads could
+ * land first and shift "most recent" out from under us. Gating the first
+ * sync on `phase === "ready"` removes that race entirely. Later sign-ins
+ * (user clicks "Sign in") happen long after boot, so they're unaffected.
+ */
+let firstSyncDone = false;
+function onSignInGated(): void {
+  if (firstSyncDone) {
+    void triggerSync();
+    return;
+  }
+  if (useBootStore.getState().phase === "ready") {
+    firstSyncDone = true;
+    void triggerSync();
+    return;
+  }
+  const unsub = useBootStore.subscribe((s) => {
+    if (s.phase !== "ready") return;
+    unsub();
+    firstSyncDone = true;
+    void triggerSync();
+  });
+}
 
 // Route: `/cli-auth` is the device-code browser flow completion page for
 // `vcad login`. Check the pathname at mount time and render the standalone
@@ -93,7 +126,7 @@ const isCliAuth = window.location.pathname === "/cli-auth";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <AuthProvider onSignIn={() => triggerSync()}>
+    <AuthProvider onSignIn={onSignInGated}>
       {isCliAuth ? <CliAuth /> : <App />}
     </AuthProvider>
   </StrictMode>,

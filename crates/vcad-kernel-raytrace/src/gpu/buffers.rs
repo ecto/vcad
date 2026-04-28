@@ -308,12 +308,14 @@ pub struct GpuCamera {
 
 /// Render state for progressive rendering.
 ///
-/// Layout (96 bytes, 16-byte aligned — matches `RenderState` in raytrace.wgsl):
-/// offset  0–31: eight u32/f32 scalars (existing fields)
-/// offset 32–47: silhouette_color vec4
-/// offset 48–63: crease_color vec4
-/// offset 64–79: boundary_color vec4
-/// offset 80–95: four f32 width/softness scalars
+/// Layout (112 bytes, 16-byte aligned — matches `RenderState` in raytrace.wgsl):
+/// offset  0–31: eight u32/f32 scalars (frame_index … theme)
+/// offset 32–35: refine_sample_count u32
+/// offset 36–47: _pad [u32; 3]
+/// offset 48–63: silhouette_color vec4
+/// offset 64–79: crease_color vec4
+/// offset 80–95: boundary_color vec4
+/// offset 96–111: four f32 width/softness scalars
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct GpuRenderState {
@@ -329,12 +331,18 @@ pub struct GpuRenderState {
     pub edge_depth_threshold: f32,
     /// Edge detection threshold for normal discontinuity (degrees).
     pub edge_normal_threshold: f32,
-    /// Debug render mode: 0=normal, 1=show normals, 2=show face_id, 3=show n_dot_l, 4=show orientation.
+    /// Debug render mode: 0=normal, 1=show normals, 2=show face_id, 3=show n_dot_l,
+    /// 4=show orientation, 5=sample-count heatmap (blue=1 ray, red=max rays).
     pub debug_mode: u32,
     /// Theme: 0 = dark (default), 1 = light. Drives the visible background
     /// palette in `sky_color`; the IBL panels and direct lighting stay
     /// constant across themes so the model itself looks the same.
     pub theme: u32,
+    /// Number of additional refinement rays per edge pixel (0 = disabled).
+    /// Actual rays fired = floor(sqrt(refine_sample_count))^2.
+    pub refine_sample_count: u32,
+    /// Padding to align silhouette_color to 16-byte boundary (required for uniform buffers).
+    pub _pad: [u32; 3],
     // --- edge style (added for Fusion-style edge lines) ---
     /// Silhouette line color (RGBA linear, depth-gradient edges).
     pub silhouette_color: [f32; 4],
@@ -375,6 +383,8 @@ impl GpuRenderState {
             edge_normal_threshold: 30.0,
             debug_mode: 0,
             theme: 0,
+            refine_sample_count: 0,
+            _pad: [0; 3],
             silhouette_color: DEFAULT_SILHOUETTE_COLOR,
             crease_color: DEFAULT_CREASE_COLOR,
             boundary_color: DEFAULT_BOUNDARY_COLOR,
@@ -471,6 +481,8 @@ impl GpuRenderState {
             edge_normal_threshold,
             debug_mode,
             theme,
+            refine_sample_count: 0,
+            _pad: [0; 3],
             silhouette_color,
             crease_color,
             boundary_color,
@@ -479,6 +491,28 @@ impl GpuRenderState {
             boundary_width,
             edge_softness,
         }
+    }
+
+    /// Create a render state with adaptive refinement enabled.
+    pub fn with_refinement(
+        frame_index: u32,
+        debug_mode: u32,
+        enable_edges: bool,
+        edge_depth_threshold: f32,
+        edge_normal_threshold: f32,
+        theme: u32,
+        refine_sample_count: u32,
+    ) -> Self {
+        let mut state = Self::with_full_settings(
+            frame_index,
+            debug_mode,
+            enable_edges,
+            edge_depth_threshold,
+            edge_normal_threshold,
+            theme,
+        );
+        state.refine_sample_count = refine_sample_count;
+        state
     }
 }
 

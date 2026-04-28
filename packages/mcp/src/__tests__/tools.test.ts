@@ -1,8 +1,20 @@
-import { describe, it, expect, beforeAll } from "vitest";
-import { Engine } from "@vcad/engine";
-import { createCadDocument } from "../tools/create.js";
+import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { Engine, getKernelWasm } from "@vcad/engine";
+import type { Document } from "@vcad/ir";
+import { commandRegistry } from "@vcad/core";
 import { exportCad } from "../tools/export.js";
 import { inspectCad } from "../tools/inspect.js";
+import {
+  openDocument,
+  getDocumentTool,
+  closeDocument,
+  documents,
+} from "../tools/session.js";
+import {
+  registryDispatchableNames,
+  registryToolDescriptors,
+  dispatchRegistryTool,
+} from "../tools/registry-dispatch.js";
 import {
   createRobotEnv,
   gymStep,
@@ -13,484 +25,173 @@ import {
 import { existsSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 
-describe("create_cad_document", () => {
-  it("creates a simple cube", () => {
-    const result = createCadDocument({
-      format: "json",
-      parts: [
-        {
-          name: "test_cube",
-          primitive: { type: "cube", size: { x: 10, y: 20, z: 30 } },
-        },
-      ],
-    });
-
-    expect(result.content).toHaveLength(1);
-    expect(result.content[0].type).toBe("text");
-
-    const doc = JSON.parse(result.content[0].text);
-    expect(doc.version).toBe("0.1");
-    expect(doc.roots).toHaveLength(1);
-    expect(Object.keys(doc.nodes)).toHaveLength(1);
-  });
-
-  it("creates a cylinder with difference", () => {
-    const result = createCadDocument({
-      format: "json",
-      parts: [
-        {
-          name: "plate_with_hole",
-          primitive: { type: "cube", size: { x: 50, y: 50, z: 5 } },
-          operations: [
-            {
-              type: "difference",
-              primitive: { type: "cylinder", radius: 5, height: 10 },
-              at: { x: 25, y: 25, z: -2.5 },
-            },
-          ],
-        },
-      ],
-    });
-
-    const doc = JSON.parse(result.content[0].text);
-    expect(doc.roots).toHaveLength(1);
-    // Cube + cylinder + translate + difference = 4 nodes
-    expect(Object.keys(doc.nodes).length).toBeGreaterThanOrEqual(3);
-  });
-
-  it("supports multiple parts", () => {
-    const result = createCadDocument({
-      format: "json",
-      parts: [
-        {
-          name: "part1",
-          primitive: { type: "cube", size: { x: 10, y: 10, z: 10 } },
-        },
-        {
-          name: "part2",
-          primitive: { type: "sphere", radius: 5 },
-          operations: [{ type: "translate", offset: { x: 20, y: 0, z: 0 } }],
-        },
-      ],
-    });
-
-    const doc = JSON.parse(result.content[0].text);
-    expect(doc.roots).toHaveLength(2);
-  });
-
-  it("creates a hole with 'center' positioning", () => {
-    const result = createCadDocument({
-      format: "json",
-      parts: [
-        {
-          name: "plate_with_hole",
-          primitive: { type: "cube", size: { x: 50, y: 50, z: 5 } },
-          operations: [
-            {
-              type: "hole",
-              diameter: 6,
-              at: "center",
-            },
-          ],
-        },
-      ],
-    });
-
-    const doc = JSON.parse(result.content[0].text);
-    expect(doc.roots).toHaveLength(1);
-    // Should have: cube + cylinder + translate + difference = 4 nodes
-    expect(Object.keys(doc.nodes).length).toBe(4);
-
-    // Verify the difference operation exists
-    const nodes = Object.values(doc.nodes) as Array<{
-      op: { type: string };
-    }>;
-    const hasHole = nodes.some((n) => n.op.type === "Difference");
-    expect(hasHole).toBe(true);
-  });
-
-  it("supports percentage positioning", () => {
-    const result = createCadDocument({
-      format: "json",
-      parts: [
-        {
-          name: "plate",
-          primitive: { type: "cube", size: { x: 100, y: 100, z: 10 } },
-          operations: [
-            {
-              type: "difference",
-              primitive: { type: "cylinder", radius: 5, height: 15 },
-              at: { x: "25%", y: "75%" },
-            },
-          ],
-        },
-      ],
-    });
-
-    const doc = JSON.parse(result.content[0].text);
-    // Find the translate node and verify position
-    const nodes = Object.values(doc.nodes) as Array<{
-      op: { type: string; offset?: { x: number; y: number; z: number } };
-    }>;
-    const translateNode = nodes.find((n) => n.op.type === "Translate");
-    expect(translateNode).toBeDefined();
-    // 25% of 100 = 25, 75% of 100 = 75
-    expect(translateNode!.op.offset!.x).toBe(25);
-    expect(translateNode!.op.offset!.y).toBe(75);
-  });
-
-  it("creates through-hole with auto-sized depth", () => {
-    const result = createCadDocument({
-      format: "json",
-      parts: [
-        {
-          name: "block",
-          primitive: { type: "cube", size: { x: 20, y: 20, z: 30 } },
-          operations: [
-            {
-              type: "hole",
-              diameter: 10,
-              at: "center",
-            },
-          ],
-        },
-      ],
-    });
-
-    const doc = JSON.parse(result.content[0].text);
-    // Find the cylinder node and verify height extends past part
-    const nodes = Object.values(doc.nodes) as Array<{
-      op: { type: string; height?: number };
-    }>;
-    const cylinderNode = nodes.find((n) => n.op.type === "Cylinder");
-    expect(cylinderNode).toBeDefined();
-    // Through-hole height should be > part height (30) to ensure clean cut
-    expect(cylinderNode!.op.height).toBeGreaterThan(30);
-  });
-
-  it("creates blind hole with specified depth", () => {
-    const result = createCadDocument({
-      format: "json",
-      parts: [
-        {
-          name: "block",
-          primitive: { type: "cube", size: { x: 20, y: 20, z: 30 } },
-          operations: [
-            {
-              type: "hole",
-              diameter: 8,
-              depth: 15,
-              at: "center",
-            },
-          ],
-        },
-      ],
-    });
-
-    const doc = JSON.parse(result.content[0].text);
-    // Find the cylinder node and verify height matches depth
-    const nodes = Object.values(doc.nodes) as Array<{
-      op: { type: string; height?: number };
-    }>;
-    const cylinderNode = nodes.find((n) => n.op.type === "Cylinder");
-    expect(cylinderNode).toBeDefined();
-    expect(cylinderNode!.op.height).toBe(15);
-  });
-
-  it("supports named position 'top-center'", () => {
-    const result = createCadDocument({
-      format: "json",
-      parts: [
-        {
-          name: "block",
-          primitive: { type: "cube", size: { x: 40, y: 40, z: 20 } },
-          operations: [
-            {
-              type: "difference",
-              primitive: { type: "sphere", radius: 5 },
-              at: "top-center",
-            },
-          ],
-        },
-      ],
-    });
-
-    const doc = JSON.parse(result.content[0].text);
-    const nodes = Object.values(doc.nodes) as Array<{
-      op: { type: string; offset?: { x: number; y: number; z: number } };
-    }>;
-    const translateNode = nodes.find((n) => n.op.type === "Translate");
-    expect(translateNode).toBeDefined();
-    // top-center of cube 40x40x20: x=20, y=20, z=20
-    expect(translateNode!.op.offset!.x).toBe(20);
-    expect(translateNode!.op.offset!.y).toBe(20);
-    expect(translateNode!.op.offset!.z).toBe(20);
-  });
-
-  it("creates fillet operation", () => {
-    const result = createCadDocument({
-      format: "json",
-      parts: [
-        {
-          name: "filleted_cube",
-          primitive: { type: "cube", size: { x: 20, y: 20, z: 20 } },
-          operations: [{ type: "fillet", radius: 2 }],
-        },
-      ],
-    });
-
-    const doc = JSON.parse(result.content[0].text);
-    const nodes = Object.values(doc.nodes) as Array<{
-      op: { type: string; radius?: number };
-    }>;
-    const filletNode = nodes.find((n) => n.op.type === "Fillet");
-    expect(filletNode).toBeDefined();
-    expect(filletNode!.op.radius).toBe(2);
-  });
-
-  it("creates chamfer operation", () => {
-    const result = createCadDocument({
-      format: "json",
-      parts: [
-        {
-          name: "chamfered_cube",
-          primitive: { type: "cube", size: { x: 20, y: 20, z: 20 } },
-          operations: [{ type: "chamfer", distance: 3 }],
-        },
-      ],
-    });
-
-    const doc = JSON.parse(result.content[0].text);
-    const nodes = Object.values(doc.nodes) as Array<{
-      op: { type: string; distance?: number };
-    }>;
-    const chamferNode = nodes.find((n) => n.op.type === "Chamfer");
-    expect(chamferNode).toBeDefined();
-    expect(chamferNode!.op.distance).toBe(3);
-  });
-
-  it("creates shell operation", () => {
-    const result = createCadDocument({
-      format: "json",
-      parts: [
-        {
-          name: "hollow_box",
-          primitive: { type: "cube", size: { x: 30, y: 30, z: 30 } },
-          operations: [{ type: "shell", thickness: 2 }],
-        },
-      ],
-    });
-
-    const doc = JSON.parse(result.content[0].text);
-    const nodes = Object.values(doc.nodes) as Array<{
-      op: { type: string; thickness?: number };
-    }>;
-    const shellNode = nodes.find((n) => n.op.type === "Shell");
-    expect(shellNode).toBeDefined();
-    expect(shellNode!.op.thickness).toBe(2);
-  });
-
-  it("creates extruded rectangle", () => {
-    const result = createCadDocument({
-      format: "json",
-      parts: [
-        {
-          name: "extruded_rect",
-          extrude: {
-            sketch: {
-              plane: "xy",
-              shape: { type: "rectangle", width: 20, height: 10, centered: true },
-            },
-            height: 15,
-          },
-        },
-      ],
-    });
-
-    const doc = JSON.parse(result.content[0].text);
-    const nodes = Object.values(doc.nodes) as Array<{
-      op: { type: string };
-    }>;
-
-    // Should have Sketch2D and Extrude nodes
-    const hasSketch = nodes.some((n) => n.op.type === "Sketch2D");
-    const hasExtrude = nodes.some((n) => n.op.type === "Extrude");
-    expect(hasSketch).toBe(true);
-    expect(hasExtrude).toBe(true);
-  });
-
-  it("creates extruded circle", () => {
-    const result = createCadDocument({
-      format: "json",
-      parts: [
-        {
-          name: "extruded_circle",
-          extrude: {
-            sketch: {
-              shape: { type: "circle", radius: 10 },
-            },
-            height: 25,
-          },
-        },
-      ],
-    });
-
-    const doc = JSON.parse(result.content[0].text);
-    const nodes = Object.values(doc.nodes) as Array<{
-      op: { type: string; segments?: Array<{ type: string }> };
-    }>;
-
-    // Sketch should have Arc segments
-    const sketchNode = nodes.find((n) => n.op.type === "Sketch2D");
-    expect(sketchNode).toBeDefined();
-    expect(sketchNode!.op.segments).toBeDefined();
-    expect(sketchNode!.op.segments!.every((s) => s.type === "Arc")).toBe(true);
-  });
-
-  it("creates extruded polygon", () => {
-    const result = createCadDocument({
-      format: "json",
-      parts: [
-        {
-          name: "extruded_triangle",
-          extrude: {
-            sketch: {
-              shape: {
-                type: "polygon",
-                points: [
-                  { x: 0, y: 0 },
-                  { x: 20, y: 0 },
-                  { x: 10, y: 17 },
-                ],
-              },
-            },
-            height: 10,
-          },
-        },
-      ],
-    });
-
-    const doc = JSON.parse(result.content[0].text);
-    const nodes = Object.values(doc.nodes) as Array<{
-      op: { type: string; segments?: Array<{ type: string }> };
-    }>;
-
-    const sketchNode = nodes.find((n) => n.op.type === "Sketch2D");
-    expect(sketchNode).toBeDefined();
-    // Triangle with 3 points closed = 3 line segments
-    expect(sketchNode!.op.segments!.length).toBe(3);
-  });
-
-  it("creates revolved sketch", () => {
-    const result = createCadDocument({
-      format: "json",
-      parts: [
-        {
-          name: "revolved_rect",
-          revolve: {
-            sketch: {
-              shape: { type: "rectangle", width: 5, height: 20 },
-            },
-            axis: "y",
-            axis_offset: 15,
-            angle_deg: 360,
-          },
-        },
-      ],
-    });
-
-    const doc = JSON.parse(result.content[0].text);
-    const nodes = Object.values(doc.nodes) as Array<{
-      op: { type: string; angle_deg?: number };
-    }>;
-
-    const revolveNode = nodes.find((n) => n.op.type === "Revolve");
-    expect(revolveNode).toBeDefined();
-    expect(revolveNode!.op.angle_deg).toBe(360);
-  });
-
-  it("creates assembly with joints", () => {
-    const result = createCadDocument({
-      format: "json",
-      parts: [
-        {
-          name: "base",
-          primitive: { type: "cube", size: { x: 50, y: 50, z: 10 } },
-        },
-        {
-          name: "arm",
-          primitive: { type: "cube", size: { x: 10, y: 10, z: 50 } },
-        },
-      ],
-      assembly: {
-        instances: [
-          { id: "base_inst", part: "base" },
-          { id: "arm_inst", part: "arm", position: { x: 20, y: 20, z: 10 } },
-        ],
-        joints: [
-          {
-            id: "revolute_joint",
-            parent: "base_inst",
-            child: "arm_inst",
-            type: "revolute",
-            axis: "z",
-            parent_anchor: { x: 20, y: 20, z: 10 },
-            child_anchor: { x: 0, y: 0, z: 0 },
-          },
-        ],
-        ground: "base_inst",
+/** Minimal Document with one cube part — replaces what createCadDocument
+ *  used to build for downstream tests. */
+function makeCubeDoc(): Document {
+  return {
+    version: "0.1",
+    nodes: {
+      "1": {
+        id: 1,
+        name: "test_cube",
+        op: { type: "Cube", size: { x: 10, y: 10, z: 10 } },
       },
+    },
+    materials: {},
+    part_materials: {},
+    roots: [{ root: 1, material: "default" }],
+  };
+}
+
+/** Wire the kernel WASM into the registry. Required for `planCrud` to
+ *  work — same bootstrap createServer does at startup. */
+async function bootstrapRegistry(): Promise<void> {
+  const wasm = (await getKernelWasm()) as unknown as Record<string, unknown>;
+  const getToolSchemas = wasm.get_tool_schemas as (() => string) | undefined;
+  if (getToolSchemas) commandRegistry.loadSchemas(getToolSchemas());
+  const getAnthropicToolsJson = wasm.get_anthropic_tools_json as
+    | (() => string)
+    | undefined;
+  const buildChatSystemPrompt = wasm.build_chat_system_prompt as
+    | ((parts: string, sel: string) => string)
+    | undefined;
+  const planChatTool = wasm.plan_chat_tool as
+    | ((tool: string, args: string, doc: string) => string)
+    | undefined;
+  if (getAnthropicToolsJson && buildChatSystemPrompt) {
+    commandRegistry.setWasm({
+      get_anthropic_tools_json: getAnthropicToolsJson,
+      build_chat_system_prompt: buildChatSystemPrompt,
+      plan_chat_tool: planChatTool,
     });
+  }
+}
 
-    const doc = JSON.parse(result.content[0].text);
+beforeAll(async () => {
+  await Engine.init();
+  await bootstrapRegistry();
+});
 
-    // In assembly mode, roots should be empty
+beforeEach(() => {
+  documents.clear();
+});
+
+describe("session lifecycle", () => {
+  it("opens, gets, and closes a fresh document", () => {
+    const open = openDocument({});
+    const { document_id } = JSON.parse(open.content[0].text);
+    expect(document_id).toMatch(/^doc_/);
+    expect(documents.has(document_id)).toBe(true);
+
+    const get = getDocumentTool({ document_id });
+    const doc = JSON.parse(get.content[0].text) as Document;
+    expect(doc.version).toBe("0.1");
     expect(doc.roots).toHaveLength(0);
 
-    // Should have partDefs
-    expect(doc.partDefs).toBeDefined();
-    expect(doc.partDefs.base).toBeDefined();
-    expect(doc.partDefs.arm).toBeDefined();
+    const close = closeDocument({ document_id });
+    expect(JSON.parse(close.content[0].text).closed).toBe(true);
+    expect(documents.has(document_id)).toBe(false);
+  });
 
-    // Should have instances
-    expect(doc.instances).toBeDefined();
-    expect(doc.instances).toHaveLength(2);
+  it("opens a session seeded with an existing IR", () => {
+    const seeded = makeCubeDoc();
+    const open = openDocument({ initial: seeded });
+    const { document_id } = JSON.parse(open.content[0].text);
 
-    // Should have joints
-    expect(doc.joints).toBeDefined();
-    expect(doc.joints).toHaveLength(1);
-    expect(doc.joints[0].kind.type).toBe("Revolute");
+    const fetched = JSON.parse(
+      getDocumentTool({ document_id }).content[0].text,
+    ) as Document;
+    expect(fetched.roots).toHaveLength(1);
+    expect(Object.keys(fetched.nodes)).toContain("1");
 
-    // Should have ground
-    expect(doc.groundInstanceId).toBe("base_inst");
+    // Defensive copy — mutating the seed should NOT affect the session.
+    seeded.roots.push({ root: 999, material: "default" });
+    const after = JSON.parse(
+      getDocumentTool({ document_id }).content[0].text,
+    ) as Document;
+    expect(after.roots).toHaveLength(1);
+  });
+
+  it("close_document on unknown id reports closed: false", () => {
+    const out = closeDocument({ document_id: "doc_missing" });
+    expect(JSON.parse(out.content[0].text).closed).toBe(false);
   });
 });
 
-describe("inspect_cad", () => {
+describe("registry-driven tool surface", () => {
+  it("exposes the kernel CRUD tools and filters out browser-only ones", () => {
+    const names = registryDispatchableNames();
+    // CRUD core surface is present.
+    expect(names.has("create")).toBe(true);
+    expect(names.has("read")).toBe(true);
+    expect(names.has("update")).toBe(true);
+    expect(names.has("delete")).toBe(true);
+    expect(names.has("set_material")).toBe(true);
+    // Browser-only tools must NOT be exposed via MCP.
+    expect(names.has("focus_part")).toBe(false);
+    expect(names.has("frame_all")).toBe(false);
+    expect(names.has("set_view")).toBe(false);
+  });
+
+  it("each descriptor adds a required document_id to its inputSchema", () => {
+    const descriptors = registryToolDescriptors();
+    expect(descriptors.length).toBeGreaterThan(0);
+    for (const d of descriptors) {
+      const schema = d.inputSchema as { required?: string[]; properties?: Record<string, unknown> };
+      expect(schema.required).toContain("document_id");
+      expect(schema.properties).toHaveProperty("document_id");
+    }
+  });
+
+  it("read on an empty session returns parts: []", () => {
+    const { document_id } = JSON.parse(openDocument({}).content[0].text);
+    const out = dispatchRegistryTool("read", { document_id });
+    const payload = JSON.parse(out.content[0].text);
+    expect(payload.parts).toEqual([]);
+  });
+
+  it("delete + set_material round-trip on a seeded document", () => {
+    const { document_id } = JSON.parse(
+      openDocument({ initial: makeCubeDoc() }).content[0].text,
+    );
+    // The seeded doc has a single root with id "1" — that's our part_id.
+    const setOut = dispatchRegistryTool("set_material", {
+      document_id,
+      part_id: "1",
+      material: "aluminum",
+    });
+    expect(setOut.content[0].text).toContain("aluminum");
+
+    const after = JSON.parse(
+      getDocumentTool({ document_id }).content[0].text,
+    ) as Document;
+    expect(after.roots[0].material).toBe("aluminum");
+    expect(after.part_materials["1"]).toBe("aluminum");
+
+    dispatchRegistryTool("delete", { document_id, part_id: "1" });
+    const final = JSON.parse(
+      getDocumentTool({ document_id }).content[0].text,
+    ) as Document;
+    expect(final.roots).toHaveLength(0);
+    expect(final.nodes).toEqual({});
+  });
+});
+
+describe("inspect_cad (session-aware)", () => {
   let engine: Engine;
 
   beforeAll(async () => {
     engine = await Engine.init();
   });
 
-  it("inspects a cube", () => {
-    const createResult = createCadDocument({
-      format: "json",
-      parts: [
-        {
-          name: "test_cube",
-          primitive: { type: "cube", size: { x: 10, y: 10, z: 10 } },
-        },
-      ],
-    });
-    const doc = JSON.parse(createResult.content[0].text);
-
-    const result = inspectCad({ ir: doc }, engine);
+  it("inspects a session document with a single cube", () => {
+    const { document_id } = JSON.parse(
+      openDocument({ initial: makeCubeDoc() }).content[0].text,
+    );
+    const result = inspectCad({ document_id }, engine);
     const props = JSON.parse(result.content[0].text);
 
-    // 10x10x10 cube = 1000 mm^3
     expect(props.volume_mm3).toBeCloseTo(1000, 0);
-    // Surface area = 6 * 100 = 600 mm^2
     expect(props.surface_area_mm2).toBeCloseTo(600, 0);
     expect(props.triangles).toBeGreaterThan(0);
     expect(props.parts).toBe(1);
@@ -504,65 +205,31 @@ describe("export_cad", () => {
     engine = await Engine.init();
   });
 
-  it("exports to STL", () => {
-    const createResult = createCadDocument({
-      format: "json",
-      parts: [
-        {
-          name: "test_cube",
-          primitive: { type: "cube", size: { x: 10, y: 10, z: 10 } },
-        },
-      ],
-    });
-    const doc = JSON.parse(createResult.content[0].text);
-
+  it("exports a hand-built doc to STL", () => {
     const filename = "test_export.stl";
     const filepath = resolve(process.cwd(), filename);
+    if (existsSync(filepath)) unlinkSync(filepath);
 
-    // Clean up if exists
-    if (existsSync(filepath)) {
-      unlinkSync(filepath);
-    }
-
-    const result = exportCad({ ir: doc, filename }, engine);
+    const result = exportCad({ ir: makeCubeDoc(), filename }, engine);
     const output = JSON.parse(result.content[0].text);
 
     expect(output.format).toBe("stl");
-    expect(output.bytes).toBeGreaterThan(84); // Header + at least one triangle
+    expect(output.bytes).toBeGreaterThan(84);
     expect(existsSync(filepath)).toBe(true);
-
-    // Clean up
     unlinkSync(filepath);
   });
 
-  it("exports to GLB", () => {
-    const createResult = createCadDocument({
-      format: "json",
-      parts: [
-        {
-          name: "test_cube",
-          primitive: { type: "cube", size: { x: 10, y: 10, z: 10 } },
-        },
-      ],
-    });
-    const doc = JSON.parse(createResult.content[0].text);
-
+  it("exports a hand-built doc to GLB", () => {
     const filename = "test_export.glb";
     const filepath = resolve(process.cwd(), filename);
+    if (existsSync(filepath)) unlinkSync(filepath);
 
-    // Clean up if exists
-    if (existsSync(filepath)) {
-      unlinkSync(filepath);
-    }
-
-    const result = exportCad({ ir: doc, filename }, engine);
+    const result = exportCad({ ir: makeCubeDoc(), filename }, engine);
     const output = JSON.parse(result.content[0].text);
 
     expect(output.format).toBe("glb");
-    expect(output.bytes).toBeGreaterThan(12); // Header
+    expect(output.bytes).toBeGreaterThan(12);
     expect(existsSync(filepath)).toBe(true);
-
-    // Clean up
     unlinkSync(filepath);
   });
 });
@@ -600,17 +267,13 @@ describe("gym tools", () => {
     groundInstanceId: "base_inst",
   };
 
-  // Helper to create env and check for physics availability
   async function createEnvOrSkip(): Promise<string | null> {
     const result = await createRobotEnv({
       document: robotDoc,
       end_effector_ids: ["link1_inst"],
     });
     const info = JSON.parse(result.content[0].text);
-    if (info.error) {
-      // Physics not available in test environment
-      return null;
-    }
+    if (info.error) return null;
     return info.env_id;
   }
 
@@ -622,7 +285,6 @@ describe("gym tools", () => {
 
     const info = JSON.parse(result.content[0].text);
 
-    // Either we get a valid env, or an error about physics not available
     if (info.error) {
       expect(info.error).toContain("physics");
     } else {
@@ -635,7 +297,7 @@ describe("gym tools", () => {
 
   it("steps with position control", async () => {
     const envId = await createEnvOrSkip();
-    if (!envId) return; // Skip if physics not available
+    if (!envId) return;
 
     const stepResult = gymStep({
       env_id: envId,
@@ -654,45 +316,37 @@ describe("gym tools", () => {
 
   it("resets environment", async () => {
     const envId = await createEnvOrSkip();
-    if (!envId) return; // Skip if physics not available
+    if (!envId) return;
 
-    // Move joint
     gymStep({ env_id: envId, action_type: "position", values: [30] });
-
-    // Reset
     const resetResult = gymReset({ env_id: envId });
     const obs = JSON.parse(resetResult.content[0].text);
-
     expect(obs.joint_positions).toBeDefined();
-
     gymClose({ env_id: envId });
   });
 
   it("observes without stepping", async () => {
     const envId = await createEnvOrSkip();
-    if (!envId) return; // Skip if physics not available
+    if (!envId) return;
 
     gymStep({ env_id: envId, action_type: "position", values: [60] });
-
     const observeResult = gymObserve({ env_id: envId });
     const obs = JSON.parse(observeResult.content[0].text);
 
     expect(obs.joint_positions).toBeDefined();
     expect(obs.joint_velocities).toBeDefined();
     expect(obs.end_effector_poses).toBeDefined();
-
     gymClose({ env_id: envId });
   });
 
   it("closes environment", async () => {
     const envId = await createEnvOrSkip();
-    if (!envId) return; // Skip if physics not available
+    if (!envId) return;
 
     const closeResult = gymClose({ env_id: envId });
     const closeInfo = JSON.parse(closeResult.content[0].text);
     expect(closeInfo.success).toBe(true);
 
-    // Should error on second close
     const closeAgain = gymClose({ env_id: envId });
     const errorInfo = JSON.parse(closeAgain.content[0].text);
     expect(errorInfo.error).toBeDefined();

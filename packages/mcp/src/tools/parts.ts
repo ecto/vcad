@@ -1,9 +1,10 @@
 /**
- * MCP tool handlers for the stdlib parts library.
+ * MCP tool handlers for the stdlib parts library — session-aware.
  *
- * Mirrors the chat tools in `@vcad/core` — `search_parts` searches the
- * manifest, `place_part` inserts a PartInstance node into a supplied
- * document and returns the updated JSON.
+ * `search_parts` is read-only against the manifest, no session needed.
+ * `place_part` mutates the document attached to a session id (from
+ * `open_document`); the chat surface in `@vcad/core` mutates a Zustand
+ * docstore for the same effect.
  */
 
 import type { Engine, PartManifestEntry } from "@vcad/engine";
@@ -12,7 +13,8 @@ import {
   searchParts as searchPartsEngine,
   defaultParamsFor,
 } from "@vcad/engine";
-import type { Document, Node } from "@vcad/ir";
+import type { Node } from "@vcad/ir";
+import { getSession } from "./session.js";
 
 export const searchPartsSchema = {
   type: "object",
@@ -36,9 +38,10 @@ export const searchPartsSchema = {
 export const placePartSchema = {
   type: "object",
   properties: {
-    document: {
+    document_id: {
+      type: "string",
       description:
-        "Optional existing IR Document (JSON) to insert into. If omitted, a new document is created.",
+        "Session id from open_document. The placed part is appended to this session's document.",
     },
     path: {
       type: "string",
@@ -65,7 +68,7 @@ export const placePartSchema = {
       description: "Optional display name for the feature tree.",
     },
   },
-  required: ["path"],
+  required: ["document_id", "path"],
 } as const;
 
 function kernelOf(engine: Engine): Parameters<typeof loadPartsManifest>[0] | null {
@@ -114,11 +117,15 @@ export function searchPartsTool(
   };
 }
 
-/** `place_part` MCP handler — inserts a PartInstance node and returns the updated doc. */
+/** `place_part` MCP handler — inserts a PartInstance node into a session
+ *  document and returns the new part_id. */
 export function placePartTool(
   args: Record<string, unknown>,
   engine: Engine,
 ): { content: Array<{ type: string; text: string }> } {
+  const documentId = String(args.document_id ?? "");
+  const doc = getSession(documentId);
+
   const path = typeof args.path === "string" ? args.path : null;
   if (!path) throw new Error("place_part: missing `path`");
 
@@ -135,22 +142,6 @@ export function placePartTool(
     ...defaultParamsFor(entry),
     ...userParams,
   };
-
-  let doc: Document;
-  if (args.document) {
-    doc =
-      typeof args.document === "string"
-        ? (JSON.parse(args.document) as Document)
-        : (args.document as Document);
-  } else {
-    doc = {
-      version: "0.1",
-      nodes: {},
-      materials: {},
-      part_materials: {},
-      roots: [],
-    };
-  }
 
   const existingIds = Object.keys(doc.nodes).map(Number);
   const partNodeId = (existingIds.length ? Math.max(...existingIds) : 0) + 1;
@@ -203,13 +194,14 @@ export function placePartTool(
         type: "text",
         text: JSON.stringify(
           {
+            document_id: documentId,
+            part_id: String(rootId),
             placed: {
               path,
               version: entry.version,
               params,
               node_id: partNodeId,
             },
-            document: doc,
           },
           null,
           2,

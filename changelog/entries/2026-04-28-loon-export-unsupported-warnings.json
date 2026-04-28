@@ -1,0 +1,9 @@
+{
+  "id": "2026-04-28-loon-export-unsupported-warnings",
+  "version": "0.9.3",
+  "date": "2026-04-28",
+  "category": "fix",
+  "title": "Loon export warns on unsupported variants",
+  "summary": "Exporting a document with Text2D, ImportedMesh, PcbBoard, EmbroideryPattern, or PartInstance now surfaces a clear warning instead of silently dropping the content.",
+  "features": ["loon", "export"]
+}

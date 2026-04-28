@@ -2220,7 +2220,8 @@ pub struct RayTracer {
     /// Last render dimensions.
     last_width: u32,
     last_height: u32,
-    /// Debug render mode: 0=normal, 1=show normals, 2=show face_id, 3=show n_dot_l, 4=orientation.
+    /// Debug render mode: 0=normal, 1=show normals, 2=show face_id, 3=show n_dot_l,
+    /// 4=orientation, 5=sample-count heatmap.
     debug_mode: u32,
     /// Enable edge detection overlay (master switch).
     enable_edges: bool,
@@ -2230,6 +2231,8 @@ pub struct RayTracer {
     edge_normal_threshold: f32,
     /// Theme: 0 = dark, 1 = light. Drives the visible background palette.
     theme: u32,
+    /// Additional rays per edge pixel for adaptive refinement (0 = disabled).
+    refine_sample_count: u32,
     // Per-type edge style
     enable_silhouette: bool,
     enable_crease: bool,
@@ -2274,6 +2277,7 @@ impl RayTracer {
             edge_depth_threshold: 0.1,
             edge_normal_threshold: 30.0,
             theme: 0,
+            refine_sample_count: 0,
             enable_silhouette: true,
             enable_crease: true,
             enable_boundary: true,
@@ -2295,6 +2299,24 @@ impl RayTracer {
         self.theme = theme;
         self.frame_index = 0;
         self.accum_buffer = None;
+    }
+
+    /// Set the adaptive refinement sample count.
+    ///
+    /// Edge pixels on silhouettes receive additional stratified rays for sub-pixel
+    /// anti-aliasing. Set to 0 to disable (default), or 4/9/16 for typical quality.
+    /// Mode 5 in setDebugMode shows a heatmap of rays per pixel for tuning.
+    #[wasm_bindgen(js_name = setRefineSamples)]
+    pub fn set_refine_samples(&mut self, count: u32) {
+        self.refine_sample_count = count;
+        self.frame_index = 0;
+        self.accum_buffer = None;
+    }
+
+    /// Get the current refinement sample count.
+    #[wasm_bindgen(js_name = getRefineSamples)]
+    pub fn get_refine_samples(&self) -> u32 {
+        self.refine_sample_count
     }
 
     /// Reset the progressive accumulation (call when camera moves).
@@ -2648,7 +2670,7 @@ impl RayTracer {
             } else {
                 (false, false, false)
             };
-            vcad_kernel_raytrace::gpu::GpuRenderState::new_styled(
+            let mut rs = vcad_kernel_raytrace::gpu::GpuRenderState::new_styled(
                 self.frame_index,
                 self.debug_mode,
                 s,
@@ -2664,7 +2686,9 @@ impl RayTracer {
                 self.crease_width,
                 self.boundary_width,
                 self.edge_softness,
-            )
+            );
+            rs.refine_sample_count = self.refine_sample_count;
+            rs
         };
 
         let (pixels, new_accum) = self
@@ -4944,6 +4968,20 @@ pub fn document_to_loon(doc_json: &str) -> Result<String, JsError> {
     let doc: vcad_ir::Document = serde_json::from_str(doc_json)
         .map_err(|e| JsError::new(&format!("Failed to parse document: {}", e)))?;
     Ok(vcad_ir::to_loon::document_to_loon(&doc))
+}
+
+/// Convert a Document (as JSON) to loon, also returning unsupported variant names.
+///
+/// Returns a JS object `{ source: string, unsupported: string[] }`.
+/// When `unsupported` is non-empty, the output contains comment placeholders for
+/// those nodes and callers should warn the user that data will be lost.
+#[wasm_bindgen(js_name = documentToLoonChecked)]
+pub fn document_to_loon_checked(doc_json: &str) -> Result<JsValue, JsError> {
+    let doc: vcad_ir::Document = serde_json::from_str(doc_json)
+        .map_err(|e| JsError::new(&format!("Failed to parse document: {}", e)))?;
+    let (source, unsupported) = vcad_ir::to_loon::document_to_loon_checked(&doc);
+    let result = serde_json::json!({ "source": source, "unsupported": unsupported });
+    serde_wasm_bindgen::to_value(&result).map_err(|e| JsError::new(&e.to_string()))
 }
 
 /// Parse a .vcad file (JSON v0.1, VCode v0.2, or loon v0.3).

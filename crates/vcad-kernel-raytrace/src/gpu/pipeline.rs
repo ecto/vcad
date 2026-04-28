@@ -18,6 +18,8 @@ use super::buffers::GpuCamera;
 #[cfg(feature = "gpu")]
 pub struct RayTracePipeline {
     pipeline: wgpu::ComputePipeline,
+    /// Second pass that refines edge pixels with additional stratified samples.
+    refine_pipeline: wgpu::ComputePipeline,
     bind_group_layout: wgpu::BindGroupLayout,
 }
 
@@ -193,8 +195,20 @@ impl RayTracePipeline {
                 cache: None,
             });
 
+        let refine_pipeline =
+            ctx.device
+                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("Ray Trace Refine Pipeline"),
+                    layout: Some(&pipeline_layout),
+                    module: &shader_module,
+                    entry_point: Some("refine"),
+                    compilation_options: Default::default(),
+                    cache: None,
+                });
+
         Ok(Self {
             pipeline,
+            refine_pipeline,
             bind_group_layout,
         })
     }
@@ -257,7 +271,7 @@ impl RayTracePipeline {
         accum_buffer: Option<wgpu::Buffer>,
         debug_mode: u32,
     ) -> Result<(Vec<u8>, wgpu::Buffer), GpuError> {
-        // Delegate to full settings with default edge parameters
+        // Delegate to full settings with default edge parameters, no refinement
         self.render_with_full_settings(
             ctx,
             scene,
@@ -271,11 +285,20 @@ impl RayTracePipeline {
             0.1,
             30.0,
             0,
+            0,
         )
         .await
     }
 
-    /// Render a scene with full control over all settings (backward-compat wrapper).
+    /// Render a scene with full control over all settings.
+    ///
+    /// # Arguments
+    /// * Same as render_progressive_with_debug, plus:
+    /// * `enable_edges` - Whether to show edge detection overlay
+    /// * `edge_depth_threshold` - Depth discontinuity threshold for edges
+    /// * `edge_normal_threshold` - Normal angle threshold (degrees) for edges
+    /// * `theme` - Visual theme (0=dark, 1=light)
+    /// * `refine_sample_count` - Additional rays per edge pixel (0=disabled, 4/9/16 typical)
     #[allow(clippy::too_many_arguments)]
     pub async fn render_with_full_settings(
         &self,
@@ -291,14 +314,16 @@ impl RayTracePipeline {
         edge_depth_threshold: f32,
         edge_normal_threshold: f32,
         theme: u32,
+        refine_sample_count: u32,
     ) -> Result<(Vec<u8>, wgpu::Buffer), GpuError> {
-        let render_state = GpuRenderState::with_full_settings(
+        let render_state = GpuRenderState::with_refinement(
             frame_index,
             debug_mode,
             enable_edges,
             edge_depth_threshold,
             edge_normal_threshold,
             theme,
+            refine_sample_count,
         );
         self.render_with_render_state(
             ctx,
@@ -548,6 +573,19 @@ impl RayTracePipeline {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(width.div_ceil(8), height.div_ceil(8), 1);
+        }
+
+        // Adaptive refinement pass: fires extra stratified rays at edge pixels.
+        // The main pass must fully complete before refine reads depth_normal_buffer,
+        // which is guaranteed by wgpu's sequential command encoding.
+        if render_state.refine_sample_count > 0 {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Ray Trace Refine Pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.refine_pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
             pass.dispatch_workgroups(width.div_ceil(8), height.div_ceil(8), 1);
         }
