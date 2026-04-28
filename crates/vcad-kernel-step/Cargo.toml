@@ -16,3 +16,4 @@ stepperoni = { workspace = true }
 thiserror.workspace = true
 
 [dev-dependencies]
+vcad-kernel-booleans = { path = "../vcad-kernel-booleans" }
