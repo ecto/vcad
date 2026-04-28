@@ -57,6 +57,13 @@ Every check is something the vcad kernel (or the vcad gym, for Suite C) can comp
   "tolerance_mm": 0.1 }
 
 // Volume / surface area / center of mass.
+//
+// tolerance_pct applies to:
+//  - volume_mm3, surface_area_mm2: relative — actual within ±tolerance_pct%
+//    of spec (e.g. 0.5 ⇒ ±0.5%).
+//  - center_of_mass: tolerance_pct of the actual solid's bbox diagonal,
+//    applied per component as absolute mm, with a 0.01mm floor so COMs
+//    near origin still admit kernel rounding.
 { "type": "mass_props",
   "volume_mm3": 14717.3,                  // optional
   "surface_area_mm2": 4310.0,              // optional

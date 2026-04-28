@@ -89,8 +89,20 @@ fn run_check(spec: &CheckSpec, snapshot: &EvalSnapshot) -> (CheckOutcome, serde_
             tolerance_mm,
         } => check_bbox(snapshot, *min, *max, *tolerance_mm),
 
-        CheckSpec::MassProps { .. }
-        | CheckSpec::HoleCount { .. }
+        CheckSpec::MassProps {
+            volume_mm3,
+            surface_area_mm2,
+            center_of_mass,
+            tolerance_pct,
+        } => check_mass_props(
+            snapshot,
+            *volume_mm3,
+            *surface_area_mm2,
+            *center_of_mass,
+            *tolerance_pct,
+        ),
+
+        CheckSpec::HoleCount { .. }
         | CheckSpec::HolePositions { .. }
         | CheckSpec::FilletRadius { .. }
         | CheckSpec::StepRoundtrip { .. }
@@ -208,6 +220,138 @@ fn check_bbox(
             "max_abs_deviation_mm": max_abs_dev,
             "tolerance_mm": tolerance_mm,
         }),
+    )
+}
+
+/// `mass_props`: any subset of (volume, surface_area, center_of_mass)
+/// must match within `tolerance_pct`.
+///
+/// - Volume / surface_area: relative tolerance — `|actual - spec| / |spec| ≤ tolerance_pct/100`.
+/// - Center of mass: per-component absolute tolerance derived as
+///   `tolerance_pct/100 * actual_bbox_diagonal`, with a 0.01mm floor so
+///   solids at the origin still admit a sensible deviation.
+fn check_mass_props(
+    snap: &EvalSnapshot,
+    spec_volume: Option<f64>,
+    spec_surface_area: Option<f64>,
+    spec_com: Option<[f64; 3]>,
+    tolerance_pct: f64,
+) -> (CheckOutcome, serde_json::Value) {
+    if snap.solids.is_empty() {
+        return (
+            CheckOutcome::Fail,
+            json!({ "reason": "no valid solid to measure" }),
+        );
+    }
+
+    let mut details = serde_json::Map::new();
+    let mut all_pass = true;
+
+    if let Some(spec) = spec_volume {
+        match snap.aggregate_volume() {
+            Some(actual) => {
+                let dev_pct = ((actual - spec) / spec).abs() * 100.0;
+                let pass = dev_pct <= tolerance_pct;
+                all_pass &= pass;
+                details.insert(
+                    "volume".into(),
+                    json!({
+                        "spec_mm3": spec,
+                        "actual_mm3": actual,
+                        "deviation_pct": dev_pct,
+                        "tolerance_pct": tolerance_pct,
+                        "pass": pass,
+                    }),
+                );
+            }
+            None => {
+                all_pass = false;
+                details.insert(
+                    "volume".into(),
+                    json!({ "reason": "no positive volume produced", "pass": false }),
+                );
+            }
+        }
+    }
+
+    if let Some(spec) = spec_surface_area {
+        match snap.aggregate_surface_area() {
+            Some(actual) => {
+                let dev_pct = ((actual - spec) / spec).abs() * 100.0;
+                let pass = dev_pct <= tolerance_pct;
+                all_pass &= pass;
+                details.insert(
+                    "surface_area".into(),
+                    json!({
+                        "spec_mm2": spec,
+                        "actual_mm2": actual,
+                        "deviation_pct": dev_pct,
+                        "tolerance_pct": tolerance_pct,
+                        "pass": pass,
+                    }),
+                );
+            }
+            None => {
+                all_pass = false;
+                details.insert(
+                    "surface_area".into(),
+                    json!({ "reason": "no positive surface area produced", "pass": false }),
+                );
+            }
+        }
+    }
+
+    if let Some(spec) = spec_com {
+        let bbox_diag = snap
+            .aggregate_bbox()
+            .map(|(lo, hi)| {
+                let d = [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]];
+                (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
+            })
+            .unwrap_or(0.0);
+        let com_tol_mm = (tolerance_pct / 100.0 * bbox_diag).max(0.01);
+
+        match snap.aggregate_center_of_mass() {
+            Some(actual) => {
+                let dev = [actual[0] - spec[0], actual[1] - spec[1], actual[2] - spec[2]];
+                let max_abs = dev.iter().fold(0.0_f64, |a, d| a.max(d.abs()));
+                let pass = max_abs <= com_tol_mm;
+                all_pass &= pass;
+                details.insert(
+                    "center_of_mass".into(),
+                    json!({
+                        "spec": spec,
+                        "actual": actual,
+                        "deviation": dev,
+                        "max_abs_deviation_mm": max_abs,
+                        "tolerance_mm": com_tol_mm,
+                        "bbox_diagonal_mm": bbox_diag,
+                        "pass": pass,
+                    }),
+                );
+            }
+            None => {
+                all_pass = false;
+                details.insert(
+                    "center_of_mass".into(),
+                    json!({ "reason": "could not compute COM", "pass": false }),
+                );
+            }
+        }
+    }
+
+    if details.is_empty() {
+        // Spec asked for nothing — vacuously pass, but flag it as a likely
+        // task-authoring mistake.
+        return (
+            CheckOutcome::Pass,
+            json!({ "warning": "mass_props check had no spec subfields" }),
+        );
+    }
+
+    (
+        if all_pass { CheckOutcome::Pass } else { CheckOutcome::Fail },
+        serde_json::Value::Object(details),
     )
 }
 
@@ -413,6 +557,61 @@ mod tests {
         assert_eq!(blob.checks[0].result, CheckOutcome::Fail);
         let dev = blob.checks[0].details["max_abs_deviation_mm"].as_f64().unwrap();
         assert!(dev > 30.0, "expected large deviation, got {}", dev);
+    }
+
+    #[test]
+    fn mass_props_passes_for_correct_volume() {
+        // 10mm cube → volume = 1000.
+        let (task, task_bytes) = task_with(vec![CheckSpec::MassProps {
+            volume_mm3: Some(1000.0),
+            surface_area_mm2: None,
+            center_of_mass: None,
+            tolerance_pct: 1.0,
+        }]);
+        let tmp = write_tmp_vcad("mecheval-mp-vol-pass.vcad", &cube_vcad(10.0));
+        let blob = grade(&task, &task_bytes, &tmp).expect("grade");
+        assert_eq!(blob.checks[0].result, CheckOutcome::Pass, "{:?}", blob.checks[0].details);
+    }
+
+    #[test]
+    fn mass_props_fails_for_wrong_volume() {
+        let (task, task_bytes) = task_with(vec![CheckSpec::MassProps {
+            volume_mm3: Some(125_000.0), // expects a 50mm cube
+            surface_area_mm2: None,
+            center_of_mass: None,
+            tolerance_pct: 0.5,
+        }]);
+        let tmp = write_tmp_vcad("mecheval-mp-vol-fail.vcad", &cube_vcad(10.0));
+        let blob = grade(&task, &task_bytes, &tmp).expect("grade");
+        assert_eq!(blob.checks[0].result, CheckOutcome::Fail);
+    }
+
+    #[test]
+    fn mass_props_passes_for_com_at_cube_center() {
+        // 10mm cube primitive corner-at-origin → COM at [5,5,5].
+        let (task, task_bytes) = task_with(vec![CheckSpec::MassProps {
+            volume_mm3: None,
+            surface_area_mm2: None,
+            center_of_mass: Some([5.0, 5.0, 5.0]),
+            tolerance_pct: 0.5,
+        }]);
+        let tmp = write_tmp_vcad("mecheval-mp-com-pass.vcad", &cube_vcad(10.0));
+        let blob = grade(&task, &task_bytes, &tmp).expect("grade");
+        assert_eq!(blob.checks[0].result, CheckOutcome::Pass, "{:?}", blob.checks[0].details);
+    }
+
+    #[test]
+    fn mass_props_combined_subfields() {
+        // All three: volume + surface area (6 * 100 = 600) + COM.
+        let (task, task_bytes) = task_with(vec![CheckSpec::MassProps {
+            volume_mm3: Some(1000.0),
+            surface_area_mm2: Some(600.0),
+            center_of_mass: Some([5.0, 5.0, 5.0]),
+            tolerance_pct: 1.0,
+        }]);
+        let tmp = write_tmp_vcad("mecheval-mp-combo.vcad", &cube_vcad(10.0));
+        let blob = grade(&task, &task_bytes, &tmp).expect("grade");
+        assert_eq!(blob.checks[0].result, CheckOutcome::Pass, "{:?}", blob.checks[0].details);
     }
 
     #[test]

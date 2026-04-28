@@ -68,6 +68,68 @@ impl EvalSnapshot {
         acc
     }
 
+    /// Aggregate volume across every evaluated solid. Returns `None` if no
+    /// solid produced a finite, positive volume.
+    pub fn aggregate_volume(&self) -> Option<f64> {
+        let mut total = 0.0_f64;
+        let mut any = false;
+        for s in &self.solids {
+            if let Ok(v) = catch_unwind(AssertUnwindSafe(|| s.volume())) {
+                if v.is_finite() && v > 0.0 {
+                    total += v;
+                    any = true;
+                }
+            }
+        }
+        if any {
+            Some(total)
+        } else {
+            None
+        }
+    }
+
+    /// Aggregate surface area across every evaluated solid.
+    pub fn aggregate_surface_area(&self) -> Option<f64> {
+        let mut total = 0.0_f64;
+        let mut any = false;
+        for s in &self.solids {
+            if let Ok(a) = catch_unwind(AssertUnwindSafe(|| s.surface_area())) {
+                if a.is_finite() && a > 0.0 {
+                    total += a;
+                    any = true;
+                }
+            }
+        }
+        if any {
+            Some(total)
+        } else {
+            None
+        }
+    }
+
+    /// Volume-weighted center of mass across every evaluated solid.
+    /// Returns `None` if no solid contributes positive volume.
+    pub fn aggregate_center_of_mass(&self) -> Option<[f64; 3]> {
+        let mut accum = [0.0_f64; 3];
+        let mut total_v = 0.0_f64;
+        for s in &self.solids {
+            let v = catch_unwind(AssertUnwindSafe(|| s.volume())).ok()?;
+            let com = catch_unwind(AssertUnwindSafe(|| s.center_of_mass())).ok()?;
+            if !v.is_finite() || v <= 0.0 || com.iter().any(|c| !c.is_finite()) {
+                continue;
+            }
+            for i in 0..3 {
+                accum[i] += com[i] * v;
+            }
+            total_v += v;
+        }
+        if total_v > 0.0 {
+            Some([accum[0] / total_v, accum[1] / total_v, accum[2] / total_v])
+        } else {
+            None
+        }
+    }
+
     /// Diagnostic JSON for use in a check's `details` field.
     pub fn summary_json(&self) -> serde_json::Value {
         json!({
