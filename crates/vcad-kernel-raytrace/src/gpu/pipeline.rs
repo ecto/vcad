@@ -349,17 +349,18 @@ impl RayTracePipeline {
             theme,
             refine_sample_count,
         );
-        let (pixels, accum, _ao) = self.render_with_render_state(
-            ctx,
-            scene,
-            camera,
-            width,
-            height,
-            accum_buffer,
-            None,
-            render_state,
-        )
-        .await?;
+        let (pixels, accum, _ao) = self
+            .render_with_render_state(
+                ctx,
+                scene,
+                camera,
+                width,
+                height,
+                accum_buffer,
+                None,
+                render_state,
+            )
+            .await?;
         Ok((pixels, accum))
     }
 
