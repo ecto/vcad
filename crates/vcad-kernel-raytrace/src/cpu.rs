@@ -49,6 +49,105 @@ impl CpuRenderer {
         self.bvh.brep()
     }
 
+    /// Render the scene with stratified multi-sampling for smoother silhouettes.
+    ///
+    /// # Arguments
+    ///
+    /// * `camera` - Camera position in world space
+    /// * `target` - Point the camera is looking at
+    /// * `up` - Up direction for the camera
+    /// * `width` - Output image width in pixels
+    /// * `height` - Output image height in pixels
+    /// * `fov` - Field of view in degrees
+    /// * `samples` - Number of samples per pixel (1 = single-sample, 4/9/16 = grid AA)
+    ///
+    /// # Returns
+    ///
+    /// A `Vec<u8>` containing RGBA pixel data (4 bytes per pixel),
+    /// row-major order, top-to-bottom.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_samples(
+        &self,
+        camera: Point3,
+        target: Point3,
+        up: Dir3,
+        width: u32,
+        height: u32,
+        fov: f64,
+        samples: u32,
+    ) -> Vec<u8> {
+        let samples = samples.max(1);
+        let grid = (samples as f64).sqrt() as u32;
+        let grid = grid.max(1);
+
+        if grid == 1 {
+            return self.render(camera, target, up, width, height, fov);
+        }
+
+        let mut pixels = vec![0u8; (width * height * 4) as usize];
+
+        let forward_vec = target - camera;
+        let forward = Dir3::new_normalize(Vec3::new(forward_vec.x, forward_vec.y, forward_vec.z));
+        let right = Dir3::new_normalize(forward.cross(up));
+        let cam_up = Dir3::new_normalize(right.cross(forward));
+
+        let fov_rad = fov.to_radians();
+        let half_height = (fov_rad / 2.0).tan();
+        let half_width = half_height * (width as f64 / height as f64);
+
+        let bg_color: [u8; 4] = [30, 32, 40, 255];
+
+        for py in 0..height {
+            for px in 0..width {
+                let mut r_acc = 0.0f64;
+                let mut g_acc = 0.0f64;
+                let mut b_acc = 0.0f64;
+                let mut count = 0u32;
+
+                for sy in 0..grid {
+                    for sx in 0..grid {
+                        // Stratified sub-pixel offset: center of each stratum.
+                        let offset_x = (sx as f64 + 0.5) / grid as f64 - 0.5;
+                        let offset_y = (sy as f64 + 0.5) / grid as f64 - 0.5;
+
+                        let ndc_x = (px as f64 + 0.5 + offset_x) / width as f64;
+                        let ndc_y = (py as f64 + 0.5 + offset_y) / height as f64;
+
+                        let screen_x = (2.0 * ndc_x - 1.0) * half_width;
+                        let screen_y = (1.0 - 2.0 * ndc_y) * half_height;
+
+                        let ray_dir = Vec3::new(
+                            forward.x + screen_x * right.x + screen_y * cam_up.x,
+                            forward.y + screen_x * right.y + screen_y * cam_up.y,
+                            forward.z + screen_x * right.z + screen_y * cam_up.z,
+                        );
+
+                        let ray = Ray::new(camera, ray_dir);
+                        let color = if let Some(hit) = self.bvh.trace_closest(&ray) {
+                            self.shade_hit(&ray, &hit)
+                        } else {
+                            bg_color
+                        };
+
+                        r_acc += color[0] as f64;
+                        g_acc += color[1] as f64;
+                        b_acc += color[2] as f64;
+                        count += 1;
+                    }
+                }
+
+                let n = count as f64;
+                let idx = ((py * width + px) * 4) as usize;
+                pixels[idx] = (r_acc / n) as u8;
+                pixels[idx + 1] = (g_acc / n) as u8;
+                pixels[idx + 2] = (b_acc / n) as u8;
+                pixels[idx + 3] = 255;
+            }
+        }
+
+        pixels
+    }
+
     /// Render the scene to an RGBA pixel buffer.
     ///
     /// # Arguments
@@ -274,6 +373,175 @@ pub fn render_scene(
                     }
                 }
             }
+        }
+    }
+
+    pixels
+}
+
+/// Render multiple solids with individual transforms and colors, using stratified
+/// multi-sampling for smoother silhouettes.
+///
+/// # Arguments
+///
+/// Same as `render_scene`, plus:
+/// * `samples` - Samples per pixel (1 = single-sample, 4/9/16 = grid AA)
+///
+/// # Returns
+///
+/// RGBA pixel buffer.
+#[allow(clippy::too_many_arguments)]
+pub fn render_scene_samples(
+    solids: &[Arc<BRepSolid>],
+    transforms: &[f64],
+    colors: &[f32],
+    camera: Point3,
+    target: Point3,
+    up: Dir3,
+    width: u32,
+    height: u32,
+    fov: f64,
+    samples: u32,
+) -> Vec<u8> {
+    let samples = samples.max(1);
+    let grid = (samples as f64).sqrt() as u32;
+    let grid = grid.max(1);
+
+    if grid == 1 {
+        return render_scene(
+            solids, transforms, colors, camera, target, up, width, height, fov,
+        );
+    }
+
+    let mut pixels = vec![0u8; (width * height * 4) as usize];
+    let mut depth = vec![f64::INFINITY; (width * height) as usize];
+    // Accumulate color sum per pixel (r, g, b, count) for averaging.
+    let mut accum: Vec<[f64; 4]> = vec![[0.0; 4]; (width * height) as usize];
+
+    // Set background.
+    for i in 0..(width * height) as usize {
+        pixels[i * 4] = 30;
+        pixels[i * 4 + 1] = 32;
+        pixels[i * 4 + 2] = 40;
+        pixels[i * 4 + 3] = 255;
+    }
+
+    let forward_vec = target - camera;
+    let forward = Dir3::new_normalize(Vec3::new(forward_vec.x, forward_vec.y, forward_vec.z));
+    let right = Dir3::new_normalize(forward.cross(up));
+    let cam_up = Dir3::new_normalize(right.cross(forward));
+
+    let fov_rad = fov.to_radians();
+    let half_height = (fov_rad / 2.0).tan();
+    let half_width = half_height * (width as f64 / height as f64);
+
+    for (solid_idx, solid) in solids.iter().enumerate() {
+        let transform = if transforms.len() >= (solid_idx + 1) * 16 {
+            Some(&transforms[solid_idx * 16..(solid_idx + 1) * 16])
+        } else {
+            None
+        };
+
+        let color = if colors.len() >= (solid_idx + 1) * 3 {
+            [
+                colors[solid_idx * 3],
+                colors[solid_idx * 3 + 1],
+                colors[solid_idx * 3 + 2],
+            ]
+        } else {
+            [0.6, 0.7, 0.8]
+        };
+
+        let transformed_solid = if let Some(t) = transform {
+            transform_brep(solid.as_ref(), t)
+        } else {
+            solid.as_ref().clone()
+        };
+
+        let bvh = Bvh::build(&transformed_solid);
+
+        for py in 0..height {
+            for px in 0..width {
+                // Use only the pixel center for depth comparison; stratified samples
+                // share the same depth slot (closest hit wins per solid, then averaged).
+                let ndc_x_c = (px as f64 + 0.5) / width as f64;
+                let ndc_y_c = (py as f64 + 0.5) / height as f64;
+                let screen_x_c = (2.0 * ndc_x_c - 1.0) * half_width;
+                let screen_y_c = (1.0 - 2.0 * ndc_y_c) * half_height;
+                let ray_dir_c = Vec3::new(
+                    forward.x + screen_x_c * right.x + screen_y_c * cam_up.x,
+                    forward.y + screen_x_c * right.y + screen_y_c * cam_up.y,
+                    forward.z + screen_x_c * right.z + screen_y_c * cam_up.z,
+                );
+                let center_ray = Ray::new(camera, ray_dir_c);
+                let center_hit = bvh.trace_closest(&center_ray);
+
+                let pixel_idx = (py * width + px) as usize;
+                if let Some(ref hit) = center_hit {
+                    if hit.t >= depth[pixel_idx] {
+                        continue;
+                    }
+                    depth[pixel_idx] = hit.t;
+
+                    // Fire stratified samples for this solid's contribution.
+                    let mut r_acc = 0.0f64;
+                    let mut g_acc = 0.0f64;
+                    let mut b_acc = 0.0f64;
+
+                    for sy in 0..grid {
+                        for sx in 0..grid {
+                            let offset_x = (sx as f64 + 0.5) / grid as f64 - 0.5;
+                            let offset_y = (sy as f64 + 0.5) / grid as f64 - 0.5;
+                            let ndc_x = (px as f64 + 0.5 + offset_x) / width as f64;
+                            let ndc_y = (py as f64 + 0.5 + offset_y) / height as f64;
+                            let screen_x = (2.0 * ndc_x - 1.0) * half_width;
+                            let screen_y = (1.0 - 2.0 * ndc_y) * half_height;
+                            let ray_dir = Vec3::new(
+                                forward.x + screen_x * right.x + screen_y * cam_up.x,
+                                forward.y + screen_x * right.y + screen_y * cam_up.y,
+                                forward.z + screen_x * right.z + screen_y * cam_up.z,
+                            );
+                            let ray = Ray::new(camera, ray_dir);
+                            let light_dir = Dir3::new_normalize(-ray.direction.into_inner());
+                            let (r, g, b) = if let Some(h) = bvh.trace_closest(&ray) {
+                                let ndotl = h.normal.dot(light_dir).abs();
+                                let intensity = (0.2 + 0.8 * ndotl).min(1.0) as f32;
+                                (
+                                    (color[0] * intensity * 255.0) as f64,
+                                    (color[1] * intensity * 255.0) as f64,
+                                    (color[2] * intensity * 255.0) as f64,
+                                )
+                            } else {
+                                // Missed on sub-sample — use center-hit shading
+                                let ndotl = hit.normal.dot(light_dir).abs();
+                                let intensity = (0.2 + 0.8 * ndotl).min(1.0) as f32;
+                                (
+                                    (color[0] * intensity * 255.0) as f64,
+                                    (color[1] * intensity * 255.0) as f64,
+                                    (color[2] * intensity * 255.0) as f64,
+                                )
+                            };
+                            r_acc += r;
+                            g_acc += g;
+                            b_acc += b;
+                        }
+                    }
+
+                    let n = (grid * grid) as f64;
+                    accum[pixel_idx] = [r_acc / n, g_acc / n, b_acc / n, 1.0];
+                }
+            }
+        }
+    }
+
+    // Write averaged colors.
+    for (i, a) in accum.iter().enumerate() {
+        if a[3] > 0.0 {
+            let idx = i * 4;
+            pixels[idx] = a[0] as u8;
+            pixels[idx + 1] = a[1] as u8;
+            pixels[idx + 2] = a[2] as u8;
+            pixels[idx + 3] = 255;
         }
     }
 

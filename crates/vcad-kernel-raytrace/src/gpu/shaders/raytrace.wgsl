@@ -79,10 +79,16 @@ struct RenderState {
     enable_edges: u32,
     edge_depth_threshold: f32,
     edge_normal_threshold: f32,
-    /// Debug render mode: 0=normal, 1=show normals as RGB, 2=show face_id, 3=show n_dot_l
+    /// Debug render mode: 0=normal, 1=show normals as RGB, 2=show face_id, 3=show n_dot_l,
+    /// 4=orientation, 5=sample-count heatmap (blue=1 ray, red=max rays).
     debug_mode: u32,
     /// 0 = dark theme (cool low-key background), 1 = light theme (bright neutral background).
     theme: u32,
+    /// Additional rays per edge pixel for adaptive refinement (0 = disabled).
+    refine_sample_count: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 }
 
 struct RayHit {
@@ -116,17 +122,16 @@ fn pixel_index_i32(coord: vec2<i32>) -> u32 {
 
 // Utility functions
 
-fn ray_origin_and_direction(pixel: vec2<u32>) -> mat2x3<f32> {
+// Core ray generation with an explicit sub-pixel offset.
+// offset is in pixels, typically in [-0.5, 0.5].
+fn ray_origin_and_direction_offset(pixel: vec2<u32>, offset: vec2<f32>) -> mat2x3<f32> {
     let aspect = f32(camera.width) / f32(camera.height);
     let fov_tan = tan(camera.fov * 0.5);
 
-    // Apply sub-pixel jitter for anti-aliasing (Halton sequence from render_state)
-    let jitter = vec2<f32>(render_state.jitter_x, render_state.jitter_y);
-
-    // Compute normalized device coordinates with jitter
+    // Compute normalized device coordinates with the given offset
     let ndc = vec2<f32>(
-        (f32(pixel.x) + 0.5 + jitter.x) / f32(camera.width) * 2.0 - 1.0,
-        1.0 - (f32(pixel.y) + 0.5 + jitter.y) / f32(camera.height) * 2.0
+        (f32(pixel.x) + 0.5 + offset.x) / f32(camera.width) * 2.0 - 1.0,
+        1.0 - (f32(pixel.y) + 0.5 + offset.y) / f32(camera.height) * 2.0
     );
 
     // Build camera coordinate system
@@ -142,6 +147,12 @@ fn ray_origin_and_direction(pixel: vec2<u32>) -> mat2x3<f32> {
     );
 
     return mat2x3<f32>(camera.position.xyz, dir);
+}
+
+// Ray generation using the Halton-sequence jitter from render_state (main pass).
+fn ray_origin_and_direction(pixel: vec2<u32>) -> mat2x3<f32> {
+    let jitter = vec2<f32>(render_state.jitter_x, render_state.jitter_y);
+    return ray_origin_and_direction_offset(pixel, jitter);
 }
 
 fn intersect_aabb(origin: vec3<f32>, inv_dir: vec3<f32>, aabb_min: vec3<f32>, aabb_max: vec3<f32>) -> vec2<f32> {
@@ -1512,6 +1523,15 @@ fn detect_edge(pixel_coord: vec2<i32>, center_depth_normal: vec4<f32>) -> f32 {
     return edge_strength;
 }
 
+// Sample-count heatmap: t=0.0 → blue (1 sample/cold), t=1.0 → red (max samples/hot).
+fn heat_color(t: f32) -> vec3<f32> {
+    let t = clamp(t, 0.0, 1.0);
+    let r = clamp(t * 2.0 - 1.0, 0.0, 1.0);
+    let g = clamp(1.0 - abs(t * 2.0 - 1.0), 0.0, 1.0);
+    let b = clamp(1.0 - t * 2.0, 0.0, 1.0);
+    return vec3<f32>(r, g, b);
+}
+
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let pixel = global_id.xy;
@@ -1590,7 +1610,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // Apply debug visualization if enabled. Skip ground/miss sentinels
     // because compute_normal() would index a real face buffer.
-    if render_state.debug_mode > 0u
+    if render_state.debug_mode > 0u && render_state.debug_mode != 5u
         && hit.face_idx != 0xFFFFFFFFu
         && hit.face_idx != FACE_IDX_GROUND {
         let normal = compute_normal(hit);
@@ -1619,7 +1639,100 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
     }
 
+    // Debug mode 5: sample-count heatmap. Main pass fires 1 ray per pixel
+    // (blue = cold = minimum). The refine pass overwrites edge pixels with
+    // the actual sample count after it runs.
+    if render_state.debug_mode == 5u {
+        final_color = vec4<f32>(heat_color(0.0), 1.0);
+    }
+
+    // Store accumulated color with sample count in alpha (1.0 from main pass).
+    // The refine pass may update this for edge pixels.
+    accumulated.a = 1.0;
+
     // Store to accumulation buffer and output
     accum_buffer[pixel_index_i32(pixel_coord)] = accumulated;
+    textureStore(output, pixel_coord, final_color);
+}
+
+// Adaptive refinement pass: fires additional stratified rays for edge pixels,
+// blends with the coarse main-pass sample, and updates the output texture.
+// Only runs when render_state.refine_sample_count > 0.
+@compute @workgroup_size(8, 8)
+fn refine(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let pixel = global_id.xy;
+
+    if pixel.x >= camera.width || pixel.y >= camera.height {
+        return;
+    }
+    if render_state.refine_sample_count == 0u {
+        return;
+    }
+
+    let pixel_coord = vec2<i32>(pixel);
+    let idx = pixel_index(pixel);
+
+    // Detect edge strength from the depth/normal buffer (written by main pass).
+    let dn = depth_normal_buffer[idx];
+    let edge = detect_edge(pixel_coord, dn);
+
+    // Only refine pixels on silhouettes / creases.
+    if edge <= 0.1 {
+        return;
+    }
+
+    // Stratified sub-pixel grid: grid_size x grid_size additional samples.
+    let grid_size = u32(sqrt(f32(render_state.refine_sample_count)));
+    if grid_size == 0u {
+        return;
+    }
+
+    var color_sum = vec3<f32>(0.0);
+    var fired = 0u;
+
+    for (var sy = 0u; sy < grid_size; sy++) {
+        for (var sx = 0u; sx < grid_size; sx++) {
+            // Uniform stratified offset within the pixel, range [-0.5, 0.5].
+            let offset = (vec2<f32>(f32(sx), f32(sy)) + 0.5) / f32(grid_size) - 0.5;
+            let ray = ray_origin_and_direction_offset(pixel, offset);
+            let origin = ray[0];
+            let dir = ray[1];
+
+            var hit = trace_bvh(origin, dir);
+            let ground = intersect_ground(origin, dir);
+            if ground.t < hit.t {
+                hit.t = ground.t;
+                hit.face_idx = FACE_IDX_GROUND;
+                hit.uv = vec2<f32>(ground.fade, 0.0);
+            }
+
+            color_sum += shade(hit, origin, dir, pixel).rgb;
+            fired += 1u;
+        }
+    }
+
+    // Blend: existing coarse sample (1 ray, alpha=1.0) + fired new rays.
+    let existing = accum_buffer[idx];
+    let total = f32(1u + fired);
+    let blended_rgb = (existing.rgb + color_sum) / total;
+
+    // Store back with sample count in alpha for heatmap debug mode.
+    accum_buffer[idx] = vec4<f32>(blended_rgb, total);
+
+    // Compose the refined output pixel.
+    var final_color = vec4<f32>(blended_rgb, 1.0);
+
+    // Re-apply edge overlay (only on later frames, consistent with main pass).
+    if render_state.enable_edges == 1u && render_state.frame_index >= 2u {
+        let edge_color = vec4<f32>(0.1, 0.1, 0.12, 1.0);
+        final_color = mix(final_color, edge_color, edge * 0.8);
+    }
+
+    // Debug mode 5: show actual sample count as heatmap (refine overwrites main-pass blue).
+    if render_state.debug_mode == 5u {
+        let t = clamp((total - 1.0) / f32(render_state.refine_sample_count), 0.0, 1.0);
+        final_color = vec4<f32>(heat_color(t), 1.0);
+    }
+
     textureStore(output, pixel_coord, final_color);
 }
