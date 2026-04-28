@@ -124,6 +124,29 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
                 holes.push(hole_center);
             }
 
+            // A multi-vertex inner loop whose centroid is at (or very near)
+            // the face center is geometrically a concentric hole — even
+            // though it's not stored as a single-vertex degenerate loop.
+            // Without this, the sample-radius computation below picks
+            // mid_r = outer_r / 2, which can land inside the hole when
+            // the hole is large (e.g. an annular washer where a r=20
+            // hole sits inside an r=30 cap; mid_r = 15 is in the hole).
+            // Promote those holes' far edge into concentric_inner_r so
+            // the sampling band is correctly the annular region.
+            for hole in &holes {
+                let dist_to_origin =
+                    (hole.center_2d.0 * hole.center_2d.0 + hole.center_2d.1 * hole.center_2d.1)
+                        .sqrt();
+                if dist_to_origin < hole.radius + 1e-6 {
+                    // Face center is inside this hole — sampling must go
+                    // beyond the hole's far edge.
+                    let hole_far_edge = dist_to_origin + hole.radius;
+                    if hole_far_edge > concentric_inner_r {
+                        concentric_inner_r = hole_far_edge;
+                    }
+                }
+            }
+
             // Try multiple sample angles to find one that avoids all holes
             let mid_r = (outer_r + concentric_inner_r) / 2.0;
             let num_tries = 36;
