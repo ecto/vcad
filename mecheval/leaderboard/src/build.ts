@@ -264,6 +264,117 @@ function matrix(
   </table></div>`;
 }
 
+function paretoScatter(
+  entries: PassKEntry[],
+  xKey: "tokens" | "wallclock",
+): string {
+  const points = entries.filter((e) => {
+    const x = xKey === "tokens" ? e.mean_tokens_recent_k : e.mean_wallclock_recent_k;
+    return x > 0;
+  });
+  if (!points.length) return `<div class="nodata">no points</div>`;
+
+  const W = 760;
+  const H = 280;
+  const PAD_L = 56;
+  const PAD_R = 16;
+  const PAD_T = 26;
+  const PAD_B = 36;
+  const innerW = W - PAD_L - PAD_R;
+  const innerH = H - PAD_T - PAD_B;
+
+  const xVal = (e: PassKEntry) =>
+    xKey === "tokens" ? e.mean_tokens_recent_k : e.mean_wallclock_recent_k;
+  const xs = points.map(xVal);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minLog = Math.log10(Math.max(1, minX));
+  const maxLog = Math.log10(Math.max(2, maxX));
+  const span = Math.max(0.5, maxLog - minLog);
+  const xLo = minLog - span * 0.08;
+  const xHi = maxLog + span * 0.08;
+
+  const xPos = (v: number) =>
+    PAD_L + ((Math.log10(Math.max(1, v)) - xLo) / (xHi - xLo)) * innerW;
+  const yPos = (score: number) => PAD_T + (1 - score) * innerH;
+
+  const palette = ["#2c3e50", "#c0392b", "#27ae60", "#8e44ad", "#d68910"];
+  const modelIds = [...new Set(points.map((p) => p.model_id))];
+  const colorOf = (m: string) =>
+    palette[modelIds.indexOf(m) % palette.length];
+
+  const xTicks: number[] = [];
+  for (let p = Math.ceil(xLo); p <= Math.floor(xHi); p++) xTicks.push(p);
+  const yTicks = [0, 0.25, 0.5, 0.75, 1.0];
+
+  const xAxisLines = xTicks
+    .map((p) => {
+      const v = Math.pow(10, p);
+      const x = xPos(v);
+      const lbl =
+        xKey === "wallclock"
+          ? p === 0 ? "1s" : p === 1 ? "10s" : p === 2 ? "100s" : `1e${p}s`
+          : p < 3 ? `10^${p}`
+          : p === 3 ? "1k"
+          : p === 4 ? "10k"
+          : p === 5 ? "100k"
+          : p === 6 ? "1M"
+          : `1e${p}`;
+      return `
+        <line x1="${x}" y1="${PAD_T}" x2="${x}" y2="${H - PAD_B}" stroke="#dcd2c0" stroke-dasharray="2,3"/>
+        <text x="${x}" y="${H - PAD_B + 14}" text-anchor="middle" font-size="10" fill="#666">${lbl}</text>`;
+    })
+    .join("");
+
+  const yAxisLines = yTicks
+    .map((v) => {
+      const y = yPos(v);
+      return `
+        <line x1="${PAD_L}" y1="${y}" x2="${W - PAD_R}" y2="${y}" stroke="#dcd2c0" stroke-dasharray="2,3"/>
+        <text x="${PAD_L - 8}" y="${y + 3}" text-anchor="end" font-size="10" fill="#666">${v.toFixed(2)}</text>`;
+    })
+    .join("");
+
+  const dots = points
+    .map((e) => {
+      const cx = xPos(xVal(e));
+      const cy = yPos(e.mean_score_recent_k);
+      const color = colorOf(e.model_id);
+      const tt = `${e.model_id} · ${e.task_id}\nscore=${e.mean_score_recent_k.toFixed(2)}\ntokens=${fmtCompact(e.mean_tokens_recent_k)} · wall=${e.mean_wallclock_recent_k.toFixed(1)}s\nattempts=${e.attempts}`;
+      return `<a href="run-link-${e.task_id}-${e.model_id}.html"><circle cx="${cx}" cy="${cy}" r="5.5" fill="${color}" fill-opacity="0.7" stroke="${color}" stroke-width="1.4"><title>${escape(tt)}</title></circle></a>`;
+    })
+    .join("");
+
+  // Replace placeholder href with a real one (task page is the safest target —
+  // we don't always have a single-run url for an aggregated entry).
+  const dotsLinked = dots.replace(
+    /href="run-link-([^"]+?)-((?:claude|default)[^"]+)"/g,
+    (_, t) => `href="task/${encodeURIComponent(t as string)}.html"`,
+  );
+
+  const legend = modelIds
+    .map((m, i) => {
+      const cx = PAD_L + i * 250;
+      return `<g transform="translate(${cx}, ${PAD_T - 12})">
+        <circle cx="0" cy="0" r="4" fill="${colorOf(m)}"/>
+        <text x="9" y="3" font-size="10" fill="#333">${escape(m)}</text>
+      </g>`;
+    })
+    .join("");
+
+  const xLabel = xKey === "tokens" ? "tokens (log)" : "wall-clock seconds (log)";
+
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="${xLabel} vs score scatter" style="border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); background: rgba(0,0,0,0.015);">
+    ${yAxisLines}
+    ${xAxisLines}
+    <rect x="${PAD_L}" y="${PAD_T}" width="${innerW}" height="${innerH}" fill="none" stroke="#111"/>
+    <text x="${PAD_L + innerW / 2}" y="${H - 4}" text-anchor="middle" font-size="10" fill="#333">${xLabel}</text>
+    <text transform="translate(${PAD_L - 38}, ${PAD_T + innerH / 2}) rotate(-90)" text-anchor="middle" font-size="10" fill="#333">score</text>
+    ${legend}
+    ${dotsLinked}
+  </svg>`;
+}
+
 function entryTable(entries: PassKEntry[], k: number): string {
   const rows = entries
     .map(
@@ -338,6 +449,13 @@ function indexPage(
 
     <h2>Task × model matrix</h2>
     ${taskIds.length && modelIds.length ? matrix(taskIds, modelIds, byPair, k) : `<div class="nodata">no entries</div>`}
+
+    <h2>Cost · score Pareto</h2>
+    ${entries.length ? paretoScatter(entries, "tokens") : `<div class="nodata">no points</div>`}
+    <p class="footnote">tokens (log) vs mean score across the most recent ${k} attempts. Each dot is one (model, task) pair; click to drill into the task page.</p>
+
+    ${entries.length ? `<div style="margin-top: 18px;">${paretoScatter(entries, "wallclock")}</div>
+    <p class="footnote">wall-clock seconds (log) vs mean score. The left edge is fast; the right edge is patient.</p>` : ""}
 
     <h2>Per task · per model</h2>
     ${entries.length ? entryTable(entries, k) : `<div class="nodata">no entries</div>`}
