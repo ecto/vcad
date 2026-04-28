@@ -6,11 +6,11 @@
 //   model/<model_id>.html                        — one page per model
 //   run/<task_id>/<model_id>/<run_id>.html       — full forensic detail per attempt
 //
-// Drafting-blueprint aesthetic: black on bone-white, Berkeley Mono with
-// fallback, dotted-rule dimension-callout dividers.
+// Identity lives in `tokens.ts` (colors, fonts, copy). This file is the
+// renderer; touching the brand should mostly be a tokens-only change.
 
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import {
   loadAllRuns,
   modelSummary,
@@ -19,6 +19,7 @@ import {
   type PassKEntry,
   type RunMeta,
 } from "@mecheval/harness/pass_k";
+import { colors, copy, fonts, fontsHref, type TitleBlock } from "./tokens.js";
 
 const PASS_K = 5;
 const REPO_ROOT = process.cwd();
@@ -93,11 +94,6 @@ function escape(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function relLink(fromAbs: string, toAbs: string): string {
-  const r = relative(fromAbs.replace(/\/[^/]+$/, ""), toAbs);
-  return r.split("/").map(encodeURIComponent).join("/");
-}
-
 function passKBadge(e: PassKEntry, k: number): string {
   if (e.pass_k === null) {
     return `<span class="pending">${e.pass_count_in_recent_k}/${e.recent_k}*</span>`;
@@ -117,84 +113,244 @@ function outcomeBadge(o: string): string {
 
 const STYLES = `
   :root {
-    --ink: #111;
-    --ground: #fbf6ee;
-    --rule: #111;
-    --fail: #c0392b;
-    --pass: #27ae60;
-    --pending: #888;
-    --soft: #c8bfb1;
+    --ink: ${colors.ink};
+    --ink-soft: ${colors.inkSoft};
+    --ground: ${colors.ground};
+    --rule: ${colors.rule};
+    --fail: ${colors.fail};
+    --pass: ${colors.pass};
+    --pending: ${colors.pending};
+    --soft: ${colors.soft};
+    --accent: ${colors.accent};
+    --display: ${fonts.display};
+    --body: ${fonts.body};
   }
+  * { box-sizing: border-box; }
   html, body {
-    background: var(--ground);
+    background-color: var(--ground);
+    background-image:
+      linear-gradient(to right, rgba(14,57,96,0.06) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(14,57,96,0.06) 1px, transparent 1px);
+    background-size: 24px 24px;
     color: var(--ink);
-    font-family: "Berkeley Mono", "JetBrains Mono", ui-monospace, SFMono-Regular,
-                 Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-family: var(--body);
     font-size: 13px;
-    line-height: 1.4;
+    line-height: 1.45;
     margin: 0;
     padding: 0;
   }
-  .frame { max-width: 1180px; margin: 0 auto; padding: 28px 28px 80px; }
-  .crumb { color: #777; font-size: 11px; margin-bottom: 8px; letter-spacing: 0.04em; }
-  .crumb a { color: var(--ink); }
-  h1 { font-size: 22px; letter-spacing: 0.06em; margin: 0 0 4px; font-weight: 600; }
-  h1 .tier { font-size: 11px; color: #777; margin-left: 10px; vertical-align: middle; letter-spacing: 0.08em; }
-  h2 {
-    font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
-    margin: 32px 0 12px; border-top: 1px solid var(--rule); padding-top: 12px; color: #333;
+  .sheet {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 28px 36px 28px;
+    position: relative;
+    background: var(--ground);
+    border: 1px solid var(--ink);
+    margin-top: 24px;
+    margin-bottom: 24px;
   }
-  .tagline { color: #666; margin-bottom: 24px; font-size: 12px; }
-  .meta { color: #666; font-size: 11px; margin: 12px 0 0; }
+  /* Drafting corners — replace generic CSS borders with ASCII-feel marks. */
+  .sheet::before, .sheet::after,
+  .sheet > .corner-bl, .sheet > .corner-br {
+    position: absolute;
+    font-family: var(--body);
+    font-size: 18px;
+    color: var(--ink);
+    line-height: 1;
+    background: var(--ground);
+    padding: 0 4px;
+  }
+  .sheet::before { content: "┌"; top: -10px; left: -1px; }
+  .sheet::after  { content: "┐"; top: -10px; right: -1px; }
+  .sheet .corner-bl { content: "└"; bottom: -10px; left: -1px; }
+  .sheet .corner-br { content: "┘"; bottom: -10px; right: -1px; }
+
+  .crumb { color: var(--ink-soft); font-size: 11px; margin: 0 0 18px 0; letter-spacing: 0.04em; }
+  .crumb a { color: var(--ink); }
+
+  /* Wordmark in the upper-left of the index hero. */
+  .wordmark {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 56px;
+    letter-spacing: -0.025em;
+    color: var(--ink);
+    margin: 0;
+    line-height: 0.95;
+  }
+  .wordmark .dot { color: var(--accent); }
+  .tagline-main {
+    font-family: var(--display);
+    font-weight: 500;
+    font-size: 18px;
+    color: var(--ink);
+    margin: 14px 0 4px;
+    max-width: 720px;
+    letter-spacing: -0.005em;
+  }
+  .tagline-sub {
+    font-size: 12px;
+    color: var(--ink-soft);
+    margin: 0 0 26px;
+  }
+
+  /* Title block — engineering-drawing convention, upper-right corner of the sheet. */
+  .title-block {
+    position: absolute;
+    top: -1px;
+    right: -1px;
+    border-left: 1px solid var(--ink);
+    border-bottom: 1px solid var(--ink);
+    background: var(--ground);
+    font-size: 9.5px;
+    line-height: 1.3;
+    letter-spacing: 0.04em;
+    color: var(--ink);
+    text-transform: uppercase;
+  }
+  .title-block table { border-collapse: collapse; }
+  .title-block td {
+    padding: 4px 8px;
+    border-right: 1px solid var(--soft);
+    border-bottom: 1px dotted var(--soft);
+    vertical-align: middle;
+    white-space: nowrap;
+  }
+  .title-block td:last-child { border-right: none; }
+  .title-block tr:last-child td { border-bottom: none; }
+  .title-block .k { color: var(--ink-soft); font-size: 8.5px; }
+  .title-block .v { font-weight: 500; color: var(--ink); }
+
+  h1 {
+    font-family: var(--display);
+    font-size: 28px;
+    letter-spacing: -0.02em;
+    margin: 0 0 4px;
+    font-weight: 700;
+    color: var(--ink);
+  }
+  h1 .tier { font-size: 11px; color: var(--ink-soft); margin-left: 10px; vertical-align: middle; letter-spacing: 0.08em; font-family: var(--body); font-weight: 500; }
+  h2 {
+    font-family: var(--display);
+    font-size: 11px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase;
+    margin: 32px 0 12px; border-top: 1px solid var(--rule); padding-top: 14px; color: var(--ink);
+  }
+
+  .tagline { color: var(--ink-soft); margin-bottom: 24px; font-size: 12px; }
+  .meta { color: var(--ink-soft); font-size: 10.5px; margin: 12px 0 0; }
   a { color: var(--ink); text-decoration: none; border-bottom: 1px dotted var(--soft); }
-  a:hover { border-bottom-style: solid; }
+  a:hover { border-bottom-style: solid; border-bottom-color: var(--ink); }
+
   table.board {
     width: 100%; border-collapse: collapse;
     border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule);
   }
   table.board th {
-    text-align: right; padding: 8px 10px; font-weight: 500;
+    text-align: right; padding: 8px 10px; font-weight: 600;
     border-bottom: 1px solid var(--rule);
-    letter-spacing: 0.04em; text-transform: uppercase; font-size: 10px; color: #444;
+    letter-spacing: 0.1em; text-transform: uppercase; font-size: 10px; color: var(--ink);
+    font-family: var(--display);
   }
   table.board th:first-child,
   table.board th.left { text-align: left; }
-  table.board td { padding: 6px 10px; border-bottom: 1px dotted var(--soft); vertical-align: middle; }
+  table.board td { padding: 7px 10px; border-bottom: 1px dotted var(--soft); vertical-align: middle; }
   table.board tr:last-child td { border-bottom: none; }
+  table.board tbody tr:hover { background: rgba(14,57,96,0.04); }
   td.id { white-space: nowrap; }
   td.num { text-align: right; font-variant-numeric: tabular-nums; }
-  .pass { color: var(--pass); font-weight: 600; letter-spacing: 0.04em; }
-  .fail { color: var(--fail); }
+  .pass { color: var(--pass); font-weight: 700; letter-spacing: 0.06em; font-family: var(--display); }
+  .fail { color: var(--fail); font-weight: 500; }
   .pending { color: var(--pending); }
-  .footnote { color: #888; margin-top: 14px; font-size: 11px; }
-  .nodata { color: #888; padding: 20px 0; }
-  code { background: rgba(0,0,0,0.05); padding: 1px 5px; }
+
+  .footnote { color: var(--ink-soft); margin-top: 14px; font-size: 11px; }
+  .nodata { color: var(--ink-soft); padding: 20px 0; font-style: italic; }
+
+  code { background: rgba(14,57,96,0.06); padding: 1px 5px; font-family: var(--body); border-radius: 1px; }
   pre {
-    background: rgba(0,0,0,0.04); padding: 12px 14px; overflow-x: auto;
-    font-size: 12px; line-height: 1.5; border: 1px solid var(--soft);
+    background: rgba(14,57,96,0.04); padding: 12px 14px; overflow-x: auto;
+    font-size: 12px; line-height: 1.55; border: 1px solid var(--soft);
     white-space: pre-wrap; word-break: break-word;
+    color: var(--ink);
   }
+
   details { margin: 8px 0; }
-  details summary { cursor: pointer; padding: 4px 0; }
-  details summary:hover { color: #444; }
+  details summary { cursor: pointer; padding: 4px 0; color: var(--ink-soft); }
+  details summary:hover { color: var(--ink); }
+  details[open] summary { color: var(--ink); }
+
   .matrix table { border-collapse: collapse; }
   .matrix th, .matrix td {
-    border: 1px solid var(--soft); padding: 6px 8px; min-width: 90px; text-align: center;
+    border: 1px solid var(--soft); padding: 7px 9px; min-width: 96px; text-align: center;
     font-size: 11px;
   }
-  .matrix th { background: rgba(0,0,0,0.03); }
-  .matrix td.row-h { text-align: left; font-weight: 500; background: rgba(0,0,0,0.02); }
+  .matrix th {
+    background: rgba(14,57,96,0.06); font-family: var(--display);
+    font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; font-size: 10px;
+  }
+  .matrix td.row-h { text-align: left; font-weight: 500; background: rgba(14,57,96,0.04); }
   .matrix td a { display: block; }
-  .checkrow { display: grid; grid-template-columns: 28px 180px 80px 1fr; gap: 8px; padding: 6px 0; border-bottom: 1px dotted var(--soft); }
-  .checkrow .n { text-align: right; color: #888; }
+
+  .checkrow { display: grid; grid-template-columns: 28px 180px 80px 1fr; gap: 10px; padding: 7px 0; border-bottom: 1px dotted var(--soft); }
+  .checkrow .n { text-align: right; color: var(--ink-soft); }
   .checkrow:last-child { border-bottom: none; }
-  .toolrow { display: grid; grid-template-columns: 28px 180px 70px 80px 1fr; gap: 8px; padding: 4px 0; border-bottom: 1px dotted var(--soft); font-size: 12px; }
-  .toolrow .n { text-align: right; color: #888; }
-  .kvtable td { padding: 3px 10px 3px 0; vertical-align: top; }
-  .kvtable td.k { color: #666; white-space: nowrap; }
+  .toolrow { display: grid; grid-template-columns: 28px 180px 70px 80px 1fr; gap: 10px; padding: 5px 0; border-bottom: 1px dotted var(--soft); font-size: 12px; }
+  .toolrow .n { text-align: right; color: var(--ink-soft); }
+  .kvtable td { padding: 3px 12px 3px 0; vertical-align: top; }
+  .kvtable td.k { color: var(--ink-soft); white-space: nowrap; text-transform: uppercase; font-size: 10px; letter-spacing: 0.08em; }
+
+  /* Footer — Municipal Robotics ↔ vcad ↔ mecheval. */
+  .footer {
+    border-top: 1px solid var(--ink);
+    margin-top: 40px;
+    padding: 18px 0 4px;
+    font-size: 11px;
+    color: var(--ink-soft);
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+  .footer a { color: var(--ink); }
+  .footer .stack { letter-spacing: 0.04em; }
+  .footer .stack b {
+    font-family: var(--display); font-weight: 700; letter-spacing: -0.01em; color: var(--ink);
+  }
 `;
 
-function pageShell(title: string, crumbHtml: string, bodyHtml: string): string {
+function titleBlockHtml(tb: TitleBlock, generatedAt: string): string {
+  const dateStr = generatedAt.slice(0, 10);
+  return `<div class="title-block"><table>
+    <tr>
+      <td><span class="k">drawing</span><br><span class="v">${escape(tb.drawing)}</span></td>
+      <td><span class="k">sheet</span><br><span class="v">${escape(tb.sheet)}</span></td>
+      <td><span class="k">scale</span><br><span class="v">${escape(tb.scale ?? "1 : 1")}</span></td>
+    </tr>
+    <tr>
+      <td><span class="k">date</span><br><span class="v">${escape(dateStr)}</span></td>
+      <td><span class="k">drawn by</span><br><span class="v">muni</span></td>
+      <td><span class="k">project</span><br><span class="v">mecheval</span></td>
+    </tr>
+  </table></div>`;
+}
+
+function footerHtml(): string {
+  return `<div class="footer">
+    <div class="stack">
+      <b>${escape(copy.brand)}</b> &middot; an evaluation suite by <a href="${copy.footerOwnerUrl}">${escape(copy.footerOwner)}</a>
+    </div>
+    <div>
+      sibling project: <a href="${copy.siblingProjectUrl}">${escape(copy.siblingProjectName)}</a>
+      &middot; <a href="${copy.repoUrl}">github</a>
+    </div>
+  </div>`;
+}
+
+function pageShell(
+  title: string,
+  crumbHtml: string,
+  bodyHtml: string,
+  tb: TitleBlock,
+): string {
   const generatedAt = new Date().toISOString();
   return `<!doctype html>
 <html lang="en">
@@ -202,11 +358,17 @@ function pageShell(title: string, crumbHtml: string, bodyHtml: string): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escape(title)}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="${fontsHref}">
 <style>${STYLES}</style>
 </head>
-<body><main class="frame">
+<body><main class="sheet">
+<span class="corner-bl">└</span><span class="corner-br">┘</span>
+${titleBlockHtml(tb, generatedAt)}
 <div class="crumb">${crumbHtml}</div>
 ${bodyHtml}
+${footerHtml()}
 <p class="meta">generated ${generatedAt} · static site, regenerate with <code>npm run build -w @mecheval/leaderboard</code></p>
 </main></body></html>`;
 }
@@ -440,12 +602,15 @@ function indexPage(
   const byPair = new Map<string, PassKEntry>();
   for (const e of entries) byPair.set(`${e.model_id}::${e.task_id}`, e);
   const modelIds = models.map((m) => m.model_id);
+  const passKAchieved = models.reduce((a, m) => a + m.pass_k_full, 0);
+  const passKReady = models.reduce((a, m) => a + m.pass_k_total, 0);
   const body = `
-    <h1>MechEval</h1>
-    <div class="tagline">mechanical, physical, and CAD evaluation suite for AI models · pass<sup>${k}</sup></div>
+    <h1 class="wordmark">${escape(copy.brand.slice(0, -1))}<span class="dot">.</span></h1>
+    <div class="tagline-main">${escape(copy.tagline)}</div>
+    <div class="tagline-sub">${escape(copy.subtagline)} · pass<sup>${k}</sup></div>
 
     <h2>Models</h2>
-    ${models.length ? modelTable(models, k) : `<div class="nodata">no run blobs found under <code>mecheval/runs/</code></div>`}
+    ${models.length ? modelTable(models, k) : `<div class="nodata">no run blobs found under <code>mecheval/runs/</code> — looks lonely</div>`}
 
     <h2>Task × model matrix</h2>
     ${taskIds.length && modelIds.length ? matrix(taskIds, modelIds, byPair, k) : `<div class="nodata">no entries</div>`}
@@ -463,17 +628,27 @@ function indexPage(
     <p class="footnote">
       <span class="pending">k/k*</span> = fewer than ${k} attempts at this (model, task) — pass<sup>${k}</sup> pending.
       Score is the mean check-pass rate across the most recent ${k} attempts.
-      Total run blobs in corpus: ${runs.length}. Click any task, model, or run for full forensic detail.
+      Corpus: ${runs.length} run blobs across ${models.length} models, ${taskIds.length} tasks. Click any task, model, or run for full forensic detail.
     </p>`;
-  return pageShell("MechEval — leaderboard", "MechEval", body);
+  return pageShell(
+    "mecheval — AI builds the mech",
+    `${escape(copy.brand)}`,
+    body,
+    {
+      drawing: copy.brand,
+      sheet: "INDEX",
+      scale: passKReady > 0 ? `pass^${k} · ${passKAchieved}/${passKReady}` : `pass^${k}`,
+    },
+  );
 }
 
 function taskPage(spec: TaskSpec | null, taskId: string, runsForTask: RunMeta[]): string {
   if (!spec) {
     return pageShell(
-      `MechEval — ${taskId}`,
-      `<a href="../index.html">← MechEval</a>`,
-      `<h1>${escape(taskId)}</h1><div class="nodata">no task spec found at mecheval/tasks/${escape(taskId)}.json</div>`,
+      `mecheval — ${taskId}`,
+      `<a href="../index.html">← ${escape(copy.brand)}</a> / task / ${escape(taskId)}`,
+      `<h1>${escape(taskId)}</h1><div class="nodata">no task spec found at mecheval/tasks/${escape(taskId)}.json — OPERATOR can't find this one</div>`,
+      { drawing: copy.brand, sheet: `TASK · ${taskId}`, scale: "—" },
     );
   }
   const checksHtml = spec.checks
@@ -513,9 +688,14 @@ function taskPage(spec: TaskSpec | null, taskId: string, runsForTask: RunMeta[])
     ${runsForTask.length ? runsTable(runsForTask, "task") : `<div class="nodata">no runs yet for this task</div>`}
   `;
   return pageShell(
-    `MechEval — ${taskId}`,
-    `<a href="../index.html">← MechEval</a> / task / ${escape(taskId)}`,
+    `mecheval — ${taskId}`,
+    `<a href="../index.html">← ${escape(copy.brand)}</a> / task / ${escape(taskId)}`,
     body,
+    {
+      drawing: copy.brand,
+      sheet: `TASK · ${taskId}`,
+      scale: `${runsForTask.length} runs`,
+    },
   );
 }
 
@@ -527,10 +707,16 @@ function modelPage(modelId: string, runsForModel: RunMeta[]): string {
     <h2>All runs</h2>
     ${runsForModel.length ? runsTable(runsForModel, "model") : `<div class="nodata">no runs</div>`}
   `;
+  const taskCount = new Set(runsForModel.map((r) => r.task_id)).size;
   return pageShell(
-    `MechEval — ${modelId}`,
-    `<a href="../index.html">← MechEval</a> / model / ${escape(modelId)}`,
+    `mecheval — ${modelId}`,
+    `<a href="../index.html">← ${escape(copy.brand)}</a> / model / ${escape(modelId)}`,
     body,
+    {
+      drawing: copy.brand,
+      sheet: `MODEL · ${modelId}`,
+      scale: `${runsForModel.length} runs · ${taskCount} tasks`,
+    },
   );
 }
 
@@ -613,9 +799,16 @@ function runPage(blob: FullBlob, vcad: string | null): string {
     ${vcadHtml}
   `;
   return pageShell(
-    `MechEval — ${taskId} / ${modelId} / ${runId}`,
-    `<a href="../../../index.html">← MechEval</a> / run / ${escape(taskId)} / ${escape(modelId)} / ${escape(runId)}`,
+    `mecheval — ${taskId} / ${modelId} / ${runId}`,
+    `<a href="../../../index.html">← ${escape(copy.brand)}</a> / run / ${escape(taskId)} / ${escape(modelId)} / ${escape(runId)}`,
     body,
+    {
+      drawing: copy.brand,
+      sheet: `RUN · ${runId}`,
+      scale: blob.summary.passed
+        ? "PASS"
+        : `${blob.summary.checks_passed}/${blob.summary.checks_total}`,
+    },
   );
 }
 
