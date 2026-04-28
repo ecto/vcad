@@ -440,7 +440,7 @@ export function transformMesh(
  * Used when the WASM `evaluateDocument` is not available. Produces `Solid`
  * objects alongside meshes (needed for STEP export and BRep ray tracing).
  */
-function evaluateDocumentTS(
+export function evaluateDocumentTS(
   doc: Document,
   kernel: KernelModule,
   options: EvaluateOptions = {},

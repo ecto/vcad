@@ -29,6 +29,8 @@ export async function generateCADServer(
   options: {
     /** Supabase auth token (required) */
     authToken: string;
+    /** Optional abort signal to cancel the request */
+    signal?: AbortSignal;
   }
 ): Promise<ServerInferResult> {
   const response = await fetch(`${API_BASE}/api/generate`, {
@@ -38,6 +40,7 @@ export async function generateCADServer(
       Authorization: `Bearer ${options.authToken}`,
     },
     body: JSON.stringify({ prompt }),
+    signal: options.signal,
   });
 
   if (!response.ok) {

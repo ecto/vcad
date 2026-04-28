@@ -1,5 +1,9 @@
 import type { Document, Vec3, SketchSegment2D, NodeId } from "@vcad/ir";
-import { evaluateDocument, type EvaluateOptions } from "./evaluate.js";
+import {
+  evaluateDocument,
+  evaluateDocumentTS,
+  type EvaluateOptions,
+} from "./evaluate.js";
 import type { EvaluatedScene, TriangleMesh } from "./mesh.js";
 import type { Solid, WasmAnnotationLayer } from "@vcad/kernel-wasm";
 import { SolidCache } from "./solid-cache.js";
@@ -280,6 +284,14 @@ export class Engine {
   /** Document-level scene cache (keyed by doc hash + options) */
   private sceneCache = new Map<string, EvaluatedScene>();
 
+  /**
+   * Separate cache for scenes that include BRep `solid` handles.
+   * Worker-eval'd scenes drop solids (handles can't cross threads), so we
+   * can't share a cache with `sceneCache` — a hit there might be
+   * solid-less even though the caller asked for solids.
+   */
+  private solidSceneCache = new Map<string, EvaluatedScene>();
+
   private constructor(kernel: KernelModule, compiledWasmModule?: WebAssembly.Module) {
     this.kernel = kernel;
     this.solidCache = new SolidCache();
@@ -420,6 +432,37 @@ export class Engine {
     return scene;
   }
 
+  /**
+   * Evaluate a document on the main thread and return a scene with BRep
+   * `solid` handles populated on each part. Callers that need handles
+   * (ray tracing, STEP export) must use this entry point — both the worker
+   * eval and the WASM main-thread evaluator drop solids, so this routes
+   * through the TS evaluator which keeps them.
+   *
+   * Uses a separate cache from `evaluate()` so a solid-less scene cached
+   * for the same doc doesn't shadow the result.
+   */
+  evaluateWithSolids(doc: Document, options: EvaluateOptions = {}): EvaluatedScene {
+    const nodeCount = Object.keys(doc.nodes).length;
+    const currentHash = `${nodeCount}:${doc.roots.length}`;
+    if (this.lastDocHash !== currentHash) {
+      this.dependencyGraph.build(doc);
+      this.lastDocHash = currentHash;
+    }
+
+    const cacheKey = this.sceneCacheKey(doc, options);
+    const cached = this.solidSceneCache.get(cacheKey);
+    if (cached) return cached;
+
+    const scene = evaluateDocumentTS(doc, this.kernel, options);
+    this.solidSceneCache.set(cacheKey, scene);
+    if (this.solidSceneCache.size > SCENE_CACHE_MAX) {
+      const oldest = this.solidSceneCache.keys().next().value;
+      if (oldest !== undefined) this.solidSceneCache.delete(oldest);
+    }
+    return scene;
+  }
+
   /** Send an evaluate message to the worker and await the result. */
   private evaluateInWorker(doc: Document, options: EvaluateOptions): Promise<EvaluatedScene> {
     const worker = this.worker!;
@@ -486,6 +529,7 @@ export class Engine {
     this.solidCache.clear();
     this.meshCache.clear();
     this.sceneCache.clear();
+    this.solidSceneCache.clear();
   }
 
   /** Get the Solid class for direct use */

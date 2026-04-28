@@ -384,10 +384,14 @@ fn export_file(input: &PathBuf, output: &PathBuf) -> Result<()> {
     let json = fs::read_to_string(input)?;
     let doc = vcad_ir::Document::from_json(&json)?;
 
-    // Evaluate document to get meshes
+    let ext = output.extension().and_then(|e| e.to_str()).unwrap_or("");
+    if ext.eq_ignore_ascii_case("loon") {
+        return export_loon(&doc, output);
+    }
+
+    // Evaluate document to get meshes (not needed for loon)
     let meshes = crate::app::evaluate_document(&doc)?;
 
-    let ext = output.extension().and_then(|e| e.to_str()).unwrap_or("");
     match ext.to_lowercase().as_str() {
         "stl" => {
             // Combine all meshes and export as STL
@@ -416,6 +420,33 @@ fn export_file(input: &PathBuf, output: &PathBuf) -> Result<()> {
         _ => {
             anyhow::bail!("Unknown output format: {}", ext);
         }
+    }
+
+    Ok(())
+}
+
+fn export_loon(doc: &vcad_ir::Document, output: &PathBuf) -> Result<()> {
+    use std::fs;
+
+    let (source, unsupported) = vcad_ir::to_loon::document_to_loon_checked(doc);
+    fs::write(output, &source)?;
+
+    if unsupported.is_empty() {
+        println!("Exported loon to {}", output.display());
+    } else {
+        eprintln!(
+            "warning: loon export of '{}' dropped unsupported variants: {}",
+            output.display(),
+            unsupported.join(", ")
+        );
+        eprintln!(
+            "         These nodes were replaced with comment placeholders and will not round-trip."
+        );
+        anyhow::bail!(
+            "loon export incomplete — {} unsupported variant(s): {}",
+            unsupported.len(),
+            unsupported.join(", ")
+        );
     }
 
     Ok(())

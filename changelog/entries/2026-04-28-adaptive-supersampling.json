@@ -1,0 +1,10 @@
+{
+  "id": "2026-04-28-adaptive-supersampling",
+  "version": "0.9.3",
+  "date": "2026-04-28",
+  "category": "feat",
+  "title": "Adaptive supersampling at silhouettes",
+  "summary": "Ray tracer fires extra stratified rays only on edge pixels, giving clean silhouettes on the first frame with minimal cost overhead.",
+  "features": ["raytrace", "antialiasing"],
+  "mcpTools": []
+}

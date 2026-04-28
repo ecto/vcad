@@ -147,6 +147,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Auth gating for AI features
   const { requireAuth, showAuth, setShowAuth, feature } = useRequireAuth("ai");
@@ -175,6 +176,8 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
 
   // AI generation handler (inner function that does the actual work)
   const doAIGenerate = useCallback(async (prompt: string, useBrowser: boolean) => {
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
     setAiGenerating(true);
     onOpenChange(false); // Close palette immediately
 
@@ -202,7 +205,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
           if (status.includes("Loading") || status.includes("Initializing")) {
             store.updateAIProgress(progressId, 0, Math.min(pct * 0.7, 70));
           }
-        });
+        }, controller.signal);
 
         ir = result.ir;
         durationMs = result.durationMs;
@@ -217,6 +220,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
         }
         const result = await generateCADServer(prompt, {
           authToken: currentSession.access_token,
+          signal: controller.signal,
         });
 
         ir = result.ir;
@@ -250,12 +254,17 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
         ],
       });
     } catch (err) {
-      console.error("AI generation failed:", err);
-      store.failAIOperation(
-        progressId,
-        err instanceof Error ? err.message : "Generation failed"
-      );
+      if (err instanceof Error && err.name === "AbortError") {
+        store.cancelAIOperation(progressId);
+      } else {
+        console.error("AI generation failed:", err);
+        store.failAIOperation(
+          progressId,
+          err instanceof Error ? err.message : "Generation failed"
+        );
+      }
     } finally {
+      abortControllerRef.current = null;
       setAiGenerating(false);
       setAiStatus("");
     }
@@ -379,7 +388,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
   function handleKeyDown(e: React.KeyboardEvent) {
     if (aiGenerating) {
       if (e.key === "Escape") {
-        // TODO: Cancel generation
+        abortControllerRef.current?.abort();
       }
       return;
     }

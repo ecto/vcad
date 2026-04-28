@@ -2215,19 +2215,45 @@ pub struct RayTracer {
     frame_index: u32,
     /// Accumulation buffer for progressive anti-aliasing.
     accum_buffer: Option<wgpu::Buffer>,
+    /// AO buffer for progressive SSAO accumulation.
+    ao_buffer: Option<wgpu::Buffer>,
     /// Last camera state for detecting camera changes.
     last_camera_hash: u64,
     /// Last render dimensions.
     last_width: u32,
     last_height: u32,
-    /// Debug render mode: 0=normal, 1=show normals, 2=show face_id, 3=show n_dot_l, 4=orientation.
+    /// Debug render mode: 0=normal, 1=show normals, 2=show face_id, 3=show n_dot_l,
+    /// 4=orientation, 5=sample-count heatmap.
     debug_mode: u32,
-    /// Enable edge detection overlay.
+    /// Enable edge detection overlay (master switch).
     enable_edges: bool,
     /// Edge depth threshold.
     edge_depth_threshold: f32,
     /// Edge normal threshold (degrees).
     edge_normal_threshold: f32,
+    /// Theme: 0 = dark, 1 = light. Drives the visible background palette.
+    theme: u32,
+    /// SSAO world-space sample radius.
+    ao_radius: f32,
+    /// SSAO intensity (0 = disabled, 1 = default).
+    ao_intensity: f32,
+    /// SSAO depth bias.
+    ao_bias: f32,
+    /// SSAO sample count per frame.
+    ao_sample_count: u32,
+    /// Additional rays per edge pixel for adaptive refinement (0 = disabled).
+    refine_sample_count: u32,
+    // Per-type edge style
+    enable_silhouette: bool,
+    enable_crease: bool,
+    enable_boundary: bool,
+    silhouette_color: [f32; 4],
+    crease_color: [f32; 4],
+    boundary_color: [f32; 4],
+    silhouette_width: f32,
+    crease_width: f32,
+    boundary_width: f32,
+    edge_softness: f32,
 }
 
 #[cfg(feature = "raytrace")]
@@ -2253,6 +2279,7 @@ impl RayTracer {
             scene: None,
             frame_index: 0,
             accum_buffer: None,
+            ao_buffer: None,
             last_camera_hash: 0,
             last_width: 0,
             last_height: 0,
@@ -2260,7 +2287,52 @@ impl RayTracer {
             enable_edges: true,
             edge_depth_threshold: 0.1,
             edge_normal_threshold: 30.0,
+            theme: 0,
+            ao_radius: 0.3,
+            ao_intensity: 1.0,
+            ao_bias: 0.001,
+            ao_sample_count: 16,
+            refine_sample_count: 0,
+            enable_silhouette: true,
+            enable_crease: true,
+            enable_boundary: true,
+            silhouette_color: [0.08, 0.08, 0.10, 1.0],
+            crease_color: [0.12, 0.12, 0.14, 1.0],
+            boundary_color: [0.06, 0.06, 0.08, 1.0],
+            silhouette_width: 1.0,
+            crease_width: 0.75,
+            boundary_width: 1.25,
+            edge_softness: 1.5,
         })
+    }
+
+    /// Set the visible-background theme. 0 = dark (default), 1 = light.
+    /// IBL panels and direct lighting stay constant across themes — this
+    /// only swaps the atmospheric backdrop and ground tint.
+    #[wasm_bindgen(js_name = setTheme)]
+    pub fn set_theme(&mut self, theme: u32) {
+        self.theme = theme;
+        self.frame_index = 0;
+        self.accum_buffer = None;
+        self.ao_buffer = None;
+    }
+
+    /// Set the adaptive refinement sample count.
+    ///
+    /// Edge pixels on silhouettes receive additional stratified rays for sub-pixel
+    /// anti-aliasing. Set to 0 to disable (default), or 4/9/16 for typical quality.
+    /// Mode 5 in setDebugMode shows a heatmap of rays per pixel for tuning.
+    #[wasm_bindgen(js_name = setRefineSamples)]
+    pub fn set_refine_samples(&mut self, count: u32) {
+        self.refine_sample_count = count;
+        self.frame_index = 0;
+        self.accum_buffer = None;
+    }
+
+    /// Get the current refinement sample count.
+    #[wasm_bindgen(js_name = getRefineSamples)]
+    pub fn get_refine_samples(&self) -> u32 {
+        self.refine_sample_count
     }
 
     /// Reset the progressive accumulation (call when camera moves).
@@ -2268,6 +2340,7 @@ impl RayTracer {
     pub fn reset_accumulation(&mut self) {
         self.frame_index = 0;
         self.accum_buffer = None;
+        self.ao_buffer = None;
     }
 
     /// Get the current frame index for progressive rendering.
@@ -2288,6 +2361,7 @@ impl RayTracer {
         // Reset accumulation when debug mode changes
         self.frame_index = 0;
         self.accum_buffer = None;
+        self.ao_buffer = None;
         web_sys::console::log_1(&format!("[WASM] Debug mode set to {}", mode).into());
     }
 
@@ -2316,6 +2390,7 @@ impl RayTracer {
         // Reset accumulation when edge settings change
         self.frame_index = 0;
         self.accum_buffer = None;
+        self.ao_buffer = None;
         web_sys::console::log_1(
             &format!(
                 "[WASM] Edge detection: enabled={}, depth={:.2}, normal={:.1}°",
@@ -2331,9 +2406,90 @@ impl RayTracer {
         self.enable_edges
     }
 
+    /// Set per-type edge style (colors, widths, softness, and individual toggles).
+    ///
+    /// Colors are RGBA in linear space (0–1). Width 1.0 = one pixel; softness controls
+    /// the sub-pixel anti-aliasing transition width.
+    #[wasm_bindgen(js_name = setEdgeStyle)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_edge_style(
+        &mut self,
+        enable_silhouette: bool,
+        enable_crease: bool,
+        enable_boundary: bool,
+        silhouette_r: f32,
+        silhouette_g: f32,
+        silhouette_b: f32,
+        silhouette_a: f32,
+        crease_r: f32,
+        crease_g: f32,
+        crease_b: f32,
+        crease_a: f32,
+        boundary_r: f32,
+        boundary_g: f32,
+        boundary_b: f32,
+        boundary_a: f32,
+        silhouette_width: f32,
+        crease_width: f32,
+        boundary_width: f32,
+        edge_softness: f32,
+    ) {
+        self.enable_silhouette = enable_silhouette;
+        self.enable_crease = enable_crease;
+        self.enable_boundary = enable_boundary;
+        self.silhouette_color = [silhouette_r, silhouette_g, silhouette_b, silhouette_a];
+        self.crease_color = [crease_r, crease_g, crease_b, crease_a];
+        self.boundary_color = [boundary_r, boundary_g, boundary_b, boundary_a];
+        self.silhouette_width = silhouette_width;
+        self.crease_width = crease_width;
+        self.boundary_width = boundary_width;
+        self.edge_softness = edge_softness;
+        self.frame_index = 0;
+        self.accum_buffer = None;
+    }
+
+    /// Clear all uploaded geometry. Call before re-uploading a fresh
+    /// scene; subsequent `upload_solid` calls will accumulate into a
+    /// new merged scene.
+    #[wasm_bindgen(js_name = clearScene)]
+    pub fn clear_scene(&mut self) {
+        self.scene = None;
+        self.frame_index = 0;
+        self.accum_buffer = None;
+        self.ao_buffer = None;
+    }
+
+    /// Set SSAO (screen-space ambient occlusion) parameters.
+    ///
+    /// # Arguments
+    /// * `radius` - World-space hemisphere sample radius (default 0.3)
+    /// * `intensity` - Occlusion strength: 0 = disabled, 1 = default (>1 stylized)
+    /// * `bias` - Depth bias to prevent self-occlusion (default 0.001)
+    /// * `sample_count` - Hemisphere samples per frame: 8, 16, or 32 (default 16)
+    #[wasm_bindgen(js_name = setAO)]
+    pub fn set_ao(&mut self, radius: f32, intensity: f32, bias: f32, sample_count: u32) {
+        self.ao_radius = radius;
+        self.ao_intensity = intensity;
+        self.ao_bias = bias;
+        self.ao_sample_count = sample_count.clamp(1, 64);
+        self.frame_index = 0;
+        self.accum_buffer = None;
+        self.ao_buffer = None;
+        web_sys::console::log_1(
+            &format!(
+                "[WASM] SSAO: radius={:.3}, intensity={:.2}, bias={:.4}, samples={}",
+                radius, intensity, bias, sample_count
+            )
+            .into(),
+        );
+    }
+
     /// Upload a solid's BRep representation for ray tracing.
     ///
-    /// This extracts the BRep surfaces and builds the GPU scene data.
+    /// First call after clearScene seeds the GPU scene. Subsequent calls
+    /// merge into the existing scene — surfaces/faces/BVH from each new
+    /// solid are unified under a fresh root, so multi-part scenes render
+    /// in a single ray-trace pass.
     #[wasm_bindgen(js_name = uploadSolid)]
     pub fn upload_solid(&mut self, solid: &Solid) -> Result<(), JsError> {
         use vcad_kernel_raytrace::gpu::GpuScene;
@@ -2344,9 +2500,15 @@ impl RayTracer {
             .brep()
             .ok_or_else(|| JsError::new("Solid has no BRep representation (mesh-only)"))?;
 
-        // Build GPU scene from BRep
-        let scene = GpuScene::from_brep(brep)
+        // Build GPU scene from this BRep, then merge into the existing
+        // scene (or seed if this is the first upload).
+        let new_scene = GpuScene::from_brep(brep)
             .map_err(|e| JsError::new(&format!("Failed to build GPU scene: {}", e)))?;
+
+        let scene = match self.scene.take() {
+            Some(existing) => existing.merge(new_scene),
+            None => new_scene,
+        };
 
         let num_faces = scene.faces.len();
         let num_surfaces = scene.surfaces.len();
@@ -2509,6 +2671,7 @@ impl RayTracer {
         {
             self.frame_index = 0;
             self.accum_buffer = None;
+            self.ao_buffer = None;
             self.last_camera_hash = camera_hash;
             self.last_width = width;
             self.last_height = height;
@@ -2542,26 +2705,60 @@ impl RayTracer {
         let ctx =
             vcad_kernel_gpu::GpuContext::get().ok_or_else(|| JsError::new("GPU context lost"))?;
 
-        let (pixels, new_accum) = self
+        // Build per-type enable flags (bit 0 = silhouette, bit 1 = crease, bit 2 = boundary).
+        let render_state = {
+            let (s, c, b) = if self.enable_edges {
+                (
+                    self.enable_silhouette,
+                    self.enable_crease,
+                    self.enable_boundary,
+                )
+            } else {
+                (false, false, false)
+            };
+            let mut rs = vcad_kernel_raytrace::gpu::GpuRenderState::new_styled(
+                self.frame_index,
+                self.debug_mode,
+                s,
+                c,
+                b,
+                self.edge_depth_threshold,
+                self.edge_normal_threshold,
+                self.theme,
+                self.silhouette_color,
+                self.crease_color,
+                self.boundary_color,
+                self.silhouette_width,
+                self.crease_width,
+                self.boundary_width,
+                self.edge_softness,
+            );
+            rs.ao_radius = self.ao_radius;
+            rs.ao_intensity = self.ao_intensity;
+            rs.ao_bias = self.ao_bias;
+            rs.ao_sample_count = self.ao_sample_count;
+            rs.refine_sample_count = self.refine_sample_count;
+            rs
+        };
+
+        let (pixels, new_accum, new_ao) = self
             .pipeline
-            .render_with_full_settings(
+            .render_with_render_state(
                 ctx,
                 scene,
                 &gpu_camera,
                 width,
                 height,
-                self.frame_index,
                 self.accum_buffer.take(),
-                self.debug_mode,
-                self.enable_edges,
-                self.edge_depth_threshold,
-                self.edge_normal_threshold,
+                self.ao_buffer.take(),
+                render_state,
             )
             .await
             .map_err(|e| JsError::new(&format!("Render failed: {}", e)))?;
 
-        // Store accumulation texture for next frame
+        // Store accumulation and AO buffers for next frame
         self.accum_buffer = Some(new_accum);
+        self.ao_buffer = Some(new_ao);
 
         Ok(pixels)
     }
@@ -4823,6 +5020,20 @@ pub fn document_to_loon(doc_json: &str) -> Result<String, JsError> {
     let doc: vcad_ir::Document = serde_json::from_str(doc_json)
         .map_err(|e| JsError::new(&format!("Failed to parse document: {}", e)))?;
     Ok(vcad_ir::to_loon::document_to_loon(&doc))
+}
+
+/// Convert a Document (as JSON) to loon, also returning unsupported variant names.
+///
+/// Returns a JS object `{ source: string, unsupported: string[] }`.
+/// When `unsupported` is non-empty, the output contains comment placeholders for
+/// those nodes and callers should warn the user that data will be lost.
+#[wasm_bindgen(js_name = documentToLoonChecked)]
+pub fn document_to_loon_checked(doc_json: &str) -> Result<JsValue, JsError> {
+    let doc: vcad_ir::Document = serde_json::from_str(doc_json)
+        .map_err(|e| JsError::new(&format!("Failed to parse document: {}", e)))?;
+    let (source, unsupported) = vcad_ir::to_loon::document_to_loon_checked(&doc);
+    let result = serde_json::json!({ "source": source, "unsupported": unsupported });
+    serde_wasm_bindgen::to_value(&result).map_err(|e| JsError::new(&e.to_string()))
 }
 
 /// Parse a .vcad file (JSON v0.1, VCode v0.2, or loon v0.3).

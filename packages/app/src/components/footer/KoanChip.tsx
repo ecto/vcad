@@ -29,7 +29,7 @@ const KOANS = [
 
 const ROTATE_MS = 18_000;
 
-export type FooterModeBadge = "drafting" | "raytrace" | "assembly";
+export type FooterModeBadge = "drafting" | "assembly";
 
 const MODE_META: Record<
   FooterModeBadge,
@@ -39,11 +39,6 @@ const MODE_META: Record<
     label: "drafting",
     dot: "bg-stone-300",
     text: "text-stone-300",
-  },
-  raytrace: {
-    label: "ray-traced",
-    dot: "bg-violet-400",
-    text: "text-violet-400",
   },
   assembly: {
     label: "assembly",
@@ -58,8 +53,10 @@ const MODE_META: Record<
  * Priority of what occupies the slot:
  *   1. selection > 0 — selection summary (count + name when single).
  *   2. mode badge — colored dot + label for the active app mode
- *      (drafting / raytrace / assembly). Sketch is intentionally skipped
- *      because the sketch ribbon already covers it.
+ *      (drafting / assembly). Sketch is intentionally skipped
+ *      because the sketch ribbon already covers it. Raytrace lives in
+ *      its own right-side chip (`RaytraceChip`) since it's a render
+ *      flag rather than a workspace mode.
  *   3. parts > 0 — gentle stat about the document (parts · k tris).
  *   4. empty doc — rotating koan, cycling every 18s.
  */

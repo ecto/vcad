@@ -238,10 +238,7 @@ describe("CSG operations", () => {
     expect(scene.parts[0].mesh.indices.length).toBeGreaterThan(0);
   });
 
-  // TODO(#12): scene.parts[0].solid is undefined after a difference of a cube
-  // and a cylinder. The current WASM kernel doesn't seem to expose the .solid
-  // field through this code path. Re-enable when the kernel surfaces it.
-  it.skip("preserves B-rep data for STEP export after difference", () => {
+  it("preserves B-rep data for STEP export after difference", () => {
     const doc = singlePartDoc(
       [
         { id: 1, name: "block", op: { type: "Cube", size: { x: 20, y: 20, z: 20 } } },
@@ -250,15 +247,14 @@ describe("CSG operations", () => {
       ],
       3,
     );
-    const scene = engine.evaluate(doc);
-    // Verify the solid is present
+    // evaluateWithSolids uses the TS evaluator which keeps Solid handles;
+    // the WASM fast path only returns mesh JSON and drops them.
+    const scene = engine.evaluateWithSolids(doc);
     expect(scene.parts[0].solid).toBeDefined();
-    // Verify B-rep is preserved and STEP export is possible
     expect(scene.parts[0].solid.canExportStep()).toBe(true);
   });
 
-  // TODO(#12): same .solid undefined issue as the simpler difference test above.
-  it.skip("preserves B-rep after complex chain like mounting plate", () => {
+  it("preserves B-rep after complex chain like mounting plate", () => {
     // Mirrors the mounting plate structure: transforms -> difference -> cube minus union of holes
     const doc = singlePartDoc(
       [
@@ -283,15 +279,12 @@ describe("CSG operations", () => {
       ],
       12,
     );
-    const scene = engine.evaluate(doc);
-    // Verify the solid is present
+    const scene = engine.evaluateWithSolids(doc);
     expect(scene.parts[0].solid).toBeDefined();
-    // Verify B-rep is preserved through the entire chain
     expect(scene.parts[0].solid.canExportStep()).toBe(true);
   });
 
-  // TODO(#12): same .solid undefined issue as the simpler difference test above.
-  it.skip("preserves B-rep for union of non-overlapping cylinders", () => {
+  it("preserves B-rep for union of non-overlapping cylinders", () => {
     // Test if union of multiple non-overlapping solids preserves valid topology
     const doc = singlePartDoc(
       [
@@ -302,17 +295,16 @@ describe("CSG operations", () => {
       ],
       4,
     );
-    const scene = engine.evaluate(doc);
+    const scene = engine.evaluateWithSolids(doc);
     expect(scene.parts[0].solid).toBeDefined();
     expect(scene.parts[0].solid.canExportStep()).toBe(true);
-    // Verify we can actually export to STEP
     const stepBuffer = scene.parts[0].solid.toStepBuffer();
     expect(stepBuffer.length).toBeGreaterThan(0);
   });
 
-  // TODO(#12): fails with "half-edge has no parent edge" — topology repair
-  // works for simple cases but the 9-hole mounting plate has edge cases
-  // that still fail. The simpler 4-hole test above passes.
+  // Skipped (#78): kernel throws "half-edge has no parent edge" during topology
+  // repair when subtracting 9 cylinders from a plate in sequence. The simpler
+  // 3-hole variant above passes; this is a known kernel bug tracked in #78.
   it.skip("preserves B-rep for exact mounting plate example structure", () => {
     // This is the EXACT document structure from the mounting plate example
     const doc = createDocument();
@@ -888,10 +880,9 @@ describe("Assembly evaluation", () => {
     expect(armInstance!.transform!.translation.x).toBe(10); // parentAnchor.x - childAnchor.x
   });
 
-  // TODO(#12): scene.clashes is empty even when two instances overlap.
-  // Either the engine isn't running clash detection through this path or
-  // the kernel returns no positions. Re-enable when clash detection is
-  // wired up here.
+  // Skipped (#78): clash detection is not implemented for assembly mode
+  // (partDefs + instances with empty roots). The evaluator only checks solids
+  // from the roots array, which is empty here. Tracked in #78.
   it.skip("detects clashes between overlapping instances", () => {
     const doc: Document = {
       version: "0.1",

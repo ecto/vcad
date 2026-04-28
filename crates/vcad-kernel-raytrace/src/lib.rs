@@ -41,5 +41,5 @@ pub mod trim;
 pub mod gpu;
 
 pub use bvh::Bvh;
-pub use cpu::{render_scene, CpuRenderer};
+pub use cpu::{render_scene, render_scene_samples, CpuRenderer};
 pub use ray::{Ray, RayHit};

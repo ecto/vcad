@@ -1,23 +1,26 @@
 /**
- * inspect_cad tool — query geometry properties.
+ * inspect_cad tool — query geometry properties for an open session
+ * document. Sums volume, surface area, mass (when materials carry
+ * density), and the overall bounding box across every part.
+ *
+ * Per-part inspection (the chat surface's `inspect_part` and
+ * `describe_scene`) is deferred to a follow-up — those need
+ * scene-relative anchors and aren't yet routable through the IR-direct
+ * MCP path.
  */
 
-import type { Document } from "@vcad/ir";
 import type { Engine, TriangleMesh } from "@vcad/engine";
-
-interface InspectInput {
-  ir: Document;
-}
+import { getSession } from "./session.js";
 
 export const inspectCadSchema = {
   type: "object" as const,
   properties: {
-    ir: {
-      type: "object" as const,
-      description: "IR document from create_cad_document",
+    document_id: {
+      type: "string" as const,
+      description: "Session id from open_document.",
     },
   },
-  required: ["ir"],
+  required: ["document_id"],
 };
 
 interface BoundingBox {
@@ -163,7 +166,9 @@ export function inspectCad(
   input: unknown,
   engine: Engine,
 ): { content: Array<{ type: "text"; text: string }> } {
-  const { ir } = input as InspectInput;
+  const args = (input ?? {}) as Record<string, unknown>;
+  const documentId = String(args.document_id ?? "");
+  const ir = getSession(documentId);
 
   // Evaluate the document
   const scene = engine.evaluate(ir);

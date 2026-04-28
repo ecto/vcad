@@ -307,6 +307,16 @@ pub struct GpuCamera {
 }
 
 /// Render state for progressive rendering.
+///
+/// Layout (128 bytes, 16-byte aligned — matches `RenderState` in raytrace.wgsl):
+/// offset  0–31:  eight u32/f32 scalars (frame_index … theme)
+/// offset 32–47:  SSAO params (ao_radius, ao_intensity, ao_bias, ao_sample_count)
+/// offset 48–51:  refine_sample_count u32
+/// offset 52–63:  _pad [u32; 3]
+/// offset 64–79:  silhouette_color vec4
+/// offset 80–95:  crease_color vec4
+/// offset 96–111: boundary_color vec4
+/// offset 112–127: four f32 width/softness scalars
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct GpuRenderState {
@@ -316,31 +326,87 @@ pub struct GpuRenderState {
     pub jitter_x: f32,
     /// Jitter Y offset for anti-aliasing (-0.5 to 0.5).
     pub jitter_y: f32,
-    /// Enable edge rendering (0 = disabled, 1 = enabled).
+    /// Edge-type bit-flags: 0=off, bit0=silhouette, bit1=crease, bit2=boundary.
     pub enable_edges: u32,
     /// Edge detection threshold for depth discontinuity.
     pub edge_depth_threshold: f32,
     /// Edge detection threshold for normal discontinuity (degrees).
     pub edge_normal_threshold: f32,
-    /// Debug render mode: 0=normal, 1=show normals, 2=show face_id, 3=show n_dot_l, 4=show orientation.
+    /// Debug render mode: 0=normal, 1=show normals, 2=show face_id, 3=show n_dot_l,
+    /// 4=show orientation, 5=sample-count heatmap (blue=1 ray, red=max rays).
     pub debug_mode: u32,
-    /// Padding for 16-byte alignment.
-    pub _pad: f32,
+    /// Theme: 0 = dark (default), 1 = light. Drives the visible background
+    /// palette in `sky_color`; the IBL panels and direct lighting stay
+    /// constant across themes so the model itself looks the same.
+    pub theme: u32,
+    // SSAO
+    /// SSAO world-space sample hemisphere radius.
+    pub ao_radius: f32,
+    /// SSAO intensity: 0 = disabled (ao_buffer writes 1.0), 1 = default strength.
+    pub ao_intensity: f32,
+    /// SSAO depth bias to prevent self-occlusion.
+    pub ao_bias: f32,
+    /// SSAO hemisphere sample count per frame (8, 16, or 32).
+    pub ao_sample_count: u32,
+    // refinement + padding
+    /// Number of additional refinement rays per edge pixel (0 = disabled).
+    /// Actual rays fired = floor(sqrt(refine_sample_count))^2.
+    pub refine_sample_count: u32,
+    /// Padding to align silhouette_color to 16-byte boundary (required for uniform buffers).
+    pub _pad: [u32; 3],
+    // --- edge style (added for Fusion-style edge lines) ---
+    /// Silhouette line color (RGBA linear, depth-gradient edges).
+    pub silhouette_color: [f32; 4],
+    /// Crease line color (RGBA linear, face-ID boundary edges).
+    pub crease_color: [f32; 4],
+    /// Boundary line color (RGBA linear, foreground→background edges).
+    pub boundary_color: [f32; 4],
+    /// Silhouette line apparent width (1.0 = one pixel).
+    pub silhouette_width: f32,
+    /// Crease line apparent width.
+    pub crease_width: f32,
+    /// Boundary line apparent width.
+    pub boundary_width: f32,
+    /// Sub-pixel softness factor (higher = softer AA transition).
+    pub edge_softness: f32,
 }
 
+/// Default silhouette line color: near-black, slightly cool.
+const DEFAULT_SILHOUETTE_COLOR: [f32; 4] = [0.08, 0.08, 0.10, 1.0];
+/// Default crease line color: slightly lighter than silhouette.
+const DEFAULT_CREASE_COLOR: [f32; 4] = [0.12, 0.12, 0.14, 1.0];
+/// Default boundary line color: darkest of the three types.
+const DEFAULT_BOUNDARY_COLOR: [f32; 4] = [0.06, 0.06, 0.08, 1.0];
+
+/// All three edge types on: bits 0 (silhouette) | 1 (crease) | 2 (boundary).
+const EDGES_ALL: u32 = 7;
+
 impl GpuRenderState {
-    /// Create a new render state for the given frame.
+    /// Create a new render state for the given frame with default edge style.
     pub fn new(frame_index: u32) -> Self {
         let (jitter_x, jitter_y) = halton_2_3(frame_index);
         Self {
             frame_index,
             jitter_x,
             jitter_y,
-            enable_edges: 1, // Enabled by default
+            enable_edges: EDGES_ALL,
             edge_depth_threshold: 0.1,
-            edge_normal_threshold: 30.0, // degrees
-            debug_mode: 0,               // Normal rendering by default
-            _pad: 0.0,
+            edge_normal_threshold: 30.0,
+            debug_mode: 0,
+            theme: 0,
+            ao_radius: 0.3,
+            ao_intensity: 1.0,
+            ao_bias: 0.001,
+            ao_sample_count: 16,
+            refine_sample_count: 0,
+            _pad: [0; 3],
+            silhouette_color: DEFAULT_SILHOUETTE_COLOR,
+            crease_color: DEFAULT_CREASE_COLOR,
+            boundary_color: DEFAULT_BOUNDARY_COLOR,
+            silhouette_width: 1.0,
+            crease_width: 0.75,
+            boundary_width: 1.25,
+            edge_softness: 1.5,
         }
     }
 
@@ -359,7 +425,7 @@ impl GpuRenderState {
         state
     }
 
-    /// Create a render state with custom edge settings.
+    /// Create a render state with custom edge settings (default AO).
     pub fn with_edge_settings(
         frame_index: u32,
         debug_mode: u32,
@@ -367,17 +433,124 @@ impl GpuRenderState {
         edge_depth_threshold: f32,
         edge_normal_threshold: f32,
     ) -> Self {
+        Self::with_full_settings(
+            frame_index,
+            debug_mode,
+            enable_edges,
+            edge_depth_threshold,
+            edge_normal_threshold,
+            0,
+            0.3,
+            1.0,
+            0.001,
+            16,
+            0,
+        )
+    }
+
+    /// Create a render state with all settings including theme, SSAO, and refinement.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_full_settings(
+        frame_index: u32,
+        debug_mode: u32,
+        enable_edges: bool,
+        edge_depth_threshold: f32,
+        edge_normal_threshold: f32,
+        theme: u32,
+        ao_radius: f32,
+        ao_intensity: f32,
+        ao_bias: f32,
+        ao_sample_count: u32,
+        refine_sample_count: u32,
+    ) -> Self {
+        let mut state = Self::new(frame_index);
+        state.enable_edges = if enable_edges { EDGES_ALL } else { 0 };
+        state.edge_depth_threshold = edge_depth_threshold;
+        state.edge_normal_threshold = edge_normal_threshold;
+        state.debug_mode = debug_mode;
+        state.theme = theme;
+        state.ao_radius = ao_radius;
+        state.ao_intensity = ao_intensity;
+        state.ao_bias = ao_bias;
+        state.ao_sample_count = ao_sample_count;
+        state.refine_sample_count = refine_sample_count;
+        state
+    }
+
+    /// Create a fully-styled render state.
+    ///
+    /// `enable_silhouette`, `enable_crease`, `enable_boundary` control which
+    /// edge types are rendered independently.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_styled(
+        frame_index: u32,
+        debug_mode: u32,
+        enable_silhouette: bool,
+        enable_crease: bool,
+        enable_boundary: bool,
+        edge_depth_threshold: f32,
+        edge_normal_threshold: f32,
+        theme: u32,
+        silhouette_color: [f32; 4],
+        crease_color: [f32; 4],
+        boundary_color: [f32; 4],
+        silhouette_width: f32,
+        crease_width: f32,
+        boundary_width: f32,
+        edge_softness: f32,
+    ) -> Self {
         let (jitter_x, jitter_y) = halton_2_3(frame_index);
+        let enable_edges = (enable_silhouette as u32)
+            | ((enable_crease as u32) << 1)
+            | ((enable_boundary as u32) << 2);
         Self {
             frame_index,
             jitter_x,
             jitter_y,
-            enable_edges: if enable_edges { 1 } else { 0 },
+            enable_edges,
             edge_depth_threshold,
             edge_normal_threshold,
             debug_mode,
-            _pad: 0.0,
+            theme,
+            ao_radius: 0.3,
+            ao_intensity: 1.0,
+            ao_bias: 0.001,
+            ao_sample_count: 16,
+            refine_sample_count: 0,
+            _pad: [0; 3],
+            silhouette_color,
+            crease_color,
+            boundary_color,
+            silhouette_width,
+            crease_width,
+            boundary_width,
+            edge_softness,
         }
+    }
+
+    /// Create a render state with adaptive refinement enabled.
+    pub fn with_refinement(
+        frame_index: u32,
+        debug_mode: u32,
+        enable_edges: bool,
+        edge_depth_threshold: f32,
+        edge_normal_threshold: f32,
+        theme: u32,
+        refine_sample_count: u32,
+    ) -> Self {
+        Self::with_full_settings(
+            frame_index,
+            debug_mode,
+            enable_edges,
+            edge_depth_threshold,
+            edge_normal_threshold,
+            theme,
+            0.3,
+            1.0,
+            0.001,
+            16,
+            refine_sample_count,
+        )
     }
 }
 
@@ -690,6 +863,109 @@ impl GpuScene {
             inner_loop_descs,
             face_index_map,
         })
+    }
+
+    /// Merge another GpuScene into this one. Combines surfaces, faces,
+    /// materials, trim verts, inner-loop descriptors, and BVH nodes.
+    ///
+    /// All `other`'s indices into the various buffers are offset by the
+    /// current sizes of `self`'s buffers. The two BVH trees are unified
+    /// under a new root node whose AABB is the union of both old roots'
+    /// AABBs — this keeps traversal a single root-to-leaf walk in the
+    /// shader without changes there.
+    pub fn merge(mut self, other: Self) -> Self {
+        let surface_offset = self.surfaces.len() as u32;
+        let face_offset = self.faces.len() as u32;
+        let material_offset = self.materials.len() as u32;
+        let bvh_offset = self.bvh_nodes.len() as u32;
+        let trim_offset = self.trim_verts.len() as u32;
+        let inner_desc_offset = self.inner_loop_descs.len() as u32;
+
+        // Adjust other's faces — every cross-buffer index needs a shift.
+        let adjusted_faces: Vec<GpuFace> = other
+            .faces
+            .iter()
+            .map(|f| {
+                let mut nf = *f;
+                nf.surface_idx += surface_offset;
+                nf.material_idx += material_offset;
+                nf.trim_start += trim_offset;
+                nf.inner_start += trim_offset;
+                nf.inner_desc_start += inner_desc_offset;
+                nf
+            })
+            .collect();
+
+        // Adjust other's BVH nodes:
+        //   - leaf nodes: left_or_first is a face index in `faces`
+        //   - internal nodes: both left_or_first and right_or_count are
+        //     child node indices in bvh_nodes
+        // After the merge below we'll prepend a new root, so internal-node
+        // child indices need an extra +1 on top of the per-tree offset.
+        let adjusted_nodes: Vec<GpuBvhNode> = other
+            .bvh_nodes
+            .iter()
+            .map(|n| {
+                let mut nn = *n;
+                if nn.is_leaf == 1 {
+                    nn.left_or_first += face_offset;
+                    // right_or_count is a count, not an index — leave alone.
+                } else {
+                    nn.left_or_first += bvh_offset + 1;
+                    nn.right_or_count += bvh_offset + 1;
+                }
+                nn
+            })
+            .collect();
+
+        // Self's existing internal nodes need +1 for the new root we'll prepend.
+        for n in self.bvh_nodes.iter_mut() {
+            if n.is_leaf == 0 {
+                n.left_or_first += 1;
+                n.right_or_count += 1;
+            } else {
+                // Leaf face indices stay correct (faces are appended after).
+            }
+        }
+
+        // New root spans both trees. Children: self's old root (now at 1),
+        // other's old root (at 1 + self.bvh_nodes.len()).
+        let self_root_min = self.bvh_nodes[0].aabb_min;
+        let self_root_max = self.bvh_nodes[0].aabb_max;
+        let other_root_min = adjusted_nodes[0].aabb_min;
+        let other_root_max = adjusted_nodes[0].aabb_max;
+        let new_root = GpuBvhNode {
+            aabb_min: [
+                self_root_min[0].min(other_root_min[0]),
+                self_root_min[1].min(other_root_min[1]),
+                self_root_min[2].min(other_root_min[2]),
+                0.0,
+            ],
+            aabb_max: [
+                self_root_max[0].max(other_root_max[0]),
+                self_root_max[1].max(other_root_max[1]),
+                self_root_max[2].max(other_root_max[2]),
+                0.0,
+            ],
+            left_or_first: 1,
+            right_or_count: bvh_offset + 1,
+            is_leaf: 0,
+            _pad: 0,
+        };
+
+        let mut merged_bvh = Vec::with_capacity(1 + self.bvh_nodes.len() + adjusted_nodes.len());
+        merged_bvh.push(new_root);
+        merged_bvh.extend(self.bvh_nodes);
+        merged_bvh.extend(adjusted_nodes);
+
+        self.surfaces.extend(other.surfaces);
+        self.faces.extend(adjusted_faces);
+        self.materials.extend(other.materials);
+        self.bvh_nodes = merged_bvh;
+        self.trim_verts.extend(other.trim_verts);
+        self.inner_loop_descs.extend(other.inner_loop_descs);
+
+        self
     }
 
     /// Set the material for all faces in the scene.
