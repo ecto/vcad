@@ -80,10 +80,18 @@ export const defaultCubeSolver: Solver = {
   },
 };
 
-/** Look up a solver by id. Skeleton only ships DEFAULT_CUBE. */
+import { claudeDirectSolver, makeClaudeDirectSolver } from "./solvers/claude-direct.js";
+
+/** Look up a solver by id. Currently ships DEFAULT_CUBE + claude-direct.
+ *  The Anthropic SDK is only loaded once `claude-direct.solve()` runs,
+ *  so DEFAULT_CUBE callers don't pay for it. */
 export function getSolver(id: string): Solver {
   if (id === "default-cube" || id === "DEFAULT_CUBE") return defaultCubeSolver;
+  if (id === "claude-direct") return claudeDirectSolver;
+  if (id.startsWith("claude-direct-")) {
+    return makeClaudeDirectSolver({ model: id.slice("claude-direct-".length) });
+  }
   throw new Error(
-    `unknown solver "${id}". Skeleton only ships "default-cube".`,
+    `unknown solver "${id}". Available: "default-cube", "claude-direct[-<model>]".`,
   );
 }

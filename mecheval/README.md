@@ -48,6 +48,37 @@ Every official run lands in `runs/<task_id>/<model_id>/<timestamp>.json` with th
 
 (Not yet open.) When live: ship a Docker image exposing `solve(prompt) -> .vcad` over HTTP/MCP. We run it against the private split. SWE-Bench / Cybench pattern.
 
+## Running locally
+
+Build everything once:
+
+```
+cargo build -p mecheval-grader
+(cd mecheval/harness && npx tsc)
+```
+
+Run the DEFAULT_CUBE villain against a task — no API key required:
+
+```
+node mecheval/harness/dist/cli.js --task a1-cube-01 --solver default-cube
+```
+
+Run real Claude — single-shot, prompt-only, no MCP loop yet:
+
+```
+ANTHROPIC_API_KEY=sk-... node mecheval/harness/dist/cli.js \
+  --task a1-cube-01 --solver claude-direct
+```
+
+Override the model:
+
+```
+ANTHROPIC_API_KEY=sk-... node mecheval/harness/dist/cli.js \
+  --task a1-cube-01 --solver claude-direct-claude-haiku-4-5-20251001
+```
+
+Each run writes a forensic blob to `mecheval/runs/<task_id>/<model_id>/<run_id>.json`.
+
 ## License
 
 Apache-2.0 — same as vcad.
