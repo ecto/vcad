@@ -145,6 +145,43 @@ interface FullBlob {
 // ─── formatting ───────────────────────────────────────────────────────────
 
 const fmtNum = (n: number, d = 2) => n.toFixed(d);
+/** Friendly display name for a model id.
+ *  - "claude-direct-claude-opus-4-7" → "Opus 4.7 (direct)"
+ *  - "claude-mcp-claude-opus-4-7"   → "Opus 4.7 (mcp)"
+ *  - "default-cube"                  → "DEFAULT_CUBE"
+ */
+function modelDisplayName(modelId: string): string {
+  if (modelId === "default-cube" || modelId === "DEFAULT_CUBE") {
+    return "DEFAULT_CUBE";
+  }
+  const tokens = modelId.split("-");
+  for (let i = 0; i < tokens.length; i++) {
+    if (/^(opus|sonnet|haiku)$/i.test(tokens[i])) {
+      const family = tokens[i][0].toUpperCase() + tokens[i].slice(1).toLowerCase();
+      const ver: string[] = [];
+      let j = i + 1;
+      while (j < tokens.length && /^\d+$/.test(tokens[j])) {
+        ver.push(tokens[j]);
+        j++;
+      }
+      const v = ver.length ? " " + ver.join(".") : "";
+      const mode =
+        tokens.includes("direct") ? "direct"
+        : tokens.includes("mcp") ? "mcp"
+        : null;
+      return `${family}${v}${mode ? ` (${mode})` : ""}`;
+    }
+  }
+  return modelId;
+}
+
+function joinHumanList(items: string[]): string {
+  if (items.length === 0) return "";
+  if (items.length === 1) return items[0];
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
+}
+
 const fmtCompact = (n: number) =>
   n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M`
   : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k`
@@ -390,6 +427,57 @@ const STYLES = `
     height: auto;
     width: auto;
     display: block;
+  }
+
+  /* Recent-attempts gallery on task pages. */
+  .run-gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px;
+    margin: 8px 0 4px;
+  }
+  .run-card {
+    display: block;
+    border: 1px solid var(--soft);
+    background: rgba(14,57,96,0.02);
+    text-decoration: none;
+    color: var(--ink);
+    transition: border-color 0.15s;
+  }
+  .run-card:hover { border-color: var(--ink); }
+  .run-card-svg {
+    height: 160px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px;
+    border-bottom: 1px dotted var(--soft);
+  }
+  .run-card-svg svg {
+    max-height: 140px;
+    max-width: 100%;
+    height: auto;
+    width: auto;
+  }
+  .run-card-empty {
+    color: var(--ink-soft);
+    font-size: 11px;
+    font-style: italic;
+  }
+  .run-card-meta {
+    padding: 6px 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+  }
+  .run-card-model {
+    font-family: var(--display);
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .operator-says {
     display: inline-flex;
@@ -814,13 +902,34 @@ function indexPage(
   const modelIds = models.map((m) => m.model_id);
   const passKAchieved = models.reduce((a, m) => a + m.pass_k_full, 0);
   const passKReady = models.reduce((a, m) => a + m.pass_k_total, 0);
-  const operatorQuote = passKReady === 0
-    ? "no models scored yet. waiting."
-    : passKAchieved === 0
-      ? "no model has earned a pass^5 yet. early days."
-      : passKAchieved === passKReady
-        ? "everyone's nailing it. suspicious."
-        : `${passKAchieved} of ${passKReady} pass^5 earned. keep going.`;
+
+  // Human-friendly OPERATOR commentary based on who's actually passed.
+  const passersByModel = new Map<string, string[]>();
+  for (const e of entries) {
+    if (e.pass_k === true) {
+      const xs = passersByModel.get(e.model_id) ?? [];
+      xs.push(e.task_id);
+      passersByModel.set(e.model_id, xs);
+    }
+  }
+  const passers = [...passersByModel.keys()].map(modelDisplayName);
+  let operatorQuote: string;
+  if (entries.length === 0) {
+    operatorQuote = "no runs yet. the leaderboard is empty.";
+  } else if (passers.length === 0 && passKReady === 0) {
+    operatorQuote = "no model has 5 attempts at any task yet. need more runs to call pass^5.";
+  } else if (passers.length === 0) {
+    operatorQuote = "no model has earned a clean pass^5 yet. early days.";
+  } else if (passers.length === 1) {
+    const tasks = passersByModel.get([...passersByModel.keys()][0])!;
+    if (tasks.length === 1) {
+      operatorQuote = `only ${passers[0]} has passed anything yet — and only on ${tasks[0]}.`;
+    } else {
+      operatorQuote = `only ${passers[0]} has passes so far (${tasks.length} tasks).`;
+    }
+  } else {
+    operatorQuote = `${joinHumanList(passers)} have earned pass^5. the rest are still cooking.`;
+  }
   const body = `
     <div class="hero">
       <div>
@@ -865,7 +974,49 @@ function indexPage(
   );
 }
 
-function taskPage(spec: TaskSpec | null, taskId: string, runsForTask: RunMeta[]): string {
+/** Recent-attempts gallery for a task page. Renders the latest few
+ *  run artifacts as small clickable cards. */
+function recentAttemptsGallery(
+  runsForTask: RunMeta[],
+  runSvgs: Map<string, string | null>,
+): string {
+  const recent = runsForTask
+    .slice()
+    .sort((a, b) => b.run_id.localeCompare(a.run_id))
+    .slice(0, 8);
+  if (!recent.length) return "";
+
+  const cards = recent
+    .map((r) => {
+      const svgKey = `${r.task_id}::${r.model_id}::${r.run_id}`;
+      const svg = runSvgs.get(svgKey) ?? null;
+      const status = r.passed
+        ? `<span class="pass">PASS</span>`
+        : `<span class="fail">${fmtNum(r.score)}</span>`;
+      const href = `../run/${encodeURIComponent(r.task_id)}/${encodeURIComponent(r.model_id)}/${encodeURIComponent(r.run_id)}.html`;
+      const svgHtml = svg
+        ? svg
+        : `<div class="run-card-empty">no render</div>`;
+      return `<a class="run-card" href="${href}">
+        <div class="run-card-svg">${svgHtml}</div>
+        <div class="run-card-meta">
+          <div class="run-card-model">${escape(modelDisplayName(r.model_id))}</div>
+          <div class="run-card-status">${status}</div>
+        </div>
+      </a>`;
+    })
+    .join("");
+
+  return `<h2>Recent attempts</h2>
+    <div class="run-gallery">${cards}</div>`;
+}
+
+function taskPage(
+  spec: TaskSpec | null,
+  taskId: string,
+  runsForTask: RunMeta[],
+  runSvgs: Map<string, string | null>,
+): string {
   if (!spec) {
     return pageShell(
       `mecheval — ${taskId}`,
@@ -907,6 +1058,8 @@ function taskPage(spec: TaskSpec | null, taskId: string, runsForTask: RunMeta[])
 
     <h2>Limits</h2>
     ${limitsHtml}
+
+    ${recentAttemptsGallery(runsForTask, runSvgs)}
 
     <h2>Runs (${runsForTask.length})</h2>
     ${runsForTask.length
@@ -1024,7 +1177,7 @@ function runPage(blob: FullBlob, vcad: string | null, vcadSvg: string | null): s
     <h2>What the model built</h2>
     ${vcadSvg
       ? `<div class="run-render">${vcadSvg}</div>
-         <p class="footnote">isometric render via <code>mecheval-render</code> · the model's actual .vcad output, faceted at 28 segments per cylinder.</p>`
+         <p class="footnote">isometric render via <code>mecheval-render</code> · the model's actual .vcad output, faceted at 28 segments per cylinder · <a href="${escape(runId)}.vcad" download>download ${escape(runId)}.vcad</a></p>`
       : `<div class="nodata">no render available — vcad-render did not produce geometry for this attempt</div>`}
 
     <h2>.vcad source</h2>
@@ -1110,12 +1263,25 @@ async function main(): Promise<void> {
     indexPage(runs, entries, models, [...seenTaskIds].sort(), PASS_K, operatorSvg),
   );
 
+  // Pre-render every run artifact once into a shared map. Used by both
+  // run detail pages and task-page galleries. Keyed by
+  // "task::model::run" so a single lookup surface is reused everywhere.
+  const runSvgs = new Map<string, string | null>();
+  for (const r of runs) {
+    const vcadPath = r.blob_path.replace(/\.json$/, ".vcad");
+    const cacheKey = `runs/${r.task_id}/${r.model_id}/${r.run_id}`;
+    const svg = existsSync(vcadPath)
+      ? await getOrRenderSvg(vcadPath, cacheKey)
+      : null;
+    runSvgs.set(`${r.task_id}::${r.model_id}::${r.run_id}`, svg);
+  }
+
   // Task pages.
   for (const tid of seenTaskIds) {
     const runsForTask = runs.filter((r) => r.task_id === tid);
     await writePage(
       `task/${tid}.html`,
-      taskPage(taskSpecs.get(tid) ?? null, tid, runsForTask),
+      taskPage(taskSpecs.get(tid) ?? null, tid, runsForTask, runSvgs),
     );
   }
 
@@ -1126,22 +1292,31 @@ async function main(): Promise<void> {
     await writePage(`model/${mid}.html`, modelPage(mid, runsForModel));
   }
 
-  // Run pages — load each blob in full, attach the .vcad inline,
-  // render through cached mecheval-render for the visual embed.
+  // Run pages — reuse the SVG map populated above; copy each .vcad
+  // into dist alongside the blob so the run page can offer it as a
+  // download link.
   let renderedRuns = 0;
   for (const r of runs) {
     const blob = await loadFullBlob(r.blob_path);
     const vcad = await loadVcadIfPresent(r.blob_path);
-    const vcadPath = r.blob_path.replace(/\.json$/, ".vcad");
-    const cacheKey = `runs/${r.task_id}/${r.model_id}/${r.run_id}`;
-    const vcadSvg = existsSync(vcadPath)
-      ? await getOrRenderSvg(vcadPath, cacheKey)
-      : null;
+    const svgKey = `${r.task_id}::${r.model_id}::${r.run_id}`;
+    const vcadSvg = runSvgs.get(svgKey) ?? null;
     if (vcadSvg) renderedRuns++;
     await writePage(
       `run/${r.task_id}/${r.model_id}/${r.run_id}.html`,
       runPage(blob, vcad, vcadSvg),
     );
+    // Drop the .vcad file alongside the HTML so it can be linked.
+    if (vcad) {
+      await writeFile(
+        resolve(
+          OUT_DIR,
+          `run/${r.task_id}/${r.model_id}/${r.run_id}.vcad`,
+        ),
+        vcad,
+        "utf8",
+      );
+    }
   }
   console.log(`rendered ${renderedRuns} of ${runs.length} run artifacts`);
 
