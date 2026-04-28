@@ -35,13 +35,49 @@ export function documentToLoon(doc: Document): string {
   return documentToLoonTS(doc);
 }
 
+/**
+ * Convert a Document to loon, also returning names of unsupported variants.
+ *
+ * When `unsupported` is non-empty, those nodes were replaced with comment
+ * placeholders. Callers should surface a warning so the user knows data will
+ * be lost if they save the loon output.
+ */
+export function documentToLoonChecked(doc: Document): {
+  source: string;
+  unsupported: string[];
+} {
+  if (wasmModule?.documentToLoonChecked) {
+    try {
+      const result = wasmModule.documentToLoonChecked(JSON.stringify(doc)) as {
+        source: string;
+        unsupported: string[];
+      };
+      return result;
+    } catch (e) {
+      console.warn(
+        "[CORE] WASM documentToLoonChecked failed, using TS fallback:",
+        e,
+      );
+    }
+  }
+  return documentToLoonCheckedTS(doc);
+}
+
 // ============================================================================
 // TypeScript fallback implementation
 // ============================================================================
 
 function documentToLoonTS(doc: Document): string {
+  return documentToLoonCheckedTS(doc).source;
+}
+
+function documentToLoonCheckedTS(doc: Document): {
+  source: string;
+  unsupported: string[];
+} {
   const lines: string[] = [];
   const emitted = new Set<string>();
+  const unsupportedSet = new Set<string>();
 
   // Header
   lines.push("; Generated from vcad document");
@@ -65,7 +101,7 @@ function documentToLoonTS(doc: Document): string {
   for (const nodeId of order) {
     const node = doc.nodes[String(nodeId)];
     if (!node) continue;
-    emitNode(node, doc, lines, emitted);
+    emitNode(node, doc, lines, emitted, unsupportedSet);
   }
 
   // Emit scene roots
@@ -88,7 +124,10 @@ function documentToLoonTS(doc: Document): string {
     }
   }
 
-  return lines.join("\n") + "\n";
+  return {
+    source: lines.join("\n") + "\n",
+    unsupported: Array.from(unsupportedSet),
+  };
 }
 
 /** Sanitize a name for use as a loon identifier. */
@@ -110,6 +149,7 @@ function emitNode(
   doc: Document,
   lines: string[],
   emitted: Set<string>,
+  unsupported: Set<string>,
 ): void {
   const key = String(node.id);
   if (emitted.has(key)) return;
@@ -118,15 +158,24 @@ function emitNode(
   // Ensure dependencies are emitted first
   for (const dep of getChildIds(node.op)) {
     const depNode = doc.nodes[String(dep)];
-    if (depNode) emitNode(depNode, doc, lines, emitted);
+    if (depNode) emitNode(depNode, doc, lines, emitted, unsupported);
   }
 
   const name = nodeName(node.id, doc);
-  const expr = opToLoon(node.op, doc);
-  if (expr) {
-    lines.push(`[let ${name} ${expr}]`);
+  const result = opToLoon(node.op, doc);
+  if (result.kind === "ok") {
+    lines.push(`[let ${name} ${result.expr}]`);
+  } else if (result.kind === "unsupported") {
+    unsupported.add(result.variant);
+    lines.push(`[let ${name} ${result.comment}]`);
   }
+  // kind === "skip": do nothing
 }
+
+type OpResult =
+  | { kind: "ok"; expr: string }
+  | { kind: "unsupported"; variant: string; comment: string }
+  | { kind: "skip" };
 
 /** Format a number for loon output. Always includes decimal for floats. */
 function f(n: number): string {
@@ -141,55 +190,75 @@ function ref(id: NodeId, doc: Document): string {
   return nodeName(id, doc);
 }
 
-function opToLoon(op: CsgOp, doc: Document): string | null {
+function ok(expr: string): OpResult {
+  return { kind: "ok", expr };
+}
+
+function unsupported(variant: string, comment: string): OpResult {
+  return { kind: "unsupported", variant, comment };
+}
+
+function opToLoon(op: CsgOp, doc: Document): OpResult {
   switch (op.type) {
     case "Cube":
-      return `[cube ${f(op.size.x)} ${f(op.size.y)} ${f(op.size.z)}]`;
+      return ok(`[cube ${f(op.size.x)} ${f(op.size.y)} ${f(op.size.z)}]`);
 
     case "Cylinder":
-      return `[cylinder ${f(op.radius)} ${f(op.height)}]`;
+      return ok(`[cylinder ${f(op.radius)} ${f(op.height)}]`);
 
     case "Sphere":
-      return `[sphere ${f(op.radius)}]`;
+      return ok(`[sphere ${f(op.radius)}]`);
 
     case "Cone":
-      return `[cone ${f(op.radius_bottom)} ${f(op.radius_top)} ${f(op.height)}]`;
+      return ok(
+        `[cone ${f(op.radius_bottom)} ${f(op.radius_top)} ${f(op.height)}]`,
+      );
 
     case "Empty":
-      return "Empty";
+      return ok("Empty");
 
     case "Union":
-      return `[union ${ref(op.left, doc)} ${ref(op.right, doc)}]`;
+      return ok(`[union ${ref(op.left, doc)} ${ref(op.right, doc)}]`);
 
     case "Difference":
-      return `[difference ${ref(op.left, doc)} ${ref(op.right, doc)}]`;
+      return ok(`[difference ${ref(op.left, doc)} ${ref(op.right, doc)}]`);
 
     case "Intersection":
-      return `[intersection ${ref(op.left, doc)} ${ref(op.right, doc)}]`;
+      return ok(`[intersection ${ref(op.left, doc)} ${ref(op.right, doc)}]`);
 
     case "Translate":
-      return `[translate ${f(op.offset.x)} ${f(op.offset.y)} ${f(op.offset.z)} ${ref(op.child, doc)}]`;
+      return ok(
+        `[translate ${f(op.offset.x)} ${f(op.offset.y)} ${f(op.offset.z)} ${ref(op.child, doc)}]`,
+      );
 
     case "Rotate":
-      return `[rotate ${f(op.angles.x)} ${f(op.angles.y)} ${f(op.angles.z)} ${ref(op.child, doc)}]`;
+      return ok(
+        `[rotate ${f(op.angles.x)} ${f(op.angles.y)} ${f(op.angles.z)} ${ref(op.child, doc)}]`,
+      );
 
     case "Scale":
-      return `[scale ${f(op.factor.x)} ${f(op.factor.y)} ${f(op.factor.z)} ${ref(op.child, doc)}]`;
+      return ok(
+        `[scale ${f(op.factor.x)} ${f(op.factor.y)} ${f(op.factor.z)} ${ref(op.child, doc)}]`,
+      );
 
     case "Fillet":
-      return `[fillet ${f(op.radius)} ${ref(op.child, doc)}]`;
+      return ok(`[fillet ${f(op.radius)} ${ref(op.child, doc)}]`);
 
     case "Chamfer":
-      return `[chamfer ${f(op.distance)} ${ref(op.child, doc)}]`;
+      return ok(`[chamfer ${f(op.distance)} ${ref(op.child, doc)}]`);
 
     case "Shell":
-      return `[shell ${f(op.thickness)} ${ref(op.child, doc)}]`;
+      return ok(`[shell ${f(op.thickness)} ${ref(op.child, doc)}]`);
 
     case "LinearPattern":
-      return `[linear-pattern ${f(op.direction.x)} ${f(op.direction.y)} ${f(op.direction.z)} ${op.count} ${f(op.spacing)} ${ref(op.child, doc)}]`;
+      return ok(
+        `[linear-pattern ${f(op.direction.x)} ${f(op.direction.y)} ${f(op.direction.z)} ${op.count} ${f(op.spacing)} ${ref(op.child, doc)}]`,
+      );
 
     case "CircularPattern":
-      return `[circular-pattern ${f(op.axis_origin.x)} ${f(op.axis_origin.y)} ${f(op.axis_origin.z)} ${f(op.axis_dir.x)} ${f(op.axis_dir.y)} ${f(op.axis_dir.z)} ${op.count} ${f(op.angle_deg)} ${ref(op.child, doc)}]`;
+      return ok(
+        `[circular-pattern ${f(op.axis_origin.x)} ${f(op.axis_origin.y)} ${f(op.axis_origin.z)} ${f(op.axis_dir.x)} ${f(op.axis_dir.y)} ${f(op.axis_dir.z)} ${op.count} ${f(op.angle_deg)} ${ref(op.child, doc)}]`,
+      );
 
     case "Sketch2D": {
       const segs = op.segments
@@ -201,51 +270,81 @@ function opToLoon(op: CsgOp, doc: Document): string | null {
           }
         })
         .join("\n");
-      return [
-        `[sketch`,
-        `  ${f(op.origin.x)} ${f(op.origin.y)} ${f(op.origin.z)}`,
-        `  ${f(op.x_dir.x)} ${f(op.x_dir.y)} ${f(op.x_dir.z)}`,
-        `  ${f(op.y_dir.x)} ${f(op.y_dir.y)} ${f(op.y_dir.z)}`,
-        `  #[`,
-        segs,
-        `  ]]`,
-      ].join("\n");
+      return ok(
+        [
+          `[sketch`,
+          `  ${f(op.origin.x)} ${f(op.origin.y)} ${f(op.origin.z)}`,
+          `  ${f(op.x_dir.x)} ${f(op.x_dir.y)} ${f(op.x_dir.z)}`,
+          `  ${f(op.y_dir.x)} ${f(op.y_dir.y)} ${f(op.y_dir.z)}`,
+          `  #[`,
+          segs,
+          `  ]]`,
+        ].join("\n"),
+      );
     }
 
     case "Extrude":
-      return `[extrude ${f(op.direction.x)} ${f(op.direction.y)} ${f(op.direction.z)} ${ref(op.sketch, doc)}]`;
+      return ok(
+        `[extrude ${f(op.direction.x)} ${f(op.direction.y)} ${f(op.direction.z)} ${ref(op.sketch, doc)}]`,
+      );
 
     case "Revolve":
-      return `[revolve ${f(op.axis_origin.x)} ${f(op.axis_origin.y)} ${f(op.axis_origin.z)} ${f(op.axis_dir.x)} ${f(op.axis_dir.y)} ${f(op.axis_dir.z)} ${f(op.angle_deg)} ${ref(op.sketch, doc)}]`;
+      return ok(
+        `[revolve ${f(op.axis_origin.x)} ${f(op.axis_origin.y)} ${f(op.axis_origin.z)} ${f(op.axis_dir.x)} ${f(op.axis_dir.y)} ${f(op.axis_dir.z)} ${f(op.angle_deg)} ${ref(op.sketch, doc)}]`,
+      );
 
     case "Sweep": {
       const sk = ref(op.sketch, doc);
       if (op.path.type === "Line") {
-        return `[sweep-line ${f(op.path.start.x)} ${f(op.path.start.y)} ${f(op.path.start.z)} ${f(op.path.end.x)} ${f(op.path.end.y)} ${f(op.path.end.z)} ${sk}]`;
+        return ok(
+          `[sweep-line ${f(op.path.start.x)} ${f(op.path.start.y)} ${f(op.path.start.z)} ${f(op.path.end.x)} ${f(op.path.end.y)} ${f(op.path.end.z)} ${sk}]`,
+        );
       } else {
-        // Helix
-        return `[sweep-helix ${f(op.path.radius)} ${f(op.path.pitch)} ${f(op.path.height)} ${f(op.path.turns)} ${sk}]`;
+        return ok(
+          `[sweep-helix ${f(op.path.radius)} ${f(op.path.pitch)} ${f(op.path.height)} ${f(op.path.turns)} ${sk}]`,
+        );
       }
     }
 
     case "Loft": {
       const sketchRefs = op.sketches.map((id) => ref(id, doc)).join(" ");
       if (op.closed) {
-        return `[loft-closed #[${sketchRefs}]]`;
+        return ok(`[loft-closed #[${sketchRefs}]]`);
       }
-      return `[loft #[${sketchRefs}]]`;
+      return ok(`[loft #[${sketchRefs}]]`);
     }
 
     case "Text2D":
-      // Text2D can't round-trip through loon yet — emit as comment
-      return `; TODO: Text2D "${op.text}" (h=${f(op.height)}) — not yet supported in loon\n; [text2d ...]`;
+      return unsupported(
+        "Text2D",
+        `; Text2D "${op.text}" (h=${f(op.height)}) — not yet supported in loon`,
+      );
 
     case "ImportedMesh":
-      // ImportedMesh is raw triangles — can't represent parametrically
-      return `; TODO: ImportedMesh (${op.positions.length / 3} vertices, ${op.indices.length / 3} triangles${op.source ? `, source: ${op.source}` : ""}) — not representable in loon`;
+      return unsupported(
+        "ImportedMesh",
+        `; ImportedMesh (${op.positions.length / 3} vertices, ${op.indices.length / 3} triangles${op.source ? `, source: ${op.source}` : ""}) — not representable in loon`,
+      );
+
+    case "PcbBoard":
+      return unsupported("PcbBoard", "; PcbBoard — not yet supported in loon");
+
+    case "EmbroideryPattern":
+      return unsupported(
+        "EmbroideryPattern",
+        "; EmbroideryPattern — not yet supported in loon",
+      );
+
+    case "PartInstance": {
+      const kv = Object.entries(op.params)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([k, v]) => `:${k} ${JSON.stringify(v)}`)
+        .join(" ");
+      return ok(`[part-instance ${JSON.stringify(op.path)} ${JSON.stringify(op.version)} #{${kv}}]`);
+    }
 
     default:
-      return null;
+      return { kind: "skip" };
   }
 }
 
