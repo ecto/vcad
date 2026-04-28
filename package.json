@@ -7,6 +7,7 @@
     "build": "turbo build",
     "test": "turbo test",
     "dev": "turbo dev",
+    "build:mecheval": "npm run build -w @mecheval/harness && npm run build -w @mecheval/leaderboard",
     "changelog:build": "node scripts/build-changelog.mjs",
     "tauri": "cd crates/vcad-desktop && tauri",
     "tauri:dev": "cd crates/vcad-desktop && tauri dev",

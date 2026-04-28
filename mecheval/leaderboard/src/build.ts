@@ -12,7 +12,8 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   loadAllRuns,
   modelSummary,
@@ -29,17 +30,22 @@ function operatorSays(quote: string): string {
 }
 
 const PASS_K = 5;
-const REPO_ROOT = process.cwd();
+// Resolve REPO_ROOT relative to this script (mecheval/leaderboard/dist/build.js)
+// so we work the same whether invoked via `npm run build -w …` (cwd = leaderboard
+// package), `node mecheval/leaderboard/dist/build.js` (cwd = repo root), or
+// Vercel (cwd = the configured Root Directory).
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = resolve(SCRIPT_DIR, "../../..");
 const RUNS_DIR = resolve(REPO_ROOT, "mecheval/runs");
 const TASKS_DIR = resolve(REPO_ROOT, "mecheval/tasks");
 const CORPUS_DIR = resolve(REPO_ROOT, "mecheval/corpus");
 const OUT_DIR = resolve(REPO_ROOT, "mecheval/leaderboard/dist");
+const CACHE_DIR = resolve(REPO_ROOT, "mecheval/leaderboard/cache");
 const RENDER_BIN =
   process.env.MECHEVAL_RENDER_BIN ?? resolve(REPO_ROOT, "target/debug/mecheval-render");
 
 /** Spawn mecheval-render against a `.vcad` and capture the SVG. Returns
- *  null if the binary is missing or rendering errors out — the build
- *  should still succeed without geometry, just less pretty. */
+ *  null if the binary is missing or rendering errors out. */
 function renderVcad(vcadPath: string): string | null {
   if (!existsSync(RENDER_BIN)) return null;
   try {
@@ -52,6 +58,33 @@ function renderVcad(vcadPath: string): string | null {
     console.warn(`renderVcad failed for ${vcadPath}: ${(e as Error).message}`);
     return null;
   }
+}
+
+/** Cache-first render. Looks for a pre-rendered SVG at
+ *  `mecheval/leaderboard/cache/<cacheKey>.svg`; if absent, falls back to
+ *  the live binary and writes the result to cache. Lets Vercel builds
+ *  succeed without Rust as long as someone has run `npm run build`
+ *  locally and committed the cache.
+ *
+ *  Returns:
+ *  - cached svg string if cache hit,
+ *  - newly rendered svg if cache miss + binary available (and writes
+ *    it to cache),
+ *  - null if both fail. */
+async function getOrRenderSvg(
+  vcadPath: string,
+  cacheKey: string,
+): Promise<string | null> {
+  const cachePath = resolve(CACHE_DIR, `${cacheKey}.svg`);
+  if (existsSync(cachePath)) {
+    return readFile(cachePath, "utf8");
+  }
+  const svg = renderVcad(vcadPath);
+  if (svg) {
+    await mkdir(cachePath.replace(/\/[^/]+$/, ""), { recursive: true });
+    await writeFile(cachePath, svg, "utf8");
+  }
+  return svg;
 }
 
 // ─── types ────────────────────────────────────────────────────────────────
@@ -1060,12 +1093,14 @@ async function main(): Promise<void> {
   const taskIds = [...taskSpecs.keys()].sort();
   const seenTaskIds = new Set([...taskIds, ...runs.map((r) => r.task_id)]);
 
-  // Render OPERATOR once for the hero.
+  // Render OPERATOR once for the hero (cache-first).
   const operatorVcad = resolve(CORPUS_DIR, "operator.vcad");
-  const operatorSvg = existsSync(operatorVcad) ? renderVcad(operatorVcad) : null;
+  const operatorSvg = existsSync(operatorVcad)
+    ? await getOrRenderSvg(operatorVcad, "operator")
+    : null;
   if (!operatorSvg) {
     console.warn(
-      `operator render unavailable — make sure mecheval-render is built (cargo build -p mecheval-grader) and ${operatorVcad} exists`,
+      `operator render unavailable — neither cache nor mecheval-render produced an SVG`,
     );
   }
 
@@ -1092,13 +1127,16 @@ async function main(): Promise<void> {
   }
 
   // Run pages — load each blob in full, attach the .vcad inline,
-  // render through mecheval-render for the visual embed.
+  // render through cached mecheval-render for the visual embed.
   let renderedRuns = 0;
   for (const r of runs) {
     const blob = await loadFullBlob(r.blob_path);
     const vcad = await loadVcadIfPresent(r.blob_path);
     const vcadPath = r.blob_path.replace(/\.json$/, ".vcad");
-    const vcadSvg = existsSync(vcadPath) ? renderVcad(vcadPath) : null;
+    const cacheKey = `runs/${r.task_id}/${r.model_id}/${r.run_id}`;
+    const vcadSvg = existsSync(vcadPath)
+      ? await getOrRenderSvg(vcadPath, cacheKey)
+      : null;
     if (vcadSvg) renderedRuns++;
     await writePage(
       `run/${r.task_id}/${r.model_id}/${r.run_id}.html`,

@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>mecheval — AI builds the mech</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;700&display=swap">
+<style>
+  :root {
+    --ink: #0e3960;
+    --ink-soft: #5b7892;
+    --ground: #fbf6ee;
+    --rule: #0e3960;
+    --fail: #c0392b;
+    --pass: #27ae60;
+    --pending: #8a8576;
+    --soft: #cfc6b4;
+    --accent: #d68910;
+    --display: "Space Grotesk", "Inter", system-ui, sans-serif;
+    --body: "JetBrains Mono", "Berkeley Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    background-color: var(--ground);
+    background-image:
+      linear-gradient(to right, rgba(14,57,96,0.06) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(14,57,96,0.06) 1px, transparent 1px);
+    background-size: 24px 24px;
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 13px;
+    line-height: 1.45;
+    margin: 0;
+    padding: 0;
+  }
+  .sheet {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 28px 36px 28px;
+    position: relative;
+    background: var(--ground);
+    border: 1px solid var(--ink);
+    margin-top: 24px;
+    margin-bottom: 24px;
+  }
+  /* Drafting corners — replace generic CSS borders with ASCII-feel marks. */
+  .sheet::before, .sheet::after,
+  .sheet > .corner-bl, .sheet > .corner-br {
+    position: absolute;
+    font-family: var(--body);
+    font-size: 18px;
+    color: var(--ink);
+    line-height: 1;
+    background: var(--ground);
+    padding: 0 4px;
+  }
+  .sheet::before { content: "┌"; top: -10px; left: -1px; }
+  .sheet::after  { content: "┐"; top: -10px; right: -1px; }
+  .sheet .corner-bl { content: "└"; bottom: -10px; left: -1px; }
+  .sheet .corner-br { content: "┘"; bottom: -10px; right: -1px; }
+
+  .crumb { color: var(--ink-soft); font-size: 11px; margin: 0 0 18px 0; letter-spacing: 0.04em; }
+  .crumb a { color: var(--ink); }
+
+  /* Wordmark in the upper-left of the index hero. */
+  .wordmark {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 56px;
+    letter-spacing: -0.025em;
+    color: var(--ink);
+    margin: 0;
+    line-height: 0.95;
+  }
+  .wordmark .dot { color: var(--accent); }
+  .tagline-main {
+    font-family: var(--display);
+    font-weight: 500;
+    font-size: 18px;
+    color: var(--ink);
+    margin: 14px 0 4px;
+    max-width: 720px;
+    letter-spacing: -0.005em;
+  }
+  .tagline-sub {
+    font-size: 12px;
+    color: var(--ink-soft);
+    margin: 0 0 26px;
+  }
+
+  /* Title block — engineering-drawing convention, upper-right corner of the sheet. */
+  .title-block {
+    position: absolute;
+    top: -1px;
+    right: -1px;
+    border-left: 1px solid var(--ink);
+    border-bottom: 1px solid var(--ink);
+    background: var(--ground);
+    font-size: 9.5px;
+    line-height: 1.3;
+    letter-spacing: 0.04em;
+    color: var(--ink);
+    text-transform: uppercase;
+  }
+  .title-block table { border-collapse: collapse; }
+  .title-block td {
+    padding: 4px 8px;
+    border-right: 1px solid var(--soft);
+    border-bottom: 1px dotted var(--soft);
+    vertical-align: middle;
+    white-space: nowrap;
+  }
+  .title-block td:last-child { border-right: none; }
+  .title-block tr:last-child td { border-bottom: none; }
+  .title-block .k { color: var(--ink-soft); font-size: 8.5px; }
+  .title-block .v { font-weight: 500; color: var(--ink); }
+
+  h1 {
+    font-family: var(--display);
+    font-size: 28px;
+    letter-spacing: -0.02em;
+    margin: 0 0 4px;
+    font-weight: 700;
+    color: var(--ink);
+  }
+  h1 .tier { font-size: 11px; color: var(--ink-soft); margin-left: 10px; vertical-align: middle; letter-spacing: 0.08em; font-family: var(--body); font-weight: 500; }
+  h2 {
+    font-family: var(--display);
+    font-size: 11px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase;
+    margin: 32px 0 12px; border-top: 1px solid var(--rule); padding-top: 14px; color: var(--ink);
+  }
+
+  .tagline { color: var(--ink-soft); margin-bottom: 24px; font-size: 12px; }
+  .meta { color: var(--ink-soft); font-size: 10.5px; margin: 12px 0 0; }
+  a { color: var(--ink); text-decoration: none; border-bottom: 1px dotted var(--soft); }
+  a:hover { border-bottom-style: solid; border-bottom-color: var(--ink); }
+
+  table.board {
+    width: 100%; border-collapse: collapse;
+    border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule);
+  }
+  table.board th {
+    text-align: right; padding: 8px 10px; font-weight: 600;
+    border-bottom: 1px solid var(--rule);
+    letter-spacing: 0.1em; text-transform: uppercase; font-size: 10px; color: var(--ink);
+    font-family: var(--display);
+  }
+  table.board th:first-child,
+  table.board th.left { text-align: left; }
+  table.board td { padding: 7px 10px; border-bottom: 1px dotted var(--soft); vertical-align: middle; }
+  table.board tr:last-child td { border-bottom: none; }
+  table.board tbody tr:hover { background: rgba(14,57,96,0.04); }
+  td.id { white-space: nowrap; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .pass { color: var(--pass); font-weight: 700; letter-spacing: 0.06em; font-family: var(--display); }
+  .fail { color: var(--fail); font-weight: 500; }
+  .pending { color: var(--pending); }
+
+  .footnote { color: var(--ink-soft); margin-top: 14px; font-size: 11px; }
+  .nodata { color: var(--ink-soft); padding: 20px 0; font-style: italic; }
+
+  code { background: rgba(14,57,96,0.06); padding: 1px 5px; font-family: var(--body); border-radius: 1px; }
+  pre {
+    background: rgba(14,57,96,0.04); padding: 12px 14px; overflow-x: auto;
+    font-size: 12px; line-height: 1.55; border: 1px solid var(--soft);
+    white-space: pre-wrap; word-break: break-word;
+    color: var(--ink);
+  }
+
+  details { margin: 8px 0; }
+  details summary { cursor: pointer; padding: 4px 0; color: var(--ink-soft); }
+  details summary:hover { color: var(--ink); }
+  details[open] summary { color: var(--ink); }
+
+  .matrix table { border-collapse: collapse; }
+  .matrix th, .matrix td {
+    border: 1px solid var(--soft); padding: 7px 9px; min-width: 96px; text-align: center;
+    font-size: 11px;
+  }
+  .matrix th {
+    background: rgba(14,57,96,0.06); font-family: var(--display);
+    font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; font-size: 10px;
+  }
+  .matrix td.row-h { text-align: left; font-weight: 500; background: rgba(14,57,96,0.04); }
+  .matrix td a { display: block; }
+
+  .checkrow { display: grid; grid-template-columns: 28px 180px 80px 1fr; gap: 10px; padding: 7px 0; border-bottom: 1px dotted var(--soft); }
+  .checkrow .n { text-align: right; color: var(--ink-soft); }
+  .checkrow:last-child { border-bottom: none; }
+  .toolrow { display: grid; grid-template-columns: 28px 180px 70px 80px 1fr; gap: 10px; padding: 5px 0; border-bottom: 1px dotted var(--soft); font-size: 12px; }
+  .toolrow .n { text-align: right; color: var(--ink-soft); }
+  .kvtable td { padding: 3px 12px 3px 0; vertical-align: top; }
+  .kvtable td.k { color: var(--ink-soft); white-space: nowrap; text-transform: uppercase; font-size: 10px; letter-spacing: 0.08em; }
+
+  /* Hero layout with OPERATOR. */
+  .hero {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: end;
+    gap: 24px;
+    margin: 0 0 8px;
+  }
+  .hero .mascot {
+    color: var(--ink);
+    margin-right: 4px;
+    align-self: end;
+  }
+  .hero .mascot svg {
+    height: 320px;
+    width: auto;
+    display: block;
+  }
+  .run-render {
+    border: 1px solid var(--ink);
+    background: rgba(14,57,96,0.02);
+    padding: 16px;
+    margin: 8px 0 4px;
+    display: flex;
+    justify-content: center;
+  }
+  .run-render svg {
+    max-height: 460px;
+    max-width: 100%;
+    height: auto;
+    width: auto;
+    display: block;
+  }
+  .operator-says {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border: 1px dashed var(--ink-soft);
+    background: rgba(214, 137, 16, 0.05);
+    font-size: 11.5px;
+    color: var(--ink);
+    margin: 14px 0 24px;
+  }
+  .operator-says .op-name {
+    color: var(--accent); font-weight: 700; letter-spacing: 0.08em;
+    font-family: var(--display);
+  }
+  .operator-says .op-quote { color: var(--ink); }
+
+  /* Footer — Municipal Robotics ↔ vcad ↔ mecheval. */
+  .footer {
+    border-top: 1px solid var(--ink);
+    margin-top: 40px;
+    padding: 18px 0 4px;
+    font-size: 11px;
+    color: var(--ink-soft);
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+  .footer a { color: var(--ink); }
+  .footer .stack { letter-spacing: 0.04em; }
+  .footer .stack b {
+    font-family: var(--display); font-weight: 700; letter-spacing: -0.01em; color: var(--ink);
+  }
+
+  /* Wrappers that allow tables / charts to scroll horizontally on
+     narrow viewports without exploding the layout. */
+  .scroll-x {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 0 -4px;
+    padding: 0 4px;
+  }
+  .scroll-x table { min-width: 560px; }
+  .matrix.scroll-x table { min-width: 0; }
+
+  /* ─── mobile (< 720px) ─────────────────────────────────────────── */
+  @media (max-width: 720px) {
+    body { font-size: 12px; }
+    .sheet {
+      padding: 18px 16px 18px;
+      margin: 12px 8px;
+      border-width: 1px;
+    }
+    /* Title block takes half the screen at narrow widths — relocate it
+       to the bottom of the sheet, before the footer. */
+    .title-block {
+      position: static;
+      display: block;
+      margin: 18px -16px -10px;
+      width: calc(100% + 32px);
+      border-left: none;
+      border-top: 1px solid var(--ink);
+      border-right: none;
+    }
+    .title-block table { width: 100%; }
+    .title-block td { padding: 6px 8px; }
+
+    /* Hero stacks: wordmark first, then mascot below. */
+    .hero {
+      grid-template-columns: 1fr;
+      gap: 12px;
+      align-items: start;
+    }
+    .hero .mascot { justify-self: center; margin-right: 0; }
+    .hero .mascot svg { height: 220px; }
+    .wordmark { font-size: 38px; }
+    .tagline-main { font-size: 16px; }
+
+    h1 { font-size: 22px; }
+    h2 { margin: 24px 0 10px; padding-top: 10px; }
+
+    /* Tables go horizontal-scroll. Cells get tighter. */
+    table.board th, table.board td { padding: 6px 7px; font-size: 11px; }
+    .matrix th, .matrix td { padding: 6px 7px; min-width: 84px; }
+
+    /* checkrow / toolrow — switch to a stacked layout on phones since
+       the fixed-pixel grid columns overflow hard. */
+    .checkrow {
+      grid-template-columns: 24px 1fr;
+      grid-template-areas: "n head" ". status" ". detail";
+      gap: 4px 8px;
+    }
+    .checkrow > :nth-child(1) { grid-area: n; }
+    .checkrow > :nth-child(2) { grid-area: head; }
+    .checkrow > :nth-child(3) { grid-area: status; }
+    .checkrow > :nth-child(4) { grid-area: detail; }
+    .toolrow {
+      grid-template-columns: 24px 1fr auto;
+      grid-template-areas: "n tool kind" ". time time" ". detail detail";
+      gap: 4px 8px;
+    }
+    .toolrow > :nth-child(1) { grid-area: n; }
+    .toolrow > :nth-child(2) { grid-area: tool; }
+    .toolrow > :nth-child(3) { grid-area: kind; }
+    .toolrow > :nth-child(4) { grid-area: time; text-align: left; }
+    .toolrow > :nth-child(5) { grid-area: detail; }
+
+    /* Footer stacks. */
+    .footer { flex-direction: column; gap: 6px; }
+
+    /* Operator callout looks better full-width on phones. */
+    .operator-says { display: block; }
+
+    .run-render { padding: 8px; }
+    .run-render svg { max-height: 320px; }
+
+    /* Drafting corner glyphs sit on the sheet's edge — at narrow
+       viewports the box-shadow they sit inside can clip them. Push
+       them slightly inward. */
+    .sheet::before, .sheet::after,
+    .sheet .corner-bl, .sheet .corner-br {
+      font-size: 14px;
+    }
+  }
+
+  /* ─── small phones (< 380px) — extra tightening. ─────────────── */
+  @media (max-width: 380px) {
+    .sheet { padding: 14px 12px; margin: 6px 4px; }
+    .wordmark { font-size: 32px; }
+    .tagline-main { font-size: 14px; }
+    .hero .mascot svg { height: 180px; }
+  }
+</style>
+</head>
+<body><main class="sheet">
+<span class="corner-bl">└</span><span class="corner-br">┘</span>
+<div class="crumb">mecheval.</div>
+
+    <div class="hero">
+      <div>
+        <h1 class="wordmark">mecheval<span class="dot">.</span></h1>
+        <div class="tagline-main">AI builds the mech. We measure how badly it fits.</div>
+        <div class="tagline-sub">mechanical, physical, and CAD evaluation suite for AI models · pass<sup>5</sup></div>
+      </div>
+      <div class="mascot"><!-- mecheval-render not available; build with `cargo build -p mecheval-grader` first --></div>
+    </div>
+    <div class="operator-says"><span class="op-name">OPERATOR</span> says: <span class="op-quote">no models scored yet. waiting.</span></div>
+
+    <h2>Models</h2>
+    <div class="nodata">no run blobs found under <code>mecheval/runs/</code> — OPERATOR is alone in here</div>
+
+    <h2>Task × model matrix</h2>
+    <div class="nodata">no entries</div>
+
+    <h2>Cost · score Pareto</h2>
+    <div class="nodata">no points</div>
+    <p class="footnote">tokens (log) vs mean score across the most recent 5 attempts. Each dot is one (model, task) pair; click to drill into the task page.</p>
+
+    
+
+    <h2>Per task · per model</h2>
+    <div class="nodata">no entries</div>
+
+    <p class="footnote">
+      <span class="pending">k/k*</span> = fewer than 5 attempts at this (model, task) — pass<sup>5</sup> pending.
+      Score is the mean check-pass rate across the most recent 5 attempts.
+      Corpus: 0 run blobs across 0 models, 0 tasks. Click any task, model, or run for full forensic detail.
+    </p>
+<div class="footer">
+    <div class="stack">
+      <b>mecheval.</b> &middot; an evaluation suite by <a href="https://municipalrobotics.com">Municipal Robotics</a>
+    </div>
+    <div>
+      sibling project: <a href="https://vcad.io">vcad.</a>
+      &middot; <a href="https://github.com/ecto/vcad">github</a>
+    </div>
+  </div>
+<div class="title-block"><table>
+    <tr>
+      <td><span class="k">drawing</span><br><span class="v">mecheval.</span></td>
+      <td><span class="k">sheet</span><br><span class="v">INDEX</span></td>
+      <td><span class="k">scale</span><br><span class="v">pass^5</span></td>
+    </tr>
+    <tr>
+      <td><span class="k">date</span><br><span class="v">2026-04-28</span></td>
+      <td><span class="k">drawn by</span><br><span class="v">muni</span></td>
+      <td><span class="k">project</span><br><span class="v">mecheval</span></td>
+    </tr>
+  </table></div>
+<p class="meta">generated 2026-04-28T17:25:12.538Z · static site, regenerate with <code>npm run build -w @mecheval/leaderboard</code></p>
+</main></body></html>
