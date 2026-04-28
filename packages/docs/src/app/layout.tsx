@@ -7,6 +7,7 @@ import { Analytics } from "@vercel/analytics/react";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import "./globals.css";
 import { Navigation } from "@/components/Navigation";
+import { Footer } from "@/components/Footer";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { SearchProvider } from "@/components/Search/SearchProvider";
 
@@ -51,6 +52,7 @@ export default function RootLayout({
               <Navigation />
               <main className="flex-1 overflow-auto">
                 {children}
+                <Footer />
               </main>
             </div>
           </SearchProvider>

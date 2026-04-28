@@ -41,6 +41,17 @@ export function Footer() {
             </a>
           </div>
         </div>
+        <div className="mt-4 text-center sm:text-right text-xs text-text-muted/70">
+          © 2026{" "}
+          <a
+            href="https://muni.works"
+            className="hover:text-text transition-colors"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            municipal robotics
+          </a>
+        </div>
       </div>
     </footer>
   );

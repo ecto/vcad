@@ -195,6 +195,15 @@ export function AboutModal({
             <a href="/privacy" className="hover:text-text-muted transition-colors">{t("footer.privacy")}</a>
             <a href="/terms" className="hover:text-text-muted transition-colors">{t("footer.terms")}</a>
             <a href="/security" className="hover:text-text-muted transition-colors">{t("footer.security")}</a>
+            <span>·</span>
+            <a
+              href="https://muni.works"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-text-muted transition-colors"
+            >
+              © 2026 Municipal Robotics
+            </a>
           </div>
         </Dialog.Content>
       </Dialog.Portal>
