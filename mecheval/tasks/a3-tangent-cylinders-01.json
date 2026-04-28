@@ -1,0 +1,33 @@
+{
+  "id": "a3-tangent-cylinders-01",
+  "suite": "A",
+  "tier": "A3",
+  "title": "Externally tangent cylinder pair",
+  "prompt": "Make a single solid consisting of two cylinders fused together. Big cylinder: outside diameter 50mm, axis along Z, base on the XY plane (z = 0 to z = 40), centered on the Z axis. Small cylinder: outside diameter 10mm, axis along Z, base on the XY plane (z = 0 to z = 40), positioned so that its outer surface is externally tangent to the big cylinder's outer surface on the +X side. The two cylinders share exactly one tangent line (no overlap, no gap). Output a single solid (the union of the two cylinders).",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-25, -25, 0],
+      "max": [35, 25, 40],
+      "tolerance_mm": 0.2
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 81681.41,
+      "tolerance_pct": 1.0
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 1.0 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 30000,
+    "max_wallclock_sec": 180,
+    "max_tool_calls": 30
+  },
+  "pass_k": 5,
+  "tags": ["tangent", "cylinder", "advanced", "geometric-reasoning"]
+}

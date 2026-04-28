@@ -1,0 +1,13 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "cyl_hex", "op": {"type":"Cylinder", "radius": 10.9697, "height": 8, "segments": 6} },
+    "2": { "id": 2, "name": "cyl_hex_rot", "op": {"type":"Rotate", "child": 1, "angles": {"x":0,"y":0,"z":30}} },
+    "3": { "id": 3, "name": "hole", "op": {"type":"Cylinder", "radius": 5, "height": 10, "segments": 64} },
+    "4": { "id": 4, "name": "hole_pos", "op": {"type":"Translate", "child": 3, "offset": {"x":0,"y":0,"z":-1}} },
+    "5": { "id": 5, "name": "nut", "op": {"type":"Difference", "left": 2, "right": 4} }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 5, "material": "default" }]
+}

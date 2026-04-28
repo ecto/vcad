@@ -1,0 +1,12 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "block", "op": {"type":"Cube", "size":{"x":40,"y":30,"z":20}} },
+    "2": { "id": 2, "name": "centered", "op": {"type":"Translate", "child":1, "offset":{"x":-20,"y":-15,"z":-10}} },
+    "3": { "id": 3, "name": "rotZ", "op": {"type":"Rotate", "child":2, "axis":{"x":0,"y":0,"z":1}, "angle":0.5235987755982988} },
+    "4": { "id": 4, "name": "rotX", "op": {"type":"Rotate", "child":3, "axis":{"x":1,"y":0,"z":0}, "angle":0.2617993877991494} }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root":4, "material":"default"}]
+}

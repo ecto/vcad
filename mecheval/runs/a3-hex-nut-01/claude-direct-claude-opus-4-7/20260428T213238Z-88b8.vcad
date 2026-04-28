@@ -1,0 +1,12 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "hex_prism_raw", "op": {"type":"Cylinder", "radius": 10.969655114602888, "height": 8, "segments": 6} },
+    "2": { "id": 2, "name": "hex_prism", "op": {"type":"Rotate", "child": 1, "axis": {"x":0,"y":0,"z":1}, "angle": 1.5707963267948966} },
+    "3": { "id": 3, "name": "hole", "op": {"type":"Cylinder", "radius": 5.0, "height": 8, "segments": 64} },
+    "4": { "id": 4, "name": "nut", "op": {"type":"Difference", "left": 2, "right": 3} }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 4, "material": "default" }]
+}

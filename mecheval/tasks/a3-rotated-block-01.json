@@ -1,0 +1,34 @@
+{
+  "id": "a3-rotated-block-01",
+  "suite": "A",
+  "tier": "A3",
+  "title": "Block with compound rotation",
+  "prompt": "Make a rectangular block 40mm long (X) × 30mm wide (Y) × 20mm tall (Z), centered at the origin BEFORE any rotation. Then rotate the block about its center by 30 degrees around the Z axis (the rotation matrix Rz(30°)), and after that rotate again by 15 degrees around the X axis (Rx(15°)). Both rotations are about the origin, which is the block's center. Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-24.82, -24.81, -15.62],
+      "max": [24.82, 24.81, 15.62],
+      "tolerance_mm": 0.5
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 24000.0,
+      "center_of_mass": [0, 0, 0],
+      "tolerance_pct": 0.5
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 0.5 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 40000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 40
+  },
+  "pass_k": 5,
+  "tags": ["rotation", "spatial-reasoning", "advanced"]
+}

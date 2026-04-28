@@ -1,0 +1,45 @@
+{
+  "id": "a3-hex-nut-01",
+  "suite": "A",
+  "tier": "A3",
+  "title": "Hexagonal nut",
+  "prompt": "Make a hexagonal nut. The outer cross-section is a regular hexagon with flat-to-flat distance 19mm (so 19mm wrench fits), oriented so two flats are parallel to the X axis (the top and bottom of the hex). Height 8mm along Z, base on the XY plane (z = 0 to z = 8). Concentric central through-hole of diameter 10mm, axis along Z. Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-10.97, -9.5, 0],
+      "max": [10.97, 9.5, 8],
+      "tolerance_mm": 0.2
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 1872.62,
+      "tolerance_pct": 1.5
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 10.0,
+      "expected": 1,
+      "diameter_tolerance_mm": 0.1
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 10.0,
+      "positions": [[0, 0, 0]],
+      "tolerance_mm": 0.15
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 1.5 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 40000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 40
+  },
+  "pass_k": 5,
+  "tags": ["hex", "polygon", "nut", "boolean", "advanced"]
+}

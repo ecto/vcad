@@ -1,0 +1,20 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "hex_box", "op": {"type":"Cube","size":{"x":22,"y":19,"z":8}} },
+    "2": { "id": 2, "name": "hex_box_centered", "op": {"type":"Translate","child":1,"offset":{"x":-11,"y":-9.5,"z":0}} },
+    "3": { "id": 3, "name": "cut1_box", "op": {"type":"Cube","size":{"x":22,"y":19,"z":8}} },
+    "4": { "id": 4, "name": "cut1_centered", "op": {"type":"Translate","child":3,"offset":{"x":-11,"y":-9.5,"z":0}} },
+    "5": { "id": 5, "name": "cut1_rotated", "op": {"type":"Rotate","child":4,"axis":{"x":0,"y":0,"z":1},"angle":1.0471975511965976} },
+    "6": { "id": 6, "name": "hex_step1", "op": {"type":"Intersection","left":2,"right":5} },
+    "7": { "id": 7, "name": "cut2_box", "op": {"type":"Cube","size":{"x":22,"y":19,"z":8}} },
+    "8": { "id": 8, "name": "cut2_centered", "op": {"type":"Translate","child":7,"offset":{"x":-11,"y":-9.5,"z":0}} },
+    "9": { "id": 9, "name": "cut2_rotated", "op": {"type":"Rotate","child":8,"axis":{"x":0,"y":0,"z":1},"angle":2.0943951023931953} },
+    "10": { "id": 10, "name": "hex_solid", "op": {"type":"Intersection","left":6,"right":9} },
+    "11": { "id": 11, "name": "hole", "op": {"type":"Cylinder","radius":5,"height":8,"segments":64} },
+    "12": { "id": 12, "name": "nut", "op": {"type":"Difference","left":10,"right":11} }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 12, "material": "default" }]
+}

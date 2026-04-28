@@ -1,0 +1,140 @@
+{
+  "schema_version": 0,
+  "task_id": "a3-rotated-block-01",
+  "task_sha256": "3fcbc632c20f9b4ba3a0a840a433e819eeac34f519272073adfc8e8be402d856",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "fail",
+      "details": {
+        "error": "parse: Invalid JSON vcad file: missing field `angles` at line 6 column 135",
+        "reason": "fatal evaluation error"
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -24.82,
+          -24.81,
+          -15.62
+        ],
+        "max": [
+          24.82,
+          24.81,
+          15.62
+        ],
+        "tolerance_mm": 0.5
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 24000,
+        "center_of_mass": [
+          0,
+          0,
+          0
+        ],
+        "tolerance_pct": 0.5
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.5
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to round-trip"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 4,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T213343Z-c874",
+  "model": {
+    "id": "claude-direct-claude-opus-4-7",
+    "name": "Claude (direct, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "direct",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a3-rotated-block-01",
+    "rendered": "Make a rectangular block 40mm long (X) × 30mm wide (Y) × 20mm tall (Z), centered at the origin BEFORE any rotation. Then rotate the block about its center by 30 degrees around the Z axis (the rotation matrix Rz(30°)), and after that rotate again by 15 degrees around the X axis (Rx(15°)). Both rotations are about the origin, which is the block's center. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "anthropic.messages.create",
+        "args": {
+          "model": "claude-opus-4-7",
+          "max_tokens": 8000,
+          "system_chars": 1632,
+          "user_chars": 439
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3933.751333
+      }
+    ],
+    "tokens": {
+      "input": 898,
+      "output": 346,
+      "total": 1244
+    },
+    "wallclock_sec": 3.933751333
+  },
+  "output": {
+    "vcad_path": "20260428T213343Z-c874.vcad",
+    "vcad_sha256": "f6ecb11391c41b42bca77209552a8e55e958afe06144848f2b654e046ea6df1f",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T21:33:43.931Z",
+    "ended_at": "2026-04-28T21:33:47.870Z"
+  },
+  "signature": null
+}

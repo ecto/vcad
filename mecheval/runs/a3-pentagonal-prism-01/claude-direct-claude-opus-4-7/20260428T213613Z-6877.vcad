@@ -1,0 +1,30 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {"id":1,"name":"box1","op":{"type":"Cube","size":{"x":200,"y":400,"z":25}}},
+    "2": {"id":2,"name":"box1t","op":{"type":"Translate","child":1,"offset":{"x":-187.8647,"y":-200,"z":0}}},
+    "3": {"id":3,"name":"hs1","op":{"type":"Rotate","child":2,"angles":{"x":0,"y":0,"z":126}}},
+    "4": {"id":4,"name":"box2","op":{"type":"Cube","size":{"x":200,"y":400,"z":25}}},
+    "5": {"id":5,"name":"box2t","op":{"type":"Translate","child":4,"offset":{"x":-187.8647,"y":-200,"z":0}}},
+    "6": {"id":6,"name":"hs2","op":{"type":"Rotate","child":5,"angles":{"x":0,"y":0,"z":198}}},
+    "7": {"id":7,"name":"box3","op":{"type":"Cube","size":{"x":200,"y":400,"z":25}}},
+    "8": {"id":8,"name":"box3t","op":{"type":"Translate","child":7,"offset":{"x":-187.8647,"y":-200,"z":0}}},
+    "9": {"id":9,"name":"hs3","op":{"type":"Rotate","child":8,"angles":{"x":0,"y":0,"z":270}}},
+    "10": {"id":10,"name":"box4","op":{"type":"Cube","size":{"x":200,"y":400,"z":25}}},
+    "11": {"id":11,"name":"box4t","op":{"type":"Translate","child":10,"offset":{"x":-187.8647,"y":-200,"z":0}}},
+    "12": {"id":12,"name":"hs4","op":{"type":"Rotate","child":11,"angles":{"x":0,"y":0,"z":342}}},
+    "13": {"id":13,"name":"box5","op":{"type":"Cube","size":{"x":200,"y":400,"z":25}}},
+    "14": {"id":14,"name":"box5t","op":{"type":"Translate","child":13,"offset":{"x":-187.8647,"y":-200,"z":0}}},
+    "15": {"id":15,"name":"hs5","op":{"type":"Rotate","child":14,"angles":{"x":0,"y":0,"z":54}}},
+    "16": {"id":16,"name":"i1","op":{"type":"Intersection","left":3,"right":6}},
+    "17": {"id":17,"name":"i2","op":{"type":"Intersection","left":16,"right":9}},
+    "18": {"id":18,"name":"i3","op":{"type":"Intersection","left":17,"right":12}},
+    "19": {"id":19,"name":"pentagon","op":{"type":"Intersection","left":18,"right":15}},
+    "20": {"id":20,"name":"holeCyl","op":{"type":"Cylinder","radius":2.5,"height":27,"segments":32}},
+    "21": {"id":21,"name":"holeT","op":{"type":"Translate","child":20,"offset":{"x":5,"y":0,"z":-1}}},
+    "22": {"id":22,"name":"result","op":{"type":"Difference","left":19,"right":21}}
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root":22,"material":"default"}]
+}

@@ -1,0 +1,16 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "cyl_a", "op": {"type":"Cylinder","radius":10.969,"height":8,"segments":6} },
+    "2": { "id": 2, "name": "cyl_b_raw", "op": {"type":"Cylinder","radius":10.969,"height":8,"segments":6} },
+    "3": { "id": 3, "name": "cyl_b_rot", "op": {"type":"Rotate","child":2,"angles":{"x":0,"y":0,"z":30}} },
+    "4": { "id": 4, "name": "hex_pre_rot", "op": {"type":"Intersection","left":1,"right":3} },
+    "5": { "id": 5, "name": "hex", "op": {"type":"Rotate","child":4,"angles":{"x":0,"y":0,"z":30}} },
+    "6": { "id": 6, "name": "hole_raw", "op": {"type":"Cylinder","radius":5,"height":10,"segments":64} },
+    "7": { "id": 7, "name": "hole", "op": {"type":"Translate","child":6,"offset":{"x":0,"y":0,"z":-1}} },
+    "8": { "id": 8, "name": "nut", "op": {"type":"Difference","left":5,"right":7} }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 8, "material": "default" }]
+}
