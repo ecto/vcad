@@ -328,6 +328,14 @@ pub struct GpuRenderState {
     /// palette in `sky_color`; the IBL panels and direct lighting stay
     /// constant across themes so the model itself looks the same.
     pub theme: u32,
+    /// SSAO world-space sample hemisphere radius.
+    pub ao_radius: f32,
+    /// SSAO intensity: 0 = disabled (ao_buffer writes 1.0), 1 = default strength.
+    pub ao_intensity: f32,
+    /// SSAO depth bias to prevent self-occlusion.
+    pub ao_bias: f32,
+    /// SSAO hemisphere sample count per frame (8, 16, or 32).
+    pub ao_sample_count: u32,
 }
 
 impl GpuRenderState {
@@ -338,11 +346,15 @@ impl GpuRenderState {
             frame_index,
             jitter_x,
             jitter_y,
-            enable_edges: 1, // Enabled by default
+            enable_edges: 1,
             edge_depth_threshold: 0.1,
-            edge_normal_threshold: 30.0, // degrees
-            debug_mode: 0,               // Normal rendering by default
+            edge_normal_threshold: 30.0,
+            debug_mode: 0,
             theme: 0,
+            ao_radius: 0.3,
+            ao_intensity: 1.0,
+            ao_bias: 0.001,
+            ao_sample_count: 16,
         }
     }
 
@@ -361,7 +373,7 @@ impl GpuRenderState {
         state
     }
 
-    /// Create a render state with custom edge settings.
+    /// Create a render state with custom edge settings (default AO).
     pub fn with_edge_settings(
         frame_index: u32,
         debug_mode: u32,
@@ -376,10 +388,15 @@ impl GpuRenderState {
             edge_depth_threshold,
             edge_normal_threshold,
             0,
+            0.3,
+            1.0,
+            0.001,
+            16,
         )
     }
 
-    /// Create a render state with all settings including theme.
+    /// Create a render state with all settings including theme and SSAO.
+    #[allow(clippy::too_many_arguments)]
     pub fn with_full_settings(
         frame_index: u32,
         debug_mode: u32,
@@ -387,6 +404,10 @@ impl GpuRenderState {
         edge_depth_threshold: f32,
         edge_normal_threshold: f32,
         theme: u32,
+        ao_radius: f32,
+        ao_intensity: f32,
+        ao_bias: f32,
+        ao_sample_count: u32,
     ) -> Self {
         let (jitter_x, jitter_y) = halton_2_3(frame_index);
         Self {
@@ -398,6 +419,10 @@ impl GpuRenderState {
             edge_normal_threshold,
             debug_mode,
             theme,
+            ao_radius,
+            ao_intensity,
+            ao_bias,
+            ao_sample_count,
         }
     }
 }

@@ -1,0 +1,10 @@
+{
+  "id": "2026-04-28-ssao",
+  "version": "0.9.3",
+  "date": "2026-04-28",
+  "category": "feat",
+  "title": "Screen-space ambient occlusion (SSAO)",
+  "summary": "Adds a screen-space AO pass to the ray tracer, darkening concavities and tight corners for crisper part definition.",
+  "features": ["raytrace", "rendering"],
+  "mcpTools": []
+}
