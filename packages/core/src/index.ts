@@ -242,7 +242,10 @@ export {
   getDocumentForDisplay,
   buildVcadFileFromState,
 } from "./utils/save-load.js";
-export { documentToLoon } from "./utils/document-to-loon.js";
+export {
+  documentToLoon,
+  documentToLoonChecked,
+} from "./utils/document-to-loon.js";
 export type {
   VcadFile as VcadFileFormat,
   VcadFileCrdt,

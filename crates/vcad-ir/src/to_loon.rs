@@ -9,10 +9,15 @@ use std::fmt::Write;
 
 use crate::{CsgOp, Document, Node, NodeId, PathCurve, SketchSegment2D};
 
-/// Convert a [`Document`] to loon source code.
-pub fn document_to_loon(doc: &Document) -> String {
+/// Convert a [`Document`] to loon source code, also returning names of unsupported variants.
+///
+/// Returns `(source, unsupported)` where `unsupported` is a list of variant type names
+/// (e.g. `"Text2D"`, `"ImportedMesh"`) that could not be represented in loon. Callers
+/// should warn the user when this list is non-empty — data will be lost on round-trip.
+pub fn document_to_loon_checked(doc: &Document) -> (String, Vec<String>) {
     let mut lines: Vec<String> = Vec::new();
     let mut emitted = HashSet::new();
+    let mut unsupported: Vec<String> = Vec::new();
 
     // Header
     lines.push("; Generated from vcad document".to_string());
@@ -47,7 +52,7 @@ pub fn document_to_loon(doc: &Document) -> String {
         let Some(node) = doc.nodes.get(node_id) else {
             continue;
         };
-        emit_node(node, doc, &mut lines, &mut emitted);
+        emit_node(node, doc, &mut lines, &mut emitted, &mut unsupported);
     }
 
     // Emit scene roots
@@ -77,9 +82,22 @@ pub fn document_to_loon(doc: &Document) -> String {
         }
     }
 
+    // Deduplicate while preserving first-seen order
+    let mut seen = HashSet::new();
+    unsupported.retain(|s| seen.insert(s.clone()));
+
     let mut result = lines.join("\n");
     result.push('\n');
-    result
+    (result, unsupported)
+}
+
+/// Convert a [`Document`] to loon source code.
+///
+/// Silently ignores unsupported variants (they are replaced with comment placeholders).
+/// Use [`document_to_loon_checked`] to also receive a list of dropped variant names.
+pub fn document_to_loon(doc: &Document) -> String {
+    let (source, _) = document_to_loon_checked(doc);
+    source
 }
 
 /// Sanitize a name for use as a loon identifier.
@@ -105,7 +123,13 @@ fn node_name(id: NodeId, doc: &Document) -> String {
     format!("n{}", id)
 }
 
-fn emit_node(node: &Node, doc: &Document, lines: &mut Vec<String>, emitted: &mut HashSet<NodeId>) {
+fn emit_node(
+    node: &Node,
+    doc: &Document,
+    lines: &mut Vec<String>,
+    emitted: &mut HashSet<NodeId>,
+    unsupported: &mut Vec<String>,
+) {
     if emitted.contains(&node.id) {
         return;
     }
@@ -114,14 +138,27 @@ fn emit_node(node: &Node, doc: &Document, lines: &mut Vec<String>, emitted: &mut
     // Ensure dependencies are emitted first
     for dep in get_child_ids(&node.op) {
         if let Some(dep_node) = doc.nodes.get(&dep) {
-            emit_node(dep_node, doc, lines, emitted);
+            emit_node(dep_node, doc, lines, emitted, unsupported);
         }
     }
 
     let name = node_name(node.id, doc);
-    if let Some(expr) = op_to_loon(&node.op, doc) {
-        lines.push(format!("[let {} {}]", name, expr));
+    match op_to_loon(&node.op, doc) {
+        OpResult::Ok(expr) => lines.push(format!("[let {} {}]", name, expr)),
+        OpResult::Unsupported(variant, comment) => {
+            unsupported.push(variant);
+            lines.push(format!("[let {} {}]", name, comment));
+        }
     }
+}
+
+/// Result of converting a single op to loon.
+enum OpResult {
+    /// Successfully converted to loon expression.
+    Ok(String),
+    /// Variant is not yet supported; emits a comment placeholder.
+    /// The first field is the variant name for the warning list.
+    Unsupported(String, String),
 }
 
 /// Format a number for loon output. Always includes decimal for floats.
@@ -146,56 +183,56 @@ fn node_ref(id: NodeId, doc: &Document) -> String {
 }
 
 #[allow(clippy::too_many_lines)]
-fn op_to_loon(op: &CsgOp, doc: &Document) -> Option<String> {
+fn op_to_loon(op: &CsgOp, doc: &Document) -> OpResult {
     match op {
-        CsgOp::Cube { size } => Some(format!(
+        CsgOp::Cube { size } => OpResult::Ok(format!(
             "[cube {} {} {}]",
             fmt_f64(size.x),
             fmt_f64(size.y),
             fmt_f64(size.z)
         )),
 
-        CsgOp::Cylinder { radius, height, .. } => Some(format!(
+        CsgOp::Cylinder { radius, height, .. } => OpResult::Ok(format!(
             "[cylinder {} {}]",
             fmt_f64(*radius),
             fmt_f64(*height)
         )),
 
-        CsgOp::Sphere { radius, .. } => Some(format!("[sphere {}]", fmt_f64(*radius))),
+        CsgOp::Sphere { radius, .. } => OpResult::Ok(format!("[sphere {}]", fmt_f64(*radius))),
 
         CsgOp::Cone {
             radius_bottom,
             radius_top,
             height,
             ..
-        } => Some(format!(
+        } => OpResult::Ok(format!(
             "[cone {} {} {}]",
             fmt_f64(*radius_bottom),
             fmt_f64(*radius_top),
             fmt_f64(*height)
         )),
 
-        CsgOp::Empty => Some("Empty".to_string()),
+        CsgOp::Empty => OpResult::Ok("Empty".to_string()),
 
-        CsgOp::Union { left, right } => Some(format!(
+        CsgOp::Union { left, right } => OpResult::Ok(format!(
             "[union {} {}]",
             node_ref(*left, doc),
             node_ref(*right, doc)
         )),
 
-        CsgOp::Difference { left, right } => Some(format!(
+        CsgOp::Difference { left, right } => OpResult::Ok(format!(
             "[difference {} {}]",
             node_ref(*left, doc),
             node_ref(*right, doc)
         )),
 
-        CsgOp::Intersection { left, right } => Some(format!(
+        CsgOp::Intersection { left, right } => OpResult::Ok(format!(
             "[intersection {} {}]",
             node_ref(*left, doc),
             node_ref(*right, doc)
         )),
 
-        CsgOp::Translate { child, offset } => Some(format!(
+        CsgOp::Translate { child, offset } => OpResult::Ok(format!(
             "[translate {} {} {} {}]",
             fmt_f64(offset.x),
             fmt_f64(offset.y),
@@ -203,7 +240,7 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> Option<String> {
             node_ref(*child, doc)
         )),
 
-        CsgOp::Rotate { child, angles } => Some(format!(
+        CsgOp::Rotate { child, angles } => OpResult::Ok(format!(
             "[rotate {} {} {} {}]",
             fmt_f64(angles.x),
             fmt_f64(angles.y),
@@ -211,7 +248,7 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> Option<String> {
             node_ref(*child, doc)
         )),
 
-        CsgOp::Scale { child, factor } => Some(format!(
+        CsgOp::Scale { child, factor } => OpResult::Ok(format!(
             "[scale {} {} {} {}]",
             fmt_f64(factor.x),
             fmt_f64(factor.y),
@@ -219,19 +256,19 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> Option<String> {
             node_ref(*child, doc)
         )),
 
-        CsgOp::Fillet { child, radius } => Some(format!(
+        CsgOp::Fillet { child, radius } => OpResult::Ok(format!(
             "[fillet {} {}]",
             fmt_f64(*radius),
             node_ref(*child, doc)
         )),
 
-        CsgOp::Chamfer { child, distance } => Some(format!(
+        CsgOp::Chamfer { child, distance } => OpResult::Ok(format!(
             "[chamfer {} {}]",
             fmt_f64(*distance),
             node_ref(*child, doc)
         )),
 
-        CsgOp::Shell { child, thickness } => Some(format!(
+        CsgOp::Shell { child, thickness } => OpResult::Ok(format!(
             "[shell {} {}]",
             fmt_f64(*thickness),
             node_ref(*child, doc)
@@ -242,7 +279,7 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> Option<String> {
             direction,
             count,
             spacing,
-        } => Some(format!(
+        } => OpResult::Ok(format!(
             "[linear-pattern {} {} {} {} {} {}]",
             fmt_f64(direction.x),
             fmt_f64(direction.y),
@@ -258,7 +295,7 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> Option<String> {
             axis_dir,
             count,
             angle_deg,
-        } => Some(format!(
+        } => OpResult::Ok(format!(
             "[circular-pattern {} {} {} {} {} {} {} {} {}]",
             fmt_f64(axis_origin.x),
             fmt_f64(axis_origin.y),
@@ -334,12 +371,12 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> Option<String> {
                 }
             }
             let _ = write!(buf, "  ]]");
-            Some(buf)
+            OpResult::Ok(buf)
         }
 
         CsgOp::Extrude {
             sketch, direction, ..
-        } => Some(format!(
+        } => OpResult::Ok(format!(
             "[extrude {} {} {} {}]",
             fmt_f64(direction.x),
             fmt_f64(direction.y),
@@ -352,7 +389,7 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> Option<String> {
             axis_origin,
             axis_dir,
             angle_deg,
-        } => Some(format!(
+        } => OpResult::Ok(format!(
             "[revolve {} {} {} {} {} {} {} {}]",
             fmt_f64(axis_origin.x),
             fmt_f64(axis_origin.y),
@@ -367,7 +404,7 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> Option<String> {
         CsgOp::Sweep { sketch, path, .. } => {
             let sk = node_ref(*sketch, doc);
             match path {
-                PathCurve::Line { start, end } => Some(format!(
+                PathCurve::Line { start, end } => OpResult::Ok(format!(
                     "[sweep-line {} {} {} {} {} {} {}]",
                     fmt_f64(start.x),
                     fmt_f64(start.y),
@@ -382,7 +419,7 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> Option<String> {
                     pitch,
                     height,
                     turns,
-                } => Some(format!(
+                } => OpResult::Ok(format!(
                     "[sweep-helix {} {} {} {} {}]",
                     fmt_f64(*radius),
                     fmt_f64(*pitch),
@@ -397,17 +434,20 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> Option<String> {
             let refs: Vec<String> = sketches.iter().map(|id| node_ref(*id, doc)).collect();
             let refs_str = refs.join(" ");
             if closed.unwrap_or(false) {
-                Some(format!("[loft-closed #[{}]]", refs_str))
+                OpResult::Ok(format!("[loft-closed #[{}]]", refs_str))
             } else {
-                Some(format!("[loft #[{}]]", refs_str))
+                OpResult::Ok(format!("[loft #[{}]]", refs_str))
             }
         }
 
-        CsgOp::Text2D { text, height, .. } => Some(format!(
-            "; TODO: Text2D {:?} (h={}) — not yet supported in loon\n; [text2d ...]",
-            text,
-            fmt_f64(*height)
-        )),
+        CsgOp::Text2D { text, height, .. } => OpResult::Unsupported(
+            "Text2D".to_string(),
+            format!(
+                "; Text2D {:?} (h={}) — not yet supported in loon",
+                text,
+                fmt_f64(*height)
+            ),
+        ),
 
         CsgOp::ImportedMesh {
             positions,
@@ -421,22 +461,29 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> Option<String> {
                 .as_ref()
                 .map(|s| format!(", source: {}", s))
                 .unwrap_or_default();
-            Some(format!(
-                "; TODO: ImportedMesh ({} vertices, {} triangles{}) — not representable in loon",
-                verts, tris, src
-            ))
+            OpResult::Unsupported(
+                "ImportedMesh".to_string(),
+                format!(
+                    "; ImportedMesh ({} vertices, {} triangles{}) — not representable in loon",
+                    verts, tris, src
+                ),
+            )
         }
 
-        CsgOp::StepImport { path } => Some(format!(
-            "; TODO: StepImport {:?} — not yet supported in loon",
-            path
-        )),
+        CsgOp::StepImport { path } => OpResult::Unsupported(
+            "StepImport".to_string(),
+            format!("; StepImport {:?} — not yet supported in loon", path),
+        ),
 
-        CsgOp::PcbBoard { .. } => Some("; TODO: PcbBoard — not yet supported in loon".to_string()),
+        CsgOp::PcbBoard { .. } => OpResult::Unsupported(
+            "PcbBoard".to_string(),
+            "; PcbBoard — not yet supported in loon".to_string(),
+        ),
 
-        CsgOp::EmbroideryPattern { .. } => {
-            Some("; TODO: EmbroideryPattern — not yet supported in loon".to_string())
-        }
+        CsgOp::EmbroideryPattern { .. } => OpResult::Unsupported(
+            "EmbroideryPattern".to_string(),
+            "; EmbroideryPattern — not yet supported in loon".to_string(),
+        ),
 
         CsgOp::PartInstance {
             path,
@@ -453,7 +500,7 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> Option<String> {
                 .map(|(k, v)| format!(":{k} {v}"))
                 .collect::<Vec<_>>()
                 .join(" ");
-            Some(format!(
+            OpResult::Ok(format!(
                 "[part-instance {:?} {:?} #{{{}}}]",
                 path, version, params_str
             ))
@@ -712,5 +759,118 @@ mod tests {
     fn sanitize_name_special_chars() {
         assert_eq!(sanitize_name("My Part #1"), "my-part--1");
         assert_eq!(sanitize_name("hello_world"), "hello_world");
+    }
+
+    #[test]
+    fn checked_no_unsupported() {
+        let doc = make_doc_with_cube();
+        let (loon, unsupported) = document_to_loon_checked(&doc);
+        assert!(loon.contains("[let box [cube 10.0 20.0 30.0]]"));
+        assert!(
+            unsupported.is_empty(),
+            "cube should have no unsupported variants"
+        );
+    }
+
+    #[test]
+    fn checked_text2d_is_unsupported() {
+        let mut doc = Document::new();
+        doc.nodes.insert(
+            1,
+            Node {
+                id: 1,
+                name: Some("label".into()),
+                op: CsgOp::Text2D {
+                    origin: Vec3::new(0.0, 0.0, 0.0),
+                    x_dir: Vec3::new(1.0, 0.0, 0.0),
+                    y_dir: Vec3::new(0.0, 1.0, 0.0),
+                    text: "Hello".to_string(),
+                    font: "sans-serif".to_string(),
+                    height: 10.0,
+                    letter_spacing: None,
+                    line_spacing: None,
+                    alignment: crate::TextAlignment::default(),
+                },
+            },
+        );
+        doc.roots.push(SceneEntry {
+            root: 1,
+            material: "default".into(),
+            visible: None,
+        });
+        let (loon, unsupported) = document_to_loon_checked(&doc);
+        assert!(unsupported.contains(&"Text2D".to_string()));
+        // Comment placeholder should still appear in output
+        assert!(loon.contains("; Text2D"));
+    }
+
+    #[test]
+    fn checked_imported_mesh_is_unsupported() {
+        let mut doc = Document::new();
+        doc.nodes.insert(
+            1,
+            Node {
+                id: 1,
+                name: Some("mesh".into()),
+                op: CsgOp::ImportedMesh {
+                    positions: vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+                    indices: vec![0, 1, 2],
+                    normals: None,
+                    source: Some("model.stl".to_string()),
+                },
+            },
+        );
+        doc.roots.push(SceneEntry {
+            root: 1,
+            material: "default".into(),
+            visible: None,
+        });
+        let (_, unsupported) = document_to_loon_checked(&doc);
+        assert!(unsupported.contains(&"ImportedMesh".to_string()));
+    }
+
+    #[test]
+    fn checked_deduplicates_same_variant() {
+        let mut doc = Document::new();
+        doc.nodes.insert(
+            1,
+            Node {
+                id: 1,
+                name: Some("m1".into()),
+                op: CsgOp::ImportedMesh {
+                    positions: vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+                    indices: vec![0, 1, 2],
+                    normals: None,
+                    source: None,
+                },
+            },
+        );
+        doc.nodes.insert(
+            2,
+            Node {
+                id: 2,
+                name: Some("m2".into()),
+                op: CsgOp::ImportedMesh {
+                    positions: vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+                    indices: vec![0, 1, 2],
+                    normals: None,
+                    source: None,
+                },
+            },
+        );
+        doc.roots.push(SceneEntry {
+            root: 1,
+            material: "default".into(),
+            visible: None,
+        });
+        let (_, unsupported) = document_to_loon_checked(&doc);
+        assert_eq!(
+            unsupported
+                .iter()
+                .filter(|s| s.as_str() == "ImportedMesh")
+                .count(),
+            1,
+            "duplicate variants should be deduplicated"
+        );
     }
 }

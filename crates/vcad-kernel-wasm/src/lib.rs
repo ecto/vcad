@@ -4858,6 +4858,20 @@ pub fn document_to_loon(doc_json: &str) -> Result<String, JsError> {
     Ok(vcad_ir::to_loon::document_to_loon(&doc))
 }
 
+/// Convert a Document (as JSON) to loon, also returning unsupported variant names.
+///
+/// Returns a JS object `{ source: string, unsupported: string[] }`.
+/// When `unsupported` is non-empty, the output contains comment placeholders for
+/// those nodes and callers should warn the user that data will be lost.
+#[wasm_bindgen(js_name = documentToLoonChecked)]
+pub fn document_to_loon_checked(doc_json: &str) -> Result<JsValue, JsError> {
+    let doc: vcad_ir::Document = serde_json::from_str(doc_json)
+        .map_err(|e| JsError::new(&format!("Failed to parse document: {}", e)))?;
+    let (source, unsupported) = vcad_ir::to_loon::document_to_loon_checked(&doc);
+    let result = serde_json::json!({ "source": source, "unsupported": unsupported });
+    serde_wasm_bindgen::to_value(&result).map_err(|e| JsError::new(&e.to_string()))
+}
+
 /// Parse a .vcad file (JSON v0.1, VCode v0.2, or loon v0.3).
 ///
 /// Returns a JSON-serialized VcadFile with document, parts, and metadata.
