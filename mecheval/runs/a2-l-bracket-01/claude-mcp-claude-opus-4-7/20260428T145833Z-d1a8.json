@@ -21,38 +21,38 @@
       "params": {
         "type": "bbox",
         "min": [
-          0,
-          0,
-          0
+          0.0,
+          0.0,
+          0.0
         ],
         "max": [
-          50,
-          30,
-          30
+          50.0,
+          30.0,
+          30.0
         ],
         "tolerance_mm": 0.1
       },
       "result": "fail",
       "details": {
         "actual_max": [
-          50,
-          30,
-          30
+          50.0,
+          30.0,
+          30.0
         ],
         "actual_min": [
           -2.5,
           -2.5,
-          -1
+          -1.0
         ],
         "deviation_max": [
-          0,
-          0,
-          0
+          0.0,
+          0.0,
+          0.0
         ],
         "deviation_min": [
           -2.5,
           -2.5,
-          -1
+          -1.0
         ],
         "max_abs_deviation_mm": 2.5,
         "tolerance_mm": 0.1
@@ -82,26 +82,26 @@
       "type": "hole_count",
       "params": {
         "type": "hole_count",
-        "diameter_mm": 5,
+        "diameter_mm": 5.0,
         "expected": 2,
         "diameter_tolerance_mm": 0.05
       },
       "result": "pass",
       "details": {
         "actual": 2,
-        "diameter_mm": 5,
+        "diameter_mm": 5.0,
         "diameter_tolerance_mm": 0.05,
         "expected": 2,
         "found": [
           [
-            0,
-            0,
-            5
+            0.0,
+            0.0,
+            5.0
           ],
           [
-            10,
-            15,
-            5
+            10.0,
+            15.0,
+            5.0
           ]
         ]
       }
@@ -111,43 +111,43 @@
       "type": "hole_positions",
       "params": {
         "type": "hole_positions",
-        "diameter_mm": 5,
+        "diameter_mm": 5.0,
         "positions": [
           [
-            10,
-            15,
-            0
+            10.0,
+            15.0,
+            0.0
           ],
           [
-            35,
-            15,
-            0
+            35.0,
+            15.0,
+            0.0
           ]
         ],
         "tolerance_mm": 0.1
       },
       "result": "fail",
       "details": {
-        "diameter_mm": 5,
+        "diameter_mm": 5.0,
         "per_expected": [
           {
-            "distance_mm": 0,
+            "distance_mm": 0.0,
             "matched_hole": [
-              10,
-              15
+              10.0,
+              15.0
             ],
             "pass": true,
             "spec_xy": [
-              10,
-              15
+              10.0,
+              15.0
             ]
           },
           {
             "nearest_distance_mm": 38.07886552931954,
             "pass": false,
             "spec_xy": [
-              35,
-              15
+              35.0,
+              15.0
             ],
             "tolerance_mm": 0.1
           }
@@ -155,8 +155,8 @@
         "tolerance_mm": 0.1,
         "unmatched_extras": [
           [
-            0,
-            0
+            0.0,
+            0.0
           ]
         ]
       }
@@ -179,27 +179,27 @@
           },
           {
             "bbox": {
-              "max_abs_deviation_mm": 0,
+              "max_abs_deviation_mm": 0.0,
               "original_max": [
                 2.5,
                 2.5,
-                6
+                6.0
               ],
               "original_min": [
                 -2.5,
                 -2.5,
-                0
+                0.0
               ],
               "pass": true,
               "roundtripped_max": [
                 2.5,
                 2.5,
-                6
+                6.0
               ],
               "roundtripped_min": [
                 -2.5,
                 -2.5,
-                0
+                0.0
               ],
               "tolerance_mm": 0.01
             },
@@ -214,27 +214,27 @@
           },
           {
             "bbox": {
-              "max_abs_deviation_mm": 0,
+              "max_abs_deviation_mm": 0.0,
               "original_max": [
                 12.5,
                 17.5,
-                5
+                5.0
               ],
               "original_min": [
                 7.5,
                 12.5,
-                -1
+                -1.0
               ],
               "pass": true,
               "roundtripped_max": [
                 12.5,
                 17.5,
-                5
+                5.0
               ],
               "roundtripped_min": [
                 7.5,
                 12.5,
-                -1
+                -1.0
               ],
               "tolerance_mm": 0.01
             },
@@ -249,27 +249,27 @@
           },
           {
             "bbox": {
-              "max_abs_deviation_mm": 0,
+              "max_abs_deviation_mm": 0.0,
               "original_max": [
                 2.5,
                 2.5,
-                6
+                6.0
               ],
               "original_min": [
                 -2.5,
                 -2.5,
-                0
+                0.0
               ],
               "pass": true,
               "roundtripped_max": [
                 2.5,
                 2.5,
-                6
+                6.0
               ],
               "roundtripped_min": [
                 -2.5,
                 -2.5,
-                0
+                0.0
               ],
               "tolerance_mm": 0.01
             },

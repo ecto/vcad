@@ -21,40 +21,40 @@
       "params": {
         "type": "bbox",
         "min": [
-          -30,
-          -30,
-          0
+          -30.0,
+          -30.0,
+          0.0
         ],
         "max": [
-          30,
-          30,
-          8
+          30.0,
+          30.0,
+          8.0
         ],
         "tolerance_mm": 0.1
       },
       "result": "pass",
       "details": {
         "actual_max": [
-          30,
-          30,
-          8
+          30.0,
+          30.0,
+          8.0
         ],
         "actual_min": [
-          -30,
-          -30,
-          0
+          -30.0,
+          -30.0,
+          0.0
         ],
         "deviation_max": [
-          0,
-          0,
-          0
+          0.0,
+          0.0,
+          0.0
         ],
         "deviation_min": [
-          0,
-          0,
-          0
+          0.0,
+          0.0,
+          0.0
         ],
-        "max_abs_deviation_mm": 0,
+        "max_abs_deviation_mm": 0.0,
         "tolerance_mm": 0.1
       }
     },
@@ -65,9 +65,9 @@
         "type": "mass_props",
         "volume_mm3": 11623.89,
         "center_of_mass": [
-          0,
-          0,
-          4
+          0.0,
+          0.0,
+          4.0
         ],
         "tolerance_pct": 0.5
       },
@@ -88,9 +88,9 @@
           "max_abs_deviation_mm": 0.29522735986566034,
           "pass": true,
           "spec": [
-            0,
-            0,
-            4
+            0.0,
+            0.0,
+            4.0
           ],
           "tolerance_mm": 0.4261455150532503
         },
@@ -108,21 +108,21 @@
       "type": "hole_count",
       "params": {
         "type": "hole_count",
-        "diameter_mm": 40,
+        "diameter_mm": 40.0,
         "expected": 1,
         "diameter_tolerance_mm": 0.1
       },
       "result": "pass",
       "details": {
         "actual": 1,
-        "diameter_mm": 40,
+        "diameter_mm": 40.0,
         "diameter_tolerance_mm": 0.1,
         "expected": 1,
         "found": [
           [
-            0,
-            0,
-            40
+            0.0,
+            0.0,
+            40.0
           ]
         ]
       }
@@ -132,46 +132,46 @@
       "type": "hole_count",
       "params": {
         "type": "hole_count",
-        "diameter_mm": 5,
+        "diameter_mm": 5.0,
         "expected": 6,
         "diameter_tolerance_mm": 0.05
       },
       "result": "pass",
       "details": {
         "actual": 6,
-        "diameter_mm": 5,
+        "diameter_mm": 5.0,
         "diameter_tolerance_mm": 0.05,
         "expected": 6,
         "found": [
           [
-            25,
-            0,
-            5
+            25.0,
+            0.0,
+            5.0
           ],
           [
             12.5,
             21.65063509461097,
-            5
+            5.0
           ],
           [
             -12.5,
             21.65063509461097,
-            5
+            5.0
           ],
           [
-            -25,
-            0,
-            5
+            -25.0,
+            0.0,
+            5.0
           ],
           [
             -12.5,
             -21.65063509461097,
-            5
+            5.0
           ],
           [
             12.5,
             -21.65063509461097,
-            5
+            5.0
           ]
         ]
       }
@@ -181,55 +181,55 @@
       "type": "hole_positions",
       "params": {
         "type": "hole_positions",
-        "diameter_mm": 5,
+        "diameter_mm": 5.0,
         "positions": [
           [
-            25,
-            0,
-            0
+            25.0,
+            0.0,
+            0.0
           ],
           [
             12.5,
             21.65,
-            0
+            0.0
           ],
           [
             -12.5,
             21.65,
-            0
+            0.0
           ],
           [
-            -25,
-            0,
-            0
+            -25.0,
+            0.0,
+            0.0
           ],
           [
             -12.5,
             -21.65,
-            0
+            0.0
           ],
           [
             12.5,
             -21.65,
-            0
+            0.0
           ]
         ],
         "tolerance_mm": 0.15
       },
       "result": "pass",
       "details": {
-        "diameter_mm": 5,
+        "diameter_mm": 5.0,
         "per_expected": [
           {
-            "distance_mm": 0,
+            "distance_mm": 0.0,
             "matched_hole": [
-              25,
-              0
+              25.0,
+              0.0
             ],
             "pass": true,
             "spec_xy": [
-              25,
-              0
+              25.0,
+              0.0
             ]
           },
           {
@@ -257,15 +257,15 @@
             ]
           },
           {
-            "distance_mm": 0,
+            "distance_mm": 0.0,
             "matched_hole": [
-              -25,
-              0
+              -25.0,
+              0.0
             ],
             "pass": true,
             "spec_xy": [
-              -25,
-              0
+              -25.0,
+              0.0
             ]
           },
           {
@@ -309,34 +309,34 @@
         "per_solid": [
           {
             "bbox": {
-              "max_abs_deviation_mm": 0,
+              "max_abs_deviation_mm": 0.0,
               "original_max": [
                 27.5,
                 2.5,
-                8
+                8.0
               ],
               "original_min": [
                 22.5,
                 -2.5,
-                0
+                0.0
               ],
               "pass": true,
               "roundtripped_max": [
                 27.5,
                 2.5,
-                8
+                8.0
               ],
               "roundtripped_min": [
                 22.5,
                 -2.5,
-                0
+                0.0
               ],
               "tolerance_mm": 0.010677078252031312
             },
             "index": 0,
             "pass": true,
             "volume": {
-              "deviation_pct": 0,
+              "deviation_pct": 0.0,
               "original_mm3": 156.07225729533457,
               "pass": true,
               "roundtripped_mm3": 156.07225729533457
@@ -344,34 +344,34 @@
           },
           {
             "bbox": {
-              "max_abs_deviation_mm": 0,
+              "max_abs_deviation_mm": 0.0,
               "original_max": [
-                15,
+                15.0,
                 24.150634765625,
-                8
+                8.0
               ],
               "original_min": [
-                10,
+                10.0,
                 19.150634765625,
-                0
+                0.0
               ],
               "pass": true,
               "roundtripped_max": [
-                15,
+                15.0,
                 24.150634765625,
-                8
+                8.0
               ],
               "roundtripped_min": [
-                10,
+                10.0,
                 19.150634765625,
-                0
+                0.0
               ],
               "tolerance_mm": 0.010677078252031312
             },
             "index": 1,
             "pass": true,
             "volume": {
-              "deviation_pct": 0,
+              "deviation_pct": 0.0,
               "original_mm3": 156.07228427822702,
               "pass": true,
               "roundtripped_mm3": 156.07228427822702
@@ -379,34 +379,34 @@
           },
           {
             "bbox": {
-              "max_abs_deviation_mm": 0,
+              "max_abs_deviation_mm": 0.0,
               "original_max": [
-                -10,
+                -10.0,
                 24.150634765625,
-                8
+                8.0
               ],
               "original_min": [
-                -15,
+                -15.0,
                 19.150634765625,
-                0
+                0.0
               ],
               "pass": true,
               "roundtripped_max": [
-                -10,
+                -10.0,
                 24.150634765625,
-                8
+                8.0
               ],
               "roundtripped_min": [
-                -15,
+                -15.0,
                 19.150634765625,
-                0
+                0.0
               ],
               "tolerance_mm": 0.010677078252031312
             },
             "index": 2,
             "pass": true,
             "volume": {
-              "deviation_pct": 0,
+              "deviation_pct": 0.0,
               "original_mm3": 156.07228427822702,
               "pass": true,
               "roundtripped_mm3": 156.07228427822702
@@ -414,34 +414,34 @@
           },
           {
             "bbox": {
-              "max_abs_deviation_mm": 0,
+              "max_abs_deviation_mm": 0.0,
               "original_max": [
                 -22.5,
                 2.5,
-                8
+                8.0
               ],
               "original_min": [
                 -27.5,
                 -2.5,
-                0
+                0.0
               ],
               "pass": true,
               "roundtripped_max": [
                 -22.5,
                 2.5,
-                8
+                8.0
               ],
               "roundtripped_min": [
                 -27.5,
                 -2.5,
-                0
+                0.0
               ],
               "tolerance_mm": 0.010677078252031312
             },
             "index": 3,
             "pass": true,
             "volume": {
-              "deviation_pct": 0,
+              "deviation_pct": 0.0,
               "original_mm3": 156.07225729533457,
               "pass": true,
               "roundtripped_mm3": 156.07225729533457
@@ -449,34 +449,34 @@
           },
           {
             "bbox": {
-              "max_abs_deviation_mm": 0,
+              "max_abs_deviation_mm": 0.0,
               "original_max": [
-                -10,
+                -10.0,
                 -19.150634765625,
-                8
+                8.0
               ],
               "original_min": [
-                -15,
+                -15.0,
                 -24.150634765625,
-                0
+                0.0
               ],
               "pass": true,
               "roundtripped_max": [
-                -10,
+                -10.0,
                 -19.150634765625,
-                8
+                8.0
               ],
               "roundtripped_min": [
-                -15,
+                -15.0,
                 -24.150634765625,
-                0
+                0.0
               ],
               "tolerance_mm": 0.010677078252031312
             },
             "index": 4,
             "pass": true,
             "volume": {
-              "deviation_pct": 0,
+              "deviation_pct": 0.0,
               "original_mm3": 156.07228427822702,
               "pass": true,
               "roundtripped_mm3": 156.07228427822702
@@ -484,34 +484,34 @@
           },
           {
             "bbox": {
-              "max_abs_deviation_mm": 0,
+              "max_abs_deviation_mm": 0.0,
               "original_max": [
-                15,
+                15.0,
                 -19.150634765625,
-                8
+                8.0
               ],
               "original_min": [
-                10,
+                10.0,
                 -24.150634765625,
-                0
+                0.0
               ],
               "pass": true,
               "roundtripped_max": [
-                15,
+                15.0,
                 -19.150634765625,
-                8
+                8.0
               ],
               "roundtripped_min": [
-                10,
+                10.0,
                 -24.150634765625,
-                0
+                0.0
               ],
               "tolerance_mm": 0.010677078252031312
             },
             "index": 5,
             "pass": true,
             "volume": {
-              "deviation_pct": 0,
+              "deviation_pct": 0.0,
               "original_mm3": 156.07228427822702,
               "pass": true,
               "roundtripped_mm3": 156.07228427822702
@@ -519,27 +519,27 @@
           },
           {
             "bbox": {
-              "max_abs_deviation_mm": 0,
+              "max_abs_deviation_mm": 0.0,
               "original_max": [
-                20,
-                20,
-                8
+                20.0,
+                20.0,
+                8.0
               ],
               "original_min": [
-                -20,
-                -20,
-                0
+                -20.0,
+                -20.0,
+                0.0
               ],
               "pass": true,
               "roundtripped_max": [
-                20,
-                20,
-                8
+                20.0,
+                20.0,
+                8.0
               ],
               "roundtripped_min": [
-                -20,
-                -20,
-                0
+                -20.0,
+                -20.0,
+                0.0
               ],
               "tolerance_mm": 0.057131427428342804
             },
@@ -554,27 +554,27 @@
           },
           {
             "bbox": {
-              "max_abs_deviation_mm": 0,
+              "max_abs_deviation_mm": 0.0,
               "original_max": [
-                30,
-                30,
-                8
+                30.0,
+                30.0,
+                8.0
               ],
               "original_min": [
-                -30,
-                -30,
-                0
+                -30.0,
+                -30.0,
+                0.0
               ],
               "pass": true,
               "roundtripped_max": [
-                30,
-                30,
-                8
+                30.0,
+                30.0,
+                8.0
               ],
               "roundtripped_min": [
-                -30,
-                -30,
-                0
+                -30.0,
+                -30.0,
+                0.0
               ],
               "tolerance_mm": 0.08522910301065006
             },
@@ -589,34 +589,34 @@
           },
           {
             "bbox": {
-              "max_abs_deviation_mm": 0,
+              "max_abs_deviation_mm": 0.0,
               "original_max": [
                 27.5,
                 24.150634765625,
-                8
+                8.0
               ],
               "original_min": [
-                10,
+                10.0,
                 -2.5,
-                0
+                0.0
               ],
               "pass": true,
               "roundtripped_max": [
                 27.5,
                 24.150634765625,
-                8
+                8.0
               ],
               "roundtripped_min": [
-                10,
+                10.0,
                 -2.5,
-                0
+                0.0
               ],
               "tolerance_mm": 0.032871056165124056
             },
             "index": 8,
             "pass": true,
             "volume": {
-              "deviation_pct": 0,
+              "deviation_pct": 0.0,
               "original_mm3": 312.1445415735616,
               "pass": true,
               "roundtripped_mm3": 312.1445415735616
@@ -624,34 +624,34 @@
           },
           {
             "bbox": {
-              "max_abs_deviation_mm": 0,
+              "max_abs_deviation_mm": 0.0,
               "original_max": [
                 27.5,
                 24.150634765625,
-                8
+                8.0
               ],
               "original_min": [
-                -15,
+                -15.0,
                 -2.5,
-                0
+                0.0
               ],
               "pass": true,
               "roundtripped_max": [
                 27.5,
                 24.150634765625,
-                8
+                8.0
               ],
               "roundtripped_min": [
-                -15,
+                -15.0,
                 -2.5,
-                0
+                0.0
               ],
               "tolerance_mm": 0.05079868436692765
             },
             "index": 9,
             "pass": true,
             "volume": {
-              "deviation_pct": 0,
+              "deviation_pct": 0.0,
               "original_mm3": 468.2168258517886,
               "pass": true,
               "roundtripped_mm3": 468.2168258517886

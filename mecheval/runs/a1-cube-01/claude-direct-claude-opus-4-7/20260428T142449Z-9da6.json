@@ -45,16 +45,16 @@
           -12.5
         ],
         "deviation_max": [
-          0,
-          0,
-          0
+          0.0,
+          0.0,
+          0.0
         ],
         "deviation_min": [
-          0,
-          0,
-          0
+          0.0,
+          0.0,
+          0.0
         ],
-        "max_abs_deviation_mm": 0,
+        "max_abs_deviation_mm": 0.0,
         "tolerance_mm": 0.05
       }
     },
@@ -63,11 +63,11 @@
       "type": "mass_props",
       "params": {
         "type": "mass_props",
-        "volume_mm3": 15625,
+        "volume_mm3": 15625.0,
         "center_of_mass": [
-          0,
-          0,
-          0
+          0.0,
+          0.0,
+          0.0
         ],
         "tolerance_pct": 0.1
       },
@@ -75,30 +75,30 @@
       "details": {
         "center_of_mass": {
           "actual": [
-            0,
-            0,
-            0
+            0.0,
+            0.0,
+            0.0
           ],
           "bbox_diagonal_mm": 43.30127018922193,
           "deviation": [
-            0,
-            0,
-            0
+            0.0,
+            0.0,
+            0.0
           ],
-          "max_abs_deviation_mm": 0,
+          "max_abs_deviation_mm": 0.0,
           "pass": true,
           "spec": [
-            0,
-            0,
-            0
+            0.0,
+            0.0,
+            0.0
           ],
           "tolerance_mm": 0.04330127018922193
         },
         "volume": {
-          "actual_mm3": 15625,
-          "deviation_pct": 0,
+          "actual_mm3": 15625.0,
+          "deviation_pct": 0.0,
           "pass": true,
-          "spec_mm3": 15625,
+          "spec_mm3": 15625.0,
           "tolerance_pct": 0.1
         }
       }
@@ -115,7 +115,7 @@
         "per_solid": [
           {
             "bbox": {
-              "max_abs_deviation_mm": 0,
+              "max_abs_deviation_mm": 0.0,
               "original_max": [
                 12.5,
                 12.5,
@@ -142,10 +142,10 @@
             "index": 0,
             "pass": true,
             "volume": {
-              "deviation_pct": 0,
-              "original_mm3": 15625,
+              "deviation_pct": 0.0,
+              "original_mm3": 15625.0,
               "pass": true,
-              "roundtripped_mm3": 15625
+              "roundtripped_mm3": 15625.0
             }
           }
         ],
@@ -157,7 +157,7 @@
     "passed": true,
     "checks_passed": 4,
     "checks_total": 4,
-    "score": 1,
+    "score": 1.0,
     "anti_cheese_violated": false,
     "limits_exceeded": []
   },

@@ -21,40 +21,40 @@
       "params": {
         "type": "bbox",
         "min": [
-          0,
-          0,
-          0
+          0.0,
+          0.0,
+          0.0
         ],
         "max": [
-          50,
-          30,
-          30
+          50.0,
+          30.0,
+          30.0
         ],
         "tolerance_mm": 0.1
       },
       "result": "pass",
       "details": {
         "actual_max": [
-          50,
-          30,
-          30
+          50.0,
+          30.0,
+          30.0
         ],
         "actual_min": [
-          0,
-          0,
-          0
+          0.0,
+          0.0,
+          0.0
         ],
         "deviation_max": [
-          0,
-          0,
-          0
+          0.0,
+          0.0,
+          0.0
         ],
         "deviation_min": [
-          0,
-          0,
-          0
+          0.0,
+          0.0,
+          0.0
         ],
-        "max_abs_deviation_mm": 0,
+        "max_abs_deviation_mm": 0.0,
         "tolerance_mm": 0.1
       }
     },
@@ -82,26 +82,26 @@
       "type": "hole_count",
       "params": {
         "type": "hole_count",
-        "diameter_mm": 5,
+        "diameter_mm": 5.0,
         "expected": 2,
         "diameter_tolerance_mm": 0.05
       },
       "result": "pass",
       "details": {
         "actual": 2,
-        "diameter_mm": 5,
+        "diameter_mm": 5.0,
         "diameter_tolerance_mm": 0.05,
         "expected": 2,
         "found": [
           [
-            10,
-            15,
-            5
+            10.0,
+            15.0,
+            5.0
           ],
           [
-            35,
-            15,
-            5
+            35.0,
+            15.0,
+            5.0
           ]
         ]
       }
@@ -111,47 +111,47 @@
       "type": "hole_positions",
       "params": {
         "type": "hole_positions",
-        "diameter_mm": 5,
+        "diameter_mm": 5.0,
         "positions": [
           [
-            10,
-            15,
-            0
+            10.0,
+            15.0,
+            0.0
           ],
           [
-            35,
-            15,
-            0
+            35.0,
+            15.0,
+            0.0
           ]
         ],
         "tolerance_mm": 0.1
       },
       "result": "pass",
       "details": {
-        "diameter_mm": 5,
+        "diameter_mm": 5.0,
         "per_expected": [
           {
-            "distance_mm": 0,
+            "distance_mm": 0.0,
             "matched_hole": [
-              10,
-              15
+              10.0,
+              15.0
             ],
             "pass": true,
             "spec_xy": [
-              10,
-              15
+              10.0,
+              15.0
             ]
           },
           {
-            "distance_mm": 0,
+            "distance_mm": 0.0,
             "matched_hole": [
-              35,
-              15
+              35.0,
+              15.0
             ],
             "pass": true,
             "spec_xy": [
-              35,
-              15
+              35.0,
+              15.0
             ]
           }
         ],

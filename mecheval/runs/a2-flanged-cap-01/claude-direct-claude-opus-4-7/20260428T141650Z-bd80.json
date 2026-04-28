@@ -21,40 +21,40 @@
       "params": {
         "type": "bbox",
         "min": [
-          -30,
-          -30,
-          0
+          -30.0,
+          -30.0,
+          0.0
         ],
         "max": [
-          30,
-          30,
-          8
+          30.0,
+          30.0,
+          8.0
         ],
         "tolerance_mm": 0.1
       },
       "result": "pass",
       "details": {
         "actual_max": [
-          30,
-          30,
-          8
+          30.0,
+          30.0,
+          8.0
         ],
         "actual_min": [
-          -30,
-          -30,
-          0
+          -30.0,
+          -30.0,
+          0.0
         ],
         "deviation_max": [
-          0,
-          0,
-          0
+          0.0,
+          0.0,
+          0.0
         ],
         "deviation_min": [
-          0,
-          0,
-          0
+          0.0,
+          0.0,
+          0.0
         ],
-        "max_abs_deviation_mm": 0,
+        "max_abs_deviation_mm": 0.0,
         "tolerance_mm": 0.1
       }
     },
@@ -65,39 +65,39 @@
         "type": "mass_props",
         "volume_mm3": 11623.89,
         "center_of_mass": [
-          0,
-          0,
-          4
+          0.0,
+          0.0,
+          4.0
         ],
         "tolerance_pct": 0.5
       },
-      "result": "fail",
+      "result": "pass",
       "details": {
         "center_of_mass": {
           "actual": [
-            2.1747504490771465e-16,
-            2.045624641163191e-15,
-            3.0000000000000164
+            -1.967398132653739e-16,
+            1.7600457983408554e-15,
+            4.000000000000054
           ],
           "bbox_diagonal_mm": 85.22910301065006,
           "deviation": [
-            2.1747504490771465e-16,
-            2.045624641163191e-15,
-            -0.9999999999999836
+            -1.967398132653739e-16,
+            1.7600457983408554e-15,
+            5.417888360170764e-14
           ],
-          "max_abs_deviation_mm": 0.9999999999999836,
-          "pass": false,
+          "max_abs_deviation_mm": 5.417888360170764e-14,
+          "pass": true,
           "spec": [
-            0,
-            0,
-            4
+            0.0,
+            0.0,
+            4.0
           ],
           "tolerance_mm": 0.4261455150532503
         },
         "volume": {
-          "actual_mm3": 8364.129338691448,
-          "deviation_pct": 28.043629639548822,
-          "pass": false,
+          "actual_mm3": 11605.229361969885,
+          "deviation_pct": 0.1605369461524031,
+          "pass": true,
           "spec_mm3": 11623.89,
           "tolerance_pct": 0.5
         }
@@ -108,13 +108,23 @@
       "type": "hole_count",
       "params": {
         "type": "hole_count",
-        "diameter_mm": 40,
+        "diameter_mm": 40.0,
         "expected": 1,
         "diameter_tolerance_mm": 0.1
       },
-      "result": "not_implemented",
+      "result": "pass",
       "details": {
-        "reason": "skeleton — kernel wiring pending"
+        "actual": 1,
+        "diameter_mm": 40.0,
+        "diameter_tolerance_mm": 0.1,
+        "expected": 1,
+        "found": [
+          [
+            0.0,
+            0.0,
+            40.0
+          ]
+        ]
       }
     },
     {
@@ -122,13 +132,48 @@
       "type": "hole_count",
       "params": {
         "type": "hole_count",
-        "diameter_mm": 5,
+        "diameter_mm": 5.0,
         "expected": 6,
         "diameter_tolerance_mm": 0.05
       },
-      "result": "not_implemented",
+      "result": "pass",
       "details": {
-        "reason": "skeleton — kernel wiring pending"
+        "actual": 6,
+        "diameter_mm": 5.0,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 6,
+        "found": [
+          [
+            25.0,
+            0.0,
+            5.0
+          ],
+          [
+            12.5,
+            21.65063509461097,
+            5.0
+          ],
+          [
+            -12.499999999999998,
+            21.65063509461097,
+            5.0
+          ],
+          [
+            -25.0,
+            0.0,
+            5.0
+          ],
+          [
+            -12.500000000000004,
+            -21.65063509461097,
+            5.0
+          ],
+          [
+            12.499999999999991,
+            -21.65063509461097,
+            5.0
+          ]
+        ]
       }
     },
     {
@@ -136,44 +181,120 @@
       "type": "hole_positions",
       "params": {
         "type": "hole_positions",
-        "diameter_mm": 5,
+        "diameter_mm": 5.0,
         "positions": [
           [
-            25,
-            0,
-            0
+            25.0,
+            0.0,
+            0.0
           ],
           [
             12.5,
             21.65,
-            0
+            0.0
           ],
           [
             -12.5,
             21.65,
-            0
+            0.0
           ],
           [
-            -25,
-            0,
-            0
+            -25.0,
+            0.0,
+            0.0
           ],
           [
             -12.5,
             -21.65,
-            0
+            0.0
           ],
           [
             12.5,
             -21.65,
-            0
+            0.0
           ]
         ],
         "tolerance_mm": 0.15
       },
-      "result": "not_implemented",
+      "result": "pass",
       "details": {
-        "reason": "skeleton — kernel wiring pending"
+        "diameter_mm": 5.0,
+        "per_expected": [
+          {
+            "distance_mm": 0.0,
+            "matched_hole": [
+              25.0,
+              0.0
+            ],
+            "pass": true,
+            "spec_xy": [
+              25.0,
+              0.0
+            ]
+          },
+          {
+            "distance_mm": 0.0006350946109705546,
+            "matched_hole": [
+              12.5,
+              21.65063509461097
+            ],
+            "pass": true,
+            "spec_xy": [
+              12.5,
+              21.65
+            ]
+          },
+          {
+            "distance_mm": 0.0006350946109705546,
+            "matched_hole": [
+              -12.499999999999998,
+              21.65063509461097
+            ],
+            "pass": true,
+            "spec_xy": [
+              -12.5,
+              21.65
+            ]
+          },
+          {
+            "distance_mm": 0.0,
+            "matched_hole": [
+              -25.0,
+              0.0
+            ],
+            "pass": true,
+            "spec_xy": [
+              -25.0,
+              0.0
+            ]
+          },
+          {
+            "distance_mm": 0.0006350946109705546,
+            "matched_hole": [
+              -12.500000000000004,
+              -21.65063509461097
+            ],
+            "pass": true,
+            "spec_xy": [
+              -12.5,
+              -21.65
+            ]
+          },
+          {
+            "distance_mm": 0.0006350946109705546,
+            "matched_hole": [
+              12.499999999999991,
+              -21.65063509461097
+            ],
+            "pass": true,
+            "spec_xy": [
+              12.5,
+              -21.65
+            ]
+          }
+        ],
+        "tolerance_mm": 0.15,
+        "unmatched_extras": []
       }
     },
     {
@@ -187,39 +308,10 @@
       "details": {
         "per_solid": [
           {
-            "bbox": {
-              "max_abs_deviation_mm": 0,
-              "original_max": [
-                30,
-                30,
-                8
-              ],
-              "original_min": [
-                -30,
-                -30,
-                0
-              ],
-              "pass": true,
-              "roundtripped_max": [
-                30,
-                30,
-                8
-              ],
-              "roundtripped_min": [
-                -30,
-                -30,
-                0
-              ],
-              "tolerance_mm": 0.08522910301065006
-            },
+            "error": "Invalid topology: half-edge has no parent edge",
             "index": 0,
             "pass": false,
-            "volume": {
-              "deviation_pct": 0.4815246455920414,
-              "original_mm3": 8364.129338691448,
-              "pass": false,
-              "roundtripped_mm3": 8323.853994536454
-            }
+            "stage": "export"
           }
         ],
         "tolerance_pct": 0.1
@@ -228,9 +320,9 @@
   ],
   "summary": {
     "passed": false,
-    "checks_passed": 2,
+    "checks_passed": 6,
     "checks_total": 7,
-    "score": 0.2857142857142857,
+    "score": 0.8571428571428571,
     "anti_cheese_violated": false,
     "limits_exceeded": []
   },

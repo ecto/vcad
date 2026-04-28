@@ -21,40 +21,40 @@
       "params": {
         "type": "bbox",
         "min": [
-          -20,
-          -20,
-          0
+          -20.0,
+          -20.0,
+          0.0
         ],
         "max": [
-          20,
-          20,
-          25
+          20.0,
+          20.0,
+          25.0
         ],
         "tolerance_mm": 0.1
       },
       "result": "pass",
       "details": {
         "actual_max": [
-          20,
-          20,
-          25
+          20.0,
+          20.0,
+          25.0
         ],
         "actual_min": [
-          -20,
-          -20,
-          0
+          -20.0,
+          -20.0,
+          0.0
         ],
         "deviation_max": [
-          0,
-          0,
-          0
+          0.0,
+          0.0,
+          0.0
         ],
         "deviation_min": [
-          0,
-          0,
-          0
+          0.0,
+          0.0,
+          0.0
         ],
-        "max_abs_deviation_mm": 0,
+        "max_abs_deviation_mm": 0.0,
         "tolerance_mm": 0.1
       }
     },

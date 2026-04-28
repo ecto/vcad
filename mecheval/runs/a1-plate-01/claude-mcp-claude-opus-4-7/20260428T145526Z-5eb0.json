@@ -21,40 +21,40 @@
       "params": {
         "type": "bbox",
         "min": [
-          -25,
-          -15,
-          0
+          -25.0,
+          -15.0,
+          0.0
         ],
         "max": [
-          25,
-          15,
-          10
+          25.0,
+          15.0,
+          10.0
         ],
         "tolerance_mm": 0.1
       },
       "result": "fail",
       "details": {
         "actual_max": [
-          25,
-          15,
-          12
+          25.0,
+          15.0,
+          12.0
         ],
         "actual_min": [
-          -25,
-          -15,
-          -5
+          -25.0,
+          -15.0,
+          -5.0
         ],
         "deviation_max": [
-          0,
-          0,
-          2
+          0.0,
+          0.0,
+          2.0
         ],
         "deviation_min": [
-          0,
-          0,
-          -5
+          0.0,
+          0.0,
+          -5.0
         ],
-        "max_abs_deviation_mm": 5,
+        "max_abs_deviation_mm": 5.0,
         "tolerance_mm": 0.1
       }
     },
@@ -82,26 +82,26 @@
       "type": "hole_count",
       "params": {
         "type": "hole_count",
-        "diameter_mm": 3,
+        "diameter_mm": 3.0,
         "expected": 4,
         "diameter_tolerance_mm": 0.05
       },
       "result": "fail",
       "details": {
         "actual": 2,
-        "diameter_mm": 3,
+        "diameter_mm": 3.0,
         "diameter_tolerance_mm": 0.05,
         "expected": 4,
         "found": [
           [
-            20,
-            10,
-            3
+            20.0,
+            10.0,
+            3.0
           ],
           [
-            0,
-            0,
-            3
+            0.0,
+            0.0,
+            3.0
           ]
         ]
       }
@@ -111,53 +111,53 @@
       "type": "hole_positions",
       "params": {
         "type": "hole_positions",
-        "diameter_mm": 3,
+        "diameter_mm": 3.0,
         "positions": [
           [
-            20,
-            10,
-            0
+            20.0,
+            10.0,
+            0.0
           ],
           [
-            -20,
-            10,
-            0
+            -20.0,
+            10.0,
+            0.0
           ],
           [
-            -20,
-            -10,
-            0
+            -20.0,
+            -10.0,
+            0.0
           ],
           [
-            20,
-            -10,
-            0
+            20.0,
+            -10.0,
+            0.0
           ]
         ],
         "tolerance_mm": 0.1
       },
       "result": "fail",
       "details": {
-        "diameter_mm": 3,
+        "diameter_mm": 3.0,
         "per_expected": [
           {
-            "distance_mm": 0,
+            "distance_mm": 0.0,
             "matched_hole": [
-              20,
-              10
+              20.0,
+              10.0
             ],
             "pass": true,
             "spec_xy": [
-              20,
-              10
+              20.0,
+              10.0
             ]
           },
           {
             "nearest_distance_mm": 22.360679774997898,
             "pass": false,
             "spec_xy": [
-              -20,
-              10
+              -20.0,
+              10.0
             ],
             "tolerance_mm": 0.1
           },
@@ -165,8 +165,8 @@
             "nearest_distance_mm": 22.360679774997898,
             "pass": false,
             "spec_xy": [
-              -20,
-              -10
+              -20.0,
+              -10.0
             ],
             "tolerance_mm": 0.1
           },
@@ -174,8 +174,8 @@
             "nearest_distance_mm": 22.360679774997898,
             "pass": false,
             "spec_xy": [
-              20,
-              -10
+              20.0,
+              -10.0
             ],
             "tolerance_mm": 0.1
           }
@@ -183,8 +183,8 @@
         "tolerance_mm": 0.1,
         "unmatched_extras": [
           [
-            0,
-            0
+            0.0,
+            0.0
           ]
         ]
       }
@@ -207,34 +207,34 @@
           },
           {
             "bbox": {
-              "max_abs_deviation_mm": 0,
+              "max_abs_deviation_mm": 0.0,
               "original_max": [
                 1.5,
                 1.5,
-                12
+                12.0
               ],
               "original_min": [
                 -1.5,
                 -1.5,
-                0
+                0.0
               ],
               "pass": true,
               "roundtripped_max": [
                 1.5,
                 1.5,
-                12
+                12.0
               ],
               "roundtripped_min": [
                 -1.5,
                 -1.5,
-                0
+                0.0
               ],
               "tolerance_mm": 0.012727922061357855
             },
             "index": 1,
             "pass": true,
             "volume": {
-              "deviation_pct": 0,
+              "deviation_pct": 0.0,
               "original_mm3": 84.27901938896767,
               "pass": true,
               "roundtripped_mm3": 84.27901938896767
@@ -278,7 +278,7 @@
   "submission_kind": "self-run",
   "prompt": {
     "seed": "a1-plate-01",
-    "rendered": "Make a 50mm × 30mm × 10mm rectangular plate centered on the origin. Drill four cylindrical through-holes of diameter 3mm, axes parallel to Z, positioned 5mm in from each corner of the top face.",
+    "rendered": "Make a 50mm \u00d7 30mm \u00d7 10mm rectangular plate centered on the origin. Drill four cylindrical through-holes of diameter 3mm, axes parallel to Z, positioned 5mm in from each corner of the top face.",
     "attachments": []
   },
   "trace": {
