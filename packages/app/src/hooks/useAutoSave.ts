@@ -13,6 +13,32 @@ import {
 const DEBOUNCE_MS = 1000;
 const LOCK_REFRESH_MS = 15000;
 
+/**
+ * Module-level pending-save registry.
+ *
+ * The autosave hook registers its current save closure here whenever a
+ * debounced save is queued. Doc-switch call sites await `flushPendingSave()`
+ * BEFORE swapping the engine, so the old doc's pending edit is persisted with
+ * its own documentId — without this, switching docs within DEBOUNCE_MS of an
+ * edit silently dropped that edit (the engine was replaced before the timer
+ * fired).
+ *
+ * `pendingSaveFn` is the actual save call; it captures the OLD documentId at
+ * dirty-tick time, so it remains valid after the store has moved on.
+ */
+let pendingSaveFn: (() => Promise<void>) | null = null;
+
+export async function flushPendingSave(): Promise<void> {
+  const fn = pendingSaveFn;
+  if (!fn) return;
+  pendingSaveFn = null;
+  try {
+    await fn();
+  } catch (err) {
+    console.error("flushPendingSave failed:", err);
+  }
+}
+
 export function useAutoSave() {
   const documentId = useDocumentStore((s) => s.documentId);
   const documentName = useDocumentStore((s) => s.documentName);
@@ -135,7 +161,14 @@ export function useAutoSave() {
       clearTimeout(debounceRef.current);
     }
 
+    // Register `save` as the pending flush. The closure captures the CURRENT
+    // documentId / documentName, so even if the store has switched docs by
+    // the time `flushPendingSave()` is awaited, the persisted row is the old
+    // doc — which is exactly what we want.
+    pendingSaveFn = save;
+
     debounceRef.current = setTimeout(() => {
+      pendingSaveFn = null;
       save();
     }, DEBOUNCE_MS);
 
@@ -144,6 +177,10 @@ export function useAutoSave() {
         clearTimeout(debounceRef.current);
         debounceRef.current = null;
       }
+      // Effect cleanup runs when documentId changes (or unmount). Clear our
+      // registration so a stale closure can't run later — the flush should
+      // have been awaited by whoever triggered the doc switch.
+      if (pendingSaveFn === save) pendingSaveFn = null;
     };
   }, [isDirty, documentId, save, hasLock, readOnlyShare]);
 
