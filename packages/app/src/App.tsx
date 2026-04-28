@@ -83,13 +83,14 @@ import { useEngine } from "@/hooks/useEngine";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useKeybindingDispatcher } from "@/hooks/useKeybindingDispatcher";
 import { useOperationPreview } from "@/hooks/useOperationPreview";
-import { useAutoSave } from "@/hooks/useAutoSave";
+import { useAutoSave, flushPendingSave } from "@/hooks/useAutoSave";
 import { useCollabSync } from "@/hooks/useCollabSync";
 import { useChatHandler } from "@/hooks/useChatHandler";
 import { useChatHydration } from "@/hooks/useChatHydration";
 import { useUrlSync } from "@/hooks/useUrlSync";
 import { useSketchAutoFit } from "@/hooks/useSketchAutoFit";
 import { saveDocument } from "@/lib/save-load";
+import { openLocalDocumentById } from "@/lib/open-document";
 import { bootstrap } from "@/lib/bootstrap";
 import { useBootStore } from "@/stores/boot-store";
 import { Splash } from "@/components/Splash";
@@ -238,6 +239,40 @@ export function App() {
     void import("@/lib/deep-links").then((m) =>
       m.installDeepLinkListener(),
     );
+
+    // When a sync conflict creates a fork, surface it as an actionable toast
+    // with a one-click "Open my version" button. Without this the fork sits
+    // silently in the document picker and the user has no way to find it.
+    let prevConflictCount = 0;
+    void import("@vcad/auth").then(({ useSyncStore }) => {
+      const initial = useSyncStore.getState().conflicts;
+      prevConflictCount = initial.length;
+      useSyncStore.subscribe((state) => {
+        const conflicts = state.conflicts;
+        if (conflicts.length <= prevConflictCount) {
+          prevConflictCount = conflicts.length;
+          return;
+        }
+        const fresh = conflicts.slice(prevConflictCount);
+        prevConflictCount = conflicts.length;
+        for (const c of fresh) {
+          useNotificationStore.getState().showActionResult({
+            type: "success",
+            title: "Cloud version was newer — your edits were saved as a fork",
+            description: c.forkName,
+            actions: [
+              {
+                label: "Open my version",
+                variant: "primary",
+                onClick: () => {
+                  void openLocalDocumentById(c.forkId);
+                },
+              },
+            ],
+          });
+        }
+      });
+    });
   }, []);
 
   const isMobile = useIsMobile();
@@ -402,6 +437,9 @@ export function App() {
         const finalIndices = mergedMesh.indices;
         const finalNormals: Float32Array | undefined = undefined;
 
+        // Persist any pending edit on the outgoing doc before swapping engines.
+        await flushPendingSave();
+
         // Add as a proper document part (not just a scene mesh)
         // This makes it selectable, deletable, and transformable
         useDocumentStore.getState().loadDocument({
@@ -457,6 +495,9 @@ export function App() {
         const buffer = await file.arrayBuffer();
         const mesh = parseStl(buffer);
         const triangleCount = mesh.indices.length / 3;
+
+        // Persist any pending edit on the outgoing doc before swapping engines.
+        await flushPendingSave();
 
         // Add as a proper document part (not just a scene mesh)
         // This makes it selectable, deletable, and exportable
@@ -553,6 +594,8 @@ export function App() {
           }
         : undefined;
       const vcadFile = parseVcadFile(text, evalLoon);
+      // Persist any pending edit on the outgoing doc before swapping engines.
+      await flushPendingSave();
       useDocumentStore.getState().loadDocument(vcadFile);
       useUiStore.getState().clearSelection();
     } catch (err) {
@@ -664,6 +707,8 @@ export function App() {
     ) => {
       try {
         const { exampleToVcadFile } = await import("./data/examples");
+        // Persist any pending edit on the outgoing doc before swapping engines.
+        await flushPendingSave();
         useDocumentStore.getState().loadDocument(exampleToVcadFile(e.detail.file));
         useUiStore.getState().clearSelection();
       } catch (err) {

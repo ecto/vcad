@@ -223,12 +223,15 @@ export async function generateCAD(
   prompt: string,
   onToken?: TokenCallback,
   onProgress?: ProgressCallback,
+  signal?: AbortSignal,
 ): Promise<BrowserInferResult> {
   const startTime = performance.now();
   const wasCached = modelState.loaded;
 
   // Ensure model is loaded
   await loadModel(onProgress);
+
+  signal?.throwIfAborted();
 
   if (!modelState.pipeline) {
     throw new Error("Failed to load model");

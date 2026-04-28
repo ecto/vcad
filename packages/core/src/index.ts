@@ -210,8 +210,23 @@ export {
 } from "./keybindings/index.js";
 
 // AI Tool Registry (CRUD)
-export { commandRegistry, executeCrud, HIGH_LEVEL_TOOLS_SYSTEM_PROMPT_APPENDIX } from "./commands/index.js";
-export type { ToolSchemaEntry, ExecutionResult, ExecutionDisplay, SummarySegment, AnthropicTool } from "./commands/index.js";
+export {
+  commandRegistry,
+  executeCrud,
+  HIGH_LEVEL_TOOLS_SYSTEM_PROMPT_APPENDIX,
+  applyToolOutcome,
+  listPartsFromDocument,
+} from "./commands/index.js";
+export type {
+  ToolSchemaEntry,
+  ExecutionResult,
+  ExecutionDisplay,
+  SummarySegment,
+  AnthropicTool,
+  ToolOutcome,
+  PlannedResponse,
+  ApplyOutcomeResult,
+} from "./commands/index.js";
 
 // Part labels
 export { PART_GLYPHS, getPartGlyph } from "./part-labels.js";
@@ -227,7 +242,10 @@ export {
   getDocumentForDisplay,
   buildVcadFileFromState,
 } from "./utils/save-load.js";
-export { documentToLoon } from "./utils/document-to-loon.js";
+export {
+  documentToLoon,
+  documentToLoonChecked,
+} from "./utils/document-to-loon.js";
 export type {
   VcadFile as VcadFileFormat,
   VcadFileCrdt,

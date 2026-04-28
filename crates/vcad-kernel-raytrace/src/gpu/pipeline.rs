@@ -19,6 +19,8 @@ use super::buffers::GpuCamera;
 pub struct RayTracePipeline {
     pipeline: wgpu::ComputePipeline,
     ssao_pipeline: wgpu::ComputePipeline,
+    /// Second pass that refines edge pixels with additional stratified samples.
+    refine_pipeline: wgpu::ComputePipeline,
     bind_group_layout: wgpu::BindGroupLayout,
 }
 
@@ -205,9 +207,21 @@ impl RayTracePipeline {
                 cache: None,
             });
 
+        let refine_pipeline =
+            ctx.device
+                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("Ray Trace Refine Pipeline"),
+                    layout: Some(&pipeline_layout),
+                    module: &shader_module,
+                    entry_point: Some("refine"),
+                    compilation_options: Default::default(),
+                    cache: None,
+                });
+
         Ok(Self {
             pipeline,
             ssao_pipeline,
+            refine_pipeline,
             bind_group_layout,
         })
     }
@@ -270,7 +284,7 @@ impl RayTracePipeline {
         accum_buffer: Option<wgpu::Buffer>,
         debug_mode: u32,
     ) -> Result<(Vec<u8>, wgpu::Buffer), GpuError> {
-        // Delegate to full settings with default edge and AO parameters
+        // Delegate to full settings with default edge, AO, and refinement parameters
         let (pixels, accum, _ao) = self
             .render_with_full_settings(
                 ctx,
@@ -290,6 +304,7 @@ impl RayTracePipeline {
                 1.0,
                 0.001,
                 16,
+                0,
             )
             .await?;
         Ok((pixels, accum))
@@ -299,6 +314,15 @@ impl RayTracePipeline {
     ///
     /// Returns `(pixels, accum_buffer, ao_buffer)`.  Pass both buffers back on
     /// the next call to continue progressive accumulation and SSAO refinement.
+    ///
+    /// # Arguments
+    /// * Same as render_progressive_with_debug, plus:
+    /// * `enable_edges` - Whether to show edge detection overlay
+    /// * `edge_depth_threshold` - Depth discontinuity threshold for edges
+    /// * `edge_normal_threshold` - Normal angle threshold (degrees) for edges
+    /// * `theme` - Visual theme (0=dark, 1=light)
+    /// * `ao_radius/intensity/bias/sample_count` - SSAO parameters
+    /// * `refine_sample_count` - Additional rays per edge pixel (0=disabled, 4/9/16 typical)
     #[allow(clippy::too_many_arguments)]
     pub async fn render_with_full_settings(
         &self,
@@ -319,6 +343,7 @@ impl RayTracePipeline {
         ao_intensity: f32,
         ao_bias: f32,
         ao_sample_count: u32,
+        refine_sample_count: u32,
     ) -> Result<(Vec<u8>, wgpu::Buffer, wgpu::Buffer), GpuError> {
         use wgpu::util::DeviceExt;
 
@@ -343,6 +368,7 @@ impl RayTracePipeline {
             ao_intensity,
             ao_bias,
             ao_sample_count,
+            refine_sample_count,
         );
         let render_state_buffer =
             ctx.device
@@ -586,6 +612,19 @@ impl RayTracePipeline {
             ssao_pass.set_pipeline(&self.ssao_pipeline);
             ssao_pass.set_bind_group(0, &bind_group, &[]);
             ssao_pass.dispatch_workgroups(width.div_ceil(8), height.div_ceil(8), 1);
+        }
+
+        // Adaptive refinement pass: fires extra stratified rays at edge pixels.
+        // The main pass must fully complete before refine reads depth_normal_buffer,
+        // which is guaranteed by wgpu's sequential command encoding.
+        if refine_sample_count > 0 {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Ray Trace Refine Pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.refine_pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(width.div_ceil(8), height.div_ceil(8), 1);
         }
 
         // Copy texture to readback buffer

@@ -322,7 +322,8 @@ pub struct GpuRenderState {
     pub edge_depth_threshold: f32,
     /// Edge detection threshold for normal discontinuity (degrees).
     pub edge_normal_threshold: f32,
-    /// Debug render mode: 0=normal, 1=show normals, 2=show face_id, 3=show n_dot_l, 4=show orientation.
+    /// Debug render mode: 0=normal, 1=show normals, 2=show face_id, 3=show n_dot_l,
+    /// 4=show orientation, 5=sample-count heatmap (blue=1 ray, red=max rays).
     pub debug_mode: u32,
     /// Theme: 0 = dark (default), 1 = light. Drives the visible background
     /// palette in `sky_color`; the IBL panels and direct lighting stay
@@ -336,6 +337,11 @@ pub struct GpuRenderState {
     pub ao_bias: f32,
     /// SSAO hemisphere sample count per frame (8, 16, or 32).
     pub ao_sample_count: u32,
+    /// Number of additional refinement rays per edge pixel (0 = disabled).
+    /// Actual rays fired = floor(sqrt(refine_sample_count))^2.
+    pub refine_sample_count: u32,
+    /// Padding to align struct to 16-byte boundary (required for uniform buffers).
+    pub _pad: [u32; 3],
 }
 
 impl GpuRenderState {
@@ -355,6 +361,8 @@ impl GpuRenderState {
             ao_intensity: 1.0,
             ao_bias: 0.001,
             ao_sample_count: 16,
+            refine_sample_count: 0,
+            _pad: [0; 3],
         }
     }
 
@@ -392,10 +400,11 @@ impl GpuRenderState {
             1.0,
             0.001,
             16,
+            0,
         )
     }
 
-    /// Create a render state with all settings including theme and SSAO.
+    /// Create a render state with all settings including theme, SSAO, and refinement.
     #[allow(clippy::too_many_arguments)]
     pub fn with_full_settings(
         frame_index: u32,
@@ -408,6 +417,7 @@ impl GpuRenderState {
         ao_intensity: f32,
         ao_bias: f32,
         ao_sample_count: u32,
+        refine_sample_count: u32,
     ) -> Self {
         let (jitter_x, jitter_y) = halton_2_3(frame_index);
         Self {
@@ -423,6 +433,37 @@ impl GpuRenderState {
             ao_intensity,
             ao_bias,
             ao_sample_count,
+            refine_sample_count: 0,
+            _pad: [0; 3],
+        }
+    }
+
+    /// Create a render state with adaptive refinement enabled.
+    pub fn with_refinement(
+        frame_index: u32,
+        debug_mode: u32,
+        enable_edges: bool,
+        edge_depth_threshold: f32,
+        edge_normal_threshold: f32,
+        theme: u32,
+        refine_sample_count: u32,
+    ) -> Self {
+        let (jitter_x, jitter_y) = halton_2_3(frame_index);
+        Self {
+            frame_index,
+            jitter_x,
+            jitter_y,
+            enable_edges: if enable_edges { 1 } else { 0 },
+            edge_depth_threshold,
+            edge_normal_threshold,
+            debug_mode,
+            theme,
+            ao_radius: 0.3,
+            ao_intensity: 1.0,
+            ao_bias: 0.001,
+            ao_sample_count: 16,
+            refine_sample_count,
+            _pad: [0; 3],
         }
     }
 }

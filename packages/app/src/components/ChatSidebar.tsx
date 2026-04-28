@@ -10,7 +10,7 @@ import {
   useDocumentStore,
   useEngineStore,
   parseVcadFile,
-  documentToLoon,
+  documentToLoonChecked,
   formatTokens,
 } from "@vcad/core";
 import type {
@@ -434,6 +434,7 @@ function SourcePanel() {
   const isDraggingGizmo = useUiStore((s) => s.isDraggingGizmo);
   const [localSource, setLocalSource] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [unsupportedVariants, setUnsupportedVariants] = useState<string[]>([]);
   const [isDirty, setIsDirty] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -445,10 +446,13 @@ function SourcePanel() {
     if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
     syncTimerRef.current = setTimeout(() => {
       try {
-        setLocalSource(documentToLoon(document));
+        const { source, unsupported } = documentToLoonChecked(document);
+        setLocalSource(source);
+        setUnsupportedVariants(unsupported);
         setError(null);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
+        setUnsupportedVariants([]);
       }
     }, 150);
     return () => {
@@ -520,6 +524,13 @@ function SourcePanel() {
         className="flex-1 resize-none bg-bg p-3 font-mono text-[10px] leading-relaxed text-text outline-none"
         placeholder={"; Write loon source here\n[cube 20.0 20.0 20.0]"}
       />
+      {unsupportedVariants.length > 0 && (
+        <div className="border-t border-warning/30 bg-warning/10 px-3 py-2 text-[10px] text-warning shrink-0">
+          <strong>Loon export warning:</strong> This document contains{" "}
+          {unsupportedVariants.join(", ")} which cannot be preserved in loon
+          format. Saving as .loon will lose this content.
+        </div>
+      )}
       {error && (
         <div className="border-t border-danger/30 bg-danger/10 px-3 py-2 text-[10px] text-danger shrink-0">
           {error}
