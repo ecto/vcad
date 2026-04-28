@@ -1,0 +1,170 @@
+{
+  "schema_version": 0,
+  "task_id": "a1-stepped-shaft-01",
+  "task_sha256": "d2316d1b2e359aebd978c6f9fac0e648fbfa915efb4e0d40e923386865f3fc69",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -20,
+          -20,
+          0
+        ],
+        "max": [
+          20,
+          20,
+          25
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          20,
+          20,
+          25
+        ],
+        "actual_min": [
+          -20,
+          -20,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 17278.76,
+        "tolerance_pct": 0.5
+      },
+      "result": "fail",
+      "details": {
+        "volume": {
+          "actual_mm3": 17167.948359636033,
+          "deviation_pct": 0.6413170873602339,
+          "pass": false,
+          "spec_mm3": 17278.76,
+          "tolerance_pct": 0.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "per_solid": [
+          {
+            "error": "Invalid topology: half-edge has no parent edge",
+            "index": 0,
+            "pass": false,
+            "stage": "export"
+          }
+        ],
+        "tolerance_pct": 0.1
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 2,
+    "checks_total": 4,
+    "score": 0.5,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T142500Z-3bc3",
+  "model": {
+    "id": "claude-direct-claude-opus-4-7",
+    "name": "Claude (direct, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "direct",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a1-stepped-shaft-01",
+    "rendered": "Make a stepped shaft along the Z axis: a base cylinder of diameter 40mm and height 10mm sitting on the XY plane (z = 0 to z = 10), with a smaller coaxial cylinder of diameter 20mm and height 15mm stacked directly on top (z = 10 to z = 25). The result is a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "anthropic.messages.create",
+        "args": {
+          "model": "claude-opus-4-7",
+          "max_tokens": 8000,
+          "system_chars": 1632,
+          "user_chars": 331
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3604.61425
+      }
+    ],
+    "tokens": {
+      "input": 865,
+      "output": 311,
+      "total": 1176
+    },
+    "wallclock_sec": 3.60461425
+  },
+  "output": {
+    "vcad_path": "20260428T142500Z-3bc3.vcad",
+    "vcad_sha256": "a56c384df03e45f245e5ec0f04eb2fc2f2c11bd2e5222ce83ef1cc6bc3cfac10",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T14:25:00.769Z",
+    "ended_at": "2026-04-28T14:25:04.405Z"
+  },
+  "signature": null
+}
