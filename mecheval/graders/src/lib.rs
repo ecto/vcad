@@ -17,6 +17,7 @@ pub mod blob;
 pub mod check;
 pub mod eval;
 pub mod grader;
+pub mod holes;
 pub mod task;
 
 pub use blob::{CheckOutcome, CheckRecord, RunBlob, Summary};

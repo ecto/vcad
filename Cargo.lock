@@ -3086,6 +3086,7 @@ dependencies = [
  "vcad-eval",
  "vcad-ir",
  "vcad-kernel",
+ "vcad-kernel-geom",
  "vcad-kernel-step",
 ]
 

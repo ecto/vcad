@@ -14,6 +14,7 @@ vcad-ir = { workspace = true }
 vcad-eval = { workspace = true }
 vcad-kernel = { workspace = true }
 vcad-kernel-step = { workspace = true }
+vcad-kernel-geom = { workspace = true }
 
 [[bin]]
 name = "mecheval-grade"

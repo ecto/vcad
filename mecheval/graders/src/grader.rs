@@ -8,6 +8,7 @@
 use crate::blob::{CheckOutcome, CheckRecord, RunBlob, Summary, SCHEMA_VERSION};
 use crate::check::CheckSpec;
 use crate::eval::{evaluate_vcad, EvalSnapshot};
+use crate::holes::find_z_holes;
 use crate::task::Task;
 use serde_json::json;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -107,9 +108,19 @@ fn run_check(spec: &CheckSpec, snapshot: &EvalSnapshot) -> (CheckOutcome, serde_
             check_step_roundtrip(snapshot, *tolerance_pct)
         }
 
-        CheckSpec::HoleCount { .. }
-        | CheckSpec::HolePositions { .. }
-        | CheckSpec::FilletRadius { .. }
+        CheckSpec::HoleCount {
+            diameter_mm,
+            expected,
+            diameter_tolerance_mm,
+        } => check_hole_count(snapshot, *diameter_mm, *expected, *diameter_tolerance_mm),
+
+        CheckSpec::HolePositions {
+            diameter_mm,
+            positions,
+            tolerance_mm,
+        } => check_hole_positions(snapshot, *diameter_mm, positions, *tolerance_mm),
+
+        CheckSpec::FilletRadius { .. }
         | CheckSpec::DrcClean
         | CheckSpec::ErcClean
         | CheckSpec::Dfm { .. }
@@ -542,6 +553,119 @@ fn check_step_roundtrip(
     (
         if all_pass { CheckOutcome::Pass } else { CheckOutcome::Fail },
         serde_json::Value::Object(details),
+    )
+}
+
+/// `hole_count`: count Z-axis cylindrical features of the target diameter.
+fn check_hole_count(
+    snap: &EvalSnapshot,
+    diameter_mm: f64,
+    expected: u32,
+    diameter_tolerance_mm: f64,
+) -> (CheckOutcome, serde_json::Value) {
+    let holes = find_z_holes(snap, diameter_mm, diameter_tolerance_mm);
+    let actual = holes.len() as u32;
+    let outcome = if actual == expected {
+        CheckOutcome::Pass
+    } else {
+        CheckOutcome::Fail
+    };
+    (
+        outcome,
+        json!({
+            "diameter_mm": diameter_mm,
+            "diameter_tolerance_mm": diameter_tolerance_mm,
+            "expected": expected,
+            "actual": actual,
+            "found": holes.iter().map(|h| json!([h.x, h.y, 2.0 * h.radius])).collect::<Vec<_>>(),
+        }),
+    )
+}
+
+/// `hole_positions`: every expected (x, y) must match a detected hole's
+/// axis position within `tolerance_mm`. Order-independent. Each detected
+/// hole may match at most one expected position.
+fn check_hole_positions(
+    snap: &EvalSnapshot,
+    diameter_mm: f64,
+    expected: &[[f64; 3]],
+    tolerance_mm: f64,
+) -> (CheckOutcome, serde_json::Value) {
+    let holes = find_z_holes(snap, diameter_mm, tolerance_mm * 2.0);
+
+    let mut matched: Vec<bool> = vec![false; holes.len()];
+    let mut per_expected = Vec::with_capacity(expected.len());
+    let mut all_matched = true;
+
+    for exp in expected {
+        let mut best: Option<(usize, f64)> = None;
+        for (i, h) in holes.iter().enumerate() {
+            if matched[i] {
+                continue;
+            }
+            let dx = h.x - exp[0];
+            let dy = h.y - exp[1];
+            let d = (dx * dx + dy * dy).sqrt();
+            if best.is_none_or(|(_, bd)| d < bd) {
+                best = Some((i, d));
+            }
+        }
+        match best {
+            Some((idx, dist)) if dist <= tolerance_mm => {
+                matched[idx] = true;
+                per_expected.push(json!({
+                    "spec_xy": [exp[0], exp[1]],
+                    "matched_hole": [holes[idx].x, holes[idx].y],
+                    "distance_mm": dist,
+                    "pass": true,
+                }));
+            }
+            Some((_, dist)) => {
+                all_matched = false;
+                per_expected.push(json!({
+                    "spec_xy": [exp[0], exp[1]],
+                    "nearest_distance_mm": dist,
+                    "tolerance_mm": tolerance_mm,
+                    "pass": false,
+                }));
+            }
+            None => {
+                all_matched = false;
+                per_expected.push(json!({
+                    "spec_xy": [exp[0], exp[1]],
+                    "pass": false,
+                    "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+                }));
+            }
+        }
+    }
+
+    let unmatched_extras: Vec<_> = holes
+        .iter()
+        .zip(matched.iter())
+        .filter_map(|(h, &m)| {
+            if !m {
+                Some(json!([h.x, h.y]))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let outcome = if all_matched {
+        CheckOutcome::Pass
+    } else {
+        CheckOutcome::Fail
+    };
+
+    (
+        outcome,
+        json!({
+            "diameter_mm": diameter_mm,
+            "tolerance_mm": tolerance_mm,
+            "per_expected": per_expected,
+            "unmatched_extras": unmatched_extras,
+        }),
     )
 }
 
