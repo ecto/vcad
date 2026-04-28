@@ -9,6 +9,8 @@
 // Identity lives in `tokens.ts` (colors, fonts, copy). This file is the
 // renderer; touching the brand should mostly be a tokens-only change.
 
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
@@ -30,7 +32,27 @@ const PASS_K = 5;
 const REPO_ROOT = process.cwd();
 const RUNS_DIR = resolve(REPO_ROOT, "mecheval/runs");
 const TASKS_DIR = resolve(REPO_ROOT, "mecheval/tasks");
+const CORPUS_DIR = resolve(REPO_ROOT, "mecheval/corpus");
 const OUT_DIR = resolve(REPO_ROOT, "mecheval/leaderboard/dist");
+const RENDER_BIN =
+  process.env.MECHEVAL_RENDER_BIN ?? resolve(REPO_ROOT, "target/debug/mecheval-render");
+
+/** Spawn mecheval-render against a `.vcad` and capture the SVG. Returns
+ *  null if the binary is missing or rendering errors out — the build
+ *  should still succeed without geometry, just less pretty. */
+function renderVcad(vcadPath: string): string | null {
+  if (!existsSync(RENDER_BIN)) return null;
+  try {
+    return execFileSync(RENDER_BIN, [vcadPath], {
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (e) {
+    console.warn(`renderVcad failed for ${vcadPath}: ${(e as Error).message}`);
+    return null;
+  }
+}
 
 // ─── types ────────────────────────────────────────────────────────────────
 
@@ -314,6 +336,27 @@ const STYLES = `
   .hero .mascot {
     color: var(--ink);
     margin-right: 4px;
+    align-self: end;
+  }
+  .hero .mascot svg {
+    height: 320px;
+    width: auto;
+    display: block;
+  }
+  .run-render {
+    border: 1px solid var(--ink);
+    background: rgba(14,57,96,0.02);
+    padding: 16px;
+    margin: 8px 0 4px;
+    display: flex;
+    justify-content: center;
+  }
+  .run-render svg {
+    max-height: 460px;
+    max-width: 100%;
+    height: auto;
+    width: auto;
+    display: block;
   }
   .operator-says {
     display: inline-flex;
@@ -632,6 +675,7 @@ function indexPage(
   models: ModelSummary[],
   taskIds: string[],
   k: number,
+  operatorSvg: string | null,
 ): string {
   const byPair = new Map<string, PassKEntry>();
   for (const e of entries) byPair.set(`${e.model_id}::${e.task_id}`, e);
@@ -652,7 +696,7 @@ function indexPage(
         <div class="tagline-main">${escape(copy.tagline)}</div>
         <div class="tagline-sub">${escape(copy.subtagline)} · pass<sup>${k}</sup></div>
       </div>
-      <div class="mascot"><!-- OPERATOR mech render lands here in commit 4 --></div>
+      <div class="mascot">${operatorSvg ?? "<!-- mecheval-render not available; build with `cargo build -p mecheval-grader` first -->"}</div>
     </div>
     ${operatorSays(operatorQuote)}
 
@@ -770,7 +814,7 @@ function modelPage(modelId: string, runsForModel: RunMeta[]): string {
   );
 }
 
-function runPage(blob: FullBlob, vcad: string | null): string {
+function runPage(blob: FullBlob, vcad: string | null, vcadSvg: string | null): string {
   const taskId = blob.task_id;
   const modelId = blob.model.id;
   const runId = blob.run_id;
@@ -845,7 +889,13 @@ function runPage(blob: FullBlob, vcad: string | null): string {
     <h2>Tool calls</h2>
     ${traceHtml}
 
-    <h2>.vcad output</h2>
+    <h2>What the model built</h2>
+    ${vcadSvg
+      ? `<div class="run-render">${vcadSvg}</div>
+         <p class="footnote">isometric render via <code>mecheval-render</code> · the model's actual .vcad output, faceted at 28 segments per cylinder.</p>`
+      : `<div class="nodata">no render available — vcad-render did not produce geometry for this attempt</div>`}
+
+    <h2>.vcad source</h2>
     ${vcadHtml}
   `;
   return pageShell(
@@ -911,10 +961,19 @@ async function main(): Promise<void> {
   const taskIds = [...taskSpecs.keys()].sort();
   const seenTaskIds = new Set([...taskIds, ...runs.map((r) => r.task_id)]);
 
+  // Render OPERATOR once for the hero.
+  const operatorVcad = resolve(CORPUS_DIR, "operator.vcad");
+  const operatorSvg = existsSync(operatorVcad) ? renderVcad(operatorVcad) : null;
+  if (!operatorSvg) {
+    console.warn(
+      `operator render unavailable — make sure mecheval-render is built (cargo build -p mecheval-grader) and ${operatorVcad} exists`,
+    );
+  }
+
   // Index.
   await writePage(
     "index.html",
-    indexPage(runs, entries, models, [...seenTaskIds].sort(), PASS_K),
+    indexPage(runs, entries, models, [...seenTaskIds].sort(), PASS_K, operatorSvg),
   );
 
   // Task pages.
@@ -933,15 +992,21 @@ async function main(): Promise<void> {
     await writePage(`model/${mid}.html`, modelPage(mid, runsForModel));
   }
 
-  // Run pages — load each blob in full, attach the .vcad inline.
+  // Run pages — load each blob in full, attach the .vcad inline,
+  // render through mecheval-render for the visual embed.
+  let renderedRuns = 0;
   for (const r of runs) {
     const blob = await loadFullBlob(r.blob_path);
     const vcad = await loadVcadIfPresent(r.blob_path);
+    const vcadPath = r.blob_path.replace(/\.json$/, ".vcad");
+    const vcadSvg = existsSync(vcadPath) ? renderVcad(vcadPath) : null;
+    if (vcadSvg) renderedRuns++;
     await writePage(
       `run/${r.task_id}/${r.model_id}/${r.run_id}.html`,
-      runPage(blob, vcad),
+      runPage(blob, vcad, vcadSvg),
     );
   }
+  console.log(`rendered ${renderedRuns} of ${runs.length} run artifacts`);
 
   console.log(
     `wrote ${OUT_DIR}: index + ${seenTaskIds.size} tasks + ${modelIds.size} models + ${runs.length} runs`,
