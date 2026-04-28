@@ -41,6 +41,33 @@ impl EvalSnapshot {
         })
     }
 
+    /// Aggregate bounding box across every evaluated solid: per-axis
+    /// minimum of mins and maximum of maxes. Returns `None` if no solid
+    /// produced a valid AABB.
+    pub fn aggregate_bbox(&self) -> Option<([f64; 3], [f64; 3])> {
+        let mut acc: Option<([f64; 3], [f64; 3])> = None;
+        for s in &self.solids {
+            let bb = catch_unwind(AssertUnwindSafe(|| s.bounding_box()));
+            let (lo, hi) = match bb {
+                Ok(b) => b,
+                Err(_) => continue,
+            };
+            // Skip degenerate (kernel returns sentinel f64::MAX/MIN for
+            // empty solids). A real solid will have lo[i] <= hi[i].
+            if (0..3).any(|i| lo[i] > hi[i]) {
+                continue;
+            }
+            acc = Some(match acc {
+                None => (lo, hi),
+                Some((al, ah)) => (
+                    [al[0].min(lo[0]), al[1].min(lo[1]), al[2].min(lo[2])],
+                    [ah[0].max(hi[0]), ah[1].max(hi[1]), ah[2].max(hi[2])],
+                ),
+            });
+        }
+        acc
+    }
+
     /// Diagnostic JSON for use in a check's `details` field.
     pub fn summary_json(&self) -> serde_json::Value {
         json!({

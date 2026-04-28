@@ -83,8 +83,13 @@ fn run_check(spec: &CheckSpec, snapshot: &EvalSnapshot) -> (CheckOutcome, serde_
     match spec {
         CheckSpec::ValidSolid => check_valid_solid(snapshot),
 
-        CheckSpec::Bbox { .. }
-        | CheckSpec::MassProps { .. }
+        CheckSpec::Bbox {
+            min,
+            max,
+            tolerance_mm,
+        } => check_bbox(snapshot, *min, *max, *tolerance_mm),
+
+        CheckSpec::MassProps { .. }
         | CheckSpec::HoleCount { .. }
         | CheckSpec::HolePositions { .. }
         | CheckSpec::FilletRadius { .. }
@@ -149,6 +154,59 @@ fn check_valid_solid(snap: &EvalSnapshot) -> (CheckOutcome, serde_json::Value) {
         json!({
             "solids_produced": snap.solids.len(),
             "root_count": snap.root_count,
+        }),
+    )
+}
+
+/// `bbox`: aggregate AABB across all evaluated solids must match the spec
+/// within `tolerance_mm` on every face (six bounds total).
+fn check_bbox(
+    snap: &EvalSnapshot,
+    spec_min: [f64; 3],
+    spec_max: [f64; 3],
+    tolerance_mm: f64,
+) -> (CheckOutcome, serde_json::Value) {
+    let (actual_min, actual_max) = match snap.aggregate_bbox() {
+        Some(b) => b,
+        None => {
+            return (
+                CheckOutcome::Fail,
+                json!({ "reason": "no valid solid to measure" }),
+            );
+        }
+    };
+
+    let dev_min: [f64; 3] = [
+        actual_min[0] - spec_min[0],
+        actual_min[1] - spec_min[1],
+        actual_min[2] - spec_min[2],
+    ];
+    let dev_max: [f64; 3] = [
+        actual_max[0] - spec_max[0],
+        actual_max[1] - spec_max[1],
+        actual_max[2] - spec_max[2],
+    ];
+
+    let max_abs_dev = dev_min
+        .iter()
+        .chain(dev_max.iter())
+        .fold(0.0_f64, |acc, d| acc.max(d.abs()));
+
+    let outcome = if max_abs_dev <= tolerance_mm {
+        CheckOutcome::Pass
+    } else {
+        CheckOutcome::Fail
+    };
+
+    (
+        outcome,
+        json!({
+            "actual_min": actual_min,
+            "actual_max": actual_max,
+            "deviation_min": dev_min,
+            "deviation_max": dev_max,
+            "max_abs_deviation_mm": max_abs_dev,
+            "tolerance_mm": tolerance_mm,
         }),
     )
 }
@@ -299,11 +357,8 @@ mod tests {
 
     #[test]
     fn unwired_checks_still_return_not_implemented() {
-        let (task, task_bytes) = task_with(vec![CheckSpec::Bbox {
-            min: [0.0; 3],
-            max: [1.0; 3],
-            tolerance_mm: 0.1,
-        }]);
+        // DRC is still unwired; this catches accidental dispatch leaks.
+        let (task, task_bytes) = task_with(vec![CheckSpec::DrcClean]);
         let tmp = write_tmp_vcad("mecheval-unwired.vcad", &cube_vcad(10.0));
         let blob = grade(&task, &task_bytes, &tmp).expect("grade");
         assert_eq!(blob.checks.len(), 1);
@@ -329,6 +384,35 @@ mod tests {
         let blob = grade(&task, &task_bytes, &tmp).expect("grade");
         assert_eq!(blob.checks[0].result, CheckOutcome::Fail);
         assert!(!blob.summary.passed);
+    }
+
+    #[test]
+    fn bbox_passes_when_within_tolerance() {
+        // Cube primitive's corner is at origin per the IR convention (a
+        // 10mm cube spans 0..10 on each axis).
+        let (task, task_bytes) = task_with(vec![CheckSpec::Bbox {
+            min: [0.0, 0.0, 0.0],
+            max: [10.0, 10.0, 10.0],
+            tolerance_mm: 0.05,
+        }]);
+        let tmp = write_tmp_vcad("mecheval-bbox-pass.vcad", &cube_vcad(10.0));
+        let blob = grade(&task, &task_bytes, &tmp).expect("grade");
+        assert_eq!(blob.checks[0].result, CheckOutcome::Pass, "{:?}", blob.checks[0].details);
+    }
+
+    #[test]
+    fn bbox_fails_when_off() {
+        // Same 10mm cube, but spec says 50mm — should fail with deviations.
+        let (task, task_bytes) = task_with(vec![CheckSpec::Bbox {
+            min: [0.0, 0.0, 0.0],
+            max: [50.0, 50.0, 50.0],
+            tolerance_mm: 0.1,
+        }]);
+        let tmp = write_tmp_vcad("mecheval-bbox-fail.vcad", &cube_vcad(10.0));
+        let blob = grade(&task, &task_bytes, &tmp).expect("grade");
+        assert_eq!(blob.checks[0].result, CheckOutcome::Fail);
+        let dev = blob.checks[0].details["max_abs_deviation_mm"].as_f64().unwrap();
+        assert!(dev > 30.0, "expected large deviation, got {}", dev);
     }
 
     #[test]
