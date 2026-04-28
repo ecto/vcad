@@ -42,7 +42,7 @@ import { Shimmer } from "@/components/ai-elements/shimmer";
 import { VcadToolCard } from "@/components/chat/VcadToolCard";
 import { CadSuggestions } from "@/components/chat/CadSuggestions";
 import { UpgradeModal } from "@/components/UpgradeModal";
-import { captureViewportAsFile } from "@/lib/ai-screenshot";
+import { captureViewportAsFile, downscaleImageDataUrl } from "@/lib/ai-screenshot";
 
 // ---------------------------------------------------------------------------
 // Attach-viewport button — grabs the current 3D viewport canvas as a JPEG
@@ -674,17 +674,25 @@ export function ChatSidebar() {
       // PromptInput converts any attached blob: URLs to data URLs before
       // firing onSubmit, so message.files[i].url is already a `data:...`
       // string we can forward straight to the chat handler.
-      const attachments: ChatAttachment[] = [];
-      for (const f of message.files) {
-        if (!f.url || !f.url.startsWith("data:")) continue;
-        attachments.push({
-          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          dataUrl: f.url,
-          mediaType: f.mediaType ?? "image/jpeg",
-          filename: f.filename,
-        });
-      }
-      sendMessage(message.text, attachments.length > 0 ? attachments : undefined);
+      void (async () => {
+        const attachments: ChatAttachment[] = [];
+        for (const f of message.files) {
+          if (!f.url || !f.url.startsWith("data:")) continue;
+          // Downscale to keep us under Anthropic's image size limit; large
+          // source PNGs/photos blow past 5MB and the API rejects the whole
+          // turn with "Could not process image".
+          const scaled = await downscaleImageDataUrl(f.url);
+          attachments.push({
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            dataUrl: scaled,
+            mediaType: scaled.startsWith("data:image/jpeg")
+              ? "image/jpeg"
+              : f.mediaType ?? "image/jpeg",
+            filename: f.filename,
+          });
+        }
+        sendMessage(message.text, attachments.length > 0 ? attachments : undefined);
+      })();
     },
     [sendMessage],
   );
