@@ -5,7 +5,7 @@ import { Gear } from "@phosphor-icons/react/dist/ssr/Gear";
 import { Eye } from "@phosphor-icons/react/dist/ssr/Eye";
 import { Export } from "@phosphor-icons/react/dist/ssr/Export";
 import { Spinner } from "@phosphor-icons/react/dist/ssr/Spinner";
-import { useSlicerStore, formatDuration, infillPatternToId, type SliceResult } from "@/stores/slicer-store";
+import { useSlicerStore, formatDuration, type SliceResult } from "@/stores/slicer-store";
 import { usePrinterStore, type PrinterStatus as PrinterStatusData } from "@/stores/printer-store";
 import { useEngineStore } from "@vcad/core";
 import { useNotificationStore } from "@/stores/notification-store";
@@ -15,25 +15,16 @@ import { PrinterStatus } from "./PrinterStatus";
 import { PrintPreview } from "./PrintPreview";
 import { downloadBlob } from "@/lib/download";
 import { sendPrint, getPrinterStatus } from "@/lib/print-relay";
+import {
+  sliceMesh as sliceMeshOnWorker,
+  generateGcode as generateGcodeOnWorker,
+  generate3mf as generate3mfOnWorker,
+  generate3mfWithGcode as generate3mfWithGcodeOnWorker,
+  releaseSlice,
+  cancelSlicing,
+} from "@/lib/slicer-client";
 
 type Tab = "settings" | "preview" | "printer";
-
-// Module-level WASM cache
-let wasmModule: typeof import("@vcad/kernel-wasm") | null = null;
-
-async function loadSlicerWasm(): Promise<typeof import("@vcad/kernel-wasm") | null> {
-  if (wasmModule) return wasmModule;
-  try {
-    const wasm = await import("@vcad/kernel-wasm");
-    if (typeof (wasm as Record<string, unknown>).isSlicerAvailable !== "function") {
-      return null;
-    }
-    wasmModule = wasm;
-    return wasmModule;
-  } catch {
-    return null;
-  }
-}
 
 /** Collect all mesh data from scene parts into flat vertex/index arrays. */
 function collectMeshData(scene: { parts: Array<{ mesh: { positions: Float32Array; indices: Uint32Array } }> }) {
@@ -58,6 +49,7 @@ function collectMeshData(scene: { parts: Array<{ mesh: { positions: Float32Array
 
 export function PrintPanel() {
   const [activeTab, setActiveTab] = useState<Tab>("settings");
+  const [progress, setProgress] = useState<{ stage: string; percent: number } | null>(null);
   const sliceResultRef = useRef<SliceResult | null>(null);
 
   const closePrintPanel = useSlicerStore((s) => s.closePrintPanel);
@@ -94,51 +86,31 @@ export function PrintPanel() {
     setSlicing(true);
     setSliceError(null);
     setStats(null);
+    setProgress({ stage: "Starting", percent: 0 });
+    // Free the previous slice result on the worker side before kicking off a new one.
+    const previous = sliceResultRef.current;
     setSliceResult(null);
     sliceResultRef.current = null;
+    if (previous) {
+      releaseSlice(previous).catch(() => { /* worker may be dead, ignore */ });
+    }
 
     try {
-      const wasm = await loadSlicerWasm();
-      if (!wasm) throw new Error("Slicer not available in this build");
-
-      const slicerWasm = wasm as typeof wasm & {
-        SlicerSettings: new () => {
-          layer_height: number;
-          first_layer_height: number;
-          nozzle_diameter: number;
-          line_width: number;
-          wall_count: number;
-          infill_density: number;
-          infill_pattern: number;
-          support_enabled: boolean;
-          support_angle: number;
-        };
-        sliceMesh: (vertices: Float32Array, indices: Uint32Array, settings: unknown) => SliceResult;
-      };
-
-      // Collect mesh from all parts
       const { vertices, indices } = collectMeshData(scene);
+      const outcome = await sliceMeshOnWorker(
+        vertices,
+        indices,
+        slicerSettings,
+        (stage, current, total) => {
+          const percent = total > 0 ? Math.min(100, Math.round((current / total) * 100)) : 0;
+          setProgress({ stage, percent });
+        },
+      );
 
-      // Build WASM slicer settings
-      const settings = new slicerWasm.SlicerSettings();
-      settings.layer_height = slicerSettings.layerHeight;
-      settings.first_layer_height = slicerSettings.firstLayerHeight;
-      settings.nozzle_diameter = slicerSettings.nozzleDiameter;
-      settings.line_width = slicerSettings.lineWidth;
-      settings.wall_count = slicerSettings.wallCount;
-      settings.infill_density = slicerSettings.infillDensity;
-      settings.infill_pattern = infillPatternToId(slicerSettings.infillPattern);
-      settings.support_enabled = slicerSettings.supportEnabled;
-      settings.support_angle = slicerSettings.supportAngle;
+      sliceResultRef.current = outcome.handle;
+      setSliceResult(outcome.handle);
 
-      // Slice
-      const result = slicerWasm.sliceMesh(vertices, indices, settings);
-      sliceResultRef.current = result;
-      setSliceResult(result);
-
-      // Parse stats
-      const statsJson = result.statsJson();
-      const parsedStats = JSON.parse(statsJson);
+      const parsedStats = JSON.parse(outcome.statsJson);
       setStats({
         layerCount: parsedStats.layer_count,
         printTimeSeconds: parsedStats.print_time_seconds,
@@ -148,19 +120,11 @@ export function PrintPanel() {
         boundsMax: parsedStats.bounds_max,
       });
 
-      // Show first layer preview
-      if (result.layerCount > 0) {
-        const preview = result.getLayerPreview(0);
-        setCurrentLayerPreview({
-          z: preview.z,
-          index: preview.index,
-          outerPerimeters: preview.outer_perimeters,
-          innerPerimeters: preview.inner_perimeters,
-          infill: preview.infill,
-        });
+      if (outcome.firstPreview) {
+        setCurrentLayerPreview(outcome.firstPreview);
       }
 
-      addToast(`Sliced: ${result.layerCount} layers`, "success");
+      addToast(`Sliced: ${outcome.handle.layerCount} layers`, "success");
       setActiveTab("preview");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Slicing failed";
@@ -168,23 +132,27 @@ export function PrintPanel() {
       addToast(message, "error");
     } finally {
       setSlicing(false);
+      setProgress(null);
     }
   }, [engine, scene, slicerSettings, addToast, setSlicing, setSliceError, setStats, setSliceResult, setCurrentLayerPreview]);
+
+  const handleCancelSlice = useCallback(() => {
+    cancelSlicing();
+    sliceResultRef.current = null;
+    setSliceResult(null);
+    setStats(null);
+    setSlicing(false);
+    setSliceError("Slicing cancelled");
+    setProgress(null);
+  }, [setSliceResult, setStats, setSlicing, setSliceError]);
 
   const handleExportGcode = useCallback(async () => {
     const result = sliceResultRef.current;
     if (!result || !stats) return;
 
     try {
-      const wasm = await loadSlicerWasm();
-      if (!wasm) throw new Error("Slicer not available");
-
-      const slicerWasm = wasm as typeof wasm & {
-        generateGcode: (result: SliceResult, profile: string, printTemp: number, bedTemp: number) => string;
-      };
-
       const profileId = selectedPrinter?.id || "generic";
-      const gcode = slicerWasm.generateGcode(result, profileId, printTemp, bedTemp);
+      const gcode = await generateGcodeOnWorker(result, profileId, printTemp, bedTemp);
       const blob = new Blob([gcode], { type: "text/plain" });
       downloadBlob(blob, "model.gcode");
       addToast("G-code exported", "success");
@@ -198,13 +166,6 @@ export function PrintPanel() {
     if (!scene?.parts?.length) return;
 
     try {
-      const wasm = await loadSlicerWasm();
-      if (!wasm) throw new Error("Slicer not available");
-
-      const slicerWasm = wasm as typeof wasm & {
-        generate3mf: (name: string, vertices: Float32Array, indices: Uint32Array, settingsJson: string) => Uint8Array;
-      };
-
       const { vertices, indices } = collectMeshData(scene);
       const settingsJson = JSON.stringify({
         layer_height: slicerSettings.layerHeight,
@@ -215,7 +176,7 @@ export function PrintPanel() {
         bed_temp: bedTemp,
       });
 
-      const bytes = slicerWasm.generate3mf("model", vertices, indices, settingsJson);
+      const bytes = await generate3mfOnWorker("model", vertices, indices, settingsJson);
       const blob = new Blob([bytes as unknown as BlobPart], { type: "application/vnd.ms-package.3dmanufacturing-3dmodel+xml" });
       downloadBlob(blob, "model.3mf");
       addToast("3MF exported", "success");
@@ -242,21 +203,7 @@ export function PrintPanel() {
 
     setIsPrinting(true);
     try {
-      const wasm = await loadSlicerWasm();
-      if (!wasm) throw new Error("Slicer not available");
-
-      const slicerWasm = wasm as typeof wasm & {
-        generateGcode: (result: SliceResult, profile: string, printTemp: number, bedTemp: number) => string;
-        generate3mfWithGcode: (
-          name: string,
-          vertices: Float32Array,
-          indices: Uint32Array,
-          gcode: Uint8Array,
-          settingsJson: string
-        ) => Uint8Array;
-      };
-
-      const gcodeText = slicerWasm.generateGcode(result, selectedProfile, printTemp, bedTemp);
+      const gcodeText = await generateGcodeOnWorker(result, selectedProfile, printTemp, bedTemp);
       const gcodeBytes = new TextEncoder().encode(gcodeText);
 
       const { vertices, indices } = collectMeshData(scene);
@@ -269,12 +216,13 @@ export function PrintPanel() {
         bed_temp: bedTemp,
       });
 
-      const threemfBytes = slicerWasm.generate3mfWithGcode(
+      const threemfBytes = await generate3mfWithGcodeOnWorker(
+        result,
         "vcad_print",
         vertices,
         indices,
         gcodeBytes,
-        settingsJson
+        settingsJson,
       );
 
       await sendPrint(threemfBytes, "vcad_print.gcode.3mf");
@@ -456,24 +404,42 @@ export function PrintPanel() {
           <div className="text-xs text-red-400 mb-2">{sliceError}</div>
         )}
 
-        {/* Slice button */}
-        <button
-          onClick={handleSlice}
-          disabled={!hasMesh || isSlicing}
-          className="w-full flex items-center justify-center gap-2 py-2 bg-brand hover:bg-brand/90 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded font-medium"
-        >
-          {isSlicing ? (
-            <>
-              <Spinner className="animate-spin" size={18} />
-              Slicing...
-            </>
-          ) : (
-            <>
-              <Eye size={18} />
-              Slice
-            </>
-          )}
-        </button>
+        {/* Slice button (turns into Cancel + progress bar while in flight) */}
+        {isSlicing ? (
+          <div className="space-y-2">
+            <div className="flex gap-2">
+              <button
+                disabled
+                className="flex-1 flex items-center justify-center gap-2 py-2 bg-brand/60 text-white rounded font-medium cursor-not-allowed"
+              >
+                <Spinner className="animate-spin" size={18} />
+                {progress?.stage ?? "Slicing"}
+                {progress ? ` ${progress.percent}%` : "…"}
+              </button>
+              <button
+                onClick={handleCancelSlice}
+                className="px-3 py-2 bg-hover hover:bg-border rounded text-sm"
+              >
+                Cancel
+              </button>
+            </div>
+            <div className="h-1 w-full bg-hover rounded overflow-hidden">
+              <div
+                className="h-full bg-brand transition-[width] duration-150"
+                style={{ width: `${progress?.percent ?? 0}%` }}
+              />
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={handleSlice}
+            disabled={!hasMesh}
+            className="w-full flex items-center justify-center gap-2 py-2 bg-brand hover:bg-brand/90 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded font-medium"
+          >
+            <Eye size={18} />
+            Slice
+          </button>
+        )}
 
         {/* Export / Print buttons */}
         {stats && (

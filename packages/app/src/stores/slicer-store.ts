@@ -1,19 +1,15 @@
 import { create } from "zustand";
 
-// Stub type for SliceResult until slicer is implemented in kernel-wasm
+/**
+ * Opaque pointer to a SliceResult living inside the slicer Web Worker.
+ * The WASM `SliceResult` object can't cross postMessage, so the main
+ * thread holds only this lightweight handle and round-trips through
+ * `slicer-client.ts` for layer previews and downstream gcode/3MF
+ * generation.
+ */
 export interface SliceResult {
+  handle: number;
   layerCount: number;
-  printTimeSeconds: number;
-  filamentMm: number;
-  filamentGrams: number;
-  statsJson(): string;
-  getLayerPreview(index: number): {
-    z: number;
-    index: number;
-    outer_perimeters: [number, number][][];
-    inner_perimeters: [number, number][][];
-    infill: [number, number][][];
-  };
 }
 
 export type InfillPattern = "grid" | "lines" | "triangles" | "honeycomb" | "gyroid";

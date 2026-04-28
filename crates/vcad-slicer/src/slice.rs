@@ -249,7 +249,18 @@ fn chain_segments(segments: Vec<([f64; 2], [f64; 2])>) -> Vec<Polygon> {
                 chain.pop(); // Remove duplicate closing point
             }
             if chain.len() >= 3 {
-                contours.push(Polygon::new(chain));
+                let mut poly = Polygon::new(chain);
+                // Two-triangle faces leave a midpoint vertex on every contour
+                // edge. Strip the spurious collinear vertices here so downstream
+                // offset() doesn't overshoot the resulting short segments.
+                poly.dedupe_collinear(1e-6);
+                if poly.points.len() >= 3 {
+                    // Chain direction depends on segment input order, which is
+                    // arbitrary. Force CCW on every contour so infill's outer
+                    // / hole tests stay consistent — hole handling lands later.
+                    poly.ensure_ccw();
+                    contours.push(poly);
+                }
             }
         }
     }
