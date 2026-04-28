@@ -9,9 +9,11 @@
 //! that make a tessellated flat face look like a fan of slivers. We
 //! canonicalize each mesh's vertices, build an edge → adjacent-triangle
 //! map, and emit each edge as one of:
+//!
 //!   - boundary  (1 triangle)         → drawn as silhouette
 //!   - crease    (2 tris, non-parallel normals)  → drawn
 //!   - internal  (2 tris, parallel normals)      → hidden
+//!
 //! Filled polygons get no stroke; the edge lines get strokes. The result
 //! reads as drafting linework, not 3D rendering.
 //!
