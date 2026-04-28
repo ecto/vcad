@@ -365,6 +365,34 @@ export class RayTracer {
         wasm.raytracer_setEdgeDetection(this.__wbg_ptr, enabled, depth_threshold, normal_threshold);
     }
     /**
+     * Set per-type edge style (colors, widths, softness, and individual toggles).
+     *
+     * Colors are RGBA in linear space (0–1). Width 1.0 = one pixel; softness controls
+     * the sub-pixel anti-aliasing transition width.
+     * @param {boolean} enable_silhouette
+     * @param {boolean} enable_crease
+     * @param {boolean} enable_boundary
+     * @param {number} silhouette_r
+     * @param {number} silhouette_g
+     * @param {number} silhouette_b
+     * @param {number} silhouette_a
+     * @param {number} crease_r
+     * @param {number} crease_g
+     * @param {number} crease_b
+     * @param {number} crease_a
+     * @param {number} boundary_r
+     * @param {number} boundary_g
+     * @param {number} boundary_b
+     * @param {number} boundary_a
+     * @param {number} silhouette_width
+     * @param {number} crease_width
+     * @param {number} boundary_width
+     * @param {number} edge_softness
+     */
+    setEdgeStyle(enable_silhouette, enable_crease, enable_boundary, silhouette_r, silhouette_g, silhouette_b, silhouette_a, crease_r, crease_g, crease_b, crease_a, boundary_r, boundary_g, boundary_b, boundary_a, silhouette_width, crease_width, boundary_width, edge_softness) {
+        wasm.raytracer_setEdgeStyle(this.__wbg_ptr, enable_silhouette, enable_crease, enable_boundary, silhouette_r, silhouette_g, silhouette_b, silhouette_a, crease_r, crease_g, crease_b, crease_a, boundary_r, boundary_g, boundary_b, boundary_a, silhouette_width, crease_width, boundary_width, edge_softness);
+    }
+    /**
      * Set the material for all faces in the scene.
      *
      * # Arguments

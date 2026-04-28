@@ -110,6 +110,15 @@ export interface UiState {
   raytraceEdgesEnabled: boolean;
   raytraceEdgeDepthThreshold: number;
   raytraceEdgeNormalThreshold: number;
+  // Per-type edge style
+  raytraceEdgeSilhouetteEnabled: boolean;
+  raytraceEdgeCreaseEnabled: boolean;
+  raytraceEdgeBoundaryEnabled: boolean;
+  raytraceEdgeSilhouetteWidth: number;
+  raytraceEdgeCreaseWidth: number;
+  raytraceEdgeBoundaryWidth: number;
+  raytraceEdgeSoftness: number;
+  // SSAO
   raytraceAoEnabled: boolean;
   raytraceAoRadius: number;
   raytraceAoIntensity: number;
@@ -184,6 +193,15 @@ export interface UiState {
   setRaytraceEdgesEnabled: (enabled: boolean) => void;
   setRaytraceEdgeDepthThreshold: (threshold: number) => void;
   setRaytraceEdgeNormalThreshold: (threshold: number) => void;
+  // Per-type edge style actions
+  setRaytraceEdgeSilhouetteEnabled: (enabled: boolean) => void;
+  setRaytraceEdgeCreaseEnabled: (enabled: boolean) => void;
+  setRaytraceEdgeBoundaryEnabled: (enabled: boolean) => void;
+  setRaytraceEdgeSilhouetteWidth: (width: number) => void;
+  setRaytraceEdgeCreaseWidth: (width: number) => void;
+  setRaytraceEdgeBoundaryWidth: (width: number) => void;
+  setRaytraceEdgeSoftness: (softness: number) => void;
+  // SSAO actions
   setRaytraceAoEnabled: (enabled: boolean) => void;
   setRaytraceAoRadius: (radius: number) => void;
   setRaytraceAoIntensity: (intensity: number) => void;
@@ -286,6 +304,13 @@ export const useUiStore = create<UiState>((set) => ({
   raytraceEdgesEnabled: true,
   raytraceEdgeDepthThreshold: 0.1,
   raytraceEdgeNormalThreshold: 30.0,
+  raytraceEdgeSilhouetteEnabled: true,
+  raytraceEdgeCreaseEnabled: true,
+  raytraceEdgeBoundaryEnabled: true,
+  raytraceEdgeSilhouetteWidth: 1.0,
+  raytraceEdgeCreaseWidth: 0.75,
+  raytraceEdgeBoundaryWidth: 1.25,
+  raytraceEdgeSoftness: 1.5,
   raytraceAoEnabled: true,
   raytraceAoRadius: 0.3,
   raytraceAoIntensity: 1.0,
@@ -458,6 +483,14 @@ export const useUiStore = create<UiState>((set) => ({
   setRaytraceEdgeDepthThreshold: (threshold) => set({ raytraceEdgeDepthThreshold: threshold }),
 
   setRaytraceEdgeNormalThreshold: (threshold) => set({ raytraceEdgeNormalThreshold: threshold }),
+
+  setRaytraceEdgeSilhouetteEnabled: (enabled) => set({ raytraceEdgeSilhouetteEnabled: enabled }),
+  setRaytraceEdgeCreaseEnabled: (enabled) => set({ raytraceEdgeCreaseEnabled: enabled }),
+  setRaytraceEdgeBoundaryEnabled: (enabled) => set({ raytraceEdgeBoundaryEnabled: enabled }),
+  setRaytraceEdgeSilhouetteWidth: (width) => set({ raytraceEdgeSilhouetteWidth: width }),
+  setRaytraceEdgeCreaseWidth: (width) => set({ raytraceEdgeCreaseWidth: width }),
+  setRaytraceEdgeBoundaryWidth: (width) => set({ raytraceEdgeBoundaryWidth: width }),
+  setRaytraceEdgeSoftness: (softness) => set({ raytraceEdgeSoftness: softness }),
 
   setRaytraceAoEnabled: (enabled) => set({ raytraceAoEnabled: enabled }),
 
