@@ -23,6 +23,107 @@ export interface RunMeta {
   tokens_total: number;
   wallclock_sec: number;
   blob_path: string;
+  /** Short reason for the first failed/errored check, or null if all checks passed. */
+  first_fail: { type: string; reason: string } | null;
+}
+
+interface CheckRecord {
+  type: string;
+  result: "pass" | "fail" | "not_implemented" | "error";
+  details: Record<string, unknown>;
+}
+
+/** Produce a short, human-readable reason for the first non-passing check.
+ *  Returns null when every check passed. The reason is intentionally terse —
+ *  it has to fit under a small score in a leaderboard card. */
+export function summarizeFirstFailure(
+  checks: CheckRecord[],
+): { type: string; reason: string } | null {
+  for (const c of checks) {
+    const r = summarizeCheckFailure(c);
+    if (r) return r;
+  }
+  return null;
+}
+
+/** Like summarizeFirstFailure but for a single check. Returns null if the
+ *  check passed. */
+export function summarizeCheckFailure(
+  c: CheckRecord,
+): { type: string; reason: string } | null {
+  if (c.result === "pass") return null;
+  return { type: c.type, reason: failureReason(c) };
+}
+
+function failureReason(c: CheckRecord): string {
+  if (c.result === "error") return "grader errored";
+  if (c.result === "not_implemented") return "check not implemented";
+  const d = c.details ?? {};
+  switch (c.type) {
+    case "bbox": {
+      // Pick the dominant axis from deviation_min/deviation_max.
+      const dmax = (d.deviation_max as number[]) ?? [0, 0, 0];
+      const dmin = (d.deviation_min as number[]) ?? [0, 0, 0];
+      const axes = ["X", "Y", "Z"] as const;
+      let bestAxis = "?", bestVal = 0;
+      for (let i = 0; i < 3; i++) {
+        for (const v of [dmax[i] ?? 0, dmin[i] ?? 0]) {
+          if (Math.abs(v) > Math.abs(bestVal)) {
+            bestVal = v;
+            bestAxis = axes[i];
+          }
+        }
+      }
+      const sign = bestVal > 0 ? "+" : "";
+      return `${bestAxis} off by ${sign}${bestVal.toFixed(2)}mm`;
+    }
+    case "mass_props": {
+      const vol = d.volume as { pass?: boolean; deviation_pct?: number } | undefined;
+      if (vol && vol.pass === false && typeof vol.deviation_pct === "number") {
+        return `volume off by ${vol.deviation_pct.toFixed(1)}%`;
+      }
+      const com = d.center_of_mass as { pass?: boolean; max_abs_deviation_mm?: number } | undefined;
+      if (com && com.pass === false && typeof com.max_abs_deviation_mm === "number") {
+        return `center of mass off by ${com.max_abs_deviation_mm.toFixed(2)}mm`;
+      }
+      return "mass props off";
+    }
+    case "valid_solid": {
+      const produced = d.solids_produced as number | undefined;
+      const root = d.root_count as number | undefined;
+      if (produced === 0) return "no valid solid produced";
+      if (typeof produced === "number" && produced > 1) return `produced ${produced} solids (expected 1)`;
+      if (typeof root === "number") return `root_count=${root}`;
+      return "solid invalid";
+    }
+    case "hole_count": {
+      const actual = d.actual as number | undefined;
+      const expected = d.expected as number | undefined;
+      const diam = d.diameter_mm as number | undefined;
+      if (typeof actual === "number" && typeof expected === "number") {
+        return `found ${actual}/${expected} holes${diam ? ` of ⌀${diam}mm` : ""}`;
+      }
+      return "hole count off";
+    }
+    case "hole_positions": {
+      const per = (d.per_expected as Array<{ pass: boolean }> | undefined) ?? [];
+      const failed = per.filter((p) => !p.pass).length;
+      const extras = (d.unmatched_extras as unknown[] | undefined)?.length ?? 0;
+      const parts: string[] = [];
+      if (failed) parts.push(`${failed}/${per.length} mispositioned`);
+      if (extras) parts.push(`${extras} extra`);
+      return parts.length ? parts.join(", ") : "hole positions off";
+    }
+    case "step_roundtrip": {
+      const per = (d.per_solid as Array<{ pass: boolean }> | undefined) ?? [];
+      const failed = per.filter((p) => !p.pass).length;
+      return failed
+        ? `STEP drift on ${failed}/${per.length} solid${per.length === 1 ? "" : "s"}`
+        : "STEP roundtrip failed";
+    }
+    default:
+      return "failed";
+  }
 }
 
 export interface PassKEntry {
@@ -70,6 +171,7 @@ export async function loadAllRuns(runsDir: string): Promise<RunMeta[]> {
           run_id: string;
           summary: { passed: boolean; score: number };
           trace: { tokens: { total: number }; wallclock_sec: number };
+          checks?: CheckRecord[];
         };
         runs.push({
           task_id: d.task_id,
@@ -80,6 +182,7 @@ export async function loadAllRuns(runsDir: string): Promise<RunMeta[]> {
           tokens_total: d.trace.tokens.total,
           wallclock_sec: d.trace.wallclock_sec,
           blob_path: blobPath,
+          first_fail: d.summary.passed ? null : summarizeFirstFailure(d.checks ?? []),
         });
       }
     }

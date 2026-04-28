@@ -41,7 +41,7 @@ export const copy = {
   subtagline:
     "mechanical, physical, and CAD evaluation suite for AI models",
   footerOwner: "Municipal Robotics",
-  footerOwnerUrl: "https://municipalrobotics.com",
+  footerOwnerUrl: "https://muni.works",
   siblingProjectName: "vcad.",
   siblingProjectUrl: "https://vcad.io",
   repoUrl: "https://github.com/ecto/vcad",

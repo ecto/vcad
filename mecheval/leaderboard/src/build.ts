@@ -18,6 +18,7 @@ import {
   loadAllRuns,
   modelSummary,
   passKBy,
+  summarizeCheckFailure,
   type ModelSummary,
   type PassKEntry,
   type RunMeta,
@@ -41,10 +42,18 @@ const TASKS_DIR = resolve(REPO_ROOT, "mecheval/tasks");
 const CORPUS_DIR = resolve(REPO_ROOT, "mecheval/corpus");
 const OUT_DIR = resolve(REPO_ROOT, "mecheval/leaderboard/dist");
 const CACHE_DIR = resolve(REPO_ROOT, "mecheval/leaderboard/cache");
+// Resolution order:
+//   1. VCAD_RENDER_BIN  — current name
+//   2. MECHEVAL_RENDER_BIN  — legacy name from when this lived in
+//      mecheval/graders/. Kept as a one-release bridge so anyone with
+//      the old env var or cached scripts doesn't suddenly lose renders.
+//   3. target/debug/vcad-render  — default after `cargo build -p vcad-render`.
 const RENDER_BIN =
-  process.env.MECHEVAL_RENDER_BIN ?? resolve(REPO_ROOT, "target/debug/mecheval-render");
+  process.env.VCAD_RENDER_BIN ??
+  process.env.MECHEVAL_RENDER_BIN ??
+  resolve(REPO_ROOT, "target/debug/vcad-render");
 
-/** Spawn mecheval-render against a `.vcad` and capture the SVG. Returns
+/** Spawn vcad-render against a `.vcad` and capture the SVG. Returns
  *  null if the binary is missing or rendering errors out. */
 function renderVcad(vcadPath: string): string | null {
   if (!existsSync(RENDER_BIN)) return null;
@@ -389,6 +398,7 @@ const STYLES = `
 
   .checkrow { display: grid; grid-template-columns: 28px 180px 80px 1fr; gap: 10px; padding: 7px 0; border-bottom: 1px dotted var(--soft); }
   .checkrow .n { text-align: right; color: var(--ink-soft); }
+  .check-reason { color: var(--fail); font-size: 12px; margin-bottom: 4px; }
   .checkrow:last-child { border-bottom: none; }
   .toolrow { display: grid; grid-template-columns: 28px 180px 70px 80px 1fr; gap: 10px; padding: 5px 0; border-bottom: 1px dotted var(--soft); font-size: 12px; }
   .toolrow .n { text-align: right; color: var(--ink-soft); }
@@ -479,6 +489,24 @@ const STYLES = `
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .run-card-fail {
+    padding: 4px 8px 6px;
+    color: var(--fail);
+    font-size: 10.5px;
+    line-height: 1.35;
+    border-top: 1px dotted var(--soft);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .fail-summary { color: var(--fail); font-size: 11px; }
+  .fail-summary code {
+    background: transparent;
+    padding: 0;
+    color: var(--fail);
+    font-weight: 500;
+  }
+  .muted { color: var(--ink-soft); }
   .operator-says {
     display: inline-flex;
     align-items: center;
@@ -869,11 +897,15 @@ function runsTable(runs: RunMeta[], pageKind: "task" | "model"): string {
       const status = r.passed
         ? `<span class="pass">PASS</span>`
         : `<span class="fail">fail</span>`;
+      const failCell = r.first_fail
+        ? `<span class="fail-summary"><code>${escape(r.first_fail.type)}</code> · ${escape(r.first_fail.reason)}</span>`
+        : `<span class="muted">—</span>`;
       return `<tr>
         <td class="id">${colA}</td>
         <td class="id"><a href="${detailHref}">${escape(r.run_id)}</a></td>
         <td class="num">${status}</td>
         <td class="num">${fmtNum(r.score)}</td>
+        <td class="left">${failCell}</td>
         <td class="num">${fmtCompact(r.tokens_total)}</td>
         <td class="num">${fmtNum(r.wallclock_sec, 1)}s</td>
       </tr>`;
@@ -883,7 +915,7 @@ function runsTable(runs: RunMeta[], pageKind: "task" | "model"): string {
   return `<div class="scroll-x"><table class="board">
     <thead><tr>
       <th class="left">${header}</th><th class="left">run</th>
-      <th>status</th><th>score</th><th>tokens</th><th>wall</th>
+      <th>status</th><th>score</th><th class="left">first fail</th><th>tokens</th><th>wall</th>
     </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
@@ -937,7 +969,7 @@ function indexPage(
         <div class="tagline-main">${escape(copy.tagline)}</div>
         <div class="tagline-sub">${escape(copy.subtagline)} · pass<sup>${k}</sup></div>
       </div>
-      <div class="mascot">${operatorSvg ?? "<!-- mecheval-render not available; build with `cargo build -p mecheval-grader` first -->"}</div>
+      <div class="mascot">${operatorSvg ?? "<!-- vcad-render not available; build with `cargo build -p vcad-render` first -->"}</div>
     </div>
     ${operatorSays(operatorQuote)}
 
@@ -997,12 +1029,16 @@ function recentAttemptsGallery(
       const svgHtml = svg
         ? svg
         : `<div class="run-card-empty">no render</div>`;
+      const failHtml = r.first_fail
+        ? `<div class="run-card-fail">${escape(r.first_fail.type)} · ${escape(r.first_fail.reason)}</div>`
+        : "";
       return `<a class="run-card" href="${href}">
         <div class="run-card-svg">${svgHtml}</div>
         <div class="run-card-meta">
           <div class="run-card-model">${escape(modelDisplayName(r.model_id))}</div>
           <div class="run-card-status">${status}</div>
         </div>
+        ${failHtml}
       </a>`;
     })
     .join("");
@@ -1121,12 +1157,21 @@ function runPage(blob: FullBlob, vcad: string | null, vcadSvg: string | null): s
 
   const checksHtml = blob.checks
     .map((c) => {
+      const summary = summarizeCheckFailure({
+        type: c.type,
+        result: c.result,
+        details: c.details,
+      });
+      const reasonHtml = summary
+        ? `<div class="check-reason">${escape(summary.reason)}</div>`
+        : "";
       return `
       <div class="checkrow">
         <div class="n">${c.n}</div>
         <div><code>${escape(c.type)}</code></div>
         <div>${outcomeBadge(c.result)}</div>
         <div>
+          ${reasonHtml}
           <details>
             <summary>params + details</summary>
             <pre>params: ${escape(JSON.stringify(c.params, null, 2))}\n\ndetails: ${escape(JSON.stringify(c.details, null, 2))}</pre>
@@ -1177,7 +1222,7 @@ function runPage(blob: FullBlob, vcad: string | null, vcadSvg: string | null): s
     <h2>What the model built</h2>
     ${vcadSvg
       ? `<div class="run-render">${vcadSvg}</div>
-         <p class="footnote">isometric render via <code>mecheval-render</code> · the model's actual .vcad output, faceted at 28 segments per cylinder · <a href="${escape(runId)}.vcad" download>download ${escape(runId)}.vcad</a></p>`
+         <p class="footnote">isometric render via <code>vcad-render</code> · the model's actual .vcad output, faceted at 28 segments per cylinder · <a href="${escape(runId)}.vcad" download>download ${escape(runId)}.vcad</a></p>`
       : `<div class="nodata">no render available — vcad-render did not produce geometry for this attempt</div>`}
 
     <h2>.vcad source</h2>
@@ -1253,7 +1298,7 @@ async function main(): Promise<void> {
     : null;
   if (!operatorSvg) {
     console.warn(
-      `operator render unavailable — neither cache nor mecheval-render produced an SVG`,
+      `operator render unavailable — neither cache nor vcad-render produced an SVG`,
     );
   }
 
