@@ -307,6 +307,16 @@ pub struct GpuCamera {
 }
 
 /// Render state for progressive rendering.
+///
+/// Layout (128 bytes, 16-byte aligned — matches `RenderState` in raytrace.wgsl):
+/// offset  0–31:  eight u32/f32 scalars (frame_index … theme)
+/// offset 32–47:  SSAO params (ao_radius, ao_intensity, ao_bias, ao_sample_count)
+/// offset 48–51:  refine_sample_count u32
+/// offset 52–63:  _pad [u32; 3]
+/// offset 64–79:  silhouette_color vec4
+/// offset 80–95:  crease_color vec4
+/// offset 96–111: boundary_color vec4
+/// offset 112–127: four f32 width/softness scalars
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct GpuRenderState {
@@ -316,7 +326,7 @@ pub struct GpuRenderState {
     pub jitter_x: f32,
     /// Jitter Y offset for anti-aliasing (-0.5 to 0.5).
     pub jitter_y: f32,
-    /// Enable edge rendering (0 = disabled, 1 = enabled).
+    /// Edge-type bit-flags: 0=off, bit0=silhouette, bit1=crease, bit2=boundary.
     pub enable_edges: u32,
     /// Edge detection threshold for depth discontinuity.
     pub edge_depth_threshold: f32,
@@ -329,28 +339,74 @@ pub struct GpuRenderState {
     /// palette in `sky_color`; the IBL panels and direct lighting stay
     /// constant across themes so the model itself looks the same.
     pub theme: u32,
+    // SSAO
+    /// SSAO world-space sample hemisphere radius.
+    pub ao_radius: f32,
+    /// SSAO intensity: 0 = disabled (ao_buffer writes 1.0), 1 = default strength.
+    pub ao_intensity: f32,
+    /// SSAO depth bias to prevent self-occlusion.
+    pub ao_bias: f32,
+    /// SSAO hemisphere sample count per frame (8, 16, or 32).
+    pub ao_sample_count: u32,
+    // refinement + padding
     /// Number of additional refinement rays per edge pixel (0 = disabled).
     /// Actual rays fired = floor(sqrt(refine_sample_count))^2.
     pub refine_sample_count: u32,
-    /// Padding to align struct to 16-byte boundary (required for uniform buffers).
+    /// Padding to align silhouette_color to 16-byte boundary (required for uniform buffers).
     pub _pad: [u32; 3],
+    // --- edge style (added for Fusion-style edge lines) ---
+    /// Silhouette line color (RGBA linear, depth-gradient edges).
+    pub silhouette_color: [f32; 4],
+    /// Crease line color (RGBA linear, face-ID boundary edges).
+    pub crease_color: [f32; 4],
+    /// Boundary line color (RGBA linear, foreground→background edges).
+    pub boundary_color: [f32; 4],
+    /// Silhouette line apparent width (1.0 = one pixel).
+    pub silhouette_width: f32,
+    /// Crease line apparent width.
+    pub crease_width: f32,
+    /// Boundary line apparent width.
+    pub boundary_width: f32,
+    /// Sub-pixel softness factor (higher = softer AA transition).
+    pub edge_softness: f32,
 }
 
+/// Default silhouette line color: near-black, slightly cool.
+const DEFAULT_SILHOUETTE_COLOR: [f32; 4] = [0.08, 0.08, 0.10, 1.0];
+/// Default crease line color: slightly lighter than silhouette.
+const DEFAULT_CREASE_COLOR: [f32; 4] = [0.12, 0.12, 0.14, 1.0];
+/// Default boundary line color: darkest of the three types.
+const DEFAULT_BOUNDARY_COLOR: [f32; 4] = [0.06, 0.06, 0.08, 1.0];
+
+/// All three edge types on: bits 0 (silhouette) | 1 (crease) | 2 (boundary).
+const EDGES_ALL: u32 = 7;
+
 impl GpuRenderState {
-    /// Create a new render state for the given frame.
+    /// Create a new render state for the given frame with default edge style.
     pub fn new(frame_index: u32) -> Self {
         let (jitter_x, jitter_y) = halton_2_3(frame_index);
         Self {
             frame_index,
             jitter_x,
             jitter_y,
-            enable_edges: 1, // Enabled by default
+            enable_edges: EDGES_ALL,
             edge_depth_threshold: 0.1,
-            edge_normal_threshold: 30.0, // degrees
-            debug_mode: 0,               // Normal rendering by default
+            edge_normal_threshold: 30.0,
+            debug_mode: 0,
             theme: 0,
+            ao_radius: 0.3,
+            ao_intensity: 1.0,
+            ao_bias: 0.001,
+            ao_sample_count: 16,
             refine_sample_count: 0,
             _pad: [0; 3],
+            silhouette_color: DEFAULT_SILHOUETTE_COLOR,
+            crease_color: DEFAULT_CREASE_COLOR,
+            boundary_color: DEFAULT_BOUNDARY_COLOR,
+            silhouette_width: 1.0,
+            crease_width: 0.75,
+            boundary_width: 1.25,
+            edge_softness: 1.5,
         }
     }
 
@@ -369,7 +425,7 @@ impl GpuRenderState {
         state
     }
 
-    /// Create a render state with custom edge settings.
+    /// Create a render state with custom edge settings (default AO).
     pub fn with_edge_settings(
         frame_index: u32,
         debug_mode: u32,
@@ -384,10 +440,16 @@ impl GpuRenderState {
             edge_depth_threshold,
             edge_normal_threshold,
             0,
+            0.3,
+            1.0,
+            0.001,
+            16,
+            0,
         )
     }
 
-    /// Create a render state with all settings including theme.
+    /// Create a render state with all settings including theme, SSAO, and refinement.
+    #[allow(clippy::too_many_arguments)]
     pub fn with_full_settings(
         frame_index: u32,
         debug_mode: u32,
@@ -395,19 +457,74 @@ impl GpuRenderState {
         edge_depth_threshold: f32,
         edge_normal_threshold: f32,
         theme: u32,
+        ao_radius: f32,
+        ao_intensity: f32,
+        ao_bias: f32,
+        ao_sample_count: u32,
+        refine_sample_count: u32,
+    ) -> Self {
+        let mut state = Self::new(frame_index);
+        state.enable_edges = if enable_edges { EDGES_ALL } else { 0 };
+        state.edge_depth_threshold = edge_depth_threshold;
+        state.edge_normal_threshold = edge_normal_threshold;
+        state.debug_mode = debug_mode;
+        state.theme = theme;
+        state.ao_radius = ao_radius;
+        state.ao_intensity = ao_intensity;
+        state.ao_bias = ao_bias;
+        state.ao_sample_count = ao_sample_count;
+        state.refine_sample_count = refine_sample_count;
+        state
+    }
+
+    /// Create a fully-styled render state.
+    ///
+    /// `enable_silhouette`, `enable_crease`, `enable_boundary` control which
+    /// edge types are rendered independently.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_styled(
+        frame_index: u32,
+        debug_mode: u32,
+        enable_silhouette: bool,
+        enable_crease: bool,
+        enable_boundary: bool,
+        edge_depth_threshold: f32,
+        edge_normal_threshold: f32,
+        theme: u32,
+        silhouette_color: [f32; 4],
+        crease_color: [f32; 4],
+        boundary_color: [f32; 4],
+        silhouette_width: f32,
+        crease_width: f32,
+        boundary_width: f32,
+        edge_softness: f32,
     ) -> Self {
         let (jitter_x, jitter_y) = halton_2_3(frame_index);
+        let enable_edges = (enable_silhouette as u32)
+            | ((enable_crease as u32) << 1)
+            | ((enable_boundary as u32) << 2);
         Self {
             frame_index,
             jitter_x,
             jitter_y,
-            enable_edges: if enable_edges { 1 } else { 0 },
+            enable_edges,
             edge_depth_threshold,
             edge_normal_threshold,
             debug_mode,
             theme,
+            ao_radius: 0.3,
+            ao_intensity: 1.0,
+            ao_bias: 0.001,
+            ao_sample_count: 16,
             refine_sample_count: 0,
             _pad: [0; 3],
+            silhouette_color,
+            crease_color,
+            boundary_color,
+            silhouette_width,
+            crease_width,
+            boundary_width,
+            edge_softness,
         }
     }
 
@@ -421,19 +538,19 @@ impl GpuRenderState {
         theme: u32,
         refine_sample_count: u32,
     ) -> Self {
-        let (jitter_x, jitter_y) = halton_2_3(frame_index);
-        Self {
+        Self::with_full_settings(
             frame_index,
-            jitter_x,
-            jitter_y,
-            enable_edges: if enable_edges { 1 } else { 0 },
+            debug_mode,
+            enable_edges,
             edge_depth_threshold,
             edge_normal_threshold,
-            debug_mode,
             theme,
+            0.3,
+            1.0,
+            0.001,
+            16,
             refine_sample_count,
-            _pad: [0; 3],
-        }
+        )
     }
 }
 

@@ -76,19 +76,32 @@ struct RenderState {
     frame_index: u32,
     jitter_x: f32,
     jitter_y: f32,
+    // Edge bit-flags: bit0=silhouette, bit1=crease, bit2=boundary. 0 = edges off.
     enable_edges: u32,
     edge_depth_threshold: f32,
     edge_normal_threshold: f32,
-    /// Debug render mode: 0=normal, 1=show normals as RGB, 2=show face_id, 3=show n_dot_l,
-    /// 4=orientation, 5=sample-count heatmap (blue=1 ray, red=max rays).
+    // 0=normal, 1=normals RGB, 2=face_id, 3=n_dot_l, 4=orientation, 5=sample-count heatmap
     debug_mode: u32,
-    /// 0 = dark theme (cool low-key background), 1 = light theme (bright neutral background).
+    // 0=dark, 1=light
     theme: u32,
-    /// Additional rays per edge pixel for adaptive refinement (0 = disabled).
+    // SSAO params
+    ao_radius: f32,
+    ao_intensity: f32,
+    ao_bias: f32,
+    ao_sample_count: u32,
+    // Additional rays per edge pixel for adaptive refinement (0 = disabled).
     refine_sample_count: u32,
     _pad0: u32,
     _pad1: u32,
     _pad2: u32,
+    // Edge style — layout must match GpuRenderState in buffers.rs
+    silhouette_color: vec4<f32>,
+    crease_color: vec4<f32>,
+    boundary_color: vec4<f32>,
+    silhouette_width: f32,
+    crease_width: f32,
+    boundary_width: f32,
+    edge_softness: f32,
 }
 
 struct RayHit {
@@ -110,6 +123,12 @@ struct RayHit {
 @group(0) @binding(8) var<storage, read_write> accum_buffer: array<vec4<f32>>;
 @group(0) @binding(9) var<storage, read> materials: array<GpuMaterial>;
 @group(0) @binding(10) var<storage, read_write> depth_normal_buffer: array<vec4<f32>>;
+// SSAO result buffer: one f32 per pixel in [0,1]. Written by the `ssao` pass,
+// read by `shade`. Initialised to 1.0 (no occlusion); accumulates over frames.
+@group(0) @binding(11) var<storage, read_write> ao_buffer: array<f32>;
+// Per-pixel face_idx for analytic crease detection (0xFFFFFFFF = background).
+// Written at frame 1; read at frame 2+ by detect_edge_sobel.
+@group(0) @binding(12) var<storage, read_write> feature_id_buffer: array<u32>;
 
 // Helper functions for buffer indexing (2D coords to 1D index)
 fn pixel_index(coord: vec2<u32>) -> u32 {
@@ -979,6 +998,57 @@ fn jitter_direction(dir: vec3<f32>, cone_radius: f32, u: vec2<f32>) -> vec3<f32>
     return normalize(build_tangent_frame(dir) * vec3<f32>(offset.x, offset.y, 1.0));
 }
 
+// Deterministic low-discrepancy Halton sequence for the given base.
+// Returns values in [0, 1). Used by the SSAO kernel so sample patterns are
+// stable across calls and decorrelate across frames via frame_base offset.
+fn halton_wgsl(index: u32, base: u32) -> f32 {
+    var f = 1.0;
+    var r = 0.0;
+    var i = index;
+    let b = f32(base);
+    for (var iter = 0u; iter < 32u; iter++) {
+        if i == 0u { break; }
+        f = f / b;
+        r = r + f * f32(i % base);
+        i = i / base;
+    }
+    return r;
+}
+
+// Reconstruct world-space position from a pixel coord and depth-buffer t value.
+// Uses un-jittered pixel centre so SSAO sample positions are frame-stable.
+fn world_pos_from_depth(pixel: vec2<u32>, t: f32) -> vec3<f32> {
+    let aspect = f32(camera.width) / f32(camera.height);
+    let fov_tan = tan(camera.fov * 0.5);
+    let ndc = vec2<f32>(
+        (f32(pixel.x) + 0.5) / f32(camera.width)  * 2.0 - 1.0,
+        1.0 - (f32(pixel.y) + 0.5) / f32(camera.height) * 2.0
+    );
+    let forward = normalize(camera.look_at.xyz - camera.position.xyz);
+    let right   = normalize(cross(forward, camera.up.xyz));
+    let up_cam  = cross(right, forward);
+    let dir = normalize(forward + right * ndc.x * fov_tan * aspect + up_cam * ndc.y * fov_tan);
+    return camera.position.xyz + dir * t;
+}
+
+// Project a world-space point onto the screen. Returns pixel coords, or
+// (-1, -1) when the point is behind the camera or outside the viewport.
+fn world_to_screen_coords(world_pos: vec3<f32>) -> vec2<i32> {
+    let forward = normalize(camera.look_at.xyz - camera.position.xyz);
+    let right   = normalize(cross(forward, camera.up.xyz));
+    let up_cam  = cross(right, forward);
+    let fov_tan = tan(camera.fov * 0.5);
+    let aspect  = f32(camera.width) / f32(camera.height);
+    let p       = world_pos - camera.position.xyz;
+    let view_z  = dot(p, forward);
+    if view_z <= 0.0 { return vec2<i32>(-1, -1); }
+    let ndc_x = dot(p, right)   / (view_z * fov_tan * aspect);
+    let ndc_y = dot(p, up_cam)  / (view_z * fov_tan);
+    let px = i32((ndc_x + 1.0) * 0.5 * f32(camera.width));
+    let py = i32((1.0 - ndc_y)  * 0.5 * f32(camera.height));
+    return vec2<i32>(px, py);
+}
+
 // Ambient occlusion via a single short hemisphere ray per pixel. Accumulation
 // across frames averages out the noise — at 1 sample per frame and ~8-16
 // frames at HIGH quality, the result settles into clean soft contact
@@ -1173,8 +1243,9 @@ fn shade_ground(p: vec3<f32>, dir: vec3<f32>, fade: f32, pixel: vec2<u32>) -> ve
     let f0 = vec3<f32>(0.04);
 
     let ambient_base = ambient_factor * albedo;
-    let ao = ambient_occlusion(p, normal, pixel);
-    let ambient = ambient_base * ao;
+    let ray_ao = ambient_occlusion(p, normal, pixel);
+    let ssao_val = ao_buffer[pixel_index(pixel)];
+    let ambient = ambient_base * ray_ao * ssao_val;
 
     var lo = vec3<f32>(0.0);
     let sun = sun_direction();
@@ -1277,12 +1348,16 @@ fn shade(hit: RayHit, origin: vec3<f32>, dir: vec3<f32>, pixel: vec2<u32>) -> ve
 
     let f0 = mix(vec3<f32>(0.04, 0.04, 0.04), albedo, metallic);
 
-    // Hemisphere ambient blend, modulated by AO for clean contact darkening.
+    // Hemisphere ambient blend, modulated by both ray AO and SSAO for crisp
+    // contact darkening in concave features and tight corners.
     let sky_up = mix(vec3<f32>(0.40, 0.42, 0.46), sky_color(normal), 0.3);
     let sky_down = vec3<f32>(0.30, 0.27, 0.24);
     let hemi_factor = max(normal.z, 0.0) * 0.5 + 0.5;
-    let ao = ambient_occlusion(p, normal, pixel);
-    let ambient = mix(sky_down, sky_up, hemi_factor) * albedo * 0.30 * ao;
+    let ray_ao = ambient_occlusion(p, normal, pixel);
+    // SSAO value is written by the previous frame's `ssao` pass (one-frame lag).
+    // Defaults to 1.0 on frame 1 and when ao_intensity = 0.
+    let ssao_val = ao_buffer[pixel_index(pixel)];
+    let ambient = mix(sky_down, sky_up, hemi_factor) * albedo * 0.30 * ray_ao * ssao_val;
 
     var lo = vec3<f32>(0.0);
 
@@ -1467,60 +1542,137 @@ fn denoise(pixel_coord: vec2<i32>, center_color: vec4<f32>, center_depth_normal:
     return vec4<f32>(mix(center_color.rgb, blurred, strength), center_color.a);
 }
 
-// Detect edges based on depth and normal discontinuity
-fn detect_edge(pixel_coord: vec2<i32>, center_depth_normal: vec4<f32>) -> f32 {
+// Sample depth_normal_buffer with coordinate clamped to image bounds.
+fn sample_dn(offset: vec2<i32>, center: vec2<i32>) -> vec4<f32> {
+    let c = clamp(center + offset,
+                  vec2<i32>(0, 0),
+                  vec2<i32>(i32(camera.width) - 1, i32(camera.height) - 1));
+    return depth_normal_buffer[pixel_index_i32(c)];
+}
+
+// Sample feature_id_buffer with coordinate clamped to image bounds.
+fn sample_fid(offset: vec2<i32>, center: vec2<i32>) -> u32 {
+    let c = clamp(center + offset,
+                  vec2<i32>(0, 0),
+                  vec2<i32>(i32(camera.width) - 1, i32(camera.height) - 1));
+    return feature_id_buffer[pixel_index_i32(c)];
+}
+
+// Detect Fusion-style edge lines using 3×3 Sobel on depth+normal plus analytic
+// face-ID creases.  Returns vec3(silhouette, crease, boundary) strengths in [0,1].
+//
+// silhouette — large depth gradient (Sobel), catches diagonal edges without stair-stepping
+// crease     — face_id changes between neighbours without a silhouette-level depth jump
+// boundary   — foreground pixel adjacent to background (rendered both sides)
+fn detect_edge_sobel(pixel_coord: vec2<i32>) -> vec3<f32> {
+    // 3×3 neighbourhood samples (clamped at image borders)
+    let p00 = sample_dn(vec2<i32>(-1,-1), pixel_coord);
+    let p10 = sample_dn(vec2<i32>( 0,-1), pixel_coord);
+    let p20 = sample_dn(vec2<i32>( 1,-1), pixel_coord);
+    let p01 = sample_dn(vec2<i32>(-1, 0), pixel_coord);
+    let p11 = sample_dn(vec2<i32>( 0, 0), pixel_coord); // center
+    let p21 = sample_dn(vec2<i32>( 1, 0), pixel_coord);
+    let p02 = sample_dn(vec2<i32>(-1, 1), pixel_coord);
+    let p12 = sample_dn(vec2<i32>( 0, 1), pixel_coord);
+    let p22 = sample_dn(vec2<i32>( 1, 1), pixel_coord);
+
+    let center_depth = p11.w;
+    let is_fg = center_depth < MAX_T - 1.0;
+
+    // ---------- Sobel depth gradient (perspective-normalised) ----------
+    let d00 = p00.w; let d10 = p10.w; let d20 = p20.w;
+    let d01 = p01.w; let d21 = p21.w;
+    let d02 = p02.w; let d12 = p12.w; let d22 = p22.w;
+
+    let gx_d = -d00 + d20 - 2.0*d01 + 2.0*d21 - d02 + d22;
+    let gy_d = -d00 - 2.0*d10 - d20 + d02 + 2.0*d12 + d22;
+    let depth_grad = sqrt(gx_d*gx_d + gy_d*gy_d) / max(center_depth, 0.1);
+
+    // ---------- Sobel normal gradient (sum of all three channels) ----------
+    let n00 = p00.xyz; let n10 = p10.xyz; let n20 = p20.xyz;
+    let n01 = p01.xyz; let n21 = p21.xyz;
+    let n02 = p02.xyz; let n12 = p12.xyz; let n22 = p22.xyz;
+
+    var normal_grad2 = 0.0;
+    // Sobel on x channel
+    let gx_nx = -n00.x + n20.x - 2.0*n01.x + 2.0*n21.x - n02.x + n22.x;
+    let gy_nx = -n00.x - 2.0*n10.x - n20.x + n02.x + 2.0*n12.x + n22.x;
+    // Sobel on y channel
+    let gx_ny = -n00.y + n20.y - 2.0*n01.y + 2.0*n21.y - n02.y + n22.y;
+    let gy_ny = -n00.y - 2.0*n10.y - n20.y + n02.y + 2.0*n12.y + n22.y;
+    // Sobel on z channel
+    let gx_nz = -n00.z + n20.z - 2.0*n01.z + 2.0*n21.z - n02.z + n22.z;
+    let gy_nz = -n00.z - 2.0*n10.z - n20.z + n02.z + 2.0*n12.z + n22.z;
+    normal_grad2 = gx_nx*gx_nx + gy_nx*gy_nx
+                 + gx_ny*gx_ny + gy_ny*gy_ny
+                 + gx_nz*gx_nz + gy_nz*gy_nz;
+    let normal_grad = sqrt(normal_grad2);
+
+    // ---------- Silhouette strength ----------
     let depth_threshold = render_state.edge_depth_threshold;
+    var silhouette = 0.0;
+    if depth_grad > depth_threshold {
+        // Use the raw Sobel magnitude (relative to threshold) as AA sub-pixel distance.
+        silhouette = clamp((depth_grad - depth_threshold) / depth_threshold, 0.0, 1.0);
+    }
+    // Add normal Sobel contribution for sharp curvature changes on a single surface.
     let normal_threshold_cos = cos(radians(render_state.edge_normal_threshold));
+    let normal_edge_thresh = (1.0 - normal_threshold_cos) * 8.0; // scale to comparable range
+    if normal_grad > normal_edge_thresh {
+        let n_strength = clamp((normal_grad - normal_edge_thresh) / normal_edge_thresh, 0.0, 1.0);
+        silhouette = max(silhouette, n_strength);
+    }
 
-    let center_normal = center_depth_normal.xyz;
-    let center_depth = center_depth_normal.w;
-
-    // Sample neighbors (4-connected)
-    let offsets = array<vec2<i32>, 4>(
-        vec2<i32>(-1, 0),
-        vec2<i32>(1, 0),
-        vec2<i32>(0, -1),
-        vec2<i32>(0, 1)
-    );
-
-    var edge_strength = 0.0;
-
-    for (var i = 0; i < 4; i++) {
-        let neighbor_coord = pixel_coord + offsets[i];
-
-        // Bounds check
-        if neighbor_coord.x < 0 || neighbor_coord.x >= i32(camera.width) ||
-           neighbor_coord.y < 0 || neighbor_coord.y >= i32(camera.height) {
-            continue;
+    // ---------- Boundary (foreground ↔ background) ----------
+    // Check 4-connected neighbours only; boundary pixels get full strength.
+    var boundary = 0.0;
+    let f01_d = p01.w; let f21_d = p21.w; let f10_d = p10.w; let f12_d = p12.w;
+    let bg_t = MAX_T - 1.0;
+    if is_fg {
+        if f01_d > bg_t || f21_d > bg_t || f10_d > bg_t || f12_d > bg_t {
+            boundary = 1.0;
         }
-
-        let neighbor = depth_normal_buffer[pixel_index_i32(neighbor_coord)];
-        let neighbor_normal = neighbor.xyz;
-        let neighbor_depth = neighbor.w;
-
-        // Depth discontinuity
-        let depth_diff = abs(center_depth - neighbor_depth) / max(center_depth, 0.1);
-        if depth_diff > depth_threshold {
-            edge_strength = max(edge_strength, clamp(depth_diff * 2.0, 0.0, 1.0));
-        }
-
-        // Normal discontinuity (silhouette edges)
-        if length(center_normal) > 0.5 && length(neighbor_normal) > 0.5 {
-            let normal_dot = dot(normalize(center_normal), normalize(neighbor_normal));
-            if normal_dot < normal_threshold_cos {
-                let normal_edge = 1.0 - normal_dot;
-                edge_strength = max(edge_strength, clamp(normal_edge, 0.0, 1.0));
-            }
-        }
-
-        // Background boundary (silhouette)
-        if (center_depth < MAX_T - 1.0 && neighbor_depth > MAX_T - 1.0) ||
-           (center_depth > MAX_T - 1.0 && neighbor_depth < MAX_T - 1.0) {
-            edge_strength = 1.0;
+    } else {
+        if f01_d < bg_t || f21_d < bg_t || f10_d < bg_t || f12_d < bg_t {
+            boundary = 1.0;
         }
     }
 
-    return edge_strength;
+    // ---------- Crease (analytic face-ID discontinuity) ----------
+    // A crease exists when two adjacent foreground pixels belong to different faces
+    // and there is no silhouette-level depth jump between them.
+    var crease = 0.0;
+    if is_fg {
+        let center_fid = feature_id_buffer[pixel_index_i32(pixel_coord)];
+        if center_fid != 0xFFFFFFFFu {
+            let fid01 = sample_fid(vec2<i32>(-1, 0), pixel_coord);
+            let fid21 = sample_fid(vec2<i32>( 1, 0), pixel_coord);
+            let fid10 = sample_fid(vec2<i32>( 0,-1), pixel_coord);
+            let fid12 = sample_fid(vec2<i32>( 0, 1), pixel_coord);
+            let dn01 = p01.w; let dn21 = p21.w;
+            let dn10 = p10.w; let dn12 = p12.w;
+            let dd_max = depth_threshold * 2.0;
+
+            if fid01 != 0xFFFFFFFFu && fid01 != center_fid
+               && abs(center_depth - dn01) / max(center_depth, 0.1) < dd_max {
+                crease = 1.0;
+            }
+            if fid21 != 0xFFFFFFFFu && fid21 != center_fid
+               && abs(center_depth - dn21) / max(center_depth, 0.1) < dd_max {
+                crease = max(crease, 1.0);
+            }
+            if fid10 != 0xFFFFFFFFu && fid10 != center_fid
+               && abs(center_depth - dn10) / max(center_depth, 0.1) < dd_max {
+                crease = max(crease, 1.0);
+            }
+            if fid12 != 0xFFFFFFFFu && fid12 != center_fid
+               && abs(center_depth - dn12) / max(center_depth, 0.1) < dd_max {
+                crease = max(crease, 1.0);
+            }
+        }
+    }
+
+    return vec3<f32>(silhouette, crease, boundary);
 }
 
 // Sample-count heatmap: t=0.0 → blue (1 sample/cold), t=1.0 → red (max samples/hot).
@@ -1568,9 +1720,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         depth_normal = vec4<f32>(normal, hit.t);
     }
 
-    // Always store depth/normal on first frame
+    // Write stable geometry data on the first frame so edge detection has
+    // coherent neighbours on frame 2+ (same condition as depth_normal_buffer).
     if render_state.frame_index <= 1u {
         depth_normal_buffer[pixel_index_i32(pixel_coord)] = depth_normal;
+        feature_id_buffer[pixel_index_i32(pixel_coord)] = hit.face_idx;
     }
 
     // Progressive accumulation
@@ -1597,14 +1751,28 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         final_color = denoise(pixel_coord, accumulated, stored_dn);
     }
 
-    // Apply edge detection on later frames (when we have stable depth/normal data)
-    if render_state.enable_edges == 1u && render_state.frame_index >= 2u {
-        let stored_depth_normal = depth_normal_buffer[pixel_index_i32(pixel_coord)];
-        let edge = detect_edge(pixel_coord, stored_depth_normal);
-        if edge > 0.1 {
-            // Darken edges
-            let edge_color = vec4<f32>(0.1, 0.1, 0.12, 1.0);
-            final_color = mix(final_color, edge_color, edge * 0.8);
+    // Apply Fusion-style edge lines on later frames (stable depth/normal/face-ID data).
+    // enable_edges is a bit-mask: bit0=silhouette, bit1=crease, bit2=boundary.
+    if render_state.enable_edges != 0u && render_state.frame_index >= 2u {
+        let strengths = detect_edge_sobel(pixel_coord);
+
+        // Silhouette lines (large depth/normal gradient, bit 0)
+        if (render_state.enable_edges & 1u) != 0u && strengths.x > 0.001 {
+            let s = clamp(strengths.x * render_state.silhouette_width * render_state.edge_softness,
+                          0.0, 1.0);
+            final_color = mix(final_color, render_state.silhouette_color, s);
+        }
+
+        // Crease lines (analytic face-ID boundary, bit 1)
+        if (render_state.enable_edges & 2u) != 0u && strengths.y > 0.001 {
+            let s = clamp(render_state.crease_width * render_state.edge_softness, 0.0, 1.0);
+            final_color = mix(final_color, render_state.crease_color, s * strengths.y);
+        }
+
+        // Boundary lines (foreground↔background, bit 2 — highest priority)
+        if (render_state.enable_edges & 4u) != 0u && strengths.z > 0.001 {
+            let s = clamp(render_state.boundary_width * render_state.edge_softness, 0.0, 1.0);
+            final_color = mix(final_color, render_state.boundary_color, s * strengths.z);
         }
     }
 
@@ -1655,6 +1823,117 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     textureStore(output, pixel_coord, final_color);
 }
 
+// Screen-Space Ambient Occlusion (SSAO) compute kernel.
+//
+// Runs after the main `main` pass so depth_normal_buffer is populated.
+// Samples N hemisphere directions (Halton sequence for low discrepancy,
+// offset by frame_index so temporal accumulation converges to a noise-free
+// result).  Writes the AO factor (in [0,1]) to ao_buffer; the main pass
+// reads this on the next frame.
+//
+// When ao_intensity == 0 every pixel receives 1.0 (no occlusion), giving
+// bit-identical output to a renderer without any SSAO contribution.
+@compute @workgroup_size(8, 8)
+fn ssao(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let pixel = global_id.xy;
+    if pixel.x >= camera.width || pixel.y >= camera.height { return; }
+
+    let idx = pixel_index(pixel);
+
+    // Fast-exit: AO disabled.
+    if render_state.ao_intensity < 0.001 {
+        ao_buffer[idx] = 1.0;
+        return;
+    }
+
+    let dn     = depth_normal_buffer[idx];
+    let depth  = dn.w;
+    let normal = dn.xyz;
+
+    // Background or ground — skip, write no-occlusion.
+    if depth >= MAX_T - 1.0 || length(normal) < 0.5 {
+        ao_buffer[idx] = 1.0;
+        return;
+    }
+
+    let pos     = world_pos_from_depth(pixel, depth);
+    let forward = normalize(camera.look_at.xyz - camera.position.xyz);
+
+    // View-space Z of the centre pixel (used for range-check below).
+    let center_view_z = dot(pos - camera.position.xyz, forward);
+
+    let n_samples  = render_state.ao_sample_count;
+    // Halton base offset advances each frame so temporal accumulation
+    // samples a different part of the hemisphere every frame.
+    let frame_base = (render_state.frame_index - 1u) * n_samples;
+
+    var occ = 0.0;
+
+    for (var i = 0u; i < n_samples; i++) {
+        let h = frame_base + i;
+
+        // Low-discrepancy 2D sample in [0,1)^2 — Halton bases 5 and 7.
+        let u = vec2<f32>(halton_wgsl(h, 5u), halton_wgsl(h, 7u));
+
+        // Uniform hemisphere (not cosine-weighted — we want even spatial
+        // coverage around the normal, not cosine-biased AO).
+        let sin_theta = sqrt(max(0.0, 1.0 - u.x * u.x));
+        let phi       = 2.0 * PI * u.y;
+        let local_dir = vec3<f32>(sin_theta * cos(phi), sin_theta * sin(phi), u.x);
+        let sample_dir = build_tangent_frame(normal) * local_dir;
+
+        // Vary radius: bias towards shorter distances (quadratic ramp).
+        let t_radius   = render_state.ao_radius * halton_wgsl(h + 1u, 11u);
+        let sample_pos = pos + sample_dir * t_radius;
+
+        // Project sample point to screen.
+        let screen = world_to_screen_coords(sample_pos);
+        if screen.x < 0 || screen.x >= i32(camera.width) ||
+           screen.y < 0 || screen.y >= i32(camera.height) {
+            continue;
+        }
+
+        let scene_dn    = depth_normal_buffer[pixel_index_i32(screen)];
+        let scene_depth = scene_dn.w;
+        // Transparent sky or unresolved pixel — no occlusion from this sample.
+        if scene_depth >= MAX_T - 1.0 { continue; }
+
+        // Reconstruct the scene surface's world position.
+        let scene_pos    = world_pos_from_depth(vec2<u32>(screen), scene_depth);
+        let scene_view_z = dot(scene_pos - camera.position.xyz, forward);
+        let sample_view_z = dot(sample_pos - camera.position.xyz, forward);
+
+        // Range guard: surfaces far from the centre pixel should not
+        // contribute — this prevents haloing at depth discontinuities
+        // (silhouette edges stay clean).
+        if abs(center_view_z - scene_view_z) > render_state.ao_radius { continue; }
+
+        // Occlusion test: the scene surface is closer to the camera than
+        // the sample point → the sample is hidden behind it.
+        if scene_view_z < sample_view_z - render_state.ao_bias {
+            // Smooth falloff: close occluders contribute more than distant ones.
+            let dist         = length(scene_pos - pos);
+            let range_weight = 1.0 - smoothstep(0.0, render_state.ao_radius, dist);
+            occ += range_weight;
+        }
+    }
+
+    // AO value in [0,1]: 0 = fully occluded, 1 = fully lit.
+    let ao_val = clamp(
+        1.0 - (occ / f32(n_samples)) * render_state.ao_intensity,
+        0.0, 1.0
+    );
+
+    // Progressive accumulation (running average matches main-pass behaviour).
+    if render_state.frame_index <= 1u {
+        ao_buffer[idx] = ao_val;
+    } else {
+        let prev   = ao_buffer[idx];
+        let weight = 1.0 / f32(render_state.frame_index);
+        ao_buffer[idx] = mix(prev, ao_val, weight);
+    }
+}
+
 // Adaptive refinement pass: fires additional stratified rays for edge pixels,
 // blends with the coarse main-pass sample, and updates the output texture.
 // Only runs when render_state.refine_sample_count > 0.
@@ -1673,8 +1952,9 @@ fn refine(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let idx = pixel_index(pixel);
 
     // Detect edge strength from the depth/normal buffer (written by main pass).
-    let dn = depth_normal_buffer[idx];
-    let edge = detect_edge(pixel_coord, dn);
+    // Use the Sobel-based detector; take the max of silhouette, crease, boundary.
+    let strengths = detect_edge_sobel(pixel_coord);
+    let edge = max(strengths.x, max(strengths.y, strengths.z));
 
     // Only refine pixels on silhouettes / creases.
     if edge <= 0.1 {

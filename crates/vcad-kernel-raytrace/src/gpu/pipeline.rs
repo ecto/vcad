@@ -18,6 +18,7 @@ use super::buffers::GpuCamera;
 #[cfg(feature = "gpu")]
 pub struct RayTracePipeline {
     pipeline: wgpu::ComputePipeline,
+    ssao_pipeline: wgpu::ComputePipeline,
     /// Second pass that refines edge pixels with additional stratified samples.
     refine_pipeline: wgpu::ComputePipeline,
     bind_group_layout: wgpu::BindGroupLayout,
@@ -162,6 +163,28 @@ impl RayTracePipeline {
                             },
                             count: None,
                         },
+                        // AO buffer (screen-space ambient occlusion, f32 per pixel)
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 11,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        // Feature ID buffer (per-pixel face_idx for analytic crease detection)
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 12,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
                     ],
                 });
 
@@ -184,6 +207,17 @@ impl RayTracePipeline {
                 cache: None,
             });
 
+        let ssao_pipeline = ctx
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("SSAO Pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &shader_module,
+                entry_point: Some("ssao"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+
         let refine_pipeline =
             ctx.device
                 .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -197,6 +231,7 @@ impl RayTracePipeline {
 
         Ok(Self {
             pipeline,
+            ssao_pipeline,
             refine_pipeline,
             bind_group_layout,
         })
@@ -260,7 +295,7 @@ impl RayTracePipeline {
         accum_buffer: Option<wgpu::Buffer>,
         debug_mode: u32,
     ) -> Result<(Vec<u8>, wgpu::Buffer), GpuError> {
-        // Delegate to full settings with default edge parameters, no refinement
+        // Delegate to full settings with default edge, AO, and refinement parameters
         self.render_with_full_settings(
             ctx,
             scene,
@@ -305,6 +340,42 @@ impl RayTracePipeline {
         theme: u32,
         refine_sample_count: u32,
     ) -> Result<(Vec<u8>, wgpu::Buffer), GpuError> {
+        let render_state = GpuRenderState::with_refinement(
+            frame_index,
+            debug_mode,
+            enable_edges,
+            edge_depth_threshold,
+            edge_normal_threshold,
+            theme,
+            refine_sample_count,
+        );
+        let (pixels, accum, _ao) = self.render_with_render_state(
+            ctx,
+            scene,
+            camera,
+            width,
+            height,
+            accum_buffer,
+            None,
+            render_state,
+        )
+        .await?;
+        Ok((pixels, accum))
+    }
+
+    /// Render with a fully-constructed `GpuRenderState` (supports per-type edge style).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn render_with_render_state(
+        &self,
+        ctx: &GpuContext,
+        scene: &GpuScene,
+        camera: &GpuCamera,
+        width: u32,
+        height: u32,
+        accum_buffer: Option<wgpu::Buffer>,
+        ao_buffer_in: Option<wgpu::Buffer>,
+        render_state: GpuRenderState,
+    ) -> Result<(Vec<u8>, wgpu::Buffer, wgpu::Buffer), GpuError> {
         use wgpu::util::DeviceExt;
 
         // Create camera buffer
@@ -317,15 +388,6 @@ impl RayTracePipeline {
             });
 
         // Create render state buffer
-        let render_state = GpuRenderState::with_refinement(
-            frame_index,
-            debug_mode,
-            enable_edges,
-            edge_depth_threshold,
-            edge_normal_threshold,
-            theme,
-            refine_sample_count,
-        );
         let render_state_buffer =
             ctx.device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -441,10 +503,32 @@ impl RayTracePipeline {
             })
         });
 
-        // Create depth/normal buffer for edge detection (4 floats per pixel: depth, nx, ny, nz)
+        // Depth/normal buffer for edge detection (vec4 per pixel: normal.xyz, depth).
         let depth_normal_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Depth Normal Buffer"),
             size: accum_buf_size,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+
+        // AO buffer (1 f32 per pixel; initialised to 1.0 = no occlusion).
+        // Reuse the caller's buffer for progressive SSAO accumulation; create fresh on first frame.
+        let ao_buf = ao_buffer_in.unwrap_or_else(|| {
+            let ones: Vec<f32> = vec![1.0f32; (width * height) as usize];
+            ctx.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("AO Buffer"),
+                    contents: bytemuck::cast_slice(&ones),
+                    usage: wgpu::BufferUsages::STORAGE,
+                })
+        });
+
+        // Feature ID buffer: one u32 per pixel storing face_idx (0xFFFFFFFF = background).
+        // Written at frame 1 and reused by the crease detector on subsequent frames.
+        let feature_id_buf_size = (width * height * 4) as u64;
+        let feature_id_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Feature ID Buffer"),
+            size: feature_id_buf_size,
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
@@ -508,6 +592,14 @@ impl RayTracePipeline {
                     binding: 10,
                     resource: depth_normal_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: ao_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 12,
+                    resource: feature_id_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -528,10 +620,22 @@ impl RayTracePipeline {
             pass.dispatch_workgroups(width.div_ceil(8), height.div_ceil(8), 1);
         }
 
+        // SSAO pass: reads depth_normal_buffer, writes ao_buffer.
+        // Runs after the main trace so depth/normal data is ready.
+        {
+            let mut ssao_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("SSAO Pass"),
+                timestamp_writes: None,
+            });
+            ssao_pass.set_pipeline(&self.ssao_pipeline);
+            ssao_pass.set_bind_group(0, &bind_group, &[]);
+            ssao_pass.dispatch_workgroups(width.div_ceil(8), height.div_ceil(8), 1);
+        }
+
         // Adaptive refinement pass: fires extra stratified rays at edge pixels.
         // The main pass must fully complete before refine reads depth_normal_buffer,
         // which is guaranteed by wgpu's sequential command encoding.
-        if refine_sample_count > 0 {
+        if render_state.refine_sample_count > 0 {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Ray Trace Refine Pass"),
                 timestamp_writes: None,
@@ -684,7 +788,7 @@ impl RayTracePipeline {
         drop(data);
         readback_buffer.unmap();
 
-        Ok((result, accum))
+        Ok((result, accum, ao_buf))
     }
 
     /// Render a scene to an output texture (single-frame, non-progressive).

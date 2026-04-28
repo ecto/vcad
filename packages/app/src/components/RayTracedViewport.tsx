@@ -288,6 +288,18 @@ export function RayTracedViewportOverlay() {
   const raytraceEdgesEnabled = useUiStore((s) => s.raytraceEdgesEnabled);
   const raytraceEdgeDepthThreshold = useUiStore((s) => s.raytraceEdgeDepthThreshold);
   const raytraceEdgeNormalThreshold = useUiStore((s) => s.raytraceEdgeNormalThreshold);
+  const raytraceEdgeSilhouetteEnabled = useUiStore((s) => s.raytraceEdgeSilhouetteEnabled);
+  const raytraceEdgeCreaseEnabled = useUiStore((s) => s.raytraceEdgeCreaseEnabled);
+  const raytraceEdgeBoundaryEnabled = useUiStore((s) => s.raytraceEdgeBoundaryEnabled);
+  const raytraceEdgeSilhouetteWidth = useUiStore((s) => s.raytraceEdgeSilhouetteWidth);
+  const raytraceEdgeCreaseWidth = useUiStore((s) => s.raytraceEdgeCreaseWidth);
+  const raytraceEdgeBoundaryWidth = useUiStore((s) => s.raytraceEdgeBoundaryWidth);
+  const raytraceEdgeSoftness = useUiStore((s) => s.raytraceEdgeSoftness);
+  const raytraceAoEnabled = useUiStore((s) => s.raytraceAoEnabled);
+  const raytraceAoRadius = useUiStore((s) => s.raytraceAoRadius);
+  const raytraceAoIntensity = useUiStore((s) => s.raytraceAoIntensity);
+  const raytraceAoBias = useUiStore((s) => s.raytraceAoBias);
+  const raytraceAoSampleCount = useUiStore((s) => s.raytraceAoSampleCount);
   const rayTracer = getRayTracer();
   const { isDark } = useTheme();
 
@@ -299,6 +311,22 @@ export function RayTracedViewportOverlay() {
     enabled: true,
     depth: 0.1,
     normal: 30.0,
+    silhouette: true,
+    crease: true,
+    boundary: true,
+    silhouetteWidth: 1.0,
+    creaseWidth: 0.75,
+    boundaryWidth: 1.25,
+    softness: 1.5,
+  });
+
+  // Track last AO settings to detect changes
+  const lastAoSettingsRef = useRef({
+    enabled: true,
+    radius: 0.3,
+    intensity: 1.0,
+    bias: 0.001,
+    sampleCount: 16,
   });
 
   // Track pending async render to avoid overlapping calls
@@ -574,7 +602,7 @@ export function RayTracedViewportOverlay() {
     }
   }, [raytraceDebugMode, rayTracer, doRender]);
 
-  // Apply edge detection settings changes
+  // Apply edge detection settings changes (master switch + thresholds)
   useEffect(() => {
     if (!rayTracer) return;
 
@@ -582,7 +610,14 @@ export function RayTracedViewportOverlay() {
     if (
       raytraceEdgesEnabled === last.enabled &&
       raytraceEdgeDepthThreshold === last.depth &&
-      raytraceEdgeNormalThreshold === last.normal
+      raytraceEdgeNormalThreshold === last.normal &&
+      raytraceEdgeSilhouetteEnabled === last.silhouette &&
+      raytraceEdgeCreaseEnabled === last.crease &&
+      raytraceEdgeBoundaryEnabled === last.boundary &&
+      raytraceEdgeSilhouetteWidth === last.silhouetteWidth &&
+      raytraceEdgeCreaseWidth === last.creaseWidth &&
+      raytraceEdgeBoundaryWidth === last.boundaryWidth &&
+      raytraceEdgeSoftness === last.softness
     ) {
       return;
     }
@@ -591,28 +626,106 @@ export function RayTracedViewportOverlay() {
       enabled: raytraceEdgesEnabled,
       depth: raytraceEdgeDepthThreshold,
       normal: raytraceEdgeNormalThreshold,
+      silhouette: raytraceEdgeSilhouetteEnabled,
+      crease: raytraceEdgeCreaseEnabled,
+      boundary: raytraceEdgeBoundaryEnabled,
+      silhouetteWidth: raytraceEdgeSilhouetteWidth,
+      creaseWidth: raytraceEdgeCreaseWidth,
+      boundaryWidth: raytraceEdgeBoundaryWidth,
+      softness: raytraceEdgeSoftness,
     };
 
-    const rt = rayTracer as { setEdgeDetection?: (enabled: boolean, depth: number, normal: number) => void };
-    const hasMethod = typeof rt.setEdgeDetection === "function";
-    if (!hasMethod) {
-      logger.debug("gpu", "setEdgeDetection not available - WASM may need rebuild");
-      return;
+    const rt = rayTracer as {
+      setEdgeDetection?: (enabled: boolean, depth: number, normal: number) => void;
+      setEdgeStyle?: (
+        enableSilhouette: boolean, enableCrease: boolean, enableBoundary: boolean,
+        silR: number, silG: number, silB: number, silA: number,
+        crR: number, crG: number, crB: number, crA: number,
+        bdR: number, bdG: number, bdB: number, bdA: number,
+        silW: number, crW: number, bdW: number, softness: number,
+      ) => void;
+    };
+
+    if (typeof rt.setEdgeDetection === "function") {
+      queueWasm(() =>
+        rt.setEdgeDetection!(
+          raytraceEdgesEnabled,
+          raytraceEdgeDepthThreshold,
+          raytraceEdgeNormalThreshold,
+        ),
+      );
     }
 
-    queueWasm(() =>
-      rt.setEdgeDetection!(
-        raytraceEdgesEnabled,
-        raytraceEdgeDepthThreshold,
-        raytraceEdgeNormalThreshold,
-      ),
-    );
+    if (typeof rt.setEdgeStyle === "function") {
+      // Use Fusion-style default colors (near-black, slightly cool)
+      queueWasm(() =>
+        rt.setEdgeStyle!(
+          raytraceEdgeSilhouetteEnabled,
+          raytraceEdgeCreaseEnabled,
+          raytraceEdgeBoundaryEnabled,
+          0.08, 0.08, 0.10, 1.0,  // silhouette color
+          0.12, 0.12, 0.14, 1.0,  // crease color
+          0.06, 0.06, 0.08, 1.0,  // boundary color
+          raytraceEdgeSilhouetteWidth,
+          raytraceEdgeCreaseWidth,
+          raytraceEdgeBoundaryWidth,
+          raytraceEdgeSoftness,
+        ),
+      );
+    } else {
+      logger.debug("gpu", "setEdgeStyle not available - WASM may need rebuild");
+    }
 
     // Re-render to see the change
     if (lastCameraStateRef.current) {
       doRender(lastCameraStateRef.current);
     }
-  }, [raytraceEdgesEnabled, raytraceEdgeDepthThreshold, raytraceEdgeNormalThreshold, rayTracer, doRender]);
+  }, [
+    raytraceEdgesEnabled, raytraceEdgeDepthThreshold, raytraceEdgeNormalThreshold,
+    raytraceEdgeSilhouetteEnabled, raytraceEdgeCreaseEnabled, raytraceEdgeBoundaryEnabled,
+    raytraceEdgeSilhouetteWidth, raytraceEdgeCreaseWidth, raytraceEdgeBoundaryWidth,
+    raytraceEdgeSoftness,
+    rayTracer, doRender,
+  ]);
+
+  // Apply SSAO settings changes
+  useEffect(() => {
+    if (!rayTracer) return;
+
+    const last = lastAoSettingsRef.current;
+    if (
+      raytraceAoEnabled === last.enabled &&
+      raytraceAoRadius === last.radius &&
+      raytraceAoIntensity === last.intensity &&
+      raytraceAoBias === last.bias &&
+      raytraceAoSampleCount === last.sampleCount
+    ) {
+      return;
+    }
+
+    lastAoSettingsRef.current = {
+      enabled: raytraceAoEnabled,
+      radius: raytraceAoRadius,
+      intensity: raytraceAoIntensity,
+      bias: raytraceAoBias,
+      sampleCount: raytraceAoSampleCount,
+    };
+
+    const rt = rayTracer as { setAO?: (radius: number, intensity: number, bias: number, sampleCount: number) => void };
+    if (typeof rt.setAO !== "function") {
+      logger.debug("gpu", "setAO not available - WASM may need rebuild");
+      return;
+    }
+
+    const effectiveIntensity = raytraceAoEnabled ? raytraceAoIntensity : 0.0;
+    queueWasm(() =>
+      rt.setAO!(raytraceAoRadius, effectiveIntensity, raytraceAoBias, raytraceAoSampleCount),
+    );
+
+    if (lastCameraStateRef.current) {
+      doRender(lastCameraStateRef.current);
+    }
+  }, [raytraceAoEnabled, raytraceAoRadius, raytraceAoIntensity, raytraceAoBias, raytraceAoSampleCount, rayTracer, doRender]);
 
   if (!rayTracer) {
     return null;
