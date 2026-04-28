@@ -295,6 +295,11 @@ export function RayTracedViewportOverlay() {
   const raytraceEdgeCreaseWidth = useUiStore((s) => s.raytraceEdgeCreaseWidth);
   const raytraceEdgeBoundaryWidth = useUiStore((s) => s.raytraceEdgeBoundaryWidth);
   const raytraceEdgeSoftness = useUiStore((s) => s.raytraceEdgeSoftness);
+  const raytraceAoEnabled = useUiStore((s) => s.raytraceAoEnabled);
+  const raytraceAoRadius = useUiStore((s) => s.raytraceAoRadius);
+  const raytraceAoIntensity = useUiStore((s) => s.raytraceAoIntensity);
+  const raytraceAoBias = useUiStore((s) => s.raytraceAoBias);
+  const raytraceAoSampleCount = useUiStore((s) => s.raytraceAoSampleCount);
   const rayTracer = getRayTracer();
   const { isDark } = useTheme();
 
@@ -313,6 +318,15 @@ export function RayTracedViewportOverlay() {
     creaseWidth: 0.75,
     boundaryWidth: 1.25,
     softness: 1.5,
+  });
+
+  // Track last AO settings to detect changes
+  const lastAoSettingsRef = useRef({
+    enabled: true,
+    radius: 0.3,
+    intensity: 1.0,
+    bias: 0.001,
+    sampleCount: 16,
   });
 
   // Track pending async render to avoid overlapping calls
@@ -673,6 +687,45 @@ export function RayTracedViewportOverlay() {
     raytraceEdgeSoftness,
     rayTracer, doRender,
   ]);
+
+  // Apply SSAO settings changes
+  useEffect(() => {
+    if (!rayTracer) return;
+
+    const last = lastAoSettingsRef.current;
+    if (
+      raytraceAoEnabled === last.enabled &&
+      raytraceAoRadius === last.radius &&
+      raytraceAoIntensity === last.intensity &&
+      raytraceAoBias === last.bias &&
+      raytraceAoSampleCount === last.sampleCount
+    ) {
+      return;
+    }
+
+    lastAoSettingsRef.current = {
+      enabled: raytraceAoEnabled,
+      radius: raytraceAoRadius,
+      intensity: raytraceAoIntensity,
+      bias: raytraceAoBias,
+      sampleCount: raytraceAoSampleCount,
+    };
+
+    const rt = rayTracer as { setAO?: (radius: number, intensity: number, bias: number, sampleCount: number) => void };
+    if (typeof rt.setAO !== "function") {
+      logger.debug("gpu", "setAO not available - WASM may need rebuild");
+      return;
+    }
+
+    const effectiveIntensity = raytraceAoEnabled ? raytraceAoIntensity : 0.0;
+    queueWasm(() =>
+      rt.setAO!(raytraceAoRadius, effectiveIntensity, raytraceAoBias, raytraceAoSampleCount),
+    );
+
+    if (lastCameraStateRef.current) {
+      doRender(lastCameraStateRef.current);
+    }
+  }, [raytraceAoEnabled, raytraceAoRadius, raytraceAoIntensity, raytraceAoBias, raytraceAoSampleCount, rayTracer, doRender]);
 
   if (!rayTracer) {
     return null;

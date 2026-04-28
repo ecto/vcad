@@ -84,6 +84,11 @@ struct RenderState {
     debug_mode: u32,
     // 0=dark, 1=light
     theme: u32,
+    // SSAO params
+    ao_radius: f32,
+    ao_intensity: f32,
+    ao_bias: f32,
+    ao_sample_count: u32,
     // Additional rays per edge pixel for adaptive refinement (0 = disabled).
     refine_sample_count: u32,
     _pad0: u32,
@@ -118,9 +123,12 @@ struct RayHit {
 @group(0) @binding(8) var<storage, read_write> accum_buffer: array<vec4<f32>>;
 @group(0) @binding(9) var<storage, read> materials: array<GpuMaterial>;
 @group(0) @binding(10) var<storage, read_write> depth_normal_buffer: array<vec4<f32>>;
+// SSAO result buffer: one f32 per pixel in [0,1]. Written by the `ssao` pass,
+// read by `shade`. Initialised to 1.0 (no occlusion); accumulates over frames.
+@group(0) @binding(11) var<storage, read_write> ao_buffer: array<f32>;
 // Per-pixel face_idx for analytic crease detection (0xFFFFFFFF = background).
 // Written at frame 1; read at frame 2+ by detect_edge_sobel.
-@group(0) @binding(11) var<storage, read_write> feature_id_buffer: array<u32>;
+@group(0) @binding(12) var<storage, read_write> feature_id_buffer: array<u32>;
 
 // Helper functions for buffer indexing (2D coords to 1D index)
 fn pixel_index(coord: vec2<u32>) -> u32 {
@@ -990,6 +998,57 @@ fn jitter_direction(dir: vec3<f32>, cone_radius: f32, u: vec2<f32>) -> vec3<f32>
     return normalize(build_tangent_frame(dir) * vec3<f32>(offset.x, offset.y, 1.0));
 }
 
+// Deterministic low-discrepancy Halton sequence for the given base.
+// Returns values in [0, 1). Used by the SSAO kernel so sample patterns are
+// stable across calls and decorrelate across frames via frame_base offset.
+fn halton_wgsl(index: u32, base: u32) -> f32 {
+    var f = 1.0;
+    var r = 0.0;
+    var i = index;
+    let b = f32(base);
+    for (var iter = 0u; iter < 32u; iter++) {
+        if i == 0u { break; }
+        f = f / b;
+        r = r + f * f32(i % base);
+        i = i / base;
+    }
+    return r;
+}
+
+// Reconstruct world-space position from a pixel coord and depth-buffer t value.
+// Uses un-jittered pixel centre so SSAO sample positions are frame-stable.
+fn world_pos_from_depth(pixel: vec2<u32>, t: f32) -> vec3<f32> {
+    let aspect = f32(camera.width) / f32(camera.height);
+    let fov_tan = tan(camera.fov * 0.5);
+    let ndc = vec2<f32>(
+        (f32(pixel.x) + 0.5) / f32(camera.width)  * 2.0 - 1.0,
+        1.0 - (f32(pixel.y) + 0.5) / f32(camera.height) * 2.0
+    );
+    let forward = normalize(camera.look_at.xyz - camera.position.xyz);
+    let right   = normalize(cross(forward, camera.up.xyz));
+    let up_cam  = cross(right, forward);
+    let dir = normalize(forward + right * ndc.x * fov_tan * aspect + up_cam * ndc.y * fov_tan);
+    return camera.position.xyz + dir * t;
+}
+
+// Project a world-space point onto the screen. Returns pixel coords, or
+// (-1, -1) when the point is behind the camera or outside the viewport.
+fn world_to_screen_coords(world_pos: vec3<f32>) -> vec2<i32> {
+    let forward = normalize(camera.look_at.xyz - camera.position.xyz);
+    let right   = normalize(cross(forward, camera.up.xyz));
+    let up_cam  = cross(right, forward);
+    let fov_tan = tan(camera.fov * 0.5);
+    let aspect  = f32(camera.width) / f32(camera.height);
+    let p       = world_pos - camera.position.xyz;
+    let view_z  = dot(p, forward);
+    if view_z <= 0.0 { return vec2<i32>(-1, -1); }
+    let ndc_x = dot(p, right)   / (view_z * fov_tan * aspect);
+    let ndc_y = dot(p, up_cam)  / (view_z * fov_tan);
+    let px = i32((ndc_x + 1.0) * 0.5 * f32(camera.width));
+    let py = i32((1.0 - ndc_y)  * 0.5 * f32(camera.height));
+    return vec2<i32>(px, py);
+}
+
 // Ambient occlusion via a single short hemisphere ray per pixel. Accumulation
 // across frames averages out the noise — at 1 sample per frame and ~8-16
 // frames at HIGH quality, the result settles into clean soft contact
@@ -1184,8 +1243,9 @@ fn shade_ground(p: vec3<f32>, dir: vec3<f32>, fade: f32, pixel: vec2<u32>) -> ve
     let f0 = vec3<f32>(0.04);
 
     let ambient_base = ambient_factor * albedo;
-    let ao = ambient_occlusion(p, normal, pixel);
-    let ambient = ambient_base * ao;
+    let ray_ao = ambient_occlusion(p, normal, pixel);
+    let ssao_val = ao_buffer[pixel_index(pixel)];
+    let ambient = ambient_base * ray_ao * ssao_val;
 
     var lo = vec3<f32>(0.0);
     let sun = sun_direction();
@@ -1288,12 +1348,16 @@ fn shade(hit: RayHit, origin: vec3<f32>, dir: vec3<f32>, pixel: vec2<u32>) -> ve
 
     let f0 = mix(vec3<f32>(0.04, 0.04, 0.04), albedo, metallic);
 
-    // Hemisphere ambient blend, modulated by AO for clean contact darkening.
+    // Hemisphere ambient blend, modulated by both ray AO and SSAO for crisp
+    // contact darkening in concave features and tight corners.
     let sky_up = mix(vec3<f32>(0.40, 0.42, 0.46), sky_color(normal), 0.3);
     let sky_down = vec3<f32>(0.30, 0.27, 0.24);
     let hemi_factor = max(normal.z, 0.0) * 0.5 + 0.5;
-    let ao = ambient_occlusion(p, normal, pixel);
-    let ambient = mix(sky_down, sky_up, hemi_factor) * albedo * 0.30 * ao;
+    let ray_ao = ambient_occlusion(p, normal, pixel);
+    // SSAO value is written by the previous frame's `ssao` pass (one-frame lag).
+    // Defaults to 1.0 on frame 1 and when ao_intensity = 0.
+    let ssao_val = ao_buffer[pixel_index(pixel)];
+    let ambient = mix(sky_down, sky_up, hemi_factor) * albedo * 0.30 * ray_ao * ssao_val;
 
     var lo = vec3<f32>(0.0);
 
@@ -1759,6 +1823,117 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     textureStore(output, pixel_coord, final_color);
 }
 
+// Screen-Space Ambient Occlusion (SSAO) compute kernel.
+//
+// Runs after the main `main` pass so depth_normal_buffer is populated.
+// Samples N hemisphere directions (Halton sequence for low discrepancy,
+// offset by frame_index so temporal accumulation converges to a noise-free
+// result).  Writes the AO factor (in [0,1]) to ao_buffer; the main pass
+// reads this on the next frame.
+//
+// When ao_intensity == 0 every pixel receives 1.0 (no occlusion), giving
+// bit-identical output to a renderer without any SSAO contribution.
+@compute @workgroup_size(8, 8)
+fn ssao(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let pixel = global_id.xy;
+    if pixel.x >= camera.width || pixel.y >= camera.height { return; }
+
+    let idx = pixel_index(pixel);
+
+    // Fast-exit: AO disabled.
+    if render_state.ao_intensity < 0.001 {
+        ao_buffer[idx] = 1.0;
+        return;
+    }
+
+    let dn     = depth_normal_buffer[idx];
+    let depth  = dn.w;
+    let normal = dn.xyz;
+
+    // Background or ground — skip, write no-occlusion.
+    if depth >= MAX_T - 1.0 || length(normal) < 0.5 {
+        ao_buffer[idx] = 1.0;
+        return;
+    }
+
+    let pos     = world_pos_from_depth(pixel, depth);
+    let forward = normalize(camera.look_at.xyz - camera.position.xyz);
+
+    // View-space Z of the centre pixel (used for range-check below).
+    let center_view_z = dot(pos - camera.position.xyz, forward);
+
+    let n_samples  = render_state.ao_sample_count;
+    // Halton base offset advances each frame so temporal accumulation
+    // samples a different part of the hemisphere every frame.
+    let frame_base = (render_state.frame_index - 1u) * n_samples;
+
+    var occ = 0.0;
+
+    for (var i = 0u; i < n_samples; i++) {
+        let h = frame_base + i;
+
+        // Low-discrepancy 2D sample in [0,1)^2 — Halton bases 5 and 7.
+        let u = vec2<f32>(halton_wgsl(h, 5u), halton_wgsl(h, 7u));
+
+        // Uniform hemisphere (not cosine-weighted — we want even spatial
+        // coverage around the normal, not cosine-biased AO).
+        let sin_theta = sqrt(max(0.0, 1.0 - u.x * u.x));
+        let phi       = 2.0 * PI * u.y;
+        let local_dir = vec3<f32>(sin_theta * cos(phi), sin_theta * sin(phi), u.x);
+        let sample_dir = build_tangent_frame(normal) * local_dir;
+
+        // Vary radius: bias towards shorter distances (quadratic ramp).
+        let t_radius   = render_state.ao_radius * halton_wgsl(h + 1u, 11u);
+        let sample_pos = pos + sample_dir * t_radius;
+
+        // Project sample point to screen.
+        let screen = world_to_screen_coords(sample_pos);
+        if screen.x < 0 || screen.x >= i32(camera.width) ||
+           screen.y < 0 || screen.y >= i32(camera.height) {
+            continue;
+        }
+
+        let scene_dn    = depth_normal_buffer[pixel_index_i32(screen)];
+        let scene_depth = scene_dn.w;
+        // Transparent sky or unresolved pixel — no occlusion from this sample.
+        if scene_depth >= MAX_T - 1.0 { continue; }
+
+        // Reconstruct the scene surface's world position.
+        let scene_pos    = world_pos_from_depth(vec2<u32>(screen), scene_depth);
+        let scene_view_z = dot(scene_pos - camera.position.xyz, forward);
+        let sample_view_z = dot(sample_pos - camera.position.xyz, forward);
+
+        // Range guard: surfaces far from the centre pixel should not
+        // contribute — this prevents haloing at depth discontinuities
+        // (silhouette edges stay clean).
+        if abs(center_view_z - scene_view_z) > render_state.ao_radius { continue; }
+
+        // Occlusion test: the scene surface is closer to the camera than
+        // the sample point → the sample is hidden behind it.
+        if scene_view_z < sample_view_z - render_state.ao_bias {
+            // Smooth falloff: close occluders contribute more than distant ones.
+            let dist         = length(scene_pos - pos);
+            let range_weight = 1.0 - smoothstep(0.0, render_state.ao_radius, dist);
+            occ += range_weight;
+        }
+    }
+
+    // AO value in [0,1]: 0 = fully occluded, 1 = fully lit.
+    let ao_val = clamp(
+        1.0 - (occ / f32(n_samples)) * render_state.ao_intensity,
+        0.0, 1.0
+    );
+
+    // Progressive accumulation (running average matches main-pass behaviour).
+    if render_state.frame_index <= 1u {
+        ao_buffer[idx] = ao_val;
+    } else {
+        let prev   = ao_buffer[idx];
+        let weight = 1.0 / f32(render_state.frame_index);
+        ao_buffer[idx] = mix(prev, ao_val, weight);
+    }
+}
+
 // Adaptive refinement pass: fires additional stratified rays for edge pixels,
 // blends with the coarse main-pass sample, and updates the output texture.
 // Only runs when render_state.refine_sample_count > 0.
@@ -1777,8 +1952,9 @@ fn refine(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let idx = pixel_index(pixel);
 
     // Detect edge strength from the depth/normal buffer (written by main pass).
-    let dn = depth_normal_buffer[idx];
-    let edge = detect_edge(pixel_coord, dn);
+    // Use the Sobel-based detector; take the max of silhouette, crease, boundary.
+    let strengths = detect_edge_sobel(pixel_coord);
+    let edge = max(strengths.x, max(strengths.y, strengths.z));
 
     // Only refine pixels on silhouettes / creases.
     if edge <= 0.1 {

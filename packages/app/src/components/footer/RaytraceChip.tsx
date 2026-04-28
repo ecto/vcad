@@ -5,6 +5,7 @@ import { useUiStore, type RaytraceQuality } from "@vcad/core";
 import { FooterChipButton } from "@/components/footer/FooterChip";
 import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { useCallback } from "react";
 
 const QUALITY_OPTIONS: Array<{
   value: RaytraceQuality;
@@ -44,6 +45,9 @@ export function RaytraceChip({ className }: { className?: string }) {
   const raytraceEdgeCreaseWidth = useUiStore((s) => s.raytraceEdgeCreaseWidth);
   const raytraceEdgeBoundaryWidth = useUiStore((s) => s.raytraceEdgeBoundaryWidth);
   const raytraceEdgeSoftness = useUiStore((s) => s.raytraceEdgeSoftness);
+  const raytraceAoEnabled = useUiStore((s) => s.raytraceAoEnabled);
+  const raytraceAoIntensity = useUiStore((s) => s.raytraceAoIntensity);
+  const raytraceAoSampleCount = useUiStore((s) => s.raytraceAoSampleCount);
   const toggleRenderMode = useUiStore((s) => s.toggleRenderMode);
   const setRaytraceQuality = useUiStore((s) => s.setRaytraceQuality);
   const setRaytraceEdgesEnabled = useUiStore((s) => s.setRaytraceEdgesEnabled);
@@ -54,6 +58,23 @@ export function RaytraceChip({ className }: { className?: string }) {
   const setRaytraceEdgeCreaseWidth = useUiStore((s) => s.setRaytraceEdgeCreaseWidth);
   const setRaytraceEdgeBoundaryWidth = useUiStore((s) => s.setRaytraceEdgeBoundaryWidth);
   const setRaytraceEdgeSoftness = useUiStore((s) => s.setRaytraceEdgeSoftness);
+  const setRaytraceAoEnabled = useUiStore((s) => s.setRaytraceAoEnabled);
+  const setRaytraceAoIntensity = useUiStore((s) => s.setRaytraceAoIntensity);
+  const setRaytraceAoSampleCount = useUiStore((s) => s.setRaytraceAoSampleCount);
+
+  const handleAoIntensityChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      setRaytraceAoIntensity(parseFloat(e.target.value));
+    },
+    [setRaytraceAoIntensity],
+  );
+
+  const handleAoSampleChange = useCallback(
+    (count: number) => {
+      setRaytraceAoSampleCount(count);
+    },
+    [setRaytraceAoSampleCount],
+  );
 
   if (!raytraceAvailable) return null;
 
@@ -243,6 +264,71 @@ export function RaytraceChip({ className }: { className?: string }) {
                 <span className="w-6 text-right text-[9px] tabular-nums text-text-muted/60">
                   {raytraceEdgeSoftness.toFixed(1)}
                 </span>
+              </div>
+            </div>
+          )}
+
+          <div className="my-1 border-t border-border/40" />
+
+          {/* AO toggle + intensity slider */}
+          <button
+            type="button"
+            onClick={() => setRaytraceAoEnabled(!raytraceAoEnabled)}
+            className={cn(
+              "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left",
+              "transition-colors",
+              "text-text-muted hover:bg-hover hover:text-text",
+            )}
+          >
+            <span className="flex-1 uppercase tracking-wide text-[10px] text-text">
+              Ambient Occlusion
+            </span>
+            <span
+              className={cn(
+                "uppercase tracking-wide text-[10px] tabular-nums",
+                raytraceAoEnabled ? "text-brand" : "text-text-muted/70",
+              )}
+            >
+              {raytraceAoEnabled ? "on" : "off"}
+            </span>
+          </button>
+
+          {raytraceAoEnabled && (
+            <div className="px-2 pb-1.5 flex flex-col gap-1">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-text-muted/70 w-16 shrink-0">Intensity</span>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="2.0"
+                  step="0.05"
+                  value={raytraceAoIntensity}
+                  onChange={handleAoIntensityChange}
+                  className="flex-1 h-1 accent-brand"
+                />
+                <span className="text-[10px] text-text-muted tabular-nums w-8 text-right">
+                  {raytraceAoIntensity.toFixed(2)}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-text-muted/70 w-16 shrink-0">Samples</span>
+                <div className="flex gap-1">
+                  {([8, 16, 32] as const).map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => handleAoSampleChange(n)}
+                      className={cn(
+                        "px-1.5 py-0.5 rounded text-[10px] tabular-nums",
+                        raytraceAoSampleCount === n
+                          ? "bg-brand/20 text-brand"
+                          : "text-text-muted hover:bg-hover",
+                      )}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           )}

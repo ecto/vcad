@@ -2215,6 +2215,8 @@ pub struct RayTracer {
     frame_index: u32,
     /// Accumulation buffer for progressive anti-aliasing.
     accum_buffer: Option<wgpu::Buffer>,
+    /// AO buffer for progressive SSAO accumulation.
+    ao_buffer: Option<wgpu::Buffer>,
     /// Last camera state for detecting camera changes.
     last_camera_hash: u64,
     /// Last render dimensions.
@@ -2231,6 +2233,14 @@ pub struct RayTracer {
     edge_normal_threshold: f32,
     /// Theme: 0 = dark, 1 = light. Drives the visible background palette.
     theme: u32,
+    /// SSAO world-space sample radius.
+    ao_radius: f32,
+    /// SSAO intensity (0 = disabled, 1 = default).
+    ao_intensity: f32,
+    /// SSAO depth bias.
+    ao_bias: f32,
+    /// SSAO sample count per frame.
+    ao_sample_count: u32,
     /// Additional rays per edge pixel for adaptive refinement (0 = disabled).
     refine_sample_count: u32,
     // Per-type edge style
@@ -2269,6 +2279,7 @@ impl RayTracer {
             scene: None,
             frame_index: 0,
             accum_buffer: None,
+            ao_buffer: None,
             last_camera_hash: 0,
             last_width: 0,
             last_height: 0,
@@ -2277,6 +2288,10 @@ impl RayTracer {
             edge_depth_threshold: 0.1,
             edge_normal_threshold: 30.0,
             theme: 0,
+            ao_radius: 0.3,
+            ao_intensity: 1.0,
+            ao_bias: 0.001,
+            ao_sample_count: 16,
             refine_sample_count: 0,
             enable_silhouette: true,
             enable_crease: true,
@@ -2299,6 +2314,7 @@ impl RayTracer {
         self.theme = theme;
         self.frame_index = 0;
         self.accum_buffer = None;
+        self.ao_buffer = None;
     }
 
     /// Set the adaptive refinement sample count.
@@ -2324,6 +2340,7 @@ impl RayTracer {
     pub fn reset_accumulation(&mut self) {
         self.frame_index = 0;
         self.accum_buffer = None;
+        self.ao_buffer = None;
     }
 
     /// Get the current frame index for progressive rendering.
@@ -2344,6 +2361,7 @@ impl RayTracer {
         // Reset accumulation when debug mode changes
         self.frame_index = 0;
         self.accum_buffer = None;
+        self.ao_buffer = None;
         web_sys::console::log_1(&format!("[WASM] Debug mode set to {}", mode).into());
     }
 
@@ -2372,6 +2390,7 @@ impl RayTracer {
         // Reset accumulation when edge settings change
         self.frame_index = 0;
         self.accum_buffer = None;
+        self.ao_buffer = None;
         web_sys::console::log_1(
             &format!(
                 "[WASM] Edge detection: enabled={}, depth={:.2}, normal={:.1}°",
@@ -2437,6 +2456,32 @@ impl RayTracer {
         self.scene = None;
         self.frame_index = 0;
         self.accum_buffer = None;
+        self.ao_buffer = None;
+    }
+
+    /// Set SSAO (screen-space ambient occlusion) parameters.
+    ///
+    /// # Arguments
+    /// * `radius` - World-space hemisphere sample radius (default 0.3)
+    /// * `intensity` - Occlusion strength: 0 = disabled, 1 = default (>1 stylized)
+    /// * `bias` - Depth bias to prevent self-occlusion (default 0.001)
+    /// * `sample_count` - Hemisphere samples per frame: 8, 16, or 32 (default 16)
+    #[wasm_bindgen(js_name = setAO)]
+    pub fn set_ao(&mut self, radius: f32, intensity: f32, bias: f32, sample_count: u32) {
+        self.ao_radius = radius;
+        self.ao_intensity = intensity;
+        self.ao_bias = bias;
+        self.ao_sample_count = sample_count.clamp(1, 64);
+        self.frame_index = 0;
+        self.accum_buffer = None;
+        self.ao_buffer = None;
+        web_sys::console::log_1(
+            &format!(
+                "[WASM] SSAO: radius={:.3}, intensity={:.2}, bias={:.4}, samples={}",
+                radius, intensity, bias, sample_count
+            )
+            .into(),
+        );
     }
 
     /// Upload a solid's BRep representation for ray tracing.
@@ -2626,6 +2671,7 @@ impl RayTracer {
         {
             self.frame_index = 0;
             self.accum_buffer = None;
+            self.ao_buffer = None;
             self.last_camera_hash = camera_hash;
             self.last_width = width;
             self.last_height = height;
@@ -2687,11 +2733,15 @@ impl RayTracer {
                 self.boundary_width,
                 self.edge_softness,
             );
+            rs.ao_radius = self.ao_radius;
+            rs.ao_intensity = self.ao_intensity;
+            rs.ao_bias = self.ao_bias;
+            rs.ao_sample_count = self.ao_sample_count;
             rs.refine_sample_count = self.refine_sample_count;
             rs
         };
 
-        let (pixels, new_accum) = self
+        let (pixels, new_accum, new_ao) = self
             .pipeline
             .render_with_render_state(
                 ctx,
@@ -2700,13 +2750,15 @@ impl RayTracer {
                 width,
                 height,
                 self.accum_buffer.take(),
+                self.ao_buffer.take(),
                 render_state,
             )
             .await
             .map_err(|e| JsError::new(&format!("Render failed: {}", e)))?;
 
-        // Store accumulation texture for next frame
+        // Store accumulation and AO buffers for next frame
         self.accum_buffer = Some(new_accum);
+        self.ao_buffer = Some(new_ao);
 
         Ok(pixels)
     }

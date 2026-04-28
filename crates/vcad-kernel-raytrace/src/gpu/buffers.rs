@@ -308,14 +308,15 @@ pub struct GpuCamera {
 
 /// Render state for progressive rendering.
 ///
-/// Layout (112 bytes, 16-byte aligned — matches `RenderState` in raytrace.wgsl):
-/// offset  0–31: eight u32/f32 scalars (frame_index … theme)
-/// offset 32–35: refine_sample_count u32
-/// offset 36–47: _pad [u32; 3]
-/// offset 48–63: silhouette_color vec4
-/// offset 64–79: crease_color vec4
-/// offset 80–95: boundary_color vec4
-/// offset 96–111: four f32 width/softness scalars
+/// Layout (128 bytes, 16-byte aligned — matches `RenderState` in raytrace.wgsl):
+/// offset  0–31:  eight u32/f32 scalars (frame_index … theme)
+/// offset 32–47:  SSAO params (ao_radius, ao_intensity, ao_bias, ao_sample_count)
+/// offset 48–51:  refine_sample_count u32
+/// offset 52–63:  _pad [u32; 3]
+/// offset 64–79:  silhouette_color vec4
+/// offset 80–95:  crease_color vec4
+/// offset 96–111: boundary_color vec4
+/// offset 112–127: four f32 width/softness scalars
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct GpuRenderState {
@@ -338,6 +339,16 @@ pub struct GpuRenderState {
     /// palette in `sky_color`; the IBL panels and direct lighting stay
     /// constant across themes so the model itself looks the same.
     pub theme: u32,
+    // SSAO
+    /// SSAO world-space sample hemisphere radius.
+    pub ao_radius: f32,
+    /// SSAO intensity: 0 = disabled (ao_buffer writes 1.0), 1 = default strength.
+    pub ao_intensity: f32,
+    /// SSAO depth bias to prevent self-occlusion.
+    pub ao_bias: f32,
+    /// SSAO hemisphere sample count per frame (8, 16, or 32).
+    pub ao_sample_count: u32,
+    // refinement + padding
     /// Number of additional refinement rays per edge pixel (0 = disabled).
     /// Actual rays fired = floor(sqrt(refine_sample_count))^2.
     pub refine_sample_count: u32,
@@ -383,6 +394,10 @@ impl GpuRenderState {
             edge_normal_threshold: 30.0,
             debug_mode: 0,
             theme: 0,
+            ao_radius: 0.3,
+            ao_intensity: 1.0,
+            ao_bias: 0.001,
+            ao_sample_count: 16,
             refine_sample_count: 0,
             _pad: [0; 3],
             silhouette_color: DEFAULT_SILHOUETTE_COLOR,
@@ -410,7 +425,7 @@ impl GpuRenderState {
         state
     }
 
-    /// Create a render state with custom edge settings.
+    /// Create a render state with custom edge settings (default AO).
     pub fn with_edge_settings(
         frame_index: u32,
         debug_mode: u32,
@@ -425,10 +440,16 @@ impl GpuRenderState {
             edge_depth_threshold,
             edge_normal_threshold,
             0,
+            0.3,
+            1.0,
+            0.001,
+            16,
+            0,
         )
     }
 
-    /// Create a render state with all settings including theme.
+    /// Create a render state with all settings including theme, SSAO, and refinement.
+    #[allow(clippy::too_many_arguments)]
     pub fn with_full_settings(
         frame_index: u32,
         debug_mode: u32,
@@ -436,6 +457,11 @@ impl GpuRenderState {
         edge_depth_threshold: f32,
         edge_normal_threshold: f32,
         theme: u32,
+        ao_radius: f32,
+        ao_intensity: f32,
+        ao_bias: f32,
+        ao_sample_count: u32,
+        refine_sample_count: u32,
     ) -> Self {
         let mut state = Self::new(frame_index);
         state.enable_edges = if enable_edges { EDGES_ALL } else { 0 };
@@ -443,6 +469,11 @@ impl GpuRenderState {
         state.edge_normal_threshold = edge_normal_threshold;
         state.debug_mode = debug_mode;
         state.theme = theme;
+        state.ao_radius = ao_radius;
+        state.ao_intensity = ao_intensity;
+        state.ao_bias = ao_bias;
+        state.ao_sample_count = ao_sample_count;
+        state.refine_sample_count = refine_sample_count;
         state
     }
 
@@ -481,6 +512,10 @@ impl GpuRenderState {
             edge_normal_threshold,
             debug_mode,
             theme,
+            ao_radius: 0.3,
+            ao_intensity: 1.0,
+            ao_bias: 0.001,
+            ao_sample_count: 16,
             refine_sample_count: 0,
             _pad: [0; 3],
             silhouette_color,
@@ -503,16 +538,19 @@ impl GpuRenderState {
         theme: u32,
         refine_sample_count: u32,
     ) -> Self {
-        let mut state = Self::with_full_settings(
+        Self::with_full_settings(
             frame_index,
             debug_mode,
             enable_edges,
             edge_depth_threshold,
             edge_normal_threshold,
             theme,
-        );
-        state.refine_sample_count = refine_sample_count;
-        state
+            0.3,
+            1.0,
+            0.001,
+            16,
+            refine_sample_count,
+        )
     }
 }
 
