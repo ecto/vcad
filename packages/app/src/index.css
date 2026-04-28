@@ -1,5 +1,11 @@
 @import "tailwindcss";
 
+/* Workspace packages whose JSX uses Tailwind classes need to be scanned
+   explicitly — Tailwind v4's auto-detection only walks the package that
+   owns this stylesheet. */
+@source "../../auth/src/**/*.{ts,tsx}";
+@source "../../core/src/**/*.{ts,tsx}";
+
 /* Inter Variable (v4) — UI body font. Self-hosted, full 100..900 weight axis
    plus the `opsz` axis (we engage it via `font-optical-sizing: auto` on body
    so glyphs visibly tighten at small sizes and open up in headings).
@@ -368,6 +374,53 @@ body {
 .upgrade-cta:hover::after {
   animation-play-state: paused;
   opacity: 0;
+}
+
+/* ------------------------------------------------------------------------
+ * Auth + Terms-gate modals
+ *
+ * Re-use the upgrade-modal keyframes so the sign-in and terms-acceptance
+ * surfaces feel like the same family as the upgrade flow. CSS-driven via
+ * Radix's data-state attribute — no JS animation lib needed.
+ * ------------------------------------------------------------------------ */
+.auth-overlay[data-state="open"] {
+  animation: upgrade-overlay-in 180ms ease-out;
+}
+.auth-overlay[data-state="closed"] {
+  animation: upgrade-overlay-out 140ms ease-in;
+}
+.auth-content[data-state="open"] {
+  animation: upgrade-content-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.auth-content[data-state="closed"] {
+  animation: upgrade-content-out 140ms ease-in;
+}
+
+/* Tiny press-celebration on the terms-gate Continue button — fires for
+   220ms before the modal exits, so accepting feels like a confirmation
+   gesture instead of an instant cut. */
+@keyframes vcad-cta-press {
+  0%   { transform: scale(1); }
+  35%  { transform: scale(0.97); }
+  100% { transform: scale(1.02); }
+}
+.cta-press {
+  animation: vcad-cta-press 220ms ease-out;
+}
+
+/* Magic-link success chip slides up + fades in. */
+@keyframes vcad-success-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.auth-success-in {
+  animation: vcad-success-in 360ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* Bottom toolbar: remove focus outlines in the bar and its menus */
