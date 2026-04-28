@@ -218,8 +218,7 @@ impl Polygon {
             changed = false;
             let n = self.points.len();
             // Recompute "active" set after each pass.
-            let active_indices: Vec<usize> =
-                (0..n).filter(|&i| keep[i]).collect();
+            let active_indices: Vec<usize> = (0..n).filter(|&i| keep[i]).collect();
             if active_indices.len() < 3 {
                 break;
             }

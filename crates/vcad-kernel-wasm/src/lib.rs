@@ -3663,9 +3663,8 @@ mod slicer_wasm {
                 &JsValue::from_f64(total as f64),
             );
         };
-        let result =
-            vcad_slicer::slice_with_progress(&mesh, &slice_settings, Some(&progress))
-                .map_err(|e| JsError::new(&e.to_string()))?;
+        let result = vcad_slicer::slice_with_progress(&mesh, &slice_settings, Some(&progress))
+            .map_err(|e| JsError::new(&e.to_string()))?;
 
         Ok(SliceResult { inner: result })
     }

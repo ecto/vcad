@@ -94,9 +94,7 @@ fn profile_20mm_cube() {
             / layers.len().max(1) as f64
     );
     eprintln!("  generate_perimeters:   {perim_ms:>7.2} ms");
-    eprintln!(
-        "  generate_infill:       {infill_ms:>7.2} ms  ({infill_paths} infill paths)"
-    );
+    eprintln!("  generate_infill:       {infill_ms:>7.2} ms  ({infill_paths} infill paths)");
     eprintln!("  full vcad_slicer::slice:{total_ms:>6.2} ms  (release)");
 
     // Regression guard: a 20mm cube used to hang forever (NaN polygon →

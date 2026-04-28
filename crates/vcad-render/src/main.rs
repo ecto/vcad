@@ -99,11 +99,7 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<Solid>, String> {
     .map_err(|_| "eval panicked".to_string())?
     .map_err(|e| format!("eval: {}", e))?;
 
-    let solids: Vec<Solid> = scene
-        .parts
-        .iter()
-        .filter_map(|p| p.solid.clone())
-        .collect();
+    let solids: Vec<Solid> = scene.parts.iter().filter_map(|p| p.solid.clone()).collect();
     Ok(solids)
 }
 
