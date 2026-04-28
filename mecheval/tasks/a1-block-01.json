@@ -1,0 +1,34 @@
+{
+  "id": "a1-block-01",
+  "suite": "A",
+  "tier": "A1",
+  "title": "Rectangular block",
+  "prompt": "Make a rectangular block 60mm long (X) × 40mm wide (Y) × 20mm tall (Z). Center it in X and Y, with the bottom face on the XY plane (z = 0 to z = 20). Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-30, -20, 0],
+      "max": [30, 20, 20],
+      "tolerance_mm": 0.05
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 48000.0,
+      "center_of_mass": [0, 0, 10],
+      "tolerance_pct": 0.1
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 0.1 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 20000,
+    "max_wallclock_sec": 120,
+    "max_tool_calls": 20
+  },
+  "pass_k": 5,
+  "tags": ["primitives", "block"]
+}

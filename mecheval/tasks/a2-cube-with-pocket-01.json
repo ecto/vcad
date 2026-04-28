@@ -1,0 +1,33 @@
+{
+  "id": "a2-cube-with-pocket-01",
+  "suite": "A",
+  "tier": "A2",
+  "title": "Cube with rectangular pocket",
+  "prompt": "Start with a 40mm cube, centered in X and Y with the bottom face on the XY plane (so it spans x in [-20, 20], y in [-20, 20], z in [0, 40]). Cut a rectangular pocket into the top face: remove material in x in [-10, 10], y in [-10, 10], z in [30, 40]. The pocket is open at the top, closed on the four sides and the bottom (10mm of cube remains underneath the pocket). Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-20, -20, 0],
+      "max": [20, 20, 40],
+      "tolerance_mm": 0.05
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 60000.0,
+      "tolerance_pct": 0.1
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 0.1 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 30000,
+    "max_wallclock_sec": 180,
+    "max_tool_calls": 30
+  },
+  "pass_k": 5,
+  "tags": ["cube", "pocket", "boolean", "difference"]
+}

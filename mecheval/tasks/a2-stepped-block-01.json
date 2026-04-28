@@ -1,0 +1,33 @@
+{
+  "id": "a2-stepped-block-01",
+  "suite": "A",
+  "tier": "A2",
+  "title": "Block with rectangular step",
+  "prompt": "Start with a rectangular block 50mm long (X) × 30mm wide (Y) × 20mm tall (Z), centered in X and Y with the bottom face on the XY plane (so it spans x in [-25, 25], y in [-15, 15], z in [0, 20]). Cut away the upper +X corner: remove material in the region x in [0, 25], y in [-15, 15], z in [10, 20]. The result has an L-shape when viewed from +Y. Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-25, -15, 0],
+      "max": [25, 15, 20],
+      "tolerance_mm": 0.05
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 22500.0,
+      "tolerance_pct": 0.1
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 0.1 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 30000,
+    "max_wallclock_sec": 180,
+    "max_tool_calls": 30
+  },
+  "pass_k": 5,
+  "tags": ["block", "step", "boolean", "difference"]
+}

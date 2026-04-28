@@ -1,0 +1,33 @@
+{
+  "id": "a2-channel-bracket-01",
+  "suite": "A",
+  "tier": "A2",
+  "title": "U-channel bracket",
+  "prompt": "Make a U-shaped channel bracket built from three rectangular plates fused into a single solid. Bottom plate: x in [0, 30], y in [0, 40], z in [0, 4]. Left wall standing on top of the bottom: x in [0, 4], y in [0, 40], z in [4, 30]. Right wall standing on top of the bottom: x in [26, 30], y in [0, 40], z in [4, 30]. Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [0, 0, 0],
+      "max": [30, 40, 30],
+      "tolerance_mm": 0.05
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 13120.0,
+      "tolerance_pct": 0.1
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 0.1 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 30000,
+    "max_wallclock_sec": 180,
+    "max_tool_calls": 30
+  },
+  "pass_k": 5,
+  "tags": ["bracket", "channel", "union", "multi-feature"]
+}

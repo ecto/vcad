@@ -1,0 +1,33 @@
+{
+  "id": "a2-stepped-pyramid-01",
+  "suite": "A",
+  "tier": "A2",
+  "title": "Stepped square pyramid (three tiers)",
+  "prompt": "Make a stepped square pyramid built from three stacked rectangular blocks. All tiers are centered on the Z axis. Bottom tier: 40mm × 40mm × 10mm tall (x in [-20, 20], y in [-20, 20], z in [0, 10]). Middle tier sits directly on top: 28mm × 28mm × 10mm tall (x in [-14, 14], y in [-14, 14], z in [10, 20]). Top tier sits directly on top of the middle: 16mm × 16mm × 10mm tall (x in [-8, 8], y in [-8, 8], z in [20, 30]). Fuse all three into a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-20, -20, 0],
+      "max": [20, 20, 30],
+      "tolerance_mm": 0.05
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 26400.0,
+      "tolerance_pct": 0.1
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 0.1 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 30000,
+    "max_wallclock_sec": 180,
+    "max_tool_calls": 30
+  },
+  "pass_k": 5,
+  "tags": ["pyramid", "stacked", "union", "multi-feature"]
+}
