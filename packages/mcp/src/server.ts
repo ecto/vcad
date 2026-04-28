@@ -9,13 +9,27 @@ import {
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { Engine } from "@vcad/engine";
+import { Engine, getKernelWasm } from "@vcad/engine";
+import { commandRegistry } from "@vcad/core";
 import type { Document } from "@vcad/ir";
-import { createCadDocument, createCadDocumentSchema } from "./tools/create.js";
 import { exportCad, exportCadSchema } from "./tools/export.js";
 import { inspectCad, inspectCadSchema } from "./tools/inspect.js";
 import { importStep, importStepSchema } from "./tools/import.js";
 import { openInBrowser, openInBrowserSchema } from "./tools/share.js";
+import {
+  openDocument,
+  openDocumentSchema,
+  getDocumentTool,
+  getDocumentSchema,
+  closeDocument,
+  closeDocumentSchema,
+  documents,
+} from "./tools/session.js";
+import {
+  registryToolDescriptors,
+  registryDispatchableNames,
+  dispatchRegistryTool,
+} from "./tools/registry-dispatch.js";
 import {
   createRobotEnv,
   createRobotEnvSchema,
@@ -68,7 +82,6 @@ import {
 
 /** Tools that produce or modify geometry and should show the 3D viewer. */
 const GEOMETRY_TOOLS = new Set([
-  "create_cad_document",
   "create_cad_loon",
   "import_step",
 ]);
@@ -85,6 +98,40 @@ const UI_META = {
 export async function createServer(existingEngine?: Engine): Promise<Server> {
   // Initialize the WASM engine (or reuse one provided by the caller)
   const engine = existingEngine ?? await Engine.init();
+
+  // Wire the kernel WASM's chat helpers into the shared commandRegistry so
+  // `toAnthropicTools` and `planCrud` work on the server too. Same bootstrap
+  // as `initEngineLifecycle` in @vcad/core, minus the docstore subscription
+  // — we don't have a docstore here. Without this, registryToolDescriptors
+  // returns the static-schemas fallback and planCrud returns null.
+  try {
+    const wasm = (await getKernelWasm()) as unknown as Record<string, unknown>;
+    const getToolSchemas = wasm.get_tool_schemas as (() => string) | undefined;
+    if (getToolSchemas) commandRegistry.loadSchemas(getToolSchemas());
+    const getAnthropicToolsJson = wasm.get_anthropic_tools_json as
+      | (() => string)
+      | undefined;
+    const buildChatSystemPrompt = wasm.build_chat_system_prompt as
+      | ((partsJson: string, selectionJson: string) => string)
+      | undefined;
+    const planChatTool = wasm.plan_chat_tool as
+      | ((tool: string, argsJson: string, docJson: string) => string)
+      | undefined;
+    if (getAnthropicToolsJson && buildChatSystemPrompt) {
+      commandRegistry.setWasm({
+        get_anthropic_tools_json: getAnthropicToolsJson,
+        build_chat_system_prompt: buildChatSystemPrompt,
+        plan_chat_tool: planChatTool,
+      });
+    }
+  } catch (e) {
+    console.warn("[mcp] commandRegistry wasm bootstrap failed:", e);
+  }
+
+  // Names of every kernel-tier tool that the registry dispatcher will
+  // handle. Computed once after wasm bootstrap so the call-site switch can
+  // route by name without re-querying the registry per tool call.
+  const dispatchableTools = registryDispatchableNames();
 
   const server = new Server(
     {
@@ -105,6 +152,26 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
   // List available tools
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
+      // ── Session lifecycle ──────────────────────────────────────
+      {
+        name: "open_document",
+        description:
+          "Open an editing session for a CAD document. Returns a `document_id` to pass to subsequent tool calls (create, update, place_part, inspect_cad, …). Pass an `initial` IR to begin editing an existing document; omit it for a fresh empty document.",
+        inputSchema: openDocumentSchema,
+      },
+      {
+        name: "get_document",
+        description:
+          "Return the full IR Document JSON for an open session. Use after a series of mutations to capture the result, or to feed into `export_cad` / `open_in_browser`.",
+        inputSchema: getDocumentSchema,
+      },
+      {
+        name: "close_document",
+        description:
+          "Close a document session and free its memory. Idempotent — closing an unknown id reports `closed: false`.",
+        inputSchema: closeDocumentSchema,
+      },
+      // ── Stdlib parts library (session-aware) ──────────────────
       {
         name: "search_parts",
         description:
@@ -114,26 +181,17 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
       {
         name: "place_part",
         description:
-          "Insert a stdlib part into a document. Takes the part `path` (from `search_parts.id`) and an optional `params` map; missing params use declared defaults. Returns the updated document JSON. The part remains parametric — end users can edit its params from the feature tree.",
+          "Insert a stdlib part into the session's document. Takes a `document_id`, a `path` (from `search_parts.id`), and an optional `params` map; missing params use declared defaults. The part remains parametric — end users can edit its params from the feature tree.",
         inputSchema: placePartSchema,
       },
-      {
-        name: "create_cad_document",
-        description:
-          "Create a CAD document from structured geometry input. Returns an IR document that can be exported or inspected.\n\n" +
-          "Part types (use ONE per part):\n" +
-          "- primitive: Basic shapes (cube, cylinder, sphere, cone)\n" +
-          "- extrude: Sketch (rectangle/circle/polygon) extruded to solid\n" +
-          "- revolve: Sketch revolved around an axis\n" +
-          "- sweep: Sketch swept along a path (line or helix)\n" +
-          "- loft: Interpolate between multiple sketches\n\n" +
-          "Operations: union, difference, intersection, translate, rotate, scale, " +
-          "linear_pattern, circular_pattern, hole, fillet, chamfer, shell\n\n" +
-          "Positioning: absolute {x,y,z}, named ('center', 'top-center'), percentage {x:'50%'}\n\n" +
-          "Assembly: Optional 'assembly' block with instances and joints for physics simulation.",
-        inputSchema: createCadDocumentSchema,
-        _meta: UI_META,
-      },
+      // ── Registry-driven kernel tools (auto-exposed) ───────────
+      // The next block iterates `commandRegistry.toAnthropicTools()` so the
+      // schema lives in one place — the kernel WASM. Same tools, same
+      // behavior as the in-app chat surface; viewport-only tools (camera
+      // and scene-evaluation tools) are filtered out via blocklists in
+      // tools/registry-dispatch.ts.
+      ...registryToolDescriptors(),
+      // ── Loon DSL one-shot ──────────────────────────────────────
       {
         name: "create_cad_loon",
         description:
@@ -157,7 +215,7 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
       {
         name: "inspect_cad",
         description:
-          "Inspect a CAD document to get geometry properties: volume, surface area, bounding box, center of mass, triangle count, and mass (if material density is known).",
+          "Inspect an open session document to get aggregate geometry properties: volume, surface area, bounding box, center of mass, triangle count, and mass (if material density is known). For per-part inspection use the chat-surface `inspect_part` / `describe_scene` tools (deferred from this MCP surface in v1).",
         inputSchema: inspectCadSchema,
       },
       {
@@ -344,19 +402,35 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
     const { name, arguments: args = {} } = request.params;
 
     try {
+      // Registry-driven dispatch: any kernel tool from
+      // `commandRegistry.toAnthropicTools()` (minus the browser-only and
+      // deferred sets in tools/registry-dispatch.ts) routes through the
+      // shared planner + applyToolOutcome path.
+      if (dispatchableTools.has(name)) {
+        return dispatchRegistryTool(name, args);
+      }
+
       let result: { content: Array<{ type: string; text: string; annotations?: unknown }> };
 
       switch (name) {
+        case "open_document":
+          result = openDocument(args);
+          break;
+
+        case "get_document":
+          result = getDocumentTool(args);
+          break;
+
+        case "close_document":
+          result = closeDocument(args);
+          break;
+
         case "search_parts":
           result = searchPartsTool(args, engine);
           break;
 
         case "place_part":
           result = placePartTool(args, engine);
-          break;
-
-        case "create_cad_document":
-          result = createCadDocument(args);
           break;
 
         case "create_cad_loon":
@@ -475,7 +549,6 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
  * Extract an IR Document from a tool result for GLB preview generation.
  *
  * Strategy per tool:
- * - create_cad_document: re-run with format: "json" to get parseable output
  * - create_cad_loon: re-evaluate loon source via engine
  * - import_step: parse JSON result to extract the document field
  */
@@ -504,16 +577,6 @@ function extractIrDocument(
       }
     } catch {
       // Not JSON — likely VCode format, handle below
-    }
-
-    // For create_cad_document with VCode output, re-run with JSON format
-    if (toolName === "create_cad_document" && args.parts) {
-      const jsonResult = createCadDocument({ ...args, format: "json" });
-      const jsonText = jsonResult.content[0]?.text;
-      if (jsonText) {
-        const doc = JSON.parse(jsonText);
-        if (doc.version && doc.nodes) return doc as Document;
-      }
     }
 
     // For create_cad_loon with VCode output, re-evaluate with JSON format
