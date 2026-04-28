@@ -22,6 +22,10 @@ import {
 import { loadDocumentFromUrl, getLocalDocRouteId } from "@/lib/url-document";
 import type { UrlDocumentResult } from "@/lib/url-document";
 import { newDocId } from "@/lib/doc-id";
+import {
+  getLastOpenedDocId,
+  clearLastOpenedDocId,
+} from "@/lib/last-opened";
 import { useNotificationStore } from "@/stores/notification-store";
 import { analytics } from "@/lib/analytics";
 
@@ -287,6 +291,26 @@ async function fetchDocumentData(): Promise<DocumentBootData> {
       logger.warn("app", `URL referenced unknown local doc ${routedId}, falling back`);
     }
 
+    // The doc the user had open last session. This is the primary fallback for
+    // Tauri (where the webview always reloads `/`) and for web users who land
+    // back on `/`. We only fall through to "most recent by modifiedAt" when
+    // the slot is empty or its target was deleted, so a sync write that
+    // bumps another doc's modifiedAt can no longer steal startup.
+    const lastOpenedId = getLastOpenedDocId();
+    if (lastOpenedId) {
+      const stored = await loadDocumentFromDb(lastOpenedId);
+      if (stored) {
+        return {
+          kind: "stored",
+          id: stored.id,
+          name: stored.name,
+          file: stored.document,
+        };
+      }
+      logger.info("app", `last-opened doc ${lastOpenedId} no longer exists, clearing`);
+      clearLastOpenedDocId();
+    }
+
     const recent = await getMostRecentDocument();
     if (recent) {
       const stored = await loadDocumentFromDb(recent.id);
@@ -358,20 +382,27 @@ function applyDocumentData(data: DocumentBootData): void {
  * constraint exists because the Vite alias only maps a single resolution
  * from the app's import graph — going through core produces a second
  * WASM instance whose pointers don't match.
+ *
+ * If the engine class is missing or `_initCrdt` throws, we throw —
+ * `runBootstrap` surfaces it as a hard splash error. Previously this just
+ * logged a warning, and the subsequent `applyDocumentData` silently no-op'd
+ * the document load (the document store skips loadDocument when no engine
+ * class is registered) so the user saw the doc's title with empty content.
+ * That looked indistinguishable from "different doc opened" — much better
+ * to fail loudly with a Reload affordance.
  */
 function initCrdt(
   wasmModule: typeof import("@vcad/kernel-wasm"),
 ): void {
-  try {
-    const EngineClass = (wasmModule as Record<string, unknown>)
-      .WasmDocumentEngine as (new () => unknown) | undefined;
-    if (EngineClass) {
-      useDocumentStore.getState()._initCrdt(EngineClass as never);
-      logger.info("wasm", "CRDT document engine initialized");
-    }
-  } catch (e) {
-    logger.warn("wasm", `Failed to initialize CRDT engine: ${e}`);
+  const EngineClass = (wasmModule as Record<string, unknown>)
+    .WasmDocumentEngine as (new () => unknown) | undefined;
+  if (!EngineClass) {
+    throw new Error(
+      "CRDT engine class missing from kernel WASM — kernel build mismatch",
+    );
   }
+  useDocumentStore.getState()._initCrdt(EngineClass as never);
+  logger.info("wasm", "CRDT document engine initialized");
 }
 
 /**

@@ -31,6 +31,8 @@ import {
   isDocumentLocked,
 } from "@/lib/storage";
 import { newDocId } from "@/lib/doc-id";
+import { flushPendingSave } from "@/hooks/useAutoSave";
+import { getLastOpenedDocId } from "@/lib/last-opened";
 
 function formatDate(timestamp: number): string {
   const date = new Date(timestamp);
@@ -85,6 +87,7 @@ interface DocumentRowProps {
   isSelected: boolean;
   isLocked: boolean;
   isDownloading: boolean;
+  isLastOpened: boolean;
   onSelect: () => void;
   onOpen: () => void;
   onDelete: () => void;
@@ -96,6 +99,7 @@ function DocumentRow({
   isSelected,
   isLocked,
   isDownloading,
+  isLastOpened,
   onSelect,
   onOpen,
   onDelete,
@@ -148,7 +152,17 @@ function DocumentRow({
             autoFocus
           />
         ) : (
-          <div className="text-sm text-text truncate">{doc.name}</div>
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="text-sm text-text truncate">{doc.name}</div>
+            {isLastOpened && (
+              <span
+                className="shrink-0 text-[9px] uppercase tracking-wide font-medium text-brand bg-brand/10 px-1.5 py-0.5 rounded"
+                title="Will reopen on next launch"
+              >
+                Last opened
+              </span>
+            )}
+          </div>
         )}
         <div className="text-[10px] text-text-muted">
           {formatDate(doc.modifiedAt)}
@@ -234,6 +248,9 @@ export function DocumentPicker({
   // for chat-thread RLS scoping. Skip the cloud-list path for them.
   const isCloudUser = !!user && !isAnonymous;
   const currentDocId = useDocumentStore((s) => s.documentId);
+  // The doc that bootstrap will reopen on next launch. Read-once (re-read on
+  // open is fine — the slot updates synchronously when docs switch).
+  const lastOpenedId = open ? getLastOpenedDocId() : null;
 
   // Track online/offline status
   useEffect(() => {
@@ -308,6 +325,10 @@ export function DocumentPicker({
   }, [open, loadDocuments]);
 
   const handleNewDocument = useCallback(async () => {
+    // Persist any pending edit on the current doc BEFORE the engine swap.
+    // Without this, switching within the autosave debounce window dropped
+    // the user's most recent change.
+    await flushPendingSave();
     const name = await generateDocumentName();
     const id = newDocId();
     useDocumentStore.getState().newDocument(id, name);
@@ -320,6 +341,9 @@ export function DocumentPicker({
 
     const doc = documents.find((d) => d.id === selectedId);
     if (!doc) return;
+
+    // Persist any pending edit on the OUTGOING doc before we swap engines.
+    await flushPendingSave();
 
     // Cloud-only document - download first
     if (doc.syncStatus === "cloud-only" && doc.cloudId) {
@@ -515,6 +539,10 @@ export function DocumentPicker({
                     isSelected={selectedId === doc.id}
                     isLocked={lockedIds.has(doc.id)}
                     isDownloading={downloadingIds.has(doc.id)}
+                    isLastOpened={
+                      lastOpenedId !== null &&
+                      (doc.localId ?? doc.id) === lastOpenedId
+                    }
                     onSelect={() => setSelectedId(doc.id)}
                     onOpen={handleOpenDocument}
                     onDelete={() => handleDeleteDocument(doc.id)}
