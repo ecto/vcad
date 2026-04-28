@@ -434,11 +434,7 @@ impl<'a> StepWriter<'a> {
         let loop_ids: Vec<LoopId> = self.solid.topology.loops.keys().collect();
 
         for loop_id in loop_ids {
-            let he_ids: Vec<HalfEdgeId> = self
-                .solid
-                .topology
-                .loop_half_edges(loop_id)
-                .collect();
+            let he_ids: Vec<HalfEdgeId> = self.solid.topology.loop_half_edges(loop_id).collect();
 
             let mut oriented_edge_ids = Vec::new();
 

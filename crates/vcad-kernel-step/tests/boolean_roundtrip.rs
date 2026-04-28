@@ -33,7 +33,10 @@ fn write_step_after_difference_round_trips() {
 
     let buffer = write_step_to_buffer(brep).expect("STEP write should succeed");
     let solids = read_step_from_buffer(&buffer).expect("STEP read should succeed");
-    assert!(!solids.is_empty(), "expected at least one solid round-tripped");
+    assert!(
+        !solids.is_empty(),
+        "expected at least one solid round-tripped"
+    );
 }
 
 #[test]
