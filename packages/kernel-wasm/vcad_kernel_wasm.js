@@ -323,6 +323,22 @@ export class RayTracer {
         wasm.raytracer_resetAccumulation(this.__wbg_ptr);
     }
     /**
+     * Set SSAO (screen-space ambient occlusion) parameters.
+     *
+     * # Arguments
+     * * `radius` - World-space hemisphere sample radius (default 0.3)
+     * * `intensity` - Occlusion strength: 0 = disabled, 1 = default (>1 stylized)
+     * * `bias` - Depth bias to prevent self-occlusion (default 0.001)
+     * * `sample_count` - Hemisphere samples per frame: 8, 16, or 32 (default 16)
+     * @param {number} radius
+     * @param {number} intensity
+     * @param {number} bias
+     * @param {number} sample_count
+     */
+    setAO(radius, intensity, bias, sample_count) {
+        wasm.raytracer_setAO(this.__wbg_ptr, radius, intensity, bias, sample_count);
+    }
+    /**
      * Set the debug render mode.
      *
      * # Arguments
@@ -5877,7 +5893,7 @@ function __wbg_get_imports() {
                     const a = state0.a;
                     state0.a = 0;
                     try {
-                        return wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(a, state0.b, arg0, arg1);
+                        return wasm_bindgen__convert__closures_____invoke__h61f848611b9bfd22(a, state0.b, arg0, arg1);
                     } finally {
                         state0.a = a;
                     }
@@ -6462,13 +6478,13 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 1233, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1234, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 1231, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1232, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h29172bbcd065953b, wasm_bindgen__convert__closures_____invoke__h409646c44a6f7cf4);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2020, function: Function { arguments: [Externref], shim_idx: 2021, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2018, function: Function { arguments: [Externref], shim_idx: 2019, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h6ed7eb1128abde65, wasm_bindgen__convert__closures_____invoke__h53e1d5f5246c70f9);
             return ret;
         },
         __wbindgen_cast_0000000000000003: function(arg0) {
@@ -6556,16 +6572,16 @@ function __wbg_get_imports() {
     };
 }
 
-function wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h409646c44a6f7cf4(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h409646c44a6f7cf4(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h53e1d5f5246c70f9(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h53e1d5f5246c70f9(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(arg0, arg1, arg2, arg3) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(arg0, arg1, arg2, arg3);
+function wasm_bindgen__convert__closures_____invoke__h61f848611b9bfd22(arg0, arg1, arg2, arg3) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h61f848611b9bfd22(arg0, arg1, arg2, arg3);
 }
 
 
