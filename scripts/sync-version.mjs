@@ -127,6 +127,60 @@ function updateCargoToml(version) {
   return { path: cargoPath, changed: true, oldVersion, newVersion: version };
 }
 
+// Bump intra-workspace dep versions in [workspace.dependencies] so that the
+// `version = "..."` we publish to crates.io tracks workspace.package.version.
+// Only matches lines where path is into `crates/` (so sibling-repo deps like
+// tang/tang-la/tang-expr — which have their own release cadence — are not
+// touched). Crates that pin their own version (e.g. stepperoni) are also
+// skipped via a name-based exclusion list.
+const SKIP_WORKSPACE_DEP = new Set(['stepperoni']);
+
+function updateWorkspaceDeps(version) {
+  const cargoPath = join(root, 'Cargo.toml');
+  let content = readFileSync(cargoPath, 'utf8');
+  const original = content;
+
+  // Match a workspace dep line of the form:
+  //   <name> = { path = "crates/..." [, ...] version = "<old>" [, ...] }
+  // The version field can appear before or after path; capture both orderings
+  // by matching the full line and rewriting only the version literal.
+  const lineRegex = /^(?<name>[A-Za-z0-9_-]+)\s*=\s*\{[^}]*\}\s*$/gm;
+  const changes = [];
+  content = content.replace(lineRegex, (line, _name, _idx, _src, groups) => {
+    const name = groups.name;
+    if (SKIP_WORKSPACE_DEP.has(name)) return line;
+    if (!/path\s*=\s*"crates\//.test(line)) return line;
+    const versionMatch = line.match(/version\s*=\s*"([^"]+)"/);
+    if (!versionMatch) return line;
+    if (versionMatch[1] === version) return line;
+    changes.push({ name, oldVersion: versionMatch[1] });
+    return line.replace(/version\s*=\s*"[^"]+"/, `version = "${version}"`);
+  });
+
+  if (changes.length === 0) {
+    return { path: cargoPath, changed: false, oldVersion: version, label: 'workspace deps' };
+  }
+
+  if (checkOnly) {
+    return {
+      path: cargoPath,
+      changed: true,
+      oldVersion: changes.map((c) => `${c.name}@${c.oldVersion}`).join(', '),
+      newVersion: version,
+      label: 'workspace deps',
+    };
+  }
+
+  if (content !== original) writeFileSync(cargoPath, content);
+  return {
+    path: cargoPath,
+    changed: true,
+    oldVersion: changes.map((c) => `${c.name}@${c.oldVersion}`).join(', '),
+    newVersion: version,
+    label: 'workspace deps',
+  };
+}
+
 // Main
 const version = getVersion();
 console.log(`Version from changelog/entries: ${version}\n`);
@@ -140,6 +194,9 @@ for (const path of getPackageJsonPaths()) {
 
 // Update Cargo.toml
 results.push(updateCargoToml(version));
+
+// Update intra-workspace dep versions in [workspace.dependencies]
+results.push(updateWorkspaceDeps(version));
 
 // Update Tauri desktop config (drives latest.json's version field)
 results.push(updateTauriConf(version));

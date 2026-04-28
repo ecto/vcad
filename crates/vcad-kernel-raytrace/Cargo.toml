@@ -8,11 +8,11 @@ repository.workspace = true
 
 [dependencies]
 vcad-kernel-math = { workspace = true }
-vcad-kernel-topo = { path = "../vcad-kernel-topo" }
-vcad-kernel-geom = { path = "../vcad-kernel-geom" }
-vcad-kernel-primitives = { path = "../vcad-kernel-primitives" }
-vcad-kernel-booleans = { path = "../vcad-kernel-booleans" }
-vcad-kernel-gpu = { path = "../vcad-kernel-gpu", optional = true }
+vcad-kernel-topo = { workspace = true }
+vcad-kernel-geom = { workspace = true }
+vcad-kernel-primitives = { workspace = true }
+vcad-kernel-booleans = { workspace = true }
+vcad-kernel-gpu = { workspace = true, optional = true }
 wgpu = { workspace = true, features = ["webgpu", "wgsl"], optional = true }
 bytemuck = { workspace = true }
 thiserror.workspace = true

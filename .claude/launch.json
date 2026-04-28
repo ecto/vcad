@@ -10,6 +10,12 @@
       ],
       "port": 5173,
       "autoPort": true
+    },
+    {
+      "name": "vcad-docs",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd packages/docs && npx next start -p 3001"],
+      "port": 3001
     }
   ]
 }

@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Canonical document evaluator for vcad IR"
+publish = false
 
 [dependencies]
 vcad-ir.workspace = true

@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Internationalization for vcad — shared translations for TUI, web, and desktop"
+publish = false
 
 [dependencies]
 serde.workspace = true

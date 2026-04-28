@@ -94,18 +94,6 @@ export default function DocsHomePage() {
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="px-8 py-8 lg:px-16 border-t border-border">
-        <div className="max-w-6xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-4 text-sm text-text-muted">
-          <span>mit license</span>
-          <div className="flex gap-6">
-            <a href="https://github.com/ecto/vcad" className="hover:text-text">github</a>
-            <a href="https://vcad.io" className="hover:text-text">vcad.io</a>
-            <a href="https://crates.io/crates/vcad" className="hover:text-text">crates.io</a>
-            <a href="https://www.npmjs.com/search?q=%40vcad" className="hover:text-text">npm</a>
-          </div>
-        </div>
-      </footer>
     </div>
   );
 }

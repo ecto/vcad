@@ -12,7 +12,9 @@
     "tauri:dev": "cd crates/vcad-desktop && tauri dev",
     "tauri:build": "cd crates/vcad-desktop && tauri build",
     "version:sync": "node scripts/sync-version.mjs",
-    "version:check": "node scripts/sync-version.mjs --check"
+    "version:check": "node scripts/sync-version.mjs --check",
+    "publish:crates": "node scripts/publish-crates.mjs",
+    "publish:crates:dry": "node scripts/publish-crates.mjs --dry-run"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.88.0",

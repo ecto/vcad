@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "AI chat contract for vcad — tool schemas, system prompt, Anthropic streaming, token storage"
+publish = false
 
 [features]
 # `native` pulls in the HTTP client + async runtime + token storage
