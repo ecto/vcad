@@ -2,7 +2,7 @@
   "name": "vcad-kernel-wasm",
   "type": "module",
   "description": "WASM bindings for the vcad B-rep kernel",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "license": "MIT",
   "repository": {
     "type": "git",

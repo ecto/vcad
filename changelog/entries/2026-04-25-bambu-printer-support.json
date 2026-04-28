@@ -1,6 +1,6 @@
 {
   "id": "2026-04-25-bambu-printer-support",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "date": "2026-04-25",
   "category": "feat",
   "title": "One-click print to Bambu P1S over LAN",

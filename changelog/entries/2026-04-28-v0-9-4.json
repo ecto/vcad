@@ -1,0 +1,9 @@
+{
+  "id": "2026-04-28-v0-9-4",
+  "version": "0.9.4",
+  "date": "2026-04-28",
+  "category": "feat",
+  "title": "v0.9.4",
+  "summary": "12 new UI languages plus French; one-click LAN print to Bambu P1S/X1/A1; in-app feedback button; Inter typography; full keyboard navigation; ray tracer SSAO + adaptive supersampling; cube-fillet rendering rebuild; STEP export through boolean Difference; Loon export warnings.",
+  "features": ["i18n", "printing", "raytrace", "fillet", "step", "loon", "typography", "keyboard"]
+}
