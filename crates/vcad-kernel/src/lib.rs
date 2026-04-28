@@ -130,6 +130,16 @@ impl Solid {
         }
     }
 
+    /// Create a solid from a raw BRep. Intended for callers that produce
+    /// a `BRepSolid` outside the kernel's primitive constructors — e.g.
+    /// STEP import, custom topology builders, eval grader round-trip.
+    pub fn from_brep(brep: BRepSolid) -> Self {
+        Self {
+            repr: SolidRepr::BRep(Box::new(brep)),
+            segments: 32,
+        }
+    }
+
     /// Create a box (cuboid) with corner at origin and dimensions `(sx, sy, sz)`.
     pub fn cube(sx: f64, sy: f64, sz: f64) -> Self {
         Self {

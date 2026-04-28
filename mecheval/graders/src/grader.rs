@@ -10,6 +10,7 @@ use crate::check::CheckSpec;
 use crate::eval::{evaluate_vcad, EvalSnapshot};
 use crate::task::Task;
 use serde_json::json;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
 use thiserror::Error;
 
@@ -102,10 +103,13 @@ fn run_check(spec: &CheckSpec, snapshot: &EvalSnapshot) -> (CheckOutcome, serde_
             *tolerance_pct,
         ),
 
+        CheckSpec::StepRoundtrip { tolerance_pct } => {
+            check_step_roundtrip(snapshot, *tolerance_pct)
+        }
+
         CheckSpec::HoleCount { .. }
         | CheckSpec::HolePositions { .. }
         | CheckSpec::FilletRadius { .. }
-        | CheckSpec::StepRoundtrip { .. }
         | CheckSpec::DrcClean
         | CheckSpec::ErcClean
         | CheckSpec::Dfm { .. }
@@ -353,6 +357,206 @@ fn check_mass_props(
         if all_pass { CheckOutcome::Pass } else { CheckOutcome::Fail },
         serde_json::Value::Object(details),
     )
+}
+
+/// `step_roundtrip`: write each evaluated solid to STEP, read it back,
+/// and confirm volume + bbox extents agree within `tolerance_pct`.
+///
+/// Catches kernels that emit STEP they can't re-import, or that lose
+/// material on export — both of which would otherwise pass A1/A2 in
+/// vcad's own gym while breaking interop with every other CAD tool.
+fn check_step_roundtrip(
+    snap: &EvalSnapshot,
+    tolerance_pct: f64,
+) -> (CheckOutcome, serde_json::Value) {
+    use vcad_kernel::Solid;
+    use vcad_kernel_step::{read_step_from_buffer, write_step_to_buffer};
+
+    if snap.solids.is_empty() {
+        return (
+            CheckOutcome::Fail,
+            json!({ "reason": "no valid solid to round-trip" }),
+        );
+    }
+
+    let mut details = serde_json::Map::new();
+    let mut per_solid = Vec::new();
+    let mut all_pass = true;
+
+    for (idx, solid) in snap.solids.iter().enumerate() {
+        let brep = match solid.as_brep() {
+            Some(b) => b,
+            None => {
+                all_pass = false;
+                per_solid.push(json!({
+                    "index": idx,
+                    "pass": false,
+                    "reason": "solid is not BRep-backed (mesh-only after a boolean fallback?)",
+                }));
+                continue;
+            }
+        };
+
+        let original_volume = catch_unwind_volume(solid);
+        let original_bbox = catch_unwind_bbox(solid);
+
+        // Export.
+        let buffer = match catch_unwind(AssertUnwindSafe(|| write_step_to_buffer(brep))) {
+            Ok(Ok(b)) => b,
+            Ok(Err(e)) => {
+                all_pass = false;
+                per_solid.push(json!({
+                    "index": idx,
+                    "pass": false,
+                    "stage": "export",
+                    "error": format!("{}", e),
+                }));
+                continue;
+            }
+            Err(_) => {
+                all_pass = false;
+                per_solid.push(json!({
+                    "index": idx,
+                    "pass": false,
+                    "stage": "export",
+                    "error": "panic in write_step_to_buffer",
+                }));
+                continue;
+            }
+        };
+
+        // Re-import.
+        let imported_breps = match catch_unwind(AssertUnwindSafe(|| read_step_from_buffer(&buffer)))
+        {
+            Ok(Ok(b)) => b,
+            Ok(Err(e)) => {
+                all_pass = false;
+                per_solid.push(json!({
+                    "index": idx,
+                    "pass": false,
+                    "stage": "import",
+                    "error": format!("{}", e),
+                }));
+                continue;
+            }
+            Err(_) => {
+                all_pass = false;
+                per_solid.push(json!({
+                    "index": idx,
+                    "pass": false,
+                    "stage": "import",
+                    "error": "panic in read_step_from_buffer",
+                }));
+                continue;
+            }
+        };
+
+        if imported_breps.is_empty() {
+            all_pass = false;
+            per_solid.push(json!({
+                "index": idx,
+                "pass": false,
+                "stage": "import",
+                "error": "round-trip yielded zero solids",
+            }));
+            continue;
+        }
+
+        // Sum mass props across all imported BReps (a single STEP file may
+        // round-trip into multiple solids if the writer split shells).
+        let mut imp_volume = 0.0_f64;
+        let mut imp_bbox: Option<([f64; 3], [f64; 3])> = None;
+        for brep in &imported_breps {
+            let s = Solid::from_brep(brep.clone());
+            if let Some(v) = catch_unwind_volume(&s) {
+                imp_volume += v;
+            }
+            if let Some(bb) = catch_unwind_bbox(&s) {
+                imp_bbox = Some(match imp_bbox {
+                    None => bb,
+                    Some((al, ah)) => (
+                        [al[0].min(bb.0[0]), al[1].min(bb.0[1]), al[2].min(bb.0[2])],
+                        [ah[0].max(bb.1[0]), ah[1].max(bb.1[1]), ah[2].max(bb.1[2])],
+                    ),
+                });
+            }
+        }
+
+        // Compare.
+        let mut entry = serde_json::Map::new();
+        entry.insert("index".into(), json!(idx));
+        let mut this_pass = true;
+
+        if let (Some(orig), imp) = (original_volume, imp_volume) {
+            let dev_pct = if orig > 0.0 {
+                ((imp - orig) / orig).abs() * 100.0
+            } else {
+                f64::INFINITY
+            };
+            let pass = dev_pct <= tolerance_pct;
+            this_pass &= pass;
+            entry.insert(
+                "volume".into(),
+                json!({
+                    "original_mm3": orig,
+                    "roundtripped_mm3": imp,
+                    "deviation_pct": dev_pct,
+                    "pass": pass,
+                }),
+            );
+        }
+
+        if let (Some((omin, omax)), Some((imin, imax))) = (original_bbox, imp_bbox) {
+            let max_abs_dev = (0..3)
+                .flat_map(|i| [(omin[i] - imin[i]).abs(), (omax[i] - imax[i]).abs()])
+                .fold(0.0_f64, |a, d| a.max(d));
+            // Use tolerance_pct of the original bbox diagonal as the absolute
+            // mm tolerance for bbox extent shifts (with a 0.01mm floor).
+            let diag = ((omax[0] - omin[0]).powi(2)
+                + (omax[1] - omin[1]).powi(2)
+                + (omax[2] - omin[2]).powi(2))
+            .sqrt();
+            let bbox_tol_mm = (tolerance_pct / 100.0 * diag).max(0.01);
+            let pass = max_abs_dev <= bbox_tol_mm;
+            this_pass &= pass;
+            entry.insert(
+                "bbox".into(),
+                json!({
+                    "original_min": omin, "original_max": omax,
+                    "roundtripped_min": imin, "roundtripped_max": imax,
+                    "max_abs_deviation_mm": max_abs_dev,
+                    "tolerance_mm": bbox_tol_mm,
+                    "pass": pass,
+                }),
+            );
+        }
+
+        entry.insert("pass".into(), json!(this_pass));
+        all_pass &= this_pass;
+        per_solid.push(serde_json::Value::Object(entry));
+    }
+
+    details.insert("per_solid".into(), serde_json::Value::Array(per_solid));
+    details.insert("tolerance_pct".into(), json!(tolerance_pct));
+
+    (
+        if all_pass { CheckOutcome::Pass } else { CheckOutcome::Fail },
+        serde_json::Value::Object(details),
+    )
+}
+
+fn catch_unwind_volume(s: &vcad_kernel::Solid) -> Option<f64> {
+    catch_unwind(AssertUnwindSafe(|| s.volume()))
+        .ok()
+        .filter(|v| v.is_finite() && *v > 0.0)
+}
+
+fn catch_unwind_bbox(s: &vcad_kernel::Solid) -> Option<([f64; 3], [f64; 3])> {
+    let bb = catch_unwind(AssertUnwindSafe(|| s.bounding_box())).ok()?;
+    if (0..3).any(|i| bb.0[i] > bb.1[i]) {
+        return None;
+    }
+    Some(bb)
 }
 
 /// SHA-256 hex of arbitrary bytes. Tiny pure-Rust implementation so we
@@ -610,6 +814,16 @@ mod tests {
             tolerance_pct: 1.0,
         }]);
         let tmp = write_tmp_vcad("mecheval-mp-combo.vcad", &cube_vcad(10.0));
+        let blob = grade(&task, &task_bytes, &tmp).expect("grade");
+        assert_eq!(blob.checks[0].result, CheckOutcome::Pass, "{:?}", blob.checks[0].details);
+    }
+
+    #[test]
+    fn step_roundtrip_passes_for_a_cube() {
+        let (task, task_bytes) = task_with(vec![CheckSpec::StepRoundtrip {
+            tolerance_pct: 1.0,
+        }]);
+        let tmp = write_tmp_vcad("mecheval-step-cube.vcad", &cube_vcad(20.0));
         let blob = grade(&task, &task_bytes, &tmp).expect("grade");
         assert_eq!(blob.checks[0].result, CheckOutcome::Pass, "{:?}", blob.checks[0].details);
     }

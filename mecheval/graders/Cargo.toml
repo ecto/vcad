@@ -13,6 +13,7 @@ anyhow = { workspace = true }
 vcad-ir = { workspace = true }
 vcad-eval = { workspace = true }
 vcad-kernel = { workspace = true }
+vcad-kernel-step = { workspace = true }
 
 [[bin]]
 name = "mecheval-grade"
