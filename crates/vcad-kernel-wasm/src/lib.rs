@@ -2220,7 +2220,8 @@ pub struct RayTracer {
     /// Last render dimensions.
     last_width: u32,
     last_height: u32,
-    /// Debug render mode: 0=normal, 1=show normals, 2=show face_id, 3=show n_dot_l, 4=orientation.
+    /// Debug render mode: 0=normal, 1=show normals, 2=show face_id, 3=show n_dot_l,
+    /// 4=orientation, 5=sample-count heatmap.
     debug_mode: u32,
     /// Enable edge detection overlay.
     enable_edges: bool,
@@ -2230,6 +2231,8 @@ pub struct RayTracer {
     edge_normal_threshold: f32,
     /// Theme: 0 = dark, 1 = light. Drives the visible background palette.
     theme: u32,
+    /// Additional rays per edge pixel for adaptive refinement (0 = disabled).
+    refine_sample_count: u32,
 }
 
 #[cfg(feature = "raytrace")]
@@ -2263,6 +2266,7 @@ impl RayTracer {
             edge_depth_threshold: 0.1,
             edge_normal_threshold: 30.0,
             theme: 0,
+            refine_sample_count: 0,
         })
     }
 
@@ -2274,6 +2278,24 @@ impl RayTracer {
         self.theme = theme;
         self.frame_index = 0;
         self.accum_buffer = None;
+    }
+
+    /// Set the adaptive refinement sample count.
+    ///
+    /// Edge pixels on silhouettes receive additional stratified rays for sub-pixel
+    /// anti-aliasing. Set to 0 to disable (default), or 4/9/16 for typical quality.
+    /// Mode 5 in setDebugMode shows a heatmap of rays per pixel for tuning.
+    #[wasm_bindgen(js_name = setRefineSamples)]
+    pub fn set_refine_samples(&mut self, count: u32) {
+        self.refine_sample_count = count;
+        self.frame_index = 0;
+        self.accum_buffer = None;
+    }
+
+    /// Get the current refinement sample count.
+    #[wasm_bindgen(js_name = getRefineSamples)]
+    pub fn get_refine_samples(&self) -> u32 {
+        self.refine_sample_count
     }
 
     /// Reset the progressive accumulation (call when camera moves).
@@ -2589,6 +2611,7 @@ impl RayTracer {
                 self.edge_depth_threshold,
                 self.edge_normal_threshold,
                 self.theme,
+                self.refine_sample_count,
             )
             .await
             .map_err(|e| JsError::new(&format!("Render failed: {}", e)))?;
