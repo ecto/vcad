@@ -410,3 +410,62 @@ fn arc_split_full_cylinder_interior_difference() {
         err * 100.0
     );
 }
+
+// ---------------------------------------------------------------------------
+// 7. Coaxial cylinder difference — annular washer.
+// ---------------------------------------------------------------------------
+
+/// Difference of two coaxial Z-axis cylinders. Result must be an annular
+/// washer with both top and bottom annular cap faces present, not an open
+/// tube. Regression for a sample-point bug in classify::face_sample_point:
+/// a multi-vertex inner loop centered at the face center was producing
+/// `concentric_inner_r = 0`, causing the sample radius to land inside the
+/// hole; the annular face was then misclassified as Inside B and dropped.
+///
+/// Tests both the flush case (inner cylinder same height as outer) and
+/// the through-piercing case (inner extends past both ends), since both
+/// hit the same code path.
+#[test]
+fn coaxial_cylinder_difference_produces_annular_caps() {
+    for (label, inner_h, inner_z) in &[("flush", 8.0_f64, 0.0_f64), ("through", 10.0, -1.0)] {
+        let outer = make_cylinder(30.0, 8.0, 32);
+        let mut inner = make_cylinder(20.0, *inner_h, 32);
+        translate(&mut inner, 0.0, 0.0, *inner_z);
+        let result = boolean_op(&outer, &inner, BooleanOp::Difference, 32);
+        let brep = result
+            .as_brep()
+            .unwrap_or_else(|| panic!("[{label}] expected BRep result, got mesh-only"));
+
+        // Topology must include 4 faces: outer wall, inner wall, top cap, bottom cap.
+        let face_count = brep.topology.faces.len();
+        assert_eq!(
+            face_count, 4,
+            "[{label}] expected 4 faces (2 walls + 2 annular caps), got {face_count}",
+        );
+        let planar_count = brep
+            .topology
+            .faces
+            .iter()
+            .filter(|(_, f)| {
+                brep.geometry.surfaces[f.surface_index].surface_type()
+                    == vcad_kernel_geom::SurfaceKind::Plane
+            })
+            .count();
+        assert_eq!(
+            planar_count, 2,
+            "[{label}] expected 2 planar (annular cap) faces, got {planar_count}",
+        );
+
+        // Volume must be close to π·(R² − r²)·h. Tolerate the standard
+        // 32-segment polygon-vs-circle area discrepancy (~0.7%).
+        let mesh = result.to_mesh(32);
+        let vol = mesh_volume(&mesh);
+        let expected = std::f64::consts::PI * (30.0_f64.powi(2) - 20.0_f64.powi(2)) * 8.0;
+        let err = (vol - expected).abs() / expected;
+        assert!(
+            err < 0.02,
+            "[{label}] coaxial annulus: volume error {:.2}% (expected {expected:.2}, got {vol:.2})",
+            err * 100.0
+        );
+    }
+}

@@ -1,0 +1,46 @@
+{
+  "id": "c-reacher-01",
+  "suite": "C",
+  "tier": "C-reacher",
+  "title": "Two-DOF reacher",
+  "prompt": "Design a tabletop manipulator that touches a target at (0.20, 0.00, 0.10) meters in the world frame. The base is fixed at the origin, with its lowest contact in the XY plane (z = 0). Use at least two actuated revolute joints. Each link's mass must be under 0.5 kg, and each joint's torque ceiling is 5 N·m. The end-effector link must be tagged 'tip'. The arm must reach the target without any link colliding with the table (z = 0 plane), the base, or itself. Output a complete .vcad assembly with body, joints, materials, and an initial pose; the grader will solve forward kinematics to find a configuration that reaches the target.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    { "type": "body_valid" },
+    {
+      "type": "fk_reaches",
+      "target": [0.20, 0.00, 0.10],
+      "tolerance_m": 0.005
+    },
+    {
+      "type": "torque_budget",
+      "payload_kg": 0.0,
+      "safety_factor": 1.5
+    },
+    {
+      "type": "task_success",
+      "task": "reach_target",
+      "params": {
+        "target": [0.20, 0.00, 0.10],
+        "tolerance_m": 0.005,
+        "max_steps": 1000,
+        "controller": "stock_pd"
+      }
+    }
+  ],
+  "anti_cheese": {
+    "min_rigid_bodies": 3,
+    "min_actuated_joints": 2,
+    "max_total_mass_kg": 2.0,
+    "joint_torque_ceiling_nm": 5.0,
+    "required_links": ["base", "tip"]
+  },
+  "limits": {
+    "max_tokens": 200000,
+    "max_wallclock_sec": 600,
+    "max_tool_calls": 200
+  },
+  "pass_k": 5,
+  "tags": ["mech", "reacher", "manipulator", "two-dof", "stock-controller"]
+}

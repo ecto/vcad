@@ -1,0 +1,33 @@
+{
+  "name": "@mecheval/harness",
+  "version": "0.0.1",
+  "private": true,
+  "description": "MechEval harness — drives a solver against a task, calls the grader, writes a run blob.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "mecheval-run": "dist/cli.js",
+    "mecheval-leaderboard": "dist/leaderboard-cli.js"
+  },
+  "exports": {
+    ".": "./dist/index.js",
+    "./pass_k": "./dist/pass_k.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.88.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@vcad/mcp": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5.4",
+    "vitest": "^1"
+  }
+}

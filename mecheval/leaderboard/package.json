@@ -1,0 +1,18 @@
+{
+  "name": "@mecheval/leaderboard",
+  "version": "0.0.1",
+  "private": true,
+  "description": "MechEval static leaderboard — generated from mecheval/runs/.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc && node dist/build.js",
+    "dev": "npm run build && node dist/serve.js"
+  },
+  "dependencies": {
+    "@mecheval/harness": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5.4"
+  }
+}

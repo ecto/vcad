@@ -1,0 +1,30 @@
+[package]
+name = "mecheval-grader"
+version = "0.0.1"
+edition = "2021"
+publish = false
+description = "MechEval grader — loads task JSON, dispatches checks against a .vcad file, emits a run blob"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+vcad-ir = { workspace = true }
+vcad-eval = { workspace = true }
+vcad-kernel = { workspace = true }
+vcad-kernel-step = { workspace = true }
+vcad-kernel-geom = { workspace = true }
+vcad-kernel-topo = { workspace = true }
+
+[[bin]]
+name = "mecheval-grade"
+path = "src/bin/grade.rs"
+
+[[bin]]
+name = "mecheval-render"
+path = "src/bin/render.rs"
+
+[[bin]]
+name = "mecheval-inspect-topo"
+path = "src/bin/inspect-topo.rs"

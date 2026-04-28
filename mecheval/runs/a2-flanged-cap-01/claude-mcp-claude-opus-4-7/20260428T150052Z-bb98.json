@@ -1,0 +1,1376 @@
+{
+  "schema_version": 0,
+  "task_id": "a2-flanged-cap-01",
+  "task_sha256": "a438f2e4d00d25d7991ea2fdde326ede44cf4fd92d274e301da0c4d35100ecba",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 10,
+        "solids_produced": 10
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -30.0,
+          -30.0,
+          0.0
+        ],
+        "max": [
+          30.0,
+          30.0,
+          8.0
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          30.0,
+          30.0,
+          8.0
+        ],
+        "actual_min": [
+          -30.0,
+          -30.0,
+          0.0
+        ],
+        "deviation_max": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "deviation_min": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "max_abs_deviation_mm": 0.0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 11623.89,
+        "center_of_mass": [
+          0.0,
+          0.0,
+          4.0
+        ],
+        "tolerance_pct": 0.5
+      },
+      "result": "fail",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            0.2840826218535675,
+            0.29522735986566034,
+            3.9999999999999964
+          ],
+          "bbox_diagonal_mm": 85.22910301065006,
+          "deviation": [
+            0.2840826218535675,
+            0.29522735986566034,
+            -3.552713678800501e-15
+          ],
+          "max_abs_deviation_mm": 0.29522735986566034,
+          "pass": true,
+          "spec": [
+            0.0,
+            0.0,
+            4.0
+          ],
+          "tolerance_mm": 0.4261455150532503
+        },
+        "volume": {
+          "actual_mm3": 34336.8994365048,
+          "deviation_pct": 195.39938382507748,
+          "pass": false,
+          "spec_mm3": 11623.89,
+          "tolerance_pct": 0.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 40.0,
+        "expected": 1,
+        "diameter_tolerance_mm": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "actual": 0,
+        "diameter_mm": 40.0,
+        "diameter_tolerance_mm": 0.1,
+        "expected": 1,
+        "found": []
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 5.0,
+        "expected": 6,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "fail",
+      "details": {
+        "actual": 0,
+        "diameter_mm": 5.0,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 6,
+        "found": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 5.0,
+        "positions": [
+          [
+            25.0,
+            0.0,
+            0.0
+          ],
+          [
+            12.5,
+            21.65,
+            0.0
+          ],
+          [
+            -12.5,
+            21.65,
+            0.0
+          ],
+          [
+            -25.0,
+            0.0,
+            0.0
+          ],
+          [
+            -12.5,
+            -21.65,
+            0.0
+          ],
+          [
+            12.5,
+            -21.65,
+            0.0
+          ]
+        ],
+        "tolerance_mm": 0.15
+      },
+      "result": "fail",
+      "details": {
+        "diameter_mm": 5.0,
+        "per_expected": [
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              25.0,
+              0.0
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              12.5,
+              21.65
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              -12.5,
+              21.65
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              -25.0,
+              0.0
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              -12.5,
+              -21.65
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              12.5,
+              -21.65
+            ]
+          }
+        ],
+        "tolerance_mm": 0.15,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 6,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1.0
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0.0,
+              "original_max": [
+                27.5,
+                2.5,
+                8.0
+              ],
+              "original_min": [
+                22.5,
+                -2.5,
+                0.0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                27.5,
+                2.5,
+                8.0
+              ],
+              "roundtripped_min": [
+                22.5,
+                -2.5,
+                0.0
+              ],
+              "tolerance_mm": 0.10677078252031312
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.0,
+              "original_mm3": 156.07225729533457,
+              "pass": true,
+              "roundtripped_mm3": 156.07225729533457
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0.0,
+              "original_max": [
+                15.0,
+                24.150634765625,
+                8.0
+              ],
+              "original_min": [
+                10.0,
+                19.150634765625,
+                0.0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                15.0,
+                24.150634765625,
+                8.0
+              ],
+              "roundtripped_min": [
+                10.0,
+                19.150634765625,
+                0.0
+              ],
+              "tolerance_mm": 0.10677078252031312
+            },
+            "index": 1,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.0,
+              "original_mm3": 156.07228427822702,
+              "pass": true,
+              "roundtripped_mm3": 156.07228427822702
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0.0,
+              "original_max": [
+                -10.0,
+                24.150634765625,
+                8.0
+              ],
+              "original_min": [
+                -15.0,
+                19.150634765625,
+                0.0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                -10.0,
+                24.150634765625,
+                8.0
+              ],
+              "roundtripped_min": [
+                -15.0,
+                19.150634765625,
+                0.0
+              ],
+              "tolerance_mm": 0.10677078252031312
+            },
+            "index": 2,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.0,
+              "original_mm3": 156.07228427822702,
+              "pass": true,
+              "roundtripped_mm3": 156.07228427822702
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0.0,
+              "original_max": [
+                -22.5,
+                2.5,
+                8.0
+              ],
+              "original_min": [
+                -27.5,
+                -2.5,
+                0.0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                -22.5,
+                2.5,
+                8.0
+              ],
+              "roundtripped_min": [
+                -27.5,
+                -2.5,
+                0.0
+              ],
+              "tolerance_mm": 0.10677078252031312
+            },
+            "index": 3,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.0,
+              "original_mm3": 156.07225729533457,
+              "pass": true,
+              "roundtripped_mm3": 156.07225729533457
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0.0,
+              "original_max": [
+                -10.0,
+                -19.150634765625,
+                8.0
+              ],
+              "original_min": [
+                -15.0,
+                -24.150634765625,
+                0.0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                -10.0,
+                -19.150634765625,
+                8.0
+              ],
+              "roundtripped_min": [
+                -15.0,
+                -24.150634765625,
+                0.0
+              ],
+              "tolerance_mm": 0.10677078252031312
+            },
+            "index": 4,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.0,
+              "original_mm3": 156.07228427822702,
+              "pass": true,
+              "roundtripped_mm3": 156.07228427822702
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0.0,
+              "original_max": [
+                15.0,
+                -19.150634765625,
+                8.0
+              ],
+              "original_min": [
+                10.0,
+                -24.150634765625,
+                0.0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                15.0,
+                -19.150634765625,
+                8.0
+              ],
+              "roundtripped_min": [
+                10.0,
+                -24.150634765625,
+                0.0
+              ],
+              "tolerance_mm": 0.10677078252031312
+            },
+            "index": 5,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.0,
+              "original_mm3": 156.07228427822702,
+              "pass": true,
+              "roundtripped_mm3": 156.07228427822702
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0.0,
+              "original_max": [
+                20.0,
+                20.0,
+                8.0
+              ],
+              "original_min": [
+                -20.0,
+                -20.0,
+                0.0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                20.0,
+                20.0,
+                8.0
+              ],
+              "roundtripped_min": [
+                -20.0,
+                -20.0,
+                0.0
+              ],
+              "tolerance_mm": 0.5713142742834281
+            },
+            "index": 6,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.4815275502572024,
+              "original_mm3": 10036.955204669326,
+              "pass": true,
+              "roundtripped_mm3": 9988.62450015187
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0.0,
+              "original_max": [
+                30.0,
+                30.0,
+                8.0
+              ],
+              "original_min": [
+                -30.0,
+                -30.0,
+                0.0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                30.0,
+                30.0,
+                8.0
+              ],
+              "roundtripped_min": [
+                -30.0,
+                -30.0,
+                0.0
+              ],
+              "tolerance_mm": 0.8522910301065006
+            },
+            "index": 7,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.48152593655443887,
+              "original_mm3": 22583.14921270654,
+              "pass": true,
+              "roundtripped_mm3": 22474.405491956568
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0.0,
+              "original_max": [
+                27.5,
+                24.150634765625,
+                8.0
+              ],
+              "original_min": [
+                10.0,
+                -2.5,
+                0.0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                27.5,
+                24.150634765625,
+                8.0
+              ],
+              "roundtripped_min": [
+                10.0,
+                -2.5,
+                0.0
+              ],
+              "tolerance_mm": 0.3287105616512405
+            },
+            "index": 8,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.0,
+              "original_mm3": 312.1445415735616,
+              "pass": true,
+              "roundtripped_mm3": 312.1445415735616
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0.0,
+              "original_max": [
+                27.5,
+                24.150634765625,
+                8.0
+              ],
+              "original_min": [
+                -15.0,
+                -2.5,
+                0.0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                27.5,
+                24.150634765625,
+                8.0
+              ],
+              "roundtripped_min": [
+                -15.0,
+                -2.5,
+                0.0
+              ],
+              "tolerance_mm": 0.5079868436692765
+            },
+            "index": 9,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.0,
+              "original_mm3": 468.2168258517886,
+              "pass": true,
+              "roundtripped_mm3": 468.2168258517886
+            }
+          }
+        ],
+        "tolerance_pct": 1.0
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 3,
+    "checks_total": 7,
+    "score": 0.42857142857142855,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T150052Z-bb98",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a2-flanged-cap-01",
+    "rendered": "Make a circular flanged cap. Outer cylinder: outside diameter 60mm, height 8mm, axis along Z, base on the XY plane (z = 0 to z = 8). Concentric central through-hole of diameter 40mm, axis along Z. Six bolt holes of diameter 5mm on a 50mm bolt circle (radius 25mm from the axis), evenly spaced starting at 0 degrees, all parallel to Z and going fully through. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.3009169999999983
+      },
+      {
+        "n": 1,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "type": "difference",
+          "name": "Flanged Cap",
+          "params": "{\"a\": {\"type\": \"cylinder\", \"params\": {\"radius\": 30, \"height\": 8, \"center\": false}}, \"b\": {\"type\": \"union\", \"params\": {\"a\": {\"type\": \"cylinder\", \"params\": {\"radius\": 20, \"height\": 8, \"center\": false}}, \"b\": {\"type\": \"union\", \"params\": {\"a\": {\"type\": \"translate\", \"params\": {\"x\": 25, \"y\": 0, \"z\": 0, \"child\": {\"type\": \"cylinder\", \"params\": {\"radius\": 2.5, \"height\": 8, \"center\": false}}}}, \"b\": {\"type\": \"union\", \"params\": {\"a\": {\"type\": \"translate\", \"params\": {\"x\": 12.5, \"y\": 21.650635094610966, \"z\": 0, \"child\": {\"type\": \"cylinder\", \"params\": {\"radius\": 2.5, \"height\": 8, \"center\": false}}}}, \"b\": {\"type\": \"union\", \"params\": {\"a\": {\"type\": \"translate\", \"params\": {\"x\": -12.5, \"y\": 21.650635094610966, \"z\": 0, \"child\": {\"type\": \"cylinder\", \"params\": {\"radius\": 2.5, \"height\": 8, \"center\": false}}}}, \"b\": {\"type\": \"union\", \"params\": {\"a\": {\"type\": \"translate\", \"params\": {\"x\": -25, \"y\": 0, \"z\": 0, \"child\": {\"type\": \"cylinder\", \"params\": {\"radius\": 2.5, \"height\": 8, \"center\": false}}}}, \"b\": {\"type\": \"union\", \"params\": {\"a\": {\"type\": \"translate\", \"params\": {\"x\": -12.5, \"y\": -21.650635094610966, \"z\": 0, \"child\": {\"type\": \"cylinder\", \"params\": {\"radius\": 2.5, \"height\": 8, \"center\": false}}}}, \"b\": {\"type\": \"translate\", \"params\": {\"x\": 12.5, \"y\": -21.650635094610966, \"z\": 0, \"child\": {\"type\": \"cylinder\", \"params\": {\"radius\": 2.5, \"height\": 8, \"center\": false}}}}}}}}}}}}}}}}}}"
+        },
+        "result_kind": "err",
+        "wallclock_ms": 8.765459000000192
+      },
+      {
+        "n": 2,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "type": "cylinder",
+          "name": "Outer",
+          "params": {
+            "radius": 30,
+            "height": 8
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 11.682667000000947
+      },
+      {
+        "n": 3,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "type": "cylinder",
+          "name": "Outer",
+          "params": {
+            "radius": 30,
+            "height": 8,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.09495799999786
+      },
+      {
+        "n": 4,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "type": "cylinder",
+          "name": "CenterHole",
+          "params": {
+            "radius": 20,
+            "height": 8,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.201499999999214
+      },
+      {
+        "n": 5,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "type": "cylinder",
+          "name": "Bolt0",
+          "params": {
+            "radius": 2.5,
+            "height": 8,
+            "segments": 32
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.6134579999998095
+      },
+      {
+        "n": 6,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "type": "cylinder",
+          "name": "Bolt1",
+          "params": {
+            "radius": 2.5,
+            "height": 8,
+            "segments": 32
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.11162499999773
+      },
+      {
+        "n": 7,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "type": "cylinder",
+          "name": "Bolt2",
+          "params": {
+            "radius": 2.5,
+            "height": 8,
+            "segments": 32
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.0444580000003043
+      },
+      {
+        "n": 8,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "type": "cylinder",
+          "name": "Bolt3",
+          "params": {
+            "radius": 2.5,
+            "height": 8,
+            "segments": 32
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9761250000010477
+      },
+      {
+        "n": 9,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "type": "cylinder",
+          "name": "Bolt4",
+          "params": {
+            "radius": 2.5,
+            "height": 8,
+            "segments": 32
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.8425409999981639
+      },
+      {
+        "n": 10,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "type": "cylinder",
+          "name": "Bolt5",
+          "params": {
+            "radius": 2.5,
+            "height": 8,
+            "segments": 32
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9360000000015134
+      },
+      {
+        "n": 11,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.629166999999143
+      },
+      {
+        "n": 12,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.5593750000043656
+      },
+      {
+        "n": 13,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9669580000045244
+      },
+      {
+        "n": 14,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "part_id": "4"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.5883340000000317
+      },
+      {
+        "n": 15,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "part_id": "5"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.7750840000007884
+      },
+      {
+        "n": 16,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "part_id": "6"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.565667000002577
+      },
+      {
+        "n": 17,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "part_id": "7"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.5490830000053393
+      },
+      {
+        "n": 18,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "part_id": "8"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.4750830000048154
+      },
+      {
+        "n": 19,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "type": "cylinder",
+          "name": "Flange Body",
+          "params": {
+            "radius": 30,
+            "height": 8,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.3448330000028363
+      },
+      {
+        "n": 20,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "type": "cylinder",
+          "name": "Center Hole",
+          "parent_part_id": "1",
+          "params": {
+            "radius": 20,
+            "height": 8,
+            "segments": 64,
+            "operation": "difference"
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.9041660000002594
+      },
+      {
+        "n": 21,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1777388452449_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.468082999999751
+      },
+      {
+        "n": 22,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.5163749999992433
+      },
+      {
+        "n": 23,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.2486250000001746
+      },
+      {
+        "n": 24,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1777388452449_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.0815830000065034
+      },
+      {
+        "n": 25,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.0447500000009313
+      },
+      {
+        "n": 26,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[root [pipe [cylinder 30 8] [difference [cylinder 20 8]]] \"steel\"]",
+          "format": "json"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 46.671375000005355
+      },
+      {
+        "n": 27,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1777388452449_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.6423329999961425
+      },
+      {
+        "n": 28,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "type": "difference",
+          "name": "Center Hole",
+          "parent_part_id": "1",
+          "params": {
+            "tool": {
+              "type": "cylinder",
+              "radius": 20,
+              "height": 8,
+              "segments": 64
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.2397909999999683
+      },
+      {
+        "n": 29,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "type": "difference",
+          "name": "Center Hole",
+          "parent_part_id": "1",
+          "params": {
+            "left": 1,
+            "right": {
+              "type": "cylinder",
+              "radius": 20,
+              "height": 8,
+              "segments": 64
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 2.6908340000081807
+      },
+      {
+        "n": 30,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "type": "cylinder",
+          "name": "CenterHole",
+          "parent_part_id": "1",
+          "params": {
+            "radius": 20,
+            "height": 8,
+            "segments": 64,
+            "operation": "difference"
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.5796660000050906
+      },
+      {
+        "n": 31,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1777388452449_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.5986249999987194
+      },
+      {
+        "n": 32,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.712291999996523
+      },
+      {
+        "n": 33,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "type": "cylinder",
+          "name": "CenterHole",
+          "parent_part_id": "1",
+          "params": {
+            "radius": 20,
+            "height": 8,
+            "segments": 64,
+            "op": "subtract"
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.463707999995677
+      },
+      {
+        "n": 34,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1777388452449_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7932499999878928
+      },
+      {
+        "n": 35,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.129957999990438
+      },
+      {
+        "n": 36,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.1550410000054399
+      },
+      {
+        "n": 37,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "type": "cylinder",
+          "name": "BoltCyl",
+          "params": {
+            "radius": 2.5,
+            "height": 8,
+            "segments": 32
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.1405830000003334
+      },
+      {
+        "n": 38,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "type": "translate",
+          "name": "Bolt0Pos",
+          "params": {
+            "x": 25,
+            "y": 0,
+            "z": 0,
+            "child": 1
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 2.8809170000022277
+      },
+      {
+        "n": 39,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "type": "translate",
+          "name": "Bolt0Pos",
+          "params": {
+            "offset": [
+              25,
+              0,
+              0
+            ],
+            "child": 1
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.235167000006186
+      },
+      {
+        "n": 40,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1777388452449_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.8785420000058366
+      },
+      {
+        "n": 41,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.376749999995809
+      },
+      {
+        "n": 42,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1777388452449_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9249159999890253
+      },
+      {
+        "n": 43,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "type": "translate",
+          "name": "Bolt1Pos",
+          "params": {
+            "offset": {
+              "x": 12.5,
+              "y": 21.650635094610966,
+              "z": 0
+            },
+            "child": 1
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.126542000012705
+      },
+      {
+        "n": 44,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "type": "translate",
+          "name": "Bolt2Pos",
+          "params": {
+            "offset": {
+              "x": -12.5,
+              "y": 21.650635094610966,
+              "z": 0
+            },
+            "child": 1
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.065792000008514
+      },
+      {
+        "n": 45,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "type": "translate",
+          "name": "Bolt3Pos",
+          "params": {
+            "offset": {
+              "x": -25,
+              "y": 0,
+              "z": 0
+            },
+            "child": 1
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.1291670000064187
+      },
+      {
+        "n": 46,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "type": "translate",
+          "name": "Bolt4Pos",
+          "params": {
+            "offset": {
+              "x": -12.5,
+              "y": -21.650635094610966,
+              "z": 0
+            },
+            "child": 1
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.7406670000054874
+      },
+      {
+        "n": 47,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "type": "translate",
+          "name": "Bolt5Pos",
+          "params": {
+            "offset": {
+              "x": 12.5,
+              "y": -21.650635094610966,
+              "z": 0
+            },
+            "child": 1
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.6913340000028256
+      },
+      {
+        "n": 48,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "type": "cylinder",
+          "name": "CenterHole",
+          "params": {
+            "radius": 20,
+            "height": 8,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.918874999973923
+      },
+      {
+        "n": 49,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "type": "cylinder",
+          "name": "OuterBody",
+          "params": {
+            "radius": 30,
+            "height": 8,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.8466670000052545
+      },
+      {
+        "n": 50,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "type": "union",
+          "name": "U1",
+          "params": {
+            "left": 2,
+            "right": 3
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.553083000006154
+      },
+      {
+        "n": 51,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388452449_1",
+          "type": "union",
+          "name": "U2",
+          "params": {
+            "left": 10,
+            "right": 4
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.8197499999951106
+      },
+      {
+        "n": 52,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1777388452449_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.7733749999897555
+      }
+    ],
+    "tokens": {
+      "input": 601256,
+      "output": 8698,
+      "total": 609954
+    },
+    "wallclock_sec": 157.74533974999997
+  },
+  "output": {
+    "vcad_path": "20260428T150052Z-bb98.vcad",
+    "vcad_sha256": "8f7a9cd8e22937c97b26801ec62bd5761b89ae214defe8e56ab255dd771a28ee",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T15:00:52.265Z",
+    "ended_at": "2026-04-28T15:03:30.468Z"
+  },
+  "signature": null
+}

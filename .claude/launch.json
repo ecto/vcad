@@ -16,6 +16,12 @@
       "runtimeExecutable": "bash",
       "runtimeArgs": ["-c", "cd packages/docs && npx next start -p 3001"],
       "port": 3001
+    },
+    {
+      "name": "mecheval-leaderboard",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["mecheval/leaderboard/dist/serve.js"],
+      "port": 5174
     }
   ]
 }

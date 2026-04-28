@@ -52,6 +52,7 @@ members = [
     "crates/vcad-desktop",
     "crates/vcad-tool-derive",
     "crates/vcad-i18n",
+    "mecheval/graders",
 ]
 
 # vcad-desktop pulls in tauri/gtk/atk which requires system dev libraries
@@ -109,6 +110,7 @@ default-members = [
     "crates/vcad-embroidery-dst",
     "crates/vcad-tool-derive",
     "crates/vcad-i18n",
+    "mecheval/graders",
 ]
 
 [workspace.package]

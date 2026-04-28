@@ -1,0 +1,84 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "plate_raw",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 30,
+          "z": 10
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "plate",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -25,
+          "y": -15,
+          "z": -5
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "hole1_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 12,
+        "segments": 32
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "hole1",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 20,
+          "y": 10,
+          "z": -6
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "plate_h1",
+      "op": {
+        "type": "Difference",
+        "left": 2,
+        "right": 4
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "hole2_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 12,
+        "segments": 32
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 5,
+      "material": "default"
+    },
+    {
+      "root": 6,
+      "material": "default"
+    }
+  ]
+}
