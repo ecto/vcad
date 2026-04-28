@@ -619,50 +619,89 @@ export function App() {
     [processFile],
   );
 
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-    const items = e.dataTransfer?.items;
-    const hasImage = items
-      ? Array.from(items).some((it) => it.kind === "file" && it.type.startsWith("image/"))
-      : false;
-    setIsDraggingImage(hasImage);
-  }, []);
-
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    setIsDraggingImage(false);
-  }, []);
-
-  const handleDrop = useCallback(
-    async (e: React.DragEvent) => {
-      e.preventDefault();
-      setIsDragging(false);
-      setIsDraggingImage(false);
-      const file = e.dataTransfer.files[0];
-      if (file) await processFile(file);
-    },
-    [processFile],
-  );
-
-  // Window-level reset: any drop or drag cancel anywhere on the page always
-  // clears the overlay, even when a child handler called stopPropagation
-  // (e.g. ChatSidebar swallows image drops so App doesn't try to parse them
-  // as .vcad files — synthetic React propagation stops, but the native window
-  // event still fires).
+  // Drag/drop is wired at the document level using native listeners (not
+  // React events) to dodge two failure modes we've hit:
+  //   1. React's event delegation can miss events through the `display:
+  //      contents` wrapper and the r3f canvas.
+  //   2. Safari requires dragover to set `dropEffect` for drop to fire at
+  //      all when the source is another tab; without it the cursor shows
+  //      "no drop" and the overlay never resets.
+  // dragenter/dragleave fire as the cursor crosses every child, so we track
+  // depth and only hide the overlay when the counter returns to zero.
   useEffect(() => {
-    const reset = () => {
+    let depth = 0;
+
+    const isFileDrag = (e: DragEvent) =>
+      Array.from(e.dataTransfer?.types ?? []).includes("Files");
+
+    const close = () => {
+      depth = 0;
       setIsDragging(false);
       setIsDraggingImage(false);
     };
-    window.addEventListener("drop", reset);
-    window.addEventListener("dragend", reset);
-    return () => {
-      window.removeEventListener("drop", reset);
-      window.removeEventListener("dragend", reset);
+
+    const onDragEnter = (e: DragEvent) => {
+      if (!isFileDrag(e)) return;
+      e.preventDefault();
+      depth += 1;
+      setIsDragging(true);
+      const items = e.dataTransfer?.items;
+      const hasImage = items
+        ? Array.from(items).some((it) => it.kind === "file" && it.type.startsWith("image/"))
+        : false;
+      setIsDraggingImage(hasImage);
     };
-  }, []);
+
+    const onDragOver = (e: DragEvent) => {
+      if (!isFileDrag(e)) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    };
+
+    const onDragLeave = (e: DragEvent) => {
+      if (!isFileDrag(e)) return;
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) {
+        setIsDragging(false);
+        setIsDraggingImage(false);
+      }
+    };
+
+    const onDrop = (e: DragEvent) => {
+      // Always clear, even if the drop target was the chat sidebar (which
+      // calls stopPropagation on its own React handler — native listeners
+      // still see it because React delegation runs on synthetic events,
+      // not the native bubble path).
+      close();
+      // Don't preventDefault unconditionally — the chat sidebar's own
+      // handler may want to consume the file. Only handle drops that
+      // weren't already consumed by an inner handler that called
+      // preventDefault.
+      if (e.defaultPrevented) return;
+      if (!isFileDrag(e)) return;
+      e.preventDefault();
+      const file = e.dataTransfer?.files[0];
+      if (file) void processFile(file);
+    };
+
+    // NB: there's a `const document = useDocumentStore(...)` further down
+    // in this component that shadows the global `document` binding inside
+    // closures. Use `window` for drag events — they bubble all the way up.
+    window.addEventListener("dragenter", onDragEnter);
+    window.addEventListener("dragover", onDragOver);
+    window.addEventListener("dragleave", onDragLeave);
+    window.addEventListener("drop", onDrop);
+    window.addEventListener("dragend", close);
+    window.addEventListener("blur", close);
+    return () => {
+      window.removeEventListener("dragenter", onDragEnter);
+      window.removeEventListener("dragover", onDragOver);
+      window.removeEventListener("dragleave", onDragLeave);
+      window.removeEventListener("drop", onDrop);
+      window.removeEventListener("dragend", close);
+      window.removeEventListener("blur", close);
+    };
+  }, [processFile]);
 
   const handleOpenDocuments = useCallback(() => {
     setDocumentPickerOpen(true);
@@ -935,12 +974,7 @@ export function App() {
         <Suspense fallback={null}>
           <TermsGate />
         </Suspense>
-        <div
-          className="contents"
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-        >
+        <div className="contents">
           {isMobile ? (
             <MobileShell
               onAboutOpen={() => setAboutOpen(true)}

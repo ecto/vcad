@@ -139,6 +139,40 @@ function encodeCanvasAsJpeg(canvas: HTMLCanvasElement): EncodedCanvas {
   };
 }
 
+/** Decode an arbitrary image data URL, downscale to MAX_IMAGE_DIM on the long
+ * edge, and re-encode as JPEG at 0.85 quality. Used to keep user-attached
+ * photos under Anthropic's image size limits — large source PNGs blow past
+ * 5MB and the API rejects with "Could not process image". Returns the
+ * original data URL unchanged if decoding fails (better partial than total
+ * failure). */
+export async function downscaleImageDataUrl(dataUrl: string): Promise<string> {
+  if (!dataUrl.startsWith("data:image/")) return dataUrl;
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = reject;
+      el.src = dataUrl;
+    });
+    const longest = Math.max(img.width, img.height);
+    if (longest <= MAX_IMAGE_DIM && dataUrl.startsWith("data:image/jpeg")) {
+      return dataUrl;
+    }
+    const scale = Math.min(1, MAX_IMAGE_DIM / longest);
+    const w = Math.max(1, Math.round(img.width * scale));
+    const h = Math.max(1, Math.round(img.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return dataUrl;
+    ctx.drawImage(img, 0, 0, w, h);
+    return canvas.toDataURL("image/jpeg", 0.85);
+  } catch {
+    return dataUrl;
+  }
+}
+
 /** Capture the current viewport as a JPEG File, without touching the camera.
  * Used by the chat-input attach-viewport button so the user can aim the camera
  * themselves before grabbing the shot. Returns null if the viewport canvas
