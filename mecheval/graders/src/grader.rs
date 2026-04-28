@@ -7,6 +7,7 @@
 
 use crate::blob::{CheckOutcome, CheckRecord, RunBlob, Summary, SCHEMA_VERSION};
 use crate::check::CheckSpec;
+use crate::eval::{evaluate_vcad, EvalSnapshot};
 use crate::task::Task;
 use serde_json::json;
 use std::path::Path;
@@ -37,15 +38,16 @@ pub fn grade(
     task_json_bytes: &[u8],
     candidate_vcad: &Path,
 ) -> Result<RunBlob, GraderError> {
-    // Read + sanity-check the candidate. We don't yet open it through
-    // vcad-kernel — that's the wiring step. For now we just confirm it
-    // parses as JSON.
+    // Read + sanity-check the candidate.
     let candidate_raw = std::fs::read_to_string(candidate_vcad)?;
     let _candidate_value: serde_json::Value = serde_json::from_str(&candidate_raw)?;
 
+    // Evaluate once up front; every check shares the snapshot.
+    let snapshot = evaluate_vcad(&candidate_raw);
+
     let mut records: Vec<CheckRecord> = Vec::with_capacity(task.checks.len());
     for (n, spec) in task.checks.iter().enumerate() {
-        let (outcome, details) = run_check(spec, &candidate_raw);
+        let (outcome, details) = run_check(spec, &snapshot);
         records.push(CheckRecord {
             n,
             r#type: spec.kind().to_string(),
@@ -74,14 +76,14 @@ pub fn grade(
     })
 }
 
-/// Dispatch one check. v0.0: every kernel-dependent variant returns
-/// `NotImplemented`. As individual checks land they replace their arm here.
-fn run_check(spec: &CheckSpec, _candidate_vcad_raw: &str) -> (CheckOutcome, serde_json::Value) {
+/// Dispatch one check against the prebuilt evaluation snapshot. Checks
+/// that haven't been wired yet return [`CheckOutcome::NotImplemented`].
+fn run_check(spec: &CheckSpec, snapshot: &EvalSnapshot) -> (CheckOutcome, serde_json::Value) {
     let stub_reason = "skeleton — kernel wiring pending";
     match spec {
-        // Suite A / B checks
-        CheckSpec::ValidSolid
-        | CheckSpec::Bbox { .. }
+        CheckSpec::ValidSolid => check_valid_solid(snapshot),
+
+        CheckSpec::Bbox { .. }
         | CheckSpec::MassProps { .. }
         | CheckSpec::HoleCount { .. }
         | CheckSpec::HolePositions { .. }
@@ -94,7 +96,7 @@ fn run_check(spec: &CheckSpec, _candidate_vcad_raw: &str) -> (CheckOutcome, serd
             CheckOutcome::NotImplemented,
             json!({ "reason": stub_reason }),
         ),
-        // Suite C checks
+
         CheckSpec::BodyValid
         | CheckSpec::FkReaches { .. }
         | CheckSpec::TorqueBudget { .. }
@@ -104,6 +106,51 @@ fn run_check(spec: &CheckSpec, _candidate_vcad_raw: &str) -> (CheckOutcome, serd
             json!({ "reason": stub_reason, "needs": "vcad-gym (phyz + tang)" }),
         ),
     }
+}
+
+/// `valid_solid`: candidate evaluates cleanly, has at least one root, and
+/// at least one root produces a non-empty solid with positive volume.
+fn check_valid_solid(snap: &EvalSnapshot) -> (CheckOutcome, serde_json::Value) {
+    if let Some(fatal) = &snap.fatal {
+        return (
+            CheckOutcome::Fail,
+            json!({ "reason": "fatal evaluation error", "error": fatal }),
+        );
+    }
+    if !snap.root_failures.is_empty() {
+        // A partially-failed eval is still a fail, but distinguishable from
+        // a clean-but-empty doc.
+        return (
+            CheckOutcome::Fail,
+            json!({
+                "reason": "one or more roots failed to evaluate",
+                "root_failures": snap.root_failures,
+                "solids_produced": snap.solids.len(),
+            }),
+        );
+    }
+    if snap.solids.is_empty() {
+        return (
+            CheckOutcome::Fail,
+            json!({ "reason": "no solids produced", "root_count": snap.root_count }),
+        );
+    }
+    if !snap.has_any_valid_solid() {
+        return (
+            CheckOutcome::Fail,
+            json!({
+                "reason": "evaluated but every solid is empty or zero-volume",
+                "solids_produced": snap.solids.len(),
+            }),
+        );
+    }
+    (
+        CheckOutcome::Pass,
+        json!({
+            "solids_produced": snap.solids.len(),
+            "root_count": snap.root_count,
+        }),
+    )
 }
 
 /// SHA-256 hex of arbitrary bytes. Tiny pure-Rust implementation so we
@@ -217,8 +264,16 @@ mod tests {
         );
     }
 
-    #[test]
-    fn skeleton_run_returns_not_implemented_for_every_check() {
+    /// A 25mm cube .vcad as a JSON string — used by valid_solid + bbox +
+    /// mass_props tests below.
+    fn cube_vcad(size: f64) -> String {
+        format!(
+            r#"{{"version":"0.1","nodes":{{"1":{{"id":1,"name":"cube","op":{{"type":"Cube","size":{{"x":{s},"y":{s},"z":{s}}}}}}}}},"materials":{{}},"part_materials":{{}},"roots":[{{"root":1,"material":"default"}}]}}"#,
+            s = size
+        )
+    }
+
+    fn task_with(checks: Vec<CheckSpec>) -> (Task, Vec<u8>) {
         let task = Task {
             id: "test-1".into(),
             suite: crate::task::Suite::A,
@@ -226,30 +281,61 @@ mod tests {
             title: "t".into(),
             prompt: "p".into(),
             inputs: vec![],
-            checks: vec![
-                CheckSpec::ValidSolid,
-                CheckSpec::Bbox {
-                    min: [0.0; 3],
-                    max: [1.0; 3],
-                    tolerance_mm: 0.1,
-                },
-            ],
+            checks,
             anti_cheese: Default::default(),
             limits: Default::default(),
             pass_k: 5,
             tags: vec![],
         };
-        let task_bytes = serde_json::to_vec(&task).unwrap();
-        let tmp = std::env::temp_dir().join("mecheval-skeleton-test.vcad");
-        std::fs::write(&tmp, "{}").unwrap();
+        let bytes = serde_json::to_vec(&task).unwrap();
+        (task, bytes)
+    }
+
+    fn write_tmp_vcad(name: &str, contents: &str) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(name);
+        std::fs::write(&p, contents).unwrap();
+        p
+    }
+
+    #[test]
+    fn unwired_checks_still_return_not_implemented() {
+        let (task, task_bytes) = task_with(vec![CheckSpec::Bbox {
+            min: [0.0; 3],
+            max: [1.0; 3],
+            tolerance_mm: 0.1,
+        }]);
+        let tmp = write_tmp_vcad("mecheval-unwired.vcad", &cube_vcad(10.0));
         let blob = grade(&task, &task_bytes, &tmp).expect("grade");
-        assert_eq!(blob.checks.len(), 2);
-        assert!(blob
-            .checks
-            .iter()
-            .all(|r| r.result == CheckOutcome::NotImplemented));
+        assert_eq!(blob.checks.len(), 1);
+        assert_eq!(blob.checks[0].result, CheckOutcome::NotImplemented);
+    }
+
+    #[test]
+    fn valid_solid_passes_for_a_real_cube() {
+        let (task, task_bytes) = task_with(vec![CheckSpec::ValidSolid]);
+        let tmp = write_tmp_vcad("mecheval-valid-cube.vcad", &cube_vcad(10.0));
+        let blob = grade(&task, &task_bytes, &tmp).expect("grade");
+        assert_eq!(blob.checks[0].result, CheckOutcome::Pass);
+        assert!(blob.summary.passed);
+    }
+
+    #[test]
+    fn valid_solid_fails_for_empty_doc() {
+        let (task, task_bytes) = task_with(vec![CheckSpec::ValidSolid]);
+        let tmp = write_tmp_vcad(
+            "mecheval-empty-doc.vcad",
+            r#"{"version":"0.1","nodes":{},"materials":{},"part_materials":{},"roots":[]}"#,
+        );
+        let blob = grade(&task, &task_bytes, &tmp).expect("grade");
+        assert_eq!(blob.checks[0].result, CheckOutcome::Fail);
         assert!(!blob.summary.passed);
-        assert_eq!(blob.summary.score, 0.0);
+    }
+
+    #[test]
+    fn task_sha256_has_64_hex_chars() {
+        let (task, task_bytes) = task_with(vec![CheckSpec::ValidSolid]);
+        let tmp = write_tmp_vcad("mecheval-hash-len.vcad", &cube_vcad(5.0));
+        let blob = grade(&task, &task_bytes, &tmp).expect("grade");
         assert_eq!(blob.task_sha256.len(), 64);
     }
 }

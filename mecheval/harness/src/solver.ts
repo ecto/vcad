@@ -59,7 +59,7 @@ export const defaultCubeSolver: Solver = {
       },
       materials: {},
       part_materials: {},
-      roots: [{ root: 1, material: null }],
+      roots: [{ root: 1, material: "default" }],
     };
     const wallclockSec = (performance.now() - start) / 1000;
     return {

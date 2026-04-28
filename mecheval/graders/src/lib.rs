@@ -15,6 +15,7 @@
 
 pub mod blob;
 pub mod check;
+pub mod eval;
 pub mod grader;
 pub mod task;
 

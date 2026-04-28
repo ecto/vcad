@@ -10,6 +10,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
+vcad-ir = { workspace = true }
+vcad-eval = { workspace = true }
+vcad-kernel = { workspace = true }
 
 [[bin]]
 name = "mecheval-grade"
