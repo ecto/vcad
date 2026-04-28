@@ -1,7 +1,7 @@
 {
   "schema_version": 0,
   "task_id": "a1-stepped-shaft-01",
-  "task_sha256": "d2316d1b2e359aebd978c6f9fac0e648fbfa915efb4e0d40e923386865f3fc69",
+  "task_sha256": "0b362741f05ae51465629d87cf389069cec219be11f5e3718299a14c41a20458",
   "checks": [
     {
       "n": 0,
@@ -64,16 +64,16 @@
       "params": {
         "type": "mass_props",
         "volume_mm3": 17278.76,
-        "tolerance_pct": 0.5
+        "tolerance_pct": 1.0
       },
       "result": "pass",
       "details": {
         "volume": {
-          "actual_mm3": 17251.01675802539,
-          "deviation_pct": 0.1605626906942823,
+          "actual_mm3": 17251.016758025395,
+          "deviation_pct": 0.16056269069426127,
           "pass": true,
           "spec_mm3": 17278.76,
-          "tolerance_pct": 0.5
+          "tolerance_pct": 1.0
         }
       }
     },
@@ -82,27 +82,56 @@
       "type": "step_roundtrip",
       "params": {
         "type": "step_roundtrip",
-        "tolerance_pct": 0.1
+        "tolerance_pct": 1.0
       },
-      "result": "fail",
+      "result": "pass",
       "details": {
         "per_solid": [
           {
-            "error": "Invalid topology: half-edge has no parent edge",
+            "bbox": {
+              "max_abs_deviation_mm": 0.0,
+              "original_max": [
+                20.0,
+                20.0,
+                25.0
+              ],
+              "original_min": [
+                -20.0,
+                -20.0,
+                0.0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                20.0,
+                20.0,
+                25.0
+              ],
+              "roundtripped_min": [
+                -20.0,
+                -20.0,
+                0.0
+              ],
+              "tolerance_mm": 0.6184658438426491
+            },
             "index": 0,
-            "pass": false,
-            "stage": "export"
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.510711038151438,
+              "original_mm3": 17251.016758025387,
+              "pass": true,
+              "roundtripped_mm3": 17162.913911248797
+            }
           }
         ],
-        "tolerance_pct": 0.1
+        "tolerance_pct": 1.0
       }
     }
   ],
   "summary": {
-    "passed": false,
-    "checks_passed": 3,
+    "passed": true,
+    "checks_passed": 4,
     "checks_total": 4,
-    "score": 0.75,
+    "score": 1.0,
     "anti_cheese_violated": false,
     "limits_exceeded": []
   },

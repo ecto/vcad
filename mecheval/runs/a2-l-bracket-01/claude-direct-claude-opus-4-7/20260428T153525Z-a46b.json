@@ -166,14 +166,43 @@
         "type": "step_roundtrip",
         "tolerance_pct": 0.1
       },
-      "result": "fail",
+      "result": "pass",
       "details": {
         "per_solid": [
           {
-            "error": "Invalid topology: half-edge has no parent edge",
+            "bbox": {
+              "max_abs_deviation_mm": 0.0,
+              "original_max": [
+                50.0,
+                30.0,
+                30.0
+              ],
+              "original_min": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                50.0,
+                30.0,
+                30.0
+              ],
+              "roundtripped_min": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "tolerance_mm": 0.06557438524302
+            },
             "index": 0,
-            "pass": false,
-            "stage": "export"
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.0,
+              "original_mm3": 8963.927721672726,
+              "pass": true,
+              "roundtripped_mm3": 8963.927721672726
+            }
           }
         ],
         "tolerance_pct": 0.1
@@ -181,10 +210,10 @@
     }
   ],
   "summary": {
-    "passed": false,
-    "checks_passed": 5,
+    "passed": true,
+    "checks_passed": 6,
     "checks_total": 6,
-    "score": 0.8333333333333334,
+    "score": 1.0,
     "anti_cheese_violated": false,
     "limits_exceeded": []
   },

@@ -86,24 +86,13 @@
         "expected": 2,
         "diameter_tolerance_mm": 0.05
       },
-      "result": "pass",
+      "result": "fail",
       "details": {
-        "actual": 2,
+        "actual": 0,
         "diameter_mm": 5.0,
         "diameter_tolerance_mm": 0.05,
         "expected": 2,
-        "found": [
-          [
-            0.0,
-            0.0,
-            5.0
-          ],
-          [
-            10.0,
-            15.0,
-            5.0
-          ]
-        ]
+        "found": []
       }
     },
     {
@@ -131,34 +120,24 @@
         "diameter_mm": 5.0,
         "per_expected": [
           {
-            "distance_mm": 0.0,
-            "matched_hole": [
-              10.0,
-              15.0
-            ],
-            "pass": true,
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
               10.0,
               15.0
             ]
           },
           {
-            "nearest_distance_mm": 38.07886552931954,
             "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
               35.0,
               15.0
-            ],
-            "tolerance_mm": 0.1
+            ]
           }
         ],
         "tolerance_mm": 0.1,
-        "unmatched_extras": [
-          [
-            0.0,
-            0.0
-          ]
-        ]
+        "unmatched_extras": []
       }
     },
     {
@@ -172,10 +151,39 @@
       "details": {
         "per_solid": [
           {
-            "error": "Invalid topology: half-edge has no parent edge",
+            "bbox": {
+              "max_abs_deviation_mm": 0.0,
+              "original_max": [
+                50.0,
+                30.0,
+                30.0
+              ],
+              "original_min": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                50.0,
+                30.0,
+                30.0
+              ],
+              "roundtripped_min": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "tolerance_mm": 0.06557438524302
+            },
             "index": 0,
-            "pass": false,
-            "stage": "export"
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.0,
+              "original_mm3": 9120.0,
+              "pass": true,
+              "roundtripped_mm3": 9120.0
+            }
           },
           {
             "bbox": {
@@ -289,9 +297,9 @@
   ],
   "summary": {
     "passed": false,
-    "checks_passed": 2,
+    "checks_passed": 1,
     "checks_total": 6,
-    "score": 0.3333333333333333,
+    "score": 0.16666666666666666,
     "anti_cheese_violated": false,
     "limits_exceeded": []
   },

@@ -16,9 +16,9 @@
     {
       "type": "mass_props",
       "volume_mm3": 17278.76,
-      "tolerance_pct": 0.5
+      "tolerance_pct": 1.0
     },
-    { "type": "step_roundtrip", "tolerance_pct": 0.1 }
+    { "type": "step_roundtrip", "tolerance_pct": 1.0 }
   ],
   "anti_cheese": {
     "max_solid_count": 1

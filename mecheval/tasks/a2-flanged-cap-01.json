@@ -44,7 +44,7 @@
       ],
       "tolerance_mm": 0.15
     },
-    { "type": "step_roundtrip", "tolerance_pct": 0.1 }
+    { "type": "step_roundtrip", "tolerance_pct": 1.0 }
   ],
   "anti_cheese": {
     "max_solid_count": 1

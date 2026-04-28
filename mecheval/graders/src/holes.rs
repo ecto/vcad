@@ -17,6 +17,7 @@
 
 use crate::eval::EvalSnapshot;
 use vcad_kernel_geom::{CylinderSurface, SurfaceKind};
+use vcad_kernel_topo::Orientation;
 
 /// One detected hole, in kernel-space mm.
 #[derive(Debug, Clone, Copy)]
@@ -38,10 +39,24 @@ const MERGE_TOL_MM: f64 = 0.1;
 /// outputs without admitting genuinely off-axis cylinders.
 const Z_AXIS_COS_TOL: f64 = 0.99;
 
-/// Find every cylindrical face whose axis is approximately Z-parallel and
-/// whose radius matches `target_diameter_mm / 2` within
+/// Find every Z-axis-parallel cylindrical *hole* (concave / inward-facing
+/// cylindrical face) whose radius matches `target_diameter_mm / 2` within
 /// `diameter_tol_mm / 2`. Cluster co-axial faces into one entry per
 /// physical hole.
+///
+/// Distinguishes holes from protrusions via face orientation:
+/// - Solid primitives create cylindrical lateral faces with
+///   `Orientation::Forward` — the face normal points *outward* from the
+///   axis, so this is the OUTSIDE of a solid cylinder body or a
+///   protrusion sticking up.
+/// - Boolean `Difference(body, cylinder)` keeps the cylinder's lateral
+///   face but reverses its orientation — the face normal then points
+///   *inward* toward the axis, which is the wall of a void/hole.
+///
+/// We only count `Orientation::Reversed` cylindrical faces, so a model
+/// that mistakenly leaves a tower of cylinders sticking up out of a
+/// plate (a real Claude failure mode on the flanged-cap task) doesn't
+/// get credit for "drilling" holes that are actually protrusions.
 pub fn find_z_holes(
     snap: &EvalSnapshot,
     target_diameter_mm: f64,
@@ -53,10 +68,11 @@ pub fn find_z_holes(
 
     for solid in &snap.solids {
         let Some(brep) = solid.as_brep() else { continue };
-        // Walk faces (not bare surfaces) to avoid counting unused entries
-        // and to honour topology — a surface is only "real" if at least
-        // one face references it.
         for (_face_id, face) in &brep.topology.faces {
+            // Only count concave (inward-facing) cylindrical faces.
+            if face.orientation != Orientation::Reversed {
+                continue;
+            }
             let Some(surface) = brep.geometry.surfaces.get(face.surface_index) else {
                 continue;
             };
@@ -66,12 +82,11 @@ pub fn find_z_holes(
             let Some(cyl) = surface.as_any().downcast_ref::<CylinderSurface>() else {
                 continue;
             };
-            // Z-aligned check (sign-invariant — cylinders have no preferred axis direction).
+            // Z-aligned (sign-invariant — cylinders have no preferred axis direction).
             let axis = cyl.axis.as_ref();
             if axis.z.abs() < Z_AXIS_COS_TOL {
                 continue;
             }
-            // Radius match.
             if (cyl.radius - target_radius).abs() > radius_tol {
                 continue;
             }
@@ -80,7 +95,6 @@ pub fn find_z_holes(
                 y: cyl.center.y,
                 radius: cyl.radius,
             };
-            // De-dupe against existing holes from this or earlier solids.
             if !holes.iter().any(|h| same_hole(h, &cand)) {
                 holes.push(cand);
             }
@@ -140,6 +154,67 @@ mod tests {
             .collect();
         got.sort();
         assert_eq!(got, vec![(-20, -10), (-20, 10), (20, -10), (20, 10)]);
+    }
+
+    /// A cylinder unioned on top of a plate is a protrusion, not a hole.
+    /// The orientation filter must reject it. Reproduces a real Claude
+    /// failure mode on the flanged-cap task — bolt cylinders sticking up
+    /// instead of holes drilled down.
+    #[test]
+    fn ignores_protrusions_with_matching_diameter() {
+        let vcad = r#"{
+            "version": "0.1",
+            "nodes": {
+                "1": {"id": 1, "name": "plate",
+                      "op": {"type": "Cube", "size": {"x": 60, "y": 60, "z": 4}}},
+                "2": {"id": 2, "name": "plate_t",
+                      "op": {"type": "Translate", "child": 1,
+                             "offset": {"x": -30, "y": -30, "z": 0}}},
+                "3": {"id": 3, "name": "stub",
+                      "op": {"type": "Cylinder", "radius": 1.5, "height": 8, "segments": 32}},
+                "4": {"id": 4, "name": "stub_t",
+                      "op": {"type": "Translate", "child": 3,
+                             "offset": {"x": 0, "y": 0, "z": 4}}},
+                "5": {"id": 5, "name": "out",
+                      "op": {"type": "Union", "left": 2, "right": 4}}
+            },
+            "materials": {}, "part_materials": {},
+            "roots": [{"root": 5, "material": "default"}]
+        }"#;
+        let snap = evaluate_vcad(vcad);
+        assert!(snap.fatal.is_none(), "fatal: {:?}", snap.fatal);
+        let holes = find_z_holes(&snap, 3.0, 0.1);
+        assert!(holes.is_empty(), "protrusion was misdetected as hole: {:?}", holes);
+    }
+
+    /// A cylinder DIFFERENCED out of a plate is a real hole. Same
+    /// geometry as the protrusion test, just the boolean flipped.
+    #[test]
+    fn finds_a_real_drilled_hole() {
+        let vcad = r#"{
+            "version": "0.1",
+            "nodes": {
+                "1": {"id": 1, "name": "plate",
+                      "op": {"type": "Cube", "size": {"x": 60, "y": 60, "z": 8}}},
+                "2": {"id": 2, "name": "plate_t",
+                      "op": {"type": "Translate", "child": 1,
+                             "offset": {"x": -30, "y": -30, "z": 0}}},
+                "3": {"id": 3, "name": "drill",
+                      "op": {"type": "Cylinder", "radius": 1.5, "height": 12, "segments": 32}},
+                "4": {"id": 4, "name": "drill_t",
+                      "op": {"type": "Translate", "child": 3,
+                             "offset": {"x": 0, "y": 0, "z": -2}}},
+                "5": {"id": 5, "name": "out",
+                      "op": {"type": "Difference", "left": 2, "right": 4}}
+            },
+            "materials": {}, "part_materials": {},
+            "roots": [{"root": 5, "material": "default"}]
+        }"#;
+        let snap = evaluate_vcad(vcad);
+        assert!(snap.fatal.is_none(), "fatal: {:?}", snap.fatal);
+        let holes = find_z_holes(&snap, 3.0, 0.1);
+        assert_eq!(holes.len(), 1, "expected 1 drilled hole, got {:?}", holes);
+        assert!(holes[0].x.abs() < 0.1 && holes[0].y.abs() < 0.1);
     }
 
     #[test]

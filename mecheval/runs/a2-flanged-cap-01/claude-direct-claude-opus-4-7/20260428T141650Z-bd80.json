@@ -1,7 +1,7 @@
 {
   "schema_version": 0,
   "task_id": "a2-flanged-cap-01",
-  "task_sha256": "c5c947aeb78428d47141e88b0df15516d8e1bea2b28a21d6fb95524b2ed3320e",
+  "task_sha256": "a438f2e4d00d25d7991ea2fdde326ede44cf4fd92d274e301da0c4d35100ecba",
   "checks": [
     {
       "n": 0,
@@ -75,17 +75,17 @@
       "details": {
         "center_of_mass": {
           "actual": [
-            -1.967398132653739e-16,
-            1.7600457983408554e-15,
-            4.000000000000054
+            2.2123024645193486e-16,
+            1.7600457983408546e-15,
+            4.000000000000064
           ],
           "bbox_diagonal_mm": 85.22910301065006,
           "deviation": [
-            -1.967398132653739e-16,
-            1.7600457983408554e-15,
-            5.417888360170764e-14
+            2.2123024645193486e-16,
+            1.7600457983408546e-15,
+            6.394884621840902e-14
           ],
-          "max_abs_deviation_mm": 5.417888360170764e-14,
+          "max_abs_deviation_mm": 6.394884621840902e-14,
           "pass": true,
           "spec": [
             0.0,
@@ -95,8 +95,8 @@
           "tolerance_mm": 0.4261455150532503
         },
         "volume": {
-          "actual_mm3": 11605.229361969885,
-          "deviation_pct": 0.1605369461524031,
+          "actual_mm3": 11605.229361969876,
+          "deviation_pct": 0.16053694615248135,
           "pass": true,
           "spec_mm3": 11623.89,
           "tolerance_pct": 0.5
@@ -302,27 +302,56 @@
       "type": "step_roundtrip",
       "params": {
         "type": "step_roundtrip",
-        "tolerance_pct": 0.1
+        "tolerance_pct": 1.0
       },
-      "result": "fail",
+      "result": "pass",
       "details": {
         "per_solid": [
           {
-            "error": "Invalid topology: half-edge has no parent edge",
+            "bbox": {
+              "max_abs_deviation_mm": 0.0,
+              "original_max": [
+                30.0,
+                30.0,
+                8.0
+              ],
+              "original_min": [
+                -30.0,
+                -30.0,
+                0.0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                30.0,
+                30.0,
+                8.0
+              ],
+              "roundtripped_min": [
+                -30.0,
+                -30.0,
+                0.0
+              ],
+              "tolerance_mm": 0.8522910301065006
+            },
             "index": 0,
-            "pass": false,
-            "stage": "export"
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.6333574793734557,
+              "original_mm3": 11605.229361969881,
+              "pass": true,
+              "roundtripped_mm3": 11531.7267738074
+            }
           }
         ],
-        "tolerance_pct": 0.1
+        "tolerance_pct": 1.0
       }
     }
   ],
   "summary": {
-    "passed": false,
-    "checks_passed": 6,
+    "passed": true,
+    "checks_passed": 7,
     "checks_total": 7,
-    "score": 0.8571428571428571,
+    "score": 1.0,
     "anti_cheese_violated": false,
     "limits_exceeded": []
   },

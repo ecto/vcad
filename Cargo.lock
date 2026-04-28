@@ -3088,6 +3088,7 @@ dependencies = [
  "vcad-kernel",
  "vcad-kernel-geom",
  "vcad-kernel-step",
+ "vcad-kernel-topo",
 ]
 
 [[package]]
@@ -7053,6 +7054,7 @@ version = "0.9.3"
 dependencies = [
  "stepperoni",
  "thiserror 2.0.18",
+ "vcad-kernel-booleans",
  "vcad-kernel-geom",
  "vcad-kernel-math",
  "vcad-kernel-nurbs",

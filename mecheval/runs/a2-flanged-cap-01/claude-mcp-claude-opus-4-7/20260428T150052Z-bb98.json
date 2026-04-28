@@ -1,7 +1,7 @@
 {
   "schema_version": 0,
   "task_id": "a2-flanged-cap-01",
-  "task_sha256": "c5c947aeb78428d47141e88b0df15516d8e1bea2b28a21d6fb95524b2ed3320e",
+  "task_sha256": "a438f2e4d00d25d7991ea2fdde326ede44cf4fd92d274e301da0c4d35100ecba",
   "checks": [
     {
       "n": 0,
@@ -112,19 +112,13 @@
         "expected": 1,
         "diameter_tolerance_mm": 0.1
       },
-      "result": "pass",
+      "result": "fail",
       "details": {
-        "actual": 1,
+        "actual": 0,
         "diameter_mm": 40.0,
         "diameter_tolerance_mm": 0.1,
         "expected": 1,
-        "found": [
-          [
-            0.0,
-            0.0,
-            40.0
-          ]
-        ]
+        "found": []
       }
     },
     {
@@ -136,44 +130,13 @@
         "expected": 6,
         "diameter_tolerance_mm": 0.05
       },
-      "result": "pass",
+      "result": "fail",
       "details": {
-        "actual": 6,
+        "actual": 0,
         "diameter_mm": 5.0,
         "diameter_tolerance_mm": 0.05,
         "expected": 6,
-        "found": [
-          [
-            25.0,
-            0.0,
-            5.0
-          ],
-          [
-            12.5,
-            21.65063509461097,
-            5.0
-          ],
-          [
-            -12.5,
-            21.65063509461097,
-            5.0
-          ],
-          [
-            -25.0,
-            0.0,
-            5.0
-          ],
-          [
-            -12.5,
-            -21.65063509461097,
-            5.0
-          ],
-          [
-            12.5,
-            -21.65063509461097,
-            5.0
-          ]
-        ]
+        "found": []
       }
     },
     {
@@ -216,77 +179,53 @@
         ],
         "tolerance_mm": 0.15
       },
-      "result": "pass",
+      "result": "fail",
       "details": {
         "diameter_mm": 5.0,
         "per_expected": [
           {
-            "distance_mm": 0.0,
-            "matched_hole": [
-              25.0,
-              0.0
-            ],
-            "pass": true,
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
               25.0,
               0.0
             ]
           },
           {
-            "distance_mm": 0.0006350946109705546,
-            "matched_hole": [
-              12.5,
-              21.65063509461097
-            ],
-            "pass": true,
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
               12.5,
               21.65
             ]
           },
           {
-            "distance_mm": 0.0006350946109705546,
-            "matched_hole": [
-              -12.5,
-              21.65063509461097
-            ],
-            "pass": true,
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
               -12.5,
               21.65
             ]
           },
           {
-            "distance_mm": 0.0,
-            "matched_hole": [
-              -25.0,
-              0.0
-            ],
-            "pass": true,
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
               -25.0,
               0.0
             ]
           },
           {
-            "distance_mm": 0.0006350946109705546,
-            "matched_hole": [
-              -12.5,
-              -21.65063509461097
-            ],
-            "pass": true,
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
               -12.5,
               -21.65
             ]
           },
           {
-            "distance_mm": 0.0006350946109705546,
-            "matched_hole": [
-              12.5,
-              -21.65063509461097
-            ],
-            "pass": true,
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
               12.5,
               -21.65
@@ -302,9 +241,9 @@
       "type": "step_roundtrip",
       "params": {
         "type": "step_roundtrip",
-        "tolerance_pct": 0.1
+        "tolerance_pct": 1.0
       },
-      "result": "fail",
+      "result": "pass",
       "details": {
         "per_solid": [
           {
@@ -331,7 +270,7 @@
                 -2.5,
                 0.0
               ],
-              "tolerance_mm": 0.010677078252031312
+              "tolerance_mm": 0.10677078252031312
             },
             "index": 0,
             "pass": true,
@@ -366,7 +305,7 @@
                 19.150634765625,
                 0.0
               ],
-              "tolerance_mm": 0.010677078252031312
+              "tolerance_mm": 0.10677078252031312
             },
             "index": 1,
             "pass": true,
@@ -401,7 +340,7 @@
                 19.150634765625,
                 0.0
               ],
-              "tolerance_mm": 0.010677078252031312
+              "tolerance_mm": 0.10677078252031312
             },
             "index": 2,
             "pass": true,
@@ -436,7 +375,7 @@
                 -2.5,
                 0.0
               ],
-              "tolerance_mm": 0.010677078252031312
+              "tolerance_mm": 0.10677078252031312
             },
             "index": 3,
             "pass": true,
@@ -471,7 +410,7 @@
                 -24.150634765625,
                 0.0
               ],
-              "tolerance_mm": 0.010677078252031312
+              "tolerance_mm": 0.10677078252031312
             },
             "index": 4,
             "pass": true,
@@ -506,7 +445,7 @@
                 -24.150634765625,
                 0.0
               ],
-              "tolerance_mm": 0.010677078252031312
+              "tolerance_mm": 0.10677078252031312
             },
             "index": 5,
             "pass": true,
@@ -541,14 +480,14 @@
                 -20.0,
                 0.0
               ],
-              "tolerance_mm": 0.057131427428342804
+              "tolerance_mm": 0.5713142742834281
             },
             "index": 6,
-            "pass": false,
+            "pass": true,
             "volume": {
               "deviation_pct": 0.4815275502572024,
               "original_mm3": 10036.955204669326,
-              "pass": false,
+              "pass": true,
               "roundtripped_mm3": 9988.62450015187
             }
           },
@@ -576,14 +515,14 @@
                 -30.0,
                 0.0
               ],
-              "tolerance_mm": 0.08522910301065006
+              "tolerance_mm": 0.8522910301065006
             },
             "index": 7,
-            "pass": false,
+            "pass": true,
             "volume": {
               "deviation_pct": 0.48152593655443887,
               "original_mm3": 22583.14921270654,
-              "pass": false,
+              "pass": true,
               "roundtripped_mm3": 22474.405491956568
             }
           },
@@ -611,7 +550,7 @@
                 -2.5,
                 0.0
               ],
-              "tolerance_mm": 0.032871056165124056
+              "tolerance_mm": 0.3287105616512405
             },
             "index": 8,
             "pass": true,
@@ -646,7 +585,7 @@
                 -2.5,
                 0.0
               ],
-              "tolerance_mm": 0.05079868436692765
+              "tolerance_mm": 0.5079868436692765
             },
             "index": 9,
             "pass": true,
@@ -658,15 +597,15 @@
             }
           }
         ],
-        "tolerance_pct": 0.1
+        "tolerance_pct": 1.0
       }
     }
   ],
   "summary": {
     "passed": false,
-    "checks_passed": 5,
+    "checks_passed": 3,
     "checks_total": 7,
-    "score": 0.7142857142857143,
+    "score": 0.42857142857142855,
     "anti_cheese_violated": false,
     "limits_exceeded": []
   },
