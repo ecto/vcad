@@ -28,6 +28,11 @@
       "dependsOn": ["vcad-kernel-wasm#build", "^build"],
       "outputs": ["dist/**", "*.js", "*.d.ts"],
       "inputs": ["src/**", "package.json", "tsconfig.json"]
+    },
+    "@mecheval/leaderboard#dev": {
+      "cache": false,
+      "persistent": true,
+      "dependsOn": ["@mecheval/harness#build"]
     }
   }
 }

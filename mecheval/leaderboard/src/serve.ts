@@ -3,10 +3,14 @@
 
 import { readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
-import { extname, join, resolve } from "node:path";
+import { dirname, extname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const PORT = parseInt(process.env.PORT ?? "5174", 10);
-const ROOT = resolve(process.cwd(), "mecheval/leaderboard/dist");
+// Anchor to the compiled script (mecheval/leaderboard/dist/serve.js) so the
+// server works regardless of cwd — matters because turbo runs `dev` from the
+// workspace package directory, not the repo root.
+const ROOT = dirname(fileURLToPath(import.meta.url));
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
