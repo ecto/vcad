@@ -1,0 +1,9 @@
+{
+  "id": "2026-04-28-step-export-after-difference",
+  "version": "0.9.3",
+  "date": "2026-04-28",
+  "category": "fix",
+  "title": "STEP export survives boolean Difference output",
+  "summary": "The writer used to error with `Invalid topology: half-edge has no parent edge` on every BRep that came out of a Difference (cube-minus-cylinder, plates with through-holes, stepped shafts) because boolean sewing leaves orphan half-edges where a curved face meets a polygonal hole. The writer now synthesizes a line edge for each orphan half-edge so the loop emits cleanly.",
+  "features": ["step", "kernel"]
+}

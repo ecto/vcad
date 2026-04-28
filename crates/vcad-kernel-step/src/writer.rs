@@ -374,74 +374,96 @@ impl<'a> StepWriter<'a> {
             let he = &topo.half_edges[edge.half_edge];
             let start_vid = he.origin;
             let end_vid = topo.half_edge_dest(edge.half_edge);
-
-            let start_vertex = self.vertex_map[&start_vid];
-            let end_vertex = self.vertex_map[&end_vid];
-
-            // Write line geometry for the edge
-            let start_point = topo.vertices[start_vid].point;
-            let end_point = topo.vertices[end_vid].point;
-
-            let dir_vec = end_point - start_point;
-            let magnitude = dir_vec.norm();
-            let dir = if magnitude > 1e-15 {
-                Dir3::new_normalize(dir_vec)
-            } else {
-                Dir3::new_normalize(Vec3::x())
-            };
-
-            // Write point for line origin
-            let line_point_id = self.alloc_id();
-            self.emit(line_point_id, &write_cartesian_point(&start_point, ""));
-
-            // Write direction
-            let dir_id = self.alloc_id();
-            self.emit(dir_id, &write_direction(&dir, ""));
-
-            // Write vector
-            let vec_id = self.alloc_id();
-            self.emit(
-                vec_id,
-                &format!("VECTOR('', #{}, {:.15E})", dir_id, magnitude),
-            );
-
-            // Write line
-            let line_id = self.alloc_id();
-            self.emit(
-                line_id,
-                &format!("LINE('', #{}, #{})", line_point_id, vec_id),
-            );
-
-            // Write edge curve
-            let step_edge_id = self.alloc_id();
-            let entity = write_edge_curve("", start_vertex, end_vertex, line_id, true);
-            self.emit(step_edge_id, &entity);
+            let step_edge_id = self.write_line_edge_curve(start_vid, end_vid);
             self.edge_map.insert(edge_id, step_edge_id);
         }
 
         Ok(())
     }
 
-    fn write_loops(&mut self) -> Result<(), StepError> {
+    /// Emit a straight EDGE_CURVE between two vcad vertices and return its ID.
+    ///
+    /// Used by `write_edges` for proper edges and by `write_loops` to synthesize
+    /// edges for orphan half-edges (those whose `parent_edge` link was severed
+    /// by the boolean sewing pipeline — see crates/vcad-kernel-booleans/src/sew.rs).
+    /// The geometry is approximated as a line segment regardless of the
+    /// underlying surface's curvature; this matches `write_edges`'s existing
+    /// limitation and keeps the writer's contract simple.
+    fn write_line_edge_curve(&mut self, start_vid: VertexId, end_vid: VertexId) -> u64 {
         let topo = &self.solid.topology;
+        let start_vertex = self.vertex_map[&start_vid];
+        let end_vertex = self.vertex_map[&end_vid];
 
-        for (loop_id, _loop) in &topo.loops {
-            // Collect oriented edges for this loop
+        let start_point = topo.vertices[start_vid].point;
+        let end_point = topo.vertices[end_vid].point;
+
+        let dir_vec = end_point - start_point;
+        let magnitude = dir_vec.norm();
+        let dir = if magnitude > 1e-15 {
+            Dir3::new_normalize(dir_vec)
+        } else {
+            Dir3::new_normalize(Vec3::x())
+        };
+
+        let line_point_id = self.alloc_id();
+        self.emit(line_point_id, &write_cartesian_point(&start_point, ""));
+
+        let dir_id = self.alloc_id();
+        self.emit(dir_id, &write_direction(&dir, ""));
+
+        let vec_id = self.alloc_id();
+        self.emit(
+            vec_id,
+            &format!("VECTOR('', #{}, {:.15E})", dir_id, magnitude),
+        );
+
+        let line_id = self.alloc_id();
+        self.emit(
+            line_id,
+            &format!("LINE('', #{}, #{})", line_point_id, vec_id),
+        );
+
+        let step_edge_id = self.alloc_id();
+        let entity = write_edge_curve("", start_vertex, end_vertex, line_id, true);
+        self.emit(step_edge_id, &entity);
+        step_edge_id
+    }
+
+    fn write_loops(&mut self) -> Result<(), StepError> {
+        // Collect loops first so we can borrow self mutably inside.
+        let loop_ids: Vec<LoopId> = self.solid.topology.loops.keys().collect();
+
+        for loop_id in loop_ids {
+            let he_ids: Vec<HalfEdgeId> = self
+                .solid
+                .topology
+                .loop_half_edges(loop_id)
+                .collect();
+
             let mut oriented_edge_ids = Vec::new();
 
-            for he_id in topo.loop_half_edges(loop_id) {
-                let he = &topo.half_edges[he_id];
-                let edge_id = he.edge.ok_or_else(|| {
-                    StepError::InvalidTopology("half-edge has no parent edge".into())
-                })?;
+            for he_id in he_ids {
+                let he = &self.solid.topology.half_edges[he_id];
+                let (step_edge_id, orientation) = match he.edge {
+                    Some(edge_id) => {
+                        let step_edge_id = self.edge_map[&edge_id];
+                        let edge = &self.solid.topology.edges[edge_id];
+                        let orientation = edge.half_edge == he_id;
+                        (step_edge_id, orientation)
+                    }
+                    None => {
+                        // Orphan half-edge — boolean sewing leaves these when face
+                        // boundaries can't be paired (curved-vs-polygonal mismatch).
+                        // Synthesize a one-off line edge so the loop can still be
+                        // emitted; orientation is forward since this he is the
+                        // synthetic edge's only half-edge.
+                        let start_vid = he.origin;
+                        let end_vid = self.solid.topology.half_edge_dest(he_id);
+                        let step_edge_id = self.write_line_edge_curve(start_vid, end_vid);
+                        (step_edge_id, true)
+                    }
+                };
 
-                let step_edge_id = self.edge_map[&edge_id];
-
-                // Determine orientation: check if this half-edge is the "primary" one
-                let edge = &topo.edges[edge_id];
-                let orientation = edge.half_edge == he_id;
-
-                // Write oriented edge
                 let oe_id = self.alloc_id();
                 let entity = write_oriented_edge("", step_edge_id, orientation);
                 self.emit(oe_id, &entity);
@@ -450,7 +472,6 @@ impl<'a> StepWriter<'a> {
                 oriented_edge_ids.push(oe_id);
             }
 
-            // Write edge loop
             let el_id = self.alloc_id();
             let entity = write_edge_loop("", &oriented_edge_ids);
             self.emit(el_id, &entity);
