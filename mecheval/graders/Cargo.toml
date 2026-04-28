@@ -22,9 +22,5 @@ name = "mecheval-grade"
 path = "src/bin/grade.rs"
 
 [[bin]]
-name = "mecheval-render"
-path = "src/bin/render.rs"
-
-[[bin]]
 name = "mecheval-inspect-topo"
 path = "src/bin/inspect-topo.rs"

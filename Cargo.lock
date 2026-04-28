@@ -7192,6 +7192,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-render"
+version = "0.9.3"
+dependencies = [
+ "vcad-eval",
+ "vcad-ir",
+ "vcad-kernel",
+]
+
+[[package]]
 name = "vcad-sim"
 version = "0.9.3"
 dependencies = [
