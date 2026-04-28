@@ -10,7 +10,8 @@
     "mecheval-leaderboard": "dist/leaderboard-cli.js"
   },
   "exports": {
-    ".": "./dist/index.js"
+    ".": "./dist/index.js",
+    "./pass_k": "./dist/pass_k.js"
   },
   "files": [
     "dist"
