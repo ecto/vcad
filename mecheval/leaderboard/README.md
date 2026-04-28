@@ -10,7 +10,7 @@ From the monorepo root:
 
 ```bash
 # 1. Build the Rust render binary (once, or after touching it).
-cargo build -p mecheval-grader
+cargo build -p vcad-render
 
 # 2. Build the harness (provides the pass_k aggregation library).
 npm run build -w @mecheval/harness
@@ -28,7 +28,7 @@ npm run dev -w @mecheval/leaderboard
 ## Render cache
 
 The leaderboard inlines isometric SVGs for OPERATOR (the hero mech) and
-every committed run artifact. Renders are produced by `mecheval-render`
+every committed run artifact. Renders are produced by [`vcad-render`](../../crates/vcad-render)
 (Rust) and cached at `mecheval/leaderboard/cache/`.
 
 - **Cache hit** → SVG read straight from disk, no Rust required.

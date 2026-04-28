@@ -106,6 +106,7 @@ vcad/
 │   ├── vcad-kernel-wasm/          # WASM bindings for browser
 │   ├── vcad-ir/                   # Intermediate representation
 │   ├── vcad-cli/                  # CLI tool
+│   ├── vcad-render/               # Standalone .vcad → isometric SVG renderer
 │   └── vcad/                      # Legacy CSG library (manifold-based)
 │
 │   # Work-in-progress crates (built but not yet wired to any consumer):
@@ -223,6 +224,12 @@ Rapier3D-based physics via `vcad-kernel-physics`:
 vcad export input.vcad output.stl   # Export to STL/GLB/STEP
 vcad import-step input.step out.vcad
 vcad info input.vcad                # Show document info
+```
+
+**Static SVG renderer:** [`vcad-render`](crates/vcad-render) projects a `.vcad` to a drafting-style isometric SVG. Used by the mecheval leaderboard, but standalone — handy for docs, marketing, and README diagrams.
+```bash
+cargo build -p vcad-render
+target/debug/vcad-render path/to/part.vcad > out.svg
 ```
 
 **MCP Server** (for AI agents):

@@ -3631,6 +3631,44 @@ mod slicer_wasm {
         Ok(SliceResult { inner: result })
     }
 
+    /// Slice a mesh and report progress to a JS callback.
+    ///
+    /// The callback is invoked synchronously during the WASM call as
+    /// `cb(stageLabel: string, current: number, total: number)`. Inside a
+    /// dedicated worker, the callback can safely `postMessage` to the main
+    /// thread — the worker thread is the one running the WASM, not the
+    /// main thread.
+    #[wasm_bindgen(js_name = sliceMeshWithProgress)]
+    pub fn slice_mesh_with_progress(
+        vertices: &[f32],
+        indices: &[u32],
+        settings: &SlicerSettings,
+        progress_cb: &js_sys::Function,
+    ) -> Result<SliceResult, JsError> {
+        let mesh = TriangleMesh {
+            vertices: vertices.to_vec(),
+            indices: indices.to_vec(),
+            normals: Vec::new(),
+            face_kinds: Vec::new(),
+        };
+
+        let slice_settings: SliceSettings = settings.clone().into();
+
+        let cb = progress_cb.clone();
+        let progress = move |stage: vcad_slicer::SliceStage, current: usize, total: usize| {
+            let _ = cb.call3(
+                &JsValue::NULL,
+                &JsValue::from_str(stage.label()),
+                &JsValue::from_f64(current as f64),
+                &JsValue::from_f64(total as f64),
+            );
+        };
+        let result = vcad_slicer::slice_with_progress(&mesh, &slice_settings, Some(&progress))
+            .map_err(|e| JsError::new(&e.to_string()))?;
+
+        Ok(SliceResult { inner: result })
+    }
+
     /// Slice a solid.
     #[wasm_bindgen(js_name = sliceSolid)]
     pub fn slice_solid(

@@ -95,13 +95,29 @@ impl Polygon {
 
     /// Offset the polygon inward (shrink) or outward (expand) by distance.
     /// Positive distance = inward (for outer contours).
+    ///
+    /// Antiparallel consecutive edges (180° spikes) and zero-length edges
+    /// would otherwise produce NaN-valued bisectors; both fall back to a
+    /// single edge normal so the result stays finite. Hoist `is_ccw()`
+    /// outside the per-vertex loop — it's an O(n) scan and was previously
+    /// re-evaluated for every vertex.
     pub fn offset(&self, distance: f64) -> Option<Self> {
         if self.points.len() < 3 {
             return None;
         }
 
         let n = self.points.len();
+        let sign = if self.is_ccw() { 1.0 } else { -1.0 };
         let mut offset_points = Vec::with_capacity(n);
+
+        let safe_normalize = |v: vcad_kernel_math::Vec2| -> Option<vcad_kernel_math::Vec2> {
+            let len = v.norm();
+            if len > 1e-12 {
+                Some(v / len)
+            } else {
+                None
+            }
+        };
 
         for i in 0..n {
             let prev = (i + n - 1) % n;
@@ -111,28 +127,44 @@ impl Polygon {
             let p1 = self.points[i];
             let p2 = self.points[next];
 
-            // Edge vectors
-            let e1 = (p1 - p0).normalize();
-            let e2 = (p2 - p1).normalize();
+            // Edge directions; if either edge is zero-length, fall back to the
+            // other one. If both are zero, the vertex is degenerate — keep it
+            // in place rather than introducing NaN.
+            let e1 = safe_normalize(p1 - p0);
+            let e2 = safe_normalize(p2 - p1);
 
-            // Inward normals (rotate 90° CCW for CCW polygon, CW for CW polygon)
-            let sign = if self.is_ccw() { 1.0 } else { -1.0 };
-            let n1 = Point2::new(-e1.y * sign, e1.x * sign);
-            let n2 = Point2::new(-e2.y * sign, e2.x * sign);
+            let (e1, e2) = match (e1, e2) {
+                (Some(a), Some(b)) => (a, b),
+                (Some(a), None) => (a, a),
+                (None, Some(b)) => (b, b),
+                (None, None) => {
+                    offset_points.push(p1);
+                    continue;
+                }
+            };
 
-            // Bisector direction (average of normals)
-            let bisector = (n1.to_vec() + n2.to_vec()).normalize();
+            // Inward normals (rotate 90° CCW for CCW polygon, CW for CW polygon).
+            let n1 = vcad_kernel_math::Vec2::new(-e1.y * sign, e1.x * sign);
+            let n2 = vcad_kernel_math::Vec2::new(-e2.y * sign, e2.x * sign);
 
-            // Offset distance along bisector (adjusted for corner angle)
-            let dot = n1.to_vec().dot(bisector);
+            // Bisector — fall back to n1 if the two normals cancel (antiparallel
+            // edges, e.g. an offset that folded a short edge back on itself).
+            let sum = n1 + n2;
+            let bisector = match safe_normalize(sum) {
+                Some(b) => b,
+                None => n1,
+            };
+
+            // Offset distance along bisector (adjusted for corner angle).
+            let dot = n1.dot(bisector);
             let offset_dist = if dot.abs() > 0.001 {
                 distance / dot
             } else {
                 distance
             };
 
-            // Limit offset to avoid self-intersection at sharp corners
-            let max_offset = distance * 2.0;
+            // Limit offset to avoid self-intersection at sharp corners.
+            let max_offset = distance.abs() * 2.0;
             let clamped_offset = offset_dist.clamp(-max_offset, max_offset);
 
             let offset_pt = Point2::new(
@@ -142,13 +174,80 @@ impl Polygon {
             offset_points.push(offset_pt);
         }
 
-        // Check if offset polygon collapsed
+        // Check if offset polygon collapsed.
         let result = Polygon::new(offset_points);
-        if result.signed_area().abs() < 1e-10 {
+        let area = result.signed_area();
+        if !area.is_finite() || area.abs() < 1e-10 {
             return None;
         }
 
         Some(result)
+    }
+
+    /// Remove vertices that are collinear with their neighbors (or coincident).
+    /// Cleans up the spurious "midpoint" vertices that the per-triangle slice
+    /// step produces — without this, two-triangle faces leave a vertex midway
+    /// along each edge of the contour, and downstream `offset()` overshoots
+    /// those short segments and produces non-simple polygons.
+    pub fn dedupe_collinear(&mut self, eps: f64) {
+        if self.points.len() < 3 {
+            return;
+        }
+
+        // 1) Drop consecutive duplicate points.
+        self.points.dedup_by(|a, b| {
+            let dx = a.x - b.x;
+            let dy = a.y - b.y;
+            (dx * dx + dy * dy).sqrt() < eps
+        });
+        if let (Some(first), Some(last)) = (self.points.first(), self.points.last()) {
+            let dx = first.x - last.x;
+            let dy = first.y - last.y;
+            if (dx * dx + dy * dy).sqrt() < eps {
+                self.points.pop();
+            }
+        }
+        if self.points.len() < 3 {
+            return;
+        }
+
+        // 2) Drop vertices that lie on the line between their neighbors.
+        let mut keep: Vec<bool> = vec![true; self.points.len()];
+        let mut changed = true;
+        while changed {
+            changed = false;
+            let n = self.points.len();
+            // Recompute "active" set after each pass.
+            let active_indices: Vec<usize> = (0..n).filter(|&i| keep[i]).collect();
+            if active_indices.len() < 3 {
+                break;
+            }
+            for w in 0..active_indices.len() {
+                let i = active_indices[w];
+                let prev = active_indices[(w + active_indices.len() - 1) % active_indices.len()];
+                let next = active_indices[(w + 1) % active_indices.len()];
+                let p0 = self.points[prev];
+                let p1 = self.points[i];
+                let p2 = self.points[next];
+                let cross = (p1.x - p0.x) * (p2.y - p0.y) - (p1.y - p0.y) * (p2.x - p0.x);
+                let base = ((p2 - p0).norm()).max(1.0);
+                if cross.abs() / base < eps {
+                    keep[i] = false;
+                    changed = true;
+                    if active_indices.len() - 1 < 3 {
+                        break;
+                    }
+                }
+            }
+        }
+
+        let mut compacted = Vec::with_capacity(self.points.len());
+        for (i, &pt) in self.points.iter().enumerate() {
+            if keep[i] {
+                compacted.push(pt);
+            }
+        }
+        self.points = compacted;
     }
 }
 

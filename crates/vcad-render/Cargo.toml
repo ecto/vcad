@@ -1,0 +1,15 @@
+[package]
+name = "vcad-render"
+version = "0.9.3"
+edition = "2021"
+publish = false
+description = "Project a .vcad document to a static isometric SVG (drafting-style line art)."
+
+[dependencies]
+vcad-eval = { workspace = true }
+vcad-ir = { workspace = true }
+vcad-kernel = { workspace = true }
+
+[[bin]]
+name = "vcad-render"
+path = "src/main.rs"

@@ -3,7 +3,7 @@
   "suite": "A",
   "tier": "A1",
   "title": "Drilled plate",
-  "prompt": "Make a 50mm × 30mm × 10mm rectangular plate centered on the origin. Drill four cylindrical through-holes of diameter 3mm, axes parallel to Z, positioned 5mm in from each corner of the top face.",
+  "prompt": "Make a 50mm × 30mm × 10mm rectangular plate. Center it in X and Y, with the bottom face on the XY plane (z = 0 to z = 10). Drill four cylindrical through-holes of diameter 3mm, axes parallel to Z, positioned 5mm in from each corner of the top face.",
   "inputs": [],
   "checks": [
     { "type": "valid_solid" },

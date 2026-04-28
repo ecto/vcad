@@ -1,29 +1,33 @@
-//! `mecheval-render` — project a `.vcad` to a static isometric SVG.
+//! `vcad-render` — project a `.vcad` to a static isometric SVG.
 //!
-//! Used to render the OPERATOR mascot, task reference parts, and run
-//! artifacts (model-built .vcads) for the leaderboard. Output is a single
-//! self-contained <svg> on stdout.
+//! Drafting-style line art: low-poly painter's-algorithm shading with
+//! proper edge classification so tessellated flat faces don't look like
+//! a fan of slivers. Each triangulation edge is emitted as one of:
 //!
-//! Style: low-poly painter's-algorithm shading, but with proper edge
-//! classification to avoid drawing the internal triangulation diagonals
-//! that make a tessellated flat face look like a fan of slivers. We
-//! canonicalize each mesh's vertices, build an edge → adjacent-triangle
-//! map, and emit each edge as one of:
-//!
-//!   - boundary  (1 triangle)         → drawn as silhouette
-//!   - crease    (2 tris, non-parallel normals)  → drawn
-//!   - internal  (2 tris, parallel normals)      → hidden
+//!   - boundary  (1 triangle)                   → drawn as silhouette
+//!   - crease    (2 tris, non-parallel normals) → drawn
+//!   - internal  (2 tris, parallel normals)     → hidden
 //!
 //! Filled polygons get no stroke; the edge lines get strokes. The result
 //! reads as drafting linework, not 3D rendering.
 //!
 //! Usage:
-//!   mecheval-render <path.vcad> [--scale <px-per-mm>]
+//!   vcad-render <path.vcad> [--scale <px-per-mm>]
+//!
+//! Output: a single self-contained `<svg>` on stdout.
+//!
+//! Originally lived as `mecheval-render` inside the mecheval grader crate.
+//! Promoted to a standalone vcad tool so other consumers (docs, marketing,
+//! task previewers) can use it without depending on the grader.
 
-use mecheval_grader::eval::evaluate_vcad;
 use std::collections::HashMap;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::process::ExitCode;
+
+use vcad_eval::{evaluate_document, EvalOptions};
+use vcad_ir::file_io::parse_vcad_file;
+use vcad_kernel::Solid;
 
 // ─── tunable knobs ────────────────────────────────────────────────────────
 
@@ -66,7 +70,7 @@ fn parse_args() -> Result<Args, String> {
     let mut args = std::env::args().skip(1);
     let path = args
         .next()
-        .ok_or("usage: mecheval-render <path.vcad> [--scale N]")?;
+        .ok_or("usage: vcad-render <path.vcad> [--scale N]")?;
     let mut scale = DEFAULT_SCALE;
     while let Some(flag) = args.next() {
         match flag.as_str() {
@@ -83,6 +87,20 @@ fn parse_args() -> Result<Args, String> {
         path: PathBuf::from(path),
         scale,
     })
+}
+
+// ─── .vcad → solids ───────────────────────────────────────────────────────
+
+fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<Solid>, String> {
+    let parsed = parse_vcad_file(raw_vcad).map_err(|e| format!("parse: {}", e))?;
+    let scene = catch_unwind(AssertUnwindSafe(|| {
+        evaluate_document(&parsed.document, &EvalOptions::default())
+    }))
+    .map_err(|_| "eval panicked".to_string())?
+    .map_err(|e| format!("eval: {}", e))?;
+
+    let solids: Vec<Solid> = scene.parts.iter().filter_map(|p| p.solid.clone()).collect();
+    Ok(solids)
 }
 
 // ─── projection ───────────────────────────────────────────────────────────
@@ -233,12 +251,14 @@ fn main() -> ExitCode {
         }
     };
 
-    let snap = evaluate_vcad(&raw);
-    if let Some(err) = &snap.fatal {
-        eprintln!("eval error: {}", err);
-        return ExitCode::from(2);
-    }
-    if snap.solids.is_empty() {
+    let solids = match evaluate_vcad(&raw) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{}", e);
+            return ExitCode::from(2);
+        }
+    };
+    if solids.is_empty() {
         eprintln!("no solids produced");
         return ExitCode::from(2);
     }
@@ -249,7 +269,7 @@ fn main() -> ExitCode {
     let mut polys: Vec<ProjPoly> = Vec::new();
     let mut edges: Vec<ProjEdge> = Vec::new();
 
-    for solid in &snap.solids {
+    for solid in &solids {
         let mesh = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             solid.to_mesh(TESSELLATION_SEGMENTS)
         }));

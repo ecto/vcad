@@ -3,6 +3,7 @@ import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
 import { useSlicerStore } from "@/stores/slicer-store";
+import { getLayerPreview } from "@/lib/slicer-client";
 
 function LayerMesh() {
   const layerPreview = useSlicerStore((s) => s.currentLayerPreview);
@@ -87,20 +88,11 @@ export function PrintPreview({ width = 300, height = 200 }: PrintPreviewProps) {
     const index = parseInt(e.target.value);
     setPreviewLayerIndex(index);
 
-    // Fetch layer preview from slice result
+    // Round-trip through the slicer worker to fetch this layer's polylines.
     if (sliceResult && index < sliceResult.layerCount) {
-      try {
-        const layerPreview = sliceResult.getLayerPreview(index);
-        setCurrentLayerPreview({
-          z: layerPreview.z,
-          index: layerPreview.index,
-          outerPerimeters: layerPreview.outer_perimeters,
-          innerPerimeters: layerPreview.inner_perimeters,
-          infill: layerPreview.infill,
-        });
-      } catch (err) {
-        console.error("Failed to get layer preview:", err);
-      }
+      getLayerPreview(sliceResult, index)
+        .then(setCurrentLayerPreview)
+        .catch((err) => console.error("Failed to get layer preview:", err));
     }
   }, [sliceResult, setPreviewLayerIndex, setCurrentLayerPreview]);
 

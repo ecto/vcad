@@ -238,6 +238,14 @@ export class RayTracer {
         return ret >>> 0;
     }
     /**
+     * Get the current refinement sample count.
+     * @returns {number}
+     */
+    getRefineSamples() {
+        const ret = wasm.raytracer_getRefineSamples(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
      * Check if the ray tracer has a scene loaded.
      * @returns {boolean}
      */
@@ -410,6 +418,17 @@ export class RayTracer {
         if (ret[1]) {
             throw takeFromExternrefTable0(ret[0]);
         }
+    }
+    /**
+     * Set the adaptive refinement sample count.
+     *
+     * Edge pixels on silhouettes receive additional stratified rays for sub-pixel
+     * anti-aliasing. Set to 0 to disable (default), or 4/9/16 for typical quality.
+     * Mode 5 in setDebugMode shows a heatmap of rays per pixel for tuning.
+     * @param {number} count
+     */
+    setRefineSamples(count) {
+        wasm.raytracer_setRefineSamples(this.__wbg_ptr, count);
     }
     /**
      * Set the visible-background theme. 0 = dark (default), 1 = light.
@@ -3137,6 +3156,25 @@ export function documentToLoon(doc_json) {
 }
 
 /**
+ * Convert a Document (as JSON) to loon, also returning unsupported variant names.
+ *
+ * Returns a JS object `{ source: string, unsupported: string[] }`.
+ * When `unsupported` is non-empty, the output contains comment placeholders for
+ * those nodes and callers should warn the user that data will be lost.
+ * @param {string} doc_json
+ * @returns {any}
+ */
+export function documentToLoonChecked(doc_json) {
+    const ptr0 = passStringToWasm0(doc_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.documentToLoonChecked(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Return all builtin symbol definitions.
  *
  * # Returns
@@ -4534,6 +4572,33 @@ export function sliceMesh(vertices, indices, settings) {
 }
 
 /**
+ * Slice a mesh and report progress to a JS callback.
+ *
+ * The callback is invoked synchronously during the WASM call as
+ * `cb(stageLabel: string, current: number, total: number)`. Inside a
+ * dedicated worker, the callback can safely `postMessage` to the main
+ * thread — the worker thread is the one running the WASM, not the
+ * main thread.
+ * @param {Float32Array} vertices
+ * @param {Uint32Array} indices
+ * @param {SlicerSettings} settings
+ * @param {Function} progress_cb
+ * @returns {SliceResult}
+ */
+export function sliceMeshWithProgress(vertices, indices, settings, progress_cb) {
+    const ptr0 = passArrayF32ToWasm0(vertices, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray32ToWasm0(indices, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    _assertClass(settings, SlicerSettings);
+    const ret = wasm.sliceMeshWithProgress(ptr0, len0, ptr1, len1, settings.__wbg_ptr, progress_cb);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return SliceResult.__wrap(ret[0]);
+}
+
+/**
  * Slice a solid.
  * @param {Solid} solid
  * @param {SlicerSettings} settings
@@ -4930,6 +4995,10 @@ function __wbg_get_imports() {
         }, arguments); },
         __wbg_call_4708e0c13bdc8e95: function() { return handleError(function (arg0, arg1, arg2) {
             const ret = arg0.call(arg1, arg2);
+            return ret;
+        }, arguments); },
+        __wbg_call_e8c868596c950cf6: function() { return handleError(function (arg0, arg1, arg2, arg3, arg4) {
+            const ret = arg0.call(arg1, arg2, arg3, arg4);
             return ret;
         }, arguments); },
         __wbg_clearBuffer_6164fc25d22b25cc: function(arg0, arg1, arg2, arg3) {
@@ -5921,7 +5990,7 @@ function __wbg_get_imports() {
                     const a = state0.a;
                     state0.a = 0;
                     try {
-                        return wasm_bindgen__convert__closures_____invoke__h61f848611b9bfd22(a, state0.b, arg0, arg1);
+                        return wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(a, state0.b, arg0, arg1);
                     } finally {
                         state0.a = a;
                     }
@@ -6506,13 +6575,13 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 1231, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1232, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h29172bbcd065953b, wasm_bindgen__convert__closures_____invoke__h409646c44a6f7cf4);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 1234, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1235, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2018, function: Function { arguments: [Externref], shim_idx: 2019, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h6ed7eb1128abde65, wasm_bindgen__convert__closures_____invoke__h53e1d5f5246c70f9);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2021, function: Function { arguments: [Externref], shim_idx: 2022, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
             return ret;
         },
         __wbindgen_cast_0000000000000003: function(arg0) {
@@ -6600,16 +6669,16 @@ function __wbg_get_imports() {
     };
 }
 
-function wasm_bindgen__convert__closures_____invoke__h409646c44a6f7cf4(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h409646c44a6f7cf4(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h53e1d5f5246c70f9(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h53e1d5f5246c70f9(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h61f848611b9bfd22(arg0, arg1, arg2, arg3) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h61f848611b9bfd22(arg0, arg1, arg2, arg3);
+function wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(arg0, arg1, arg2, arg3) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(arg0, arg1, arg2, arg3);
 }
 
 

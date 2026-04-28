@@ -155,6 +155,38 @@ pub struct SliceResult {
     pub stats: PrintStats,
 }
 
+/// Stage of the slicing pipeline. Reported to a `progress_callback` so the
+/// UI can show a Bambu-style "what's happening, how much is done" line.
+#[derive(Debug, Clone, Copy)]
+pub enum SliceStage {
+    /// Intersecting the mesh with each Z plane and chaining the segments.
+    SlicingLayers,
+    /// Computing inner / outer walls from the layer contours.
+    Perimeters,
+    /// Generating infill paths inside each layer.
+    Infill,
+    /// Detecting overhangs and laying down support material.
+    Support,
+}
+
+impl SliceStage {
+    /// Human-readable label shown in the UI.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::SlicingLayers => "Slicing layers",
+            Self::Perimeters => "Generating perimeters",
+            Self::Infill => "Generating infill",
+            Self::Support => "Generating support",
+        }
+    }
+}
+
+/// Optional progress sink. Called multiple times per stage; `current` /
+/// `total` describe completion of the *current* stage, not the whole slice.
+/// Not `Sync` — only invoked from the driving thread, never from the
+/// rayon pool inside `slice_mesh`.
+pub type ProgressFn<'a> = &'a dyn Fn(SliceStage, usize, usize);
+
 /// Slice a mesh with the given settings.
 ///
 /// This is the main entry point for slicing. It:
@@ -164,7 +196,24 @@ pub struct SliceResult {
 /// 4. Optionally generates support structures
 /// 5. Computes print statistics
 pub fn slice(mesh: &TriangleMesh, settings: &SliceSettings) -> Result<SliceResult> {
+    slice_with_progress(mesh, settings, None)
+}
+
+/// Like [`slice`], but reports progress to the given callback. The callback
+/// runs synchronously on whatever thread is driving the slice; for the
+/// worker pipeline that means it can `postMessage` straight to the main
+/// thread without blocking it.
+pub fn slice_with_progress(
+    mesh: &TriangleMesh,
+    settings: &SliceSettings,
+    progress: Option<ProgressFn<'_>>,
+) -> Result<SliceResult> {
     settings.validate()?;
+    let report = |stage: SliceStage, current: usize, total: usize| {
+        if let Some(p) = progress {
+            p(stage, current, total);
+        }
+    };
 
     // Get mesh bounds
     let (bounds_min, bounds_max) = mesh_bounds(mesh).ok_or(SlicerError::EmptyMesh)?;
@@ -181,17 +230,22 @@ pub fn slice(mesh: &TriangleMesh, settings: &SliceSettings) -> Result<SliceResul
         return Err(SlicerError::SliceFailed("model too thin to slice".into()));
     }
 
-    // Slice mesh
+    let total = layer_heights.len();
+    report(SliceStage::SlicingLayers, 0, total);
     let slice_layers = slice_mesh(mesh, &layer_heights)?;
+    report(SliceStage::SlicingLayers, total, total);
 
     // Detect support if enabled
     let support_layers = if settings.support_enabled {
+        report(SliceStage::Support, 0, total);
         let support_settings = SupportSettings {
             overhang_angle: settings.support_angle,
             density: 0.15,
             ..Default::default()
         };
-        Some(detect_overhangs(mesh, &slice_layers, &support_settings))
+        let s = Some(detect_overhangs(mesh, &slice_layers, &support_settings));
+        report(SliceStage::Support, total, total);
+        s
     } else {
         None
     };
@@ -206,6 +260,11 @@ pub fn slice(mesh: &TriangleMesh, settings: &SliceSettings) -> Result<SliceResul
     let mut print_layers: Vec<PrintLayer> = Vec::with_capacity(slice_layers.len());
     let mut total_path_length = 0.0;
 
+    // Throttle progress callbacks so we don't drown the worker channel on
+    // big models — emit at most ~50 events per stage (every 2%).
+    let progress_step = (total / 50).max(1);
+
+    report(SliceStage::Perimeters, 0, total);
     for (idx, slice_layer) in slice_layers.iter().enumerate() {
         let layer_height = if idx == 0 {
             settings.first_layer_height
@@ -252,7 +311,14 @@ pub fn slice(mesh: &TriangleMesh, settings: &SliceSettings) -> Result<SliceResul
             infill: infill.paths,
             support,
         });
+
+        if (idx + 1) % progress_step == 0 || idx + 1 == total {
+            // Perimeters and infill happen in the same loop, but the latter
+            // dominates on dense models — bias the displayed stage that way.
+            report(SliceStage::Infill, idx + 1, total);
+        }
     }
+    report(SliceStage::Infill, total, total);
 
     // Compute statistics
     let _filament_mm = total_path_length;
