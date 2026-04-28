@@ -16,6 +16,7 @@
 pub mod blob;
 pub mod check;
 pub mod eval;
+pub mod fillets;
 pub mod grader;
 pub mod holes;
 pub mod task;

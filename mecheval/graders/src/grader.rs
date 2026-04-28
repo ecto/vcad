@@ -8,6 +8,7 @@
 use crate::blob::{CheckOutcome, CheckRecord, RunBlob, Summary, SCHEMA_VERSION};
 use crate::check::CheckSpec;
 use crate::eval::{evaluate_vcad, EvalSnapshot};
+use crate::fillets::find_non_z_cylinders;
 use crate::holes::find_z_holes;
 use crate::task::Task;
 use serde_json::json;
@@ -120,8 +121,13 @@ fn run_check(spec: &CheckSpec, snapshot: &EvalSnapshot) -> (CheckOutcome, serde_
             tolerance_mm,
         } => check_hole_positions(snapshot, *diameter_mm, positions, *tolerance_mm),
 
-        CheckSpec::FilletRadius { .. }
-        | CheckSpec::DrcClean
+        CheckSpec::FilletRadius {
+            edge_class,
+            radius_mm,
+            tolerance_mm,
+        } => check_fillet_radius(snapshot, edge_class, *radius_mm, *tolerance_mm),
+
+        CheckSpec::DrcClean
         | CheckSpec::ErcClean
         | CheckSpec::Dfm { .. }
         | CheckSpec::RefactorInvariant { .. } => (
@@ -553,6 +559,38 @@ fn check_step_roundtrip(
     (
         if all_pass { CheckOutcome::Pass } else { CheckOutcome::Fail },
         serde_json::Value::Object(details),
+    )
+}
+
+/// `fillet_radius`: pass if the body has at least one non-Z-axis
+/// cylindrical surface whose radius matches the spec within
+/// `tolerance_mm`. v0.0 ignores `edge_class` — any matching cylinder
+/// counts. Tightening to actual tangency-checked fillets is future work.
+fn check_fillet_radius(
+    snap: &EvalSnapshot,
+    edge_class: &str,
+    radius_mm: f64,
+    tolerance_mm: f64,
+) -> (CheckOutcome, serde_json::Value) {
+    let found = find_non_z_cylinders(snap, radius_mm, tolerance_mm);
+    let outcome = if found.is_empty() {
+        CheckOutcome::Fail
+    } else {
+        CheckOutcome::Pass
+    };
+    (
+        outcome,
+        json!({
+            "edge_class": edge_class,
+            "edge_class_note": "v0.0 grader: edge_class is not yet enforced",
+            "radius_mm": radius_mm,
+            "tolerance_mm": tolerance_mm,
+            "matched": found.iter().map(|f| json!({
+                "radius": f.radius,
+                "axis": f.axis,
+                "axis_point": f.axis_point,
+            })).collect::<Vec<_>>(),
+        }),
     )
 }
 
