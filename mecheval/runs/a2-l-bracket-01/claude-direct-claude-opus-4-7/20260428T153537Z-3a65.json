@@ -1,0 +1,252 @@
+{
+  "schema_version": 0,
+  "task_id": "a2-l-bracket-01",
+  "task_sha256": "c8efa8964b7ad82a8c4ffce1647f17b38185296471e2d57befd3b095567f396b",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          0,
+          0,
+          0
+        ],
+        "max": [
+          50,
+          30,
+          30
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          50,
+          30,
+          30
+        ],
+        "actual_min": [
+          0,
+          0,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 8962.92,
+        "tolerance_pct": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "volume": {
+          "actual_mm3": 8963.927721672726,
+          "deviation_pct": 0.011243229580604232,
+          "pass": true,
+          "spec_mm3": 8962.92,
+          "tolerance_pct": 0.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 5,
+        "expected": 2,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual": 2,
+        "diameter_mm": 5,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 2,
+        "found": [
+          [
+            10,
+            15,
+            5
+          ],
+          [
+            35,
+            15,
+            5
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 5,
+        "positions": [
+          [
+            10,
+            15,
+            0
+          ],
+          [
+            35,
+            15,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 5,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              10,
+              15
+            ],
+            "pass": true,
+            "spec_xy": [
+              10,
+              15
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              35,
+              15
+            ],
+            "pass": true,
+            "spec_xy": [
+              35,
+              15
+            ]
+          }
+        ],
+        "tolerance_mm": 0.1,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "per_solid": [
+          {
+            "error": "Invalid topology: half-edge has no parent edge",
+            "index": 0,
+            "pass": false,
+            "stage": "export"
+          }
+        ],
+        "tolerance_pct": 0.1
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 5,
+    "checks_total": 6,
+    "score": 0.8333333333333334,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T153537Z-3a65",
+  "model": {
+    "id": "claude-direct-claude-opus-4-7",
+    "name": "Claude (direct, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "direct",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a2-l-bracket-01",
+    "rendered": "Make an L-shaped mounting bracket. The base lies in the XY plane, occupying x in [0, 50], y in [0, 30], z in [0, 4] (50mm long, 30mm wide, 4mm thick). A vertical wall stands on the +X edge: x in [46, 50], y in [0, 30], z in [4, 30] (4mm thick, 30mm wide, rising to z = 30). Two through-holes of diameter 5mm pierce the base parallel to Z, centered at (10, 15) and (35, 15) on the top face. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "anthropic.messages.create",
+        "args": {
+          "model": "claude-opus-4-7",
+          "max_tokens": 8000,
+          "system_chars": 1632,
+          "user_chars": 470
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5860.728875000001
+      }
+    ],
+    "tokens": {
+      "input": 940,
+      "output": 594,
+      "total": 1534
+    },
+    "wallclock_sec": 5.860728875
+  },
+  "output": {
+    "vcad_path": "20260428T153537Z-3a65.vcad",
+    "vcad_sha256": "fad69e03ef86941ef3c6c9b5749307c1310299d88079f15f5012e53b2271e239",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T15:35:37.045Z",
+    "ended_at": "2026-04-28T15:35:42.948Z"
+  },
+  "signature": null
+}

@@ -6,7 +6,8 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "mecheval-run": "dist/cli.js"
+    "mecheval-run": "dist/cli.js",
+    "mecheval-leaderboard": "dist/leaderboard-cli.js"
   },
   "exports": {
     ".": "./dist/index.js"
