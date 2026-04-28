@@ -19,3 +19,7 @@ vcad-kernel-geom = { workspace = true }
 [[bin]]
 name = "mecheval-grade"
 path = "src/bin/grade.rs"
+
+[[bin]]
+name = "mecheval-render"
+path = "src/bin/render.rs"
