@@ -30,33 +30,25 @@
     "21": { "id": 21, "name": "core",        "op": { "type": "Cube",     "size": { "x": 6,  "y": 2,  "z": 6 } } },
     "22": { "id": 22, "name": "CORE",        "op": { "type": "Translate", "child": 21, "offset": { "x": -3, "y": -10, "z": 72 } } },
 
-    "23": { "id": 23, "name": "l_pauld",     "op": { "type": "Cube",     "size": { "x": 12, "y": 20, "z": 18 } } },
-    "24": { "id": 24, "name": "L_PAULDRON",  "op": { "type": "Translate", "child": 23, "offset": { "x": -30, "y": -10, "z": 72 } } },
-    "25": { "id": 25, "name": "r_pauld",     "op": { "type": "Cube",     "size": { "x": 12, "y": 20, "z": 18 } } },
-    "26": { "id": 26, "name": "R_PAULDRON",  "op": { "type": "Translate", "child": 25, "offset": { "x": 18,  "y": -10, "z": 72 } } },
-
-    "27": { "id": 27, "name": "saber",       "op": { "type": "Cylinder", "radius": 1.5, "height": 14, "segments": 12 } },
-    "28": { "id": 28, "name": "BEAM_SABER",  "op": { "type": "Translate", "child": 27, "offset": { "x": -24, "y": 0, "z": 90 } } },
-
     "29": { "id": 29, "name": "l_uarm",      "op": { "type": "Cylinder", "radius": 4, "height": 16, "segments": 18 } },
-    "30": { "id": 30, "name": "L_UPPER_ARM", "op": { "type": "Translate", "child": 29, "offset": { "x": -24, "y": 0, "z": 56 } } },
+    "30": { "id": 30, "name": "L_UPPER_ARM", "op": { "type": "Translate", "child": 29, "offset": { "x": -22, "y": 0, "z": 56 } } },
     "31": { "id": 31, "name": "r_uarm",      "op": { "type": "Cylinder", "radius": 4, "height": 16, "segments": 18 } },
-    "32": { "id": 32, "name": "R_UPPER_ARM", "op": { "type": "Translate", "child": 31, "offset": { "x": 24,  "y": 0, "z": 56 } } },
+    "32": { "id": 32, "name": "R_UPPER_ARM", "op": { "type": "Translate", "child": 31, "offset": { "x": 22,  "y": 0, "z": 56 } } },
 
     "33": { "id": 33, "name": "l_elbow",     "op": { "type": "Sphere",   "radius": 4.5, "segments": 16 } },
-    "34": { "id": 34, "name": "L_ELBOW",     "op": { "type": "Translate", "child": 33, "offset": { "x": -24, "y": 0, "z": 55 } } },
+    "34": { "id": 34, "name": "L_ELBOW",     "op": { "type": "Translate", "child": 33, "offset": { "x": -22, "y": 0, "z": 55 } } },
     "35": { "id": 35, "name": "r_elbow",     "op": { "type": "Sphere",   "radius": 4.5, "segments": 16 } },
-    "36": { "id": 36, "name": "R_ELBOW",     "op": { "type": "Translate", "child": 35, "offset": { "x": 24,  "y": 0, "z": 55 } } },
+    "36": { "id": 36, "name": "R_ELBOW",     "op": { "type": "Translate", "child": 35, "offset": { "x": 22,  "y": 0, "z": 55 } } },
 
     "37": { "id": 37, "name": "l_farm",      "op": { "type": "Cylinder", "radius": 4, "height": 16, "segments": 18 } },
-    "38": { "id": 38, "name": "L_FOREARM",   "op": { "type": "Translate", "child": 37, "offset": { "x": -24, "y": 0, "z": 38 } } },
+    "38": { "id": 38, "name": "L_FOREARM",   "op": { "type": "Translate", "child": 37, "offset": { "x": -22, "y": 0, "z": 38 } } },
     "39": { "id": 39, "name": "r_farm",      "op": { "type": "Cylinder", "radius": 4, "height": 16, "segments": 18 } },
-    "40": { "id": 40, "name": "R_FOREARM",   "op": { "type": "Translate", "child": 39, "offset": { "x": 24,  "y": 0, "z": 38 } } },
+    "40": { "id": 40, "name": "R_FOREARM",   "op": { "type": "Translate", "child": 39, "offset": { "x": 22,  "y": 0, "z": 38 } } },
 
     "41": { "id": 41, "name": "l_hand",      "op": { "type": "Cube",     "size": { "x": 9, "y": 9, "z": 8 } } },
-    "42": { "id": 42, "name": "L_HAND",      "op": { "type": "Translate", "child": 41, "offset": { "x": -28.5, "y": -4.5, "z": 30 } } },
+    "42": { "id": 42, "name": "L_HAND",      "op": { "type": "Translate", "child": 41, "offset": { "x": -26.5, "y": -4.5, "z": 30 } } },
     "43": { "id": 43, "name": "r_hand",      "op": { "type": "Cube",     "size": { "x": 9, "y": 9, "z": 8 } } },
-    "44": { "id": 44, "name": "R_HAND",      "op": { "type": "Translate", "child": 43, "offset": { "x": 19.5,  "y": -4.5, "z": 30 } } },
+    "44": { "id": 44, "name": "R_HAND",      "op": { "type": "Translate", "child": 43, "offset": { "x": 17.5,  "y": -4.5, "z": 30 } } },
 
     "45": { "id": 45, "name": "neck",        "op": { "type": "Cylinder", "radius": 4, "height": 4, "segments": 16 } },
     "46": { "id": 46, "name": "NECK",        "op": { "type": "Translate", "child": 45, "offset": { "x": 0, "y": 0, "z": 90 } } },
@@ -65,10 +57,7 @@
     "48": { "id": 48, "name": "HEAD",        "op": { "type": "Translate", "child": 47, "offset": { "x": -10, "y": -8, "z": 94 } } },
 
     "49": { "id": 49, "name": "visor",       "op": { "type": "Cube",     "size": { "x": 16, "y": 2, "z": 4 } } },
-    "50": { "id": 50, "name": "VISOR",       "op": { "type": "Translate", "child": 49, "offset": { "x": -8, "y": -9.1, "z": 102 } } },
-
-    "51": { "id": 51, "name": "vfin",        "op": { "type": "Cone",     "radius_bottom": 4, "radius_top": 0.5, "height": 12, "segments": 16 } },
-    "52": { "id": 52, "name": "V_FIN",       "op": { "type": "Translate", "child": 51, "offset": { "x": 0, "y": 0, "z": 112 } } }
+    "50": { "id": 50, "name": "VISOR",       "op": { "type": "Translate", "child": 49, "offset": { "x": -8, "y": -9.1, "z": 102 } } }
   },
   "materials": {
     "default": {
@@ -101,9 +90,6 @@
     { "root": 18, "material": "default" },
     { "root": 20, "material": "default" },
     { "root": 22, "material": "accent" },
-    { "root": 24, "material": "default" },
-    { "root": 26, "material": "default" },
-    { "root": 28, "material": "accent" },
     { "root": 30, "material": "default" },
     { "root": 32, "material": "default" },
     { "root": 34, "material": "default" },
@@ -114,7 +100,6 @@
     { "root": 44, "material": "default" },
     { "root": 46, "material": "default" },
     { "root": 48, "material": "default" },
-    { "root": 50, "material": "accent" },
-    { "root": 52, "material": "accent" }
+    { "root": 50, "material": "accent" }
   ]
 }
