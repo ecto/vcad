@@ -1,0 +1,10 @@
+{
+  "id": "2026-04-28-chat-screenshot-preview-persists",
+  "version": "0.9.3",
+  "date": "2026-04-28",
+  "category": "fix",
+  "title": "AI chat screenshot previews stay rendered after the next turn",
+  "summary": "When the AI used screenshot_viewport, the inline preview vanished as soon as the next turn started — the DB roundtrip for the JPEG data URL races the next reproject, and Supabase Realtime can drop the large row. Hydration now preserves any client-captured imageDataUrl across re-projections so the screenshot stays in the chat.",
+  "features": ["chat", "ai"],
+  "mcpTools": []
+}

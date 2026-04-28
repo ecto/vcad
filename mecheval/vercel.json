@@ -1,7 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "cd ../.. && npm run build:mecheval",
-  "outputDirectory": "dist",
+  "installCommand": "cd .. && npm ci",
+  "buildCommand": "cd .. && npm run build:mecheval",
+  "outputDirectory": "leaderboard/dist",
   "framework": null,
   "cleanUrls": true,
   "trailingSlash": false,

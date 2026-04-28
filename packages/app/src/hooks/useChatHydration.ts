@@ -125,6 +125,44 @@ function buildMessages(
   return rows.map((r) => projectMessage(r, byMessage));
 }
 
+/** Copy any imageDataUrl values from a previous in-memory ChatMessage onto
+ * a freshly-projected one whose tool rows are still missing them. The DB
+ * round-trip for a screenshot data URL races with the next AI turn, so the
+ * projected version often catches up only after Realtime delivers the
+ * UPDATE event — and Supabase Realtime can drop large row payloads. Once
+ * the client has captured an image for a tool, never let a stale projection
+ * blank it out. */
+function preserveToolImages(
+  projected: ChatMessage,
+  existing: ChatMessage | undefined,
+): ChatMessage {
+  if (!existing) return projected;
+  const existingImages = new Map<string, string>();
+  for (const part of existing.parts ?? []) {
+    if (part.type === "tool" && part.tool.imageDataUrl) {
+      existingImages.set(part.tool.id, part.tool.imageDataUrl);
+    }
+  }
+  for (const tc of existing.toolCalls ?? []) {
+    if (tc.imageDataUrl) existingImages.set(tc.id, tc.imageDataUrl);
+  }
+  if (existingImages.size === 0) return projected;
+
+  const patchedParts = projected.parts?.map((part) => {
+    if (part.type !== "tool" || part.tool.imageDataUrl) return part;
+    const url = existingImages.get(part.tool.id);
+    return url
+      ? { type: "tool" as const, tool: { ...part.tool, imageDataUrl: url } }
+      : part;
+  });
+  const patchedToolCalls = projected.toolCalls?.map((tc) => {
+    if (tc.imageDataUrl) return tc;
+    const url = existingImages.get(tc.id);
+    return url ? { ...tc, imageDataUrl: url } : tc;
+  });
+  return { ...projected, parts: patchedParts, toolCalls: patchedToolCalls };
+}
+
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
@@ -168,11 +206,17 @@ export function useChatHydration() {
       const locallyStreamingIds = useChatStore.getState().locallyStreamingIds;
       const existing = useChatStore.getState().messages;
       const existingById = new Map(existing.map((m) => [m.id, m]));
-      const merged = projected.map((p) =>
-        locallyStreamingIds.has(p.id) && existingById.has(p.id)
-          ? existingById.get(p.id)!
-          : p,
-      );
+      const merged = projected.map((p) => {
+        if (locallyStreamingIds.has(p.id) && existingById.has(p.id)) {
+          return existingById.get(p.id)!;
+        }
+        // Preserve client-set imageDataUrl on tool parts that the DB
+        // projection is missing. persistToolResult is fire-and-forget and
+        // the screenshot data URL (~200KB JPEG) can lag — or get dropped by
+        // Realtime — so without this merge, the in-chat preview vanishes
+        // the moment the next turn's events trigger a reproject.
+        return preserveToolImages(p, existingById.get(p.id));
+      });
       // Preserve any locally-tracked messages that haven't landed in the
       // DB cache yet (e.g. a placeholder added moments before the server
       // emits its insert event).
