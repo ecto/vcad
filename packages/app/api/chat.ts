@@ -835,6 +835,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Capture into a const so the closure narrowing survives.
     const turnForPersistence = persistedTurn;
     const adminForPersistence = admin;
+    // In-stream writes (tool_call rows + per-block deltas) are queued without
+    // awaiting so they don't slow the SSE pipe, but we keep their promises so
+    // they can be drained before the function returns. On Vercel the Node
+    // function can be terminated as soon as the handler returns, which would
+    // strand truly fire-and-forget writes.
+    const pendingWrites: Promise<unknown>[] = [];
     const persistence: PersistenceHooks | undefined =
       turnForPersistence && adminForPersistence
         ? {
@@ -844,31 +850,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 block.id &&
                 block.name
               ) {
-                void persistToolCallStart(adminForPersistence, {
-                  toolUseId: block.id,
-                  messageId: turnForPersistence.assistantMessageId,
-                  threadId: turnForPersistence.threadId,
-                  name: block.name,
-                });
+                pendingWrites.push(
+                  persistToolCallStart(adminForPersistence, {
+                    toolUseId: block.id,
+                    messageId: turnForPersistence.assistantMessageId,
+                    threadId: turnForPersistence.threadId,
+                    name: block.name,
+                  }),
+                );
               } else if (
                 block.type === "__tool_args_finalized__" &&
                 block.id
               ) {
-                void persistToolCallArgs(
-                  adminForPersistence,
-                  block.id,
-                  (block.input ?? {}) as Record<string, unknown>,
+                pendingWrites.push(
+                  persistToolCallArgs(
+                    adminForPersistence,
+                    block.id,
+                    (block.input ?? {}) as Record<string, unknown>,
+                  ),
                 );
               }
             },
             onDelta: (deltaType, payload) => {
               const seq = deltaSequence++;
-              void persistDelta(adminForPersistence, {
-                messageId: turnForPersistence.assistantMessageId,
-                sequence: seq,
-                deltaType,
-                payload,
-              });
+              pendingWrites.push(
+                persistDelta(adminForPersistence, {
+                  messageId: turnForPersistence.assistantMessageId,
+                  sequence: seq,
+                  deltaType,
+                  payload,
+                }),
+              );
             },
           }
         : undefined;
@@ -907,15 +919,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         /* client may have disconnected — non-fatal */
       }
     }
-    res.end();
-
+    // Drain in-stream writes and the canonical finalize BEFORE res.end(). The
+    // streamed SSE body has already been flushed to the client; res.end() only
+    // sends the close signal. Awaiting here costs ~one Supabase round-trip
+    // but is essential for refresh-survival: if the Vercel function returns
+    // before these land, the assistant row stays at status='streaming' with
+    // empty content_blocks and the message is lost on hydration.
     if (admin && persistedTurn) {
       // Strip our internal sentinel that pipeAnthropicStream never adds to
       // the actual blocks list, but be defensive in case the shape evolves.
       const finalBlocks = contentBlocks.filter(
         (b) => b.type !== "__tool_args_finalized__",
       );
-      void finalizeAssistantMessage(admin, {
+      await Promise.allSettled(pendingWrites);
+      await finalizeAssistantMessage(admin, {
         messageId: persistedTurn.assistantMessageId,
         contentBlocks: finalBlocks,
         status: "complete",
@@ -923,12 +940,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         outputTokens,
         durationMs: Date.now() - startedAt,
       });
-      void updateThreadHead(
+      await updateThreadHead(
         admin,
         persistedTurn.threadId,
         persistedTurn.assistantMessageId,
       );
     }
+    res.end();
 
     if (cacheReadTokens > 0 || cacheCreationTokens > 0) {
       console.log(
@@ -992,14 +1010,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   } catch (err) {
     console.error("Chat API error:", err);
     if (admin && persistedTurn) {
-      void finalizeAssistantMessage(admin, {
-        messageId: persistedTurn.assistantMessageId,
-        contentBlocks: [],
-        status: "error",
-        inputTokens: 0,
-        outputTokens: 0,
-        durationMs: 0,
-      });
+      // Awaited so the row reflects the failure before the function exits;
+      // otherwise the client sees a stale 'streaming' row that only the
+      // sweep RPC eventually flips to 'interrupted'.
+      try {
+        await finalizeAssistantMessage(admin, {
+          messageId: persistedTurn.assistantMessageId,
+          contentBlocks: [],
+          status: "error",
+          inputTokens: 0,
+          outputTokens: 0,
+          durationMs: 0,
+        });
+      } catch (finalizeErr) {
+        console.error("Chat API finalize-on-error failed:", finalizeErr);
+      }
     }
     if (!res.headersSent) {
       res.status(500).json({ error: "Internal server error" });
