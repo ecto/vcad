@@ -20,6 +20,7 @@ import {
   type RunMeta,
 } from "@mecheval/harness/pass_k";
 import { colors, copy, fonts, fontsHref, type TitleBlock } from "./tokens.js";
+import { operator, operatorSays } from "./mascot.js";
 
 const PASS_K = 5;
 const REPO_ROOT = process.cwd();
@@ -297,6 +298,35 @@ const STYLES = `
   .toolrow .n { text-align: right; color: var(--ink-soft); }
   .kvtable td { padding: 3px 12px 3px 0; vertical-align: top; }
   .kvtable td.k { color: var(--ink-soft); white-space: nowrap; text-transform: uppercase; font-size: 10px; letter-spacing: 0.08em; }
+
+  /* Hero layout with OPERATOR. */
+  .hero {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: end;
+    gap: 24px;
+    margin: 0 0 8px;
+  }
+  .hero .mascot {
+    color: var(--ink);
+    margin-right: 4px;
+  }
+  .operator-says {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border: 1px dashed var(--ink-soft);
+    background: rgba(214, 137, 16, 0.05);
+    font-size: 11.5px;
+    color: var(--ink);
+    margin: 14px 0 24px;
+  }
+  .operator-says .op-name {
+    color: var(--accent); font-weight: 700; letter-spacing: 0.08em;
+    font-family: var(--display);
+  }
+  .operator-says .op-quote { color: var(--ink); }
 
   /* Footer — Municipal Robotics ↔ vcad ↔ mecheval. */
   .footer {
@@ -604,13 +634,26 @@ function indexPage(
   const modelIds = models.map((m) => m.model_id);
   const passKAchieved = models.reduce((a, m) => a + m.pass_k_full, 0);
   const passKReady = models.reduce((a, m) => a + m.pass_k_total, 0);
+  const operatorQuote = passKReady === 0
+    ? "no models scored yet. waiting."
+    : passKAchieved === 0
+      ? "no model has earned a pass^5 yet. early days."
+      : passKAchieved === passKReady
+        ? "everyone's nailing it. suspicious."
+        : `${passKAchieved} of ${passKReady} pass^5 earned. keep going.`;
   const body = `
-    <h1 class="wordmark">${escape(copy.brand.slice(0, -1))}<span class="dot">.</span></h1>
-    <div class="tagline-main">${escape(copy.tagline)}</div>
-    <div class="tagline-sub">${escape(copy.subtagline)} · pass<sup>${k}</sup></div>
+    <div class="hero">
+      <div>
+        <h1 class="wordmark">${escape(copy.brand.slice(0, -1))}<span class="dot">.</span></h1>
+        <div class="tagline-main">${escape(copy.tagline)}</div>
+        <div class="tagline-sub">${escape(copy.subtagline)} · pass<sup>${k}</sup></div>
+      </div>
+      <div class="mascot">${operator("salute", { height: 110 })}</div>
+    </div>
+    ${operatorSays(operatorQuote)}
 
     <h2>Models</h2>
-    ${models.length ? modelTable(models, k) : `<div class="nodata">no run blobs found under <code>mecheval/runs/</code> — looks lonely</div>`}
+    ${models.length ? modelTable(models, k) : `<div class="nodata">no run blobs found under <code>mecheval/runs/</code> — OPERATOR is alone in here</div>`}
 
     <h2>Task × model matrix</h2>
     ${taskIds.length && modelIds.length ? matrix(taskIds, modelIds, byPair, k) : `<div class="nodata">no entries</div>`}
@@ -647,7 +690,11 @@ function taskPage(spec: TaskSpec | null, taskId: string, runsForTask: RunMeta[])
     return pageShell(
       `mecheval — ${taskId}`,
       `<a href="../index.html">← ${escape(copy.brand)}</a> / task / ${escape(taskId)}`,
-      `<h1>${escape(taskId)}</h1><div class="nodata">no task spec found at mecheval/tasks/${escape(taskId)}.json — OPERATOR can't find this one</div>`,
+      `<h1>${escape(taskId)}</h1>
+       <div style="display:flex; align-items: center; gap: 16px;">
+         <div class="mascot" style="color: var(--ink-soft);">${operator("snooze", { height: 90 })}</div>
+         <div class="nodata">no task spec found at mecheval/tasks/${escape(taskId)}.json</div>
+       </div>`,
       { drawing: copy.brand, sheet: `TASK · ${taskId}`, scale: "—" },
     );
   }
@@ -685,7 +732,12 @@ function taskPage(spec: TaskSpec | null, taskId: string, runsForTask: RunMeta[])
     ${limitsHtml}
 
     <h2>Runs (${runsForTask.length})</h2>
-    ${runsForTask.length ? runsTable(runsForTask, "task") : `<div class="nodata">no runs yet for this task</div>`}
+    ${runsForTask.length
+      ? runsTable(runsForTask, "task")
+      : `<div style="display:flex; align-items: center; gap: 16px;">
+           <div class="mascot" style="color: var(--ink-soft);">${operator("snooze", { height: 90 })}</div>
+           <div class="nodata">no runs yet for this task — OPERATOR is waiting</div>
+         </div>`}
   `;
   return pageShell(
     `mecheval — ${taskId}`,
