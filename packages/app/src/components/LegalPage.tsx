@@ -228,10 +228,20 @@ export function LegalPage({ slug }: { slug: LegalSlug }) {
           ))}
         </div>
 
-        <footer className="mt-16 flex gap-6 border-t border-border pt-6 text-xs text-text-muted">
-          <a href="/privacy" className="hover:text-text transition-colors">Privacy</a>
-          <a href="/terms" className="hover:text-text transition-colors">Terms</a>
-          <a href="/security" className="hover:text-text transition-colors">Security</a>
+        <footer className="mt-16 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-t border-border pt-6 text-xs text-text-muted">
+          <div className="flex gap-6">
+            <a href="/privacy" className="hover:text-text transition-colors">Privacy</a>
+            <a href="/terms" className="hover:text-text transition-colors">Terms</a>
+            <a href="/security" className="hover:text-text transition-colors">Security</a>
+          </div>
+          <a
+            href="https://muni.works"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-text transition-colors"
+          >
+            © 2026 Municipal Robotics
+          </a>
         </footer>
       </div>
     </div>
