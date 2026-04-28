@@ -392,6 +392,105 @@ const STYLES = `
   .footer .stack b {
     font-family: var(--display); font-weight: 700; letter-spacing: -0.01em; color: var(--ink);
   }
+
+  /* Wrappers that allow tables / charts to scroll horizontally on
+     narrow viewports without exploding the layout. */
+  .scroll-x {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 0 -4px;
+    padding: 0 4px;
+  }
+  .scroll-x table { min-width: 560px; }
+  .matrix.scroll-x table { min-width: 0; }
+
+  /* ─── mobile (< 720px) ─────────────────────────────────────────── */
+  @media (max-width: 720px) {
+    body { font-size: 12px; }
+    .sheet {
+      padding: 18px 16px 18px;
+      margin: 12px 8px;
+      border-width: 1px;
+    }
+    /* Title block takes half the screen at narrow widths — relocate it
+       to the bottom of the sheet, before the footer. */
+    .title-block {
+      position: static;
+      display: block;
+      margin: 18px -16px -10px;
+      width: calc(100% + 32px);
+      border-left: none;
+      border-top: 1px solid var(--ink);
+      border-right: none;
+    }
+    .title-block table { width: 100%; }
+    .title-block td { padding: 6px 8px; }
+
+    /* Hero stacks: wordmark first, then mascot below. */
+    .hero {
+      grid-template-columns: 1fr;
+      gap: 12px;
+      align-items: start;
+    }
+    .hero .mascot { justify-self: center; margin-right: 0; }
+    .hero .mascot svg { height: 220px; }
+    .wordmark { font-size: 38px; }
+    .tagline-main { font-size: 16px; }
+
+    h1 { font-size: 22px; }
+    h2 { margin: 24px 0 10px; padding-top: 10px; }
+
+    /* Tables go horizontal-scroll. Cells get tighter. */
+    table.board th, table.board td { padding: 6px 7px; font-size: 11px; }
+    .matrix th, .matrix td { padding: 6px 7px; min-width: 84px; }
+
+    /* checkrow / toolrow — switch to a stacked layout on phones since
+       the fixed-pixel grid columns overflow hard. */
+    .checkrow {
+      grid-template-columns: 24px 1fr;
+      grid-template-areas: "n head" ". status" ". detail";
+      gap: 4px 8px;
+    }
+    .checkrow > :nth-child(1) { grid-area: n; }
+    .checkrow > :nth-child(2) { grid-area: head; }
+    .checkrow > :nth-child(3) { grid-area: status; }
+    .checkrow > :nth-child(4) { grid-area: detail; }
+    .toolrow {
+      grid-template-columns: 24px 1fr auto;
+      grid-template-areas: "n tool kind" ". time time" ". detail detail";
+      gap: 4px 8px;
+    }
+    .toolrow > :nth-child(1) { grid-area: n; }
+    .toolrow > :nth-child(2) { grid-area: tool; }
+    .toolrow > :nth-child(3) { grid-area: kind; }
+    .toolrow > :nth-child(4) { grid-area: time; text-align: left; }
+    .toolrow > :nth-child(5) { grid-area: detail; }
+
+    /* Footer stacks. */
+    .footer { flex-direction: column; gap: 6px; }
+
+    /* Operator callout looks better full-width on phones. */
+    .operator-says { display: block; }
+
+    .run-render { padding: 8px; }
+    .run-render svg { max-height: 320px; }
+
+    /* Drafting corner glyphs sit on the sheet's edge — at narrow
+       viewports the box-shadow they sit inside can clip them. Push
+       them slightly inward. */
+    .sheet::before, .sheet::after,
+    .sheet .corner-bl, .sheet .corner-br {
+      font-size: 14px;
+    }
+  }
+
+  /* ─── small phones (< 380px) — extra tightening. ─────────────── */
+  @media (max-width: 380px) {
+    .sheet { padding: 14px 12px; margin: 6px 4px; }
+    .wordmark { font-size: 32px; }
+    .tagline-main { font-size: 14px; }
+    .hero .mascot svg { height: 180px; }
+  }
 `;
 
 function titleBlockHtml(tb: TitleBlock, generatedAt: string): string {
@@ -442,10 +541,10 @@ function pageShell(
 </head>
 <body><main class="sheet">
 <span class="corner-bl">└</span><span class="corner-br">┘</span>
-${titleBlockHtml(tb, generatedAt)}
 <div class="crumb">${crumbHtml}</div>
 ${bodyHtml}
 ${footerHtml()}
+${titleBlockHtml(tb, generatedAt)}
 <p class="meta">generated ${generatedAt} · static site, regenerate with <code>npm run build -w @mecheval/leaderboard</code></p>
 </main></body></html>`;
 }
@@ -467,11 +566,11 @@ function modelTable(models: ModelSummary[], k: number): string {
       </tr>`,
     )
     .join("");
-  return `<table class="board">
+  return `<div class="scroll-x"><table class="board">
     <thead><tr>
       <th class="left">model</th><th>tasks</th><th>runs</th>
       <th>pass^${k}</th><th>score</th><th>tokens</th><th>wall</th>
-    </tr></thead><tbody>${rows}</tbody></table>`;
+    </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 function matrix(
@@ -497,7 +596,7 @@ function matrix(
       return `<tr><td class="row-h"><a href="task/${encodeURIComponent(tid)}.html">${escape(tid)}</a></td>${cells}</tr>`;
     })
     .join("");
-  return `<div class="matrix"><table>
+  return `<div class="matrix scroll-x"><table>
     <thead><tr><th class="left">task ↓ · model →</th>${head}</tr></thead>
     <tbody>${body}</tbody>
   </table></div>`;
@@ -629,12 +728,12 @@ function entryTable(entries: PassKEntry[], k: number): string {
       </tr>`,
     )
     .join("");
-  return `<table class="board">
+  return `<div class="scroll-x"><table class="board">
     <thead><tr>
       <th class="left">model</th><th class="left">task</th>
       <th>attempts</th><th>pass^${k}</th><th>score</th>
       <th>tokens</th><th>wall</th>
-    </tr></thead><tbody>${rows}</tbody></table>`;
+    </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 function runsTable(runs: RunMeta[], pageKind: "task" | "model"): string {
@@ -660,11 +759,11 @@ function runsTable(runs: RunMeta[], pageKind: "task" | "model"): string {
     })
     .join("");
   const header = pageKind === "task" ? "model" : "task";
-  return `<table class="board">
+  return `<div class="scroll-x"><table class="board">
     <thead><tr>
       <th class="left">${header}</th><th class="left">run</th>
       <th>status</th><th>score</th><th>tokens</th><th>wall</th>
-    </tr></thead><tbody>${rows}</tbody></table>`;
+    </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 // ─── page renderers ───────────────────────────────────────────────────────
