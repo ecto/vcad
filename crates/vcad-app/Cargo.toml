@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Shared application core for vcad — evaluation, undo/redo, camera, commands"
+publish = false
 
 [dependencies]
 vcad-ir = { path = "../vcad-ir" }

@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "CRDT document model for vcad — conflict-free replicated data types for collaborative CAD"
+publish = false
 
 [dependencies]
 serde.workspace = true

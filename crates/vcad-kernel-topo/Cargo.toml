@@ -7,5 +7,5 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-vcad-kernel-math = { path = "../vcad-kernel-math" }
+vcad-kernel-math = { workspace = true }
 slotmap = { workspace = true }

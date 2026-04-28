@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Tauri v2 desktop shell for vcad"
+publish = false
 
 # Override the binary name so the app appears as "vcad" in macOS activity
 # monitor / dev-run menus (the OS uses the binary name, not the Tauri
