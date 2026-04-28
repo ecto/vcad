@@ -20,7 +20,11 @@ import {
   type RunMeta,
 } from "@mecheval/harness/pass_k";
 import { colors, copy, fonts, fontsHref, type TitleBlock } from "./tokens.js";
-import { operator, operatorSays } from "./mascot.js";
+
+/** Cheeky one-liner attributed to OPERATOR. */
+function operatorSays(quote: string): string {
+  return `<div class="operator-says"><span class="op-name">OPERATOR</span> says: <span class="op-quote">${escape(quote)}</span></div>`;
+}
 
 const PASS_K = 5;
 const REPO_ROOT = process.cwd();
@@ -648,7 +652,7 @@ function indexPage(
         <div class="tagline-main">${escape(copy.tagline)}</div>
         <div class="tagline-sub">${escape(copy.subtagline)} · pass<sup>${k}</sup></div>
       </div>
-      <div class="mascot">${operator("salute", { height: 110 })}</div>
+      <div class="mascot"><!-- OPERATOR mech render lands here in commit 4 --></div>
     </div>
     ${operatorSays(operatorQuote)}
 
@@ -691,10 +695,7 @@ function taskPage(spec: TaskSpec | null, taskId: string, runsForTask: RunMeta[])
       `mecheval — ${taskId}`,
       `<a href="../index.html">← ${escape(copy.brand)}</a> / task / ${escape(taskId)}`,
       `<h1>${escape(taskId)}</h1>
-       <div style="display:flex; align-items: center; gap: 16px;">
-         <div class="mascot" style="color: var(--ink-soft);">${operator("snooze", { height: 90 })}</div>
-         <div class="nodata">no task spec found at mecheval/tasks/${escape(taskId)}.json</div>
-       </div>`,
+       <div class="nodata">no task spec found at mecheval/tasks/${escape(taskId)}.json — OPERATOR can't find this one</div>`,
       { drawing: copy.brand, sheet: `TASK · ${taskId}`, scale: "—" },
     );
   }
@@ -734,10 +735,7 @@ function taskPage(spec: TaskSpec | null, taskId: string, runsForTask: RunMeta[])
     <h2>Runs (${runsForTask.length})</h2>
     ${runsForTask.length
       ? runsTable(runsForTask, "task")
-      : `<div style="display:flex; align-items: center; gap: 16px;">
-           <div class="mascot" style="color: var(--ink-soft);">${operator("snooze", { height: 90 })}</div>
-           <div class="nodata">no runs yet for this task — OPERATOR is waiting</div>
-         </div>`}
+      : `<div class="nodata">no runs yet for this task — OPERATOR is waiting</div>`}
   `;
   return pageShell(
     `mecheval — ${taskId}`,
