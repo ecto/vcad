@@ -7,6 +7,6 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-vcad-kernel-math = { path = "../vcad-kernel-math" }
-vcad-kernel-tessellate = { path = "../vcad-kernel-tessellate" }
+vcad-kernel-math = { workspace = true }
+vcad-kernel-tessellate = { workspace = true }
 serde = { workspace = true }

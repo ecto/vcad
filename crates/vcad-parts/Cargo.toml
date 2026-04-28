@@ -1,9 +1,10 @@
 [package]
 name = "vcad-parts"
-version = "0.9.0"
-edition = "2021"
 description = "Built-in parametric parts library (stdlib) for vcad."
-license = "MIT OR Apache-2.0"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [lib]
 path = "src/lib.rs"

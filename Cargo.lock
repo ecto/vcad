@@ -7083,7 +7083,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-text"
-version = "0.1.0"
+version = "0.9.3"
 dependencies = [
  "thiserror 2.0.18",
  "ttf-parser",
@@ -7167,7 +7167,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-parts"
-version = "0.9.0"
+version = "0.9.3"
 dependencies = [
  "serde",
  "serde_json",

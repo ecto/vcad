@@ -1,20 +1,16 @@
 [package]
 name = "vcad-kernel-text"
-version = "0.1.0"
-edition = "2021"
 description = "Text to geometry conversion for vcad kernel"
-license = "Apache-2.0"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
-# Font parsing
 ttf-parser = "0.25"
-
-# Error handling
-thiserror = "2"
-
-# Internal dependencies
-vcad-kernel-math = { path = "../vcad-kernel-math" }
-vcad-kernel-sketch = { path = "../vcad-kernel-sketch" }
+thiserror = { workspace = true }
+vcad-kernel-math = { workspace = true }
+vcad-kernel-sketch = { workspace = true }
 
 [features]
 no-builtin-font = []

@@ -7,19 +7,19 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-vcad-kernel-math = { path = "../vcad-kernel-math" }
-vcad-kernel-topo = { path = "../vcad-kernel-topo" }
-vcad-kernel-geom = { path = "../vcad-kernel-geom" }
-vcad-kernel-primitives = { path = "../vcad-kernel-primitives" }
-vcad-kernel-tessellate = { path = "../vcad-kernel-tessellate" }
-vcad-kernel-booleans = { path = "../vcad-kernel-booleans" }
-vcad-kernel-fillet = { path = "../vcad-kernel-fillet" }
-vcad-kernel-sketch = { path = "../vcad-kernel-sketch" }
-vcad-kernel-sweep = { path = "../vcad-kernel-sweep" }
-vcad-kernel-shell = { path = "../vcad-kernel-shell" }
-vcad-kernel-step = { path = "../vcad-kernel-step" }
-vcad-kernel-constraints = { path = "../vcad-kernel-constraints" }
-vcad-kernel-text = { path = "../vcad-kernel-text" }
+vcad-kernel-math = { workspace = true }
+vcad-kernel-topo = { workspace = true }
+vcad-kernel-geom = { workspace = true }
+vcad-kernel-primitives = { workspace = true }
+vcad-kernel-tessellate = { workspace = true }
+vcad-kernel-booleans = { workspace = true }
+vcad-kernel-fillet = { workspace = true }
+vcad-kernel-sketch = { workspace = true }
+vcad-kernel-sweep = { workspace = true }
+vcad-kernel-shell = { workspace = true }
+vcad-kernel-step = { workspace = true }
+vcad-kernel-constraints = { workspace = true }
+vcad-kernel-text = { workspace = true }
 
 [features]
 # Forwards the `no-builtin-font` flag from vcad-kernel-text so downstream

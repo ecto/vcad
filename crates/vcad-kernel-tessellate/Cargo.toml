@@ -7,10 +7,10 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-vcad-kernel-math = { path = "../vcad-kernel-math" }
-vcad-kernel-topo = { path = "../vcad-kernel-topo" }
-vcad-kernel-geom = { path = "../vcad-kernel-geom" }
-vcad-kernel-primitives = { path = "../vcad-kernel-primitives" }
+vcad-kernel-math = { workspace = true }
+vcad-kernel-topo = { workspace = true }
+vcad-kernel-geom = { workspace = true }
+vcad-kernel-primitives = { workspace = true }
 
 [dev-dependencies]
-vcad-kernel-step = { path = "../vcad-kernel-step" }
+vcad-kernel-step = { workspace = true }

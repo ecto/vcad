@@ -2,6 +2,7 @@
 name = "vcad-loon"
 version.workspace = true
 edition.workspace = true
+publish = false
 
 [dependencies]
 loon-lang = { path = "../../../loon/crates/loon-lang" }

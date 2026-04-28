@@ -7,12 +7,12 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-vcad-kernel-math = { path = "../vcad-kernel-math" }
-vcad-kernel-topo = { path = "../vcad-kernel-topo" }
-vcad-kernel-geom = { path = "../vcad-kernel-geom" }
-vcad-kernel-primitives = { path = "../vcad-kernel-primitives" }
-vcad-kernel-nurbs = { path = "../vcad-kernel-nurbs" }
-stepperoni = { path = "../stepperoni" }
+vcad-kernel-math = { workspace = true }
+vcad-kernel-topo = { workspace = true }
+vcad-kernel-geom = { workspace = true }
+vcad-kernel-primitives = { workspace = true }
+vcad-kernel-nurbs = { workspace = true }
+stepperoni = { workspace = true }
 thiserror.workspace = true
 
 [dev-dependencies]

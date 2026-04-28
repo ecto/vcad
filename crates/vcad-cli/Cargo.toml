@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Full-featured parametric CAD in the terminal"
+publish = false
 
 [[bin]]
 name = "vcad"
