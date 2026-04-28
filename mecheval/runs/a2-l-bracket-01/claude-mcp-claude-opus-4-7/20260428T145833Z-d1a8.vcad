@@ -1,0 +1,104 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Base",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 30,
+          "z": 4
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "WallCube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 4,
+          "y": 30,
+          "z": 26
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "WallTrans",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 46,
+          "y": 0,
+          "z": 4
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "BaseAndWall",
+      "op": {
+        "type": "Union",
+        "left": 1,
+        "right": 3
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Hole1Cyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 6,
+        "segments": 64
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "Hole1Pos",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": 10,
+          "y": 15,
+          "z": -1
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "Hole2Cyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 6,
+        "segments": 64
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 4,
+      "material": "default"
+    },
+    {
+      "root": 5,
+      "material": "default"
+    },
+    {
+      "root": 6,
+      "material": "default"
+    },
+    {
+      "root": 7,
+      "material": "default"
+    }
+  ]
+}

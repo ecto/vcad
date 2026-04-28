@@ -81,17 +81,26 @@ export const defaultCubeSolver: Solver = {
 };
 
 import { claudeDirectSolver, makeClaudeDirectSolver } from "./solvers/claude-direct.js";
+import { claudeMcpSolver, makeClaudeMcpSolver } from "./solvers/claude-mcp.js";
 
-/** Look up a solver by id. Currently ships DEFAULT_CUBE + claude-direct.
- *  The Anthropic SDK is only loaded once `claude-direct.solve()` runs,
- *  so DEFAULT_CUBE callers don't pay for it. */
+/** Look up a solver by id. Currently ships:
+ *  - default-cube           — baseline villain
+ *  - claude-direct[-<m>]    — single-shot, prompt-only
+ *  - claude-mcp[-<m>]       — agentic, drives @vcad/mcp via MCP tool loop
+ *
+ *  SDKs (Anthropic, MCP) are loaded lazily inside `solve()`, so callers
+ *  that only use DEFAULT_CUBE never pay for the import. */
 export function getSolver(id: string): Solver {
   if (id === "default-cube" || id === "DEFAULT_CUBE") return defaultCubeSolver;
   if (id === "claude-direct") return claudeDirectSolver;
   if (id.startsWith("claude-direct-")) {
     return makeClaudeDirectSolver({ model: id.slice("claude-direct-".length) });
   }
+  if (id === "claude-mcp") return claudeMcpSolver;
+  if (id.startsWith("claude-mcp-")) {
+    return makeClaudeMcpSolver({ model: id.slice("claude-mcp-".length) });
+  }
   throw new Error(
-    `unknown solver "${id}". Available: "default-cube", "claude-direct[-<model>]".`,
+    `unknown solver "${id}". Available: "default-cube", "claude-direct[-<m>]", "claude-mcp[-<m>]".`,
   );
 }

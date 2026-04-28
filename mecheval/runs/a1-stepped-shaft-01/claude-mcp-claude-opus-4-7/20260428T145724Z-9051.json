@@ -1,0 +1,416 @@
+{
+  "schema_version": 0,
+  "task_id": "a1-stepped-shaft-01",
+  "task_sha256": "d2316d1b2e359aebd978c6f9fac0e648fbfa915efb4e0d40e923386865f3fc69",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -20,
+          -20,
+          0
+        ],
+        "max": [
+          20,
+          20,
+          25
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          20,
+          20,
+          25
+        ],
+        "actual_min": [
+          -20,
+          -20,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 17278.76,
+        "tolerance_pct": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "volume": {
+          "actual_mm3": 17251.016758025384,
+          "deviation_pct": 0.1605626906943244,
+          "pass": true,
+          "spec_mm3": 17278.76,
+          "tolerance_pct": 0.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "per_solid": [
+          {
+            "error": "Invalid topology: half-edge has no parent edge",
+            "index": 0,
+            "pass": false,
+            "stage": "export"
+          }
+        ],
+        "tolerance_pct": 0.1
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 3,
+    "checks_total": 4,
+    "score": 0.75,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T145724Z-9051",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a1-stepped-shaft-01",
+    "rendered": "Make a stepped shaft along the Z axis: a base cylinder of diameter 40mm and height 10mm sitting on the XY plane (z = 0 to z = 10), with a smaller coaxial cylinder of diameter 20mm and height 15mm stacked directly on top (z = 10 to z = 25). The result is a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.9274580000000014
+      },
+      {
+        "n": 1,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388244710_1",
+          "type": "union",
+          "name": "Stepped Shaft",
+          "params": {
+            "children": [
+              {
+                "type": "cylinder",
+                "params": {
+                  "radius": 20,
+                  "height": 10
+                }
+              },
+              {
+                "type": "translate",
+                "params": {
+                  "x": 0,
+                  "y": 0,
+                  "z": 10,
+                  "child": {
+                    "type": "cylinder",
+                    "params": {
+                      "radius": 10,
+                      "height": 15
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 11.97570799999994
+      },
+      {
+        "n": 2,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[root [union [cylinder 20 10] [translate 0 0 10 [cylinder 10 15]]] \"steel\"]",
+          "format": "json"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 41.470124999999825
+      },
+      {
+        "n": 3,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1777388244710_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.8715830000001006
+      },
+      {
+        "n": 4,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388244710_1",
+          "type": "cylinder",
+          "name": "Base",
+          "params": {
+            "radius": 20,
+            "height": 10
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 1.1008750000000873
+      },
+      {
+        "n": 5,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388244710_1",
+          "type": "cylinder",
+          "name": "Base",
+          "params": {
+            "radius": 20,
+            "height": 10,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.980374999999185
+      },
+      {
+        "n": 6,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388244710_1",
+          "type": "cylinder",
+          "name": "Top",
+          "params": {
+            "radius": 10,
+            "height": 15,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2467089999991003
+      },
+      {
+        "n": 7,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1777388244710_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.9535840000025928
+      },
+      {
+        "n": 8,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388244710_1",
+          "type": "translate",
+          "name": "Top Up",
+          "parent_part_id": "2",
+          "params": {
+            "offset": {
+              "x": 0,
+              "y": 0,
+              "z": 10
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 1.0994170000049053
+      },
+      {
+        "n": 9,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388244710_1",
+          "type": "translate",
+          "name": "Top Up",
+          "params": {
+            "offset": {
+              "x": 0,
+              "y": 0,
+              "z": 10
+            },
+            "child": "2"
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 1.742707999997947
+      },
+      {
+        "n": 10,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388244710_1",
+          "type": "translate",
+          "name": "Top Up",
+          "params": {
+            "offset": {
+              "x": 0,
+              "y": 0,
+              "z": 10
+            },
+            "child": 2
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.8994579999998678
+      },
+      {
+        "n": 11,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1777388244710_1",
+          "type": "union",
+          "name": "Stepped Shaft",
+          "params": {
+            "left": 1,
+            "right": 3
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.7718339999992168
+      },
+      {
+        "n": 12,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1777388244710_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.3031669999982114
+      },
+      {
+        "n": 13,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1777388244710_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.7094579999975394
+      },
+      {
+        "n": 14,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1777388244710_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.155709000006027
+      },
+      {
+        "n": 15,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1777388244710_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.7335419999944861
+      },
+      {
+        "n": 16,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1777388244710_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.8774169999960577
+      },
+      {
+        "n": 17,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1777388244710_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.195625000000291
+      },
+      {
+        "n": 18,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1777388244710_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.4561669999966398
+      }
+    ],
+    "tokens": {
+      "input": 399769,
+      "output": 2435,
+      "total": 402204
+    },
+    "wallclock_sec": 69.356046792
+  },
+  "output": {
+    "vcad_path": "20260428T145724Z-9051.vcad",
+    "vcad_sha256": "5a7dd01b327c315fa9841e81751aef763c45a33af37627a9dd4788c629b0fb05",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T14:57:24.508Z",
+    "ended_at": "2026-04-28T14:58:33.948Z"
+  },
+  "signature": null
+}
