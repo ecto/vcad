@@ -8,7 +8,8 @@
         "-c",
         "if [ -f .env ]; then set -a && source .env && set +a; fi && CLAUDE_PREVIEW=1 npm run dev -w @vcad/app -- --host 0.0.0.0"
       ],
-      "port": 5173
+      "port": 5173,
+      "autoPort": true
     }
   ]
 }

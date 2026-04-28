@@ -29,6 +29,23 @@ export function getAuthRedirectUrl(): string {
   return typeof window !== "undefined" ? window.location.origin : "";
 }
 
+/**
+ * Where Supabase should redirect a popup OAuth flow. This is a static
+ * page that postMessages the callback URL to its opener and closes
+ * itself, so the main window completes the PKCE exchange against the
+ * existing Supabase client without ever navigating away.
+ *
+ * Web only — Tauri keeps using `getAuthRedirectUrl()` so the OS browser
+ * routes back through the deep-link bridge.
+ */
+export function getPopupCallbackUrl(): string {
+  if (typeof window === "undefined") return "";
+  // `.html` extension keeps the URL pointing at the static file even
+  // on hosts that fall back to the SPA's index.html for unknown paths
+  // (Vite dev server, Cloudflare Pages, Vercel, etc.).
+  return `${window.location.origin}/auth/popup.html`;
+}
+
 import {
   createClient,
   type Session as SupabaseSession,

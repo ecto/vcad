@@ -7,6 +7,7 @@ import {
   GithubLogo,
 } from "@phosphor-icons/react";
 import { getAuthRedirectUrl, getSupabase, isTauriRuntime } from "../client";
+import { signInWithOAuthPopup } from "../oauth-popup";
 import type { GatedFeature } from "../hooks/useRequireAuth";
 
 type OAuthProvider = "google" | "github";
@@ -48,18 +49,6 @@ export function AuthModal({ open, onOpenChange, feature }: AuthModalProps) {
       new CustomEvent("vcad:sign-in-attempt", { detail: { provider } }),
     );
 
-    const tauri = isTauriRuntime();
-
-    const { data, error } = await supabase.auth.signInWithOAuth({
-      provider,
-      options: {
-        redirectTo: getAuthRedirectUrl(),
-        // On desktop we hand the URL to the OS browser ourselves so
-        // Google/GitHub don't reject the embedded webview as "insecure".
-        skipBrowserRedirect: tauri,
-      },
-    });
-
     const reportFailure = (message: string) => {
       setError(message);
       window.dispatchEvent(
@@ -70,12 +59,21 @@ export function AuthModal({ open, onOpenChange, feature }: AuthModalProps) {
       setLoading(false);
     };
 
-    if (error) {
-      reportFailure(error.message);
-      return;
-    }
-
-    if (tauri) {
+    if (isTauriRuntime()) {
+      // Desktop: open the OS browser and let the deep-link bridge
+      // complete the flow. Embedded webviews would be rejected by
+      // Google/GitHub as "insecure".
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider,
+        options: {
+          redirectTo: getAuthRedirectUrl(),
+          skipBrowserRedirect: true,
+        },
+      });
+      if (error) {
+        reportFailure(error.message);
+        return;
+      }
       if (!data?.url) {
         reportFailure("OAuth provider did not return a redirect URL");
         return;
@@ -94,8 +92,43 @@ export function AuthModal({ open, onOpenChange, feature }: AuthModalProps) {
       }
       return;
     }
-    // On web Supabase already navigated; leave `loading` set so the
-    // form doesn't flash active mid-redirect.
+
+    // Web: drive the OAuth dance inside a popup so the user keeps
+    // their place. `signInWithOAuthPopup` must run synchronously
+    // enough that the click gesture still authorizes window.open —
+    // it does (only state setters and the supabase call run before
+    // the popup is opened).
+    const result = await signInWithOAuthPopup(provider);
+
+    if (result.ok) {
+      // AuthProvider's onAuthStateChange handles the rest.
+      setLoading(false);
+      return;
+    }
+
+    if (result.cancelled) {
+      // User closed the popup; quietly reset the form.
+      setLoading(false);
+      return;
+    }
+
+    if (result.popupBlocked) {
+      // Fall back to today's full-page redirect so sign-in still
+      // completes, even if the user loses ephemeral state.
+      const { error: redirectError } = await supabase.auth.signInWithOAuth({
+        provider,
+        options: { redirectTo: getAuthRedirectUrl() },
+      });
+      if (redirectError) {
+        reportFailure(redirectError.message);
+        return;
+      }
+      // Supabase has navigated the page; leave loading set so the
+      // form doesn't flash active mid-redirect.
+      return;
+    }
+
+    reportFailure(result.error ?? "Sign-in failed");
   };
 
   const signInWithEmail = async (e: FormEvent) => {
