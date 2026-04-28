@@ -1,0 +1,126 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "base": {
+      "id": "base",
+      "name": "Base",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 30,
+          "z": 5
+        }
+      }
+    },
+    "fin1": {
+      "id": "fin1",
+      "name": "Fin 1",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 3,
+          "z": 15
+        }
+      }
+    },
+    "fin2": {
+      "id": "fin2",
+      "name": "Fin 2",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 3,
+          "z": 15
+        }
+      }
+    },
+    "fin3": {
+      "id": "fin3",
+      "name": "Fin 3",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 3,
+          "z": 15
+        }
+      }
+    },
+    "fins": {
+      "id": "fins",
+      "name": "Fins",
+      "op": {
+        "type": "Union",
+        "left": "fin1",
+        "right": {
+          "type": "Union",
+          "left": "fin2",
+          "right": "fin3"
+        }
+      }
+    },
+    "translated_base": {
+      "id": "translated_base",
+      "name": "Translated Base",
+      "op": {
+        "type": "Translate",
+        "child": "base",
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "translated_fin1": {
+      "id": "translated_fin1",
+      "name": "Translated Fin 1",
+      "op": {
+        "type": "Translate",
+        "child": "fin1",
+        "offset": {
+          "x": 0,
+          "y": -10,
+          "z": 5
+        }
+      }
+    },
+    "translated_fin2": {
+      "id": "translated_fin2",
+      "name": "Translated Fin 2",
+      "op": {
+        "type": "Translate",
+        "child": "fin2",
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 5
+        }
+      }
+    },
+    "translated_fin3": {
+      "id": "translated_fin3",
+      "name": "Translated Fin 3",
+      "op": {
+        "type": "Translate",
+        "child": "fin3",
+        "offset": {
+          "x": 0,
+          "y": 10,
+          "z": 5
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "fins",
+      "material": "default"
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "cube_base": {
+      "id": "cube_base",
+      "name": "cube_base",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 25, "y": 25, "z": 25}
+      }
+    },
+    "cube_centered": {
+      "id": "cube_centered",
+      "name": "cube_centered",
+      "op": {
+        "type": "Translate",
+        "child": "cube_base",
+        "offset": {"x": -12.5, "y": -12.5, "z": -12.5}
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": "cube_centered", "material": "default"}]
+}

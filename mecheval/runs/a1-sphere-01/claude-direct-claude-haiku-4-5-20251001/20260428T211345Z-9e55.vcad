@@ -1,0 +1,22 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "sphere": {
+      "id": "sphere",
+      "name": "Sphere",
+      "op": {
+        "type": "Sphere",
+        "radius": 15,
+        "segments": 32
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "sphere",
+      "material": "default"
+    }
+  ]
+}

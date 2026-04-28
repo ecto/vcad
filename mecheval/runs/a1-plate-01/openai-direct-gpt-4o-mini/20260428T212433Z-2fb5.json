@@ -1,0 +1,224 @@
+{
+  "schema_version": 0,
+  "task_id": "a1-plate-01",
+  "task_sha256": "fedd0fa098bf5361d9bcda705012edac968fd2f1d9a3fc619c091aac83558b83",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "fail",
+      "details": {
+        "error": "parse: Invalid JSON vcad file: invalid type: map, expected u64 at line 98 column 5",
+        "reason": "fatal evaluation error"
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -25,
+          -15,
+          0
+        ],
+        "max": [
+          25,
+          15,
+          10
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 14717.3,
+        "tolerance_pct": 0.5
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 3,
+        "expected": 4,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "fail",
+      "details": {
+        "actual": 0,
+        "diameter_mm": 3,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 4,
+        "found": []
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 3,
+        "positions": [
+          [
+            20,
+            10,
+            0
+          ],
+          [
+            -20,
+            10,
+            0
+          ],
+          [
+            -20,
+            -10,
+            0
+          ],
+          [
+            20,
+            -10,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "diameter_mm": 3,
+        "per_expected": [
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              20,
+              10
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              -20,
+              10
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              -20,
+              -10
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              20,
+              -10
+            ]
+          }
+        ],
+        "tolerance_mm": 0.1,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to round-trip"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 6,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T212433Z-2fb5",
+  "model": {
+    "id": "openai-direct-gpt-4o-mini",
+    "name": "OpenAI (direct, gpt-4o-mini)",
+    "provider": "openai",
+    "params": {
+      "mode": "direct",
+      "model": "gpt-4o-mini",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a1-plate-01",
+    "rendered": "Make a 50mm × 30mm × 10mm rectangular plate. Center it in X and Y, with the bottom face on the XY plane (z = 0 to z = 10). Drill four cylindrical through-holes of diameter 3mm, axes parallel to Z, positioned 5mm in from each corner of the top face.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "openai.chat.completions.create",
+        "args": {
+          "model": "gpt-4o-mini",
+          "max_tokens": 8000,
+          "system_chars": 1632,
+          "user_chars": 302
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 12023.593791
+      }
+    ],
+    "tokens": {
+      "input": 593,
+      "output": 580,
+      "total": 1173
+    },
+    "wallclock_sec": 12.023593791
+  },
+  "output": {
+    "vcad_path": "20260428T212433Z-2fb5.vcad",
+    "vcad_sha256": "d6ac84fd80141cadb528d571261c8ae17095f8b31bf5a49823b8913498373f5c",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T21:24:33.263Z",
+    "ended_at": "2026-04-28T21:24:45.292Z"
+  },
+  "signature": null
+}

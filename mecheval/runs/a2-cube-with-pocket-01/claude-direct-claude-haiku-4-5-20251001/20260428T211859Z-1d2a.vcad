@@ -1,0 +1,56 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "cube_main": {
+      "id": "cube_main",
+      "name": "Main cube 40mm",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 40, "y": 40, "z": 40}
+      }
+    },
+    "cube_centered": {
+      "id": "cube_centered",
+      "name": "Cube centered in XY",
+      "op": {
+        "type": "Translate",
+        "child": "cube_main",
+        "offset": {"x": -20, "y": -20, "z": 0}
+      }
+    },
+    "pocket": {
+      "id": "pocket",
+      "name": "Pocket cutter 20x20x10",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 20, "y": 20, "z": 10}
+      }
+    },
+    "pocket_positioned": {
+      "id": "pocket_positioned",
+      "name": "Pocket positioned at top",
+      "op": {
+        "type": "Translate",
+        "child": "pocket",
+        "offset": {"x": -10, "y": -10, "z": 30}
+      }
+    },
+    "result": {
+      "id": "result",
+      "name": "Cube with pocket",
+      "op": {
+        "type": "Difference",
+        "left": "cube_centered",
+        "right": "pocket_positioned"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "result",
+      "material": "default"
+    }
+  ]
+}

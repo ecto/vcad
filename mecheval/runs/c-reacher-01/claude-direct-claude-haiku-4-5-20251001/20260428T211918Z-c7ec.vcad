@@ -1,0 +1,174 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "base": {
+      "id": "base",
+      "name": "Base",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 0.08, "y": 0.08, "z": 0.02}
+      }
+    },
+    "base_centered": {
+      "id": "base_centered",
+      "name": "BaseCentered",
+      "op": {
+        "type": "Translate",
+        "child": "base",
+        "offset": {"x": -0.04, "y": -0.04, "z": 0}
+      }
+    },
+    "link1_cyl": {
+      "id": "link1_cyl",
+      "name": "Link1Cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 0.01,
+        "height": 0.15,
+        "segments": 32
+      }
+    },
+    "link1": {
+      "id": "link1",
+      "name": "Link1",
+      "op": {
+        "type": "Translate",
+        "child": "link1_cyl",
+        "offset": {"x": 0, "y": 0, "z": 0.02}
+      }
+    },
+    "joint1_pivot": {
+      "id": "joint1_pivot",
+      "name": "Joint1Pivot",
+      "op": {
+        "type": "Translate",
+        "child": "link1",
+        "offset": {"x": 0, "y": 0, "z": 0}
+      }
+    },
+    "link2_cyl": {
+      "id": "link2_cyl",
+      "name": "Link2Cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 0.008,
+        "height": 0.12,
+        "segments": 32
+      }
+    },
+    "link2": {
+      "id": "link2",
+      "name": "Link2",
+      "op": {
+        "type": "Translate",
+        "child": "link2_cyl",
+        "offset": {"x": 0, "y": 0, "z": 0.12}
+      }
+    },
+    "joint2_pivot": {
+      "id": "joint2_pivot",
+      "name": "Joint2Pivot",
+      "op": {
+        "type": "Translate",
+        "child": "link2",
+        "offset": {"x": 0, "y": 0, "z": 0}
+      }
+    },
+    "tip_sphere": {
+      "id": "tip_sphere",
+      "name": "TipSphere",
+      "op": {
+        "type": "Sphere",
+        "radius": 0.005,
+        "segments": 32
+      }
+    },
+    "tip": {
+      "id": "tip",
+      "name": "Tip",
+      "op": {
+        "type": "Translate",
+        "child": "tip_sphere",
+        "offset": {"x": 0, "y": 0, "z": 0.12}
+      }
+    },
+    "assembly": {
+      "id": "assembly",
+      "name": "Manipulator",
+      "op": {
+        "type": "Union",
+        "left": "base_centered",
+        "right": "joint1_pivot"
+      }
+    },
+    "assembly2": {
+      "id": "assembly2",
+      "name": "ManipulatorWithLink2",
+      "op": {
+        "type": "Union",
+        "left": "assembly",
+        "right": "joint2_pivot"
+      }
+    },
+    "assembly3": {
+      "id": "assembly3",
+      "name": "ManipulatorWithTip",
+      "op": {
+        "type": "Union",
+        "left": "assembly2",
+        "right": "tip"
+      }
+    }
+  },
+  "materials": {
+    "aluminum": {
+      "color": [0.9, 0.9, 0.95],
+      "metallic": 0.8,
+      "roughness": 0.3
+    },
+    "steel": {
+      "color": [0.7, 0.7, 0.75],
+      "metallic": 0.9,
+      "roughness": 0.2
+    },
+    "rubber": {
+      "color": [0.2, 0.2, 0.2],
+      "metallic": 0.0,
+      "roughness": 0.8
+    }
+  },
+  "part_materials": {
+    "base_centered": "rubber",
+    "joint1_pivot": "aluminum",
+    "joint2_pivot": "steel",
+    "tip": "steel"
+  },
+  "roots": [
+    {
+      "root": "assembly3",
+      "material": "default"
+    }
+  ],
+  "joints": [
+    {
+      "name": "Joint1",
+      "parent_body": "base",
+      "child_body": "link1",
+      "type": "revolute",
+      "axis": {"x": 0, "y": 1, "z": 0},
+      "anchor": {"x": 0, "y": 0, "z": 0.02},
+      "angle_initial": 1.2,
+      "torque_limit": 5.0
+    },
+    {
+      "name": "Joint2",
+      "parent_body": "link1",
+      "child_body": "link2",
+      "type": "revolute",
+      "axis": {"x": 0, "y": 1, "z": 0},
+      "anchor": {"x": 0, "y": 0, "z": 0.17},
+      "angle_initial": -1.5,
+      "torque_limit": 5.0
+    }
+  ]
+}

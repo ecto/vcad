@@ -1,0 +1,249 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "base_cube": {
+      "id": 0,
+      "name": "base_cube",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 60, "y": 60, "z": 10}
+      }
+    },
+    "base_centered": {
+      "id": 1,
+      "name": "base_centered",
+      "op": {
+        "type": "Translate",
+        "child": 0,
+        "offset": {"x": -30, "y": -30, "z": 0}
+      }
+    },
+    "hole_0": {
+      "id": 2,
+      "name": "hole_0",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole_0_positioned": {
+      "id": 3,
+      "name": "hole_0_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {"x": 20, "y": 0, "z": 0}
+      }
+    },
+    "hole_1": {
+      "id": 4,
+      "name": "hole_1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole_1_positioned": {
+      "id": 5,
+      "name": "hole_1_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {"x": 14.142135623730951, "y": 14.142135623730951, "z": 0}
+      }
+    },
+    "hole_2": {
+      "id": 6,
+      "name": "hole_2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole_2_positioned": {
+      "id": 7,
+      "name": "hole_2_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {"x": 0, "y": 20, "z": 0}
+      }
+    },
+    "hole_3": {
+      "id": 8,
+      "name": "hole_3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole_3_positioned": {
+      "id": 9,
+      "name": "hole_3_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 8,
+        "offset": {"x": -14.142135623730951, "y": 14.142135623730951, "z": 0}
+      }
+    },
+    "hole_4": {
+      "id": 10,
+      "name": "hole_4",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole_4_positioned": {
+      "id": 11,
+      "name": "hole_4_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 10,
+        "offset": {"x": -20, "y": 0, "z": 0}
+      }
+    },
+    "hole_5": {
+      "id": 12,
+      "name": "hole_5",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole_5_positioned": {
+      "id": 13,
+      "name": "hole_5_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 12,
+        "offset": {"x": -14.142135623730951, "y": -14.142135623730951, "z": 0}
+      }
+    },
+    "hole_6": {
+      "id": 14,
+      "name": "hole_6",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole_6_positioned": {
+      "id": 15,
+      "name": "hole_6_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 14,
+        "offset": {"x": 0, "y": -20, "z": 0}
+      }
+    },
+    "hole_7": {
+      "id": 16,
+      "name": "hole_7",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole_7_positioned": {
+      "id": 17,
+      "name": "hole_7_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 16,
+        "offset": {"x": 14.142135623730951, "y": -14.142135623730951, "z": 0}
+      }
+    },
+    "result_after_hole_0": {
+      "id": 18,
+      "name": "result_after_hole_0",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 3
+      }
+    },
+    "result_after_hole_1": {
+      "id": 19,
+      "name": "result_after_hole_1",
+      "op": {
+        "type": "Difference",
+        "left": 18,
+        "right": 5
+      }
+    },
+    "result_after_hole_2": {
+      "id": 20,
+      "name": "result_after_hole_2",
+      "op": {
+        "type": "Difference",
+        "left": 19,
+        "right": 7
+      }
+    },
+    "result_after_hole_3": {
+      "id": 21,
+      "name": "result_after_hole_3",
+      "op": {
+        "type": "Difference",
+        "left": 20,
+        "right": 9
+      }
+    },
+    "result_after_hole_4": {
+      "id": 22,
+      "name": "result_after_hole_4",
+      "op": {
+        "type": "Difference",
+        "left": 21,
+        "right": 11
+      }
+    },
+    "result_after_hole_5": {
+      "id": 23,
+      "name": "result_after_hole_5",
+      "op": {
+        "type": "Difference",
+        "left": 22,
+        "right": 13
+      }
+    },
+    "result_after_hole_6": {
+      "id": 24,
+      "name": "result_after_hole_6",
+      "op": {
+        "type": "Difference",
+        "left": 23,
+        "right": 15
+      }
+    },
+    "result_after_hole_7": {
+      "id": 25,
+      "name": "result_after_hole_7",
+      "op": {
+        "type": "Difference",
+        "left": 24,
+        "right": 17
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": 25, "material": "default"}]
+}

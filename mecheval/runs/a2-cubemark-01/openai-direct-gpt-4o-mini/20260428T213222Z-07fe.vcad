@@ -1,0 +1,148 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "cube": {
+      "id": "cube",
+      "name": "Cube",
+      "op": {"type":"Cube", "size":{"x":30,"y":30,"z":30}}
+    },
+    "hole1": {
+      "id": "hole1",
+      "name": "Hole1",
+      "op": {"type":"Cylinder", "radius":1.5, "height":30, "segments":32}
+    },
+    "hole2": {
+      "id": "hole2",
+      "name": "Hole2",
+      "op": {"type":"Cylinder", "radius":1.5, "height":30, "segments":32}
+    },
+    "hole3": {
+      "id": "hole3",
+      "name": "Hole3",
+      "op": {"type":"Cylinder", "radius":1.5, "height":30, "segments":32}
+    },
+    "hole4": {
+      "id": "hole4",
+      "name": "Hole4",
+      "op": {"type":"Cylinder", "radius":1.5, "height":30, "segments":32}
+    },
+    "hole5": {
+      "id": "hole5",
+      "name": "Hole5",
+      "op": {"type":"Cylinder", "radius":1.5, "height":30, "segments":32}
+    },
+    "hole6": {
+      "id": "hole6",
+      "name": "Hole6",
+      "op": {"type":"Cylinder", "radius":1.5, "height":30, "segments":32}
+    },
+    "hole7": {
+      "id": "hole7",
+      "name": "Hole7",
+      "op": {"type":"Cylinder", "radius":1.5, "height":30, "segments":32}
+    },
+    "hole8": {
+      "id": "hole8",
+      "name": "Hole8",
+      "op": {"type":"Cylinder", "radius":1.5, "height":30, "segments":32}
+    },
+    "hole9": {
+      "id": "hole9",
+      "name": "Hole9",
+      "op": {"type":"Cylinder", "radius":1.5, "height":30, "segments":32}
+    },
+    "subtract1": {
+      "id": "subtract1",
+      "name": "Subtract1",
+      "op": {"type":"Difference", "left":"cube", "right":"hole1"}
+    },
+    "subtract2": {
+      "id": "subtract2",
+      "name": "Subtract2",
+      "op": {"type":"Difference", "left":"subtract1", "right":"hole2"}
+    },
+    "subtract3": {
+      "id": "subtract3",
+      "name": "Subtract3",
+      "op": {"type":"Difference", "left":"subtract2", "right":"hole3"}
+    },
+    "subtract4": {
+      "id": "subtract4",
+      "name": "Subtract4",
+      "op": {"type":"Difference", "left":"subtract3", "right":"hole4"}
+    },
+    "subtract5": {
+      "id": "subtract5",
+      "name": "Subtract5",
+      "op": {"type":"Difference", "left":"subtract4", "right":"hole5"}
+    },
+    "subtract6": {
+      "id": "subtract6",
+      "name": "Subtract6",
+      "op": {"type":"Difference", "left":"subtract5", "right":"hole6"}
+    },
+    "subtract7": {
+      "id": "subtract7",
+      "name": "Subtract7",
+      "op": {"type":"Difference", "left":"subtract6", "right":"hole7"}
+    },
+    "subtract8": {
+      "id": "subtract8",
+      "name": "Subtract8",
+      "op": {"type":"Difference", "left":"subtract7", "right":"hole8"}
+    },
+    "final": {
+      "id": "final",
+      "name": "FinalCube",
+      "op": {"type":"Difference", "left":"subtract8", "right":"hole9"}
+    },
+    "trans1": {
+      "id": "trans1",
+      "name": "TranslateHole1",
+      "op": {"type":"Translate", "child":"hole1", "offset":{"x":-8,"y":-8,"z":0}}
+    },
+    "trans2": {
+      "id": "trans2",
+      "name": "TranslateHole2",
+      "op": {"type":"Translate", "child":"hole2", "offset":{"x":0,"y":-8,"z":0}}
+    },
+    "trans3": {
+      "id": "trans3",
+      "name": "TranslateHole3",
+      "op": {"type":"Translate", "child":"hole3", "offset":{"x":8,"y":-8,"z":0}}
+    },
+    "trans4": {
+      "id": "trans4",
+      "name": "TranslateHole4",
+      "op": {"type":"Translate", "child":"hole4", "offset":{"x":-8,"y":0,"z":0}}
+    },
+    "trans5": {
+      "id": "trans5",
+      "name": "TranslateHole5",
+      "op": {"type":"Translate", "child":"hole5", "offset":{"x":0,"y":0,"z":0}}
+    },
+    "trans6": {
+      "id": "trans6",
+      "name": "TranslateHole6",
+      "op": {"type":"Translate", "child":"hole6", "offset":{"x":8,"y":0,"z":0}}
+    },
+    "trans7": {
+      "id": "trans7",
+      "name": "TranslateHole7",
+      "op": {"type":"Translate", "child":"hole7", "offset":{"x":-8,"y":8,"z":0}}
+    },
+    "trans8": {
+      "id": "trans8",
+      "name": "TranslateHole8",
+      "op": {"type":"Translate", "child":"hole8", "offset":{"x":0,"y":8,"z":0}}
+    },
+    "trans9": {
+      "id": "trans9",
+      "name": "TranslateHole9",
+      "op": {"type":"Translate", "child":"hole9", "offset":{"x":8,"y":8,"z":0}}
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root":"final", "material":"default"}]
+}

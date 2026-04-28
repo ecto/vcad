@@ -1,0 +1,24 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "Plate raw", "op": { "type": "Cube", "size": { "x": 50, "y": 30, "z": 10 } } },
+    "2": { "id": 2, "name": "Plate centered", "op": { "type": "Translate", "child": 1, "offset": { "x": -25, "y": -15, "z": 0 } } },
+
+    "3": { "id": 3, "name": "Hole base cylinder", "op": { "type": "Cylinder", "radius": 1.5, "height": 10, "segments": 32 } },
+    "4": { "id": 4, "name": "Hole NE (20,10)", "op": { "type": "Translate", "child": 3, "offset": { "x": 20, "y": 10, "z": 0 } } },
+    "5": { "id": 5, "name": "Hole NW (-20,10)", "op": { "type": "Translate", "child": 3, "offset": { "x": -20, "y": 10, "z": 0 } } },
+    "6": { "id": 6, "name": "Hole SE (20,-10)", "op": { "type": "Translate", "child": 3, "offset": { "x": 20, "y": -10, "z": 0 } } },
+    "7": { "id": 7, "name": "Hole SW (-20,-10)", "op": { "type": "Translate", "child": 3, "offset": { "x": -20, "y": -10, "z": 0 } } },
+
+    "8": { "id": 8, "name": "Union holes NE+NW", "op": { "type": "Union", "left": 4, "right": 5 } },
+    "9": { "id": 9, "name": "Union holes SE+SW", "op": { "type": "Union", "left": 6, "right": 7 } },
+    "10": { "id": 10, "name": "All holes union", "op": { "type": "Union", "left": 8, "right": 9 } },
+
+    "11": { "id": 11, "name": "Plate with holes", "op": { "type": "Difference", "left": 2, "right": 10 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    { "root": 11, "material": "default" }
+  ]
+}

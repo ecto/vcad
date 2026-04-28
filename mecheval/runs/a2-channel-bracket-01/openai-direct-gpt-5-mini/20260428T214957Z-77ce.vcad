@@ -1,0 +1,93 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "bottom_plate",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 30,
+          "y": 40,
+          "z": 4
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "left_wall_cube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 4,
+          "y": 40,
+          "z": 26
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "left_wall_translated",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 4
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "right_wall_cube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 4,
+          "y": 40,
+          "z": 26
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "right_wall_translated",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {
+          "x": 26,
+          "y": 0,
+          "z": 4
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "union_bottom_left",
+      "op": {
+        "type": "Union",
+        "left": 1,
+        "right": 3
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "u_channel_bracket",
+      "op": {
+        "type": "Union",
+        "left": 6,
+        "right": 5
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 7,
+      "material": "default"
+    }
+  ]
+}

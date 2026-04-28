@@ -1,0 +1,108 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Plate",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 30,
+          "z": 10
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Hole1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Hole2",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 22,
+          "y": 14,
+          "z": 0
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Hole3",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 22,
+          "y": -14,
+          "z": 0
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Hole4",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": -22,
+          "y": 14,
+          "z": 0
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "Hole5",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": -22,
+          "y": -14,
+          "z": 0
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "PlateWithHoles",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": {
+          "type": "Union",
+          "left": 3,
+          "right": {
+            "type": "Union",
+            "left": 4,
+            "right": {
+              "type": "Union",
+              "left": 5,
+              "right": 6
+            }
+          }
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 7,
+      "material": "default"
+    }
+  ]
+}

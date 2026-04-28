@@ -1,0 +1,174 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "base",
+      "op": {
+        "type": "Cylinder",
+        "radius": 40,
+        "height": 20,
+        "segments": 32
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "assembly_offset_to_base_top",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 20
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "joint1_rev_z torque=5Nm (actuated)",
+      "op": {
+        "type": "Rotate",
+        "child": 4,
+        "angles": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "link1_and_joint2_subassembly",
+      "op": {
+        "type": "Union",
+        "left": 5,
+        "right": 6
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "link1 (shoulder link)",
+      "op": {
+        "type": "Translate",
+        "child": 7,
+        "offset": {
+          "x": 0,
+          "y": -5,
+          "z": -5
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "link1_geom",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 140,
+          "y": 10,
+          "z": 10
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "joint2_position_at_link1_end",
+      "op": {
+        "type": "Translate",
+        "child": 8,
+        "offset": {
+          "x": 140,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "joint2_rev_y torque=5Nm (actuated)",
+      "op": {
+        "type": "Rotate",
+        "child": 9,
+        "angles": {
+          "x": 0,
+          "y": 35.695,
+          "z": 0
+        }
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "link2_and_tip_subassembly",
+      "op": {
+        "type": "Union",
+        "left": 10,
+        "right": 11
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "link2 (forearm)",
+      "op": {
+        "type": "Translate",
+        "child": 12,
+        "offset": {
+          "x": 0,
+          "y": -3,
+          "z": -3
+        }
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "link2_geom",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 120,
+          "y": 6,
+          "z": 6
+        }
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "end_effector_tip_position",
+      "op": {
+        "type": "Translate",
+        "child": 13,
+        "offset": {
+          "x": 120,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "tip",
+      "op": {
+        "type": "Sphere",
+        "radius": 4,
+        "segments": 32
+      }
+    },
+    "100": {
+      "id": 100,
+      "name": "root_union_base_and_arm",
+      "op": {
+        "type": "Union",
+        "left": 1,
+        "right": 2
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 100,
+      "material": "default"
+    }
+  ]
+}

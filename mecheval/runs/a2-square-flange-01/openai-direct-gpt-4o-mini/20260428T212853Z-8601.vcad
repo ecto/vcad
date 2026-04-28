@@ -1,0 +1,93 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Plate",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 80,
+          "y": 80,
+          "z": 6
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Main Hole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 6,
+        "height": 6,
+        "segments": 32
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Corner Holes",
+      "op": {
+        "type": "Union",
+        "left": {
+          "type": "Translate",
+          "child": 2,
+          "offset": {
+            "x": 30,
+            "y": 30,
+            "z": 0
+          }
+        },
+        "right": {
+          "type": "Union",
+          "left": {
+            "type": "Translate",
+            "child": 2,
+            "offset": {
+              "x": 30,
+              "y": -30,
+              "z": 0
+            }
+          },
+          "right": {
+            "type": "Union",
+            "left": {
+              "type": "Translate",
+              "child": 2,
+              "offset": {
+                "x": -30,
+                "y": 30,
+                "z": 0
+              }
+            },
+            "right": {
+              "type": "Translate",
+              "child": 2,
+              "offset": {
+                "x": -30,
+                "y": -30,
+                "z": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Final Plate with Holes",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 3
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 4,
+      "material": "default"
+    }
+  ]
+}

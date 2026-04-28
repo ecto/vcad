@@ -1,0 +1,25 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "cube": {
+      "id": "cube",
+      "name": "25mm cube",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 25, "y": 25, "z": 25}
+      }
+    },
+    "centered_cube": {
+      "id": "centered_cube",
+      "name": "centered 25mm cube",
+      "op": {
+        "type": "Translate",
+        "child": "cube",
+        "offset": {"x": -12.5, "y": -12.5, "z": -12.5}
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": "centered_cube", "material": "default"}]
+}

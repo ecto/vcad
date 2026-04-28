@@ -1,0 +1,166 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "cube_raw": {
+      "id": "cube_raw",
+      "name": "plate_cube_raw",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 30,
+          "z": 10
+        }
+      }
+    },
+    "plate": {
+      "id": "plate",
+      "name": "plate_centered_xy",
+      "op": {
+        "type": "Translate",
+        "child": "cube_raw",
+        "offset": {
+          "x": -25,
+          "y": -15,
+          "z": 0
+        }
+      }
+    },
+    "hole1": {
+      "id": "hole1",
+      "name": "hole_20_10",
+      "op": {
+        "type": "Translate",
+        "child": "cyl_hole_1",
+        "offset": {
+          "x": 20,
+          "y": 10,
+          "z": 0
+        }
+      }
+    },
+    "cyl_hole_1": {
+      "id": "cyl_hole_1",
+      "name": "cyl_hole_radius_1p5",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole2": {
+      "id": "hole2",
+      "name": "hole_minus20_10",
+      "op": {
+        "type": "Translate",
+        "child": "cyl_hole_2",
+        "offset": {
+          "x": -20,
+          "y": 10,
+          "z": 0
+        }
+      }
+    },
+    "cyl_hole_2": {
+      "id": "cyl_hole_2",
+      "name": "cyl_hole_radius_1p5_b",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole3": {
+      "id": "hole3",
+      "name": "hole_20_minus10",
+      "op": {
+        "type": "Translate",
+        "child": "cyl_hole_3",
+        "offset": {
+          "x": 20,
+          "y": -10,
+          "z": 0
+        }
+      }
+    },
+    "cyl_hole_3": {
+      "id": "cyl_hole_3",
+      "name": "cyl_hole_radius_1p5_c",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole4": {
+      "id": "hole4",
+      "name": "hole_minus20_minus10",
+      "op": {
+        "type": "Translate",
+        "child": "cyl_hole_4",
+        "offset": {
+          "x": -20,
+          "y": -10,
+          "z": 0
+        }
+      }
+    },
+    "cyl_hole_4": {
+      "id": "cyl_hole_4",
+      "name": "cyl_hole_radius_1p5_d",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "union12": {
+      "id": "union12",
+      "name": "union_hole1_hole2",
+      "op": {
+        "type": "Union",
+        "left": "hole1",
+        "right": "hole2"
+      }
+    },
+    "union123": {
+      "id": "union123",
+      "name": "union_12_3",
+      "op": {
+        "type": "Union",
+        "left": "union12",
+        "right": "hole3"
+      }
+    },
+    "union_all": {
+      "id": "union_all",
+      "name": "union_all_holes",
+      "op": {
+        "type": "Union",
+        "left": "union123",
+        "right": "hole4"
+      }
+    },
+    "plate_with_holes": {
+      "id": "plate_with_holes",
+      "name": "plate_final_with_4_holes",
+      "op": {
+        "type": "Difference",
+        "left": "plate",
+        "right": "union_all"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "plate_with_holes",
+      "material": "default"
+    }
+  ]
+}

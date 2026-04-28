@@ -1,0 +1,82 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "bottom_tier": {
+      "id": "bottom_tier",
+      "name": "Bottom Tier",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 40, "y": 40, "z": 10}
+      }
+    },
+    "bottom_centered": {
+      "id": "bottom_centered",
+      "name": "Bottom Centered",
+      "op": {
+        "type": "Translate",
+        "child": "bottom_tier",
+        "offset": {"x": -20, "y": -20, "z": 0}
+      }
+    },
+    "middle_tier": {
+      "id": "middle_tier",
+      "name": "Middle Tier",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 28, "y": 28, "z": 10}
+      }
+    },
+    "middle_centered": {
+      "id": "middle_centered",
+      "name": "Middle Centered",
+      "op": {
+        "type": "Translate",
+        "child": "middle_tier",
+        "offset": {"x": -14, "y": -14, "z": 10}
+      }
+    },
+    "top_tier": {
+      "id": "top_tier",
+      "name": "Top Tier",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 16, "y": 16, "z": 10}
+      }
+    },
+    "top_centered": {
+      "id": "top_centered",
+      "name": "Top Centered",
+      "op": {
+        "type": "Translate",
+        "child": "top_tier",
+        "offset": {"x": -8, "y": -8, "z": 20}
+      }
+    },
+    "bottom_middle": {
+      "id": "bottom_middle",
+      "name": "Bottom and Middle Union",
+      "op": {
+        "type": "Union",
+        "left": "bottom_centered",
+        "right": "middle_centered"
+      }
+    },
+    "pyramid": {
+      "id": "pyramid",
+      "name": "Stepped Pyramid",
+      "op": {
+        "type": "Union",
+        "left": "bottom_middle",
+        "right": "top_centered"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "pyramid",
+      "material": "default"
+    }
+  ]
+}

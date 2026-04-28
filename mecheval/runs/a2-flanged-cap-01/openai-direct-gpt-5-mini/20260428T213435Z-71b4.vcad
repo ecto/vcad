@@ -1,0 +1,234 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "outer_cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 30,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "central_hole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 20,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "bolt_cyl_0_deg",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "bolt_tr_0_deg",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 25,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "bolt_cyl_60_deg",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "bolt_tr_60_deg",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": 12.5,
+          "y": 21.650635094611,
+          "z": 0
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "bolt_cyl_120_deg",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "bolt_tr_120_deg",
+      "op": {
+        "type": "Translate",
+        "child": 7,
+        "offset": {
+          "x": -12.5,
+          "y": 21.650635094611,
+          "z": 0
+        }
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "bolt_cyl_180_deg",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "bolt_tr_180_deg",
+      "op": {
+        "type": "Translate",
+        "child": 9,
+        "offset": {
+          "x": -25,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "bolt_cyl_240_deg",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "bolt_tr_240_deg",
+      "op": {
+        "type": "Translate",
+        "child": 11,
+        "offset": {
+          "x": -12.5,
+          "y": -21.650635094611,
+          "z": 0
+        }
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "bolt_cyl_300_deg",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "14": {
+      "id": 14,
+      "name": "bolt_tr_300_deg",
+      "op": {
+        "type": "Translate",
+        "child": 13,
+        "offset": {
+          "x": 12.5,
+          "y": -21.650635094611,
+          "z": 0
+        }
+      }
+    },
+    "15": {
+      "id": 15,
+      "name": "union_holes_1",
+      "op": {
+        "type": "Union",
+        "left": 2,
+        "right": 4
+      }
+    },
+    "16": {
+      "id": 16,
+      "name": "union_holes_2",
+      "op": {
+        "type": "Union",
+        "left": 15,
+        "right": 6
+      }
+    },
+    "17": {
+      "id": 17,
+      "name": "union_holes_3",
+      "op": {
+        "type": "Union",
+        "left": 16,
+        "right": 8
+      }
+    },
+    "18": {
+      "id": 18,
+      "name": "union_holes_4",
+      "op": {
+        "type": "Union",
+        "left": 17,
+        "right": 10
+      }
+    },
+    "19": {
+      "id": 19,
+      "name": "union_holes_5",
+      "op": {
+        "type": "Union",
+        "left": 18,
+        "right": 12
+      }
+    },
+    "20": {
+      "id": 20,
+      "name": "union_all_holes",
+      "op": {
+        "type": "Union",
+        "left": 19,
+        "right": 14
+      }
+    },
+    "21": {
+      "id": 21,
+      "name": "flanged_cap_with_holes",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 20
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 21,
+      "material": "default"
+    }
+  ]
+}

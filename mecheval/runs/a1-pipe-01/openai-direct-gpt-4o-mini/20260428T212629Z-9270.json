@@ -1,0 +1,190 @@
+{
+  "schema_version": 0,
+  "task_id": "a1-pipe-01",
+  "task_sha256": "dc635a8f07dac22f9ac03673ee1369327e2bed4cb368afe55657d9f4a1eeafa9",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "fail",
+      "details": {
+        "error": "parse: Invalid JSON vcad file: invalid value: expected key to be a number in quotes at line 4 column 5",
+        "reason": "fatal evaluation error"
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -15,
+          -15,
+          0
+        ],
+        "max": [
+          15,
+          15,
+          40
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 15707.96,
+        "center_of_mass": [
+          0,
+          0,
+          20
+        ],
+        "tolerance_pct": 1
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 20,
+        "expected": 1,
+        "diameter_tolerance_mm": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "actual": 0,
+        "diameter_mm": 20,
+        "diameter_tolerance_mm": 0.1,
+        "expected": 1,
+        "found": []
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 20,
+        "positions": [
+          [
+            0,
+            0,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.15
+      },
+      "result": "fail",
+      "details": {
+        "diameter_mm": 20,
+        "per_expected": [
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              0,
+              0
+            ]
+          }
+        ],
+        "tolerance_mm": 0.15,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to round-trip"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 6,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T212629Z-9270",
+  "model": {
+    "id": "openai-direct-gpt-4o-mini",
+    "name": "OpenAI (direct, gpt-4o-mini)",
+    "provider": "openai",
+    "params": {
+      "mode": "direct",
+      "model": "gpt-4o-mini",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a1-pipe-01",
+    "rendered": "Make a hollow cylindrical pipe with outer diameter 30mm and inner diameter 20mm. Length 40mm, axis along Z, base on the XY plane (z = 0 to z = 40). The bore is a single through-hole on the central axis. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "openai.chat.completions.create",
+        "args": {
+          "model": "gpt-4o-mini",
+          "max_tokens": 8000,
+          "system_chars": 1632,
+          "user_chars": 278
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3689.853958
+      }
+    ],
+    "tokens": {
+      "input": 581,
+      "output": 236,
+      "total": 817
+    },
+    "wallclock_sec": 3.689853958
+  },
+  "output": {
+    "vcad_path": "20260428T212629Z-9270.vcad",
+    "vcad_sha256": "357bd44ced93471490ce4980abfbf3c9063b86f14f83cb465f7f93aead4cecbc",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T21:26:29.050Z",
+    "ended_at": "2026-04-28T21:26:32.744Z"
+  },
+  "signature": null
+}

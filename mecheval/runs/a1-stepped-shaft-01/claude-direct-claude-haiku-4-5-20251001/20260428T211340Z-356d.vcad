@@ -1,0 +1,55 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "base_cylinder": {
+      "id": 0,
+      "name": "base_cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 20,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "top_cylinder": {
+      "id": 1,
+      "name": "top_cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 15,
+        "segments": 32
+      }
+    },
+    "top_cylinder_translated": {
+      "id": 2,
+      "name": "top_cylinder_translated",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 10
+        }
+      }
+    },
+    "stepped_shaft": {
+      "id": 3,
+      "name": "stepped_shaft",
+      "op": {
+        "type": "Union",
+        "left": 0,
+        "right": 2
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 3,
+      "material": "default"
+    }
+  ]
+}

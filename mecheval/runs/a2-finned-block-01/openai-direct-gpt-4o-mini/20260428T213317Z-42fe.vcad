@@ -1,0 +1,102 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "base": {
+      "id": "base",
+      "name": "Base",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 30,
+          "z": 5
+        }
+      }
+    },
+    "fin1": {
+      "id": "fin1",
+      "name": "Fin1",
+      "op": {
+        "type": "Translate",
+        "child": {
+          "type": "Cube",
+          "size": {
+            "x": 50,
+            "y": 3,
+            "z": 15
+          }
+        },
+        "offset": {
+          "x": 0,
+          "y": -10,
+          "z": 5
+        }
+      }
+    },
+    "fin2": {
+      "id": "fin2",
+      "name": "Fin2",
+      "op": {
+        "type": "Translate",
+        "child": {
+          "type": "Cube",
+          "size": {
+            "x": 50,
+            "y": 3,
+            "z": 15
+          }
+        },
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 5
+        }
+      }
+    },
+    "fin3": {
+      "id": "fin3",
+      "name": "Fin3",
+      "op": {
+        "type": "Translate",
+        "child": {
+          "type": "Cube",
+          "size": {
+            "x": 50,
+            "y": 3,
+            "z": 15
+          }
+        },
+        "offset": {
+          "x": 0,
+          "y": 10,
+          "z": 5
+        }
+      }
+    },
+    "finned_block": {
+      "id": "finned_block",
+      "name": "Finned Block",
+      "op": {
+        "type": "Union",
+        "left": "base",
+        "right": {
+          "type": "Union",
+          "left": "fin1",
+          "right": {
+            "type": "Union",
+            "left": "fin2",
+            "right": "fin3"
+          }
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "finned_block",
+      "material": "default"
+    }
+  ]
+}

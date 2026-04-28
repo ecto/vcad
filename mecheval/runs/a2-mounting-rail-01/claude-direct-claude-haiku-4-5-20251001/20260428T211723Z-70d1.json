@@ -1,0 +1,211 @@
+{
+  "schema_version": 0,
+  "task_id": "a2-mounting-rail-01",
+  "task_sha256": "e375cec77275714a18d10d9c88594fb0ae9f43f8219f01063480b2467d8705a3",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "fail",
+      "details": {
+        "error": "parse: Invalid JSON vcad file: invalid value: expected key to be a number in quotes at line 4 column 5",
+        "reason": "fatal evaluation error"
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -50,
+          -10,
+          0
+        ],
+        "max": [
+          50,
+          10,
+          8
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 15321.42,
+        "tolerance_pct": 0.5
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 6,
+        "expected": 3,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "fail",
+      "details": {
+        "actual": 0,
+        "diameter_mm": 6,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 3,
+        "found": []
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 6,
+        "positions": [
+          [
+            -40,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            40,
+            0,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.15
+      },
+      "result": "fail",
+      "details": {
+        "diameter_mm": 6,
+        "per_expected": [
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              -40,
+              0
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              0,
+              0
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              40,
+              0
+            ]
+          }
+        ],
+        "tolerance_mm": 0.15,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.5
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to round-trip"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 6,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T211723Z-70d1",
+  "model": {
+    "id": "claude-direct-claude-haiku-4-5-20251001",
+    "name": "Claude (direct, claude-haiku-4-5-20251001)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "direct",
+      "model": "claude-haiku-4-5-20251001",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a2-mounting-rail-01",
+    "rendered": "Make a long rectangular mounting rail 100mm long (X) × 20mm wide (Y) × 8mm thick (Z). Center it in X and Y, with the bottom face on the XY plane (z = 0 to z = 8). Drill three through-holes of diameter 6mm, axes parallel to Z, evenly spaced along the centerline (y = 0) at x = -40, x = 0, and x = 40. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "anthropic.messages.create",
+        "args": {
+          "model": "claude-haiku-4-5-20251001",
+          "max_tokens": 8000,
+          "system_chars": 1632,
+          "user_chars": 384
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3813.427542
+      }
+    ],
+    "tokens": {
+      "input": 689,
+      "output": 863,
+      "total": 1552
+    },
+    "wallclock_sec": 3.813427542
+  },
+  "output": {
+    "vcad_path": "20260428T211723Z-70d1.vcad",
+    "vcad_sha256": "ecb725b67b8ac037b5d2e0da97d53ffa9095ecc5eb4ac2c3948d44e583bb0ba2",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T21:17:23.344Z",
+    "ended_at": "2026-04-28T21:17:27.162Z"
+  },
+  "signature": null
+}

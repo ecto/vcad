@@ -1,0 +1,165 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "plate": {
+      "id": "plate",
+      "name": "Base plate",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 80, "y": 80, "z": 6}
+      }
+    },
+    "plate_centered": {
+      "id": "plate_centered",
+      "name": "Plate centered in XY",
+      "op": {
+        "type": "Translate",
+        "child": "plate",
+        "offset": {"x": -40, "y": -40, "z": 0}
+      }
+    },
+    "central_hole": {
+      "id": "central_hole",
+      "name": "Central hole cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 6,
+        "height": 6,
+        "segments": 32
+      }
+    },
+    "central_hole_positioned": {
+      "id": "central_hole_positioned",
+      "name": "Central hole at origin",
+      "op": {
+        "type": "Translate",
+        "child": "central_hole",
+        "offset": {"x": 0, "y": 0, "z": 0}
+      }
+    },
+    "corner_hole_1": {
+      "id": "corner_hole_1",
+      "name": "Corner hole 1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 6,
+        "segments": 32
+      }
+    },
+    "corner_hole_1_positioned": {
+      "id": "corner_hole_1_positioned",
+      "name": "Corner hole 1 positioned",
+      "op": {
+        "type": "Translate",
+        "child": "corner_hole_1",
+        "offset": {"x": -30, "y": -30, "z": 0}
+      }
+    },
+    "corner_hole_2": {
+      "id": "corner_hole_2",
+      "name": "Corner hole 2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 6,
+        "segments": 32
+      }
+    },
+    "corner_hole_2_positioned": {
+      "id": "corner_hole_2_positioned",
+      "name": "Corner hole 2 positioned",
+      "op": {
+        "type": "Translate",
+        "child": "corner_hole_2",
+        "offset": {"x": 30, "y": -30, "z": 0}
+      }
+    },
+    "corner_hole_3": {
+      "id": "corner_hole_3",
+      "name": "Corner hole 3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 6,
+        "segments": 32
+      }
+    },
+    "corner_hole_3_positioned": {
+      "id": "corner_hole_3_positioned",
+      "name": "Corner hole 3 positioned",
+      "op": {
+        "type": "Translate",
+        "child": "corner_hole_3",
+        "offset": {"x": -30, "y": 30, "z": 0}
+      }
+    },
+    "corner_hole_4": {
+      "id": "corner_hole_4",
+      "name": "Corner hole 4",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 6,
+        "segments": 32
+      }
+    },
+    "corner_hole_4_positioned": {
+      "id": "corner_hole_4_positioned",
+      "name": "Corner hole 4 positioned",
+      "op": {
+        "type": "Translate",
+        "child": "corner_hole_4",
+        "offset": {"x": 30, "y": 30, "z": 0}
+      }
+    },
+    "with_central_hole": {
+      "id": "with_central_hole",
+      "name": "Plate with central hole",
+      "op": {
+        "type": "Difference",
+        "left": "plate_centered",
+        "right": "central_hole_positioned"
+      }
+    },
+    "with_hole_1": {
+      "id": "with_hole_1",
+      "name": "With corner hole 1",
+      "op": {
+        "type": "Difference",
+        "left": "with_central_hole",
+        "right": "corner_hole_1_positioned"
+      }
+    },
+    "with_hole_2": {
+      "id": "with_hole_2",
+      "name": "With corner hole 2",
+      "op": {
+        "type": "Difference",
+        "left": "with_hole_1",
+        "right": "corner_hole_2_positioned"
+      }
+    },
+    "with_hole_3": {
+      "id": "with_hole_3",
+      "name": "With corner hole 3",
+      "op": {
+        "type": "Difference",
+        "left": "with_hole_2",
+        "right": "corner_hole_3_positioned"
+      }
+    },
+    "final": {
+      "id": "final",
+      "name": "Square flange with all holes",
+      "op": {
+        "type": "Difference",
+        "left": "with_hole_3",
+        "right": "corner_hole_4_positioned"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": "final", "material": "default"}]
+}

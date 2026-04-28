@@ -1,0 +1,56 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "base_block": {
+      "id": "base_block",
+      "name": "Base rectangular block",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 50, "y": 30, "z": 20}
+      }
+    },
+    "base_translated": {
+      "id": "base_translated",
+      "name": "Base block centered in X and Y",
+      "op": {
+        "type": "Translate",
+        "child": "base_block",
+        "offset": {"x": -25, "y": -15, "z": 0}
+      }
+    },
+    "cut_block": {
+      "id": "cut_block",
+      "name": "Block to cut away",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 25, "y": 30, "z": 10}
+      }
+    },
+    "cut_translated": {
+      "id": "cut_translated",
+      "name": "Cut block positioned at upper +X corner",
+      "op": {
+        "type": "Translate",
+        "child": "cut_block",
+        "offset": {"x": 0, "y": -15, "z": 10}
+      }
+    },
+    "final_shape": {
+      "id": "final_shape",
+      "name": "Stepped block with L-shape profile",
+      "op": {
+        "type": "Difference",
+        "left": "base_translated",
+        "right": "cut_translated"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "final_shape",
+      "material": "default"
+    }
+  ]
+}

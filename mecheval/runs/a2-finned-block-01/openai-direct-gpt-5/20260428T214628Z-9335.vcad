@@ -1,0 +1,17 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "BaseCube", "op": { "type": "Cube", "size": { "x": 50, "y": 30, "z": 5 } } },
+    "2": { "id": 2, "name": "BaseTranslate", "op": { "type": "Translate", "child": 1, "offset": { "x": -25, "y": -15, "z": 0 } } },
+    "3": { "id": 3, "name": "FinCube", "op": { "type": "Cube", "size": { "x": 50, "y": 3, "z": 15 } } },
+    "4": { "id": 4, "name": "Fin1Translate", "op": { "type": "Translate", "child": 3, "offset": { "x": -25, "y": -11.5, "z": 5 } } },
+    "5": { "id": 5, "name": "Fin2Translate", "op": { "type": "Translate", "child": 3, "offset": { "x": -25, "y": -1.5, "z": 5 } } },
+    "6": { "id": 6, "name": "Fin3Translate", "op": { "type": "Translate", "child": 3, "offset": { "x": -25, "y": 8.5, "z": 5 } } },
+    "7": { "id": 7, "name": "UnionBaseFin1", "op": { "type": "Union", "left": 2, "right": 4 } },
+    "8": { "id": 8, "name": "UnionAddFin2", "op": { "type": "Union", "left": 7, "right": 5 } },
+    "9": { "id": 9, "name": "UnionAddFin3", "op": { "type": "Union", "left": 8, "right": 6 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 9, "material": "default" }]
+}

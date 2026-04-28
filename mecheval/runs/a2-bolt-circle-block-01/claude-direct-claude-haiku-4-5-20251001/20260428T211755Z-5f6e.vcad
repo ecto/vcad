@@ -1,0 +1,184 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "base_block",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 60, "y": 60, "z": 10}
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "base_centered",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {"x": -30, "y": -30, "z": 0}
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "hole_cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "hole_0_deg",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {"x": 20, "y": 0, "z": 0}
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "hole_45_deg",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {"x": 14.142, "y": 14.142, "z": 0}
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "hole_90_deg",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {"x": 0, "y": 20, "z": 0}
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "hole_135_deg",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {"x": -14.142, "y": 14.142, "z": 0}
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "hole_180_deg",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {"x": -20, "y": 0, "z": 0}
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "hole_225_deg",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {"x": -14.142, "y": -14.142, "z": 0}
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "hole_270_deg",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {"x": 0, "y": -20, "z": 0}
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "hole_315_deg",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {"x": 14.142, "y": -14.142, "z": 0}
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "subtract_hole_0",
+      "op": {
+        "type": "Difference",
+        "left": 2,
+        "right": 4
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "subtract_hole_1",
+      "op": {
+        "type": "Difference",
+        "left": 12,
+        "right": 5
+      }
+    },
+    "14": {
+      "id": 14,
+      "name": "subtract_hole_2",
+      "op": {
+        "type": "Difference",
+        "left": 13,
+        "right": 6
+      }
+    },
+    "15": {
+      "id": 15,
+      "name": "subtract_hole_3",
+      "op": {
+        "type": "Difference",
+        "left": 14,
+        "right": 7
+      }
+    },
+    "16": {
+      "id": 16,
+      "name": "subtract_hole_4",
+      "op": {
+        "type": "Difference",
+        "left": 15,
+        "right": 8
+      }
+    },
+    "17": {
+      "id": 17,
+      "name": "subtract_hole_5",
+      "op": {
+        "type": "Difference",
+        "left": 16,
+        "right": 9
+      }
+    },
+    "18": {
+      "id": 18,
+      "name": "subtract_hole_6",
+      "op": {
+        "type": "Difference",
+        "left": 17,
+        "right": 10
+      }
+    },
+    "19": {
+      "id": 19,
+      "name": "final_block",
+      "op": {
+        "type": "Difference",
+        "left": 18,
+        "right": 11
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 19,
+      "material": "default"
+    }
+  ]
+}

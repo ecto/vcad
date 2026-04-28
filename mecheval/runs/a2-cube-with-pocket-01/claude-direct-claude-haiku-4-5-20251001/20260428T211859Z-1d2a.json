@@ -1,0 +1,135 @@
+{
+  "schema_version": 0,
+  "task_id": "a2-cube-with-pocket-01",
+  "task_sha256": "58a30883751efce83433de6e7ae585c30f574a7bb2e8458f252b9186582897ea",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "fail",
+      "details": {
+        "error": "parse: Invalid JSON vcad file: invalid value: expected key to be a number in quotes at line 4 column 5",
+        "reason": "fatal evaluation error"
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -20,
+          -20,
+          0
+        ],
+        "max": [
+          20,
+          20,
+          40
+        ],
+        "tolerance_mm": 0.05
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 60000,
+        "tolerance_pct": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to round-trip"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 4,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T211859Z-1d2a",
+  "model": {
+    "id": "claude-direct-claude-haiku-4-5-20251001",
+    "name": "Claude (direct, claude-haiku-4-5-20251001)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "direct",
+      "model": "claude-haiku-4-5-20251001",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a2-cube-with-pocket-01",
+    "rendered": "Start with a 40mm cube, centered in X and Y with the bottom face on the XY plane (so it spans x in [-20, 20], y in [-20, 20], z in [0, 40]). Cut a rectangular pocket into the top face: remove material in x in [-10, 10], y in [-10, 10], z in [30, 40]. The pocket is open at the top, closed on the four sides and the bottom (10mm of cube remains underneath the pocket). Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "anthropic.messages.create",
+        "args": {
+          "model": "claude-haiku-4-5-20251001",
+          "max_tokens": 8000,
+          "system_chars": 1632,
+          "user_chars": 455
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2548.37175
+      }
+    ],
+    "tokens": {
+      "input": 699,
+      "output": 457,
+      "total": 1156
+    },
+    "wallclock_sec": 2.54837175
+  },
+  "output": {
+    "vcad_path": "20260428T211859Z-1d2a.vcad",
+    "vcad_sha256": "0415d2779c08232b598d5db3363fc4f9efc3a4ffbeff2098cbcc393e45fc7581",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T21:18:59.543Z",
+    "ended_at": "2026-04-28T21:19:02.096Z"
+  },
+  "signature": null
+}

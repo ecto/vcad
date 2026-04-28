@@ -1,0 +1,140 @@
+{
+  "schema_version": 0,
+  "task_id": "a1-sphere-01",
+  "task_sha256": "ebf88120c06a0cab30ee1b4e5f595a8f4bd16b7b9fb605f9efbf78c8e88ef1db",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "fail",
+      "details": {
+        "error": "parse: Invalid JSON vcad file: invalid value: expected key to be a number in quotes at line 4 column 5",
+        "reason": "fatal evaluation error"
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -15,
+          -15,
+          -15
+        ],
+        "max": [
+          15,
+          15,
+          15
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 14137.17,
+        "center_of_mass": [
+          0,
+          0,
+          0
+        ],
+        "tolerance_pct": 2
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 2
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to round-trip"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 4,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T211345Z-9e55",
+  "model": {
+    "id": "claude-direct-claude-haiku-4-5-20251001",
+    "name": "Claude (direct, claude-haiku-4-5-20251001)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "direct",
+      "model": "claude-haiku-4-5-20251001",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a1-sphere-01",
+    "rendered": "Make a sphere of diameter 30mm (radius 15mm) centered at the origin. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "anthropic.messages.create",
+        "args": {
+          "model": "claude-haiku-4-5-20251001",
+          "max_tokens": 8000,
+          "system_chars": 1632,
+          "user_chars": 146
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1007.226542
+      }
+    ],
+    "tokens": {
+      "input": 601,
+      "output": 134,
+      "total": 735
+    },
+    "wallclock_sec": 1.007226542
+  },
+  "output": {
+    "vcad_path": "20260428T211345Z-9e55.vcad",
+    "vcad_sha256": "1cc812ebfbe2453c138df3c50a1a0cf8d8b288bb54c04da2432c418802094da7",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T21:13:45.079Z",
+    "ended_at": "2026-04-28T21:13:46.091Z"
+  },
+  "signature": null
+}

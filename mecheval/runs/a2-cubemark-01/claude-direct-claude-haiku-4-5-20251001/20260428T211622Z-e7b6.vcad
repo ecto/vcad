@@ -1,0 +1,282 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "cube_base": {
+      "id": "cube_base",
+      "name": "Base Cube",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 30, "y": 30, "z": 30}
+      }
+    },
+    "cube_centered": {
+      "id": "cube_centered",
+      "name": "Centered Cube",
+      "op": {
+        "type": "Translate",
+        "child": "cube_base",
+        "offset": {"x": -15, "y": -15, "z": 0}
+      }
+    },
+    "hole_1": {
+      "id": "hole_1",
+      "name": "Hole at (-8, -8)",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "hole_1_pos": {
+      "id": "hole_1_pos",
+      "name": "Hole 1 Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_1",
+        "offset": {"x": -8, "y": -8, "z": 0}
+      }
+    },
+    "hole_2": {
+      "id": "hole_2",
+      "name": "Hole at (0, -8)",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "hole_2_pos": {
+      "id": "hole_2_pos",
+      "name": "Hole 2 Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_2",
+        "offset": {"x": 0, "y": -8, "z": 0}
+      }
+    },
+    "hole_3": {
+      "id": "hole_3",
+      "name": "Hole at (8, -8)",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "hole_3_pos": {
+      "id": "hole_3_pos",
+      "name": "Hole 3 Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_3",
+        "offset": {"x": 8, "y": -8, "z": 0}
+      }
+    },
+    "hole_4": {
+      "id": "hole_4",
+      "name": "Hole at (-8, 0)",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "hole_4_pos": {
+      "id": "hole_4_pos",
+      "name": "Hole 4 Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_4",
+        "offset": {"x": -8, "y": 0, "z": 0}
+      }
+    },
+    "hole_5": {
+      "id": "hole_5",
+      "name": "Hole at (0, 0)",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "hole_5_pos": {
+      "id": "hole_5_pos",
+      "name": "Hole 5 Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_5",
+        "offset": {"x": 0, "y": 0, "z": 0}
+      }
+    },
+    "hole_6": {
+      "id": "hole_6",
+      "name": "Hole at (8, 0)",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "hole_6_pos": {
+      "id": "hole_6_pos",
+      "name": "Hole 6 Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_6",
+        "offset": {"x": 8, "y": 0, "z": 0}
+      }
+    },
+    "hole_7": {
+      "id": "hole_7",
+      "name": "Hole at (-8, 8)",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "hole_7_pos": {
+      "id": "hole_7_pos",
+      "name": "Hole 7 Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_7",
+        "offset": {"x": -8, "y": 8, "z": 0}
+      }
+    },
+    "hole_8": {
+      "id": "hole_8",
+      "name": "Hole at (0, 8)",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "hole_8_pos": {
+      "id": "hole_8_pos",
+      "name": "Hole 8 Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_8",
+        "offset": {"x": 0, "y": 8, "z": 0}
+      }
+    },
+    "hole_9": {
+      "id": "hole_9",
+      "name": "Hole at (8, 8)",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "hole_9_pos": {
+      "id": "hole_9_pos",
+      "name": "Hole 9 Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_9",
+        "offset": {"x": 8, "y": 8, "z": 0}
+      }
+    },
+    "with_holes_1": {
+      "id": "with_holes_1",
+      "name": "Cube minus hole 1",
+      "op": {
+        "type": "Difference",
+        "left": "cube_centered",
+        "right": "hole_1_pos"
+      }
+    },
+    "with_holes_2": {
+      "id": "with_holes_2",
+      "name": "Cube minus holes 1-2",
+      "op": {
+        "type": "Difference",
+        "left": "with_holes_1",
+        "right": "hole_2_pos"
+      }
+    },
+    "with_holes_3": {
+      "id": "with_holes_3",
+      "name": "Cube minus holes 1-3",
+      "op": {
+        "type": "Difference",
+        "left": "with_holes_2",
+        "right": "hole_3_pos"
+      }
+    },
+    "with_holes_4": {
+      "id": "with_holes_4",
+      "name": "Cube minus holes 1-4",
+      "op": {
+        "type": "Difference",
+        "left": "with_holes_3",
+        "right": "hole_4_pos"
+      }
+    },
+    "with_holes_5": {
+      "id": "with_holes_5",
+      "name": "Cube minus holes 1-5",
+      "op": {
+        "type": "Difference",
+        "left": "with_holes_4",
+        "right": "hole_5_pos"
+      }
+    },
+    "with_holes_6": {
+      "id": "with_holes_6",
+      "name": "Cube minus holes 1-6",
+      "op": {
+        "type": "Difference",
+        "left": "with_holes_5",
+        "right": "hole_6_pos"
+      }
+    },
+    "with_holes_7": {
+      "id": "with_holes_7",
+      "name": "Cube minus holes 1-7",
+      "op": {
+        "type": "Difference",
+        "left": "with_holes_6",
+        "right": "hole_7_pos"
+      }
+    },
+    "with_holes_8": {
+      "id": "with_holes_8",
+      "name": "Cube minus holes 1-8",
+      "op": {
+        "type": "Difference",
+        "left": "with_holes_7",
+        "right": "hole_8_pos"
+      }
+    },
+    "with_holes_9": {
+      "id": "with_holes_9",
+      "name": "Cube minus all 9 holes",
+      "op": {
+        "type": "Difference",
+        "left": "with_holes_8",
+        "right": "hole_9_pos"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "with_holes_9",
+      "material": "default"
+    }
+  ]
+}

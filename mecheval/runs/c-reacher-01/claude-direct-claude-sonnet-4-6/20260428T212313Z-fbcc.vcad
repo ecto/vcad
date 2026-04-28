@@ -1,0 +1,73 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "base_cylinder",
+      "op": {"type": "Cylinder", "radius": 30, "height": 40, "segments": 32}
+    },
+    "2": {
+      "id": 2,
+      "name": "base",
+      "op": {"type": "Translate", "child": 1, "offset": {"x": 0, "y": 0, "z": 0}}
+    },
+    "3": {
+      "id": 3,
+      "name": "link1_body",
+      "op": {"type": "Cylinder", "radius": 10, "height": 120, "segments": 16}
+    },
+    "4": {
+      "id": 4,
+      "name": "link1_rotated",
+      "op": {"type": "Rotate", "child": 3, "axis": {"x": 0, "y": 1, "z": 0}, "angle": 0.0}
+    },
+    "5": {
+      "id": 5,
+      "name": "link1",
+      "op": {"type": "Translate", "child": 4, "offset": {"x": 0, "y": 0, "z": 40}}
+    },
+    "6": {
+      "id": 6,
+      "name": "link2_body",
+      "op": {"type": "Cylinder", "radius": 8, "height": 100, "segments": 16}
+    },
+    "7": {
+      "id": 7,
+      "name": "link2_rotated",
+      "op": {"type": "Rotate", "child": 6, "axis": {"x": 0, "y": 1, "z": 0}, "angle": 0.0}
+    },
+    "8": {
+      "id": 8,
+      "name": "link2",
+      "op": {"type": "Translate", "child": 7, "offset": {"x": 0, "y": 0, "z": 160}}
+    },
+    "9": {
+      "id": 9,
+      "name": "tip_sphere",
+      "op": {"type": "Sphere", "radius": 6, "segments": 16}
+    },
+    "10": {
+      "id": 10,
+      "name": "tip",
+      "op": {"type": "Translate", "child": 9, "offset": {"x": 200, "y": 0, "z": 100}}
+    },
+    "11": {
+      "id": 11,
+      "name": "arm_union_1",
+      "op": {"type": "Union", "left": 2, "right": 5}
+    },
+    "12": {
+      "id": 12,
+      "name": "arm_union_2",
+      "op": {"type": "Union", "left": 11, "right": 8}
+    },
+    "13": {
+      "id": 13,
+      "name": "assembly",
+      "op": {"type": "Union", "left": 12, "right": 10}
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": 13, "material": "default"}]
+}

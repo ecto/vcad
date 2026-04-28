@@ -1,0 +1,119 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": "1",
+      "name": "Mounting Rail",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 100,
+          "y": 20,
+          "z": 8
+        }
+      }
+    },
+    "2": {
+      "id": "2",
+      "name": "Hole 1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "3": {
+      "id": "3",
+      "name": "Hole 2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "4": {
+      "id": "4",
+      "name": "Hole 3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "5": {
+      "id": "5",
+      "name": "Drilled Mounting Rail",
+      "op": {
+        "type": "Difference",
+        "left": "1",
+        "right": "2"
+      }
+    },
+    "6": {
+      "id": "6",
+      "name": "Drilled Mounting Rail 2",
+      "op": {
+        "type": "Difference",
+        "left": "5",
+        "right": "3"
+      }
+    },
+    "7": {
+      "id": "7",
+      "name": "Final Drilled Mounting Rail",
+      "op": {
+        "type": "Difference",
+        "left": "6",
+        "right": "4"
+      }
+    },
+    "8": {
+      "id": "8",
+      "name": "Translate Hole 1",
+      "op": {
+        "type": "Translate",
+        "child": "2",
+        "offset": {
+          "x": -40,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "9": {
+      "id": "9",
+      "name": "Translate Hole 2",
+      "op": {
+        "type": "Translate",
+        "child": "3",
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "10": {
+      "id": "10",
+      "name": "Translate Hole 3",
+      "op": {
+        "type": "Translate",
+        "child": "4",
+        "offset": {
+          "x": 40,
+          "y": 0,
+          "z": 0
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{
+    "root": "7",
+    "material": "default"
+  }]
+}

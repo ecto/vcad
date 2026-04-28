@@ -1,0 +1,135 @@
+{
+  "schema_version": 0,
+  "task_id": "a2-channel-bracket-01",
+  "task_sha256": "8a57ee77a91f87fa90ba207e9524334697e4b43bab1d516bc878440ebaf57017",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "fail",
+      "details": {
+        "error": "parse: Invalid JSON vcad file: invalid type: string \"1\", expected u64 at line 5 column 15",
+        "reason": "fatal evaluation error"
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          0,
+          0,
+          0
+        ],
+        "max": [
+          30,
+          40,
+          30
+        ],
+        "tolerance_mm": 0.05
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 13120,
+        "tolerance_pct": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to round-trip"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 4,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T213558Z-2f31",
+  "model": {
+    "id": "openai-direct-gpt-4o-mini",
+    "name": "OpenAI (direct, gpt-4o-mini)",
+    "provider": "openai",
+    "params": {
+      "mode": "direct",
+      "model": "gpt-4o-mini",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a2-channel-bracket-01",
+    "rendered": "Make a U-shaped channel bracket built from three rectangular plates fused into a single solid. Bottom plate: x in [0, 30], y in [0, 40], z in [0, 4]. Left wall standing on top of the bottom: x in [0, 4], y in [0, 40], z in [4, 30]. Right wall standing on top of the bottom: x in [26, 30], y in [0, 40], z in [4, 30]. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "openai.chat.completions.create",
+        "args": {
+          "model": "gpt-4o-mini",
+          "max_tokens": 8000,
+          "system_chars": 1674,
+          "user_chars": 403
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5851.290833
+      }
+    ],
+    "tokens": {
+      "input": 650,
+      "output": 352,
+      "total": 1002
+    },
+    "wallclock_sec": 5.851290833
+  },
+  "output": {
+    "vcad_path": "20260428T213558Z-2f31.vcad",
+    "vcad_sha256": "5ab470d99c9712f0112972a4d363adfa991015199575792e5672324a5d6e0114",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T21:35:58.868Z",
+    "ended_at": "2026-04-28T21:36:04.725Z"
+  },
+  "signature": null
+}

@@ -1,0 +1,114 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "rail": {
+      "id": 0,
+      "name": "mounting_rail_base",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 100, "y": 20, "z": 8}
+      }
+    },
+    "rail_centered": {
+      "id": 1,
+      "name": "rail_centered_xy",
+      "op": {
+        "type": "Translate",
+        "child": 0,
+        "offset": {"x": -50, "y": -10, "z": 0}
+      }
+    },
+    "hole_1": {
+      "id": 2,
+      "name": "hole_at_x_minus_40",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole_1_positioned": {
+      "id": 3,
+      "name": "hole_1_at_position",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {"x": -40, "y": 0, "z": 0}
+      }
+    },
+    "hole_2": {
+      "id": 4,
+      "name": "hole_at_x_0",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole_2_positioned": {
+      "id": 5,
+      "name": "hole_2_at_position",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {"x": 0, "y": 0, "z": 0}
+      }
+    },
+    "hole_3": {
+      "id": 6,
+      "name": "hole_at_x_40",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole_3_positioned": {
+      "id": 7,
+      "name": "hole_3_at_position",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {"x": 40, "y": 0, "z": 0}
+      }
+    },
+    "holes_combined": {
+      "id": 8,
+      "name": "all_holes_union",
+      "op": {
+        "type": "Union",
+        "left": 3,
+        "right": 5
+      }
+    },
+    "holes_all": {
+      "id": 9,
+      "name": "all_three_holes",
+      "op": {
+        "type": "Union",
+        "left": 8,
+        "right": 7
+      }
+    },
+    "final": {
+      "id": 10,
+      "name": "mounting_rail_with_holes",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 9
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 10,
+      "material": "default"
+    }
+  ]
+}

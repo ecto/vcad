@@ -1,0 +1,225 @@
+{
+  "schema_version": 0,
+  "task_id": "a1-sphere-01",
+  "task_sha256": "ebf88120c06a0cab30ee1b4e5f595a8f4bd16b7b9fb605f9efbf78c8e88ef1db",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -15,
+          -15,
+          -15
+        ],
+        "max": [
+          15,
+          15,
+          15
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          15,
+          15,
+          15
+        ],
+        "actual_min": [
+          -15,
+          -15,
+          -15
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 14137.17,
+        "center_of_mass": [
+          0,
+          0,
+          0
+        ],
+        "tolerance_pct": 2
+      },
+      "result": "pass",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            3.745553528084382e-17,
+            -4.8431496826920635e-17,
+            -5.992885644935011e-17
+          ],
+          "bbox_diagonal_mm": 51.96152422706632,
+          "deviation": [
+            3.745553528084382e-17,
+            -4.8431496826920635e-17,
+            -5.992885644935011e-17
+          ],
+          "max_abs_deviation_mm": 5.992885644935011e-17,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            0
+          ],
+          "tolerance_mm": 1.0392304845413265
+        },
+        "volume": {
+          "actual_mm3": 13911.55323195267,
+          "deviation_pct": 1.5959118271006854,
+          "pass": true,
+          "spec_mm3": 14137.17,
+          "tolerance_pct": 2
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 2
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                15,
+                15,
+                15
+              ],
+              "original_min": [
+                -15,
+                -15,
+                -15
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                15,
+                15,
+                15
+              ],
+              "roundtripped_min": [
+                -15,
+                -15,
+                -15
+              ],
+              "tolerance_mm": 1.0392304845413265
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 13911.55323195267,
+              "pass": true,
+              "roundtripped_mm3": 13911.55323195267
+            }
+          }
+        ],
+        "tolerance_pct": 2
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T211411Z-d412",
+  "model": {
+    "id": "claude-direct-claude-sonnet-4-6",
+    "name": "Claude (direct, claude-sonnet-4-6)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "direct",
+      "model": "claude-sonnet-4-6",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a1-sphere-01",
+    "rendered": "Make a sphere of diameter 30mm (radius 15mm) centered at the origin. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "anthropic.messages.create",
+        "args": {
+          "model": "claude-sonnet-4-6",
+          "max_tokens": 8000,
+          "system_chars": 1632,
+          "user_chars": 146
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2498.632542
+      }
+    ],
+    "tokens": {
+      "input": 602,
+      "output": 134,
+      "total": 736
+    },
+    "wallclock_sec": 2.4986325419999997
+  },
+  "output": {
+    "vcad_path": "20260428T211411Z-d412.vcad",
+    "vcad_sha256": "2839f699d058be20da2b42eb9ed21d21e97e0e1dcb7ecba4d57b92960f66ad31",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T21:14:11.844Z",
+    "ended_at": "2026-04-28T21:14:14.376Z"
+  },
+  "signature": null
+}

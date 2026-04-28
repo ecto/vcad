@@ -1,0 +1,23 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "OuterCylinder",
+      "op": { "type": "Cylinder", "radius": 25, "height": 5, "segments": 32 }
+    },
+    "2": {
+      "id": 2,
+      "name": "InnerHole",
+      "op": { "type": "Cylinder", "radius": 12.5, "height": 5, "segments": 32 }
+    },
+    "3": {
+      "id": 3,
+      "name": "Washer",
+      "op": { "type": "Difference", "left": 1, "right": 2 }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 3, "material": "default" }]
+}

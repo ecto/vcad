@@ -1,0 +1,163 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "base_body": {
+      "id": 0,
+      "name": "base_body",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 0.08, "y": 0.08, "z": 0.02}
+      }
+    },
+    "base_centered": {
+      "id": 1,
+      "name": "base_centered",
+      "op": {
+        "type": "Translate",
+        "child": 0,
+        "offset": {"x": -0.04, "y": -0.04, "z": 0}
+      }
+    },
+    "link1_cyl": {
+      "id": 2,
+      "name": "link1_cyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 0.008,
+        "height": 0.15,
+        "segments": 32
+      }
+    },
+    "link1_body": {
+      "id": 3,
+      "name": "link1_body",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {"x": 0, "y": 0, "z": 0.02}
+      }
+    },
+    "link2_cyl": {
+      "id": 4,
+      "name": "link2_cyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 0.007,
+        "height": 0.13,
+        "segments": 32
+      }
+    },
+    "link2_body": {
+      "id": 5,
+      "name": "link2_body",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {"x": 0, "y": 0, "z": 0}
+      }
+    },
+    "tip_sphere": {
+      "id": 6,
+      "name": "tip_sphere",
+      "op": {
+        "type": "Sphere",
+        "radius": 0.005,
+        "segments": 32
+      }
+    },
+    "assembly": {
+      "id": 7,
+      "name": "assembly",
+      "op": {
+        "type": "Union",
+        "left": 1,
+        "right": 3
+      }
+    },
+    "assembly_with_link2": {
+      "id": 8,
+      "name": "assembly_with_link2",
+      "op": {
+        "type": "Union",
+        "left": 7,
+        "right": 5
+      }
+    },
+    "final_assembly": {
+      "id": 9,
+      "name": "final_assembly",
+      "op": {
+        "type": "Union",
+        "left": 8,
+        "right": 6
+      }
+    }
+  },
+  "materials": {
+    "aluminum": {
+      "color": [0.9, 0.9, 0.95],
+      "metallic": 0.8,
+      "roughness": 0.2
+    },
+    "steel": {
+      "color": [0.5, 0.5, 0.52],
+      "metallic": 0.9,
+      "roughness": 0.3
+    },
+    "endeffector": {
+      "color": [1.0, 0.2, 0.2],
+      "metallic": 0.6,
+      "roughness": 0.4
+    }
+  },
+  "part_materials": {
+    "0": "steel",
+    "1": "steel",
+    "2": "aluminum",
+    "3": "aluminum",
+    "4": "aluminum",
+    "5": "aluminum",
+    "6": "endeffector"
+  },
+  "roots": [
+    {
+      "root": 9,
+      "material": "default"
+    }
+  ],
+  "joints": [
+    {
+      "name": "joint1",
+      "parent_body": "base_body",
+      "child_body": "link1_body",
+      "joint_type": "revolute",
+      "axis": {"x": 0, "y": 1, "z": 0},
+      "origin": {"x": 0, "y": 0, "z": 0.02},
+      "lower_limit": -1.5708,
+      "upper_limit": 1.5708,
+      "torque_limit": 5.0
+    },
+    {
+      "name": "joint2",
+      "parent_body": "link1_body",
+      "child_body": "link2_body",
+      "joint_type": "revolute",
+      "axis": {"x": 0, "y": 1, "z": 0},
+      "origin": {"x": 0, "y": 0, "z": 0.17},
+      "lower_limit": -1.5708,
+      "upper_limit": 1.5708,
+      "torque_limit": 5.0
+    },
+    {
+      "name": "joint_tip",
+      "parent_body": "link2_body",
+      "child_body": "tip_sphere",
+      "joint_type": "fixed",
+      "origin": {"x": 0, "y": 0, "z": 0.13}
+    }
+  ],
+  "initial_pose": {
+    "joint1": 0.5236,
+    "joint2": 0.5236
+  }
+}

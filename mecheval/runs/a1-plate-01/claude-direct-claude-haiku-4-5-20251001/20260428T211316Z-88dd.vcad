@@ -1,0 +1,137 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "base_plate": {
+      "id": 0,
+      "name": "base_plate",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 50, "y": 30, "z": 10}
+      }
+    },
+    "base_plate_centered": {
+      "id": 1,
+      "name": "base_plate_centered",
+      "op": {
+        "type": "Translate",
+        "child": 0,
+        "offset": {"x": -25, "y": -15, "z": 0}
+      }
+    },
+    "hole_1": {
+      "id": 2,
+      "name": "hole_1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole_1_positioned": {
+      "id": 3,
+      "name": "hole_1_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {"x": -20, "y": -10, "z": 0}
+      }
+    },
+    "hole_2": {
+      "id": 4,
+      "name": "hole_2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole_2_positioned": {
+      "id": 5,
+      "name": "hole_2_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {"x": 20, "y": -10, "z": 0}
+      }
+    },
+    "hole_3": {
+      "id": 6,
+      "name": "hole_3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole_3_positioned": {
+      "id": 7,
+      "name": "hole_3_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {"x": -20, "y": 10, "z": 0}
+      }
+    },
+    "hole_4": {
+      "id": 8,
+      "name": "hole_4",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole_4_positioned": {
+      "id": 9,
+      "name": "hole_4_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 8,
+        "offset": {"x": 20, "y": 10, "z": 0}
+      }
+    },
+    "with_holes_1": {
+      "id": 10,
+      "name": "with_holes_1",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 3
+      }
+    },
+    "with_holes_2": {
+      "id": 11,
+      "name": "with_holes_2",
+      "op": {
+        "type": "Difference",
+        "left": 10,
+        "right": 5
+      }
+    },
+    "with_holes_3": {
+      "id": 12,
+      "name": "with_holes_3",
+      "op": {
+        "type": "Difference",
+        "left": 11,
+        "right": 7
+      }
+    },
+    "final": {
+      "id": 13,
+      "name": "final",
+      "op": {
+        "type": "Difference",
+        "left": 12,
+        "right": 9
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": 13, "material": "default"}]
+}

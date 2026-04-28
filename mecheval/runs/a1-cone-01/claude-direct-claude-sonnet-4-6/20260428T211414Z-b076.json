@@ -1,0 +1,199 @@
+{
+  "schema_version": 0,
+  "task_id": "a1-cone-01",
+  "task_sha256": "736e216be7a1e5d85a215dba947f5f861775bb865bd6484fac01d9bbbc93c219",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -20,
+          -20,
+          0
+        ],
+        "max": [
+          20,
+          20,
+          30
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          20,
+          20,
+          30
+        ],
+        "actual_min": [
+          -20,
+          -20,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 21991.15,
+        "tolerance_pct": 2
+      },
+      "result": "pass",
+      "details": {
+        "volume": {
+          "actual_mm3": 21850.116094082226,
+          "deviation_pct": 0.641321194743226,
+          "pass": true,
+          "spec_mm3": 21991.15,
+          "tolerance_pct": 2
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 2
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                20,
+                20,
+                30
+              ],
+              "original_min": [
+                -20,
+                -20,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                20,
+                20,
+                30
+              ],
+              "roundtripped_min": [
+                -20,
+                -20,
+                0
+              ],
+              "tolerance_mm": 1.2806248474865698
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 21850.116094082226,
+              "pass": true,
+              "roundtripped_mm3": 21850.116094082226
+            }
+          }
+        ],
+        "tolerance_pct": 2
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T211414Z-b076",
+  "model": {
+    "id": "claude-direct-claude-sonnet-4-6",
+    "name": "Claude (direct, claude-sonnet-4-6)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "direct",
+      "model": "claude-sonnet-4-6",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a1-cone-01",
+    "rendered": "Make a truncated cone with bottom radius 20mm, top radius 10mm, and height 30mm. Axis along Z, base on the XY plane (z = 0 to z = 30). Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "anthropic.messages.create",
+        "args": {
+          "model": "claude-sonnet-4-6",
+          "max_tokens": 8000,
+          "system_chars": 1632,
+          "user_chars": 210
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2717.623333
+      }
+    ],
+    "tokens": {
+      "input": 630,
+      "output": 148,
+      "total": 778
+    },
+    "wallclock_sec": 2.717623333
+  },
+  "output": {
+    "vcad_path": "20260428T211414Z-b076.vcad",
+    "vcad_sha256": "dec85ee5c9866d101a680486f720d4e000360aa6edf0424e827666c9a1dac071",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T21:14:14.412Z",
+    "ended_at": "2026-04-28T21:14:17.137Z"
+  },
+  "signature": null
+}

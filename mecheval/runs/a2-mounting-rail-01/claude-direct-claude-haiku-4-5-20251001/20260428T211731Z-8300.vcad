@@ -1,0 +1,114 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "base_rail",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 100, "y": 20, "z": 8}
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "base_rail_centered",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {"x": -50, "y": -10, "z": 0}
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "hole_1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "hole_1_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {"x": -40, "y": 0, "z": -1}
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "hole_2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "hole_2_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {"x": 0, "y": 0, "z": -1}
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "hole_3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "hole_3_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 7,
+        "offset": {"x": 40, "y": 0, "z": -1}
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "rail_minus_hole1",
+      "op": {
+        "type": "Difference",
+        "left": 2,
+        "right": 4
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "rail_minus_hole12",
+      "op": {
+        "type": "Difference",
+        "left": 9,
+        "right": 6
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "mounting_rail",
+      "op": {
+        "type": "Difference",
+        "left": 10,
+        "right": 8
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 11,
+      "material": "default"
+    }
+  ]
+}

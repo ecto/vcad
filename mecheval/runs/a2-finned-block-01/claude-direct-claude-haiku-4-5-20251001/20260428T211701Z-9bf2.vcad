@@ -1,0 +1,108 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "base": {
+      "id": "base",
+      "name": "Base plate",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 50, "y": 30, "z": 5}
+      }
+    },
+    "base_centered": {
+      "id": "base_centered",
+      "name": "Base plate centered",
+      "op": {
+        "type": "Translate",
+        "child": "base",
+        "offset": {"x": -25, "y": -15, "z": 0}
+      }
+    },
+    "fin1": {
+      "id": "fin1",
+      "name": "Fin 1",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 50, "y": 3, "z": 15}
+      }
+    },
+    "fin1_positioned": {
+      "id": "fin1_positioned",
+      "name": "Fin 1 positioned",
+      "op": {
+        "type": "Translate",
+        "child": "fin1",
+        "offset": {"x": -25, "y": -11.5, "z": 5}
+      }
+    },
+    "fin2": {
+      "id": "fin2",
+      "name": "Fin 2",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 50, "y": 3, "z": 15}
+      }
+    },
+    "fin2_positioned": {
+      "id": "fin2_positioned",
+      "name": "Fin 2 positioned",
+      "op": {
+        "type": "Translate",
+        "child": "fin2",
+        "offset": {"x": -25, "y": -1.5, "z": 5}
+      }
+    },
+    "fin3": {
+      "id": "fin3",
+      "name": "Fin 3",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 50, "y": 3, "z": 15}
+      }
+    },
+    "fin3_positioned": {
+      "id": "fin3_positioned",
+      "name": "Fin 3 positioned",
+      "op": {
+        "type": "Translate",
+        "child": "fin3",
+        "offset": {"x": -25, "y": 8.5, "z": 5}
+      }
+    },
+    "base_with_fin1": {
+      "id": "base_with_fin1",
+      "name": "Base with fin 1",
+      "op": {
+        "type": "Union",
+        "left": "base_centered",
+        "right": "fin1_positioned"
+      }
+    },
+    "base_with_fin1_fin2": {
+      "id": "base_with_fin1_fin2",
+      "name": "Base with fins 1 and 2",
+      "op": {
+        "type": "Union",
+        "left": "base_with_fin1",
+        "right": "fin2_positioned"
+      }
+    },
+    "finned_block": {
+      "id": "finned_block",
+      "name": "Finned block",
+      "op": {
+        "type": "Union",
+        "left": "base_with_fin1_fin2",
+        "right": "fin3_positioned"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "finned_block",
+      "material": "default"
+    }
+  ]
+}

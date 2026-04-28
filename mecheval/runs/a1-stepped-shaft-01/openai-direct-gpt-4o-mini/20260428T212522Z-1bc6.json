@@ -1,0 +1,135 @@
+{
+  "schema_version": 0,
+  "task_id": "a1-stepped-shaft-01",
+  "task_sha256": "0b362741f05ae51465629d87cf389069cec219be11f5e3718299a14c41a20458",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "fail",
+      "details": {
+        "error": "parse: Invalid JSON vcad file: invalid type: map, expected u64 at line 31 column 5",
+        "reason": "fatal evaluation error"
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -20,
+          -20,
+          0
+        ],
+        "max": [
+          20,
+          20,
+          25
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 17278.76,
+        "tolerance_pct": 1
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to round-trip"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 4,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T212522Z-1bc6",
+  "model": {
+    "id": "openai-direct-gpt-4o-mini",
+    "name": "OpenAI (direct, gpt-4o-mini)",
+    "provider": "openai",
+    "params": {
+      "mode": "direct",
+      "model": "gpt-4o-mini",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a1-stepped-shaft-01",
+    "rendered": "Make a stepped shaft along the Z axis: a base cylinder of diameter 40mm and height 10mm sitting on the XY plane (z = 0 to z = 10), with a smaller coaxial cylinder of diameter 20mm and height 15mm stacked directly on top (z = 10 to z = 25). The result is a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "openai.chat.completions.create",
+        "args": {
+          "model": "gpt-4o-mini",
+          "max_tokens": 8000,
+          "system_chars": 1632,
+          "user_chars": 331
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4061.4276250000003
+      }
+    ],
+    "tokens": {
+      "input": 599,
+      "output": 267,
+      "total": 866
+    },
+    "wallclock_sec": 4.061427625
+  },
+  "output": {
+    "vcad_path": "20260428T212522Z-1bc6.vcad",
+    "vcad_sha256": "81c80e58d72bf5e52f318deaa8235b37cbb978bce870613c43af5f67b3235047",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T21:25:22.450Z",
+    "ended_at": "2026-04-28T21:25:26.516Z"
+  },
+  "signature": null
+}

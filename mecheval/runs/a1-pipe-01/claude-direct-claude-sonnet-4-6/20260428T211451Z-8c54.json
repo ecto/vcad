@@ -1,0 +1,285 @@
+{
+  "schema_version": 0,
+  "task_id": "a1-pipe-01",
+  "task_sha256": "dc635a8f07dac22f9ac03673ee1369327e2bed4cb368afe55657d9f4a1eeafa9",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -15,
+          -15,
+          0
+        ],
+        "max": [
+          15,
+          15,
+          40
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          15,
+          15,
+          40
+        ],
+        "actual_min": [
+          -15,
+          -15,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 15707.96,
+        "center_of_mass": [
+          0,
+          0,
+          20
+        ],
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            1.5464892082326348e-16,
+            7.447010044721799e-16,
+            19.99999999999997
+          ],
+          "bbox_diagonal_mm": 58.309518948453004,
+          "deviation": [
+            1.5464892082326348e-16,
+            7.447010044721799e-16,
+            -2.842170943040401e-14
+          ],
+          "max_abs_deviation_mm": 2.842170943040401e-14,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            20
+          ],
+          "tolerance_mm": 0.5830951894845301
+        },
+        "volume": {
+          "actual_mm3": 15682.742510046499,
+          "deviation_pct": 0.16053956053809829,
+          "pass": true,
+          "spec_mm3": 15707.96,
+          "tolerance_pct": 1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 20,
+        "expected": 1,
+        "diameter_tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual": 1,
+        "diameter_mm": 20,
+        "diameter_tolerance_mm": 0.1,
+        "expected": 1,
+        "found": [
+          [
+            0,
+            0,
+            20
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 20,
+        "positions": [
+          [
+            0,
+            0,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.15
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 20,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              0
+            ]
+          }
+        ],
+        "tolerance_mm": 0.15,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                15,
+                15,
+                40
+              ],
+              "original_min": [
+                -15,
+                -15,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                15,
+                15,
+                40
+              ],
+              "roundtripped_min": [
+                -15,
+                -15,
+                0
+              ],
+              "tolerance_mm": 0.5830951894845301
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.6099319923050419,
+              "original_mm3": 15682.742510046499,
+              "pass": true,
+              "roundtripped_mm3": 15587.088446206903
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 6,
+    "checks_total": 6,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T211451Z-8c54",
+  "model": {
+    "id": "claude-direct-claude-sonnet-4-6",
+    "name": "Claude (direct, claude-sonnet-4-6)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "direct",
+      "model": "claude-sonnet-4-6",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a1-pipe-01",
+    "rendered": "Make a hollow cylindrical pipe with outer diameter 30mm and inner diameter 20mm. Length 40mm, axis along Z, base on the XY plane (z = 0 to z = 40). The bore is a single through-hole on the central axis. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "anthropic.messages.create",
+        "args": {
+          "model": "claude-sonnet-4-6",
+          "max_tokens": 8000,
+          "system_chars": 1632,
+          "user_chars": 278
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3035.720542
+      }
+    ],
+    "tokens": {
+      "input": 642,
+      "output": 204,
+      "total": 846
+    },
+    "wallclock_sec": 3.035720542
+  },
+  "output": {
+    "vcad_path": "20260428T211451Z-8c54.vcad",
+    "vcad_sha256": "ff7ded413f60cd9b0e263935b45b55518721a952aca00383b21312b653f1a9fa",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T21:14:51.501Z",
+    "ended_at": "2026-04-28T21:14:54.652Z"
+  },
+  "signature": null
+}

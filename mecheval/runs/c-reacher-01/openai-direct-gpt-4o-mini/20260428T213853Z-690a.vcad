@@ -1,0 +1,139 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Base",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 50,
+          "z": 5
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Link1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 100,
+        "segments": 32
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Link2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 8,
+        "height": 80,
+        "segments": 32
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "EndEffector",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 10,
+          "y": 10,
+          "z": 10
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Joint1",
+      "op": {
+        "type": "Rotate",
+        "child": 2,
+        "angles": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "Joint2",
+      "op": {
+        "type": "Rotate",
+        "child": 3,
+        "angles": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "TranslateLink1",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 5
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "TranslateLink2",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 100
+        }
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "TranslateEndEffector",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 80
+        }
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "Manipulator",
+      "op": {
+        "type": "Union",
+        "left": 1,
+        "right": {
+          "type": "Union",
+          "left": 7,
+          "right": {
+            "type": "Union",
+            "left": 8,
+            "right": 9
+          }
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 10,
+      "material": "default"
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "Base Cube", "op": { "type": "Cube", "size": { "x": 30, "y": 30, "z": 30 } } },
+    "2": { "id": 2, "name": "Cube Positioned", "op": { "type": "Translate", "child": 1, "offset": { "x": -15, "y": -15, "z": 0 } } },
+    "3": { "id": 3, "name": "Hole Cylinder", "op": { "type": "Cylinder", "radius": 1.5, "height": 40, "segments": 32 } },
+    "4": { "id": 4, "name": "Hole T(-8,-8)", "op": { "type": "Translate", "child": 3, "offset": { "x": -8, "y": -8, "z": -5 } } },
+    "5": { "id": 5, "name": "Hole T(0,-8)", "op": { "type": "Translate", "child": 3, "offset": { "x": 0, "y": -8, "z": -5 } } },
+    "6": { "id": 6, "name": "Hole T(8,-8)", "op": { "type": "Translate", "child": 3, "offset": { "x": 8, "y": -8, "z": -5 } } },
+    "7": { "id": 7, "name": "Hole T(-8,0)", "op": { "type": "Translate", "child": 3, "offset": { "x": -8, "y": 0, "z": -5 } } },
+    "8": { "id": 8, "name": "Hole T(0,0)", "op": { "type": "Translate", "child": 3, "offset": { "x": 0, "y": 0, "z": -5 } } },
+    "9": { "id": 9, "name": "Hole T(8,0)", "op": { "type": "Translate", "child": 3, "offset": { "x": 8, "y": 0, "z": -5 } } },
+    "10": { "id": 10, "name": "Hole T(-8,8)", "op": { "type": "Translate", "child": 3, "offset": { "x": -8, "y": 8, "z": -5 } } },
+    "11": { "id": 11, "name": "Hole T(0,8)", "op": { "type": "Translate", "child": 3, "offset": { "x": 0, "y": 8, "z": -5 } } },
+    "12": { "id": 12, "name": "Hole T(8,8)", "op": { "type": "Translate", "child": 3, "offset": { "x": 8, "y": 8, "z": -5 } } },
+    "13": { "id": 13, "name": "Holes Union 1", "op": { "type": "Union", "left": 4, "right": 5 } },
+    "14": { "id": 14, "name": "Holes Union 2", "op": { "type": "Union", "left": 13, "right": 6 } },
+    "15": { "id": 15, "name": "Holes Union 3", "op": { "type": "Union", "left": 14, "right": 7 } },
+    "16": { "id": 16, "name": "Holes Union 4", "op": { "type": "Union", "left": 15, "right": 8 } },
+    "17": { "id": 17, "name": "Holes Union 5", "op": { "type": "Union", "left": 16, "right": 9 } },
+    "18": { "id": 18, "name": "Holes Union 6", "op": { "type": "Union", "left": 17, "right": 10 } },
+    "19": { "id": 19, "name": "Holes Union 7", "op": { "type": "Union", "left": 18, "right": 11 } },
+    "20": { "id": 20, "name": "Holes Union 8", "op": { "type": "Union", "left": 19, "right": 12 } },
+    "21": { "id": 21, "name": "Cube with Holes", "op": { "type": "Difference", "left": 2, "right": 20 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 21, "material": "default" }]
+}

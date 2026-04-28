@@ -1,0 +1,83 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Base",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 30,
+          "z": 4
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Wall",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 4,
+          "y": 30,
+          "z": 26
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Hole1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 4,
+        "segments": 32
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Hole2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 4,
+        "segments": 32
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "BaseWithHoles",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 3
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "FinalBracket",
+      "op": {
+        "type": "Union",
+        "left": 5,
+        "right": {
+          "type": "Translate",
+          "child": 2,
+          "offset": {
+            "x": 46,
+            "y": 0,
+            "z": 4
+          }
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 6,
+      "material": "default"
+    }
+  ]
+}

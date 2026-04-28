@@ -1,0 +1,140 @@
+{
+  "schema_version": 0,
+  "task_id": "a1-block-01",
+  "task_sha256": "eb827360a11bd0254eb82fe36a174169bf9a9a7f5e9d9d062f4d5c63e4f9826a",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "fail",
+      "details": {
+        "error": "parse: Invalid JSON vcad file: invalid value: expected key to be a number in quotes at line 4 column 5",
+        "reason": "fatal evaluation error"
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -30,
+          -20,
+          0
+        ],
+        "max": [
+          30,
+          20,
+          20
+        ],
+        "tolerance_mm": 0.05
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 48000,
+        "center_of_mass": [
+          0,
+          0,
+          10
+        ],
+        "tolerance_pct": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to round-trip"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 4,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T211358Z-a58a",
+  "model": {
+    "id": "claude-direct-claude-haiku-4-5-20251001",
+    "name": "Claude (direct, claude-haiku-4-5-20251001)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "direct",
+      "model": "claude-haiku-4-5-20251001",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a1-block-01",
+    "rendered": "Make a rectangular block 60mm long (X) × 40mm wide (Y) × 20mm tall (Z). Center it in X and Y, with the bottom face on the XY plane (z = 0 to z = 20). Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "anthropic.messages.create",
+        "args": {
+          "model": "claude-haiku-4-5-20251001",
+          "max_tokens": 8000,
+          "system_chars": 1632,
+          "user_chars": 226
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1651.7931250000001
+      }
+    ],
+    "tokens": {
+      "input": 637,
+      "output": 245,
+      "total": 882
+    },
+    "wallclock_sec": 1.6517931250000002
+  },
+  "output": {
+    "vcad_path": "20260428T211358Z-a58a.vcad",
+    "vcad_sha256": "f2a0ca61b31cf1f02be0ddfbf4ae693e41889528bdec1d2071c8c60c02bb5910",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T21:13:58.688Z",
+    "ended_at": "2026-04-28T21:14:00.345Z"
+  },
+  "signature": null
+}

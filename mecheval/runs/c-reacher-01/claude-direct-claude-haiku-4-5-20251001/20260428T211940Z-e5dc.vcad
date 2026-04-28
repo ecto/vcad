@@ -1,0 +1,160 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "base_body": {
+      "id": "base_body",
+      "name": "base_body",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 0.08, "y": 0.08, "z": 0.05}
+      }
+    },
+    "base_translated": {
+      "id": "base_translated",
+      "name": "base_translated",
+      "op": {
+        "type": "Translate",
+        "child": "base_body",
+        "offset": {"x": -0.04, "y": -0.04, "z": 0.0}
+      }
+    },
+    "link1_body": {
+      "id": "link1_body",
+      "name": "link1_body",
+      "op": {
+        "type": "Cylinder",
+        "radius": 0.01,
+        "height": 0.15,
+        "segments": 32
+      }
+    },
+    "link1_translated": {
+      "id": "link1_translated",
+      "name": "link1_translated",
+      "op": {
+        "type": "Translate",
+        "child": "link1_body",
+        "offset": {"x": 0.0, "y": 0.0, "z": 0.05}
+      }
+    },
+    "link2_body": {
+      "id": "link2_body",
+      "name": "link2_body",
+      "op": {
+        "type": "Cylinder",
+        "radius": 0.008,
+        "height": 0.12,
+        "segments": 32
+      }
+    },
+    "link2_translated": {
+      "id": "link2_translated",
+      "name": "link2_translated",
+      "op": {
+        "type": "Translate",
+        "child": "link2_body",
+        "offset": {"x": 0.0, "y": 0.0, "z": 0.0}
+      }
+    },
+    "tip_body": {
+      "id": "tip_body",
+      "name": "tip",
+      "op": {
+        "type": "Sphere",
+        "radius": 0.005,
+        "segments": 32
+      }
+    },
+    "tip_translated": {
+      "id": "tip_translated",
+      "name": "tip_translated",
+      "op": {
+        "type": "Translate",
+        "child": "tip_body",
+        "offset": {"x": 0.0, "y": 0.0, "z": 0.12}
+      }
+    },
+    "assembly": {
+      "id": "assembly",
+      "name": "assembly",
+      "op": {
+        "type": "Union",
+        "left": "base_translated",
+        "right": "link1_translated"
+      }
+    }
+  },
+  "materials": {
+    "default": {
+      "color": [0.7, 0.7, 0.7],
+      "metallic": 0.3,
+      "roughness": 0.4
+    },
+    "base_mat": {
+      "color": [0.2, 0.2, 0.2],
+      "metallic": 0.5,
+      "roughness": 0.3
+    },
+    "link_mat": {
+      "color": [0.8, 0.6, 0.2],
+      "metallic": 0.4,
+      "roughness": 0.5
+    },
+    "tip_mat": {
+      "color": [1.0, 0.0, 0.0],
+      "metallic": 0.8,
+      "roughness": 0.2
+    }
+  },
+  "part_materials": {
+    "base_body": "base_mat",
+    "link1_body": "link_mat",
+    "link2_body": "link_mat",
+    "tip_body": "tip_mat"
+  },
+  "roots": [
+    {
+      "root": "assembly",
+      "material": "default"
+    }
+  ],
+  "joints": [
+    {
+      "name": "joint1",
+      "type": "revolute",
+      "parent": "base_body",
+      "child": "link1_body",
+      "axis": {"x": 0.0, "y": 1.0, "z": 0.0},
+      "origin": {"x": 0.0, "y": 0.0, "z": 0.05},
+      "limits": {"lower": -1.5708, "upper": 1.5708},
+      "max_effort": 5.0,
+      "max_velocity": 1.57,
+      "initial_position": 0.5236
+    },
+    {
+      "name": "joint2",
+      "type": "revolute",
+      "parent": "link1_body",
+      "child": "link2_body",
+      "axis": {"x": 0.0, "y": 1.0, "z": 0.0},
+      "origin": {"x": 0.0, "y": 0.0, "z": 0.15},
+      "limits": {"lower": -1.5708, "upper": 1.5708},
+      "max_effort": 5.0,
+      "max_velocity": 1.57,
+      "initial_position": 0.7854
+    },
+    {
+      "name": "tip_joint",
+      "type": "fixed",
+      "parent": "link2_body",
+      "child": "tip_body",
+      "origin": {"x": 0.0, "y": 0.0, "z": 0.12}
+    }
+  ],
+  "link_masses": {
+    "base_body": 0.3,
+    "link1_body": 0.25,
+    "link2_body": 0.18,
+    "tip_body": 0.05
+  }
+}

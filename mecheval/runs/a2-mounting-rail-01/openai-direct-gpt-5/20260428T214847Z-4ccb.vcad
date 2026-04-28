@@ -1,0 +1,101 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Rail base cube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 100,
+          "y": 20,
+          "z": 8
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Rail base centered",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -50,
+          "y": -10,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Through-hole cylinder Ø6",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Hole at x=-40",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": -40,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Hole at x=40",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 40,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "Union holes (-40 and 0)",
+      "op": {
+        "type": "Union",
+        "left": 4,
+        "right": 3
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "Union all holes",
+      "op": {
+        "type": "Union",
+        "left": 6,
+        "right": 5
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "Rail with holes",
+      "op": {
+        "type": "Difference",
+        "left": 2,
+        "right": 7
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 8,
+      "material": "default"
+    }
+  ]
+}

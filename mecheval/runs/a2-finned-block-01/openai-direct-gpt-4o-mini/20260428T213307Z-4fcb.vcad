@@ -1,0 +1,117 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "base": {
+      "id": "base",
+      "name": "Base",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 30,
+          "z": 5
+        }
+      }
+    },
+    "fin1": {
+      "id": "fin1",
+      "name": "Fin 1",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 3,
+          "z": 15
+        }
+      }
+    },
+    "fin2": {
+      "id": "fin2",
+      "name": "Fin 2",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 3,
+          "z": 15
+        }
+      }
+    },
+    "fin3": {
+      "id": "fin3",
+      "name": "Fin 3",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 3,
+          "z": 15
+        }
+      }
+    },
+    "fin1_translated": {
+      "id": "fin1_translated",
+      "name": "Fin 1 Translated",
+      "op": {
+        "type": "Translate",
+        "child": "fin1",
+        "offset": {
+          "x": 0,
+          "y": -10,
+          "z": 5
+        }
+      }
+    },
+    "fin2_translated": {
+      "id": "fin2_translated",
+      "name": "Fin 2 Translated",
+      "op": {
+        "type": "Translate",
+        "child": "fin2",
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 5
+        }
+      }
+    },
+    "fin3_translated": {
+      "id": "fin3_translated",
+      "name": "Fin 3 Translated",
+      "op": {
+        "type": "Translate",
+        "child": "fin3",
+        "offset": {
+          "x": 0,
+          "y": 10,
+          "z": 5
+        }
+      }
+    },
+    "final_block": {
+      "id": "final_block",
+      "name": "Final Block",
+      "op": {
+        "type": "Union",
+        "left": "base",
+        "right": {
+          "type": "Union",
+          "left": "fin1_translated",
+          "right": {
+            "type": "Union",
+            "left": "fin2_translated",
+            "right": "fin3_translated"
+          }
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "final_block",
+      "material": "default"
+    }
+  ]
+}

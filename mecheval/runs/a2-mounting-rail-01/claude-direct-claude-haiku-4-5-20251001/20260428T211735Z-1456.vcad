@@ -1,0 +1,109 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "rail_body": {
+      "id": 0,
+      "name": "rail_body",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 100, "y": 20, "z": 8}
+      }
+    },
+    "rail_centered": {
+      "id": 1,
+      "name": "rail_centered",
+      "op": {
+        "type": "Translate",
+        "child": 0,
+        "offset": {"x": -50, "y": -10, "z": 0}
+      }
+    },
+    "hole1": {
+      "id": 2,
+      "name": "hole1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole1_positioned": {
+      "id": 3,
+      "name": "hole1_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {"x": -40, "y": 0, "z": 0}
+      }
+    },
+    "hole2": {
+      "id": 4,
+      "name": "hole2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole2_positioned": {
+      "id": 5,
+      "name": "hole2_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {"x": 0, "y": 0, "z": 0}
+      }
+    },
+    "hole3": {
+      "id": 6,
+      "name": "hole3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole3_positioned": {
+      "id": 7,
+      "name": "hole3_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {"x": 40, "y": 0, "z": 0}
+      }
+    },
+    "rail_with_holes_1": {
+      "id": 8,
+      "name": "rail_with_holes_1",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 3
+      }
+    },
+    "rail_with_holes_2": {
+      "id": 9,
+      "name": "rail_with_holes_2",
+      "op": {
+        "type": "Difference",
+        "left": 8,
+        "right": 5
+      }
+    },
+    "final_rail": {
+      "id": 10,
+      "name": "final_rail",
+      "op": {
+        "type": "Difference",
+        "left": 9,
+        "right": 7
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": 10, "material": "default"}]
+}

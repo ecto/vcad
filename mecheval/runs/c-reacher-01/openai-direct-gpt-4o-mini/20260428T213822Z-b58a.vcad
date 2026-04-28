@@ -1,0 +1,136 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "base": {
+      "id": "base",
+      "name": "Base",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 50,
+          "z": 10
+        }
+      }
+    },
+    "arm1": {
+      "id": "arm1",
+      "name": "First Arm Link",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 60,
+          "y": 10,
+          "z": 10
+        }
+      }
+    },
+    "arm2": {
+      "id": "arm2",
+      "name": "Second Arm Link",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 10,
+          "z": 10
+        }
+      }
+    },
+    "tip": {
+      "id": "tip",
+      "name": "End Effector",
+      "op": {
+        "type": "Sphere",
+        "radius": 5,
+        "segments": 32
+      }
+    },
+    "joint1": {
+      "id": "joint1",
+      "name": "Revolute Joint 1",
+      "op": {
+        "type": "Rotate",
+        "child": "arm1",
+        "angles": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "joint2": {
+      "id": "joint2",
+      "name": "Revolute Joint 2",
+      "op": {
+        "type": "Rotate",
+        "child": "arm2",
+        "angles": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "translate_base_to_arm1": {
+      "id": "translate_base_to_arm1",
+      "name": "Translate Base to Arm 1",
+      "op": {
+        "type": "Translate",
+        "child": "arm1",
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 10
+        }
+      }
+    },
+    "translate_arm1_to_joint2": {
+      "id": "translate_arm1_to_joint2",
+      "name": "Translate Arm 1 to Joint 2",
+      "op": {
+        "type": "Translate",
+        "child": "arm2",
+        "offset": {
+          "x": 60,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "translate_arm2_to_tip": {
+      "id": "translate_arm2_to_tip",
+      "name": "Translate Arm 2 to Tip",
+      "op": {
+        "type": "Translate",
+        "child": "tip",
+        "offset": {
+          "x": 50,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "composed_arm": {
+      "id": "composed_arm",
+      "name": "Composed Arm",
+      "op": {
+        "type": "Union",
+        "left": "translate_base_to_arm1",
+        "right": {
+          "type": "Union",
+          "left": "translate_arm1_to_joint2",
+          "right": "translate_arm2_to_tip"
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "composed_arm",
+      "material": "default"
+    }
+  ]
+}
