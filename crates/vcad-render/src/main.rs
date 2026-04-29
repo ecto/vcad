@@ -420,8 +420,11 @@ fn main() -> ExitCode {
 
     // Emit SVG.
     let mut out = String::new();
+    // Emit explicit width/height alongside viewBox so the SVG has intrinsic
+    // dimensions. Without them, browsers compute auto/auto as 0×0 inside flex
+    // containers (Chrome/Safari), which silently hides the render.
     out.push_str(&format!(
-        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w:.2} {h:.2}" role="img" aria-label="vcad render">"#
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{w:.2}" height="{h:.2}" viewBox="0 0 {w:.2} {h:.2}" role="img" aria-label="vcad render">"#
     ));
 
     // Filled polygons — no stroke.
