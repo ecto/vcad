@@ -1,0 +1,9 @@
+{
+  "id": "2026-04-29-difference-tangent-cyl-union",
+  "version": "0.9.4",
+  "date": "2026-04-29",
+  "category": "fix",
+  "title": "Difference cutter with tangent Union'd cylinder no longer under-subtracts",
+  "summary": "When a Difference uses a Union of primitives whose lateral surfaces share a tangent boundary as the cutter (e.g. a slot built from a rect plus tangent cylinders), the cylinder's full SSI circle on the target face fell entirely inside the polygon, tangent to two edges. The arc-based splitter saw both circle halves as 'inside' and arbitrarily picked one — leaving ~66% of the cylinder's external lobe un-subtracted. The polygon is now split along the chord between the two tangent points first, so each sub-polygon contains exactly one arc and the inside check resolves unambiguously.",
+  "features": ["kernel", "boolean"]
+}

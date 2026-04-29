@@ -1195,6 +1195,22 @@ pub fn split_planar_face_by_arc(
     let arc1_mid_y = center_2d.1 + circle.radius * arc1_mid_angle.sin();
     let arc1_inside = point_in_polygon_2d(arc1_mid_x, arc1_mid_y, &poly_2d);
 
+    // Tangent-inside case: when the circle is fully inside the polygon but
+    // tangent to two polygon edges, both arcs (the two halves of the circle
+    // separated by the chord through the tangent points) lie inside the
+    // polygon. Picking either arc arbitrarily produces a face whose boundary
+    // bulges through the disk in the wrong direction (issue #165). Split the
+    // polygon along the chord first, then recurse: each sub-polygon contains
+    // exactly one of the two arcs, so the inside/outside check resolves
+    // unambiguously.
+    let arc2_mid_angle = arc1_mid_angle + std::f64::consts::PI;
+    let arc2_mid_x = center_2d.0 + circle.radius * arc2_mid_angle.cos();
+    let arc2_mid_y = center_2d.1 + circle.radius * arc2_mid_angle.sin();
+    let arc2_inside = point_in_polygon_2d(arc2_mid_x, arc2_mid_y, &poly_2d);
+    if arc1_inside && arc2_inside {
+        return split_planar_face_tangent_inside(brep, face_id, circle, segments, int1, int2);
+    }
+
     // Determine which arc is inside and which edge indices to walk
     let (inside_start, inside_end, inside_start_angle, inside_end_angle) = if arc1_inside {
         (int1, int2, angle1, angle2)
@@ -1378,6 +1394,72 @@ pub fn split_planar_face_by_arc(
 
     SplitResult {
         sub_faces: vec![face1, face2],
+    }
+}
+
+/// Handle the tangent-inside case where a circle lies fully inside a polygon
+/// but is tangent to two polygon edges.
+///
+/// Strategy: split the polygon along the chord between the two tangent points
+/// using `split_face_by_curve` (line-based), producing two simple sub-polygons.
+/// Each sub-polygon contains exactly one of the two circle arcs, so calling
+/// `split_planar_face_by_arc` on each resolves the disk's relevant half-circle
+/// unambiguously.
+///
+/// This is essential when a Difference cutter is itself a Union of primitives
+/// whose lateral surfaces share a tangent boundary (e.g. a rect with a tangent
+/// cylinder), where the cylinder's full SSI circle on the target's planar face
+/// would otherwise straddle two regions of different classification.
+fn split_planar_face_tangent_inside(
+    brep: &mut BRepSolid,
+    face_id: FaceId,
+    circle: &vcad_kernel_geom::Circle3d,
+    segments: u32,
+    int1: &CirclePolygonIntersection,
+    int2: &CirclePolygonIntersection,
+) -> SplitResult {
+    // Build a Line3d through the two tangent points to act as the chord.
+    let chord_dir = int2.point - int1.point;
+    let chord_len = chord_dir.norm();
+    if chord_len < 1e-9 {
+        return SplitResult {
+            sub_faces: vec![face_id],
+        };
+    }
+    let chord_line = vcad_kernel_geom::Line3d {
+        origin: int1.point,
+        direction: chord_dir / chord_len,
+    };
+    let chord_curve = IntersectionCurve::Line(chord_line);
+
+    // Split the polygon along the chord; sub-faces split on the original face's
+    // outer loop at int1 and int2.
+    let chord_result = split_face_by_curve(brep, face_id, &chord_curve, &int1.point, &int2.point);
+    if chord_result.sub_faces.len() < 2 {
+        return chord_result;
+    }
+
+    // Now split each sub-face by the arc. Each sub-polygon should contain
+    // exactly one of the two arc midpoints, so the inside/outside check
+    // resolves correctly.
+    let mut all_sub_faces = Vec::new();
+    for sub_id in chord_result.sub_faces {
+        if !brep.topology.faces.contains_key(sub_id) {
+            continue;
+        }
+        let sub_result = split_planar_face_by_arc(brep, sub_id, circle, segments);
+        // If the recursive split made progress (>= 2 sub-faces), use those;
+        // otherwise the sub-face was left intact (e.g. its arc midpoint missed
+        // the polygon by a tolerance margin) — keep the unsplit sub-face.
+        if sub_result.sub_faces.len() >= 2 {
+            all_sub_faces.extend(sub_result.sub_faces);
+        } else {
+            all_sub_faces.push(sub_id);
+        }
+    }
+
+    SplitResult {
+        sub_faces: all_sub_faces,
     }
 }
 

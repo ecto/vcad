@@ -1851,4 +1851,99 @@ mod tests {
             "Result mesh should have triangles"
         );
     }
+
+    /// Regression test for issue #165: `Difference(plate, Union(rect, cyl))`
+    /// where a cylinder is tangent to a rect must subtract the full
+    /// stadium-shaped cutout, not under-subtract the cylinder's external lobe.
+    ///
+    /// Before the fix, the SSI between the half-cylinder and the plate's caps
+    /// produced a full circle, which fell on the boundary between the rect
+    /// interior and the strip beside it on the plate's cap face. The arc-based
+    /// splitter saw both circle halves as "inside the polygon" and arbitrarily
+    /// picked one — so the kept face's outline traced the inside arc rather
+    /// than the outside arc, leaving ~66% of the cylinder's external lobe
+    /// un-subtracted.
+    #[test]
+    fn test_difference_with_tangent_cyl_union_cutter() {
+        use vcad_kernel_primitives::make_cylinder;
+
+        // Plate 80×40×8 centered on (0,0).
+        let mut plate = make_cube(80.0, 40.0, 8.0);
+        translate_brep(&mut plate, -40.0, -20.0, 0.0);
+
+        // Rect 40×10×8 centered on (0,0).
+        let mut rect = make_cube(40.0, 10.0, 8.0);
+        translate_brep(&mut rect, -20.0, -5.0, 0.0);
+
+        // Cylinder R=5, H=8 at (-20, 0) — tangent to rect's left edge at (-20, ±5).
+        let mut cyl_l = make_cylinder(5.0, 8.0, 64);
+        translate_brep(&mut cyl_l, -20.0, 0.0, 0.0);
+
+        let union1 = boolean_op(&rect, &cyl_l, BooleanOp::Union, 64)
+            .into_brep()
+            .unwrap();
+        let result = boolean_op(&plate, &union1, BooleanOp::Difference, 64);
+        let mesh = result.to_mesh(64);
+        let actual = compute_mesh_volume(&mesh);
+
+        let plate_vol = 80.0 * 40.0 * 8.0;
+        let rect_vol = 40.0 * 10.0 * 8.0;
+        let half_disk_vol = std::f64::consts::PI * 25.0 / 2.0 * 8.0;
+        let expected = plate_vol - rect_vol - half_disk_vol;
+
+        let dev = ((actual - expected) / expected).abs();
+        assert!(
+            dev < 0.001,
+            "Difference(plate, Union(rect, tangent_cyl)) should subtract the \
+             full stadium cutout. Got {:.4} mm³, expected {:.4} (dev {:.3}%).",
+            actual,
+            expected,
+            dev * 100.0
+        );
+    }
+
+    /// Regression test for issue #165 with two tangent cylinders (one on each
+    /// end of the rect). The error was linear in cylinder count, so this case
+    /// is the most sensitive.
+    #[test]
+    fn test_difference_with_two_tangent_cyls_union_cutter() {
+        use vcad_kernel_primitives::make_cylinder;
+
+        let mut plate = make_cube(80.0, 40.0, 8.0);
+        translate_brep(&mut plate, -40.0, -20.0, 0.0);
+
+        let mut rect = make_cube(40.0, 10.0, 8.0);
+        translate_brep(&mut rect, -20.0, -5.0, 0.0);
+
+        let mut cyl_l = make_cylinder(5.0, 8.0, 64);
+        translate_brep(&mut cyl_l, -20.0, 0.0, 0.0);
+
+        let mut cyl_r = make_cylinder(5.0, 8.0, 64);
+        translate_brep(&mut cyl_r, 20.0, 0.0, 0.0);
+
+        let u1 = boolean_op(&rect, &cyl_l, BooleanOp::Union, 64)
+            .into_brep()
+            .unwrap();
+        let u2 = boolean_op(&u1, &cyl_r, BooleanOp::Union, 64)
+            .into_brep()
+            .unwrap();
+        let result = boolean_op(&plate, &u2, BooleanOp::Difference, 64);
+        let mesh = result.to_mesh(64);
+        let actual = compute_mesh_volume(&mesh);
+
+        let plate_vol = 80.0 * 40.0 * 8.0;
+        let rect_vol = 40.0 * 10.0 * 8.0;
+        let two_half_disks_vol = std::f64::consts::PI * 25.0 * 8.0;
+        let expected = plate_vol - rect_vol - two_half_disks_vol;
+
+        let dev = ((actual - expected) / expected).abs();
+        assert!(
+            dev < 0.001,
+            "Difference with two-cylinder slot should match analytic stadium \
+             cutout. Got {:.4} mm³, expected {:.4} (dev {:.3}%).",
+            actual,
+            expected,
+            dev * 100.0
+        );
+    }
 }
