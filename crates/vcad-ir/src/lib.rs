@@ -153,6 +153,11 @@ pub struct Instance {
     /// Optional human-readable name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// Semantic tags for the link, e.g. `["tip"]`, `["foot_left"]`. Used by
+    /// Suite C graders to identify end-effectors and required links. Empty
+    /// when omitted from JSON.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     /// Optional transform override.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transform: Option<Transform3D>,
@@ -1501,6 +1506,7 @@ mod tests {
                 id: "base_inst".to_string(),
                 part_def_id: "base".to_string(),
                 name: Some("Ground Base".to_string()),
+                tags: Vec::new(),
                 transform: None,
                 material: None,
             },
@@ -1508,6 +1514,7 @@ mod tests {
                 id: "arm_inst".to_string(),
                 part_def_id: "arm".to_string(),
                 name: Some("Rotating Arm".to_string()),
+                tags: Vec::new(),
                 transform: Some(Transform3D {
                     translation: Vec3::new(0.0, 0.0, 10.0),
                     rotation: Vec3::new(0.0, 0.0, 0.0),

@@ -546,6 +546,11 @@ export interface Instance {
   id: string;
   partDefId: string;
   name?: string;
+  /**
+   * Semantic tags for the link, e.g. `["tip"]`, `["foot_left"]`. Used by
+   * Suite C graders to identify end-effectors and required links.
+   */
+  tags?: string[];
   transform?: Transform3D;
   material?: string;
 }
