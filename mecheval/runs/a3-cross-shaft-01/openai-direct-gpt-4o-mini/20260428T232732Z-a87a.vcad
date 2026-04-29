@@ -1,0 +1,58 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Vertical Cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 40,
+        "segments": 32
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Horizontal Cylinder",
+      "op": {
+        "type": "Rotate",
+        "child": {
+          "type": "Cylinder",
+          "radius": 10,
+          "height": 40,
+          "segments": 32
+        },
+        "angles": {
+          "x": 90,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Union of Cylinders",
+      "op": {
+        "type": "Union",
+        "left": 1,
+        "right": {
+          "type": "Translate",
+          "child": 2,
+          "offset": {
+            "x": 0,
+            "y": 0,
+            "z": 20
+          }
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 3,
+      "material": "default"
+    }
+  ]
+}

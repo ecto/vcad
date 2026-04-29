@@ -1,0 +1,341 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "square_A",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 40,
+          "y": 40,
+          "z": 8
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "square_A_centered",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -20,
+          "y": -20,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "square_B",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 40,
+          "y": 40,
+          "z": 8
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "square_B_centered",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": -20,
+          "y": -20,
+          "z": 0
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "square_B_rot45",
+      "op": {
+        "type": "Rotate",
+        "child": 4,
+        "angles": {
+          "x": 0,
+          "y": 0,
+          "z": 45
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "octagonal_prism_body",
+      "op": {
+        "type": "Intersection",
+        "left": 2,
+        "right": 5
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "hole_cyl_0",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "hole_cyl_45",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "hole_cyl_90",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "hole_cyl_135",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "hole_cyl_180",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "hole_cyl_225",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "hole_cyl_270",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "14": {
+      "id": 14,
+      "name": "hole_cyl_315",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "15": {
+      "id": 15,
+      "name": "hole_0_pos",
+      "op": {
+        "type": "Translate",
+        "child": 7,
+        "offset": {
+          "x": 15,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "16": {
+      "id": 16,
+      "name": "hole_45_pos",
+      "op": {
+        "type": "Translate",
+        "child": 8,
+        "offset": {
+          "x": 10.60660172,
+          "y": 10.60660172,
+          "z": 0
+        }
+      }
+    },
+    "17": {
+      "id": 17,
+      "name": "hole_90_pos",
+      "op": {
+        "type": "Translate",
+        "child": 9,
+        "offset": {
+          "x": 0,
+          "y": 15,
+          "z": 0
+        }
+      }
+    },
+    "18": {
+      "id": 18,
+      "name": "hole_135_pos",
+      "op": {
+        "type": "Translate",
+        "child": 10,
+        "offset": {
+          "x": -10.60660172,
+          "y": 10.60660172,
+          "z": 0
+        }
+      }
+    },
+    "19": {
+      "id": 19,
+      "name": "hole_180_pos",
+      "op": {
+        "type": "Translate",
+        "child": 11,
+        "offset": {
+          "x": -15,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "20": {
+      "id": 20,
+      "name": "hole_225_pos",
+      "op": {
+        "type": "Translate",
+        "child": 12,
+        "offset": {
+          "x": -10.60660172,
+          "y": -10.60660172,
+          "z": 0
+        }
+      }
+    },
+    "21": {
+      "id": 21,
+      "name": "hole_270_pos",
+      "op": {
+        "type": "Translate",
+        "child": 13,
+        "offset": {
+          "x": 0,
+          "y": -15,
+          "z": 0
+        }
+      }
+    },
+    "22": {
+      "id": 22,
+      "name": "hole_315_pos",
+      "op": {
+        "type": "Translate",
+        "child": 14,
+        "offset": {
+          "x": 10.60660172,
+          "y": -10.60660172,
+          "z": 0
+        }
+      }
+    },
+    "23": {
+      "id": 23,
+      "name": "holes_union_1",
+      "op": {
+        "type": "Union",
+        "left": 15,
+        "right": 16
+      }
+    },
+    "24": {
+      "id": 24,
+      "name": "holes_union_2",
+      "op": {
+        "type": "Union",
+        "left": 23,
+        "right": 17
+      }
+    },
+    "25": {
+      "id": 25,
+      "name": "holes_union_3",
+      "op": {
+        "type": "Union",
+        "left": 24,
+        "right": 18
+      }
+    },
+    "26": {
+      "id": 26,
+      "name": "holes_union_4",
+      "op": {
+        "type": "Union",
+        "left": 25,
+        "right": 19
+      }
+    },
+    "27": {
+      "id": 27,
+      "name": "holes_union_5",
+      "op": {
+        "type": "Union",
+        "left": 26,
+        "right": 20
+      }
+    },
+    "28": {
+      "id": 28,
+      "name": "holes_union_6",
+      "op": {
+        "type": "Union",
+        "left": 27,
+        "right": 21
+      }
+    },
+    "29": {
+      "id": 29,
+      "name": "holes_union_all",
+      "op": {
+        "type": "Union",
+        "left": 28,
+        "right": 22
+      }
+    },
+    "30": {
+      "id": 30,
+      "name": "octagonal_flange_with_holes",
+      "op": {
+        "type": "Difference",
+        "left": 6,
+        "right": 29
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 30,
+      "material": "default"
+    }
+  ]
+}

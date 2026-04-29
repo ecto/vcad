@@ -1,0 +1,83 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "cube_body": {
+      "id": 0,
+      "name": "cube_body",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 40, "y": 40, "z": 40}
+      }
+    },
+    "cube_centered": {
+      "id": 1,
+      "name": "cube_centered",
+      "op": {
+        "type": "Translate",
+        "child": 0,
+        "offset": {"x": -20, "y": -20, "z": 0}
+      }
+    },
+    "sphere_full": {
+      "id": 2,
+      "name": "sphere_full",
+      "op": {
+        "type": "Sphere",
+        "radius": 15,
+        "segments": 32
+      }
+    },
+    "sphere_centered": {
+      "id": 3,
+      "name": "sphere_centered",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {"x": 0, "y": 0, "z": 40}
+      }
+    },
+    "half_space": {
+      "id": 4,
+      "name": "half_space",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 100, "y": 100, "z": 50}
+      }
+    },
+    "half_space_positioned": {
+      "id": 5,
+      "name": "half_space_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {"x": -50, "y": -50, "z": 40}
+      }
+    },
+    "hemisphere": {
+      "id": 6,
+      "name": "hemisphere",
+      "op": {
+        "type": "Intersection",
+        "left": 3,
+        "right": 5
+      }
+    },
+    "dome_and_cube": {
+      "id": 7,
+      "name": "dome_and_cube",
+      "op": {
+        "type": "Union",
+        "left": 1,
+        "right": 6
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 7,
+      "material": "default"
+    }
+  ]
+}

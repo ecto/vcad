@@ -1,0 +1,391 @@
+{
+  "schema_version": 0,
+  "task_id": "a3-hex-bolt-pattern-01",
+  "task_sha256": "01a4b0ae34f8c19b1a2db1a4d9ff75231201c7a976ff59c4987df6075e749a62",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -30,
+          -30,
+          0
+        ],
+        "max": [
+          30,
+          30,
+          8
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          30,
+          30,
+          8
+        ],
+        "actual_min": [
+          -30,
+          -30,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 27700.44,
+        "tolerance_pct": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "volume": {
+          "actual_mm3": 27707.494117808994,
+          "deviation_pct": 0.025465724764643507,
+          "pass": true,
+          "spec_mm3": 27700.44,
+          "tolerance_pct": 0.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 5,
+        "expected": 7,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual": 7,
+        "diameter_mm": 5,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 7,
+        "found": [
+          [
+            0,
+            0,
+            5
+          ],
+          [
+            15,
+            0,
+            5
+          ],
+          [
+            7.5,
+            12.99038105676658,
+            5
+          ],
+          [
+            -7.5,
+            12.99038105676658,
+            5
+          ],
+          [
+            -15,
+            0,
+            5
+          ],
+          [
+            -7.5,
+            -12.99038105676658,
+            5
+          ],
+          [
+            7.5,
+            -12.99038105676658,
+            5
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 5,
+        "positions": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            15,
+            0,
+            0
+          ],
+          [
+            7.5,
+            12.99,
+            0
+          ],
+          [
+            -7.5,
+            12.99,
+            0
+          ],
+          [
+            -15,
+            0,
+            0
+          ],
+          [
+            -7.5,
+            -12.99,
+            0
+          ],
+          [
+            7.5,
+            -12.99,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 5,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              0
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              15,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              15,
+              0
+            ]
+          },
+          {
+            "distance_mm": 0.0003810567665798459,
+            "matched_hole": [
+              7.5,
+              12.99038105676658
+            ],
+            "pass": true,
+            "spec_xy": [
+              7.5,
+              12.99
+            ]
+          },
+          {
+            "distance_mm": 0.0003810567665798459,
+            "matched_hole": [
+              -7.5,
+              12.99038105676658
+            ],
+            "pass": true,
+            "spec_xy": [
+              -7.5,
+              12.99
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              -15,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              -15,
+              0
+            ]
+          },
+          {
+            "distance_mm": 0.0003810567665798459,
+            "matched_hole": [
+              -7.5,
+              -12.99038105676658
+            ],
+            "pass": true,
+            "spec_xy": [
+              -7.5,
+              -12.99
+            ]
+          },
+          {
+            "distance_mm": 0.0003810567665798459,
+            "matched_hole": [
+              7.5,
+              -12.99038105676658
+            ],
+            "pass": true,
+            "spec_xy": [
+              7.5,
+              -12.99
+            ]
+          }
+        ],
+        "tolerance_mm": 0.2,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                30,
+                30,
+                8
+              ],
+              "original_min": [
+                -30,
+                -30,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                30,
+                30,
+                8
+              ],
+              "roundtripped_min": [
+                -30,
+                -30,
+                0
+              ],
+              "tolerance_mm": 0.4261455150532503
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 27707.494117808994,
+              "pass": true,
+              "roundtripped_mm3": 27707.494117808994
+            }
+          }
+        ],
+        "tolerance_pct": 0.5
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 6,
+    "checks_total": 6,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T232822Z-847a",
+  "model": {
+    "id": "claude-direct-claude-sonnet-4-6",
+    "name": "Claude (direct, claude-sonnet-4-6)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "direct",
+      "model": "claude-sonnet-4-6",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a3-hex-bolt-pattern-01",
+    "rendered": "Make a flat square plate 60mm × 60mm × 8mm thick. Center it in X and Y with the bottom face on the XY plane (z = 0 to z = 8). Drill seven through-holes of diameter 5mm, axes parallel to Z, arranged in a hexagonal grid pattern: one hole at the center (0, 0), and six surrounding holes at the vertices of a regular hexagon with circumradius 15mm (distance from center to each surrounding hole is exactly 15mm). The first surrounding hole is on the +X axis, and the remaining five are evenly spaced every 60 degrees. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "anthropic.messages.create",
+        "args": {
+          "model": "claude-sonnet-4-6",
+          "max_tokens": 8000,
+          "system_chars": 1674,
+          "user_chars": 601
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 12030.002458
+      }
+    ],
+    "tokens": {
+      "input": 740,
+      "output": 1245,
+      "total": 1985
+    },
+    "wallclock_sec": 12.030002458
+  },
+  "output": {
+    "vcad_path": "20260428T232822Z-847a.vcad",
+    "vcad_sha256": "cbee520602d958e9b124dabd0b71d1965cf9eefdb962f9c6ced79c682d8a3312",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T23:28:22.700Z",
+    "ended_at": "2026-04-28T23:28:35.101Z"
+  },
+  "signature": null
+}

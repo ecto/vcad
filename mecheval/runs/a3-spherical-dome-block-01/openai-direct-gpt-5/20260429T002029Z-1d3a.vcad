@@ -1,0 +1,16 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "Cube 40x40x40", "op": { "type": "Cube", "size": { "x": 40, "y": 40, "z": 40 } } },
+    "2": { "id": 2, "name": "Cube Positioned (-20,-20,0)", "op": { "type": "Translate", "child": 1, "offset": { "x": -20, "y": -20, "z": 0 } } },
+    "3": { "id": 3, "name": "Sphere R15", "op": { "type": "Sphere", "radius": 15, "segments": 32 } },
+    "4": { "id": 4, "name": "Sphere Centered at (0,0,40)", "op": { "type": "Translate", "child": 3, "offset": { "x": 0, "y": 0, "z": 40 } } },
+    "5": { "id": 5, "name": "Halfspace Cube 1000x1000x1000", "op": { "type": "Cube", "size": { "x": 1000, "y": 1000, "z": 1000 } } },
+    "6": { "id": 6, "name": "Halfspace Z>=40", "op": { "type": "Translate", "child": 5, "offset": { "x": -500, "y": -500, "z": 40 } } },
+    "7": { "id": 7, "name": "Hemisphere (Top Half)", "op": { "type": "Intersection", "left": 4, "right": 6 } },
+    "8": { "id": 8, "name": "Cube + Dome Union", "op": { "type": "Union", "left": 2, "right": 7 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 8, "material": "default" }]
+}

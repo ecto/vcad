@@ -1,0 +1,135 @@
+{
+  "schema_version": 0,
+  "task_id": "a3-cross-shaft-01",
+  "task_sha256": "9e7917fe01d0892e88b6db245e1a793fe379e42d09df6f046d4b8767a8ddfb61",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "fail",
+      "details": {
+        "error": "parse: Invalid JSON vcad file: invalid type: string \"1\", expected u64 at line 5 column 15",
+        "reason": "fatal evaluation error"
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -20,
+          -10,
+          0
+        ],
+        "max": [
+          20,
+          10,
+          40
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 19799.41,
+        "tolerance_pct": 1.5
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1.5
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to round-trip"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 4,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T232743Z-1d98",
+  "model": {
+    "id": "openai-direct-gpt-4o-mini",
+    "name": "OpenAI (direct, gpt-4o-mini)",
+    "provider": "openai",
+    "params": {
+      "mode": "direct",
+      "model": "gpt-4o-mini",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a3-cross-shaft-01",
+    "rendered": "Make a single solid that is the union of two cylinders intersecting at right angles. Vertical cylinder: outside diameter 20mm, length 40mm, axis along Z, base on the XY plane (z = 0 to z = 40), centered on the Z axis. Horizontal cylinder: outside diameter 20mm, length 40mm, axis along the X axis, centered at (0, 0, 20) (so it passes through the middle of the vertical cylinder). The two cylinders are merged into one solid (their intersection region counts only once).",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "openai.chat.completions.create",
+        "args": {
+          "model": "gpt-4o-mini",
+          "max_tokens": 8000,
+          "system_chars": 1674,
+          "user_chars": 530
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5793.8105
+      }
+    ],
+    "tokens": {
+      "input": 651,
+      "output": 268,
+      "total": 919
+    },
+    "wallclock_sec": 5.793810499999999
+  },
+  "output": {
+    "vcad_path": "20260428T232743Z-1d98.vcad",
+    "vcad_sha256": "d4b928c5dd9263d95d1a0a68065865a31ee023d85f6e32365739932d7810f66f",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T23:27:43.563Z",
+    "ended_at": "2026-04-28T23:27:49.368Z"
+  },
+  "signature": null
+}

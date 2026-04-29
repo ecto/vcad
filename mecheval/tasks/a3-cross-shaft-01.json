@@ -1,0 +1,33 @@
+{
+  "id": "a3-cross-shaft-01",
+  "suite": "A",
+  "tier": "A3",
+  "title": "Two perpendicular cylinders fused into a cross",
+  "prompt": "Make a single solid that is the union of two cylinders intersecting at right angles. Vertical cylinder: outside diameter 20mm, length 40mm, axis along Z, base on the XY plane (z = 0 to z = 40), centered on the Z axis. Horizontal cylinder: outside diameter 20mm, length 40mm, axis along the X axis, centered at (0, 0, 20) (so it passes through the middle of the vertical cylinder). The two cylinders are merged into one solid (their intersection region counts only once).",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-20, -10, 0],
+      "max": [20, 10, 40],
+      "tolerance_mm": 0.2
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 19799.41,
+      "tolerance_pct": 1.5
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 1.5 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 40000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 40
+  },
+  "pass_k": 5,
+  "tags": ["rotation", "boolean", "steinmetz", "advanced"]
+}

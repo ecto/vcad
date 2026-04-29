@@ -1,0 +1,67 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": "1",
+      "name": "Cylinder1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "2": {
+      "id": "2",
+      "name": "Cylinder2",
+      "op": {
+        "type": "Translate",
+        "child": "1",
+        "offset": {
+          "x": -10,
+          "y": 17.32,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": "3",
+      "name": "Cylinder3",
+      "op": {
+        "type": "Translate",
+        "child": "1",
+        "offset": {
+          "x": 10,
+          "y": 17.32,
+          "z": 0
+        }
+      }
+    },
+    "4": {
+      "id": "4",
+      "name": "UnionCylinders",
+      "op": {
+        "type": "Union",
+        "left": "2",
+        "right": "3"
+      }
+    },
+    "5": {
+      "id": "5",
+      "name": "FinalUnion",
+      "op": {
+        "type": "Union",
+        "left": "1",
+        "right": "4"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "5",
+      "material": "default"
+    }
+  ]
+}

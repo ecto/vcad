@@ -1,0 +1,36 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {"id":1,"name":"square_main","op":{"type":"Cube","size":{"x":40,"y":40,"z":8}}},
+    "2": {"id":2,"name":"square_main_centered","op":{"type":"Translate","child":1,"offset":{"x":-20,"y":-20,"z":0}}},
+    "3": {"id":3,"name":"square_rot","op":{"type":"Cube","size":{"x":40,"y":40,"z":8}}},
+    "4": {"id":4,"name":"square_rot_centered","op":{"type":"Translate","child":3,"offset":{"x":-20,"y":-20,"z":0}}},
+    "5": {"id":5,"name":"square_rotated","op":{"type":"Rotate","child":4,"angles":{"x":0,"y":0,"z":45}}},
+    "6": {"id":6,"name":"octagon","op":{"type":"Intersection","left":2,"right":5}},
+
+    "10": {"id":10,"name":"hole_proto","op":{"type":"Cylinder","radius":2.5,"height":10,"segments":32}},
+    "11": {"id":11,"name":"hole_z","op":{"type":"Translate","child":10,"offset":{"x":0,"y":0,"z":-1}}},
+
+    "20": {"id":20,"name":"hole0","op":{"type":"Translate","child":11,"offset":{"x":15.0,"y":0.0,"z":0}}},
+    "21": {"id":21,"name":"hole1","op":{"type":"Translate","child":11,"offset":{"x":10.606601717798213,"y":10.606601717798213,"z":0}}},
+    "22": {"id":22,"name":"hole2","op":{"type":"Translate","child":11,"offset":{"x":0.0,"y":15.0,"z":0}}},
+    "23": {"id":23,"name":"hole3","op":{"type":"Translate","child":11,"offset":{"x":-10.606601717798213,"y":10.606601717798213,"z":0}}},
+    "24": {"id":24,"name":"hole4","op":{"type":"Translate","child":11,"offset":{"x":-15.0,"y":0.0,"z":0}}},
+    "25": {"id":25,"name":"hole5","op":{"type":"Translate","child":11,"offset":{"x":-10.606601717798213,"y":-10.606601717798213,"z":0}}},
+    "26": {"id":26,"name":"hole6","op":{"type":"Translate","child":11,"offset":{"x":0.0,"y":-15.0,"z":0}}},
+    "27": {"id":27,"name":"hole7","op":{"type":"Translate","child":11,"offset":{"x":10.606601717798213,"y":-10.606601717798213,"z":0}}},
+
+    "30": {"id":30,"name":"u01","op":{"type":"Union","left":20,"right":21}},
+    "31": {"id":31,"name":"u23","op":{"type":"Union","left":22,"right":23}},
+    "32": {"id":32,"name":"u45","op":{"type":"Union","left":24,"right":25}},
+    "33": {"id":33,"name":"u67","op":{"type":"Union","left":26,"right":27}},
+    "34": {"id":34,"name":"u0123","op":{"type":"Union","left":30,"right":31}},
+    "35": {"id":35,"name":"u4567","op":{"type":"Union","left":32,"right":33}},
+    "36": {"id":36,"name":"all_holes","op":{"type":"Union","left":34,"right":35}},
+
+    "40": {"id":40,"name":"flange","op":{"type":"Difference","left":6,"right":36}}
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root":40,"material":"default"}]
+}

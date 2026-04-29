@@ -1,0 +1,226 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "plate": {
+      "id": "plate",
+      "name": "Main Plate",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 60, "y": 60, "z": 8}
+      }
+    },
+    "plate_centered": {
+      "id": "plate_centered",
+      "name": "Plate Centered",
+      "op": {
+        "type": "Translate",
+        "child": "plate",
+        "offset": {"x": -30, "y": -30, "z": 0}
+      }
+    },
+    "hole_center": {
+      "id": "hole_center",
+      "name": "Center Hole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole_center_positioned": {
+      "id": "hole_center_positioned",
+      "name": "Center Hole Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_center",
+        "offset": {"x": 0, "y": 0, "z": 0}
+      }
+    },
+    "hole_1": {
+      "id": "hole_1",
+      "name": "Hole 1 (0°)",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole_1_positioned": {
+      "id": "hole_1_positioned",
+      "name": "Hole 1 Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_1",
+        "offset": {"x": 15, "y": 0, "z": 0}
+      }
+    },
+    "hole_2": {
+      "id": "hole_2",
+      "name": "Hole 2 (60°)",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole_2_positioned": {
+      "id": "hole_2_positioned",
+      "name": "Hole 2 Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_2",
+        "offset": {"x": 7.5, "y": 12.99038105676658, "z": 0}
+      }
+    },
+    "hole_3": {
+      "id": "hole_3",
+      "name": "Hole 3 (120°)",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole_3_positioned": {
+      "id": "hole_3_positioned",
+      "name": "Hole 3 Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_3",
+        "offset": {"x": -7.5, "y": 12.99038105676658, "z": 0}
+      }
+    },
+    "hole_4": {
+      "id": "hole_4",
+      "name": "Hole 4 (180°)",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole_4_positioned": {
+      "id": "hole_4_positioned",
+      "name": "Hole 4 Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_4",
+        "offset": {"x": -15, "y": 0, "z": 0}
+      }
+    },
+    "hole_5": {
+      "id": "hole_5",
+      "name": "Hole 5 (240°)",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole_5_positioned": {
+      "id": "hole_5_positioned",
+      "name": "Hole 5 Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_5",
+        "offset": {"x": -7.5, "y": -12.99038105676658, "z": 0}
+      }
+    },
+    "hole_6": {
+      "id": "hole_6",
+      "name": "Hole 6 (300°)",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole_6_positioned": {
+      "id": "hole_6_positioned",
+      "name": "Hole 6 Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_6",
+        "offset": {"x": 7.5, "y": -12.99038105676658, "z": 0}
+      }
+    },
+    "all_holes_union": {
+      "id": "all_holes_union",
+      "name": "All Holes Combined",
+      "op": {
+        "type": "Union",
+        "left": "hole_center_positioned",
+        "right": "hole_1_positioned"
+      }
+    },
+    "all_holes_union_2": {
+      "id": "all_holes_union_2",
+      "name": "All Holes Combined 2",
+      "op": {
+        "type": "Union",
+        "left": "all_holes_union",
+        "right": "hole_2_positioned"
+      }
+    },
+    "all_holes_union_3": {
+      "id": "all_holes_union_3",
+      "name": "All Holes Combined 3",
+      "op": {
+        "type": "Union",
+        "left": "all_holes_union_2",
+        "right": "hole_3_positioned"
+      }
+    },
+    "all_holes_union_4": {
+      "id": "all_holes_union_4",
+      "name": "All Holes Combined 4",
+      "op": {
+        "type": "Union",
+        "left": "all_holes_union_3",
+        "right": "hole_4_positioned"
+      }
+    },
+    "all_holes_union_5": {
+      "id": "all_holes_union_5",
+      "name": "All Holes Combined 5",
+      "op": {
+        "type": "Union",
+        "left": "all_holes_union_4",
+        "right": "hole_5_positioned"
+      }
+    },
+    "all_holes_union_6": {
+      "id": "all_holes_union_6",
+      "name": "All Holes Combined 6",
+      "op": {
+        "type": "Union",
+        "left": "all_holes_union_5",
+        "right": "hole_6_positioned"
+      }
+    },
+    "final": {
+      "id": "final",
+      "name": "Final Plate with Holes",
+      "op": {
+        "type": "Difference",
+        "left": "plate_centered",
+        "right": "all_holes_union_6"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "final",
+      "material": "default"
+    }
+  ]
+}

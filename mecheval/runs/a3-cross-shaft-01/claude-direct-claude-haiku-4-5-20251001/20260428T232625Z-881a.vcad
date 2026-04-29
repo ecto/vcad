@@ -1,0 +1,69 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "vertical_cyl": {
+      "id": 0,
+      "name": "vertical_cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 40,
+        "segments": 32
+      }
+    },
+    "vertical_centered": {
+      "id": 1,
+      "name": "vertical_centered",
+      "op": {
+        "type": "Translate",
+        "child": 0,
+        "offset": {"x": -10, "y": -10, "z": 0}
+      }
+    },
+    "horizontal_cyl": {
+      "id": 2,
+      "name": "horizontal_cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 40,
+        "segments": 32
+      }
+    },
+    "horizontal_rotated": {
+      "id": 3,
+      "name": "horizontal_rotated",
+      "op": {
+        "type": "Rotate",
+        "child": 2,
+        "angles": {"x": 0, "y": 90, "z": 0}
+      }
+    },
+    "horizontal_positioned": {
+      "id": 4,
+      "name": "horizontal_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {"x": -20, "y": -10, "z": 20}
+      }
+    },
+    "cross_shaft": {
+      "id": 5,
+      "name": "cross_shaft",
+      "op": {
+        "type": "Union",
+        "left": 1,
+        "right": 4
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 5,
+      "material": "default"
+    }
+  ]
+}

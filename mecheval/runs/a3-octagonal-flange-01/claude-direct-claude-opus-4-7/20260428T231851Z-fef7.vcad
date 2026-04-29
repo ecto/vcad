@@ -1,0 +1,80 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {"id": 1, "name": "slab", "op": {"type": "Cube", "size": {"x": 60, "y": 60, "z": 8}}},
+    "2": {"id": 2, "name": "slab_centered", "op": {"type": "Translate", "child": 1, "offset": {"x": -30, "y": -30, "z": 0}}},
+
+    "10": {"id": 10, "name": "cut_top", "op": {"type": "Cube", "size": {"x": 80, "y": 40, "z": 20}}},
+    "11": {"id": 11, "name": "cut_top_pos", "op": {"type": "Translate", "child": 10, "offset": {"x": -40, "y": 20, "z": -5}}},
+    "12": {"id": 12, "name": "oct1", "op": {"type": "Difference", "left": 2, "right": 11}},
+
+    "13": {"id": 13, "name": "cut_bot", "op": {"type": "Cube", "size": {"x": 80, "y": 40, "z": 20}}},
+    "14": {"id": 14, "name": "cut_bot_pos", "op": {"type": "Translate", "child": 13, "offset": {"x": -40, "y": -60, "z": -5}}},
+    "15": {"id": 15, "name": "oct2", "op": {"type": "Difference", "left": 12, "right": 14}},
+
+    "16": {"id": 16, "name": "cut_right", "op": {"type": "Cube", "size": {"x": 40, "y": 80, "z": 20}}},
+    "17": {"id": 17, "name": "cut_right_pos", "op": {"type": "Translate", "child": 16, "offset": {"x": 20, "y": -40, "z": -5}}},
+    "18": {"id": 18, "name": "oct3", "op": {"type": "Difference", "left": 15, "right": 17}},
+
+    "19": {"id": 19, "name": "cut_left", "op": {"type": "Cube", "size": {"x": 40, "y": 80, "z": 20}}},
+    "20": {"id": 20, "name": "cut_left_pos", "op": {"type": "Translate", "child": 19, "offset": {"x": -60, "y": -40, "z": -5}}},
+    "21": {"id": 21, "name": "oct4", "op": {"type": "Difference", "left": 18, "right": 20}},
+
+    "30": {"id": 30, "name": "cut_d1", "op": {"type": "Cube", "size": {"x": 80, "y": 40, "z": 20}}},
+    "31": {"id": 31, "name": "cut_d1_t", "op": {"type": "Translate", "child": 30, "offset": {"x": -40, "y": 20, "z": -5}}},
+    "32": {"id": 32, "name": "cut_d1_r", "op": {"type": "Rotate", "child": 31, "angles": {"x": 0, "y": 0, "z": 45}}},
+    "33": {"id": 33, "name": "oct5", "op": {"type": "Difference", "left": 21, "right": 32}},
+
+    "34": {"id": 34, "name": "cut_d2", "op": {"type": "Cube", "size": {"x": 80, "y": 40, "z": 20}}},
+    "35": {"id": 35, "name": "cut_d2_t", "op": {"type": "Translate", "child": 34, "offset": {"x": -40, "y": -60, "z": -5}}},
+    "36": {"id": 36, "name": "cut_d2_r", "op": {"type": "Rotate", "child": 35, "angles": {"x": 0, "y": 0, "z": 45}}},
+    "37": {"id": 37, "name": "oct6", "op": {"type": "Difference", "left": 33, "right": 36}},
+
+    "38": {"id": 38, "name": "cut_d3", "op": {"type": "Cube", "size": {"x": 40, "y": 80, "z": 20}}},
+    "39": {"id": 39, "name": "cut_d3_t", "op": {"type": "Translate", "child": 38, "offset": {"x": 20, "y": -40, "z": -5}}},
+    "40": {"id": 40, "name": "cut_d3_r", "op": {"type": "Rotate", "child": 39, "angles": {"x": 0, "y": 0, "z": 45}}},
+    "41": {"id": 41, "name": "oct7", "op": {"type": "Difference", "left": 37, "right": 40}},
+
+    "42": {"id": 42, "name": "cut_d4", "op": {"type": "Cube", "size": {"x": 40, "y": 80, "z": 20}}},
+    "43": {"id": 43, "name": "cut_d4_t", "op": {"type": "Translate", "child": 42, "offset": {"x": -60, "y": -40, "z": -5}}},
+    "44": {"id": 44, "name": "cut_d4_r", "op": {"type": "Rotate", "child": 43, "angles": {"x": 0, "y": 0, "z": 45}}},
+    "45": {"id": 45, "name": "octagon", "op": {"type": "Difference", "left": 41, "right": 44}},
+
+    "100": {"id": 100, "name": "hole0", "op": {"type": "Cylinder", "radius": 2.5, "height": 10, "segments": 32}},
+    "101": {"id": 101, "name": "h0", "op": {"type": "Translate", "child": 100, "offset": {"x": 15, "y": 0, "z": -1}}},
+
+    "102": {"id": 102, "name": "hole1", "op": {"type": "Cylinder", "radius": 2.5, "height": 10, "segments": 32}},
+    "103": {"id": 103, "name": "h1", "op": {"type": "Translate", "child": 102, "offset": {"x": 10.6066017, "y": 10.6066017, "z": -1}}},
+
+    "104": {"id": 104, "name": "hole2", "op": {"type": "Cylinder", "radius": 2.5, "height": 10, "segments": 32}},
+    "105": {"id": 105, "name": "h2", "op": {"type": "Translate", "child": 104, "offset": {"x": 0, "y": 15, "z": -1}}},
+
+    "106": {"id": 106, "name": "hole3", "op": {"type": "Cylinder", "radius": 2.5, "height": 10, "segments": 32}},
+    "107": {"id": 107, "name": "h3", "op": {"type": "Translate", "child": 106, "offset": {"x": -10.6066017, "y": 10.6066017, "z": -1}}},
+
+    "108": {"id": 108, "name": "hole4", "op": {"type": "Cylinder", "radius": 2.5, "height": 10, "segments": 32}},
+    "109": {"id": 109, "name": "h4", "op": {"type": "Translate", "child": 108, "offset": {"x": -15, "y": 0, "z": -1}}},
+
+    "110": {"id": 110, "name": "hole5", "op": {"type": "Cylinder", "radius": 2.5, "height": 10, "segments": 32}},
+    "111": {"id": 111, "name": "h5", "op": {"type": "Translate", "child": 110, "offset": {"x": -10.6066017, "y": -10.6066017, "z": -1}}},
+
+    "112": {"id": 112, "name": "hole6", "op": {"type": "Cylinder", "radius": 2.5, "height": 10, "segments": 32}},
+    "113": {"id": 113, "name": "h6", "op": {"type": "Translate", "child": 112, "offset": {"x": 0, "y": -15, "z": -1}}},
+
+    "114": {"id": 114, "name": "hole7", "op": {"type": "Cylinder", "radius": 2.5, "height": 10, "segments": 32}},
+    "115": {"id": 115, "name": "h7", "op": {"type": "Translate", "child": 114, "offset": {"x": 10.6066017, "y": -10.6066017, "z": -1}}},
+
+    "200": {"id": 200, "name": "u1", "op": {"type": "Union", "left": 101, "right": 103}},
+    "201": {"id": 201, "name": "u2", "op": {"type": "Union", "left": 200, "right": 105}},
+    "202": {"id": 202, "name": "u3", "op": {"type": "Union", "left": 201, "right": 107}},
+    "203": {"id": 203, "name": "u4", "op": {"type": "Union", "left": 202, "right": 109}},
+    "204": {"id": 204, "name": "u5", "op": {"type": "Union", "left": 203, "right": 111}},
+    "205": {"id": 205, "name": "u6", "op": {"type": "Union", "left": 204, "right": 113}},
+    "206": {"id": 206, "name": "all_holes", "op": {"type": "Union", "left": 205, "right": 115}},
+
+    "300": {"id": 300, "name": "flange", "op": {"type": "Difference", "left": 45, "right": 206}}
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": 300, "material": "default"}]
+}

@@ -1,0 +1,31 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {"id": 1, "name": "plate_cube", "op": {"type": "Cube", "size": {"x": 60, "y": 60, "z": 8}}},
+    "2": {"id": 2, "name": "plate_centered", "op": {"type": "Translate", "child": 1, "offset": {"x": -30, "y": -30, "z": 0}}},
+    "3": {"id": 3, "name": "hole0_cyl", "op": {"type": "Cylinder", "radius": 2.5, "height": 8, "segments": 32}},
+    "4": {"id": 4, "name": "hole0", "op": {"type": "Translate", "child": 3, "offset": {"x": 0, "y": 0, "z": 0}}},
+    "5": {"id": 5, "name": "hole1_cyl", "op": {"type": "Cylinder", "radius": 2.5, "height": 8, "segments": 32}},
+    "6": {"id": 6, "name": "hole1", "op": {"type": "Translate", "child": 5, "offset": {"x": 15, "y": 0, "z": 0}}},
+    "7": {"id": 7, "name": "hole2_cyl", "op": {"type": "Cylinder", "radius": 2.5, "height": 8, "segments": 32}},
+    "8": {"id": 8, "name": "hole2", "op": {"type": "Translate", "child": 7, "offset": {"x": 7.5, "y": 12.990381, "z": 0}}},
+    "9": {"id": 9, "name": "hole3_cyl", "op": {"type": "Cylinder", "radius": 2.5, "height": 8, "segments": 32}},
+    "10": {"id": 10, "name": "hole3", "op": {"type": "Translate", "child": 9, "offset": {"x": -7.5, "y": 12.990381, "z": 0}}},
+    "11": {"id": 11, "name": "hole4_cyl", "op": {"type": "Cylinder", "radius": 2.5, "height": 8, "segments": 32}},
+    "12": {"id": 12, "name": "hole4", "op": {"type": "Translate", "child": 11, "offset": {"x": -15, "y": 0, "z": 0}}},
+    "13": {"id": 13, "name": "hole5_cyl", "op": {"type": "Cylinder", "radius": 2.5, "height": 8, "segments": 32}},
+    "14": {"id": 14, "name": "hole5", "op": {"type": "Translate", "child": 13, "offset": {"x": -7.5, "y": -12.990381, "z": 0}}},
+    "15": {"id": 15, "name": "hole6_cyl", "op": {"type": "Cylinder", "radius": 2.5, "height": 8, "segments": 32}},
+    "16": {"id": 16, "name": "hole6", "op": {"type": "Translate", "child": 15, "offset": {"x": 7.5, "y": -12.990381, "z": 0}}},
+    "17": {"id": 17, "name": "diff1", "op": {"type": "Difference", "left": 2, "right": 4}},
+    "18": {"id": 18, "name": "diff2", "op": {"type": "Difference", "left": 17, "right": 6}},
+    "19": {"id": 19, "name": "diff3", "op": {"type": "Difference", "left": 18, "right": 8}},
+    "20": {"id": 20, "name": "diff4", "op": {"type": "Difference", "left": 19, "right": 10}},
+    "21": {"id": 21, "name": "diff5", "op": {"type": "Difference", "left": 20, "right": 12}},
+    "22": {"id": 22, "name": "diff6", "op": {"type": "Difference", "left": 21, "right": 14}},
+    "23": {"id": 23, "name": "diff7", "op": {"type": "Difference", "left": 22, "right": 16}}
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": 23, "material": "default"}]
+}

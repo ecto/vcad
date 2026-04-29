@@ -1,0 +1,135 @@
+{
+  "schema_version": 0,
+  "task_id": "a3-spherical-dome-block-01",
+  "task_sha256": "c684f817f90fd823cb95d7d5f3d1f0a259bf340445f19b4069a2007a6e62bdaa",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "fail",
+      "details": {
+        "error": "parse: Invalid JSON vcad file: invalid value: expected key to be a number in quotes at line 4 column 5",
+        "reason": "fatal evaluation error"
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -20,
+          -20,
+          0
+        ],
+        "max": [
+          20,
+          20,
+          55
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 71068.58,
+        "tolerance_pct": 2
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 2
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to round-trip"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 4,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T232733Z-a61e",
+  "model": {
+    "id": "claude-direct-claude-haiku-4-5-20251001",
+    "name": "Claude (direct, claude-haiku-4-5-20251001)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "direct",
+      "model": "claude-haiku-4-5-20251001",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a3-spherical-dome-block-01",
+    "rendered": "Make a single solid consisting of a cube with a hemispherical dome fused onto its top face. Cube: 40mm × 40mm × 40mm, centered in X and Y with the bottom face on the XY plane (so it spans x in [-20, 20], y in [-20, 20], z in [0, 40]). Dome: a hemisphere of radius 15mm sitting on top of the cube, centered on the Z axis. The flat (circular) face of the hemisphere is flush with the top face of the cube at z = 40, and the dome extends upward from there. The two parts are joined into a single solid (their shared circular interface is internal, not a face). Note: the kernel only has a full Sphere primitive — to get a hemisphere you must boolean a sphere with a half-space (e.g. intersect a sphere with a large cube positioned at z ≥ 40).",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "anthropic.messages.create",
+        "args": {
+          "model": "claude-haiku-4-5-20251001",
+          "max_tokens": 8000,
+          "system_chars": 1674,
+          "user_chars": 808
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3078.2866670000003
+      }
+    ],
+    "tokens": {
+      "input": 801,
+      "output": 638,
+      "total": 1439
+    },
+    "wallclock_sec": 3.0782866670000004
+  },
+  "output": {
+    "vcad_path": "20260428T232733Z-a61e.vcad",
+    "vcad_sha256": "f63ec7b865639d912b43f4cb1f00b7dac6689d4dad767e4f67421a74d8d1b528",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T23:27:33.422Z",
+    "ended_at": "2026-04-28T23:27:36.506Z"
+  },
+  "signature": null
+}

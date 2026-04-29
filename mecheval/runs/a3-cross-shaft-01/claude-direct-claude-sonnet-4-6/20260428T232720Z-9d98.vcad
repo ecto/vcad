@@ -1,0 +1,38 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "VerticalCylinder",
+      "op": {"type": "Cylinder", "radius": 10, "height": 40, "segments": 32}
+    },
+    "2": {
+      "id": 2,
+      "name": "VerticalCylinderCentered",
+      "op": {"type": "Translate", "child": 1, "offset": {"x": 0, "y": 0, "z": 0}}
+    },
+    "3": {
+      "id": 3,
+      "name": "HorizontalCylinderRaw",
+      "op": {"type": "Cylinder", "radius": 10, "height": 40, "segments": 32}
+    },
+    "4": {
+      "id": 4,
+      "name": "HorizontalCylinderRotated",
+      "op": {"type": "Rotate", "child": 3, "angles": {"x": 0, "y": 90, "z": 0}}
+    },
+    "5": {
+      "id": 5,
+      "name": "HorizontalCylinderPositioned",
+      "op": {"type": "Translate", "child": 4, "offset": {"x": -20, "y": 0, "z": 20}}
+    },
+    "6": {
+      "id": 6,
+      "name": "CrossShaft",
+      "op": {"type": "Union", "left": 2, "right": 5}
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": 6, "material": "default"}]
+}

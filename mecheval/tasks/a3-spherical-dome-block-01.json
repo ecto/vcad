@@ -1,0 +1,33 @@
+{
+  "id": "a3-spherical-dome-block-01",
+  "suite": "A",
+  "tier": "A3",
+  "title": "Cube with spherical dome on top face",
+  "prompt": "Make a single solid consisting of a cube with a hemispherical dome fused onto its top face. Cube: 40mm × 40mm × 40mm, centered in X and Y with the bottom face on the XY plane (so it spans x in [-20, 20], y in [-20, 20], z in [0, 40]). Dome: a hemisphere of radius 15mm sitting on top of the cube, centered on the Z axis. The flat (circular) face of the hemisphere is flush with the top face of the cube at z = 40, and the dome extends upward from there. The two parts are joined into a single solid (their shared circular interface is internal, not a face). Note: the kernel only has a full Sphere primitive — to get a hemisphere you must boolean a sphere with a half-space (e.g. intersect a sphere with a large cube positioned at z ≥ 40).",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-20, -20, 0],
+      "max": [20, 20, 55],
+      "tolerance_mm": 0.2
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 71068.58,
+      "tolerance_pct": 2.0
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 2.0 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 40000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 40
+  },
+  "pass_k": 5,
+  "tags": ["cube", "sphere", "boolean", "hemisphere", "advanced"]
+}

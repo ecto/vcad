@@ -1,0 +1,189 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "plate_cube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 60,
+          "y": 60,
+          "z": 8
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "plate_centered",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -30,
+          "y": -30,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "hole_cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "hole_pos_0deg",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 15,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "hole_pos_60deg",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 7.5,
+          "y": 12.9903810568,
+          "z": 0
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "hole_pos_120deg",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": -7.5,
+          "y": 12.9903810568,
+          "z": 0
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "hole_pos_180deg",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": -15,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "hole_pos_240deg",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": -7.5,
+          "y": -12.9903810568,
+          "z": 0
+        }
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "hole_pos_300deg",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 7.5,
+          "y": -12.9903810568,
+          "z": 0
+        }
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "holes_union_1",
+      "op": {
+        "type": "Union",
+        "left": 3,
+        "right": 4
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "holes_union_2",
+      "op": {
+        "type": "Union",
+        "left": 10,
+        "right": 5
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "holes_union_3",
+      "op": {
+        "type": "Union",
+        "left": 11,
+        "right": 6
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "holes_union_4",
+      "op": {
+        "type": "Union",
+        "left": 12,
+        "right": 7
+      }
+    },
+    "14": {
+      "id": 14,
+      "name": "holes_union_5",
+      "op": {
+        "type": "Union",
+        "left": 13,
+        "right": 8
+      }
+    },
+    "15": {
+      "id": 15,
+      "name": "holes_union_6",
+      "op": {
+        "type": "Union",
+        "left": 14,
+        "right": 9
+      }
+    },
+    "16": {
+      "id": 16,
+      "name": "plate_with_holes",
+      "op": {
+        "type": "Difference",
+        "left": 2,
+        "right": 15
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 16,
+      "material": "default"
+    }
+  ]
+}

@@ -1,0 +1,353 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "octagon_base": {
+      "id": 0,
+      "name": "octagon_base",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 40, "y": 40, "z": 8}
+      }
+    },
+    "octagon_base_centered": {
+      "id": 1,
+      "name": "octagon_base_centered",
+      "op": {
+        "type": "Translate",
+        "child": 0,
+        "offset": {"x": -20, "y": -20, "z": 0}
+      }
+    },
+    "cut1": {
+      "id": 2,
+      "name": "cut1",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 40, "y": 11.716, "z": 8}
+      }
+    },
+    "cut1_pos": {
+      "id": 3,
+      "name": "cut1_pos",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {"x": -20, "y": 20, "z": 0}
+      }
+    },
+    "cut2": {
+      "id": 4,
+      "name": "cut2",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 40, "y": 11.716, "z": 8}
+      }
+    },
+    "cut2_neg": {
+      "id": 5,
+      "name": "cut2_neg",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {"x": -20, "y": -31.716, "z": 0}
+      }
+    },
+    "cut3": {
+      "id": 6,
+      "name": "cut3",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 11.716, "y": 40, "z": 8}
+      }
+    },
+    "cut3_pos": {
+      "id": 7,
+      "name": "cut3_pos",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {"x": 20, "y": -20, "z": 0}
+      }
+    },
+    "cut4": {
+      "id": 8,
+      "name": "cut4",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 11.716, "y": 40, "z": 8}
+      }
+    },
+    "cut4_neg": {
+      "id": 9,
+      "name": "cut4_neg",
+      "op": {
+        "type": "Translate",
+        "child": 8,
+        "offset": {"x": -31.716, "y": -20, "z": 0}
+      }
+    },
+    "octagon_with_cuts_1": {
+      "id": 10,
+      "name": "octagon_with_cuts_1",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 3
+      }
+    },
+    "octagon_with_cuts_2": {
+      "id": 11,
+      "name": "octagon_with_cuts_2",
+      "op": {
+        "type": "Difference",
+        "left": 10,
+        "right": 5
+      }
+    },
+    "octagon_with_cuts_3": {
+      "id": 12,
+      "name": "octagon_with_cuts_3",
+      "op": {
+        "type": "Difference",
+        "left": 11,
+        "right": 7
+      }
+    },
+    "octagon": {
+      "id": 13,
+      "name": "octagon",
+      "op": {
+        "type": "Difference",
+        "left": 12,
+        "right": 9
+      }
+    },
+    "hole_1": {
+      "id": 14,
+      "name": "hole_1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole_1_pos": {
+      "id": 15,
+      "name": "hole_1_pos",
+      "op": {
+        "type": "Translate",
+        "child": 14,
+        "offset": {"x": 15, "y": 0, "z": 0}
+      }
+    },
+    "hole_2": {
+      "id": 16,
+      "name": "hole_2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole_2_pos": {
+      "id": 17,
+      "name": "hole_2_pos",
+      "op": {
+        "type": "Translate",
+        "child": 16,
+        "offset": {"x": 10.6066, "y": 10.6066, "z": 0}
+      }
+    },
+    "hole_3": {
+      "id": 18,
+      "name": "hole_3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole_3_pos": {
+      "id": 19,
+      "name": "hole_3_pos",
+      "op": {
+        "type": "Translate",
+        "child": 18,
+        "offset": {"x": 0, "y": 15, "z": 0}
+      }
+    },
+    "hole_4": {
+      "id": 20,
+      "name": "hole_4",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole_4_pos": {
+      "id": 21,
+      "name": "hole_4_pos",
+      "op": {
+        "type": "Translate",
+        "child": 20,
+        "offset": {"x": -10.6066, "y": 10.6066, "z": 0}
+      }
+    },
+    "hole_5": {
+      "id": 22,
+      "name": "hole_5",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole_5_pos": {
+      "id": 23,
+      "name": "hole_5_pos",
+      "op": {
+        "type": "Translate",
+        "child": 22,
+        "offset": {"x": -15, "y": 0, "z": 0}
+      }
+    },
+    "hole_6": {
+      "id": 24,
+      "name": "hole_6",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole_6_pos": {
+      "id": 25,
+      "name": "hole_6_pos",
+      "op": {
+        "type": "Translate",
+        "child": 24,
+        "offset": {"x": -10.6066, "y": -10.6066, "z": 0}
+      }
+    },
+    "hole_7": {
+      "id": 26,
+      "name": "hole_7",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole_7_pos": {
+      "id": 27,
+      "name": "hole_7_pos",
+      "op": {
+        "type": "Translate",
+        "child": 26,
+        "offset": {"x": 0, "y": -15, "z": 0}
+      }
+    },
+    "hole_8": {
+      "id": 28,
+      "name": "hole_8",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole_8_pos": {
+      "id": 29,
+      "name": "hole_8_pos",
+      "op": {
+        "type": "Translate",
+        "child": 28,
+        "offset": {"x": 10.6066, "y": -10.6066, "z": 0}
+      }
+    },
+    "with_hole_1": {
+      "id": 30,
+      "name": "with_hole_1",
+      "op": {
+        "type": "Difference",
+        "left": 13,
+        "right": 15
+      }
+    },
+    "with_hole_2": {
+      "id": 31,
+      "name": "with_hole_2",
+      "op": {
+        "type": "Difference",
+        "left": 30,
+        "right": 17
+      }
+    },
+    "with_hole_3": {
+      "id": 32,
+      "name": "with_hole_3",
+      "op": {
+        "type": "Difference",
+        "left": 31,
+        "right": 19
+      }
+    },
+    "with_hole_4": {
+      "id": 33,
+      "name": "with_hole_4",
+      "op": {
+        "type": "Difference",
+        "left": 32,
+        "right": 21
+      }
+    },
+    "with_hole_5": {
+      "id": 34,
+      "name": "with_hole_5",
+      "op": {
+        "type": "Difference",
+        "left": 33,
+        "right": 23
+      }
+    },
+    "with_hole_6": {
+      "id": 35,
+      "name": "with_hole_6",
+      "op": {
+        "type": "Difference",
+        "left": 34,
+        "right": 25
+      }
+    },
+    "with_hole_7": {
+      "id": 36,
+      "name": "with_hole_7",
+      "op": {
+        "type": "Difference",
+        "left": 35,
+        "right": 27
+      }
+    },
+    "flange": {
+      "id": 37,
+      "name": "flange",
+      "op": {
+        "type": "Difference",
+        "left": 36,
+        "right": 29
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": 37, "material": "default"}]
+}

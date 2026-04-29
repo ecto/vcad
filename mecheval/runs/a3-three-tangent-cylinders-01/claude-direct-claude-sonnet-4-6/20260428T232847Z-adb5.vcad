@@ -1,0 +1,48 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Cylinder1_base",
+      "op": {"type": "Cylinder", "radius": 10, "height": 30, "segments": 64}
+    },
+    "2": {
+      "id": 2,
+      "name": "Cylinder1",
+      "op": {"type": "Translate", "child": 1, "offset": {"x": 0, "y": 11.547005383792515, "z": 0}}
+    },
+    "3": {
+      "id": 3,
+      "name": "Cylinder2_base",
+      "op": {"type": "Cylinder", "radius": 10, "height": 30, "segments": 64}
+    },
+    "4": {
+      "id": 4,
+      "name": "Cylinder2",
+      "op": {"type": "Translate", "child": 3, "offset": {"x": -10, "y": -5.773502691896258, "z": 0}}
+    },
+    "5": {
+      "id": 5,
+      "name": "Cylinder3_base",
+      "op": {"type": "Cylinder", "radius": 10, "height": 30, "segments": 64}
+    },
+    "6": {
+      "id": 6,
+      "name": "Cylinder3",
+      "op": {"type": "Translate", "child": 5, "offset": {"x": 10, "y": -5.773502691896258, "z": 0}}
+    },
+    "7": {
+      "id": 7,
+      "name": "Union12",
+      "op": {"type": "Union", "left": 2, "right": 4}
+    },
+    "8": {
+      "id": 8,
+      "name": "UnionAll",
+      "op": {"type": "Union", "left": 7, "right": 6}
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": 8, "material": "default"}]
+}

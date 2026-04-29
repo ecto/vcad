@@ -1,0 +1,13 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "VerticalCylinder", "op": { "type": "Cylinder", "radius": 10, "height": 40, "segments": 32 } },
+    "2": { "id": 2, "name": "HorizontalCylinderRaw", "op": { "type": "Cylinder", "radius": 10, "height": 40, "segments": 32 } },
+    "3": { "id": 3, "name": "RotateHorizontalToX", "op": { "type": "Rotate", "child": 2, "angles": { "x": 0, "y": 90, "z": 0 } } },
+    "4": { "id": 4, "name": "PositionHorizontalAtCenterZ20", "op": { "type": "Translate", "child": 3, "offset": { "x": -20, "y": 0, "z": 20 } } },
+    "5": { "id": 5, "name": "CrossUnion", "op": { "type": "Union", "left": 1, "right": 4 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 5, "material": "default" }]
+}

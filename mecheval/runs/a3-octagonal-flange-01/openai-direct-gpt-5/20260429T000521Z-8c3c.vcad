@@ -1,0 +1,44 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "slab_x_cube", "op": { "type": "Cube", "size": { "x": 40, "y": 200, "z": 8 } } },
+    "2": { "id": 2, "name": "slab_x_centered", "op": { "type": "Translate", "child": 1, "offset": { "x": -20, "y": -100, "z": 0 } } },
+
+    "3": { "id": 3, "name": "slab_y_cube", "op": { "type": "Cube", "size": { "x": 200, "y": 40, "z": 8 } } },
+    "4": { "id": 4, "name": "slab_y_centered", "op": { "type": "Translate", "child": 3, "offset": { "x": -100, "y": -20, "z": 0 } } },
+
+    "5": { "id": 5, "name": "slab_diag_cube", "op": { "type": "Cube", "size": { "x": 40, "y": 200, "z": 8 } } },
+    "6": { "id": 6, "name": "slab_diag_centered", "op": { "type": "Translate", "child": 5, "offset": { "x": -20, "y": -100, "z": 0 } } },
+    "7": { "id": 7, "name": "slab_pos45", "op": { "type": "Rotate", "child": 6, "angles": { "x": 0, "y": 0, "z": 45 } } },
+    "8": { "id": 8, "name": "slab_neg45", "op": { "type": "Rotate", "child": 6, "angles": { "x": 0, "y": 0, "z": -45 } } },
+
+    "9": { "id": 9, "name": "inter_axes", "op": { "type": "Intersection", "left": 2, "right": 4 } },
+    "10": { "id": 10, "name": "inter_diags", "op": { "type": "Intersection", "left": 7, "right": 8 } },
+    "11": { "id": 11, "name": "octagon_body", "op": { "type": "Intersection", "left": 9, "right": 10 } },
+
+    "12": { "id": 12, "name": "hole_cylinder", "op": { "type": "Cylinder", "radius": 2.5, "height": 8, "segments": 32 } },
+    "13": { "id": 13, "name": "hole_0deg", "op": { "type": "Translate", "child": 12, "offset": { "x": 15, "y": 0, "z": 0 } } },
+    "14": { "id": 14, "name": "hole_45deg", "op": { "type": "Translate", "child": 12, "offset": { "x": 10.6066017178, "y": 10.6066017178, "z": 0 } } },
+    "15": { "id": 15, "name": "hole_90deg", "op": { "type": "Translate", "child": 12, "offset": { "x": 0, "y": 15, "z": 0 } } },
+    "16": { "id": 16, "name": "hole_135deg", "op": { "type": "Translate", "child": 12, "offset": { "x": -10.6066017178, "y": 10.6066017178, "z": 0 } } },
+    "17": { "id": 17, "name": "hole_180deg", "op": { "type": "Translate", "child": 12, "offset": { "x": -15, "y": 0, "z": 0 } } },
+    "18": { "id": 18, "name": "hole_225deg", "op": { "type": "Translate", "child": 12, "offset": { "x": -10.6066017178, "y": -10.6066017178, "z": 0 } } },
+    "19": { "id": 19, "name": "hole_270deg", "op": { "type": "Translate", "child": 12, "offset": { "x": 0, "y": -15, "z": 0 } } },
+    "20": { "id": 20, "name": "hole_315deg", "op": { "type": "Translate", "child": 12, "offset": { "x": 10.6066017178, "y": -10.6066017178, "z": 0 } } },
+
+    "21": { "id": 21, "name": "holes_u1", "op": { "type": "Union", "left": 13, "right": 14 } },
+    "22": { "id": 22, "name": "holes_u2", "op": { "type": "Union", "left": 21, "right": 15 } },
+    "23": { "id": 23, "name": "holes_u3", "op": { "type": "Union", "left": 22, "right": 16 } },
+    "24": { "id": 24, "name": "holes_u4", "op": { "type": "Union", "left": 23, "right": 17 } },
+    "25": { "id": 25, "name": "holes_u5", "op": { "type": "Union", "left": 24, "right": 18 } },
+    "26": { "id": 26, "name": "holes_u6", "op": { "type": "Union", "left": 25, "right": 19 } },
+    "27": { "id": 27, "name": "all_holes", "op": { "type": "Union", "left": 26, "right": 20 } },
+
+    "28": { "id": 28, "name": "flange_with_holes", "op": { "type": "Difference", "left": 11, "right": 27 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    { "root": 28, "material": "default" }
+  ]
+}

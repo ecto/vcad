@@ -1,0 +1,104 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Plate",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 60,
+          "y": 60,
+          "z": 8
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Center Hole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "First Surrounding Hole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Second Surrounding Hole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Third Surrounding Hole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "Fourth Surrounding Hole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "Fifth Surrounding Hole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "Sixth Surrounding Hole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "Holes",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 2
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 9,
+      "material": "default"
+    }
+  ]
+}

@@ -1,0 +1,358 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "octagon_base": {
+      "id": "octagon_base",
+      "name": "octagon_base",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 40, "y": 40, "z": 8}
+      }
+    },
+    "octagon_base_centered": {
+      "id": "octagon_base_centered",
+      "name": "octagon_base_centered",
+      "op": {
+        "type": "Translate",
+        "child": "octagon_base",
+        "offset": {"x": -20, "y": -20, "z": 0}
+      }
+    },
+    "cut1": {
+      "id": "cut1",
+      "name": "cut1",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 40, "y": 40, "z": 8}
+      }
+    },
+    "cut1_pos": {
+      "id": "cut1_pos",
+      "name": "cut1_pos",
+      "op": {
+        "type": "Translate",
+        "child": "cut1",
+        "offset": {"x": 14.142, "y": -20, "z": 0}
+      }
+    },
+    "cut2": {
+      "id": "cut2",
+      "name": "cut2",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 40, "y": 40, "z": 8}
+      }
+    },
+    "cut2_pos": {
+      "id": "cut2_pos",
+      "name": "cut2_pos",
+      "op": {
+        "type": "Translate",
+        "child": "cut2",
+        "offset": {"x": -34.142, "y": -20, "z": 0}
+      }
+    },
+    "cut3": {
+      "id": "cut3",
+      "name": "cut3",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 40, "y": 40, "z": 8}
+      }
+    },
+    "cut3_pos": {
+      "id": "cut3_pos",
+      "name": "cut3_pos",
+      "op": {
+        "type": "Translate",
+        "child": "cut3",
+        "offset": {"x": 14.142, "y": 20, "z": 0}
+      }
+    },
+    "cut4": {
+      "id": "cut4",
+      "name": "cut4",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 40, "y": 40, "z": 8}
+      }
+    },
+    "cut4_pos": {
+      "id": "cut4_pos",
+      "name": "cut4_pos",
+      "op": {
+        "type": "Translate",
+        "child": "cut4",
+        "offset": {"x": -34.142, "y": 20, "z": 0}
+      }
+    },
+    "octagon_after_cuts": {
+      "id": "octagon_after_cuts",
+      "name": "octagon_after_cuts",
+      "op": {
+        "type": "Difference",
+        "left": "octagon_base_centered",
+        "right": "cut1_pos"
+      }
+    },
+    "octagon_after_cuts2": {
+      "id": "octagon_after_cuts2",
+      "name": "octagon_after_cuts2",
+      "op": {
+        "type": "Difference",
+        "left": "octagon_after_cuts",
+        "right": "cut2_pos"
+      }
+    },
+    "octagon_after_cuts3": {
+      "id": "octagon_after_cuts3",
+      "name": "octagon_after_cuts3",
+      "op": {
+        "type": "Difference",
+        "left": "octagon_after_cuts2",
+        "right": "cut3_pos"
+      }
+    },
+    "octagon_final": {
+      "id": "octagon_final",
+      "name": "octagon_final",
+      "op": {
+        "type": "Difference",
+        "left": "octagon_after_cuts3",
+        "right": "cut4_pos"
+      }
+    },
+    "hole0": {
+      "id": "hole0",
+      "name": "hole0",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole0_pos": {
+      "id": "hole0_pos",
+      "name": "hole0_pos",
+      "op": {
+        "type": "Translate",
+        "child": "hole0",
+        "offset": {"x": 15, "y": 0, "z": 0}
+      }
+    },
+    "hole1": {
+      "id": "hole1",
+      "name": "hole1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole1_pos": {
+      "id": "hole1_pos",
+      "name": "hole1_pos",
+      "op": {
+        "type": "Translate",
+        "child": "hole1",
+        "offset": {"x": 10.606, "y": 10.606, "z": 0}
+      }
+    },
+    "hole2": {
+      "id": "hole2",
+      "name": "hole2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole2_pos": {
+      "id": "hole2_pos",
+      "name": "hole2_pos",
+      "op": {
+        "type": "Translate",
+        "child": "hole2",
+        "offset": {"x": 0, "y": 15, "z": 0}
+      }
+    },
+    "hole3": {
+      "id": "hole3",
+      "name": "hole3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole3_pos": {
+      "id": "hole3_pos",
+      "name": "hole3_pos",
+      "op": {
+        "type": "Translate",
+        "child": "hole3",
+        "offset": {"x": -10.606, "y": 10.606, "z": 0}
+      }
+    },
+    "hole4": {
+      "id": "hole4",
+      "name": "hole4",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole4_pos": {
+      "id": "hole4_pos",
+      "name": "hole4_pos",
+      "op": {
+        "type": "Translate",
+        "child": "hole4",
+        "offset": {"x": -15, "y": 0, "z": 0}
+      }
+    },
+    "hole5": {
+      "id": "hole5",
+      "name": "hole5",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole5_pos": {
+      "id": "hole5_pos",
+      "name": "hole5_pos",
+      "op": {
+        "type": "Translate",
+        "child": "hole5",
+        "offset": {"x": -10.606, "y": -10.606, "z": 0}
+      }
+    },
+    "hole6": {
+      "id": "hole6",
+      "name": "hole6",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole6_pos": {
+      "id": "hole6_pos",
+      "name": "hole6_pos",
+      "op": {
+        "type": "Translate",
+        "child": "hole6",
+        "offset": {"x": 0, "y": -15, "z": 0}
+      }
+    },
+    "hole7": {
+      "id": "hole7",
+      "name": "hole7",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole7_pos": {
+      "id": "hole7_pos",
+      "name": "hole7_pos",
+      "op": {
+        "type": "Translate",
+        "child": "hole7",
+        "offset": {"x": 10.606, "y": -10.606, "z": 0}
+      }
+    },
+    "with_hole0": {
+      "id": "with_hole0",
+      "name": "with_hole0",
+      "op": {
+        "type": "Difference",
+        "left": "octagon_final",
+        "right": "hole0_pos"
+      }
+    },
+    "with_hole1": {
+      "id": "with_hole1",
+      "name": "with_hole1",
+      "op": {
+        "type": "Difference",
+        "left": "with_hole0",
+        "right": "hole1_pos"
+      }
+    },
+    "with_hole2": {
+      "id": "with_hole2",
+      "name": "with_hole2",
+      "op": {
+        "type": "Difference",
+        "left": "with_hole1",
+        "right": "hole2_pos"
+      }
+    },
+    "with_hole3": {
+      "id": "with_hole3",
+      "name": "with_hole3",
+      "op": {
+        "type": "Difference",
+        "left": "with_hole2",
+        "right": "hole3_pos"
+      }
+    },
+    "with_hole4": {
+      "id": "with_hole4",
+      "name": "with_hole4",
+      "op": {
+        "type": "Difference",
+        "left": "with_hole3",
+        "right": "hole4_pos"
+      }
+    },
+    "with_hole5": {
+      "id": "with_hole5",
+      "name": "with_hole5",
+      "op": {
+        "type": "Difference",
+        "left": "with_hole4",
+        "right": "hole5_pos"
+      }
+    },
+    "with_hole6": {
+      "id": "with_hole6",
+      "name": "with_hole6",
+      "op": {
+        "type": "Difference",
+        "left": "with_hole5",
+        "right": "hole6_pos"
+      }
+    },
+    "final": {
+      "id": "final",
+      "name": "final",
+      "op": {
+        "type": "Difference",
+        "left": "with_hole6",
+        "right": "hole7_pos"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "final",
+      "material": "default"
+    }
+  ]
+}

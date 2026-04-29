@@ -1,0 +1,358 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "octagon_base": {
+      "id": "octagon_base",
+      "name": "Octagonal prism",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 40, "y": 40, "z": 8}
+      }
+    },
+    "octagon_base_centered": {
+      "id": "octagon_base_centered",
+      "name": "Octagonal prism centered",
+      "op": {
+        "type": "Translate",
+        "child": "octagon_base",
+        "offset": {"x": -20, "y": -20, "z": 0}
+      }
+    },
+    "cut1": {
+      "id": "cut1",
+      "name": "Cut corner 1",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 20, "y": 20, "z": 8}
+      }
+    },
+    "cut1_positioned": {
+      "id": "cut1_positioned",
+      "name": "Cut corner 1 positioned",
+      "op": {
+        "type": "Translate",
+        "child": "cut1",
+        "offset": {"x": -20, "y": -20, "z": 0}
+      }
+    },
+    "after_cut1": {
+      "id": "after_cut1",
+      "name": "After cut 1",
+      "op": {
+        "type": "Difference",
+        "left": "octagon_base_centered",
+        "right": "cut1_positioned"
+      }
+    },
+    "cut2": {
+      "id": "cut2",
+      "name": "Cut corner 2",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 20, "y": 20, "z": 8}
+      }
+    },
+    "cut2_positioned": {
+      "id": "cut2_positioned",
+      "name": "Cut corner 2 positioned",
+      "op": {
+        "type": "Translate",
+        "child": "cut2",
+        "offset": {"x": 0, "y": -20, "z": 0}
+      }
+    },
+    "after_cut2": {
+      "id": "after_cut2",
+      "name": "After cut 2",
+      "op": {
+        "type": "Difference",
+        "left": "after_cut1",
+        "right": "cut2_positioned"
+      }
+    },
+    "cut3": {
+      "id": "cut3",
+      "name": "Cut corner 3",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 20, "y": 20, "z": 8}
+      }
+    },
+    "cut3_positioned": {
+      "id": "cut3_positioned",
+      "name": "Cut corner 3 positioned",
+      "op": {
+        "type": "Translate",
+        "child": "cut3",
+        "offset": {"x": 0, "y": 0, "z": 0}
+      }
+    },
+    "after_cut3": {
+      "id": "after_cut3",
+      "name": "After cut 3",
+      "op": {
+        "type": "Difference",
+        "left": "after_cut2",
+        "right": "cut3_positioned"
+      }
+    },
+    "cut4": {
+      "id": "cut4",
+      "name": "Cut corner 4",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 20, "y": 20, "z": 8}
+      }
+    },
+    "cut4_positioned": {
+      "id": "cut4_positioned",
+      "name": "Cut corner 4 positioned",
+      "op": {
+        "type": "Translate",
+        "child": "cut4",
+        "offset": {"x": -20, "y": 0, "z": 0}
+      }
+    },
+    "octagon": {
+      "id": "octagon",
+      "name": "Octagon",
+      "op": {
+        "type": "Difference",
+        "left": "after_cut3",
+        "right": "cut4_positioned"
+      }
+    },
+    "hole0": {
+      "id": "hole0",
+      "name": "Bolt hole 0 (0 deg)",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole0_positioned": {
+      "id": "hole0_positioned",
+      "name": "Bolt hole 0 positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole0",
+        "offset": {"x": 15, "y": 0, "z": 0}
+      }
+    },
+    "after_hole0": {
+      "id": "after_hole0",
+      "name": "After hole 0",
+      "op": {
+        "type": "Difference",
+        "left": "octagon",
+        "right": "hole0_positioned"
+      }
+    },
+    "hole1": {
+      "id": "hole1",
+      "name": "Bolt hole 1 (45 deg)",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole1_positioned": {
+      "id": "hole1_positioned",
+      "name": "Bolt hole 1 positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole1",
+        "offset": {"x": 10.60660171509580, "y": 10.60660171509580, "z": 0}
+      }
+    },
+    "after_hole1": {
+      "id": "after_hole1",
+      "name": "After hole 1",
+      "op": {
+        "type": "Difference",
+        "left": "after_hole0",
+        "right": "hole1_positioned"
+      }
+    },
+    "hole2": {
+      "id": "hole2",
+      "name": "Bolt hole 2 (90 deg)",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole2_positioned": {
+      "id": "hole2_positioned",
+      "name": "Bolt hole 2 positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole2",
+        "offset": {"x": 0, "y": 15, "z": 0}
+      }
+    },
+    "after_hole2": {
+      "id": "after_hole2",
+      "name": "After hole 2",
+      "op": {
+        "type": "Difference",
+        "left": "after_hole1",
+        "right": "hole2_positioned"
+      }
+    },
+    "hole3": {
+      "id": "hole3",
+      "name": "Bolt hole 3 (135 deg)",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole3_positioned": {
+      "id": "hole3_positioned",
+      "name": "Bolt hole 3 positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole3",
+        "offset": {"x": -10.60660171509580, "y": 10.60660171509580, "z": 0}
+      }
+    },
+    "after_hole3": {
+      "id": "after_hole3",
+      "name": "After hole 3",
+      "op": {
+        "type": "Difference",
+        "left": "after_hole2",
+        "right": "hole3_positioned"
+      }
+    },
+    "hole4": {
+      "id": "hole4",
+      "name": "Bolt hole 4 (180 deg)",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole4_positioned": {
+      "id": "hole4_positioned",
+      "name": "Bolt hole 4 positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole4",
+        "offset": {"x": -15, "y": 0, "z": 0}
+      }
+    },
+    "after_hole4": {
+      "id": "after_hole4",
+      "name": "After hole 4",
+      "op": {
+        "type": "Difference",
+        "left": "after_hole3",
+        "right": "hole4_positioned"
+      }
+    },
+    "hole5": {
+      "id": "hole5",
+      "name": "Bolt hole 5 (225 deg)",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole5_positioned": {
+      "id": "hole5_positioned",
+      "name": "Bolt hole 5 positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole5",
+        "offset": {"x": -10.60660171509580, "y": -10.60660171509580, "z": 0}
+      }
+    },
+    "after_hole5": {
+      "id": "after_hole5",
+      "name": "After hole 5",
+      "op": {
+        "type": "Difference",
+        "left": "after_hole4",
+        "right": "hole5_positioned"
+      }
+    },
+    "hole6": {
+      "id": "hole6",
+      "name": "Bolt hole 6 (270 deg)",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole6_positioned": {
+      "id": "hole6_positioned",
+      "name": "Bolt hole 6 positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole6",
+        "offset": {"x": 0, "y": -15, "z": 0}
+      }
+    },
+    "after_hole6": {
+      "id": "after_hole6",
+      "name": "After hole 6",
+      "op": {
+        "type": "Difference",
+        "left": "after_hole5",
+        "right": "hole6_positioned"
+      }
+    },
+    "hole7": {
+      "id": "hole7",
+      "name": "Bolt hole 7 (315 deg)",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole7_positioned": {
+      "id": "hole7_positioned",
+      "name": "Bolt hole 7 positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole7",
+        "offset": {"x": 10.60660171509580, "y": -10.60660171509580, "z": 0}
+      }
+    },
+    "flange": {
+      "id": "flange",
+      "name": "Octagonal flange with bolt holes",
+      "op": {
+        "type": "Difference",
+        "left": "after_hole6",
+        "right": "hole7_positioned"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "flange",
+      "material": "default"
+    }
+  ]
+}
