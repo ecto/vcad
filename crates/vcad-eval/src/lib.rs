@@ -500,6 +500,7 @@ mod tests {
             id: "inst1".to_string(),
             part_def_id: "base".to_string(),
             name: None,
+            tags: Vec::new(),
             transform: None,
             material: None,
         }]);

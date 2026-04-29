@@ -174,6 +174,7 @@ impl<'a> UrdfReader<'a> {
                 id: instance_id,
                 part_def_id: part_id,
                 name: Some(link.name.clone()),
+                tags: Vec::new(),
                 transform: None, // Transforms come from joints
                 material: None,
             });

@@ -1174,6 +1174,7 @@ fn materialize_instance(doc: &mut Document, ctx: &Context, fid: FeatureId, featu
         id,
         part_def_id,
         name: inst_name,
+        tags: Vec::new(),
         transform,
         material,
     });
