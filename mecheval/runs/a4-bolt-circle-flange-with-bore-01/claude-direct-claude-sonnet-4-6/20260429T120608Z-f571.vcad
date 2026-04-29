@@ -1,0 +1,30 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {"id": 1, "name": "outer_cylinder", "op": {"type": "Cylinder", "radius": 50, "height": 12, "segments": 64}},
+    "2": {"id": 2, "name": "outer_centered", "op": {"type": "Translate", "child": 1, "offset": {"x": 0, "y": 0, "z": 0}}},
+    "3": {"id": 3, "name": "bore_cyl", "op": {"type": "Cylinder", "radius": 20, "height": 12, "segments": 64}},
+    "4": {"id": 4, "name": "body_with_bore", "op": {"type": "Difference", "left": 2, "right": 3}},
+    "5": {"id": 5, "name": "bolt_hole_proto", "op": {"type": "Cylinder", "radius": 4, "height": 12, "segments": 32}},
+    "6": {"id": 6, "name": "bolt_hole_0", "op": {"type": "Translate", "child": 5, "offset": {"x": 37.5, "y": 0, "z": 0}}},
+    "7": {"id": 7, "name": "bolt_hole_1_cyl", "op": {"type": "Cylinder", "radius": 4, "height": 12, "segments": 32}},
+    "8": {"id": 8, "name": "bolt_hole_1", "op": {"type": "Translate", "child": 7, "offset": {"x": 18.75, "y": 32.4759, "z": 0}}},
+    "9": {"id": 9, "name": "bolt_hole_2_cyl", "op": {"type": "Cylinder", "radius": 4, "height": 12, "segments": 32}},
+    "10": {"id": 10, "name": "bolt_hole_2", "op": {"type": "Translate", "child": 9, "offset": {"x": -18.75, "y": 32.4759, "z": 0}}},
+    "11": {"id": 11, "name": "bolt_hole_3_cyl", "op": {"type": "Cylinder", "radius": 4, "height": 12, "segments": 32}},
+    "12": {"id": 12, "name": "bolt_hole_3", "op": {"type": "Translate", "child": 11, "offset": {"x": -37.5, "y": 0, "z": 0}}},
+    "13": {"id": 13, "name": "bolt_hole_4_cyl", "op": {"type": "Cylinder", "radius": 4, "height": 12, "segments": 32}},
+    "14": {"id": 14, "name": "bolt_hole_4", "op": {"type": "Translate", "child": 13, "offset": {"x": -18.75, "y": -32.4759, "z": 0}}},
+    "15": {"id": 15, "name": "bolt_hole_5_cyl", "op": {"type": "Cylinder", "radius": 4, "height": 12, "segments": 32}},
+    "16": {"id": 16, "name": "bolt_hole_5", "op": {"type": "Translate", "child": 15, "offset": {"x": 18.75, "y": -32.4759, "z": 0}}},
+    "17": {"id": 17, "name": "holes_01", "op": {"type": "Union", "left": 6, "right": 8}},
+    "18": {"id": 18, "name": "holes_012", "op": {"type": "Union", "left": 17, "right": 10}},
+    "19": {"id": 19, "name": "holes_0123", "op": {"type": "Union", "left": 18, "right": 12}},
+    "20": {"id": 20, "name": "holes_01234", "op": {"type": "Union", "left": 19, "right": 14}},
+    "21": {"id": 21, "name": "all_bolt_holes", "op": {"type": "Union", "left": 20, "right": 16}},
+    "22": {"id": 22, "name": "body_minus_bolts", "op": {"type": "Difference", "left": 4, "right": 21}}
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": 22, "material": "default"}]
+}

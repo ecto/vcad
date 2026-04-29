@@ -1,0 +1,98 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "flange_base": {
+      "id": 1,
+      "name": "flange_base",
+      "op": {"type": "Cylinder", "radius": 40, "height": 10, "segments": 32}
+    },
+    "shaft_cyl": {
+      "id": 2,
+      "name": "shaft_cyl",
+      "op": {"type": "Cylinder", "radius": 15, "height": 50, "segments": 32}
+    },
+    "shaft_translated": {
+      "id": 3,
+      "name": "shaft_translated",
+      "op": {"type": "Translate", "child": 2, "offset": {"x": 0, "y": 0, "z": 10}}
+    },
+    "flange_and_shaft": {
+      "id": 4,
+      "name": "flange_and_shaft",
+      "op": {"type": "Union", "left": 1, "right": 3}
+    },
+    "center_bore": {
+      "id": 5,
+      "name": "center_bore",
+      "op": {"type": "Cylinder", "radius": 7.5, "height": 60, "segments": 32}
+    },
+    "with_center_bore": {
+      "id": 6,
+      "name": "with_center_bore",
+      "op": {"type": "Difference", "left": 4, "right": 5}
+    },
+    "bolt_hole_1": {
+      "id": 7,
+      "name": "bolt_hole_1",
+      "op": {"type": "Cylinder", "radius": 3, "height": 10, "segments": 32}
+    },
+    "bolt_hole_1_positioned": {
+      "id": 8,
+      "name": "bolt_hole_1_positioned",
+      "op": {"type": "Translate", "child": 7, "offset": {"x": 30, "y": 0, "z": 0}}
+    },
+    "bolt_hole_2": {
+      "id": 9,
+      "name": "bolt_hole_2",
+      "op": {"type": "Cylinder", "radius": 3, "height": 10, "segments": 32}
+    },
+    "bolt_hole_2_positioned": {
+      "id": 10,
+      "name": "bolt_hole_2_positioned",
+      "op": {"type": "Translate", "child": 9, "offset": {"x": 0, "y": 30, "z": 0}}
+    },
+    "bolt_hole_3": {
+      "id": 11,
+      "name": "bolt_hole_3",
+      "op": {"type": "Cylinder", "radius": 3, "height": 10, "segments": 32}
+    },
+    "bolt_hole_3_positioned": {
+      "id": 12,
+      "name": "bolt_hole_3_positioned",
+      "op": {"type": "Translate", "child": 11, "offset": {"x": -30, "y": 0, "z": 0}}
+    },
+    "bolt_hole_4": {
+      "id": 13,
+      "name": "bolt_hole_4",
+      "op": {"type": "Cylinder", "radius": 3, "height": 10, "segments": 32}
+    },
+    "bolt_hole_4_positioned": {
+      "id": 14,
+      "name": "bolt_hole_4_positioned",
+      "op": {"type": "Translate", "child": 13, "offset": {"x": 0, "y": -30, "z": 0}}
+    },
+    "with_bolt_holes_1": {
+      "id": 15,
+      "name": "with_bolt_holes_1",
+      "op": {"type": "Difference", "left": 6, "right": 8}
+    },
+    "with_bolt_holes_2": {
+      "id": 16,
+      "name": "with_bolt_holes_2",
+      "op": {"type": "Difference", "left": 15, "right": 10}
+    },
+    "with_bolt_holes_3": {
+      "id": 17,
+      "name": "with_bolt_holes_3",
+      "op": {"type": "Difference", "left": 16, "right": 12}
+    },
+    "final_shaft": {
+      "id": 18,
+      "name": "final_shaft",
+      "op": {"type": "Difference", "left": 17, "right": 14}
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": 18, "material": "default"}]
+}

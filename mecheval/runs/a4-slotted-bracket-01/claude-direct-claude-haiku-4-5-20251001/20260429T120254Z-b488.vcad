@@ -1,0 +1,112 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "base_plate": {
+      "id": 1,
+      "name": "base_plate",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 80, "y": 40, "z": 8}
+      }
+    },
+    "base_plate_centered": {
+      "id": 2,
+      "name": "base_plate_centered",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {"x": -40, "y": -20, "z": 0}
+      }
+    },
+    "slot_rect": {
+      "id": 3,
+      "name": "slot_rect",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 40, "y": 10, "z": 10}
+      }
+    },
+    "slot_rect_positioned": {
+      "id": 4,
+      "name": "slot_rect_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {"x": -20, "y": -5, "z": -1}
+      }
+    },
+    "slot_left_semi": {
+      "id": 5,
+      "name": "slot_left_semi",
+      "op": {
+        "type": "Cylinder",
+        "radius": 5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "slot_left_semi_positioned": {
+      "id": 6,
+      "name": "slot_left_semi_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {"x": -20, "y": 0, "z": -1}
+      }
+    },
+    "slot_right_semi": {
+      "id": 7,
+      "name": "slot_right_semi",
+      "op": {
+        "type": "Cylinder",
+        "radius": 5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "slot_right_semi_positioned": {
+      "id": 8,
+      "name": "slot_right_semi_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 7,
+        "offset": {"x": 20, "y": 0, "z": -1}
+      }
+    },
+    "slot_rect_and_left": {
+      "id": 9,
+      "name": "slot_rect_and_left",
+      "op": {
+        "type": "Union",
+        "left": 4,
+        "right": 6
+      }
+    },
+    "slot_complete": {
+      "id": 10,
+      "name": "slot_complete",
+      "op": {
+        "type": "Union",
+        "left": 9,
+        "right": 8
+      }
+    },
+    "bracket": {
+      "id": 11,
+      "name": "bracket",
+      "op": {
+        "type": "Difference",
+        "left": 2,
+        "right": 10
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 11,
+      "material": "default"
+    }
+  ]
+}

@@ -1,0 +1,254 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "plate": {
+      "id": 0,
+      "name": "plate",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 60, "y": 60, "z": 12}
+      }
+    },
+    "plate_centered": {
+      "id": 1,
+      "name": "plate_centered",
+      "op": {
+        "type": "Translate",
+        "child": 0,
+        "offset": {"x": -30, "y": -30, "z": 0}
+      }
+    },
+    "clearance_hole_1": {
+      "id": 2,
+      "name": "clearance_hole_1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2,
+        "height": 12,
+        "segments": 32
+      }
+    },
+    "clearance_hole_1_positioned": {
+      "id": 3,
+      "name": "clearance_hole_1_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {"x": 20, "y": 20, "z": 0}
+      }
+    },
+    "recess_1": {
+      "id": 4,
+      "name": "recess_1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4,
+        "height": 4,
+        "segments": 32
+      }
+    },
+    "recess_1_positioned": {
+      "id": 5,
+      "name": "recess_1_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {"x": 20, "y": 20, "z": 8}
+      }
+    },
+    "counterbore_1": {
+      "id": 6,
+      "name": "counterbore_1",
+      "op": {
+        "type": "Union",
+        "left": 3,
+        "right": 5
+      }
+    },
+    "clearance_hole_2": {
+      "id": 7,
+      "name": "clearance_hole_2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2,
+        "height": 12,
+        "segments": 32
+      }
+    },
+    "clearance_hole_2_positioned": {
+      "id": 8,
+      "name": "clearance_hole_2_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 7,
+        "offset": {"x": -20, "y": 20, "z": 0}
+      }
+    },
+    "recess_2": {
+      "id": 9,
+      "name": "recess_2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4,
+        "height": 4,
+        "segments": 32
+      }
+    },
+    "recess_2_positioned": {
+      "id": 10,
+      "name": "recess_2_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 9,
+        "offset": {"x": -20, "y": 20, "z": 8}
+      }
+    },
+    "counterbore_2": {
+      "id": 11,
+      "name": "counterbore_2",
+      "op": {
+        "type": "Union",
+        "left": 8,
+        "right": 10
+      }
+    },
+    "clearance_hole_3": {
+      "id": 12,
+      "name": "clearance_hole_3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2,
+        "height": 12,
+        "segments": 32
+      }
+    },
+    "clearance_hole_3_positioned": {
+      "id": 13,
+      "name": "clearance_hole_3_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 12,
+        "offset": {"x": -20, "y": -20, "z": 0}
+      }
+    },
+    "recess_3": {
+      "id": 14,
+      "name": "recess_3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4,
+        "height": 4,
+        "segments": 32
+      }
+    },
+    "recess_3_positioned": {
+      "id": 15,
+      "name": "recess_3_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 14,
+        "offset": {"x": -20, "y": -20, "z": 8}
+      }
+    },
+    "counterbore_3": {
+      "id": 16,
+      "name": "counterbore_3",
+      "op": {
+        "type": "Union",
+        "left": 13,
+        "right": 15
+      }
+    },
+    "clearance_hole_4": {
+      "id": 17,
+      "name": "clearance_hole_4",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2,
+        "height": 12,
+        "segments": 32
+      }
+    },
+    "clearance_hole_4_positioned": {
+      "id": 18,
+      "name": "clearance_hole_4_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 17,
+        "offset": {"x": 20, "y": -20, "z": 0}
+      }
+    },
+    "recess_4": {
+      "id": 19,
+      "name": "recess_4",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4,
+        "height": 4,
+        "segments": 32
+      }
+    },
+    "recess_4_positioned": {
+      "id": 20,
+      "name": "recess_4_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 19,
+        "offset": {"x": 20, "y": -20, "z": 8}
+      }
+    },
+    "counterbore_4": {
+      "id": 21,
+      "name": "counterbore_4",
+      "op": {
+        "type": "Union",
+        "left": 18,
+        "right": 20
+      }
+    },
+    "all_counterbores": {
+      "id": 22,
+      "name": "all_counterbores",
+      "op": {
+        "type": "Union",
+        "left": 6,
+        "right": 11
+      }
+    },
+    "all_counterbores_2": {
+      "id": 23,
+      "name": "all_counterbores_2",
+      "op": {
+        "type": "Union",
+        "left": 22,
+        "right": 16
+      }
+    },
+    "all_counterbores_3": {
+      "id": 24,
+      "name": "all_counterbores_3",
+      "op": {
+        "type": "Union",
+        "left": 23,
+        "right": 21
+      }
+    },
+    "final": {
+      "id": 25,
+      "name": "final",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 24
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 25,
+      "material": "default"
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {"id": 1, "name": "base_plate", "op": {"type": "Cube", "size": {"x": 60, "y": 60, "z": 12}}},
+    "2": {"id": 2, "name": "base_plate_centered", "op": {"type": "Translate", "child": 1, "offset": {"x": -30, "y": -30, "z": 0}}},
+
+    "3": {"id": 3, "name": "thru_cyl_pp", "op": {"type": "Cylinder", "radius": 2, "height": 12, "segments": 32}},
+    "4": {"id": 4, "name": "thru_pp", "op": {"type": "Translate", "child": 3, "offset": {"x": 20, "y": 20, "z": 0}}},
+
+    "5": {"id": 5, "name": "recess_cyl_pp", "op": {"type": "Cylinder", "radius": 4, "height": 4, "segments": 32}},
+    "6": {"id": 6, "name": "recess_pp", "op": {"type": "Translate", "child": 5, "offset": {"x": 20, "y": 20, "z": 8}}},
+
+    "7": {"id": 7, "name": "thru_cyl_np", "op": {"type": "Cylinder", "radius": 2, "height": 12, "segments": 32}},
+    "8": {"id": 8, "name": "thru_np", "op": {"type": "Translate", "child": 7, "offset": {"x": -20, "y": 20, "z": 0}}},
+
+    "9": {"id": 9, "name": "recess_cyl_np", "op": {"type": "Cylinder", "radius": 4, "height": 4, "segments": 32}},
+    "10": {"id": 10, "name": "recess_np", "op": {"type": "Translate", "child": 9, "offset": {"x": -20, "y": 20, "z": 8}}},
+
+    "11": {"id": 11, "name": "thru_cyl_nn", "op": {"type": "Cylinder", "radius": 2, "height": 12, "segments": 32}},
+    "12": {"id": 12, "name": "thru_nn", "op": {"type": "Translate", "child": 11, "offset": {"x": -20, "y": -20, "z": 0}}},
+
+    "13": {"id": 13, "name": "recess_cyl_nn", "op": {"type": "Cylinder", "radius": 4, "height": 4, "segments": 32}},
+    "14": {"id": 14, "name": "recess_nn", "op": {"type": "Translate", "child": 13, "offset": {"x": -20, "y": -20, "z": 8}}},
+
+    "15": {"id": 15, "name": "thru_cyl_pn", "op": {"type": "Cylinder", "radius": 2, "height": 12, "segments": 32}},
+    "16": {"id": 16, "name": "thru_pn", "op": {"type": "Translate", "child": 15, "offset": {"x": 20, "y": -20, "z": 0}}},
+
+    "17": {"id": 17, "name": "recess_cyl_pn", "op": {"type": "Cylinder", "radius": 4, "height": 4, "segments": 32}},
+    "18": {"id": 18, "name": "recess_pn", "op": {"type": "Translate", "child": 17, "offset": {"x": 20, "y": -20, "z": 8}}},
+
+    "19": {"id": 19, "name": "cutters_union_1", "op": {"type": "Union", "left": 4, "right": 6}},
+    "20": {"id": 20, "name": "cutters_union_2", "op": {"type": "Union", "left": 8, "right": 10}},
+    "21": {"id": 21, "name": "cutters_union_3", "op": {"type": "Union", "left": 12, "right": 14}},
+    "22": {"id": 22, "name": "cutters_union_4", "op": {"type": "Union", "left": 16, "right": 18}},
+
+    "23": {"id": 23, "name": "all_cutters_a", "op": {"type": "Union", "left": 19, "right": 20}},
+    "24": {"id": 24, "name": "all_cutters_b", "op": {"type": "Union", "left": 21, "right": 22}},
+    "25": {"id": 25, "name": "all_cutters", "op": {"type": "Union", "left": 23, "right": 24}},
+
+    "26": {"id": 26, "name": "result", "op": {"type": "Difference", "left": 2, "right": 25}}
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": 26, "material": "default"}]
+}

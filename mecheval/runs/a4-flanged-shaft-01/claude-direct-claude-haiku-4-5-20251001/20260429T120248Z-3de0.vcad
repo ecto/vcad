@@ -1,0 +1,202 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "flange_base": {
+      "id": 0,
+      "name": "flange_base",
+      "op": {
+        "type": "Cylinder",
+        "radius": 40,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "shaft_cyl": {
+      "id": 1,
+      "name": "shaft_cyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 15,
+        "height": 50,
+        "segments": 32
+      }
+    },
+    "shaft_positioned": {
+      "id": 2,
+      "name": "shaft_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 10
+        }
+      }
+    },
+    "flange_and_shaft": {
+      "id": 3,
+      "name": "flange_and_shaft",
+      "op": {
+        "type": "Union",
+        "left": 0,
+        "right": 2
+      }
+    },
+    "center_bore": {
+      "id": 4,
+      "name": "center_bore",
+      "op": {
+        "type": "Cylinder",
+        "radius": 7.5,
+        "height": 60,
+        "segments": 32
+      }
+    },
+    "with_center_bore": {
+      "id": 5,
+      "name": "with_center_bore",
+      "op": {
+        "type": "Difference",
+        "left": 3,
+        "right": 4
+      }
+    },
+    "bolt_hole_1": {
+      "id": 6,
+      "name": "bolt_hole_1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "bolt_hole_1_pos": {
+      "id": 7,
+      "name": "bolt_hole_1_pos",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {
+          "x": 30,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "bolt_hole_2": {
+      "id": 8,
+      "name": "bolt_hole_2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "bolt_hole_2_pos": {
+      "id": 9,
+      "name": "bolt_hole_2_pos",
+      "op": {
+        "type": "Translate",
+        "child": 8,
+        "offset": {
+          "x": 0,
+          "y": 30,
+          "z": 0
+        }
+      }
+    },
+    "bolt_hole_3": {
+      "id": 10,
+      "name": "bolt_hole_3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "bolt_hole_3_pos": {
+      "id": 11,
+      "name": "bolt_hole_3_pos",
+      "op": {
+        "type": "Translate",
+        "child": 10,
+        "offset": {
+          "x": -30,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "bolt_hole_4": {
+      "id": 12,
+      "name": "bolt_hole_4",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "bolt_hole_4_pos": {
+      "id": 13,
+      "name": "bolt_hole_4_pos",
+      "op": {
+        "type": "Translate",
+        "child": 12,
+        "offset": {
+          "x": 0,
+          "y": -30,
+          "z": 0
+        }
+      }
+    },
+    "holes_combined": {
+      "id": 14,
+      "name": "holes_combined",
+      "op": {
+        "type": "Union",
+        "left": 7,
+        "right": 9
+      }
+    },
+    "holes_combined_2": {
+      "id": 15,
+      "name": "holes_combined_2",
+      "op": {
+        "type": "Union",
+        "left": 14,
+        "right": 11
+      }
+    },
+    "holes_combined_3": {
+      "id": 16,
+      "name": "holes_combined_3",
+      "op": {
+        "type": "Union",
+        "left": 15,
+        "right": 13
+      }
+    },
+    "final_solid": {
+      "id": 17,
+      "name": "final_solid",
+      "op": {
+        "type": "Difference",
+        "left": 5,
+        "right": 16
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 17,
+      "material": "default"
+    }
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "center_rect": {
+      "id": "center_rect",
+      "name": "center_rect",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 60, "y": 20, "z": 10}
+      }
+    },
+    "center_rect_positioned": {
+      "id": "center_rect_positioned",
+      "name": "center_rect_positioned",
+      "op": {
+        "type": "Translate",
+        "child": "center_rect",
+        "offset": {"x": -30, "y": -10, "z": 0}
+      }
+    },
+    "left_sphere": {
+      "id": "left_sphere",
+      "name": "left_sphere",
+      "op": {
+        "type": "Sphere",
+        "radius": 10,
+        "segments": 32
+      }
+    },
+    "left_sphere_positioned": {
+      "id": "left_sphere_positioned",
+      "name": "left_sphere_positioned",
+      "op": {
+        "type": "Translate",
+        "child": "left_sphere",
+        "offset": {"x": -30, "y": 0, "z": 5}
+      }
+    },
+    "right_sphere": {
+      "id": "right_sphere",
+      "name": "right_sphere",
+      "op": {
+        "type": "Sphere",
+        "radius": 10,
+        "segments": 32
+      }
+    },
+    "right_sphere_positioned": {
+      "id": "right_sphere_positioned",
+      "name": "right_sphere_positioned",
+      "op": {
+        "type": "Translate",
+        "child": "right_sphere",
+        "offset": {"x": 30, "y": 0, "z": 5}
+      }
+    },
+    "union_left": {
+      "id": "union_left",
+      "name": "union_left",
+      "op": {
+        "type": "Union",
+        "left": "center_rect_positioned",
+        "right": "left_sphere_positioned"
+      }
+    },
+    "final_union": {
+      "id": "final_union",
+      "name": "final_union",
+      "op": {
+        "type": "Union",
+        "left": "union_left",
+        "right": "right_sphere_positioned"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": "final_union", "material": "default"}]
+}

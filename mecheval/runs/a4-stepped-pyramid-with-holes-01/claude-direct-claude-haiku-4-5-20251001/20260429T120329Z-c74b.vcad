@@ -1,0 +1,108 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "base_cube": {
+      "id": "base_cube",
+      "name": "Base layer cube",
+      "op": {"type": "Cube", "size": {"x": 80, "y": 80, "z": 10}}
+    },
+    "base_translated": {
+      "id": "base_translated",
+      "name": "Base layer centered",
+      "op": {"type": "Translate", "child": "base_cube", "offset": {"x": -40, "y": -40, "z": 0}}
+    },
+    "middle_cube": {
+      "id": "middle_cube",
+      "name": "Middle layer cube",
+      "op": {"type": "Cube", "size": {"x": 60, "y": 60, "z": 10}}
+    },
+    "middle_translated": {
+      "id": "middle_translated",
+      "name": "Middle layer centered",
+      "op": {"type": "Translate", "child": "middle_cube", "offset": {"x": -30, "y": -30, "z": 10}}
+    },
+    "top_cube": {
+      "id": "top_cube",
+      "name": "Top layer cube",
+      "op": {"type": "Cube", "size": {"x": 40, "y": 40, "z": 10}}
+    },
+    "top_translated": {
+      "id": "top_translated",
+      "name": "Top layer centered",
+      "op": {"type": "Translate", "child": "top_cube", "offset": {"x": -20, "y": -20, "z": 20}}
+    },
+    "base_and_middle": {
+      "id": "base_and_middle",
+      "name": "Base and middle fused",
+      "op": {"type": "Union", "left": "base_translated", "right": "middle_translated"}
+    },
+    "pyramid_unfused": {
+      "id": "pyramid_unfused",
+      "name": "All three layers fused",
+      "op": {"type": "Union", "left": "base_and_middle", "right": "top_translated"}
+    },
+    "hole1_cylinder": {
+      "id": "hole1_cylinder",
+      "name": "Hole 1 cylinder",
+      "op": {"type": "Cylinder", "radius": 3, "height": 10, "segments": 32}
+    },
+    "hole1_translated": {
+      "id": "hole1_translated",
+      "name": "Hole 1 positioned",
+      "op": {"type": "Translate", "child": "hole1_cylinder", "offset": {"x": 30, "y": 30, "z": 0}}
+    },
+    "hole2_cylinder": {
+      "id": "hole2_cylinder",
+      "name": "Hole 2 cylinder",
+      "op": {"type": "Cylinder", "radius": 3, "height": 10, "segments": 32}
+    },
+    "hole2_translated": {
+      "id": "hole2_translated",
+      "name": "Hole 2 positioned",
+      "op": {"type": "Translate", "child": "hole2_cylinder", "offset": {"x": -30, "y": 30, "z": 0}}
+    },
+    "hole3_cylinder": {
+      "id": "hole3_cylinder",
+      "name": "Hole 3 cylinder",
+      "op": {"type": "Cylinder", "radius": 3, "height": 10, "segments": 32}
+    },
+    "hole3_translated": {
+      "id": "hole3_translated",
+      "name": "Hole 3 positioned",
+      "op": {"type": "Translate", "child": "hole3_cylinder", "offset": {"x": -30, "y": -30, "z": 0}}
+    },
+    "hole4_cylinder": {
+      "id": "hole4_cylinder",
+      "name": "Hole 4 cylinder",
+      "op": {"type": "Cylinder", "radius": 3, "height": 10, "segments": 32}
+    },
+    "hole4_translated": {
+      "id": "hole4_translated",
+      "name": "Hole 4 positioned",
+      "op": {"type": "Translate", "child": "hole4_cylinder", "offset": {"x": 30, "y": -30, "z": 0}}
+    },
+    "holes_union_1": {
+      "id": "holes_union_1",
+      "name": "Holes 1 and 2 combined",
+      "op": {"type": "Union", "left": "hole1_translated", "right": "hole2_translated"}
+    },
+    "holes_union_2": {
+      "id": "holes_union_2",
+      "name": "Holes 3 and 4 combined",
+      "op": {"type": "Union", "left": "hole3_translated", "right": "hole4_translated"}
+    },
+    "all_holes": {
+      "id": "all_holes",
+      "name": "All holes combined",
+      "op": {"type": "Union", "left": "holes_union_1", "right": "holes_union_2"}
+    },
+    "final_pyramid": {
+      "id": "final_pyramid",
+      "name": "Stepped pyramid with holes",
+      "op": {"type": "Difference", "left": "pyramid_unfused", "right": "all_holes"}
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": "final_pyramid", "material": "default"}]
+}

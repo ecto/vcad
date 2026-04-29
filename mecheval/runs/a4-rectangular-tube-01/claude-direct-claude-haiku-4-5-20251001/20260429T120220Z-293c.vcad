@@ -1,0 +1,56 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "outer_cube": {
+      "id": "outer_cube",
+      "name": "Outer cube",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 40, "y": 40, "z": 80}
+      }
+    },
+    "outer_translated": {
+      "id": "outer_translated",
+      "name": "Outer cube centered in XY",
+      "op": {
+        "type": "Translate",
+        "child": "outer_cube",
+        "offset": {"x": -20, "y": -20, "z": 0}
+      }
+    },
+    "inner_cube": {
+      "id": "inner_cube",
+      "name": "Inner cavity cube",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 28, "y": 28, "z": 80}
+      }
+    },
+    "inner_translated": {
+      "id": "inner_translated",
+      "name": "Inner cavity cube centered in XY",
+      "op": {
+        "type": "Translate",
+        "child": "inner_cube",
+        "offset": {"x": -14, "y": -14, "z": 0}
+      }
+    },
+    "hollow_tube": {
+      "id": "hollow_tube",
+      "name": "Hollow rectangular tube",
+      "op": {
+        "type": "Difference",
+        "left": "outer_translated",
+        "right": "inner_translated"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "hollow_tube",
+      "material": "default"
+    }
+  ]
+}

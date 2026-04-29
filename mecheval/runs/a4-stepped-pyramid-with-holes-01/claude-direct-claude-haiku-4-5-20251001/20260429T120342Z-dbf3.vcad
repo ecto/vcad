@@ -1,0 +1,189 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "base_layer": {
+      "id": 0,
+      "name": "base_layer",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 80, "y": 80, "z": 10}
+      }
+    },
+    "base_centered": {
+      "id": 1,
+      "name": "base_centered",
+      "op": {
+        "type": "Translate",
+        "child": 0,
+        "offset": {"x": -40, "y": -40, "z": 0}
+      }
+    },
+    "middle_layer": {
+      "id": 2,
+      "name": "middle_layer",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 60, "y": 60, "z": 10}
+      }
+    },
+    "middle_centered": {
+      "id": 3,
+      "name": "middle_centered",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {"x": -30, "y": -30, "z": 10}
+      }
+    },
+    "top_layer": {
+      "id": 4,
+      "name": "top_layer",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 40, "y": 40, "z": 10}
+      }
+    },
+    "top_centered": {
+      "id": 5,
+      "name": "top_centered",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {"x": -20, "y": -20, "z": 20}
+      }
+    },
+    "base_middle_union": {
+      "id": 6,
+      "name": "base_middle_union",
+      "op": {
+        "type": "Union",
+        "left": 1,
+        "right": 3
+      }
+    },
+    "pyramid_union": {
+      "id": 7,
+      "name": "pyramid_union",
+      "op": {
+        "type": "Union",
+        "left": 6,
+        "right": 5
+      }
+    },
+    "hole_1": {
+      "id": 8,
+      "name": "hole_1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole_1_positioned": {
+      "id": 9,
+      "name": "hole_1_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 8,
+        "offset": {"x": 30, "y": 30, "z": 0}
+      }
+    },
+    "hole_2": {
+      "id": 10,
+      "name": "hole_2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole_2_positioned": {
+      "id": 11,
+      "name": "hole_2_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 10,
+        "offset": {"x": -30, "y": 30, "z": 0}
+      }
+    },
+    "hole_3": {
+      "id": 12,
+      "name": "hole_3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole_3_positioned": {
+      "id": 13,
+      "name": "hole_3_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 12,
+        "offset": {"x": -30, "y": -30, "z": 0}
+      }
+    },
+    "hole_4": {
+      "id": 14,
+      "name": "hole_4",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole_4_positioned": {
+      "id": 15,
+      "name": "hole_4_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 14,
+        "offset": {"x": 30, "y": -30, "z": 0}
+      }
+    },
+    "with_hole_1": {
+      "id": 16,
+      "name": "with_hole_1",
+      "op": {
+        "type": "Difference",
+        "left": 7,
+        "right": 9
+      }
+    },
+    "with_hole_2": {
+      "id": 17,
+      "name": "with_hole_2",
+      "op": {
+        "type": "Difference",
+        "left": 16,
+        "right": 11
+      }
+    },
+    "with_hole_3": {
+      "id": 18,
+      "name": "with_hole_3",
+      "op": {
+        "type": "Difference",
+        "left": 17,
+        "right": 13
+      }
+    },
+    "final_solid": {
+      "id": 19,
+      "name": "final_solid",
+      "op": {
+        "type": "Difference",
+        "left": 18,
+        "right": 15
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": 19, "material": "default"}]
+}

@@ -1,0 +1,86 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "rect": {
+      "id": "rect",
+      "name": "Central rectangle",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 60, "y": 20, "z": 10}
+      }
+    },
+    "rect_centered": {
+      "id": "rect_centered",
+      "name": "Rectangle centered at origin in XY",
+      "op": {
+        "type": "Translate",
+        "child": "rect",
+        "offset": {"x": -30, "y": -10, "z": 0}
+      }
+    },
+    "cylinder_left": {
+      "id": "cylinder_left",
+      "name": "Left semicircle cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "cylinder_left_positioned": {
+      "id": "cylinder_left_positioned",
+      "name": "Left semicircle at (-30, 0)",
+      "op": {
+        "type": "Translate",
+        "child": "cylinder_left",
+        "offset": {"x": -30, "y": 0, "z": 0}
+      }
+    },
+    "cylinder_right": {
+      "id": "cylinder_right",
+      "name": "Right semicircle cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "cylinder_right_positioned": {
+      "id": "cylinder_right_positioned",
+      "name": "Right semicircle at (30, 0)",
+      "op": {
+        "type": "Translate",
+        "child": "cylinder_right",
+        "offset": {"x": 30, "y": 0, "z": 0}
+      }
+    },
+    "union_left": {
+      "id": "union_left",
+      "name": "Rectangle union left semicircle",
+      "op": {
+        "type": "Union",
+        "left": "rect_centered",
+        "right": "cylinder_left_positioned"
+      }
+    },
+    "final": {
+      "id": "final",
+      "name": "Stadium-shaped bar",
+      "op": {
+        "type": "Union",
+        "left": "union_left",
+        "right": "cylinder_right_positioned"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "final",
+      "material": "default"
+    }
+  ]
+}

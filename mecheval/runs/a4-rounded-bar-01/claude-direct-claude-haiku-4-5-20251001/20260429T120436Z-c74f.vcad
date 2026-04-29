@@ -1,0 +1,86 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "rect": {
+      "id": 0,
+      "name": "central_rectangle",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 60, "y": 20, "z": 10}
+      }
+    },
+    "rect_centered": {
+      "id": 1,
+      "name": "rect_centered",
+      "op": {
+        "type": "Translate",
+        "child": 0,
+        "offset": {"x": -30, "y": -10, "z": 0}
+      }
+    },
+    "cylinder_left": {
+      "id": 2,
+      "name": "left_semicircle_full",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "cylinder_left_moved": {
+      "id": 3,
+      "name": "left_semicircle_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {"x": -30, "y": 0, "z": 0}
+      }
+    },
+    "cylinder_right": {
+      "id": 4,
+      "name": "right_semicircle_full",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "cylinder_right_moved": {
+      "id": 5,
+      "name": "right_semicircle_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {"x": 30, "y": 0, "z": 0}
+      }
+    },
+    "union_left": {
+      "id": 6,
+      "name": "rect_with_left_cylinder",
+      "op": {
+        "type": "Union",
+        "left": 1,
+        "right": 3
+      }
+    },
+    "stadium": {
+      "id": 7,
+      "name": "stadium_bar",
+      "op": {
+        "type": "Union",
+        "left": 6,
+        "right": 5
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 7,
+      "material": "default"
+    }
+  ]
+}

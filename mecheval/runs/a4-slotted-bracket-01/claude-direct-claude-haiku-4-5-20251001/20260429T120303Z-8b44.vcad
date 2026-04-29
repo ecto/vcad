@@ -1,0 +1,112 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "plate": {
+      "id": 0,
+      "name": "base_plate",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 80, "y": 40, "z": 8}
+      }
+    },
+    "plate_centered": {
+      "id": 1,
+      "name": "plate_centered",
+      "op": {
+        "type": "Translate",
+        "child": 0,
+        "offset": {"x": -40, "y": -20, "z": 0}
+      }
+    },
+    "slot_rect": {
+      "id": 2,
+      "name": "slot_rectangle",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 40, "y": 10, "z": 8}
+      }
+    },
+    "slot_rect_centered": {
+      "id": 3,
+      "name": "slot_rect_centered",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {"x": -20, "y": -5, "z": 0}
+      }
+    },
+    "slot_left_semicircle": {
+      "id": 4,
+      "name": "slot_left_semicircle",
+      "op": {
+        "type": "Cylinder",
+        "radius": 5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "slot_left_semi_positioned": {
+      "id": 5,
+      "name": "slot_left_semi_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {"x": -20, "y": 0, "z": 0}
+      }
+    },
+    "slot_right_semicircle": {
+      "id": 6,
+      "name": "slot_right_semicircle",
+      "op": {
+        "type": "Cylinder",
+        "radius": 5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "slot_right_semi_positioned": {
+      "id": 7,
+      "name": "slot_right_semi_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {"x": 20, "y": 0, "z": 0}
+      }
+    },
+    "slot_union_1": {
+      "id": 8,
+      "name": "slot_union_1",
+      "op": {
+        "type": "Union",
+        "left": 3,
+        "right": 5
+      }
+    },
+    "slot_complete": {
+      "id": 9,
+      "name": "slot_complete",
+      "op": {
+        "type": "Union",
+        "left": 8,
+        "right": 7
+      }
+    },
+    "final_bracket": {
+      "id": 10,
+      "name": "slotted_bracket",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 9
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 10,
+      "material": "default"
+    }
+  ]
+}

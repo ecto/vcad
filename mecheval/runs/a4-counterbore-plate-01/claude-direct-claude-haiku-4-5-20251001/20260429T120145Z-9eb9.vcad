@@ -1,0 +1,254 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "plate_base": {
+      "id": "plate_base",
+      "name": "Base Plate",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 60, "y": 60, "z": 12}
+      }
+    },
+    "plate_centered": {
+      "id": "plate_centered",
+      "name": "Centered Plate",
+      "op": {
+        "type": "Translate",
+        "child": "plate_base",
+        "offset": {"x": -30, "y": -30, "z": 0}
+      }
+    },
+    "hole1_clearance": {
+      "id": "hole1_clearance",
+      "name": "Hole 1 Clearance",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2,
+        "height": 12,
+        "segments": 32
+      }
+    },
+    "hole1_clearance_pos": {
+      "id": "hole1_clearance_pos",
+      "name": "Hole 1 Clearance Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole1_clearance",
+        "offset": {"x": 20, "y": 20, "z": 0}
+      }
+    },
+    "hole1_recess": {
+      "id": "hole1_recess",
+      "name": "Hole 1 Recess",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4,
+        "height": 4,
+        "segments": 32
+      }
+    },
+    "hole1_recess_pos": {
+      "id": "hole1_recess_pos",
+      "name": "Hole 1 Recess Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole1_recess",
+        "offset": {"x": 20, "y": 20, "z": 8}
+      }
+    },
+    "hole1_combined": {
+      "id": "hole1_combined",
+      "name": "Hole 1 Combined",
+      "op": {
+        "type": "Union",
+        "left": "hole1_clearance_pos",
+        "right": "hole1_recess_pos"
+      }
+    },
+    "hole2_clearance": {
+      "id": "hole2_clearance",
+      "name": "Hole 2 Clearance",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2,
+        "height": 12,
+        "segments": 32
+      }
+    },
+    "hole2_clearance_pos": {
+      "id": "hole2_clearance_pos",
+      "name": "Hole 2 Clearance Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole2_clearance",
+        "offset": {"x": -20, "y": 20, "z": 0}
+      }
+    },
+    "hole2_recess": {
+      "id": "hole2_recess",
+      "name": "Hole 2 Recess",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4,
+        "height": 4,
+        "segments": 32
+      }
+    },
+    "hole2_recess_pos": {
+      "id": "hole2_recess_pos",
+      "name": "Hole 2 Recess Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole2_recess",
+        "offset": {"x": -20, "y": 20, "z": 8}
+      }
+    },
+    "hole2_combined": {
+      "id": "hole2_combined",
+      "name": "Hole 2 Combined",
+      "op": {
+        "type": "Union",
+        "left": "hole2_clearance_pos",
+        "right": "hole2_recess_pos"
+      }
+    },
+    "hole3_clearance": {
+      "id": "hole3_clearance",
+      "name": "Hole 3 Clearance",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2,
+        "height": 12,
+        "segments": 32
+      }
+    },
+    "hole3_clearance_pos": {
+      "id": "hole3_clearance_pos",
+      "name": "Hole 3 Clearance Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole3_clearance",
+        "offset": {"x": -20, "y": -20, "z": 0}
+      }
+    },
+    "hole3_recess": {
+      "id": "hole3_recess",
+      "name": "Hole 3 Recess",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4,
+        "height": 4,
+        "segments": 32
+      }
+    },
+    "hole3_recess_pos": {
+      "id": "hole3_recess_pos",
+      "name": "Hole 3 Recess Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole3_recess",
+        "offset": {"x": -20, "y": -20, "z": 8}
+      }
+    },
+    "hole3_combined": {
+      "id": "hole3_combined",
+      "name": "Hole 3 Combined",
+      "op": {
+        "type": "Union",
+        "left": "hole3_clearance_pos",
+        "right": "hole3_recess_pos"
+      }
+    },
+    "hole4_clearance": {
+      "id": "hole4_clearance",
+      "name": "Hole 4 Clearance",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2,
+        "height": 12,
+        "segments": 32
+      }
+    },
+    "hole4_clearance_pos": {
+      "id": "hole4_clearance_pos",
+      "name": "Hole 4 Clearance Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole4_clearance",
+        "offset": {"x": 20, "y": -20, "z": 0}
+      }
+    },
+    "hole4_recess": {
+      "id": "hole4_recess",
+      "name": "Hole 4 Recess",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4,
+        "height": 4,
+        "segments": 32
+      }
+    },
+    "hole4_recess_pos": {
+      "id": "hole4_recess_pos",
+      "name": "Hole 4 Recess Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole4_recess",
+        "offset": {"x": 20, "y": -20, "z": 8}
+      }
+    },
+    "hole4_combined": {
+      "id": "hole4_combined",
+      "name": "Hole 4 Combined",
+      "op": {
+        "type": "Union",
+        "left": "hole4_clearance_pos",
+        "right": "hole4_recess_pos"
+      }
+    },
+    "all_holes": {
+      "id": "all_holes",
+      "name": "All Holes Union",
+      "op": {
+        "type": "Union",
+        "left": "hole1_combined",
+        "right": "hole2_combined"
+      }
+    },
+    "all_holes_34": {
+      "id": "all_holes_34",
+      "name": "Holes 3 and 4 Union",
+      "op": {
+        "type": "Union",
+        "left": "hole3_combined",
+        "right": "hole4_combined"
+      }
+    },
+    "all_holes_final": {
+      "id": "all_holes_final",
+      "name": "All Four Holes",
+      "op": {
+        "type": "Union",
+        "left": "all_holes",
+        "right": "all_holes_34"
+      }
+    },
+    "final_part": {
+      "id": "final_part",
+      "name": "Counterbore Plate",
+      "op": {
+        "type": "Difference",
+        "left": "plate_centered",
+        "right": "all_holes_final"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "final_part",
+      "material": "default"
+    }
+  ]
+}

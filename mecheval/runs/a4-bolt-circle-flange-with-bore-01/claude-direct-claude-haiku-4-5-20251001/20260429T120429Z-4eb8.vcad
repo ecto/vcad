@@ -1,0 +1,180 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "body": {
+      "id": "body",
+      "name": "Main flange cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 50,
+        "height": 12,
+        "segments": 32
+      }
+    },
+    "central_bore": {
+      "id": "central_bore",
+      "name": "Central bore cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 20,
+        "height": 12,
+        "segments": 32
+      }
+    },
+    "body_minus_bore": {
+      "id": "body_minus_bore",
+      "name": "Body with central bore",
+      "op": {
+        "type": "Difference",
+        "left": "body",
+        "right": "central_bore"
+      }
+    },
+    "bolt_hole_1": {
+      "id": "bolt_hole_1",
+      "name": "Bolt hole 1 at 0 degrees",
+      "op": {
+        "type": "Translate",
+        "child": {
+          "type": "Cylinder",
+          "radius": 4,
+          "height": 12,
+          "segments": 32
+        },
+        "offset": {"x": 37.5, "y": 0, "z": 0}
+      }
+    },
+    "bolt_hole_2": {
+      "id": "bolt_hole_2",
+      "name": "Bolt hole 2 at 60 degrees",
+      "op": {
+        "type": "Translate",
+        "child": {
+          "type": "Cylinder",
+          "radius": 4,
+          "height": 12,
+          "segments": 32
+        },
+        "offset": {"x": 18.75, "y": 32.476, "z": 0}
+      }
+    },
+    "bolt_hole_3": {
+      "id": "bolt_hole_3",
+      "name": "Bolt hole 3 at 120 degrees",
+      "op": {
+        "type": "Translate",
+        "child": {
+          "type": "Cylinder",
+          "radius": 4,
+          "height": 12,
+          "segments": 32
+        },
+        "offset": {"x": -18.75, "y": 32.476, "z": 0}
+      }
+    },
+    "bolt_hole_4": {
+      "id": "bolt_hole_4",
+      "name": "Bolt hole 4 at 180 degrees",
+      "op": {
+        "type": "Translate",
+        "child": {
+          "type": "Cylinder",
+          "radius": 4,
+          "height": 12,
+          "segments": 32
+        },
+        "offset": {"x": -37.5, "y": 0, "z": 0}
+      }
+    },
+    "bolt_hole_5": {
+      "id": "bolt_hole_5",
+      "name": "Bolt hole 5 at 240 degrees",
+      "op": {
+        "type": "Translate",
+        "child": {
+          "type": "Cylinder",
+          "radius": 4,
+          "height": 12,
+          "segments": 32
+        },
+        "offset": {"x": -18.75, "y": -32.476, "z": 0}
+      }
+    },
+    "bolt_hole_6": {
+      "id": "bolt_hole_6",
+      "name": "Bolt hole 6 at 300 degrees",
+      "op": {
+        "type": "Translate",
+        "child": {
+          "type": "Cylinder",
+          "radius": 4,
+          "height": 12,
+          "segments": 32
+        },
+        "offset": {"x": 18.75, "y": -32.476, "z": 0}
+      }
+    },
+    "with_holes_1_2": {
+      "id": "with_holes_1_2",
+      "name": "Body with holes 1 and 2",
+      "op": {
+        "type": "Difference",
+        "left": "body_minus_bore",
+        "right": "bolt_hole_1"
+      }
+    },
+    "with_holes_1_2_3": {
+      "id": "with_holes_1_2_3",
+      "name": "Body with holes 1, 2 and 3",
+      "op": {
+        "type": "Difference",
+        "left": "with_holes_1_2",
+        "right": "bolt_hole_2"
+      }
+    },
+    "with_holes_1_2_3_4": {
+      "id": "with_holes_1_2_3_4",
+      "name": "Body with holes 1, 2, 3 and 4",
+      "op": {
+        "type": "Difference",
+        "left": "with_holes_1_2_3",
+        "right": "bolt_hole_3"
+      }
+    },
+    "with_holes_1_2_3_4_5": {
+      "id": "with_holes_1_2_3_4_5",
+      "name": "Body with holes 1, 2, 3, 4 and 5",
+      "op": {
+        "type": "Difference",
+        "left": "with_holes_1_2_3_4",
+        "right": "bolt_hole_4"
+      }
+    },
+    "with_holes_1_2_3_4_5_6": {
+      "id": "with_holes_1_2_3_4_5_6",
+      "name": "Body with holes 1, 2, 3, 4, 5 and 6",
+      "op": {
+        "type": "Difference",
+        "left": "with_holes_1_2_3_4_5",
+        "right": "bolt_hole_5"
+      }
+    },
+    "final_flange": {
+      "id": "final_flange",
+      "name": "Final flange with all holes",
+      "op": {
+        "type": "Difference",
+        "left": "with_holes_1_2_3_4_5_6",
+        "right": "bolt_hole_6"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "final_flange",
+      "material": "default"
+    }
+  ]
+}

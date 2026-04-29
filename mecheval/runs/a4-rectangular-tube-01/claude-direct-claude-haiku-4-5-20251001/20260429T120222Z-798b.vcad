@@ -1,0 +1,56 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "outer_cube": {
+      "id": 0,
+      "name": "outer_cube",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 40, "y": 40, "z": 80}
+      }
+    },
+    "outer_centered": {
+      "id": 1,
+      "name": "outer_centered",
+      "op": {
+        "type": "Translate",
+        "child": 0,
+        "offset": {"x": -20, "y": -20, "z": 0}
+      }
+    },
+    "inner_cube": {
+      "id": 2,
+      "name": "inner_cube",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 28, "y": 28, "z": 80}
+      }
+    },
+    "inner_centered": {
+      "id": 3,
+      "name": "inner_centered",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {"x": -14, "y": -14, "z": 0}
+      }
+    },
+    "hollow_tube": {
+      "id": 4,
+      "name": "hollow_tube",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 3
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 4,
+      "material": "default"
+    }
+  ]
+}

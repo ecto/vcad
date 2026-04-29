@@ -1,0 +1,225 @@
+{
+  "schema_version": 0,
+  "task_id": "a4-rounded-bar-01",
+  "task_sha256": "7d784df0d0a2093508ecd8afc9682f361b3ac3936400a370796a57e039c78acb",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -40,
+          -10,
+          0
+        ],
+        "max": [
+          40,
+          10,
+          10
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          40,
+          10,
+          10
+        ],
+        "actual_min": [
+          -40,
+          -10,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.2
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 15141.59,
+        "center_of_mass": [
+          0,
+          0,
+          5
+        ],
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            3.0643861140820463e-15,
+            2.7069995799438013e-17,
+            4.999999999999997
+          ],
+          "bbox_diagonal_mm": 83.06623862918075,
+          "deviation": [
+            3.0643861140820463e-15,
+            2.7069995799438013e-17,
+            -2.6645352591003757e-15
+          ],
+          "max_abs_deviation_mm": 3.0643861140820463e-15,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            5
+          ],
+          "tolerance_mm": 0.8306623862918074
+        },
+        "volume": {
+          "actual_mm3": 15136.54874536396,
+          "deviation_pct": 0.033294090224608656,
+          "pass": true,
+          "spec_mm3": 15141.59,
+          "tolerance_pct": 1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                40,
+                10,
+                10
+              ],
+              "original_min": [
+                -40,
+                -10,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                40,
+                10,
+                10
+              ],
+              "roundtripped_min": [
+                -40,
+                -10,
+                0
+              ],
+              "tolerance_mm": 0.8306623862918074
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.28237134162160193,
+              "original_mm3": 15136.54874536396,
+              "pass": true,
+              "roundtripped_mm3": 15093.807469596468
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260429T120648Z-5e06",
+  "model": {
+    "id": "claude-direct-claude-opus-4-7",
+    "name": "Claude (direct, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "direct",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "linux-v22.22.2",
+      "arch": "x64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a4-rounded-bar-01",
+    "rendered": "Make a flat bar with a stadium-shaped (rectangle with semicircular ends) footprint, extruded 10mm along Z. Total end-to-end length is 80mm along X; total width is 20mm along Y. The footprint is the union of a 60mm × 20mm rectangle (x in [-30, 30], y in [-10, 10]) and two semicircles of radius 10mm centered at (-30, 0) and (30, 0). The bottom face sits on the XY plane (z = 0 to z = 10). Output a single solid (no holes or other features).",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "anthropic.messages.create",
+        "args": {
+          "model": "claude-opus-4-7",
+          "max_tokens": 8000,
+          "system_chars": 1674,
+          "user_chars": 500
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 6035.939893000001
+      }
+    ],
+    "tokens": {
+      "input": 955,
+      "output": 515,
+      "total": 1470
+    },
+    "wallclock_sec": 6.035939893000001
+  },
+  "output": {
+    "vcad_path": "20260429T120648Z-5e06.vcad",
+    "vcad_sha256": "222d55f59a9e50aab4e8b25ba121091523a3467971035ce87f8d85349eb7e556",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-29T12:06:48.562Z",
+    "ended_at": "2026-04-29T12:06:54.682Z"
+  },
+  "signature": null
+}
