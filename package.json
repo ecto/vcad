@@ -18,7 +18,7 @@
     "publish:crates:dry": "node scripts/publish-crates.mjs --dry-run"
   },
   "devDependencies": {
-    "@anthropic-ai/sdk": "^0.88.0",
+    "@anthropic-ai/sdk": "^0.91.1",
     "@tauri-apps/cli": "^2",
     "turbo": "^2"
   },

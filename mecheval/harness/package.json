@@ -21,7 +21,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.88.0",
+    "@anthropic-ai/sdk": "^0.91.1",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@vcad/mcp": "*",
     "openai": "^4.104.0"
