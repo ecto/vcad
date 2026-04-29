@@ -2545,19 +2545,36 @@ fn tessellate_spherical_cap(
         (centroid, r)
     };
 
-    // Compute centroid of boundary vertices for cap center
-    let boundary_centroid: Point3 = loop_verts.iter().fold(Point3::origin(), |acc, p| {
-        Point3::new(acc.x + p.x, acc.y + p.y, acc.z + p.z)
-    });
-    let n = loop_verts.len() as f64;
-    let boundary_centroid = Point3::new(
-        boundary_centroid.x / n,
-        boundary_centroid.y / n,
-        boundary_centroid.z / n,
-    );
-
-    // Direction from sphere center to cap center
-    let cap_dir = (boundary_centroid - center).normalize();
+    // Direction to the cap pole, derived from the loop winding's
+    // solid-angle integrand. For a closed loop on a sphere, summing
+    // (p_i - c) × (p_{i+1} - c) over consecutive vertices yields a
+    // vector along the spherical cap's axis pointing toward the bounded
+    // cap's pole. This is robust to the two split caps sharing an
+    // identical boundary centroid (the previous `boundary_centroid -
+    // center` formulation collapsed both caps to the same direction).
+    let mut sa_normal = Vec3::zeros();
+    for i in 0..loop_verts.len() {
+        let j = (i + 1) % loop_verts.len();
+        let a = loop_verts[i] - center;
+        let b = loop_verts[j] - center;
+        sa_normal += a.cross(b);
+    }
+    let sa_len = sa_normal.norm();
+    let cap_dir = if sa_len > 1e-12 {
+        sa_normal / sa_len
+    } else {
+        // Degenerate: fall back to the boundary centroid direction.
+        let boundary_centroid: Point3 = loop_verts.iter().fold(Point3::origin(), |acc, p| {
+            Point3::new(acc.x + p.x, acc.y + p.y, acc.z + p.z)
+        });
+        let n = loop_verts.len() as f64;
+        let boundary_centroid = Point3::new(
+            boundary_centroid.x / n,
+            boundary_centroid.y / n,
+            boundary_centroid.z / n,
+        );
+        (boundary_centroid - center).normalize()
+    };
 
     // Compute angle from cap direction to each boundary vertex
     let boundary_angles: Vec<f64> = loop_verts
@@ -2574,12 +2591,40 @@ fn tessellate_spherical_cap(
         .fold(f64::INFINITY, f64::min);
     let avg_angle = boundary_angles.iter().sum::<f64>() / boundary_angles.len() as f64;
 
-    // Determine if this is a large cap (> ~90 degrees) or small cap
-    let is_large_cap = avg_angle > PI / 2.0;
+    // Use the small-cap path whenever the boundary stays clear of the
+    // antipode of the cap pole (phi < ~0.85·π, ≈153°). The small-cap
+    // slerp `(cap_dir·sin((1-t)·phi) + b_dir·sin(t·phi))/sin(phi)` is
+    // numerically robust through this range, including the hemispherical
+    // phi = π/2 case where the previous `> π/2` threshold flipped on
+    // floating-point noise. The large-cap path is reserved for caps
+    // that genuinely wrap toward the antipode (e.g. big-sphere minus
+    // small-bite from a Difference op).
+    let is_large_cap = avg_angle > 0.85 * PI;
 
     if is_large_cap {
-        tessellate_large_spherical_cap(loop_verts, center, radius, cap_dir, min_angle, reversed)
+        // `tessellate_large_spherical_cap` was written under the legacy
+        // convention where `cap_dir` points to the boundary side and
+        // `anti_pole = -cap_dir` is the cap interior pole. Our winding
+        // -derived `cap_dir` points to the cap interior, so flip it (and
+        // recompute the min angle in the flipped frame) for that path.
+        let flipped_cap_dir = -cap_dir;
+        let min_angle_flipped = loop_verts
+            .iter()
+            .map(|p| {
+                let v = (*p - center).normalize();
+                v.dot(flipped_cap_dir).clamp(-1.0, 1.0).acos()
+            })
+            .fold(f64::INFINITY, f64::min);
+        tessellate_large_spherical_cap(
+            loop_verts,
+            center,
+            radius,
+            flipped_cap_dir,
+            min_angle_flipped,
+            reversed,
+        )
     } else {
+        let _ = min_angle;
         tessellate_small_spherical_cap(loop_verts, center, radius, cap_dir, params, reversed)
     }
 }

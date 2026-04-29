@@ -536,8 +536,27 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
                     return sph.center + sph.radius * ref_dir;
                 }
 
-                // For partial sphere faces with enough vertices, project centroid
-                // onto the sphere surface
+                // For cap faces produced by booleans, both caps share the
+                // same outer-loop centroid (the cutting circle's center),
+                // so the centroid-projection sample collapses to a single
+                // direction for both — selection then keeps or drops both
+                // together, which loses the operation. Use the loop's
+                // solid-angle integrand to pick each cap's own pole;
+                // it points to the bounded cap's interior by construction
+                // and disambiguates the two caps via their opposite loop
+                // windings.
+                let mut sa_normal = Vec3::zeros();
+                for i in 0..vertices.len() {
+                    let j = (i + 1) % vertices.len();
+                    let a = vertices[i] - sph.center;
+                    let b = vertices[j] - sph.center;
+                    sa_normal += a.cross(b);
+                }
+                let sa_len = sa_normal.norm();
+                if sa_len > 1e-12 {
+                    let cap_dir = sa_normal / sa_len;
+                    return sph.center + sph.radius * cap_dir;
+                }
                 let dir = centroid - sph.center;
                 let dir_len = dir.norm();
                 if dir_len > 1e-12 {

@@ -1,0 +1,9 @@
+{
+  "id": "2026-04-29-sphere-intersection-cube",
+  "version": "0.9.4",
+  "date": "2026-04-29",
+  "category": "fix",
+  "title": "Sphere ∩ Cube no longer returns an empty mesh",
+  "summary": "Boolean Intersection of a sphere with a cube/half-space (used for hemispheres, lenses, spherical caps) used to produce an empty mesh because the sphere was split into one face-with-hole plus a planar disk and the lone sphere face was always classified on the wrong side. The sphere now splits into two cap faces — each classified independently via the loop's solid-angle direction — so dome and lens constructions work.",
+  "features": ["kernel", "boolean"]
+}
