@@ -88,7 +88,7 @@ mod tests {
 
     #[test]
     fn test_difference_hole_in_center() {
-        // Simpler test case: two axis-aligned cubes with partial overlap
+        // Two axis-aligned cubes with partial overlap.
         let big_cube = make_cube(10.0, 10.0, 10.0);
 
         let mut small_cube = make_cube(4.0, 20.0, 4.0);
@@ -99,16 +99,13 @@ mod tests {
 
         let volume = compute_mesh_volume(&mesh);
 
-        // Accept volume in range [600, 1100] as "working"
         // Expected: 10*10*10 - 4*10*4 = 1000 - 160 = 840
-        // The winding fix can affect volume calculation, so we use a wider tolerance.
         assert!(
-            volume > 600.0 && volume < 1100.0,
-            "Expected volume in [600,1100], got {}",
+            (volume - 840.0).abs() < 1.0,
+            "Expected volume ~840, got {}",
             volume
         );
 
-        // Check bounding box
         let (min, max) = compute_mesh_bbox(&mesh);
         assert!(
             min[0] >= -0.01 && min[1] >= -0.01 && min[2] >= -0.01,
@@ -124,6 +121,31 @@ mod tests {
         assert!(
             mesh.num_triangles() > 0,
             "Result mesh should have triangles"
+        );
+    }
+
+    /// Regression for the planar-tessellator winding-flip heuristic that
+    /// previously over-counted cavity-wall contributions. Cube-minus-cube
+    /// hollow tube: outer 40×40×80 minus inner 28×28×80, both axis-aligned
+    /// and centred in XY. Cavity walls are reversed-orientation planar
+    /// faces; the volume integrator must respect the orientation flag, not
+    /// override it from loop winding.
+    #[test]
+    fn test_difference_hollow_tube_volume() {
+        let mut outer = make_cube(40.0, 40.0, 80.0);
+        translate_brep(&mut outer, -20.0, -20.0, 0.0);
+        let mut inner = make_cube(28.0, 28.0, 84.0);
+        translate_brep(&mut inner, -14.0, -14.0, -2.0);
+
+        let result = boolean_op(&outer, &inner, BooleanOp::Difference, 32);
+        let mesh = result.to_mesh(32);
+        let volume = compute_mesh_volume(&mesh);
+
+        // Expected: (40² − 28²) × 80 = 65280 mm³.
+        assert!(
+            (volume - 65280.0).abs() < 1.0,
+            "Expected hollow-tube volume ~65280, got {}",
+            volume
         );
     }
 
