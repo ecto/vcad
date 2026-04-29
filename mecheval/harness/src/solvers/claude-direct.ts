@@ -55,10 +55,17 @@ CsgOp variants you can use:
 
 Conventions:
 - Z is up. Cube and cylinder primitives have their corner / base at the origin.
-- Units are millimeters (mm).
+- Units are millimeters (mm) for Suites A/B; **meters** for Suite C (mech) — a Suite C task will say so explicitly.
 - Output a single solid (one root) unless the task says otherwise.
 - For a centered cube of side s, translate the cube by (-s/2, -s/2, -s/2).
 - For holes, use a Difference: subtract a cylinder from the body.
+
+Suite C (mech) — additional fields. Only emit these when the task is in Suite C (mech / robotics). The same root \`nodes\` graph defines per-part geometry; Suite C also requires:
+
+- \`partDefs\`: { "<partDefId>": { "id": "<partDefId>", "name": "<label>", "root": <node_id> } } — each part definition points at a root node in \`nodes\`.
+- \`instances\`: [ { "id": "<instId>", "partDefId": "<partDefId>", "name": "<label>", "tags": ["tip"], "transform": { "translation": {"x":..,"y":..,"z":..}, "rotation": {"x":..,"y":..,"z":..}, "scale": {"x":1,"y":1,"z":1} } } ] — concrete links in the assembly. Use \`tags\` to mark the end-effector (\`["tip"]\`), the base (\`["base"]\`), feet (\`["foot_left"]\`), etc. Suite C graders read these.
+- \`joints\`: [ { "id": "<jointId>", "parentInstanceId": "<instId>", "childInstanceId": "<instId>", "parentAnchor": {"x":..,"y":..,"z":..}, "childAnchor": {"x":..,"y":..,"z":..}, "kind": { "type": "Revolute", "axis": {"x":0,"y":0,"z":1}, "limits": [-90, 90] }, "state": 0 } ] — joint kinds: \`Revolute\` (axis + degree limits), \`Slider\` (axis + mm limits), \`Cylindrical\` (axis), \`Ball\`, \`Fixed\`. Anchors are local to each instance, in the same units as the document.
+- \`groundInstanceId\`: the id of the instance fixed in world space (the base).
 
 Output format:
 - Output ONLY a single \`\`\`json fenced code block containing the full .vcad document.
