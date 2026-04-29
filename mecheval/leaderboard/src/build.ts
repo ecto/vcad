@@ -660,7 +660,7 @@ function titleBlockHtml(tb: TitleBlock, generatedAt: string): string {
     <tr>
       <td><span class="k">date</span><br><span class="v">${escape(dateStr)}</span></td>
       <td><span class="k">drawn by</span><br><span class="v">muni</span></td>
-      <td><span class="k">project</span><br><span class="v">mecheval</span></td>
+      <td><span class="k">project</span><br><span class="v">${escape(tb.project ?? "—")}</span></td>
     </tr>
   </table></div>`;
 }
@@ -697,7 +697,7 @@ function pageShell(
 </head>
 <body><main class="sheet">
 <span class="corner-bl">└</span><span class="corner-br">┘</span>
-<div class="crumb">${crumbHtml}</div>
+${crumbHtml ? `<div class="crumb">${crumbHtml}</div>` : ""}
 ${bodyHtml}
 ${footerHtml()}
 ${titleBlockHtml(tb, generatedAt)}
@@ -1012,13 +1012,14 @@ function indexPage(
       Corpus: ${runs.length} run blobs across ${models.length} models, ${taskIds.length} tasks. Click any task, model, or run for full forensic detail.
     </p>`;
   return pageShell(
-    "mecheval — AI builds the mech",
-    `${escape(copy.brand)}`,
+    "mecheval — eval suite for AI mechanical design",
+    "",
     body,
     {
       drawing: copy.brand,
       sheet: "INDEX",
       scale: passKReady > 0 ? `pass^${k} · ${passKAchieved}/${passKReady}` : `pass^${k}`,
+      project: "leaderboard",
     },
   );
 }
@@ -1076,7 +1077,7 @@ function taskPage(
       `<a href="../index.html">← ${escape(copy.brand)}</a> / task / ${escape(taskId)}`,
       `<h1>${escape(taskId)}</h1>
        <div class="nodata">no task spec found at mecheval/tasks/${escape(taskId)}.json — OPERATOR can't find this one</div>`,
-      { drawing: copy.brand, sheet: `TASK · ${taskId}`, scale: "—" },
+      { drawing: copy.brand, sheet: `TASK · ${taskId}`, scale: "—", project: taskId },
     );
   }
   const checksHtml = spec.checks
@@ -1127,6 +1128,7 @@ function taskPage(
       drawing: copy.brand,
       sheet: `TASK · ${taskId}`,
       scale: `${runsForTask.length} runs`,
+      project: `${spec.suite} · ${spec.tier}`,
     },
   );
 }
@@ -1148,6 +1150,7 @@ function modelPage(modelId: string, runsForModel: RunMeta[]): string {
       drawing: copy.brand,
       sheet: `MODEL · ${modelId}`,
       scale: `${runsForModel.length} runs · ${taskCount} tasks`,
+      project: modelDisplayName(modelId),
     },
   );
 }
@@ -1255,6 +1258,7 @@ function runPage(blob: FullBlob, vcad: string | null, vcadSvg: string | null): s
       scale: blob.summary.passed
         ? "PASS"
         : `${blob.summary.checks_passed}/${blob.summary.checks_total}`,
+      project: `${taskId} · ${modelDisplayName(modelId)}`,
     },
   );
 }

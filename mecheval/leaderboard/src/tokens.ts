@@ -37,9 +37,9 @@ export const fontsHref =
 
 export const copy = {
   brand: "mecheval.",
-  tagline: "AI builds the mech. We measure how badly it fits.",
+  tagline: "The mechanical, physical, and CAD evaluation suite for AI models.",
   subtagline:
-    "mechanical, physical, and CAD evaluation suite for AI models",
+    "Every check is something the CAD kernel can compute exactly.",
   footerOwner: "Municipal Robotics",
   footerOwnerUrl: "https://muni.works",
   siblingProjectName: "vcad.",
@@ -53,4 +53,7 @@ export interface TitleBlock {
   sheet: string;
   /** Optional dimension callout shown in the corner — e.g. "PASS^5". */
   scale?: string;
+  /** Page-specific label for the bottom-right cell (e.g. "leaderboard",
+   *  task id, model id, run id). Defaults to "—" if omitted. */
+  project?: string;
 }
