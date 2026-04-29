@@ -1,0 +1,50 @@
+{
+  "id": "a4-stepped-pyramid-with-holes-01",
+  "suite": "A",
+  "tier": "A4",
+  "title": "Three-step pyramid with bolt holes through base",
+  "prompt": "Make a stepped pyramid composed of three concentric square layers stacked along Z, fused into a single solid. Base layer: 80mm × 80mm × 10mm, centered in X and Y, bottom face on the XY plane (z = 0 to z = 10). Middle layer: 60mm × 60mm × 10mm, centered, sitting on top of the base layer (z = 10 to z = 20). Top layer: 40mm × 40mm × 10mm, centered, sitting on top of the middle layer (z = 20 to z = 30). The base layer has four bolt holes of diameter 6mm, axes parallel to Z, drilled through the full 10mm thickness of the base only (z = 0 to z = 10), located at (30, 30), (-30, 30), (-30, -30), (30, -30). Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-40, -40, 0],
+      "max": [40, 40, 30],
+      "tolerance_mm": 0.1
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 114869.03,
+      "tolerance_pct": 0.5
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 6.0,
+      "expected": 4,
+      "diameter_tolerance_mm": 0.05
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 6.0,
+      "positions": [
+        [30.0, 30.0, 0],
+        [-30.0, 30.0, 0],
+        [-30.0, -30.0, 0],
+        [30.0, -30.0, 0]
+      ],
+      "tolerance_mm": 0.15
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 0.5 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 40000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 40
+  },
+  "pass_k": 5,
+  "tags": ["stepped", "pyramid", "bolt-holes", "boolean", "advanced"]
+}

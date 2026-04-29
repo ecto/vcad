@@ -1,0 +1,67 @@
+{
+  "id": "a4-counterbore-plate-01",
+  "suite": "A",
+  "tier": "A4",
+  "title": "Plate with four counterbore holes",
+  "prompt": "Make a single solid: a flat plate 60mm × 60mm × 12mm, centered in X and Y with the bottom face on the XY plane (z = 0 to z = 12). Drill four counterbore holes at corners (20, 20), (-20, 20), (-20, -20), (20, -20). Each counterbore consists of two coaxial Z-aligned through-features: a clearance through-hole of diameter 4mm running the full thickness (z = 0 to z = 12), and a coaxial recess of diameter 8mm machined 4mm deep from the top face (so the larger diameter spans z = 8 to z = 12). Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-30, -30, 0],
+      "max": [30, 30, 12],
+      "tolerance_mm": 0.1
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 41993.63,
+      "tolerance_pct": 1.0
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 4.0,
+      "expected": 4,
+      "diameter_tolerance_mm": 0.05
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 4.0,
+      "positions": [
+        [20.0, 20.0, 0],
+        [-20.0, 20.0, 0],
+        [-20.0, -20.0, 0],
+        [20.0, -20.0, 0]
+      ],
+      "tolerance_mm": 0.15
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 8.0,
+      "expected": 4,
+      "diameter_tolerance_mm": 0.05
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 8.0,
+      "positions": [
+        [20.0, 20.0, 0],
+        [-20.0, 20.0, 0],
+        [-20.0, -20.0, 0],
+        [20.0, -20.0, 0]
+      ],
+      "tolerance_mm": 0.15
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 1.0 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 40000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 40
+  },
+  "pass_k": 5,
+  "tags": ["plate", "counterbore", "multi-diameter-hole", "boolean", "advanced"]
+}

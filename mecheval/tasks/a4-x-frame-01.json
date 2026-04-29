@@ -1,0 +1,34 @@
+{
+  "id": "a4-x-frame-01",
+  "suite": "A",
+  "tier": "A4",
+  "title": "Cross frame from two perpendicular bars",
+  "prompt": "Make a cross-shaped frame in the XY plane by fusing two rectangular bars at right angles. Bar A is 100mm long along X, 20mm wide along Y, and 10mm tall along Z, centered in X and Y with its bottom face on the XY plane (so it spans x in [-50, 50], y in [-10, 10], z in [0, 10]). Bar B is 20mm wide along X, 100mm long along Y, and 10mm tall along Z, centered in X and Y with its bottom face on the XY plane (so it spans x in [-10, 10], y in [-50, 50], z in [0, 10]). Union the two bars into a single plus-sign-shaped solid; the central 20mm × 20mm × 10mm overlap is counted only once. Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-50, -50, 0],
+      "max": [50, 50, 10],
+      "tolerance_mm": 0.05
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 36000.0,
+      "center_of_mass": [0, 0, 5],
+      "tolerance_pct": 0.5
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 0.5 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 40000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 40
+  },
+  "pass_k": 5,
+  "tags": ["frame", "cross", "union", "boolean", "advanced"]
+}

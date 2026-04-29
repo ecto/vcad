@@ -1,0 +1,34 @@
+{
+  "id": "a4-rounded-bar-01",
+  "suite": "A",
+  "tier": "A4",
+  "title": "Stadium-shaped flat bar",
+  "prompt": "Make a flat bar with a stadium-shaped (rectangle with semicircular ends) footprint, extruded 10mm along Z. Total end-to-end length is 80mm along X; total width is 20mm along Y. The footprint is the union of a 60mm × 20mm rectangle (x in [-30, 30], y in [-10, 10]) and two semicircles of radius 10mm centered at (-30, 0) and (30, 0). The bottom face sits on the XY plane (z = 0 to z = 10). Output a single solid (no holes or other features).",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-40, -10, 0],
+      "max": [40, 10, 10],
+      "tolerance_mm": 0.2
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 15141.59,
+      "center_of_mass": [0, 0, 5],
+      "tolerance_pct": 1.0
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 1.0 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 40000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 40
+  },
+  "pass_k": 5,
+  "tags": ["stadium", "bar", "union", "boolean", "advanced"]
+}

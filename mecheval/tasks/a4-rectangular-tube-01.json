@@ -1,0 +1,34 @@
+{
+  "id": "a4-rectangular-tube-01",
+  "suite": "A",
+  "tier": "A4",
+  "title": "Hollow square tube",
+  "prompt": "Make a hollow square tube. The outer cross-section is a 40mm × 40mm square; the inner cavity is a 28mm × 28mm square, concentric with the outer. The cavity passes all the way through. The tube is 80mm long along Z, with the bottom face on the XY plane (so it spans x in [-20, 20], y in [-20, 20], z in [0, 80] for the outer envelope). The inner cavity spans x in [-14, 14], y in [-14, 14], z in [0, 80]. Wall thickness is 6mm uniformly. Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-20, -20, 0],
+      "max": [20, 20, 80],
+      "tolerance_mm": 0.05
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 65280.0,
+      "center_of_mass": [0, 0, 40],
+      "tolerance_pct": 0.5
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 0.5 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 40000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 40
+  },
+  "pass_k": 5,
+  "tags": ["tube", "hollow", "boolean", "rectangular", "advanced"]
+}
