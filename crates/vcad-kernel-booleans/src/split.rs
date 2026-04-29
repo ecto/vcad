@@ -1533,7 +1533,8 @@ pub fn split_spherical_face_by_circle(
 
     let tolerance = 1e-6;
 
-    // Generate circle vertices
+    // Generate the N shared circle vertices.
+    let n = segments as usize;
     let circle_verts: Vec<Point3> = (0..segments)
         .map(|i| {
             let theta = 2.0 * std::f64::consts::PI * (i as f64) / (segments as f64);
@@ -1543,100 +1544,56 @@ pub fn split_spherical_face_by_circle(
                     * (cos_t * circle.x_dir.into_inner() + sin_t * circle.y_dir.into_inner())
         })
         .collect();
-
-    // Create inner disk face on the plane of the circle.
-    // This face will be classified as inside/outside the other solid.
-    // First, find or create the planar surface for the disk.
-    let circle_normal = circle.x_dir.into_inner().cross(circle.y_dir.into_inner());
-    let disk_plane = vcad_kernel_geom::Plane::new(
-        circle.center,
-        circle.x_dir.into_inner(),
-        circle.y_dir.into_inner(),
-    );
-    let disk_surf_idx = brep.geometry.add_surface(Box::new(disk_plane));
-
-    let inner_verts: Vec<_> = circle_verts
+    let circle_vert_ids: Vec<_> = circle_verts
         .iter()
         .map(|p| find_or_create_vertex(brep, p, tolerance))
         .collect();
-    let inner_hes: Vec<_> = inner_verts
-        .iter()
-        .map(|&v| brep.topology.add_half_edge(v))
+
+    // Cap-A walks the circle in forward order: v[0], v[1], ..., v[N-1].
+    // Half-edge i has origin v[i] and points toward v[(i+1) mod N].
+    let he_a: Vec<_> = (0..n)
+        .map(|i| brep.topology.add_half_edge(circle_vert_ids[i]))
         .collect();
-    let inner_loop = brep.topology.add_loop(&inner_hes);
-    let inner_face = brep
-        .topology
-        .add_face(inner_loop, disk_surf_idx, orientation);
+    let loop_a = brep.topology.add_loop(&he_a);
 
-    // Add the circle as an inner loop (hole) on the sphere face.
-    // The hole winding must be opposite to the inner disk face's winding
-    // when viewed from outside the sphere.
-    // Determine winding: compute signed area of circle_verts projected along circle normal
-    let circle_signed_area = {
-        // Use the circle's own coordinate system
-        let pts_2d: Vec<(f64, f64)> = circle_verts
-            .iter()
-            .map(|p| {
-                let d = *p - circle.center;
-                (
-                    d.dot(circle.x_dir.into_inner()),
-                    d.dot(circle.y_dir.into_inner()),
-                )
-            })
-            .collect();
-        let mut a = 0.0;
-        for i in 0..pts_2d.len() {
-            let j = (i + 1) % pts_2d.len();
-            a += pts_2d[i].0 * pts_2d[j].1 - pts_2d[j].0 * pts_2d[i].1;
-        }
-        a / 2.0
-    };
-
-    // The sphere's outward direction at the circle center
-    let sphere_outward = (circle.center - sph.center).normalize();
-    // If circle_normal aligns with sphere_outward, the CCW vertices (as seen from outside)
-    // should be reversed for the hole
-    let normals_aligned = circle_normal.dot(sphere_outward) > 0.0;
-
-    // Inner loop on sphere should be CW when viewed from outside the sphere
-    // If circle area is positive and normals are aligned, the vertices are CCW from outside → reverse
-    let need_reverse = (circle_signed_area > 0.0) == normals_aligned;
-
-    let hole_verts: Vec<Point3> = if need_reverse {
-        circle_verts.iter().rev().cloned().collect()
-    } else {
-        circle_verts.clone()
-    };
-
-    let hole_vert_ids: Vec<_> = hole_verts
-        .iter()
-        .map(|p| find_or_create_vertex(brep, p, tolerance))
+    // Cap-B walks the circle in reverse: v[0], v[N-1], v[N-2], ..., v[1].
+    // Half-edge j has origin v[(N - j) mod N] (so j=0 → v[0], j=1 → v[N-1], ...).
+    // Cap-B's edge j spans {v[(N-j) mod N], v[(N-1-j) mod N]} — same physical
+    // edge as cap-A's edge i = N-1-j, traversed in reverse.
+    let he_b: Vec<_> = (0..n)
+        .map(|j| brep.topology.add_half_edge(circle_vert_ids[(n - j) % n]))
         .collect();
-    let hole_hes: Vec<_> = hole_vert_ids
-        .iter()
-        .map(|&v| brep.topology.add_half_edge(v))
-        .collect();
-    let hole_loop = brep.topology.add_loop(&hole_hes);
-    brep.topology.faces[face_id].inner_loops.push(hole_loop);
+    let loop_b = brep.topology.add_loop(&he_b);
 
-    // Add twin edges between inner disk and hole on sphere
-    for i in 0..segments as usize {
-        let inner_he = inner_hes[i];
-        let outer_he = hole_hes[(segments as usize - 1 - i) % segments as usize];
-        brep.topology.add_edge(inner_he, outer_he);
+    // Repurpose the original face as cap-A: clear holes, replace outer loop.
+    // Same surface, orientation, shell. The original 4-edge seam loop is
+    // now orphaned (no face references it) — benign because all kernel
+    // traversal goes from faces.
+    {
+        let f = &mut brep.topology.faces[face_id];
+        f.outer_loop = loop_a;
+        f.inner_loops.clear();
     }
 
-    // Add faces to shell
+    // Cap-B is a new face with the same surface and orientation.
+    let face_b = brep.topology.add_face(loop_b, surface_index, orientation);
+
+    // Twin-pair the two caps' half-edges along the shared circle.
+    for i in 0..n {
+        brep.topology.add_edge(he_a[i], he_b[n - 1 - i]);
+    }
+
+    // Add cap-B to the same shell as the original face.
     if let Some(shell_id) = brep.topology.faces[face_id].shell {
-        brep.topology.shells[shell_id].faces.push(inner_face);
-        brep.topology.faces[inner_face].shell = Some(shell_id);
+        brep.topology.shells[shell_id].faces.push(face_b);
+        brep.topology.faces[face_b].shell = Some(shell_id);
     }
 
-    // Add 3D curve
+    // Add the SSI circle as a 3D curve in the geometry store.
     brep.geometry.add_curve_3d(Box::new(circle.clone()));
 
     SplitResult {
-        sub_faces: vec![inner_face, face_id],
+        sub_faces: vec![face_id, face_b],
     }
 }
 

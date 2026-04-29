@@ -1537,6 +1537,89 @@ mod tests {
         );
     }
 
+    /// Splitting a sphere into two cap faces along its equator should
+    /// yield a tessellation whose closed-surface volume matches the
+    /// original sphere. Catches winding inversions in the cap-tessellator
+    /// dispatch (the previous fix attempt's regression mode).
+    #[test]
+    fn test_split_sphere_volume_preservation() {
+        use vcad_kernel_geom::Circle3d;
+        use vcad_kernel_primitives::make_sphere;
+        use vcad_kernel_tessellate::tessellate_brep;
+
+        let radius = 10.0;
+        let mut brep = make_sphere(radius, 32);
+
+        // The full sphere has a single face. Split it along the equator
+        // (z = 0 circle) into two cap faces.
+        let face_id = brep
+            .topology
+            .faces
+            .iter()
+            .next()
+            .map(|(id, _)| id)
+            .expect("sphere should have a face");
+        let circle = Circle3d::new(Point3::new(0.0, 0.0, 0.0), radius);
+        let result = split::split_spherical_face_by_circle(&mut brep, face_id, &circle, 32);
+        assert_eq!(
+            result.sub_faces.len(),
+            2,
+            "split should produce exactly two cap faces"
+        );
+
+        let mesh = tessellate_brep(&brep, 32);
+        assert!(!mesh.indices.is_empty(), "tessellation should be non-empty");
+
+        let volume = compute_mesh_volume(&mesh);
+        let expected = 4.0 / 3.0 * std::f64::consts::PI * radius.powi(3);
+        let rel_err = (volume - expected).abs() / expected;
+        assert!(
+            rel_err < 0.05,
+            "split-sphere mesh volume {:.1} differs from sphere volume {:.1} by {:.1}%",
+            volume,
+            expected,
+            rel_err * 100.0
+        );
+    }
+
+    /// Reproduces issue #152: `Sphere ∩ HalfSpace` (cube clip) used to
+    /// return an empty mesh because the boolean classifier dropped the
+    /// only sphere face it had after the split (the planar disk + sphere
+    /// -with-hole arrangement). With two cap faces, the kept hemisphere
+    /// is a real spherical cap.
+    #[test]
+    fn test_sphere_intersection_cube_clip() {
+        use vcad_kernel_primitives::make_sphere;
+
+        let sphere = make_sphere(15.0, 32);
+        // Half-space cube (z >= 0): a 100x100x100 cube translated so its
+        // bottom face is at z = 0.
+        let mut cube = make_cube(100.0, 100.0, 100.0);
+        translate_brep(&mut cube, -50.0, -50.0, 0.0);
+
+        let result = boolean_op(&sphere, &cube, BooleanOp::Intersection, 32);
+        let mesh = result.to_mesh(32);
+        assert!(
+            !mesh.indices.is_empty(),
+            "sphere ∩ halfspace should produce a non-empty mesh"
+        );
+
+        let volume = compute_mesh_volume(&mesh);
+        let expected = 2.0 / 3.0 * std::f64::consts::PI * 15.0_f64.powi(3);
+        let rel_err = (volume - expected).abs() / expected;
+        assert!(
+            rel_err < 0.05,
+            "hemisphere mesh volume {:.1} differs from {:.1} by {:.1}%",
+            volume,
+            expected,
+            rel_err * 100.0
+        );
+
+        let (min, max) = compute_mesh_bbox(&mesh);
+        assert!(min[2] > -0.5, "hemisphere should not extend below z=0");
+        assert!(max[2] > 14.0, "hemisphere should reach near z=15");
+    }
+
     /// Test boolean difference with a Y-axis aligned (rotated) cylinder subtracted from a box.
     #[test]
     fn test_rotated_cylinder_subtract() {
