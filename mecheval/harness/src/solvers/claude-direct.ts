@@ -48,7 +48,7 @@ CsgOp variants you can use:
 - {"type":"Sphere", "radius":r, "segments":32}                      → centered at origin
 - {"type":"Cone", "radius_bottom":rb, "radius_top":rt, "height":h, "segments":32}
 - {"type":"Translate", "child":<id>, "offset":{"x":dx,"y":dy,"z":dz}}
-- {"type":"Rotate", "child":<id>, "angles":{"x":dx,"y":dy,"z":dz}}  → Euler angles in DEGREES, applied as X, then Y, then Z
+- {"type":"Rotate", "child":<id>, "angles":{"x":rx,"y":ry,"z":rz}}  → Euler angles in DEGREES around the X, Y, Z axes (intrinsic, applied X→Y→Z). The field is named "angles" and is a vector — *not* an OpenSCAD-style {axis, angle}. To rotate a child 90° about Y: {"type":"Rotate","child":<id>,"angles":{"x":0,"y":90,"z":0}}.
 - {"type":"Difference", "left":<id>, "right":<id>}                  → subtract right from left
 - {"type":"Union", "left":<id>, "right":<id>}
 - {"type":"Intersection", "left":<id>, "right":<id>}
