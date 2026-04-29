@@ -2531,7 +2531,6 @@ fn tessellate_spherical_cap(
         return mesh;
     }
 
-
     // Get sphere center and radius
     let (center, radius) = if let Some(sphere) = surface.as_any().downcast_ref::<SphereSurface>() {
         (sphere.center, sphere.radius)
