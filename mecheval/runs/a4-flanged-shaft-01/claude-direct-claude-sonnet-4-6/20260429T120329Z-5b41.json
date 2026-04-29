@@ -1,0 +1,385 @@
+{
+  "schema_version": 0,
+  "task_id": "a4-flanged-shaft-01",
+  "task_sha256": "70d8d5eb7fc1d94167fdbf0c0241a820f8e76ed8652cfdfdb23800cf351eacf4",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -40.0,
+          -40.0,
+          0.0
+        ],
+        "max": [
+          40.0,
+          40.0,
+          60.0
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          40.0,
+          40.0,
+          60.0
+        ],
+        "actual_min": [
+          -40.0,
+          -40.0,
+          0.0
+        ],
+        "deviation_max": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "deviation_min": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "max_abs_deviation_mm": 0.0,
+        "tolerance_mm": 0.2
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 73874.55,
+        "tolerance_pct": 1.5
+      },
+      "result": "pass",
+      "details": {
+        "volume": {
+          "actual_mm3": 73755.93810602803,
+          "deviation_pct": 0.1605585333135356,
+          "pass": true,
+          "spec_mm3": 73874.55,
+          "tolerance_pct": 1.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 15.0,
+        "expected": 1,
+        "diameter_tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual": 1,
+        "diameter_mm": 15.0,
+        "diameter_tolerance_mm": 0.1,
+        "expected": 1,
+        "found": [
+          [
+            0.0,
+            0.0,
+            15.0
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 15.0,
+        "positions": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 15.0,
+        "per_expected": [
+          {
+            "distance_mm": 0.0,
+            "matched_hole": [
+              0.0,
+              0.0
+            ],
+            "pass": true,
+            "spec_xy": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "tolerance_mm": 0.2,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 6.0,
+        "expected": 4,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual": 4,
+        "diameter_mm": 6.0,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 4,
+        "found": [
+          [
+            30.0,
+            0.0,
+            6.0
+          ],
+          [
+            0.0,
+            30.0,
+            6.0
+          ],
+          [
+            -30.0,
+            0.0,
+            6.0
+          ],
+          [
+            0.0,
+            -30.0,
+            6.0
+          ]
+        ]
+      }
+    },
+    {
+      "n": 6,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 6.0,
+        "positions": [
+          [
+            30.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            30.0,
+            0.0
+          ],
+          [
+            -30.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            -30.0,
+            0.0
+          ]
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 6.0,
+        "per_expected": [
+          {
+            "distance_mm": 0.0,
+            "matched_hole": [
+              30.0,
+              0.0
+            ],
+            "pass": true,
+            "spec_xy": [
+              30.0,
+              0.0
+            ]
+          },
+          {
+            "distance_mm": 0.0,
+            "matched_hole": [
+              0.0,
+              30.0
+            ],
+            "pass": true,
+            "spec_xy": [
+              0.0,
+              30.0
+            ]
+          },
+          {
+            "distance_mm": 0.0,
+            "matched_hole": [
+              -30.0,
+              0.0
+            ],
+            "pass": true,
+            "spec_xy": [
+              -30.0,
+              0.0
+            ]
+          },
+          {
+            "distance_mm": 0.0,
+            "matched_hole": [
+              0.0,
+              -30.0
+            ],
+            "pass": true,
+            "spec_xy": [
+              0.0,
+              -30.0
+            ]
+          }
+        ],
+        "tolerance_mm": 0.2,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 7,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1.5
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0.0,
+              "original_max": [
+                40.0,
+                40.0,
+                60.0
+              ],
+              "original_min": [
+                -40.0,
+                -40.0,
+                0.0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                40.0,
+                40.0,
+                60.0
+              ],
+              "roundtripped_min": [
+                -40.0,
+                -40.0,
+                0.0
+              ],
+              "tolerance_mm": 1.9209372712298545
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.522379398954136,
+              "original_mm3": 73755.938106028,
+              "pass": true,
+              "roundtripped_mm3": 73370.65227985675
+            }
+          }
+        ],
+        "tolerance_pct": 1.5
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 8,
+    "checks_total": 8,
+    "score": 1.0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260429T120329Z-5b41",
+  "model": {
+    "id": "claude-direct-claude-sonnet-4-6",
+    "name": "Claude (direct, claude-sonnet-4-6)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "direct",
+      "model": "claude-sonnet-4-6",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "linux-v22.22.2",
+      "arch": "x64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a4-flanged-shaft-01",
+    "rendered": "Make a flanged hollow shaft as a single solid. The base is a circular flange of outer diameter 80mm and thickness 10mm, with its bottom face on the XY plane (z = 0 to z = 10). Above the flange and concentric with it sits a cylindrical shaft of outer diameter 30mm extending 50mm upward (z = 10 to z = 60). A central through-bore of diameter 15mm runs along the Z axis through both the flange and the shaft (z = 0 to z = 60). The flange has four bolt holes of diameter 6mm, axes parallel to Z, on a bolt circle of diameter 60mm (radius 30mm) centered on the Z axis. The first bolt hole is on the +X axis; the others are spaced every 90 degrees. The bolt holes pass through the full flange thickness. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "anthropic.messages.create",
+        "args": {
+          "model": "claude-sonnet-4-6",
+          "max_tokens": 8000,
+          "system_chars": 1674,
+          "user_chars": 783
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 8188.205115000001
+      }
+    ],
+    "tokens": {
+      "input": 795,
+      "output": 967,
+      "total": 1762
+    },
+    "wallclock_sec": 8.188205115
+  },
+  "output": {
+    "vcad_path": "20260429T120329Z-5b41.vcad",
+    "vcad_sha256": "e9c07626dff2be1476d340126a8f0e615e1a71299b23db53aa8f676cad0f150d",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-29T12:03:29.407Z",
+    "ended_at": "2026-04-29T12:03:38.656Z"
+  },
+  "signature": null
+}

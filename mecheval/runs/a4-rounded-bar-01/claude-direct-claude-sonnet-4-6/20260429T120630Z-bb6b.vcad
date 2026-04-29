@@ -1,0 +1,16 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {"id": 1, "name": "center_box", "op": {"type": "Cube", "size": {"x": 60, "y": 20, "z": 10}}},
+    "2": {"id": 2, "name": "center_box_translated", "op": {"type": "Translate", "child": 1, "offset": {"x": -30, "y": -10, "z": 0}}},
+    "3": {"id": 3, "name": "left_cylinder", "op": {"type": "Cylinder", "radius": 10, "height": 10, "segments": 64}},
+    "4": {"id": 4, "name": "left_cylinder_translated", "op": {"type": "Translate", "child": 3, "offset": {"x": -30, "y": 0, "z": 0}}},
+    "5": {"id": 5, "name": "right_cylinder", "op": {"type": "Cylinder", "radius": 10, "height": 10, "segments": 64}},
+    "6": {"id": 6, "name": "right_cylinder_translated", "op": {"type": "Translate", "child": 5, "offset": {"x": 30, "y": 0, "z": 0}}},
+    "7": {"id": 7, "name": "union_left", "op": {"type": "Union", "left": 2, "right": 4}},
+    "8": {"id": 8, "name": "stadium_bar", "op": {"type": "Union", "left": 7, "right": 6}}
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": 8, "material": "default"}]
+}

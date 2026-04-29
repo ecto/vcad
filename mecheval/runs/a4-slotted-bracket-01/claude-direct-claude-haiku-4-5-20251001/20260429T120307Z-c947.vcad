@@ -1,0 +1,112 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "base_plate": {
+      "id": "base_plate",
+      "name": "Base Plate",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 80, "y": 40, "z": 8}
+      }
+    },
+    "base_plate_centered": {
+      "id": "base_plate_centered",
+      "name": "Base Plate Centered",
+      "op": {
+        "type": "Translate",
+        "child": "base_plate",
+        "offset": {"x": -40, "y": -20, "z": 0}
+      }
+    },
+    "slot_rect": {
+      "id": "slot_rect",
+      "name": "Slot Rectangle",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 40, "y": 10, "z": 10}
+      }
+    },
+    "slot_rect_positioned": {
+      "id": "slot_rect_positioned",
+      "name": "Slot Rectangle Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "slot_rect",
+        "offset": {"x": -20, "y": -5, "z": -1}
+      }
+    },
+    "slot_semicircle_left": {
+      "id": "slot_semicircle_left",
+      "name": "Slot Semicircle Left",
+      "op": {
+        "type": "Cylinder",
+        "radius": 5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "slot_semicircle_left_positioned": {
+      "id": "slot_semicircle_left_positioned",
+      "name": "Slot Semicircle Left Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "slot_semicircle_left",
+        "offset": {"x": -20, "y": 0, "z": -1}
+      }
+    },
+    "slot_semicircle_right": {
+      "id": "slot_semicircle_right",
+      "name": "Slot Semicircle Right",
+      "op": {
+        "type": "Cylinder",
+        "radius": 5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "slot_semicircle_right_positioned": {
+      "id": "slot_semicircle_right_positioned",
+      "name": "Slot Semicircle Right Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "slot_semicircle_right",
+        "offset": {"x": 20, "y": 0, "z": -1}
+      }
+    },
+    "slot_union_1": {
+      "id": "slot_union_1",
+      "name": "Slot Union 1",
+      "op": {
+        "type": "Union",
+        "left": "slot_rect_positioned",
+        "right": "slot_semicircle_left_positioned"
+      }
+    },
+    "slot_union_2": {
+      "id": "slot_union_2",
+      "name": "Slot Union 2",
+      "op": {
+        "type": "Union",
+        "left": "slot_union_1",
+        "right": "slot_semicircle_right_positioned"
+      }
+    },
+    "final_bracket": {
+      "id": "final_bracket",
+      "name": "Slotted Bracket",
+      "op": {
+        "type": "Difference",
+        "left": "base_plate_centered",
+        "right": "slot_union_2"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "final_bracket",
+      "material": "default"
+    }
+  ]
+}

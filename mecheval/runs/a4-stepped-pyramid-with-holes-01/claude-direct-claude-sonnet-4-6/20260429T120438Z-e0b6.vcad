@@ -1,0 +1,28 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {"id": 1, "name": "base_cube", "op": {"type": "Cube", "size": {"x": 80, "y": 80, "z": 10}}},
+    "2": {"id": 2, "name": "base_cube_translate", "op": {"type": "Translate", "child": 1, "offset": {"x": -40, "y": -40, "z": 0}}},
+    "3": {"id": 3, "name": "middle_cube", "op": {"type": "Cube", "size": {"x": 60, "y": 60, "z": 10}}},
+    "4": {"id": 4, "name": "middle_cube_translate", "op": {"type": "Translate", "child": 3, "offset": {"x": -30, "y": -30, "z": 10}}},
+    "5": {"id": 5, "name": "top_cube", "op": {"type": "Cube", "size": {"x": 40, "y": 40, "z": 10}}},
+    "6": {"id": 6, "name": "top_cube_translate", "op": {"type": "Translate", "child": 5, "offset": {"x": -20, "y": -20, "z": 20}}},
+    "7": {"id": 7, "name": "union_base_middle", "op": {"type": "Union", "left": 2, "right": 4}},
+    "8": {"id": 8, "name": "union_all_layers", "op": {"type": "Union", "left": 7, "right": 6}},
+    "9": {"id": 9, "name": "hole1_cyl", "op": {"type": "Cylinder", "radius": 3, "height": 10, "segments": 32}},
+    "10": {"id": 10, "name": "hole1_translate", "op": {"type": "Translate", "child": 9, "offset": {"x": 30, "y": 30, "z": 0}}},
+    "11": {"id": 11, "name": "hole2_cyl", "op": {"type": "Cylinder", "radius": 3, "height": 10, "segments": 32}},
+    "12": {"id": 12, "name": "hole2_translate", "op": {"type": "Translate", "child": 11, "offset": {"x": -30, "y": 30, "z": 0}}},
+    "13": {"id": 13, "name": "hole3_cyl", "op": {"type": "Cylinder", "radius": 3, "height": 10, "segments": 32}},
+    "14": {"id": 14, "name": "hole3_translate", "op": {"type": "Translate", "child": 13, "offset": {"x": -30, "y": -30, "z": 0}}},
+    "15": {"id": 15, "name": "hole4_cyl", "op": {"type": "Cylinder", "radius": 3, "height": 10, "segments": 32}},
+    "16": {"id": 16, "name": "hole4_translate", "op": {"type": "Translate", "child": 15, "offset": {"x": 30, "y": -30, "z": 0}}},
+    "17": {"id": 17, "name": "diff_hole1", "op": {"type": "Difference", "left": 8, "right": 10}},
+    "18": {"id": 18, "name": "diff_hole2", "op": {"type": "Difference", "left": 17, "right": 12}},
+    "19": {"id": 19, "name": "diff_hole3", "op": {"type": "Difference", "left": 18, "right": 14}},
+    "20": {"id": 20, "name": "final", "op": {"type": "Difference", "left": 19, "right": 16}}
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": 20, "material": "default"}]
+}

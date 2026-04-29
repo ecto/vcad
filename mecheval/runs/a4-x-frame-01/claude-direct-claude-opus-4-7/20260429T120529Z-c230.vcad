@@ -1,0 +1,13 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {"id": 1, "name": "barA_cube", "op": {"type": "Cube", "size": {"x": 100, "y": 20, "z": 10}}},
+    "2": {"id": 2, "name": "barA", "op": {"type": "Translate", "child": 1, "offset": {"x": -50, "y": -10, "z": 0}}},
+    "3": {"id": 3, "name": "barB_cube", "op": {"type": "Cube", "size": {"x": 20, "y": 100, "z": 10}}},
+    "4": {"id": 4, "name": "barB", "op": {"type": "Translate", "child": 3, "offset": {"x": -10, "y": -50, "z": 0}}},
+    "5": {"id": 5, "name": "cross", "op": {"type": "Union", "left": 2, "right": 4}}
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": 5, "material": "default"}]
+}

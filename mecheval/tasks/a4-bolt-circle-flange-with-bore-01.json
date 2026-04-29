@@ -1,0 +1,64 @@
+{
+  "id": "a4-bolt-circle-flange-with-bore-01",
+  "suite": "A",
+  "tier": "A4",
+  "title": "Round flange with central bore and 6-bolt circle",
+  "prompt": "Make a round flange as a single solid. The outer body is a cylinder of diameter 100mm and thickness 12mm, with its bottom face on the XY plane (z = 0 to z = 12), centered on the Z axis. A central through-bore of diameter 40mm runs along the Z axis through the full thickness. Six bolt holes of diameter 8mm, axes parallel to Z, are arranged on a bolt circle of diameter 75mm (radius 37.5mm) centered on the Z axis, passing through the full thickness. The first bolt hole is on the +X axis, and the remaining five are evenly spaced every 60 degrees. Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-50, -50, 0],
+      "max": [50, 50, 12],
+      "tolerance_mm": 0.3
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 75549.02,
+      "tolerance_pct": 1.5
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 40.0,
+      "expected": 1,
+      "diameter_tolerance_mm": 0.1
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 40.0,
+      "positions": [[0, 0, 0]],
+      "tolerance_mm": 0.2
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 8.0,
+      "expected": 6,
+      "diameter_tolerance_mm": 0.05
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 8.0,
+      "positions": [
+        [37.5, 0.0, 0],
+        [18.75, 32.476, 0],
+        [-18.75, 32.476, 0],
+        [-37.5, 0.0, 0],
+        [-18.75, -32.476, 0],
+        [18.75, -32.476, 0]
+      ],
+      "tolerance_mm": 0.2
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 1.5 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 40000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 40
+  },
+  "pass_k": 5,
+  "tags": ["flange", "bolt-circle", "central-bore", "trigonometry", "advanced"]
+}

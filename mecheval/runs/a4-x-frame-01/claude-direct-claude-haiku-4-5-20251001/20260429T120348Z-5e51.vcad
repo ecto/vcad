@@ -1,0 +1,72 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "bar_a": {
+      "id": "bar_a",
+      "name": "Bar A",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 100,
+          "y": 20,
+          "z": 10
+        }
+      }
+    },
+    "bar_a_centered": {
+      "id": "bar_a_centered",
+      "name": "Bar A Centered",
+      "op": {
+        "type": "Translate",
+        "child": "bar_a",
+        "offset": {
+          "x": -50,
+          "y": -10,
+          "z": 0
+        }
+      }
+    },
+    "bar_b": {
+      "id": "bar_b",
+      "name": "Bar B",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 20,
+          "y": 100,
+          "z": 10
+        }
+      }
+    },
+    "bar_b_centered": {
+      "id": "bar_b_centered",
+      "name": "Bar B Centered",
+      "op": {
+        "type": "Translate",
+        "child": "bar_b",
+        "offset": {
+          "x": -10,
+          "y": -50,
+          "z": 0
+        }
+      }
+    },
+    "cross_frame": {
+      "id": "cross_frame",
+      "name": "Cross Frame",
+      "op": {
+        "type": "Union",
+        "left": "bar_a_centered",
+        "right": "bar_b_centered"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "cross_frame",
+      "material": "default"
+    }
+  ]
+}

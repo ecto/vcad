@@ -791,12 +791,10 @@ fn tessellate_face(
     }
 }
 
-/// Tessellate a planar face with geometry-aware winding detection.
-///
-/// This function detects when the loop vertex winding doesn't match the expected
-/// face normal (surface normal * orientation), which can happen after boolean
-/// operations that split faces. When mismatch is detected, the reversed flag
-/// is flipped to ensure correct triangle orientation.
+/// Tessellate a planar face. Producers (primitives + booleans) wind the
+/// loop consistent with the surface's stored normal; `Orientation::Reversed`
+/// flips the effective face normal without touching loop ordering — so the
+/// volume integrator and renderer see the normal the topology intends.
 fn tessellate_planar_face_with_geom(
     topo: &Topology,
     geom: &GeometryStore,
@@ -805,16 +803,7 @@ fn tessellate_planar_face_with_geom(
 ) -> TriangleMesh {
     let face = &topo.faces[face_id];
     let surface = &geom.surfaces[face.surface_index];
-
-    // Get the surface normal direction (at parameter origin)
     let surface_normal = surface.normal(Point2::new(0.0, 0.0));
-
-    // Effective face normal accounts for orientation
-    let expected_normal = if reversed {
-        -surface_normal
-    } else {
-        surface_normal
-    };
 
     let outer_verts: Vec<_> = topo
         .loop_half_edges(face.outer_loop)
@@ -825,33 +814,13 @@ fn tessellate_planar_face_with_geom(
         return TriangleMesh::new();
     }
 
-    // Compute geometric winding normal from loop vertices using Newell's method.
-    // This is robust for non-convex polygons and any orientation.
-    let mut geom_normal = Vec3::zeros();
-    for i in 0..outer_verts.len() {
-        let curr = outer_verts[i];
-        let next = outer_verts[(i + 1) % outer_verts.len()];
-        geom_normal.x += (curr.y - next.y) * (curr.z + next.z);
-        geom_normal.y += (curr.z - next.z) * (curr.x + next.x);
-        geom_normal.z += (curr.x - next.x) * (curr.y + next.y);
-    }
-
-    // Check if geometric winding matches expected face normal
-    let dot = geom_normal.dot(expected_normal);
-    let winding_matches = dot > 0.0;
-
-    // If winding doesn't match, flip the reversed flag
-    let effective_reversed = if winding_matches { reversed } else { !reversed };
-
-    // Check if face has inner loops (holes)
     let mut mesh = if !face.inner_loops.is_empty() {
-        tessellate_planar_face_with_holes(topo, face_id, effective_reversed)
+        tessellate_planar_face_with_holes(topo, face_id, reversed)
     } else {
-        tessellate_planar_face_core(&outer_verts, effective_reversed)
+        tessellate_planar_face_core(&outer_verts, reversed)
     };
 
-    // Add constant analytical normal for all vertices (planar face has uniform normal)
-    let face_normal = if effective_reversed {
+    let face_normal = if reversed {
         -surface_normal
     } else {
         surface_normal

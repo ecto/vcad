@@ -1,0 +1,24 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {"id": 1, "name": "flange", "op": {"type": "Cylinder", "radius": 40, "height": 10, "segments": 64}},
+    "2": {"id": 2, "name": "shaft_raw", "op": {"type": "Cylinder", "radius": 15, "height": 50, "segments": 64}},
+    "3": {"id": 3, "name": "shaft", "op": {"type": "Translate", "child": 2, "offset": {"x": 0, "y": 0, "z": 10}}},
+    "4": {"id": 4, "name": "body", "op": {"type": "Union", "left": 1, "right": 3}},
+    "5": {"id": 5, "name": "bore_raw", "op": {"type": "Cylinder", "radius": 7.5, "height": 60.2, "segments": 64}},
+    "6": {"id": 6, "name": "bore", "op": {"type": "Translate", "child": 5, "offset": {"x": 0, "y": 0, "z": -0.1}}},
+    "7": {"id": 7, "name": "body_bored", "op": {"type": "Difference", "left": 4, "right": 6}},
+    "8": {"id": 8, "name": "bolt_raw", "op": {"type": "Cylinder", "radius": 3, "height": 10.2, "segments": 32}},
+    "9": {"id": 9, "name": "bolt_px", "op": {"type": "Translate", "child": 8, "offset": {"x": 30, "y": 0, "z": -0.1}}},
+    "10": {"id": 10, "name": "bolt_py", "op": {"type": "Translate", "child": 8, "offset": {"x": 0, "y": 30, "z": -0.1}}},
+    "11": {"id": 11, "name": "bolt_nx", "op": {"type": "Translate", "child": 8, "offset": {"x": -30, "y": 0, "z": -0.1}}},
+    "12": {"id": 12, "name": "bolt_ny", "op": {"type": "Translate", "child": 8, "offset": {"x": 0, "y": -30, "z": -0.1}}},
+    "13": {"id": 13, "name": "bolts_a", "op": {"type": "Union", "left": 9, "right": 10}},
+    "14": {"id": 14, "name": "bolts_b", "op": {"type": "Union", "left": 11, "right": 12}},
+    "15": {"id": 15, "name": "bolts", "op": {"type": "Union", "left": 13, "right": 14}},
+    "16": {"id": 16, "name": "final", "op": {"type": "Difference", "left": 7, "right": 15}}
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": 16, "material": "default"}]
+}

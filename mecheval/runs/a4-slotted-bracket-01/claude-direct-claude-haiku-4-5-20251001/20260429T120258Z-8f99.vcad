@@ -1,0 +1,112 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "plate": {
+      "id": "plate",
+      "name": "Base plate",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 80, "y": 40, "z": 8}
+      }
+    },
+    "plate_centered": {
+      "id": "plate_centered",
+      "name": "Centered plate",
+      "op": {
+        "type": "Translate",
+        "child": "plate",
+        "offset": {"x": -40, "y": -20, "z": 0}
+      }
+    },
+    "slot_rect": {
+      "id": "slot_rect",
+      "name": "Rectangular section of slot",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 40, "y": 10, "z": 10}
+      }
+    },
+    "slot_rect_positioned": {
+      "id": "slot_rect_positioned",
+      "name": "Rectangular section positioned",
+      "op": {
+        "type": "Translate",
+        "child": "slot_rect",
+        "offset": {"x": -20, "y": -5, "z": -1}
+      }
+    },
+    "slot_left_semicircle": {
+      "id": "slot_left_semicircle",
+      "name": "Left semicircle of slot",
+      "op": {
+        "type": "Cylinder",
+        "radius": 5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "slot_left_positioned": {
+      "id": "slot_left_positioned",
+      "name": "Left semicircle positioned",
+      "op": {
+        "type": "Translate",
+        "child": "slot_left_semicircle",
+        "offset": {"x": -20, "y": 0, "z": -1}
+      }
+    },
+    "slot_right_semicircle": {
+      "id": "slot_right_semicircle",
+      "name": "Right semicircle of slot",
+      "op": {
+        "type": "Cylinder",
+        "radius": 5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "slot_right_positioned": {
+      "id": "slot_right_positioned",
+      "name": "Right semicircle positioned",
+      "op": {
+        "type": "Translate",
+        "child": "slot_right_semicircle",
+        "offset": {"x": 20, "y": 0, "z": -1}
+      }
+    },
+    "slot_left_and_rect": {
+      "id": "slot_left_and_rect",
+      "name": "Left semicircle union with rect",
+      "op": {
+        "type": "Union",
+        "left": "slot_left_positioned",
+        "right": "slot_rect_positioned"
+      }
+    },
+    "slot_combined": {
+      "id": "slot_combined",
+      "name": "Full stadium slot",
+      "op": {
+        "type": "Union",
+        "left": "slot_left_and_rect",
+        "right": "slot_right_positioned"
+      }
+    },
+    "result": {
+      "id": "result",
+      "name": "Slotted bracket",
+      "op": {
+        "type": "Difference",
+        "left": "plate_centered",
+        "right": "slot_combined"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "result",
+      "material": "default"
+    }
+  ]
+}

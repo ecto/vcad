@@ -1,0 +1,98 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "flange_cyl": {
+      "id": "flange_cyl",
+      "name": "Flange cylinder",
+      "op": {"type": "Cylinder", "radius": 40, "height": 10, "segments": 32}
+    },
+    "shaft_cyl": {
+      "id": "shaft_cyl",
+      "name": "Shaft cylinder",
+      "op": {"type": "Cylinder", "radius": 15, "height": 50, "segments": 32}
+    },
+    "shaft_translated": {
+      "id": "shaft_translated",
+      "name": "Shaft translated to z=10",
+      "op": {"type": "Translate", "child": "shaft_cyl", "offset": {"x": 0, "y": 0, "z": 10}}
+    },
+    "flange_and_shaft": {
+      "id": "flange_and_shaft",
+      "name": "Flange and shaft combined",
+      "op": {"type": "Union", "left": "flange_cyl", "right": "shaft_translated"}
+    },
+    "central_bore": {
+      "id": "central_bore",
+      "name": "Central bore cylinder",
+      "op": {"type": "Cylinder", "radius": 7.5, "height": 60, "segments": 32}
+    },
+    "bolt_hole_1": {
+      "id": "bolt_hole_1",
+      "name": "Bolt hole 1 at +X",
+      "op": {"type": "Cylinder", "radius": 3, "height": 10, "segments": 32}
+    },
+    "bolt_hole_1_trans": {
+      "id": "bolt_hole_1_trans",
+      "name": "Bolt hole 1 translated",
+      "op": {"type": "Translate", "child": "bolt_hole_1", "offset": {"x": 30, "y": 0, "z": 0}}
+    },
+    "bolt_hole_2": {
+      "id": "bolt_hole_2",
+      "name": "Bolt hole 2 at +Y",
+      "op": {"type": "Cylinder", "radius": 3, "height": 10, "segments": 32}
+    },
+    "bolt_hole_2_trans": {
+      "id": "bolt_hole_2_trans",
+      "name": "Bolt hole 2 translated",
+      "op": {"type": "Translate", "child": "bolt_hole_2", "offset": {"x": 0, "y": 30, "z": 0}}
+    },
+    "bolt_hole_3": {
+      "id": "bolt_hole_3",
+      "name": "Bolt hole 3 at -X",
+      "op": {"type": "Cylinder", "radius": 3, "height": 10, "segments": 32}
+    },
+    "bolt_hole_3_trans": {
+      "id": "bolt_hole_3_trans",
+      "name": "Bolt hole 3 translated",
+      "op": {"type": "Translate", "child": "bolt_hole_3", "offset": {"x": -30, "y": 0, "z": 0}}
+    },
+    "bolt_hole_4": {
+      "id": "bolt_hole_4",
+      "name": "Bolt hole 4 at -Y",
+      "op": {"type": "Cylinder", "radius": 3, "height": 10, "segments": 32}
+    },
+    "bolt_hole_4_trans": {
+      "id": "bolt_hole_4_trans",
+      "name": "Bolt hole 4 translated",
+      "op": {"type": "Translate", "child": "bolt_hole_4", "offset": {"x": 0, "y": -30, "z": 0}}
+    },
+    "all_bolt_holes": {
+      "id": "all_bolt_holes",
+      "name": "Union of all bolt holes",
+      "op": {"type": "Union", "left": "bolt_hole_1_trans", "right": "bolt_hole_2_trans"}
+    },
+    "all_bolt_holes_2": {
+      "id": "all_bolt_holes_2",
+      "name": "Union of bolt holes 1,2,3",
+      "op": {"type": "Union", "left": "all_bolt_holes", "right": "bolt_hole_3_trans"}
+    },
+    "all_bolt_holes_3": {
+      "id": "all_bolt_holes_3",
+      "name": "Union of all 4 bolt holes",
+      "op": {"type": "Union", "left": "all_bolt_holes_2", "right": "bolt_hole_4_trans"}
+    },
+    "all_holes": {
+      "id": "all_holes",
+      "name": "Central bore and bolt holes",
+      "op": {"type": "Union", "left": "central_bore", "right": "all_bolt_holes_3"}
+    },
+    "final_shaft": {
+      "id": "final_shaft",
+      "name": "Flanged hollow shaft",
+      "op": {"type": "Difference", "left": "flange_and_shaft", "right": "all_holes"}
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": "final_shaft", "material": "default"}]
+}

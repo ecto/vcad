@@ -1,0 +1,194 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "base_cube": {
+      "id": "base_cube",
+      "name": "Base layer cube",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 80, "y": 80, "z": 10}
+      }
+    },
+    "base_centered": {
+      "id": "base_centered",
+      "name": "Base layer centered",
+      "op": {
+        "type": "Translate",
+        "child": "base_cube",
+        "offset": {"x": -40, "y": -40, "z": 0}
+      }
+    },
+    "middle_cube": {
+      "id": "middle_cube",
+      "name": "Middle layer cube",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 60, "y": 60, "z": 10}
+      }
+    },
+    "middle_centered": {
+      "id": "middle_centered",
+      "name": "Middle layer centered",
+      "op": {
+        "type": "Translate",
+        "child": "middle_cube",
+        "offset": {"x": -30, "y": -30, "z": 10}
+      }
+    },
+    "top_cube": {
+      "id": "top_cube",
+      "name": "Top layer cube",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 40, "y": 40, "z": 10}
+      }
+    },
+    "top_centered": {
+      "id": "top_centered",
+      "name": "Top layer centered",
+      "op": {
+        "type": "Translate",
+        "child": "top_cube",
+        "offset": {"x": -20, "y": -20, "z": 20}
+      }
+    },
+    "base_middle": {
+      "id": "base_middle",
+      "name": "Base and middle fused",
+      "op": {
+        "type": "Union",
+        "left": "base_centered",
+        "right": "middle_centered"
+      }
+    },
+    "pyramid": {
+      "id": "pyramid",
+      "name": "Stepped pyramid",
+      "op": {
+        "type": "Union",
+        "left": "base_middle",
+        "right": "top_centered"
+      }
+    },
+    "hole1": {
+      "id": "hole1",
+      "name": "Bolt hole 1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole1_positioned": {
+      "id": "hole1_positioned",
+      "name": "Bolt hole 1 positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole1",
+        "offset": {"x": 30, "y": 30, "z": 0}
+      }
+    },
+    "hole2": {
+      "id": "hole2",
+      "name": "Bolt hole 2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole2_positioned": {
+      "id": "hole2_positioned",
+      "name": "Bolt hole 2 positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole2",
+        "offset": {"x": -30, "y": 30, "z": 0}
+      }
+    },
+    "hole3": {
+      "id": "hole3",
+      "name": "Bolt hole 3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole3_positioned": {
+      "id": "hole3_positioned",
+      "name": "Bolt hole 3 positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole3",
+        "offset": {"x": -30, "y": -30, "z": 0}
+      }
+    },
+    "hole4": {
+      "id": "hole4",
+      "name": "Bolt hole 4",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole4_positioned": {
+      "id": "hole4_positioned",
+      "name": "Bolt hole 4 positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole4",
+        "offset": {"x": 30, "y": -30, "z": 0}
+      }
+    },
+    "holes_combined": {
+      "id": "holes_combined",
+      "name": "All holes combined",
+      "op": {
+        "type": "Union",
+        "left": "hole1_positioned",
+        "right": "hole2_positioned"
+      }
+    },
+    "holes_combined_3": {
+      "id": "holes_combined_3",
+      "name": "All holes combined 3",
+      "op": {
+        "type": "Union",
+        "left": "holes_combined",
+        "right": "hole3_positioned"
+      }
+    },
+    "holes_combined_4": {
+      "id": "holes_combined_4",
+      "name": "All holes combined 4",
+      "op": {
+        "type": "Union",
+        "left": "holes_combined_3",
+        "right": "hole4_positioned"
+      }
+    },
+    "final": {
+      "id": "final",
+      "name": "Stepped pyramid with bolt holes",
+      "op": {
+        "type": "Difference",
+        "left": "pyramid",
+        "right": "holes_combined_4"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "final",
+      "material": "default"
+    }
+  ]
+}

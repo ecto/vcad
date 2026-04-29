@@ -1,0 +1,136 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "plate": {
+      "id": "plate",
+      "name": "base_plate",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 80,
+          "y": 40,
+          "z": 8
+        }
+      }
+    },
+    "plate_centered": {
+      "id": "plate_centered",
+      "name": "plate_centered",
+      "op": {
+        "type": "Translate",
+        "child": "plate",
+        "offset": {
+          "x": -40,
+          "y": -20,
+          "z": 0
+        }
+      }
+    },
+    "slot_rect": {
+      "id": "slot_rect",
+      "name": "slot_rect",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 40,
+          "y": 10,
+          "z": 8
+        }
+      }
+    },
+    "slot_rect_centered": {
+      "id": "slot_rect_centered",
+      "name": "slot_rect_centered",
+      "op": {
+        "type": "Translate",
+        "child": "slot_rect",
+        "offset": {
+          "x": -20,
+          "y": -5,
+          "z": 0
+        }
+      }
+    },
+    "slot_left_semi": {
+      "id": "slot_left_semi",
+      "name": "slot_left_semi",
+      "op": {
+        "type": "Cylinder",
+        "radius": 5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "slot_left_semi_positioned": {
+      "id": "slot_left_semi_positioned",
+      "name": "slot_left_semi_positioned",
+      "op": {
+        "type": "Translate",
+        "child": "slot_left_semi",
+        "offset": {
+          "x": -20,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "slot_right_semi": {
+      "id": "slot_right_semi",
+      "name": "slot_right_semi",
+      "op": {
+        "type": "Cylinder",
+        "radius": 5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "slot_right_semi_positioned": {
+      "id": "slot_right_semi_positioned",
+      "name": "slot_right_semi_positioned",
+      "op": {
+        "type": "Translate",
+        "child": "slot_right_semi",
+        "offset": {
+          "x": 20,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "slot_union_1": {
+      "id": "slot_union_1",
+      "name": "slot_union_1",
+      "op": {
+        "type": "Union",
+        "left": "slot_rect_centered",
+        "right": "slot_left_semi_positioned"
+      }
+    },
+    "slot_complete": {
+      "id": "slot_complete",
+      "name": "slot_complete",
+      "op": {
+        "type": "Union",
+        "left": "slot_union_1",
+        "right": "slot_right_semi_positioned"
+      }
+    },
+    "bracket": {
+      "id": "bracket",
+      "name": "bracket",
+      "op": {
+        "type": "Difference",
+        "left": "plate_centered",
+        "right": "slot_complete"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "bracket",
+      "material": "default"
+    }
+  ]
+}
