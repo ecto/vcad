@@ -1,0 +1,137 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Base",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 0.1,
+          "y": 0.1,
+          "z": 0.05
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Link1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 0.02,
+        "height": 0.4,
+        "segments": 32
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Link2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 0.02,
+        "height": 0.3,
+        "segments": 32
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Tip",
+      "op": {
+        "type": "Sphere",
+        "radius": 0.02,
+        "segments": 32
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Joint1",
+      "op": {
+        "type": "Rotate",
+        "child": 2,
+        "angles": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "Joint2",
+      "op": {
+        "type": "Rotate",
+        "child": 3,
+        "angles": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "Translate1",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 0.05
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "Translate2",
+      "op": {
+        "type": "Translate",
+        "child": 7,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 0.4
+        }
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "Translate3",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 0.3
+        }
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "FinalTranslate",
+      "op": {
+        "type": "Translate",
+        "child": 9,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 0.3
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {
+    "1": "default",
+    "2": "default",
+    "3": "default",
+    "4": "default"
+  },
+  "roots": [
+    {
+      "root": 1,
+      "material": "default"
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "id": "a2-cubemark-01",
+  "suite": "A",
+  "tier": "A2",
+  "title": "Cube with 3×3 hole grid",
+  "prompt": "Make a 30mm cube. Center it in X and Y, with the bottom face on the XY plane (z = 0 to z = 30). Drill nine through-holes of diameter 3mm, axes parallel to Z, arranged in a 3×3 grid on the top face spaced 8mm apart in both X and Y, centered on the Z axis. Hole centers are at (x, y) = (-8, -8), (0, -8), (8, -8), (-8, 0), (0, 0), (8, 0), (-8, 8), (0, 8), (8, 8). Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-15, -15, 0],
+      "max": [15, 15, 30],
+      "tolerance_mm": 0.1
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 25091.48,
+      "tolerance_pct": 0.5
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 3.0,
+      "expected": 9,
+      "diameter_tolerance_mm": 0.05
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 3.0,
+      "positions": [
+        [-8, -8, 0], [0, -8, 0], [8, -8, 0],
+        [-8, 0, 0],  [0, 0, 0],  [8, 0, 0],
+        [-8, 8, 0],  [0, 8, 0],  [8, 8, 0]
+      ],
+      "tolerance_mm": 0.15
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 1.0 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 40000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 40
+  },
+  "pass_k": 5,
+  "tags": ["block", "multi-hole", "grid", "boolean"]
+}

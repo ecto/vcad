@@ -23,7 +23,7 @@ export const DEFAULT_CLAUDE_DIRECT: ClaudeDirectConfig = {
   maxOutputTokens: 8000,
 };
 
-const SYSTEM_PROMPT = `You are a CAD modeling agent for vcad. You receive an engineering task and output exactly one .vcad document — a JSON file describing a parametric CAD scene.
+export const SYSTEM_PROMPT = `You are a CAD modeling agent for vcad. You receive an engineering task and output exactly one .vcad document — a JSON file describing a parametric CAD scene.
 
 The .vcad format:
 
@@ -41,7 +41,7 @@ CsgOp variants you can use:
 - {"type":"Sphere", "radius":r, "segments":32}                      → centered at origin
 - {"type":"Cone", "radius_bottom":rb, "radius_top":rt, "height":h, "segments":32}
 - {"type":"Translate", "child":<id>, "offset":{"x":dx,"y":dy,"z":dz}}
-- {"type":"Rotate", "child":<id>, "axis":{"x":ax,"y":ay,"z":az}, "angle":radians}
+- {"type":"Rotate", "child":<id>, "angles":{"x":dx,"y":dy,"z":dz}}  → Euler angles in DEGREES, applied as X, then Y, then Z
 - {"type":"Difference", "left":<id>, "right":<id>}                  → subtract right from left
 - {"type":"Union", "left":<id>, "right":<id>}
 - {"type":"Intersection", "left":<id>, "right":<id>}

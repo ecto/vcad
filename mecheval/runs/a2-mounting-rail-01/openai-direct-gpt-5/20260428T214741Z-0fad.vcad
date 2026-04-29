@@ -1,0 +1,19 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "BaseCube", "op": { "type": "Cube", "size": { "x": 100, "y": 20, "z": 8 } } },
+    "2": { "id": 2, "name": "CenteredBase", "op": { "type": "Translate", "child": 1, "offset": { "x": -50, "y": -10, "z": 0 } } },
+    "3": { "id": 3, "name": "HoleCylinder", "op": { "type": "Cylinder", "radius": 3, "height": 8, "segments": 32 } },
+    "4": { "id": 4, "name": "HoleLeft", "op": { "type": "Translate", "child": 3, "offset": { "x": -40, "y": 0, "z": 0 } } },
+    "5": { "id": 5, "name": "HoleCenter", "op": { "type": "Translate", "child": 3, "offset": { "x": 0, "y": 0, "z": 0 } } },
+    "6": { "id": 6, "name": "HoleRight", "op": { "type": "Translate", "child": 3, "offset": { "x": 40, "y": 0, "z": 0 } } },
+    "7": { "id": 7, "name": "HolesUnion1", "op": { "type": "Union", "left": 4, "right": 5 } },
+    "8": { "id": 8, "name": "HolesUnion2", "op": { "type": "Union", "left": 7, "right": 6 } },
+    "9": { "id": 9, "name": "RailWithHoles", "op": { "type": "Difference", "left": 2, "right": 8 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    { "root": 9, "material": "default" }
+  ]
+}

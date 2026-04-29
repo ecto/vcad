@@ -1,0 +1,155 @@
+{
+  "schema_version": 0,
+  "task_id": "c-reacher-01",
+  "task_sha256": "3aad876b5a5c728a0f2dd565e1c8982358f5d21a0d062ddf5dbafd259f5637c5",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "fail",
+      "details": {
+        "error": "parse: Invalid JSON vcad file: invalid value: expected key to be a number in quotes at line 4 column 5",
+        "reason": "fatal evaluation error"
+      }
+    },
+    {
+      "n": 1,
+      "type": "body_valid",
+      "params": {
+        "type": "body_valid"
+      },
+      "result": "not_implemented",
+      "details": {
+        "needs": "vcad-gym (phyz + tang)",
+        "reason": "skeleton — kernel wiring pending"
+      }
+    },
+    {
+      "n": 2,
+      "type": "fk_reaches",
+      "params": {
+        "type": "fk_reaches",
+        "target": [
+          0.2,
+          0,
+          0.1
+        ],
+        "tolerance_m": 0.005
+      },
+      "result": "not_implemented",
+      "details": {
+        "needs": "vcad-gym (phyz + tang)",
+        "reason": "skeleton — kernel wiring pending"
+      }
+    },
+    {
+      "n": 3,
+      "type": "torque_budget",
+      "params": {
+        "type": "torque_budget",
+        "payload_kg": 0,
+        "safety_factor": 1.5
+      },
+      "result": "not_implemented",
+      "details": {
+        "needs": "vcad-gym (phyz + tang)",
+        "reason": "skeleton — kernel wiring pending"
+      }
+    },
+    {
+      "n": 4,
+      "type": "task_success",
+      "params": {
+        "type": "task_success",
+        "task": "reach_target",
+        "params": {
+          "controller": "stock_pd",
+          "max_steps": 1000,
+          "target": [
+            0.2,
+            0,
+            0.1
+          ],
+          "tolerance_m": 0.005
+        }
+      },
+      "result": "not_implemented",
+      "details": {
+        "needs": "vcad-gym (phyz + tang)",
+        "reason": "skeleton — kernel wiring pending"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 5,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T213758Z-4442",
+  "model": {
+    "id": "openai-direct-gpt-4o-mini",
+    "name": "OpenAI (direct, gpt-4o-mini)",
+    "provider": "openai",
+    "params": {
+      "mode": "direct",
+      "model": "gpt-4o-mini",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "c-reacher-01",
+    "rendered": "Design a tabletop manipulator that touches a target at (0.20, 0.00, 0.10) meters in the world frame. The base is fixed at the origin, with its lowest contact in the XY plane (z = 0). Use at least two actuated revolute joints. Each link's mass must be under 0.5 kg, and each joint's torque ceiling is 5 N·m. The end-effector link must be tagged 'tip'. The arm must reach the target without any link colliding with the table (z = 0 plane), the base, or itself. Output a complete .vcad assembly with body, joints, materials, and an initial pose; the grader will solve forward kinematics to find a configuration that reaches the target.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "openai.chat.completions.create",
+        "args": {
+          "model": "gpt-4o-mini",
+          "max_tokens": 8000,
+          "system_chars": 1674,
+          "user_chars": 694
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 12934.671417
+      }
+    ],
+    "tokens": {
+      "input": 696,
+      "output": 622,
+      "total": 1318
+    },
+    "wallclock_sec": 12.934671416999999
+  },
+  "output": {
+    "vcad_path": "20260428T213758Z-4442.vcad",
+    "vcad_sha256": "b0c26bd6b3ad46ac787738087d8f042965ffdeb4f360959e36e3aba9b89684f2",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T21:37:58.889Z",
+    "ended_at": "2026-04-28T21:38:11.832Z"
+  },
+  "signature": null
+}

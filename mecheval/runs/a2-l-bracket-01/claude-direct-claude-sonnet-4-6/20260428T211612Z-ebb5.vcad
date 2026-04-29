@@ -1,0 +1,18 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {"id": 1, "name": "base", "op": {"type": "Cube", "size": {"x": 50, "y": 30, "z": 4}}},
+    "2": {"id": 2, "name": "wall", "op": {"type": "Cube", "size": {"x": 4, "y": 30, "z": 26}}},
+    "3": {"id": 3, "name": "wall_translated", "op": {"type": "Translate", "child": 2, "offset": {"x": 46, "y": 0, "z": 4}}},
+    "4": {"id": 4, "name": "l_body", "op": {"type": "Union", "left": 1, "right": 3}},
+    "5": {"id": 5, "name": "hole1_cyl", "op": {"type": "Cylinder", "radius": 2.5, "height": 4, "segments": 32}},
+    "6": {"id": 6, "name": "hole1_pos", "op": {"type": "Translate", "child": 5, "offset": {"x": 10, "y": 15, "z": 0}}},
+    "7": {"id": 7, "name": "hole2_cyl", "op": {"type": "Cylinder", "radius": 2.5, "height": 4, "segments": 32}},
+    "8": {"id": 8, "name": "hole2_pos", "op": {"type": "Translate", "child": 7, "offset": {"x": 35, "y": 15, "z": 0}}},
+    "9": {"id": 9, "name": "body_minus_hole1", "op": {"type": "Difference", "left": 4, "right": 6}},
+    "10": {"id": 10, "name": "final", "op": {"type": "Difference", "left": 9, "right": 8}}
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": 10, "material": "default"}]
+}

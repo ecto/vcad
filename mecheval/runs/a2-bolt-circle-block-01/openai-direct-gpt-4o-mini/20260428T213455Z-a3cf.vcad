@@ -1,0 +1,179 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": "1",
+      "name": "Block",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 60,
+          "y": 60,
+          "z": 10
+        }
+      }
+    },
+    "2": {
+      "id": "2",
+      "name": "Hole1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "3": {
+      "id": "3",
+      "name": "Hole2",
+      "op": {
+        "type": "Rotate",
+        "child": "2",
+        "axis": {
+          "x": 0,
+          "y": 0,
+          "z": 1
+        },
+        "angle": 0.7853981633974483
+      }
+    },
+    "4": {
+      "id": "4",
+      "name": "Hole3",
+      "op": {
+        "type": "Rotate",
+        "child": "2",
+        "axis": {
+          "x": 0,
+          "y": 0,
+          "z": 1
+        },
+        "angle": 1.5707963267948966
+      }
+    },
+    "5": {
+      "id": "5",
+      "name": "Hole4",
+      "op": {
+        "type": "Rotate",
+        "child": "2",
+        "axis": {
+          "x": 0,
+          "y": 0,
+          "z": 1
+        },
+        "angle": 2.356194490192345
+      }
+    },
+    "6": {
+      "id": "6",
+      "name": "Hole5",
+      "op": {
+        "type": "Rotate",
+        "child": "2",
+        "axis": {
+          "x": 0,
+          "y": 0,
+          "z": 1
+        },
+        "angle": 3.141592653589793
+      }
+    },
+    "7": {
+      "id": "7",
+      "name": "Hole6",
+      "op": {
+        "type": "Rotate",
+        "child": "2",
+        "axis": {
+          "x": 0,
+          "y": 0,
+          "z": 1
+        },
+        "angle": 3.9269908169872414
+      }
+    },
+    "8": {
+      "id": "8",
+      "name": "Hole7",
+      "op": {
+        "type": "Rotate",
+        "child": "2",
+        "axis": {
+          "x": 0,
+          "y": 0,
+          "z": 1
+        },
+        "angle": 4.71238898038469
+      }
+    },
+    "9": {
+      "id": "9",
+      "name": "Hole8",
+      "op": {
+        "type": "Rotate",
+        "child": "2",
+        "axis": {
+          "x": 0,
+          "y": 0,
+          "z": 1
+        },
+        "angle": 5.497787143782138
+      }
+    },
+    "10": {
+      "id": "10",
+      "name": "Holes",
+      "op": {
+        "type": "Union",
+        "left": "3",
+        "right": {
+          "type": "Union",
+          "left": "4",
+          "right": {
+            "type": "Union",
+            "left": "5",
+            "right": {
+              "type": "Union",
+              "left": "6",
+              "right": {
+                "type": "Union",
+                "left": "7",
+                "right": {
+                  "type": "Union",
+                  "left": "8",
+                  "right": "9"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "11": {
+      "id": "11",
+      "name": "FinalBlock",
+      "op": {
+        "type": "Difference",
+        "left": "1",
+        "right": {
+          "type": "Translate",
+          "child": "10",
+          "offset": {
+            "x": 20,
+            "y": 0,
+            "z": 0
+          }
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "11",
+      "material": "default"
+    }
+  ]
+}

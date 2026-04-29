@@ -1,0 +1,83 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "cube_main": {
+      "id": "cube_main",
+      "name": "Main cube",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 40, "y": 40, "z": 40}
+      }
+    },
+    "cube_main_centered": {
+      "id": "cube_main_centered",
+      "name": "Centered cube",
+      "op": {
+        "type": "Translate",
+        "child": "cube_main",
+        "offset": {"x": -20, "y": -20, "z": 0}
+      }
+    },
+    "sphere_full": {
+      "id": "sphere_full",
+      "name": "Full sphere",
+      "op": {
+        "type": "Sphere",
+        "radius": 15,
+        "segments": 32
+      }
+    },
+    "sphere_positioned": {
+      "id": "sphere_positioned",
+      "name": "Sphere at top of cube",
+      "op": {
+        "type": "Translate",
+        "child": "sphere_full",
+        "offset": {"x": 0, "y": 0, "z": 40}
+      }
+    },
+    "half_space": {
+      "id": "half_space",
+      "name": "Half-space for hemisphere extraction",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 100, "y": 100, "z": 100}
+      }
+    },
+    "half_space_positioned": {
+      "id": "half_space_positioned",
+      "name": "Half-space positioned above cube",
+      "op": {
+        "type": "Translate",
+        "child": "half_space",
+        "offset": {"x": -50, "y": -50, "z": 40}
+      }
+    },
+    "hemisphere": {
+      "id": "hemisphere",
+      "name": "Hemisphere (sphere intersected with half-space)",
+      "op": {
+        "type": "Intersection",
+        "left": "sphere_positioned",
+        "right": "half_space_positioned"
+      }
+    },
+    "result": {
+      "id": "result",
+      "name": "Cube with hemispherical dome",
+      "op": {
+        "type": "Union",
+        "left": "cube_main_centered",
+        "right": "hemisphere"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "result",
+      "material": "default"
+    }
+  ]
+}

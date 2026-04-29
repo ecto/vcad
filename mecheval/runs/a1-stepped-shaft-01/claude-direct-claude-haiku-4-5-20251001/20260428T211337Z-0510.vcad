@@ -1,0 +1,60 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "base_cylinder": {
+      "id": "base_cylinder",
+      "name": "Base Cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 20,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "base_centered": {
+      "id": "base_centered",
+      "name": "Base Cylinder Centered",
+      "op": {
+        "type": "Translate",
+        "child": "base_cylinder",
+        "offset": { "x": -20, "y": -20, "z": 0 }
+      }
+    },
+    "small_cylinder": {
+      "id": "small_cylinder",
+      "name": "Small Cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 15,
+        "segments": 32
+      }
+    },
+    "small_centered": {
+      "id": "small_centered",
+      "name": "Small Cylinder Centered",
+      "op": {
+        "type": "Translate",
+        "child": "small_cylinder",
+        "offset": { "x": -10, "y": -10, "z": 10 }
+      }
+    },
+    "stepped_shaft": {
+      "id": "stepped_shaft",
+      "name": "Stepped Shaft",
+      "op": {
+        "type": "Union",
+        "left": "base_centered",
+        "right": "small_centered"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "stepped_shaft",
+      "material": "default"
+    }
+  ]
+}

@@ -1,0 +1,199 @@
+{
+  "schema_version": 0,
+  "task_id": "a3-spherical-dome-block-01",
+  "task_sha256": "c684f817f90fd823cb95d7d5f3d1f0a259bf340445f19b4069a2007a6e62bdaa",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -20,
+          -20,
+          0
+        ],
+        "max": [
+          20,
+          20,
+          55
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "fail",
+      "details": {
+        "actual_max": [
+          40,
+          40,
+          40
+        ],
+        "actual_min": [
+          0,
+          0,
+          0
+        ],
+        "deviation_max": [
+          20,
+          20,
+          -15
+        ],
+        "deviation_min": [
+          20,
+          20,
+          0
+        ],
+        "max_abs_deviation_mm": 20,
+        "tolerance_mm": 0.2
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 71068.58,
+        "tolerance_pct": 2
+      },
+      "result": "fail",
+      "details": {
+        "volume": {
+          "actual_mm3": 64000,
+          "deviation_pct": 9.946139348781138,
+          "pass": false,
+          "spec_mm3": 71068.58,
+          "tolerance_pct": 2
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 2
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                40,
+                40,
+                40
+              ],
+              "original_min": [
+                0,
+                0,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                40,
+                40,
+                40
+              ],
+              "roundtripped_min": [
+                0,
+                0,
+                0
+              ],
+              "tolerance_mm": 1.385640646055102
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 64000,
+              "pass": true,
+              "roundtripped_mm3": 64000
+            }
+          }
+        ],
+        "tolerance_pct": 2
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 2,
+    "checks_total": 4,
+    "score": 0.5,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T233007Z-2fac",
+  "model": {
+    "id": "openai-direct-gpt-4o-mini",
+    "name": "OpenAI (direct, gpt-4o-mini)",
+    "provider": "openai",
+    "params": {
+      "mode": "direct",
+      "model": "gpt-4o-mini",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a3-spherical-dome-block-01",
+    "rendered": "Make a single solid consisting of a cube with a hemispherical dome fused onto its top face. Cube: 40mm × 40mm × 40mm, centered in X and Y with the bottom face on the XY plane (so it spans x in [-20, 20], y in [-20, 20], z in [0, 40]). Dome: a hemisphere of radius 15mm sitting on top of the cube, centered on the Z axis. The flat (circular) face of the hemisphere is flush with the top face of the cube at z = 40, and the dome extends upward from there. The two parts are joined into a single solid (their shared circular interface is internal, not a face). Note: the kernel only has a full Sphere primitive — to get a hemisphere you must boolean a sphere with a half-space (e.g. intersect a sphere with a large cube positioned at z ≥ 40).",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "openai.chat.completions.create",
+        "args": {
+          "model": "gpt-4o-mini",
+          "max_tokens": 8000,
+          "system_chars": 1674,
+          "user_chars": 808
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 7923.877167000001
+      }
+    ],
+    "tokens": {
+      "input": 729,
+      "output": 406,
+      "total": 1135
+    },
+    "wallclock_sec": 7.9238771670000006
+  },
+  "output": {
+    "vcad_path": "20260428T233007Z-2fac.vcad",
+    "vcad_sha256": "3ecbce09d547b5bee3fa6b025fe2fcc8e20b9b60afcd3db50d05f3fb3d64ca70",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T23:30:07.569Z",
+    "ended_at": "2026-04-28T23:30:15.512Z"
+  },
+  "signature": null
+}

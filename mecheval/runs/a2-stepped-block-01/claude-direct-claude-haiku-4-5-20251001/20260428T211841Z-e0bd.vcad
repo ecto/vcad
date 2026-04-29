@@ -1,0 +1,51 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "base": {
+      "id": "base",
+      "name": "Base Block",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 50, "y": 30, "z": 20}
+      }
+    },
+    "base_translated": {
+      "id": "base_translated",
+      "name": "Base Block Centered",
+      "op": {
+        "type": "Translate",
+        "child": "base",
+        "offset": {"x": -25, "y": -15, "z": 0}
+      }
+    },
+    "cutaway": {
+      "id": "cutaway",
+      "name": "Cutaway Block",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 25, "y": 30, "z": 10}
+      }
+    },
+    "cutaway_positioned": {
+      "id": "cutaway_positioned",
+      "name": "Cutaway Block Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "cutaway",
+        "offset": {"x": 0, "y": -15, "z": 10}
+      }
+    },
+    "stepped_block": {
+      "id": "stepped_block",
+      "name": "Stepped Block",
+      "op": {
+        "type": "Difference",
+        "left": "base_translated",
+        "right": "cutaway_positioned"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": "stepped_block", "material": "default"}]
+}

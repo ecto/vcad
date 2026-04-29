@@ -1,0 +1,77 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Cube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 40,
+          "y": 40,
+          "z": 40
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Sphere",
+      "op": {
+        "type": "Sphere",
+        "radius": 15,
+        "segments": 32
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Half-Space",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 100,
+          "y": 100,
+          "z": 100
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Dome",
+      "op": {
+        "type": "Intersection",
+        "left": 2,
+        "right": 3
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "FinalObject",
+      "op": {
+        "type": "Union",
+        "left": 1,
+        "right": 4
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "TranslateDome",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 40
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 5,
+      "material": "default"
+    }
+  ]
+}

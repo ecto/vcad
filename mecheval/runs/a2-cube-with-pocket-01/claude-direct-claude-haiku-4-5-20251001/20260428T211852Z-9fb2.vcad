@@ -1,0 +1,56 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "cube": {
+      "id": "cube",
+      "name": "base_cube",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 40, "y": 40, "z": 40}
+      }
+    },
+    "cube_translated": {
+      "id": "cube_translated",
+      "name": "cube_centered",
+      "op": {
+        "type": "Translate",
+        "child": "cube",
+        "offset": {"x": -20, "y": -20, "z": 0}
+      }
+    },
+    "pocket": {
+      "id": "pocket",
+      "name": "pocket_cube",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 20, "y": 20, "z": 10}
+      }
+    },
+    "pocket_translated": {
+      "id": "pocket_translated",
+      "name": "pocket_positioned",
+      "op": {
+        "type": "Translate",
+        "child": "pocket",
+        "offset": {"x": -10, "y": -10, "z": 30}
+      }
+    },
+    "result": {
+      "id": "result",
+      "name": "cube_with_pocket",
+      "op": {
+        "type": "Difference",
+        "left": "cube_translated",
+        "right": "pocket_translated"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "result",
+      "material": "default"
+    }
+  ]
+}

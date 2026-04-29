@@ -1,0 +1,22 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {"id": 1, "name": "horizontal_bar", "op": {"type": "Cube", "size": {"x": 60, "y": 20, "z": 5}}},
+    "2": {"id": 2, "name": "horizontal_bar_translated", "op": {"type": "Translate", "child": 1, "offset": {"x": -30, "y": 0, "z": 0}}},
+    "3": {"id": 3, "name": "vertical_stem", "op": {"type": "Cube", "size": {"x": 20, "y": 30, "z": 5}}},
+    "4": {"id": 4, "name": "vertical_stem_translated", "op": {"type": "Translate", "child": 3, "offset": {"x": -10, "y": 20, "z": 0}}},
+    "5": {"id": 5, "name": "t_shape", "op": {"type": "Union", "left": 2, "right": 4}},
+    "6": {"id": 6, "name": "hole_top_stem", "op": {"type": "Cylinder", "radius": 2.5, "height": 5, "segments": 32}},
+    "7": {"id": 7, "name": "hole_top_stem_placed", "op": {"type": "Translate", "child": 6, "offset": {"x": 0, "y": 45, "z": 0}}},
+    "8": {"id": 8, "name": "hole_left", "op": {"type": "Cylinder", "radius": 2.5, "height": 5, "segments": 32}},
+    "9": {"id": 9, "name": "hole_left_placed", "op": {"type": "Translate", "child": 8, "offset": {"x": -25, "y": 10, "z": 0}}},
+    "10": {"id": 10, "name": "hole_right", "op": {"type": "Cylinder", "radius": 2.5, "height": 5, "segments": 32}},
+    "11": {"id": 11, "name": "hole_right_placed", "op": {"type": "Translate", "child": 10, "offset": {"x": 25, "y": 10, "z": 0}}},
+    "12": {"id": 12, "name": "diff1", "op": {"type": "Difference", "left": 5, "right": 7}},
+    "13": {"id": 13, "name": "diff2", "op": {"type": "Difference", "left": 12, "right": 9}},
+    "14": {"id": 14, "name": "final", "op": {"type": "Difference", "left": 13, "right": 11}}
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": 14, "material": "default"}]
+}

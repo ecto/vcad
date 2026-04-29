@@ -1,0 +1,64 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "base": {
+      "id": "base",
+      "name": "Base",
+      "op": {"type":"Cube", "size":{"x":0.1,"y":0.1,"z":0.05}}
+    },
+    "link1": {
+      "id": "link1",
+      "name": "Link 1",
+      "op": {"type":"Cylinder", "radius":0.01,"height":0.2,"segments":32}
+    },
+    "joint1": {
+      "id": "joint1",
+      "name": "Joint 1",
+      "op": {"type":"Rotate", "child":"link1", "angles":{"x":0,"y":0,"z":0}}
+    },
+    "link2": {
+      "id": "link2",
+      "name": "Link 2",
+      "op": {"type":"Cylinder", "radius":0.01,"height":0.15,"segments":32}
+    },
+    "joint2": {
+      "id": "joint2",
+      "name": "Joint 2",
+      "op": {"type":"Rotate", "child":"link2", "angles":{"x":0,"y":0,"z":0}}
+    },
+    "end_effector": {
+      "id": "end_effector",
+      "name": "End Effector",
+      "op": {"type":"Cylinder", "radius":0.01,"height":0.05,"segments":32}
+    },
+    "translate_link1": {
+      "id": "translate_link1",
+      "name": "Translate Link 1",
+      "op": {"type":"Translate", "child":"joint1", "offset":{"x":0,"y":0,"z":0.025}}
+    },
+    "translate_link2": {
+      "id": "translate_link2",
+      "name": "Translate Link 2",
+      "op": {"type":"Translate", "child":"joint2", "offset":{"x":0,"y":0,"z":0.2}}
+    },
+    "translate_end_effector": {
+      "id": "translate_end_effector",
+      "name": "Translate End Effector",
+      "op": {"type":"Translate", "child":"end_effector", "offset":{"x":0,"y":0,"z":0.15}}
+    },
+    "assembly": {
+      "id": "assembly",
+      "name": "Manipulator",
+      "op": {"type":"Union", "left":"base", "right":"translate_link1"}
+    }
+  },
+  "materials": {},
+  "part_materials": {
+    "link1": "default",
+    "link2": "default",
+    "end_effector": "default"
+  },
+  "roots": [
+    {"root": "assembly", "material": "default"}
+  ]
+}

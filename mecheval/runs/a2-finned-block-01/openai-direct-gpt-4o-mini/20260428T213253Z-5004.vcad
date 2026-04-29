@@ -1,0 +1,130 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "base": {
+      "id": "base",
+      "name": "Base",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 30,
+          "z": 5
+        }
+      }
+    },
+    "fin1": {
+      "id": "fin1",
+      "name": "Fin 1",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 3,
+          "z": 15
+        }
+      }
+    },
+    "fin2": {
+      "id": "fin2",
+      "name": "Fin 2",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 3,
+          "z": 15
+        }
+      }
+    },
+    "fin3": {
+      "id": "fin3",
+      "name": "Fin 3",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 3,
+          "z": 15
+        }
+      }
+    },
+    "translate_base": {
+      "id": "translate_base",
+      "name": "Translate Base",
+      "op": {
+        "type": "Translate",
+        "child": "base",
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 2.5
+        }
+      }
+    },
+    "translate_fin1": {
+      "id": "translate_fin1",
+      "name": "Translate Fin 1",
+      "op": {
+        "type": "Translate",
+        "child": "fin1",
+        "offset": {
+          "x": 0,
+          "y": -10,
+          "z": 12.5
+        }
+      }
+    },
+    "translate_fin2": {
+      "id": "translate_fin2",
+      "name": "Translate Fin 2",
+      "op": {
+        "type": "Translate",
+        "child": "fin2",
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 12.5
+        }
+      }
+    },
+    "translate_fin3": {
+      "id": "translate_fin3",
+      "name": "Translate Fin 3",
+      "op": {
+        "type": "Translate",
+        "child": "fin3",
+        "offset": {
+          "x": 0,
+          "y": 10,
+          "z": 12.5
+        }
+      }
+    },
+    "union": {
+      "id": "union",
+      "name": "Union of Base and Fins",
+      "op": {
+        "type": "Union",
+        "left": "translate_base",
+        "right": {
+          "type": "Union",
+          "left": "translate_fin1",
+          "right": {
+            "type": "Union",
+            "left": "translate_fin2",
+            "right": "translate_fin3"
+          }
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "union",
+      "material": "default"
+    }
+  ]
+}

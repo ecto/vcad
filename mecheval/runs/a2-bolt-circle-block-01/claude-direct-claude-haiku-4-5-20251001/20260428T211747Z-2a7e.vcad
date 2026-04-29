@@ -1,0 +1,254 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "base_cube": {
+      "id": "base_cube",
+      "name": "Base Square Block",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 60, "y": 60, "z": 10}
+      }
+    },
+    "base_centered": {
+      "id": "base_centered",
+      "name": "Base Centered",
+      "op": {
+        "type": "Translate",
+        "child": "base_cube",
+        "offset": {"x": -30, "y": -30, "z": 0}
+      }
+    },
+    "hole_0": {
+      "id": "hole_0",
+      "name": "Hole at 0°",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole_0_positioned": {
+      "id": "hole_0_positioned",
+      "name": "Hole 0 Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_0",
+        "offset": {"x": 20, "y": 0, "z": 0}
+      }
+    },
+    "hole_1": {
+      "id": "hole_1",
+      "name": "Hole at 45°",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole_1_positioned": {
+      "id": "hole_1_positioned",
+      "name": "Hole 1 Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_1",
+        "offset": {"x": 14.142135623730951, "y": 14.142135623730951, "z": 0}
+      }
+    },
+    "hole_2": {
+      "id": "hole_2",
+      "name": "Hole at 90°",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole_2_positioned": {
+      "id": "hole_2_positioned",
+      "name": "Hole 2 Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_2",
+        "offset": {"x": 0, "y": 20, "z": 0}
+      }
+    },
+    "hole_3": {
+      "id": "hole_3",
+      "name": "Hole at 135°",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole_3_positioned": {
+      "id": "hole_3_positioned",
+      "name": "Hole 3 Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_3",
+        "offset": {"x": -14.142135623730951, "y": 14.142135623730951, "z": 0}
+      }
+    },
+    "hole_4": {
+      "id": "hole_4",
+      "name": "Hole at 180°",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole_4_positioned": {
+      "id": "hole_4_positioned",
+      "name": "Hole 4 Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_4",
+        "offset": {"x": -20, "y": 0, "z": 0}
+      }
+    },
+    "hole_5": {
+      "id": "hole_5",
+      "name": "Hole at 225°",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole_5_positioned": {
+      "id": "hole_5_positioned",
+      "name": "Hole 5 Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_5",
+        "offset": {"x": -14.142135623730951, "y": -14.142135623730951, "z": 0}
+      }
+    },
+    "hole_6": {
+      "id": "hole_6",
+      "name": "Hole at 270°",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole_6_positioned": {
+      "id": "hole_6_positioned",
+      "name": "Hole 6 Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_6",
+        "offset": {"x": 0, "y": -20, "z": 0}
+      }
+    },
+    "hole_7": {
+      "id": "hole_7",
+      "name": "Hole at 315°",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole_7_positioned": {
+      "id": "hole_7_positioned",
+      "name": "Hole 7 Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_7",
+        "offset": {"x": 14.142135623730951, "y": -14.142135623730951, "z": 0}
+      }
+    },
+    "with_hole_0": {
+      "id": "with_hole_0",
+      "name": "After Hole 0",
+      "op": {
+        "type": "Difference",
+        "left": "base_centered",
+        "right": "hole_0_positioned"
+      }
+    },
+    "with_hole_1": {
+      "id": "with_hole_1",
+      "name": "After Hole 1",
+      "op": {
+        "type": "Difference",
+        "left": "with_hole_0",
+        "right": "hole_1_positioned"
+      }
+    },
+    "with_hole_2": {
+      "id": "with_hole_2",
+      "name": "After Hole 2",
+      "op": {
+        "type": "Difference",
+        "left": "with_hole_1",
+        "right": "hole_2_positioned"
+      }
+    },
+    "with_hole_3": {
+      "id": "with_hole_3",
+      "name": "After Hole 3",
+      "op": {
+        "type": "Difference",
+        "left": "with_hole_2",
+        "right": "hole_3_positioned"
+      }
+    },
+    "with_hole_4": {
+      "id": "with_hole_4",
+      "name": "After Hole 4",
+      "op": {
+        "type": "Difference",
+        "left": "with_hole_3",
+        "right": "hole_4_positioned"
+      }
+    },
+    "with_hole_5": {
+      "id": "with_hole_5",
+      "name": "After Hole 5",
+      "op": {
+        "type": "Difference",
+        "left": "with_hole_4",
+        "right": "hole_5_positioned"
+      }
+    },
+    "with_hole_6": {
+      "id": "with_hole_6",
+      "name": "After Hole 6",
+      "op": {
+        "type": "Difference",
+        "left": "with_hole_5",
+        "right": "hole_6_positioned"
+      }
+    },
+    "final": {
+      "id": "final",
+      "name": "Bolt Circle Block",
+      "op": {
+        "type": "Difference",
+        "left": "with_hole_6",
+        "right": "hole_7_positioned"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "final",
+      "material": "default"
+    }
+  ]
+}

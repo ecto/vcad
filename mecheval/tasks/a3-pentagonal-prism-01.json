@@ -1,0 +1,45 @@
+{
+  "id": "a3-pentagonal-prism-01",
+  "suite": "A",
+  "tier": "A3",
+  "title": "Pentagonal prism with offset hole",
+  "prompt": "Make a regular pentagonal prism. The cross-section is a regular pentagon centered on the Z axis with circumradius 15mm (distance from center to each vertex). Orient the pentagon so one vertex points in the +Y direction. Height 25mm along Z, base on the XY plane (z = 0 to z = 25). Drill one through-hole of diameter 5mm, axis parallel to Z, with its axis offset 5mm in the +X direction from the center (so hole axis is at (x=5, y=0)). Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-14.27, -12.13, 0],
+      "max": [14.27, 15.0, 25],
+      "tolerance_mm": 0.3
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 12884.48,
+      "tolerance_pct": 1.5
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 5.0,
+      "expected": 1,
+      "diameter_tolerance_mm": 0.05
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 5.0,
+      "positions": [[5, 0, 0]],
+      "tolerance_mm": 0.15
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 1.5 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 40000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 40
+  },
+  "pass_k": 5,
+  "tags": ["pentagon", "polygon", "offset-hole", "advanced"]
+}

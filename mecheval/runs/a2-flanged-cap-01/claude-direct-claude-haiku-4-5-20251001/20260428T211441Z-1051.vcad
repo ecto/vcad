@@ -1,0 +1,184 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "outer_cylinder": {
+      "id": "outer_cylinder",
+      "name": "Outer Cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 30,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "center_hole": {
+      "id": "center_hole",
+      "name": "Center Hole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 20,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "with_center_hole": {
+      "id": "with_center_hole",
+      "name": "With Center Hole",
+      "op": {
+        "type": "Difference",
+        "left": "outer_cylinder",
+        "right": "center_hole"
+      }
+    },
+    "bolt_hole_0": {
+      "id": "bolt_hole_0",
+      "name": "Bolt Hole 0",
+      "op": {
+        "type": "Translate",
+        "child": "bolt_cylinder",
+        "offset": {
+          "x": 25,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "bolt_hole_1": {
+      "id": "bolt_hole_1",
+      "name": "Bolt Hole 1",
+      "op": {
+        "type": "Translate",
+        "child": "bolt_cylinder",
+        "offset": {
+          "x": 12.5,
+          "y": 21.650635094610968,
+          "z": 0
+        }
+      }
+    },
+    "bolt_hole_2": {
+      "id": "bolt_hole_2",
+      "name": "Bolt Hole 2",
+      "op": {
+        "type": "Translate",
+        "child": "bolt_cylinder",
+        "offset": {
+          "x": -12.5,
+          "y": 21.650635094610968,
+          "z": 0
+        }
+      }
+    },
+    "bolt_hole_3": {
+      "id": "bolt_hole_3",
+      "name": "Bolt Hole 3",
+      "op": {
+        "type": "Translate",
+        "child": "bolt_cylinder",
+        "offset": {
+          "x": -25,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "bolt_hole_4": {
+      "id": "bolt_hole_4",
+      "name": "Bolt Hole 4",
+      "op": {
+        "type": "Translate",
+        "child": "bolt_cylinder",
+        "offset": {
+          "x": -12.5,
+          "y": -21.650635094610968,
+          "z": 0
+        }
+      }
+    },
+    "bolt_hole_5": {
+      "id": "bolt_hole_5",
+      "name": "Bolt Hole 5",
+      "op": {
+        "type": "Translate",
+        "child": "bolt_cylinder",
+        "offset": {
+          "x": 12.5,
+          "y": -21.650635094610968,
+          "z": 0
+        }
+      }
+    },
+    "bolt_cylinder": {
+      "id": "bolt_cylinder",
+      "name": "Bolt Cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "all_bolt_holes": {
+      "id": "all_bolt_holes",
+      "name": "All Bolt Holes",
+      "op": {
+        "type": "Union",
+        "left": "bolt_hole_0",
+        "right": "bolt_hole_1"
+      }
+    },
+    "all_bolt_holes_2": {
+      "id": "all_bolt_holes_2",
+      "name": "All Bolt Holes 2",
+      "op": {
+        "type": "Union",
+        "left": "all_bolt_holes",
+        "right": "bolt_hole_2"
+      }
+    },
+    "all_bolt_holes_3": {
+      "id": "all_bolt_holes_3",
+      "name": "All Bolt Holes 3",
+      "op": {
+        "type": "Union",
+        "left": "all_bolt_holes_2",
+        "right": "bolt_hole_3"
+      }
+    },
+    "all_bolt_holes_4": {
+      "id": "all_bolt_holes_4",
+      "name": "All Bolt Holes 4",
+      "op": {
+        "type": "Union",
+        "left": "all_bolt_holes_3",
+        "right": "bolt_hole_4"
+      }
+    },
+    "all_bolt_holes_5": {
+      "id": "all_bolt_holes_5",
+      "name": "All Bolt Holes 5",
+      "op": {
+        "type": "Union",
+        "left": "all_bolt_holes_4",
+        "right": "bolt_hole_5"
+      }
+    },
+    "flanged_cap": {
+      "id": "flanged_cap",
+      "name": "Flanged Cap",
+      "op": {
+        "type": "Difference",
+        "left": "with_center_hole",
+        "right": "all_bolt_holes_5"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "flanged_cap",
+      "material": "default"
+    }
+  ]
+}

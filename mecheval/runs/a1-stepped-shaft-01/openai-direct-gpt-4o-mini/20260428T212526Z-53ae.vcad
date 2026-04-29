@@ -1,0 +1,48 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": "1",
+      "name": "Base Cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 20,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "2": {
+      "id": "2",
+      "name": "Top Cylinder",
+      "op": {
+        "type": "Translate",
+        "child": {
+          "type": "Cylinder",
+          "radius": 10,
+          "height": 15,
+          "segments": 32
+        },
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 10
+        }
+      }
+    },
+    "3": {
+      "id": "3",
+      "name": "Stepped Shaft",
+      "op": {
+        "type": "Union",
+        "left": "1",
+        "right": "2"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{
+    "root": "3",
+    "material": "default"
+  }]
+}

@@ -82,14 +82,16 @@ export const defaultCubeSolver: Solver = {
 
 import { claudeDirectSolver, makeClaudeDirectSolver } from "./solvers/claude-direct.js";
 import { claudeMcpSolver, makeClaudeMcpSolver } from "./solvers/claude-mcp.js";
+import { openAiDirectSolver, makeOpenAiDirectSolver } from "./solvers/openai-direct.js";
 
 /** Look up a solver by id. Currently ships:
  *  - default-cube           — baseline villain
- *  - claude-direct[-<m>]    — single-shot, prompt-only
+ *  - claude-direct[-<m>]    — single-shot, prompt-only (Anthropic)
  *  - claude-mcp[-<m>]       — agentic, drives @vcad/mcp via MCP tool loop
+ *  - openai-direct[-<m>]    — single-shot, prompt-only (OpenAI)
  *
- *  SDKs (Anthropic, MCP) are loaded lazily inside `solve()`, so callers
- *  that only use DEFAULT_CUBE never pay for the import. */
+ *  SDKs (Anthropic, MCP, OpenAI) are loaded lazily inside `solve()`, so
+ *  callers that only use DEFAULT_CUBE never pay for the import. */
 export function getSolver(id: string): Solver {
   if (id === "default-cube" || id === "DEFAULT_CUBE") return defaultCubeSolver;
   if (id === "claude-direct") return claudeDirectSolver;
@@ -100,7 +102,11 @@ export function getSolver(id: string): Solver {
   if (id.startsWith("claude-mcp-")) {
     return makeClaudeMcpSolver({ model: id.slice("claude-mcp-".length) });
   }
+  if (id === "openai-direct") return openAiDirectSolver;
+  if (id.startsWith("openai-direct-")) {
+    return makeOpenAiDirectSolver({ model: id.slice("openai-direct-".length) });
+  }
   throw new Error(
-    `unknown solver "${id}". Available: "default-cube", "claude-direct[-<m>]", "claude-mcp[-<m>]".`,
+    `unknown solver "${id}". Available: "default-cube", "claude-direct[-<m>]", "claude-mcp[-<m>]", "openai-direct[-<m>]".`,
   );
 }

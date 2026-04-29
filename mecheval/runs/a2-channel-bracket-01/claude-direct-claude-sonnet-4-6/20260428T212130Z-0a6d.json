@@ -1,0 +1,199 @@
+{
+  "schema_version": 0,
+  "task_id": "a2-channel-bracket-01",
+  "task_sha256": "8a57ee77a91f87fa90ba207e9524334697e4b43bab1d516bc878440ebaf57017",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          0,
+          0,
+          0
+        ],
+        "max": [
+          30,
+          40,
+          30
+        ],
+        "tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          30,
+          40,
+          30
+        ],
+        "actual_min": [
+          0,
+          0,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.05
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 13120,
+        "tolerance_pct": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "volume": {
+          "actual_mm3": 13120,
+          "deviation_pct": 0,
+          "pass": true,
+          "spec_mm3": 13120,
+          "tolerance_pct": 0.1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                30,
+                40,
+                30
+              ],
+              "original_min": [
+                0,
+                0,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                30,
+                40,
+                30
+              ],
+              "roundtripped_min": [
+                0,
+                0,
+                0
+              ],
+              "tolerance_mm": 0.05830951894845301
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 13120,
+              "pass": true,
+              "roundtripped_mm3": 13120
+            }
+          }
+        ],
+        "tolerance_pct": 0.1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T212130Z-0a6d",
+  "model": {
+    "id": "claude-direct-claude-sonnet-4-6",
+    "name": "Claude (direct, claude-sonnet-4-6)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "direct",
+      "model": "claude-sonnet-4-6",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a2-channel-bracket-01",
+    "rendered": "Make a U-shaped channel bracket built from three rectangular plates fused into a single solid. Bottom plate: x in [0, 30], y in [0, 40], z in [0, 4]. Left wall standing on top of the bottom: x in [0, 4], y in [0, 40], z in [4, 30]. Right wall standing on top of the bottom: x in [26, 30], y in [0, 40], z in [4, 30]. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "anthropic.messages.create",
+        "args": {
+          "model": "claude-sonnet-4-6",
+          "max_tokens": 8000,
+          "system_chars": 1632,
+          "user_chars": 403
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5300.572749999999
+      }
+    ],
+    "tokens": {
+      "input": 697,
+      "output": 434,
+      "total": 1131
+    },
+    "wallclock_sec": 5.30057275
+  },
+  "output": {
+    "vcad_path": "20260428T212130Z-0a6d.vcad",
+    "vcad_sha256": "aed263a4c66a5f2cc46f94d153e472c6dccde0498d73177a8adee6e97f72644a",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T21:21:30.168Z",
+    "ended_at": "2026-04-28T21:21:35.483Z"
+  },
+  "signature": null
+}

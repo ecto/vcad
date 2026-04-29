@@ -1,0 +1,26 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "Body_OuterCylinder", "op": { "type": "Cylinder", "radius": 30, "height": 8, "segments": 32 } },
+    "2": { "id": 2, "name": "CentralHole_Cylinder", "op": { "type": "Cylinder", "radius": 20, "height": 8, "segments": 32 } },
+    "3": { "id": 3, "name": "Body_minus_Center", "op": { "type": "Difference", "left": 1, "right": 2 } },
+    "4": { "id": 4, "name": "BoltHole_Cylinder", "op": { "type": "Cylinder", "radius": 2.5, "height": 8, "segments": 32 } },
+    "5": { "id": 5, "name": "BoltHole_0deg", "op": { "type": "Translate", "child": 4, "offset": { "x": 25, "y": 0, "z": 0 } } },
+    "6": { "id": 6, "name": "BoltHole_60deg", "op": { "type": "Translate", "child": 4, "offset": { "x": 12.5, "y": 21.6506350946, "z": 0 } } },
+    "7": { "id": 7, "name": "BoltHole_120deg", "op": { "type": "Translate", "child": 4, "offset": { "x": -12.5, "y": 21.6506350946, "z": 0 } } },
+    "8": { "id": 8, "name": "BoltHole_180deg", "op": { "type": "Translate", "child": 4, "offset": { "x": -25, "y": 0, "z": 0 } } },
+    "9": { "id": 9, "name": "BoltHole_240deg", "op": { "type": "Translate", "child": 4, "offset": { "x": -12.5, "y": -21.6506350946, "z": 0 } } },
+    "10": { "id": 10, "name": "BoltHole_300deg", "op": { "type": "Translate", "child": 4, "offset": { "x": 12.5, "y": -21.6506350946, "z": 0 } } },
+    "11": { "id": 11, "name": "Minus_Bolt_0", "op": { "type": "Difference", "left": 3, "right": 5 } },
+    "12": { "id": 12, "name": "Minus_Bolt_60", "op": { "type": "Difference", "left": 11, "right": 6 } },
+    "13": { "id": 13, "name": "Minus_Bolt_120", "op": { "type": "Difference", "left": 12, "right": 7 } },
+    "14": { "id": 14, "name": "Minus_Bolt_180", "op": { "type": "Difference", "left": 13, "right": 8 } },
+    "15": { "id": 15, "name": "Minus_Bolt_240", "op": { "type": "Difference", "left": 14, "right": 9 } },
+    "16": { "id": 16, "name": "Minus_Bolt_300", "op": { "type": "Difference", "left": 15, "right": 10 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    { "root": 16, "material": "default" }
+  ]
+}

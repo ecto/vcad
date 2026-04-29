@@ -1,0 +1,341 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "cube_axis": {
+      "id": "cube_axis",
+      "name": "axis_aligned_square_prism",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 40,
+          "y": 40,
+          "z": 8
+        }
+      }
+    },
+    "trans_axis": {
+      "id": "trans_axis",
+      "name": "translate_axis_square_to_center",
+      "op": {
+        "type": "Translate",
+        "child": "cube_axis",
+        "offset": {
+          "x": -20,
+          "y": -20,
+          "z": 0
+        }
+      }
+    },
+    "cube_rot": {
+      "id": "cube_rot",
+      "name": "rotated_square_prism",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 40,
+          "y": 40,
+          "z": 8
+        }
+      }
+    },
+    "trans_rot": {
+      "id": "trans_rot",
+      "name": "translate_rot_square_to_center",
+      "op": {
+        "type": "Translate",
+        "child": "cube_rot",
+        "offset": {
+          "x": -20,
+          "y": -20,
+          "z": 0
+        }
+      }
+    },
+    "rot45": {
+      "id": "rot45",
+      "name": "rotate_45_deg",
+      "op": {
+        "type": "Rotate",
+        "child": "trans_rot",
+        "angles": {
+          "x": 0,
+          "y": 0,
+          "z": 45
+        }
+      }
+    },
+    "octagon": {
+      "id": "octagon",
+      "name": "octagonal_prism_intersection",
+      "op": {
+        "type": "Intersection",
+        "left": "trans_axis",
+        "right": "rot45"
+      }
+    },
+    "cyl_0": {
+      "id": "cyl_0",
+      "name": "hole_0",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "tcyl_0": {
+      "id": "tcyl_0",
+      "name": "translate_hole_0",
+      "op": {
+        "type": "Translate",
+        "child": "cyl_0",
+        "offset": {
+          "x": 15,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "cyl_1": {
+      "id": "cyl_1",
+      "name": "hole_1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "tcyl_1": {
+      "id": "tcyl_1",
+      "name": "translate_hole_1",
+      "op": {
+        "type": "Translate",
+        "child": "cyl_1",
+        "offset": {
+          "x": 10.606602,
+          "y": 10.606602,
+          "z": 0
+        }
+      }
+    },
+    "cyl_2": {
+      "id": "cyl_2",
+      "name": "hole_2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "tcyl_2": {
+      "id": "tcyl_2",
+      "name": "translate_hole_2",
+      "op": {
+        "type": "Translate",
+        "child": "cyl_2",
+        "offset": {
+          "x": 0,
+          "y": 15,
+          "z": 0
+        }
+      }
+    },
+    "cyl_3": {
+      "id": "cyl_3",
+      "name": "hole_3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "tcyl_3": {
+      "id": "tcyl_3",
+      "name": "translate_hole_3",
+      "op": {
+        "type": "Translate",
+        "child": "cyl_3",
+        "offset": {
+          "x": -10.606602,
+          "y": 10.606602,
+          "z": 0
+        }
+      }
+    },
+    "cyl_4": {
+      "id": "cyl_4",
+      "name": "hole_4",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "tcyl_4": {
+      "id": "tcyl_4",
+      "name": "translate_hole_4",
+      "op": {
+        "type": "Translate",
+        "child": "cyl_4",
+        "offset": {
+          "x": -15,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "cyl_5": {
+      "id": "cyl_5",
+      "name": "hole_5",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "tcyl_5": {
+      "id": "tcyl_5",
+      "name": "translate_hole_5",
+      "op": {
+        "type": "Translate",
+        "child": "cyl_5",
+        "offset": {
+          "x": -10.606602,
+          "y": -10.606602,
+          "z": 0
+        }
+      }
+    },
+    "cyl_6": {
+      "id": "cyl_6",
+      "name": "hole_6",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "tcyl_6": {
+      "id": "tcyl_6",
+      "name": "translate_hole_6",
+      "op": {
+        "type": "Translate",
+        "child": "cyl_6",
+        "offset": {
+          "x": 0,
+          "y": -15,
+          "z": 0
+        }
+      }
+    },
+    "cyl_7": {
+      "id": "cyl_7",
+      "name": "hole_7",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "tcyl_7": {
+      "id": "tcyl_7",
+      "name": "translate_hole_7",
+      "op": {
+        "type": "Translate",
+        "child": "cyl_7",
+        "offset": {
+          "x": 10.606602,
+          "y": -10.606602,
+          "z": 0
+        }
+      }
+    },
+    "u01": {
+      "id": "u01",
+      "name": "union_0_1",
+      "op": {
+        "type": "Union",
+        "left": "tcyl_0",
+        "right": "tcyl_1"
+      }
+    },
+    "u23": {
+      "id": "u23",
+      "name": "union_2_3",
+      "op": {
+        "type": "Union",
+        "left": "tcyl_2",
+        "right": "tcyl_3"
+      }
+    },
+    "u45": {
+      "id": "u45",
+      "name": "union_4_5",
+      "op": {
+        "type": "Union",
+        "left": "tcyl_4",
+        "right": "tcyl_5"
+      }
+    },
+    "u67": {
+      "id": "u67",
+      "name": "union_6_7",
+      "op": {
+        "type": "Union",
+        "left": "tcyl_6",
+        "right": "tcyl_7"
+      }
+    },
+    "u0123": {
+      "id": "u0123",
+      "name": "union_0_1_2_3",
+      "op": {
+        "type": "Union",
+        "left": "u01",
+        "right": "u23"
+      }
+    },
+    "u4567": {
+      "id": "u4567",
+      "name": "union_4_5_6_7",
+      "op": {
+        "type": "Union",
+        "left": "u45",
+        "right": "u67"
+      }
+    },
+    "holes": {
+      "id": "holes",
+      "name": "all_holes_union",
+      "op": {
+        "type": "Union",
+        "left": "u0123",
+        "right": "u4567"
+      }
+    },
+    "final": {
+      "id": "final",
+      "name": "octagonal_flange_with_holes",
+      "op": {
+        "type": "Difference",
+        "left": "octagon",
+        "right": "holes"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "final",
+      "material": "default"
+    }
+  ]
+}

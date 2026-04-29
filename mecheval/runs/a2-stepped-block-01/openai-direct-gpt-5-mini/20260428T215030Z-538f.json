@@ -1,0 +1,199 @@
+{
+  "schema_version": 0,
+  "task_id": "a2-stepped-block-01",
+  "task_sha256": "f89fc615a163d859bef73f8aac7159cfa4ae682ee5421dc55aaec6d523499a8e",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -25,
+          -15,
+          0
+        ],
+        "max": [
+          25,
+          15,
+          20
+        ],
+        "tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          25,
+          15,
+          20
+        ],
+        "actual_min": [
+          -25,
+          -15,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.05
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 22500,
+        "tolerance_pct": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "volume": {
+          "actual_mm3": 17500,
+          "deviation_pct": 22.22222222222222,
+          "pass": false,
+          "spec_mm3": 22500,
+          "tolerance_pct": 0.1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                25,
+                15,
+                20
+              ],
+              "original_min": [
+                -25,
+                -15,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                25,
+                15,
+                20
+              ],
+              "roundtripped_min": [
+                -25,
+                -15,
+                0
+              ],
+              "tolerance_mm": 0.061644140029689765
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 17500,
+              "pass": true,
+              "roundtripped_mm3": 17500
+            }
+          }
+        ],
+        "tolerance_pct": 0.1
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 3,
+    "checks_total": 4,
+    "score": 0.75,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T215030Z-538f",
+  "model": {
+    "id": "openai-direct-gpt-5-mini",
+    "name": "OpenAI (direct, gpt-5-mini)",
+    "provider": "openai",
+    "params": {
+      "mode": "direct",
+      "model": "gpt-5-mini",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a2-stepped-block-01",
+    "rendered": "Start with a rectangular block 50mm long (X) × 30mm wide (Y) × 20mm tall (Z), centered in X and Y with the bottom face on the XY plane (so it spans x in [-25, 25], y in [-15, 15], z in [0, 20]). Cut away the upper +X corner: remove material in the region x in [0, 25], y in [-15, 15], z in [10, 20]. The result has an L-shape when viewed from +Y. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "openai.chat.completions.create",
+        "args": {
+          "model": "gpt-5-mini",
+          "max_tokens": 8000,
+          "system_chars": 1674,
+          "user_chars": 431
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 10849.671084000001
+      }
+    ],
+    "tokens": {
+      "input": 658,
+      "output": 1291,
+      "total": 1949
+    },
+    "wallclock_sec": 10.849671084
+  },
+  "output": {
+    "vcad_path": "20260428T215030Z-538f.vcad",
+    "vcad_sha256": "b0726a2534bac7a7777997f7de68aa262a175fb394abb6f85ed3b626a8edb0bc",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T21:50:30.497Z",
+    "ended_at": "2026-04-28T21:50:41.359Z"
+  },
+  "signature": null
+}

@@ -1,0 +1,53 @@
+{
+  "id": "a3-hex-bolt-pattern-01",
+  "suite": "A",
+  "tier": "A3",
+  "title": "Plate with 7-hole hex grid pattern",
+  "prompt": "Make a flat square plate 60mm × 60mm × 8mm thick. Center it in X and Y with the bottom face on the XY plane (z = 0 to z = 8). Drill seven through-holes of diameter 5mm, axes parallel to Z, arranged in a hexagonal grid pattern: one hole at the center (0, 0), and six surrounding holes at the vertices of a regular hexagon with circumradius 15mm (distance from center to each surrounding hole is exactly 15mm). The first surrounding hole is on the +X axis, and the remaining five are evenly spaced every 60 degrees. Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-30, -30, 0],
+      "max": [30, 30, 8],
+      "tolerance_mm": 0.1
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 27700.44,
+      "tolerance_pct": 0.5
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 5.0,
+      "expected": 7,
+      "diameter_tolerance_mm": 0.05
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 5.0,
+      "positions": [
+        [0.0, 0.0, 0],
+        [15.0, 0.0, 0],
+        [7.5, 12.99, 0],
+        [-7.5, 12.99, 0],
+        [-15.0, 0.0, 0],
+        [-7.5, -12.99, 0],
+        [7.5, -12.99, 0]
+      ],
+      "tolerance_mm": 0.2
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 0.5 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 40000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 40
+  },
+  "pass_k": 5,
+  "tags": ["plate", "multi-hole", "hex-grid", "trigonometry", "advanced"]
+}

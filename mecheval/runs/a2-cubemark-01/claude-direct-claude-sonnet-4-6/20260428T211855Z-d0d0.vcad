@@ -1,0 +1,40 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {"id": 1, "name": "cube_body", "op": {"type": "Cube", "size": {"x": 30, "y": 30, "z": 30}}},
+    "2": {"id": 2, "name": "cube_centered", "op": {"type": "Translate", "child": 1, "offset": {"x": -15, "y": -15, "z": 0}}},
+
+    "10": {"id": 10, "name": "hole_cyl", "op": {"type": "Cylinder", "radius": 1.5, "height": 30, "segments": 32}},
+    "11": {"id": 11, "name": "hole_00", "op": {"type": "Translate", "child": 10, "offset": {"x": -8, "y": -8, "z": 0}}},
+    "12": {"id": 12, "name": "hole_10", "op": {"type": "Cylinder", "radius": 1.5, "height": 30, "segments": 32}},
+    "13": {"id": 13, "name": "hole_10t", "op": {"type": "Translate", "child": 12, "offset": {"x": 0, "y": -8, "z": 0}}},
+    "14": {"id": 14, "name": "hole_20", "op": {"type": "Cylinder", "radius": 1.5, "height": 30, "segments": 32}},
+    "15": {"id": 15, "name": "hole_20t", "op": {"type": "Translate", "child": 14, "offset": {"x": 8, "y": -8, "z": 0}}},
+    "16": {"id": 16, "name": "hole_01", "op": {"type": "Cylinder", "radius": 1.5, "height": 30, "segments": 32}},
+    "17": {"id": 17, "name": "hole_01t", "op": {"type": "Translate", "child": 16, "offset": {"x": -8, "y": 0, "z": 0}}},
+    "18": {"id": 18, "name": "hole_11", "op": {"type": "Cylinder", "radius": 1.5, "height": 30, "segments": 32}},
+    "19": {"id": 19, "name": "hole_11t", "op": {"type": "Translate", "child": 18, "offset": {"x": 0, "y": 0, "z": 0}}},
+    "20": {"id": 20, "name": "hole_21", "op": {"type": "Cylinder", "radius": 1.5, "height": 30, "segments": 32}},
+    "21": {"id": 21, "name": "hole_21t", "op": {"type": "Translate", "child": 20, "offset": {"x": 8, "y": 0, "z": 0}}},
+    "22": {"id": 22, "name": "hole_02", "op": {"type": "Cylinder", "radius": 1.5, "height": 30, "segments": 32}},
+    "23": {"id": 23, "name": "hole_02t", "op": {"type": "Translate", "child": 22, "offset": {"x": -8, "y": 8, "z": 0}}},
+    "24": {"id": 24, "name": "hole_12", "op": {"type": "Cylinder", "radius": 1.5, "height": 30, "segments": 32}},
+    "25": {"id": 25, "name": "hole_12t", "op": {"type": "Translate", "child": 24, "offset": {"x": 0, "y": 8, "z": 0}}},
+    "26": {"id": 26, "name": "hole_22", "op": {"type": "Cylinder", "radius": 1.5, "height": 30, "segments": 32}},
+    "27": {"id": 27, "name": "hole_22t", "op": {"type": "Translate", "child": 26, "offset": {"x": 8, "y": 8, "z": 0}}},
+
+    "30": {"id": 30, "name": "union_h01", "op": {"type": "Union", "left": 11, "right": 13}},
+    "31": {"id": 31, "name": "union_h012", "op": {"type": "Union", "left": 30, "right": 15}},
+    "32": {"id": 32, "name": "union_h0123", "op": {"type": "Union", "left": 31, "right": 17}},
+    "33": {"id": 33, "name": "union_h01234", "op": {"type": "Union", "left": 32, "right": 19}},
+    "34": {"id": 34, "name": "union_h012345", "op": {"type": "Union", "left": 33, "right": 21}},
+    "35": {"id": 35, "name": "union_h0123456", "op": {"type": "Union", "left": 34, "right": 23}},
+    "36": {"id": 36, "name": "union_h01234567", "op": {"type": "Union", "left": 35, "right": 25}},
+    "37": {"id": 37, "name": "union_all_holes", "op": {"type": "Union", "left": 36, "right": 27}},
+
+    "40": {"id": 40, "name": "result", "op": {"type": "Difference", "left": 2, "right": 37}}
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": 40, "material": "default"}]
+}

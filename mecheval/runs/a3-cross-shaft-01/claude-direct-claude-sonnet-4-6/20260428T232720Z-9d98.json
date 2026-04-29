@@ -1,0 +1,199 @@
+{
+  "schema_version": 0,
+  "task_id": "a3-cross-shaft-01",
+  "task_sha256": "9e7917fe01d0892e88b6db245e1a793fe379e42d09df6f046d4b8767a8ddfb61",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -20,
+          -10,
+          0
+        ],
+        "max": [
+          20,
+          10,
+          40
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          20,
+          10,
+          40
+        ],
+        "actual_min": [
+          -20,
+          -10,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.2
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 19799.41,
+        "tolerance_pct": 1.5
+      },
+      "result": "fail",
+      "details": {
+        "volume": {
+          "actual_mm3": 24971.5613101584,
+          "deviation_pct": 26.122754719248697,
+          "pass": false,
+          "spec_mm3": 19799.41,
+          "tolerance_pct": 1.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1.5
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                20,
+                10,
+                40
+              ],
+              "original_min": [
+                -20,
+                -10,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                20,
+                10,
+                40
+              ],
+              "roundtripped_min": [
+                -20,
+                -10,
+                0
+              ],
+              "tolerance_mm": 0.8999999999999999
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 24971.5613101584,
+              "pass": true,
+              "roundtripped_mm3": 24971.5613101584
+            }
+          }
+        ],
+        "tolerance_pct": 1.5
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 3,
+    "checks_total": 4,
+    "score": 0.75,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T232720Z-9d98",
+  "model": {
+    "id": "claude-direct-claude-sonnet-4-6",
+    "name": "Claude (direct, claude-sonnet-4-6)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "direct",
+      "model": "claude-sonnet-4-6",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a3-cross-shaft-01",
+    "rendered": "Make a single solid that is the union of two cylinders intersecting at right angles. Vertical cylinder: outside diameter 20mm, length 40mm, axis along Z, base on the XY plane (z = 0 to z = 40), centered on the Z axis. Horizontal cylinder: outside diameter 20mm, length 40mm, axis along the X axis, centered at (0, 0, 20) (so it passes through the middle of the vertical cylinder). The two cylinders are merged into one solid (their intersection region counts only once).",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "anthropic.messages.create",
+        "args": {
+          "model": "claude-sonnet-4-6",
+          "max_tokens": 8000,
+          "system_chars": 1674,
+          "user_chars": 530
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4684.515417
+      }
+    ],
+    "tokens": {
+      "input": 715,
+      "output": 453,
+      "total": 1168
+    },
+    "wallclock_sec": 4.684515416999999
+  },
+  "output": {
+    "vcad_path": "20260428T232720Z-9d98.vcad",
+    "vcad_sha256": "45c4834dd136a2630dc8b64b4c2a27e5adc3e88d34d1029b7eceb27ac1de0074",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T23:27:20.367Z",
+    "ended_at": "2026-04-28T23:27:25.080Z"
+  },
+  "signature": null
+}

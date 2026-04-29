@@ -1,0 +1,38 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": "1",
+      "name": "Cube",
+      "op": {
+        "type": "Translate",
+        "child": "2",
+        "offset": {
+          "x": -12.5,
+          "y": -12.5,
+          "z": -12.5
+        }
+      }
+    },
+    "2": {
+      "id": "2",
+      "name": "CubeBody",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 25,
+          "y": 25,
+          "z": 25
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "1",
+      "material": "default"
+    }
+  ]
+}

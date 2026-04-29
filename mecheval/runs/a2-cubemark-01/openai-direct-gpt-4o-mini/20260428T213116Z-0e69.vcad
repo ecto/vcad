@@ -1,0 +1,313 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "cube": {
+      "id": "cube",
+      "name": "Cube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 30,
+          "y": 30,
+          "z": 30
+        }
+      }
+    },
+    "hole1": {
+      "id": "hole1",
+      "name": "Hole1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "hole2": {
+      "id": "hole2",
+      "name": "Hole2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "hole3": {
+      "id": "hole3",
+      "name": "Hole3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "hole4": {
+      "id": "hole4",
+      "name": "Hole4",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "hole5": {
+      "id": "hole5",
+      "name": "Hole5",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "hole6": {
+      "id": "hole6",
+      "name": "Hole6",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "hole7": {
+      "id": "hole7",
+      "name": "Hole7",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "hole8": {
+      "id": "hole8",
+      "name": "Hole8",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "hole9": {
+      "id": "hole9",
+      "name": "Hole9",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "difference1": {
+      "id": "difference1",
+      "name": "Difference1",
+      "op": {
+        "type": "Difference",
+        "left": "cube",
+        "right": "hole1"
+      }
+    },
+    "difference2": {
+      "id": "difference2",
+      "name": "Difference2",
+      "op": {
+        "type": "Difference",
+        "left": "difference1",
+        "right": "hole2"
+      }
+    },
+    "difference3": {
+      "id": "difference3",
+      "name": "Difference3",
+      "op": {
+        "type": "Difference",
+        "left": "difference2",
+        "right": "hole3"
+      }
+    },
+    "difference4": {
+      "id": "difference4",
+      "name": "Difference4",
+      "op": {
+        "type": "Difference",
+        "left": "difference3",
+        "right": "hole4"
+      }
+    },
+    "difference5": {
+      "id": "difference5",
+      "name": "Difference5",
+      "op": {
+        "type": "Difference",
+        "left": "difference4",
+        "right": "hole5"
+      }
+    },
+    "difference6": {
+      "id": "difference6",
+      "name": "Difference6",
+      "op": {
+        "type": "Difference",
+        "left": "difference5",
+        "right": "hole6"
+      }
+    },
+    "difference7": {
+      "id": "difference7",
+      "name": "Difference7",
+      "op": {
+        "type": "Difference",
+        "left": "difference6",
+        "right": "hole7"
+      }
+    },
+    "difference8": {
+      "id": "difference8",
+      "name": "Difference8",
+      "op": {
+        "type": "Difference",
+        "left": "difference7",
+        "right": "hole8"
+      }
+    },
+    "final_difference": {
+      "id": "final_difference",
+      "name": "Final Difference",
+      "op": {
+        "type": "Difference",
+        "left": "difference8",
+        "right": "hole9"
+      }
+    },
+    "translate_hole1": {
+      "id": "translate_hole1",
+      "name": "Translate Hole1",
+      "op": {
+        "type": "Translate",
+        "child": "hole1",
+        "offset": {
+          "x": -8,
+          "y": -8,
+          "z": 0
+        }
+      }
+    },
+    "translate_hole2": {
+      "id": "translate_hole2",
+      "name": "Translate Hole2",
+      "op": {
+        "type": "Translate",
+        "child": "hole2",
+        "offset": {
+          "x": 0,
+          "y": -8,
+          "z": 0
+        }
+      }
+    },
+    "translate_hole3": {
+      "id": "translate_hole3",
+      "name": "Translate Hole3",
+      "op": {
+        "type": "Translate",
+        "child": "hole3",
+        "offset": {
+          "x": 8,
+          "y": -8,
+          "z": 0
+        }
+      }
+    },
+    "translate_hole4": {
+      "id": "translate_hole4",
+      "name": "Translate Hole4",
+      "op": {
+        "type": "Translate",
+        "child": "hole4",
+        "offset": {
+          "x": -8,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "translate_hole5": {
+      "id": "translate_hole5",
+      "name": "Translate Hole5",
+      "op": {
+        "type": "Translate",
+        "child": "hole5",
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "translate_hole6": {
+      "id": "translate_hole6",
+      "name": "Translate Hole6",
+      "op": {
+        "type": "Translate",
+        "child": "hole6",
+        "offset": {
+          "x": 8,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "translate_hole7": {
+      "id": "translate_hole7",
+      "name": "Translate Hole7",
+      "op": {
+        "type": "Translate",
+        "child": "hole7",
+        "offset": {
+          "x": -8,
+          "y": 8,
+          "z": 0
+        }
+      }
+    },
+    "translate_hole8": {
+      "id": "translate_hole8",
+      "name": "Translate Hole8",
+      "op": {
+        "type": "Translate",
+        "child": "hole8",
+        "offset": {
+          "x": 0,
+          "y": 8,
+          "z": 0
+        }
+      }
+    },
+    "translate_hole9": {
+      "id": "translate_hole9",
+      "name": "Translate Hole9",
+      "op": {
+        "type": "Translate",
+        "child": "hole9",
+        "offset": {
+          "x": 8,
+          "y": 8,
+          "z": 0
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "final_difference",
+      "material": "default"
+    }
+  ]
+}

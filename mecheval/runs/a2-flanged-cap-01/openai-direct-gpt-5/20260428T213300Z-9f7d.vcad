@@ -1,0 +1,26 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "OuterCylinder", "op": { "type": "Cylinder", "radius": 30, "height": 8, "segments": 32 } },
+    "2": { "id": 2, "name": "CentralHole", "op": { "type": "Cylinder", "radius": 20, "height": 8, "segments": 32 } },
+    "3": { "id": 3, "name": "BoltHolePrimitive", "op": { "type": "Cylinder", "radius": 2.5, "height": 8, "segments": 32 } },
+    "4": { "id": 4, "name": "BoltHole_0deg", "op": { "type": "Translate", "child": 3, "offset": { "x": 25, "y": 0, "z": 0 } } },
+    "5": { "id": 5, "name": "BoltHole_60deg", "op": { "type": "Translate", "child": 3, "offset": { "x": 12.5, "y": 21.650635, "z": 0 } } },
+    "6": { "id": 6, "name": "BoltHole_120deg", "op": { "type": "Translate", "child": 3, "offset": { "x": -12.5, "y": 21.650635, "z": 0 } } },
+    "7": { "id": 7, "name": "BoltHole_180deg", "op": { "type": "Translate", "child": 3, "offset": { "x": -25, "y": 0, "z": 0 } } },
+    "8": { "id": 8, "name": "BoltHole_240deg", "op": { "type": "Translate", "child": 3, "offset": { "x": -12.5, "y": -21.650635, "z": 0 } } },
+    "9": { "id": 9, "name": "BoltHole_300deg", "op": { "type": "Translate", "child": 3, "offset": { "x": 12.5, "y": -21.650635, "z": 0 } } },
+    "10": { "id": 10, "name": "HolesUnion1", "op": { "type": "Union", "left": 2, "right": 4 } },
+    "11": { "id": 11, "name": "HolesUnion2", "op": { "type": "Union", "left": 10, "right": 5 } },
+    "12": { "id": 12, "name": "HolesUnion3", "op": { "type": "Union", "left": 11, "right": 6 } },
+    "13": { "id": 13, "name": "HolesUnion4", "op": { "type": "Union", "left": 12, "right": 7 } },
+    "14": { "id": 14, "name": "HolesUnion5", "op": { "type": "Union", "left": 13, "right": 8 } },
+    "15": { "id": 15, "name": "AllHolesUnion", "op": { "type": "Union", "left": 14, "right": 9 } },
+    "16": { "id": 16, "name": "FlangedCap", "op": { "type": "Difference", "left": 1, "right": 15 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    { "root": 16, "material": "default" }
+  ]
+}

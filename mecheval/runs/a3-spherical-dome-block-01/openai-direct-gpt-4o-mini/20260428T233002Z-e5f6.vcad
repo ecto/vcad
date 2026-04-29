@@ -1,0 +1,65 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Cube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 40,
+          "y": 40,
+          "z": 40
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Dome",
+      "op": {
+        "type": "Intersection",
+        "left": {
+          "type": "Sphere",
+          "radius": 15,
+          "segments": 32
+        },
+        "right": {
+          "type": "Cube",
+          "size": {
+            "x": 100,
+            "y": 100,
+            "z": 100
+          }
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Dome_Translate",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 40
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Final_Solid",
+      "op": {
+        "type": "Union",
+        "left": 1,
+        "right": 3
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{
+    "root": 4,
+    "material": "default"
+  }]
+}

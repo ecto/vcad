@@ -1,0 +1,38 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "cube": {
+      "id": "cube",
+      "name": "RectangularBlock",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 60,
+          "y": 40,
+          "z": 20
+        }
+      }
+    },
+    "centered_block": {
+      "id": "centered_block",
+      "name": "CenteredBlock",
+      "op": {
+        "type": "Translate",
+        "child": "cube",
+        "offset": {
+          "x": -30,
+          "y": -20,
+          "z": 0
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "centered_block",
+      "material": "default"
+    }
+  ]
+}

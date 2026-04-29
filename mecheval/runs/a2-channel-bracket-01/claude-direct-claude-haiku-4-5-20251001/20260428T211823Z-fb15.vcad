@@ -1,0 +1,73 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "bottom_plate": {
+      "id": "bottom_plate",
+      "name": "Bottom Plate",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 30, "y": 40, "z": 4}
+      }
+    },
+    "left_wall": {
+      "id": "left_wall",
+      "name": "Left Wall",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 4, "y": 40, "z": 26}
+      }
+    },
+    "left_wall_positioned": {
+      "id": "left_wall_positioned",
+      "name": "Left Wall Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "left_wall",
+        "offset": {"x": 0, "y": 0, "z": 4}
+      }
+    },
+    "right_wall": {
+      "id": "right_wall",
+      "name": "Right Wall",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 4, "y": 40, "z": 26}
+      }
+    },
+    "right_wall_positioned": {
+      "id": "right_wall_positioned",
+      "name": "Right Wall Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "right_wall",
+        "offset": {"x": 26, "y": 0, "z": 4}
+      }
+    },
+    "bottom_with_left": {
+      "id": "bottom_with_left",
+      "name": "Bottom with Left Wall",
+      "op": {
+        "type": "Union",
+        "left": "bottom_plate",
+        "right": "left_wall_positioned"
+      }
+    },
+    "channel_bracket": {
+      "id": "channel_bracket",
+      "name": "Channel Bracket",
+      "op": {
+        "type": "Union",
+        "left": "bottom_with_left",
+        "right": "right_wall_positioned"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "channel_bracket",
+      "material": "default"
+    }
+  ]
+}

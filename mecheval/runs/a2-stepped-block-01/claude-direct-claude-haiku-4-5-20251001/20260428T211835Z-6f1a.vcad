@@ -1,0 +1,51 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "main_block": {
+      "id": 0,
+      "name": "main_block",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 50, "y": 30, "z": 20}
+      }
+    },
+    "main_block_centered": {
+      "id": 1,
+      "name": "main_block_centered",
+      "op": {
+        "type": "Translate",
+        "child": 0,
+        "offset": {"x": -25, "y": -15, "z": 0}
+      }
+    },
+    "cutaway_block": {
+      "id": 2,
+      "name": "cutaway_block",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 25, "y": 30, "z": 10}
+      }
+    },
+    "cutaway_block_positioned": {
+      "id": 3,
+      "name": "cutaway_block_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {"x": 0, "y": -15, "z": 10}
+      }
+    },
+    "stepped_block": {
+      "id": 4,
+      "name": "stepped_block",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 3
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": 4, "material": "default"}]
+}

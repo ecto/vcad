@@ -1,0 +1,28 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {"id": 1, "name": "plate_raw", "op": {"type": "Cube", "size": {"x": 60, "y": 60, "z": 8}}},
+    "2": {"id": 2, "name": "plate", "op": {"type": "Translate", "child": 1, "offset": {"x": -30, "y": -30, "z": 0}}},
+    "10": {"id": 10, "name": "hole_proto", "op": {"type": "Cylinder", "radius": 2.5, "height": 8, "segments": 32}},
+
+    "100": {"id": 100, "name": "hole_center", "op": {"type": "Translate", "child": 10, "offset": {"x": 0, "y": 0, "z": 0}}},
+    "101": {"id": 101, "name": "hole_0", "op": {"type": "Translate", "child": 10, "offset": {"x": 15.0, "y": 0.0, "z": 0}}},
+    "102": {"id": 102, "name": "hole_60", "op": {"type": "Translate", "child": 10, "offset": {"x": 7.5, "y": 12.99038105676658, "z": 0}}},
+    "103": {"id": 103, "name": "hole_120", "op": {"type": "Translate", "child": 10, "offset": {"x": -7.5, "y": 12.99038105676658, "z": 0}}},
+    "104": {"id": 104, "name": "hole_180", "op": {"type": "Translate", "child": 10, "offset": {"x": -15.0, "y": 0.0, "z": 0}}},
+    "105": {"id": 105, "name": "hole_240", "op": {"type": "Translate", "child": 10, "offset": {"x": -7.5, "y": -12.99038105676658, "z": 0}}},
+    "106": {"id": 106, "name": "hole_300", "op": {"type": "Translate", "child": 10, "offset": {"x": 7.5, "y": -12.99038105676658, "z": 0}}},
+
+    "201": {"id": 201, "name": "u1", "op": {"type": "Union", "left": 100, "right": 101}},
+    "202": {"id": 202, "name": "u2", "op": {"type": "Union", "left": 201, "right": 102}},
+    "203": {"id": 203, "name": "u3", "op": {"type": "Union", "left": 202, "right": 103}},
+    "204": {"id": 204, "name": "u4", "op": {"type": "Union", "left": 203, "right": 104}},
+    "205": {"id": 205, "name": "u5", "op": {"type": "Union", "left": 204, "right": 105}},
+    "206": {"id": 206, "name": "all_holes", "op": {"type": "Union", "left": 205, "right": 106}},
+
+    "300": {"id": 300, "name": "result", "op": {"type": "Difference", "left": 2, "right": 206}}
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": 300, "material": "default"}]
+}

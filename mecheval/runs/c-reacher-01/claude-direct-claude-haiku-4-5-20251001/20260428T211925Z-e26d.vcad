@@ -1,0 +1,186 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "base_cube": {
+      "id": "base_cube",
+      "name": "base_cube",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 0.1, "y": 0.1, "z": 0.05}
+      }
+    },
+    "base_translated": {
+      "id": "base_translated",
+      "name": "base_translated",
+      "op": {
+        "type": "Translate",
+        "child": "base_cube",
+        "offset": {"x": -0.05, "y": -0.05, "z": 0}
+      }
+    },
+    "link1_cyl": {
+      "id": "link1_cyl",
+      "name": "link1_cyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 0.012,
+        "height": 0.15,
+        "segments": 32
+      }
+    },
+    "link1_translated": {
+      "id": "link1_translated",
+      "name": "link1_translated",
+      "op": {
+        "type": "Translate",
+        "child": "link1_cyl",
+        "offset": {"x": 0, "y": 0, "z": 0.05}
+      }
+    },
+    "link2_cyl": {
+      "id": "link2_cyl",
+      "name": "link2_cyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 0.01,
+        "height": 0.15,
+        "segments": 32
+      }
+    },
+    "link2_translated": {
+      "id": "link2_translated",
+      "name": "link2_translated",
+      "op": {
+        "type": "Translate",
+        "child": "link2_cyl",
+        "offset": {"x": 0, "y": 0, "z": 0.15}
+      }
+    },
+    "tip_sphere": {
+      "id": "tip_sphere",
+      "name": "tip_sphere",
+      "op": {
+        "type": "Sphere",
+        "radius": 0.008,
+        "segments": 32
+      }
+    },
+    "tip_translated": {
+      "id": "tip_translated",
+      "name": "tip_translated",
+      "op": {
+        "type": "Translate",
+        "child": "tip_sphere",
+        "offset": {"x": 0, "y": 0, "z": 0.3}
+      }
+    },
+    "assembly": {
+      "id": "assembly",
+      "name": "assembly",
+      "op": {
+        "type": "Union",
+        "left": "base_translated",
+        "right": "link1_translated"
+      }
+    },
+    "assembly2": {
+      "id": "assembly2",
+      "name": "assembly2",
+      "op": {
+        "type": "Union",
+        "left": "assembly",
+        "right": "link2_translated"
+      }
+    },
+    "assembly3": {
+      "id": "assembly3",
+      "name": "assembly3",
+      "op": {
+        "type": "Union",
+        "left": "assembly2",
+        "right": "tip_translated"
+      }
+    }
+  },
+  "materials": {
+    "default": {
+      "color": [0.8, 0.8, 0.8],
+      "metallic": 0.5,
+      "roughness": 0.5
+    },
+    "base_mat": {
+      "color": [0.3, 0.3, 0.3],
+      "metallic": 0.7,
+      "roughness": 0.3
+    },
+    "link1_mat": {
+      "color": [0.6, 0.6, 0.6],
+      "metallic": 0.5,
+      "roughness": 0.4
+    },
+    "link2_mat": {
+      "color": [0.7, 0.7, 0.7],
+      "metallic": 0.5,
+      "roughness": 0.4
+    },
+    "tip_mat": {
+      "color": [0.2, 0.8, 0.2],
+      "metallic": 0.3,
+      "roughness": 0.6
+    }
+  },
+  "part_materials": {
+    "base_translated": "base_mat",
+    "link1_translated": "link1_mat",
+    "link2_translated": "link2_mat",
+    "tip_translated": "tip_mat"
+  },
+  "roots": [
+    {
+      "root": "assembly3",
+      "material": "default"
+    }
+  ],
+  "joints": [
+    {
+      "name": "joint1",
+      "type": "revolute",
+      "parent": "base",
+      "child": "link1",
+      "axis": {"x": 0, "y": 1, "z": 0},
+      "origin": {"x": 0, "y": 0, "z": 0.05},
+      "limits": {"lower": -1.5708, "upper": 1.5708},
+      "torque_limit": 5.0,
+      "initial_angle": 0.7854
+    },
+    {
+      "name": "joint2",
+      "type": "revolute",
+      "parent": "link1",
+      "child": "link2",
+      "axis": {"x": 0, "y": 1, "z": 0},
+      "origin": {"x": 0, "y": 0, "z": 0.15},
+      "limits": {"lower": -1.5708, "upper": 1.5708},
+      "torque_limit": 5.0,
+      "initial_angle": 0.7854
+    }
+  ],
+  "links": [
+    {
+      "name": "base",
+      "mass": 0.3,
+      "inertia": {"ixx": 0.0001, "iyy": 0.0001, "izz": 0.0001}
+    },
+    {
+      "name": "link1",
+      "mass": 0.25,
+      "inertia": {"ixx": 0.00005, "iyy": 0.00005, "izz": 0.00005}
+    },
+    {
+      "name": "link2",
+      "mass": 0.2,
+      "inertia": {"ixx": 0.00003, "iyy": 0.00003, "izz": 0.00003},
+      "tags": ["tip"]
+    }
+  ]
+}

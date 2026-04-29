@@ -1,0 +1,62 @@
+{
+  "id": "a2-square-flange-01",
+  "suite": "A",
+  "tier": "A2",
+  "title": "Square flange with corner and center holes",
+  "prompt": "Make a square plate 80mm × 80mm × 6mm (X × Y × Z). Center it in X and Y, with the bottom face on the XY plane (z = 0 to z = 6). Drill one central through-hole of diameter 12mm on the Z axis, and four corner through-holes of diameter 6mm with axes parallel to Z, centered 10mm in from each corner of the top face. Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-40, -40, 0],
+      "max": [40, 40, 6],
+      "tolerance_mm": 0.1
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 37042.83,
+      "tolerance_pct": 0.5
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 12.0,
+      "expected": 1,
+      "diameter_tolerance_mm": 0.1
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 6.0,
+      "expected": 4,
+      "diameter_tolerance_mm": 0.05
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 12.0,
+      "positions": [[0, 0, 0]],
+      "tolerance_mm": 0.15
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 6.0,
+      "positions": [
+        [30, 30, 0],
+        [-30, 30, 0],
+        [-30, -30, 0],
+        [30, -30, 0]
+      ],
+      "tolerance_mm": 0.15
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 1.0 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 30000,
+    "max_wallclock_sec": 180,
+    "max_tool_calls": 30
+  },
+  "pass_k": 5,
+  "tags": ["plate", "multi-hole", "boolean", "mixed-diameter"]
+}

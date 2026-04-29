@@ -1,0 +1,33 @@
+{
+  "id": "a1-cone-01",
+  "suite": "A",
+  "tier": "A1",
+  "title": "Truncated cone (frustum)",
+  "prompt": "Make a truncated cone with bottom radius 20mm, top radius 10mm, and height 30mm. Axis along Z, base on the XY plane (z = 0 to z = 30). Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-20, -20, 0],
+      "max": [20, 20, 30],
+      "tolerance_mm": 0.1
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 21991.15,
+      "tolerance_pct": 2.0
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 2.0 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 20000,
+    "max_wallclock_sec": 120,
+    "max_tool_calls": 20
+  },
+  "pass_k": 5,
+  "tags": ["primitives", "cone", "frustum"]
+}

@@ -1,0 +1,33 @@
+{
+  "id": "a2-finned-block-01",
+  "suite": "A",
+  "tier": "A2",
+  "title": "Finned heatsink-style block",
+  "prompt": "Make a finned block. Base: a rectangular plate 50mm long (X) × 30mm wide (Y) × 5mm thick (Z), centered in X and Y, with the bottom face on the XY plane (z = 0 to z = 5). Three rectangular fins stand on top of the base, each 50mm long in X, 3mm thick in Y, and 15mm tall in Z (z = 5 to z = 20). The fins are centered on y = -10, y = 0, and y = 10 (each fin spans 1.5mm to either side of its centerline). Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-25, -15, 0],
+      "max": [25, 15, 20],
+      "tolerance_mm": 0.1
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 14250.0,
+      "tolerance_pct": 0.5
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 0.5 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 30000,
+    "max_wallclock_sec": 180,
+    "max_tool_calls": 30
+  },
+  "pass_k": 5,
+  "tags": ["heatsink", "fins", "multi-feature", "union"]
+}

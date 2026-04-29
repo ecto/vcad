@@ -1,0 +1,141 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "plate": {
+      "id": "plate",
+      "name": "Rectangular Plate",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 30,
+          "z": 10
+        }
+      }
+    },
+    "hole1": {
+      "id": "hole1",
+      "name": "Hole 1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole2": {
+      "id": "hole2",
+      "name": "Hole 2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole3": {
+      "id": "hole3",
+      "name": "Hole 3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole4": {
+      "id": "hole4",
+      "name": "Hole 4",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "holes": {
+      "id": "holes",
+      "name": "Holes",
+      "op": {
+        "type": "Union",
+        "left": "hole1",
+        "right": {
+          "type": "Union",
+          "left": "hole2",
+          "right": {
+            "type": "Union",
+            "left": "hole3",
+            "right": "hole4"
+          }
+        }
+      }
+    },
+    "cut_plate": {
+      "id": "cut_plate",
+      "name": "Cut Plate",
+      "op": {
+        "type": "Difference",
+        "left": "plate",
+        "right": "holes"
+      }
+    },
+    "translated_hole1": {
+      "id": "translated_hole1",
+      "name": "Translated Hole 1",
+      "op": {
+        "type": "Translate",
+        "child": "hole1",
+        "offset": {
+          "x": -22,
+          "y": -13,
+          "z": 0
+        }
+      }
+    },
+    "translated_hole2": {
+      "id": "translated_hole2",
+      "name": "Translated Hole 2",
+      "op": {
+        "type": "Translate",
+        "child": "hole2",
+        "offset": {
+          "x": 22,
+          "y": -13,
+          "z": 0
+        }
+      }
+    },
+    "translated_hole3": {
+      "id": "translated_hole3",
+      "name": "Translated Hole 3",
+      "op": {
+        "type": "Translate",
+        "child": "hole3",
+        "offset": {
+          "x": -22,
+          "y": 13,
+          "z": 0
+        }
+      }
+    },
+    "translated_hole4": {
+      "id": "translated_hole4",
+      "name": "Translated Hole 4",
+      "op": {
+        "type": "Translate",
+        "child": "hole4",
+        "offset": {
+          "x": 22,
+          "y": 13,
+          "z": 0
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{
+    "root": "cut_plate",
+    "material": "default"
+  }]
+}

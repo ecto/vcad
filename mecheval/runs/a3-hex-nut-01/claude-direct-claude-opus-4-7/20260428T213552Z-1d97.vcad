@@ -1,0 +1,12 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "cyl_template", "op": {"type":"Cylinder", "radius": 10.97, "height": 8, "segments": 6} },
+    "2": { "id": 2, "name": "hex_oriented", "op": {"type":"Rotate", "child": 1, "angles": {"x":0,"y":0,"z":30}} },
+    "3": { "id": 3, "name": "hole", "op": {"type":"Cylinder", "radius": 5, "height": 8, "segments": 64} },
+    "4": { "id": 4, "name": "nut", "op": {"type":"Difference", "left": 2, "right": 3} }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 4, "material": "default" }]
+}

@@ -1,0 +1,135 @@
+{
+  "schema_version": 0,
+  "task_id": "a2-finned-block-01",
+  "task_sha256": "279a65e8e81b3007e126e2a4707d2a246b1a3c607f2b81e4382cc98d5cf09855",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "fail",
+      "details": {
+        "error": "parse: Invalid JSON vcad file: invalid value: expected key to be a number in quotes at line 4 column 5",
+        "reason": "fatal evaluation error"
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -25,
+          -15,
+          0
+        ],
+        "max": [
+          25,
+          15,
+          20
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 14250,
+        "tolerance_pct": 0.5
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.5
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to round-trip"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 4,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T213240Z-691c",
+  "model": {
+    "id": "openai-direct-gpt-4o-mini",
+    "name": "OpenAI (direct, gpt-4o-mini)",
+    "provider": "openai",
+    "params": {
+      "mode": "direct",
+      "model": "gpt-4o-mini",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a2-finned-block-01",
+    "rendered": "Make a finned block. Base: a rectangular plate 50mm long (X) × 30mm wide (Y) × 5mm thick (Z), centered in X and Y, with the bottom face on the XY plane (z = 0 to z = 5). Three rectangular fins stand on top of the base, each 50mm long in X, 3mm thick in Y, and 15mm tall in Z (z = 5 to z = 20). The fins are centered on y = -10, y = 0, and y = 10 (each fin spans 1.5mm to either side of its centerline). Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "openai.chat.completions.create",
+        "args": {
+          "model": "gpt-4o-mini",
+          "max_tokens": 8000,
+          "system_chars": 1632,
+          "user_chars": 486
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 13100.122458
+      }
+    ],
+    "tokens": {
+      "input": 666,
+      "output": 725,
+      "total": 1391
+    },
+    "wallclock_sec": 13.100122458
+  },
+  "output": {
+    "vcad_path": "20260428T213240Z-691c.vcad",
+    "vcad_sha256": "f4c983f1102708b060ce954aa084b9b8e6461911e54029ebd52eb24da60d99a9",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T21:32:40.766Z",
+    "ended_at": "2026-04-28T21:32:53.872Z"
+  },
+  "signature": null
+}

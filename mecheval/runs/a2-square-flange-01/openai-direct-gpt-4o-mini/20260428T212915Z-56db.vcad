@@ -1,0 +1,122 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": "1",
+      "name": "Plate",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 80,
+          "y": 80,
+          "z": 6
+        }
+      }
+    },
+    "2": {
+      "id": "2",
+      "name": "Central Holes",
+      "op": {
+        "type": "Difference",
+        "left": "1",
+        "right": {
+          "type": "Cylinder",
+          "radius": 6,
+          "height": 6,
+          "segments": 32
+        }
+      }
+    },
+    "3": {
+      "id": "3",
+      "name": "Corner Hole 1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 6,
+        "segments": 32
+      }
+    },
+    "4": {
+      "id": "4",
+      "name": "Corner Hole 2",
+      "op": {
+        "type": "Translate",
+        "child": "3",
+        "offset": {
+          "x": 35,
+          "y": 35,
+          "z": 0
+        }
+      }
+    },
+    "5": {
+      "id": "5",
+      "name": "Corner Hole 3",
+      "op": {
+        "type": "Translate",
+        "child": "3",
+        "offset": {
+          "x": -35,
+          "y": 35,
+          "z": 0
+        }
+      }
+    },
+    "6": {
+      "id": "6",
+      "name": "Corner Hole 4",
+      "op": {
+        "type": "Translate",
+        "child": "3",
+        "offset": {
+          "x": 35,
+          "y": -35,
+          "z": 0
+        }
+      }
+    },
+    "7": {
+      "id": "7",
+      "name": "Corner Hole 5",
+      "op": {
+        "type": "Translate",
+        "child": "3",
+        "offset": {
+          "x": -35,
+          "y": -35,
+          "z": 0
+        }
+      }
+    },
+    "8": {
+      "id": "8",
+      "name": "Holes",
+      "op": {
+        "type": "Difference",
+        "left": "2",
+        "right": {
+          "type": "Union",
+          "left": "4",
+          "right": {
+            "type": "Union",
+            "left": "5",
+            "right": {
+              "type": "Union",
+              "left": "6",
+              "right": "7"
+            }
+          }
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "8",
+      "material": "default"
+    }
+  ]
+}

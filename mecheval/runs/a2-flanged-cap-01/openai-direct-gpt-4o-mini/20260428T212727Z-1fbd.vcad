@@ -1,0 +1,77 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "OuterCylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 30,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "CentralHole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 20,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "BoltHoles",
+      "op": {
+        "type": "Union",
+        "left": {
+          "type": "Translate",
+          "child": 4,
+          "offset": {
+            "x": 25,
+            "y": 0,
+            "z": 4
+          }
+        },
+        "right": {
+          "type": "Translate",
+          "child": 4,
+          "offset": {
+            "x": 0,
+            "y": 25,
+            "z": 4
+          }
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "SingleBoltHole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "FlangedCap",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 2
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 5,
+      "material": "default"
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "id": "a1-pipe-01",
+  "suite": "A",
+  "tier": "A1",
+  "title": "Hollow pipe",
+  "prompt": "Make a hollow cylindrical pipe with outer diameter 30mm and inner diameter 20mm. Length 40mm, axis along Z, base on the XY plane (z = 0 to z = 40). The bore is a single through-hole on the central axis. Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-15, -15, 0],
+      "max": [15, 15, 40],
+      "tolerance_mm": 0.1
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 15707.96,
+      "center_of_mass": [0, 0, 20],
+      "tolerance_pct": 1.0
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 20.0,
+      "expected": 1,
+      "diameter_tolerance_mm": 0.1
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 20.0,
+      "positions": [[0, 0, 0]],
+      "tolerance_mm": 0.15
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 1.0 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 20000,
+    "max_wallclock_sec": 120,
+    "max_tool_calls": 20
+  },
+  "pass_k": 5,
+  "tags": ["primitives", "boolean", "pipe", "hollow"]
+}

@@ -1,0 +1,54 @@
+{
+  "id": "a2-bolt-circle-block-01",
+  "suite": "A",
+  "tier": "A2",
+  "title": "Block with 8-hole bolt circle",
+  "prompt": "Make a square block 60mm × 60mm × 10mm. Center it in X and Y, with the bottom face on the XY plane (z = 0 to z = 10). Drill eight through-holes of diameter 5mm, axes parallel to Z, on a bolt circle of radius 20mm centered on the Z axis. Holes are evenly spaced every 45 degrees, with the first hole on the +X axis. Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-30, -30, 0],
+      "max": [30, 30, 10],
+      "tolerance_mm": 0.1
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 34429.20,
+      "tolerance_pct": 0.5
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 5.0,
+      "expected": 8,
+      "diameter_tolerance_mm": 0.05
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 5.0,
+      "positions": [
+        [20.0, 0.0, 0],
+        [14.14, 14.14, 0],
+        [0.0, 20.0, 0],
+        [-14.14, 14.14, 0],
+        [-20.0, 0.0, 0],
+        [-14.14, -14.14, 0],
+        [0.0, -20.0, 0],
+        [14.14, -14.14, 0]
+      ],
+      "tolerance_mm": 0.2
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 1.0 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 40000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 40
+  },
+  "pass_k": 5,
+  "tags": ["block", "bolt-circle", "multi-hole", "trigonometry"]
+}

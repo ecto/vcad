@@ -1,0 +1,20 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {"id": 1, "name": "slab_base", "op": {"type": "Cube", "size": {"x": 40, "y": 19, "z": 8}}},
+    "2": {"id": 2, "name": "slab1_centered", "op": {"type": "Translate", "child": 1, "offset": {"x": -20, "y": -9.5, "z": 0}}},
+    "3": {"id": 3, "name": "slab_base2", "op": {"type": "Cube", "size": {"x": 40, "y": 19, "z": 8}}},
+    "4": {"id": 4, "name": "slab2_centered", "op": {"type": "Translate", "child": 3, "offset": {"x": -20, "y": -9.5, "z": 0}}},
+    "5": {"id": 5, "name": "slab2_rot", "op": {"type": "Rotate", "child": 4, "angles": {"x": 0, "y": 0, "z": 60}}},
+    "6": {"id": 6, "name": "slab_base3", "op": {"type": "Cube", "size": {"x": 40, "y": 19, "z": 8}}},
+    "7": {"id": 7, "name": "slab3_centered", "op": {"type": "Translate", "child": 6, "offset": {"x": -20, "y": -9.5, "z": 0}}},
+    "8": {"id": 8, "name": "slab3_rot", "op": {"type": "Rotate", "child": 7, "angles": {"x": 0, "y": 0, "z": 120}}},
+    "9": {"id": 9, "name": "hex_partial", "op": {"type": "Intersection", "left": 2, "right": 5}},
+    "10": {"id": 10, "name": "hex", "op": {"type": "Intersection", "left": 9, "right": 8}},
+    "11": {"id": 11, "name": "hole", "op": {"type": "Cylinder", "radius": 5, "height": 8, "segments": 64}},
+    "12": {"id": 12, "name": "nut", "op": {"type": "Difference", "left": 10, "right": 11}}
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": 12, "material": "default"}]
+}

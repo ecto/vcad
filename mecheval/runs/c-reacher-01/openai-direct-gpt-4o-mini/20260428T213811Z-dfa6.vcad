@@ -1,0 +1,119 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "base": {
+      "id": "base",
+      "name": "Base",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 100,
+          "y": 100,
+          "z": 10
+        }
+      }
+    },
+    "link1": {
+      "id": "link1",
+      "name": "Link 1",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 10,
+          "y": 10,
+          "z": 200
+        }
+      }
+    },
+    "joint1": {
+      "id": "joint1",
+      "name": "Joint 1",
+      "op": {
+        "type": "Translate",
+        "child": "link1",
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 10
+        }
+      }
+    },
+    "link2": {
+      "id": "link2",
+      "name": "Link 2",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 10,
+          "y": 10,
+          "z": 200
+        }
+      }
+    },
+    "joint2": {
+      "id": "joint2",
+      "name": "Joint 2",
+      "op": {
+        "type": "Translate",
+        "child": "link2",
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 200
+        }
+      }
+    },
+    "end_effector": {
+      "id": "end_effector",
+      "name": "End Effector",
+      "op": {
+        "type": "Cylinder",
+        "radius": 5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "end_effector_translated": {
+      "id": "end_effector_translated",
+      "name": "End Effector Translated",
+      "op": {
+        "type": "Translate",
+        "child": "end_effector",
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 200
+        }
+      }
+    },
+    "arm_group": {
+      "id": "arm_group",
+      "name": "Arm Group",
+      "op": {
+        "type": "Union",
+        "left": "joint1",
+        "right": "joint2"
+      }
+    },
+    "final_group": {
+      "id": "final_group",
+      "name": "Final Assembly",
+      "op": {
+        "type": "Union",
+        "left": "arm_group",
+        "right": "end_effector_translated"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {
+    "base": "default",
+    "link1": "default",
+    "link2": "default",
+    "end_effector": "default"
+  },
+  "roots": [{
+    "root": "final_group",
+    "material": "default"
+  }]
+}

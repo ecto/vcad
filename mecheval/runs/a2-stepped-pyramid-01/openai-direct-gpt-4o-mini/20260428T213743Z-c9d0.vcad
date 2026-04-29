@@ -1,0 +1,78 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "BottomTier",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 40,
+          "y": 40,
+          "z": 10
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "MiddleTier",
+      "op": {
+        "type": "Translate",
+        "child": {
+          "type": "Cube",
+          "size": {
+            "x": 28,
+            "y": 28,
+            "z": 10
+          }
+        },
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 10
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "TopTier",
+      "op": {
+        "type": "Translate",
+        "child": {
+          "type": "Cube",
+          "size": {
+            "x": 16,
+            "y": 16,
+            "z": 10
+          }
+        },
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 20
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "SteppedPyramid",
+      "op": {
+        "type": "Union",
+        "left": 1,
+        "right": {
+          "type": "Union",
+          "left": 2,
+          "right": 3
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 4,
+      "material": "default"
+    }
+  ]
+}

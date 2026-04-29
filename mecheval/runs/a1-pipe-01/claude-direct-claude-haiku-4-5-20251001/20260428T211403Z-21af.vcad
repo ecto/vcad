@@ -1,0 +1,42 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "outer_cylinder": {
+      "id": 0,
+      "name": "outer_cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 15,
+        "height": 40,
+        "segments": 32
+      }
+    },
+    "inner_cylinder": {
+      "id": 1,
+      "name": "inner_cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 40,
+        "segments": 32
+      }
+    },
+    "pipe": {
+      "id": 2,
+      "name": "pipe",
+      "op": {
+        "type": "Difference",
+        "left": 0,
+        "right": 1
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 2,
+      "material": "default"
+    }
+  ]
+}

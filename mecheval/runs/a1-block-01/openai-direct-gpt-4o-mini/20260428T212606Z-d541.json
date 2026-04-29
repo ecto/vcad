@@ -1,0 +1,140 @@
+{
+  "schema_version": 0,
+  "task_id": "a1-block-01",
+  "task_sha256": "eb827360a11bd0254eb82fe36a174169bf9a9a7f5e9d9d062f4d5c63e4f9826a",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "fail",
+      "details": {
+        "error": "parse: Invalid JSON vcad file: invalid type: map, expected u64 at line 23 column 5",
+        "reason": "fatal evaluation error"
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -30,
+          -20,
+          0
+        ],
+        "max": [
+          30,
+          20,
+          20
+        ],
+        "tolerance_mm": 0.05
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 48000,
+        "center_of_mass": [
+          0,
+          0,
+          10
+        ],
+        "tolerance_pct": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to round-trip"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 4,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T212606Z-d541",
+  "model": {
+    "id": "openai-direct-gpt-4o-mini",
+    "name": "OpenAI (direct, gpt-4o-mini)",
+    "provider": "openai",
+    "params": {
+      "mode": "direct",
+      "model": "gpt-4o-mini",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a1-block-01",
+    "rendered": "Make a rectangular block 60mm long (X) × 40mm wide (Y) × 20mm tall (Z). Center it in X and Y, with the bottom face on the XY plane (z = 0 to z = 20). Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "openai.chat.completions.create",
+        "args": {
+          "model": "gpt-4o-mini",
+          "max_tokens": 8000,
+          "system_chars": 1632,
+          "user_chars": 226
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3377.2467920000004
+      }
+    ],
+    "tokens": {
+      "input": 578,
+      "output": 164,
+      "total": 742
+    },
+    "wallclock_sec": 3.377246792
+  },
+  "output": {
+    "vcad_path": "20260428T212606Z-d541.vcad",
+    "vcad_sha256": "45a2c3fa86db5afb08f99cccd243e7aa1d1dede72324bc50395f023dfe7f2191",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T21:26:06.674Z",
+    "ended_at": "2026-04-28T21:26:10.056Z"
+  },
+  "signature": null
+}

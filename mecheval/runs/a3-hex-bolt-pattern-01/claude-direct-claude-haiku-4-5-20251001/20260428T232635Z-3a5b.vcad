@@ -1,0 +1,226 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "plate": {
+      "id": 1,
+      "name": "base_plate",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 60, "y": 60, "z": 8}
+      }
+    },
+    "plate_centered": {
+      "id": 2,
+      "name": "plate_centered",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {"x": -30, "y": -30, "z": 0}
+      }
+    },
+    "hole_center": {
+      "id": 3,
+      "name": "hole_center",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole_center_positioned": {
+      "id": 4,
+      "name": "hole_center_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {"x": 0, "y": 0, "z": 0}
+      }
+    },
+    "hole_1": {
+      "id": 5,
+      "name": "hole_1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole_1_positioned": {
+      "id": 6,
+      "name": "hole_1_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {"x": 15, "y": 0, "z": 0}
+      }
+    },
+    "hole_2": {
+      "id": 7,
+      "name": "hole_2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole_2_positioned": {
+      "id": 8,
+      "name": "hole_2_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 7,
+        "offset": {"x": 7.5, "y": 12.99038, "z": 0}
+      }
+    },
+    "hole_3": {
+      "id": 9,
+      "name": "hole_3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole_3_positioned": {
+      "id": 10,
+      "name": "hole_3_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 9,
+        "offset": {"x": -7.5, "y": 12.99038, "z": 0}
+      }
+    },
+    "hole_4": {
+      "id": 11,
+      "name": "hole_4",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole_4_positioned": {
+      "id": 12,
+      "name": "hole_4_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 11,
+        "offset": {"x": -15, "y": 0, "z": 0}
+      }
+    },
+    "hole_5": {
+      "id": 13,
+      "name": "hole_5",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole_5_positioned": {
+      "id": 14,
+      "name": "hole_5_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 13,
+        "offset": {"x": -7.5, "y": -12.99038, "z": 0}
+      }
+    },
+    "hole_6": {
+      "id": 15,
+      "name": "hole_6",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "hole_6_positioned": {
+      "id": 16,
+      "name": "hole_6_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 15,
+        "offset": {"x": 7.5, "y": -12.99038, "z": 0}
+      }
+    },
+    "all_holes": {
+      "id": 17,
+      "name": "all_holes_union",
+      "op": {
+        "type": "Union",
+        "left": 4,
+        "right": 6
+      }
+    },
+    "all_holes_2": {
+      "id": 18,
+      "name": "all_holes_union_2",
+      "op": {
+        "type": "Union",
+        "left": 17,
+        "right": 8
+      }
+    },
+    "all_holes_3": {
+      "id": 19,
+      "name": "all_holes_union_3",
+      "op": {
+        "type": "Union",
+        "left": 18,
+        "right": 10
+      }
+    },
+    "all_holes_4": {
+      "id": 20,
+      "name": "all_holes_union_4",
+      "op": {
+        "type": "Union",
+        "left": 19,
+        "right": 12
+      }
+    },
+    "all_holes_5": {
+      "id": 21,
+      "name": "all_holes_union_5",
+      "op": {
+        "type": "Union",
+        "left": 20,
+        "right": 14
+      }
+    },
+    "all_holes_final": {
+      "id": 22,
+      "name": "all_holes_final",
+      "op": {
+        "type": "Union",
+        "left": 21,
+        "right": 16
+      }
+    },
+    "final_part": {
+      "id": 23,
+      "name": "drilled_plate",
+      "op": {
+        "type": "Difference",
+        "left": 2,
+        "right": 22
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 23,
+      "material": "default"
+    }
+  ]
+}

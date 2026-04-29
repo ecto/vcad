@@ -1,0 +1,27 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "Plate Cube 60x60x8", "op": { "type": "Cube", "size": { "x": 60, "y": 60, "z": 8 } } },
+    "2": { "id": 2, "name": "Plate Centered XY (z=0..8)", "op": { "type": "Translate", "child": 1, "offset": { "x": -30, "y": -30, "z": 0 } } },
+
+    "3": { "id": 3, "name": "Hole Cylinder Ø5 h8 (center)", "op": { "type": "Cylinder", "radius": 2.5, "height": 8, "segments": 32 } },
+    "4": { "id": 4, "name": "Hole @ (15, 0)", "op": { "type": "Translate", "child": 3, "offset": { "x": 15, "y": 0, "z": 0 } } },
+    "5": { "id": 5, "name": "Hole @ (7.5, 12.990381)", "op": { "type": "Translate", "child": 3, "offset": { "x": 7.5, "y": 12.990381, "z": 0 } } },
+    "6": { "id": 6, "name": "Hole @ (-7.5, 12.990381)", "op": { "type": "Translate", "child": 3, "offset": { "x": -7.5, "y": 12.990381, "z": 0 } } },
+    "7": { "id": 7, "name": "Hole @ (-15, 0)", "op": { "type": "Translate", "child": 3, "offset": { "x": -15, "y": 0, "z": 0 } } },
+    "8": { "id": 8, "name": "Hole @ (-7.5, -12.990381)", "op": { "type": "Translate", "child": 3, "offset": { "x": -7.5, "y": -12.990381, "z": 0 } } },
+    "9": { "id": 9, "name": "Hole @ (7.5, -12.990381)", "op": { "type": "Translate", "child": 3, "offset": { "x": 7.5, "y": -12.990381, "z": 0 } } },
+
+    "10": { "id": 10, "name": "Holes Union 1", "op": { "type": "Union", "left": 3, "right": 4 } },
+    "11": { "id": 11, "name": "Holes Union 2", "op": { "type": "Union", "left": 10, "right": 5 } },
+    "12": { "id": 12, "name": "Holes Union 3", "op": { "type": "Union", "left": 11, "right": 6 } },
+    "13": { "id": 13, "name": "Holes Union 4", "op": { "type": "Union", "left": 12, "right": 7 } },
+    "14": { "id": 14, "name": "Holes Union 5", "op": { "type": "Union", "left": 13, "right": 8 } },
+    "15": { "id": 15, "name": "Holes Union 6", "op": { "type": "Union", "left": 14, "right": 9 } },
+
+    "16": { "id": 16, "name": "Plate with Hex Pattern Holes", "op": { "type": "Difference", "left": 2, "right": 15 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 16, "material": "default" }]
+}

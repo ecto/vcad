@@ -1,0 +1,72 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "body_cube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 40,
+          "y": 40,
+          "z": 40
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "body_translated",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -20,
+          "y": -20,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "pocket_cube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 20,
+          "y": 20,
+          "z": 10
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "pocket_translated",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": -10,
+          "y": -10,
+          "z": 30
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "cube_with_pocket",
+      "op": {
+        "type": "Difference",
+        "left": 2,
+        "right": 4
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 5,
+      "material": "default"
+    }
+  ]
+}

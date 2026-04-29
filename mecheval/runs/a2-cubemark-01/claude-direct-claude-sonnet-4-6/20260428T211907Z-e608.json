@@ -1,0 +1,435 @@
+{
+  "schema_version": 0,
+  "task_id": "a2-cubemark-01",
+  "task_sha256": "04f3bf7a653dc3fdbbc32dd9f5c389f929dcf6773a8535128dce5809491fb574",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -15,
+          -15,
+          0
+        ],
+        "max": [
+          15,
+          15,
+          30
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          15,
+          15,
+          30
+        ],
+        "actual_min": [
+          -15,
+          -15,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 25091.48,
+        "tolerance_pct": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "volume": {
+          "actual_mm3": 25103.72187997139,
+          "deviation_pct": 0.048788991208923105,
+          "pass": true,
+          "spec_mm3": 25091.48,
+          "tolerance_pct": 0.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 3,
+        "expected": 9,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual": 9,
+        "diameter_mm": 3,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 9,
+        "found": [
+          [
+            -8,
+            -8,
+            3
+          ],
+          [
+            0,
+            -8,
+            3
+          ],
+          [
+            8,
+            -8,
+            3
+          ],
+          [
+            -8,
+            0,
+            3
+          ],
+          [
+            0,
+            0,
+            3
+          ],
+          [
+            8,
+            0,
+            3
+          ],
+          [
+            -8,
+            8,
+            3
+          ],
+          [
+            0,
+            8,
+            3
+          ],
+          [
+            8,
+            8,
+            3
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 3,
+        "positions": [
+          [
+            -8,
+            -8,
+            0
+          ],
+          [
+            0,
+            -8,
+            0
+          ],
+          [
+            8,
+            -8,
+            0
+          ],
+          [
+            -8,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            8,
+            0,
+            0
+          ],
+          [
+            -8,
+            8,
+            0
+          ],
+          [
+            0,
+            8,
+            0
+          ],
+          [
+            8,
+            8,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.15
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 3,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              -8,
+              -8
+            ],
+            "pass": true,
+            "spec_xy": [
+              -8,
+              -8
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              -8
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              -8
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              8,
+              -8
+            ],
+            "pass": true,
+            "spec_xy": [
+              8,
+              -8
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              -8,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              -8,
+              0
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              0
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              8,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              8,
+              0
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              -8,
+              8
+            ],
+            "pass": true,
+            "spec_xy": [
+              -8,
+              8
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              8
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              8
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              8,
+              8
+            ],
+            "pass": true,
+            "spec_xy": [
+              8,
+              8
+            ]
+          }
+        ],
+        "tolerance_mm": 0.15,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                15,
+                15,
+                30
+              ],
+              "original_min": [
+                -15,
+                -15,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                15,
+                15,
+                30
+              ],
+              "roundtripped_min": [
+                -15,
+                -15,
+                0
+              ],
+              "tolerance_mm": 0.5196152422706632
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 25103.72187997139,
+              "pass": true,
+              "roundtripped_mm3": 25103.72187997139
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 6,
+    "checks_total": 6,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T211907Z-e608",
+  "model": {
+    "id": "claude-direct-claude-sonnet-4-6",
+    "name": "Claude (direct, claude-sonnet-4-6)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "direct",
+      "model": "claude-sonnet-4-6",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a2-cubemark-01",
+    "rendered": "Make a 30mm cube. Center it in X and Y, with the bottom face on the XY plane (z = 0 to z = 30). Drill nine through-holes of diameter 3mm, axes parallel to Z, arranged in a 3×3 grid on the top face spaced 8mm apart in both X and Y, centered on the Z axis. Hole centers are at (x, y) = (-8, -8), (0, -8), (8, -8), (-8, 0), (0, 0), (8, 0), (-8, 8), (0, 8), (8, 8). Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "anthropic.messages.create",
+        "args": {
+          "model": "claude-sonnet-4-6",
+          "max_tokens": 8000,
+          "system_chars": 1632,
+          "user_chars": 441
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 14656.658334
+      }
+    ],
+    "tokens": {
+      "input": 732,
+      "output": 1519,
+      "total": 2251
+    },
+    "wallclock_sec": 14.656658334
+  },
+  "output": {
+    "vcad_path": "20260428T211907Z-e608.vcad",
+    "vcad_sha256": "f11dc33133d775560ec926bfe61a1226926bf8b529d9646d3203de63e441b4eb",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T21:19:07.985Z",
+    "ended_at": "2026-04-28T21:19:23.121Z"
+  },
+  "signature": null
+}

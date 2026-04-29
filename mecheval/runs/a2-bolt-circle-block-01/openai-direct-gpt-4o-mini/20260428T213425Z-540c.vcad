@@ -1,0 +1,147 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "block": {
+      "id": "block",
+      "name": "Block",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 60,
+          "y": 60,
+          "z": 10
+        }
+      }
+    },
+    "hole1": {
+      "id": "hole1",
+      "name": "Hole1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole2": {
+      "id": "hole2",
+      "name": "Hole2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole3": {
+      "id": "hole3",
+      "name": "Hole3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole4": {
+      "id": "hole4",
+      "name": "Hole4",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole5": {
+      "id": "hole5",
+      "name": "Hole5",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole6": {
+      "id": "hole6",
+      "name": "Hole6",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole7": {
+      "id": "hole7",
+      "name": "Hole7",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole8": {
+      "id": "hole8",
+      "name": "Hole8",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "holes": {
+      "id": "holes",
+      "name": "Holes",
+      "op": {
+        "type": "Union",
+        "left": "hole1",
+        "right": {
+          "type": "Union",
+          "left": "hole2",
+          "right": {
+            "type": "Union",
+            "left": "hole3",
+            "right": {
+              "type": "Union",
+              "left": "hole4",
+              "right": {
+                "type": "Union",
+                "left": "hole5",
+                "right": {
+                  "type": "Union",
+                  "left": "hole6",
+                  "right": {
+                    "type": "Union",
+                    "left": "hole7",
+                    "right": "hole8"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "final": {
+      "id": "final",
+      "name": "Final",
+      "op": {
+        "type": "Difference",
+        "left": "block",
+        "right": "holes"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "final",
+      "material": "default"
+    }
+  ]
+}

@@ -1,0 +1,111 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": "1",
+      "name": "T Bracket",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 60,
+          "y": 50,
+          "z": 5
+        }
+      }
+    },
+    "2": {
+      "id": "2",
+      "name": "Vertical Stem",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 20,
+          "y": 30,
+          "z": 5
+        }
+      }
+    },
+    "3": {
+      "id": "3",
+      "name": "Hole 1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 5,
+        "segments": 32
+      }
+    },
+    "4": {
+      "id": "4",
+      "name": "Hole 2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 5,
+        "segments": 32
+      }
+    },
+    "5": {
+      "id": "5",
+      "name": "Hole 3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 5,
+        "segments": 32
+      }
+    },
+    "6": {
+      "id": "6",
+      "name": "Brackets with Holes",
+      "op": {
+        "type": "Difference",
+        "left": "1",
+        "right": "3"
+      }
+    },
+    "7": {
+      "id": "7",
+      "name": "Final Shape",
+      "op": {
+        "type": "Difference",
+        "left": "6",
+        "right": "4"
+      }
+    },
+    "8": {
+      "id": "8",
+      "name": "Final Shape with Stem",
+      "op": {
+        "type": "Union",
+        "left": "7",
+        "right": {
+          "type": "Translate",
+          "child": "2",
+          "offset": {
+            "x": 0,
+            "y": 25,
+            "z": 0
+          }
+        }
+      }
+    },
+    "9": {
+      "id": "9",
+      "name": "Final Shape with All Holes",
+      "op": {
+        "type": "Difference",
+        "left": "8",
+        "right": "5"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "9",
+      "material": "default"
+    }
+  ]
+}

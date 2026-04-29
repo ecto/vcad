@@ -1,0 +1,148 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "cube": {
+      "id": "cube",
+      "name": "Cube",
+      "op": {"type":"Cube", "size":{"x":30,"y":30,"z":30}}
+    },
+    "hole1": {
+      "id": "hole1",
+      "name": "Hole1",
+      "op": {"type":"Cylinder", "radius":1.5, "height":30, "segments":32}
+    },
+    "hole2": {
+      "id": "hole2",
+      "name": "Hole2",
+      "op": {"type":"Cylinder", "radius":1.5, "height":30, "segments":32}
+    },
+    "hole3": {
+      "id": "hole3",
+      "name": "Hole3",
+      "op": {"type":"Cylinder", "radius":1.5, "height":30, "segments":32}
+    },
+    "hole4": {
+      "id": "hole4",
+      "name": "Hole4",
+      "op": {"type":"Cylinder", "radius":1.5, "height":30, "segments":32}
+    },
+    "hole5": {
+      "id": "hole5",
+      "name": "Hole5",
+      "op": {"type":"Cylinder", "radius":1.5, "height":30, "segments":32}
+    },
+    "hole6": {
+      "id": "hole6",
+      "name": "Hole6",
+      "op": {"type":"Cylinder", "radius":1.5, "height":30, "segments":32}
+    },
+    "hole7": {
+      "id": "hole7",
+      "name": "Hole7",
+      "op": {"type":"Cylinder", "radius":1.5, "height":30, "segments":32}
+    },
+    "hole8": {
+      "id": "hole8",
+      "name": "Hole8",
+      "op": {"type":"Cylinder", "radius":1.5, "height":30, "segments":32}
+    },
+    "hole9": {
+      "id": "hole9",
+      "name": "Hole9",
+      "op": {"type":"Cylinder", "radius":1.5, "height":30, "segments":32}
+    },
+    "diff1": {
+      "id": "diff1",
+      "name": "Difference1",
+      "op": {"type":"Difference", "left":"cube", "right":"hole1"}
+    },
+    "diff2": {
+      "id": "diff2",
+      "name": "Difference2",
+      "op": {"type":"Difference", "left":"diff1", "right":"hole2"}
+    },
+    "diff3": {
+      "id": "diff3",
+      "name": "Difference3",
+      "op": {"type":"Difference", "left":"diff2", "right":"hole3"}
+    },
+    "diff4": {
+      "id": "diff4",
+      "name": "Difference4",
+      "op": {"type":"Difference", "left":"diff3", "right":"hole4"}
+    },
+    "diff5": {
+      "id": "diff5",
+      "name": "Difference5",
+      "op": {"type":"Difference", "left":"diff4", "right":"hole5"}
+    },
+    "diff6": {
+      "id": "diff6",
+      "name": "Difference6",
+      "op": {"type":"Difference", "left":"diff5", "right":"hole6"}
+    },
+    "diff7": {
+      "id": "diff7",
+      "name": "Difference7",
+      "op": {"type":"Difference", "left":"diff6", "right":"hole7"}
+    },
+    "diff8": {
+      "id": "diff8",
+      "name": "Difference8",
+      "op": {"type":"Difference", "left":"diff7", "right":"hole8"}
+    },
+    "final": {
+      "id": "final",
+      "name": "FinalCube",
+      "op": {"type":"Difference", "left":"diff8", "right":"hole9"}
+    },
+    "transformed1": {
+      "id": "transformed1",
+      "name": "TransformHole1",
+      "op": {"type":"Translate", "child":"hole1", "offset":{"x":-8,"y":-8,"z":0}}
+    },
+    "transformed2": {
+      "id": "transformed2",
+      "name": "TransformHole2",
+      "op": {"type":"Translate", "child":"hole2", "offset":{"x":0,"y":-8,"z":0}}
+    },
+    "transformed3": {
+      "id": "transformed3",
+      "name": "TransformHole3",
+      "op": {"type":"Translate", "child":"hole3", "offset":{"x":8,"y":-8,"z":0}}
+    },
+    "transformed4": {
+      "id": "transformed4",
+      "name": "TransformHole4",
+      "op": {"type":"Translate", "child":"hole4", "offset":{"x":-8,"y":0,"z":0}}
+    },
+    "transformed5": {
+      "id": "transformed5",
+      "name": "TransformHole5",
+      "op": {"type":"Translate", "child":"hole5", "offset":{"x":0,"y":0,"z":0}}
+    },
+    "transformed6": {
+      "id": "transformed6",
+      "name": "TransformHole6",
+      "op": {"type":"Translate", "child":"hole6", "offset":{"x":8,"y":0,"z":0}}
+    },
+    "transformed7": {
+      "id": "transformed7",
+      "name": "TransformHole7",
+      "op": {"type":"Translate", "child":"hole7", "offset":{"x":-8,"y":8,"z":0}}
+    },
+    "transformed8": {
+      "id": "transformed8",
+      "name": "TransformHole8",
+      "op": {"type":"Translate", "child":"hole8", "offset":{"x":0,"y":8,"z":0}}
+    },
+    "transformed9": {
+      "id": "transformed9",
+      "name": "TransformHole9",
+      "op": {"type":"Translate", "child":"hole9", "offset":{"x":8,"y":8,"z":0}}
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root":"final", "material":"default"}]
+}

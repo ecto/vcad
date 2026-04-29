@@ -1,0 +1,172 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "cylinder_outer": {
+      "id": "cylinder_outer",
+      "name": "Outer Cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 30,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "cylinder_inner": {
+      "id": "cylinder_inner",
+      "name": "Inner Cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 20,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "bolt_holes": {
+      "id": "bolt_holes",
+      "name": "Bolt Holes",
+      "op": {
+        "type": "Union",
+        "left": {
+          "type": "Translate",
+          "child": {
+            "type": "Difference",
+            "left": {
+              "type": "Cylinder",
+              "radius": 2.5,
+              "height": 8,
+              "segments": 32
+            },
+            "right": {
+              "type": "Sphere",
+              "radius": 2.5,
+              "segments": 32
+            }
+          },
+          "offset": {
+            "x": 25,
+            "y": 0,
+            "z": 0
+          }
+        },
+        "right": {
+          "type": "Union",
+          "left": {
+            "type": "Translate",
+            "child": {
+              "type": "Difference",
+              "left": {
+                "type": "Cylinder",
+                "radius": 2.5,
+                "height": 8,
+                "segments": 32
+              },
+              "right": {
+                "type": "Sphere",
+                "radius": 2.5,
+                "segments": 32
+              }
+            },
+            "offset": {
+              "x": 0,
+              "y": 25,
+              "z": 0
+            }
+          },
+          "right": {
+            "type": "Union",
+            "left": {
+              "type": "Translate",
+              "child": {
+                "type": "Difference",
+                "left": {
+                  "type": "Cylinder",
+                  "radius": 2.5,
+                  "height": 8,
+                  "segments": 32
+                },
+                "right": {
+                  "type": "Sphere",
+                  "radius": 2.5,
+                  "segments": 32
+                }
+              },
+              "offset": {
+                "x": -25,
+                "y": 0,
+                "z": 0
+              }
+            },
+            "right": {
+              "type": "Union",
+              "left": {
+                "type": "Translate",
+                "child": {
+                  "type": "Difference",
+                  "left": {
+                    "type": "Cylinder",
+                    "radius": 2.5,
+                    "height": 8,
+                    "segments": 32
+                  },
+                  "right": {
+                    "type": "Sphere",
+                    "radius": 2.5,
+                    "segments": 32
+                  }
+                },
+                "offset": {
+                  "x": 0,
+                  "y": -25,
+                  "z": 0
+                }
+              },
+              "right": {
+                "type": "Translate",
+                "child": {
+                  "type": "Difference",
+                  "left": {
+                    "type": "Cylinder",
+                    "radius": 2.5,
+                    "height": 8,
+                    "segments": 32
+                  },
+                  "right": {
+                    "type": "Sphere",
+                    "radius": 2.5,
+                    "segments": 32
+                  }
+                },
+                "offset": {
+                  "x": 17.68,
+                  "y": 17.68,
+                  "z": 0
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "flanged_cap": {
+      "id": "flanged_cap",
+      "name": "Flanged Cap",
+      "op": {
+        "type": "Difference",
+        "left": "cylinder_outer",
+        "right": "cylinder_inner"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "flanged_cap",
+      "material": "default"
+    },
+    {
+      "root": "bolt_holes",
+      "material": "default"
+    }
+  ]
+}

@@ -1,0 +1,140 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "plate": {
+      "id": "plate",
+      "name": "square_plate",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 80,
+          "y": 80,
+          "z": 6
+        }
+      }
+    },
+    "central_hole": {
+      "id": "central_hole",
+      "name": "central_through_hole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 6,
+        "height": 6,
+        "segments": 32
+      }
+    },
+    "corner_hole_1": {
+      "id": "corner_hole_1",
+      "name": "corner_through_hole_1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 6,
+        "segments": 32
+      }
+    },
+    "corner_hole_2": {
+      "id": "corner_hole_2",
+      "name": "corner_through_hole_2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 6,
+        "segments": 32
+      }
+    },
+    "corner_hole_3": {
+      "id": "corner_hole_3",
+      "name": "corner_through_hole_3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 6,
+        "segments": 32
+      }
+    },
+    "corner_hole_4": {
+      "id": "corner_hole_4",
+      "name": "corner_through_hole_4",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 6,
+        "segments": 32
+      }
+    },
+    "holes": {
+      "id": "holes",
+      "name": "holes",
+      "op": {
+        "type": "Difference",
+        "left": "plate",
+        "right": {
+          "type": "Union",
+          "left": {
+            "type": "Union",
+            "left": {
+              "type": "Union",
+              "left": {
+                "type": "Translate",
+                "child": "central_hole",
+                "offset": {
+                  "x": 0,
+                  "y": 0,
+                  "z": 0
+                }
+              },
+              "right": {
+                "type": "Translate",
+                "child": "corner_hole_1",
+                "offset": {
+                  "x": 30,
+                  "y": 30,
+                  "z": 0
+                }
+              }
+            },
+            "right": {
+              "type": "Translate",
+              "child": "corner_hole_2",
+              "offset": {
+                "x": 30,
+                "y": -30,
+                "z": 0
+              }
+            }
+          },
+          "right": {
+            "type": "Union",
+            "left": {
+              "type": "Translate",
+              "child": "corner_hole_3",
+              "offset": {
+                "x": -30,
+                "y": 30,
+                "z": 0
+              }
+            },
+            "right": {
+              "type": "Translate",
+              "child": "corner_hole_4",
+              "offset": {
+                "x": -30,
+                "y": -30,
+                "z": 0
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "holes",
+      "material": "default"
+    }
+  ]
+}

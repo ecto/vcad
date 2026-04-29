@@ -1,0 +1,49 @@
+{
+  "id": "a2-mounting-rail-01",
+  "suite": "A",
+  "tier": "A2",
+  "title": "Mounting rail with three through-holes",
+  "prompt": "Make a long rectangular mounting rail 100mm long (X) × 20mm wide (Y) × 8mm thick (Z). Center it in X and Y, with the bottom face on the XY plane (z = 0 to z = 8). Drill three through-holes of diameter 6mm, axes parallel to Z, evenly spaced along the centerline (y = 0) at x = -40, x = 0, and x = 40. Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-50, -10, 0],
+      "max": [50, 10, 8],
+      "tolerance_mm": 0.1
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 15321.42,
+      "tolerance_pct": 0.5
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 6.0,
+      "expected": 3,
+      "diameter_tolerance_mm": 0.05
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 6.0,
+      "positions": [
+        [-40, 0, 0],
+        [0, 0, 0],
+        [40, 0, 0]
+      ],
+      "tolerance_mm": 0.15
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 0.5 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 30000,
+    "max_wallclock_sec": 180,
+    "max_tool_calls": 30
+  },
+  "pass_k": 5,
+  "tags": ["rail", "multi-hole", "boolean"]
+}

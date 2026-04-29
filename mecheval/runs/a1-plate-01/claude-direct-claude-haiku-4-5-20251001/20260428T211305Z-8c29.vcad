@@ -1,0 +1,142 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "plate_base": {
+      "id": "plate_base",
+      "name": "Base Plate",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 50, "y": 30, "z": 10}
+      }
+    },
+    "plate_centered": {
+      "id": "plate_centered",
+      "name": "Centered Plate",
+      "op": {
+        "type": "Translate",
+        "child": "plate_base",
+        "offset": {"x": -25, "y": -15, "z": 0}
+      }
+    },
+    "hole_1": {
+      "id": "hole_1",
+      "name": "Hole 1 (top-left)",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole_1_positioned": {
+      "id": "hole_1_positioned",
+      "name": "Hole 1 Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_1",
+        "offset": {"x": -20, "y": -10, "z": 0}
+      }
+    },
+    "hole_2": {
+      "id": "hole_2",
+      "name": "Hole 2 (top-right)",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole_2_positioned": {
+      "id": "hole_2_positioned",
+      "name": "Hole 2 Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_2",
+        "offset": {"x": 20, "y": -10, "z": 0}
+      }
+    },
+    "hole_3": {
+      "id": "hole_3",
+      "name": "Hole 3 (bottom-left)",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole_3_positioned": {
+      "id": "hole_3_positioned",
+      "name": "Hole 3 Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_3",
+        "offset": {"x": -20, "y": 10, "z": 0}
+      }
+    },
+    "hole_4": {
+      "id": "hole_4",
+      "name": "Hole 4 (bottom-right)",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "hole_4_positioned": {
+      "id": "hole_4_positioned",
+      "name": "Hole 4 Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_4",
+        "offset": {"x": 20, "y": 10, "z": 0}
+      }
+    },
+    "with_holes_1": {
+      "id": "with_holes_1",
+      "name": "Plate with Hole 1",
+      "op": {
+        "type": "Difference",
+        "left": "plate_centered",
+        "right": "hole_1_positioned"
+      }
+    },
+    "with_holes_2": {
+      "id": "with_holes_2",
+      "name": "Plate with Holes 1-2",
+      "op": {
+        "type": "Difference",
+        "left": "with_holes_1",
+        "right": "hole_2_positioned"
+      }
+    },
+    "with_holes_3": {
+      "id": "with_holes_3",
+      "name": "Plate with Holes 1-3",
+      "op": {
+        "type": "Difference",
+        "left": "with_holes_2",
+        "right": "hole_3_positioned"
+      }
+    },
+    "final_plate": {
+      "id": "final_plate",
+      "name": "Drilled Plate",
+      "op": {
+        "type": "Difference",
+        "left": "with_holes_3",
+        "right": "hole_4_positioned"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "final_plate",
+      "material": "default"
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "outerCylinder": {
+      "id": "outerCylinder",
+      "name": "Outer Cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 15,
+        "height": 40,
+        "segments": 32
+      }
+    },
+    "innerCylinder": {
+      "id": "innerCylinder",
+      "name": "Inner Cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 40,
+        "segments": 32
+      }
+    },
+    "hollowPipe": {
+      "id": "hollowPipe",
+      "name": "Hollow Pipe",
+      "op": {
+        "type": "Difference",
+        "left": "outerCylinder",
+        "right": "innerCylinder"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "hollowPipe",
+      "material": "default"
+    }
+  ]
+}

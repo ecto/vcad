@@ -1,0 +1,326 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "cube_prim": {
+      "id": "cube_prim",
+      "name": "cube_prim",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 30,
+          "y": 30,
+          "z": 30
+        }
+      }
+    },
+    "cube": {
+      "id": "cube",
+      "name": "centered_cube",
+      "op": {
+        "type": "Translate",
+        "child": "cube_prim",
+        "offset": {
+          "x": -15,
+          "y": -15,
+          "z": 0
+        }
+      }
+    },
+    "cyl_p1": {
+      "id": "cyl_p1",
+      "name": "cyl_p1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "hole1": {
+      "id": "hole1",
+      "name": "hole1_translate",
+      "op": {
+        "type": "Translate",
+        "child": "cyl_p1",
+        "offset": {
+          "x": -8,
+          "y": -8,
+          "z": 0
+        }
+      }
+    },
+    "cyl_p2": {
+      "id": "cyl_p2",
+      "name": "cyl_p2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "hole2": {
+      "id": "hole2",
+      "name": "hole2_translate",
+      "op": {
+        "type": "Translate",
+        "child": "cyl_p2",
+        "offset": {
+          "x": 0,
+          "y": -8,
+          "z": 0
+        }
+      }
+    },
+    "cyl_p3": {
+      "id": "cyl_p3",
+      "name": "cyl_p3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "hole3": {
+      "id": "hole3",
+      "name": "hole3_translate",
+      "op": {
+        "type": "Translate",
+        "child": "cyl_p3",
+        "offset": {
+          "x": 8,
+          "y": -8,
+          "z": 0
+        }
+      }
+    },
+    "cyl_p4": {
+      "id": "cyl_p4",
+      "name": "cyl_p4",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "hole4": {
+      "id": "hole4",
+      "name": "hole4_translate",
+      "op": {
+        "type": "Translate",
+        "child": "cyl_p4",
+        "offset": {
+          "x": -8,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "cyl_p5": {
+      "id": "cyl_p5",
+      "name": "cyl_p5",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "hole5": {
+      "id": "hole5",
+      "name": "hole5_translate",
+      "op": {
+        "type": "Translate",
+        "child": "cyl_p5",
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "cyl_p6": {
+      "id": "cyl_p6",
+      "name": "cyl_p6",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "hole6": {
+      "id": "hole6",
+      "name": "hole6_translate",
+      "op": {
+        "type": "Translate",
+        "child": "cyl_p6",
+        "offset": {
+          "x": 8,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "cyl_p7": {
+      "id": "cyl_p7",
+      "name": "cyl_p7",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "hole7": {
+      "id": "hole7",
+      "name": "hole7_translate",
+      "op": {
+        "type": "Translate",
+        "child": "cyl_p7",
+        "offset": {
+          "x": -8,
+          "y": 8,
+          "z": 0
+        }
+      }
+    },
+    "cyl_p8": {
+      "id": "cyl_p8",
+      "name": "cyl_p8",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "hole8": {
+      "id": "hole8",
+      "name": "hole8_translate",
+      "op": {
+        "type": "Translate",
+        "child": "cyl_p8",
+        "offset": {
+          "x": 0,
+          "y": 8,
+          "z": 0
+        }
+      }
+    },
+    "cyl_p9": {
+      "id": "cyl_p9",
+      "name": "cyl_p9",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "hole9": {
+      "id": "hole9",
+      "name": "hole9_translate",
+      "op": {
+        "type": "Translate",
+        "child": "cyl_p9",
+        "offset": {
+          "x": 8,
+          "y": 8,
+          "z": 0
+        }
+      }
+    },
+    "u1": {
+      "id": "u1",
+      "name": "union_1_2",
+      "op": {
+        "type": "Union",
+        "left": "hole1",
+        "right": "hole2"
+      }
+    },
+    "u2": {
+      "id": "u2",
+      "name": "union_1_3",
+      "op": {
+        "type": "Union",
+        "left": "u1",
+        "right": "hole3"
+      }
+    },
+    "u3": {
+      "id": "u3",
+      "name": "union_1_4",
+      "op": {
+        "type": "Union",
+        "left": "u2",
+        "right": "hole4"
+      }
+    },
+    "u4": {
+      "id": "u4",
+      "name": "union_1_5",
+      "op": {
+        "type": "Union",
+        "left": "u3",
+        "right": "hole5"
+      }
+    },
+    "u5": {
+      "id": "u5",
+      "name": "union_1_6",
+      "op": {
+        "type": "Union",
+        "left": "u4",
+        "right": "hole6"
+      }
+    },
+    "u6": {
+      "id": "u6",
+      "name": "union_1_7",
+      "op": {
+        "type": "Union",
+        "left": "u5",
+        "right": "hole7"
+      }
+    },
+    "u7": {
+      "id": "u7",
+      "name": "union_1_8",
+      "op": {
+        "type": "Union",
+        "left": "u6",
+        "right": "hole8"
+      }
+    },
+    "u8": {
+      "id": "u8",
+      "name": "union_all_holes",
+      "op": {
+        "type": "Union",
+        "left": "u7",
+        "right": "hole9"
+      }
+    },
+    "final": {
+      "id": "final",
+      "name": "cube_with_holes",
+      "op": {
+        "type": "Difference",
+        "left": "cube",
+        "right": "u8"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "final",
+      "material": "default"
+    }
+  ]
+}

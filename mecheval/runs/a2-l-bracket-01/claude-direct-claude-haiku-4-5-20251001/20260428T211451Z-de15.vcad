@@ -1,0 +1,58 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "base": {
+      "id": "base",
+      "name": "Base plate",
+      "op": {"type": "Cube", "size": {"x": 50, "y": 30, "z": 4}}
+    },
+    "wall": {
+      "id": "wall",
+      "name": "Vertical wall",
+      "op": {"type": "Cube", "size": {"x": 4, "y": 30, "z": 26}}
+    },
+    "wall_translated": {
+      "id": "wall_translated",
+      "name": "Wall positioned at +X edge",
+      "op": {"type": "Translate", "child": "wall", "offset": {"x": 46, "y": 0, "z": 4}}
+    },
+    "base_and_wall": {
+      "id": "base_and_wall",
+      "name": "L-bracket without holes",
+      "op": {"type": "Union", "left": "base", "right": "wall_translated"}
+    },
+    "hole1": {
+      "id": "hole1",
+      "name": "First hole",
+      "op": {"type": "Cylinder", "radius": 2.5, "height": 4, "segments": 32}
+    },
+    "hole1_positioned": {
+      "id": "hole1_positioned",
+      "name": "First hole at (10, 15)",
+      "op": {"type": "Translate", "child": "hole1", "offset": {"x": 10, "y": 15, "z": 0}}
+    },
+    "hole2": {
+      "id": "hole2",
+      "name": "Second hole",
+      "op": {"type": "Cylinder", "radius": 2.5, "height": 4, "segments": 32}
+    },
+    "hole2_positioned": {
+      "id": "hole2_positioned",
+      "name": "Second hole at (35, 15)",
+      "op": {"type": "Translate", "child": "hole2", "offset": {"x": 35, "y": 15, "z": 0}}
+    },
+    "both_holes": {
+      "id": "both_holes",
+      "name": "Both holes combined",
+      "op": {"type": "Union", "left": "hole1_positioned", "right": "hole2_positioned"}
+    },
+    "bracket": {
+      "id": "bracket",
+      "name": "L-shaped bracket with holes",
+      "op": {"type": "Difference", "left": "base_and_wall", "right": "both_holes"}
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": "bracket", "material": "default"}]
+}

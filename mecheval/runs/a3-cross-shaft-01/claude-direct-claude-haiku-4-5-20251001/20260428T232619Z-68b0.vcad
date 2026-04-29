@@ -1,0 +1,81 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "vertical_cyl": {
+      "id": "vertical_cyl",
+      "name": "Vertical Cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 40,
+        "segments": 32
+      }
+    },
+    "vertical_centered": {
+      "id": "vertical_centered",
+      "name": "Vertical Cylinder Centered",
+      "op": {
+        "type": "Translate",
+        "child": "vertical_cyl",
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "horizontal_cyl": {
+      "id": "horizontal_cyl",
+      "name": "Horizontal Cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 40,
+        "segments": 32
+      }
+    },
+    "horizontal_rotated": {
+      "id": "horizontal_rotated",
+      "name": "Horizontal Cylinder Rotated",
+      "op": {
+        "type": "Rotate",
+        "child": "horizontal_cyl",
+        "angles": {
+          "x": 0,
+          "y": 90,
+          "z": 0
+        }
+      }
+    },
+    "horizontal_positioned": {
+      "id": "horizontal_positioned",
+      "name": "Horizontal Cylinder Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "horizontal_rotated",
+        "offset": {
+          "x": -20,
+          "y": 0,
+          "z": 20
+        }
+      }
+    },
+    "cross_shaft": {
+      "id": "cross_shaft",
+      "name": "Cross Shaft Union",
+      "op": {
+        "type": "Union",
+        "left": "vertical_centered",
+        "right": "horizontal_positioned"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "cross_shaft",
+      "material": "default"
+    }
+  ]
+}

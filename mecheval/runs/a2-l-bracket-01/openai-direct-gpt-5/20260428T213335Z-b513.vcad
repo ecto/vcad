@@ -1,0 +1,58 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Base",
+      "op": { "type": "Cube", "size": { "x": 50, "y": 30, "z": 4 } }
+    },
+    "2": {
+      "id": 2,
+      "name": "Wall_Cube",
+      "op": { "type": "Cube", "size": { "x": 4, "y": 30, "z": 26 } }
+    },
+    "3": {
+      "id": 3,
+      "name": "Wall_Translate",
+      "op": { "type": "Translate", "child": 2, "offset": { "x": 46, "y": 0, "z": 4 } }
+    },
+    "4": {
+      "id": 4,
+      "name": "Bracket_Union",
+      "op": { "type": "Union", "left": 1, "right": 3 }
+    },
+    "5": {
+      "id": 5,
+      "name": "Hole1_Cyl",
+      "op": { "type": "Cylinder", "radius": 2.5, "height": 4, "segments": 32 }
+    },
+    "6": {
+      "id": 6,
+      "name": "Hole1_Pos",
+      "op": { "type": "Translate", "child": 5, "offset": { "x": 10, "y": 15, "z": 0 } }
+    },
+    "7": {
+      "id": 7,
+      "name": "Hole2_Cyl",
+      "op": { "type": "Cylinder", "radius": 2.5, "height": 4, "segments": 32 }
+    },
+    "8": {
+      "id": 8,
+      "name": "Hole2_Pos",
+      "op": { "type": "Translate", "child": 7, "offset": { "x": 35, "y": 15, "z": 0 } }
+    },
+    "9": {
+      "id": 9,
+      "name": "Holes_Union",
+      "op": { "type": "Union", "left": 6, "right": 8 }
+    },
+    "10": {
+      "id": 10,
+      "name": "Bracket_With_Holes",
+      "op": { "type": "Difference", "left": 4, "right": 9 }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 10, "material": "default" }]
+}

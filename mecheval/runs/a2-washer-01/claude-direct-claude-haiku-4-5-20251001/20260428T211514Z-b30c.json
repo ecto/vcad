@@ -1,0 +1,190 @@
+{
+  "schema_version": 0,
+  "task_id": "a2-washer-01",
+  "task_sha256": "fea2171898f2fccb349f8b4864b17701307f12b5cffb10dc6d59415890ec618a",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "fail",
+      "details": {
+        "error": "parse: Invalid JSON vcad file: invalid value: expected key to be a number in quotes at line 4 column 5",
+        "reason": "fatal evaluation error"
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -25,
+          -25,
+          0
+        ],
+        "max": [
+          25,
+          25,
+          5
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 7363.11,
+        "center_of_mass": [
+          0,
+          0,
+          2.5
+        ],
+        "tolerance_pct": 1
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 25,
+        "expected": 1,
+        "diameter_tolerance_mm": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "actual": 0,
+        "diameter_mm": 25,
+        "diameter_tolerance_mm": 0.1,
+        "expected": 1,
+        "found": []
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 25,
+        "positions": [
+          [
+            0,
+            0,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.15
+      },
+      "result": "fail",
+      "details": {
+        "diameter_mm": 25,
+        "per_expected": [
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              0,
+              0
+            ]
+          }
+        ],
+        "tolerance_mm": 0.15,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to round-trip"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 6,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T211514Z-b30c",
+  "model": {
+    "id": "claude-direct-claude-haiku-4-5-20251001",
+    "name": "Claude (direct, claude-haiku-4-5-20251001)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "direct",
+      "model": "claude-haiku-4-5-20251001",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a2-washer-01",
+    "rendered": "Make a flat circular washer. Outer diameter 50mm, inner diameter 25mm, thickness 5mm. Axis along Z, base on the XY plane (z = 0 to z = 5). The bore is a single concentric through-hole. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "anthropic.messages.create",
+        "args": {
+          "model": "claude-haiku-4-5-20251001",
+          "max_tokens": 8000,
+          "system_chars": 1632,
+          "user_chars": 262
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2186.973167
+      }
+    ],
+    "tokens": {
+      "input": 642,
+      "output": 290,
+      "total": 932
+    },
+    "wallclock_sec": 2.186973167
+  },
+  "output": {
+    "vcad_path": "20260428T211514Z-b30c.vcad",
+    "vcad_sha256": "2b12f702991ac3a1ddeb47c4901b0a7211ff0ffaf9e6d4c3c0011d65a3ee11eb",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T21:15:14.825Z",
+    "ended_at": "2026-04-28T21:15:17.018Z"
+  },
+  "signature": null
+}

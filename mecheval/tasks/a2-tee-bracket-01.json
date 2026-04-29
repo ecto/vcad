@@ -1,0 +1,49 @@
+{
+  "id": "a2-tee-bracket-01",
+  "suite": "A",
+  "tier": "A2",
+  "title": "Flat T-bracket with mounting holes",
+  "prompt": "Make a flat T-shaped bracket lying in the XY plane, 5mm thick (z = 0 to z = 5). Horizontal bar: x in [-30, 30], y in [0, 20]. Vertical stem extending in +Y from the middle of the horizontal bar: x in [-10, 10], y in [20, 50]. Drill three through-holes of diameter 5mm, axes parallel to Z: one at (0, 45) at the top of the stem, and two on the horizontal bar at (-25, 10) and (25, 10). Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-30, 0, 0],
+      "max": [30, 50, 5],
+      "tolerance_mm": 0.1
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 8705.48,
+      "tolerance_pct": 0.5
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 5.0,
+      "expected": 3,
+      "diameter_tolerance_mm": 0.05
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 5.0,
+      "positions": [
+        [0, 45, 0],
+        [-25, 10, 0],
+        [25, 10, 0]
+      ],
+      "tolerance_mm": 0.15
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 0.5 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 30000,
+    "max_wallclock_sec": 180,
+    "max_tool_calls": 30
+  },
+  "pass_k": 5,
+  "tags": ["bracket", "planar", "multi-hole"]
+}

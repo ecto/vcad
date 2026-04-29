@@ -1,0 +1,31 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Block",
+      "op": {
+        "type": "Translate",
+        "child": {
+          "type": "Cube",
+          "size": {
+            "x": 60,
+            "y": 40,
+            "z": 20
+          }
+        },
+        "offset": {
+          "x": -30,
+          "y": -20,
+          "z": 0
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{
+    "root": 1,
+    "material": "default"
+  }]
+}

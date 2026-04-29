@@ -1,0 +1,160 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "base": {
+      "id": "base",
+      "name": "Base",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 0.05, "y": 0.05, "z": 0.02}
+      }
+    },
+    "base_translated": {
+      "id": "base_translated",
+      "name": "Base Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "base",
+        "offset": {"x": -0.025, "y": -0.025, "z": 0.0}
+      }
+    },
+    "link1_cyl": {
+      "id": "link1_cyl",
+      "name": "Link 1 Cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 0.008,
+        "height": 0.15,
+        "segments": 32
+      }
+    },
+    "link1": {
+      "id": "link1",
+      "name": "Link 1",
+      "op": {
+        "type": "Translate",
+        "child": "link1_cyl",
+        "offset": {"x": 0.0, "y": 0.0, "z": 0.02}
+      }
+    },
+    "link2_cyl": {
+      "id": "link2_cyl",
+      "name": "Link 2 Cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 0.007,
+        "height": 0.12,
+        "segments": 32
+      }
+    },
+    "link2": {
+      "id": "link2",
+      "name": "Link 2",
+      "op": {
+        "type": "Translate",
+        "child": "link2_cyl",
+        "offset": {"x": 0.0, "y": 0.0, "z": 0.0}
+      }
+    },
+    "joint1_assembled": {
+      "id": "joint1_assembled",
+      "name": "Joint 1 Assembly",
+      "op": {
+        "type": "Union",
+        "left": "base_translated",
+        "right": "link1"
+      }
+    },
+    "tip": {
+      "id": "tip",
+      "name": "End Effector Tip",
+      "op": {
+        "type": "Sphere",
+        "radius": 0.005
+      }
+    },
+    "full_assembly": {
+      "id": "full_assembly",
+      "name": "Full Manipulator Assembly",
+      "op": {
+        "type": "Union",
+        "left": "joint1_assembled",
+        "right": "link2"
+      }
+    },
+    "manipulator_with_tip": {
+      "id": "manipulator_with_tip",
+      "name": "Manipulator with Tip",
+      "op": {
+        "type": "Union",
+        "left": "full_assembly",
+        "right": "tip"
+      }
+    }
+  },
+  "materials": {
+    "default": {
+      "color": [0.8, 0.8, 0.8],
+      "metallic": 0.3,
+      "roughness": 0.6
+    },
+    "steel": {
+      "color": [0.6, 0.6, 0.65],
+      "metallic": 0.8,
+      "roughness": 0.2
+    }
+  },
+  "part_materials": {
+    "base_translated": "steel",
+    "link1": "steel",
+    "link2": "steel",
+    "tip": "default"
+  },
+  "roots": [
+    {
+      "root": "manipulator_with_tip",
+      "material": "default"
+    }
+  ],
+  "joints": [
+    {
+      "name": "joint1",
+      "parent": "base",
+      "child": "link1",
+      "type": "revolute",
+      "axis": {"x": 0.0, "y": 1.0, "z": 0.0},
+      "origin": {"x": 0.0, "y": 0.0, "z": 0.02},
+      "limits": {
+        "lower": -1.5708,
+        "upper": 1.5708
+      },
+      "max_torque": 5.0,
+      "max_velocity": 2.0
+    },
+    {
+      "name": "joint2",
+      "parent": "link1",
+      "child": "link2",
+      "type": "revolute",
+      "axis": {"x": 0.0, "y": 1.0, "z": 0.0},
+      "origin": {"x": 0.0, "y": 0.0, "z": 0.17},
+      "limits": {
+        "lower": -1.5708,
+        "upper": 1.5708
+      },
+      "max_torque": 5.0,
+      "max_velocity": 2.0
+    },
+    {
+      "name": "tip_joint",
+      "parent": "link2",
+      "child": "tip",
+      "type": "fixed",
+      "origin": {"x": 0.0, "y": 0.0, "z": 0.12}
+    }
+  ],
+  "initial_pose": {
+    "joint1": 0.3,
+    "joint2": 0.4
+  }
+}

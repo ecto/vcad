@@ -1,0 +1,155 @@
+{
+  "schema_version": 0,
+  "task_id": "c-reacher-01",
+  "task_sha256": "3aad876b5a5c728a0f2dd565e1c8982358f5d21a0d062ddf5dbafd259f5637c5",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "body_valid",
+      "params": {
+        "type": "body_valid"
+      },
+      "result": "not_implemented",
+      "details": {
+        "needs": "vcad-gym (phyz + tang)",
+        "reason": "skeleton — kernel wiring pending"
+      }
+    },
+    {
+      "n": 2,
+      "type": "fk_reaches",
+      "params": {
+        "type": "fk_reaches",
+        "target": [
+          0.2,
+          0,
+          0.1
+        ],
+        "tolerance_m": 0.005
+      },
+      "result": "not_implemented",
+      "details": {
+        "needs": "vcad-gym (phyz + tang)",
+        "reason": "skeleton — kernel wiring pending"
+      }
+    },
+    {
+      "n": 3,
+      "type": "torque_budget",
+      "params": {
+        "type": "torque_budget",
+        "payload_kg": 0,
+        "safety_factor": 1.5
+      },
+      "result": "not_implemented",
+      "details": {
+        "needs": "vcad-gym (phyz + tang)",
+        "reason": "skeleton — kernel wiring pending"
+      }
+    },
+    {
+      "n": 4,
+      "type": "task_success",
+      "params": {
+        "type": "task_success",
+        "task": "reach_target",
+        "params": {
+          "controller": "stock_pd",
+          "max_steps": 1000,
+          "target": [
+            0.2,
+            0,
+            0.1
+          ],
+          "tolerance_m": 0.005
+        }
+      },
+      "result": "not_implemented",
+      "details": {
+        "needs": "vcad-gym (phyz + tang)",
+        "reason": "skeleton — kernel wiring pending"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 1,
+    "checks_total": 5,
+    "score": 0.2,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T212305Z-5ea1",
+  "model": {
+    "id": "claude-direct-claude-sonnet-4-6",
+    "name": "Claude (direct, claude-sonnet-4-6)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "direct",
+      "model": "claude-sonnet-4-6",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "c-reacher-01",
+    "rendered": "Design a tabletop manipulator that touches a target at (0.20, 0.00, 0.10) meters in the world frame. The base is fixed at the origin, with its lowest contact in the XY plane (z = 0). Use at least two actuated revolute joints. Each link's mass must be under 0.5 kg, and each joint's torque ceiling is 5 N·m. The end-effector link must be tagged 'tip'. The arm must reach the target without any link colliding with the table (z = 0 plane), the base, or itself. Output a complete .vcad assembly with body, joints, materials, and an initial pose; the grader will solve forward kinematics to find a configuration that reaches the target.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "anthropic.messages.create",
+        "args": {
+          "model": "claude-sonnet-4-6",
+          "max_tokens": 8000,
+          "system_chars": 1632,
+          "user_chars": 694
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 8168.153208
+      }
+    ],
+    "tokens": {
+      "input": 753,
+      "output": 843,
+      "total": 1596
+    },
+    "wallclock_sec": 8.168153208
+  },
+  "output": {
+    "vcad_path": "20260428T212305Z-5ea1.vcad",
+    "vcad_sha256": "809d07568882bf396b50d8b075d267cb35de473776f1b90dc2bc80ec4e3daad5",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T21:23:05.184Z",
+    "ended_at": "2026-04-28T21:23:13.395Z"
+  },
+  "signature": null
+}

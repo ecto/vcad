@@ -1,0 +1,289 @@
+{
+  "schema_version": 0,
+  "task_id": "a2-cubemark-01",
+  "task_sha256": "04f3bf7a653dc3fdbbc32dd9f5c389f929dcf6773a8535128dce5809491fb574",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "fail",
+      "details": {
+        "error": "parse: Invalid JSON vcad file: invalid type: map, expected u64 at line 162 column 5",
+        "reason": "fatal evaluation error"
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -15,
+          -15,
+          0
+        ],
+        "max": [
+          15,
+          15,
+          30
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 25091.48,
+        "tolerance_pct": 0.5
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 3,
+        "expected": 9,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "fail",
+      "details": {
+        "actual": 0,
+        "diameter_mm": 3,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 9,
+        "found": []
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 3,
+        "positions": [
+          [
+            -8,
+            -8,
+            0
+          ],
+          [
+            0,
+            -8,
+            0
+          ],
+          [
+            8,
+            -8,
+            0
+          ],
+          [
+            -8,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            8,
+            0,
+            0
+          ],
+          [
+            -8,
+            8,
+            0
+          ],
+          [
+            0,
+            8,
+            0
+          ],
+          [
+            8,
+            8,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.15
+      },
+      "result": "fail",
+      "details": {
+        "diameter_mm": 3,
+        "per_expected": [
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              -8,
+              -8
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              0,
+              -8
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              8,
+              -8
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              -8,
+              0
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              0,
+              0
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              8,
+              0
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              -8,
+              8
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              0,
+              8
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              8,
+              8
+            ]
+          }
+        ],
+        "tolerance_mm": 0.15,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to round-trip"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 6,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T213207Z-8739",
+  "model": {
+    "id": "openai-direct-gpt-4o-mini",
+    "name": "OpenAI (direct, gpt-4o-mini)",
+    "provider": "openai",
+    "params": {
+      "mode": "direct",
+      "model": "gpt-4o-mini",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a2-cubemark-01",
+    "rendered": "Make a 30mm cube. Center it in X and Y, with the bottom face on the XY plane (z = 0 to z = 30). Drill nine through-holes of diameter 3mm, axes parallel to Z, arranged in a 3×3 grid on the top face spaced 8mm apart in both X and Y, centered on the Z axis. Hole centers are at (x, y) = (-8, -8), (0, -8), (8, -8), (-8, 0), (0, 0), (8, 0), (-8, 8), (0, 8), (8, 8). Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "openai.chat.completions.create",
+        "args": {
+          "model": "gpt-4o-mini",
+          "max_tokens": 8000,
+          "system_chars": 1632,
+          "user_chars": 441
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 14954.416583
+      }
+    ],
+    "tokens": {
+      "input": 669,
+      "output": 975,
+      "total": 1644
+    },
+    "wallclock_sec": 14.954416583
+  },
+  "output": {
+    "vcad_path": "20260428T213207Z-8739.vcad",
+    "vcad_sha256": "5ac1a5a7844f978bcdb5e28f193ad010ca0bc420b06f8e33f5dd0165eb76f6d8",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T21:32:07.519Z",
+    "ended_at": "2026-04-28T21:32:22.480Z"
+  },
+  "signature": null
+}

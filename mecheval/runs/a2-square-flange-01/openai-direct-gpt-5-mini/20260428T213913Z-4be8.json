@@ -1,0 +1,385 @@
+{
+  "schema_version": 0,
+  "task_id": "a2-square-flange-01",
+  "task_sha256": "5be67adc7641fb5aacf176677cd8864f852928504e06c1f085de82cac3abb3b7",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -40,
+          -40,
+          0
+        ],
+        "max": [
+          40,
+          40,
+          6
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          40,
+          40,
+          6
+        ],
+        "actual_min": [
+          -40,
+          -40,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 37042.83,
+        "tolerance_pct": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "volume": {
+          "actual_mm3": 37051.535830417306,
+          "deviation_pct": 0.02350206616855203,
+          "pass": true,
+          "spec_mm3": 37042.83,
+          "tolerance_pct": 0.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 12,
+        "expected": 1,
+        "diameter_tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual": 1,
+        "diameter_mm": 12,
+        "diameter_tolerance_mm": 0.1,
+        "expected": 1,
+        "found": [
+          [
+            0,
+            0,
+            12
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 6,
+        "expected": 4,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual": 4,
+        "diameter_mm": 6,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 4,
+        "found": [
+          [
+            -30,
+            -30,
+            6
+          ],
+          [
+            30,
+            -30,
+            6
+          ],
+          [
+            -30,
+            30,
+            6
+          ],
+          [
+            30,
+            30,
+            6
+          ]
+        ]
+      }
+    },
+    {
+      "n": 5,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 12,
+        "positions": [
+          [
+            0,
+            0,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.15
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 12,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              0
+            ]
+          }
+        ],
+        "tolerance_mm": 0.15,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 6,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 6,
+        "positions": [
+          [
+            30,
+            30,
+            0
+          ],
+          [
+            -30,
+            30,
+            0
+          ],
+          [
+            -30,
+            -30,
+            0
+          ],
+          [
+            30,
+            -30,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.15
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 6,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              30,
+              30
+            ],
+            "pass": true,
+            "spec_xy": [
+              30,
+              30
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              -30,
+              30
+            ],
+            "pass": true,
+            "spec_xy": [
+              -30,
+              30
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              -30,
+              -30
+            ],
+            "pass": true,
+            "spec_xy": [
+              -30,
+              -30
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              30,
+              -30
+            ],
+            "pass": true,
+            "spec_xy": [
+              30,
+              -30
+            ]
+          }
+        ],
+        "tolerance_mm": 0.15,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 7,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                40,
+                40,
+                6
+              ],
+              "original_min": [
+                -40,
+                -40,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                40,
+                40,
+                6
+              ],
+              "roundtripped_min": [
+                -40,
+                -40,
+                0
+              ],
+              "tolerance_mm": 1.1329607230614838
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 3.9274796313356915e-14,
+              "original_mm3": 37051.535830417306,
+              "pass": true,
+              "roundtripped_mm3": 37051.53583041729
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 8,
+    "checks_total": 8,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T213913Z-4be8",
+  "model": {
+    "id": "openai-direct-gpt-5-mini",
+    "name": "OpenAI (direct, gpt-5-mini)",
+    "provider": "openai",
+    "params": {
+      "mode": "direct",
+      "model": "gpt-5-mini",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a2-square-flange-01",
+    "rendered": "Make a square plate 80mm × 80mm × 6mm (X × Y × Z). Center it in X and Y, with the bottom face on the XY plane (z = 0 to z = 6). Drill one central through-hole of diameter 12mm on the Z axis, and four corner through-holes of diameter 6mm with axes parallel to Z, centered 10mm in from each corner of the top face. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "openai.chat.completions.create",
+        "args": {
+          "model": "gpt-5-mini",
+          "max_tokens": 8000,
+          "system_chars": 1674,
+          "user_chars": 397
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 19591.3835
+      }
+    ],
+    "tokens": {
+      "input": 632,
+      "output": 2072,
+      "total": 2704
+    },
+    "wallclock_sec": 19.5913835
+  },
+  "output": {
+    "vcad_path": "20260428T213913Z-4be8.vcad",
+    "vcad_sha256": "e852a6d6ba42006478365899b822b4c3d3df8ff3149524df0c1411f9ef2886a3",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T21:39:13.159Z",
+    "ended_at": "2026-04-28T21:39:33.029Z"
+  },
+  "signature": null
+}

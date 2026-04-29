@@ -1,0 +1,199 @@
+{
+  "schema_version": 0,
+  "task_id": "a3-tangent-cylinders-01",
+  "task_sha256": "3c9319f74706d04c10463ebfaf7bf5e1720142b2d95e8558dda012feacc886dc",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -25,
+          -25,
+          0
+        ],
+        "max": [
+          35,
+          25,
+          40
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          35,
+          25,
+          40
+        ],
+        "actual_min": [
+          -25,
+          -25,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.2
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 81681.41,
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "volume": {
+          "actual_mm3": 81550.2610428139,
+          "deviation_pct": 0.1605615735405425,
+          "pass": true,
+          "spec_mm3": 81681.41,
+          "tolerance_pct": 1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                35,
+                25,
+                40
+              ],
+              "original_min": [
+                -25,
+                -25,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                35,
+                25,
+                40
+              ],
+              "roundtripped_min": [
+                -25,
+                -25,
+                0
+              ],
+              "tolerance_mm": 0.8774964387392121
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.4815248605890577,
+              "original_mm3": 81550.2610428139,
+              "pass": true,
+              "roundtripped_mm3": 81157.57626201748
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T213351Z-42cf",
+  "model": {
+    "id": "claude-direct-claude-opus-4-7",
+    "name": "Claude (direct, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "direct",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a3-tangent-cylinders-01",
+    "rendered": "Make a single solid consisting of two cylinders fused together. Big cylinder: outside diameter 50mm, axis along Z, base on the XY plane (z = 0 to z = 40), centered on the Z axis. Small cylinder: outside diameter 10mm, axis along Z, base on the XY plane (z = 0 to z = 40), positioned so that its outer surface is externally tangent to the big cylinder's outer surface on the +X side. The two cylinders share exactly one tangent line (no overlap, no gap). Output a single solid (the union of the two cylinders).",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "anthropic.messages.create",
+        "args": {
+          "model": "claude-opus-4-7",
+          "max_tokens": 8000,
+          "system_chars": 1632,
+          "user_chars": 575
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3686.065417
+      }
+    ],
+    "tokens": {
+      "input": 943,
+      "output": 298,
+      "total": 1241
+    },
+    "wallclock_sec": 3.686065417
+  },
+  "output": {
+    "vcad_path": "20260428T213351Z-42cf.vcad",
+    "vcad_sha256": "db0e561bfd2c2611c36e4edec11ba4e9920ff2c05bd166f130ef5642941f3b40",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T21:33:51.672Z",
+    "ended_at": "2026-04-28T21:33:55.378Z"
+  },
+  "signature": null
+}

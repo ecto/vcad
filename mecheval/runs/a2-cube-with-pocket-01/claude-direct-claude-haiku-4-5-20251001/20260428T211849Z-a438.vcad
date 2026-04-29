@@ -1,0 +1,56 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "cube_main": {
+      "id": "cube_main",
+      "name": "Main cube",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 40, "y": 40, "z": 40}
+      }
+    },
+    "cube_centered": {
+      "id": "cube_centered",
+      "name": "Centered cube",
+      "op": {
+        "type": "Translate",
+        "child": "cube_main",
+        "offset": {"x": -20, "y": -20, "z": 0}
+      }
+    },
+    "pocket_shape": {
+      "id": "pocket_shape",
+      "name": "Pocket to remove",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 20, "y": 20, "z": 10}
+      }
+    },
+    "pocket_positioned": {
+      "id": "pocket_positioned",
+      "name": "Pocket positioned",
+      "op": {
+        "type": "Translate",
+        "child": "pocket_shape",
+        "offset": {"x": -10, "y": -10, "z": 30}
+      }
+    },
+    "final": {
+      "id": "final",
+      "name": "Cube with pocket",
+      "op": {
+        "type": "Difference",
+        "left": "cube_centered",
+        "right": "pocket_positioned"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "final",
+      "material": "default"
+    }
+  ]
+}

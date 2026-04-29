@@ -1,0 +1,135 @@
+{
+  "schema_version": 0,
+  "task_id": "a3-three-tangent-cylinders-01",
+  "task_sha256": "4bf52e7ac1c38ed54b20a328274610f7ef2271b76fb1ea65799947ea855f7b4b",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "fail",
+      "details": {
+        "error": "parse: Invalid JSON vcad file: invalid value: expected key to be a number in quotes at line 4 column 5",
+        "reason": "fatal evaluation error"
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -20,
+          -15.77,
+          0
+        ],
+        "max": [
+          20,
+          21.55,
+          30
+        ],
+        "tolerance_mm": 0.3
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 28274.33,
+        "tolerance_pct": 1
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to round-trip"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 4,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T232913Z-c272",
+  "model": {
+    "id": "openai-direct-gpt-4o-mini",
+    "name": "OpenAI (direct, gpt-4o-mini)",
+    "provider": "openai",
+    "params": {
+      "mode": "direct",
+      "model": "gpt-4o-mini",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a3-three-tangent-cylinders-01",
+    "rendered": "Make a single solid that is the union of three identical cylinders arranged so they are all mutually externally tangent (each cylinder touches each of the other two at exactly one tangent line). Each cylinder has outside diameter 20mm, length 30mm, axis along Z, base on the XY plane (z = 0 to z = 30). Place the three cylinder axes at the vertices of an equilateral triangle in the XY plane such that adjacent axes are exactly 20mm apart (so the cylinders are externally tangent — outer surfaces touch but do not overlap). Center the arrangement on the Z axis (the centroid of the three axes is at (0, 0)), with one cylinder axis on the +Y side directly above the centroid. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "openai.chat.completions.create",
+        "args": {
+          "model": "gpt-4o-mini",
+          "max_tokens": 8000,
+          "system_chars": 1674,
+          "user_chars": 769
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 9989.865667
+      }
+    ],
+    "tokens": {
+      "input": 691,
+      "output": 556,
+      "total": 1247
+    },
+    "wallclock_sec": 9.989865667
+  },
+  "output": {
+    "vcad_path": "20260428T232913Z-c272.vcad",
+    "vcad_sha256": "f9e2e12bc1c15b6125c0360e494aa87572945377d83a8dcf91f7b8402874ed94",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T23:29:13.021Z",
+    "ended_at": "2026-04-28T23:29:23.021Z"
+  },
+  "signature": null
+}

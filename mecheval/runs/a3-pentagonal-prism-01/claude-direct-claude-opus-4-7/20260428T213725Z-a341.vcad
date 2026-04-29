@@ -1,0 +1,32 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {"id": 1, "name": "hs_cube", "op": {"type": "Cube", "size": {"x": 200, "y": 200, "z": 200}}},
+    "2": {"id": 2, "name": "hs_centered", "op": {"type": "Translate", "child": 1, "offset": {"x": -200, "y": -100, "z": -100}}},
+    "3": {"id": 3, "name": "hs_shifted", "op": {"type": "Translate", "child": 2, "offset": {"x": 12.1352549, "y": 0, "z": 0}}},
+
+    "10": {"id": 10, "name": "hs0", "op": {"type": "Rotate", "child": 3, "angles": {"x": 0, "y": 0, "z": 54}}},
+    "11": {"id": 11, "name": "hs1", "op": {"type": "Rotate", "child": 3, "angles": {"x": 0, "y": 0, "z": 126}}},
+    "12": {"id": 12, "name": "hs2", "op": {"type": "Rotate", "child": 3, "angles": {"x": 0, "y": 0, "z": 198}}},
+    "13": {"id": 13, "name": "hs3", "op": {"type": "Rotate", "child": 3, "angles": {"x": 0, "y": 0, "z": 270}}},
+    "14": {"id": 14, "name": "hs4", "op": {"type": "Rotate", "child": 3, "angles": {"x": 0, "y": 0, "z": 342}}},
+
+    "20": {"id": 20, "name": "i01", "op": {"type": "Intersection", "left": 10, "right": 11}},
+    "21": {"id": 21, "name": "i012", "op": {"type": "Intersection", "left": 20, "right": 12}},
+    "22": {"id": 22, "name": "i0123", "op": {"type": "Intersection", "left": 21, "right": 13}},
+    "23": {"id": 23, "name": "pentagon_inf", "op": {"type": "Intersection", "left": 22, "right": 14}},
+
+    "30": {"id": 30, "name": "height_box", "op": {"type": "Cube", "size": {"x": 60, "y": 60, "z": 25}}},
+    "31": {"id": 31, "name": "height_box_centered", "op": {"type": "Translate", "child": 30, "offset": {"x": -30, "y": -30, "z": 0}}},
+
+    "40": {"id": 40, "name": "prism", "op": {"type": "Intersection", "left": 23, "right": 31}},
+
+    "50": {"id": 50, "name": "hole_cyl", "op": {"type": "Cylinder", "radius": 2.5, "height": 27, "segments": 64}},
+    "51": {"id": 51, "name": "hole_positioned", "op": {"type": "Translate", "child": 50, "offset": {"x": 5, "y": 0, "z": -1}}},
+
+    "60": {"id": 60, "name": "result", "op": {"type": "Difference", "left": 40, "right": 51}}
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": 60, "material": "default"}]
+}

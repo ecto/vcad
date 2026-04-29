@@ -1,0 +1,165 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "plate_base": {
+      "id": "plate_base",
+      "name": "Base plate 80x80x6",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 80, "y": 80, "z": 6}
+      }
+    },
+    "plate_centered": {
+      "id": "plate_centered",
+      "name": "Centered plate",
+      "op": {
+        "type": "Translate",
+        "child": "plate_base",
+        "offset": {"x": -40, "y": -40, "z": 0}
+      }
+    },
+    "center_hole": {
+      "id": "center_hole",
+      "name": "Central hole cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 6,
+        "height": 6,
+        "segments": 32
+      }
+    },
+    "center_hole_positioned": {
+      "id": "center_hole_positioned",
+      "name": "Central hole at origin",
+      "op": {
+        "type": "Translate",
+        "child": "center_hole",
+        "offset": {"x": 0, "y": 0, "z": 0}
+      }
+    },
+    "corner_hole_1": {
+      "id": "corner_hole_1",
+      "name": "Corner hole 1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 6,
+        "segments": 32
+      }
+    },
+    "corner_hole_1_pos": {
+      "id": "corner_hole_1_pos",
+      "name": "Corner hole 1 positioned",
+      "op": {
+        "type": "Translate",
+        "child": "corner_hole_1",
+        "offset": {"x": -30, "y": -30, "z": 0}
+      }
+    },
+    "corner_hole_2": {
+      "id": "corner_hole_2",
+      "name": "Corner hole 2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 6,
+        "segments": 32
+      }
+    },
+    "corner_hole_2_pos": {
+      "id": "corner_hole_2_pos",
+      "name": "Corner hole 2 positioned",
+      "op": {
+        "type": "Translate",
+        "child": "corner_hole_2",
+        "offset": {"x": 30, "y": -30, "z": 0}
+      }
+    },
+    "corner_hole_3": {
+      "id": "corner_hole_3",
+      "name": "Corner hole 3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 6,
+        "segments": 32
+      }
+    },
+    "corner_hole_3_pos": {
+      "id": "corner_hole_3_pos",
+      "name": "Corner hole 3 positioned",
+      "op": {
+        "type": "Translate",
+        "child": "corner_hole_3",
+        "offset": {"x": -30, "y": 30, "z": 0}
+      }
+    },
+    "corner_hole_4": {
+      "id": "corner_hole_4",
+      "name": "Corner hole 4",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 6,
+        "segments": 32
+      }
+    },
+    "corner_hole_4_pos": {
+      "id": "corner_hole_4_pos",
+      "name": "Corner hole 4 positioned",
+      "op": {
+        "type": "Translate",
+        "child": "corner_hole_4",
+        "offset": {"x": 30, "y": 30, "z": 0}
+      }
+    },
+    "with_center_hole": {
+      "id": "with_center_hole",
+      "name": "Plate with center hole",
+      "op": {
+        "type": "Difference",
+        "left": "plate_centered",
+        "right": "center_hole_positioned"
+      }
+    },
+    "with_corner1": {
+      "id": "with_corner1",
+      "name": "With corner hole 1",
+      "op": {
+        "type": "Difference",
+        "left": "with_center_hole",
+        "right": "corner_hole_1_pos"
+      }
+    },
+    "with_corner2": {
+      "id": "with_corner2",
+      "name": "With corner hole 2",
+      "op": {
+        "type": "Difference",
+        "left": "with_corner1",
+        "right": "corner_hole_2_pos"
+      }
+    },
+    "with_corner3": {
+      "id": "with_corner3",
+      "name": "With corner hole 3",
+      "op": {
+        "type": "Difference",
+        "left": "with_corner2",
+        "right": "corner_hole_3_pos"
+      }
+    },
+    "final": {
+      "id": "final",
+      "name": "Square flange with holes",
+      "op": {
+        "type": "Difference",
+        "left": "with_corner3",
+        "right": "corner_hole_4_pos"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": "final", "material": "default"}]
+}

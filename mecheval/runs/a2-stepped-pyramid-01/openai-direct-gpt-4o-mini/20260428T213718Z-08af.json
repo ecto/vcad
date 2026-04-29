@@ -1,0 +1,135 @@
+{
+  "schema_version": 0,
+  "task_id": "a2-stepped-pyramid-01",
+  "task_sha256": "c7bef444b49eac2000f867f4e89597ba8f9b6263c51152ae546872feea79a56b",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "fail",
+      "details": {
+        "error": "parse: Invalid JSON vcad file: invalid type: map, expected u64 at line 35 column 5",
+        "reason": "fatal evaluation error"
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -20,
+          -20,
+          0
+        ],
+        "max": [
+          20,
+          20,
+          30
+        ],
+        "tolerance_mm": 0.05
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 26400,
+        "tolerance_pct": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to round-trip"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 4,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T213718Z-08af",
+  "model": {
+    "id": "openai-direct-gpt-4o-mini",
+    "name": "OpenAI (direct, gpt-4o-mini)",
+    "provider": "openai",
+    "params": {
+      "mode": "direct",
+      "model": "gpt-4o-mini",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a2-stepped-pyramid-01",
+    "rendered": "Make a stepped square pyramid built from three stacked rectangular blocks. All tiers are centered on the Z axis. Bottom tier: 40mm × 40mm × 10mm tall (x in [-20, 20], y in [-20, 20], z in [0, 10]). Middle tier sits directly on top: 28mm × 28mm × 10mm tall (x in [-14, 14], y in [-14, 14], z in [10, 20]). Top tier sits directly on top of the middle: 16mm × 16mm × 10mm tall (x in [-8, 8], y in [-8, 8], z in [20, 30]). Fuse all three into a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "openai.chat.completions.create",
+        "args": {
+          "model": "gpt-4o-mini",
+          "max_tokens": 8000,
+          "system_chars": 1674,
+          "user_chars": 518
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 10015.581291999999
+      }
+    ],
+    "tokens": {
+      "input": 696,
+      "output": 408,
+      "total": 1104
+    },
+    "wallclock_sec": 10.015581291999998
+  },
+  "output": {
+    "vcad_path": "20260428T213718Z-08af.vcad",
+    "vcad_sha256": "5f277af401203b65e60a919d5e090cde28b7cf7fbefa428cbe664992e176ba0f",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T21:37:18.101Z",
+    "ended_at": "2026-04-28T21:37:28.121Z"
+  },
+  "signature": null
+}

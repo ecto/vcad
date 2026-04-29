@@ -1,0 +1,54 @@
+{
+  "id": "a3-octagonal-flange-01",
+  "suite": "A",
+  "tier": "A3",
+  "title": "Octagonal flange with 8 bolt holes",
+  "prompt": "Make an octagonal prism flange. The outer cross-section is a regular octagon with flat-to-flat distance 40mm (apothem 20mm), oriented so two flats are parallel to the X axis (the top and bottom of the octagon). Height 8mm along Z, base on the XY plane (z = 0 to z = 8). Drill eight through-holes of diameter 5mm, axes parallel to Z, on a bolt circle of radius 15mm centered on the Z axis. The first bolt hole is on the +X axis, and the rest are evenly spaced every 45 degrees. Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-21.65, -20, 0],
+      "max": [21.65, 20, 8],
+      "tolerance_mm": 0.3
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 9347.81,
+      "tolerance_pct": 1.5
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 5.0,
+      "expected": 8,
+      "diameter_tolerance_mm": 0.05
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 5.0,
+      "positions": [
+        [15.0, 0.0, 0],
+        [10.61, 10.61, 0],
+        [0.0, 15.0, 0],
+        [-10.61, 10.61, 0],
+        [-15.0, 0.0, 0],
+        [-10.61, -10.61, 0],
+        [0.0, -15.0, 0],
+        [10.61, -10.61, 0]
+      ],
+      "tolerance_mm": 0.2
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 1.5 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 40000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 40
+  },
+  "pass_k": 5,
+  "tags": ["polygon", "octagon", "bolt-circle", "advanced"]
+}

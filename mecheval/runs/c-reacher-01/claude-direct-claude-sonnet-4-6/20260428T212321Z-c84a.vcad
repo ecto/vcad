@@ -1,0 +1,90 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "base_cylinder",
+      "op": {"type": "Cylinder", "radius": 30, "height": 40, "segments": 32}
+    },
+    "2": {
+      "id": 2,
+      "name": "base",
+      "op": {"type": "Translate", "child": 1, "offset": {"x": 0, "y": 0, "z": 0}}
+    },
+    "3": {
+      "id": 3,
+      "name": "link1_body",
+      "op": {"type": "Cube", "size": {"x": 20, "y": 20, "z": 100}}
+    },
+    "4": {
+      "id": 4,
+      "name": "link1_centered",
+      "op": {"type": "Translate", "child": 3, "offset": {"x": -10, "y": -10, "z": 0}}
+    },
+    "5": {
+      "id": 5,
+      "name": "link1",
+      "op": {"type": "Translate", "child": 4, "offset": {"x": 0, "y": 0, "z": 40}}
+    },
+    "6": {
+      "id": 6,
+      "name": "link2_body",
+      "op": {"type": "Cube", "size": {"x": 16, "y": 16, "z": 120}}
+    },
+    "7": {
+      "id": 7,
+      "name": "link2_centered",
+      "op": {"type": "Translate", "child": 6, "offset": {"x": -8, "y": -8, "z": 0}}
+    },
+    "8": {
+      "id": 8,
+      "name": "link2",
+      "op": {"type": "Translate", "child": 7, "offset": {"x": 0, "y": 0, "z": 140}}
+    },
+    "9": {
+      "id": 9,
+      "name": "tip_sphere",
+      "op": {"type": "Sphere", "radius": 8, "segments": 32}
+    },
+    "10": {
+      "id": 10,
+      "name": "tip",
+      "op": {"type": "Translate", "child": 9, "offset": {"x": 0, "y": 0, "z": 260}}
+    },
+    "11": {
+      "id": 11,
+      "name": "arm_union_1",
+      "op": {"type": "Union", "left": 5, "right": 8}
+    },
+    "12": {
+      "id": 12,
+      "name": "arm_union_2",
+      "op": {"type": "Union", "left": 11, "right": 10}
+    },
+    "13": {
+      "id": 13,
+      "name": "full_assembly",
+      "op": {"type": "Union", "left": 2, "right": 12}
+    },
+    "14": {
+      "id": 14,
+      "name": "assembly_rotated_joint1",
+      "op": {"type": "Rotate", "child": 13, "axis": {"x": 0, "y": 0, "z": 1}, "angle": 0.0}
+    },
+    "15": {
+      "id": 15,
+      "name": "assembly_rotated_joint2",
+      "op": {"type": "Rotate", "child": 14, "axis": {"x": 0, "y": 1, "z": 0}, "angle": 0.3948}
+    }
+  },
+  "materials": {
+    "default": {"base_color": [0.6, 0.6, 0.7, 1.0]},
+    "tip_material": {"base_color": [1.0, 0.2, 0.2, 1.0]}
+  },
+  "part_materials": {
+    "10": "tip_material"
+  },
+  "roots": [
+    {"root": 15, "material": "default"}
+  ]
+}

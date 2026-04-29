@@ -1,0 +1,140 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "horizontal_bar": {
+      "id": "horizontal_bar",
+      "name": "Horizontal Bar",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 60, "y": 20, "z": 5}
+      }
+    },
+    "horizontal_bar_centered": {
+      "id": "horizontal_bar_centered",
+      "name": "Horizontal Bar Centered",
+      "op": {
+        "type": "Translate",
+        "child": "horizontal_bar",
+        "offset": {"x": -30, "y": 0, "z": 0}
+      }
+    },
+    "vertical_stem": {
+      "id": "vertical_stem",
+      "name": "Vertical Stem",
+      "op": {
+        "type": "Cube",
+        "size": {"x": 20, "y": 30, "z": 5}
+      }
+    },
+    "vertical_stem_centered": {
+      "id": "vertical_stem_centered",
+      "name": "Vertical Stem Centered",
+      "op": {
+        "type": "Translate",
+        "child": "vertical_stem",
+        "offset": {"x": -10, "y": 20, "z": 0}
+      }
+    },
+    "t_shape": {
+      "id": "t_shape",
+      "name": "T-Shape Union",
+      "op": {
+        "type": "Union",
+        "left": "horizontal_bar_centered",
+        "right": "vertical_stem_centered"
+      }
+    },
+    "hole_top": {
+      "id": "hole_top",
+      "name": "Top Hole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 5,
+        "segments": 32
+      }
+    },
+    "hole_top_positioned": {
+      "id": "hole_top_positioned",
+      "name": "Top Hole Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_top",
+        "offset": {"x": 0, "y": 45, "z": 0}
+      }
+    },
+    "hole_left": {
+      "id": "hole_left",
+      "name": "Left Hole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 5,
+        "segments": 32
+      }
+    },
+    "hole_left_positioned": {
+      "id": "hole_left_positioned",
+      "name": "Left Hole Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_left",
+        "offset": {"x": -25, "y": 10, "z": 0}
+      }
+    },
+    "hole_right": {
+      "id": "hole_right",
+      "name": "Right Hole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 5,
+        "segments": 32
+      }
+    },
+    "hole_right_positioned": {
+      "id": "hole_right_positioned",
+      "name": "Right Hole Positioned",
+      "op": {
+        "type": "Translate",
+        "child": "hole_right",
+        "offset": {"x": 25, "y": 10, "z": 0}
+      }
+    },
+    "with_hole_top": {
+      "id": "with_hole_top",
+      "name": "After Top Hole",
+      "op": {
+        "type": "Difference",
+        "left": "t_shape",
+        "right": "hole_top_positioned"
+      }
+    },
+    "with_hole_left": {
+      "id": "with_hole_left",
+      "name": "After Left Hole",
+      "op": {
+        "type": "Difference",
+        "left": "with_hole_top",
+        "right": "hole_left_positioned"
+      }
+    },
+    "final_bracket": {
+      "id": "final_bracket",
+      "name": "T-Bracket with Holes",
+      "op": {
+        "type": "Difference",
+        "left": "with_hole_left",
+        "right": "hole_right_positioned"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "final_bracket",
+      "material": "default"
+    }
+  ]
+}

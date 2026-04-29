@@ -1,0 +1,95 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "cylinder1": {
+      "id": "cylinder1",
+      "name": "Cylinder 1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "cylinder2": {
+      "id": "cylinder2",
+      "name": "Cylinder 2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "cylinder3": {
+      "id": "cylinder3",
+      "name": "Cylinder 3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "translated1": {
+      "id": "translated1",
+      "name": "Translated Cylinder 1",
+      "op": {
+        "type": "Translate",
+        "child": "cylinder1",
+        "offset": {
+          "x": 0,
+          "y": 10,
+          "z": 0
+        }
+      }
+    },
+    "translated2": {
+      "id": "translated2",
+      "name": "Translated Cylinder 2",
+      "op": {
+        "type": "Translate",
+        "child": "cylinder2",
+        "offset": {
+          "x": -17.32,
+          "y": -10,
+          "z": 0
+        }
+      }
+    },
+    "translated3": {
+      "id": "translated3",
+      "name": "Translated Cylinder 3",
+      "op": {
+        "type": "Translate",
+        "child": "cylinder3",
+        "offset": {
+          "x": 17.32,
+          "y": -10,
+          "z": 0
+        }
+      }
+    },
+    "union": {
+      "id": "union",
+      "name": "Union of Cylinders",
+      "op": {
+        "type": "Union",
+        "left": "translated1",
+        "right": {
+          "type": "Union",
+          "left": "translated2",
+          "right": "translated3"
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "union",
+      "material": "default"
+    }
+  ]
+}

@@ -1,0 +1,121 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Plate",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 30,
+          "z": 10
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Hole1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Hole2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Hole3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Hole4",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "PlateWithHoles",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": {
+          "type": "Union",
+          "left": {
+            "type": "Union",
+            "left": {
+              "type": "Union",
+              "left": {
+                "type": "Translate",
+                "child": 2,
+                "offset": {
+                  "x": -20,
+                  "y": -15,
+                  "z": 5
+                }
+              },
+              "right": {
+                "type": "Translate",
+                "child": 3,
+                "offset": {
+                  "x": 20,
+                  "y": -15,
+                  "z": 5
+                }
+              }
+            },
+            "right": {
+              "type": "Union",
+              "left": {
+                "type": "Translate",
+                "child": 4,
+                "offset": {
+                  "x": -20,
+                  "y": 15,
+                  "z": 5
+                }
+              },
+              "right": {
+                "type": "Translate",
+                "child": 5,
+                "offset": {
+                  "x": 20,
+                  "y": 15,
+                  "z": 5
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 6,
+      "material": "default"
+    }
+  ]
+}

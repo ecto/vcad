@@ -1,0 +1,42 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "outer_cylinder": {
+      "id": "outer_cylinder",
+      "name": "Outer cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 25,
+        "height": 5,
+        "segments": 32
+      }
+    },
+    "inner_cylinder": {
+      "id": "inner_cylinder",
+      "name": "Inner cylinder (bore)",
+      "op": {
+        "type": "Cylinder",
+        "radius": 12.5,
+        "height": 5,
+        "segments": 32
+      }
+    },
+    "washer": {
+      "id": "washer",
+      "name": "Washer",
+      "op": {
+        "type": "Difference",
+        "left": "outer_cylinder",
+        "right": "inner_cylinder"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "washer",
+      "material": "default"
+    }
+  ]
+}

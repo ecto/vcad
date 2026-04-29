@@ -1,0 +1,413 @@
+{
+  "schema_version": 0,
+  "task_id": "a3-octagonal-flange-01",
+  "task_sha256": "91605c57469285ce67c864012910184c234cc0303f6a7c986d134cfba4df66d7",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -21.65,
+          -20,
+          0
+        ],
+        "max": [
+          21.65,
+          20,
+          8
+        ],
+        "tolerance_mm": 0.3
+      },
+      "result": "fail",
+      "details": {
+        "actual_max": [
+          20,
+          20,
+          8
+        ],
+        "actual_min": [
+          -20,
+          -20,
+          0
+        ],
+        "deviation_max": [
+          -1.6499999999999986,
+          0,
+          0
+        ],
+        "deviation_min": [
+          1.6499999999999986,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 1.6499999999999986,
+        "tolerance_mm": 0.3
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 9347.81,
+        "tolerance_pct": 1.5
+      },
+      "result": "pass",
+      "details": {
+        "volume": {
+          "actual_mm3": 9355.289000244959,
+          "deviation_pct": 0.08000804728550351,
+          "pass": true,
+          "spec_mm3": 9347.81,
+          "tolerance_pct": 1.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 5,
+        "expected": 8,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual": 8,
+        "diameter_mm": 5,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 8,
+        "found": [
+          [
+            15,
+            0,
+            5
+          ],
+          [
+            10.60660172,
+            10.60660172,
+            5
+          ],
+          [
+            0,
+            15,
+            5
+          ],
+          [
+            -10.60660172,
+            10.60660172,
+            5
+          ],
+          [
+            -15,
+            0,
+            5
+          ],
+          [
+            -10.60660172,
+            -10.60660172,
+            5
+          ],
+          [
+            0,
+            -15,
+            5
+          ],
+          [
+            10.60660172,
+            -10.60660172,
+            5
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 5,
+        "positions": [
+          [
+            15,
+            0,
+            0
+          ],
+          [
+            10.61,
+            10.61,
+            0
+          ],
+          [
+            0,
+            15,
+            0
+          ],
+          [
+            -10.61,
+            10.61,
+            0
+          ],
+          [
+            -15,
+            0,
+            0
+          ],
+          [
+            -10.61,
+            -10.61,
+            0
+          ],
+          [
+            0,
+            -15,
+            0
+          ],
+          [
+            10.61,
+            -10.61,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 5,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              15,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              15,
+              0
+            ]
+          },
+          {
+            "distance_mm": 0.004805893664739794,
+            "matched_hole": [
+              10.60660172,
+              10.60660172
+            ],
+            "pass": true,
+            "spec_xy": [
+              10.61,
+              10.61
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              15
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              15
+            ]
+          },
+          {
+            "distance_mm": 0.004805893664739794,
+            "matched_hole": [
+              -10.60660172,
+              10.60660172
+            ],
+            "pass": true,
+            "spec_xy": [
+              -10.61,
+              10.61
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              -15,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              -15,
+              0
+            ]
+          },
+          {
+            "distance_mm": 0.004805893664739794,
+            "matched_hole": [
+              -10.60660172,
+              -10.60660172
+            ],
+            "pass": true,
+            "spec_xy": [
+              -10.61,
+              -10.61
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              -15
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              -15
+            ]
+          },
+          {
+            "distance_mm": 0.004805893664739794,
+            "matched_hole": [
+              10.60660172,
+              -10.60660172
+            ],
+            "pass": true,
+            "spec_xy": [
+              10.61,
+              -10.61
+            ]
+          }
+        ],
+        "tolerance_mm": 0.2,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1.5
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                20,
+                20,
+                8
+              ],
+              "original_min": [
+                -20,
+                -20,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                20,
+                20,
+                8
+              ],
+              "roundtripped_min": [
+                -20,
+                -20,
+                0
+              ],
+              "tolerance_mm": 0.856971411425142
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 9355.289000244959,
+              "pass": true,
+              "roundtripped_mm3": 9355.289000244959
+            }
+          }
+        ],
+        "tolerance_pct": 1.5
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 5,
+    "checks_total": 6,
+    "score": 0.8333333333333334,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T233213Z-12bc",
+  "model": {
+    "id": "openai-direct-gpt-5-mini",
+    "name": "OpenAI (direct, gpt-5-mini)",
+    "provider": "openai",
+    "params": {
+      "mode": "direct",
+      "model": "gpt-5-mini",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a3-octagonal-flange-01",
+    "rendered": "Make an octagonal prism flange. The outer cross-section is a regular octagon with flat-to-flat distance 40mm (apothem 20mm), oriented so two flats are parallel to the X axis (the top and bottom of the octagon). Height 8mm along Z, base on the XY plane (z = 0 to z = 8). Drill eight through-holes of diameter 5mm, axes parallel to Z, on a bolt circle of radius 15mm centered on the Z axis. The first bolt hole is on the +X axis, and the rest are evenly spaced every 45 degrees. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "openai.chat.completions.create",
+        "args": {
+          "model": "gpt-5-mini",
+          "max_tokens": 8000,
+          "system_chars": 1674,
+          "user_chars": 564
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 65599.863083
+      }
+    ],
+    "tokens": {
+      "input": 668,
+      "output": 5967,
+      "total": 6635
+    },
+    "wallclock_sec": 65.599863083
+  },
+  "output": {
+    "vcad_path": "20260428T233213Z-12bc.vcad",
+    "vcad_sha256": "a9a25d90425262294b4437f9a0ad545664032bf1567edbaa894623755167642d",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T23:32:13.384Z",
+    "ended_at": "2026-04-28T23:33:19.367Z"
+  },
+  "signature": null
+}

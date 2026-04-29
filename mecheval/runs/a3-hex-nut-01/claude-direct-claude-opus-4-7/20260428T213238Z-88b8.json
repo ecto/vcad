@@ -1,0 +1,185 @@
+{
+  "schema_version": 0,
+  "task_id": "a3-hex-nut-01",
+  "task_sha256": "7a7b681fbc898d3aa4f21777ce05899d118d2aa1fb5e31a87d45c8963be74ea2",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "fail",
+      "details": {
+        "error": "parse: Invalid JSON vcad file: missing field `angles` at line 5 column 136",
+        "reason": "fatal evaluation error"
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -10.97,
+          -9.5,
+          0
+        ],
+        "max": [
+          10.97,
+          9.5,
+          8
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 1872.62,
+        "tolerance_pct": 1.5
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 10,
+        "expected": 1,
+        "diameter_tolerance_mm": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "actual": 0,
+        "diameter_mm": 10,
+        "diameter_tolerance_mm": 0.1,
+        "expected": 1,
+        "found": []
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 10,
+        "positions": [
+          [
+            0,
+            0,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.15
+      },
+      "result": "fail",
+      "details": {
+        "diameter_mm": 10,
+        "per_expected": [
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              0,
+              0
+            ]
+          }
+        ],
+        "tolerance_mm": 0.15,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1.5
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to round-trip"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 6,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T213238Z-88b8",
+  "model": {
+    "id": "claude-direct-claude-opus-4-7",
+    "name": "Claude (direct, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "direct",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a3-hex-nut-01",
+    "rendered": "Make a hexagonal nut. The outer cross-section is a regular hexagon with flat-to-flat distance 19mm (so 19mm wrench fits), oriented so two flats are parallel to the X axis (the top and bottom of the hex). Height 8mm along Z, base on the XY plane (z = 0 to z = 8). Concentric central through-hole of diameter 10mm, axis along Z. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "anthropic.messages.create",
+        "args": {
+          "model": "claude-opus-4-7",
+          "max_tokens": 8000,
+          "system_chars": 1632,
+          "user_chars": 405
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3883.702584
+      }
+    ],
+    "tokens": {
+      "input": 892,
+      "output": 318,
+      "total": 1210
+    },
+    "wallclock_sec": 3.883702584
+  },
+  "output": {
+    "vcad_path": "20260428T213238Z-88b8.vcad",
+    "vcad_sha256": "50b876ee8c75a8026f71edc738152e6db7d2b868d91fdf73ddf35817468a6d82",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T21:32:38.327Z",
+    "ended_at": "2026-04-28T21:32:42.215Z"
+  },
+  "signature": null
+}

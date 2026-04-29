@@ -1,0 +1,24 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {"id": 1, "name": "plate", "op": {"type": "Cube", "size": {"x": 80, "y": 80, "z": 6}}},
+    "2": {"id": 2, "name": "plate_centered", "op": {"type": "Translate", "child": 1, "offset": {"x": -40, "y": -40, "z": 0}}},
+    "3": {"id": 3, "name": "center_hole", "op": {"type": "Cylinder", "radius": 6, "height": 6, "segments": 32}},
+    "4": {"id": 4, "name": "corner_hole_1", "op": {"type": "Cylinder", "radius": 3, "height": 6, "segments": 32}},
+    "5": {"id": 5, "name": "corner_hole_1_placed", "op": {"type": "Translate", "child": 4, "offset": {"x": 30, "y": 30, "z": 0}}},
+    "6": {"id": 6, "name": "corner_hole_2", "op": {"type": "Cylinder", "radius": 3, "height": 6, "segments": 32}},
+    "7": {"id": 7, "name": "corner_hole_2_placed", "op": {"type": "Translate", "child": 6, "offset": {"x": -30, "y": 30, "z": 0}}},
+    "8": {"id": 8, "name": "corner_hole_3", "op": {"type": "Cylinder", "radius": 3, "height": 6, "segments": 32}},
+    "9": {"id": 9, "name": "corner_hole_3_placed", "op": {"type": "Translate", "child": 8, "offset": {"x": 30, "y": -30, "z": 0}}},
+    "10": {"id": 10, "name": "corner_hole_4", "op": {"type": "Cylinder", "radius": 3, "height": 6, "segments": 32}},
+    "11": {"id": 11, "name": "corner_hole_4_placed", "op": {"type": "Translate", "child": 10, "offset": {"x": -30, "y": -30, "z": 0}}},
+    "12": {"id": 12, "name": "diff1", "op": {"type": "Difference", "left": 2, "right": 3}},
+    "13": {"id": 13, "name": "diff2", "op": {"type": "Difference", "left": 12, "right": 5}},
+    "14": {"id": 14, "name": "diff3", "op": {"type": "Difference", "left": 13, "right": 7}},
+    "15": {"id": 15, "name": "diff4", "op": {"type": "Difference", "left": 14, "right": 9}},
+    "16": {"id": 16, "name": "diff5", "op": {"type": "Difference", "left": 15, "right": 11}}
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": 16, "material": "default"}]
+}

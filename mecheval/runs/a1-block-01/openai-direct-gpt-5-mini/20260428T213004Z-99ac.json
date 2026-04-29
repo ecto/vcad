@@ -1,0 +1,225 @@
+{
+  "schema_version": 0,
+  "task_id": "a1-block-01",
+  "task_sha256": "eb827360a11bd0254eb82fe36a174169bf9a9a7f5e9d9d062f4d5c63e4f9826a",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -30,
+          -20,
+          0
+        ],
+        "max": [
+          30,
+          20,
+          20
+        ],
+        "tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          30,
+          20,
+          20
+        ],
+        "actual_min": [
+          -30,
+          -20,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.05
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 48000,
+        "center_of_mass": [
+          0,
+          0,
+          10
+        ],
+        "tolerance_pct": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            0,
+            0,
+            10
+          ],
+          "bbox_diagonal_mm": 74.83314773547883,
+          "deviation": [
+            0,
+            0,
+            0
+          ],
+          "max_abs_deviation_mm": 0,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            10
+          ],
+          "tolerance_mm": 0.07483314773547883
+        },
+        "volume": {
+          "actual_mm3": 48000,
+          "deviation_pct": 0,
+          "pass": true,
+          "spec_mm3": 48000,
+          "tolerance_pct": 0.1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                30,
+                20,
+                20
+              ],
+              "original_min": [
+                -30,
+                -20,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                30,
+                20,
+                20
+              ],
+              "roundtripped_min": [
+                -30,
+                -20,
+                0
+              ],
+              "tolerance_mm": 0.07483314773547883
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 48000,
+              "pass": true,
+              "roundtripped_mm3": 48000
+            }
+          }
+        ],
+        "tolerance_pct": 0.1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T213004Z-99ac",
+  "model": {
+    "id": "openai-direct-gpt-5-mini",
+    "name": "OpenAI (direct, gpt-5-mini)",
+    "provider": "openai",
+    "params": {
+      "mode": "direct",
+      "model": "gpt-5-mini",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a1-block-01",
+    "rendered": "Make a rectangular block 60mm long (X) × 40mm wide (Y) × 20mm tall (Z). Center it in X and Y, with the bottom face on the XY plane (z = 0 to z = 20). Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "openai.chat.completions.create",
+        "args": {
+          "model": "gpt-5-mini",
+          "max_tokens": 8000,
+          "system_chars": 1632,
+          "user_chars": 226
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 8984.789625000001
+      }
+    ],
+    "tokens": {
+      "input": 577,
+      "output": 525,
+      "total": 1102
+    },
+    "wallclock_sec": 8.984789625000001
+  },
+  "output": {
+    "vcad_path": "20260428T213004Z-99ac.vcad",
+    "vcad_sha256": "ed3634a6ac755ab22f840157ea60a7eeda24ec5aeb71925fae8c0b377749d0a8",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T21:30:04.684Z",
+    "ended_at": "2026-04-28T21:30:13.676Z"
+  },
+  "signature": null
+}

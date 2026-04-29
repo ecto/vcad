@@ -1,0 +1,90 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "base": {
+      "id": "base",
+      "name": "Base",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 30,
+          "z": 4
+        }
+      }
+    },
+    "wall": {
+      "id": "wall",
+      "name": "Wall",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 4,
+          "y": 30,
+          "z": 26
+        }
+      }
+    },
+    "hole1": {
+      "id": "hole1",
+      "name": "Hole1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 4,
+        "segments": 32
+      }
+    },
+    "hole2": {
+      "id": "hole2",
+      "name": "Hole2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 4,
+        "segments": 32
+      }
+    },
+    "bracket": {
+      "id": "bracket",
+      "name": "Bracket",
+      "op": {
+        "type": "Difference",
+        "left": "base",
+        "right": "hole1"
+      }
+    },
+    "finalBracket": {
+      "id": "finalBracket",
+      "name": "FinalBracket",
+      "op": {
+        "type": "Difference",
+        "left": "bracket",
+        "right": "hole2"
+      }
+    },
+    "finalAssembly": {
+      "id": "finalAssembly",
+      "name": "FinalAssembly",
+      "op": {
+        "type": "Union",
+        "left": "finalBracket",
+        "right": {
+          "type": "Translate",
+          "child": "wall",
+          "offset": {
+            "x": 46,
+            "y": 0,
+            "z": 4
+          }
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{
+    "root": "finalAssembly",
+    "material": "default"
+  }]
+}

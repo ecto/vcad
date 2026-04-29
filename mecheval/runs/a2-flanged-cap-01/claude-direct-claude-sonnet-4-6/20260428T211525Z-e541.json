@@ -1,0 +1,419 @@
+{
+  "schema_version": 0,
+  "task_id": "a2-flanged-cap-01",
+  "task_sha256": "a438f2e4d00d25d7991ea2fdde326ede44cf4fd92d274e301da0c4d35100ecba",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -30,
+          -30,
+          0
+        ],
+        "max": [
+          30,
+          30,
+          8
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          30,
+          30,
+          8
+        ],
+        "actual_min": [
+          -30,
+          -30,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 11623.89,
+        "center_of_mass": [
+          0,
+          0,
+          4
+        ],
+        "tolerance_pct": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            -6.147098729826828e-16,
+            1.3420757386235465e-15,
+            4.000000000000065
+          ],
+          "bbox_diagonal_mm": 85.22910301065006,
+          "deviation": [
+            -6.147098729826828e-16,
+            1.3420757386235465e-15,
+            6.483702463810914e-14
+          ],
+          "max_abs_deviation_mm": 6.483702463810914e-14,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            4
+          ],
+          "tolerance_mm": 0.4261455150532503
+        },
+        "volume": {
+          "actual_mm3": 11605.229361969885,
+          "deviation_pct": 0.1605369461524031,
+          "pass": true,
+          "spec_mm3": 11623.89,
+          "tolerance_pct": 0.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 40,
+        "expected": 1,
+        "diameter_tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual": 1,
+        "diameter_mm": 40,
+        "diameter_tolerance_mm": 0.1,
+        "expected": 1,
+        "found": [
+          [
+            0,
+            0,
+            40
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 5,
+        "expected": 6,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual": 6,
+        "diameter_mm": 5,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 6,
+        "found": [
+          [
+            25,
+            0,
+            5
+          ],
+          [
+            12.5,
+            21.65063509461097,
+            5
+          ],
+          [
+            -12.5,
+            21.65063509461097,
+            5
+          ],
+          [
+            -25,
+            0,
+            5
+          ],
+          [
+            -12.5,
+            -21.65063509461097,
+            5
+          ],
+          [
+            12.5,
+            -21.65063509461097,
+            5
+          ]
+        ]
+      }
+    },
+    {
+      "n": 5,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 5,
+        "positions": [
+          [
+            25,
+            0,
+            0
+          ],
+          [
+            12.5,
+            21.65,
+            0
+          ],
+          [
+            -12.5,
+            21.65,
+            0
+          ],
+          [
+            -25,
+            0,
+            0
+          ],
+          [
+            -12.5,
+            -21.65,
+            0
+          ],
+          [
+            12.5,
+            -21.65,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.15
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 5,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              25,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              25,
+              0
+            ]
+          },
+          {
+            "distance_mm": 0.0006350946109705546,
+            "matched_hole": [
+              12.5,
+              21.65063509461097
+            ],
+            "pass": true,
+            "spec_xy": [
+              12.5,
+              21.65
+            ]
+          },
+          {
+            "distance_mm": 0.0006350946109705546,
+            "matched_hole": [
+              -12.5,
+              21.65063509461097
+            ],
+            "pass": true,
+            "spec_xy": [
+              -12.5,
+              21.65
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              -25,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              -25,
+              0
+            ]
+          },
+          {
+            "distance_mm": 0.0006350946109705546,
+            "matched_hole": [
+              -12.5,
+              -21.65063509461097
+            ],
+            "pass": true,
+            "spec_xy": [
+              -12.5,
+              -21.65
+            ]
+          },
+          {
+            "distance_mm": 0.0006350946109705546,
+            "matched_hole": [
+              12.5,
+              -21.65063509461097
+            ],
+            "pass": true,
+            "spec_xy": [
+              12.5,
+              -21.65
+            ]
+          }
+        ],
+        "tolerance_mm": 0.15,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 6,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                30,
+                30,
+                8
+              ],
+              "original_min": [
+                -30,
+                -30,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                30,
+                30,
+                8
+              ],
+              "roundtripped_min": [
+                -30,
+                -30,
+                0
+              ],
+              "tolerance_mm": 0.8522910301065006
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.633357479373613,
+              "original_mm3": 11605.22936196987,
+              "pass": true,
+              "roundtripped_mm3": 11531.726773807372
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 7,
+    "checks_total": 7,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260428T211525Z-e541",
+  "model": {
+    "id": "claude-direct-claude-sonnet-4-6",
+    "name": "Claude (direct, claude-sonnet-4-6)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "direct",
+      "model": "claude-sonnet-4-6",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a2-flanged-cap-01",
+    "rendered": "Make a circular flanged cap. Outer cylinder: outside diameter 60mm, height 8mm, axis along Z, base on the XY plane (z = 0 to z = 8). Concentric central through-hole of diameter 40mm, axis along Z. Six bolt holes of diameter 5mm on a 50mm bolt circle (radius 25mm from the axis), evenly spaced starting at 0 degrees, all parallel to Z and going fully through. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "anthropic.messages.create",
+        "args": {
+          "model": "claude-sonnet-4-6",
+          "max_tokens": 8000,
+          "system_chars": 1632,
+          "user_chars": 441
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 12728.35425
+      }
+    ],
+    "tokens": {
+      "input": 691,
+      "output": 1201,
+      "total": 1892
+    },
+    "wallclock_sec": 12.72835425
+  },
+  "output": {
+    "vcad_path": "20260428T211525Z-e541.vcad",
+    "vcad_sha256": "079d6f84384906941fa9940a509556fe02280893251f716a8c9c3b1e28926e8b",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-04-28T21:15:25.576Z",
+    "ended_at": "2026-04-28T21:15:39.232Z"
+  },
+  "signature": null
+}

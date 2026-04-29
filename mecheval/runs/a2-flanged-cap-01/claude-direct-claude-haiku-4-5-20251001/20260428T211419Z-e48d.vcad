@@ -1,0 +1,210 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "outer_cylinder": {
+      "id": 1,
+      "name": "outer_cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 30,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "central_hole": {
+      "id": 2,
+      "name": "central_hole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 20,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "with_central_hole": {
+      "id": 3,
+      "name": "with_central_hole",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 2
+      }
+    },
+    "bolt_hole_0": {
+      "id": 4,
+      "name": "bolt_hole_0",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "bolt_hole_0_positioned": {
+      "id": 5,
+      "name": "bolt_hole_0_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {"x": 25, "y": 0, "z": 0}
+      }
+    },
+    "bolt_hole_1": {
+      "id": 6,
+      "name": "bolt_hole_1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "bolt_hole_1_positioned": {
+      "id": 7,
+      "name": "bolt_hole_1_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {"x": 12.5, "y": 21.65, "z": 0}
+      }
+    },
+    "bolt_hole_2": {
+      "id": 8,
+      "name": "bolt_hole_2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "bolt_hole_2_positioned": {
+      "id": 9,
+      "name": "bolt_hole_2_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 8,
+        "offset": {"x": -12.5, "y": 21.65, "z": 0}
+      }
+    },
+    "bolt_hole_3": {
+      "id": 10,
+      "name": "bolt_hole_3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "bolt_hole_3_positioned": {
+      "id": 11,
+      "name": "bolt_hole_3_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 10,
+        "offset": {"x": -25, "y": 0, "z": 0}
+      }
+    },
+    "bolt_hole_4": {
+      "id": 12,
+      "name": "bolt_hole_4",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "bolt_hole_4_positioned": {
+      "id": 13,
+      "name": "bolt_hole_4_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 12,
+        "offset": {"x": -12.5, "y": -21.65, "z": 0}
+      }
+    },
+    "bolt_hole_5": {
+      "id": 14,
+      "name": "bolt_hole_5",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "bolt_hole_5_positioned": {
+      "id": 15,
+      "name": "bolt_hole_5_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 14,
+        "offset": {"x": 12.5, "y": -21.65, "z": 0}
+      }
+    },
+    "with_holes_1": {
+      "id": 16,
+      "name": "with_holes_1",
+      "op": {
+        "type": "Difference",
+        "left": 3,
+        "right": 5
+      }
+    },
+    "with_holes_2": {
+      "id": 17,
+      "name": "with_holes_2",
+      "op": {
+        "type": "Difference",
+        "left": 16,
+        "right": 7
+      }
+    },
+    "with_holes_3": {
+      "id": 18,
+      "name": "with_holes_3",
+      "op": {
+        "type": "Difference",
+        "left": 17,
+        "right": 9
+      }
+    },
+    "with_holes_4": {
+      "id": 19,
+      "name": "with_holes_4",
+      "op": {
+        "type": "Difference",
+        "left": 18,
+        "right": 11
+      }
+    },
+    "with_holes_5": {
+      "id": 20,
+      "name": "with_holes_5",
+      "op": {
+        "type": "Difference",
+        "left": 19,
+        "right": 13
+      }
+    },
+    "flanged_cap": {
+      "id": 21,
+      "name": "flanged_cap",
+      "op": {
+        "type": "Difference",
+        "left": 20,
+        "right": 15
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 21,
+      "material": "default"
+    }
+  ]
+}

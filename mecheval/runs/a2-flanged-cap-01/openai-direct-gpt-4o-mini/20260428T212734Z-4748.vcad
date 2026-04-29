@@ -1,0 +1,110 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Outer Cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 30,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Central Hole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 20,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Bolt Holes",
+      "op": {
+        "type": "Union",
+        "left": {
+          "type": "Translate",
+          "child": "4",
+          "offset": { "x": 25, "y": 0, "z": 4 }
+        },
+        "right": {
+          "type": "Union",
+          "left": {
+            "type": "Translate",
+            "child": "4",
+            "offset": { "x": 0, "y": 25, "z": 4 }
+          },
+          "right": {
+            "type": "Union",
+            "left": {
+              "type": "Translate",
+              "child": "4",
+              "offset": { "x": -25, "y": 0, "z": 4 }
+            },
+            "right": {
+              "type": "Union",
+              "left": {
+                "type": "Translate",
+                "child": "4",
+                "offset": { "x": 0, "y": -25, "z": 4 }
+              },
+              "right": {
+                "type": "Union",
+                "left": {
+                  "type": "Translate",
+                  "child": "4",
+                  "offset": { "x": 17.68, "y": 17.68, "z": 4 }
+                },
+                "right": {
+                  "type": "Translate",
+                  "child": "4",
+                  "offset": { "x": -17.68, "y": 17.68, "z": 4 }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Bolt Hole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Flanged Cap",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 2
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "Final Cap",
+      "op": {
+        "type": "Difference",
+        "left": 5,
+        "right": 3
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 6,
+      "material": "default"
+    }
+  ]
+}

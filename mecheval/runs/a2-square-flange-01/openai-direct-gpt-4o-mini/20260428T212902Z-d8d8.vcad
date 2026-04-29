@@ -1,0 +1,146 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Square Plate",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 80,
+          "y": 80,
+          "z": 6
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Central Through-Hole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 6,
+        "height": 6,
+        "segments": 32
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Corner Through-Hole 1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 6,
+        "segments": 32
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Corner Through-Hole 2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 6,
+        "segments": 32
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Corner Through-Hole 3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 6,
+        "segments": 32
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "Corner Through-Hole 4",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 6,
+        "segments": 32
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "Central Hole Subtraction",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 2
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "Corner Holes Subtraction 1",
+      "op": {
+        "type": "Difference",
+        "left": 7,
+        "right": 3
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "Corner Holes Subtraction 2",
+      "op": {
+        "type": "Difference",
+        "left": 8,
+        "right": 4
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "Corner Holes Subtraction 3",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": 35,
+          "y": -35,
+          "z": 0
+        }
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "Corner Holes Subtraction 4",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {
+          "x": -35,
+          "y": -35,
+          "z": 0
+        }
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "Final Solid",
+      "op": {
+        "type": "Difference",
+        "left": 9,
+        "right": 10
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "Final Solid Complete",
+      "op": {
+        "type": "Difference",
+        "left": 12,
+        "right": 11
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 13,
+      "material": "default"
+    }
+  ]
+}

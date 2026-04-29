@@ -1,0 +1,87 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "base": {
+      "id": "base",
+      "name": "Base",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 30,
+          "z": 4
+        }
+      }
+    },
+    "wall": {
+      "id": "wall",
+      "name": "Wall",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 4,
+          "y": 30,
+          "z": 26
+        }
+      }
+    },
+    "hole1": {
+      "id": "hole1",
+      "name": "Hole1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 4,
+        "segments": 32
+      }
+    },
+    "hole2": {
+      "id": "hole2",
+      "name": "Hole2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 4,
+        "segments": 32
+      }
+    },
+    "base_with_holes": {
+      "id": "base_with_holes",
+      "name": "BaseWithHoles",
+      "op": {
+        "type": "Difference",
+        "left": "base",
+        "right": "hole1"
+      }
+    },
+    "final_bracket": {
+      "id": "final_bracket",
+      "name": "FinalBracket",
+      "op": {
+        "type": "Difference",
+        "left": {
+          "type": "Union",
+          "left": "base_with_holes",
+          "right": {
+            "type": "Translate",
+            "child": "wall",
+            "offset": {
+              "x": 46,
+              "y": 0,
+              "z": 4
+            }
+          }
+        },
+        "right": "hole2"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": "final_bracket",
+      "material": "default"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "block",
+      "op": {"type": "Cube", "size": {"x": 60, "y": 40, "z": 20}}
+    },
+    "2": {
+      "id": 2,
+      "name": "centered_block",
+      "op": {"type": "Translate", "child": 1, "offset": {"x": -30, "y": -20, "z": 0}}
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": 2, "material": "default"}]
+}

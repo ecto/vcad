@@ -1,0 +1,72 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "2": {
+      "id": 2,
+      "name": "main_block_cube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 30,
+          "z": 20
+        }
+      }
+    },
+    "1": {
+      "id": 1,
+      "name": "main_block_translated",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": -25,
+          "y": -15,
+          "z": 0
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "cut_cube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 25,
+          "y": 30,
+          "z": 10
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "cut_translated",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {
+          "x": 0,
+          "y": -15,
+          "z": 10
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "stepped_block_result",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 3
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 5,
+      "material": "default"
+    }
+  ]
+}

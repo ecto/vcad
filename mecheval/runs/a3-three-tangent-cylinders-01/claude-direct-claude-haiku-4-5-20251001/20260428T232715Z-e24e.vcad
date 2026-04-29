@@ -1,0 +1,83 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "cyl1": {
+      "id": "cyl1",
+      "name": "cylinder_1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "cyl1_translated": {
+      "id": "cyl1_translated",
+      "name": "cylinder_1_positioned",
+      "op": {
+        "type": "Translate",
+        "child": "cyl1",
+        "offset": {"x": 0, "y": 11.547, "z": 0}
+      }
+    },
+    "cyl2": {
+      "id": "cyl2",
+      "name": "cylinder_2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "cyl2_translated": {
+      "id": "cyl2_translated",
+      "name": "cylinder_2_positioned",
+      "op": {
+        "type": "Translate",
+        "child": "cyl2",
+        "offset": {"x": -10, "y": -5.774, "z": 0}
+      }
+    },
+    "cyl3": {
+      "id": "cyl3",
+      "name": "cylinder_3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "cyl3_translated": {
+      "id": "cyl3_translated",
+      "name": "cylinder_3_positioned",
+      "op": {
+        "type": "Translate",
+        "child": "cyl3",
+        "offset": {"x": 10, "y": -5.774, "z": 0}
+      }
+    },
+    "union_12": {
+      "id": "union_12",
+      "name": "union_1_2",
+      "op": {
+        "type": "Union",
+        "left": "cyl1_translated",
+        "right": "cyl2_translated"
+      }
+    },
+    "union_123": {
+      "id": "union_123",
+      "name": "union_all",
+      "op": {
+        "type": "Union",
+        "left": "union_12",
+        "right": "cyl3_translated"
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{"root": "union_123", "material": "default"}]
+}

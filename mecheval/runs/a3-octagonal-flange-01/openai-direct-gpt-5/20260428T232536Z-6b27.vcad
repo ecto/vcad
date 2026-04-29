@@ -1,0 +1,36 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "Square Prism A", "op": { "type": "Cube", "size": { "x": 40, "y": 40, "z": 8 } } },
+    "2": { "id": 2, "name": "Centered Square Prism A", "op": { "type": "Translate", "child": 1, "offset": { "x": -20, "y": -20, "z": 0 } } },
+    "3": { "id": 3, "name": "Square Prism B", "op": { "type": "Cube", "size": { "x": 40, "y": 40, "z": 8 } } },
+    "4": { "id": 4, "name": "Centered Square Prism B", "op": { "type": "Translate", "child": 3, "offset": { "x": -20, "y": -20, "z": 0 } } },
+    "5": { "id": 5, "name": "Rotated Square Prism B 45deg", "op": { "type": "Rotate", "child": 4, "angles": { "x": 0, "y": 0, "z": 45 } } },
+    "6": { "id": 6, "name": "Octagonal Flange Body", "op": { "type": "Intersection", "left": 2, "right": 5 } },
+
+    "7": { "id": 7, "name": "Hole Cylinder Base", "op": { "type": "Cylinder", "radius": 2.5, "height": 8, "segments": 32 } },
+    "8": { "id": 8, "name": "Hole 0 deg (+X)", "op": { "type": "Translate", "child": 7, "offset": { "x": 15, "y": 0, "z": 0 } } },
+    "9": { "id": 9, "name": "Hole 45 deg", "op": { "type": "Translate", "child": 7, "offset": { "x": 10.6066, "y": 10.6066, "z": 0 } } },
+    "10": { "id": 10, "name": "Hole 90 deg (+Y)", "op": { "type": "Translate", "child": 7, "offset": { "x": 0, "y": 15, "z": 0 } } },
+    "11": { "id": 11, "name": "Hole 135 deg", "op": { "type": "Translate", "child": 7, "offset": { "x": -10.6066, "y": 10.6066, "z": 0 } } },
+    "12": { "id": 12, "name": "Hole 180 deg (-X)", "op": { "type": "Translate", "child": 7, "offset": { "x": -15, "y": 0, "z": 0 } } },
+    "13": { "id": 13, "name": "Hole 225 deg", "op": { "type": "Translate", "child": 7, "offset": { "x": -10.6066, "y": -10.6066, "z": 0 } } },
+    "14": { "id": 14, "name": "Hole 270 deg (-Y)", "op": { "type": "Translate", "child": 7, "offset": { "x": 0, "y": -15, "z": 0 } } },
+    "15": { "id": 15, "name": "Hole 315 deg", "op": { "type": "Translate", "child": 7, "offset": { "x": 10.6066, "y": -10.6066, "z": 0 } } },
+
+    "16": { "id": 16, "name": "Holes Union 1", "op": { "type": "Union", "left": 8, "right": 9 } },
+    "17": { "id": 17, "name": "Holes Union 2", "op": { "type": "Union", "left": 16, "right": 10 } },
+    "18": { "id": 18, "name": "Holes Union 3", "op": { "type": "Union", "left": 17, "right": 11 } },
+    "19": { "id": 19, "name": "Holes Union 4", "op": { "type": "Union", "left": 18, "right": 12 } },
+    "20": { "id": 20, "name": "Holes Union 5", "op": { "type": "Union", "left": 19, "right": 13 } },
+    "21": { "id": 21, "name": "Holes Union 6", "op": { "type": "Union", "left": 20, "right": 14 } },
+    "22": { "id": 22, "name": "Holes Union 7", "op": { "type": "Union", "left": 21, "right": 15 } },
+
+    "23": { "id": 23, "name": "Flange with Holes", "op": { "type": "Difference", "left": 6, "right": 22 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    { "root": 23, "material": "default" }
+  ]
+}

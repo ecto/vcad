@@ -1,0 +1,170 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "plate": {
+      "id": 1,
+      "name": "base_plate",
+      "op": {
+        "type": "Cube",
+        "size": { "x": 80, "y": 80, "z": 6 }
+      }
+    },
+    "plate_centered": {
+      "id": 2,
+      "name": "plate_centered",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": { "x": -40, "y": -40, "z": 0 }
+      }
+    },
+    "center_hole": {
+      "id": 3,
+      "name": "center_hole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 6,
+        "height": 6,
+        "segments": 32
+      }
+    },
+    "center_hole_positioned": {
+      "id": 4,
+      "name": "center_hole_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": { "x": 0, "y": 0, "z": 0 }
+      }
+    },
+    "corner_hole_1": {
+      "id": 5,
+      "name": "corner_hole_1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 6,
+        "segments": 32
+      }
+    },
+    "corner_hole_1_positioned": {
+      "id": 6,
+      "name": "corner_hole_1_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": { "x": -30, "y": -30, "z": 0 }
+      }
+    },
+    "corner_hole_2": {
+      "id": 7,
+      "name": "corner_hole_2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 6,
+        "segments": 32
+      }
+    },
+    "corner_hole_2_positioned": {
+      "id": 8,
+      "name": "corner_hole_2_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 7,
+        "offset": { "x": 30, "y": -30, "z": 0 }
+      }
+    },
+    "corner_hole_3": {
+      "id": 9,
+      "name": "corner_hole_3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 6,
+        "segments": 32
+      }
+    },
+    "corner_hole_3_positioned": {
+      "id": 10,
+      "name": "corner_hole_3_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 9,
+        "offset": { "x": -30, "y": 30, "z": 0 }
+      }
+    },
+    "corner_hole_4": {
+      "id": 11,
+      "name": "corner_hole_4",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 6,
+        "segments": 32
+      }
+    },
+    "corner_hole_4_positioned": {
+      "id": 12,
+      "name": "corner_hole_4_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 11,
+        "offset": { "x": 30, "y": 30, "z": 0 }
+      }
+    },
+    "with_center_hole": {
+      "id": 13,
+      "name": "with_center_hole",
+      "op": {
+        "type": "Difference",
+        "left": 2,
+        "right": 4
+      }
+    },
+    "with_corner_hole_1": {
+      "id": 14,
+      "name": "with_corner_hole_1",
+      "op": {
+        "type": "Difference",
+        "left": 13,
+        "right": 6
+      }
+    },
+    "with_corner_hole_2": {
+      "id": 15,
+      "name": "with_corner_hole_2",
+      "op": {
+        "type": "Difference",
+        "left": 14,
+        "right": 8
+      }
+    },
+    "with_corner_hole_3": {
+      "id": 16,
+      "name": "with_corner_hole_3",
+      "op": {
+        "type": "Difference",
+        "left": 15,
+        "right": 10
+      }
+    },
+    "final": {
+      "id": 17,
+      "name": "final_flange",
+      "op": {
+        "type": "Difference",
+        "left": 16,
+        "right": 12
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 17,
+      "material": "default"
+    }
+  ]
+}

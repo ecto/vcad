@@ -1,0 +1,174 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "base",
+      "op": {
+        "type": "Cylinder",
+        "radius": 30,
+        "height": 20,
+        "segments": 32
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "link1_cube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 150,
+          "y": 18,
+          "z": 18
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "link1_geom",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 0,
+          "y": -9,
+          "z": -9
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "link2_cube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 140,
+          "y": 16,
+          "z": 16
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "link2_geom",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {
+          "x": 0,
+          "y": -8,
+          "z": -8
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "tip",
+      "op": {
+        "type": "Sphere",
+        "radius": 5,
+        "segments": 32
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "tip_pos",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {
+          "x": 140,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "link2_with_tip",
+      "op": {
+        "type": "Union",
+        "left": 5,
+        "right": 7
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "joint2_rev_y torque_limit=5",
+      "op": {
+        "type": "Rotate",
+        "child": 8,
+        "angles": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "joint2_mount",
+      "op": {
+        "type": "Translate",
+        "child": 9,
+        "offset": {
+          "x": 150,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "link1_union",
+      "op": {
+        "type": "Union",
+        "left": 3,
+        "right": 10
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "joint1_rev_y torque_limit=5",
+      "op": {
+        "type": "Rotate",
+        "child": 11,
+        "angles": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "arm_mount",
+      "op": {
+        "type": "Translate",
+        "child": 12,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 29
+        }
+      }
+    },
+    "14": {
+      "id": 14,
+      "name": "assembly_root",
+      "op": {
+        "type": "Union",
+        "left": 1,
+        "right": 13
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 14,
+      "material": "default"
+    }
+  ]
+}

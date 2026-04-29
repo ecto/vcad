@@ -1,0 +1,146 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Plate",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 60,
+          "y": 60,
+          "z": 8
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "CenterHole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 32
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Hole1",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 15,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Hole2",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 7.5,
+          "y": 12.99,
+          "z": 0
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Hole3",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": -7.5,
+          "y": 12.99,
+          "z": 0
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "Hole4",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": -15,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "Hole5",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": -7.5,
+          "y": -12.99,
+          "z": 0
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "Hole6",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 7.5,
+          "y": -12.99,
+          "z": 0
+        }
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "Holes",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": {
+          "type": "Union",
+          "left": 2,
+          "right": {
+            "type": "Union",
+            "left": 3,
+            "right": {
+              "type": "Union",
+              "left": 4,
+              "right": {
+                "type": "Union",
+                "left": 5,
+                "right": {
+                  "type": "Union",
+                  "left": 6,
+                  "right": {
+                    "type": "Union",
+                    "left": 7,
+                    "right": 8
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 9,
+      "material": "default"
+    }
+  ]
+}
