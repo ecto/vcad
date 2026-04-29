@@ -21,40 +21,40 @@
       "params": {
         "type": "bbox",
         "min": [
-          -40,
-          -40,
-          0
+          -40.0,
+          -40.0,
+          0.0
         ],
         "max": [
-          40,
-          40,
-          30
+          40.0,
+          40.0,
+          30.0
         ],
         "tolerance_mm": 0.1
       },
       "result": "pass",
       "details": {
         "actual_max": [
-          40,
-          40,
-          30
+          40.0,
+          40.0,
+          30.0
         ],
         "actual_min": [
-          -40,
-          -40,
-          0
+          -40.0,
+          -40.0,
+          0.0
         ],
         "deviation_max": [
-          0,
-          0,
-          0
+          0.0,
+          0.0,
+          0.0
         ],
         "deviation_min": [
-          0,
-          0,
-          0
+          0.0,
+          0.0,
+          0.0
         ],
-        "max_abs_deviation_mm": 0,
+        "max_abs_deviation_mm": 0.0,
         "tolerance_mm": 0.1
       }
     },
@@ -69,8 +69,8 @@
       "result": "pass",
       "details": {
         "volume": {
-          "actual_mm3": 115063.56671987216,
-          "deviation_pct": 0.16935523863322005,
+          "actual_mm3": 115063.56671987213,
+          "deviation_pct": 0.1693552386331947,
           "pass": true,
           "spec_mm3": 114869.03,
           "tolerance_pct": 0.5
@@ -82,36 +82,36 @@
       "type": "hole_count",
       "params": {
         "type": "hole_count",
-        "diameter_mm": 6,
+        "diameter_mm": 6.0,
         "expected": 4,
         "diameter_tolerance_mm": 0.05
       },
       "result": "pass",
       "details": {
         "actual": 4,
-        "diameter_mm": 6,
+        "diameter_mm": 6.0,
         "diameter_tolerance_mm": 0.05,
         "expected": 4,
         "found": [
           [
-            30,
-            30,
-            6
+            30.0,
+            30.0,
+            6.0
           ],
           [
-            -30,
-            30,
-            6
+            -30.0,
+            30.0,
+            6.0
           ],
           [
-            -30,
-            -30,
-            6
+            -30.0,
+            -30.0,
+            6.0
           ],
           [
-            30,
-            -30,
-            6
+            30.0,
+            -30.0,
+            6.0
           ]
         ]
       }
@@ -121,81 +121,81 @@
       "type": "hole_positions",
       "params": {
         "type": "hole_positions",
-        "diameter_mm": 6,
+        "diameter_mm": 6.0,
         "positions": [
           [
-            30,
-            30,
-            0
+            30.0,
+            30.0,
+            0.0
           ],
           [
-            -30,
-            30,
-            0
+            -30.0,
+            30.0,
+            0.0
           ],
           [
-            -30,
-            -30,
-            0
+            -30.0,
+            -30.0,
+            0.0
           ],
           [
-            30,
-            -30,
-            0
+            30.0,
+            -30.0,
+            0.0
           ]
         ],
         "tolerance_mm": 0.15
       },
       "result": "pass",
       "details": {
-        "diameter_mm": 6,
+        "diameter_mm": 6.0,
         "per_expected": [
           {
-            "distance_mm": 0,
+            "distance_mm": 0.0,
             "matched_hole": [
-              30,
-              30
+              30.0,
+              30.0
             ],
             "pass": true,
             "spec_xy": [
-              30,
-              30
+              30.0,
+              30.0
             ]
           },
           {
-            "distance_mm": 0,
+            "distance_mm": 0.0,
             "matched_hole": [
-              -30,
-              30
+              -30.0,
+              30.0
             ],
             "pass": true,
             "spec_xy": [
-              -30,
-              30
+              -30.0,
+              30.0
             ]
           },
           {
-            "distance_mm": 0,
+            "distance_mm": 0.0,
             "matched_hole": [
-              -30,
-              -30
+              -30.0,
+              -30.0
             ],
             "pass": true,
             "spec_xy": [
-              -30,
-              -30
+              -30.0,
+              -30.0
             ]
           },
           {
-            "distance_mm": 0,
+            "distance_mm": 0.0,
             "matched_hole": [
-              30,
-              -30
+              30.0,
+              -30.0
             ],
             "pass": true,
             "spec_xy": [
-              30,
-              -30
+              30.0,
+              -30.0
             ]
           }
         ],
@@ -215,37 +215,37 @@
         "per_solid": [
           {
             "bbox": {
-              "max_abs_deviation_mm": 0,
+              "max_abs_deviation_mm": 0.0,
               "original_max": [
-                40,
-                40,
-                30
+                40.0,
+                40.0,
+                30.0
               ],
               "original_min": [
-                -40,
-                -40,
-                0
+                -40.0,
+                -40.0,
+                0.0
               ],
               "pass": true,
               "roundtripped_max": [
-                40,
-                40,
-                30
+                40.0,
+                40.0,
+                30.0
               ],
               "roundtripped_min": [
-                -40,
-                -40,
-                0
+                -40.0,
+                -40.0,
+                0.0
               ],
               "tolerance_mm": 0.5852349955359814
             },
             "index": 0,
             "pass": true,
             "volume": {
-              "deviation_pct": 0.1627680038305869,
-              "original_mm3": 115063.56671987216,
+              "deviation_pct": 0.35868287656399156,
+              "original_mm3": 115063.56671987213,
               "pass": true,
-              "roundtripped_mm3": 114876.28004918595
+              "roundtripped_mm3": 115476.2800308601
             }
           }
         ],
@@ -257,7 +257,7 @@
     "passed": true,
     "checks_passed": 6,
     "checks_total": 6,
-    "score": 1,
+    "score": 1.0,
     "anti_cheese_violated": false,
     "limits_exceeded": []
   },
@@ -285,7 +285,7 @@
   "submission_kind": "self-run",
   "prompt": {
     "seed": "a4-stepped-pyramid-with-holes-01",
-    "rendered": "Make a stepped pyramid composed of three concentric square layers stacked along Z, fused into a single solid. Base layer: 80mm × 80mm × 10mm, centered in X and Y, bottom face on the XY plane (z = 0 to z = 10). Middle layer: 60mm × 60mm × 10mm, centered, sitting on top of the base layer (z = 10 to z = 20). Top layer: 40mm × 40mm × 10mm, centered, sitting on top of the middle layer (z = 20 to z = 30). The base layer has four bolt holes of diameter 6mm, axes parallel to Z, drilled through the full 10mm thickness of the base only (z = 0 to z = 10), located at (30, 30), (-30, 30), (-30, -30), (30, -30). Output a single solid.",
+    "rendered": "Make a stepped pyramid composed of three concentric square layers stacked along Z, fused into a single solid. Base layer: 80mm \u00d7 80mm \u00d7 10mm, centered in X and Y, bottom face on the XY plane (z = 0 to z = 10). Middle layer: 60mm \u00d7 60mm \u00d7 10mm, centered, sitting on top of the base layer (z = 10 to z = 20). Top layer: 40mm \u00d7 40mm \u00d7 10mm, centered, sitting on top of the middle layer (z = 20 to z = 30). The base layer has four bolt holes of diameter 6mm, axes parallel to Z, drilled through the full 10mm thickness of the base only (z = 0 to z = 10), located at (30, 30), (-30, 30), (-30, -30), (30, -30). Output a single solid.",
     "attachments": []
   },
   "trace": {

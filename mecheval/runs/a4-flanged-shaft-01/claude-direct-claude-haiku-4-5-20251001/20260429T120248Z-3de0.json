@@ -21,14 +21,14 @@
       "params": {
         "type": "bbox",
         "min": [
-          -40,
-          -40,
-          0
+          -40.0,
+          -40.0,
+          0.0
         ],
         "max": [
-          40,
-          40,
-          60
+          40.0,
+          40.0,
+          60.0
         ],
         "tolerance_mm": 0.2
       },
@@ -55,14 +55,14 @@
       "type": "hole_count",
       "params": {
         "type": "hole_count",
-        "diameter_mm": 15,
+        "diameter_mm": 15.0,
         "expected": 1,
         "diameter_tolerance_mm": 0.1
       },
       "result": "fail",
       "details": {
         "actual": 0,
-        "diameter_mm": 15,
+        "diameter_mm": 15.0,
         "diameter_tolerance_mm": 0.1,
         "expected": 1,
         "found": []
@@ -73,26 +73,26 @@
       "type": "hole_positions",
       "params": {
         "type": "hole_positions",
-        "diameter_mm": 15,
+        "diameter_mm": 15.0,
         "positions": [
           [
-            0,
-            0,
-            0
+            0.0,
+            0.0,
+            0.0
           ]
         ],
         "tolerance_mm": 0.2
       },
       "result": "fail",
       "details": {
-        "diameter_mm": 15,
+        "diameter_mm": 15.0,
         "per_expected": [
           {
             "pass": false,
             "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
-              0,
-              0
+              0.0,
+              0.0
             ]
           }
         ],
@@ -105,14 +105,14 @@
       "type": "hole_count",
       "params": {
         "type": "hole_count",
-        "diameter_mm": 6,
+        "diameter_mm": 6.0,
         "expected": 4,
         "diameter_tolerance_mm": 0.05
       },
       "result": "fail",
       "details": {
         "actual": 0,
-        "diameter_mm": 6,
+        "diameter_mm": 6.0,
         "diameter_tolerance_mm": 0.05,
         "expected": 4,
         "found": []
@@ -123,65 +123,65 @@
       "type": "hole_positions",
       "params": {
         "type": "hole_positions",
-        "diameter_mm": 6,
+        "diameter_mm": 6.0,
         "positions": [
           [
-            30,
-            0,
-            0
+            30.0,
+            0.0,
+            0.0
           ],
           [
-            0,
-            30,
-            0
+            0.0,
+            30.0,
+            0.0
           ],
           [
-            -30,
-            0,
-            0
+            -30.0,
+            0.0,
+            0.0
           ],
           [
-            0,
-            -30,
-            0
+            0.0,
+            -30.0,
+            0.0
           ]
         ],
         "tolerance_mm": 0.2
       },
       "result": "fail",
       "details": {
-        "diameter_mm": 6,
+        "diameter_mm": 6.0,
         "per_expected": [
           {
             "pass": false,
             "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
-              30,
-              0
+              30.0,
+              0.0
             ]
           },
           {
             "pass": false,
             "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
-              0,
-              30
+              0.0,
+              30.0
             ]
           },
           {
             "pass": false,
             "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
-              -30,
-              0
+              -30.0,
+              0.0
             ]
           },
           {
             "pass": false,
             "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
-              0,
-              -30
+              0.0,
+              -30.0
             ]
           }
         ],
@@ -206,7 +206,7 @@
     "passed": false,
     "checks_passed": 0,
     "checks_total": 8,
-    "score": 0,
+    "score": 0.0,
     "anti_cheese_violated": false,
     "limits_exceeded": []
   },

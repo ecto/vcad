@@ -21,14 +21,14 @@
       "params": {
         "type": "bbox",
         "min": [
-          -50,
-          -50,
-          0
+          -50.0,
+          -50.0,
+          0.0
         ],
         "max": [
-          50,
-          50,
-          10
+          50.0,
+          50.0,
+          10.0
         ],
         "tolerance_mm": 0.05
       },
@@ -42,11 +42,11 @@
       "type": "mass_props",
       "params": {
         "type": "mass_props",
-        "volume_mm3": 36000,
+        "volume_mm3": 36000.0,
         "center_of_mass": [
-          0,
-          0,
-          5
+          0.0,
+          0.0,
+          5.0
         ],
         "tolerance_pct": 0.5
       },
@@ -72,7 +72,7 @@
     "passed": false,
     "checks_passed": 0,
     "checks_total": 4,
-    "score": 0,
+    "score": 0.0,
     "anti_cheese_violated": false,
     "limits_exceeded": []
   },
@@ -100,7 +100,7 @@
   "submission_kind": "self-run",
   "prompt": {
     "seed": "a4-x-frame-01",
-    "rendered": "Make a cross-shaped frame in the XY plane by fusing two rectangular bars at right angles. Bar A is 100mm long along X, 20mm wide along Y, and 10mm tall along Z, centered in X and Y with its bottom face on the XY plane (so it spans x in [-50, 50], y in [-10, 10], z in [0, 10]). Bar B is 20mm wide along X, 100mm long along Y, and 10mm tall along Z, centered in X and Y with its bottom face on the XY plane (so it spans x in [-10, 10], y in [-50, 50], z in [0, 10]). Union the two bars into a single plus-sign-shaped solid; the central 20mm × 20mm × 10mm overlap is counted only once. Output a single solid.",
+    "rendered": "Make a cross-shaped frame in the XY plane by fusing two rectangular bars at right angles. Bar A is 100mm long along X, 20mm wide along Y, and 10mm tall along Z, centered in X and Y with its bottom face on the XY plane (so it spans x in [-50, 50], y in [-10, 10], z in [0, 10]). Bar B is 20mm wide along X, 100mm long along Y, and 10mm tall along Z, centered in X and Y with its bottom face on the XY plane (so it spans x in [-10, 10], y in [-50, 50], z in [0, 10]). Union the two bars into a single plus-sign-shaped solid; the central 20mm \u00d7 20mm \u00d7 10mm overlap is counted only once. Output a single solid.",
     "attachments": []
   },
   "trace": {

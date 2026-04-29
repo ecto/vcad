@@ -21,14 +21,14 @@
       "params": {
         "type": "bbox",
         "min": [
-          -20,
-          -20,
-          0
+          -20.0,
+          -20.0,
+          0.0
         ],
         "max": [
-          20,
-          20,
-          80
+          20.0,
+          20.0,
+          80.0
         ],
         "tolerance_mm": 0.05
       },
@@ -42,11 +42,11 @@
       "type": "mass_props",
       "params": {
         "type": "mass_props",
-        "volume_mm3": 65280,
+        "volume_mm3": 65280.0,
         "center_of_mass": [
-          0,
-          0,
-          40
+          0.0,
+          0.0,
+          40.0
         ],
         "tolerance_pct": 0.5
       },
@@ -72,7 +72,7 @@
     "passed": false,
     "checks_passed": 0,
     "checks_total": 4,
-    "score": 0,
+    "score": 0.0,
     "anti_cheese_violated": false,
     "limits_exceeded": []
   },
@@ -100,7 +100,7 @@
   "submission_kind": "self-run",
   "prompt": {
     "seed": "a4-rectangular-tube-01",
-    "rendered": "Make a hollow square tube. The outer cross-section is a 40mm × 40mm square; the inner cavity is a 28mm × 28mm square, concentric with the outer. The cavity passes all the way through. The tube is 80mm long along Z, with the bottom face on the XY plane (so it spans x in [-20, 20], y in [-20, 20], z in [0, 80] for the outer envelope). The inner cavity spans x in [-14, 14], y in [-14, 14], z in [0, 80]. Wall thickness is 6mm uniformly. Output a single solid.",
+    "rendered": "Make a hollow square tube. The outer cross-section is a 40mm \u00d7 40mm square; the inner cavity is a 28mm \u00d7 28mm square, concentric with the outer. The cavity passes all the way through. The tube is 80mm long along Z, with the bottom face on the XY plane (so it spans x in [-20, 20], y in [-20, 20], z in [0, 80] for the outer envelope). The inner cavity spans x in [-14, 14], y in [-14, 14], z in [0, 80]. Wall thickness is 6mm uniformly. Output a single solid.",
     "attachments": []
   },
   "trace": {

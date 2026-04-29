@@ -21,40 +21,40 @@
       "params": {
         "type": "bbox",
         "min": [
-          -40,
-          -20,
-          0
+          -40.0,
+          -20.0,
+          0.0
         ],
         "max": [
-          40,
-          20,
-          8
+          40.0,
+          20.0,
+          8.0
         ],
         "tolerance_mm": 0.1
       },
       "result": "pass",
       "details": {
         "actual_max": [
-          40,
-          20,
-          8
+          40.0,
+          20.0,
+          8.0
         ],
         "actual_min": [
-          -40,
-          -20,
-          0
+          -40.0,
+          -20.0,
+          0.0
         ],
         "deviation_max": [
-          0,
-          0,
-          0
+          0.0,
+          0.0,
+          0.0
         ],
         "deviation_min": [
-          0,
-          0,
-          0
+          0.0,
+          0.0,
+          0.0
         ],
-        "max_abs_deviation_mm": 0,
+        "max_abs_deviation_mm": 0.0,
         "tolerance_mm": 0.1
       }
     },
@@ -64,16 +64,16 @@
       "params": {
         "type": "mass_props",
         "volume_mm3": 21771.68,
-        "tolerance_pct": 1
+        "tolerance_pct": 1.0
       },
       "result": "fail",
       "details": {
         "volume": {
-          "actual_mm3": 24324.230069357087,
-          "deviation_pct": 11.724175944883843,
+          "actual_mm3": 22190.896736023755,
+          "deviation_pct": 1.9255139521789522,
           "pass": false,
           "spec_mm3": 21771.68,
-          "tolerance_pct": 1
+          "tolerance_pct": 1.0
         }
       }
     },
@@ -82,26 +82,26 @@
       "type": "hole_count",
       "params": {
         "type": "hole_count",
-        "diameter_mm": 10,
+        "diameter_mm": 10.0,
         "expected": 2,
         "diameter_tolerance_mm": 0.1
       },
       "result": "pass",
       "details": {
         "actual": 2,
-        "diameter_mm": 10,
+        "diameter_mm": 10.0,
         "diameter_tolerance_mm": 0.1,
         "expected": 2,
         "found": [
           [
-            -20,
-            0,
-            10
+            -20.0,
+            0.0,
+            10.0
           ],
           [
-            20,
-            0,
-            10
+            20.0,
+            0.0,
+            10.0
           ]
         ]
       }
@@ -111,47 +111,47 @@
       "type": "hole_positions",
       "params": {
         "type": "hole_positions",
-        "diameter_mm": 10,
+        "diameter_mm": 10.0,
         "positions": [
           [
-            -20,
-            0,
-            0
+            -20.0,
+            0.0,
+            0.0
           ],
           [
-            20,
-            0,
-            0
+            20.0,
+            0.0,
+            0.0
           ]
         ],
         "tolerance_mm": 0.2
       },
       "result": "pass",
       "details": {
-        "diameter_mm": 10,
+        "diameter_mm": 10.0,
         "per_expected": [
           {
-            "distance_mm": 0,
+            "distance_mm": 0.0,
             "matched_hole": [
-              -20,
-              0
+              -20.0,
+              0.0
             ],
             "pass": true,
             "spec_xy": [
-              -20,
-              0
+              -20.0,
+              0.0
             ]
           },
           {
-            "distance_mm": 0,
+            "distance_mm": 0.0,
             "matched_hole": [
-              20,
-              0
+              20.0,
+              0.0
             ],
             "pass": true,
             "spec_xy": [
-              20,
-              0
+              20.0,
+              0.0
             ]
           }
         ],
@@ -164,48 +164,48 @@
       "type": "step_roundtrip",
       "params": {
         "type": "step_roundtrip",
-        "tolerance_pct": 1
+        "tolerance_pct": 1.0
       },
       "result": "pass",
       "details": {
         "per_solid": [
           {
             "bbox": {
-              "max_abs_deviation_mm": 0,
+              "max_abs_deviation_mm": 0.0,
               "original_max": [
-                40,
-                20,
-                8
+                40.0,
+                20.0,
+                8.0
               ],
               "original_min": [
-                -40,
-                -20,
-                0
+                -40.0,
+                -20.0,
+                0.0
               ],
               "pass": true,
               "roundtripped_max": [
-                40,
-                20,
-                8
+                40.0,
+                20.0,
+                8.0
               ],
               "roundtripped_min": [
-                -40,
-                -20,
-                0
+                -40.0,
+                -20.0,
+                0.0
               ],
               "tolerance_mm": 0.897997772825746
             },
             "index": 0,
             "pass": true,
             "volume": {
-              "deviation_pct": 0.008278899396057558,
-              "original_mm3": 24324.230069357087,
+              "deviation_pct": 0.009074795670778697,
+              "original_mm3": 22190.896736023755,
               "pass": true,
-              "roundtripped_mm3": 24326.243847893395
+              "roundtripped_mm3": 22192.910514560062
             }
           }
         ],
-        "tolerance_pct": 1
+        "tolerance_pct": 1.0
       }
     }
   ],
@@ -241,7 +241,7 @@
   "submission_kind": "self-run",
   "prompt": {
     "seed": "a4-slotted-bracket-01",
-    "rendered": "Make a flat rectangular plate 80mm × 40mm × 8mm thick, centered in X and Y with the bottom face on the XY plane (so it spans x in [-40, 40], y in [-20, 20], z in [0, 8]). Cut a stadium-shaped (rectangle with semicircular ends) slot all the way through the plate, axes along the X direction. The slot has total end-to-end length 50mm and width 10mm: the centers of the two semicircular ends are at (-20, 0) and (20, 0), each of radius 5mm, joined by a 40mm-long, 10mm-wide rectangular section (x in [-20, 20], y in [-5, 5]). The slot is cut through the full plate thickness. Output a single solid.",
+    "rendered": "Make a flat rectangular plate 80mm \u00d7 40mm \u00d7 8mm thick, centered in X and Y with the bottom face on the XY plane (so it spans x in [-40, 40], y in [-20, 20], z in [0, 8]). Cut a stadium-shaped (rectangle with semicircular ends) slot all the way through the plate, axes along the X direction. The slot has total end-to-end length 50mm and width 10mm: the centers of the two semicircular ends are at (-20, 0) and (20, 0), each of radius 5mm, joined by a 40mm-long, 10mm-wide rectangular section (x in [-20, 20], y in [-5, 5]). The slot is cut through the full plate thickness. Output a single solid.",
     "attachments": []
   },
   "trace": {

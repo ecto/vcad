@@ -21,14 +21,14 @@
       "params": {
         "type": "bbox",
         "min": [
-          -50,
-          -50,
-          0
+          -50.0,
+          -50.0,
+          0.0
         ],
         "max": [
-          50,
-          50,
-          12
+          50.0,
+          50.0,
+          12.0
         ],
         "tolerance_mm": 0.3
       },
@@ -55,14 +55,14 @@
       "type": "hole_count",
       "params": {
         "type": "hole_count",
-        "diameter_mm": 40,
+        "diameter_mm": 40.0,
         "expected": 1,
         "diameter_tolerance_mm": 0.1
       },
       "result": "fail",
       "details": {
         "actual": 0,
-        "diameter_mm": 40,
+        "diameter_mm": 40.0,
         "diameter_tolerance_mm": 0.1,
         "expected": 1,
         "found": []
@@ -73,26 +73,26 @@
       "type": "hole_positions",
       "params": {
         "type": "hole_positions",
-        "diameter_mm": 40,
+        "diameter_mm": 40.0,
         "positions": [
           [
-            0,
-            0,
-            0
+            0.0,
+            0.0,
+            0.0
           ]
         ],
         "tolerance_mm": 0.2
       },
       "result": "fail",
       "details": {
-        "diameter_mm": 40,
+        "diameter_mm": 40.0,
         "per_expected": [
           {
             "pass": false,
             "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
-              0,
-              0
+              0.0,
+              0.0
             ]
           }
         ],
@@ -105,14 +105,14 @@
       "type": "hole_count",
       "params": {
         "type": "hole_count",
-        "diameter_mm": 8,
+        "diameter_mm": 8.0,
         "expected": 6,
         "diameter_tolerance_mm": 0.05
       },
       "result": "fail",
       "details": {
         "actual": 0,
-        "diameter_mm": 8,
+        "diameter_mm": 8.0,
         "diameter_tolerance_mm": 0.05,
         "expected": 6,
         "found": []
@@ -123,51 +123,51 @@
       "type": "hole_positions",
       "params": {
         "type": "hole_positions",
-        "diameter_mm": 8,
+        "diameter_mm": 8.0,
         "positions": [
           [
             37.5,
-            0,
-            0
+            0.0,
+            0.0
           ],
           [
             18.75,
             32.476,
-            0
+            0.0
           ],
           [
             -18.75,
             32.476,
-            0
+            0.0
           ],
           [
             -37.5,
-            0,
-            0
+            0.0,
+            0.0
           ],
           [
             -18.75,
             -32.476,
-            0
+            0.0
           ],
           [
             18.75,
             -32.476,
-            0
+            0.0
           ]
         ],
         "tolerance_mm": 0.2
       },
       "result": "fail",
       "details": {
-        "diameter_mm": 8,
+        "diameter_mm": 8.0,
         "per_expected": [
           {
             "pass": false,
             "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
               37.5,
-              0
+              0.0
             ]
           },
           {
@@ -191,7 +191,7 @@
             "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
               -37.5,
-              0
+              0.0
             ]
           },
           {
@@ -232,7 +232,7 @@
     "passed": false,
     "checks_passed": 0,
     "checks_total": 8,
-    "score": 0,
+    "score": 0.0,
     "anti_cheese_violated": false,
     "limits_exceeded": []
   },

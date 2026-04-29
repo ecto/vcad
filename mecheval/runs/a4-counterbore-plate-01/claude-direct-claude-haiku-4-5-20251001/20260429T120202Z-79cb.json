@@ -21,14 +21,14 @@
       "params": {
         "type": "bbox",
         "min": [
-          -30,
-          -30,
-          0
+          -30.0,
+          -30.0,
+          0.0
         ],
         "max": [
-          30,
-          30,
-          12
+          30.0,
+          30.0,
+          12.0
         ],
         "tolerance_mm": 0.1
       },
@@ -43,7 +43,7 @@
       "params": {
         "type": "mass_props",
         "volume_mm3": 41993.63,
-        "tolerance_pct": 1
+        "tolerance_pct": 1.0
       },
       "result": "fail",
       "details": {
@@ -55,14 +55,14 @@
       "type": "hole_count",
       "params": {
         "type": "hole_count",
-        "diameter_mm": 4,
+        "diameter_mm": 4.0,
         "expected": 4,
         "diameter_tolerance_mm": 0.05
       },
       "result": "fail",
       "details": {
         "actual": 0,
-        "diameter_mm": 4,
+        "diameter_mm": 4.0,
         "diameter_tolerance_mm": 0.05,
         "expected": 4,
         "found": []
@@ -73,65 +73,65 @@
       "type": "hole_positions",
       "params": {
         "type": "hole_positions",
-        "diameter_mm": 4,
+        "diameter_mm": 4.0,
         "positions": [
           [
-            20,
-            20,
-            0
+            20.0,
+            20.0,
+            0.0
           ],
           [
-            -20,
-            20,
-            0
+            -20.0,
+            20.0,
+            0.0
           ],
           [
-            -20,
-            -20,
-            0
+            -20.0,
+            -20.0,
+            0.0
           ],
           [
-            20,
-            -20,
-            0
+            20.0,
+            -20.0,
+            0.0
           ]
         ],
         "tolerance_mm": 0.15
       },
       "result": "fail",
       "details": {
-        "diameter_mm": 4,
+        "diameter_mm": 4.0,
         "per_expected": [
           {
             "pass": false,
             "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
-              20,
-              20
+              20.0,
+              20.0
             ]
           },
           {
             "pass": false,
             "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
-              -20,
-              20
+              -20.0,
+              20.0
             ]
           },
           {
             "pass": false,
             "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
-              -20,
-              -20
+              -20.0,
+              -20.0
             ]
           },
           {
             "pass": false,
             "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
-              20,
-              -20
+              20.0,
+              -20.0
             ]
           }
         ],
@@ -144,14 +144,14 @@
       "type": "hole_count",
       "params": {
         "type": "hole_count",
-        "diameter_mm": 8,
+        "diameter_mm": 8.0,
         "expected": 4,
         "diameter_tolerance_mm": 0.05
       },
       "result": "fail",
       "details": {
         "actual": 0,
-        "diameter_mm": 8,
+        "diameter_mm": 8.0,
         "diameter_tolerance_mm": 0.05,
         "expected": 4,
         "found": []
@@ -162,65 +162,65 @@
       "type": "hole_positions",
       "params": {
         "type": "hole_positions",
-        "diameter_mm": 8,
+        "diameter_mm": 8.0,
         "positions": [
           [
-            20,
-            20,
-            0
+            20.0,
+            20.0,
+            0.0
           ],
           [
-            -20,
-            20,
-            0
+            -20.0,
+            20.0,
+            0.0
           ],
           [
-            -20,
-            -20,
-            0
+            -20.0,
+            -20.0,
+            0.0
           ],
           [
-            20,
-            -20,
-            0
+            20.0,
+            -20.0,
+            0.0
           ]
         ],
         "tolerance_mm": 0.15
       },
       "result": "fail",
       "details": {
-        "diameter_mm": 8,
+        "diameter_mm": 8.0,
         "per_expected": [
           {
             "pass": false,
             "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
-              20,
-              20
+              20.0,
+              20.0
             ]
           },
           {
             "pass": false,
             "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
-              -20,
-              20
+              -20.0,
+              20.0
             ]
           },
           {
             "pass": false,
             "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
-              -20,
-              -20
+              -20.0,
+              -20.0
             ]
           },
           {
             "pass": false,
             "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
-              20,
-              -20
+              20.0,
+              -20.0
             ]
           }
         ],
@@ -233,7 +233,7 @@
       "type": "step_roundtrip",
       "params": {
         "type": "step_roundtrip",
-        "tolerance_pct": 1
+        "tolerance_pct": 1.0
       },
       "result": "fail",
       "details": {
@@ -245,7 +245,7 @@
     "passed": false,
     "checks_passed": 0,
     "checks_total": 8,
-    "score": 0,
+    "score": 0.0,
     "anti_cheese_violated": false,
     "limits_exceeded": []
   },
@@ -273,7 +273,7 @@
   "submission_kind": "self-run",
   "prompt": {
     "seed": "a4-counterbore-plate-01",
-    "rendered": "Make a single solid: a flat plate 60mm × 60mm × 12mm, centered in X and Y with the bottom face on the XY plane (z = 0 to z = 12). Drill four counterbore holes at corners (20, 20), (-20, 20), (-20, -20), (20, -20). Each counterbore consists of two coaxial Z-aligned through-features: a clearance through-hole of diameter 4mm running the full thickness (z = 0 to z = 12), and a coaxial recess of diameter 8mm machined 4mm deep from the top face (so the larger diameter spans z = 8 to z = 12). Output a single solid.",
+    "rendered": "Make a single solid: a flat plate 60mm \u00d7 60mm \u00d7 12mm, centered in X and Y with the bottom face on the XY plane (z = 0 to z = 12). Drill four counterbore holes at corners (20, 20), (-20, 20), (-20, -20), (20, -20). Each counterbore consists of two coaxial Z-aligned through-features: a clearance through-hole of diameter 4mm running the full thickness (z = 0 to z = 12), and a coaxial recess of diameter 8mm machined 4mm deep from the top face (so the larger diameter spans z = 8 to z = 12). Output a single solid.",
     "attachments": []
   },
   "trace": {

@@ -21,14 +21,14 @@
       "params": {
         "type": "bbox",
         "min": [
-          -40,
-          -40,
-          0
+          -40.0,
+          -40.0,
+          0.0
         ],
         "max": [
-          40,
-          40,
-          30
+          40.0,
+          40.0,
+          30.0
         ],
         "tolerance_mm": 0.1
       },
@@ -55,14 +55,14 @@
       "type": "hole_count",
       "params": {
         "type": "hole_count",
-        "diameter_mm": 6,
+        "diameter_mm": 6.0,
         "expected": 4,
         "diameter_tolerance_mm": 0.05
       },
       "result": "fail",
       "details": {
         "actual": 0,
-        "diameter_mm": 6,
+        "diameter_mm": 6.0,
         "diameter_tolerance_mm": 0.05,
         "expected": 4,
         "found": []
@@ -73,65 +73,65 @@
       "type": "hole_positions",
       "params": {
         "type": "hole_positions",
-        "diameter_mm": 6,
+        "diameter_mm": 6.0,
         "positions": [
           [
-            30,
-            30,
-            0
+            30.0,
+            30.0,
+            0.0
           ],
           [
-            -30,
-            30,
-            0
+            -30.0,
+            30.0,
+            0.0
           ],
           [
-            -30,
-            -30,
-            0
+            -30.0,
+            -30.0,
+            0.0
           ],
           [
-            30,
-            -30,
-            0
+            30.0,
+            -30.0,
+            0.0
           ]
         ],
         "tolerance_mm": 0.15
       },
       "result": "fail",
       "details": {
-        "diameter_mm": 6,
+        "diameter_mm": 6.0,
         "per_expected": [
           {
             "pass": false,
             "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
-              30,
-              30
+              30.0,
+              30.0
             ]
           },
           {
             "pass": false,
             "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
-              -30,
-              30
+              -30.0,
+              30.0
             ]
           },
           {
             "pass": false,
             "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
-              -30,
-              -30
+              -30.0,
+              -30.0
             ]
           },
           {
             "pass": false,
             "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
-              30,
-              -30
+              30.0,
+              -30.0
             ]
           }
         ],
@@ -156,7 +156,7 @@
     "passed": false,
     "checks_passed": 0,
     "checks_total": 6,
-    "score": 0,
+    "score": 0.0,
     "anti_cheese_violated": false,
     "limits_exceeded": []
   },
@@ -184,7 +184,7 @@
   "submission_kind": "self-run",
   "prompt": {
     "seed": "a4-stepped-pyramid-with-holes-01",
-    "rendered": "Make a stepped pyramid composed of three concentric square layers stacked along Z, fused into a single solid. Base layer: 80mm × 80mm × 10mm, centered in X and Y, bottom face on the XY plane (z = 0 to z = 10). Middle layer: 60mm × 60mm × 10mm, centered, sitting on top of the base layer (z = 10 to z = 20). Top layer: 40mm × 40mm × 10mm, centered, sitting on top of the middle layer (z = 20 to z = 30). The base layer has four bolt holes of diameter 6mm, axes parallel to Z, drilled through the full 10mm thickness of the base only (z = 0 to z = 10), located at (30, 30), (-30, 30), (-30, -30), (30, -30). Output a single solid.",
+    "rendered": "Make a stepped pyramid composed of three concentric square layers stacked along Z, fused into a single solid. Base layer: 80mm \u00d7 80mm \u00d7 10mm, centered in X and Y, bottom face on the XY plane (z = 0 to z = 10). Middle layer: 60mm \u00d7 60mm \u00d7 10mm, centered, sitting on top of the base layer (z = 10 to z = 20). Top layer: 40mm \u00d7 40mm \u00d7 10mm, centered, sitting on top of the middle layer (z = 20 to z = 30). The base layer has four bolt holes of diameter 6mm, axes parallel to Z, drilled through the full 10mm thickness of the base only (z = 0 to z = 10), located at (30, 30), (-30, 30), (-30, -30), (30, -30). Output a single solid.",
     "attachments": []
   },
   "trace": {

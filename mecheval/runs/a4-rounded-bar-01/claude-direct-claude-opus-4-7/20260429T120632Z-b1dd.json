@@ -21,40 +21,40 @@
       "params": {
         "type": "bbox",
         "min": [
-          -40,
-          -10,
-          0
+          -40.0,
+          -10.0,
+          0.0
         ],
         "max": [
-          40,
-          10,
-          10
+          40.0,
+          10.0,
+          10.0
         ],
         "tolerance_mm": 0.2
       },
       "result": "pass",
       "details": {
         "actual_max": [
-          40,
-          10,
-          10
+          40.0,
+          10.0,
+          10.0
         ],
         "actual_min": [
-          -40,
-          -10,
-          0
+          -40.0,
+          -10.0,
+          0.0
         ],
         "deviation_max": [
-          0,
-          0,
-          0
+          0.0,
+          0.0,
+          0.0
         ],
         "deviation_min": [
-          0,
-          0,
-          0
+          0.0,
+          0.0,
+          0.0
         ],
-        "max_abs_deviation_mm": 0,
+        "max_abs_deviation_mm": 0.0,
         "tolerance_mm": 0.2
       }
     },
@@ -65,41 +65,41 @@
         "type": "mass_props",
         "volume_mm3": 15141.59,
         "center_of_mass": [
-          0,
-          0,
-          5
+          0.0,
+          0.0,
+          5.0
         ],
-        "tolerance_pct": 1
+        "tolerance_pct": 1.0
       },
       "result": "pass",
       "details": {
         "center_of_mass": {
           "actual": [
-            3.0643861140820463e-15,
-            2.7069995799438013e-17,
+            4.39629249700006e-15,
+            -5.946010638026846e-17,
             4.999999999999997
           ],
           "bbox_diagonal_mm": 83.06623862918075,
           "deviation": [
-            3.0643861140820463e-15,
-            2.7069995799438013e-17,
+            4.39629249700006e-15,
+            -5.946010638026846e-17,
             -2.6645352591003757e-15
           ],
-          "max_abs_deviation_mm": 3.0643861140820463e-15,
+          "max_abs_deviation_mm": 4.39629249700006e-15,
           "pass": true,
           "spec": [
-            0,
-            0,
-            5
+            0.0,
+            0.0,
+            5.0
           ],
           "tolerance_mm": 0.8306623862918074
         },
         "volume": {
-          "actual_mm3": 15136.54874536396,
-          "deviation_pct": 0.033294090224608656,
+          "actual_mm3": 15136.548745363963,
+          "deviation_pct": 0.03329409022458463,
           "pass": true,
           "spec_mm3": 15141.59,
-          "tolerance_pct": 1
+          "tolerance_pct": 1.0
         }
       }
     },
@@ -108,48 +108,48 @@
       "type": "step_roundtrip",
       "params": {
         "type": "step_roundtrip",
-        "tolerance_pct": 1
+        "tolerance_pct": 1.0
       },
       "result": "pass",
       "details": {
         "per_solid": [
           {
             "bbox": {
-              "max_abs_deviation_mm": 0,
+              "max_abs_deviation_mm": 0.0,
               "original_max": [
-                40,
-                10,
-                10
+                40.0,
+                10.0,
+                10.0
               ],
               "original_min": [
-                -40,
-                -10,
-                0
+                -40.0,
+                -10.0,
+                0.0
               ],
               "pass": true,
               "roundtripped_max": [
-                40,
-                10,
-                10
+                40.0,
+                10.0,
+                10.0
               ],
               "roundtripped_min": [
-                -40,
-                -10,
-                0
+                -40.0,
+                -10.0,
+                0.0
               ],
               "tolerance_mm": 0.8306623862918074
             },
             "index": 0,
             "pass": true,
             "volume": {
-              "deviation_pct": 0.06548108557483903,
-              "original_mm3": 15136.54874536396,
+              "deviation_pct": 0.2823713416216259,
+              "original_mm3": 15136.548745363963,
               "pass": true,
-              "roundtripped_mm3": 15126.63716892693
+              "roundtripped_mm3": 15093.807469596468
             }
           }
         ],
-        "tolerance_pct": 1
+        "tolerance_pct": 1.0
       }
     }
   ],
@@ -157,7 +157,7 @@
     "passed": true,
     "checks_passed": 4,
     "checks_total": 4,
-    "score": 1,
+    "score": 1.0,
     "anti_cheese_violated": false,
     "limits_exceeded": []
   },
@@ -185,7 +185,7 @@
   "submission_kind": "self-run",
   "prompt": {
     "seed": "a4-rounded-bar-01",
-    "rendered": "Make a flat bar with a stadium-shaped (rectangle with semicircular ends) footprint, extruded 10mm along Z. Total end-to-end length is 80mm along X; total width is 20mm along Y. The footprint is the union of a 60mm × 20mm rectangle (x in [-30, 30], y in [-10, 10]) and two semicircles of radius 10mm centered at (-30, 0) and (30, 0). The bottom face sits on the XY plane (z = 0 to z = 10). Output a single solid (no holes or other features).",
+    "rendered": "Make a flat bar with a stadium-shaped (rectangle with semicircular ends) footprint, extruded 10mm along Z. Total end-to-end length is 80mm along X; total width is 20mm along Y. The footprint is the union of a 60mm \u00d7 20mm rectangle (x in [-30, 30], y in [-10, 10]) and two semicircles of radius 10mm centered at (-30, 0) and (30, 0). The bottom face sits on the XY plane (z = 0 to z = 10). Output a single solid (no holes or other features).",
     "attachments": []
   },
   "trace": {

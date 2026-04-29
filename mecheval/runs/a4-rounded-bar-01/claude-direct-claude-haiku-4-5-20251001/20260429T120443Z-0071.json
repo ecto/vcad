@@ -21,14 +21,14 @@
       "params": {
         "type": "bbox",
         "min": [
-          -40,
-          -10,
-          0
+          -40.0,
+          -10.0,
+          0.0
         ],
         "max": [
-          40,
-          10,
-          10
+          40.0,
+          10.0,
+          10.0
         ],
         "tolerance_mm": 0.2
       },
@@ -44,11 +44,11 @@
         "type": "mass_props",
         "volume_mm3": 15141.59,
         "center_of_mass": [
-          0,
-          0,
-          5
+          0.0,
+          0.0,
+          5.0
         ],
-        "tolerance_pct": 1
+        "tolerance_pct": 1.0
       },
       "result": "fail",
       "details": {
@@ -60,7 +60,7 @@
       "type": "step_roundtrip",
       "params": {
         "type": "step_roundtrip",
-        "tolerance_pct": 1
+        "tolerance_pct": 1.0
       },
       "result": "fail",
       "details": {
@@ -72,7 +72,7 @@
     "passed": false,
     "checks_passed": 0,
     "checks_total": 4,
-    "score": 0,
+    "score": 0.0,
     "anti_cheese_violated": false,
     "limits_exceeded": []
   },
@@ -100,7 +100,7 @@
   "submission_kind": "self-run",
   "prompt": {
     "seed": "a4-rounded-bar-01",
-    "rendered": "Make a flat bar with a stadium-shaped (rectangle with semicircular ends) footprint, extruded 10mm along Z. Total end-to-end length is 80mm along X; total width is 20mm along Y. The footprint is the union of a 60mm × 20mm rectangle (x in [-30, 30], y in [-10, 10]) and two semicircles of radius 10mm centered at (-30, 0) and (30, 0). The bottom face sits on the XY plane (z = 0 to z = 10). Output a single solid (no holes or other features).",
+    "rendered": "Make a flat bar with a stadium-shaped (rectangle with semicircular ends) footprint, extruded 10mm along Z. Total end-to-end length is 80mm along X; total width is 20mm along Y. The footprint is the union of a 60mm \u00d7 20mm rectangle (x in [-30, 30], y in [-10, 10]) and two semicircles of radius 10mm centered at (-30, 0) and (30, 0). The bottom face sits on the XY plane (z = 0 to z = 10). Output a single solid (no holes or other features).",
     "attachments": []
   },
   "trace": {

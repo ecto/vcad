@@ -21,14 +21,14 @@
       "params": {
         "type": "bbox",
         "min": [
-          -40,
-          -20,
-          0
+          -40.0,
+          -20.0,
+          0.0
         ],
         "max": [
-          40,
-          20,
-          8
+          40.0,
+          20.0,
+          8.0
         ],
         "tolerance_mm": 0.1
       },
@@ -43,7 +43,7 @@
       "params": {
         "type": "mass_props",
         "volume_mm3": 21771.68,
-        "tolerance_pct": 1
+        "tolerance_pct": 1.0
       },
       "result": "fail",
       "details": {
@@ -55,14 +55,14 @@
       "type": "hole_count",
       "params": {
         "type": "hole_count",
-        "diameter_mm": 10,
+        "diameter_mm": 10.0,
         "expected": 2,
         "diameter_tolerance_mm": 0.1
       },
       "result": "fail",
       "details": {
         "actual": 0,
-        "diameter_mm": 10,
+        "diameter_mm": 10.0,
         "diameter_tolerance_mm": 0.1,
         "expected": 2,
         "found": []
@@ -73,39 +73,39 @@
       "type": "hole_positions",
       "params": {
         "type": "hole_positions",
-        "diameter_mm": 10,
+        "diameter_mm": 10.0,
         "positions": [
           [
-            -20,
-            0,
-            0
+            -20.0,
+            0.0,
+            0.0
           ],
           [
-            20,
-            0,
-            0
+            20.0,
+            0.0,
+            0.0
           ]
         ],
         "tolerance_mm": 0.2
       },
       "result": "fail",
       "details": {
-        "diameter_mm": 10,
+        "diameter_mm": 10.0,
         "per_expected": [
           {
             "pass": false,
             "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
-              -20,
-              0
+              -20.0,
+              0.0
             ]
           },
           {
             "pass": false,
             "reason": "no candidate cylindrical feature of this diameter remained unmatched",
             "spec_xy": [
-              20,
-              0
+              20.0,
+              0.0
             ]
           }
         ],
@@ -118,7 +118,7 @@
       "type": "step_roundtrip",
       "params": {
         "type": "step_roundtrip",
-        "tolerance_pct": 1
+        "tolerance_pct": 1.0
       },
       "result": "fail",
       "details": {
@@ -130,7 +130,7 @@
     "passed": false,
     "checks_passed": 0,
     "checks_total": 6,
-    "score": 0,
+    "score": 0.0,
     "anti_cheese_violated": false,
     "limits_exceeded": []
   },
@@ -158,7 +158,7 @@
   "submission_kind": "self-run",
   "prompt": {
     "seed": "a4-slotted-bracket-01",
-    "rendered": "Make a flat rectangular plate 80mm × 40mm × 8mm thick, centered in X and Y with the bottom face on the XY plane (so it spans x in [-40, 40], y in [-20, 20], z in [0, 8]). Cut a stadium-shaped (rectangle with semicircular ends) slot all the way through the plate, axes along the X direction. The slot has total end-to-end length 50mm and width 10mm: the centers of the two semicircular ends are at (-20, 0) and (20, 0), each of radius 5mm, joined by a 40mm-long, 10mm-wide rectangular section (x in [-20, 20], y in [-5, 5]). The slot is cut through the full plate thickness. Output a single solid.",
+    "rendered": "Make a flat rectangular plate 80mm \u00d7 40mm \u00d7 8mm thick, centered in X and Y with the bottom face on the XY plane (so it spans x in [-40, 40], y in [-20, 20], z in [0, 8]). Cut a stadium-shaped (rectangle with semicircular ends) slot all the way through the plate, axes along the X direction. The slot has total end-to-end length 50mm and width 10mm: the centers of the two semicircular ends are at (-20, 0) and (20, 0), each of radius 5mm, joined by a 40mm-long, 10mm-wide rectangular section (x in [-20, 20], y in [-5, 5]). The slot is cut through the full plate thickness. Output a single solid.",
     "attachments": []
   },
   "trace": {

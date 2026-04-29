@@ -21,40 +21,40 @@
       "params": {
         "type": "bbox",
         "min": [
-          -40,
-          -40,
-          0
+          -40.0,
+          -40.0,
+          0.0
         ],
         "max": [
-          40,
-          40,
-          60
+          40.0,
+          40.0,
+          60.0
         ],
         "tolerance_mm": 0.2
       },
       "result": "pass",
       "details": {
         "actual_max": [
-          40,
-          40,
-          60
+          40.0,
+          40.0,
+          60.0
         ],
         "actual_min": [
-          -40,
-          -40,
-          0
+          -40.0,
+          -40.0,
+          0.0
         ],
         "deviation_max": [
-          0,
-          0,
-          0
+          0.0,
+          0.0,
+          0.0
         ],
         "deviation_min": [
-          0,
-          0,
-          0
+          0.0,
+          0.0,
+          0.0
         ],
-        "max_abs_deviation_mm": 0,
+        "max_abs_deviation_mm": 0.0,
         "tolerance_mm": 0.2
       }
     },
@@ -69,8 +69,8 @@
       "result": "pass",
       "details": {
         "volume": {
-          "actual_mm3": 73755.93810602803,
-          "deviation_pct": 0.1605585333135356,
+          "actual_mm3": 73755.938106028,
+          "deviation_pct": 0.16055853331357497,
           "pass": true,
           "spec_mm3": 73874.55,
           "tolerance_pct": 1.5
@@ -82,21 +82,21 @@
       "type": "hole_count",
       "params": {
         "type": "hole_count",
-        "diameter_mm": 15,
+        "diameter_mm": 15.0,
         "expected": 1,
         "diameter_tolerance_mm": 0.1
       },
       "result": "pass",
       "details": {
         "actual": 1,
-        "diameter_mm": 15,
+        "diameter_mm": 15.0,
         "diameter_tolerance_mm": 0.1,
         "expected": 1,
         "found": [
           [
-            0,
-            0,
-            15
+            0.0,
+            0.0,
+            15.0
           ]
         ]
       }
@@ -106,30 +106,30 @@
       "type": "hole_positions",
       "params": {
         "type": "hole_positions",
-        "diameter_mm": 15,
+        "diameter_mm": 15.0,
         "positions": [
           [
-            0,
-            0,
-            0
+            0.0,
+            0.0,
+            0.0
           ]
         ],
         "tolerance_mm": 0.2
       },
       "result": "pass",
       "details": {
-        "diameter_mm": 15,
+        "diameter_mm": 15.0,
         "per_expected": [
           {
-            "distance_mm": 0,
+            "distance_mm": 0.0,
             "matched_hole": [
-              0,
-              0
+              0.0,
+              0.0
             ],
             "pass": true,
             "spec_xy": [
-              0,
-              0
+              0.0,
+              0.0
             ]
           }
         ],
@@ -142,36 +142,36 @@
       "type": "hole_count",
       "params": {
         "type": "hole_count",
-        "diameter_mm": 6,
+        "diameter_mm": 6.0,
         "expected": 4,
         "diameter_tolerance_mm": 0.05
       },
       "result": "pass",
       "details": {
         "actual": 4,
-        "diameter_mm": 6,
+        "diameter_mm": 6.0,
         "diameter_tolerance_mm": 0.05,
         "expected": 4,
         "found": [
           [
-            30,
-            0,
-            6
+            30.0,
+            0.0,
+            6.0
           ],
           [
-            0,
-            30,
-            6
+            0.0,
+            30.0,
+            6.0
           ],
           [
-            -30,
-            0,
-            6
+            -30.0,
+            0.0,
+            6.0
           ],
           [
-            0,
-            -30,
-            6
+            0.0,
+            -30.0,
+            6.0
           ]
         ]
       }
@@ -181,81 +181,81 @@
       "type": "hole_positions",
       "params": {
         "type": "hole_positions",
-        "diameter_mm": 6,
+        "diameter_mm": 6.0,
         "positions": [
           [
-            30,
-            0,
-            0
+            30.0,
+            0.0,
+            0.0
           ],
           [
-            0,
-            30,
-            0
+            0.0,
+            30.0,
+            0.0
           ],
           [
-            -30,
-            0,
-            0
+            -30.0,
+            0.0,
+            0.0
           ],
           [
-            0,
-            -30,
-            0
+            0.0,
+            -30.0,
+            0.0
           ]
         ],
         "tolerance_mm": 0.2
       },
       "result": "pass",
       "details": {
-        "diameter_mm": 6,
+        "diameter_mm": 6.0,
         "per_expected": [
           {
-            "distance_mm": 0,
+            "distance_mm": 0.0,
             "matched_hole": [
-              30,
-              0
+              30.0,
+              0.0
             ],
             "pass": true,
             "spec_xy": [
-              30,
-              0
+              30.0,
+              0.0
             ]
           },
           {
-            "distance_mm": 0,
+            "distance_mm": 0.0,
             "matched_hole": [
-              0,
-              30
+              0.0,
+              30.0
             ],
             "pass": true,
             "spec_xy": [
-              0,
-              30
+              0.0,
+              30.0
             ]
           },
           {
-            "distance_mm": 0,
+            "distance_mm": 0.0,
             "matched_hole": [
-              -30,
-              0
+              -30.0,
+              0.0
             ],
             "pass": true,
             "spec_xy": [
-              -30,
-              0
+              -30.0,
+              0.0
             ]
           },
           {
-            "distance_mm": 0,
+            "distance_mm": 0.0,
             "matched_hole": [
-              0,
-              -30
+              0.0,
+              -30.0
             ],
             "pass": true,
             "spec_xy": [
-              0,
-              -30
+              0.0,
+              -30.0
             ]
           }
         ],
@@ -275,37 +275,37 @@
         "per_solid": [
           {
             "bbox": {
-              "max_abs_deviation_mm": 0,
+              "max_abs_deviation_mm": 0.0,
               "original_max": [
-                40,
-                40,
-                60
+                40.0,
+                40.0,
+                60.0
               ],
               "original_min": [
-                -40,
-                -40,
-                0
+                -40.0,
+                -40.0,
+                0.0
               ],
               "pass": true,
               "roundtripped_max": [
-                40,
-                40,
-                60
+                40.0,
+                40.0,
+                60.0
               ],
               "roundtripped_min": [
-                -40,
-                -40,
-                0
+                -40.0,
+                -40.0,
+                0.0
               ],
               "tolerance_mm": 1.9209372712298545
             },
             "index": 0,
             "pass": true,
             "volume": {
-              "deviation_pct": 0.5223793989542149,
-              "original_mm3": 73755.938106028,
+              "deviation_pct": 0.5223793989542146,
+              "original_mm3": 73755.93810602803,
               "pass": true,
-              "roundtripped_mm3": 73370.65227985669
+              "roundtripped_mm3": 73370.65227985672
             }
           }
         ],
@@ -317,7 +317,7 @@
     "passed": true,
     "checks_passed": 8,
     "checks_total": 8,
-    "score": 1,
+    "score": 1.0,
     "anti_cheese_violated": false,
     "limits_exceeded": []
   },
