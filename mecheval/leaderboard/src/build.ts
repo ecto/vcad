@@ -399,7 +399,12 @@ const STYLES = `
     background: rgba(14,57,96,0.02); vertical-align: middle;
   }
   .matrix .matrix-ref { display: flex; align-items: center; justify-content: center; height: 64px; }
-  .matrix .matrix-ref svg { max-width: 72px; max-height: 60px; height: auto; width: auto; }
+  /* Inline SVGs from vcad-render carry only viewBox (no width/height attrs).
+     In a flex item with width:auto/height:auto, the SVG has no intrinsic
+     dimensions and collapses to 0×0 in Chrome/Safari. Pin explicit pixel
+     dimensions so preserveAspectRatio (default xMidYMid meet) handles the
+     scaling inside the box. */
+  .matrix .matrix-ref svg { width: 72px; height: 60px; }
   .matrix .matrix-ref-empty { color: var(--ink-soft); font-size: 11px; text-align: center; }
   .matrix td a { display: block; }
 
