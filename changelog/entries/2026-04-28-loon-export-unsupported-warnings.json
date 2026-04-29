@@ -1,6 +1,6 @@
 {
   "id": "2026-04-28-loon-export-unsupported-warnings",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "date": "2026-04-28",
   "category": "fix",
   "title": "Loon export warns on unsupported variants",

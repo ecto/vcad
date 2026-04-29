@@ -1,6 +1,6 @@
 {
   "id": "2026-04-26-part-clone",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "date": "2026-04-26",
   "category": "feat",
   "title": "Part and PartMesh now implement Clone",
