@@ -14,6 +14,8 @@ use vcad_kernel::Solid;
 
 /// Result of loading + evaluating a candidate `.vcad`.
 pub struct EvalSnapshot {
+    /// The parsed document, or `None` when parse failed.
+    pub doc: Option<vcad_ir::Document>,
     /// Solids successfully produced by visible roots.
     pub solids: Vec<Solid>,
     /// Number of visible roots in the document (whether they evaluated or not).
@@ -151,6 +153,7 @@ pub fn evaluate_vcad(raw_vcad: &str) -> EvalSnapshot {
         Ok(p) => p,
         Err(e) => {
             return EvalSnapshot {
+                doc: None,
                 solids: Vec::new(),
                 root_count: 0,
                 root_failures: Vec::new(),
@@ -172,6 +175,7 @@ pub fn evaluate_vcad(raw_vcad: &str) -> EvalSnapshot {
         Ok(Ok(s)) => s,
         Ok(Err(e)) => {
             return EvalSnapshot {
+                doc: Some(doc),
                 solids: Vec::new(),
                 root_count,
                 root_failures: Vec::new(),
@@ -180,6 +184,7 @@ pub fn evaluate_vcad(raw_vcad: &str) -> EvalSnapshot {
         }
         Err(_) => {
             return EvalSnapshot {
+                doc: Some(doc),
                 solids: Vec::new(),
                 root_count,
                 root_failures: Vec::new(),
@@ -202,6 +207,7 @@ pub fn evaluate_vcad(raw_vcad: &str) -> EvalSnapshot {
         .collect();
 
     EvalSnapshot {
+        doc: Some(doc),
         solids,
         root_count,
         root_failures,

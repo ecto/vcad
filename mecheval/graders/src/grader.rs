@@ -10,6 +10,10 @@ use crate::check::CheckSpec;
 use crate::eval::{evaluate_vcad, EvalSnapshot};
 use crate::fillets::find_non_z_cylinders;
 use crate::holes::find_z_holes;
+use crate::suite_c::{
+    build_assembly_snapshot, check_body_valid, check_fk_reaches, check_task_success,
+    check_torque_budget, AssemblySnapshot,
+};
 use crate::task::Task;
 use serde_json::json;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -48,9 +52,26 @@ pub fn grade(
     // Evaluate once up front; every check shares the snapshot.
     let snapshot = evaluate_vcad(&candidate_raw);
 
+    // Build a Suite-C assembly snapshot lazily — only if the task has
+    // physics checks. Failures here surface as the per-check `Fail`
+    // reason via [`AssemblyState`].
+    let mut assembly = if task.checks.iter().any(CheckSpec::is_suite_c) {
+        match snapshot.doc.as_ref() {
+            Some(doc) => match build_assembly_snapshot(doc) {
+                Ok(s) => AssemblyState::Built(Box::new(s)),
+                Err(e) => AssemblyState::BuildError(e),
+            },
+            None => AssemblyState::BuildError("document failed to parse".into()),
+        }
+    } else {
+        AssemblyState::NotNeeded
+    };
+
+    let task_target = first_fk_target(task);
+
     let mut records: Vec<CheckRecord> = Vec::with_capacity(task.checks.len());
     for (n, spec) in task.checks.iter().enumerate() {
-        let (outcome, details) = run_check(spec, &snapshot);
+        let (outcome, details) = run_check(spec, &snapshot, &mut assembly, task, task_target);
         records.push(CheckRecord {
             n,
             r#type: spec.kind().to_string(),
@@ -60,11 +81,11 @@ pub fn grade(
         });
     }
 
-    // Anti-cheese + limits enforcement is wired by the harness, which
-    // sees token counts, tool-call counts, and wall-clock. The grader
-    // proper just receives that as input later. v0.0 reports "not yet
-    // checked" — false here so it doesn't force a fail.
-    let anti_cheese_violated = false;
+    // Limits enforcement (token counts, wall-clock, tool calls) is wired
+    // by the harness, which has the trace data — that stays Vec::new()
+    // here. Structural anti-cheese, on the other hand, is a function of
+    // the candidate document only, so we run it.
+    let (anti_cheese_violated, _ac_violations) = crate::anti_cheese::run(task, &snapshot);
     let limits_exceeded: Vec<String> = Vec::new();
 
     let summary = Summary::from_records(&records, anti_cheese_violated, limits_exceeded);
@@ -79,9 +100,37 @@ pub fn grade(
     })
 }
 
+/// State of the lazily-built Suite-C assembly snapshot.
+enum AssemblyState {
+    NotNeeded,
+    Built(Box<AssemblySnapshot>),
+    BuildError(String),
+}
+
+/// Pull the first `fk_reaches` check's target/tolerance out of the
+/// task — `torque_budget` and `task_success` reuse it as the IK goal.
+fn first_fk_target(task: &Task) -> Option<([f64; 3], f64)> {
+    for c in &task.checks {
+        if let CheckSpec::FkReaches {
+            target,
+            tolerance_m,
+        } = c
+        {
+            return Some((*target, *tolerance_m));
+        }
+    }
+    None
+}
+
 /// Dispatch one check against the prebuilt evaluation snapshot. Checks
 /// that haven't been wired yet return [`CheckOutcome::NotImplemented`].
-fn run_check(spec: &CheckSpec, snapshot: &EvalSnapshot) -> (CheckOutcome, serde_json::Value) {
+fn run_check(
+    spec: &CheckSpec,
+    snapshot: &EvalSnapshot,
+    assembly: &mut AssemblyState,
+    task: &Task,
+    task_target: Option<([f64; 3], f64)>,
+) -> (CheckOutcome, serde_json::Value) {
     let stub_reason = "skeleton — kernel wiring pending";
     match spec {
         CheckSpec::ValidSolid => check_valid_solid(snapshot),
@@ -135,13 +184,74 @@ fn run_check(spec: &CheckSpec, snapshot: &EvalSnapshot) -> (CheckOutcome, serde_
             json!({ "reason": stub_reason }),
         ),
 
-        CheckSpec::BodyValid
-        | CheckSpec::FkReaches { .. }
-        | CheckSpec::TorqueBudget { .. }
-        | CheckSpec::StableDuringRollout { .. }
-        | CheckSpec::TaskSuccess { .. } => (
+        CheckSpec::BodyValid => match assembly {
+            AssemblyState::Built(snap) => check_body_valid(snap),
+            AssemblyState::BuildError(e) => (
+                CheckOutcome::Fail,
+                json!({ "reason": "could not build physics world", "error": e }),
+            ),
+            AssemblyState::NotNeeded => (
+                CheckOutcome::NotImplemented,
+                json!({ "reason": "internal: body_valid dispatched without assembly" }),
+            ),
+        },
+        CheckSpec::FkReaches {
+            target,
+            tolerance_m,
+        } => match assembly {
+            AssemblyState::Built(snap) => check_fk_reaches(snap, *target, *tolerance_m),
+            AssemblyState::BuildError(e) => (
+                CheckOutcome::Fail,
+                json!({ "reason": "could not build physics world", "error": e }),
+            ),
+            AssemblyState::NotNeeded => (
+                CheckOutcome::NotImplemented,
+                json!({ "reason": "internal: fk_reaches dispatched without assembly" }),
+            ),
+        },
+        CheckSpec::TorqueBudget {
+            payload_kg,
+            safety_factor,
+        } => match assembly {
+            AssemblyState::Built(snap) => {
+                let (target, tol) = task_target.unwrap_or(([0.0, 0.0, 0.0], 0.005));
+                check_torque_budget(
+                    snap,
+                    *payload_kg,
+                    *safety_factor,
+                    task.anti_cheese.joint_torque_ceiling_nm,
+                    target,
+                    tol,
+                )
+            }
+            AssemblyState::BuildError(e) => (
+                CheckOutcome::Fail,
+                json!({ "reason": "could not build physics world", "error": e }),
+            ),
+            AssemblyState::NotNeeded => (
+                CheckOutcome::NotImplemented,
+                json!({ "reason": "internal: torque_budget dispatched without assembly" }),
+            ),
+        },
+        CheckSpec::TaskSuccess { task: _, params } => match assembly {
+            AssemblyState::Built(snap) => check_task_success(
+                snap,
+                params,
+                task_target.map(|(t, _)| t),
+                task_target.map(|(_, tol)| tol),
+            ),
+            AssemblyState::BuildError(e) => (
+                CheckOutcome::Fail,
+                json!({ "reason": "could not build physics world", "error": e }),
+            ),
+            AssemblyState::NotNeeded => (
+                CheckOutcome::NotImplemented,
+                json!({ "reason": "internal: task_success dispatched without assembly" }),
+            ),
+        },
+        CheckSpec::StableDuringRollout { .. } => (
             CheckOutcome::NotImplemented,
-            json!({ "reason": stub_reason, "needs": "vcad-gym (phyz + tang)" }),
+            json!({ "reason": "no current task uses stable_during_rollout" }),
         ),
     }
 }
@@ -1027,5 +1137,124 @@ mod tests {
         let tmp = write_tmp_vcad("mecheval-hash-len.vcad", &cube_vcad(5.0));
         let blob = grade(&task, &task_bytes, &tmp).expect("grade");
         assert_eq!(blob.task_sha256.len(), 64);
+    }
+
+    /// End-to-end Suite-C smoke: a small reacher .vcad goes through
+    /// the full dispatch (body_valid + fk_reaches + torque_budget +
+    /// task_success). Targets are picked at the rest pose so IK has a
+    /// trivial solution; this test exists to verify the dispatch
+    /// plumbing is intact, not the IK / controller solvers (those are
+    /// covered in `suite_c::tests`).
+    fn reacher_vcad_str() -> String {
+        // Mirror suite_c::tests::reacher_doc — a base + two-link Y-axis
+        // revolute reacher, with the second link tagged "tip".
+        r#"{
+            "version":"0.1",
+            "nodes":{
+                "1":{"id":1,"name":"base_g","op":{"type":"Cube","size":{"x":100,"y":100,"z":50}}},
+                "2":{"id":2,"name":"l1_g","op":{"type":"Cube","size":{"x":20,"y":20,"z":100}}},
+                "3":{"id":3,"name":"l2_g","op":{"type":"Cube","size":{"x":20,"y":20,"z":100}}}
+            },
+            "materials":{},
+            "part_materials":{},
+            "roots":[],
+            "partDefs":{
+                "base":{"id":"base","root":1},
+                "l1":{"id":"l1","root":2},
+                "l2":{"id":"l2","root":3}
+            },
+            "instances":[
+                {"id":"base_inst","partDefId":"base","name":"Base","tags":["base"]},
+                {"id":"l1_inst","partDefId":"l1","name":"L1"},
+                {"id":"l2_inst","partDefId":"l2","name":"Tip","tags":["tip"]}
+            ],
+            "joints":[
+                {"id":"j1","parentInstanceId":"base_inst","childInstanceId":"l1_inst",
+                 "parentAnchor":{"x":0,"y":0,"z":25},"childAnchor":{"x":0,"y":0,"z":-50},
+                 "kind":{"type":"Revolute","axis":{"x":0,"y":1,"z":0},"limits":[-180,180]},
+                 "state":0},
+                {"id":"j2","parentInstanceId":"l1_inst","childInstanceId":"l2_inst",
+                 "parentAnchor":{"x":0,"y":0,"z":50},"childAnchor":{"x":0,"y":0,"z":-50},
+                 "kind":{"type":"Revolute","axis":{"x":0,"y":1,"z":0},"limits":[-180,180]},
+                 "state":0}
+            ],
+            "groundInstanceId":"base_inst"
+        }"#
+        .to_string()
+    }
+
+    #[test]
+    fn end_to_end_suite_c_runs_real_pass_fail() {
+        // Discover the tip rest pose and use it as the target — that way
+        // IK trivially finds q=0 and we exercise the full dispatch chain.
+        use crate::eval::evaluate_vcad;
+        use crate::suite_c::{build_assembly_snapshot, resolve_tip_instance};
+        let raw = reacher_vcad_str();
+        let snap = evaluate_vcad(&raw);
+        let doc = snap.doc.as_ref().expect("doc parsed");
+        let mut asm = build_assembly_snapshot(doc).expect("assembly built");
+        let tip = resolve_tip_instance(doc).unwrap().to_string();
+        let rest = asm
+            .world
+            .forward_kinematics_at(&[0.0, 0.0])
+            .unwrap()
+            .get(&tip)
+            .unwrap()
+            .0;
+
+        let task = Task {
+            id: "c-smoke".into(),
+            suite: crate::task::Suite::C,
+            tier: "C-smoke".into(),
+            title: "smoke".into(),
+            prompt: "p".into(),
+            inputs: vec![],
+            checks: vec![
+                CheckSpec::BodyValid,
+                CheckSpec::FkReaches {
+                    target: rest,
+                    tolerance_m: 0.005,
+                },
+                CheckSpec::TorqueBudget {
+                    payload_kg: 0.0,
+                    safety_factor: 1.5,
+                },
+                CheckSpec::TaskSuccess {
+                    task: "reach_target".into(),
+                    params: serde_json::json!({
+                        "target": rest,
+                        "tolerance_m": 0.05,
+                        "max_steps": 200,
+                        "controller": "stock_pd"
+                    }),
+                },
+            ],
+            anti_cheese: crate::task::AntiCheese {
+                min_rigid_bodies: Some(3),
+                min_actuated_joints: Some(2),
+                joint_torque_ceiling_nm: Some(50.0),
+                required_links: vec!["base".into(), "tip".into()],
+                ..Default::default()
+            },
+            limits: Default::default(),
+            pass_k: 1,
+            tags: vec![],
+        };
+        let task_bytes = serde_json::to_vec(&task).unwrap();
+        let tmp = write_tmp_vcad("mecheval-suite-c-e2e.vcad", &raw);
+        let blob = grade(&task, &task_bytes, &tmp).expect("grade");
+
+        // Each check has a real outcome — never NotImplemented now.
+        for r in &blob.checks {
+            assert_ne!(
+                r.result,
+                CheckOutcome::NotImplemented,
+                "check {} returned NotImplemented: {:?}",
+                r.r#type,
+                r.details
+            );
+        }
+        assert!(!blob.summary.anti_cheese_violated);
+        assert_eq!(blob.checks.len(), 4);
     }
 }

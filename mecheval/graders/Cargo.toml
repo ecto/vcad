@@ -16,6 +16,7 @@ vcad-kernel = { workspace = true }
 vcad-kernel-step = { workspace = true }
 vcad-kernel-geom = { workspace = true }
 vcad-kernel-topo = { workspace = true }
+vcad-kernel-physics = { workspace = true }
 
 [[bin]]
 name = "mecheval-grade"
