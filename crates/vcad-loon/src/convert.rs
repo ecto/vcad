@@ -227,6 +227,7 @@ fn convert_assembly(ctx: &mut ConvertCtx, fields: &[Value]) -> Result<(), String
             id: id.clone(),
             part_def_id,
             name: Some(id),
+            tags: Vec::new(),
             transform,
             material: None,
         });

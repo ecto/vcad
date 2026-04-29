@@ -1048,6 +1048,7 @@ fn parse_instance(doc: &mut Document, parts: &[&str], line: usize) -> Result<(),
         id,
         part_def_id,
         name: Some(name),
+        tags: Vec::new(),
         transform: Some(transform),
         material,
     });
@@ -3398,6 +3399,7 @@ CAM cam2 0 100 0 0 0 0"#;
                 id: "inst1".to_string(),
                 part_def_id: "part1".to_string(),
                 name: Some("Instance 1".to_string()),
+                tags: Vec::new(),
                 transform: Some(Transform3D::default()),
                 material: None,
             },
@@ -3405,6 +3407,7 @@ CAM cam2 0 100 0 0 0 0"#;
                 id: "inst2".to_string(),
                 part_def_id: "part1".to_string(),
                 name: Some("Instance 2".to_string()),
+                tags: Vec::new(),
                 transform: Some(Transform3D {
                     translation: Vec3::new(50.0, 0.0, 0.0),
                     rotation: Vec3::new(0.0, 0.0, 0.0),

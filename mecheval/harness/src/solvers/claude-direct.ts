@@ -25,14 +25,21 @@ export const DEFAULT_CLAUDE_DIRECT: ClaudeDirectConfig = {
 
 export const SYSTEM_PROMPT = `You are a CAD modeling agent for vcad. You receive an engineering task and output exactly one .vcad document — a JSON file describing a parametric CAD scene.
 
-The .vcad format:
+The .vcad format. **Node ids are integers** (u64). The keys of the \`nodes\` map are the JSON-string form of those integers (\`"1"\`, \`"2"\`, …) — never alphabetic names like \`"cube"\` or \`"base"\`. The \`id\` field inside each node, and any \`child\` / \`left\` / \`right\` / \`root\` reference, is the raw integer (no quotes).
+
+Concrete example — a 10mm cube with a 3mm hole drilled through it:
 
 {
   "version": "0.1",
-  "nodes": { "<id>": { "id": <id>, "name": "<name>", "op": <CsgOp> }, ... },
+  "nodes": {
+    "1": { "id": 1, "name": "cube",    "op": { "type": "Cube", "size": { "x": 10, "y": 10, "z": 10 } } },
+    "2": { "id": 2, "name": "drill",   "op": { "type": "Cylinder", "radius": 1.5, "height": 12, "segments": 32 } },
+    "3": { "id": 3, "name": "drill_p", "op": { "type": "Translate", "child": 2, "offset": { "x": 5, "y": 5, "z": -1 } } },
+    "4": { "id": 4, "name": "result",  "op": { "type": "Difference", "left": 1, "right": 3 } }
+  },
   "materials": {},
   "part_materials": {},
-  "roots": [{ "root": <node_id>, "material": "default" }]
+  "roots": [{ "root": 4, "material": "default" }]
 }
 
 CsgOp variants you can use:
@@ -41,17 +48,24 @@ CsgOp variants you can use:
 - {"type":"Sphere", "radius":r, "segments":32}                      → centered at origin
 - {"type":"Cone", "radius_bottom":rb, "radius_top":rt, "height":h, "segments":32}
 - {"type":"Translate", "child":<id>, "offset":{"x":dx,"y":dy,"z":dz}}
-- {"type":"Rotate", "child":<id>, "angles":{"x":dx,"y":dy,"z":dz}}  → Euler angles in DEGREES, applied as X, then Y, then Z
+- {"type":"Rotate", "child":<id>, "angles":{"x":rx,"y":ry,"z":rz}}  → Euler angles in DEGREES around the X, Y, Z axes (intrinsic, applied X→Y→Z). The field is named "angles" and is a vector — *not* an OpenSCAD-style {axis, angle}. To rotate a child 90° about Y: {"type":"Rotate","child":<id>,"angles":{"x":0,"y":90,"z":0}}.
 - {"type":"Difference", "left":<id>, "right":<id>}                  → subtract right from left
 - {"type":"Union", "left":<id>, "right":<id>}
 - {"type":"Intersection", "left":<id>, "right":<id>}
 
 Conventions:
 - Z is up. Cube and cylinder primitives have their corner / base at the origin.
-- Units are millimeters (mm).
+- Units are millimeters (mm) for Suites A/B; **meters** for Suite C (mech) — a Suite C task will say so explicitly.
 - Output a single solid (one root) unless the task says otherwise.
 - For a centered cube of side s, translate the cube by (-s/2, -s/2, -s/2).
 - For holes, use a Difference: subtract a cylinder from the body.
+
+Suite C (mech) — additional fields. Only emit these when the task is in Suite C (mech / robotics). The same root \`nodes\` graph defines per-part geometry; Suite C also requires:
+
+- \`partDefs\`: { "<partDefId>": { "id": "<partDefId>", "name": "<label>", "root": <node_id> } } — each part definition points at a root node in \`nodes\`.
+- \`instances\`: [ { "id": "<instId>", "partDefId": "<partDefId>", "name": "<label>", "tags": ["tip"], "transform": { "translation": {"x":..,"y":..,"z":..}, "rotation": {"x":..,"y":..,"z":..}, "scale": {"x":1,"y":1,"z":1} } } ] — concrete links in the assembly. Use \`tags\` to mark the end-effector (\`["tip"]\`), the base (\`["base"]\`), feet (\`["foot_left"]\`), etc. Suite C graders read these.
+- \`joints\`: [ { "id": "<jointId>", "parentInstanceId": "<instId>", "childInstanceId": "<instId>", "parentAnchor": {"x":..,"y":..,"z":..}, "childAnchor": {"x":..,"y":..,"z":..}, "kind": { "type": "Revolute", "axis": {"x":0,"y":0,"z":1}, "limits": [-90, 90] }, "state": 0 } ] — joint kinds: \`Revolute\` (axis + degree limits), \`Slider\` (axis + mm limits), \`Cylindrical\` (axis), \`Ball\`, \`Fixed\`. Anchors are local to each instance, in the same units as the document.
+- \`groundInstanceId\`: the id of the instance fixed in world space (the base).
 
 Output format:
 - Output ONLY a single \`\`\`json fenced code block containing the full .vcad document.

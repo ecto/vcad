@@ -13,12 +13,14 @@
 //! [`CheckOutcome::NotImplemented`]. Wiring each check to the relevant
 //! `vcad-kernel-*` crate is a follow-up step.
 
+pub mod anti_cheese;
 pub mod blob;
 pub mod check;
 pub mod eval;
 pub mod fillets;
 pub mod grader;
 pub mod holes;
+pub mod suite_c;
 pub mod task;
 
 pub use blob::{CheckOutcome, CheckRecord, RunBlob, Summary};

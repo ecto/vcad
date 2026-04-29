@@ -15,6 +15,13 @@ use crate::joints::{
     MotorMode, MotorTarget,
 };
 
+/// Per-instance world-frame pose: `(position_m, quaternion_wxyz)`.
+pub type Pose = ([f64; 3], [f64; 4]);
+
+/// Map of instance id → world-frame pose, returned from
+/// [`PhysicsWorld::forward_kinematics_at`].
+pub type PoseMap = HashMap<String, Pose>;
+
 /// State of a single joint.
 #[derive(Debug, Clone, Default)]
 pub struct JointState {
@@ -99,10 +106,12 @@ impl PhysicsWorld {
             Ok((mesh, mass, geometry))
         };
 
-        // Compute a box inertia from mass and mesh bounding box
+        // Compute a box inertia from mass and mesh bounding box, with the
+        // COM placed at the bbox center. Without this offset, RNEA / ABA
+        // see a body whose mass acts at the joint origin — gravity then
+        // exerts no moment and torque budgeting / settling are wrong.
         let compute_inertia =
             |mesh: &vcad_kernel_tessellate::TriangleMesh, mass: f64| -> SpatialInertia {
-                // Compute bounding box to estimate inertia
                 let mut min = Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
                 let mut max = Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
                 for v in mesh.vertices.chunks(3) {
@@ -119,12 +128,16 @@ impl PhysicsWorld {
                 let dx = max.x - min.x;
                 let dy = max.y - min.y;
                 let dz = max.z - min.z;
-                // Box inertia: I_xx = m/12 * (dy² + dz²), etc.
+                let com = Vec3::new(
+                    0.5 * (min.x + max.x),
+                    0.5 * (min.y + max.y),
+                    0.5 * (min.z + max.z),
+                );
                 let ixx = mass / 12.0 * (dy * dy + dz * dz);
                 let iyy = mass / 12.0 * (dx * dx + dz * dz);
                 let izz = mass / 12.0 * (dx * dx + dy * dy);
                 let inertia_mat = Mat3::new(ixx, 0.0, 0.0, 0.0, iyy, 0.0, 0.0, 0.0, izz);
-                SpatialInertia::new(mass, Vec3::zeros(), inertia_mat)
+                SpatialInertia::new(mass, com, inertia_mat)
             };
 
         // 1. Add ground body (fixed, attached to world)
@@ -430,6 +443,135 @@ impl PhysicsWorld {
         self.model.gravity = Vec3::new(x as f64, y as f64, z as f64);
     }
 
+    /// Pose every instance in world coordinates for a given joint configuration.
+    ///
+    /// Computes forward kinematics at `q` (per-joint values in **vcad units**:
+    /// degrees for revolute / cylindrical / ball, mm for sliders) and returns
+    /// `(position_m, quat_wxyz)` per instance id. The mutation of `state.q`
+    /// is rolled back before returning, so this can be called repeatedly
+    /// during IK search without disturbing the simulation.
+    ///
+    /// `q` is interpreted positionally against [`Self::joint_ids`]: `q[i]`
+    /// applies to `joint_ids()[i]`. Multi-DOF joints (Ball, Free) consume
+    /// multiple consecutive entries from `q`.
+    pub fn forward_kinematics_at(&mut self, q: &[f64]) -> Result<PoseMap, PhysicsError> {
+        let joint_ids = self.joint_ids();
+        let saved_q = self.state.q.clone();
+        let saved_xform = self.state.body_xform.clone();
+
+        // Walk joint_ids in order and write q values into state.q at the
+        // right offsets. We reject the call if `q` is too short.
+        let mut cursor = 0usize;
+        for joint_id in &joint_ids {
+            let kind = self
+                .joint_kinds
+                .get(joint_id)
+                .ok_or_else(|| PhysicsError::MissingJoint(joint_id.clone()))?;
+            let ndof = joint_ndof(kind);
+            if ndof == 0 {
+                continue;
+            }
+            if cursor + ndof > q.len() {
+                self.state.q = saved_q;
+                self.state.body_xform = saved_xform;
+                return Err(PhysicsError::Evaluation(format!(
+                    "forward_kinematics_at: q has {} entries, joints need {}",
+                    q.len(),
+                    cursor + ndof
+                )));
+            }
+            let q_offset = self
+                .joint_q_offsets
+                .get(joint_id)
+                .copied()
+                .ok_or_else(|| PhysicsError::MissingJoint(joint_id.clone()))?;
+            for k in 0..ndof {
+                let physics_val = convert_state_to_physics(kind, q[cursor + k]);
+                self.state.q[q_offset + k] = physics_val;
+            }
+            cursor += ndof;
+        }
+
+        let (xforms, _) = forward_kinematics(&self.model, &self.state);
+        self.state.body_xform = xforms;
+
+        let mut out = HashMap::new();
+        for (inst_id, &body_idx) in &self.instance_to_body {
+            let inv = self.state.body_xform[body_idx].inverse();
+            let pos = inv.pos;
+            let rot = inv.rot;
+            let quat = phyz::math::Quat::from_matrix(&rot);
+            out.insert(
+                inst_id.clone(),
+                (
+                    [pos.x, pos.y, pos.z],
+                    [quat.w, quat.v.x, quat.v.y, quat.v.z],
+                ),
+            );
+        }
+
+        // Restore prior state — caller wanted a kinematic probe, not a step.
+        self.state.q = saved_q;
+        self.state.body_xform = saved_xform;
+        Ok(out)
+    }
+
+    /// Joint torques required to hold configuration `q` at rest under
+    /// gravity. Uses RNEA inverse dynamics with `v = 0` and `qdd = 0`,
+    /// so the result is pure gravity-comp + any spring/limit terms.
+    ///
+    /// Result is keyed by joint id, in **N·m** for revolute joints,
+    /// **N** for sliders. For multi-DOF joints (Ball, Free) only the
+    /// first DOF's torque is reported — Suite C cares about per-actuator
+    /// effort and the reacher uses single-DOF joints exclusively.
+    ///
+    /// State is restored before returning (same contract as
+    /// [`Self::forward_kinematics_at`]).
+    pub fn gravity_torques_at(&mut self, q: &[f64]) -> Result<HashMap<String, f64>, PhysicsError> {
+        let joint_ids = self.joint_ids();
+        let saved_q = self.state.q.clone();
+        let saved_v = self.state.v.clone();
+
+        // Reuse the FK-at machinery to write q into state.q. We don't need
+        // its return value here — RNEA reads state directly.
+        self.forward_kinematics_at(q)?;
+        // forward_kinematics_at restores state at the end; rewrite q again
+        // for the inverse-dyn pass.
+        let mut cursor = 0usize;
+        for joint_id in &joint_ids {
+            let kind = self.joint_kinds.get(joint_id).unwrap();
+            let ndof = joint_ndof(kind);
+            if ndof == 0 {
+                continue;
+            }
+            let q_offset = self.joint_q_offsets[joint_id];
+            for k in 0..ndof {
+                self.state.q[q_offset + k] = convert_state_to_physics(kind, q[cursor + k]);
+            }
+            cursor += ndof;
+        }
+
+        // Zero out velocities so RNEA gives the static (gravity-only) torques.
+        for i in 0..self.state.v.len() {
+            self.state.v[i] = 0.0;
+        }
+
+        let qdd = phyz::math::DVec::zeros(self.state.v.len());
+        let tau = phyz::rnea(&self.model, &self.state, &qdd);
+
+        let mut out = HashMap::new();
+        for (joint_id, &v_offset) in &self.joint_v_offsets {
+            if v_offset < tau.len() {
+                out.insert(joint_id.clone(), tau[v_offset]);
+            }
+        }
+
+        // Restore.
+        self.state.q = saved_q;
+        self.state.v = saved_v;
+        Ok(out)
+    }
+
     /// Get list of all joint IDs.
     pub fn joint_ids(&self) -> Vec<String> {
         self.joint_to_index.keys().cloned().collect()
@@ -585,6 +727,7 @@ mod tests {
                 id: "base_inst".to_string(),
                 part_def_id: "base".to_string(),
                 name: Some("Base".to_string()),
+                tags: Vec::new(),
                 transform: None,
                 material: None,
             },
@@ -592,6 +735,7 @@ mod tests {
                 id: "arm_inst".to_string(),
                 part_def_id: "arm".to_string(),
                 name: Some("Arm".to_string()),
+                tags: Vec::new(),
                 transform: None,
                 material: None,
             },
@@ -659,5 +803,129 @@ mod tests {
         let state = states.get("joint1").unwrap();
         // Position should be non-zero after commanding 45 degrees
         assert!(state.position.abs() > 0.0 || state.velocity.abs() > 0.0);
+    }
+
+    #[test]
+    fn test_forward_kinematics_at_does_not_mutate_state() {
+        let doc = create_test_document();
+        let mut world = PhysicsWorld::from_document(&doc).unwrap();
+        let q_before: Vec<f64> = (0..world.state.q.len()).map(|i| world.state.q[i]).collect();
+
+        let poses = world.forward_kinematics_at(&[45.0]).unwrap();
+        // Test fixture has two instances, one of which is the rotating arm
+        // — its world-z must be positive (lifted by parent_anchor) and FK
+        // restores state at the end.
+        assert!(poses.contains_key("base_inst"));
+        assert!(poses.contains_key("arm_inst"));
+
+        let q_after: Vec<f64> = (0..world.state.q.len()).map(|i| world.state.q[i]).collect();
+        assert_eq!(
+            q_before, q_after,
+            "forward_kinematics_at must restore state.q"
+        );
+    }
+
+    #[test]
+    fn test_gravity_torques_at_returns_per_joint_torque() {
+        let doc = create_test_document();
+        let mut world = PhysicsWorld::from_document(&doc).unwrap();
+
+        let tau = world.gravity_torques_at(&[0.0]).unwrap();
+        // Test fixture has joint1 (revolute about Z). At q=0 with gravity
+        // along -Z, a Z-axis revolute joint sees zero gravity moment about
+        // its axis (lever arm parallel to gravity). The map must still
+        // contain the key with a finite value.
+        assert!(tau.contains_key("joint1"));
+        assert!(tau["joint1"].is_finite());
+    }
+
+    /// Y-axis revolute under -Z gravity should produce a non-zero gravity
+    /// torque whenever the link is off vertical. Smoke-tests
+    /// [`PhysicsWorld::gravity_torques_at`].
+    #[test]
+    fn test_gravity_torques_at_nonzero_for_y_axis_revolute() {
+        let mut doc = Document::new();
+        doc.nodes.insert(
+            1,
+            vcad_ir::Node {
+                id: 1,
+                name: Some("base_g".into()),
+                op: vcad_ir::CsgOp::Cube {
+                    size: VcadVec3::new(100.0, 100.0, 50.0),
+                },
+            },
+        );
+        doc.nodes.insert(
+            2,
+            vcad_ir::Node {
+                id: 2,
+                name: Some("link_g".into()),
+                op: vcad_ir::CsgOp::Cube {
+                    size: VcadVec3::new(20.0, 20.0, 100.0),
+                },
+            },
+        );
+        let mut part_defs = HashMap::new();
+        part_defs.insert(
+            "base".into(),
+            vcad_ir::PartDef {
+                id: "base".into(),
+                name: None,
+                root: 1,
+                default_material: None,
+            },
+        );
+        part_defs.insert(
+            "arm".into(),
+            vcad_ir::PartDef {
+                id: "arm".into(),
+                name: None,
+                root: 2,
+                default_material: None,
+            },
+        );
+        doc.part_defs = Some(part_defs);
+        doc.instances = Some(vec![
+            vcad_ir::Instance {
+                id: "base_inst".into(),
+                part_def_id: "base".into(),
+                name: None,
+                tags: Vec::new(),
+                transform: None,
+                material: None,
+            },
+            vcad_ir::Instance {
+                id: "arm_inst".into(),
+                part_def_id: "arm".into(),
+                name: None,
+                tags: Vec::new(),
+                transform: None,
+                material: None,
+            },
+        ]);
+        doc.joints = Some(vec![vcad_ir::Joint {
+            id: "j".into(),
+            name: None,
+            parent_instance_id: Some("base_inst".into()),
+            child_instance_id: "arm_inst".into(),
+            parent_anchor: VcadVec3::new(0.0, 0.0, 25.0),
+            child_anchor: VcadVec3::new(0.0, 0.0, -50.0),
+            kind: JointKind::Revolute {
+                axis: VcadVec3::new(0.0, 1.0, 0.0),
+                limits: Some((-180.0, 180.0)),
+            },
+            state: 0.0,
+        }]);
+        doc.ground_instance_id = Some("base_inst".into());
+
+        let mut world = PhysicsWorld::from_document(&doc).unwrap();
+        // 60° off vertical → non-zero gravity moment about the Y joint axis.
+        let tau = world.gravity_torques_at(&[60.0]).unwrap();
+        let t = tau["j"];
+        assert!(
+            t.abs() > 1e-4,
+            "expected nonzero gravity torque at q=60° about Y axis, got {}",
+            t
+        );
     }
 }
