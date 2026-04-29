@@ -32,7 +32,8 @@
 //! world.set_joint_position("joint1", 45.0);  // 45 degrees
 //! ```
 
-mod colliders;
+/// Mesh-to-collider conversion + mass / inertia estimation.
+pub mod colliders;
 mod error;
 mod gym;
 /// Joint conversion utilities.

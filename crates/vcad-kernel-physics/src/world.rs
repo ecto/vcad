@@ -15,6 +15,13 @@ use crate::joints::{
     MotorMode, MotorTarget,
 };
 
+/// Per-instance world-frame pose: `(position_m, quaternion_wxyz)`.
+pub type Pose = ([f64; 3], [f64; 4]);
+
+/// Map of instance id → world-frame pose, returned from
+/// [`PhysicsWorld::forward_kinematics_at`].
+pub type PoseMap = HashMap<String, Pose>;
+
 /// State of a single joint.
 #[derive(Debug, Clone, Default)]
 pub struct JointState {
@@ -99,10 +106,12 @@ impl PhysicsWorld {
             Ok((mesh, mass, geometry))
         };
 
-        // Compute a box inertia from mass and mesh bounding box
+        // Compute a box inertia from mass and mesh bounding box, with the
+        // COM placed at the bbox center. Without this offset, RNEA / ABA
+        // see a body whose mass acts at the joint origin — gravity then
+        // exerts no moment and torque budgeting / settling are wrong.
         let compute_inertia =
             |mesh: &vcad_kernel_tessellate::TriangleMesh, mass: f64| -> SpatialInertia {
-                // Compute bounding box to estimate inertia
                 let mut min = Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
                 let mut max = Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
                 for v in mesh.vertices.chunks(3) {
@@ -119,12 +128,16 @@ impl PhysicsWorld {
                 let dx = max.x - min.x;
                 let dy = max.y - min.y;
                 let dz = max.z - min.z;
-                // Box inertia: I_xx = m/12 * (dy² + dz²), etc.
+                let com = Vec3::new(
+                    0.5 * (min.x + max.x),
+                    0.5 * (min.y + max.y),
+                    0.5 * (min.z + max.z),
+                );
                 let ixx = mass / 12.0 * (dy * dy + dz * dz);
                 let iyy = mass / 12.0 * (dx * dx + dz * dz);
                 let izz = mass / 12.0 * (dx * dx + dy * dy);
                 let inertia_mat = Mat3::new(ixx, 0.0, 0.0, 0.0, iyy, 0.0, 0.0, 0.0, izz);
-                SpatialInertia::new(mass, Vec3::zeros(), inertia_mat)
+                SpatialInertia::new(mass, com, inertia_mat)
             };
 
         // 1. Add ground body (fixed, attached to world)
@@ -441,10 +454,7 @@ impl PhysicsWorld {
     /// `q` is interpreted positionally against [`Self::joint_ids`]: `q[i]`
     /// applies to `joint_ids()[i]`. Multi-DOF joints (Ball, Free) consume
     /// multiple consecutive entries from `q`.
-    pub fn forward_kinematics_at(
-        &mut self,
-        q: &[f64],
-    ) -> Result<HashMap<String, ([f64; 3], [f64; 4])>, PhysicsError> {
+    pub fn forward_kinematics_at(&mut self, q: &[f64]) -> Result<PoseMap, PhysicsError> {
         let joint_ids = self.joint_ids();
         let saved_q = self.state.q.clone();
         let saved_xform = self.state.body_xform.clone();
@@ -809,7 +819,10 @@ mod tests {
         assert!(poses.contains_key("arm_inst"));
 
         let q_after: Vec<f64> = (0..world.state.q.len()).map(|i| world.state.q[i]).collect();
-        assert_eq!(q_before, q_after, "forward_kinematics_at must restore state.q");
+        assert_eq!(
+            q_before, q_after,
+            "forward_kinematics_at must restore state.q"
+        );
     }
 
     #[test]
@@ -824,5 +837,95 @@ mod tests {
         // contain the key with a finite value.
         assert!(tau.contains_key("joint1"));
         assert!(tau["joint1"].is_finite());
+    }
+
+    /// Y-axis revolute under -Z gravity should produce a non-zero gravity
+    /// torque whenever the link is off vertical. Smoke-tests
+    /// [`PhysicsWorld::gravity_torques_at`].
+    #[test]
+    fn test_gravity_torques_at_nonzero_for_y_axis_revolute() {
+        let mut doc = Document::new();
+        doc.nodes.insert(
+            1,
+            vcad_ir::Node {
+                id: 1,
+                name: Some("base_g".into()),
+                op: vcad_ir::CsgOp::Cube {
+                    size: VcadVec3::new(100.0, 100.0, 50.0),
+                },
+            },
+        );
+        doc.nodes.insert(
+            2,
+            vcad_ir::Node {
+                id: 2,
+                name: Some("link_g".into()),
+                op: vcad_ir::CsgOp::Cube {
+                    size: VcadVec3::new(20.0, 20.0, 100.0),
+                },
+            },
+        );
+        let mut part_defs = HashMap::new();
+        part_defs.insert(
+            "base".into(),
+            vcad_ir::PartDef {
+                id: "base".into(),
+                name: None,
+                root: 1,
+                default_material: None,
+            },
+        );
+        part_defs.insert(
+            "arm".into(),
+            vcad_ir::PartDef {
+                id: "arm".into(),
+                name: None,
+                root: 2,
+                default_material: None,
+            },
+        );
+        doc.part_defs = Some(part_defs);
+        doc.instances = Some(vec![
+            vcad_ir::Instance {
+                id: "base_inst".into(),
+                part_def_id: "base".into(),
+                name: None,
+                tags: Vec::new(),
+                transform: None,
+                material: None,
+            },
+            vcad_ir::Instance {
+                id: "arm_inst".into(),
+                part_def_id: "arm".into(),
+                name: None,
+                tags: Vec::new(),
+                transform: None,
+                material: None,
+            },
+        ]);
+        doc.joints = Some(vec![vcad_ir::Joint {
+            id: "j".into(),
+            name: None,
+            parent_instance_id: Some("base_inst".into()),
+            child_instance_id: "arm_inst".into(),
+            parent_anchor: VcadVec3::new(0.0, 0.0, 25.0),
+            child_anchor: VcadVec3::new(0.0, 0.0, -50.0),
+            kind: JointKind::Revolute {
+                axis: VcadVec3::new(0.0, 1.0, 0.0),
+                limits: Some((-180.0, 180.0)),
+            },
+            state: 0.0,
+        }]);
+        doc.ground_instance_id = Some("base_inst".into());
+
+        let mut world = PhysicsWorld::from_document(&doc).unwrap();
+        // 60° off vertical → non-zero gravity moment about the Y joint axis.
+        let tau = world.gravity_torques_at(&[60.0]).unwrap();
+        let t = tau["j"];
+        assert!(
+            t.abs() > 1e-4,
+            "expected nonzero gravity torque at q=60° about Y axis, got {}",
+            t
+        );
     }
 }
