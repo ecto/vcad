@@ -102,6 +102,77 @@ fn coplanar_adjacent_difference_no_change() {
     );
 }
 
+/// A2 stepped-block regression (mecheval task `a2-stepped-block-01`):
+/// cut box is flush with 4 of the base box's faces (+X, ±Y, +Z), interior
+/// faces only at x=0 and z=10. The result is an L-shape with volume
+/// 22500 mm³ = 30000 - 7500. Pre-79ab4d0 the kernel computed 17500 mm³
+/// because the planar tessellator overrode `Orientation::Reversed` on
+/// the cut's exposed cavity walls, inverting their contribution to the
+/// divergence-theorem volume integral.
+#[test]
+fn flush_corner_step_block_difference_volume_pos_x() {
+    let mut base = make_cube(50.0, 30.0, 20.0);
+    translate(&mut base, -25.0, -15.0, 0.0);
+    let mut cut = make_cube(25.0, 30.0, 10.0);
+    translate(&mut cut, 0.0, -15.0, 10.0);
+
+    let result = boolean_op(&base, &cut, BooleanOp::Difference, 32);
+    let mesh = result.to_mesh(32);
+    assert_valid_mesh(&mesh);
+
+    let vol = mesh_volume(&mesh);
+    assert!(
+        (vol - 22500.0).abs() / 22500.0 < 0.01,
+        "stepped-block diff (+X corner): expected ~22500, got {vol:.2}"
+    );
+}
+
+/// Mirror of `flush_corner_step_block_difference_volume_pos_x` cutting the −X
+/// corner instead. Same flush-on-four-faces topology, opposite-direction
+/// outward normals — guards against any sign-only fix.
+#[test]
+fn flush_corner_step_block_difference_volume_neg_x() {
+    let mut base = make_cube(50.0, 30.0, 20.0);
+    translate(&mut base, -25.0, -15.0, 0.0);
+    let mut cut = make_cube(25.0, 30.0, 10.0);
+    translate(&mut cut, -25.0, -15.0, 10.0);
+
+    let result = boolean_op(&base, &cut, BooleanOp::Difference, 32);
+    let mesh = result.to_mesh(32);
+    assert_valid_mesh(&mesh);
+
+    let vol = mesh_volume(&mesh);
+    assert!(
+        (vol - 22500.0).abs() / 22500.0 < 0.01,
+        "stepped-block diff (−X corner): expected ~22500, got {vol:.2}"
+    );
+}
+
+/// Vertical-step variant: cut is flush with ±X and ±Y of the base, only
+/// the bottom (−Z) face of the cut is interior. Exercises the same
+/// coincident-face routing on a different axis.
+#[test]
+fn flush_corner_step_block_difference_volume_vertical() {
+    // Base 30×30×40 spanning (-15..15, -15..15, 0..40).
+    let mut base = make_cube(30.0, 30.0, 40.0);
+    translate(&mut base, -15.0, -15.0, 0.0);
+    // Cut 30×30×20 spanning (-15..15, -15..15, 20..40) — flush on ±X, ±Y, +Z.
+    // Only the −Z face (z=20) is interior, leaving the lower half of the base.
+    let mut cut = make_cube(30.0, 30.0, 20.0);
+    translate(&mut cut, -15.0, -15.0, 20.0);
+
+    let result = boolean_op(&base, &cut, BooleanOp::Difference, 32);
+    let mesh = result.to_mesh(32);
+    assert_valid_mesh(&mesh);
+
+    let vol = mesh_volume(&mesh);
+    let expected = 30.0 * 30.0 * 20.0; // 18000
+    assert!(
+        (vol - expected).abs() / expected < 0.01,
+        "stepped-block diff (vertical): expected ~{expected}, got {vol:.2}"
+    );
+}
+
 /// Co-planar face union where both operands share an entire face in the Z direction.
 /// A occupies z=[0,10], B occupies z=[10,20]; they touch at the z=10 plane.
 #[test]
