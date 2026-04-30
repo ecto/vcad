@@ -569,31 +569,7 @@ fn coaxial_cylinder_difference_produces_annular_caps() {
 ///                 = 2·π·100·40 − 16·1000/3
 ///                 ≈ 19799.41 mm³.
 ///
-/// **Currently ignored** — the kernel today returns ≈ 25132 mm³ (= 2·V_cyl,
-/// off by 26.1%) for this case. Root cause has two parts that both need
-/// real implementations to land before this can be turned on:
-///
-///   1. `ssi::intersect_surfaces` has no Cylinder × Cylinder analytic
-///      handler, so it falls through to `marching_ssi(_, _, 16)`. With
-///      16 × 16 = 256 surface samples and a 1e-3 distance threshold, the
-///      sampler returns `IntersectionCurve::Empty` for our two
-///      perpendicular cylinders. No splits get scheduled.
-///
-///   2. Even if a handler emitted the analytic Steinmetz curves (two
-///      ellipses on a 45° plane through the cylinder axis), the existing
-///      `split::split_cylindrical_face` matches on `IntersectionCurve::
-///      Sampled` only to log a TODO and return the face unsplit. So the
-///      cylindrical face stays as one big face that classify picks a
-///      single sample point on, and the entire face is kept. The
-///      tessellated result is two intact closed surfaces ⇒ V_A + V_B.
-///
-/// Tracking issue/follow-up: implement analytic perpendicular-cylinder
-/// SSI (returns the two figure-8 ellipses on the cylinder face's u-v
-/// rectangle) plus a `split_cylindrical_face_by_sampled` that turns each
-/// ellipse into seam-crossing edges and decomposes the face into the four
-/// resulting sub-faces.
 #[test]
-#[ignore = "cylinder × cylinder SSI + Sampled cylindrical-face splitter not yet implemented"]
 fn cylinder_cylinder_perpendicular_union_steinmetz() {
     let vertical = make_cylinder(10.0, 40.0, 32);
     let mut horizontal = make_cylinder(10.0, 40.0, 32);
@@ -620,4 +596,3 @@ fn cylinder_cylinder_perpendicular_union_steinmetz() {
         err * 100.0
     );
 }
-

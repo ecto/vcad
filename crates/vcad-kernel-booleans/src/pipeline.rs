@@ -115,6 +115,22 @@ fn evaluate_curve(curve: &ssi::IntersectionCurve, t: f64) -> Point3 {
                 p0.z + frac * (p1.z - p0.z),
             )
         }
+        ssi::IntersectionCurve::TwoSampled(points, _) => {
+            // TwoSampled should be expanded before calling this function;
+            // evaluate on the first curve as a defensive fallback.
+            if points.is_empty() {
+                return Point3::origin();
+            }
+            let idx = ((t * (points.len() - 1) as f64).floor() as usize).min(points.len() - 2);
+            let frac = t * (points.len() - 1) as f64 - idx as f64;
+            let p0 = points[idx];
+            let p1 = points[idx + 1];
+            Point3::new(
+                p0.x + frac * (p1.x - p0.x),
+                p0.y + frac * (p1.y - p0.y),
+                p0.z + frac * (p1.z - p0.z),
+            )
+        }
         ssi::IntersectionCurve::Empty => Point3::origin(),
     };
     // Snap small values to exactly 0 to avoid floating point classification issues
@@ -515,6 +531,28 @@ pub(crate) fn brep_boolean(
             }
             if split::is_conical_face(&b, face_b) {
                 results_b.push((curve.clone(), circle.center, circle.center));
+            }
+            return Some((face_a, results_a, face_b, results_b));
+        }
+
+        // TwoSampled is the analytic cylinder × cylinder result (the
+        // Steinmetz pair of ellipses). The curves are already on both
+        // cylindrical surfaces; route them directly to the cylindrical
+        // splitter without going through `trim_curve_to_face`, so the
+        // figure-8 stays atomic and the 4-way split happens in one call.
+        if let ssi::IntersectionCurve::TwoSampled(_, _) = &curve {
+            debug_bool!(
+                "  TwoSampled: {:?}({:?}) x {:?}({:?})",
+                face_a,
+                surf_a.surface_type(),
+                face_b,
+                surf_b.surface_type()
+            );
+            if split::is_cylindrical_face(&a, face_a) {
+                results_a.push((curve.clone(), Point3::origin(), Point3::origin()));
+            }
+            if split::is_cylindrical_face(&b, face_b) {
+                results_b.push((curve.clone(), Point3::origin(), Point3::origin()));
             }
             return Some((face_a, results_a, face_b, results_b));
         }

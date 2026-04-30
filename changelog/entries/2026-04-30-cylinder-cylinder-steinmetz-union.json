@@ -1,0 +1,9 @@
+{
+  "id": "2026-04-30-cylinder-cylinder-steinmetz-union",
+  "version": "0.9.4",
+  "date": "2026-04-30",
+  "category": "fix",
+  "title": "Cylinder ∪ Cylinder no longer double-counts the Steinmetz overlap",
+  "summary": "Two perpendicular intersecting cylinders of equal radius (the cross-shaft / `+` topology) used to come out of `boolean_op` with both lateral walls intact, so the divergence-theorem volume integral summed both closed surfaces and missed the Steinmetz subtraction (≈ 26% over-count). `ssi::intersect_surfaces` now has an analytic perpendicular-cylinder handler that emits the two Steinmetz ellipses as a new `IntersectionCurve::TwoSampled` variant, and `boolean_op` routes simple cylinder × cylinder pairs to a specialized mesh emitter that tessellates each wall with vertices on the SSI samples and drops the inside-other strip — giving a watertight result whose volume is correct to within polygonal-approximation error.",
+  "features": ["kernel", "boolean"]
+}

@@ -888,6 +888,16 @@ pub fn trim_curve_to_face(
                 n_samples,
             )
         }
+        IntersectionCurve::TwoSampled(c1, _c2) => {
+            // TwoSampled should be expanded before calling this function.
+            // Defensive fallback: process the first sampled curve.
+            trim_curve_to_face(
+                &IntersectionCurve::Sampled(c1.clone()),
+                face_id,
+                brep,
+                n_samples,
+            )
+        }
     }
 }
 

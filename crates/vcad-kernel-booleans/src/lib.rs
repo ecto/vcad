@@ -17,6 +17,7 @@
 mod api;
 pub mod bbox;
 pub mod classify;
+pub mod cyl_cyl;
 pub mod mesh;
 mod pipeline;
 mod repair;
