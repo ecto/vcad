@@ -73,6 +73,12 @@ import {
 } from "./tools/ecad.js";
 import { createCadLoon, createCadLoonSchema } from "./tools/loon.js";
 import { appendGlbPreview } from "./tools/preview.js";
+import { buildTool, buildSchema } from "./tools/build.js";
+import { readTool, readSchema } from "./tools/read.js";
+import { queryTool, querySchema } from "./tools/query.js";
+import { inspectV2, inspectV2Schema } from "./tools/inspect-v2.js";
+import { exportV2, exportV2Schema } from "./tools/export-v2.js";
+import { shareV2, shareV2Schema } from "./tools/share-v2.js";
 import {
   getViewerHtml,
   VIEWER_RESOURCE_URI,
@@ -136,7 +142,7 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
   const server = new Server(
     {
       name: "vcad",
-      version: "0.1.0",
+      version: "2.0.0-alpha",
     },
     {
       capabilities: {
@@ -351,6 +357,54 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
           "Returns Z0, effective Er, and propagation delay.",
         inputSchema: calcImpedanceSchema,
       },
+      // ── v2 surface (handle-based, universal envelope) ────────────
+      {
+        name: "build",
+        description:
+          "v2: Create or edit a CAD document via an ordered list of build ops. " +
+          "Pass a `doc` handle to edit a prior result; omit for a fresh document. " +
+          "Returns a new versioned handle plus a preview PNG and aggregate stats. " +
+          "Phase-1 ops: primitives, booleans, transforms, fillet/chamfer/shell, " +
+          "linear/circular patterns, mirror, set_material, rename, delete, set_parameter, raw_ir.",
+        inputSchema: buildSchema,
+        _meta: UI_META,
+      },
+      {
+        name: "read",
+        description:
+          "v2: Hydrate a doc handle (or inline IR) to its full IR — JSON or VCode. " +
+          "Use sparingly; the universal envelope already returns stats + preview on every build.",
+        inputSchema: readSchema,
+      },
+      {
+        name: "query",
+        description:
+          "v2: Read-only structured introspection over a doc handle. Queries: " +
+          "`{ kind: 'tree' }`, `{ kind: 'list', of: 'parts'|'sketches'|'joints'|'instances'|'materials' }`, " +
+          "`{ kind: 'find', name }`, `{ kind: 'parameters' }`, `{ kind: 'dependencies', of }`, `{ kind: 'node', id }`.",
+        inputSchema: querySchema,
+      },
+      {
+        name: "inspect",
+        description:
+          "v2: Aggregate + per-part geometry properties (volume, surface area, bbox, COM, mass) " +
+          "over a doc handle. Returns the universal envelope.",
+        inputSchema: inspectV2Schema,
+      },
+      {
+        name: "export",
+        description:
+          "v2: Export a doc handle to STL or GLB. Default returns an embedded base64 resource; " +
+          "pass `target: { path: '...' }` for local-mode disk writes (requires MCP_LOCAL=1).",
+        inputSchema: exportV2Schema,
+      },
+      {
+        name: "share",
+        description:
+          "v2: Generate a vcad.io URL for a doc handle. Returns the URL plus byte sizes; " +
+          "warns when the URL exceeds ~2 KB.",
+        inputSchema: shareV2Schema,
+      },
     ],
   }));
 
@@ -410,7 +464,11 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
         return dispatchRegistryTool(name, args);
       }
 
-      let result: { content: Array<{ type: string; text: string; annotations?: unknown }> };
+      let result: {
+        content: Array<{ type: string; [k: string]: unknown }>;
+        isError?: boolean;
+        _meta?: Record<string, unknown>;
+      };
 
       switch (name) {
         case "open_document":
@@ -515,6 +573,31 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
 
         case "calc_impedance":
           result = calcImpedance(args);
+          break;
+
+        // ── v2 surface ──────────────────────────────────────────
+        case "build":
+          result = buildTool(args, engine);
+          break;
+
+        case "read":
+          result = readTool(args, engine);
+          break;
+
+        case "query":
+          result = queryTool(args, engine);
+          break;
+
+        case "inspect":
+          result = inspectV2(args, engine);
+          break;
+
+        case "export":
+          result = exportV2(args, engine);
+          break;
+
+        case "share":
+          result = shareV2(args, engine);
           break;
 
         default:
