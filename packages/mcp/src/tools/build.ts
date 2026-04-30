@@ -26,6 +26,8 @@ import {
   type MaterialDef,
   type Node,
   type NodeId,
+  type SketchSegment2D,
+  type Vec2,
   type Vec3,
 } from "@vcad/ir";
 import type { Engine } from "@vcad/engine";
@@ -47,6 +49,7 @@ import type {
   Material,
   NamedPos,
   NodeRef,
+  SketchEntity,
 } from "../types.js";
 
 export const buildSchema = {
@@ -171,17 +174,23 @@ function applyOp(
     case "raw_ir":
       return applyRawIr(doc, reg, op, result);
     case "sketch":
+      return applySketch(doc, reg, op, result);
     case "extrude":
+      return applyExtrude(doc, reg, op, result);
     case "revolve":
+      return applyRevolve(doc, reg, op, result);
     case "sweep":
+      return applySweep(doc, reg, op, result);
     case "loft":
+      return applyLoft(doc, reg, op, result);
     case "hole":
+      return applyHole(doc, reg, op, result);
     case "draft":
     case "sheet_base":
     case "sheet_flange":
     case "sheet_unfold":
       throw new Error(
-        `op '${op.op}' is not desugared yet — file via raw_ir or wait for the sketch-pipeline phase.`,
+        `op '${op.op}' is not desugared yet — file via raw_ir or wait for the sheet-metal phase.`,
       );
     default:
       throw new Error(`Unknown op: ${(op as { op: string }).op}`);
@@ -700,6 +709,318 @@ function planeRefFromDef(def: Extract<BuildOp, { op: "ref_plane" }>["def"]) {
 function axisRefFromDef(def: Extract<BuildOp, { op: "ref_axis" }>["def"]) {
   if ("kind" in def) return { kind: def.kind };
   return { from: def.from, to: def.to };
+}
+
+// ── Sketch op handlers ─────────────────────────────────────────────
+
+function applySketch(
+  doc: Document,
+  reg: NameRegistry,
+  op: Extract<BuildOp, { op: "sketch" }>,
+  result: BuildResult,
+): void {
+  const plane = resolvePlane(op.plane, reg, doc);
+  const segments = entitiesToSegments(op.entities);
+  const id = addNode(doc, reg, result, op.name, {
+    type: "Sketch2D",
+    origin: plane.origin,
+    x_dir: plane.xDir,
+    y_dir: plane.yDir,
+    segments,
+  });
+  reg.sketches.set(op.name, id);
+  // Sketches don't become roots until extruded/revolved/etc.
+}
+
+function entitiesToSegments(entities: SketchEntity[]): SketchSegment2D[] {
+  const out: SketchSegment2D[] = [];
+  for (const e of entities) {
+    switch (e.kind) {
+      case "line":
+        out.push({ type: "Line", start: e.from, end: e.to });
+        break;
+      case "circle":
+        // Approximate circle as 4 arcs.
+        out.push(...arcsAroundCenter(e.center, e.radius, 0, 2 * Math.PI, 8));
+        break;
+      case "arc": {
+        const startAngle = e.start_angle;
+        const endAngle = e.end_angle;
+        const start: Vec2 = {
+          x: e.center.x + Math.cos(startAngle) * e.radius,
+          y: e.center.y + Math.sin(startAngle) * e.radius,
+        };
+        const end: Vec2 = {
+          x: e.center.x + Math.cos(endAngle) * e.radius,
+          y: e.center.y + Math.sin(endAngle) * e.radius,
+        };
+        out.push({ type: "Arc", start, end, center: e.center, ccw: endAngle > startAngle });
+        break;
+      }
+      case "rectangle": {
+        const c = e.corner;
+        const s = e.size;
+        const a = c;
+        const b = { x: c.x + s.x, y: c.y };
+        const cc = { x: c.x + s.x, y: c.y + s.y };
+        const d = { x: c.x, y: c.y + s.y };
+        out.push({ type: "Line", start: a, end: b });
+        out.push({ type: "Line", start: b, end: cc });
+        out.push({ type: "Line", start: cc, end: d });
+        out.push({ type: "Line", start: d, end: a });
+        break;
+      }
+      case "polygon": {
+        const pts: Vec2[] = [];
+        for (let i = 0; i < e.sides; i++) {
+          const a = (e.rotation_deg ?? 0) * (Math.PI / 180) + (i * 2 * Math.PI) / e.sides;
+          pts.push({ x: e.center.x + Math.cos(a) * e.radius, y: e.center.y + Math.sin(a) * e.radius });
+        }
+        for (let i = 0; i < pts.length; i++) {
+          const next = (i + 1) % pts.length;
+          out.push({ type: "Line", start: pts[i], end: pts[next] });
+        }
+        break;
+      }
+      case "ellipse":
+      case "spline":
+      case "text":
+        // Tessellate as polylines — a single segment per chord.
+        // For now we approximate ellipse, skip spline/text.
+        if (e.kind === "ellipse") {
+          const N = 32;
+          const rot = (e.rotation_deg ?? 0) * (Math.PI / 180);
+          const pts: Vec2[] = [];
+          for (let i = 0; i < N; i++) {
+            const a = (i * 2 * Math.PI) / N;
+            const x = Math.cos(a) * e.rx;
+            const y = Math.sin(a) * e.ry;
+            pts.push({
+              x: e.center.x + x * Math.cos(rot) - y * Math.sin(rot),
+              y: e.center.y + x * Math.sin(rot) + y * Math.cos(rot),
+            });
+          }
+          for (let i = 0; i < pts.length; i++) {
+            const j = (i + 1) % pts.length;
+            out.push({ type: "Line", start: pts[i], end: pts[j] });
+          }
+        }
+        // spline / text — silently skipped for now.
+        break;
+    }
+  }
+  return out;
+}
+
+function arcsAroundCenter(
+  center: Vec2,
+  radius: number,
+  start: number,
+  end: number,
+  steps: number,
+): SketchSegment2D[] {
+  const out: SketchSegment2D[] = [];
+  const span = end - start;
+  for (let i = 0; i < steps; i++) {
+    const a0 = start + (span * i) / steps;
+    const a1 = start + (span * (i + 1)) / steps;
+    out.push({
+      type: "Arc",
+      start: { x: center.x + Math.cos(a0) * radius, y: center.y + Math.sin(a0) * radius },
+      end: { x: center.x + Math.cos(a1) * radius, y: center.y + Math.sin(a1) * radius },
+      center,
+      ccw: true,
+    });
+  }
+  return out;
+}
+
+function applyExtrude(
+  doc: Document,
+  reg: NameRegistry,
+  op: Extract<BuildOp, { op: "extrude" }>,
+  result: BuildResult,
+): void {
+  const sketchId = reg.sketches.get(op.sketch) ?? reg.byName.get(op.sketch);
+  if (sketchId === undefined) throw new Error(`extrude: unknown sketch "${op.sketch}"`);
+  const sketchNode = doc.nodes[String(sketchId)];
+  if (!sketchNode) throw new Error(`extrude: sketch node missing`);
+  if (sketchNode.op.type !== "Sketch2D") {
+    throw new Error(`extrude: node "${op.sketch}" is ${sketchNode.op.type}, not a sketch`);
+  }
+
+  const depth = typeof op.depth === "number" ? op.depth : 10;
+  // Extrude along the sketch's normal (z_dir = x_dir × y_dir).
+  const xd = sketchNode.op.x_dir;
+  const yd = sketchNode.op.y_dir;
+  const normal = {
+    x: xd.y * yd.z - xd.z * yd.y,
+    y: xd.z * yd.x - xd.x * yd.z,
+    z: xd.x * yd.y - xd.y * yd.x,
+  };
+  const sign = op.direction === "reverse" ? -1 : 1;
+  const direction = { x: normal.x * depth * sign, y: normal.y * depth * sign, z: normal.z * depth * sign };
+
+  const id = addNode(doc, reg, result, op.name, {
+    type: "Extrude",
+    sketch: sketchId,
+    direction,
+  });
+  attachRoot(doc, id, op.material ?? "default");
+  if (op.material) doc.part_materials[String(id)] = op.material;
+}
+
+function applyRevolve(
+  doc: Document,
+  reg: NameRegistry,
+  op: Extract<BuildOp, { op: "revolve" }>,
+  result: BuildResult,
+): void {
+  const sketchId = reg.sketches.get(op.sketch) ?? reg.byName.get(op.sketch);
+  if (sketchId === undefined) throw new Error(`revolve: unknown sketch "${op.sketch}"`);
+  const axis = resolveAxis(op.axis, reg, doc);
+  const sign = op.direction === "reverse" ? -1 : 1;
+  const id = addNode(doc, reg, result, op.name, {
+    type: "Revolve",
+    sketch: sketchId,
+    axis_origin: axis.origin,
+    axis_dir: axis.direction,
+    angle_deg: op.angle_deg * sign,
+  });
+  attachRoot(doc, id, op.material ?? "default");
+  if (op.material) doc.part_materials[String(id)] = op.material;
+}
+
+function applySweep(
+  doc: Document,
+  reg: NameRegistry,
+  op: Extract<BuildOp, { op: "sweep" }>,
+  result: BuildResult,
+): void {
+  const sketchId = reg.sketches.get(op.profile) ?? reg.byName.get(op.profile);
+  if (sketchId === undefined) throw new Error(`sweep: unknown profile "${op.profile}"`);
+  // Path: support either a named LinePath/HelixPath in the registry or
+  // an inline IR PathCurve literal.
+  let path: { type: "Line"; start: Vec3; end: Vec3 } | { type: "Helix"; radius: number; pitch: number; height: number; turns: number };
+  if (typeof op.path === "string") {
+    throw new Error(`sweep: named paths not yet supported — pass an inline { type: 'Line'|'Helix', ... }`);
+  } else {
+    path = op.path as typeof path;
+  }
+  const id = addNode(doc, reg, result, op.name, {
+    type: "Sweep",
+    sketch: sketchId,
+    path,
+    twist_angle: op.twist_deg !== undefined ? (op.twist_deg * Math.PI) / 180 : undefined,
+  });
+  attachRoot(doc, id, op.material ?? "default");
+  if (op.material) doc.part_materials[String(id)] = op.material;
+}
+
+function applyLoft(
+  doc: Document,
+  reg: NameRegistry,
+  op: Extract<BuildOp, { op: "loft" }>,
+  result: BuildResult,
+): void {
+  const sketches: NodeId[] = [];
+  for (const name of op.profiles) {
+    const id = reg.sketches.get(name) ?? reg.byName.get(name);
+    if (id === undefined) throw new Error(`loft: unknown profile "${name}"`);
+    sketches.push(id);
+  }
+  if (sketches.length < 2) throw new Error(`loft: needs ≥2 profiles`);
+  const id = addNode(doc, reg, result, op.name, {
+    type: "Loft",
+    sketches,
+    closed: op.closed ?? false,
+  });
+  attachRoot(doc, id, op.material ?? "default");
+  if (op.material) doc.part_materials[String(id)] = op.material;
+}
+
+function applyHole(
+  doc: Document,
+  reg: NameRegistry,
+  op: Extract<BuildOp, { op: "hole" }>,
+  result: BuildResult,
+): void {
+  // Hole desugars to: a cylinder positioned at `at`, subtracted from `target`.
+  const target = op.target ?? findFirstRoot(doc, reg);
+  if (!target) throw new Error(`hole: no target and no roots present`);
+  const targetId = resolveNodeRef(reg, target);
+  const targetMat = removeRoot(doc, targetId) ?? "default";
+
+  const center: Vec3 = "node" in (op.at as object)
+    ? // FaceRef — use its bbox-derived point as the hole center.
+      (() => {
+        const fr = op.at as { node: NodeRef; face_role?: string };
+        const bbox = bboxOfRoot(doc, resolveNodeRef(reg, fr.node), undefined);
+        if (!bbox) return { x: 0, y: 0, z: 0 };
+        return {
+          x: (bbox.min.x + bbox.max.x) / 2,
+          y: (bbox.min.y + bbox.max.y) / 2,
+          z: bbox.max.z,
+        };
+      })()
+    : (op.at as Vec3);
+
+  const depth = typeof op.depth === "number" ? op.depth : 100;
+  const cyl = addNode(doc, reg, result, undefined, {
+    type: "Cylinder",
+    radius: op.diameter / 2,
+    height: depth,
+    segments: 32,
+  });
+  const placed = addNode(doc, reg, result, undefined, {
+    type: "Translate",
+    child: cyl,
+    offset: { x: center.x, y: center.y, z: center.z - depth / 2 },
+  });
+
+  let resultId = addNode(doc, reg, result, undefined, {
+    type: "Difference",
+    left: targetId,
+    right: placed,
+  });
+
+  if (op.counterbore) {
+    const cb = addNode(doc, reg, result, undefined, {
+      type: "Cylinder",
+      radius: op.counterbore.diameter / 2,
+      height: op.counterbore.depth,
+      segments: 32,
+    });
+    const cbPlaced = addNode(doc, reg, result, undefined, {
+      type: "Translate",
+      child: cb,
+      offset: { x: center.x, y: center.y, z: center.z - op.counterbore.depth / 2 },
+    });
+    resultId = addNode(doc, reg, result, undefined, {
+      type: "Difference",
+      left: resultId,
+      right: cbPlaced,
+    });
+  }
+
+  if (op.name) {
+    reg.byName.set(op.name, resultId);
+    if (result.named_nodes) result.named_nodes[op.name] = resultId;
+    doc.nodes[String(resultId)].name = op.name;
+  }
+  // Re-bind the target's name (if any) to the new result, so subsequent
+  // ops referencing the target name pick up the holed version.
+  const targetName = doc.nodes[String(targetId)]?.name;
+  if (targetName) reg.byName.set(targetName, resultId);
+
+  attachRoot(doc, resultId, targetMat);
+}
+
+function findFirstRoot(doc: Document, reg: NameRegistry): NodeRef | undefined {
+  if (doc.roots.length === 0) return undefined;
+  const node = doc.nodes[String(doc.roots[0].root)];
+  if (!node || !node.name) return undefined;
+  return node.name;
 }
 
 // ── Suppressed unused warnings ────────────────────────────────────

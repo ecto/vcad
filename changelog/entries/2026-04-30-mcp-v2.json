@@ -1,0 +1,29 @@
+{
+  "id": "2026-04-30-mcp-v2",
+  "version": "0.9.4",
+  "date": "2026-04-30",
+  "category": "feat",
+  "title": "MCP v2 — handle-based docs and full kernel access",
+  "summary": "Redesigned MCP surface for long-horizon agents: versioned doc handles, universal envelope, 18 new tools (build, assemble, drawing, render, simulate, ECAD v2, …) live alongside the v1 surface.",
+  "features": ["mcp", "ai", "ecad", "physics"],
+  "mcpTools": [
+    "build",
+    "read",
+    "query",
+    "inspect",
+    "export",
+    "share",
+    "import",
+    "parts",
+    "assemble",
+    "simulate",
+    "render",
+    "drawing",
+    "schematic",
+    "layout",
+    "route",
+    "check",
+    "gerber",
+    "calc_impedance_v2"
+  ]
+}

@@ -1,0 +1,224 @@
+---
+title: "MCP v2 — handles, envelope, and the v2 surface"
+description: "The next-generation MCP surface: handle-based docs, universal envelope, full kernel access for long-horizon agents"
+order: 2
+---
+
+# MCP v2
+
+vcad's MCP server is shipping v2 — a redesigned surface for AI agents that
+work for hundreds of turns over hours. The v2 surface lives alongside v1:
+existing v1 connectors keep working, while v2-capable clients (Claude
+Desktop, Claude.ai, ChatGPT custom connectors, Cursor) discover the new
+tools via `tools/list`.
+
+The server now advertises as `vcad@2.0.0-alpha`.
+
+## What's new
+
+### 1. Document handles, not session ids
+
+A handle is a versioned reference to a stored document:
+
+```
+vcad:doc:<uuid>             # implicitly latest version
+vcad:doc:<uuid>@<version>   # immutable, pinned version
+```
+
+Every `build` / `assemble` / `import` call returns a new handle. Subsequent
+calls take the handle (not the IR) — agents pay ~50 bytes of context per
+edit, not the full document.
+
+Handles dereference through the same `documents` + `document_versions`
+tables the web app uses, so docs the agent creates show up in your
+library at vcad.io automatically.
+
+### 2. Universal envelope
+
+Every v2 tool returns the same shape:
+
+```ts
+type ToolEnvelope<T> = {
+  ok: true;
+  doc: DocHandle;             // result handle (or echo for reads)
+  stats: ResultStats;         // parts, nodes, volume_mm3, bbox, triangles, elapsed_ms
+  warnings: Warning[];        // non-fatal issues
+  result: T;                  // tool-specific payload
+};
+```
+
+Build/edit/render tools also attach a preview PNG and (for clients that
+support MCP Apps) the `ui://vcad/viewer` resource. Errors come back as
+`{ ok: false, error: { code, message } }` with `isError: true` set.
+
+### 3. Tool surface (18 tools)
+
+| Family | Tools |
+|--------|-------|
+| **CAD** | `build`, `assemble`, `drawing`, `inspect`, `query`, `read` |
+| **Visual** | `render` |
+| **I/O** | `import`, `export`, `share`, `parts` |
+| **ECAD** | `schematic`, `layout`, `route`, `check`, `gerber` |
+| **Sim** | `simulate` |
+
+## Examples
+
+### Build → edit → inspect
+
+```jsonc
+// 1. Create a 50×30×5 mm aluminum plate.
+build({
+  ops: [
+    { op: "primitive", kind: "cube", size: { x: 50, y: 30, z: 5 },
+      name: "plate", material: "aluminum_6061" }
+  ]
+})
+// → { doc: "vcad:doc:abc123…@1", stats: { volume_mm3: 7500, … }, … }
+
+// 2. Drill a hole through it.
+build({
+  doc: "vcad:doc:abc123…@1",
+  ops: [
+    { op: "primitive", kind: "cylinder", radius: 3, height: 10, name: "hole" },
+    { op: "difference", subject: "plate", tools: ["hole"], name: "drilled" }
+  ]
+})
+// → { doc: "vcad:doc:abc123…@2", stats: { volume_mm3: 7218.6, … }, … }
+
+// 3. Inspect mass + COM with the steel material density.
+inspect({ doc: "vcad:doc:abc123…@2" })
+// → { aggregate: { volume_mm3, surface_area_mm2, bbox, center_of_mass, mass_g }, per_part: { drilled: { … } }, validity: { … } }
+```
+
+### Sketch + extrude
+
+```jsonc
+build({
+  ops: [
+    {
+      op: "sketch",
+      name: "outline",
+      plane: { kind: "xy" },
+      entities: [{ id: "r", kind: "rectangle", corner: { x: 0, y: 0 }, size: { x: 20, y: 10 } }]
+    },
+    { op: "extrude", sketch: "outline", depth: 5, name: "block" }
+  ]
+})
+```
+
+### Assemble + simulate
+
+```jsonc
+// Build two parts.
+build({
+  ops: [
+    { op: "primitive", kind: "cube", size: { x: 100, y: 100, z: 50 }, name: "base" },
+    { op: "primitive", kind: "cube", size: { x: 20, y: 20, z: 100 }, name: "link1" }
+  ]
+})
+
+// Assemble them with a revolute joint.
+assemble({
+  doc: "vcad:doc:…@1",
+  instances: [{ name: "base_inst", part: "base" }, { name: "link1_inst", part: "link1" }],
+  joints: [{
+    name: "j",
+    parent: "base_inst", child: "link1_inst",
+    kind: "revolute",
+    anchor_parent: { x: 0, y: 0, z: 25 },
+    anchor_child: { x: 0, y: 0, z: -50 },
+    axis: { x: 0, y: 1, z: 0 },
+    limits: { min: -90, max: 90 }
+  }],
+  ground: "base_inst"
+})
+
+// Open-loop torque rollout — 10 steps of 0.5 N·m.
+simulate({
+  doc: "vcad:doc:…@2",
+  actions: Array.from({ length: 10 }, () => [0.5]),
+  action_type: "torque"
+})
+// → { trajectory, observations, rewards, final_state, … }
+```
+
+### Render
+
+```jsonc
+render({ doc: "vcad:doc:…@2", quality: "preview" })
+// → { image: { kind: "embedded", mime: "image/png", data_base64: "…" }, width: 512, height: 384 }
+```
+
+`draft` and `preview` quality tiers ship today (Lambert painter at
+256×192 / 512×384). `high` and `max` route through the kernel raytracer
+once its WASM bindings land in Phase 5a — they currently return
+`raytracer_unavailable`.
+
+## Reference resolution (NodeRef / FaceRef / EdgeRef)
+
+The agent never deals with opaque kernel ids. References are
+human-stable:
+
+```ts
+type NodeRef = string;                // "plate", "drilled.holes[2]"
+type FaceRef = { node: NodeRef, face_role: "top" | "bottom" | … }
+             | { node: NodeRef, face: number }
+             | { node: NodeRef, face_at: Vec3 };
+type EdgeRef = { node: NodeRef, edges_role: "all_top" | "fillet_loops" | … }
+             | { between_faces: [FaceRef, FaceRef] };
+```
+
+Edge ids change after every topology mutation; named refs survive.
+SolidWorks calls this "persistent topology references"; ours is a
+streamlined version.
+
+## Migration from v1
+
+v1 tools (`open_document`, `create_cad_loon`, `import_step`, `inspect_cad`,
+…) keep working. v2 ships the new tools alongside; nothing is removed.
+
+| v1 | v2 |
+|----|----|
+| `open_document` + `create_cad_loon` + `get_document` | `build` |
+| `inspect_cad` | `inspect` |
+| `export_cad` | `export` |
+| `import_step` | `import` |
+| `open_in_browser` | `share` |
+| `search_parts` + `place_part` | `parts` |
+| `create_robot_env` + `gym_step` + `gym_reset` + … | `simulate` |
+| `create_schematic` + `place_components` + `route_nets` + `run_drc` + `run_erc` + `export_gerber` | `schematic`, `layout`, `route`, `check`, `gerber` |
+
+The v1 surface stays mounted on `mcp.vcad.io/v1` for one quarter to
+give existing connectors a graceful migration window.
+
+## Status by phase
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 1 | Doc handles + in-process store + Supabase migration | ✅ landed |
+| 2 | Universal envelope + preview PNG | ✅ landed |
+| 3 | `build` (primitives, booleans, transforms, fillet/chamfer/shell, patterns, sketches, extrude, revolve, sweep, loft, hole, materials, ref geometry) | ✅ landed; sheet metal + draft + threads pending |
+| 4 | `inspect`, `query`, `read`, `import`, `export`, `share`, `parts` | ✅ landed |
+| 5a | `render` (Lambert tiers) | ✅ landed; raytracer tiers pending |
+| 5b | MCP Apps interactive embed | ⏳ planned |
+| 6 | `assemble`, `drawing` | ✅ assemble; drawing as SVG (drafting pipeline still Phase 6 follow-up) |
+| 7 | ECAD `schematic`, `layout`, `route`, `check`, `gerber` | ✅ landed |
+| 8 | `simulate` (stateless) | ✅ landed |
+| 9 | OAuth + npm bundle | ⏳ planned |
+| 10 | Doc rewrite + launch | ⏳ in progress |
+
+## Storage shape
+
+The MCP server reuses the existing `documents` + `document_versions`
+tables. The Phase-1 in-process store is swappable for a Supabase
+backend via the `DocStore` interface in
+`packages/mcp/src/handles.ts`. Migration `024_mcp_v2_handles.sql`
+adds:
+
+- `documents.ttl_at`, `created_via`, `source_meta` for anonymous +
+  provenance tracking
+- `document_versions.content_sha256` for dedup
+- `mcp_short_links` for `share`'s short URLs
+- `mcp_render_cache` for the render tool
+- `mcp_tool_calls` for telemetry rollup
+- `mcp_sweep_expired_anonymous_docs()` for daily TTL cleanup

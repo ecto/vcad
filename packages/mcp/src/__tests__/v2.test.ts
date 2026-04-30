@@ -150,13 +150,69 @@ describe("build (v2)", () => {
 
   it("rejects an unsupported op clearly", () => {
     const r = buildTool(
-      { ops: [{ op: "sketch", name: "s", plane: { kind: "xy" }, entities: [] }] },
+      { ops: [{ op: "sheet_unfold", subject: "missing" }] },
       engine,
     );
     const env = envelope(r);
     expect(env.ok).toBe(false);
     expect(env.error?.code).toBe("op_failed");
-    expect(env.error?.message).toContain("sketch");
+    expect(env.error?.message).toContain("sheet_unfold");
+  });
+
+  it("supports sketch + extrude pipeline", () => {
+    const r = buildTool(
+      {
+        ops: [
+          {
+            op: "sketch",
+            name: "outline",
+            plane: { kind: "xy" },
+            entities: [
+              { id: "r", kind: "rectangle", corner: { x: 0, y: 0 }, size: { x: 10, y: 5 } },
+            ],
+          },
+          { op: "extrude", sketch: "outline", depth: 3, name: "block" },
+        ],
+      },
+      engine,
+    );
+    const env = envelope(r);
+    expect(env.ok).toBe(true);
+    expect(env.stats?.parts).toBe(1);
+    // 10 × 5 × 3 = 150
+    expect(env.stats?.volume_mm3).toBeGreaterThan(140);
+    expect(env.stats?.volume_mm3).toBeLessThan(160);
+  });
+
+  it("supports revolve to make a sphere-like body", () => {
+    const r = buildTool(
+      {
+        ops: [
+          {
+            op: "sketch",
+            name: "halfdisk",
+            plane: { kind: "xz" },
+            entities: [
+              { id: "l1", kind: "line", from: { x: 0, y: 0 }, to: { x: 5, y: 0 } },
+              { id: "l2", kind: "line", from: { x: 5, y: 0 }, to: { x: 5, y: 1 } },
+              { id: "l3", kind: "line", from: { x: 5, y: 1 }, to: { x: 0, y: 1 } },
+              { id: "l4", kind: "line", from: { x: 0, y: 1 }, to: { x: 0, y: 0 } },
+            ],
+          },
+          {
+            op: "revolve",
+            sketch: "halfdisk",
+            axis: { kind: "z" },
+            angle_deg: 360,
+            name: "ring",
+          },
+        ],
+      },
+      engine,
+    );
+    const env = envelope(r);
+    expect(env.ok).toBe(true);
+    expect(env.stats?.parts).toBe(1);
   });
 
   it("supports raw_ir as an escape hatch", () => {

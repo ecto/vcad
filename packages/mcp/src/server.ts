@@ -79,6 +79,26 @@ import { queryTool, querySchema } from "./tools/query.js";
 import { inspectV2, inspectV2Schema } from "./tools/inspect-v2.js";
 import { exportV2, exportV2Schema } from "./tools/export-v2.js";
 import { shareV2, shareV2Schema } from "./tools/share-v2.js";
+import { importV2, importV2Schema } from "./tools/import-v2.js";
+import { partsTool, partsV2Schema } from "./tools/parts-v2.js";
+import { assemble, assembleSchema } from "./tools/assemble.js";
+import { simulate, simulateSchema } from "./tools/simulate.js";
+import { render, renderSchema } from "./tools/render.js";
+import { drawing, drawingSchema } from "./tools/drawing.js";
+import {
+  schematicV2,
+  schematicSchema,
+  layoutV2,
+  layoutSchema,
+  routeV2,
+  routeSchema,
+  checkV2,
+  checkSchema,
+  gerberV2,
+  gerberSchema,
+  calcImpedanceV2,
+  calcImpedanceSchemaV2,
+} from "./tools/ecad-v2.js";
 import {
   getViewerHtml,
   VIEWER_RESOURCE_URI,
@@ -405,6 +425,89 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
           "warns when the URL exceeds ~2 KB.",
         inputSchema: shareV2Schema,
       },
+      {
+        name: "import",
+        description:
+          "v2: STEP/STL import → doc handle. Accepts an embedded base64 resource " +
+          "(`{ kind: 'embedded', mime, data_base64 }`) or `{ path }` (local mode only). " +
+          "Auto-detects format from path/mime/magic bytes when `kind` is omitted.",
+        inputSchema: importV2Schema,
+      },
+      {
+        name: "parts",
+        description:
+          "v2: Stdlib parts library. `mode: 'search'` returns matches; `mode: 'place'` inserts " +
+          "the part into a doc handle (or fresh doc) and returns the updated handle.",
+        inputSchema: partsV2Schema,
+      },
+      {
+        name: "assemble",
+        description:
+          "v2: Add or modify part instances and joints in a doc. Supports revolute / prismatic / " +
+          "cylindrical / ball / fixed joints. Returns AABB-overlap interference report.",
+        inputSchema: assembleSchema,
+        _meta: UI_META,
+      },
+      {
+        name: "simulate",
+        description:
+          "v2: Stateless physics rollout over an assembly handle. Pass an action matrix and an " +
+          "optional initial state; returns trajectory + observations + rewards. Mode: 'rollout' " +
+          "runs all actions, 'step' runs a single step for closed-loop control.",
+        inputSchema: simulateSchema,
+      },
+      {
+        name: "render",
+        description:
+          "v2: Render the doc to a PNG. Quality tiers: draft, preview (default), high, max. " +
+          "Phase-1 ships draft + preview via the embedded Lambert painter; high/max return " +
+          "`raytracer_unavailable` until the kernel raytracer's WASM bindings land.",
+        inputSchema: renderSchema,
+      },
+      {
+        name: "drawing",
+        description:
+          "v2: Generate 2D drawing views (orthographic + iso) as SVG. Phase-1 emits triangle " +
+          "edges from each requested view; sections, dimensions, and GD&T are Phase 6.",
+        inputSchema: drawingSchema,
+      },
+      {
+        name: "schematic",
+        description:
+          "v2: Create or edit a PCB schematic — components, wires, labels. Returns an updated handle.",
+        inputSchema: schematicSchema,
+      },
+      {
+        name: "layout",
+        description:
+          "v2: Place components on a PCB (board outline + stackup + footprints) for a doc handle.",
+        inputSchema: layoutSchema,
+      },
+      {
+        name: "route",
+        description:
+          "v2: Route copper traces on a PCB. Auto or constrained mode. Returns updated handle " +
+          "plus stats (routed nets, total length, unrouted nets).",
+        inputSchema: routeSchema,
+      },
+      {
+        name: "check",
+        description:
+          "v2: Unified DRC + ERC. Returns severity-tagged findings (errors / warnings / info).",
+        inputSchema: checkSchema,
+      },
+      {
+        name: "gerber",
+        description:
+          "v2: Export Gerber RS-274X (or IPC-2581) fabrication bundle for a PCB doc handle.",
+        inputSchema: gerberSchema,
+      },
+      {
+        name: "calc_impedance_v2",
+        description:
+          "v2: IPC-2141 trace impedance calculator (microstrip / stripline / differential).",
+        inputSchema: calcImpedanceSchemaV2,
+      },
     ],
   }));
 
@@ -598,6 +701,54 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
 
         case "share":
           result = shareV2(args, engine);
+          break;
+
+        case "import":
+          result = importV2(args, engine);
+          break;
+
+        case "parts":
+          result = partsTool(args, engine);
+          break;
+
+        case "assemble":
+          result = assemble(args, engine);
+          break;
+
+        case "simulate":
+          result = await simulate(args, engine);
+          break;
+
+        case "render":
+          result = render(args, engine);
+          break;
+
+        case "drawing":
+          result = drawing(args, engine);
+          break;
+
+        case "schematic":
+          result = schematicV2(args, engine);
+          break;
+
+        case "layout":
+          result = layoutV2(args, engine);
+          break;
+
+        case "route":
+          result = routeV2(args, engine);
+          break;
+
+        case "check":
+          result = checkV2(args, engine);
+          break;
+
+        case "gerber":
+          result = gerberV2(args, engine);
+          break;
+
+        case "calc_impedance_v2":
+          result = calcImpedanceV2(args);
           break;
 
         default:
