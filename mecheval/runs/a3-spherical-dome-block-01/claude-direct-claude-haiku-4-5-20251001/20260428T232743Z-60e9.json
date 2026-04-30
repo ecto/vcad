@@ -21,14 +21,14 @@
       "params": {
         "type": "bbox",
         "min": [
-          -20,
-          -20,
-          0
+          -20.0,
+          -20.0,
+          0.0
         ],
         "max": [
-          20,
-          20,
-          55
+          20.0,
+          20.0,
+          55.0
         ],
         "tolerance_mm": 0.2
       },
@@ -43,7 +43,7 @@
       "params": {
         "type": "mass_props",
         "volume_mm3": 71068.58,
-        "tolerance_pct": 2
+        "tolerance_pct": 2.0
       },
       "result": "fail",
       "details": {
@@ -55,7 +55,7 @@
       "type": "step_roundtrip",
       "params": {
         "type": "step_roundtrip",
-        "tolerance_pct": 2
+        "tolerance_pct": 2.0
       },
       "result": "fail",
       "details": {
@@ -67,7 +67,7 @@
     "passed": false,
     "checks_passed": 0,
     "checks_total": 4,
-    "score": 0,
+    "score": 0.0,
     "anti_cheese_violated": false,
     "limits_exceeded": []
   },
@@ -95,7 +95,7 @@
   "submission_kind": "self-run",
   "prompt": {
     "seed": "a3-spherical-dome-block-01",
-    "rendered": "Make a single solid consisting of a cube with a hemispherical dome fused onto its top face. Cube: 40mm × 40mm × 40mm, centered in X and Y with the bottom face on the XY plane (so it spans x in [-20, 20], y in [-20, 20], z in [0, 40]). Dome: a hemisphere of radius 15mm sitting on top of the cube, centered on the Z axis. The flat (circular) face of the hemisphere is flush with the top face of the cube at z = 40, and the dome extends upward from there. The two parts are joined into a single solid (their shared circular interface is internal, not a face). Note: the kernel only has a full Sphere primitive — to get a hemisphere you must boolean a sphere with a half-space (e.g. intersect a sphere with a large cube positioned at z ≥ 40).",
+    "rendered": "Make a single solid consisting of a cube with a hemispherical dome fused onto its top face. Cube: 40mm \u00d7 40mm \u00d7 40mm, centered in X and Y with the bottom face on the XY plane (so it spans x in [-20, 20], y in [-20, 20], z in [0, 40]). Dome: a hemisphere of radius 15mm sitting on top of the cube, centered on the Z axis. The flat (circular) face of the hemisphere is flush with the top face of the cube at z = 40, and the dome extends upward from there. The two parts are joined into a single solid (their shared circular interface is internal, not a face). Note: the kernel only has a full Sphere primitive \u2014 to get a hemisphere you must boolean a sphere with a half-space (e.g. intersect a sphere with a large cube positioned at z \u2265 40).",
     "attachments": []
   },
   "trace": {

@@ -21,14 +21,14 @@
       "params": {
         "type": "bbox",
         "min": [
-          -20,
-          -20,
-          0
+          -20.0,
+          -20.0,
+          0.0
         ],
         "max": [
-          20,
-          20,
-          40
+          20.0,
+          20.0,
+          40.0
         ],
         "tolerance_mm": 0.05
       },
@@ -42,7 +42,7 @@
       "type": "mass_props",
       "params": {
         "type": "mass_props",
-        "volume_mm3": 60000,
+        "volume_mm3": 60000.0,
         "tolerance_pct": 0.1
       },
       "result": "fail",
@@ -67,7 +67,7 @@
     "passed": false,
     "checks_passed": 0,
     "checks_total": 4,
-    "score": 0,
+    "score": 0.0,
     "anti_cheese_violated": false,
     "limits_exceeded": []
   },

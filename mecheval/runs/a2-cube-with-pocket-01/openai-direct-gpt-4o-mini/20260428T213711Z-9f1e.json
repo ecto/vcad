@@ -21,40 +21,40 @@
       "params": {
         "type": "bbox",
         "min": [
-          -20,
-          -20,
-          0
+          -20.0,
+          -20.0,
+          0.0
         ],
         "max": [
-          20,
-          20,
-          40
+          20.0,
+          20.0,
+          40.0
         ],
         "tolerance_mm": 0.05
       },
       "result": "fail",
       "details": {
         "actual_max": [
-          40,
-          40,
-          40
+          40.0,
+          40.0,
+          40.0
         ],
         "actual_min": [
-          0,
-          0,
-          0
+          0.0,
+          0.0,
+          0.0
         ],
         "deviation_max": [
-          20,
-          20,
-          0
+          20.0,
+          20.0,
+          0.0
         ],
         "deviation_min": [
-          20,
-          20,
-          0
+          20.0,
+          20.0,
+          0.0
         ],
-        "max_abs_deviation_mm": 20,
+        "max_abs_deviation_mm": 20.0,
         "tolerance_mm": 0.05
       }
     },
@@ -63,16 +63,16 @@
       "type": "mass_props",
       "params": {
         "type": "mass_props",
-        "volume_mm3": 60000,
+        "volume_mm3": 60000.0,
         "tolerance_pct": 0.1
       },
       "result": "fail",
       "details": {
         "volume": {
-          "actual_mm3": 62333.333333333336,
-          "deviation_pct": 3.8888888888888933,
+          "actual_mm3": 63000.0,
+          "deviation_pct": 5.0,
           "pass": false,
-          "spec_mm3": 60000,
+          "spec_mm3": 60000.0,
           "tolerance_pct": 0.1
         }
       }
@@ -89,37 +89,37 @@
         "per_solid": [
           {
             "bbox": {
-              "max_abs_deviation_mm": 0,
+              "max_abs_deviation_mm": 0.0,
               "original_max": [
-                40,
-                40,
-                40
+                40.0,
+                40.0,
+                40.0
               ],
               "original_min": [
-                0,
-                0,
-                0
+                0.0,
+                0.0,
+                0.0
               ],
               "pass": true,
               "roundtripped_max": [
-                40,
-                40,
-                40
+                40.0,
+                40.0,
+                40.0
               ],
               "roundtripped_min": [
-                0,
-                0,
-                0
+                0.0,
+                0.0,
+                0.0
               ],
               "tolerance_mm": 0.0692820323027551
             },
             "index": 0,
             "pass": true,
             "volume": {
-              "deviation_pct": 0,
-              "original_mm3": 62333.333333333336,
+              "deviation_pct": 0.0,
+              "original_mm3": 63000.0,
               "pass": true,
-              "roundtripped_mm3": 62333.333333333336
+              "roundtripped_mm3": 63000.0
             }
           }
         ],
