@@ -21,14 +21,14 @@
       "params": {
         "type": "bbox",
         "min": [
-          -25,
-          -15,
-          0
+          -25.0,
+          -15.0,
+          0.0
         ],
         "max": [
-          25,
-          15,
-          20
+          25.0,
+          15.0,
+          20.0
         ],
         "tolerance_mm": 0.05
       },
@@ -42,7 +42,7 @@
       "type": "mass_props",
       "params": {
         "type": "mass_props",
-        "volume_mm3": 22500,
+        "volume_mm3": 22500.0,
         "tolerance_pct": 0.1
       },
       "result": "fail",
@@ -67,7 +67,7 @@
     "passed": false,
     "checks_passed": 0,
     "checks_total": 4,
-    "score": 0,
+    "score": 0.0,
     "anti_cheese_violated": false,
     "limits_exceeded": []
   },
@@ -95,7 +95,7 @@
   "submission_kind": "self-run",
   "prompt": {
     "seed": "a2-stepped-block-01",
-    "rendered": "Start with a rectangular block 50mm long (X) × 30mm wide (Y) × 20mm tall (Z), centered in X and Y with the bottom face on the XY plane (so it spans x in [-25, 25], y in [-15, 15], z in [0, 20]). Cut away the upper +X corner: remove material in the region x in [0, 25], y in [-15, 15], z in [10, 20]. The result has an L-shape when viewed from +Y. Output a single solid.",
+    "rendered": "Start with a rectangular block 50mm long (X) \u00d7 30mm wide (Y) \u00d7 20mm tall (Z), centered in X and Y with the bottom face on the XY plane (so it spans x in [-25, 25], y in [-15, 15], z in [0, 20]). Cut away the upper +X corner: remove material in the region x in [0, 25], y in [-15, 15], z in [10, 20]. The result has an L-shape when viewed from +Y. Output a single solid.",
     "attachments": []
   },
   "trace": {
