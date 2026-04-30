@@ -140,6 +140,23 @@ pub fn intersect_surfaces(a: &dyn Surface, b: &dyn Surface) -> IntersectionCurve
         }
         _ => {
             // Unsupported pair — use marching with fewer samples.
+            //
+            // KNOWN LIMITATION: this arm catches Cylinder × Cylinder. There
+            // is no analytic handler for it (the perpendicular intersecting
+            // case is the Steinmetz curve = two ellipses on 45° planes,
+            // which doesn't fit any existing IntersectionCurve variant
+            // cleanly), and `marching_ssi` at 16 samples almost always
+            // returns Empty for cylinder × cylinder because random samples
+            // rarely land within 1e-3 of the other cylinder's surface.
+            // Even when it produces a Sampled curve, downstream
+            // `split::split_cylindrical_face` does not implement the
+            // Sampled arm, so the face stays unsplit. End result: any
+            // boolean of two cylinders that interfere produces a wrong
+            // mesh whose volume is roughly V_A + V_B. See the ignored
+            // regression test
+            // `cylinder_cylinder_perpendicular_union_steinmetz` in
+            // crates/vcad-kernel-booleans/tests/degenerate_cases.rs and
+            // mecheval task `a3-cross-shaft-01` for the canonical failure.
             marching_ssi(a, b, 16)
         }
     }
