@@ -1,8 +1,9 @@
 import { useFrame, useThree } from "@react-three/fiber";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import * as THREE from "three";
-import { useDocumentStore } from "@vcad/core";
+import { useChatStore, useDocumentStore, useUiStore } from "@vcad/core";
 import { useXRPresenting, useXRSupportStore, type XRViewTransform } from "@/stores/xr-store";
+import { isVoiceSupported, startVoice } from "@/lib/xr-voice";
 
 /**
  * WebXR pinch / bimanual gesture interpreter.
@@ -145,6 +146,15 @@ interface ScaleCapture {
 
 type Capture = FilletCapture | ScaleCapture | null;
 
+/** How long a single pinch must hold in empty space before voice mode
+ * activates. Long enough that "I'm about to bimanual pinch" doesn't
+ * accidentally trigger it. */
+const VOICE_HOLD_MS = 800;
+
+interface VoiceSessionHandle {
+  stop(): void;
+}
+
 const _midA = new THREE.Vector3();
 const _midB = new THREE.Vector3();
 const _bimid = new THREE.Vector3();
@@ -168,6 +178,23 @@ export function XRGestures() {
     midpoint: new THREE.Vector3(),
     reach: new THREE.Vector3(),
   });
+
+  // --- Voice push-to-talk state -------------------------------------------
+  // A single-hand pinch held in empty space for VOICE_HOLD_MS triggers
+  // speech recognition; release ends it and ships the transcript through
+  // the existing chat handler.
+  const voiceCandidateRef = useRef<{ startedAt: number } | null>(null);
+  const voiceActiveRef = useRef<VoiceSessionHandle | null>(null);
+  const voiceFinalRef = useRef<string>("");
+
+  // Stop any in-flight voice session if the component unmounts (e.g. user
+  // exits XR while talking).
+  useEffect(() => {
+    return () => {
+      voiceActiveRef.current?.stop();
+      voiceActiveRef.current = null;
+    };
+  }, []);
 
   useFrame((_, __, frame) => {
     if (!presenting) return;
@@ -203,6 +230,74 @@ export function XRGestures() {
     const left = leftRef.current;
     const right = rightRef.current;
     const bothPinching = left.pinching && right.pinching;
+    const oneHandPinching =
+      (left.pinching && !right.pinching) ||
+      (!left.pinching && right.pinching);
+
+    // --- 2.5 Voice push-to-talk: long single-pinch in empty space. -------
+    // Fillet capture takes precedence; a captured pinch never becomes voice.
+    if (
+      oneHandPinching &&
+      captureRef.current == null &&
+      isVoiceSupported()
+    ) {
+      const now = performance.now();
+      const c = voiceCandidateRef.current;
+      if (c == null) {
+        voiceCandidateRef.current = { startedAt: now };
+      } else if (
+        voiceActiveRef.current == null &&
+        now - c.startedAt >= VOICE_HOLD_MS
+      ) {
+        voiceFinalRef.current = "";
+        const handle = startVoice({
+          lang: "en-US",
+          onTranscript: (text, isFinal) => {
+            if (isFinal) voiceFinalRef.current = text;
+          },
+          onEnd: () => {
+            const text = voiceFinalRef.current.trim();
+            voiceActiveRef.current = null;
+            voiceFinalRef.current = "";
+            if (!text) return;
+            // Build selection context from current part selection so the
+            // assistant knows what "this", "that", "it" refer to.
+            const selectedIds = Array.from(
+              useUiStore.getState().selectedPartIds,
+            );
+            const parts = useDocumentStore.getState().parts;
+            const context = selectedIds
+              .map((id: string) => {
+                const p = parts.find((x: { id: string }) => x.id === id);
+                return p
+                  ? {
+                      partId: p.id,
+                      partName: p.name ?? p.id,
+                      geometryType: "part" as const,
+                    }
+                  : null;
+              })
+              .filter(
+                (x: unknown): x is { partId: string; partName: string; geometryType: "part" } =>
+                  x != null,
+              );
+            useChatStore.getState().sendMessage(text, context, []);
+          },
+          onError: () => {
+            voiceActiveRef.current = null;
+          },
+        });
+        if (handle) voiceActiveRef.current = handle;
+      }
+    } else {
+      // No single-pinch this frame: cancel candidate and stop active session.
+      if (voiceCandidateRef.current) voiceCandidateRef.current = null;
+      if (voiceActiveRef.current) {
+        const h = voiceActiveRef.current;
+        voiceActiveRef.current = null;
+        h.stop();
+      }
+    }
 
     // --- 3. Scale-teleport entry: bimanual pinch with no part captured. ---
     if (bothPinching && captureRef.current == null) {

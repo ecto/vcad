@@ -1,0 +1,16 @@
+{
+  "id": "2026-05-03-xr-voice",
+  "version": "0.9.4",
+  "date": "2026-05-03",
+  "category": "feat",
+  "title": "Voice in XR — talk to the assistant in headset",
+  "summary": "Hold a single pinch in empty space for a moment to start voice push-to-talk. Release to ship the transcript to the AI assistant with your current selection as context.",
+  "details": "## What's New\n\n- **Push-to-talk** — hold a pinch in empty space (no part captured, other hand open) for ~0.8 s, voice recognition starts; release ends it\n- The transcript is sent through the existing chat handler with the user's current selection as `SelectionContext`, so phrases like \"make this 20% smaller\" reference the right part\n- The AI's tool-call results land in the document just like a typed chat message — full undo, full feature tree integration\n- Falls back gracefully on browsers without `webkitSpeechRecognition`\n\nVision Pro Safari supports the WebSpeech API, so this works hands-free on AVP. The 3-variant ghost UI will land in a follow-up.",
+  "features": [
+    "vr",
+    "ar",
+    "webxr",
+    "voice",
+    "ai"
+  ]
+}
