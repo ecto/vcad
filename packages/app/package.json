@@ -57,7 +57,7 @@
     "lucide-react": "^1.8.0",
     "motion": "^12.38.0",
     "nanoid": "^5.1.7",
-    "posthog-js": "^1.336.4",
+    "posthog-js": "^1.372.6",
     "postprocessing": "^6.38.2",
     "radix-ui": "^1.4.3",
     "react": "^19.0.0",
