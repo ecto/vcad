@@ -12,6 +12,10 @@ export const xrStore = createXRStore({
   hand: true,
   controller: true,
   foveation: 0,
+  // Disable the bundled iwer device emulator. It would otherwise auto-inject a
+  // floating "Enter XR" DOM button on localhost, which clashes with our
+  // in-menubar XR entry. Real headsets are unaffected.
+  emulate: false,
 });
 
 type SupportState = {
