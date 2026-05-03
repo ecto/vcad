@@ -1785,8 +1785,12 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
         </>
       )}
 
-      {/* Post-processing effects - disabled during camera motion for FPS */}
-      {engineReady && !isCameraMoving && sceneSettings.postProcessing.ambientOcclusion?.enabled !== false && sceneSettings.postProcessing.vignette?.enabled !== false && (
+      {/* Post-processing effects - disabled during camera motion for FPS, and
+          while a WebXR session is active. EffectComposer renders to an
+          offscreen target and blits to the canvas, which doesn't write to the
+          XR layer's framebuffer — so in VR/AR the scene goes black and only
+          objects rendered directly by WebXRManager (hands, controllers) show. */}
+      {engineReady && !isCameraMoving && !xrPresenting && sceneSettings.postProcessing.ambientOcclusion?.enabled !== false && sceneSettings.postProcessing.vignette?.enabled !== false && (
         <EffectComposer>
           <N8AO
             aoRadius={sceneSettings.postProcessing.ambientOcclusion?.radius ?? 0.5}
@@ -1802,7 +1806,7 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
         </EffectComposer>
       )}
       {/* AO only mode */}
-      {engineReady && !isCameraMoving && sceneSettings.postProcessing.ambientOcclusion?.enabled !== false && sceneSettings.postProcessing.vignette?.enabled === false && (
+      {engineReady && !isCameraMoving && !xrPresenting && sceneSettings.postProcessing.ambientOcclusion?.enabled !== false && sceneSettings.postProcessing.vignette?.enabled === false && (
         <EffectComposer>
           <N8AO
             aoRadius={sceneSettings.postProcessing.ambientOcclusion?.radius ?? 0.5}
@@ -1813,7 +1817,7 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
         </EffectComposer>
       )}
       {/* Vignette only mode */}
-      {engineReady && !isCameraMoving && sceneSettings.postProcessing.ambientOcclusion?.enabled === false && sceneSettings.postProcessing.vignette?.enabled !== false && (
+      {engineReady && !isCameraMoving && !xrPresenting && sceneSettings.postProcessing.ambientOcclusion?.enabled === false && sceneSettings.postProcessing.vignette?.enabled !== false && (
         <EffectComposer>
           <Vignette
             offset={sceneSettings.postProcessing.vignette?.offset ?? 0.3}
