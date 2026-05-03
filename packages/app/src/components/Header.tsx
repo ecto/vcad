@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { BookOpen } from "@phosphor-icons/react/dist/ssr/BookOpen";
 import { Mouse } from "@phosphor-icons/react/dist/ssr/Mouse";
+import { Goggles } from "@phosphor-icons/react/dist/ssr/Goggles";
 import { Sparkle } from "@phosphor-icons/react/dist/ssr/Sparkle";
 import { CaretRight } from "@phosphor-icons/react/dist/ssr/CaretRight";
 import { Export } from "@phosphor-icons/react/dist/ssr/Export";
@@ -37,6 +38,7 @@ import { useAppCommands } from "@/hooks/useAppCommands";
 import { COMMAND_ICONS } from "@/lib/command-icons";
 import { useCapabilities } from "@/lib/capabilities";
 import { useNativeMenu } from "@/hooks/useNativeMenu";
+import { xrStore, useXRPresenting, useXRSupportStore } from "@/stores/xr-store";
 
 // Lazy so the prefs dialog (and its wasm-backed keybinding hook) doesn't
 // bloat the Header bundle until the user opens it.
@@ -307,6 +309,36 @@ function RayTracingSubmenu() {
   );
 }
 
+/** XR entries for the View menu. Always shown — disabled when the browser
+ * doesn't report support, so users can see the capability exists. */
+function XRMenuItems() {
+  const vr = useXRSupportStore((s) => s.vr);
+  const ar = useXRSupportStore((s) => s.ar);
+  const presenting = useXRPresenting();
+
+  if (presenting) {
+    return (
+      <MenuItem
+        icon={Goggles}
+        onSelect={() => xrStore.getState().session?.end()}
+      >
+        Exit XR
+      </MenuItem>
+    );
+  }
+
+  return (
+    <>
+      <MenuItem icon={Goggles} disabled={!vr} onSelect={() => xrStore.enterVR()}>
+        Enter VR
+      </MenuItem>
+      <MenuItem icon={Goggles} disabled={!ar} onSelect={() => xrStore.enterAR()}>
+        Enter AR
+      </MenuItem>
+    </>
+  );
+}
+
 export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen, onVersionHistoryOpen, children }: HeaderProps) {
   const user = useAuthStore((s) => s.user);
   const isAnonymous = useAuthStore((s) => s.isAnonymous);
@@ -565,6 +597,7 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
                 >
                   {t("menu.view.input_preferences")}
                 </MenuItem>
+                <XRMenuItems />
                 <MenuSeparator />
                 <CommandMenuItem id="cycle-theme" commands={commands} />
               </Menubar.Content>

@@ -7,7 +7,6 @@ import { DrawingView } from "./DrawingView";
 import { TriangleInspectionPanel } from "./TriangleInspector";
 import { RayTracedViewportOverlay } from "./RayTracedViewport";
 import { FollowModeToggle } from "./FollowModeToggle";
-import { EnterXRButton } from "./xr/EnterXRButton";
 import { xrStore, useXRPresenting } from "@/stores/xr-store";
 import {
   useUiStore,
@@ -350,7 +349,6 @@ export function Viewport() {
           drags in the gaps; the toggle itself re-enables them. */}
       {!electronicsActive && (
         <div className="pointer-events-none absolute top-3 right-3 z-10 flex items-center gap-2">
-          <EnterXRButton />
           <FollowModeToggle />
         </div>
       )}
