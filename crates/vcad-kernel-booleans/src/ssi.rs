@@ -25,6 +25,12 @@ pub enum IntersectionCurve {
     Circle(Circle3d),
     /// Sampled polyline for complex intersections.
     Sampled(Vec<Point3>),
+    /// Two disjoint sampled curves — the typical output for two perpendicular
+    /// cylinders of equal radius, whose intersection is the Steinmetz pair of
+    /// ellipses. Each `Vec<Point3>` is a single closed polyline; the pipeline
+    /// expands `TwoSampled` into two independent `Sampled` splits, mirroring
+    /// the way `TwoLines` is unfolded.
+    TwoSampled(Vec<Point3>, Vec<Point3>),
 }
 
 /// Compute the intersection of two surfaces.
@@ -93,6 +99,14 @@ pub fn intersect_surfaces(a: &dyn Surface, b: &dyn Surface) -> IntersectionCurve
             let sb = downcast_sphere(b);
             match (sa, sb) {
                 (Some(sa), Some(sb)) => sphere_sphere(sa, sb),
+                _ => IntersectionCurve::Empty,
+            }
+        }
+        (SurfaceKind::Cylinder, SurfaceKind::Cylinder) => {
+            let ca = downcast_cylinder(a);
+            let cb = downcast_cylinder(b);
+            match (ca, cb) {
+                (Some(ca), Some(cb)) => cylinder_cylinder(ca, cb),
                 _ => IntersectionCurve::Empty,
             }
         }
@@ -589,6 +603,99 @@ fn sphere_sphere(a: &SphereSurface, b: &SphereSurface) -> IntersectionCurve {
         circle_radius,
         *normal.as_ref(),
     ))
+}
+
+// =============================================================================
+// Cylinder-Cylinder intersection
+// =============================================================================
+
+/// Intersection of two cylinders.
+///
+/// Cases handled analytically:
+/// - **Coaxial / parallel axes** → `Empty`. Coaxial cylinders are handled by
+///   coincident-face logic in classification; for parallel-but-distinct axes
+///   the SSI is either two parallel line generators or empty, but our
+///   downstream consumers only call this for face pairs whose AABBs already
+///   overlap, and parallel-axis cylinders that overlap will normally also
+///   share planar caps that drive the trimming.
+/// - **Perpendicular intersecting axes, equal radii** → two ellipses
+///   (the Steinmetz curves). Emitted as `TwoSampled`. Each ellipse is a
+///   closed polyline that, on cylinder A's surface, traces
+///   `v = c_b ± r·cos(θ)` as θ sweeps `[0, 2π]`, where `c_b` is the height
+///   of B's axis along A's axis. The two curves cross at the saddle points
+///   `(u = π/2, v = c_b)` and `(u = 3π/2, v = c_b)`.
+///
+/// All other cylinder × cylinder geometries (skew axes, non-perpendicular
+/// intersecting, perpendicular with unequal radii) fall through to
+/// `marching_ssi`.
+#[allow(clippy::similar_names)]
+fn cylinder_cylinder(a: &CylinderSurface, b: &CylinderSurface) -> IntersectionCurve {
+    use vcad_kernel_math::Vec3;
+
+    let axis_a = a.axis.as_ref();
+    let axis_b = b.axis.as_ref();
+    let dot_ab = axis_a.dot(*axis_b);
+
+    // Coaxial or parallel axes — bail out (handled elsewhere or unsupported).
+    if (1.0 - dot_ab.abs()).abs() < 1e-9 {
+        return IntersectionCurve::Empty;
+    }
+
+    // Only the perpendicular intersecting equal-radii case has a clean
+    // analytic form. Everything else: fall through to the marching sampler
+    // with a denser grid than the catch-all.
+    if dot_ab.abs() > 1e-6 || (a.radius - b.radius).abs() > 1e-6 {
+        return marching_ssi(a as &dyn Surface, b as &dyn Surface, 64);
+    }
+
+    // Closest points on the two axis lines. With perpendicular axes
+    // (dot_ab ≈ 0) the linear system simplifies: t along axis_a, s along
+    // axis_b that minimise |c_a + t·axis_a − c_b − s·axis_b|² are
+    // t = (c_b − c_a)·axis_a, s = (c_a − c_b)·axis_b.
+    let cb_minus_ca = b.center - a.center;
+    let t = cb_minus_ca.dot(*axis_a);
+    let s = -cb_minus_ca.dot(*axis_b);
+    let p_a = a.center + t * (*axis_a);
+    let p_b = b.center + s * (*axis_b);
+    let skew_distance = (p_a - p_b).norm();
+
+    // Skew (axes don't actually intersect) — sample.
+    if skew_distance > 1e-6 {
+        return marching_ssi(a as &dyn Surface, b as &dyn Surface, 64);
+    }
+
+    // Perpendicular intersecting axes, equal radii. The SSI is two ellipses
+    // on planes spanned by `axis_a ± axis_b`. Parametrise each on cylinder A:
+    //
+    //     point(θ) = p_intersect + r·cos(θ)·ref_a + r·sin(θ)·y_a ± r·cos(θ)·axis_a
+    //
+    // Here `ref_a` is a unit vector perpendicular to `axis_a` chosen along
+    // `axis_b` (so v=0 in cylinder-B's frame ↔ θ=π/2 on cylinder-A's surface).
+    let p_intersect = p_a;
+    let r = a.radius;
+
+    // Build the orthonormal frame on cylinder A that aligns its u-axis with
+    // axis_b. ref_a points along axis_b (perpendicular to axis_a since the
+    // axes are perpendicular). y_a = axis_a × ref_a closes the right-handed
+    // frame. With this choice θ=0 on A's surface lies on B's axis line.
+    let ref_a = Vec3::new(axis_b.x, axis_b.y, axis_b.z);
+    let y_a = axis_a.cross(ref_a);
+
+    let n_samples = 64;
+    let mut curve_plus = Vec::with_capacity(n_samples + 1);
+    let mut curve_minus = Vec::with_capacity(n_samples + 1);
+    for i in 0..=n_samples {
+        let theta = 2.0 * std::f64::consts::PI * i as f64 / n_samples as f64;
+        let (sin_t, cos_t) = theta.sin_cos();
+        // Lateral offset on A's surface at angle θ measured from axis_b.
+        let lateral = r * cos_t * ref_a + r * sin_t * y_a;
+        // Axial offset along axis_a: ±r·cos(θ).
+        let axial = r * cos_t * (*axis_a);
+        curve_plus.push(p_intersect + lateral + axial);
+        curve_minus.push(p_intersect + lateral - axial);
+    }
+
+    IntersectionCurve::TwoSampled(curve_plus, curve_minus)
 }
 
 // =============================================================================

@@ -21,40 +21,40 @@
       "params": {
         "type": "bbox",
         "min": [
-          -20,
-          -20,
-          0
+          -20.0,
+          -20.0,
+          0.0
         ],
         "max": [
-          20,
-          20,
-          55
+          20.0,
+          20.0,
+          55.0
         ],
         "tolerance_mm": 0.2
       },
-      "result": "fail",
+      "result": "pass",
       "details": {
         "actual_max": [
-          20,
-          20,
-          40
+          20.0,
+          20.0,
+          55.0
         ],
         "actual_min": [
-          -20,
-          -20,
-          0
+          -20.0,
+          -20.0,
+          0.0
         ],
         "deviation_max": [
-          0,
-          0,
-          -15
+          0.0,
+          0.0,
+          0.0
         ],
         "deviation_min": [
-          0,
-          0,
-          0
+          0.0,
+          0.0,
+          0.0
         ],
-        "max_abs_deviation_mm": 15,
+        "max_abs_deviation_mm": 0.0,
         "tolerance_mm": 0.2
       }
     },
@@ -64,16 +64,16 @@
       "params": {
         "type": "mass_props",
         "volume_mm3": 71068.58,
-        "tolerance_pct": 2
+        "tolerance_pct": 2.0
       },
-      "result": "fail",
+      "result": "pass",
       "details": {
         "volume": {
-          "actual_mm3": 64000,
-          "deviation_pct": 9.946139348781138,
-          "pass": false,
+          "actual_mm3": 71001.90998533122,
+          "deviation_pct": 0.0938108157905785,
+          "pass": true,
           "spec_mm3": 71068.58,
-          "tolerance_pct": 2
+          "tolerance_pct": 2.0
         }
       }
     },
@@ -82,56 +82,56 @@
       "type": "step_roundtrip",
       "params": {
         "type": "step_roundtrip",
-        "tolerance_pct": 2
+        "tolerance_pct": 2.0
       },
       "result": "pass",
       "details": {
         "per_solid": [
           {
             "bbox": {
-              "max_abs_deviation_mm": 0,
+              "max_abs_deviation_mm": 0.0,
               "original_max": [
-                20,
-                20,
-                40
+                20.0,
+                20.0,
+                55.0
               ],
               "original_min": [
-                -20,
-                -20,
-                0
+                -20.0,
+                -20.0,
+                0.0
               ],
               "pass": true,
               "roundtripped_max": [
-                20,
-                20,
-                40
+                20.0,
+                20.0,
+                55.0
               ],
               "roundtripped_min": [
-                -20,
-                -20,
-                0
+                -20.0,
+                -20.0,
+                0.0
               ],
-              "tolerance_mm": 1.385640646055102
+              "tolerance_mm": 1.57797338380595
             },
             "index": 0,
             "pass": true,
             "volume": {
-              "deviation_pct": 0,
-              "original_mm3": 64000,
+              "deviation_pct": 0.010424823254925487,
+              "original_mm3": 71018.29548343948,
               "pass": true,
-              "roundtripped_mm3": 64000
+              "roundtripped_mm3": 71025.69901522229
             }
           }
         ],
-        "tolerance_pct": 2
+        "tolerance_pct": 2.0
       }
     }
   ],
   "summary": {
-    "passed": false,
-    "checks_passed": 2,
+    "passed": true,
+    "checks_passed": 4,
     "checks_total": 4,
-    "score": 0.5,
+    "score": 1.0,
     "anti_cheese_violated": false,
     "limits_exceeded": []
   },
@@ -159,7 +159,7 @@
   "submission_kind": "self-run",
   "prompt": {
     "seed": "a3-spherical-dome-block-01",
-    "rendered": "Make a single solid consisting of a cube with a hemispherical dome fused onto its top face. Cube: 40mm × 40mm × 40mm, centered in X and Y with the bottom face on the XY plane (so it spans x in [-20, 20], y in [-20, 20], z in [0, 40]). Dome: a hemisphere of radius 15mm sitting on top of the cube, centered on the Z axis. The flat (circular) face of the hemisphere is flush with the top face of the cube at z = 40, and the dome extends upward from there. The two parts are joined into a single solid (their shared circular interface is internal, not a face). Note: the kernel only has a full Sphere primitive — to get a hemisphere you must boolean a sphere with a half-space (e.g. intersect a sphere with a large cube positioned at z ≥ 40).",
+    "rendered": "Make a single solid consisting of a cube with a hemispherical dome fused onto its top face. Cube: 40mm \u00d7 40mm \u00d7 40mm, centered in X and Y with the bottom face on the XY plane (so it spans x in [-20, 20], y in [-20, 20], z in [0, 40]). Dome: a hemisphere of radius 15mm sitting on top of the cube, centered on the Z axis. The flat (circular) face of the hemisphere is flush with the top face of the cube at z = 40, and the dome extends upward from there. The two parts are joined into a single solid (their shared circular interface is internal, not a face). Note: the kernel only has a full Sphere primitive \u2014 to get a hemisphere you must boolean a sphere with a half-space (e.g. intersect a sphere with a large cube positioned at z \u2265 40).",
     "attachments": []
   },
   "trace": {

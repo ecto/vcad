@@ -4,6 +4,7 @@ use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_tessellate::{tessellate_brep, TriangleMesh};
 
 use crate::bbox;
+use crate::cyl_cyl;
 use crate::pipeline::{brep_boolean, non_overlapping_boolean};
 
 /// CSG boolean operation type.
@@ -80,6 +81,18 @@ pub fn boolean_op(
     if !aabb_a.overlaps(&aabb_b) {
         // No overlap — shortcut
         return non_overlapping_boolean(solid_a, solid_b, op, segments);
+    }
+
+    // Specialized fast path: two simple cylinders with perpendicular,
+    // intersecting, equal-radius axes (the cross-shaft / Steinmetz
+    // geometry). The general BRep pipeline can't render this case
+    // correctly because cylinder × cylinder analytic SSI returns a
+    // figure-8 boundary that the cylindrical-face splitter can't
+    // decompose into faces the existing tessellator handles. Emit a
+    // tessellated mesh whose discretization respects the Steinmetz
+    // boundary directly.
+    if let Some(result) = cyl_cyl::cylinder_cylinder_mesh_boolean(solid_a, solid_b, op) {
+        return result;
     }
 
     // Solids overlap — use classification pipeline

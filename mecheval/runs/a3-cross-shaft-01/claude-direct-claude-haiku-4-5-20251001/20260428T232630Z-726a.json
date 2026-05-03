@@ -21,14 +21,14 @@
       "params": {
         "type": "bbox",
         "min": [
-          -20,
-          -10,
-          0
+          -20.0,
+          -10.0,
+          0.0
         ],
         "max": [
-          20,
-          10,
-          40
+          20.0,
+          10.0,
+          40.0
         ],
         "tolerance_mm": 0.2
       },
@@ -67,7 +67,7 @@
     "passed": false,
     "checks_passed": 0,
     "checks_total": 4,
-    "score": 0,
+    "score": 0.0,
     "anti_cheese_violated": false,
     "limits_exceeded": []
   },

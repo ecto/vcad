@@ -29,6 +29,18 @@ fn translate(brep: &mut BRepSolid, dx: f64, dy: f64, dz: f64) {
         .collect();
 }
 
+fn apply_transform(brep: &mut BRepSolid, t: &Transform) {
+    for (_, v) in &mut brep.topology.vertices {
+        v.point = t.apply_point(&v.point);
+    }
+    brep.geometry.surfaces = brep
+        .geometry
+        .surfaces
+        .drain(..)
+        .map(|s| s.transform(t))
+        .collect();
+}
+
 fn mesh_volume(mesh: &vcad_kernel_tessellate::TriangleMesh) -> f64 {
     let verts = &mesh.vertices;
     let indices = &mesh.indices;
@@ -539,4 +551,48 @@ fn coaxial_cylinder_difference_produces_annular_caps() {
             err * 100.0
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// 8. Cylinder-cylinder degenerate unions
+// ---------------------------------------------------------------------------
+
+/// Two perpendicular cylinders fused into a "+" cross shape (mecheval task
+/// `a3-cross-shaft-01`). This is the Steinmetz/bicylinder geometry: the
+/// intersection region is a curved Steinmetz solid that must be subtracted
+/// once, not double-counted.
+///
+/// Vertical cylinder: r=10, axis Z, base on XY plane (z ∈ [0, 40]).
+/// Horizontal cylinder: r=10, axis X, centered at (0, 0, 20) (x ∈ [-20, 20]).
+///
+/// Expected volume = 2·π·r²·h − 16·r³/3
+///                 = 2·π·100·40 − 16·1000/3
+///                 ≈ 19799.41 mm³.
+///
+#[test]
+fn cylinder_cylinder_perpendicular_union_steinmetz() {
+    let vertical = make_cylinder(10.0, 40.0, 32);
+    let mut horizontal = make_cylinder(10.0, 40.0, 32);
+    // Rotate Z-axis cylinder onto X axis, then center along X at x=0,
+    // shift up so the X axis sits at z=20.
+    apply_transform(
+        &mut horizontal,
+        &Transform::rotation_y(std::f64::consts::FRAC_PI_2),
+    );
+    translate(&mut horizontal, -20.0, 0.0, 20.0);
+
+    let result = boolean_op(&vertical, &horizontal, BooleanOp::Union, 32);
+    let mesh = result.to_mesh(32);
+    assert_valid_mesh(&mesh);
+
+    let vol = mesh_volume(&mesh);
+    let r = 10.0_f64;
+    let h = 40.0_f64;
+    let expected = 2.0 * std::f64::consts::PI * r * r * h - 16.0 * r.powi(3) / 3.0;
+    let err = (vol - expected).abs() / expected;
+    assert!(
+        err < 0.02,
+        "perpendicular cylinder union: volume error {:.2}% (expected {expected:.2}, got {vol:.2})",
+        err * 100.0
+    );
 }

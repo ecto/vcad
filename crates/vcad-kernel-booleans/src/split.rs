@@ -1724,6 +1724,9 @@ pub fn split_conical_face(
         IntersectionCurve::TwoLines(line1, _line2) => {
             split_conical_face(brep, face_id, &IntersectionCurve::Line(line1.clone()))
         }
+        IntersectionCurve::TwoSampled(_, _) => SplitResult {
+            sub_faces: vec![face_id],
+        },
     }
 }
 
@@ -2387,6 +2390,19 @@ pub fn split_cylindrical_face(
             // TwoLines should be expanded before calling this function.
             // If we get here, just process the first line.
             split_cylindrical_face(brep, face_id, &IntersectionCurve::Line(line1.clone()))
+        }
+        IntersectionCurve::TwoSampled(_, _) => {
+            // TwoSampled is the analytic Steinmetz pair from
+            // `ssi::cylinder_cylinder`. Cylinder × cylinder unions are
+            // routed by `boolean_op` to a specialized mesh emitter
+            // (`cylinder_cylinder_mesh_boolean`) that handles the
+            // figure-8 boundary directly, so by the time we reach the
+            // BRep splitter pipeline this curve type should already be
+            // diverted. Defensive no-op for any caller that didn't
+            // pre-filter.
+            SplitResult {
+                sub_faces: vec![face_id],
+            }
         }
     }
 }
