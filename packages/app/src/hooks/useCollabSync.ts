@@ -20,6 +20,7 @@ import {
   type CollabChannel,
 } from "@vcad/auth";
 import { useBootStore } from "@/stores/boot-store";
+import { useCollabSessionStore } from "@/stores/collab-session-store";
 import { loadDocument as loadStoredDocument } from "@/lib/storage";
 
 export function useCollabSync() {
@@ -31,8 +32,17 @@ export function useCollabSync() {
   // Anonymous Supabase sessions exist for chat-thread RLS scoping; cloud
   // sync + collab features are gated to permanent identities only.
   const isCloudUser = !!user && !isAnonymous;
-  const [cloudId, setCloudId] = useState<string | null>(null);
+  const [cloudId, setCloudIdLocal] = useState<string | null>(null);
   const channelRef = useRef<CollabChannel | null>(null);
+  const publishCloudId = useCollabSessionStore((s) => s.setCloudId);
+
+  // Mirror the resolved cloudId into the shared collab-session store so
+  // sibling realtime features (XR presence, future cursor sync) don't have
+  // to re-resolve it from local storage.
+  const setCloudId = (id: string | null) => {
+    setCloudIdLocal(id);
+    publishCloudId(id);
+  };
 
   // Don't do anything until bootstrap is complete — the CRDT engine,
   // document store, and auth session aren't ready before that.

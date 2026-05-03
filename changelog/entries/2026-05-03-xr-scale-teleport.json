@@ -1,0 +1,16 @@
+{
+  "id": "2026-05-03-xr-scale-teleport",
+  "version": "0.9.4",
+  "date": "2026-05-03",
+  "category": "feat",
+  "title": "Scale teleport — step inside your model",
+  "summary": "Bimanual pinch in empty space grabs the world. Spread your hands to scale the model up; pull them together to shrink it back down. The point under your hands stays under your hands.",
+  "details": "## What's New\n\n- **Bimanual pinch** in empty space (no part picked) enters scale-teleport mode\n- **Spread hands** → scale up; **pull together** → scale down\n- **Translate both hands** → pan the scene\n- The grabbed anchor point stays pinned to the bimanual midpoint, so scaling feels physical\n- Fillet still triggers when one hand grabs a part — gestures don't fight each other\n- View transform persists between sessions, so re-entering picks up where you left off\n\nWalk around your robot at 1:1, sit inside your chair, dial back out to dial in fillets.",
+  "features": [
+    "vr",
+    "ar",
+    "webxr",
+    "scale-teleport",
+    "bimanual"
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "id": "2026-05-03-xr-shared-table",
+  "version": "0.9.4",
+  "date": "2026-05-03",
+  "category": "feat",
+  "title": "Shared table — see your collaborators in XR",
+  "summary": "Two engineers in the same cloud document now see each other's headset and hands in their VR/AR session, anchored to the same point on the same model.",
+  "details": "## What's New\n\n- New per-document realtime channel for XR pose updates, sibling to the existing collab op channel\n- Headset + left/right wrist poses broadcast at ~10 Hz\n- Poses are exchanged in scene-local coordinates, so two users with different desks still see each other at the same point on the same model — no shared spatial anchor required\n- Stale peers are pruned automatically after 5 s if their session crashes\n- Floating head + hand avatars rendered for each remote participant\n\nThis is the foundation for true co-presence design review in XR. Spatial annotations and Personas integration land in follow-ups.",
+  "features": [
+    "vr",
+    "ar",
+    "webxr",
+    "collab",
+    "presence"
+  ]
+}

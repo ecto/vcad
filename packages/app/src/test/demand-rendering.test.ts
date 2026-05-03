@@ -22,10 +22,15 @@ function readSrc(rel: string): string {
 // 1. Canvas must use demand rendering
 // ---------------------------------------------------------------------------
 describe("Canvas frameloop", () => {
-  it("uses frameloop='demand' (not always)", () => {
+  it("defaults to 'demand', only switches to 'always' while in WebXR", () => {
     const src = readSrc("components/Viewport.tsx");
-    expect(src).toContain('frameloop="demand"');
-    expect(src).not.toContain('frameloop="always"');
+    // Default must remain "demand" so the GPU idles outside XR.
+    expect(src).toContain('"demand"');
+    // The only allowed source of "always" is the XR-presenting branch:
+    // `frameloop={xrPresenting ? "always" : "demand"}`.
+    if (src.includes('"always"')) {
+      expect(src).toMatch(/xrPresenting\s*\?\s*"always"\s*:\s*"demand"/);
+    }
   });
 });
 

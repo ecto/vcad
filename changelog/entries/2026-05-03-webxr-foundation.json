@@ -1,0 +1,15 @@
+{
+  "id": "2026-05-03-webxr-foundation",
+  "version": "0.9.4",
+  "date": "2026-05-03",
+  "category": "feat",
+  "title": "WebXR — view your models in VR/AR",
+  "summary": "Enter VR or AR from the viewport to see your CAD model in 3D space. Works on Apple Vision Pro Safari, Meta Quest Browser, and any WebXR-capable headset.",
+  "details": "## What's New\n\n- **Enter XR button** appears top-right when a WebXR-capable runtime is detected (Vision Pro, Quest, etc.)\n- **VR mode** — fully immersive view of your scene\n- **AR mode** — passthrough so the model floats in your room\n- **Hand tracking** is enabled by default; controllers also supported\n- Ray tracing falls back to the standard tessellated renderer while in XR\n\nThis is the foundation for in-headset editing — bimanual gestures and voice-driven AI design land in upcoming releases.",
+  "features": [
+    "vr",
+    "ar",
+    "webxr",
+    "vision-pro"
+  ]
+}

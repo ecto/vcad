@@ -67,6 +67,10 @@ import type {
 import { PcbScene } from "./electronics/pcb3d/PcbScene";
 import { usePcbCamera } from "./electronics/pcb3d/usePcbCamera";
 import { BG_DARK, BG_LIGHT } from "./Viewport";
+import { useXRPresenting } from "@/stores/xr-store";
+import { XRSceneTransform } from "./xr/XRSceneTransform";
+import { XRGestures } from "./xr/XRGestures";
+import { XRPresence } from "./xr/XRPresence";
 
 // Reused per-frame in the participant-sync hook (Lock + Follow).
 const _syncGoalPos = new Vector3();
@@ -308,6 +312,7 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
   const renderMode = useUiStore((s) => s.renderMode);
   const raytraceAvailable = useUiStore((s) => s.raytraceAvailable);
   const sketchActive = useSketchStore((s) => s.active);
+  const xrPresenting = useXRPresenting();
   const orbitRef = useRef<OrbitControlsImpl>(null);
   usePcbCamera(orbitRef, isPcbMode);
   const { camera, invalidate } = useThree();
@@ -1505,10 +1510,13 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
       {/* Grid (3D mode only — PCB mode has its own grid) */}
       {!isPcbMode && <GridPlane />}
 
-      {/* Controls - mouse buttons configured by control scheme */}
+      {/* Controls - mouse buttons configured by control scheme.
+          Disabled while a WebXR session is active — the headset drives the
+          camera and orbit gestures would fight head-tracking. */}
       <OrbitControls
         ref={orbitRef}
         makeDefault
+        enabled={!xrPresenting}
         enableDamping={false}
         // Desktop uses a custom wheel zoom handler; touch devices need the
         // built-in pinch-to-dolly path, so enable zoom when the pointer is coarse.
@@ -1527,8 +1535,10 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
         })()}
       />
 
-      {/* Orientation gizmo - RGB axes, click to snap view (3D mode only) */}
-      {!isPcbMode && (
+      {/* Orientation gizmo - RGB axes, click to snap view (3D mode only).
+          Hidden in XR — it's a 2D screen-space overlay that doesn't make
+          sense in stereo. */}
+      {!isPcbMode && !xrPresenting && (
         <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
           <GizmoViewport
             axisColors={["#e06c75", "#61afef", "#98c379"]}
@@ -1669,7 +1679,10 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
 
           {/* Scene meshes - always render (ray trace overlays on top for BRep parts) */}
           {/* Wrap all kernel geometry in Z-up → Y-up rotation so the kernel
-              stays in standard CAD Z-up while Three.js renders Y-up */}
+              stays in standard CAD Z-up while Three.js renders Y-up.
+              `XRSceneTransform` rescales + repositions to desktop-scale while
+              a WebXR session is active; outside XR it is a passthrough. */}
+          <XRSceneTransform>
           <group rotation={[-Math.PI / 2, 0, 0]}>
             {/* Plane gizmo at origin - inside rotation group so kernel planes display correctly */}
             <PlaneGizmo />
@@ -1753,7 +1766,18 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
 
           {/* Other participants' camera frustums (AI for now, peers later) */}
           <ParticipantCameraOverlay />
+
+          {/* XR presence — broadcasts local headset/hand pose and renders
+              remote peers. No-op outside XR / outside cloud-sync. Inside the
+              rotation+scale group so its avatars are in scene-local space. */}
+          <XRPresence />
           </group>
+          </XRSceneTransform>
+
+          {/* XR gesture interpreter — only does work while a WebXR session
+              is presenting. Outside the scene transform so its raycasts run
+              in unscaled world space. */}
+          <XRGestures />
 
           {/* Transform gizmo — outside rotation group; does its own Z-up ↔ Y-up conversion
               so that gizmo handle colors (RGB=XYZ) match the kernel axis colors */}
