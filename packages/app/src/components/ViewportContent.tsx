@@ -70,6 +70,7 @@ import { BG_DARK, BG_LIGHT } from "./Viewport";
 import { useXRPresenting } from "@/stores/xr-store";
 import { XRSceneTransform } from "./xr/XRSceneTransform";
 import { XRGestures } from "./xr/XRGestures";
+import { XRPresence } from "./xr/XRPresence";
 
 // Reused per-frame in the participant-sync hook (Lock + Follow).
 const _syncGoalPos = new Vector3();
@@ -1765,6 +1766,11 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
 
           {/* Other participants' camera frustums (AI for now, peers later) */}
           <ParticipantCameraOverlay />
+
+          {/* XR presence — broadcasts local headset/hand pose and renders
+              remote peers. No-op outside XR / outside cloud-sync. Inside the
+              rotation+scale group so its avatars are in scene-local space. */}
+          <XRPresence />
           </group>
           </XRSceneTransform>
 

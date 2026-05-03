@@ -108,6 +108,16 @@ export {
 // AI
 export { textToCAD, isAIAvailable } from "./ai";
 
+// XR presence transport
+export {
+  joinXRCollabChannel,
+  type XRCollabChannel,
+  type XRPose,
+  type XRPresenceUpdate,
+  type XRPresenceListener,
+  type XRPresenceLeaveListener,
+} from "./xr-collab";
+
 // Chat persistence
 export {
   loadOrCreateThread,
