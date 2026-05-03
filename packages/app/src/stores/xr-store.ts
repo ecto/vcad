@@ -23,14 +23,42 @@ type SupportState = {
   checked: boolean;
 };
 
+/**
+ * Default scene scale on entering XR. 1/1000 maps the kernel's millimetre
+ * units to physical metres, so a 100 mm cube reads as a 10 cm cube on the
+ * desk. Exported for `XRSceneTransform` and the scale-teleport reset.
+ */
+export const XR_DEFAULT_SCALE = 0.001;
+/** Headset-height + slightly forward, world units (metres). */
+export const XR_DEFAULT_POSITION: readonly [number, number, number] = [0, 1.0, -0.7];
+
+export interface XRViewTransform {
+  /** Uniform scale applied to the kernel scene group. */
+  scale: number;
+  /** World-space position of the scene origin. */
+  position: readonly [number, number, number];
+}
+
 interface XRSupportStore extends SupportState {
   refresh: () => Promise<void>;
+  /** Live view transform — driven by scale-teleport gestures. */
+  view: XRViewTransform;
+  setView: (view: XRViewTransform) => void;
+  resetView: () => void;
 }
+
+const DEFAULT_VIEW: XRViewTransform = {
+  scale: XR_DEFAULT_SCALE,
+  position: XR_DEFAULT_POSITION,
+};
 
 export const useXRSupportStore = create<XRSupportStore>((set) => ({
   vr: false,
   ar: false,
   checked: false,
+  view: DEFAULT_VIEW,
+  setView: (view) => set({ view }),
+  resetView: () => set({ view: DEFAULT_VIEW }),
   refresh: async () => {
     const xr = (navigator as unknown as { xr?: XRSystem }).xr;
     if (!xr) {

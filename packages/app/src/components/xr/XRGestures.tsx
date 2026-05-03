@@ -2,46 +2,37 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { useRef } from "react";
 import * as THREE from "three";
 import { useDocumentStore } from "@vcad/core";
-import { useXRPresenting } from "@/stores/xr-store";
+import { useXRPresenting, useXRSupportStore, type XRViewTransform } from "@/stores/xr-store";
 
 /**
  * WebXR pinch / bimanual gesture interpreter.
  *
  * Reads thumb-tip and index-finger-tip joint poses from the active XRSession
- * each frame, detects pinches, and runs a small state machine that maps the
- * canonical CAD-in-XR gesture — bimanual pinch on a part — to the existing
- * `useDocumentStore.addFillet` op:
+ * each frame, detects pinches, and runs a small state machine that maps two
+ * canonical XR-CAD gestures onto existing app affordances:
  *
- *   1. One hand pinches near a part   → that part becomes the fillet target.
- *   2. The other hand pinches anywhere → bimanual capture; the distance
- *      between the two pinch midpoints becomes the live radius candidate.
- *   3. Either hand releases            → if a target was captured, commit
- *      `addFillet(targetPartId, radius)`. Single undo entry.
+ *   - **Fillet (M2):** pinch a part with one hand, pinch with the other,
+ *     release → commit `addFillet(partId, distanceBetweenHands)`.
+ *   - **Scale teleport (M3):** bimanual pinch in empty space → grab the
+ *     scene; spreading hands scales it up, drawing them together scales it
+ *     down. Translating both hands together pans the scene. Release to
+ *     freeze the new view.
  *
  * Outside an XR session this component renders nothing and does no work.
- *
- * The pose math runs in Three.js world space, which is also the WebXR
- * reference space, so we can compare hand positions directly against the
- * raycaster's intersect results without manual coordinate transforms — the
- * `XRSceneTransform` group's scale is handled implicitly by the raycaster.
  */
 
 const PINCH_CLOSE = 0.025; // 2.5 cm — index-tip to thumb-tip
 const PINCH_OPEN = 0.04; // hysteresis: must open past this to count as released
-const REACH_RADIUS = 0.4; // 40 cm sphere of "I'm grabbing this"
+const REACH_RADIUS = 0.4; // 40 cm reach-ray length for part picking
 const MIN_RADIUS_M = 0.005; // 5 mm physical at desktop scale; below this we skip
 const MAX_RADIUS_M = 0.5;
-/** Convert meters of separation to millimeters of model-space radius. The
- * XR transform scales the scene by 1/1000, so 1 physical metre between
- * hands = 1000 mm of fillet radius. */
+/** Convert metres of separation to millimetres of model-space radius. The
+ * default XR transform scales the scene by 1/1000, so 1 physical metre
+ * between hands = 1000 mm of fillet radius. */
 const M_TO_MODEL_MM = 1000;
 
-interface PinchSample {
-  pinching: boolean;
-  midpoint: THREE.Vector3;
-  /** Direction from wrist toward pinch midpoint — used as a "reach ray". */
-  reach: THREE.Vector3;
-}
+const SCALE_MIN = 0.0001; // 1 mm scene = 0.1 mm physical (zoomed way out)
+const SCALE_MAX = 10.0; // 1 mm scene = 10 mm physical (way zoomed in)
 
 /** Read joint position in world space; returns false if pose unavailable. */
 function readJoint(
@@ -58,6 +49,13 @@ function readJoint(
   const p = pose.transform.position;
   out.set(p.x, p.y, p.z);
   return true;
+}
+
+interface PinchSample {
+  pinching: boolean;
+  midpoint: THREE.Vector3;
+  /** Direction from wrist toward pinch midpoint — used as a "reach ray". */
+  reach: THREE.Vector3;
 }
 
 const _thumb = new THREE.Vector3();
@@ -85,16 +83,6 @@ function samplePinch(
   out.midpoint.copy(_thumb).add(_index).multiplyScalar(0.5);
   out.reach.copy(out.midpoint).sub(_wrist).normalize();
   return true;
-}
-
-interface FilletCapture {
-  partId: string;
-  initialMidpoint: THREE.Vector3;
-}
-
-interface HandState {
-  pinching: boolean;
-  midpoint: THREE.Vector3;
 }
 
 /** Walk the scene graph to find the part ID associated with a hit object. */
@@ -133,6 +121,35 @@ function pickPartId(
   return null;
 }
 
+interface HandState {
+  pinching: boolean;
+  midpoint: THREE.Vector3;
+}
+
+interface FilletCapture {
+  kind: "fillet";
+  partId: string;
+}
+
+interface ScaleCapture {
+  kind: "scale";
+  /** Midpoint of the two pinch midpoints when the gesture began (world). */
+  initialAnchor: THREE.Vector3;
+  /** Distance between the two pinches when the gesture began (metres). */
+  initialDistance: number;
+  /** View transform when the gesture began. */
+  initialView: XRViewTransform;
+  /** Anchor in scene-local space (i.e. unscaled, untranslated). */
+  sceneAnchor: THREE.Vector3;
+}
+
+type Capture = FilletCapture | ScaleCapture | null;
+
+const _midA = new THREE.Vector3();
+const _midB = new THREE.Vector3();
+const _bimid = new THREE.Vector3();
+const _newPos = new THREE.Vector3();
+
 export function XRGestures() {
   const presenting = useXRPresenting();
   const { gl, scene } = useThree();
@@ -145,7 +162,7 @@ export function XRGestures() {
     pinching: false,
     midpoint: new THREE.Vector3(),
   });
-  const captureRef = useRef<FilletCapture | null>(null);
+  const captureRef = useRef<Capture>(null);
   const sampleRef = useRef<PinchSample>({
     pinching: false,
     midpoint: new THREE.Vector3(),
@@ -160,9 +177,7 @@ export function XRGestures() {
     const refSpace = gl.xr.getReferenceSpace();
     if (!session || !refSpace) return;
 
-    let leftSample: HandState | null = null;
-    let rightSample: HandState | null = null;
-
+    // --- 1. Sample both hands ----------------------------------------------
     for (const src of session.inputSources) {
       if (!src.hand) continue;
       const handRef = src.handedness === "left" ? leftRef : rightRef;
@@ -172,54 +187,101 @@ export function XRGestures() {
       }
       handRef.current.pinching = sample.pinching;
       handRef.current.midpoint.copy(sample.midpoint);
-      const snapshot: HandState = {
-        pinching: sample.pinching,
-        midpoint: sample.midpoint.clone(),
-      };
-      if (src.handedness === "left") {
-        leftSample = snapshot;
-      } else if (src.handedness === "right") {
-        rightSample = snapshot;
-      }
 
-      // First-pinch capture: if no target yet and this hand just pinched,
-      // try to pick a part under the reach ray.
-      if (sample.pinching && !captureRef.current) {
+      // --- 2. First-pinch capture: try to grab a part for fillet mode ----
+      // Only enter fillet mode if no capture is active and this hand just
+      // pinched; the "second hand pinches first" case is handled below as
+      // scale-teleport.
+      if (sample.pinching && captureRef.current == null) {
         const partId = pickPartId(scene, sample.midpoint, sample.reach);
         if (partId) {
-          captureRef.current = {
-            partId,
-            initialMidpoint: sample.midpoint.clone(),
-          };
+          captureRef.current = { kind: "fillet", partId };
         }
       }
     }
 
-    // Commit on release. We commit when at least one of the hands transitions
-    // out of pinch while a capture is active and the *other* hand is/was
-    // pinching too (i.e. we had a bimanual moment). Single hand alone just
-    // selects the part — no fillet.
-    const capture = captureRef.current;
-    if (!capture) return;
-
-    const left = leftSample ?? leftRef.current;
-    const right = rightSample ?? rightRef.current;
+    const left = leftRef.current;
+    const right = rightRef.current;
     const bothPinching = left.pinching && right.pinching;
-    const eitherReleased = !left.pinching || !right.pinching;
 
-    if (bothPinching || !eitherReleased) {
-      // Still in capture; nothing to commit yet. (Live preview lands in a
-      // follow-up — for now we just hold state.)
+    // --- 3. Scale-teleport entry: bimanual pinch with no part captured. ---
+    if (bothPinching && captureRef.current == null) {
+      _midA.copy(left.midpoint);
+      _midB.copy(right.midpoint);
+      const initialDistance = _midA.distanceTo(_midB);
+      _bimid.copy(_midA).add(_midB).multiplyScalar(0.5);
+      const initialView = useXRSupportStore.getState().view;
+      // sceneAnchor = (worldAnchor - viewPosition) / viewScale  — the point
+      // in the kernel scene's local frame the user just "grabbed".
+      const sceneAnchor = new THREE.Vector3()
+        .copy(_bimid)
+        .sub(new THREE.Vector3(...initialView.position))
+        .divideScalar(initialView.scale);
+      captureRef.current = {
+        kind: "scale",
+        initialAnchor: _bimid.clone(),
+        initialDistance,
+        initialView,
+        sceneAnchor,
+      };
+    }
+
+    // --- 4. Active scale-teleport: drive the view transform live. ---------
+    const capture = captureRef.current;
+    if (capture && capture.kind === "scale" && bothPinching) {
+      _midA.copy(left.midpoint);
+      _midB.copy(right.midpoint);
+      const distance = _midA.distanceTo(_midB);
+      _bimid.copy(_midA).add(_midB).multiplyScalar(0.5);
+      const ratio =
+        capture.initialDistance > 1e-6
+          ? distance / capture.initialDistance
+          : 1;
+      let scale = capture.initialView.scale * ratio;
+      if (scale < SCALE_MIN) scale = SCALE_MIN;
+      if (scale > SCALE_MAX) scale = SCALE_MAX;
+      // Keep the grabbed scene point pinned to the current bimanual midpoint:
+      // worldPoint = sceneAnchor * scale + position  ⇒  position = bimid − sceneAnchor·scale.
+      _newPos
+        .copy(capture.sceneAnchor)
+        .multiplyScalar(scale)
+        .multiplyScalar(-1)
+        .add(_bimid);
+      useXRSupportStore.getState().setView({
+        scale,
+        position: [_newPos.x, _newPos.y, _newPos.z],
+      });
       return;
     }
 
-    // Released. If we ever hit bimanual (both midpoints are valid and the
-    // distance is non-degenerate), commit the fillet.
-    const distance = left.midpoint.distanceTo(right.midpoint);
-    captureRef.current = null;
-    if (distance < MIN_RADIUS_M || distance > MAX_RADIUS_M) return;
-    const radius = distance * M_TO_MODEL_MM;
-    useDocumentStore.getState().addFillet(capture.partId, radius);
+    // --- 5. Release handling ----------------------------------------------
+    if (!capture) return;
+
+    // Capture remains active until both hands are open — stops the rare
+    // single-frame chatter where one hand registers as released a frame
+    // before the other.
+    const eitherReleased = !left.pinching || !right.pinching;
+    if (!eitherReleased) return;
+
+    if (capture.kind === "fillet") {
+      const distance = left.midpoint.distanceTo(right.midpoint);
+      captureRef.current = null;
+      if (distance < MIN_RADIUS_M || distance > MAX_RADIUS_M) return;
+      // Convert physical distance to model-space mm. Use the live view scale
+      // so a fillet feels the same regardless of how zoomed-in we are: 1 cm
+      // hand-spread always reads as 1 cm at the current scale.
+      const view = useXRSupportStore.getState().view;
+      const scaleFactor = view.scale > 1e-9 ? 0.001 / view.scale : 1;
+      const radius = distance * M_TO_MODEL_MM * scaleFactor;
+      useDocumentStore.getState().addFillet(capture.partId, radius);
+      return;
+    }
+
+    if (capture.kind === "scale") {
+      // The view transform was already committed live; just exit.
+      captureRef.current = null;
+      return;
+    }
   });
 
   return null;
