@@ -831,6 +831,7 @@ export const SceneMesh = memo(function SceneMesh({
       onPointerOver={handlePointerOver}
       onPointerOut={handlePointerOut}
       material={shaderMaterial ?? undefined}
+      userData={{ partId: partInfo.id }}
     >
       <bufferGeometry ref={geoRef} />
       {/* Use procedural shader if available, otherwise standard PBR */}

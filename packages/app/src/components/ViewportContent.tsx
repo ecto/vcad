@@ -68,6 +68,8 @@ import { PcbScene } from "./electronics/pcb3d/PcbScene";
 import { usePcbCamera } from "./electronics/pcb3d/usePcbCamera";
 import { BG_DARK, BG_LIGHT } from "./Viewport";
 import { useXRPresenting } from "@/stores/xr-store";
+import { XRSceneTransform } from "./xr/XRSceneTransform";
+import { XRGestures } from "./xr/XRGestures";
 
 // Reused per-frame in the participant-sync hook (Lock + Follow).
 const _syncGoalPos = new Vector3();
@@ -1676,7 +1678,10 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
 
           {/* Scene meshes - always render (ray trace overlays on top for BRep parts) */}
           {/* Wrap all kernel geometry in Z-up → Y-up rotation so the kernel
-              stays in standard CAD Z-up while Three.js renders Y-up */}
+              stays in standard CAD Z-up while Three.js renders Y-up.
+              `XRSceneTransform` rescales + repositions to desktop-scale while
+              a WebXR session is active; outside XR it is a passthrough. */}
+          <XRSceneTransform>
           <group rotation={[-Math.PI / 2, 0, 0]}>
             {/* Plane gizmo at origin - inside rotation group so kernel planes display correctly */}
             <PlaneGizmo />
@@ -1761,6 +1766,12 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
           {/* Other participants' camera frustums (AI for now, peers later) */}
           <ParticipantCameraOverlay />
           </group>
+          </XRSceneTransform>
+
+          {/* XR gesture interpreter — only does work while a WebXR session
+              is presenting. Outside the scene transform so its raycasts run
+              in unscaled world space. */}
+          <XRGestures />
 
           {/* Transform gizmo — outside rotation group; does its own Z-up ↔ Y-up conversion
               so that gizmo handle colors (RGB=XYZ) match the kernel axis colors */}
