@@ -1,11 +1,14 @@
 import { useRef, useEffect, Suspense, lazy } from "react";
 import * as THREE from "three";
 import { Canvas, useThree } from "@react-three/fiber";
+import { XR } from "@react-three/xr";
 import { ViewportContent } from "./ViewportContent";
 import { DrawingView } from "./DrawingView";
 import { TriangleInspectionPanel } from "./TriangleInspector";
 import { RayTracedViewportOverlay } from "./RayTracedViewport";
 import { FollowModeToggle } from "./FollowModeToggle";
+import { EnterXRButton } from "./xr/EnterXRButton";
+import { xrStore, useXRPresenting } from "@/stores/xr-store";
 import {
   useUiStore,
   useDocumentStore,
@@ -223,6 +226,7 @@ export function Viewport() {
   const { isDark } = useTheme();
   const viewMode = useDrawingStore((s) => s.viewMode);
   const electronicsActive = useElectronicsStore((s) => s.active);
+  const xrPresenting = useXRPresenting();
 
   // Run electronics sync when in electronics mode
   useElectronicsSync();
@@ -283,7 +287,7 @@ export function Viewport() {
       style={{ touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
     >
       <Canvas
-        frameloop="demand"
+        frameloop={xrPresenting ? "always" : "demand"}
         camera={{ position: [50, 50, 50], fov: 50, near: 0.1, far: 10000 }}
         onPointerMissed={() => {
           // Ignore the click that follows a drag/rotate gesture.
@@ -306,8 +310,10 @@ export function Viewport() {
         }}
         style={{ background: canvasBg }}
       >
-        <ViewportContent mode={electronicsActive ? "pcb" : "3d"} />
-        {!electronicsActive && <BoxSelectHandler containerRef={containerRef} />}
+        <XR store={xrStore}>
+          <ViewportContent mode={electronicsActive ? "pcb" : "3d"} />
+          {!electronicsActive && <BoxSelectHandler containerRef={containerRef} />}
+        </XR>
       </Canvas>
 
       {/* Electronics overlay panels (outside Canvas, on top) */}
@@ -328,8 +334,11 @@ export function Viewport() {
         </>
       )}
 
-      {/* Ray-traced overlay - rendered outside Canvas to avoid R3F reconciler issues */}
-      {!electronicsActive && renderMode === "raytrace" && raytraceAvailable && (
+      {/* Ray-traced overlay - rendered outside Canvas to avoid R3F reconciler
+          issues. Suppressed in XR: WebGPU compute shaders aren't compatible
+          with the WebXR layer pipeline, so we fall back to the standard
+          tessellated rasterizer for the duration of the session. */}
+      {!electronicsActive && !xrPresenting && renderMode === "raytrace" && raytraceAvailable && (
         <RayTracedViewportOverlay />
       )}
 
@@ -340,7 +349,8 @@ export function Viewport() {
           Pointer-events none on the wrapper so the canvas still receives orbit
           drags in the gaps; the toggle itself re-enables them. */}
       {!electronicsActive && (
-        <div className="pointer-events-none absolute top-3 right-3 z-10">
+        <div className="pointer-events-none absolute top-3 right-3 z-10 flex items-center gap-2">
+          <EnterXRButton />
           <FollowModeToggle />
         </div>
       )}

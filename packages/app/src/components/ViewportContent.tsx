@@ -67,6 +67,7 @@ import type {
 import { PcbScene } from "./electronics/pcb3d/PcbScene";
 import { usePcbCamera } from "./electronics/pcb3d/usePcbCamera";
 import { BG_DARK, BG_LIGHT } from "./Viewport";
+import { useXRPresenting } from "@/stores/xr-store";
 
 // Reused per-frame in the participant-sync hook (Lock + Follow).
 const _syncGoalPos = new Vector3();
@@ -308,6 +309,7 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
   const renderMode = useUiStore((s) => s.renderMode);
   const raytraceAvailable = useUiStore((s) => s.raytraceAvailable);
   const sketchActive = useSketchStore((s) => s.active);
+  const xrPresenting = useXRPresenting();
   const orbitRef = useRef<OrbitControlsImpl>(null);
   usePcbCamera(orbitRef, isPcbMode);
   const { camera, invalidate } = useThree();
@@ -1505,10 +1507,13 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
       {/* Grid (3D mode only — PCB mode has its own grid) */}
       {!isPcbMode && <GridPlane />}
 
-      {/* Controls - mouse buttons configured by control scheme */}
+      {/* Controls - mouse buttons configured by control scheme.
+          Disabled while a WebXR session is active — the headset drives the
+          camera and orbit gestures would fight head-tracking. */}
       <OrbitControls
         ref={orbitRef}
         makeDefault
+        enabled={!xrPresenting}
         enableDamping={false}
         // Desktop uses a custom wheel zoom handler; touch devices need the
         // built-in pinch-to-dolly path, so enable zoom when the pointer is coarse.
@@ -1527,8 +1532,10 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
         })()}
       />
 
-      {/* Orientation gizmo - RGB axes, click to snap view (3D mode only) */}
-      {!isPcbMode && (
+      {/* Orientation gizmo - RGB axes, click to snap view (3D mode only).
+          Hidden in XR — it's a 2D screen-space overlay that doesn't make
+          sense in stereo. */}
+      {!isPcbMode && !xrPresenting && (
         <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
           <GizmoViewport
             axisColors={["#e06c75", "#61afef", "#98c379"]}
