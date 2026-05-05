@@ -280,14 +280,27 @@ impl Default for TriangleMesh {
 }
 
 /// Tessellation parameters controlling mesh quality.
+///
+/// `circle_segments` / `latitude_segments` set a fixed lower bound. When
+/// `chord_tolerance` and/or `angular_tolerance` are also set, the per-feature
+/// segment count is raised so curvature error stays below the tolerance — a
+/// 1mm fillet then gets fewer triangles than a 100mm cylinder, while large
+/// cylinders no longer look faceted under polished lighting.
 #[derive(Debug, Clone, Copy)]
 pub struct TessellationParams {
-    /// Number of segments for circular features.
+    /// Minimum number of segments for circular features.
     pub circle_segments: u32,
     /// Number of segments along the height of cylindrical/conical features.
     pub height_segments: u32,
-    /// Number of latitude bands for spherical features.
+    /// Minimum number of latitude bands for spherical features.
     pub latitude_segments: u32,
+    /// Optional sag tolerance in model units (mm). When set, segment counts
+    /// are raised so the chord between two adjacent samples never deviates
+    /// from the true surface by more than this distance.
+    pub chord_tolerance: Option<f64>,
+    /// Optional angular tolerance in radians. When set, segment counts are
+    /// raised so no single segment subtends more than this angle.
+    pub angular_tolerance: Option<f64>,
 }
 
 impl Default for TessellationParams {
@@ -296,9 +309,14 @@ impl Default for TessellationParams {
             circle_segments: 32,
             height_segments: 1,
             latitude_segments: 16,
+            chord_tolerance: None,
+            angular_tolerance: None,
         }
     }
 }
+
+const ADAPTIVE_SEG_FLOOR: u32 = 3;
+const ADAPTIVE_SEG_CEIL: u32 = 256;
 
 impl TessellationParams {
     /// Create params from a segment count hint (used for circular features).
@@ -307,7 +325,63 @@ impl TessellationParams {
             circle_segments: segments.max(3),
             height_segments: 1,
             latitude_segments: (segments / 2).max(4),
+            chord_tolerance: None,
+            angular_tolerance: None,
         }
+    }
+
+    /// Create params from a chord tolerance (mm) and an angular tolerance
+    /// (radians). Both are optional, but at least one must be specified to
+    /// drive adaptive subdivision.
+    pub fn from_tolerances(chord: Option<f64>, angular: Option<f64>) -> Self {
+        Self {
+            circle_segments: 16,
+            height_segments: 1,
+            latitude_segments: 8,
+            chord_tolerance: chord,
+            angular_tolerance: angular,
+        }
+    }
+
+    /// Number of segments around the circumference of a feature with the
+    /// given radius. Always at least `circle_segments`; raised if a
+    /// chord or angular tolerance is set.
+    pub fn circle_segments_for_radius(&self, radius: f64) -> u32 {
+        let mut n = self.circle_segments.max(ADAPTIVE_SEG_FLOOR);
+        if let Some(tol) = self.chord_tolerance {
+            // Sag for a chord on a circle of radius r with n segments is
+            //   e = r * (1 - cos(π/n))
+            // Solving for n given a target e gives
+            //   n = π / acos(1 − e/r)
+            // Clamp the acos argument so a degenerate (tol >= r) case
+            // doesn't blow up — we just fall through to the floor.
+            if radius > 0.0 && tol > 0.0 && tol < radius {
+                let arg = (1.0 - tol / radius).clamp(-1.0, 1.0);
+                let denom = arg.acos();
+                if denom > 1e-9 {
+                    let segs = (PI / denom).ceil() as u32;
+                    n = n.max(segs);
+                }
+            }
+        }
+        if let Some(ang) = self.angular_tolerance {
+            if ang > 1e-9 {
+                let segs = ((2.0 * PI) / ang).ceil() as u32;
+                n = n.max(segs);
+            }
+        }
+        n.clamp(ADAPTIVE_SEG_FLOOR, ADAPTIVE_SEG_CEIL)
+    }
+
+    /// Number of latitude bands for a sphere of the given radius. The
+    /// returned count is roughly half of the longitude segment count, so
+    /// triangles stay reasonably square.
+    pub fn latitude_segments_for_radius(&self, radius: f64) -> u32 {
+        let lon = self.circle_segments_for_radius(radius);
+        self.latitude_segments
+            .max(ADAPTIVE_SEG_FLOOR)
+            .max(lon / 2)
+            .clamp(ADAPTIVE_SEG_FLOOR, ADAPTIVE_SEG_CEIL)
     }
 }
 
@@ -2084,7 +2158,10 @@ fn tessellate_cylindrical_face(
 ) -> TriangleMesh {
     let face = &topo.faces[face_id];
     let surface = &geom.surfaces[face.surface_index];
-    let n_circ = params.circle_segments.max(3) as usize;
+    // `n_circ` is the lower bound; once we extract the cylinder's actual
+    // radius below, `circle_segments_for_radius` may raise it so that the
+    // chord/angular tolerance is respected.
+    let mut n_circ = params.circle_segments.max(3) as usize;
     let n_height = params.height_segments.max(1) as usize;
 
     // Determine the v (height) parameter range by projecting seam vertices
@@ -2102,7 +2179,9 @@ fn tessellate_cylindrical_face(
         .as_any()
         .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
     {
-        radius = Some(cyl.radius.abs().max(1e-6));
+        let r = cyl.radius.abs().max(1e-6);
+        radius = Some(r);
+        n_circ = (params.circle_segments_for_radius(r) as usize).max(3);
         // Project vertices onto axis to get v parameter and compute U angles
         let mut vmin = f64::MAX;
         let mut vmax = f64::MIN;
@@ -2388,8 +2467,21 @@ fn tessellate_spherical_face(
         return tessellate_spherical_cap(surface.as_ref(), &loop_verts, params, reversed);
     }
 
-    let n_lon = params.circle_segments as usize;
-    let n_lat = params.latitude_segments as usize;
+    let sphere_radius = surface
+        .as_any()
+        .downcast_ref::<vcad_kernel_geom::SphereSurface>()
+        .map(|s| s.radius.abs().max(1e-6));
+    let (n_lon, n_lat) = if let Some(r) = sphere_radius {
+        (
+            params.circle_segments_for_radius(r) as usize,
+            params.latitude_segments_for_radius(r) as usize,
+        )
+    } else {
+        (
+            params.circle_segments as usize,
+            params.latitude_segments as usize,
+        )
+    };
 
     let mut mesh = TriangleMesh::new();
 
@@ -3004,7 +3096,7 @@ fn tessellate_conical_face(
 ) -> TriangleMesh {
     let face = &topo.faces[face_id];
     let surface = &geom.surfaces[face.surface_index];
-    let n_circ = params.circle_segments as usize;
+    let mut n_circ = params.circle_segments as usize;
     let n_height = params.height_segments as usize;
 
     // Get seam vertices to determine the cone extent
@@ -3045,6 +3137,13 @@ fn tessellate_conical_face(
         let v = d.dot(axis) / half_angle.cos();
         v_min = v_min.min(v);
         v_max = v_max.max(v);
+    }
+
+    // Pick the widest ring's radius for adaptive sampling so the base of
+    // a wide frustum doesn't end up as faceted as its tip.
+    let max_radius = v_max.abs().max(v_min.abs()) * half_angle.sin().abs();
+    if max_radius > 1e-9 {
+        n_circ = (params.circle_segments_for_radius(max_radius) as usize).max(3);
     }
 
     // Generate mesh using surface.evaluate()
@@ -3255,7 +3354,18 @@ fn tessellate_toroidal_face(
 ) -> TriangleMesh {
     let face = &topo.faces[face_id];
     let surface = &geom.surfaces[face.surface_index];
-    let n_circ = params.circle_segments.max(3) as usize;
+    // Use the wider of the major and tube radii to size the segmentation.
+    // A small fillet torus (tiny tube) doesn't need many around-the-major-
+    // axis samples; the major arc is the dominant curvature.
+    let torus_radius = surface
+        .as_any()
+        .downcast_ref::<vcad_kernel_geom::TorusSurface>()
+        .map(|t| t.major_radius.abs().max(t.minor_radius.abs()).max(1e-6));
+    let n_circ = if let Some(r) = torus_radius {
+        (params.circle_segments_for_radius(r) as usize).max(3)
+    } else {
+        params.circle_segments.max(3) as usize
+    };
 
     let mut mesh = TriangleMesh::new();
 
