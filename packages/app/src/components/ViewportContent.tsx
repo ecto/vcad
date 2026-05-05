@@ -1,3 +1,4 @@
+import type React from "react";
 import { useRef, useEffect, useMemo, useState, useCallback, Suspense } from "react";
 import { Spherical, Vector3, Box3, Plane, Raycaster, Vector2, Quaternion, Matrix4, Color, TOUCH, PerspectiveCamera, WebGLRenderTarget, SRGBColorSpace, ACESFilmicToneMapping } from "three";
 
@@ -1812,38 +1813,49 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
           framebuffer, so in VR/AR the scene would go black and only
           objects rendered directly by WebXRManager (hands, controllers)
           would show. */}
-      {engineReady && !xrPresenting && (
-        sceneSettings.postProcessing.ambientOcclusion?.enabled !== false ||
-        sceneSettings.postProcessing.vignette?.enabled !== false ||
-        silhouetteEnabled
-      ) && (
-        <EffectComposer>
-          {sceneSettings.postProcessing.ambientOcclusion?.enabled !== false && (
+      {engineReady && !xrPresenting && (() => {
+        const aoEnabled = sceneSettings.postProcessing.ambientOcclusion?.enabled !== false;
+        const vignetteEnabled = sceneSettings.postProcessing.vignette?.enabled !== false;
+        if (!aoEnabled && !vignetteEnabled && !silhouetteEnabled) return null;
+        // EffectComposer's children type is strict (`JSX.Element | JSX.Element[]`),
+        // so we build the array up-front rather than inlining `cond && <Effect/>`
+        // expressions, which would resolve to `false` when disabled.
+        const effects: React.JSX.Element[] = [];
+        if (aoEnabled) {
+          effects.push(
             <N8AO
+              key="ao"
               aoRadius={sceneSettings.postProcessing.ambientOcclusion?.radius ?? 0.5}
               intensity={sceneSettings.postProcessing.ambientOcclusion?.intensity ?? (isDark ? 2 : 1.5)}
               aoSamples={isCameraMoving ? 3 : 6}
               denoiseSamples={isCameraMoving ? 1 : 4}
-            />
-          )}
-          {silhouetteEnabled && (
+            />,
+          );
+        }
+        if (silhouetteEnabled) {
+          effects.push(
             <Outline
+              key="outline"
               edgeStrength={silhouetteSettings?.edgeStrength ?? 2.0}
               visibleEdgeColor={silhouetteSettings?.visibleEdgeColor ?? (isDark ? 0x0a0a0a : 0x111111)}
               hiddenEdgeColor={silhouetteSettings?.hiddenEdgeColor ?? (isDark ? 0x0a0a0a : 0x111111)}
               blur={false}
               xRay={false}
-            />
-          )}
-          {sceneSettings.postProcessing.vignette?.enabled !== false && (
+            />,
+          );
+        }
+        if (vignetteEnabled) {
+          effects.push(
             <Vignette
+              key="vignette"
               offset={sceneSettings.postProcessing.vignette?.offset ?? 0.3}
               darkness={sceneSettings.postProcessing.vignette?.darkness ?? (isDark ? 0.5 : 0.3)}
               eskil={false}
-            />
-          )}
-        </EffectComposer>
-      )}
+            />,
+          );
+        }
+        return <EffectComposer>{effects}</EffectComposer>;
+      })()}
     </Selection>
   );
 }
