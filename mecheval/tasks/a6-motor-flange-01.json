@@ -1,0 +1,63 @@
+{
+  "id": "a6-motor-flange-01",
+  "suite": "A",
+  "tier": "A6",
+  "title": "Motor mounting flange with register boss, central shaft bore, and bolt pattern",
+  "prompt": "Make a motor mounting flange as a single solid. The main flange is a disc of diameter 120mm and thickness 12mm, base on the XY plane (z = 0 to z = 12), centered on the Z axis. On top of the flange sits a coaxial register boss (spigot) of diameter 72mm and height 6mm (z = 12 to z = 18); this raised boss is used for accurate pilot location. A central through-bore of diameter 32mm runs along the Z axis through both the flange and the register boss (z = 0 to z = 18). Four mounting bolt holes of diameter 9mm, axes parallel to Z, pass through the flange only (z = 0 to z = 12), arranged on a bolt circle of diameter 96mm (radius 48mm) centered on the Z axis at 90-degree intervals: (48, 0), (0, 48), (-48, 0), (0, -48). Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-60, -60, 0],
+      "max": [60, 60, 18],
+      "tolerance_mm": 0.2
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 142616.81,
+      "center_of_mass": [0, 0, 7.24],
+      "tolerance_pct": 1.5
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 32.0,
+      "expected": 1,
+      "diameter_tolerance_mm": 0.15
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 32.0,
+      "positions": [[0, 0, 0]],
+      "tolerance_mm": 0.2
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 9.0,
+      "expected": 4,
+      "diameter_tolerance_mm": 0.05
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 9.0,
+      "positions": [
+        [48.0, 0.0, 0],
+        [0.0, 48.0, 0],
+        [-48.0, 0.0, 0],
+        [0.0, -48.0, 0]
+      ],
+      "tolerance_mm": 0.2
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 1.5 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 50000,
+    "max_wallclock_sec": 300,
+    "max_tool_calls": 60
+  },
+  "pass_k": 5,
+  "tags": ["motor", "flange", "register", "boss", "bolt-circle", "central-bore", "advanced"]
+}

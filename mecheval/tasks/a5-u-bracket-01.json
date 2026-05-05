@@ -1,0 +1,46 @@
+{
+  "id": "a5-u-bracket-01",
+  "suite": "A",
+  "tier": "A5",
+  "title": "U-channel bracket with mounting holes",
+  "prompt": "Make a U-channel bracket as a single solid. The base is a rectangular plate 100mm × 30mm × 8mm with its bottom face on the XY plane, centered in X and Y (so it spans x in [-50, 50], y in [-15, 15], z in [0, 8]). From the left end of the base, a vertical leg rises: 8mm × 30mm × 35mm, at x in [-50, -42], y in [-15, 15], z in [8, 43]. A matching vertical leg rises from the right end: 8mm × 30mm × 35mm, at x in [42, 50], y in [-15, 15], z in [8, 43]. Drill two through-holes of diameter 6mm, axes parallel to Z, through the base only (z = 0 to z = 8), centered at (-25, 0) and (25, 0). Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-50, -15, 0],
+      "max": [50, 15, 43],
+      "tolerance_mm": 0.1
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 40347.61,
+      "center_of_mass": [0, 0, 12.95],
+      "tolerance_pct": 1.0
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 6.0,
+      "expected": 2,
+      "diameter_tolerance_mm": 0.05
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 6.0,
+      "positions": [[-25.0, 0.0, 0], [25.0, 0.0, 0]],
+      "tolerance_mm": 0.2
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 1.0 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 40000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 40
+  },
+  "pass_k": 5,
+  "tags": ["u-bracket", "channel", "legs", "boolean", "mounting-holes"]
+}

@@ -1,0 +1,65 @@
+{
+  "id": "a5-disc-hub-01",
+  "suite": "A",
+  "tier": "A5",
+  "title": "Flanged disc with raised central hub, bore, and bolt circle",
+  "prompt": "Make a flanged disc with a raised hub as a single solid. The outer flange is a cylinder of diameter 100mm and height 10mm, base on the XY plane (z = 0 to z = 10), centered on the Z axis. Concentric with the flange and sitting on top of it is a raised hub cylinder of diameter 40mm and height 20mm (z = 10 to z = 30). A central through-bore of diameter 18mm runs along the Z axis through the full combined height (z = 0 to z = 30). Six bolt holes of diameter 8mm, axes parallel to Z, pass through the flange only (z = 0 to z = 10), arranged on a bolt circle of diameter 75mm (radius 37.5mm) centered on the Z axis, evenly spaced every 60 degrees with the first hole on the +X axis: positions (37.5, 0), (18.75, 32.476), (-18.75, 32.476), (-37.5, 0), (-18.75, -32.476), (18.75, -32.476). Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-50, -50, 0],
+      "max": [50, 50, 30],
+      "tolerance_mm": 0.2
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 93022.56,
+      "center_of_mass": [0, 0, 8.23],
+      "tolerance_pct": 1.5
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 18.0,
+      "expected": 1,
+      "diameter_tolerance_mm": 0.1
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 18.0,
+      "positions": [[0, 0, 0]],
+      "tolerance_mm": 0.2
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 8.0,
+      "expected": 6,
+      "diameter_tolerance_mm": 0.05
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 8.0,
+      "positions": [
+        [37.5, 0.0, 0],
+        [18.75, 32.476, 0],
+        [-18.75, 32.476, 0],
+        [-37.5, 0.0, 0],
+        [-18.75, -32.476, 0],
+        [18.75, -32.476, 0]
+      ],
+      "tolerance_mm": 0.3
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 1.5 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 40000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 50
+  },
+  "pass_k": 5,
+  "tags": ["disc", "hub", "bolt-circle", "central-bore", "flanged", "advanced"]
+}

@@ -1,0 +1,34 @@
+{
+  "id": "a5-hollow-cap-01",
+  "suite": "A",
+  "tier": "A5",
+  "title": "Hollow cylindrical cap with 8mm base wall",
+  "prompt": "Make a hollow cylindrical cap (like a cup or thimble) as a single solid. The outer body is a cylinder of diameter 60mm and height 50mm, base on the XY plane (z = 0 to z = 50), centered on the Z axis. The inside of the cap is hollow: subtract a coaxial inner cylinder of diameter 50mm and height 42mm that opens from the top (z = 8 to z = 50), leaving a solid base wall 8mm thick at the bottom (z = 0 to z = 8) and a cylindrical wall 5mm thick all around. The top is open. Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-30, -30, 0],
+      "max": [30, 30, 50],
+      "tolerance_mm": 0.1
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 58904.77,
+      "center_of_mass": [0, 0, 19.40],
+      "tolerance_pct": 1.0
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 1.0 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 40000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 40
+  },
+  "pass_k": 5,
+  "tags": ["hollow", "cap", "cup", "thin-wall", "blind-bore"]
+}

@@ -1,0 +1,51 @@
+{
+  "id": "a5-ribbed-plate-01",
+  "suite": "A",
+  "tier": "A5",
+  "title": "Plate with three longitudinal stiffening ribs and corner bolts",
+  "prompt": "Make a ribbed plate as a single solid. The top plate is 120mm × 80mm × 10mm with its bottom face at z = 10 and top face at z = 20, centered in X and Y (x in [-60, 60], y in [-40, 40]). Three stiffening ribs run along the full length of the plate (along X) on the underside: each rib is 120mm long × 8mm wide × 10mm tall (z = 0 to z = 10). Rib A is centered at y = -24: it spans x in [-60, 60], y in [-28, -20], z in [0, 10]. Rib B is centered at y = 0: it spans x in [-60, 60], y in [-4, 4], z in [0, 10]. Rib C is centered at y = 24: it spans x in [-60, 60], y in [20, 28], z in [0, 10]. Four bolt holes of diameter 8mm, axes parallel to Z, pass through the entire assembly height (z = 0 to z = 20), located at the four corners: (45, 30), (-45, 30), (-45, -30), (45, -30). Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-60, -40, 0],
+      "max": [60, 40, 20],
+      "tolerance_mm": 0.1
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 120778.76,
+      "center_of_mass": [0, 0, 12.78],
+      "tolerance_pct": 1.0
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 8.0,
+      "expected": 4,
+      "diameter_tolerance_mm": 0.05
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 8.0,
+      "positions": [
+        [45.0, 30.0, 0],
+        [-45.0, 30.0, 0],
+        [-45.0, -30.0, 0],
+        [45.0, -30.0, 0]
+      ],
+      "tolerance_mm": 0.2
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 1.0 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 40000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 40
+  },
+  "pass_k": 5,
+  "tags": ["plate", "ribs", "stiffener", "boolean", "structural"]
+}

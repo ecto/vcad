@@ -1,0 +1,34 @@
+{
+  "id": "a6-yoke-block-01",
+  "suite": "A",
+  "tier": "A6",
+  "title": "Fork yoke with cross-bore through both tines",
+  "prompt": "Make a fork yoke as a single solid. The base block is 80mm × 40mm × 12mm, centered in X and Y with its bottom face on the XY plane (x in [-40, 40], y in [-20, 20], z in [0, 12]). Two vertical tines (fork arms) rise from the base. The left tine is 14mm × 40mm × 45mm at x in [-40, -26], y in [-20, 20], z in [12, 57]. The right tine is 14mm × 40mm × 45mm at x in [26, 40], y in [-20, 20], z in [12, 57]. The gap between the tines (x in [-26, 26]) is open. Through both tines, drill a coaxial cross-bore of diameter 18mm whose axis is parallel to X, centered at y = 0, z = 44.5, passing through the left tine (x in [-40, -26]) and the right tine (x in [26, 40]). The cross-bore removes a cylindrical channel of diameter 18mm from each tine; the open gap between the tines is unaffected. Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-40, -20, 0],
+      "max": [40, 20, 57],
+      "tolerance_mm": 0.1
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 81674.78,
+      "center_of_mass": [0, 0, 20.23],
+      "tolerance_pct": 1.5
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 1.5 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 50000,
+    "max_wallclock_sec": 300,
+    "max_tool_calls": 60
+  },
+  "pass_k": 5,
+  "tags": ["yoke", "fork", "tine", "cross-bore", "pin-hole", "advanced"]
+}

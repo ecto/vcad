@@ -1,0 +1,63 @@
+{
+  "id": "a5-stepped-boss-plate-01",
+  "suite": "A",
+  "tier": "A5",
+  "title": "Rectangular plate with raised central boss and through features",
+  "prompt": "Make a stepped boss plate as a single solid. The base is a rectangular plate 80mm × 60mm × 10mm, centered in X and Y with its bottom face on the XY plane (x in [-40, 40], y in [-30, 30], z in [0, 10]). Centered on top of the base plate sits a rectangular boss 40mm × 30mm × 8mm (x in [-20, 20], y in [-15, 15], z in [10, 18]). A central through-bore of diameter 18mm, axis parallel to Z, passes through the entire assembly from bottom to top (z = 0 to z = 18), centered at the origin. Four corner bolt holes of diameter 6mm, axes parallel to Z, pass through the base plate only (z = 0 to z = 10), located at (28, 22), (-28, 22), (-28, -22), (28, -22). Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-40, -30, 0],
+      "max": [40, 30, 18],
+      "tolerance_mm": 0.1
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 51888.59,
+      "center_of_mass": [0, 0, 6.31],
+      "tolerance_pct": 1.0
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 18.0,
+      "expected": 1,
+      "diameter_tolerance_mm": 0.1
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 18.0,
+      "positions": [[0, 0, 0]],
+      "tolerance_mm": 0.2
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 6.0,
+      "expected": 4,
+      "diameter_tolerance_mm": 0.05
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 6.0,
+      "positions": [
+        [28.0, 22.0, 0],
+        [-28.0, 22.0, 0],
+        [-28.0, -22.0, 0],
+        [28.0, -22.0, 0]
+      ],
+      "tolerance_mm": 0.2
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 1.0 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 40000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 50
+  },
+  "pass_k": 5,
+  "tags": ["plate", "boss", "stepped", "multi-diameter", "boolean", "advanced"]
+}

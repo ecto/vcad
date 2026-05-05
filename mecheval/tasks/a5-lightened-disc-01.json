@@ -1,0 +1,65 @@
+{
+  "id": "a5-lightened-disc-01",
+  "suite": "A",
+  "tier": "A5",
+  "title": "Disc with central bore and six lightening holes",
+  "prompt": "Make a lightened disc as a single solid. The outer disc is a cylinder of diameter 120mm and height 15mm, base on the XY plane (z = 0 to z = 15), centered on the Z axis. Subtract a central through-bore of diameter 22mm along the Z axis. Subtract six through-holes of diameter 16mm, axes parallel to Z, arranged on a bolt circle of diameter 76mm (radius 38mm) centered on the Z axis, evenly spaced every 60 degrees with the first hole on the +X axis: positions (38, 0), (19, 32.909), (-19, 32.909), (-38, 0), (-19, -32.909), (19, -32.909). All holes pass through the full disc height (z = 0 to z = 15). Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-60, -60, 0],
+      "max": [60, 60, 15],
+      "tolerance_mm": 0.2
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 145848.66,
+      "center_of_mass": [0, 0, 7.5],
+      "tolerance_pct": 1.5
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 22.0,
+      "expected": 1,
+      "diameter_tolerance_mm": 0.1
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 22.0,
+      "positions": [[0, 0, 0]],
+      "tolerance_mm": 0.2
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 16.0,
+      "expected": 6,
+      "diameter_tolerance_mm": 0.05
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 16.0,
+      "positions": [
+        [38.0, 0.0, 0],
+        [19.0, 32.909, 0],
+        [-19.0, 32.909, 0],
+        [-38.0, 0.0, 0],
+        [-19.0, -32.909, 0],
+        [19.0, -32.909, 0]
+      ],
+      "tolerance_mm": 0.3
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 1.5 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 40000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 50
+  },
+  "pass_k": 5,
+  "tags": ["disc", "lightening-holes", "bolt-circle", "central-bore", "advanced"]
+}
