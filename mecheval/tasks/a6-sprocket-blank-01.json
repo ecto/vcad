@@ -1,0 +1,62 @@
+{
+  "id": "a6-sprocket-blank-01",
+  "suite": "A",
+  "tier": "A6",
+  "title": "Sprocket blank: disc, raised hub, keyway, central bore, and 4-bolt circle",
+  "prompt": "Make a sprocket blank as a single solid. The main disc is a cylinder of diameter 100mm and height 20mm, base on the XY plane (z = 0 to z = 20), centered on the Z axis. Concentric with the disc and sitting on top of it is a raised hub cylinder of diameter 40mm and height 20mm (z = 20 to z = 40). A central through-bore of diameter 20mm runs along the Z axis through the full height (z = 0 to z = 40). Cut a rectangular keyway slot through the entire height: the keyway is 6mm wide (x in [-3, 3]) and 6mm deep, starting at the bore wall and extending radially outward to y = 16 (so y in [10, 16], x in [-3, 3], z in [0, 40]). Four bolt holes of diameter 8mm, axes parallel to Z, pass through the disc only (z = 0 to z = 20), arranged on a bolt circle of diameter 70mm (radius 35mm) centered on the Z axis at 90-degree intervals: (35, 0), (0, 35), (-35, 0), (0, -35). Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-50, -50, 0],
+      "max": [50, 50, 40],
+      "tolerance_mm": 0.2
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 164184.76,
+      "tolerance_pct": 1.5
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 20.0,
+      "expected": 1,
+      "diameter_tolerance_mm": 0.1
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 20.0,
+      "positions": [[0, 0, 0]],
+      "tolerance_mm": 0.2
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 8.0,
+      "expected": 4,
+      "diameter_tolerance_mm": 0.05
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 8.0,
+      "positions": [
+        [35.0, 0.0, 0],
+        [0.0, 35.0, 0],
+        [-35.0, 0.0, 0],
+        [0.0, -35.0, 0]
+      ],
+      "tolerance_mm": 0.2
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 1.5 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 50000,
+    "max_wallclock_sec": 300,
+    "max_tool_calls": 60
+  },
+  "pass_k": 5,
+  "tags": ["sprocket", "hub", "keyway", "bolt-circle", "central-bore", "disc", "advanced"]
+}

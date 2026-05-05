@@ -1,0 +1,63 @@
+{
+  "id": "a6-compound-boss-01",
+  "suite": "A",
+  "tier": "A6",
+  "title": "Rectangular base with two raised cylindrical bosses, dual bores, and corner holes",
+  "prompt": "Make a compound boss plate as a single solid. The base is a rectangular plate 120mm × 80mm × 15mm, centered in X and Y with its bottom face on the XY plane (x in [-60, 60], y in [-40, 40], z in [0, 15]). Two cylindrical bosses of diameter 30mm and height 20mm rise from the top face of the base plate: the left boss is centered at (-30, 0) and spans z in [15, 35]; the right boss is centered at (30, 0) and spans z in [15, 35]. Through each boss and through the base plate below it, drill a coaxial through-bore of diameter 16mm along the Z axis: the left bore is centered at (-30, 0) and passes through z in [0, 35]; the right bore is centered at (30, 0) and passes through z in [0, 35]. Four corner bolt holes of diameter 8mm, axes parallel to Z, pass through the base plate only (z = 0 to z = 15), at positions (50, 30), (-50, 30), (-50, -30), (50, -30). Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-60, -40, 0],
+      "max": [60, 40, 35],
+      "tolerance_mm": 0.1
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 155184.95,
+      "center_of_mass": [0, 0, 9.78],
+      "tolerance_pct": 1.0
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 16.0,
+      "expected": 2,
+      "diameter_tolerance_mm": 0.1
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 16.0,
+      "positions": [[-30.0, 0.0, 0], [30.0, 0.0, 0]],
+      "tolerance_mm": 0.2
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 8.0,
+      "expected": 4,
+      "diameter_tolerance_mm": 0.05
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 8.0,
+      "positions": [
+        [50.0, 30.0, 0],
+        [-50.0, 30.0, 0],
+        [-50.0, -30.0, 0],
+        [50.0, -30.0, 0]
+      ],
+      "tolerance_mm": 0.2
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 1.0 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 50000,
+    "max_wallclock_sec": 300,
+    "max_tool_calls": 60
+  },
+  "pass_k": 5,
+  "tags": ["compound", "boss", "dual-bore", "rectangular-base", "bolt-holes", "advanced"]
+}

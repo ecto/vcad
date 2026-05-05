@@ -1,0 +1,34 @@
+{
+  "id": "a5-hex-bolt-blank-01",
+  "suite": "A",
+  "tier": "A5",
+  "title": "Hex-head bolt blank (head + shank, no thread)",
+  "prompt": "Make a hex-head bolt blank as a single solid with no holes. The hexagonal head is a regular hexagonal prism with flat-to-flat distance 24mm and height 14mm, base on the XY plane (z = 0 to z = 14), centered on the Z axis, oriented so two flats are parallel to the X axis (flat-to-flat distance 24mm in the Y direction, so the head spans y in [-12, 12] and x in [-13.856, 13.856]). Directly above the head and concentric with it is a cylindrical shank of diameter 14mm and height 46mm (z = 14 to z = 60). The combined part is a single solid: hexagonal head at bottom, cylindrical shank extending upward. Output a single solid with no bores or holes.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-13.856, -12, 0],
+      "max": [13.856, 12, 60],
+      "tolerance_mm": 0.2
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 14068.14,
+      "center_of_mass": [0, 0, 22.10],
+      "tolerance_pct": 1.5
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 1.5 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 40000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 40
+  },
+  "pass_k": 5,
+  "tags": ["bolt", "hex-head", "shank", "polygon", "machined"]
+}

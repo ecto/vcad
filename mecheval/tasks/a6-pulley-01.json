@@ -1,0 +1,46 @@
+{
+  "id": "a6-pulley-01",
+  "suite": "A",
+  "tier": "A6",
+  "title": "Flanged belt pulley with narrow groove section and central bore",
+  "prompt": "Make a flanged belt pulley as a single solid. The pulley has three coaxial sections stacked along Z, all centered on the Z axis, with the base on the XY plane. Bottom flange: a cylinder of diameter 80mm and height 8mm (z = 0 to z = 8). Belt groove section: a cylinder of diameter 50mm and height 24mm (z = 8 to z = 32). Top flange: a cylinder of diameter 80mm and height 8mm (z = 32 to z = 40). A central through-bore of diameter 16mm runs along the Z axis through the full height (z = 0 to z = 40). The three outer sections form the stepped outer profile of the pulley when unioned together; the belt rides in the groove between the two flanges. Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-40, -40, 0],
+      "max": [40, 40, 40],
+      "tolerance_mm": 0.1
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 119506.19,
+      "center_of_mass": [0, 0, 20.0],
+      "tolerance_pct": 1.0
+    },
+    {
+      "type": "hole_count",
+      "diameter_mm": 16.0,
+      "expected": 1,
+      "diameter_tolerance_mm": 0.1
+    },
+    {
+      "type": "hole_positions",
+      "diameter_mm": 16.0,
+      "positions": [[0, 0, 0]],
+      "tolerance_mm": 0.2
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 1.0 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 50000,
+    "max_wallclock_sec": 300,
+    "max_tool_calls": 60
+  },
+  "pass_k": 5,
+  "tags": ["pulley", "flanged", "belt-groove", "stepped-cylinder", "central-bore", "advanced"]
+}

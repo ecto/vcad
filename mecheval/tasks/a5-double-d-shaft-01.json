@@ -1,0 +1,34 @@
+{
+  "id": "a5-double-d-shaft-01",
+  "suite": "A",
+  "tier": "A5",
+  "title": "Cylindrical shaft with two opposing flats (double-D profile)",
+  "prompt": "Make a double-D profile shaft as a single solid. Start with a cylinder of diameter 40mm (radius 20mm) and height 60mm, with its base on the XY plane (z = 0 to z = 60), centered on the Z axis. Mill a flat on each side by subtracting a rectangular block from the left and from the right. The left flat is at x = -14: subtract all material at x < -14 (i.e. remove the cylindrical segment from x = -20 to x = -14, running the full height z = 0 to z = 60 and the full cylinder width in Y). The right flat is at x = +14: subtract all material at x > 14. The result is a shaft with flat-to-flat width 28mm and circular arc sections of radius 20mm on the front and back (+Y and -Y sides). Output a single solid.",
+  "inputs": [],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "bbox",
+      "min": [-14, -20, 0],
+      "max": [14, 20, 60],
+      "tolerance_mm": 0.15
+    },
+    {
+      "type": "mass_props",
+      "volume_mm3": 61214.28,
+      "center_of_mass": [0, 0, 30],
+      "tolerance_pct": 1.0
+    },
+    { "type": "step_roundtrip", "tolerance_pct": 1.0 }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1
+  },
+  "limits": {
+    "max_tokens": 40000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 40
+  },
+  "pass_k": 5,
+  "tags": ["shaft", "double-d", "flat", "boolean", "machined"]
+}
