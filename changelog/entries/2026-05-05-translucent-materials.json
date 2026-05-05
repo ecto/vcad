@@ -1,0 +1,13 @@
+{
+  "id": "2026-05-05-translucent-materials",
+  "version": "0.9.4",
+  "date": "2026-05-05",
+  "category": "feat",
+  "title": "Translucent and glass materials in the viewport",
+  "summary": "Material presets now support transmission, IOR, thickness, and clearcoat so glass enclosures and acrylic housings render with realistic refraction.",
+  "features": [
+    "rendering",
+    "materials",
+    "glass"
+  ]
+}

@@ -1,3 +1,4 @@
+import type React from "react";
 import { useRef, useEffect, useMemo, useState, useCallback, Suspense } from "react";
 import { Spherical, Vector3, Box3, Plane, Raycaster, Vector2, Quaternion, Matrix4, Color, TOUCH, PerspectiveCamera, WebGLRenderTarget, SRGBColorSpace, ACESFilmicToneMapping } from "three";
 
@@ -19,7 +20,14 @@ import {
   Lightformer,
   ContactShadows,
 } from "@react-three/drei";
-import { EffectComposer, N8AO, Vignette } from "@react-three/postprocessing";
+import {
+  EffectComposer,
+  N8AO,
+  Outline,
+  Select,
+  Selection,
+  Vignette,
+} from "@react-three/postprocessing";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { GridPlane } from "./GridPlane";
 import { SceneMesh, ImportedMesh } from "./SceneMesh";
@@ -1430,8 +1438,14 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
     return env.intensity ?? 1.0;
   }, [sceneSettings.environment]);
 
+  // Silhouette outline. Default on so the viewport gets the subtle dark
+  // contour around each part that polished CAD viewers all use; users can
+  // turn it off through SceneSettings.
+  const silhouetteSettings = sceneSettings.postProcessing.silhouette;
+  const silhouetteEnabled = silhouetteSettings?.enabled !== false;
+
   return (
-    <>
+    <Selection enabled={silhouetteEnabled}>
       {/* Engine-independent content - renders immediately */}
       {/* Scene lights from document settings */}
       {sceneSettings.lights.map((light) => {
@@ -1687,7 +1701,12 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
             {/* Plane gizmo at origin - inside rotation group so kernel planes display correctly */}
             <PlaneGizmo />
 
-            {/* Scene meshes - Assembly mode (instances) */}
+            {/* Wrap rendered parts in <Select> so the Outline post-effect
+                picks them up via the Selection context. Outline runs
+                regardless of vcad's own selection state — this just tells
+                the post-process which Object3Ds to find silhouettes for. */}
+            <Select enabled={silhouetteEnabled}>
+              {/* Scene meshes - Assembly mode (instances) */}
               {scene?.instances?.map((inst: EvaluatedInstance) => {
                 const instanceSelectionId = getInstanceSelectionId(inst);
                 // Create a minimal PartInfo-like object for instance rendering
@@ -1739,6 +1758,7 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
                     />
                   );
                 })}
+            </Select>
 
               {/* Debug: mesh boundary edges (holes in tessellation).
                   Toggle with Ctrl+Shift+B or
@@ -1785,47 +1805,57 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
         </>
       )}
 
-      {/* Post-processing effects - disabled during camera motion for FPS, and
-          while a WebXR session is active. EffectComposer renders to an
-          offscreen target and blits to the canvas, which doesn't write to the
-          XR layer's framebuffer — so in VR/AR the scene goes black and only
-          objects rendered directly by WebXRManager (hands, controllers) show. */}
-      {engineReady && !isCameraMoving && !xrPresenting && sceneSettings.postProcessing.ambientOcclusion?.enabled !== false && sceneSettings.postProcessing.vignette?.enabled !== false && (
-        <EffectComposer>
-          <N8AO
-            aoRadius={sceneSettings.postProcessing.ambientOcclusion?.radius ?? 0.5}
-            intensity={sceneSettings.postProcessing.ambientOcclusion?.intensity ?? (isDark ? 2 : 1.5)}
-            aoSamples={6}
-            denoiseSamples={4}
-          />
-          <Vignette
-            offset={sceneSettings.postProcessing.vignette?.offset ?? 0.3}
-            darkness={sceneSettings.postProcessing.vignette?.darkness ?? (isDark ? 0.5 : 0.3)}
-            eskil={false}
-          />
-        </EffectComposer>
-      )}
-      {/* AO only mode */}
-      {engineReady && !isCameraMoving && !xrPresenting && sceneSettings.postProcessing.ambientOcclusion?.enabled !== false && sceneSettings.postProcessing.vignette?.enabled === false && (
-        <EffectComposer>
-          <N8AO
-            aoRadius={sceneSettings.postProcessing.ambientOcclusion?.radius ?? 0.5}
-            intensity={sceneSettings.postProcessing.ambientOcclusion?.intensity ?? (isDark ? 2 : 1.5)}
-            aoSamples={6}
-            denoiseSamples={4}
-          />
-        </EffectComposer>
-      )}
-      {/* Vignette only mode */}
-      {engineReady && !isCameraMoving && !xrPresenting && sceneSettings.postProcessing.ambientOcclusion?.enabled === false && sceneSettings.postProcessing.vignette?.enabled !== false && (
-        <EffectComposer>
-          <Vignette
-            offset={sceneSettings.postProcessing.vignette?.offset ?? 0.3}
-            darkness={sceneSettings.postProcessing.vignette?.darkness ?? (isDark ? 0.5 : 0.3)}
-            eskil={false}
-          />
-        </EffectComposer>
-      )}
-    </>
+      {/* Post-processing effects. Sample counts drop while the camera is
+          moving so the scene keeps depth without tanking framerate, then
+          ramp back up once orbit settles. Disabled entirely while a WebXR
+          session is active — EffectComposer renders to an offscreen target
+          and blits to the canvas, which doesn't write to the XR layer's
+          framebuffer, so in VR/AR the scene would go black and only
+          objects rendered directly by WebXRManager (hands, controllers)
+          would show. */}
+      {engineReady && !xrPresenting && (() => {
+        const aoEnabled = sceneSettings.postProcessing.ambientOcclusion?.enabled !== false;
+        const vignetteEnabled = sceneSettings.postProcessing.vignette?.enabled !== false;
+        if (!aoEnabled && !vignetteEnabled && !silhouetteEnabled) return null;
+        // EffectComposer's children type is strict (`JSX.Element | JSX.Element[]`),
+        // so we build the array up-front rather than inlining `cond && <Effect/>`
+        // expressions, which would resolve to `false` when disabled.
+        const effects: React.JSX.Element[] = [];
+        if (aoEnabled) {
+          effects.push(
+            <N8AO
+              key="ao"
+              aoRadius={sceneSettings.postProcessing.ambientOcclusion?.radius ?? 0.5}
+              intensity={sceneSettings.postProcessing.ambientOcclusion?.intensity ?? (isDark ? 2 : 1.5)}
+              aoSamples={isCameraMoving ? 3 : 6}
+              denoiseSamples={isCameraMoving ? 1 : 4}
+            />,
+          );
+        }
+        if (silhouetteEnabled) {
+          effects.push(
+            <Outline
+              key="outline"
+              edgeStrength={silhouetteSettings?.edgeStrength ?? 2.0}
+              visibleEdgeColor={silhouetteSettings?.visibleEdgeColor ?? (isDark ? 0x0a0a0a : 0x111111)}
+              hiddenEdgeColor={silhouetteSettings?.hiddenEdgeColor ?? (isDark ? 0x0a0a0a : 0x111111)}
+              blur={false}
+              xRay={false}
+            />,
+          );
+        }
+        if (vignetteEnabled) {
+          effects.push(
+            <Vignette
+              key="vignette"
+              offset={sceneSettings.postProcessing.vignette?.offset ?? 0.3}
+              darkness={sceneSettings.postProcessing.vignette?.darkness ?? (isDark ? 0.5 : 0.3)}
+              eskil={false}
+            />,
+          );
+        }
+        return <EffectComposer>{effects}</EffectComposer>;
+      })()}
+    </Selection>
   );
 }

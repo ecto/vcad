@@ -1,0 +1,12 @@
+{
+  "id": "2026-05-05-silhouette-outline",
+  "version": "0.9.4",
+  "date": "2026-05-05",
+  "category": "feat",
+  "title": "Subtle dark silhouette around every part",
+  "summary": "A screen-space outline post-process draws a thin dark contour around every rendered part, the same touch polished CAD viewers use to keep parts legible against busy backgrounds.",
+  "features": [
+    "rendering",
+    "outline"
+  ]
+}

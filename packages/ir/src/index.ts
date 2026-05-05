@@ -508,6 +508,19 @@ export interface MaterialDef {
   roughness: number;
   density?: number;
   friction?: number;
+  /**
+   * Optional physically-based extensions. When `transmission > 0` the renderer
+   * switches to a `MeshPhysicalMaterial` so the part renders as glass /
+   * translucent plastic. The vcode (`.loon`) text format does not yet round-trip
+   * these — they survive the JSON `.vcad` format only.
+   */
+  transmission?: number;
+  ior?: number;
+  thickness?: number;
+  attenuationDistance?: number;
+  attenuationColor?: [number, number, number];
+  clearcoat?: number;
+  clearcoatRoughness?: number;
 }
 
 /** An entry in the scene — a root node with an assigned material. */
@@ -700,6 +713,18 @@ export interface Vignette {
   darkness?: number;
 }
 
+/** Silhouette / outline effect settings. Draws a subtle dark contour
+ * around every rendered part for a more "CAD viewer" look. */
+export interface Silhouette {
+  enabled: boolean;
+  /** Edge strength multiplier (default 2.0). Higher = thicker outline. */
+  edgeStrength?: number;
+  /** Outline color of edges that face the camera, packed 0xRRGGBB (default 0x000000). */
+  visibleEdgeColor?: number;
+  /** Outline color of edges occluded by other geometry, packed 0xRRGGBB (default 0x000000). */
+  hiddenEdgeColor?: number;
+}
+
 /** Tone mapping algorithm. */
 export type ToneMapping =
   | "none"
@@ -714,6 +739,7 @@ export interface PostProcessing {
   ambientOcclusion?: AmbientOcclusion;
   bloom?: Bloom;
   vignette?: Vignette;
+  silhouette?: Silhouette;
   toneMapping?: ToneMapping;
   exposure?: number;
 }
