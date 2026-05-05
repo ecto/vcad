@@ -26,6 +26,23 @@ export interface MaterialPreset {
   density: number; // kg/m³
   /** Optional procedural shader for realistic textures */
   proceduralShader?: ProceduralShaderType;
+  /**
+   * Light transmission, 0..1. Non-zero switches the renderer to a physical
+   * material so the part renders as glass / translucent plastic.
+   */
+  transmission?: number;
+  /** Index of refraction. Common: 1.45 (acrylic), 1.5 (glass), 1.585 (polycarbonate). */
+  ior?: number;
+  /** Volume thickness in mm; controls absorption depth for tinted transmission. */
+  thickness?: number;
+  /** Distance (mm) over which transmitted light is fully absorbed by `attenuationColor`. */
+  attenuationDistance?: number;
+  /** Tint color applied to transmitted light, RGB 0-1. */
+  attenuationColor?: [number, number, number];
+  /** Clearcoat layer strength, 0..1. */
+  clearcoat?: number;
+  /** Roughness of the clearcoat layer, 0..1. */
+  clearcoatRoughness?: number;
 }
 
 export const CATEGORY_LABELS: Record<MaterialCategory, string> = {
@@ -266,24 +283,60 @@ export const MATERIAL_PRESETS: MaterialPreset[] = [
     proceduralShader: "wood",
   },
 
-  // Glass (2)
+  // Glass (4)
   {
     key: "glass",
     name: "Glass",
     category: "glass",
-    color: [0.85, 0.9, 0.95],
+    color: [0.95, 0.97, 1.0],
     metallic: 0.0,
-    roughness: 0.05,
+    roughness: 0.02,
     density: 2500,
+    transmission: 1.0,
+    ior: 1.5,
+    thickness: 2.0,
   },
   {
     key: "glass-tinted",
     name: "Tinted Glass",
     category: "glass",
-    color: [0.3, 0.4, 0.45],
+    color: [0.85, 0.9, 0.95],
     metallic: 0.0,
     roughness: 0.05,
     density: 2500,
+    transmission: 0.95,
+    ior: 1.5,
+    thickness: 3.0,
+    attenuationDistance: 25,
+    attenuationColor: [0.3, 0.45, 0.55],
+  },
+  {
+    key: "acrylic-clear",
+    name: "Acrylic (Clear)",
+    category: "glass",
+    color: [0.98, 0.98, 1.0],
+    metallic: 0.0,
+    roughness: 0.05,
+    density: 1180,
+    transmission: 0.95,
+    ior: 1.49,
+    thickness: 2.0,
+    clearcoat: 0.5,
+    clearcoatRoughness: 0.05,
+  },
+  {
+    key: "polycarbonate-frosted",
+    name: "Polycarbonate (Frosted)",
+    category: "glass",
+    color: [0.92, 0.94, 0.96],
+    metallic: 0.0,
+    roughness: 0.35,
+    density: 1200,
+    transmission: 0.7,
+    ior: 1.585,
+    thickness: 2.5,
+    attenuationDistance: 50,
+    attenuationColor: [0.85, 0.9, 0.95],
   },
 
   // Composites (3)

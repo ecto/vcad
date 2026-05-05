@@ -24,6 +24,95 @@ const FACE_HIGHLIGHT_COLOR = new THREE.Color(0x00d4ff); // cyan for face selecti
 const DEG2RAD = Math.PI / 180;
 const NORMAL_TOLERANCE = 0.01; // Tolerance for grouping triangles by normal
 
+interface PbrMaterialProps {
+  color?: THREE.Color;
+  vertexColors?: boolean;
+  emissive?: THREE.Color;
+  emissiveIntensity?: number;
+  metalness: number;
+  roughness: number;
+  envMapIntensity?: number;
+  side?: THREE.Side;
+  transmission?: number;
+  ior?: number;
+  thickness?: number;
+  attenuationDistance?: number;
+  attenuationColor?: [number, number, number];
+  clearcoat?: number;
+  clearcoatRoughness?: number;
+}
+
+/**
+ * Renders `<meshPhysicalMaterial>` when transmission is set so the part shows
+ * up as glass / translucent plastic; otherwise emits the cheaper
+ * `<meshStandardMaterial>`. Both share the same prop surface for the standard
+ * PBR fields.
+ */
+function PbrMaterial({
+  color,
+  vertexColors,
+  emissive,
+  emissiveIntensity,
+  metalness,
+  roughness,
+  envMapIntensity = 1.0,
+  side = THREE.DoubleSide,
+  transmission,
+  ior,
+  thickness,
+  attenuationDistance,
+  attenuationColor,
+  clearcoat,
+  clearcoatRoughness,
+}: PbrMaterialProps) {
+  const usePhysical =
+    (transmission !== undefined && transmission > 0) ||
+    (clearcoat !== undefined && clearcoat > 0);
+
+  if (usePhysical) {
+    const attColor = attenuationColor
+      ? new THREE.Color(attenuationColor[0], attenuationColor[1], attenuationColor[2])
+      : undefined;
+    return (
+      <meshPhysicalMaterial
+        color={color}
+        vertexColors={vertexColors}
+        emissive={emissive}
+        emissiveIntensity={emissiveIntensity}
+        metalness={metalness}
+        roughness={roughness}
+        envMapIntensity={envMapIntensity}
+        flatShading={false}
+        side={side}
+        transmission={transmission ?? 0}
+        ior={ior ?? 1.5}
+        thickness={thickness ?? 0.5}
+        // Three.js treats Infinity as "no absorption", which is the right
+        // default when the user hasn't dialed in a tinted glass.
+        attenuationDistance={attenuationDistance ?? Infinity}
+        attenuationColor={attColor}
+        clearcoat={clearcoat ?? 0}
+        clearcoatRoughness={clearcoatRoughness ?? 0}
+        transparent={(transmission ?? 0) > 0}
+      />
+    );
+  }
+
+  return (
+    <meshStandardMaterial
+      color={color}
+      vertexColors={vertexColors}
+      emissive={emissive}
+      emissiveIntensity={emissiveIntensity}
+      metalness={metalness}
+      roughness={roughness}
+      envMapIntensity={envMapIntensity}
+      flatShading={false}
+      side={side}
+    />
+  );
+}
+
 /** Find all triangle indices that share the same normal as the given triangle */
 function findCoplanarTriangles(
   mesh: TriangleMesh,
@@ -256,6 +345,13 @@ export function ImportedMesh({ mesh, materialKey }: ImportedMeshProps) {
         color: preset.color,
         metallic: preset.metallic,
         roughness: preset.roughness,
+        transmission: preset.transmission,
+        ior: preset.ior,
+        thickness: preset.thickness,
+        attenuationDistance: preset.attenuationDistance,
+        attenuationColor: preset.attenuationColor,
+        clearcoat: preset.clearcoat,
+        clearcoatRoughness: preset.clearcoatRoughness,
       };
     }
     return null;
@@ -354,13 +450,17 @@ export function ImportedMesh({ mesh, materialKey }: ImportedMeshProps) {
   return (
     <mesh ref={meshRef} castShadow receiveShadow>
       <bufferGeometry ref={geoRef} />
-      <meshStandardMaterial
+      <PbrMaterial
         color={materialColor}
         metalness={materialDef?.metallic ?? 0.0}
         roughness={materialDef?.roughness ?? 0.7}
-        envMapIntensity={1.0}
-        flatShading={false}
-        side={THREE.DoubleSide}
+        transmission={materialDef?.transmission}
+        ior={materialDef?.ior}
+        thickness={materialDef?.thickness}
+        attenuationDistance={materialDef?.attenuationDistance}
+        attenuationColor={materialDef?.attenuationColor}
+        clearcoat={materialDef?.clearcoat}
+        clearcoatRoughness={materialDef?.clearcoatRoughness}
       />
       {showWireframe && geoReady && <Edges threshold={15} color="#666" />}
     </mesh>
@@ -447,6 +547,22 @@ export const SceneMesh = memo(function SceneMesh({
   // Resolve material from document, with live preview override
   const materialDef = useMemo(() => {
     // Check for active preview for this part
+    const synthesizeFromPreset = (preset: ReturnType<typeof getMaterialByKey>) => {
+      if (!preset) return null;
+      return {
+        name: preset.name,
+        color: preset.color,
+        metallic: preset.metallic,
+        roughness: preset.roughness,
+        transmission: preset.transmission,
+        ior: preset.ior,
+        thickness: preset.thickness,
+        attenuationDistance: preset.attenuationDistance,
+        attenuationColor: preset.attenuationColor,
+        clearcoat: preset.clearcoat,
+        clearcoatRoughness: preset.clearcoatRoughness,
+      };
+    };
     if (previewMaterial?.partId === partInfo.id) {
       const previewKey = previewMaterial.materialKey;
       // First check document materials
@@ -454,27 +570,11 @@ export const SceneMesh = memo(function SceneMesh({
         return materials[previewKey];
       }
       // Fall back to preset materials library
-      const preset = getMaterialByKey(previewKey);
-      if (preset) {
-        return {
-          name: preset.name,
-          color: preset.color,
-          metallic: preset.metallic,
-          roughness: preset.roughness,
-        };
-      }
+      const fromPreset = synthesizeFromPreset(getMaterialByKey(previewKey));
+      if (fromPreset) return fromPreset;
     }
     if (materials[materialKey]) return materials[materialKey];
-    const preset = getMaterialByKey(materialKey);
-    if (preset) {
-      return {
-        name: preset.name,
-        color: preset.color,
-        metallic: preset.metallic,
-        roughness: preset.roughness,
-      };
-    }
-    return null;
+    return synthesizeFromPreset(getMaterialByKey(materialKey));
   }, [materials, materialKey, previewMaterial, partInfo.id]);
 
   // Check if this material should use a procedural shader
@@ -836,16 +936,20 @@ export const SceneMesh = memo(function SceneMesh({
       <bufferGeometry ref={geoRef} />
       {/* Use procedural shader if available, otherwise standard PBR */}
       {!shaderMaterial && (
-        <meshStandardMaterial
+        <PbrMaterial
           color={mesh.colors ? undefined : materialColor}
           vertexColors={!!mesh.colors}
           emissive={emissiveColor}
           emissiveIntensity={emissiveIntensity}
           metalness={materialDef?.metallic ?? 0.0}
           roughness={materialDef?.roughness ?? 0.7}
-          envMapIntensity={1.0}
-          flatShading={false}
-          side={THREE.DoubleSide}
+          transmission={materialDef?.transmission}
+          ior={materialDef?.ior}
+          thickness={materialDef?.thickness}
+          attenuationDistance={materialDef?.attenuationDistance}
+          attenuationColor={materialDef?.attenuationColor}
+          clearcoat={materialDef?.clearcoat}
+          clearcoatRoughness={materialDef?.clearcoatRoughness}
         />
       )}
       {showWireframe && geoReady && <Edges threshold={15} color="#666" />}

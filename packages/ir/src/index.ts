@@ -508,6 +508,19 @@ export interface MaterialDef {
   roughness: number;
   density?: number;
   friction?: number;
+  /**
+   * Optional physically-based extensions. When `transmission > 0` the renderer
+   * switches to a `MeshPhysicalMaterial` so the part renders as glass /
+   * translucent plastic. The vcode (`.loon`) text format does not yet round-trip
+   * these — they survive the JSON `.vcad` format only.
+   */
+  transmission?: number;
+  ior?: number;
+  thickness?: number;
+  attenuationDistance?: number;
+  attenuationColor?: [number, number, number];
+  clearcoat?: number;
+  clearcoatRoughness?: number;
 }
 
 /** An entry in the scene — a root node with an assigned material. */
