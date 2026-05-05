@@ -19,7 +19,14 @@ import {
   Lightformer,
   ContactShadows,
 } from "@react-three/drei";
-import { EffectComposer, N8AO, Vignette } from "@react-three/postprocessing";
+import {
+  EffectComposer,
+  N8AO,
+  Outline,
+  Select,
+  Selection,
+  Vignette,
+} from "@react-three/postprocessing";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { GridPlane } from "./GridPlane";
 import { SceneMesh, ImportedMesh } from "./SceneMesh";
@@ -1430,8 +1437,14 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
     return env.intensity ?? 1.0;
   }, [sceneSettings.environment]);
 
+  // Silhouette outline. Default on so the viewport gets the subtle dark
+  // contour around each part that polished CAD viewers all use; users can
+  // turn it off through SceneSettings.
+  const silhouetteSettings = sceneSettings.postProcessing.silhouette;
+  const silhouetteEnabled = silhouetteSettings?.enabled !== false;
+
   return (
-    <>
+    <Selection enabled={silhouetteEnabled}>
       {/* Engine-independent content - renders immediately */}
       {/* Scene lights from document settings */}
       {sceneSettings.lights.map((light) => {
@@ -1687,7 +1700,12 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
             {/* Plane gizmo at origin - inside rotation group so kernel planes display correctly */}
             <PlaneGizmo />
 
-            {/* Scene meshes - Assembly mode (instances) */}
+            {/* Wrap rendered parts in <Select> so the Outline post-effect
+                picks them up via the Selection context. Outline runs
+                regardless of vcad's own selection state — this just tells
+                the post-process which Object3Ds to find silhouettes for. */}
+            <Select enabled={silhouetteEnabled}>
+              {/* Scene meshes - Assembly mode (instances) */}
               {scene?.instances?.map((inst: EvaluatedInstance) => {
                 const instanceSelectionId = getInstanceSelectionId(inst);
                 // Create a minimal PartInfo-like object for instance rendering
@@ -1739,6 +1757,7 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
                     />
                   );
                 })}
+            </Select>
 
               {/* Debug: mesh boundary edges (holes in tessellation).
                   Toggle with Ctrl+Shift+B or
@@ -1793,42 +1812,38 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
           framebuffer, so in VR/AR the scene would go black and only
           objects rendered directly by WebXRManager (hands, controllers)
           would show. */}
-      {engineReady && !xrPresenting && sceneSettings.postProcessing.ambientOcclusion?.enabled !== false && sceneSettings.postProcessing.vignette?.enabled !== false && (
+      {engineReady && !xrPresenting && (
+        sceneSettings.postProcessing.ambientOcclusion?.enabled !== false ||
+        sceneSettings.postProcessing.vignette?.enabled !== false ||
+        silhouetteEnabled
+      ) && (
         <EffectComposer>
-          <N8AO
-            aoRadius={sceneSettings.postProcessing.ambientOcclusion?.radius ?? 0.5}
-            intensity={sceneSettings.postProcessing.ambientOcclusion?.intensity ?? (isDark ? 2 : 1.5)}
-            aoSamples={isCameraMoving ? 3 : 6}
-            denoiseSamples={isCameraMoving ? 1 : 4}
-          />
-          <Vignette
-            offset={sceneSettings.postProcessing.vignette?.offset ?? 0.3}
-            darkness={sceneSettings.postProcessing.vignette?.darkness ?? (isDark ? 0.5 : 0.3)}
-            eskil={false}
-          />
+          {sceneSettings.postProcessing.ambientOcclusion?.enabled !== false && (
+            <N8AO
+              aoRadius={sceneSettings.postProcessing.ambientOcclusion?.radius ?? 0.5}
+              intensity={sceneSettings.postProcessing.ambientOcclusion?.intensity ?? (isDark ? 2 : 1.5)}
+              aoSamples={isCameraMoving ? 3 : 6}
+              denoiseSamples={isCameraMoving ? 1 : 4}
+            />
+          )}
+          {silhouetteEnabled && (
+            <Outline
+              edgeStrength={silhouetteSettings?.edgeStrength ?? 2.0}
+              visibleEdgeColor={silhouetteSettings?.visibleEdgeColor ?? (isDark ? 0x0a0a0a : 0x111111)}
+              hiddenEdgeColor={silhouetteSettings?.hiddenEdgeColor ?? (isDark ? 0x0a0a0a : 0x111111)}
+              blur={false}
+              xRay={false}
+            />
+          )}
+          {sceneSettings.postProcessing.vignette?.enabled !== false && (
+            <Vignette
+              offset={sceneSettings.postProcessing.vignette?.offset ?? 0.3}
+              darkness={sceneSettings.postProcessing.vignette?.darkness ?? (isDark ? 0.5 : 0.3)}
+              eskil={false}
+            />
+          )}
         </EffectComposer>
       )}
-      {/* AO only mode */}
-      {engineReady && !xrPresenting && sceneSettings.postProcessing.ambientOcclusion?.enabled !== false && sceneSettings.postProcessing.vignette?.enabled === false && (
-        <EffectComposer>
-          <N8AO
-            aoRadius={sceneSettings.postProcessing.ambientOcclusion?.radius ?? 0.5}
-            intensity={sceneSettings.postProcessing.ambientOcclusion?.intensity ?? (isDark ? 2 : 1.5)}
-            aoSamples={isCameraMoving ? 3 : 6}
-            denoiseSamples={isCameraMoving ? 1 : 4}
-          />
-        </EffectComposer>
-      )}
-      {/* Vignette only mode */}
-      {engineReady && !xrPresenting && sceneSettings.postProcessing.ambientOcclusion?.enabled === false && sceneSettings.postProcessing.vignette?.enabled !== false && (
-        <EffectComposer>
-          <Vignette
-            offset={sceneSettings.postProcessing.vignette?.offset ?? 0.3}
-            darkness={sceneSettings.postProcessing.vignette?.darkness ?? (isDark ? 0.5 : 0.3)}
-            eskil={false}
-          />
-        </EffectComposer>
-      )}
-    </>
+    </Selection>
   );
 }
