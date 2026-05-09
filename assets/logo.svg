@@ -1,0 +1,102 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!--
+    vcad app icon — concept: "The Open Solid"
+    Iso-projected cube with the front (1,1,1) corner truncated, revealing
+    the boundary surface as a triangular cut face. The cube is the volume
+    you think it is; the icon shows that vcad represents it as its skin.
+
+    Geometry (axonometric, 30°/30°, edge unit L=240, centered at 512,512):
+      hexagon corners — top (512,272), upper-right (719.84,392),
+        lower-right (719.84,632), bottom (512,752),
+        lower-left (304.16,632), upper-left (304.16,392)
+      cut triangle — (408,452), (616,452), (512,632)
+  -->
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="38%" r="78%">
+      <stop offset="0%"   stop-color="#1b2233"/>
+      <stop offset="60%"  stop-color="#0d1119"/>
+      <stop offset="100%" stop-color="#05070b"/>
+    </radialGradient>
+
+    <linearGradient id="faceTop" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0%"   stop-color="#6a7693"/>
+      <stop offset="55%"  stop-color="#48536a"/>
+      <stop offset="100%" stop-color="#2f3848"/>
+    </linearGradient>
+
+    <linearGradient id="faceRight" x1="0" y1="0.2" x2="1" y2="0.85">
+      <stop offset="0%"   stop-color="#404a5e"/>
+      <stop offset="100%" stop-color="#222936"/>
+    </linearGradient>
+
+    <linearGradient id="faceLeft" x1="1" y1="0.2" x2="0" y2="0.85">
+      <stop offset="0%"   stop-color="#2c3444"/>
+      <stop offset="100%" stop-color="#171c26"/>
+    </linearGradient>
+
+    <radialGradient id="cavity" cx="50%" cy="55%" r="65%">
+      <stop offset="0%"   stop-color="#3a2418"/>
+      <stop offset="35%"  stop-color="#1a0f08"/>
+      <stop offset="100%" stop-color="#000000"/>
+    </radialGradient>
+
+    <linearGradient id="topHighlight" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="50%"  stop-color="#ffffff" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+
+    <filter id="edgeGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
+
+    <filter id="contactShadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="22"/>
+    </filter>
+
+    <clipPath id="squircle">
+      <rect x="0" y="0" width="1024" height="1024" rx="230" ry="230"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#squircle)">
+    <rect width="1024" height="1024" fill="url(#bg)"/>
+
+    <ellipse cx="512" cy="808" rx="252" ry="26" fill="#000" opacity="0.6" filter="url(#contactShadow)"/>
+
+    <polygon points="512,272 719.84,392 616,452 408,452 304.16,392" fill="url(#faceTop)"/>
+    <polygon points="719.84,392 719.84,632 512,752 512,632 616,452" fill="url(#faceRight)"/>
+    <polygon points="512,752 304.16,632 304.16,392 408,452 512,632"  fill="url(#faceLeft)"/>
+
+    <polygon points="408,452 616,452 512,632" fill="url(#cavity)"/>
+    <circle cx="512" cy="512" r="14" fill="#3a2a1c" opacity="0.55"/>
+
+    <g stroke="#1a2030" stroke-width="2" fill="none" stroke-linejoin="round" opacity="0.9">
+      <polygon points="512,272 719.84,392 719.84,632 512,752 304.16,632 304.16,392"/>
+      <line x1="719.84" y1="392" x2="616" y2="452"/>
+      <line x1="304.16" y1="392" x2="408" y2="452"/>
+      <line x1="512"    y1="752" x2="512" y2="632"/>
+    </g>
+
+    <g filter="url(#edgeGlow)" opacity="0.85">
+      <polygon points="408,452 616,452 512,632" fill="none" stroke="#00b4d8" stroke-width="6" stroke-linejoin="round"/>
+    </g>
+    <polygon points="408,452 616,452 512,632" fill="none" stroke="#7be9ff" stroke-width="2.5" stroke-linejoin="round"/>
+
+    <g>
+      <line x1="304.16" y1="392" x2="512"    y2="272" stroke="url(#topHighlight)" stroke-width="2.5" stroke-linecap="round"/>
+      <line x1="512"    y1="272" x2="719.84" y2="392" stroke="url(#topHighlight)" stroke-width="2.5" stroke-linecap="round" opacity="0.7"/>
+    </g>
+
+    <g fill="#9bf0ff">
+      <circle cx="408" cy="452" r="6"/>
+      <circle cx="616" cy="452" r="6"/>
+      <circle cx="512" cy="632" r="6"/>
+    </g>
+    <g fill="#ffffff" opacity="0.85">
+      <circle cx="408" cy="452" r="2"/>
+      <circle cx="616" cy="452" r="2"/>
+      <circle cx="512" cy="632" r="2"/>
+    </g>
+  </g>
+</svg>
