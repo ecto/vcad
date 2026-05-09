@@ -6,7 +6,7 @@ mod platform;
 
 use tauri::Manager;
 
-use commands::{bambu, local_ai};
+use commands::{bambu, context_menu, local_ai};
 
 fn main() {
     vcad_i18n::init(&vcad_i18n::Locale::from_env());
@@ -27,6 +27,10 @@ fn main() {
                 app.set_activation_policy(tauri::ActivationPolicy::Regular);
             }
             menu::install(&app.handle())?;
+            // Holds the live popup menu's items so they outlive the click
+            // closures — Tauri's popup is fire-and-forget and the OS keeps
+            // a weak ref to the menu object.
+            app.manage(context_menu::ContextMenuState::<tauri::Wry>::new());
             if let Some(window) = app.get_webview_window("main") {
                 platform::apply_window_effects(&window);
                 let _ = window.show();
@@ -35,7 +39,14 @@ fn main() {
             Ok(())
         })
         .on_menu_event(|app, event| {
-            menu::handle_event(app, event.id().as_ref());
+            let id = event.id().as_ref();
+            // Top-level menu and popup menus share Tauri's single event
+            // stream. We dispatch both: top-level ids land on the
+            // `menu-command` channel, popup ids on `context-menu-select`.
+            // The webview only listens to the relevant one for each
+            // surface, so harmless overlap if an id collides.
+            menu::handle_event(app, id);
+            context_menu::handle_event(app, id);
         })
         .invoke_handler(tauri::generate_handler![
             bambu::bambu_discover,
@@ -46,6 +57,9 @@ fn main() {
             local_ai::local_ai_probe,
             local_ai::local_ai_chat_stream,
             menu::set_menu_enabled,
+            context_menu::show_context_menu,
+            platform::set_document_edited,
+            platform::set_represented_filename,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

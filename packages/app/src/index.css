@@ -442,3 +442,157 @@ body {
   outline: none;
   box-shadow: none;
 }
+
+/* ─── macOS native shell ─────────────────────────────────────────────────
+ * `body.tauri-mac` is set by `useNativeShellClass()` once the Tauri probe
+ * resolves. Everything in this block layers on top of the existing dark
+ * (default) and light themes so we never fight them — we just lift the
+ * background opacity off chrome so the AppKit `Sidebar` vibrancy material
+ * (applied to NSWindow in Rust) bleeds through.
+ *
+ * The 3D viewport canvas paints opaque pixels, so it's unaffected by the
+ * background changes — only the chrome panels inherit the blur.
+ *
+ * Shape:
+ *  - bg              → fully transparent (so vibrancy carries the wash)
+ *  - surface (chrome panels) → translucent over vibrancy
+ *  - card (raised content)   → slightly more opaque
+ *  - border          → softer to match macOS hairlines
+ * ──────────────────────────────────────────────────────────────────────── */
+body.tauri-mac {
+  /* Dark theme — UnderWindowBackground reads as charcoal at ~0.7-0.8 alpha.
+     We tune surfaces just dark enough to keep text contrast >= 7:1. */
+  --bg: rgba(28, 28, 28, 0.0);
+  --surface: rgba(38, 38, 38, 0.62);
+  --card: rgba(48, 48, 48, 0.72);
+  --border: rgba(255, 255, 255, 0.10);
+  --hover: rgba(255, 255, 255, 0.06);
+}
+body.tauri-mac:has(:root.light) {
+  /* Light theme — Sidebar material reads as ~#e8e8e8 with subtle blur. */
+  --bg: rgba(0, 0, 0, 0.0);
+  --surface: rgba(245, 245, 247, 0.55);
+  --card: rgba(255, 255, 255, 0.72);
+  --border: rgba(0, 0, 0, 0.08);
+  --hover: rgba(0, 0, 0, 0.04);
+}
+/* HTML must allow vibrancy to pass through the document background as
+   well — Tauri's transparent window only helps if the page itself isn't
+   painting an opaque rect. */
+html.tauri-mac, body.tauri-mac { background: transparent; }
+
+/* ─── AppKit motion springs ──────────────────────────────────────────────
+ * macOS animations use a spring curve that decelerates harder than
+ * `ease-out` and slightly overshoots before settling. Apple publishes
+ * these as `.smooth` / `.snappy` SwiftUI presets; `(0.32, 0.72, 0, 1)` is
+ * the standard CSS approximation. Apply via the `appkit-spring` utility
+ * to opt specific transitions in — we deliberately don't override the
+ * whole base layer because some web components (Radix, headlessui)
+ * tune their own timings already.
+ * ──────────────────────────────────────────────────────────────────────── */
+.appkit-spring {
+  transition-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+}
+.appkit-spring-quick {
+  transition-timing-function: cubic-bezier(0.4, 0.0, 0.2, 1);
+  transition-duration: 140ms;
+}
+
+/* ─── Focus rings: keyboard-only ─────────────────────────────────────────
+ * Native macOS apps don't paint focus rings on mouse interaction — they
+ * only show on Tab. The browser's default `:focus` lights up rings on
+ * mouse clicks too, which feels distinctly web-y. Strip the mouse-focus
+ * ring globally on Tauri-mac, but keep `:focus-visible` rings so
+ * keyboard users still get the affordance.
+ *
+ * We only narrow this on `body.tauri-mac` so the browser build keeps the
+ * default a11y behavior. Inputs are exempt — text fields keep their
+ * focus ring on click, like every native text input on macOS.
+ * ──────────────────────────────────────────────────────────────────────── */
+body.tauri-mac :is(button, [role="button"], a, [tabindex]):focus:not(:focus-visible) {
+  outline: none;
+  box-shadow: none;
+}
+
+/* ─── Overlay scrollbars on macOS ────────────────────────────────────────
+ * Native Mac scrollbars overlay content and only appear during scroll;
+ * the browser default takes layout space. WebKit lets us approximate
+ * with width:0 + a thumb that's only painted on hover. Keep this
+ * scoped to Tauri-mac so the browser build stays consistent across
+ * platforms. The `.scrollbar-thin` utility opt-in still wins where
+ * present (for drawers that want a permanent track). */
+body.tauri-mac *:not(.scrollbar-thin)::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+body.tauri-mac *:not(.scrollbar-thin)::-webkit-scrollbar-track {
+  background: transparent;
+}
+body.tauri-mac *:not(.scrollbar-thin)::-webkit-scrollbar-thumb {
+  background: transparent;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+body.tauri-mac *:not(.scrollbar-thin):hover::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  background-clip: padding-box;
+}
+body.tauri-mac:has(:root.light) *:not(.scrollbar-thin):hover::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.22);
+  background-clip: padding-box;
+}
+
+/* ─── System font stack on macOS ─────────────────────────────────────────
+ * Tauri-mac picks up SF Pro via `-apple-system`, but Inter is loaded
+ * first in our cascade. We deliberately keep Inter as the primary —
+ * vcad has a designed identity around it — but tune metrics so it
+ * pairs well with the surrounding AppKit chrome (window menu bar, dock
+ * tooltips). Slight negative tracking at small sizes matches AppKit's
+ * default tracking better; full-weight body text stays as-is. */
+body.tauri-mac {
+  font-feature-settings: "ss01", "cv11";  /* Inter's straighter "a" + tighter alts */
+  letter-spacing: -0.005em;
+}
+
+/* ─── Title-bar / proxy strip ────────────────────────────────────────────
+ * Used by DocTitle when running in Tauri-mac to render the file name with
+ * native-feeling spacing and the modified-dot affordance. The dot is a
+ * 6×6 amber/brand circle inset to the left of the name when isDirty —
+ * mirrors the system close-traffic-light dot for users who can't see
+ * the OS-rendered one (overlay mode hides per-window glyphs sometimes). */
+.proxy-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: linear-gradient(135deg, var(--color-brand) 0%, #b91752 100%);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  user-select: none;
+}
+.proxy-icon[draggable="true"] {
+  cursor: grab;
+}
+.proxy-icon[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+/* Path popover (⌘-click on the proxy icon) — slim breadcrumb panel that
+   slides down from the title bar, Finder-style. */
+.path-popover {
+  background: var(--card);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  animation: path-popover-in 220ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+@keyframes path-popover-in {
+  from { opacity: 0; transform: translate(-50%, -4px) scale(0.98); }
+  to   { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}

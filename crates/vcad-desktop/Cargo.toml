@@ -37,3 +37,5 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 
 [target."cfg(target_os = \"macos\")".dependencies]
 window-vibrancy = "0.6"
+cocoa = "0.26"
+objc = "0.2"

@@ -107,3 +107,23 @@ export function useCapabilities(): Capabilities {
   }, []);
   return caps;
 }
+
+/**
+ * Stamp body classes that scope macOS-specific styling — vibrancy
+ * translucency, AppKit motion springs, system-font fallback. Pure side
+ * effect; runs once after capabilities resolve. Lives here (not in CSS
+ * via @media) because macOS detection requires a Tauri probe, not just a
+ * UA sniff: the browser build on Mac shouldn't pretend to be a desktop
+ * app, and the desktop build on Linux shouldn't pull in mac styling.
+ */
+export function useNativeShellClass(): void {
+  const { tauri, platform } = useCapabilities();
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const cls = document.body.classList;
+    cls.toggle("tauri", tauri);
+    cls.toggle("tauri-mac", tauri && platform === "mac");
+    cls.toggle("tauri-windows", tauri && platform === "windows");
+    cls.toggle("tauri-linux", tauri && platform === "linux");
+  }, [tauri, platform]);
+}
