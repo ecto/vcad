@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use vcad_ir::{
-    CsgOp, Document, Instance, Joint as VcadJoint, JointKind, MaterialDef, Node, NodeId, PartDef,
-    SceneEntry, Vec3,
+    CsgOp, Document, InertialProperties, Instance, Joint as VcadJoint, JointKind, MaterialDef,
+    Node, NodeId, PartDef, SceneEntry, Vec3,
 };
 
 use crate::error::UrdfError;
@@ -282,6 +282,7 @@ impl<'a> UrdfReader<'a> {
                     name: Some(link.name.clone()),
                     root: node_id,
                     default_material: Some("default".to_string()),
+                    inertial: None,
                 },
                 nodes,
             ));
@@ -369,12 +370,41 @@ impl<'a> UrdfReader<'a> {
             geom_node_id
         };
 
+        let inertial = link.inertial.as_ref().map(|i| {
+            // URDF stores COM in metres relative to the link frame; the rest
+            // of the IR uses millimetres.
+            let com_xyz = i
+                .origin
+                .as_ref()
+                .map(|o| o.xyz_vec())
+                .unwrap_or([0.0, 0.0, 0.0]);
+            let inertia = &i.inertia;
+            InertialProperties {
+                mass_kg: i.mass.value,
+                com_mm: Vec3::new(
+                    com_xyz[0] * 1000.0,
+                    com_xyz[1] * 1000.0,
+                    com_xyz[2] * 1000.0,
+                ),
+                // [ixx, iyy, izz, ixy, ixz, iyz]
+                inertia_kg_m2: [
+                    inertia.ixx,
+                    inertia.iyy,
+                    inertia.izz,
+                    inertia.ixy,
+                    inertia.ixz,
+                    inertia.iyz,
+                ],
+            }
+        });
+
         Ok((
             PartDef {
                 id: format!("part_{}", link.name),
                 name: Some(link.name.clone()),
                 root: root_id,
                 default_material: Some("default".to_string()),
+                inertial,
             },
             nodes,
         ))

@@ -493,6 +493,7 @@ mod tests {
                 name: Some("Base".to_string()),
                 root: 1,
                 default_material: Some("steel".to_string()),
+                inertial: None,
             },
         );
         doc.part_defs = Some(part_defs);

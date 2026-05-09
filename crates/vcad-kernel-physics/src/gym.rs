@@ -294,6 +294,7 @@ mod tests {
                 name: Some("Base".to_string()),
                 root: 1,
                 default_material: None,
+                inertial: None,
             },
         );
         part_defs.insert(
@@ -303,6 +304,7 @@ mod tests {
                 name: Some("Link 1".to_string()),
                 root: 2,
                 default_material: None,
+                inertial: None,
             },
         );
         part_defs.insert(
@@ -312,6 +314,7 @@ mod tests {
                 name: Some("Link 2".to_string()),
                 root: 3,
                 default_material: None,
+                inertial: None,
             },
         );
         doc.part_defs = Some(part_defs);

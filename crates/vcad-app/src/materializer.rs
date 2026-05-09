@@ -1144,6 +1144,7 @@ fn materialize_part_def(
             name: part_name,
             root,
             default_material,
+            inertial: None,
         },
     );
 }

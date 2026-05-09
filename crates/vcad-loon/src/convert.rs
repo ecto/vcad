@@ -180,6 +180,7 @@ fn convert_assembly(ctx: &mut ConvertCtx, fields: &[Value]) -> Result<(), String
                 name: Some(name),
                 root: root_id,
                 default_material: Some(material),
+                inertial: None,
             },
         );
     }

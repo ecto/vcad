@@ -195,6 +195,7 @@ mod tests {
                 name: None,
                 root: 42,
                 default_material: None,
+                inertial: None,
             },
         );
         doc.part_defs = Some(pd);

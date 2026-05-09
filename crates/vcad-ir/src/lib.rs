@@ -182,6 +182,36 @@ pub struct PartDef {
     /// Default material key.
     #[serde(rename = "defaultMaterial", skip_serializing_if = "Option::is_none")]
     pub default_material: Option<String>,
+    /// Authored inertial properties (mass, inertia tensor, COM).
+    ///
+    /// When present, physics simulation uses these values instead of
+    /// re-deriving them from a tessellated mesh + density. Set by the URDF
+    /// importer for any link that carries an `<inertial>` block.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inertial: Option<InertialProperties>,
+}
+
+/// Authored mass / inertia / center-of-mass for a part.
+///
+/// Mirrors the URDF `<inertial>` element. The inertia tensor is symmetric;
+/// only the upper triangle is stored. Units intentionally match the source:
+///
+/// * `mass_kg` — kilograms
+/// * `inertia_kg_m2` — kilogram·metre²
+/// * `com_mm` — part-local centre of mass in millimetres (matches the rest
+///   of the IR)
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct InertialProperties {
+    /// Mass in kilograms.
+    #[serde(rename = "mass")]
+    pub mass_kg: f64,
+    /// Centre of mass offset in part-local coordinates, millimetres.
+    #[serde(rename = "com")]
+    pub com_mm: Vec3,
+    /// Symmetric inertia tensor about the COM, in kg·m².
+    /// Order: `[ixx, iyy, izz, ixy, ixz, iyz]`.
+    #[serde(rename = "inertia")]
+    pub inertia_kg_m2: [f64; 6],
 }
 
 // ============================================================================
@@ -1487,6 +1517,7 @@ mod tests {
                 name: Some("Base Plate".to_string()),
                 root: cube_id,
                 default_material: Some("aluminum".to_string()),
+                inertial: None,
             },
         );
         part_defs.insert(
@@ -1496,6 +1527,7 @@ mod tests {
                 name: Some("Arm".to_string()),
                 root: cyl_id,
                 default_material: None,
+                inertial: None,
             },
         );
         doc.part_defs = Some(part_defs);

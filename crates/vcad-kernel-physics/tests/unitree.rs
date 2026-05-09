@@ -16,6 +16,19 @@ fn examples_dir() -> PathBuf {
     p
 }
 
+/// Sum the URDF-authored masses on every PartDef. The test below sanity-checks
+/// this value so a future change that drops <inertial> on the floor is loud.
+fn total_authored_mass(doc: &vcad_ir::Document) -> f64 {
+    doc.part_defs
+        .as_ref()
+        .map(|defs| {
+            defs.values()
+                .filter_map(|pd| pd.inertial.as_ref().map(|i| i.mass_kg))
+                .sum()
+        })
+        .unwrap_or(0.0)
+}
+
 #[test]
 fn unitree_g1_loads_and_steps() {
     let urdf_path = examples_dir().join("unitree-g1.urdf");
@@ -26,6 +39,15 @@ fn unitree_g1_loads_and_steps() {
     // fixed) through joint_ids(); fixed entries simply have zero DOF.
     let urdf_joints = doc.joints.as_ref().expect("has joints").len();
     assert_eq!(urdf_joints, 26, "G1 URDF should expose 26 joints total");
+
+    // URDF inertials must propagate through the importer onto every PartDef,
+    // not get reinvented from mesh density at physics time. The simplified G1
+    // sums to ~25 kg of authored mass (real G1 is ~35 kg incl. battery + skin).
+    let total_mass = total_authored_mass(&doc);
+    assert!(
+        total_mass > 20.0 && total_mass < 40.0,
+        "G1 authored mass out of expected range: {total_mass} kg"
+    );
 
     let mut world = PhysicsWorld::from_document(&doc).expect("build PhysicsWorld");
 

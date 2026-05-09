@@ -6,7 +6,7 @@ use phyz::aba_with_external_forces;
 use phyz::math::{Mat3, Quat, SpatialInertia, SpatialTransform, Vec3};
 use phyz::model::{Model, ModelBuilder, State};
 use phyz::{forward_kinematics, Geometry};
-use vcad_ir::{Document, JointKind};
+use vcad_ir::{Document, InertialProperties, JointKind};
 
 use crate::colliders::{estimate_mass, mesh_to_collider, ColliderStrategy};
 use crate::error::PhysicsError;
@@ -87,58 +87,88 @@ impl PhysicsWorld {
         let mut body_geometries: Vec<Option<Geometry>> = Vec::new();
         let mut body_count = 0usize;
 
-        // Helper: evaluate mesh and compute inertia for an instance
+        // Helper: evaluate mesh, mass, and (optionally) authored inertials
+        // for an instance. When the instance's PartDef carries an
+        // `inertial` block (set by the URDF importer for any link with an
+        // `<inertial>` tag), we surface those values; the caller prefers
+        // them over mesh-derived inertia.
         let eval_instance = |inst: &vcad_ir::Instance| -> Result<
-            (vcad_kernel_tessellate::TriangleMesh, f64, Geometry),
+            (
+                vcad_kernel_tessellate::TriangleMesh,
+                f64,
+                Geometry,
+                Option<InertialProperties>,
+            ),
             PhysicsError,
         > {
             let part_def = part_defs
                 .get(&inst.part_def_id)
                 .ok_or_else(|| PhysicsError::MissingPartDef(inst.part_def_id.clone()))?;
             let mesh = Self::evaluate_part(doc, part_def.root)?;
-            let density = doc
-                .materials
-                .get(inst.material.as_deref().unwrap_or("default"))
-                .and_then(|m| m.density)
-                .unwrap_or(1000.0);
-            let mass = estimate_mass(&mesh, density);
+            let authored = part_def.inertial;
+            let mass = match authored {
+                Some(props) => props.mass_kg,
+                None => {
+                    let density = doc
+                        .materials
+                        .get(inst.material.as_deref().unwrap_or("default"))
+                        .and_then(|m| m.density)
+                        .unwrap_or(1000.0);
+                    estimate_mass(&mesh, density)
+                }
+            };
             let geometry = mesh_to_collider(&mesh, ColliderStrategy::ConvexHull, &inst.id)?;
-            Ok((mesh, mass, geometry))
+            Ok((mesh, mass, geometry, authored))
         };
 
-        // Compute a box inertia from mass and mesh bounding box, with the
-        // COM placed at the bbox center. Without this offset, RNEA / ABA
-        // see a body whose mass acts at the joint origin — gravity then
-        // exerts no moment and torque budgeting / settling are wrong.
-        let compute_inertia =
-            |mesh: &vcad_kernel_tessellate::TriangleMesh, mass: f64| -> SpatialInertia {
-                let mut min = Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
-                let mut max = Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
-                for v in mesh.vertices.chunks(3) {
-                    let x = v[0] as f64 / 1000.0;
-                    let y = v[1] as f64 / 1000.0;
-                    let z = v[2] as f64 / 1000.0;
-                    min.x = min.x.min(x);
-                    min.y = min.y.min(y);
-                    min.z = min.z.min(z);
-                    max.x = max.x.max(x);
-                    max.y = max.y.max(y);
-                    max.z = max.z.max(z);
-                }
-                let dx = max.x - min.x;
-                let dy = max.y - min.y;
-                let dz = max.z - min.z;
+        // Build a SpatialInertia, preferring authored mass/inertia/COM
+        // (e.g. straight from URDF `<inertial>`) over a mesh-derived
+        // estimate. Without authored data we fall back to a box inertia
+        // computed from the mesh bounding box, with the COM placed at the
+        // bbox center — without this offset, RNEA / ABA see a body whose
+        // mass acts at the joint origin and gravity exerts no moment.
+        let build_inertia = |mesh: &vcad_kernel_tessellate::TriangleMesh,
+                             mass: f64,
+                             authored: Option<InertialProperties>|
+         -> SpatialInertia {
+            if let Some(props) = authored {
+                // Authored COM is in mm; phyz uses metres.
                 let com = Vec3::new(
-                    0.5 * (min.x + max.x),
-                    0.5 * (min.y + max.y),
-                    0.5 * (min.z + max.z),
+                    props.com_mm.x / 1000.0,
+                    props.com_mm.y / 1000.0,
+                    props.com_mm.z / 1000.0,
                 );
-                let ixx = mass / 12.0 * (dy * dy + dz * dz);
-                let iyy = mass / 12.0 * (dx * dx + dz * dz);
-                let izz = mass / 12.0 * (dx * dx + dy * dy);
-                let inertia_mat = Mat3::new(ixx, 0.0, 0.0, 0.0, iyy, 0.0, 0.0, 0.0, izz);
-                SpatialInertia::new(mass, com, inertia_mat)
-            };
+                let [ixx, iyy, izz, ixy, ixz, iyz] = props.inertia_kg_m2;
+                let inertia_mat = Mat3::new(ixx, ixy, ixz, ixy, iyy, iyz, ixz, iyz, izz);
+                return SpatialInertia::new(props.mass_kg, com, inertia_mat);
+            }
+            let mut min = Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
+            let mut max = Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+            for v in mesh.vertices.chunks(3) {
+                let x = v[0] as f64 / 1000.0;
+                let y = v[1] as f64 / 1000.0;
+                let z = v[2] as f64 / 1000.0;
+                min.x = min.x.min(x);
+                min.y = min.y.min(y);
+                min.z = min.z.min(z);
+                max.x = max.x.max(x);
+                max.y = max.y.max(y);
+                max.z = max.z.max(z);
+            }
+            let dx = max.x - min.x;
+            let dy = max.y - min.y;
+            let dz = max.z - min.z;
+            let com = Vec3::new(
+                0.5 * (min.x + max.x),
+                0.5 * (min.y + max.y),
+                0.5 * (min.z + max.z),
+            );
+            let ixx = mass / 12.0 * (dy * dy + dz * dz);
+            let iyy = mass / 12.0 * (dx * dx + dz * dz);
+            let izz = mass / 12.0 * (dx * dx + dy * dy);
+            let inertia_mat = Mat3::new(ixx, 0.0, 0.0, 0.0, iyy, 0.0, 0.0, 0.0, izz);
+            SpatialInertia::new(mass, com, inertia_mat)
+        };
 
         // 1. Add ground body (fixed, attached to world)
         let ground_inst = instances
@@ -146,8 +176,8 @@ impl PhysicsWorld {
             .find(|i| i.id == *ground_id)
             .ok_or_else(|| PhysicsError::MissingInstance(ground_id.clone()))?;
         {
-            let (mesh, mass, geometry) = eval_instance(ground_inst)?;
-            let inertia = compute_inertia(&mesh, mass);
+            let (mesh, mass, geometry, authored) = eval_instance(ground_inst)?;
+            let inertia = build_inertia(&mesh, mass, authored);
             let xform = instance_transform(ground_inst);
             builder = builder.add_fixed_body(&ground_inst.id, -1, xform, inertia);
             instance_to_body.insert(ground_inst.id.clone(), body_count);
@@ -180,8 +210,8 @@ impl PhysicsWorld {
                     .get(&parent_id)
                     .ok_or_else(|| PhysicsError::MissingInstance(parent_id.clone()))?;
 
-                let (mesh, mass, geometry) = eval_instance(child_inst)?;
-                let inertia = compute_inertia(&mesh, mass);
+                let (mesh, mass, geometry, authored) = eval_instance(child_inst)?;
+                let inertia = build_inertia(&mesh, mass, authored);
 
                 // Create phyz joint
                 let phyz_joint = vcad_joint_to_phyz(joint)?;
@@ -209,8 +239,8 @@ impl PhysicsWorld {
                 continue;
             }
 
-            let (mesh, mass, geometry) = eval_instance(inst)?;
-            let inertia = compute_inertia(&mesh, mass);
+            let (mesh, mass, geometry, authored) = eval_instance(inst)?;
+            let inertia = build_inertia(&mesh, mass, authored);
             let xform = instance_transform(inst);
 
             builder = builder.add_free_body(&inst.id, -1, xform, inertia);
@@ -708,6 +738,7 @@ mod tests {
                 name: Some("Base".to_string()),
                 root: 1,
                 default_material: None,
+                inertial: None,
             },
         );
         part_defs.insert(
@@ -717,6 +748,7 @@ mod tests {
                 name: Some("Arm".to_string()),
                 root: 2,
                 default_material: None,
+                inertial: None,
             },
         );
         doc.part_defs = Some(part_defs);
@@ -873,6 +905,7 @@ mod tests {
                 name: None,
                 root: 1,
                 default_material: None,
+                inertial: None,
             },
         );
         part_defs.insert(
@@ -882,6 +915,7 @@ mod tests {
                 name: None,
                 root: 2,
                 default_material: None,
+                inertial: None,
             },
         );
         doc.part_defs = Some(part_defs);

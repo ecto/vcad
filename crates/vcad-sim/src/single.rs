@@ -148,6 +148,7 @@ mod tests {
                 name: Some("Base".into()),
                 root: 1,
                 default_material: None,
+                inertial: None,
             },
         );
         part_defs.insert(
@@ -157,6 +158,7 @@ mod tests {
                 name: Some("Arm".into()),
                 root: 2,
                 default_material: None,
+                inertial: None,
             },
         );
         doc.part_defs = Some(part_defs);
