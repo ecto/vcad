@@ -16,6 +16,7 @@ members = [
     "crates/vcad-kernel-text",
     "crates/vcad-kernel-sweep",
     "crates/vcad-kernel-shell",
+    "crates/vcad-kernel-sheet",
     "crates/vcad-kernel-step",
     "crates/vcad-kernel",
     "crates/vcad-kernel-constraints",
@@ -76,6 +77,7 @@ default-members = [
     "crates/vcad-kernel-text",
     "crates/vcad-kernel-sweep",
     "crates/vcad-kernel-shell",
+    "crates/vcad-kernel-sheet",
     "crates/vcad-kernel-step",
     "crates/vcad-kernel",
     "crates/vcad-kernel-constraints",
@@ -154,6 +156,7 @@ vcad-kernel-fillet = { path = "crates/vcad-kernel-fillet", version = "0.9.4" }
 vcad-kernel-sketch = { path = "crates/vcad-kernel-sketch", version = "0.9.4" }
 vcad-kernel-sweep = { path = "crates/vcad-kernel-sweep", version = "0.9.4" }
 vcad-kernel-shell = { path = "crates/vcad-kernel-shell", version = "0.9.4" }
+vcad-kernel-sheet = { path = "crates/vcad-kernel-sheet", version = "0.9.4" }
 vcad-kernel-step = { path = "crates/vcad-kernel-step", version = "0.9.4" }
 vcad-kernel-constraints = { path = "crates/vcad-kernel-constraints", version = "0.9.4" }
 vcad-kernel-drafting = { path = "crates/vcad-kernel-drafting", version = "0.9.4" }

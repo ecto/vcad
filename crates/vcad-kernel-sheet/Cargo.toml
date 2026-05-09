@@ -1,0 +1,12 @@
+[package]
+name = "vcad-kernel-sheet"
+description = "Sheet-metal modeling for the vcad kernel: flanges, bends, lossless unfold"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+vcad-kernel-math = { workspace = true }
+
+[dev-dependencies]

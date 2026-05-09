@@ -7027,6 +7027,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-kernel-sheet"
+version = "0.9.4"
+dependencies = [
+ "vcad-kernel-math",
+]
+
+[[package]]
 name = "vcad-kernel-shell"
 version = "0.9.4"
 dependencies = [
