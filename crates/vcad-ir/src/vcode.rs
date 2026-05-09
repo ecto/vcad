@@ -2457,6 +2457,11 @@ fn format_op(
             message: "STEP import not supported in VCode format".to_string(),
         }),
 
+        CsgOp::MeshImport { .. } => Err(VCodeParseError {
+            line: 0,
+            message: "Mesh import not supported in VCode format".to_string(),
+        }),
+
         CsgOp::Text2D { .. } => Err(VCodeParseError {
             line: 0,
             message: "Text2D not supported in VCode format".to_string(),

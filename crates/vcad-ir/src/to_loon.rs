@@ -475,6 +475,11 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> OpResult {
             format!("; StepImport {:?} — not yet supported in loon", path),
         ),
 
+        CsgOp::MeshImport { path, .. } => OpResult::Unsupported(
+            "MeshImport".to_string(),
+            format!("; MeshImport {:?} — not yet supported in loon", path),
+        ),
+
         CsgOp::PcbBoard { .. } => OpResult::Unsupported(
             "PcbBoard".to_string(),
             "; PcbBoard — not yet supported in loon".to_string(),

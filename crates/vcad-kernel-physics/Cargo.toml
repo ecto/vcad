@@ -13,6 +13,7 @@ vcad-kernel-tessellate = { workspace = true }
 phyz = { path = "../../../phyz/crates/phyz", version = "0.2" }
 serde = { workspace = true }
 thiserror = { workspace = true }
+stl_io = "0.8"
 
 [dev-dependencies]
 vcad-kernel-urdf = { workspace = true }

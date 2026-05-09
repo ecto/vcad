@@ -821,6 +821,22 @@ pub enum CsgOp {
         path: String,
     },
     #[tool(hidden)]
+    /// Imported triangle-mesh geometry (STL).
+    ///
+    /// Used by the URDF importer for any `<mesh filename="..."/>` reference
+    /// that resolves to an STL on disk. The path is absolute by the time it
+    /// reaches the IR — the URDF reader resolves `package://` URIs against
+    /// its configured package roots before emitting this op.
+    #[serde(rename = "mesh_import")]
+    MeshImport {
+        /// Absolute path to the mesh file on disk (currently STL only).
+        path: String,
+        /// Optional non-uniform scale factor applied at load time.
+        /// `None` means "no scale" (URDF default).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scale: Option<Vec3>,
+    },
+    #[tool(hidden)]
     /// PCB board — evaluates the board's outline + components to 3D geometry.
     /// The `board` field contains the full PCB design data (same ecad::Pcb type).
     PcbBoard { board: Box<crate::ecad::Pcb> },

@@ -3402,6 +3402,10 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
             "STEP import not supported in VCode evaluation",
         )),
 
+        vcad_ir::CsgOp::MeshImport { .. } => Err(JsError::new(
+            "Mesh import not supported in VCode evaluation",
+        )),
+
         vcad_ir::CsgOp::Text2D { .. } => {
             // Text2D doesn't produce geometry by itself - it needs to be extruded.
             // This case handles direct evaluation of Text2D nodes (should be rare).

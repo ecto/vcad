@@ -163,6 +163,11 @@ enum Commands {
         /// Print joint states every N steps (0 = only summary)
         #[arg(long, default_value = "60")]
         log_every: u32,
+        /// Search root for `package://NAME/...` URI resolution. Repeat for
+        /// multiple roots. Each root is expected to contain `NAME/`
+        /// subdirectories (the standard ROS package layout).
+        #[arg(long = "package-root", value_name = "DIR")]
+        package_roots: Vec<PathBuf>,
     },
 
     /// Slice a .vcad file for 3D printing
@@ -305,8 +310,9 @@ fn main() -> Result<()> {
             steps,
             dt,
             log_every,
+            package_roots,
         }) => {
-            simulate_file(&input, steps, dt, log_every)?;
+            simulate_file(&input, steps, dt, log_every, &package_roots)?;
         }
         Some(Commands::Slice {
             input,
@@ -781,8 +787,15 @@ fn import_urdf(input: &PathBuf, output: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn simulate_file(input: &PathBuf, steps: u32, dt: f64, log_every: u32) -> Result<()> {
+fn simulate_file(
+    input: &PathBuf,
+    steps: u32,
+    dt: f64,
+    log_every: u32,
+    package_roots: &[PathBuf],
+) -> Result<()> {
     use vcad_kernel_physics::PhysicsWorld;
+    use vcad_kernel_urdf::UrdfReadOptions;
 
     let ext = input
         .extension()
@@ -791,7 +804,13 @@ fn simulate_file(input: &PathBuf, steps: u32, dt: f64, log_every: u32) -> Result
         .to_lowercase();
 
     let doc = match ext.as_str() {
-        "urdf" | "xml" => vcad_kernel_urdf::read_urdf(input)?,
+        "urdf" | "xml" => {
+            let opts = UrdfReadOptions {
+                package_roots: package_roots.to_vec(),
+                urdf_dir: input.parent().map(|p| p.to_path_buf()),
+            };
+            vcad_kernel_urdf::read_urdf_with_options(input, &opts)?
+        }
         "vcad" | "json" => {
             let json = std::fs::read_to_string(input)?;
             vcad_ir::Document::from_json(&json)?

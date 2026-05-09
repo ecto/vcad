@@ -623,6 +623,12 @@ impl PhysicsWorld {
             .get(&node_id)
             .ok_or_else(|| PhysicsError::Evaluation(format!("Node {} not found", node_id)))?;
 
+        // STL meshes bypass the BRep solid path — load straight to a
+        // triangle mesh in the IR's millimetre frame.
+        if let vcad_ir::CsgOp::MeshImport { path, scale } = &node.op {
+            return crate::stl::load_stl(std::path::Path::new(path), *scale);
+        }
+
         // Create a simple mesh based on the primitive type
         let solid = match &node.op {
             vcad_ir::CsgOp::Cube { size } => vcad_kernel::Solid::cube(size.x, size.y, size.z),

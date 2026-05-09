@@ -1,7 +1,7 @@
 //! URDF file reader: converts URDF XML to vcad Document.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use vcad_ir::{
     CsgOp, Document, InertialProperties, Instance, Joint as VcadJoint, JointKind, MaterialDef,
@@ -11,6 +11,60 @@ use vcad_ir::{
 use crate::error::UrdfError;
 use crate::types::{Geometry, Joint, Link, Robot};
 
+/// Options for resolving URDF `<mesh>` references.
+///
+/// Controls how `package://NAME/path` URIs and bare relative paths are
+/// turned into absolute filesystem paths the physics layer can `open()`.
+#[derive(Debug, Clone, Default)]
+pub struct UrdfReadOptions {
+    /// Directories to search for `package://NAME/...` resolution. Each
+    /// root is checked for a `NAME/` subdirectory containing the rest of
+    /// the URI; the first match wins.
+    pub package_roots: Vec<PathBuf>,
+    /// Directory the URDF lives in — used as the base for resolving
+    /// relative mesh paths. Set automatically by [`read_urdf`].
+    pub urdf_dir: Option<PathBuf>,
+}
+
+impl UrdfReadOptions {
+    /// Resolve a URDF `<mesh filename="...">` value to an absolute path on
+    /// disk, or `None` if no candidate exists. Logs (via `eprintln!`) when
+    /// a `package://` URI cannot be located so the caller knows a mesh
+    /// fell back to a placeholder.
+    pub fn resolve_mesh(&self, filename: &str) -> Option<PathBuf> {
+        // package://NAME/rest/of/path
+        if let Some(rest) = filename.strip_prefix("package://") {
+            let mut split = rest.splitn(2, '/');
+            let pkg = split.next()?;
+            let sub = split.next().unwrap_or("");
+            for root in &self.package_roots {
+                let candidate = root.join(pkg).join(sub);
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
+            eprintln!(
+                "urdf: package URI {filename:?} not found under {:?}",
+                self.package_roots
+            );
+            return None;
+        }
+        // file:// or absolute or relative
+        let stripped = filename.strip_prefix("file://").unwrap_or(filename);
+        let p = Path::new(stripped);
+        if p.is_absolute() {
+            return p.is_file().then(|| p.to_path_buf());
+        }
+        if let Some(dir) = &self.urdf_dir {
+            let candidate = dir.join(p);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+        None
+    }
+}
+
 /// Maximum URDF size we will attempt to parse. URDFs are tiny descriptors
 /// (tens of KB); a multi-MB "URDF" is almost always an attack payload.
 const MAX_URDF_BYTES: usize = 8 * 1024 * 1024;
@@ -18,30 +72,45 @@ const MAX_URDF_BYTES: usize = 8 * 1024 * 1024;
 const MAX_LINKS: usize = 10_000;
 const MAX_JOINTS: usize = 10_000;
 
-/// Read a URDF file from a path.
-///
-/// # Arguments
-///
-/// * `path` - Path to the URDF file
-///
-/// # Returns
-///
-/// A vcad Document representing the robot.
+/// Read a URDF file from a path with default mesh-resolution options
+/// (mesh paths are resolved relative to the URDF's parent directory; no
+/// `package://` roots are configured).
 pub fn read_urdf(path: impl AsRef<Path>) -> Result<Document, UrdfError> {
-    let content = std::fs::read_to_string(path)?;
-    read_urdf_from_str(&content)
+    let path = path.as_ref();
+    let opts = UrdfReadOptions {
+        urdf_dir: path.parent().map(|p| p.to_path_buf()),
+        ..UrdfReadOptions::default()
+    };
+    read_urdf_with_options(path, &opts)
 }
 
-/// Read a URDF from a string.
-///
-/// # Arguments
-///
-/// * `xml` - URDF XML content as string
-///
-/// # Returns
-///
-/// A vcad Document representing the robot.
+/// Read a URDF file from a path, providing explicit mesh-resolution
+/// options (e.g. `package_roots` for `package://NAME/...` URIs).
+pub fn read_urdf_with_options(
+    path: impl AsRef<Path>,
+    opts: &UrdfReadOptions,
+) -> Result<Document, UrdfError> {
+    let path = path.as_ref();
+    let content = std::fs::read_to_string(path)?;
+    let mut effective = opts.clone();
+    if effective.urdf_dir.is_none() {
+        effective.urdf_dir = path.parent().map(|p| p.to_path_buf());
+    }
+    read_urdf_from_str_with_options(&content, &effective)
+}
+
+/// Read a URDF from a string with default options. Use
+/// [`read_urdf_from_str_with_options`] when meshes need to be resolved
+/// against package roots.
 pub fn read_urdf_from_str(xml: &str) -> Result<Document, UrdfError> {
+    read_urdf_from_str_with_options(xml, &UrdfReadOptions::default())
+}
+
+/// Read a URDF from a string with explicit mesh-resolution options.
+pub fn read_urdf_from_str_with_options(
+    xml: &str,
+    opts: &UrdfReadOptions,
+) -> Result<Document, UrdfError> {
     if xml.len() > MAX_URDF_BYTES {
         return Err(UrdfError::InvalidFormat(format!(
             "URDF exceeds {} byte limit",
@@ -73,7 +142,7 @@ pub fn read_urdf_from_str(xml: &str) -> Result<Document, UrdfError> {
             MAX_JOINTS
         )));
     }
-    let reader = UrdfReader::new(&robot);
+    let reader = UrdfReader::new(&robot, opts);
     reader.into_document()
 }
 
@@ -122,15 +191,18 @@ struct UrdfReader<'a> {
     link_to_instance: HashMap<String, String>,
     /// Next node ID.
     next_node_id: NodeId,
+    /// Resolves `<mesh filename>` references to absolute paths.
+    opts: &'a UrdfReadOptions,
 }
 
 impl<'a> UrdfReader<'a> {
-    fn new(robot: &'a Robot) -> Self {
+    fn new(robot: &'a Robot, opts: &'a UrdfReadOptions) -> Self {
         Self {
             robot,
             link_to_part: HashMap::new(),
             link_to_instance: HashMap::new(),
             next_node_id: 1,
+            opts,
         }
     }
 
@@ -430,11 +502,35 @@ impl<'a> UrdfReader<'a> {
                 segments: 32,
             })
         } else if let Some(mesh) = &geom.mesh {
-            // Mesh reference - store as STEP import for now (could be STL/DAE)
-            // This is a simplification; full implementation would support mesh loading
-            Ok(CsgOp::StepImport {
-                path: mesh.filename.clone(),
-            })
+            // Resolve URDF filename → absolute path the physics layer can
+            // open. If resolution fails, fall back to a 1cm placeholder so
+            // physics still gets a non-empty body to attach inertials to.
+            let scale = mesh
+                .scale
+                .as_ref()
+                .map(|s| {
+                    let parts: Vec<f64> = s
+                        .split_whitespace()
+                        .filter_map(|p| p.parse().ok())
+                        .collect();
+                    if parts.len() >= 3 {
+                        Some(Vec3::new(parts[0], parts[1], parts[2]))
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(None);
+            match self.opts.resolve_mesh(&mesh.filename) {
+                Some(abs) => Ok(CsgOp::MeshImport {
+                    path: abs.to_string_lossy().into_owned(),
+                    scale,
+                }),
+                None => Ok(CsgOp::Cube {
+                    // 1cm placeholder — physics will still have authored
+                    // mass/inertia from <inertial> if present.
+                    size: Vec3::new(10.0, 10.0, 10.0),
+                }),
+            }
         } else {
             Err(UrdfError::InvalidGeometry(
                 "No geometry type specified".to_string(),
