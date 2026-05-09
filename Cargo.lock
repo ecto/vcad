@@ -6995,6 +6995,7 @@ dependencies = [
  "vcad-ir",
  "vcad-kernel",
  "vcad-kernel-tessellate",
+ "vcad-kernel-urdf",
 ]
 
 [[package]]

@@ -1,0 +1,14 @@
+{
+  "id": "2026-05-07-unitree-robot-sim",
+  "version": "0.9.4",
+  "date": "2026-05-07",
+  "category": "feat",
+  "title": "Unitree G1 humanoid and Go2 quadruped demo URDFs",
+  "summary": "Ship primitive-geometry URDFs for the Unitree G1 humanoid (23 DOF) and Go2 quadruped (12 DOF) plus a 'vcad simulate' CLI command that runs them through the physics kernel.",
+  "features": [
+    "robotics",
+    "physics",
+    "urdf",
+    "cli"
+  ]
+}
