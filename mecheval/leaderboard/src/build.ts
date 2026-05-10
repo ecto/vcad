@@ -266,10 +266,10 @@ const STYLES = `
     background: var(--ground);
     padding: 0 4px;
   }
-  .sheet::before { content: "┌"; top: -10px; left: -1px; }
-  .sheet::after  { content: "┐"; top: -10px; right: -1px; }
-  .sheet .corner-bl { content: "└"; bottom: -10px; left: -1px; }
-  .sheet .corner-br { content: "┘"; bottom: -10px; right: -1px; }
+  .sheet::before { content: "┌"; top: -9px; left: -10px; }
+  .sheet::after  { content: "┐"; top: -9px; right: -10px; }
+  .sheet .corner-bl { bottom: -9px; left: -10px; }
+  .sheet .corner-br { bottom: -9px; right: -10px; }
 
   .crumb { color: var(--ink-soft); font-size: 11px; margin: 0 0 18px 0; letter-spacing: 0.04em; }
   .crumb a { color: var(--ink); }
