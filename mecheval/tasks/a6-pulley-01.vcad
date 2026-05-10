@@ -1,0 +1,132 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "bot_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 40,
+        "height": 8,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "bot",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "groove_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 25,
+        "height": 24,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "groove",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 8
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "top_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 40,
+        "height": 8,
+        "segments": 64
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "top",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 32
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "body_1",
+      "op": {
+        "type": "Union",
+        "left": 2,
+        "right": 4
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "body_2",
+      "op": {
+        "type": "Union",
+        "left": 7,
+        "right": 6
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "bore_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 8,
+        "height": 40,
+        "segments": 64
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "bore",
+      "op": {
+        "type": "Translate",
+        "child": 9,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "part",
+      "op": {
+        "type": "Difference",
+        "left": 8,
+        "right": 10
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 11,
+      "material": "default"
+    }
+  ]
+}

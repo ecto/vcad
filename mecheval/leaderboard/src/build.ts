@@ -25,11 +25,6 @@ import {
 } from "@mecheval/harness/pass_k";
 import { colors, copy, fonts, fontsHref, type TitleBlock } from "./tokens.js";
 
-/** Cheeky one-liner attributed to OPERATOR. */
-function operatorSays(quote: string): string {
-  return `<div class="operator-says"><span class="op-name">OPERATOR</span> says: <span class="op-quote">${escape(quote)}</span></div>`;
-}
-
 const PASS_K = 5;
 // Resolve REPO_ROOT relative to this script (mecheval/leaderboard/dist/build.js)
 // so we work the same whether invoked via `npm run build -w …` (cwd = leaderboard
@@ -39,7 +34,6 @@ const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(SCRIPT_DIR, "../../..");
 const RUNS_DIR = resolve(REPO_ROOT, "mecheval/runs");
 const TASKS_DIR = resolve(REPO_ROOT, "mecheval/tasks");
-const CORPUS_DIR = resolve(REPO_ROOT, "mecheval/corpus");
 const OUT_DIR = resolve(REPO_ROOT, "mecheval/leaderboard/dist");
 const CACHE_DIR = resolve(REPO_ROOT, "mecheval/leaderboard/cache");
 // Resolution order:
@@ -184,13 +178,6 @@ function modelDisplayName(modelId: string): string {
   return modelId;
 }
 
-function joinHumanList(items: string[]): string {
-  if (items.length === 0) return "";
-  if (items.length === 1) return items[0];
-  if (items.length === 2) return `${items[0]} and ${items[1]}`;
-  return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
-}
-
 const fmtCompact = (n: number) =>
   n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M`
   : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k`
@@ -228,202 +215,238 @@ const STYLES = `
     --pending: ${colors.pending};
     --soft: ${colors.soft};
     --accent: ${colors.accent};
-    --display: ${fonts.display};
-    --body: ${fonts.body};
+    --serif: ${fonts.body};
   }
+
+  /* Plain-HTML aesthetic: white page, black serif, blue underlined links. */
   * { box-sizing: border-box; }
   html, body {
-    background-color: var(--ground);
-    background-image:
-      linear-gradient(to right, rgba(14,57,96,0.06) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(14,57,96,0.06) 1px, transparent 1px);
-    background-size: 24px 24px;
+    background: var(--ground);
     color: var(--ink);
-    font-family: var(--body);
-    font-size: 13px;
-    line-height: 1.45;
+    font-family: var(--serif);
+    font-size: 16px;
+    line-height: 1.55;
     margin: 0;
     padding: 0;
   }
   .sheet {
-    max-width: 1180px;
-    margin: 0 auto;
-    padding: 28px 36px 28px;
+    max-width: 900px;
+    margin: 32px auto;
+    padding: 0 28px 48px;
     position: relative;
     background: var(--ground);
-    border: 1px solid var(--ink);
-    margin-top: 24px;
-    margin-bottom: 24px;
   }
-  /* Drafting corners — replace generic CSS borders with ASCII-feel marks. */
+  /* Drafting corners disabled — plain-html mode. */
   .sheet::before, .sheet::after,
-  .sheet > .corner-bl, .sheet > .corner-br {
-    position: absolute;
-    font-family: var(--body);
-    font-size: 18px;
-    color: var(--ink);
-    line-height: 1;
-    background: var(--ground);
-    padding: 0 4px;
-  }
-  .sheet::before { content: "┌"; top: -9px; left: -10px; }
-  .sheet::after  { content: "┐"; top: -9px; right: -10px; }
-  .sheet .corner-bl { bottom: -9px; left: -10px; }
-  .sheet .corner-br { bottom: -9px; right: -10px; }
+  .sheet > .corner-bl, .sheet > .corner-br { display: none; }
 
-  .crumb { color: var(--ink-soft); font-size: 11px; margin: 0 0 18px 0; letter-spacing: 0.04em; }
-  .crumb a { color: var(--ink); }
+  /* Title block hidden — plain-html mode. */
+  .title-block { display: none; }
 
-  /* Wordmark in the upper-left of the index hero. */
-  .wordmark {
-    font-family: var(--display);
-    font-weight: 700;
-    font-size: 56px;
-    letter-spacing: -0.025em;
-    color: var(--ink);
-    margin: 0;
-    line-height: 0.95;
-  }
-  .wordmark .dot { color: var(--accent); }
+  a { color: var(--accent); text-decoration: underline; }
+  a:visited { color: #551a8b; }
+
+  .crumb { font-size: 14px; margin: 0 0 14px; }
+  .crumb a { color: var(--accent); }
+
   .tagline-main {
-    font-family: var(--display);
-    font-weight: 500;
-    font-size: 18px;
+    font-family: var(--serif);
+    font-size: 17px;
     color: var(--ink);
-    margin: 14px 0 4px;
-    max-width: 720px;
-    letter-spacing: -0.005em;
+    margin: 6px 0 18px;
+    max-width: 640px;
+    line-height: 1.5;
   }
-  .tagline-sub {
-    font-size: 12px;
-    color: var(--ink-soft);
-    margin: 0 0 26px;
-  }
-
-  /* Title block — engineering-drawing convention, upper-right corner of the sheet. */
-  .title-block {
-    position: absolute;
-    top: -1px;
-    right: -1px;
-    border-left: 1px solid var(--ink);
-    border-bottom: 1px solid var(--ink);
-    background: var(--ground);
-    font-size: 9.5px;
-    line-height: 1.3;
-    letter-spacing: 0.04em;
-    color: var(--ink);
-    text-transform: uppercase;
-  }
-  .title-block table { border-collapse: collapse; }
-  .title-block td {
-    padding: 4px 8px;
-    border-right: 1px solid var(--soft);
-    border-bottom: 1px dotted var(--soft);
-    vertical-align: middle;
-    white-space: nowrap;
-  }
-  .title-block td:last-child { border-right: none; }
-  .title-block tr:last-child td { border-bottom: none; }
-  .title-block .k { color: var(--ink-soft); font-size: 8.5px; }
-  .title-block .v { font-weight: 500; color: var(--ink); }
 
   h1 {
-    font-family: var(--display);
-    font-size: 28px;
-    letter-spacing: -0.02em;
-    margin: 0 0 4px;
-    font-weight: 700;
+    font-family: var(--serif);
+    font-size: 32px;
+    font-weight: bold;
+    margin: 0 0 6px;
     color: var(--ink);
   }
-  h1 .tier { font-size: 11px; color: var(--ink-soft); margin-left: 10px; vertical-align: middle; letter-spacing: 0.08em; font-family: var(--body); font-weight: 500; }
+  h1 .tier { font-size: 14px; color: var(--ink-soft); margin-left: 10px; vertical-align: middle; font-weight: normal; }
+
   h2 {
-    font-family: var(--display);
-    font-size: 11px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase;
-    margin: 32px 0 12px; border-top: 1px solid var(--rule); padding-top: 14px; color: var(--ink);
+    font-family: var(--serif);
+    font-size: 22px;
+    font-weight: bold;
+    margin: 32px 0 10px;
+    color: var(--ink);
   }
 
-  .tagline { color: var(--ink-soft); margin-bottom: 24px; font-size: 12px; }
-  .meta { color: var(--ink-soft); font-size: 10.5px; margin: 12px 0 0; }
-  a { color: var(--ink); text-decoration: none; border-bottom: 1px dotted var(--soft); }
-  a:hover { border-bottom-style: solid; border-bottom-color: var(--ink); }
+  .tagline { color: var(--ink-soft); margin-bottom: 20px; font-size: 14px; }
+  .meta { color: var(--ink-soft); font-size: 13px; margin: 16px 0 0; }
 
+  /* Tables: classic plain-html with thin black rules. */
   table.board {
     width: 100%; border-collapse: collapse;
-    border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule);
+    font-size: 15px;
+    margin: 8px 0;
   }
   table.board th {
-    text-align: right; padding: 8px 10px; font-weight: 600;
-    border-bottom: 1px solid var(--rule);
-    letter-spacing: 0.1em; text-transform: uppercase; font-size: 10px; color: var(--ink);
-    font-family: var(--display);
+    text-align: right; padding: 6px 10px;
+    font-weight: bold;
+    border-bottom: 2px solid var(--ink);
+    color: var(--ink);
   }
   table.board th:first-child,
   table.board th.left { text-align: left; }
-  table.board td { padding: 7px 10px; border-bottom: 1px dotted var(--soft); vertical-align: middle; }
-  table.board tr:last-child td { border-bottom: none; }
-  table.board tbody tr:hover { background: rgba(14,57,96,0.04); }
+  table.board td { padding: 5px 10px; border-bottom: 1px solid var(--soft); vertical-align: middle; }
+  table.board tr:last-child td { border-bottom: 1px solid var(--ink); }
   td.id { white-space: nowrap; }
   td.num { text-align: right; font-variant-numeric: tabular-nums; }
-  .pass { color: var(--pass); font-weight: 700; letter-spacing: 0.06em; font-family: var(--display); }
-  .fail { color: var(--fail); font-weight: 500; }
+
+  .pass { color: var(--pass); font-weight: bold; }
+  .fail { color: var(--fail); }
   .pending { color: var(--pending); }
 
-  .footnote { color: var(--ink-soft); margin-top: 14px; font-size: 11px; }
-  .nodata { color: var(--ink-soft); padding: 20px 0; font-style: italic; }
+  .footnote { color: var(--ink-soft); margin-top: 14px; font-size: 14px; line-height: 1.5; }
+  .nodata { color: var(--ink-soft); padding: 16px 0; }
 
-  code { background: rgba(14,57,96,0.06); padding: 1px 5px; font-family: var(--body); border-radius: 1px; }
+  code {
+    font-family: "Courier New", Courier, monospace;
+    font-size: 0.92em;
+    background: transparent;
+    padding: 0;
+  }
   pre {
-    background: rgba(14,57,96,0.04); padding: 12px 14px; overflow-x: auto;
-    font-size: 12px; line-height: 1.55; border: 1px solid var(--soft);
+    font-family: "Courier New", Courier, monospace;
+    background: transparent;
+    padding: 10px 12px; overflow-x: auto;
+    font-size: 13px; line-height: 1.5;
+    border: 1px solid var(--soft);
     white-space: pre-wrap; word-break: break-word;
     color: var(--ink);
   }
 
   details { margin: 8px 0; }
-  details summary { cursor: pointer; padding: 4px 0; color: var(--ink-soft); }
-  details summary:hover { color: var(--ink); }
-  details[open] summary { color: var(--ink); }
+  details summary { cursor: pointer; padding: 4px 0; color: var(--accent); }
 
-  .matrix table { border-collapse: collapse; }
+  /* Matrix — plain table with thin black borders. */
+  .matrix table { border-collapse: collapse; margin: 8px 0; }
   .matrix th, .matrix td {
-    border: 1px solid var(--soft); padding: 7px 9px; min-width: 96px; text-align: center;
-    font-size: 11px;
+    border: 1px solid var(--ink); padding: 8px 10px; min-width: 110px; text-align: center;
+    font-size: 14px;
   }
   .matrix th {
-    background: rgba(14,57,96,0.06); font-family: var(--display);
-    font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; font-size: 10px;
+    font-weight: bold;
   }
-  .matrix td.row-h { text-align: left; font-weight: 500; background: rgba(14,57,96,0.04); }
+  .matrix td.row-h { text-align: left; font-weight: normal; }
   .matrix td.row-ref {
-    width: 80px; min-width: 80px; padding: 4px;
-    background: rgba(14,57,96,0.02); vertical-align: middle;
+    width: 110px; min-width: 110px; padding: 6px;
+    vertical-align: middle;
+    position: sticky;
+    left: 0;
+    background: var(--ground);
+    z-index: 1;
   }
-  .matrix .matrix-ref { display: flex; align-items: center; justify-content: center; height: 64px; }
-  /* Inline SVGs from vcad-render carry only viewBox (no width/height attrs).
-     In a flex item with width:auto/height:auto, the SVG has no intrinsic
-     dimensions and collapses to 0×0 in Chrome/Safari. Pin explicit pixel
-     dimensions so preserveAspectRatio (default xMidYMid meet) handles the
-     scaling inside the box. */
-  .matrix .matrix-ref svg { width: 72px; height: 60px; }
-  .matrix .matrix-ref-empty { color: var(--ink-soft); font-size: 11px; text-align: center; }
+  .matrix th:first-child {
+    position: sticky;
+    left: 0;
+    background: var(--ground);
+    z-index: 2;
+  }
+  /* border-collapse: collapse strips the borders off sticky cells
+     during scroll. Re-draw left + right with box-shadows that stay put. */
+  .matrix td.row-ref,
+  .matrix th:first-child {
+    box-shadow: 1px 0 0 0 var(--ink), -1px 0 0 0 var(--ink);
+  }
+  .matrix .matrix-ref { display: flex; align-items: center; justify-content: center; height: 84px; }
+  .matrix .matrix-ref svg { width: 100px; height: 80px; }
+  .matrix .matrix-ref-empty { color: var(--ink-soft); font-size: 13px; text-align: center; }
   .matrix td a { display: block; }
 
-  .checkrow { display: grid; grid-template-columns: 28px 180px 80px 1fr; gap: 10px; padding: 7px 0; border-bottom: 1px dotted var(--soft); }
-  .checkrow .n { text-align: right; color: var(--ink-soft); }
-  .check-reason { color: var(--fail); font-size: 12px; margin-bottom: 4px; }
-  .checkrow:last-child { border-bottom: none; }
-  .toolrow { display: grid; grid-template-columns: 28px 180px 70px 80px 1fr; gap: 10px; padding: 5px 0; border-bottom: 1px dotted var(--soft); font-size: 12px; }
-  .toolrow .n { text-align: right; color: var(--ink-soft); }
-  .kvtable td { padding: 3px 12px 3px 0; vertical-align: top; }
-  .kvtable td.k { color: var(--ink-soft); white-space: nowrap; text-transform: uppercase; font-size: 10px; letter-spacing: 0.08em; }
+  /* Hero metric — single big percentage + sparkline above the stat row. */
+  .hero-metric {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    margin: 18px 0 10px;
+    padding: 14px 0;
+    border-top: 2px solid var(--ink);
+  }
+  .hero-metric-num {
+    font-family: var(--serif);
+    font-size: 84px;
+    line-height: 1;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+  .hero-metric-meta { flex: 1; min-width: 0; }
+  .hero-metric-label {
+    font-size: 14px;
+    color: var(--ink);
+    margin-bottom: 6px;
+    line-height: 1.4;
+  }
+  .hero-spark {
+    display: block;
+    color: var(--accent);
+  }
+  .hero-spark-single {
+    font-size: 13px;
+    color: var(--ink-soft);
+  }
+  .hero-metric-range {
+    font-size: 12px;
+    color: var(--ink-soft);
+    margin-top: 2px;
+  }
 
-  /* Hero layout with OPERATOR. */
+  /* Stat row — plain serif numerals on rules. */
+  .stat-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    margin: 10px 0 28px;
+    border-top: 2px solid var(--ink);
+    border-bottom: 2px solid var(--ink);
+  }
+  .stat-cell {
+    padding: 18px 22px 16px;
+    border-right: 1px solid var(--soft);
+  }
+  .stat-cell:last-child { border-right: none; }
+  .stat-num {
+    font-family: var(--serif);
+    font-size: 56px;
+    font-weight: normal;
+    line-height: 1;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+  .stat-num .stat-denom { color: var(--ink-soft); }
+  .stat-num.stat-num-text { font-size: 28px; }
+  .stat-label {
+    font-family: var(--serif);
+    font-size: 14px;
+    color: var(--ink-soft);
+    margin-top: 8px;
+  }
+
+  /* Rank-1 row in the models table. */
+  table.board tbody tr.rank-1 td.id { font-weight: bold; }
+  table.board tbody tr.rank-1 td.id::before {
+    content: "▸ ";
+  }
+
+  .checkrow { display: grid; grid-template-columns: 28px 200px 80px 1fr; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--soft); font-size: 14px; }
+  .checkrow .n { text-align: right; color: var(--ink-soft); }
+  .check-reason { color: var(--fail); font-size: 14px; margin-bottom: 4px; }
+  .checkrow:last-child { border-bottom: none; }
+  .toolrow { display: grid; grid-template-columns: 28px 200px 70px 80px 1fr; gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--soft); font-size: 14px; }
+  .toolrow .n { text-align: right; color: var(--ink-soft); }
+  .kvtable td { padding: 3px 12px 3px 0; vertical-align: top; font-size: 15px; }
+  .kvtable td.k { color: var(--ink-soft); white-space: nowrap; }
+
+  /* Hero — wordmark + tagline on the left, robot mascot on the right. */
   .hero {
     display: grid;
     grid-template-columns: 1fr auto;
     align-items: end;
     gap: 24px;
-    margin: 0 0 8px;
+    margin: 12px 0 4px;
   }
   .hero .mascot {
     color: var(--ink);
@@ -431,14 +454,14 @@ const STYLES = `
     align-self: end;
   }
   .hero .mascot svg {
-    height: 320px;
+    height: 280px;
     width: auto;
     display: block;
   }
+
   .run-render {
     border: 1px solid var(--ink);
-    background: rgba(14,57,96,0.02);
-    padding: 16px;
+    padding: 14px;
     margin: 8px 0 4px;
     display: flex;
     justify-content: center;
@@ -446,8 +469,6 @@ const STYLES = `
   .run-render svg {
     max-height: 460px;
     max-width: 100%;
-    height: auto;
-    width: auto;
     display: block;
   }
 
@@ -455,107 +476,62 @@ const STYLES = `
   .run-gallery {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-    gap: 12px;
+    gap: 10px;
     margin: 8px 0 4px;
   }
   .run-card {
     display: block;
-    border: 1px solid var(--soft);
-    background: rgba(14,57,96,0.02);
+    border: 1px solid var(--ink);
     text-decoration: none;
     color: var(--ink);
-    transition: border-color 0.15s;
   }
-  .run-card:hover { border-color: var(--ink); }
   .run-card-svg {
     height: 160px;
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 10px;
-    border-bottom: 1px dotted var(--soft);
+    border-bottom: 1px solid var(--soft);
   }
-  .run-card-svg svg {
-    max-height: 140px;
-    max-width: 100%;
-    height: auto;
-    width: auto;
-  }
-  .run-card-empty {
-    color: var(--ink-soft);
-    font-size: 11px;
-    font-style: italic;
-  }
+  .run-card-svg svg { max-height: 140px; max-width: 100%; }
+  .run-card-empty { color: var(--ink-soft); font-size: 13px; }
   .run-card-meta {
     padding: 6px 8px;
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: 6px;
-    font-size: 11px;
+    font-size: 14px;
   }
   .run-card-model {
-    font-family: var(--display);
-    font-weight: 500;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .run-card-fail {
     padding: 4px 8px 6px;
     color: var(--fail);
-    font-size: 10.5px;
-    line-height: 1.35;
-    border-top: 1px dotted var(--soft);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    font-size: 13px; line-height: 1.35;
+    border-top: 1px solid var(--soft);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .fail-summary { color: var(--fail); font-size: 11px; }
-  .fail-summary code {
-    background: transparent;
-    padding: 0;
-    color: var(--fail);
-    font-weight: 500;
-  }
+  .fail-summary { color: var(--fail); font-size: 14px; }
+  .fail-summary code { color: var(--fail); }
   .muted { color: var(--ink-soft); }
-  .operator-says {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 10px;
-    border: 1px dashed var(--ink-soft);
-    background: rgba(214, 137, 16, 0.05);
-    font-size: 11.5px;
-    color: var(--ink);
-    margin: 14px 0 24px;
-  }
-  .operator-says .op-name {
-    color: var(--accent); font-weight: 700; letter-spacing: 0.08em;
-    font-family: var(--display);
-  }
-  .operator-says .op-quote { color: var(--ink); }
 
-  /* Footer — Municipal Robotics ↔ vcad ↔ mecheval. */
+  /* Footer */
   .footer {
     border-top: 1px solid var(--ink);
     margin-top: 40px;
-    padding: 18px 0 4px;
-    font-size: 11px;
+    padding: 14px 0 4px;
+    font-size: 14px;
     color: var(--ink-soft);
     display: flex;
     justify-content: space-between;
     flex-wrap: wrap;
     gap: 16px;
   }
-  .footer a { color: var(--ink); }
-  .footer .stack { letter-spacing: 0.04em; }
-  .footer .stack b {
-    font-family: var(--display); font-weight: 700; letter-spacing: -0.01em; color: var(--ink);
-  }
+  .footer a { color: var(--accent); }
+  .footer .stack b { color: var(--ink); font-weight: bold; }
 
-  /* Wrappers that allow tables / charts to scroll horizontally on
-     narrow viewports without exploding the layout. */
   .scroll-x {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
@@ -567,46 +543,24 @@ const STYLES = `
 
   /* ─── mobile (< 720px) ─────────────────────────────────────────── */
   @media (max-width: 720px) {
-    body { font-size: 12px; }
-    .sheet {
-      padding: 18px 16px 18px;
-      margin: 12px 8px;
-      border-width: 1px;
-    }
-    /* Title block takes half the screen at narrow widths — relocate it
-       to the bottom of the sheet, before the footer. */
-    .title-block {
-      position: static;
-      display: block;
-      margin: 18px -16px -10px;
-      width: calc(100% + 32px);
-      border-left: none;
-      border-top: 1px solid var(--ink);
-      border-right: none;
-    }
-    .title-block table { width: 100%; }
-    .title-block td { padding: 6px 8px; }
-
-    /* Hero stacks: wordmark first, then mascot below. */
+    body { font-size: 15px; }
+    .sheet { padding: 0 14px 32px; margin: 16px auto; }
     .hero {
       grid-template-columns: 1fr;
       gap: 12px;
       align-items: start;
     }
     .hero .mascot { justify-self: center; margin-right: 0; }
-    .hero .mascot svg { height: 220px; }
-    .wordmark { font-size: 38px; }
+    .hero .mascot svg { height: 200px; }
+    .hero-metric { flex-direction: column; align-items: flex-start; gap: 10px; }
+    .hero-metric-num { font-size: 60px; }
     .tagline-main { font-size: 16px; }
+    h1 { font-size: 28px; }
+    h2 { font-size: 19px; margin: 26px 0 8px; }
 
-    h1 { font-size: 22px; }
-    h2 { margin: 24px 0 10px; padding-top: 10px; }
+    table.board th, table.board td { padding: 5px 7px; font-size: 13px; }
+    .matrix th, .matrix td { padding: 6px 7px; min-width: 84px; font-size: 13px; }
 
-    /* Tables go horizontal-scroll. Cells get tighter. */
-    table.board th, table.board td { padding: 6px 7px; font-size: 11px; }
-    .matrix th, .matrix td { padding: 6px 7px; min-width: 84px; }
-
-    /* checkrow / toolrow — switch to a stacked layout on phones since
-       the fixed-pixel grid columns overflow hard. */
     .checkrow {
       grid-template-columns: 24px 1fr;
       grid-template-areas: "n head" ". status" ". detail";
@@ -627,30 +581,26 @@ const STYLES = `
     .toolrow > :nth-child(4) { grid-area: time; text-align: left; }
     .toolrow > :nth-child(5) { grid-area: detail; }
 
-    /* Footer stacks. */
     .footer { flex-direction: column; gap: 6px; }
 
-    /* Operator callout looks better full-width on phones. */
-    .operator-says { display: block; }
+    .stat-row { grid-template-columns: 1fr; }
+    .stat-cell {
+      border-right: none;
+      border-bottom: 1px solid var(--soft);
+      padding: 14px 6px;
+    }
+    .stat-cell:last-child { border-bottom: none; }
+    .stat-num { font-size: 40px; }
+    .stat-num.stat-num-text { font-size: 22px; }
 
     .run-render { padding: 8px; }
     .run-render svg { max-height: 320px; }
-
-    /* Drafting corner glyphs sit on the sheet's edge — at narrow
-       viewports the box-shadow they sit inside can clip them. Push
-       them slightly inward. */
-    .sheet::before, .sheet::after,
-    .sheet .corner-bl, .sheet .corner-br {
-      font-size: 14px;
-    }
   }
 
-  /* ─── small phones (< 380px) — extra tightening. ─────────────── */
   @media (max-width: 380px) {
-    .sheet { padding: 14px 12px; margin: 6px 4px; }
-    .wordmark { font-size: 32px; }
-    .tagline-main { font-size: 14px; }
-    .hero .mascot svg { height: 180px; }
+    .sheet { padding: 0 10px 24px; }
+    .tagline-main { font-size: 15px; }
+    .hero .mascot svg { height: 160px; }
   }
 `;
 
@@ -695,17 +645,12 @@ function pageShell(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escape(title)}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="${fontsHref}">
 <style>${STYLES}</style>
 </head>
 <body><main class="sheet">
-<span class="corner-bl">└</span><span class="corner-br">┘</span>
 ${crumbHtml ? `<div class="crumb">${crumbHtml}</div>` : ""}
 ${bodyHtml}
 ${footerHtml()}
-${titleBlockHtml(tb, generatedAt)}
 <p class="meta">generated ${generatedAt} · static site, regenerate with <code>npm run build -w @mecheval/leaderboard</code></p>
 </main></body></html>`;
 }
@@ -713,10 +658,12 @@ ${titleBlockHtml(tb, generatedAt)}
 // ─── tables ───────────────────────────────────────────────────────────────
 
 function modelTable(models: ModelSummary[], k: number): string {
+  // Highlight the leading model. Only meaningful with >1 row.
+  const showLeader = models.length > 1;
   const rows = models
     .map(
-      (m) => `
-      <tr>
+      (m, i) => `
+      <tr class="${showLeader && i === 0 ? "rank-1" : ""}">
         <td class="id"><a href="model/${encodeURIComponent(m.model_id)}.html">${escape(m.model_id)}</a></td>
         <td class="num">${m.tasks_attempted}</td>
         <td class="num">${m.total_attempts}</td>
@@ -843,13 +790,37 @@ function paretoScatter(
     })
     .join("");
 
+  // Pareto frontier — points that dominate everything to their left
+  // on the cost axis. Iterate sorted-by-x ascending, keep points whose
+  // score exceeds the running max. Connect with a dashed accent line.
+  const sortedByX = [...points].sort((a, b) => xVal(a) - xVal(b));
+  const frontier: typeof points = [];
+  let maxY = -Infinity;
+  for (const p of sortedByX) {
+    if (p.mean_score_recent_k > maxY) {
+      frontier.push(p);
+      maxY = p.mean_score_recent_k;
+    }
+  }
+  const frontierPath =
+    frontier.length >= 2
+      ? `<polyline points="${frontier
+          .map((p) => `${xPos(xVal(p)).toFixed(1)},${yPos(p.mean_score_recent_k).toFixed(1)}`)
+          .join(" ")}" fill="none" stroke="${colors.accent}" stroke-width="1.6" stroke-dasharray="5,3" stroke-opacity="0.85"/>`
+      : "";
+  const frontierIds = new Set(frontier.map((p) => `${p.model_id}::${p.task_id}`));
+
   const dots = points
     .map((e) => {
       const cx = xPos(xVal(e));
       const cy = yPos(e.mean_score_recent_k);
       const color = colorOf(e.model_id);
-      const tt = `${e.model_id} · ${e.task_id}\nscore=${e.mean_score_recent_k.toFixed(2)}\ntokens=${fmtCompact(e.mean_tokens_recent_k)} · wall=${e.mean_wallclock_recent_k.toFixed(1)}s\nattempts=${e.attempts}`;
-      return `<a href="run-link-${e.task_id}-${e.model_id}.html"><circle cx="${cx}" cy="${cy}" r="5.5" fill="${color}" fill-opacity="0.7" stroke="${color}" stroke-width="1.4"><title>${escape(tt)}</title></circle></a>`;
+      const onFront = frontierIds.has(`${e.model_id}::${e.task_id}`);
+      const tt = `${e.model_id} · ${e.task_id}\nscore=${e.mean_score_recent_k.toFixed(2)}\ntokens=${fmtCompact(e.mean_tokens_recent_k)} · wall=${e.mean_wallclock_recent_k.toFixed(1)}s\nattempts=${e.attempts}${onFront ? "\n(on pareto frontier)" : ""}`;
+      const r = onFront ? 6.5 : 5;
+      const strokeColor = onFront ? colors.accent : color;
+      const strokeW = onFront ? 1.8 : 1.2;
+      return `<a href="run-link-${e.task_id}-${e.model_id}.html"><circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}" fill-opacity="${onFront ? 0.85 : 0.55}" stroke="${strokeColor}" stroke-width="${strokeW}"><title>${escape(tt)}</title></circle></a>`;
     })
     .join("");
 
@@ -879,31 +850,9 @@ function paretoScatter(
     <text x="${PAD_L + innerW / 2}" y="${H - 4}" text-anchor="middle" font-size="10" fill="#333">${xLabel}</text>
     <text transform="translate(${PAD_L - 38}, ${PAD_T + innerH / 2}) rotate(-90)" text-anchor="middle" font-size="10" fill="#333">score</text>
     ${legend}
+    ${frontierPath}
     ${dotsLinked}
   </svg>`;
-}
-
-function entryTable(entries: PassKEntry[], k: number): string {
-  const rows = entries
-    .map(
-      (e) => `
-      <tr>
-        <td class="id"><a href="model/${encodeURIComponent(e.model_id)}.html">${escape(e.model_id)}</a></td>
-        <td class="id"><a href="task/${encodeURIComponent(e.task_id)}.html">${escape(e.task_id)}</a></td>
-        <td class="num">${e.attempts}</td>
-        <td class="num">${passKBadge(e, k)}</td>
-        <td class="num">${fmtNum(e.mean_score_recent_k)}</td>
-        <td class="num">${fmtCompact(e.mean_tokens_recent_k)}</td>
-        <td class="num">${fmtNum(e.mean_wallclock_recent_k, 1)}s</td>
-      </tr>`,
-    )
-    .join("");
-  return `<div class="scroll-x"><table class="board">
-    <thead><tr>
-      <th class="left">model</th><th class="left">task</th>
-      <th>attempts</th><th>pass^${k}</th><th>score</th>
-      <th>tokens</th><th>wall</th>
-    </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 function runsTable(runs: RunMeta[], pageKind: "task" | "model"): string {
@@ -942,79 +891,174 @@ function runsTable(runs: RunMeta[], pageKind: "task" | "model"): string {
 
 // ─── page renderers ───────────────────────────────────────────────────────
 
+/** Parse a run_id prefix like "20260429T120648Z-5e06" into a Date.
+ *  Returns null if the prefix is missing/malformed. */
+function runIdDate(runId: string): Date | null {
+  const m = runId.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z/);
+  if (!m) return null;
+  return new Date(Date.UTC(
+    Number(m[1]), Number(m[2]) - 1, Number(m[3]),
+    Number(m[4]), Number(m[5]), Number(m[6]),
+  ));
+}
+
+/** Hero metric: industry pass^k as a percentage, plus a sparkline of the
+ *  same metric across daily snapshots of run history. */
+function renderHeroMetric(
+  runs: RunMeta[],
+  k: number,
+  passKAchieved: number,
+  passKReady: number,
+): string {
+  const pct = passKReady > 0 ? (100 * passKAchieved) / passKReady : 0;
+  const pctStr = passKReady > 0 ? `${pct.toFixed(0)}%` : "—";
+
+  // Build daily snapshots: for each distinct calendar date in run history,
+  // recompute pass^k over runs with started_at <= end-of-day.
+  const dated: Array<{ run: RunMeta; ts: number; day: string }> = [];
+  for (const r of runs) {
+    const d = runIdDate(r.run_id);
+    if (!d) continue;
+    const day = d.toISOString().slice(0, 10);
+    dated.push({ run: r, ts: d.getTime(), day });
+  }
+  dated.sort((a, b) => a.ts - b.ts);
+  const days = [...new Set(dated.map((d) => d.day))].sort();
+  const series: Array<{ day: string; pct: number }> = [];
+  for (const day of days) {
+    const cutoff = new Date(`${day}T23:59:59Z`).getTime();
+    const subset = dated.filter((d) => d.ts <= cutoff).map((d) => d.run);
+    const entries = passKBy(subset, k);
+    let achieved = 0;
+    let ready = 0;
+    for (const e of entries) {
+      if (e.pass_k !== null) {
+        ready += 1;
+        if (e.pass_k) achieved += 1;
+      }
+    }
+    series.push({ day, pct: ready > 0 ? (100 * achieved) / ready : 0 });
+  }
+
+  // Sparkline: simple polyline scaled to the actual range.
+  let sparkSvg = "";
+  if (series.length >= 2) {
+    const W = 240;
+    const H = 48;
+    const pad = 2;
+    const xs = series.map((_, i) => pad + (i * (W - 2 * pad)) / (series.length - 1));
+    const ys = series.map((s) => H - pad - (s.pct / 100) * (H - 2 * pad));
+    const points = xs.map((x, i) => `${x.toFixed(1)},${ys[i].toFixed(1)}`).join(" ");
+    const lastX = xs[xs.length - 1];
+    const lastY = ys[ys.length - 1];
+    sparkSvg = `<svg class="hero-spark" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="industry pass^${k} over time">
+      <polyline points="${points}" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <circle cx="${lastX.toFixed(1)}" cy="${lastY.toFixed(1)}" r="2.5" fill="currentColor"/>
+    </svg>`;
+  } else if (series.length === 1) {
+    sparkSvg = `<span class="hero-spark-single">single snapshot — ${series[0].day}</span>`;
+  }
+
+  const range =
+    series.length >= 2
+      ? `${series[0].day} &rarr; ${series[series.length - 1].day}`
+      : series.length === 1
+        ? series[0].day
+        : "no history";
+
+  return `<div class="hero-metric">
+    <div class="hero-metric-num">${pctStr}</div>
+    <div class="hero-metric-meta">
+      <div class="hero-metric-label">industry pass<sup>${k}</sup> &middot; fraction of (model, task) pairs that have earned a clean pass<sup>${k}</sup></div>
+      ${sparkSvg}
+      <div class="hero-metric-range">${range}</div>
+    </div>
+  </div>`;
+}
+
 function indexPage(
   runs: RunMeta[],
   entries: PassKEntry[],
   models: ModelSummary[],
   taskIds: string[],
   k: number,
-  operatorSvg: string | null,
+  mascotSvg: string | null,
   taskRefSvgs: Map<string, string | null>,
 ): string {
   const byPair = new Map<string, PassKEntry>();
   for (const e of entries) byPair.set(`${e.model_id}::${e.task_id}`, e);
-  const modelIds = models.map((m) => m.model_id);
-  const passKAchieved = models.reduce((a, m) => a + m.pass_k_full, 0);
-  const passKReady = models.reduce((a, m) => a + m.pass_k_total, 0);
+  // Rank models by mean score so the table's first row is the leader.
+  const rankedModels = [...models].sort(
+    (a, b) =>
+      b.mean_score - a.mean_score ||
+      b.pass_k_full - a.pass_k_full ||
+      a.mean_tokens - b.mean_tokens,
+  );
+  const modelIds = rankedModels.map((m) => m.model_id);
+  const passKAchieved = rankedModels.reduce((a, m) => a + m.pass_k_full, 0);
+  const passKReady = rankedModels.reduce((a, m) => a + m.pass_k_total, 0);
+  const leader = rankedModels[0];
+  const leaderName = leader ? modelDisplayName(leader.model_id) : "—";
 
-  // Human-friendly OPERATOR commentary based on who's actually passed.
-  const passersByModel = new Map<string, string[]>();
-  for (const e of entries) {
-    if (e.pass_k === true) {
-      const xs = passersByModel.get(e.model_id) ?? [];
-      xs.push(e.task_id);
-      passersByModel.set(e.model_id, xs);
-    }
-  }
-  const passers = [...passersByModel.keys()].map(modelDisplayName);
-  let operatorQuote: string;
-  if (entries.length === 0) {
-    operatorQuote = "no runs yet. the leaderboard is empty.";
-  } else if (passers.length === 0 && passKReady === 0) {
-    operatorQuote = "no model has 5 attempts at any task yet. need more runs to call pass^5.";
-  } else if (passers.length === 0) {
-    operatorQuote = "no model has earned a clean pass^5 yet. early days.";
-  } else if (passers.length === 1) {
-    const tasks = passersByModel.get([...passersByModel.keys()][0])!;
-    if (tasks.length === 1) {
-      operatorQuote = `only ${passers[0]} has passed anything yet — and only on ${tasks[0]}.`;
-    } else {
-      operatorQuote = `only ${passers[0]} has passes so far (${tasks.length} tasks).`;
-    }
-  } else {
-    operatorQuote = `${joinHumanList(passers)} have earned pass^5. the rest are still cooking.`;
-  }
+  // Industry pass^k metric, with a daily time series for the sparkline.
+  // Each run's date is parsed from the run_id prefix (YYYYMMDDTHHmmssZ).
+  // For each unique date in history, snapshot all runs with timestamp <=
+  // that date and recompute pass^k. The latest snapshot is the headline.
+  const heroMetricHtml = renderHeroMetric(runs, k, passKAchieved, passKReady);
+
+  // Stat row: pass^k achieved / ready, total runs, current leader.
+  const passKDisplay =
+    passKReady > 0
+      ? `${passKAchieved}<span class="stat-denom"> / ${passKReady}</span>`
+      : `0<span class="stat-denom"> / 0</span>`;
+  const statRowHtml = `
+    <div class="stat-row">
+      <div class="stat-cell">
+        <div class="stat-num">${passKDisplay}</div>
+        <div class="stat-label">pass<sup>${k}</sup> · achieved / ready</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-num">${leader ? fmtNum(leader.mean_score) : "—"}</div>
+        <div class="stat-label">top score · ${escape(leaderName)}</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-num">${runs.length}<span class="stat-denom"> runs</span></div>
+        <div class="stat-label">${rankedModels.length} models · ${taskIds.length} tasks</div>
+      </div>
+    </div>`;
+
   const body = `
     <div class="hero">
       <div>
-        <h1 class="wordmark">${escape(copy.brand.slice(0, -1))}<span class="dot">.</span></h1>
-        <div class="tagline-main">${escape(copy.tagline)}</div>
-        <div class="tagline-sub">${escape(copy.subtagline)} · pass<sup>${k}</sup></div>
+        <h1>${escape(copy.brand)}</h1>
+        <p class="tagline-main">${escape(copy.tagline)}</p>
+        ${heroMetricHtml}
       </div>
-      <div class="mascot">${operatorSvg ?? "<!-- vcad-render not available; build with `cargo build -p vcad-render` first -->"}</div>
+      <div class="mascot">${mascotSvg ?? ""}</div>
     </div>
-    ${operatorSays(operatorQuote)}
+
+    ${rankedModels.length ? statRowHtml : ""}
 
     <h2>Models</h2>
-    ${models.length ? modelTable(models, k) : `<div class="nodata">no run blobs found under <code>mecheval/runs/</code> — OPERATOR is alone in here</div>`}
+    ${rankedModels.length ? modelTable(rankedModels, k) : `<div class="nodata">no models yet</div>`}
 
-    <h2>Task × model matrix</h2>
-    ${taskIds.length && modelIds.length ? matrix(taskIds, modelIds, byPair, k, taskRefSvgs) : `<div class="nodata">no entries</div>`}
+    <h2>Task &times; model matrix</h2>
+    ${taskIds.length && modelIds.length ? matrix(taskIds, modelIds, byPair, k, taskRefSvgs) : `<div class="nodata">no run blobs found under <code>mecheval/runs/</code></div>`}
+    <p class="footnote">Each cell shows pass<sup>${k}</sup> for the most recent ${k} attempts at (model, task). The leftmost column is the latest passing reference render.</p>
 
-    <h2>Cost · score Pareto</h2>
+    <h2>Cost &middot; score Pareto</h2>
     ${entries.length ? paretoScatter(entries, "tokens") : `<div class="nodata">no points</div>`}
-    <p class="footnote">tokens (log) vs mean score across the most recent ${k} attempts. Each dot is one (model, task) pair; click to drill into the task page.</p>
+    <p class="footnote">Tokens (log) vs mean score across the most recent ${k} attempts. Each point is one (model, task) pair. The dashed line is the Pareto frontier &mdash; points on it are not dominated by any cheaper, better alternative.</p>
 
-    ${entries.length ? `<div style="margin-top: 18px;">${paretoScatter(entries, "wallclock")}</div>
-    <p class="footnote">wall-clock seconds (log) vs mean score. The left edge is fast; the right edge is patient.</p>` : ""}
-
-    <h2>Per task · per model</h2>
-    ${entries.length ? entryTable(entries, k) : `<div class="nodata">no entries</div>`}
+    ${entries.length ? `<details style="margin-top: 22px;"><summary>Wall-clock seconds vs score</summary>
+    <div style="margin-top: 12px;">${paretoScatter(entries, "wallclock")}</div>
+    <p class="footnote">Wall-clock seconds (log) vs mean score. The left edge is fast; the right edge is patient.</p>
+    </details>` : ""}
 
     <p class="footnote">
-      <span class="pending">k/k*</span> = fewer than ${k} attempts at this (model, task) — pass<sup>${k}</sup> pending.
+      <span class="pending">k/k*</span> denotes fewer than ${k} attempts at this (model, task) &mdash; pass<sup>${k}</sup> pending.
       Score is the mean check-pass rate across the most recent ${k} attempts.
-      Corpus: ${runs.length} run blobs across ${models.length} models, ${taskIds.length} tasks. Click any task, model, or run for full forensic detail.
+      Corpus: ${runs.length} run blobs across ${rankedModels.length} models and ${taskIds.length} tasks.
     </p>`;
   return pageShell(
     "mecheval — eval suite for AI mechanical design",
@@ -1075,13 +1119,14 @@ function taskPage(
   taskId: string,
   runsForTask: RunMeta[],
   runSvgs: Map<string, string | null>,
+  refSvg: string | null,
 ): string {
   if (!spec) {
     return pageShell(
       `mecheval — ${taskId}`,
       `<a href="../index.html">← ${escape(copy.brand)}</a> / task / ${escape(taskId)}`,
       `<h1>${escape(taskId)}</h1>
-       <div class="nodata">no task spec found at mecheval/tasks/${escape(taskId)}.json — OPERATOR can't find this one</div>`,
+       <div class="nodata">no task spec found at mecheval/tasks/${escape(taskId)}.json</div>`,
       { drawing: copy.brand, sheet: `TASK · ${taskId}`, scale: "—", project: taskId },
     );
   }
@@ -1102,9 +1147,15 @@ function taskPage(
   const limitsHtml = spec.limits && Object.keys(spec.limits).length
     ? `<pre>${escape(JSON.stringify(spec.limits, null, 2))}</pre>`
     : `<div class="nodata">none</div>`;
+  const refHtml = refSvg
+    ? `<h2>Expected</h2>
+       <div class="run-render">${refSvg}</div>`
+    : "";
   const body = `
     <h1>${escape(spec.title)} <span class="tier">${escape(spec.suite)} · ${escape(spec.tier)} · ${escape(taskId)}</span></h1>
     <div class="tagline">${escape((spec.tags ?? []).join(" · "))}</div>
+
+    ${refHtml}
 
     <h2>Prompt</h2>
     <pre>${escape(spec.prompt)}</pre>
@@ -1123,7 +1174,7 @@ function taskPage(
     <h2>Runs (${runsForTask.length})</h2>
     ${runsForTask.length
       ? runsTable(runsForTask, "task")
-      : `<div class="nodata">no runs yet for this task — OPERATOR is waiting</div>`}
+      : `<div class="nodata">no runs yet for this task</div>`}
   `;
   return pageShell(
     `mecheval — ${taskId}`,
@@ -1317,16 +1368,11 @@ async function main(): Promise<void> {
   const taskIds = [...taskSpecs.keys()].sort();
   const seenTaskIds = new Set([...taskIds, ...runs.map((r) => r.task_id)]);
 
-  // Render OPERATOR once for the hero (cache-first).
-  const operatorVcad = resolve(CORPUS_DIR, "operator.vcad");
-  const operatorSvg = existsSync(operatorVcad)
-    ? await getOrRenderSvg(operatorVcad, "operator")
+  // Render the mascot once for the hero (cache-first).
+  const mascotVcad = resolve(REPO_ROOT, "mecheval/corpus/mascot.vcad");
+  const mascotSvg = existsSync(mascotVcad)
+    ? await getOrRenderSvg(mascotVcad, "mascot")
     : null;
-  if (!operatorSvg) {
-    console.warn(
-      `operator render unavailable — neither cache nor vcad-render produced an SVG`,
-    );
-  }
 
   // Pre-render every run artifact once into a shared map. Used by both
   // run detail pages and task-page galleries. Keyed by
@@ -1341,11 +1387,23 @@ async function main(): Promise<void> {
     runSvgs.set(`${r.task_id}::${r.model_id}::${r.run_id}`, svg);
   }
 
-  // Per-task reference SVG for the matrix's "expected" column. Picks the
-  // most-recent passing run by run_id (any model). Falls back to the most
-  // recent run with any usable SVG. Returns null if nothing renders.
+  // Per-task reference SVG for the matrix's "expected" column.
+  // Resolution order:
+  //   1. `mecheval/tasks/<task_id>.vcad` if present (an authored or
+  //      generated reference — see scripts/gen-task-refs.mjs).
+  //   2. Most-recent passing run for that task across any model.
+  //   3. Most-recent run with a usable render, regardless of pass/fail.
+  //   4. null (matrix shows "—").
   const taskRefSvgs = new Map<string, string | null>();
   for (const tid of seenTaskIds) {
+    const authoredPath = resolve(TASKS_DIR, `${tid}.vcad`);
+    if (existsSync(authoredPath)) {
+      const svg = await getOrRenderSvg(authoredPath, `taskref/${tid}`);
+      if (svg) {
+        taskRefSvgs.set(tid, svg);
+        continue;
+      }
+    }
     const taskRuns = runs
       .filter((r) => r.task_id === tid)
       .slice()
@@ -1375,7 +1433,7 @@ async function main(): Promise<void> {
       models,
       [...seenTaskIds].sort(),
       PASS_K,
-      operatorSvg,
+      mascotSvg,
       taskRefSvgs,
     ),
   );
@@ -1385,7 +1443,7 @@ async function main(): Promise<void> {
     const runsForTask = runs.filter((r) => r.task_id === tid);
     await writePage(
       `task/${tid}.html`,
-      taskPage(taskSpecs.get(tid) ?? null, tid, runsForTask, runSvgs),
+      taskPage(taskSpecs.get(tid) ?? null, tid, runsForTask, runSvgs, taskRefSvgs.get(tid) ?? null),
     );
   }
 

@@ -1,42 +1,39 @@
 // Design tokens shared across every page in the leaderboard.
 //
-// Identity: drafting / blueprint, but distinct from vcad's Berkeley-Mono /
-// Borland aesthetic. mecheval uses a contrasting condensed sans for the
-// wordmark + headlines, blueprint-cyan ink (not pure black), and graph-
-// paper underlay. Cheeky copy is voiced by OPERATOR, the project mascot.
+// Plain-HTML aesthetic — Times New Roman, white background, default
+// blue underlined links. Tokens drive the build's <style> block.
 
 export const colors = {
-  /** Deep blueprint-cyan. Replaces near-black for body and rules. */
-  ink: "#0e3960",
-  /** Muted cyan for secondary text and metadata. */
-  inkSoft: "#5b7892",
-  /** Bone-white drafting ground, kept from earlier iteration. */
-  ground: "#fbf6ee",
-  /** Heavy rule color (= ink). */
-  rule: "#0e3960",
-  /** Dotted-rule color. */
-  soft: "#cfc6b4",
-  /** Pass / fail / pending status colors. */
-  pass: "#27ae60",
-  fail: "#c0392b",
-  pending: "#8a8576",
-  /** OPERATOR's hot-orange accent. Used sparingly. */
-  accent: "#d68910",
+  /** Pure black for body and rules. */
+  ink: "#000000",
+  /** Soft gray for metadata. */
+  inkSoft: "#666666",
+  /** Plain white background. */
+  ground: "#ffffff",
+  /** Rule color. */
+  rule: "#000000",
+  /** Light gray for inner rules. */
+  soft: "#cccccc",
+  /** Pass / fail / pending. Kept readable on white. */
+  pass: "#0a7a2f",
+  fail: "#b00020",
+  pending: "#888888",
+  /** Hyperlink blue, used for all links. */
+  accent: "#0000ee",
 } as const;
 
 export const fonts = {
-  /** Wordmark + headings: condensed sans for a drafting-engineering feel. */
-  display: '"Space Grotesk", "Inter", system-ui, sans-serif',
-  /** Body, tables, code, data: monospace. */
-  body: '"JetBrains Mono", "Berkeley Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
+  /** Body and headings: Times New Roman serif. */
+  display: '"Times New Roman", Times, serif',
+  /** Body: same Times serif for the plain-html look. */
+  body: '"Times New Roman", Times, serif',
 } as const;
 
-/** Hosted at fonts.googleapis.com — embedded as a single <link> on every page. */
-export const fontsHref =
-  "https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;700&display=swap";
+/** No web fonts — system Times New Roman is enough. */
+export const fontsHref = "";
 
 export const copy = {
-  brand: "mecheval.",
+  brand: "mecheval",
   tagline: "The mechanical, physical, and CAD evaluation suite for AI models.",
   subtagline:
     "Every check is something the CAD kernel can compute exactly.",
