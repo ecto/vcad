@@ -8,6 +8,7 @@ echo "[vcad-mcp] Building workspace packages..."
 # ── 1. Build workspace packages ──────────────────────────────
 cd "$REPO_ROOT"
 npm run build -w @vcad/ir
+npm run build -w @vcad/sheet-metal
 npm run build -w @vcad/engine
 npm run build -w @vcad/core
 npm run build -w @vcad/mcp
