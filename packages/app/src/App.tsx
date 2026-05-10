@@ -796,17 +796,69 @@ export function App() {
     };
   }, [handleSave, handleOpen, handleOpenDocuments, startGuidedFlow, processFile]);
 
-  // Listen for load-example events from the menu
+  // Listen for load-example events from the menu. The event carries
+  // either an inline `ExampleFile` or a `urdf` source bundle (Unitree
+  // robotics fixtures); the latter goes through the engine's URDF
+  // importer so meshes / joints / inertials all wire up correctly.
   useEffect(() => {
-    const onLoadExample = async (
-      e: CustomEvent<{ file: import("./data/examples").ExampleFile }>,
-    ) => {
+    type LoadExampleDetail =
+      | { file: import("./data/examples").ExampleFile }
+      | { urdf: import("./data/examples").UrdfExampleSource };
+
+    const onLoadExample = async (e: CustomEvent<LoadExampleDetail>) => {
       try {
-        const { exampleToVcadFile } = await import("./data/examples");
-        // Persist any pending edit on the outgoing doc before swapping engines.
-        await flushPendingSave();
-        useDocumentStore.getState().loadDocument(exampleToVcadFile(e.detail.file));
-        useUiStore.getState().clearSelection();
+        const detail = e.detail;
+        if ("urdf" in detail) {
+          const engine = useEngineStore.getState().engine;
+          if (!engine) {
+            useNotificationStore
+              .getState()
+              .addToast("Engine not ready", "error");
+            return;
+          }
+          const bytes = new TextEncoder().encode(detail.urdf.urdfText);
+          const documentJson = await runJob(
+            { verb: `Loading ${detail.urdf.name ?? "robot"}` },
+            () =>
+              Promise.resolve(
+                engine.importUrdf(
+                  bytes.buffer.slice(
+                    bytes.byteOffset,
+                    bytes.byteOffset + bytes.byteLength,
+                  ),
+                ),
+              ),
+          );
+          const document = JSON.parse(documentJson) as Document;
+          const parts = deriveParts(document);
+          const { nextNodeId, nextPartNum } = computeNextIds(document, parts);
+          await flushPendingSave();
+          useDocumentStore.getState().loadDocument({
+            kind: "legacy",
+            version: "0.1",
+            document,
+            parts,
+            nextNodeId,
+            nextPartNum,
+          });
+          useUiStore.getState().clearSelection();
+          const numJoints = document.joints?.length ?? 0;
+          const numLinks = document.partDefs
+            ? Object.keys(document.partDefs).length
+            : 0;
+          useNotificationStore.getState().addToast(
+            `Loaded ${detail.urdf.name ?? "robot"}: ${numLinks} link${numLinks !== 1 ? "s" : ""}, ${numJoints} joint${numJoints !== 1 ? "s" : ""}`,
+            "success",
+          );
+        } else {
+          const { exampleToVcadFile } = await import("./data/examples");
+          // Persist any pending edit on the outgoing doc before swap.
+          await flushPendingSave();
+          useDocumentStore
+            .getState()
+            .loadDocument(exampleToVcadFile(detail.file));
+          useUiStore.getState().clearSelection();
+        }
       } catch (err) {
         console.error("Failed to load example:", err);
         useNotificationStore.getState().addToast("Failed to load example", "error");

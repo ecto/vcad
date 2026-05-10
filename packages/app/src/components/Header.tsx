@@ -428,9 +428,20 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
 
   // Examples live in /src/data and their file loader still goes through a
   // dispatched event — not in the command registry because each entry is
-  // unique, not a shared command.
-  const handleLoadExample = (file: unknown) => {
-    window.dispatchEvent(new CustomEvent("vcad:load-example", { detail: { file } }));
+  // unique, not a shared command. Detail carries either an inline
+  // `ExampleFile` (legacy / loon-built examples) or a `urdf` source
+  // bundle (e.g. Unitree G1 / Go2) that the loader pipes through the
+  // engine's URDF importer.
+  const handleLoadExampleEntry = (ex: (typeof examples)[number]) => {
+    if (ex.urdf) {
+      window.dispatchEvent(
+        new CustomEvent("vcad:load-example", { detail: { urdf: ex.urdf } }),
+      );
+    } else if (ex.file) {
+      window.dispatchEvent(
+        new CustomEvent("vcad:load-example", { detail: { file: ex.file } }),
+      );
+    }
   };
 
   return (
@@ -528,7 +539,7 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
                   {examples.map((ex) => (
                     <MenuItem
                       key={ex.id}
-                      onSelect={() => handleLoadExample(ex.file)}
+                      onSelect={() => handleLoadExampleEntry(ex)}
                     >
                       {ex.name}
                     </MenuItem>

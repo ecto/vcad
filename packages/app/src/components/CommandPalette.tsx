@@ -335,9 +335,17 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
     e.target.value = "";
   }, [loadDocument, onOpenChange]);
 
-  // Handle example load
+  // Handle example load. URDF-source examples (Unitree humanoid /
+  // quadruped) get routed through the global event handler in App.tsx,
+  // which knows how to call the engine's URDF importer.
   const handleOpenExample = useCallback((example: Example) => {
-    loadDocument(exampleToVcadFile(example.file));
+    if (example.urdf) {
+      window.dispatchEvent(
+        new CustomEvent("vcad:load-example", { detail: { urdf: example.urdf } }),
+      );
+    } else if (example.file) {
+      loadDocument(exampleToVcadFile(example.file));
+    }
     onOpenChange(false);
   }, [loadDocument, onOpenChange]);
 
