@@ -1,79 +1,145 @@
 <svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
   <!--
-    vcad logo — "The Open Solid" (full-bleed)
-    The cube is the mark. No squircle, no background. The hexagonal
-    silhouette is the icon. Front (1,1,1) corner truncated to expose
-    the boundary as a triangular cut — BRep made literal.
-
-    Geometry: axonometric 30°/30°, edge unit L=512, center (512,512).
+    vcad logo — "The Open Solid" (Apple-craft pass 1)
+    Geometry unchanged: axonometric 30°/30°, edge unit L=512, center (512,512).
       hexagon — T(512,0)  UR(955.39,256)  LR(955.39,768)
                 B(512,1024)  LL(68.61,768)  UL(68.61,256)
       cut triangle — TL(290.3,384)  TR(733.7,384)  BC(512,768)
+
+    Pass 1 upgrades:
+      • asymmetric key light from upper-right (each face has directional gradient)
+      • caustic cyan bleed from cut triangle onto surrounding faces
+      • per-edge chamfer: highlight stroke on lit side, AO stroke on shadow side
+      • cavity has deep AO sink at the (0,0,0) back corner
+      • topology pips are layered gem spheres (halo + body + specular)
+      • specular hot spot on top face from the upper-right key light
   -->
   <defs>
-    <linearGradient id="faceTop" x1="0.5" y1="0" x2="0.5" y2="1">
-      <stop offset="0%"   stop-color="#7a8aaa"/>
-      <stop offset="55%"  stop-color="#4f5b73"/>
-      <stop offset="100%" stop-color="#323a4b"/>
+    <!-- ── Face gradients: directional, key from upper-right ───────────── -->
+    <linearGradient id="faceTop" x1="900" y1="200" x2="180" y2="400" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#a4b4d3"/>
+      <stop offset="35%"  stop-color="#677493"/>
+      <stop offset="100%" stop-color="#2d3548"/>
     </linearGradient>
 
-    <linearGradient id="faceRight" x1="0" y1="0.15" x2="1" y2="0.9">
-      <stop offset="0%"   stop-color="#454f63"/>
-      <stop offset="100%" stop-color="#1f2632"/>
+    <linearGradient id="faceRight" x1="800" y1="280" x2="660" y2="1000" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#525e76"/>
+      <stop offset="55%"  stop-color="#252c3a"/>
+      <stop offset="100%" stop-color="#0e1219"/>
     </linearGradient>
 
-    <linearGradient id="faceLeft" x1="1" y1="0.15" x2="0" y2="0.9">
-      <stop offset="0%"   stop-color="#2e3645"/>
-      <stop offset="100%" stop-color="#13171f"/>
+    <linearGradient id="faceLeft" x1="290" y1="280" x2="290" y2="1010" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#2a3140"/>
+      <stop offset="40%"  stop-color="#141923"/>
+      <stop offset="100%" stop-color="#070a10"/>
     </linearGradient>
 
-    <radialGradient id="cavity" cx="50%" cy="55%" r="68%">
-      <stop offset="0%"   stop-color="#3e261a"/>
-      <stop offset="35%"  stop-color="#1a0e07"/>
-      <stop offset="100%" stop-color="#000000"/>
+    <!-- ── Cavity: warmest near the rim, deepest AO at the back corner ── -->
+    <radialGradient id="cavity" cx="512" cy="540" r="280" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#000000"/>
+      <stop offset="40%"  stop-color="#180c06"/>
+      <stop offset="80%"  stop-color="#2a1810"/>
+      <stop offset="100%" stop-color="#3a2418"/>
     </radialGradient>
 
-    <linearGradient id="topHighlight" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%"   stop-color="#ffffff" stop-opacity="0"/>
-      <stop offset="50%"  stop-color="#ffffff" stop-opacity="0.6"/>
+    <radialGradient id="backCorner" cx="512" cy="540" r="22" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#6a4228" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#6a4228" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- ── Caustic cyan bleed from the cut into surrounding faces ─────── -->
+    <radialGradient id="caustic" cx="512" cy="512" r="380" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#7be9ff" stop-opacity="0.42"/>
+      <stop offset="35%"  stop-color="#00b4d8" stop-opacity="0.18"/>
+      <stop offset="70%"  stop-color="#00b4d8" stop-opacity="0.05"/>
+      <stop offset="100%" stop-color="#00b4d8" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- ── Specular hot spot on the top face ──────────────────────────── -->
+    <radialGradient id="topSpec" cx="780" cy="160" r="220" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#ffffff" stop-opacity="0.45"/>
+      <stop offset="55%"  stop-color="#ffffff" stop-opacity="0.06"/>
       <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
-    </linearGradient>
+    </radialGradient>
+
+    <!-- ── Topology vertex pip: gem sphere ─────────────────────────────── -->
+    <radialGradient id="pipBody" cx="40%" cy="32%" r="68%">
+      <stop offset="0%"   stop-color="#e8fcff"/>
+      <stop offset="35%"  stop-color="#7be9ff"/>
+      <stop offset="100%" stop-color="#005f86"/>
+    </radialGradient>
+    <radialGradient id="pipHalo" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"   stop-color="#7be9ff" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#00b4d8" stop-opacity="0"/>
+    </radialGradient>
 
     <filter id="edgeGlow" x="-30%" y="-30%" width="160%" height="160%">
       <feGaussianBlur stdDeviation="9"/>
     </filter>
+
+    <clipPath id="clipTop"><polygon points="512,0 955.39,256 733.7,384 290.3,384 68.61,256"/></clipPath>
+    <clipPath id="clipRight"><polygon points="955.39,256 955.39,768 512,1024 512,768 733.7,384"/></clipPath>
+    <clipPath id="clipLeft"><polygon points="512,1024 68.61,768 68.61,256 290.3,384 512,768"/></clipPath>
   </defs>
 
-  <polygon points="512,0 955.39,256 733.7,384 290.3,384 68.61,256"        fill="url(#faceTop)"/>
-  <polygon points="955.39,256 955.39,768 512,1024 512,768 733.7,384"      fill="url(#faceRight)"/>
-  <polygon points="512,1024 68.61,768 68.61,256 290.3,384 512,768"        fill="url(#faceLeft)"/>
+  <!-- Base face fills -->
+  <polygon points="512,0 955.39,256 733.7,384 290.3,384 68.61,256"   fill="url(#faceTop)"/>
+  <polygon points="955.39,256 955.39,768 512,1024 512,768 733.7,384" fill="url(#faceRight)"/>
+  <polygon points="512,1024 68.61,768 68.61,256 290.3,384 512,768"   fill="url(#faceLeft)"/>
 
+  <!-- Caustic bleed: cyan light from the cut onto each surrounding face -->
+  <rect width="1024" height="1024" fill="url(#caustic)" clip-path="url(#clipTop)"/>
+  <rect width="1024" height="1024" fill="url(#caustic)" clip-path="url(#clipRight)"/>
+  <rect width="1024" height="1024" fill="url(#caustic)" clip-path="url(#clipLeft)"/>
+
+  <!-- Specular streak from the upper-right key light -->
+  <rect width="1024" height="1024" fill="url(#topSpec)" clip-path="url(#clipTop)"/>
+
+  <!-- Cavity: opens onto the (0,0,0) back corner -->
   <polygon points="290.3,384 733.7,384 512,768" fill="url(#cavity)"/>
-  <circle cx="512" cy="512" r="26" fill="#3e2a1c" opacity="0.55"/>
+  <circle cx="512" cy="540" r="22" fill="url(#backCorner)"/>
 
-  <g stroke="#10141c" stroke-width="3" fill="none" stroke-linejoin="round" opacity="0.95">
-    <polygon points="512,0 955.39,256 955.39,768 512,1024 68.61,768 68.61,256"/>
-    <line x1="955.39" y1="256"  x2="733.7" y2="384"/>
-    <line x1="68.61"  y1="256"  x2="290.3" y2="384"/>
-    <line x1="512"    y1="1024" x2="512"   y2="768"/>
+  <!-- ── Chamfer pass: per-edge highlight (lit side) + AO (shadow side) ─ -->
+  <g clip-path="url(#clipTop)" stroke-linecap="round" fill="none">
+    <line x1="70.61" y1="259.46" x2="514"    y2="3.46"   stroke="#ffffff" stroke-width="3" opacity="0.7"/>
+    <line x1="510"   y1="3.46"   x2="953.39" y2="259.46" stroke="#ffffff" stroke-width="3.5" opacity="0.92"/>
+    <line x1="953.39" y1="252.54" x2="731.7"  y2="380.54" stroke="#ffffff" stroke-width="2" opacity="0.55"/>
+    <line x1="70.61"  y1="252.54" x2="292.3"  y2="380.54" stroke="#ffffff" stroke-width="2" opacity="0.38"/>
   </g>
 
-  <g filter="url(#edgeGlow)" opacity="0.9">
-    <polygon points="290.3,384 733.7,384 512,768" fill="none" stroke="#00b4d8" stroke-width="12" stroke-linejoin="round"/>
+  <g clip-path="url(#clipRight)" stroke-linecap="round" fill="none">
+    <line x1="951.39" y1="256"    x2="951.39" y2="768"   stroke="#ffffff" stroke-width="2" opacity="0.42"/>
+    <line x1="953.39" y1="764.54" x2="510"    y2="1020.54" stroke="#000000" stroke-width="2.5" opacity="0.55"/>
+    <line x1="957.39" y1="259.46" x2="735.7"  y2="387.46" stroke="#000000" stroke-width="2" opacity="0.5"/>
+    <line x1="516"    y1="1024"   x2="516"    y2="768"   stroke="#ffffff" stroke-width="2" opacity="0.32"/>
+  </g>
+
+  <g clip-path="url(#clipLeft)" stroke-linecap="round" fill="none">
+    <line x1="72.61"  y1="768"    x2="72.61"  y2="256"   stroke="#ffffff" stroke-width="2" opacity="0.18"/>
+    <line x1="514"    y1="1020.54" x2="70.61" y2="764.54" stroke="#000000" stroke-width="2.5" opacity="0.55"/>
+    <line x1="66.61"  y1="259.46" x2="288.3"  y2="387.46" stroke="#000000" stroke-width="2" opacity="0.6"/>
+    <line x1="508"    y1="1024"   x2="508"    y2="768"   stroke="#000000" stroke-width="2" opacity="0.55"/>
+  </g>
+
+  <!-- ── Cut triangle: hero feature line ─────────────────────────────── -->
+  <g filter="url(#edgeGlow)" opacity="0.95">
+    <polygon points="290.3,384 733.7,384 512,768" fill="none" stroke="#00b4d8" stroke-width="14" stroke-linejoin="round"/>
   </g>
   <polygon points="290.3,384 733.7,384 512,768" fill="none" stroke="#7be9ff" stroke-width="5" stroke-linejoin="round"/>
+  <polygon points="290.3,384 733.7,384 512,768" fill="none" stroke="#e6fcff" stroke-width="1.5" stroke-linejoin="round" opacity="0.85"/>
 
-  <line x1="68.61"  y1="256" x2="512"    y2="0"   stroke="url(#topHighlight)" stroke-width="5" stroke-linecap="round"/>
-  <line x1="512"    y1="0"   x2="955.39" y2="256" stroke="url(#topHighlight)" stroke-width="5" stroke-linecap="round" opacity="0.7"/>
+  <!-- ── Topology vertex pips: gem sphere (halo + body + specular) ───── -->
+  <g>
+    <circle cx="290.3" cy="384" r="22" fill="url(#pipHalo)"/>
+    <circle cx="290.3" cy="384" r="12" fill="url(#pipBody)"/>
+    <circle cx="287"   cy="380" r="3.4" fill="#ffffff" opacity="0.9"/>
 
-  <g fill="#9bf0ff">
-    <circle cx="290.3" cy="384" r="13"/>
-    <circle cx="733.7" cy="384" r="13"/>
-    <circle cx="512"   cy="768" r="13"/>
-  </g>
-  <g fill="#ffffff" opacity="0.9">
-    <circle cx="290.3" cy="384" r="4.5"/>
-    <circle cx="733.7" cy="384" r="4.5"/>
-    <circle cx="512"   cy="768" r="4.5"/>
+    <circle cx="733.7" cy="384" r="22" fill="url(#pipHalo)"/>
+    <circle cx="733.7" cy="384" r="12" fill="url(#pipBody)"/>
+    <circle cx="730.4" cy="380" r="3.4" fill="#ffffff" opacity="0.9"/>
+
+    <circle cx="512"   cy="768" r="22" fill="url(#pipHalo)"/>
+    <circle cx="512"   cy="768" r="12" fill="url(#pipBody)"/>
+    <circle cx="508.6" cy="764" r="3.4" fill="#ffffff" opacity="0.9"/>
   </g>
 </svg>
