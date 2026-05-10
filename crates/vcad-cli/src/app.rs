@@ -1168,7 +1168,6 @@ impl App {
             "open" => self.set_status("Open: drag a .vcad file into the terminal"),
             "export_glb" => self.set_status("Export GLB: not yet implemented in TUI"),
             "export_step" => self.set_status("Export STEP: not yet implemented in TUI"),
-            "duplicate" => self.set_status("Duplicate: select a part and press Shift+D (TODO)"),
             "select_all" => {
                 let ids: Vec<_> = self.get_parts().into_iter().map(|(id, _)| id).collect();
                 self.selected = ids.into_iter().collect();
