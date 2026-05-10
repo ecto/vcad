@@ -11,6 +11,145 @@ use vcad_ir::{
 use crate::error::UrdfError;
 use crate::types::{Geometry, Joint, Link, Robot};
 
+/// Locate the byte position just past `<robot ...>` and the position of
+/// `</robot>` (start of close tag). Used by [`normalize_robot_child_order`].
+fn locate_robot_bounds(reader: &mut quick_xml::Reader<&[u8]>) -> Result<(usize, usize), UrdfError> {
+    use quick_xml::events::Event;
+    let mut robot_open_end: Option<usize> = None;
+    let mut depth: i32 = 0;
+    loop {
+        let pos_before = reader.buffer_position() as usize;
+        match reader
+            .read_event()
+            .map_err(|e| UrdfError::InvalidFormat(format!("xml scan: {e}")))?
+        {
+            Event::Start(e) => {
+                if e.name().as_ref() == b"robot" && robot_open_end.is_none() {
+                    robot_open_end = Some(reader.buffer_position() as usize);
+                    depth = 1;
+                } else if robot_open_end.is_some() {
+                    depth += 1;
+                }
+            }
+            Event::End(e) => {
+                if let Some(open_end) = robot_open_end {
+                    depth -= 1;
+                    if depth == 0 && e.name().as_ref() == b"robot" {
+                        return Ok((open_end, pos_before));
+                    }
+                }
+            }
+            Event::Eof => {
+                return Err(UrdfError::InvalidFormat(if robot_open_end.is_some() {
+                    "URDF has unclosed <robot>".into()
+                } else {
+                    "URDF has no <robot> root element".into()
+                }));
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Reorder top-level children of `<robot>` so all `<link>` siblings come
+/// before all `<joint>` siblings.
+///
+/// quick-xml's serde adapter (as of 0.37) treats repeated siblings as
+/// `Vec<T>` only when they're contiguous; an interleaved `<link><joint>
+/// <link>` produces a "duplicate field" error. Real URDFs in the wild
+/// (e.g. Unitree's official g1_23dof.urdf) do interleave heavily, so we
+/// run a quick pre-pass that sorts the immediate children of `<robot>`
+/// while preserving everything else byte-for-byte.
+fn normalize_robot_child_order(xml: &str) -> Result<String, UrdfError> {
+    use quick_xml::events::Event;
+    use quick_xml::Reader;
+
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(false);
+
+    // Walk to <robot>. Everything before it (XML prolog, comments, top-
+    // level whitespace) is preserved verbatim.
+    // Pass 1: find <robot> opening end + </robot> position.
+    let (robot_open_end, robot_close_start) = locate_robot_bounds(&mut reader)?;
+
+    // Pass 2: walk inside <robot>, classify each top-level child by tag
+    // name, and capture its byte range in the original source.
+    let mut links: Vec<&str> = Vec::new();
+    let mut joints: Vec<&str> = Vec::new();
+    let mut materials: Vec<&str> = Vec::new();
+    let mut others: Vec<&str> = Vec::new();
+
+    let mut reader = Reader::from_str(&xml[robot_open_end..robot_close_start]);
+    reader.config_mut().trim_text(false);
+    let inner_offset = robot_open_end;
+
+    loop {
+        let pos_before = reader.buffer_position() as usize + inner_offset;
+        match reader
+            .read_event()
+            .map_err(|e| UrdfError::InvalidFormat(format!("xml scan: {e}")))?
+        {
+            Event::Start(e) => {
+                let tag = e.name().as_ref().to_vec();
+                reader
+                    .read_to_end(e.name())
+                    .map_err(|err| UrdfError::InvalidFormat(format!("read_to_end: {err}")))?;
+                let pos_after = reader.buffer_position() as usize + inner_offset;
+                let slice = &xml[pos_before..pos_after];
+                match tag.as_slice() {
+                    b"link" => links.push(slice),
+                    b"joint" => joints.push(slice),
+                    b"material" => materials.push(slice),
+                    _ => others.push(slice),
+                }
+            }
+            Event::Empty(e) => {
+                let tag = e.name().as_ref().to_vec();
+                let pos_after = reader.buffer_position() as usize + inner_offset;
+                let slice = &xml[pos_before..pos_after];
+                match tag.as_slice() {
+                    b"link" => links.push(slice),
+                    b"joint" => joints.push(slice),
+                    b"material" => materials.push(slice),
+                    _ => others.push(slice),
+                }
+            }
+            Event::Eof => break,
+            // Comments / text / whitespace at the top level are dropped by
+            // the reorder — they get folded into the gaps between elements
+            // in the rebuilt string. URDF semantics don't care about
+            // top-level whitespace.
+            _ => {}
+        }
+    }
+
+    // Rebuild: prefix (everything up to and including the <robot ...>
+    // opening tag) verbatim, then materials, links, joints, others, then
+    // the </robot> closing tag and any trailing content verbatim.
+    let prefix = &xml[..robot_open_end];
+    let mut out = String::with_capacity(xml.len());
+    out.push_str(prefix);
+    for s in &materials {
+        out.push('\n');
+        out.push_str(s);
+    }
+    for s in &links {
+        out.push('\n');
+        out.push_str(s);
+    }
+    for s in &joints {
+        out.push('\n');
+        out.push_str(s);
+    }
+    for s in &others {
+        out.push('\n');
+        out.push_str(s);
+    }
+    out.push('\n');
+    out.push_str(&xml[robot_close_start..]);
+    Ok(out)
+}
+
 /// Options for resolving URDF `<mesh>` references.
 ///
 /// Controls how `package://NAME/path` URIs and bare relative paths are
@@ -127,7 +266,12 @@ pub fn read_urdf_from_str_with_options(
             "URDF contains a DOCTYPE declaration (rejected)".into(),
         ));
     }
-    let robot: Robot = quick_xml::de::from_str(xml)?;
+    // Real-world URDFs interleave <link> and <joint> siblings; quick-xml's
+    // serde adapter only deserialises Vec<T> when those siblings are
+    // contiguous, so reorder them up front. The normalisation is a no-op
+    // when the file is already in canonical (links-then-joints) order.
+    let normalized = normalize_robot_child_order(xml)?;
+    let robot: Robot = quick_xml::de::from_str(&normalized)?;
     if robot.links.len() > MAX_LINKS {
         return Err(UrdfError::InvalidFormat(format!(
             "URDF has {} links (cap {})",
@@ -330,10 +474,15 @@ impl<'a> UrdfReader<'a> {
     ) -> Result<(PartDef, Vec<(NodeId, Node)>), UrdfError> {
         let mut nodes = Vec::new();
 
-        // Get geometry from visual or collision
-        let (geom, origin) = if let Some(visual) = &link.visual {
+        // Get geometry from the first visual, falling back to the first
+        // collision. URDFs that ship multiple visuals per link describe
+        // multi-mesh parts; the importer picks one geometry to evaluate
+        // (full multi-mesh support is a future extension — the rest of
+        // the parts come along for free once the IR can carry a list of
+        // child geometries here).
+        let (geom, origin) = if let Some(visual) = link.visuals.first() {
             (&visual.geometry, visual.origin.as_ref())
-        } else if let Some(collision) = &link.collision {
+        } else if let Some(collision) = link.collisions.first() {
             (&collision.geometry, collision.origin.as_ref())
         } else {
             // Link with no geometry - create empty cube placeholder
@@ -520,6 +669,21 @@ impl<'a> UrdfReader<'a> {
                     }
                 })
                 .unwrap_or(None);
+            // Only STL is supported for actual loading today; DAE / OBJ /
+            // PLY references resolve to a 1cm placeholder so the
+            // kinematic + inertial tree still loads. Authored <inertial>
+            // tags carry the real mass and inertia; the placeholder just
+            // gives the convex-hull collider a non-empty mesh to chew on.
+            let is_supported_format = std::path::Path::new(&mesh.filename)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("stl"))
+                .unwrap_or(false);
+            if !is_supported_format {
+                return Ok(CsgOp::Cube {
+                    size: Vec3::new(10.0, 10.0, 10.0),
+                });
+            }
             match self.opts.resolve_mesh(&mesh.filename) {
                 Some(abs) => Ok(CsgOp::MeshImport {
                     path: abs.to_string_lossy().into_owned(),

@@ -136,13 +136,13 @@ impl<'a> UrdfWriter<'a> {
 
         Ok(Link {
             name,
-            visual: Some(Visual {
+            visuals: vec![Visual {
                 name: None,
                 origin,
                 geometry,
-                material: material_ref,
-            }),
-            collision: None,
+                materials: material_ref.into_iter().collect(),
+            }],
+            collisions: Vec::new(),
             inertial: None,
         })
     }
@@ -173,13 +173,13 @@ impl<'a> UrdfWriter<'a> {
 
         Ok(Link {
             name,
-            visual: Some(Visual {
+            visuals: vec![Visual {
                 name: None,
                 origin,
                 geometry,
-                material: material_ref,
-            }),
-            collision: None,
+                materials: material_ref.into_iter().collect(),
+            }],
+            collisions: Vec::new(),
             inertial: None,
         })
     }

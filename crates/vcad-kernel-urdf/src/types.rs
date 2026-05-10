@@ -32,13 +32,15 @@ pub struct Link {
     #[serde(rename = "@name")]
     pub name: String,
 
-    /// Visual geometry.
-    #[serde(rename = "visual", skip_serializing_if = "Option::is_none")]
-    pub visual: Option<Visual>,
+    /// Visual geometries. URDF allows multiple `<visual>` children per
+    /// link (e.g. one per sub-mesh); the importer treats the first as
+    /// the primary visual when picking geometry to evaluate.
+    #[serde(rename = "visual", default, skip_serializing_if = "Vec::is_empty")]
+    pub visuals: Vec<Visual>,
 
-    /// Collision geometry.
-    #[serde(rename = "collision", skip_serializing_if = "Option::is_none")]
-    pub collision: Option<Collision>,
+    /// Collision geometries. Same multi-element story as `visuals`.
+    #[serde(rename = "collision", default, skip_serializing_if = "Vec::is_empty")]
+    pub collisions: Vec<Collision>,
 
     /// Inertial properties.
     #[serde(rename = "inertial", skip_serializing_if = "Option::is_none")]
@@ -60,9 +62,12 @@ pub struct Visual {
     #[serde(rename = "geometry")]
     pub geometry: Geometry,
 
-    /// Material reference or definition.
-    #[serde(rename = "material", skip_serializing_if = "Option::is_none")]
-    pub material: Option<MaterialRef>,
+    /// Material references. Standard URDF allows a single `<material>` per
+    /// `<visual>`, but Unitree's Go2 URDF (and a handful of other
+    /// real-world descriptors) ship multiple — vcad accepts the loose
+    /// form and uses the first as the primary.
+    #[serde(rename = "material", default, skip_serializing_if = "Vec::is_empty")]
+    pub materials: Vec<MaterialRef>,
 }
 
 /// Collision geometry of a link.

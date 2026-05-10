@@ -94,6 +94,68 @@ fn unitree_g1_loads_and_steps() {
     }
 }
 
+/// The vendored official Unitree G1 23-DOF URDF (from
+/// `unitreerobotics/unitree_ros`) loads cleanly through the importer
+/// even when its STL meshes aren't on disk — the reader falls back to
+/// 1cm placeholder cubes per link, while inertials and joint topology
+/// flow through unchanged.
+#[test]
+fn unitree_g1_official_urdf_loads() {
+    let urdf_path = examples_dir().join("unitree-g1-official.urdf");
+    let doc = vcad_kernel_urdf::read_urdf(&urdf_path).expect("parse official G1 URDF");
+
+    // The 23-DOF G1 has 33 links and 32 joints in the official descriptor.
+    let part_defs = doc.part_defs.as_ref().expect("part defs");
+    assert_eq!(part_defs.len(), 33, "G1 23-DOF should have 33 links");
+    let joints = doc.joints.as_ref().expect("joints");
+    assert_eq!(joints.len(), 32, "G1 23-DOF should have 32 joints");
+
+    // Authored mass should sum to a sensible whole-robot ballpark — the
+    // real G1 is ~35 kg.
+    let total_mass = total_authored_mass(&doc);
+    assert!(
+        total_mass > 25.0 && total_mass < 50.0,
+        "official G1 authored mass out of range: {total_mass} kg"
+    );
+
+    // PhysicsWorld must build without error even with placeholder geometry.
+    let mut world = PhysicsWorld::from_document(&doc).expect("build PhysicsWorld");
+    for _ in 0..30 {
+        world.step(1.0 / 240.0);
+    }
+}
+
+/// The vendored official Unitree Go2 URDF (from
+/// `unitreerobotics/unitree_ros`) loads through the importer. Go2's mesh
+/// references are DAE files, which vcad doesn't load yet — the reader
+/// substitutes 1cm placeholder cubes so the kinematic + inertial tree
+/// still simulates with the authored mass/inertia.
+#[test]
+fn unitree_go2_official_urdf_loads() {
+    let urdf_path = examples_dir().join("unitree-go2-official.urdf");
+    let doc = vcad_kernel_urdf::read_urdf(&urdf_path).expect("parse official Go2 URDF");
+
+    // Go2's full descriptor includes 12 actuated leg joints plus rotor /
+    // sensor / mount fixtures (foam, IMU, lidar, head, etc.) — the
+    // exact totals are 42 links / 41 joints.
+    let part_defs = doc.part_defs.as_ref().expect("part defs");
+    assert_eq!(part_defs.len(), 42, "Go2 official should have 42 links");
+    let joints = doc.joints.as_ref().expect("joints");
+    assert_eq!(joints.len(), 41, "Go2 official should have 41 joints");
+
+    // Real Go2 is ~15 kg.
+    let total_mass = total_authored_mass(&doc);
+    assert!(
+        total_mass > 10.0 && total_mass < 25.0,
+        "official Go2 authored mass out of range: {total_mass} kg"
+    );
+
+    let mut world = PhysicsWorld::from_document(&doc).expect("build PhysicsWorld");
+    for _ in 0..30 {
+        world.step(1.0 / 240.0);
+    }
+}
+
 #[test]
 fn unitree_go2_loads_and_steps() {
     let urdf_path = examples_dir().join("unitree-go2.urdf");
