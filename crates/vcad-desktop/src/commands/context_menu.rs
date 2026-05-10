@@ -14,7 +14,9 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::{
-    menu::{ContextMenu, MenuBuilder, MenuItem, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder},
+    menu::{
+        ContextMenu, MenuBuilder, MenuItem, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder,
+    },
     AppHandle, Emitter, Manager, Runtime,
 };
 
@@ -38,10 +40,7 @@ pub enum ItemSpec {
     /// Visual divider; no id, no action.
     Separator,
     /// Nested submenu opened on hover.
-    Submenu {
-        label: String,
-        items: Vec<ItemSpec>,
-    },
+    Submenu { label: String, items: Vec<ItemSpec> },
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -64,10 +63,7 @@ impl<R: Runtime> ContextMenuState<R> {
     }
 }
 
-fn build_item<R: Runtime>(
-    app: &AppHandle<R>,
-    spec: &ItemSpec,
-) -> tauri::Result<BuiltItem<R>> {
+fn build_item<R: Runtime>(app: &AppHandle<R>, spec: &ItemSpec) -> tauri::Result<BuiltItem<R>> {
     match spec {
         ItemSpec::Separator => Ok(BuiltItem::Separator(PredefinedMenuItem::separator(app)?)),
         ItemSpec::Item {

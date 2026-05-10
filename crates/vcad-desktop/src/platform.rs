@@ -53,9 +53,7 @@ mod mac {
     use cocoa::base::{id, nil, BOOL, NO, YES};
     use cocoa::foundation::NSString;
     use tauri::WebviewWindow;
-    use window_vibrancy::{
-        apply_vibrancy as apply_v, NSVisualEffectMaterial, NSVisualEffectState,
-    };
+    use window_vibrancy::{apply_vibrancy as apply_v, NSVisualEffectMaterial, NSVisualEffectState};
 
     /// Sidebar material — the strong, lively blur used for the leftmost
     /// column in Finder, Mail, Music, Notes. We let it bleed through the
