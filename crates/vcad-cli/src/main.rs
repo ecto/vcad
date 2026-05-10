@@ -150,6 +150,28 @@ enum Commands {
         file: PathBuf,
     },
 
+    /// Run a physics simulation on a robot assembly (.vcad or .urdf)
+    Simulate {
+        /// Input file (.vcad or .urdf). URDFs are imported in-memory.
+        input: PathBuf,
+        /// Number of simulation steps to run
+        #[arg(long, default_value = "240")]
+        steps: u32,
+        /// Simulation timestep in seconds. Default is 1/240 s — the
+        /// standard 240 Hz timestep used by phyz / Rapier / Bullet for
+        /// stable rigid-body integration.
+        #[arg(long, default_value_t = 1.0 / 240.0)]
+        dt: f64,
+        /// Print joint states every N steps (0 = only summary)
+        #[arg(long, default_value = "60")]
+        log_every: u32,
+        /// Search root for `package://NAME/...` URI resolution. Repeat for
+        /// multiple roots. Each root is expected to contain `NAME/`
+        /// subdirectories (the standard ROS package layout).
+        #[arg(long = "package-root", value_name = "DIR")]
+        package_roots: Vec<PathBuf>,
+    },
+
     /// Slice a .vcad file for 3D printing
     Slice {
         /// Input .vcad file
@@ -284,6 +306,15 @@ fn main() -> Result<()> {
         }
         Some(Commands::Info { file }) => {
             show_info(&file)?;
+        }
+        Some(Commands::Simulate {
+            input,
+            steps,
+            dt,
+            log_every,
+            package_roots,
+        }) => {
+            simulate_file(&input, steps, dt, log_every, &package_roots)?;
         }
         Some(Commands::Slice {
             input,
@@ -755,6 +786,103 @@ fn import_urdf(input: &PathBuf, output: &PathBuf) -> Result<()> {
         input.display(),
         output.display()
     );
+    Ok(())
+}
+
+fn simulate_file(
+    input: &PathBuf,
+    steps: u32,
+    dt: f64,
+    log_every: u32,
+    package_roots: &[PathBuf],
+) -> Result<()> {
+    use vcad_kernel_physics::PhysicsWorld;
+    use vcad_kernel_urdf::UrdfReadOptions;
+
+    let ext = input
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    let doc = match ext.as_str() {
+        "urdf" | "xml" => {
+            let opts = UrdfReadOptions {
+                package_roots: package_roots.to_vec(),
+                urdf_dir: input.parent().map(|p| p.to_path_buf()),
+            };
+            vcad_kernel_urdf::read_urdf_with_options(input, &opts)?
+        }
+        "vcad" | "json" => {
+            let json = std::fs::read_to_string(input)?;
+            vcad_ir::Document::from_json(&json)?
+        }
+        other => anyhow::bail!(
+            "simulate: unsupported input extension '{}' (expected .vcad or .urdf)",
+            other
+        ),
+    };
+
+    let robot_name = input
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("robot");
+    let num_parts = doc.part_defs.as_ref().map(|p| p.len()).unwrap_or(0);
+    let num_joints_doc = doc.joints.as_ref().map(|j| j.len()).unwrap_or(0);
+
+    let mut world = PhysicsWorld::from_document(&doc)?;
+    let joint_ids = world.joint_ids();
+
+    println!(
+        "robot '{}': {} parts, {} joints (URDF) -> {} actuated DOF",
+        robot_name,
+        num_parts,
+        num_joints_doc,
+        joint_ids.len()
+    );
+    println!(
+        "stepping {} times at dt={:.6}s ({:.2} Hz, total {:.3}s sim time)",
+        steps,
+        dt,
+        1.0 / dt,
+        steps as f64 * dt,
+    );
+
+    let dt_f32 = dt as f32;
+    for s in 1..=steps {
+        world.step(dt_f32);
+        if log_every > 0 && (s % log_every == 0 || s == steps) {
+            let states = world.get_joint_states();
+            let max_speed = states
+                .values()
+                .map(|js| js.velocity.abs())
+                .fold(0.0_f64, f64::max);
+            let max_pos = states
+                .values()
+                .map(|js| js.position.abs())
+                .fold(0.0_f64, f64::max);
+            println!(
+                "  step {:>5} / {}  t={:.3}s  |q|_max={:.3}  |qdot|_max={:.3}",
+                s,
+                steps,
+                s as f64 * dt,
+                max_pos,
+                max_speed,
+            );
+        }
+    }
+
+    println!("done. final joint states:");
+    let states = world.get_joint_states();
+    for jid in &joint_ids {
+        if let Some(js) = states.get(jid) {
+            println!(
+                "  {:<32}  q={:>8.3}  qdot={:>8.3}",
+                jid, js.position, js.velocity
+            );
+        }
+    }
+
     Ok(())
 }
 

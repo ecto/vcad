@@ -38,6 +38,8 @@ mod error;
 mod gym;
 /// Joint conversion utilities.
 pub mod joints;
+/// STL mesh loading for URDF `<mesh>` references.
+pub mod stl;
 mod world;
 
 pub use error::PhysicsError;

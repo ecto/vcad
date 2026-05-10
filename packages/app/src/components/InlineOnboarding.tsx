@@ -84,7 +84,13 @@ export function InlineOnboarding({ visible }: InlineOnboardingProps) {
 
   function handleOpenExample(example: Example) {
     incrementProjectsCreated();
-    loadDocument(exampleToVcadFile(example.file));
+    if (example.urdf) {
+      window.dispatchEvent(
+        new CustomEvent("vcad:load-example", { detail: { urdf: example.urdf } }),
+      );
+    } else if (example.file) {
+      loadDocument(exampleToVcadFile(example.file));
+    }
     hide();
   }
 

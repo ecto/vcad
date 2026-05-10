@@ -1,15 +1,208 @@
 //! URDF file reader: converts URDF XML to vcad Document.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use vcad_ir::{
-    CsgOp, Document, Instance, Joint as VcadJoint, JointKind, MaterialDef, Node, NodeId, PartDef,
-    SceneEntry, Vec3,
+    CsgOp, Document, InertialProperties, Instance, Joint as VcadJoint, JointKind, MaterialDef,
+    Node, NodeId, PartDef, SceneEntry, Vec3,
 };
 
 use crate::error::UrdfError;
 use crate::types::{Geometry, Joint, Link, Robot};
+
+/// Locate the byte position just past `<robot ...>` and the position of
+/// `</robot>` (start of close tag). Used by [`normalize_robot_child_order`].
+fn locate_robot_bounds(reader: &mut quick_xml::Reader<&[u8]>) -> Result<(usize, usize), UrdfError> {
+    use quick_xml::events::Event;
+    let mut robot_open_end: Option<usize> = None;
+    let mut depth: i32 = 0;
+    loop {
+        let pos_before = reader.buffer_position() as usize;
+        match reader
+            .read_event()
+            .map_err(|e| UrdfError::InvalidFormat(format!("xml scan: {e}")))?
+        {
+            Event::Start(e) => {
+                if e.name().as_ref() == b"robot" && robot_open_end.is_none() {
+                    robot_open_end = Some(reader.buffer_position() as usize);
+                    depth = 1;
+                } else if robot_open_end.is_some() {
+                    depth += 1;
+                }
+            }
+            Event::End(e) => {
+                if let Some(open_end) = robot_open_end {
+                    depth -= 1;
+                    if depth == 0 && e.name().as_ref() == b"robot" {
+                        return Ok((open_end, pos_before));
+                    }
+                }
+            }
+            Event::Eof => {
+                return Err(UrdfError::InvalidFormat(if robot_open_end.is_some() {
+                    "URDF has unclosed <robot>".into()
+                } else {
+                    "URDF has no <robot> root element".into()
+                }));
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Reorder top-level children of `<robot>` so all `<link>` siblings come
+/// before all `<joint>` siblings.
+///
+/// quick-xml's serde adapter (as of 0.37) treats repeated siblings as
+/// `Vec<T>` only when they're contiguous; an interleaved `<link><joint>
+/// <link>` produces a "duplicate field" error. Real URDFs in the wild
+/// (e.g. Unitree's official g1_23dof.urdf) do interleave heavily, so we
+/// run a quick pre-pass that sorts the immediate children of `<robot>`
+/// while preserving everything else byte-for-byte.
+fn normalize_robot_child_order(xml: &str) -> Result<String, UrdfError> {
+    use quick_xml::events::Event;
+    use quick_xml::Reader;
+
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(false);
+
+    // Walk to <robot>. Everything before it (XML prolog, comments, top-
+    // level whitespace) is preserved verbatim.
+    // Pass 1: find <robot> opening end + </robot> position.
+    let (robot_open_end, robot_close_start) = locate_robot_bounds(&mut reader)?;
+
+    // Pass 2: walk inside <robot>, classify each top-level child by tag
+    // name, and capture its byte range in the original source.
+    let mut links: Vec<&str> = Vec::new();
+    let mut joints: Vec<&str> = Vec::new();
+    let mut materials: Vec<&str> = Vec::new();
+    let mut others: Vec<&str> = Vec::new();
+
+    let mut reader = Reader::from_str(&xml[robot_open_end..robot_close_start]);
+    reader.config_mut().trim_text(false);
+    let inner_offset = robot_open_end;
+
+    loop {
+        let pos_before = reader.buffer_position() as usize + inner_offset;
+        match reader
+            .read_event()
+            .map_err(|e| UrdfError::InvalidFormat(format!("xml scan: {e}")))?
+        {
+            Event::Start(e) => {
+                let tag = e.name().as_ref().to_vec();
+                reader
+                    .read_to_end(e.name())
+                    .map_err(|err| UrdfError::InvalidFormat(format!("read_to_end: {err}")))?;
+                let pos_after = reader.buffer_position() as usize + inner_offset;
+                let slice = &xml[pos_before..pos_after];
+                match tag.as_slice() {
+                    b"link" => links.push(slice),
+                    b"joint" => joints.push(slice),
+                    b"material" => materials.push(slice),
+                    _ => others.push(slice),
+                }
+            }
+            Event::Empty(e) => {
+                let tag = e.name().as_ref().to_vec();
+                let pos_after = reader.buffer_position() as usize + inner_offset;
+                let slice = &xml[pos_before..pos_after];
+                match tag.as_slice() {
+                    b"link" => links.push(slice),
+                    b"joint" => joints.push(slice),
+                    b"material" => materials.push(slice),
+                    _ => others.push(slice),
+                }
+            }
+            Event::Eof => break,
+            // Comments / text / whitespace at the top level are dropped by
+            // the reorder — they get folded into the gaps between elements
+            // in the rebuilt string. URDF semantics don't care about
+            // top-level whitespace.
+            _ => {}
+        }
+    }
+
+    // Rebuild: prefix (everything up to and including the <robot ...>
+    // opening tag) verbatim, then materials, links, joints, others, then
+    // the </robot> closing tag and any trailing content verbatim.
+    let prefix = &xml[..robot_open_end];
+    let mut out = String::with_capacity(xml.len());
+    out.push_str(prefix);
+    for s in &materials {
+        out.push('\n');
+        out.push_str(s);
+    }
+    for s in &links {
+        out.push('\n');
+        out.push_str(s);
+    }
+    for s in &joints {
+        out.push('\n');
+        out.push_str(s);
+    }
+    for s in &others {
+        out.push('\n');
+        out.push_str(s);
+    }
+    out.push('\n');
+    out.push_str(&xml[robot_close_start..]);
+    Ok(out)
+}
+
+/// Options for resolving URDF `<mesh>` references.
+///
+/// Controls how `package://NAME/path` URIs and bare relative paths are
+/// turned into absolute filesystem paths the physics layer can `open()`.
+#[derive(Debug, Clone, Default)]
+pub struct UrdfReadOptions {
+    /// Directories to search for `package://NAME/...` resolution. Each
+    /// root is checked for a `NAME/` subdirectory containing the rest of
+    /// the URI; the first match wins.
+    pub package_roots: Vec<PathBuf>,
+    /// Directory the URDF lives in — used as the base for resolving
+    /// relative mesh paths. Set automatically by [`read_urdf`].
+    pub urdf_dir: Option<PathBuf>,
+}
+
+impl UrdfReadOptions {
+    /// Resolve a URDF `<mesh filename="...">` value to an absolute path on
+    /// disk, or `None` if no candidate exists. Logs (via `eprintln!`) when
+    /// a `package://` URI cannot be located so the caller knows a mesh
+    /// fell back to a placeholder.
+    pub fn resolve_mesh(&self, filename: &str) -> Option<PathBuf> {
+        // package://NAME/rest/of/path
+        if let Some(rest) = filename.strip_prefix("package://") {
+            let mut split = rest.splitn(2, '/');
+            let pkg = split.next()?;
+            let sub = split.next().unwrap_or("");
+            for root in &self.package_roots {
+                let candidate = root.join(pkg).join(sub);
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
+            eprintln!(
+                "urdf: package URI {filename:?} not found under {:?}",
+                self.package_roots
+            );
+            return None;
+        }
+        // file:// or absolute or relative
+        let stripped = filename.strip_prefix("file://").unwrap_or(filename);
+        let p = Path::new(stripped);
+        if p.is_absolute() {
+            return p.is_file().then(|| p.to_path_buf());
+        }
+        if let Some(dir) = &self.urdf_dir {
+            let candidate = dir.join(p);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+        None
+    }
+}
 
 /// Maximum URDF size we will attempt to parse. URDFs are tiny descriptors
 /// (tens of KB); a multi-MB "URDF" is almost always an attack payload.
@@ -18,30 +211,45 @@ const MAX_URDF_BYTES: usize = 8 * 1024 * 1024;
 const MAX_LINKS: usize = 10_000;
 const MAX_JOINTS: usize = 10_000;
 
-/// Read a URDF file from a path.
-///
-/// # Arguments
-///
-/// * `path` - Path to the URDF file
-///
-/// # Returns
-///
-/// A vcad Document representing the robot.
+/// Read a URDF file from a path with default mesh-resolution options
+/// (mesh paths are resolved relative to the URDF's parent directory; no
+/// `package://` roots are configured).
 pub fn read_urdf(path: impl AsRef<Path>) -> Result<Document, UrdfError> {
-    let content = std::fs::read_to_string(path)?;
-    read_urdf_from_str(&content)
+    let path = path.as_ref();
+    let opts = UrdfReadOptions {
+        urdf_dir: path.parent().map(|p| p.to_path_buf()),
+        ..UrdfReadOptions::default()
+    };
+    read_urdf_with_options(path, &opts)
 }
 
-/// Read a URDF from a string.
-///
-/// # Arguments
-///
-/// * `xml` - URDF XML content as string
-///
-/// # Returns
-///
-/// A vcad Document representing the robot.
+/// Read a URDF file from a path, providing explicit mesh-resolution
+/// options (e.g. `package_roots` for `package://NAME/...` URIs).
+pub fn read_urdf_with_options(
+    path: impl AsRef<Path>,
+    opts: &UrdfReadOptions,
+) -> Result<Document, UrdfError> {
+    let path = path.as_ref();
+    let content = std::fs::read_to_string(path)?;
+    let mut effective = opts.clone();
+    if effective.urdf_dir.is_none() {
+        effective.urdf_dir = path.parent().map(|p| p.to_path_buf());
+    }
+    read_urdf_from_str_with_options(&content, &effective)
+}
+
+/// Read a URDF from a string with default options. Use
+/// [`read_urdf_from_str_with_options`] when meshes need to be resolved
+/// against package roots.
 pub fn read_urdf_from_str(xml: &str) -> Result<Document, UrdfError> {
+    read_urdf_from_str_with_options(xml, &UrdfReadOptions::default())
+}
+
+/// Read a URDF from a string with explicit mesh-resolution options.
+pub fn read_urdf_from_str_with_options(
+    xml: &str,
+    opts: &UrdfReadOptions,
+) -> Result<Document, UrdfError> {
     if xml.len() > MAX_URDF_BYTES {
         return Err(UrdfError::InvalidFormat(format!(
             "URDF exceeds {} byte limit",
@@ -58,7 +266,12 @@ pub fn read_urdf_from_str(xml: &str) -> Result<Document, UrdfError> {
             "URDF contains a DOCTYPE declaration (rejected)".into(),
         ));
     }
-    let robot: Robot = quick_xml::de::from_str(xml)?;
+    // Real-world URDFs interleave <link> and <joint> siblings; quick-xml's
+    // serde adapter only deserialises Vec<T> when those siblings are
+    // contiguous, so reorder them up front. The normalisation is a no-op
+    // when the file is already in canonical (links-then-joints) order.
+    let normalized = normalize_robot_child_order(xml)?;
+    let robot: Robot = quick_xml::de::from_str(&normalized)?;
     if robot.links.len() > MAX_LINKS {
         return Err(UrdfError::InvalidFormat(format!(
             "URDF has {} links (cap {})",
@@ -73,7 +286,7 @@ pub fn read_urdf_from_str(xml: &str) -> Result<Document, UrdfError> {
             MAX_JOINTS
         )));
     }
-    let reader = UrdfReader::new(&robot);
+    let reader = UrdfReader::new(&robot, opts);
     reader.into_document()
 }
 
@@ -122,15 +335,18 @@ struct UrdfReader<'a> {
     link_to_instance: HashMap<String, String>,
     /// Next node ID.
     next_node_id: NodeId,
+    /// Resolves `<mesh filename>` references to absolute paths.
+    opts: &'a UrdfReadOptions,
 }
 
 impl<'a> UrdfReader<'a> {
-    fn new(robot: &'a Robot) -> Self {
+    fn new(robot: &'a Robot, opts: &'a UrdfReadOptions) -> Self {
         Self {
             robot,
             link_to_part: HashMap::new(),
             link_to_instance: HashMap::new(),
             next_node_id: 1,
+            opts,
         }
     }
 
@@ -258,10 +474,15 @@ impl<'a> UrdfReader<'a> {
     ) -> Result<(PartDef, Vec<(NodeId, Node)>), UrdfError> {
         let mut nodes = Vec::new();
 
-        // Get geometry from visual or collision
-        let (geom, origin) = if let Some(visual) = &link.visual {
+        // Get geometry from the first visual, falling back to the first
+        // collision. URDFs that ship multiple visuals per link describe
+        // multi-mesh parts; the importer picks one geometry to evaluate
+        // (full multi-mesh support is a future extension — the rest of
+        // the parts come along for free once the IR can carry a list of
+        // child geometries here).
+        let (geom, origin) = if let Some(visual) = link.visuals.first() {
             (&visual.geometry, visual.origin.as_ref())
-        } else if let Some(collision) = &link.collision {
+        } else if let Some(collision) = link.collisions.first() {
             (&collision.geometry, collision.origin.as_ref())
         } else {
             // Link with no geometry - create empty cube placeholder
@@ -282,6 +503,7 @@ impl<'a> UrdfReader<'a> {
                     name: Some(link.name.clone()),
                     root: node_id,
                     default_material: Some("default".to_string()),
+                    inertial: None,
                 },
                 nodes,
             ));
@@ -369,12 +591,41 @@ impl<'a> UrdfReader<'a> {
             geom_node_id
         };
 
+        let inertial = link.inertial.as_ref().map(|i| {
+            // URDF stores COM in metres relative to the link frame; the rest
+            // of the IR uses millimetres.
+            let com_xyz = i
+                .origin
+                .as_ref()
+                .map(|o| o.xyz_vec())
+                .unwrap_or([0.0, 0.0, 0.0]);
+            let inertia = &i.inertia;
+            InertialProperties {
+                mass_kg: i.mass.value,
+                com_mm: Vec3::new(
+                    com_xyz[0] * 1000.0,
+                    com_xyz[1] * 1000.0,
+                    com_xyz[2] * 1000.0,
+                ),
+                // [ixx, iyy, izz, ixy, ixz, iyz]
+                inertia_kg_m2: [
+                    inertia.ixx,
+                    inertia.iyy,
+                    inertia.izz,
+                    inertia.ixy,
+                    inertia.ixz,
+                    inertia.iyz,
+                ],
+            }
+        });
+
         Ok((
             PartDef {
                 id: format!("part_{}", link.name),
                 name: Some(link.name.clone()),
                 root: root_id,
                 default_material: Some("default".to_string()),
+                inertial,
             },
             nodes,
         ))
@@ -400,11 +651,50 @@ impl<'a> UrdfReader<'a> {
                 segments: 32,
             })
         } else if let Some(mesh) = &geom.mesh {
-            // Mesh reference - store as STEP import for now (could be STL/DAE)
-            // This is a simplification; full implementation would support mesh loading
-            Ok(CsgOp::StepImport {
-                path: mesh.filename.clone(),
-            })
+            // Resolve URDF filename → absolute path the physics layer can
+            // open. If resolution fails, fall back to a 1cm placeholder so
+            // physics still gets a non-empty body to attach inertials to.
+            let scale = mesh
+                .scale
+                .as_ref()
+                .map(|s| {
+                    let parts: Vec<f64> = s
+                        .split_whitespace()
+                        .filter_map(|p| p.parse().ok())
+                        .collect();
+                    if parts.len() >= 3 {
+                        Some(Vec3::new(parts[0], parts[1], parts[2]))
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(None);
+            // Only STL is supported for actual loading today; DAE / OBJ /
+            // PLY references resolve to a 1cm placeholder so the
+            // kinematic + inertial tree still loads. Authored <inertial>
+            // tags carry the real mass and inertia; the placeholder just
+            // gives the convex-hull collider a non-empty mesh to chew on.
+            let is_supported_format = std::path::Path::new(&mesh.filename)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("stl"))
+                .unwrap_or(false);
+            if !is_supported_format {
+                return Ok(CsgOp::Cube {
+                    size: Vec3::new(10.0, 10.0, 10.0),
+                });
+            }
+            match self.opts.resolve_mesh(&mesh.filename) {
+                Some(abs) => Ok(CsgOp::MeshImport {
+                    path: abs.to_string_lossy().into_owned(),
+                    scale,
+                }),
+                None => Ok(CsgOp::Cube {
+                    // 1cm placeholder — physics will still have authored
+                    // mass/inertia from <inertial> if present.
+                    size: Vec3::new(10.0, 10.0, 10.0),
+                }),
+            }
         } else {
             Err(UrdfError::InvalidGeometry(
                 "No geometry type specified".to_string(),

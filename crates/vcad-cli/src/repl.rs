@@ -581,6 +581,7 @@ fn op_type_name(op: &CsgOp) -> &'static str {
         CsgOp::Loft { .. } => "loft",
         CsgOp::ImportedMesh { .. } => "imported mesh",
         CsgOp::StepImport { .. } => "step import",
+        CsgOp::MeshImport { .. } => "mesh import",
         CsgOp::PcbBoard { .. } => "pcb board",
         CsgOp::EmbroideryPattern { .. } => "embroidery pattern",
         CsgOp::PartInstance { .. } => "part instance",

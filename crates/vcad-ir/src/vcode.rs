@@ -1006,6 +1006,7 @@ fn parse_part_def(doc: &mut Document, parts: &[&str], line: usize) -> Result<(),
             name: Some(name),
             root,
             default_material,
+            inertial: None,
         },
     );
 
@@ -2456,6 +2457,11 @@ fn format_op(
             message: "STEP import not supported in VCode format".to_string(),
         }),
 
+        CsgOp::MeshImport { .. } => Err(VCodeParseError {
+            line: 0,
+            message: "Mesh import not supported in VCode format".to_string(),
+        }),
+
         CsgOp::Text2D { .. } => Err(VCodeParseError {
             line: 0,
             message: "Text2D not supported in VCode format".to_string(),
@@ -3389,6 +3395,7 @@ CAM cam2 0 100 0 0 0 0"#;
                 name: Some("Part 1".to_string()),
                 root: 0,
                 default_material: Some("aluminum".to_string()),
+                inertial: None,
             },
         );
         doc.part_defs = Some(part_defs);

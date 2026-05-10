@@ -625,6 +625,12 @@ fn evaluate_op_timed(
 
         CsgOp::StepImport { path } => Ok(Solid::from_step(path).ok()),
 
+        // STL meshes are loaded by the physics path directly; the editor's
+        // CSG evaluator currently has no path from a triangle soup to a
+        // BRep solid, so we surface a None and let downstream code skip the
+        // mesh-derived steps for this part.
+        CsgOp::MeshImport { .. } => Ok(None),
+
         CsgOp::PcbBoard { board } => {
             // Extrude the board outline into a 3D solid.
             let verts = &board.outline.vertices;
@@ -1089,6 +1095,7 @@ fn op_name(op: &CsgOp) -> String {
         CsgOp::Loft { .. } => "Loft",
         CsgOp::ImportedMesh { .. } => "ImportedMesh",
         CsgOp::StepImport { .. } => "StepImport",
+        CsgOp::MeshImport { .. } => "MeshImport",
         CsgOp::PcbBoard { .. } => "PcbBoard",
         CsgOp::EmbroideryPattern { .. } => "EmbroideryPattern",
         CsgOp::PartInstance { .. } => "PartInstance",

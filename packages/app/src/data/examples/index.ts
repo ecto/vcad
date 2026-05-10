@@ -16,6 +16,18 @@ export interface ExampleFile {
   nextPartNum?: number;
 }
 
+/**
+ * URDF-sourced example. Loaded through the engine's `importUrdf` at click
+ * time rather than inline, since the IR representation of e.g. a 23-DOF
+ * humanoid is several hundred kB and the source URDF is more compact and
+ * editable as text.
+ */
+export interface UrdfExampleSource {
+  urdfText: string;
+  /** Display name for toasts/logs (e.g. file name). */
+  name?: string;
+}
+
 export interface Example {
   id: string;
   name: string;
@@ -24,7 +36,13 @@ export interface Example {
   thumbnail?: string;
   features?: string[];
   unlockAfter?: number;
-  file: ExampleFile;
+  /**
+   * Inline example data. Mutually exclusive with `urdf` — exactly one
+   * must be set.
+   */
+  file?: ExampleFile;
+  /** URDF source bundled via Vite `?raw`. */
+  urdf?: UrdfExampleSource;
 }
 
 /** Wrap an inline example in the canonical tagged-union `VcadFile` shape. */
@@ -51,6 +69,10 @@ import { springExample } from "./spring.vcad";
 import { vaseExample } from "./vase.vcad";
 import { wineglassExample } from "./wineglass.vcad";
 import { robotArmExample } from "./robot-arm.vcad";
+import { unitreeG1Example } from "./unitree-g1.urdf";
+import { unitreeGo2Example } from "./unitree-go2.urdf";
+import { unitreeG1OfficialExample } from "./unitree-g1-official.urdf";
+import { unitreeGo2OfficialExample } from "./unitree-go2-official.urdf";
 
 export const examples: Example[] = [
   plateExample,
@@ -63,4 +85,8 @@ export const examples: Example[] = [
   vaseExample,
   wineglassExample,
   robotArmExample,
+  unitreeG1Example,
+  unitreeGo2Example,
+  unitreeG1OfficialExample,
+  unitreeGo2OfficialExample,
 ];

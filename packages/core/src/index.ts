@@ -239,6 +239,7 @@ export {
   serializeDocument,
   parseVcadFile,
   deriveParts,
+  computeNextIds,
   getDocumentForDisplay,
   buildVcadFileFromState,
 } from "./utils/save-load.js";

@@ -163,6 +163,9 @@ fn evaluate_node(doc: &Document, node_id: NodeId) -> Result<Option<Solid>> {
             c.map(|s| s.chamfer(*distance))
         }
         CsgOp::StepImport { path } => Solid::from_step(path).ok(),
+        // STL meshes feed the physics path directly; the editor doesn't yet
+        // build a BRep from a triangle soup.
+        CsgOp::MeshImport { .. } => None,
         // These need further processing to become solids
         CsgOp::Sketch2D { .. }
         | CsgOp::Extrude { .. }

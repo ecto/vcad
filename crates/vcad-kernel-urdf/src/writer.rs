@@ -136,13 +136,13 @@ impl<'a> UrdfWriter<'a> {
 
         Ok(Link {
             name,
-            visual: Some(Visual {
+            visuals: vec![Visual {
                 name: None,
                 origin,
                 geometry,
-                material: material_ref,
-            }),
-            collision: None,
+                materials: material_ref.into_iter().collect(),
+            }],
+            collisions: Vec::new(),
             inertial: None,
         })
     }
@@ -173,13 +173,13 @@ impl<'a> UrdfWriter<'a> {
 
         Ok(Link {
             name,
-            visual: Some(Visual {
+            visuals: vec![Visual {
                 name: None,
                 origin,
                 geometry,
-                material: material_ref,
-            }),
-            collision: None,
+                materials: material_ref.into_iter().collect(),
+            }],
+            collisions: Vec::new(),
             inertial: None,
         })
     }
@@ -288,6 +288,18 @@ impl<'a> UrdfWriter<'a> {
                     mesh: Some(MeshGeom {
                         filename: path.clone(),
                         scale: None,
+                    }),
+                };
+                Ok((geometry, None))
+            }
+            CsgOp::MeshImport { path, scale } => {
+                let geometry = Geometry {
+                    box_geom: None,
+                    cylinder: None,
+                    sphere: None,
+                    mesh: Some(MeshGeom {
+                        filename: path.clone(),
+                        scale: scale.map(|s| format!("{} {} {}", s.x, s.y, s.z)),
                     }),
                 };
                 Ok((geometry, None))

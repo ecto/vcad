@@ -1526,6 +1526,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "float-cmp"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98de4bbd547a563b716d8dfa9aad1cb19bfab00f4fa09a6a4ed21dbcf44ce9c4"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "float_next_after"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5395,6 +5404,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "stl_io"
+version = "0.8.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a101fb44c7bbb34473ee14a0a9e2c06ad4b1aa22501b18223279fd21f0affd6"
+dependencies = [
+ "byteorder",
+ "float-cmp",
+]
+
+[[package]]
 name = "string_cache"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6991,10 +7010,12 @@ version = "0.9.4"
 dependencies = [
  "phyz",
  "serde",
+ "stl_io",
  "thiserror 2.0.18",
  "vcad-ir",
  "vcad-kernel",
  "vcad-kernel-tessellate",
+ "vcad-kernel-urdf",
 ]
 
 [[package]]
@@ -7169,6 +7190,7 @@ dependencies = [
  "vcad-kernel-raytrace",
  "vcad-kernel-tessellate",
  "vcad-kernel-topo",
+ "vcad-kernel-urdf",
  "vcad-loon",
  "vcad-parts",
  "vcad-slicer",
