@@ -464,6 +464,50 @@ export interface PartInstanceOp {
   params: Record<string, unknown>;
 }
 
+/** Sheet-metal direction tag. `Up` rises out of the parent's outside face. */
+export type SheetMetalDirection = "Up" | "Down";
+
+/**
+ * Sheet-metal base-flange (rectangular). Creates a new sheet-metal model
+ * from an axis-aligned rectangle in the XY plane. Outside face on +Z.
+ *
+ * The result is a `SheetMetalModel` (graph of panels + bends) that the
+ * engine tessellates into a triangle mesh and caches for the flat-pattern
+ * view to read.
+ */
+export interface SheetMetalBaseFlangeRectOp {
+  type: "SheetMetalBaseFlangeRect";
+  width: number;
+  depth: number;
+  thickness: number;
+  /** Material name for K-factor lookup (e.g. `"Al-soft"`). */
+  material: string;
+}
+
+/**
+ * Sheet-metal edge flange. Extends `parent` (which must evaluate to a
+ * sheet-metal model) by adding a new flange off `edge_index` of the
+ * referenced panel.
+ */
+export interface SheetMetalEdgeFlangeOp {
+  type: "SheetMetalEdgeFlange";
+  /** Parent node id (must produce a sheet-metal model). */
+  parent: NodeId;
+  /** Panel id within the parent's model (0 = root). */
+  panel_id: number;
+  /** Edge index in that panel's outline (0 = outline[0]→outline[1]). */
+  edge_index: number;
+  /** Flange length perpendicular to the hinge edge (mm). */
+  length: number;
+  /** Bend angle (radians, 0 < angle ≤ π). */
+  angle: number;
+  /** Inside bend radius (mm). */
+  radius: number;
+  direction: SheetMetalDirection;
+  /** Optional K-factor override (skips the bend-table lookup). */
+  manual_k?: number;
+}
+
 /** CSG operation — the core building block of the IR DAG. */
 export type CsgOp =
   | CubeOp
@@ -491,7 +535,9 @@ export type CsgOp =
   | ImportedMeshOp
   | PcbBoardOp
   | EmbroideryPatternOp
-  | PartInstanceOp;
+  | PartInstanceOp
+  | SheetMetalBaseFlangeRectOp
+  | SheetMetalEdgeFlangeOp;
 
 /** A node in the IR graph. */
 export interface Node {

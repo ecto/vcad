@@ -30,6 +30,7 @@ import { lazyWithRetry } from "@/lib/lazy-with-retry";
 // `lazyWithRetry` silently retries transient network failures; stale-deploy
 // chunk errors are handled globally in bootstrap.ts via `vite:preloadError`.
 const PropertyPanel = lazyWithRetry(() => import("@/components/PropertyPanel").then(m => ({ default: m.PropertyPanel })), "PropertyPanel");
+const SheetMetalView = lazyWithRetry(() => import("@/components/SheetMetalView").then(m => ({ default: m.SheetMetalView })), "SheetMetalView");
 const SceneInspector = lazyWithRetry(() => import("@/components/SceneInspector").then(m => ({ default: m.SceneInspector })), "SceneInspector");
 const ParametersPanel = lazyWithRetry(() => import("@/components/ParametersPanel").then(m => ({ default: m.ParametersPanel })), "ParametersPanel");
 const InlineOnboarding = lazyWithRetry(() => import("@/components/InlineOnboarding").then(m => ({ default: m.InlineOnboarding })), "InlineOnboarding");
@@ -196,7 +197,16 @@ function FeatureTreeSlot({ sketchActive }: { sketchActive: boolean }) {
             </AsyncBoundary>
           ) : (
             <AsyncBoundary region="property-panel" fallback={null}>
-              <PropertyPanel />
+              <div className="flex h-full flex-col overflow-hidden">
+                <div className="flex-1 min-h-0 overflow-auto">
+                  <PropertyPanel />
+                </div>
+                {/* Sheet-metal contextual view — only renders when the
+                    selected part has a sheet-metal model attached. */}
+                <AsyncBoundary region="sheet-metal-view" fallback={null}>
+                  <SheetMetalView />
+                </AsyncBoundary>
+              </div>
             </AsyncBoundary>
           )}
         </div>

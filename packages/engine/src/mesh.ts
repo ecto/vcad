@@ -20,6 +20,14 @@ export interface EvaluatedPart {
   /** Optional BRep solid for ray tracing (only available for primitives, not boolean results). */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   solid?: any;
+  /** Optional sheet-metal model (panels + bends graph) — present when the
+   *  root resolved to a `SheetMetalBaseFlangeRect`/`SheetMetalEdgeFlange`
+   *  chain. The flat-pattern view + property panel read this directly so
+   *  edits to thickness/K/etc. don't lose provenance. Typed as
+   *  `unknown` to avoid a circular dep on `@vcad/sheet-metal`; the app
+   *  casts it at the read site.
+   */
+  sheetMetal?: unknown;
 }
 
 /** A part definition in an assembly (reusable geometry). */

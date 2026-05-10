@@ -51,10 +51,12 @@ import { springExample } from "./spring.vcad";
 import { vaseExample } from "./vase.vcad";
 import { wineglassExample } from "./wineglass.vcad";
 import { robotArmExample } from "./robot-arm.vcad";
+import { sheetMetalBracketExample } from "./sheet-metal-bracket.vcad";
 
 export const examples: Example[] = [
   plateExample,
   bracketExample,
+  sheetMetalBracketExample,
   mascotExample,
   containerExample,
   flangeExample,

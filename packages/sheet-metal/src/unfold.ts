@@ -1,0 +1,373 @@
+/**
+ * Lossless bidirectional unfold + flat-pattern projection + 3D tessellation.
+ *
+ * `unfold` and `refold` are **inverses by construction**: both
+ * configurations of every panel — `frameBent` and `frameFlat` — are
+ * derivable from the same primary data (panel-local outline + bend
+ * metadata). The involution test in `__tests__/unfold.test.ts` proves
+ * `refold(unfold(m)) == m` on bent frames within tolerance.
+ */
+
+import type { Vec2, Vec3 } from "@vcad/ir";
+import { vec3Normalize } from "@vcad/ir";
+import { bendAllowance } from "./bend-table.js";
+import {
+  bendDirectionSign,
+  frameToWorld,
+  type Bend,
+  type BendDirection,
+  type Frame,
+  type SheetMetalModel,
+  bfs,
+} from "./model.js";
+import { rotateVecAboutAxis } from "./edge-flange.js";
+
+export type UnfoldError =
+  | { kind: "EmptyModel" }
+  | { kind: "CycleDetected" };
+
+export class UnfoldException extends Error {
+  constructor(public readonly detail: UnfoldError) {
+    super(
+      detail.kind === "EmptyModel"
+        ? "model has no panels"
+        : "model contains a cycle",
+    );
+    this.name = "UnfoldException";
+  }
+}
+
+/**
+ * Recompute every non-root panel's `frameFlat` by walking the bend tree
+ * from the root. The root's `frameFlat` is preserved.
+ */
+export function unfold(model: SheetMetalModel): void {
+  walkAndUpdate(model, "Flat");
+}
+
+/**
+ * Recompute every non-root panel's `frameBent` by walking the bend tree.
+ * The root's `frameBent` is preserved.
+ */
+export function refold(model: SheetMetalModel): void {
+  walkAndUpdate(model, "Bent");
+}
+
+type FrameKind = "Bent" | "Flat";
+
+function walkAndUpdate(model: SheetMetalModel, kind: FrameKind): void {
+  if (model.panels.length === 0) {
+    throw new UnfoldException({ kind: "EmptyModel" });
+  }
+  const order = [...bfs(model)];
+  if (order.length !== model.panels.length) {
+    throw new UnfoldException({ kind: "CycleDetected" });
+  }
+  for (let i = 1; i < order.length; i++) {
+    const [panelId, viaBend] = order[i]!;
+    if (viaBend === null) {
+      throw new UnfoldException({ kind: "CycleDetected" });
+    }
+    const bend = model.bends[viaBend]!;
+    const parentId = bend.parent === panelId ? bend.child : bend.parent;
+    const parentFrame =
+      kind === "Bent"
+        ? model.panels[parentId]!.frameBent
+        : model.panels[parentId]!.frameFlat;
+    const newFrame =
+      kind === "Bent"
+        ? childBentFrame(parentFrame, bend)
+        : childFlatFrame(parentFrame, bend, model.thickness);
+    if (kind === "Bent") {
+      model.panels[panelId]!.frameBent = newFrame;
+    } else {
+      model.panels[panelId]!.frameFlat = newFrame;
+    }
+  }
+}
+
+function childBentFrame(parentFrame: Frame, bend: Bend): Frame {
+  const [p0, p1] = bend.edgeParent;
+  const edgeVec: Vec2 = { x: p1.x - p0.x, y: p1.y - p0.y };
+  const edgeLen = Math.hypot(edgeVec.x, edgeVec.y);
+  const edgeDir2D: Vec2 = { x: edgeVec.x / edgeLen, y: edgeVec.y / edgeLen };
+  const outward2D: Vec2 = { x: edgeDir2D.y, y: -edgeDir2D.x };
+
+  const edgeDir3D: Vec3 = direction2DToWorld(parentFrame, edgeDir2D);
+  const outward3D: Vec3 = direction2DToWorld(parentFrame, outward2D);
+
+  const signedAngle = bendDirectionSign(bend.direction) * bend.angle;
+  const axis = vec3Normalize(edgeDir3D);
+  const childY = rotateVecAboutAxis(outward3D, axis, signedAngle);
+  const childOrigin = frameToWorld(parentFrame, p0);
+  return { origin: childOrigin, xDir: edgeDir3D, yDir: childY };
+}
+
+function childFlatFrame(
+  parentFrame: Frame,
+  bend: Bend,
+  thickness: number,
+): Frame {
+  const [p0, p1] = bend.edgeParent;
+  const edgeVec: Vec2 = { x: p1.x - p0.x, y: p1.y - p0.y };
+  const edgeLen = Math.hypot(edgeVec.x, edgeVec.y);
+  const edgeDir2D: Vec2 = { x: edgeVec.x / edgeLen, y: edgeVec.y / edgeLen };
+  const outward2D: Vec2 = { x: edgeDir2D.y, y: -edgeDir2D.x };
+
+  const edgeDir3D: Vec3 = direction2DToWorld(parentFrame, edgeDir2D);
+  const outward3D: Vec3 = direction2DToWorld(parentFrame, outward2D);
+
+  const ba = bendAllowance(bend.angle, bend.radius, bend.kFactor, thickness);
+  const parentHinge = frameToWorld(parentFrame, p0);
+  const childOrigin: Vec3 = {
+    x: parentHinge.x + outward3D.x * ba,
+    y: parentHinge.y + outward3D.y * ba,
+    z: parentHinge.z + outward3D.z * ba,
+  };
+  return { origin: childOrigin, xDir: edgeDir3D, yDir: outward3D };
+}
+
+function direction2DToWorld(frame: Frame, d: Vec2): Vec3 {
+  return {
+    x: frame.xDir.x * d.x + frame.yDir.x * d.y,
+    y: frame.xDir.y * d.x + frame.yDir.y * d.y,
+    z: frame.xDir.z * d.x + frame.yDir.z * d.y,
+  };
+}
+
+// -----------------------------------------------------------------------------
+// FlatPattern — the manufacturing-side view, ready for DXF / nesting / UI.
+// -----------------------------------------------------------------------------
+
+/**
+ * Manufacturing-side flat pattern: global 2D outlines + crease lines.
+ * Generated by {@link flatPatternFromModel}.
+ */
+export interface FlatPattern {
+  thickness: number;
+  /** Outlines in global flat 2D coords. One entry per panel, in panel-id order. */
+  panelOutlines2D: Vec2[][];
+  /** Hole loops per panel. */
+  panelHoles2D: Vec2[][][];
+  /** Crease lines (one per bend). */
+  creases: FlatCrease[];
+  /** Total flat-pattern area (mm²) including bend-allowance strips. */
+  areaMm2: number;
+  /** 2D bounding box. */
+  bbox: { min: Vec2; max: Vec2 };
+}
+
+export interface FlatCrease {
+  line: [Vec2, Vec2];
+  angle: number;
+  radius: number;
+  kFactor: number;
+  kFactorSource: string | null;
+  direction: BendDirection;
+  bendId: number;
+}
+
+/**
+ * Project a sheet-metal model into a global 2D flat pattern using each
+ * panel's `frameFlat`. The root panel's outline ends up in its
+ * panel-local 2D coordinates verbatim; other panels are projected.
+ */
+export function flatPatternFromModel(model: SheetMetalModel): FlatPattern {
+  const root = model.panels[model.root]!;
+  const rootFrame = root.frameFlat;
+  const toGlobal = (frame: Frame, p: Vec2): Vec2 => {
+    const world = frameToWorld(frame, p);
+    const dx = world.x - rootFrame.origin.x;
+    const dy = world.y - rootFrame.origin.y;
+    const dz = world.z - rootFrame.origin.z;
+    return {
+      x: dx * rootFrame.xDir.x + dy * rootFrame.xDir.y + dz * rootFrame.xDir.z,
+      y: dx * rootFrame.yDir.x + dy * rootFrame.yDir.y + dz * rootFrame.yDir.z,
+    };
+  };
+
+  const panelOutlines2D = model.panels.map((panel) =>
+    panel.outline.map((p) => toGlobal(panel.frameFlat, p)),
+  );
+  const panelHoles2D = model.panels.map((panel) =>
+    panel.holes.map((h) => h.map((p) => toGlobal(panel.frameFlat, p))),
+  );
+  const creases: FlatCrease[] = model.bends.map((bend, id) => {
+    const parent = model.panels[bend.parent]!;
+    const [p0, p1] = bend.edgeParent;
+    return {
+      line: [toGlobal(parent.frameFlat, p0), toGlobal(parent.frameFlat, p1)],
+      angle: bend.angle,
+      radius: bend.radius,
+      kFactor: bend.kFactor,
+      kFactorSource: bend.kFactorSource,
+      direction: bend.direction,
+      bendId: id,
+    };
+  });
+
+  let area = 0;
+  for (let i = 0; i < panelOutlines2D.length; i++) {
+    area += polygonArea(panelOutlines2D[i]!);
+    for (const h of panelHoles2D[i]!) area -= polygonArea(h);
+  }
+  for (const bend of model.bends) {
+    const [p0, p1] = bend.edgeParent;
+    const edgeLen = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+    area += edgeLen * bendAllowance(bend.angle, bend.radius, bend.kFactor, model.thickness);
+  }
+
+  // Bounding box.
+  let minX = Number.POSITIVE_INFINITY,
+    minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY,
+    maxY = Number.NEGATIVE_INFINITY;
+  for (const outline of panelOutlines2D) {
+    for (const p of outline) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+  }
+  if (!Number.isFinite(minX)) {
+    minX = 0;
+    minY = 0;
+    maxX = 0;
+    maxY = 0;
+  }
+
+  return {
+    thickness: model.thickness,
+    panelOutlines2D,
+    panelHoles2D,
+    creases,
+    areaMm2: area,
+    bbox: { min: { x: minX, y: minY }, max: { x: maxX, y: maxY } },
+  };
+}
+
+function polygonArea(loop: Vec2[]): number {
+  if (loop.length < 3) return 0;
+  let sum = 0;
+  for (let i = 0; i < loop.length; i++) {
+    const a = loop[i]!;
+    const b = loop[(i + 1) % loop.length]!;
+    sum += a.x * b.y - b.x * a.y;
+  }
+  return Math.abs(sum) * 0.5;
+}
+
+// -----------------------------------------------------------------------------
+// Tessellation — convert a SheetMetalModel into triangle data for 3D rendering.
+// -----------------------------------------------------------------------------
+
+/**
+ * Triangle mesh suitable for the existing scene renderer (positions and
+ * normals as flat float arrays, indices as flat uint32 array — same shape
+ * as `EvaluatedPart.mesh` in the engine).
+ */
+export interface TessellatedMesh {
+  positions: Float32Array;
+  normals: Float32Array;
+  indices: Uint32Array;
+}
+
+/**
+ * Tessellate a sheet-metal model into a thickness-aware triangle mesh.
+ *
+ * For the foundation tier we emit a simple zero-radius approximation: each
+ * panel is a thickness-`t` slab (top + bottom + 4 side rectangles), and
+ * bends are not yet rendered as cylinders — instead, adjacent panels meet
+ * at the hinge. Bend-region tessellation lands with the springback /
+ * lofted-flange tier; this is sufficient for the dual-view UI to show
+ * something recognisable as a bent part.
+ */
+export function tessellate(model: SheetMetalModel): TessellatedMesh {
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const indices: number[] = [];
+  const t = model.thickness;
+  const halfT = t * 0.5;
+
+  for (const panel of model.panels) {
+    const frame = panel.frameBent;
+    // Plane normal points to outside face; offset by ±t/2 along normal.
+    const n = frameNormalLocal(frame);
+    const outline = panel.outline;
+    if (outline.length < 3) continue;
+
+    const baseTop = positions.length / 3;
+    // Top face vertices (outside).
+    for (const p of outline) {
+      const w = frameToWorld(frame, p);
+      positions.push(w.x + n.x * halfT, w.y + n.y * halfT, w.z + n.z * halfT);
+      normals.push(n.x, n.y, n.z);
+    }
+    // Bottom face vertices (inside).
+    const baseBot = positions.length / 3;
+    for (const p of outline) {
+      const w = frameToWorld(frame, p);
+      positions.push(w.x - n.x * halfT, w.y - n.y * halfT, w.z - n.z * halfT);
+      normals.push(-n.x, -n.y, -n.z);
+    }
+
+    // Triangulate top with a fan from vertex 0.
+    for (let i = 1; i < outline.length - 1; i++) {
+      indices.push(baseTop, baseTop + i, baseTop + i + 1);
+    }
+    // Triangulate bottom with reversed winding (outward = -n side).
+    for (let i = 1; i < outline.length - 1; i++) {
+      indices.push(baseBot, baseBot + i + 1, baseBot + i);
+    }
+
+    // Side walls: one quad per outline edge. Add separate vertices so each
+    // wall has its own normal (no shared smoothing).
+    for (let i = 0; i < outline.length; i++) {
+      const a = outline[i]!;
+      const b = outline[(i + 1) % outline.length]!;
+      const aTopW = frameToWorld(frame, a);
+      const bTopW = frameToWorld(frame, b);
+      const edge = { x: bTopW.x - aTopW.x, y: bTopW.y - aTopW.y, z: bTopW.z - aTopW.z };
+      // Side normal = edge × n (then normalize). Should point outward
+      // (away from polygon interior).
+      const sn = normalize3({
+        x: edge.y * n.z - edge.z * n.y,
+        y: edge.z * n.x - edge.x * n.z,
+        z: edge.x * n.y - edge.y * n.x,
+      });
+      const aTop = { x: aTopW.x + n.x * halfT, y: aTopW.y + n.y * halfT, z: aTopW.z + n.z * halfT };
+      const bTop = { x: bTopW.x + n.x * halfT, y: bTopW.y + n.y * halfT, z: bTopW.z + n.z * halfT };
+      const aBot = { x: aTopW.x - n.x * halfT, y: aTopW.y - n.y * halfT, z: aTopW.z - n.z * halfT };
+      const bBot = { x: bTopW.x - n.x * halfT, y: bTopW.y - n.y * halfT, z: bTopW.z - n.z * halfT };
+      const base = positions.length / 3;
+      positions.push(aTop.x, aTop.y, aTop.z);
+      positions.push(bTop.x, bTop.y, bTop.z);
+      positions.push(bBot.x, bBot.y, bBot.z);
+      positions.push(aBot.x, aBot.y, aBot.z);
+      for (let k = 0; k < 4; k++) normals.push(sn.x, sn.y, sn.z);
+      indices.push(base, base + 1, base + 2);
+      indices.push(base, base + 2, base + 3);
+    }
+  }
+
+  return {
+    positions: new Float32Array(positions),
+    normals: new Float32Array(normals),
+    indices: new Uint32Array(indices),
+  };
+}
+
+function frameNormalLocal(f: Frame): Vec3 {
+  return normalize3({
+    x: f.xDir.y * f.yDir.z - f.xDir.z * f.yDir.y,
+    y: f.xDir.z * f.yDir.x - f.xDir.x * f.yDir.z,
+    z: f.xDir.x * f.yDir.y - f.xDir.y * f.yDir.x,
+  });
+}
+
+function normalize3(v: Vec3): Vec3 {
+  const m = Math.hypot(v.x, v.y, v.z);
+  if (m < 1e-15) return { x: 0, y: 0, z: 1 };
+  return { x: v.x / m, y: v.y / m, z: v.z / m };
+}

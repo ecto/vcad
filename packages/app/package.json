@@ -47,6 +47,7 @@
     "@vcad/engine": "*",
     "@vcad/ir": "*",
     "@vcad/mcp": "*",
+    "@vcad/sheet-metal": "*",
     "@vercel/analytics": "^2.0.1",
     "@vercel/speed-insights": "^2.0.0",
     "ai": "^6.0.159",

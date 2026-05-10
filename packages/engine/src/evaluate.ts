@@ -14,6 +14,7 @@ import type {
   EmbroideryPatternOp,
   PartInstanceOp,
 } from "@vcad/ir";
+import { buildSheetMetalModel, sheetMetalToMesh } from "./sheet-metal.js";
 import { resolveDocument } from "./expressions.js";
 import type {
   EvaluatedScene,
@@ -479,6 +480,26 @@ export function evaluateDocumentTS(
       return { mesh, material: entry.material };
     }
 
+    // Sheet-metal — bypasses the Solid pipeline. The model itself rides
+    // along on the EvaluatedPart so the flat-pattern view + property
+    // panel can read panels, bends, and provenance directly.
+    try {
+      const smModel = buildSheetMetalModel(entry.root, doc.nodes);
+      if (smModel) {
+        const mesh = sheetMetalToMesh(smModel);
+        solids.push(Solid.empty());
+        return { mesh, material: entry.material, sheetMetal: smModel };
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      failures.push({ scope: `root[${idx}]`, node_id: entry.root, error: msg });
+      console.warn(
+        `[ENGINE] sheet-metal eval failed at root[${idx}] (node ${entry.root}): ${msg}`,
+      );
+      solids.push(Solid.empty());
+      return { mesh: emptyMesh(), material: entry.material };
+    }
+
     try {
       const solid = evaluateNode(entry.root, doc.nodes, Solid, cache, 0);
       const mesh = solidToMesh(solid);
@@ -842,6 +863,17 @@ function evaluateOp(
       // `expandPartInstances`. If one slips through, treat as empty to
       // avoid crashing the evaluator — the warning has already been
       // logged during expansion.
+      return Solid.empty();
+
+    case "SheetMetalBaseFlangeRect":
+    case "SheetMetalEdgeFlange":
+      // Sheet-metal ops bypass the Solid pipeline. Detected at root level
+      // in `evaluateDocument` via `buildSheetMetalModel` and rendered as
+      // a TriangleMesh directly. Returning an empty Solid here is fine —
+      // it just prevents inadvertent boolean composition with sheet metal
+      // (which would silently produce nothing) and keeps the kernel-WASM
+      // dependency narrow. Boolean ops between sheet metal and regular
+      // bodies will land alongside the BRep tessellator in a later tier.
       return Solid.empty();
   }
 }

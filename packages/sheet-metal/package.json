@@ -1,5 +1,5 @@
 {
-  "name": "@vcad/engine",
+  "name": "@vcad/sheet-metal",
   "version": "0.9.4",
   "type": "module",
   "main": "dist/index.js",
@@ -19,9 +19,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@vcad/ir": "*",
-    "@vcad/kernel-wasm": "file:../kernel-wasm",
-    "@vcad/sheet-metal": "*"
+    "@vcad/ir": "*"
   },
   "devDependencies": {
     "typescript": "^5.7",
