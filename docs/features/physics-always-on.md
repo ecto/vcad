@@ -36,9 +36,9 @@ Mechanism design should happen *in* a physical world:
 
 ### Physics Engine
 
-- **Rapier3d** physics engine integrated via `vcad-kernel-physics` crate
+- **phyz** physics engine integrated via `vcad-kernel-physics` crate
 - Compiled to WASM for browser execution
-- Continuous collision detection (CCD) prevents tunneling at high velocities
+- Penalty-based contacts; CCD is not yet implemented in phyz
 - Stable simulation up to 240Hz internal step rate
 
 ### Architecture
@@ -47,7 +47,7 @@ Mechanism design should happen *in* a physical world:
 ┌─────────────────┐     ┌─────────────────┐
 │   Main Thread   │     │   Web Worker    │
 │                 │     │                 │
-│  Three.js       │◄────│  Rapier3d       │
+│  Three.js       │◄────│  phyz           │
 │  React UI       │     │  Physics Step   │
 │  User Input     │────►│  Collision Det  │
 └─────────────────┘     └─────────────────┘
@@ -150,7 +150,7 @@ Large assemblies (>100 bodies) may require selective physics regions or level-of
 
 ## Dependencies
 
-- `vcad-kernel-physics`: Rapier3d integration crate
+- `vcad-kernel-physics`: phyz integration crate
 - `vcad-kernel-physics-wasm`: WASM bindings for browser
 - Web Worker support in browser
 - SharedArrayBuffer (requires COOP/COEP headers)

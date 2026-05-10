@@ -81,7 +81,7 @@ const topics = [
   {
     id: "physics",
     title: "Physics Engine",
-    description: "Rapier3D integration, BRep-to-physics, joint mapping, gym interface.",
+    description: "phyz integration, BRep-to-physics, joint mapping, gym interface.",
     icon: Atom,
     readTime: "12 min",
   },

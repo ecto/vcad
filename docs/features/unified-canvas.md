@@ -201,7 +201,7 @@ The moat is integration depth. Competitors would need to rebuild from scratch to
 ### Dependencies
 
 - Unified document format (already exists in vcad)
-- Physics engine integration (planned: Rapier or custom)
+- Physics engine integration (planned: phyz)
 - Code execution sandbox (WASM-based for security)
 - Chat context protocol (extend current MCP)
 

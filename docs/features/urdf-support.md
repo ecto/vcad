@@ -320,7 +320,7 @@ enum Commands {
 
 This feature enables the broader robotics roadmap:
 
-- [ ] **Phase 2: Physics Simulation** — Integrate physics engine (Rapier) for dynamics
+- [ ] **Phase 2: Physics Simulation** — Integrate physics engine (phyz) for dynamics
 - [ ] **Phase 3: Gym Environment** — Export to Gymnasium/IsaacGym for RL training
 - [ ] **Phase 4: Motion Planning** — Integrate with MoveIt for path planning
 

@@ -2971,7 +2971,7 @@ pub fn evaluate_vcode(vcode: &str) -> Result<Solid, JsError> {
 }
 
 // =========================================================================
-// Physics Simulation (Rapier-based gym environment)
+// Physics Simulation (phyz-based gym environment)
 // =========================================================================
 
 /// Physics simulation environment for robotics and RL.

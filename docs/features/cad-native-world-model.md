@@ -108,8 +108,8 @@ This enables:
 │           │                                                     │
 │           ▼                                                     │
 │  ┌─────────────────┐                                            │
-│  │ Physics Engine  │  Rapier3d simulation                       │
-│  │ (Rapier/WASM)   │  Ground truth trajectories                 │
+│  │ Physics Engine  │  phyz simulation                       │
+│  │ (phyz/WASM)   │  Ground truth trajectories                 │
 │  └────────┬────────┘                                            │
 │           │                                                     │
 │           ▼                                                     │

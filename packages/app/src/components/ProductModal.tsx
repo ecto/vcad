@@ -60,7 +60,7 @@ const FEATURES = [
   {
     icon: Lightning,
     title: "Physics & simulation",
-    desc: "Rapier3D rigid-body physics, joint simulation, and gym-style RL interface for robotics.",
+    desc: "phyz articulated rigid-body physics, joint simulation, and gym-style RL interface for robotics.",
     color: "text-orange-400",
   },
 ] as const;
