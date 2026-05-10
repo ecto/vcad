@@ -513,7 +513,7 @@ export function evaluateDocumentTS(
         const solid = evaluateNode(partDef.root, doc.nodes, Solid, cache, 0);
         const mesh = solidToMesh(solid);
         partDefMeshes.set(id, mesh);
-        evaluatedPartDefs.push({ id, mesh });
+        evaluatedPartDefs.push({ id, mesh, solid });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         failures.push({ scope: `partDef[${JSON.stringify(id)}]`, node_id: partDef.root, error: msg });

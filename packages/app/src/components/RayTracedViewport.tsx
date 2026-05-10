@@ -102,7 +102,9 @@ export function RayTracedViewportSync() {
       return;
     }
 
-    if (!solidScene.parts?.length) {
+    const hasParts = (solidScene.parts?.length ?? 0) > 0;
+    const hasInstances = (solidScene.instances?.length ?? 0) > 0;
+    if (!hasParts && !hasInstances) {
       uploadedRef.current = false;
       return;
     }
@@ -113,6 +115,11 @@ export function RayTracedViewportSync() {
     //
     // All calls go through queueWasm so they can't race with an in-flight
     // render() and trip wasm-bindgen's recursive-use guard.
+    type SolidHandle = {
+      scale: (x: number, y: number, z: number) => SolidHandle;
+      rotate: (x_deg: number, y_deg: number, z_deg: number) => SolidHandle;
+      translate: (x: number, y: number, z: number) => SolidHandle;
+    };
     const rt = rayTracer as {
       clearScene?: () => void;
       uploadSolid: (s: unknown) => void;
@@ -122,7 +129,9 @@ export function RayTracedViewportSync() {
 
     let uploaded = false;
     let firstMaterialKey: string | undefined;
-    for (const p of solidScene.parts) {
+
+    // Top-level parts (non-assembly docs, or root-level parts in mixed docs).
+    for (const p of solidScene.parts ?? []) {
       const solid = (p as { solid?: unknown }).solid;
       if (!solid) continue;
 
@@ -131,6 +140,37 @@ export function RayTracedViewportSync() {
       });
       if (firstMaterialKey === undefined) firstMaterialKey = p.material;
       uploaded = true;
+    }
+
+    // Assembly instances. Each instance references a partDef by id; we
+    // transform the partDef's solid by the instance's world transform
+    // (translate ∘ rotate ∘ scale, matching the Three.js TRS path used by
+    // the tessellated renderer in `SceneMesh.tsx`) and upload one merged
+    // copy per instance. Re-using the partDef solid is safe — translate/
+    // rotate/scale return *new* solids without mutating the original.
+    if (hasInstances && solidScene.partDefs?.length) {
+      const partDefSolids = new Map<string, SolidHandle>();
+      for (const pd of solidScene.partDefs) {
+        const s = (pd as { solid?: unknown }).solid as SolidHandle | undefined;
+        if (s) partDefSolids.set(pd.id, s);
+      }
+
+      for (const inst of solidScene.instances ?? []) {
+        const baseSolid = partDefSolids.get(inst.partDefId);
+        if (!baseSolid) continue;
+        const tf = inst.transform;
+        const placed = tf
+          ? baseSolid
+              .scale(tf.scale.x, tf.scale.y, tf.scale.z)
+              .rotate(tf.rotation.x, tf.rotation.y, tf.rotation.z)
+              .translate(tf.translation.x, tf.translation.y, tf.translation.z)
+          : baseSolid;
+        queueWasm(() => rt.uploadSolid(placed)).catch((e) => {
+          logger.debug("gpu", `uploadSolid (instance) failed: ${e}`);
+        });
+        if (firstMaterialKey === undefined) firstMaterialKey = inst.material;
+        uploaded = true;
+      }
     }
 
     // Apply material — document overrides take precedence, fall back to preset library.
