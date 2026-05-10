@@ -157,8 +157,10 @@ enum Commands {
         /// Number of simulation steps to run
         #[arg(long, default_value = "240")]
         steps: u32,
-        /// Simulation timestep in seconds
-        #[arg(long, default_value = "0.004166666")]
+        /// Simulation timestep in seconds. Default is 1/240 s — the
+        /// standard 240 Hz timestep used by phyz / Rapier / Bullet for
+        /// stable rigid-body integration.
+        #[arg(long, default_value_t = 1.0 / 240.0)]
         dt: f64,
         /// Print joint states every N steps (0 = only summary)
         #[arg(long, default_value = "60")]
