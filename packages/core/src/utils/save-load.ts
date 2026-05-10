@@ -741,9 +741,11 @@ function getChildNodes(op: CsgOp): NodeId[] {
 }
 
 /**
- * Compute the next available node ID and part number
+ * Compute the next available node ID and part number for a freshly loaded
+ * Document — used when constructing a {@link VcadFile} from non-`.vcad`
+ * sources (e.g. the URDF importer in the web app).
  */
-function computeNextIds(
+export function computeNextIds(
   document: Document,
   parts: PartInfo[]
 ): { nextNodeId: number; nextPartNum: number } {

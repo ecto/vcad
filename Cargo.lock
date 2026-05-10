@@ -7183,6 +7183,7 @@ dependencies = [
  "vcad-kernel-raytrace",
  "vcad-kernel-tessellate",
  "vcad-kernel-topo",
+ "vcad-kernel-urdf",
  "vcad-loon",
  "vcad-parts",
  "vcad-slicer",

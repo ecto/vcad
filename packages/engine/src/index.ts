@@ -155,6 +155,19 @@ export interface KernelModule {
   WasmAnnotationLayer: typeof WasmAnnotationLayer;
   projectMesh: (mesh: { positions: Float32Array; indices: Uint32Array }, viewDirection: string) => ProjectedView | null;
   importStepBuffer: (data: Uint8Array) => Array<{ positions: Float32Array; indices: Uint32Array }>;
+  /**
+   * Import a URDF (Unified Robot Description Format) file. Returns a
+   * JSON-encoded {@link Document} that the caller deserialises with
+   * `Document.fromJson` (or hands directly to the document store).
+   *
+   * `<mesh>` references in the URDF are resolved best-effort: the
+   * browser cannot read the user's filesystem, so any mesh path that
+   * isn't already absolute on a virtual FS falls back to a 1cm
+   * placeholder cube. Joint topology and `<inertial>` mass / inertia
+   * still flow through correctly, so simulation behaves like the real
+   * robot to first order.
+   */
+  importUrdfBuffer: (data: Uint8Array) => string;
   exportProjectedViewToDxf: (view_json: string) => Uint8Array;
   createDetailView: (
     parent_json: string,
@@ -360,6 +373,7 @@ export class Engine {
       WasmAnnotationLayer: wasmModule.WasmAnnotationLayer,
       projectMesh: wasmModule.projectMesh,
       importStepBuffer: wasmModule.importStepBuffer,
+      importUrdfBuffer: (wasmModule as Record<string, unknown>).importUrdfBuffer as KernelModule["importUrdfBuffer"],
       exportProjectedViewToDxf: wasmModule.exportProjectedViewToDxf,
       createDetailView: wasmModule.createDetailView,
       evaluateDocument: (wasmModule as Record<string, unknown>).evaluateDocument as KernelModule["evaluateDocument"],
@@ -570,6 +584,27 @@ export class Engine {
       positions: new Float32Array(m.positions),
       indices: new Uint32Array(m.indices),
     }));
+  }
+
+  /**
+   * Import a URDF (Unified Robot Description Format) file. Returns a
+   * JSON-encoded vcad `Document` that the caller deserialises with
+   * `Document.fromJson` (or hands directly to the document store).
+   *
+   * Mesh references inside the URDF can't be resolved from the browser
+   * filesystem, so any `<mesh>` falls back to a 1cm placeholder cube.
+   * Joint topology and authored `<inertial>` properties still flow
+   * through unchanged, so simulation behaves like the real robot to
+   * first order.
+   */
+  importUrdf(data: ArrayBuffer): string {
+    const bytes = new Uint8Array(data);
+    if (typeof this.kernel.importUrdfBuffer !== "function") {
+      throw new Error(
+        "URDF import not available — kernel WASM was built without urdf support",
+      );
+    }
+    return this.kernel.importUrdfBuffer(bytes);
   }
 
   /** Export a projected view to DXF format.

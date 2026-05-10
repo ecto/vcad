@@ -78,7 +78,10 @@ import {
   parseStl,
   logger,
   runJob,
+  deriveParts,
+  computeNextIds,
 } from "@vcad/core";
+import type { Document } from "@vcad/ir";
 import { useEngine } from "@/hooks/useEngine";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useKeybindingDispatcher } from "@/hooks/useKeybindingDispatcher";
@@ -388,6 +391,60 @@ export function App() {
       useChatStore.getState().queuePendingAttachments([file]);
       useChatStore.getState().setOpen(true);
       window.dispatchEvent(new Event("vcad:focus-chat-input"));
+      return;
+    }
+
+    // Handle URDF (Unified Robot Description Format) files. The Rust
+    // kernel parses the XML, builds a vcad Document with assembly +
+    // joints + authored inertials, and the rest of the app treats it
+    // exactly like any other .vcad. Mesh references inside the URDF
+    // can't reach the user's filesystem from the browser, so they fall
+    // back to 1cm placeholder cubes per link — joint topology and
+    // inertials still flow through, so the Simulate tab works.
+    if (ext === "urdf") {
+      try {
+        const engine = useEngineStore.getState().engine;
+        if (!engine) {
+          useNotificationStore.getState().addToast("Engine not ready", "error");
+          return;
+        }
+        const buffer = await file.arrayBuffer();
+        const documentJson = await runJob(
+          { verb: `Importing ${file.name}` },
+          () => Promise.resolve(engine.importUrdf(buffer)),
+        );
+        const document = JSON.parse(documentJson) as Document;
+        const parts = deriveParts(document);
+        const { nextNodeId, nextPartNum } = computeNextIds(document, parts);
+
+        // Persist any pending edit on the outgoing doc before swap.
+        await flushPendingSave();
+        useDocumentStore.getState().loadDocument({
+          kind: "legacy",
+          version: "0.1",
+          document,
+          parts,
+          nextNodeId,
+          nextPartNum,
+        });
+        useUiStore.getState().clearSelection();
+
+        const numJoints = document.joints?.length ?? 0;
+        const numLinks = document.partDefs
+          ? Object.keys(document.partDefs).length
+          : 0;
+        useNotificationStore.getState().addToast(
+          `Imported URDF: ${numLinks} link${numLinks !== 1 ? "s" : ""}, ${numJoints} joint${numJoints !== 1 ? "s" : ""}`,
+          "success",
+        );
+      } catch (err) {
+        console.error("Failed to import URDF:", err);
+        const msg = err instanceof Error ? err.message : String(err);
+        useNotificationStore.getState().addToast(
+          `Failed to import URDF: ${msg}`,
+          "error",
+        );
+      }
       return;
     }
 
@@ -962,7 +1019,7 @@ export function App() {
         <div className="mt-1 text-sm text-text-muted">
           {isDraggingImage
             ? "I'll attach it to chat — describe what you want me to build"
-            : ".vcad, .loon, .stl, .step, .pes, .dst"}
+            : ".vcad, .loon, .stl, .step, .urdf, .pes, .dst"}
         </div>
       </div>
     </div>
@@ -1047,7 +1104,7 @@ export function App() {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".vcad,.loon,.json,.step,.stp,.stl,.pes,.dst,.kicad_pcb"
+          accept=".vcad,.loon,.json,.step,.stp,.stl,.urdf,.pes,.dst,.kicad_pcb"
           className="hidden"
           onChange={handleFileChange}
         />

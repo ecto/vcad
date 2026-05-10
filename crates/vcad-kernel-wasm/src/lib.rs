@@ -1989,6 +1989,34 @@ pub fn import_step_buffer(data: &[u8]) -> Result<JsValue, JsError> {
     serde_wasm_bindgen::to_value(&meshes).map_err(|e| JsError::new(&e.to_string()))
 }
 
+/// Import a URDF (Unified Robot Description Format) file and return a
+/// serialised vcad [`Document`].
+///
+/// Browsers cannot resolve `package://` URIs or relative mesh paths
+/// against the user's filesystem, so any `<mesh>` reference in the URDF
+/// falls back to a 1cm placeholder cube — the kinematic + inertial tree
+/// is still imported correctly. Loading STL/DAE meshes in the browser
+/// would require either uploading them alongside or vendoring them.
+///
+/// # Arguments
+///
+/// * `data` - Raw URDF XML bytes (UTF-8).
+///
+/// # Returns
+///
+/// JSON-encoded `Document` string. The web app parses it via
+/// `Document.fromJson` (TS) or `vcad_ir::Document::from_json` (Rust).
+#[module("urdf")]
+#[wasm_bindgen(js_name = importUrdfBuffer)]
+pub fn import_urdf_buffer(data: &[u8]) -> Result<String, JsError> {
+    let xml = std::str::from_utf8(data)
+        .map_err(|e| JsError::new(&format!("URDF must be valid UTF-8: {e}")))?;
+    let doc = vcad_kernel_urdf::read_urdf_from_str(xml)
+        .map_err(|e| JsError::new(&format!("URDF parse error: {e}")))?;
+    doc.to_json()
+        .map_err(|e| JsError::new(&format!("Document serialise error: {e}")))
+}
+
 // =========================================================================
 // GPU-Accelerated Geometry Processing
 // =========================================================================
