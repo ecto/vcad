@@ -8,8 +8,20 @@ import { Intersect } from "@phosphor-icons/react/dist/ssr/Intersect";
 import { Circuitry } from "@phosphor-icons/react/dist/ssr/Circuitry";
 import { CrosshairSimple } from "@phosphor-icons/react/dist/ssr/CrosshairSimple";
 import { Check } from "@phosphor-icons/react/dist/ssr/Check";
-import { useDocumentStore, useUiStore, useEngineStore, SELECTION_FILTER_OPTIONS } from "@vcad/core";
+import {
+  useDocumentStore,
+  useUiStore,
+  useEngineStore,
+  SELECTION_FILTER_OPTIONS,
+  type SelectionFilter,
+} from "@vcad/core";
 import type { ReactNode } from "react";
+import { useCallback } from "react";
+import {
+  nativeMenuAvailable,
+  popupNativeContextMenu,
+  type NativeMenuItem,
+} from "@/lib/native-context-menu";
 
 function MenuItem({
   icon: Icon,
@@ -39,6 +51,43 @@ function MenuItem({
   );
 }
 
+/**
+ * Compute the dimensions of the design-PCB-to-fit feature for the
+ * selected part — pulled into a helper so both the native and Radix
+ * paths share the bounding-box logic.
+ */
+function dispatchDesignPcbForSelection() {
+  const selectedIds = useUiStore.getState().selectedPartIds;
+  if (selectedIds.size !== 1) return;
+  const partId = Array.from(selectedIds)[0]!;
+  const scene = useEngineStore.getState().scene;
+  const parts = useDocumentStore.getState().parts;
+  const partIdx = parts.findIndex((p) => p.id === partId);
+  const evalPart = partIdx >= 0 ? scene?.parts?.[partIdx] : null;
+  if (
+    evalPart?.mesh?.positions &&
+    evalPart.mesh.positions.length >= 3
+  ) {
+    const pos = evalPart.mesh.positions;
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
+    for (let i = 0; i < pos.length; i += 3) {
+      const x = pos[i]!, y = pos[i + 1]!;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    const w = Math.ceil((maxX - minX) * 10) / 10;
+    const h = Math.ceil((maxY - minY) * 10) / 10;
+    window.dispatchEvent(
+      new CustomEvent("vcad:fit-pcb-dialog", { detail: { width: w, height: h } }),
+    );
+  } else {
+    window.dispatchEvent(new CustomEvent("vcad:open-pcb-dialog"));
+  }
+}
+
 export function ContextMenu({ children }: { children: ReactNode }) {
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
   const clearSelection = useUiStore((s) => s.clearSelection);
@@ -51,25 +100,109 @@ export function ContextMenu({ children }: { children: ReactNode }) {
 
   const hasSelection = selectedPartIds.size > 0;
   const hasTwoSelected = selectedPartIds.size === 2;
+  const hasOneSelected = selectedPartIds.size === 1;
 
-  function handleDelete() {
-    for (const id of selectedPartIds) {
+  const handleDelete = useCallback(() => {
+    const ids = useUiStore.getState().selectedPartIds;
+    for (const id of ids) {
       removePart(id);
     }
     clearSelection();
-  }
+  }, [removePart, clearSelection]);
 
-  function handleDuplicate() {
-    const ids = Array.from(selectedPartIds);
+  const handleDuplicate = useCallback(() => {
+    const ids = Array.from(useUiStore.getState().selectedPartIds);
     const newIds = duplicateParts(ids);
     useUiStore.getState().selectMultiple(newIds);
-  }
+  }, [duplicateParts]);
 
-  function handleBoolean(type: "union" | "difference" | "intersection") {
-    if (!hasTwoSelected) return;
-    const ids = Array.from(selectedPartIds);
-    const newId = applyBoolean(type, ids[0]!, ids[1]!);
-    if (newId) select(newId);
+  const handleBoolean = useCallback(
+    (type: "union" | "difference" | "intersection") => {
+      const ids = Array.from(useUiStore.getState().selectedPartIds);
+      if (ids.length !== 2) return;
+      const newId = applyBoolean(type, ids[0]!, ids[1]!);
+      if (newId) select(newId);
+    },
+    [applyBoolean, select],
+  );
+
+  // Native popup path — composed at click time so disabled/checked state
+  // reflects the latest store snapshot, and the radio submenu reads off
+  // SELECTION_FILTER_OPTIONS without re-encoding it. Action ids match the
+  // dispatch table at the bottom; rename `vcad:` events for clarity.
+  const buildNativeMenu = (): NativeMenuItem[] => {
+    const filter = useUiStore.getState().selectionFilter;
+    const sel = useUiStore.getState().selectedPartIds;
+    const has = sel.size > 0;
+    const oneSel = sel.size === 1;
+    const twoSel = sel.size === 2;
+    return [
+      { kind: "item", id: "duplicate", label: "Duplicate", accelerator: "CmdOrCtrl+D", disabled: !has },
+      { kind: "item", id: "rename", label: "Rename", disabled: !oneSel },
+      { kind: "item", id: "delete", label: "Delete", accelerator: "Delete", disabled: !has },
+      { kind: "separator" },
+      {
+        kind: "submenu",
+        label: "Selection priority",
+        items: SELECTION_FILTER_OPTIONS.map((o) => ({
+          kind: "item" as const,
+          id: `selfilter:${o.value}`,
+          label: o.hotkey ? `${o.label}  (${o.hotkey})` : o.label,
+          checked: filter === o.value,
+        })),
+      },
+      { kind: "separator" },
+      { kind: "item", id: "boolean:union", label: "Union", accelerator: "CmdOrCtrl+Shift+U", disabled: !twoSel },
+      { kind: "item", id: "boolean:difference", label: "Difference", accelerator: "CmdOrCtrl+Shift+D", disabled: !twoSel },
+      { kind: "item", id: "boolean:intersection", label: "Intersection", accelerator: "CmdOrCtrl+Shift+I", disabled: !twoSel },
+      { kind: "separator" },
+      { kind: "item", id: "pcb:add", label: "Add PCB Board" },
+      { kind: "item", id: "pcb:fit", label: "Design PCB to fit", disabled: !oneSel },
+    ];
+  };
+
+  const dispatchById = (id: string) => {
+    if (id === "duplicate") return handleDuplicate();
+    if (id === "rename")
+      return window.dispatchEvent(new CustomEvent("vcad:rename-part"));
+    if (id === "delete") return handleDelete();
+    if (id.startsWith("selfilter:")) {
+      const v = id.slice("selfilter:".length) as SelectionFilter;
+      return setSelectionFilter(v);
+    }
+    if (id.startsWith("boolean:")) {
+      const op = id.slice("boolean:".length) as
+        | "union"
+        | "difference"
+        | "intersection";
+      return handleBoolean(op);
+    }
+    if (id === "pcb:add")
+      return window.dispatchEvent(new CustomEvent("vcad:open-pcb-dialog"));
+    if (id === "pcb:fit") return dispatchDesignPcbForSelection();
+  };
+
+  // Native path — a single right-click handler swaps the Radix root for
+  // a real OS menu. We still render Radix's <Trigger> so `children` keeps
+  // its tabindex/aria, but we intercept contextmenu before Radix sees it.
+  const onNativeContext = async (e: React.MouseEvent) => {
+    if (!nativeMenuAvailable()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      const id = await popupNativeContextMenu(buildNativeMenu());
+      if (id) dispatchById(id);
+    } catch {
+      // Native popup failed — Radix handles the fallback on the next click.
+    }
+  };
+
+  if (nativeMenuAvailable()) {
+    return (
+      <div onContextMenu={onNativeContext} className="contents">
+        {children}
+      </div>
+    );
   }
 
   return (
@@ -87,9 +220,8 @@ export function ContextMenu({ children }: { children: ReactNode }) {
           <MenuItem
             icon={PencilSimple}
             label="Rename"
-            disabled={selectedPartIds.size !== 1}
+            disabled={!hasOneSelected}
             onClick={() => {
-              // Dispatch custom event for inline rename
               window.dispatchEvent(new CustomEvent("vcad:rename-part"));
             }}
           />
@@ -177,31 +309,8 @@ export function ContextMenu({ children }: { children: ReactNode }) {
           <MenuItem
             icon={Circuitry}
             label="Design PCB to fit"
-            disabled={selectedPartIds.size !== 1}
-            onClick={() => {
-              const partId = Array.from(selectedPartIds)[0]!;
-              const scene = useEngineStore.getState().scene;
-              const parts = useDocumentStore.getState().parts;
-              const partIdx = parts.findIndex((p) => p.id === partId);
-              const evalPart = partIdx >= 0 ? scene?.parts?.[partIdx] : null;
-              if (evalPart?.mesh?.positions && evalPart.mesh.positions.length >= 3) {
-                const pos = evalPart.mesh.positions;
-                let minX = Infinity, maxX = -Infinity;
-                let minY = Infinity, maxY = -Infinity;
-                for (let i = 0; i < pos.length; i += 3) {
-                  const x = pos[i]!, y = pos[i + 1]!;
-                  if (x < minX) minX = x;
-                  if (x > maxX) maxX = x;
-                  if (y < minY) minY = y;
-                  if (y > maxY) maxY = y;
-                }
-                const w = Math.ceil((maxX - minX) * 10) / 10;
-                const h = Math.ceil((maxY - minY) * 10) / 10;
-                window.dispatchEvent(new CustomEvent("vcad:fit-pcb-dialog", { detail: { width: w, height: h } }));
-              } else {
-                window.dispatchEvent(new CustomEvent("vcad:open-pcb-dialog"));
-              }
-            }}
+            disabled={!hasOneSelected}
+            onClick={dispatchDesignPcbForSelection}
           />
         </RadixContextMenu.Content>
       </RadixContextMenu.Portal>

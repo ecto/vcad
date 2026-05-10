@@ -17,6 +17,8 @@ import { useDrawingStore } from "@/stores/drawing-store";
 import { useElectronicsStore } from "@/stores/electronics-store";
 import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { invoke, isTauri } from "@/lib/tauri";
+import { useCapabilities } from "@/lib/capabilities";
 
 /**
  * Titlebar identity strip — filename, ambient save state, scope breadcrumb.
@@ -70,7 +72,6 @@ export function DocTitle({ macOverlay }: { macOverlay?: boolean }) {
     let cancelled = false;
     (async () => {
       try {
-        const { isTauri } = await import("@/lib/tauri");
         if (!isTauri()) return;
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
         if (cancelled) return;
@@ -87,6 +88,18 @@ export function DocTitle({ macOverlay }: { macOverlay?: boolean }) {
       cancelled = true;
     };
   }, [documentName]);
+
+  // Native macOS modified-dot. setDocumentEdited: paints the dot inside
+  // the close traffic light — the standard signal for unsaved changes.
+  // Read-only sessions are never "edited" from the OS's perspective even
+  // if local diff state exists.
+  useEffect(() => {
+    if (!isTauri()) return;
+    const edited = !!isDirty && !readOnlyShare;
+    invoke<void>("set_document_edited", { edited }).catch(() => {
+      // Mac-only command; silently no-op on Windows/Linux.
+    });
+  }, [isDirty, readOnlyShare]);
 
   // Select the whole name when edit mode opens so a single click + type
   // replaces it wholesale — the familiar Finder rename interaction.
@@ -146,14 +159,70 @@ export function DocTitle({ macOverlay }: { macOverlay?: boolean }) {
   const nameDisplay = documentName || "Untitled";
   const nameIsDefault = !documentName || documentName === "Untitled";
 
+  // ⌘-click path popover — Finder-style breadcrumb that slides down from
+  // the title bar. Anchored to the proxy icon, dismissed on outside click
+  // or Escape. The "path" is synthetic for now: cloud-synced docs read as
+  // `~/vcad/<name>`, locals as `Untitled — vcad`. Rendered only inside
+  // Tauri-mac, where the affordance is expected.
+  const { tauri: inTauri, platform } = useCapabilities();
+  const showProxy = inTauri && platform === "mac" && !sketchActive && drawingMode !== "2d" && !electronicsActive;
+  const [pathOpen, setPathOpen] = useState(false);
+  const pathRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!pathOpen) return;
+    function onDocClick(e: MouseEvent) {
+      if (!pathRef.current) return;
+      if (!pathRef.current.contains(e.target as Node)) setPathOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setPathOpen(false);
+    }
+    window.addEventListener("mousedown", onDocClick);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDocClick);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [pathOpen]);
+
+  const handleProxyClick = (e: React.MouseEvent) => {
+    if (e.metaKey || e.ctrlKey) {
+      e.preventDefault();
+      setPathOpen((v) => !v);
+    }
+  };
+
   return (
     <div
       data-tauri-drag-region={macOverlay ? "false" : undefined}
       className={cn(
-        "flex h-6 items-center gap-1.5 px-2 text-[11px] select-none",
+        "relative flex h-6 items-center gap-1.5 px-2 text-[11px] select-none",
         "max-w-[min(60vw,720px)]",
       )}
     >
+      {/* Proxy icon — Finder-style document glyph. ⌘-click opens the path
+          popover (vcad's "where does this live" affordance). Drag exports
+          a virtual file ref the rest of the OS can drop into Finder. */}
+      {showProxy && (
+        <Tooltip content="⌘-click for path">
+          <span
+            className="proxy-icon shrink-0"
+            draggable={!nameIsDefault}
+            onClick={handleProxyClick}
+            onDragStart={(e) => {
+              e.dataTransfer.setData(
+                "text/plain",
+                nameIsDefault ? "Untitled.vcad" : `${documentName}.vcad`,
+              );
+              e.dataTransfer.effectAllowed = "copy";
+            }}
+            aria-label="Document proxy"
+          >
+            v
+          </span>
+        </Tooltip>
+      )}
+
       {/* Filename — click to rename */}
       {draft !== null ? (
         <input
@@ -185,7 +254,7 @@ export function DocTitle({ macOverlay }: { macOverlay?: boolean }) {
             disabled={!!readOnlyShare}
             className={cn(
               "h-5 px-1 text-[11px] font-medium truncate max-w-[32ch] rounded-sm",
-              "hover:bg-hover transition-colors outline-none",
+              "hover:bg-hover transition-colors appkit-spring outline-none",
               nameIsDefault ? "text-text-muted italic" : "text-text",
               readOnlyShare && "cursor-not-allowed opacity-80",
             )}
@@ -250,6 +319,32 @@ export function DocTitle({ macOverlay }: { macOverlay?: boolean }) {
             <span className="text-text-muted">editing</span>
           </button>
         </Tooltip>
+      )}
+
+      {/* ⌘-click path popover — Finder-like breadcrumb panel. */}
+      {pathOpen && (
+        <div
+          ref={pathRef}
+          className="path-popover absolute left-1/2 top-[calc(100%+4px)] -translate-x-1/2 z-[80] min-w-[260px] px-3 py-2 text-[11px] rounded-md"
+          role="dialog"
+        >
+          <div className="flex items-center gap-1 text-text-muted">
+            <span className="proxy-icon" style={{ width: 12, height: 12, fontSize: 8 }}>v</span>
+            <span>vcad</span>
+            <CaretRight size={9} className="opacity-60" />
+            <span>{isSignedIn ? "Cloud" : "Local"}</span>
+            <CaretRight size={9} className="opacity-60" />
+            <span className={cn("text-text", nameIsDefault && "italic")}>
+              {nameDisplay}.vcad
+            </span>
+          </div>
+          {isDirty && (
+            <div className="mt-1 text-[10px] text-text-muted/80">
+              <Circle size={5} weight="fill" className="inline mr-1 text-brand" />
+              Unsaved changes
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

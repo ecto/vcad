@@ -4,4 +4,5 @@
 //! features come online; see the desktop plan for the staged rollout.
 
 pub mod bambu;
+pub mod context_menu;
 pub mod local_ai;

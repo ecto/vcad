@@ -23,6 +23,7 @@ import { FeatureTree } from "@/components/FeatureTree";
 import { MobileShell } from "@/components/mobile/MobileShell";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useNativeWindowDrag } from "@/hooks/useNativeWindowDrag";
+import { useNativeShellClass } from "@/lib/capabilities";
 import { lazyWithRetry } from "@/lib/lazy-with-retry";
 
 // Lazy-loaded components (behind user actions, modals, or conditional renders).
@@ -207,6 +208,7 @@ function FeatureTreeSlot({ sketchActive }: { sketchActive: boolean }) {
 export function App() {
   useEngine();
   useThemeSync();
+  useNativeShellClass();
   useAutoSave();
   useCollabSync();
   useChatHandler();
