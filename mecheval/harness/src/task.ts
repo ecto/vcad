@@ -4,7 +4,7 @@
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 
-export type Suite = "A" | "B" | "C";
+export type Suite = "A" | "B" | "C" | "F";
 
 export interface Task {
   id: string;
@@ -12,12 +12,26 @@ export interface Task {
   tier: string;
   title: string;
   prompt: string;
-  inputs?: string[];
+  inputs?: TaskInput[];
   checks: CheckSpec[];
   anti_cheese?: AntiCheese;
   limits?: Limits;
   pass_k?: number;
   tags?: string[];
+}
+
+// `inputs` accepts either a bare path (legacy starter-vcad cases) or a
+// structured object whose `kind` and `agent_visible` flag let the harness
+// route it correctly. Schema lives in `mecheval/tasks/SCHEMA.md` under
+// "Structured inputs"; we keep the TS shape opaque (Record) because the
+// Rust grader is the authoritative consumer.
+export type TaskInput = string | StructuredInput;
+
+export interface StructuredInput {
+  kind: string;
+  agent_visible: boolean;
+  path?: string;
+  [k: string]: unknown;
 }
 
 // We don't enumerate every check type in TS — the Rust grader is the

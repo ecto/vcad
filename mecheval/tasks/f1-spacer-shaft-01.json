@@ -1,0 +1,83 @@
+{
+  "id": "f1-spacer-shaft-01",
+  "suite": "F",
+  "tier": "F1",
+  "title": "Tube spacer for stepped shaft",
+  "prompt": "Reference images of a stepped shaft are attached. The shaft has two coaxial flanges separated by a narrower middle waist. Design a tube spacer that slides down over the waist from above and rests on the bottom flange's top face, filling the axial gap between the flanges.\n\nRequirements:\n- Single solid, single-root .vcad.\n- The spacer's bore must clear the waist with 0.1–0.3mm radial clearance (so 20.2–20.6mm bore diameter for a 20mm waist).\n- The spacer's outer diameter must not exceed the flange outer diameter.\n- The spacer's length must fill the gap between the two flanges (≈30mm) without interfering with either flange.\n- Wall thickness ≥ 1.5mm (printability).\n\nOutput the spacer in the host's coordinate frame: the shaft axis is +Z, the bottom face of the bottom flange sits at z = 0, the waist runs z = 10 to z = 40. Place the spacer in this same frame so the grader can assemble it directly with the host.",
+  "inputs": [
+    {
+      "kind": "reference_image",
+      "path": "assets/f1-spacer-shaft-01/front.jpg",
+      "agent_visible": true,
+      "view": "front",
+      "image_kind": "photo",
+      "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 }
+    },
+    {
+      "kind": "reference_image",
+      "path": "assets/f1-spacer-shaft-01/side.jpg",
+      "agent_visible": true,
+      "view": "side",
+      "image_kind": "photo",
+      "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 }
+    },
+    {
+      "kind": "reference_image",
+      "path": "assets/f1-spacer-shaft-01/top.jpg",
+      "agent_visible": true,
+      "view": "top",
+      "image_kind": "photo",
+      "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 }
+    },
+    {
+      "kind": "host_geometry",
+      "path": "assets/f1-spacer-shaft-01/host.vcad",
+      "agent_visible": false,
+      "frame": { "origin": [0, 0, 0], "axis": [0, 0, 1] }
+    },
+    {
+      "kind": "known_dimensions",
+      "agent_visible": true,
+      "text": "The bottom flange is 40mm in diameter."
+    }
+  ],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "interference_volume",
+      "host": "host_geometry",
+      "max_mm3": 1.0
+    },
+    {
+      "type": "contact_area",
+      "host": "host_geometry",
+      "epsilon_mm": 0.3,
+      "min_mm2": 1500
+    },
+    {
+      "type": "envelope",
+      "max_mm": [40.5, 40.5, 30.5]
+    },
+    {
+      "type": "bbox",
+      "min": [-20.5, -20.5, 9.5],
+      "max": [20.5, 20.5, 40.5],
+      "tolerance_mm": 0.2
+    },
+    {
+      "type": "dfm",
+      "rules": ["min_wall_1.5mm", "no_undercut"]
+    }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1,
+    "min_accessory_volume_mm3": 100.0
+  },
+  "limits": {
+    "max_tokens": 60000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 60
+  },
+  "pass_k": 5,
+  "tags": ["fit", "spacer", "axisymmetric", "image-conditioned", "static"]
+}

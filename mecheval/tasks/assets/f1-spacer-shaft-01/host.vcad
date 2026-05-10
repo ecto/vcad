@@ -1,0 +1,15 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "bottom_flange", "op": { "type": "Cylinder", "radius": 20.0, "height": 10.0, "segments": 64 } },
+    "2": { "id": 2, "name": "waist_raw",    "op": { "type": "Cylinder", "radius": 10.0, "height": 30.0, "segments": 64 } },
+    "3": { "id": 3, "name": "waist",        "op": { "type": "Translate", "child": 2, "offset": { "x": 0.0, "y": 0.0, "z": 10.0 } } },
+    "4": { "id": 4, "name": "top_flange_raw","op": { "type": "Cylinder", "radius": 20.0, "height": 10.0, "segments": 64 } },
+    "5": { "id": 5, "name": "top_flange",   "op": { "type": "Translate", "child": 4, "offset": { "x": 0.0, "y": 0.0, "z": 40.0 } } },
+    "6": { "id": 6, "name": "lower_union",  "op": { "type": "Union", "left": 1, "right": 3 } },
+    "7": { "id": 7, "name": "shaft",        "op": { "type": "Union", "left": 6, "right": 5 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 7, "material": "default" }]
+}

@@ -7,7 +7,7 @@
 import { createHash } from "node:crypto";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { Task } from "./task.js";
+import type { Task, TaskInput } from "./task.js";
 import type { Solver, SolverOutput } from "./solver.js";
 
 export const BLOB_SCHEMA_VERSION = 0;
@@ -46,7 +46,11 @@ export interface FullRunBlob extends PartialGraderBlob {
   prompt: {
     seed: string;
     rendered: string;
-    attachments: string[];
+    // Mirrors `task.inputs` — bare paths or structured input objects.
+    // Full set recorded for forensics; the harness will eventually filter
+    // `agent_visible: false` entries before invoking the solver, but the
+    // blob keeps everything so audits can verify what was held back.
+    attachments: TaskInput[];
   };
   trace: SolverOutput["toolCalls"] extends infer _T
     ? {
@@ -80,7 +84,7 @@ export interface BuildBlobInput {
   task: Task;
   solver: Solver;
   solverOutput: SolverOutput;
-  prompt: { seed: string; rendered: string; attachments: string[] };
+  prompt: { seed: string; rendered: string; attachments: TaskInput[] };
   vcadPath: string;
   vcadSha256: string;
   runId: string;
