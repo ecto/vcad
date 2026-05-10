@@ -1,0 +1,228 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "flange_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 60,
+        "height": 12,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "flange",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "spigot_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 36,
+        "height": 6,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "spigot",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 12
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "body",
+      "op": {
+        "type": "Union",
+        "left": 2,
+        "right": 4
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "bore_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 16,
+        "height": 18,
+        "segments": 64
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "bore",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "bolts_0_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4.5,
+        "height": 12,
+        "segments": 32
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "bolts_0",
+      "op": {
+        "type": "Translate",
+        "child": 8,
+        "offset": {
+          "x": 48,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "bolts_1_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4.5,
+        "height": 12,
+        "segments": 32
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "bolts_1",
+      "op": {
+        "type": "Translate",
+        "child": 10,
+        "offset": {
+          "x": 2.9391523179536475e-15,
+          "y": 48,
+          "z": 0
+        }
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "bolts_2_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4.5,
+        "height": 12,
+        "segments": 32
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "bolts_2",
+      "op": {
+        "type": "Translate",
+        "child": 12,
+        "offset": {
+          "x": -48,
+          "y": 5.878304635907295e-15,
+          "z": 0
+        }
+      }
+    },
+    "14": {
+      "id": 14,
+      "name": "bolts_3_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4.5,
+        "height": 12,
+        "segments": 32
+      }
+    },
+    "15": {
+      "id": 15,
+      "name": "bolts_3",
+      "op": {
+        "type": "Translate",
+        "child": 14,
+        "offset": {
+          "x": -8.817456953860943e-15,
+          "y": -48,
+          "z": 0
+        }
+      }
+    },
+    "16": {
+      "id": 16,
+      "name": "bolts_1",
+      "op": {
+        "type": "Union",
+        "left": 9,
+        "right": 11
+      }
+    },
+    "17": {
+      "id": 17,
+      "name": "bolts_2",
+      "op": {
+        "type": "Union",
+        "left": 16,
+        "right": 13
+      }
+    },
+    "18": {
+      "id": 18,
+      "name": "bolts_3",
+      "op": {
+        "type": "Union",
+        "left": 17,
+        "right": 15
+      }
+    },
+    "19": {
+      "id": 19,
+      "name": "cuts",
+      "op": {
+        "type": "Union",
+        "left": 7,
+        "right": 18
+      }
+    },
+    "20": {
+      "id": 20,
+      "name": "part",
+      "op": {
+        "type": "Difference",
+        "left": 5,
+        "right": 19
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 20,
+      "material": "default"
+    }
+  ]
+}

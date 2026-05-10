@@ -1,0 +1,262 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "disc_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 50,
+        "height": 20,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "disc",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "hub_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 20,
+        "height": 20,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "hub",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 20
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "body",
+      "op": {
+        "type": "Union",
+        "left": 2,
+        "right": 4
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "bore_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 40,
+        "segments": 64
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "bore",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "keyway_raw",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 6,
+          "y": 6,
+          "z": 40
+        }
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "keyway",
+      "op": {
+        "type": "Translate",
+        "child": 8,
+        "offset": {
+          "x": -3,
+          "y": 10,
+          "z": 0
+        }
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "bolt_0_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4,
+        "height": 20,
+        "segments": 64
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "bolt_0",
+      "op": {
+        "type": "Translate",
+        "child": 10,
+        "offset": {
+          "x": 35,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "bolt_1_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4,
+        "height": 20,
+        "segments": 64
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "bolt_1",
+      "op": {
+        "type": "Translate",
+        "child": 12,
+        "offset": {
+          "x": 0,
+          "y": 35,
+          "z": 0
+        }
+      }
+    },
+    "14": {
+      "id": 14,
+      "name": "bolt_2_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4,
+        "height": 20,
+        "segments": 64
+      }
+    },
+    "15": {
+      "id": 15,
+      "name": "bolt_2",
+      "op": {
+        "type": "Translate",
+        "child": 14,
+        "offset": {
+          "x": -35,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "16": {
+      "id": 16,
+      "name": "bolt_3_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4,
+        "height": 20,
+        "segments": 64
+      }
+    },
+    "17": {
+      "id": 17,
+      "name": "bolt_3",
+      "op": {
+        "type": "Translate",
+        "child": 16,
+        "offset": {
+          "x": 0,
+          "y": -35,
+          "z": 0
+        }
+      }
+    },
+    "18": {
+      "id": 18,
+      "name": "cuts_1",
+      "op": {
+        "type": "Union",
+        "left": 7,
+        "right": 9
+      }
+    },
+    "19": {
+      "id": 19,
+      "name": "cuts_2",
+      "op": {
+        "type": "Union",
+        "left": 18,
+        "right": 11
+      }
+    },
+    "20": {
+      "id": 20,
+      "name": "cuts_3",
+      "op": {
+        "type": "Union",
+        "left": 19,
+        "right": 13
+      }
+    },
+    "21": {
+      "id": 21,
+      "name": "cuts_4",
+      "op": {
+        "type": "Union",
+        "left": 20,
+        "right": 15
+      }
+    },
+    "22": {
+      "id": 22,
+      "name": "cuts_5",
+      "op": {
+        "type": "Union",
+        "left": 21,
+        "right": 17
+      }
+    },
+    "23": {
+      "id": 23,
+      "name": "part",
+      "op": {
+        "type": "Difference",
+        "left": 5,
+        "right": 22
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 23,
+      "material": "default"
+    }
+  ]
+}
