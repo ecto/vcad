@@ -169,11 +169,11 @@ before evaluating these checks.
   "duration_sec": 10,
   "max_drift_mm": 1.0 }
 
-// Physics: pull the accessory away with `force_N` along `direction`;
-// pass = relative drift stays under `max_drift_mm` for `duration_sec`.
+// Physics: pull the accessory away with `force_n` newtons along
+// `direction`; pass = drift stays under `max_drift_mm` for `duration_sec`.
 { "type": "pull_force",
   "host": "host_geometry",
-  "force_N": 5.0,
+  "force_n": 5.0,
   "direction": [0, 0, 1],
   "duration_sec": 2,
   "max_drift_mm": 0.5 }

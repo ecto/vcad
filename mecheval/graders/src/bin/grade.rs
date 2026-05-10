@@ -8,7 +8,7 @@
 //! ```
 
 use mecheval_grader::{grade, task::load_task};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
@@ -43,7 +43,8 @@ fn main() -> ExitCode {
         }
     };
 
-    match grade(&task, &task_bytes, &vcad_path) {
+    let task_dir = task_path.parent().unwrap_or_else(|| Path::new("."));
+    match grade(&task, &task_bytes, &vcad_path, task_dir) {
         Ok(blob) => {
             let pretty = serde_json::to_string_pretty(&blob).expect("serialize blob");
             println!("{}", pretty);

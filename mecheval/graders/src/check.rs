@@ -88,6 +88,49 @@ pub enum CheckSpec {
         task: String,
         params: serde_json::Value,
     },
+
+    /// Suite F: minimum separation between the candidate accessory and the
+    /// host. `host` names a `kind` from `task.inputs` (typically `host_geometry`).
+    MateClearance {
+        host: String,
+        min_mm: f64,
+        max_mm: f64,
+    },
+
+    /// Suite F: volume of (accessory ∩ host). Should be near zero for slip
+    /// fits, small and positive for press fits.
+    InterferenceVolume { host: String, max_mm3: f64 },
+
+    /// Suite F: surface area of accessory within `epsilon_mm` of the host.
+    ContactArea {
+        host: String,
+        epsilon_mm: f64,
+        min_mm2: f64,
+    },
+
+    /// Suite F: cap on the accessory's overall bounding-box extents (mm).
+    Envelope { max_mm: [f64; 3] },
+
+    /// Suite F: assemble host + accessory, apply gravity for `duration_sec`,
+    /// pass if relative drift stays below `max_drift_mm`. Backed by phyz.
+    GravityHold {
+        host: String,
+        host_mass_kg: f64,
+        gravity_dir: [f64; 3],
+        duration_sec: f64,
+        max_drift_mm: f64,
+    },
+
+    /// Suite F: pull the accessory away from the host with `force_n`
+    /// (newtons) along `direction`; pass if drift stays under threshold.
+    /// Backed by phyz.
+    PullForce {
+        host: String,
+        force_n: f64,
+        direction: [f64; 3],
+        duration_sec: f64,
+        max_drift_mm: f64,
+    },
 }
 
 impl CheckSpec {
@@ -110,6 +153,12 @@ impl CheckSpec {
             CheckSpec::TorqueBudget { .. } => "torque_budget",
             CheckSpec::StableDuringRollout { .. } => "stable_during_rollout",
             CheckSpec::TaskSuccess { .. } => "task_success",
+            CheckSpec::MateClearance { .. } => "mate_clearance",
+            CheckSpec::InterferenceVolume { .. } => "interference_volume",
+            CheckSpec::ContactArea { .. } => "contact_area",
+            CheckSpec::Envelope { .. } => "envelope",
+            CheckSpec::GravityHold { .. } => "gravity_hold",
+            CheckSpec::PullForce { .. } => "pull_force",
         }
     }
 
@@ -122,6 +171,18 @@ impl CheckSpec {
                 | CheckSpec::TorqueBudget { .. }
                 | CheckSpec::StableDuringRollout { .. }
                 | CheckSpec::TaskSuccess { .. }
+        )
+    }
+
+    /// True for checks that require a Suite F host geometry to be loaded.
+    pub fn is_suite_f(&self) -> bool {
+        matches!(
+            self,
+            CheckSpec::MateClearance { .. }
+                | CheckSpec::InterferenceVolume { .. }
+                | CheckSpec::ContactArea { .. }
+                | CheckSpec::GravityHold { .. }
+                | CheckSpec::PullForce { .. }
         )
     }
 }

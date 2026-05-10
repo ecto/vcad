@@ -59,12 +59,6 @@
       "max_mm": [40.5, 40.5, 30.5]
     },
     {
-      "type": "bbox",
-      "min": [-20.5, -20.5, 9.5],
-      "max": [20.5, 20.5, 40.5],
-      "tolerance_mm": 0.2
-    },
-    {
       "type": "dfm",
       "rules": ["min_wall_1.5mm", "no_undercut"]
     }
