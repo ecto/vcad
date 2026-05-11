@@ -347,8 +347,11 @@ impl<'a> UrdfWriter<'a> {
             | CsgOp::ImportedMesh { .. }
             | CsgOp::PcbBoard { .. }
             | CsgOp::EmbroideryPattern { .. }
-            | CsgOp::PartInstance { .. } => {
-                // Sketch-based / imported / PCB / embroidery / library parts cannot export to URDF directly
+            | CsgOp::PartInstance { .. }
+            | CsgOp::SheetMetalBaseFlangeRect { .. }
+            | CsgOp::SheetMetalEdgeFlange { .. } => {
+                // Sketch-based / imported / PCB / embroidery / library parts / sheet-metal
+                // cannot export to URDF directly
                 Err(UrdfError::Conversion(
                     "Sketch-based geometry cannot be exported to URDF directly".to_string(),
                 ))

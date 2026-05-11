@@ -8,5 +8,6 @@ repository.workspace = true
 
 [dependencies]
 vcad-kernel-math = { workspace = true }
+serde = { workspace = true }
 
 [dev-dependencies]

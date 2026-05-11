@@ -13,6 +13,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 vcad-kernel = { workspace = true }
 vcad-kernel-drafting = { workspace = true }
+vcad-kernel-sheet = { workspace = true }
 vcad-kernel-tessellate = { workspace = true }
 vcad-ir = { workspace = true }
 vcad-crdt = { workspace = true }

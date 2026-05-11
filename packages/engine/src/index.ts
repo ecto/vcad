@@ -51,6 +51,17 @@ export { MeshCache } from "./mesh-cache.js";
 export { DependencyGraph } from "./dependency-graph.js";
 export type { EvaluateOptions } from "./evaluate.js";
 
+// Sheet-metal — thin types that ride on EvaluatedPart.sheetMetal so the
+// UI can render the flat pattern and bend list without re-querying WASM.
+// All actual geometry lives in the Rust kernel.
+export type {
+  SheetMetalBendSummary,
+  SheetMetalModelSummary,
+  SheetMetalFlatCrease,
+  SheetMetalFlatPattern,
+  SheetMetalRendered,
+} from "./sheet-metal.js";
+
 // Parametric expressions
 export {
   parse as parseExpression,
