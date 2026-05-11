@@ -352,6 +352,83 @@ pub fn check_contact_area(
     )
 }
 
+// ---------- pull_retention_geometric -----------------------------------
+
+/// `pull_retention_geometric`: translate the candidate by intermediate
+/// fractions of `displacement_mm` along `direction` and measure peak
+/// interference with the host. Pass if the peak exceeds the baseline
+/// (as-designed pose) by at least `min_interference_gain_mm3`. This
+/// is the deterministic stand-in for `pull_force` for snap-fit / form-
+/// locked retention geometry.
+///
+/// Sampling is at 8 equispaced fractions in (0, 1] of the displacement.
+pub fn check_pull_retention_geometric(
+    candidate: &Solid,
+    host: &HostGeometry,
+    direction: [f64; 3],
+    displacement_mm: f64,
+    min_interference_gain_mm3: f64,
+) -> (CheckOutcome, serde_json::Value) {
+    let dir_mag = (direction[0] * direction[0]
+        + direction[1] * direction[1]
+        + direction[2] * direction[2])
+        .sqrt();
+    if dir_mag < 1e-9 {
+        return (
+            CheckOutcome::Fail,
+            json!({ "reason": "pull direction is zero-length" }),
+        );
+    }
+    let unit = [
+        direction[0] / dir_mag,
+        direction[1] / dir_mag,
+        direction[2] / dir_mag,
+    ];
+
+    let baseline = match catch_unwind(AssertUnwindSafe(|| {
+        candidate.intersection(&host.solid).volume()
+    })) {
+        Ok(v) if v.is_finite() && v >= 0.0 => v,
+        _ => 0.0,
+    };
+
+    const N_SAMPLES: usize = 8;
+    let mut peak = baseline;
+    let mut samples = Vec::with_capacity(N_SAMPLES);
+    for i in 1..=N_SAMPLES {
+        let t = i as f64 / N_SAMPLES as f64;
+        let dx = unit[0] * displacement_mm * t;
+        let dy = unit[1] * displacement_mm * t;
+        let dz = unit[2] * displacement_mm * t;
+        let translated = candidate.translate(dx, dy, dz);
+        let v = match catch_unwind(AssertUnwindSafe(|| {
+            translated.intersection(&host.solid).volume()
+        })) {
+            Ok(v) if v.is_finite() && v >= 0.0 => v,
+            _ => 0.0,
+        };
+        samples.push((t * displacement_mm, v));
+        if v > peak {
+            peak = v;
+        }
+    }
+
+    let gain = peak - baseline;
+    let pass = gain >= min_interference_gain_mm3;
+    (
+        if pass { CheckOutcome::Pass } else { CheckOutcome::Fail },
+        json!({
+            "baseline_interference_mm3": baseline,
+            "peak_interference_mm3": peak,
+            "interference_gain_mm3": gain,
+            "min_interference_gain_mm3": min_interference_gain_mm3,
+            "displacement_mm": displacement_mm,
+            "direction": direction,
+            "samples": samples.iter().map(|(d, v)| json!([d, v])).collect::<Vec<_>>(),
+        }),
+    )
+}
+
 // ---------- mate_clearance ---------------------------------------------
 
 /// `mate_clearance`: minimum distance between any candidate vertex and

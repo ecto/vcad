@@ -1,0 +1,9 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "pipe", "op": { "type": "Cylinder", "radius": 8.0, "height": 30.0, "segments": 64 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 1, "material": "default" }]
+}

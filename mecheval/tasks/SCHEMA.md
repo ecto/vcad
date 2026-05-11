@@ -177,6 +177,17 @@ before evaluating these checks.
   "direction": [0, 0, 1],
   "duration_sec": 2,
   "max_drift_mm": 0.5 }
+
+// Geometric form-lock: translate the accessory by intermediate
+// fractions of `displacement_mm` along `direction` and compute peak
+// interference with the host. Pass if the peak exceeds the as-designed
+// baseline by at least `min_interference_gain_mm3`. Deterministic
+// stand-in for `pull_force` for snap-fits / form-locked retention.
+{ "type": "pull_retention_geometric",
+  "host": "host_geometry",
+  "direction": [0, 0, 1],
+  "displacement_mm": 3.0,
+  "min_interference_gain_mm3": 20.0 }
 ```
 
 ## Structured inputs

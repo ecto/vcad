@@ -131,6 +131,26 @@ pub enum CheckSpec {
         duration_sec: f64,
         max_drift_mm: f64,
     },
+
+    /// Suite F: geometric form-lock test. Translate the accessory by
+    /// `displacement_mm` along `direction` (sampled at intermediate
+    /// poses) and measure the peak interference volume with the host.
+    /// Pass if peak interference exceeds the baseline (as-designed
+    /// pose) by at least `min_interference_gain_mm3`.
+    ///
+    /// Intuition: a snap-fit cap or a C-clip, when pulled, would have
+    /// to push deeper into the host's retention feature before clearing
+    /// it — that's the form-lock signature. A freely-sliding part
+    /// (press fit, simple plug) shows no interference gain.
+    ///
+    /// This is the deterministic alternative to `pull_force` while
+    /// phyz's penalty-contact stability matures.
+    PullRetentionGeometric {
+        host: String,
+        direction: [f64; 3],
+        displacement_mm: f64,
+        min_interference_gain_mm3: f64,
+    },
 }
 
 impl CheckSpec {
@@ -159,6 +179,7 @@ impl CheckSpec {
             CheckSpec::Envelope { .. } => "envelope",
             CheckSpec::GravityHold { .. } => "gravity_hold",
             CheckSpec::PullForce { .. } => "pull_force",
+            CheckSpec::PullRetentionGeometric { .. } => "pull_retention_geometric",
         }
     }
 
@@ -183,6 +204,7 @@ impl CheckSpec {
                 | CheckSpec::ContactArea { .. }
                 | CheckSpec::GravityHold { .. }
                 | CheckSpec::PullForce { .. }
+                | CheckSpec::PullRetentionGeometric { .. }
         )
     }
 }

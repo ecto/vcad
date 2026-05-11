@@ -11,7 +11,7 @@ use crate::eval::{evaluate_vcad, EvalSnapshot};
 use crate::fillets::find_non_z_cylinders;
 use crate::fit::{
     aggregate_candidate, check_contact_area, check_envelope, check_interference_volume,
-    check_mate_clearance, load_host, HostError, HostGeometry,
+    check_mate_clearance, check_pull_retention_geometric, load_host, HostError, HostGeometry,
 };
 use crate::fit_physics::{check_gravity_hold, check_pull_force};
 use crate::holes::find_z_holes;
@@ -356,6 +356,20 @@ fn run_check(
                 *direction,
                 *duration_sec,
                 *max_drift_mm,
+            )
+        }),
+        CheckSpec::PullRetentionGeometric {
+            host: _,
+            direction,
+            displacement_mm,
+            min_interference_gain_mm3,
+        } => dispatch_with_host(host_state, candidate_solid, |cand, host| {
+            check_pull_retention_geometric(
+                cand,
+                host,
+                *direction,
+                *displacement_mm,
+                *min_interference_gain_mm3,
             )
         }),
     }

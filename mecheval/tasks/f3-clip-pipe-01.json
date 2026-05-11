@@ -1,0 +1,47 @@
+{
+  "id": "f3-clip-pipe-01",
+  "suite": "F",
+  "tier": "F3",
+  "title": "C-clip wrapping a vertical pipe",
+  "prompt": "Reference images of a vertical pipe (16mm OD, 30mm tall) are attached. Design a C-clip that wraps around the pipe at mid-height with a radial slot opening to the +X side. The slot must be narrower than the pipe diameter so the clip is form-locked: pulling the clip in the -X direction would force the slot edges to spread, which they cannot (the clip is rigid).\n\nRequirements:\n- Single solid, single-root .vcad.\n- The clip's internal bore must clear the 16mm pipe with 0.1–0.5mm radial clearance (so an internal diameter of 16.2–17.0mm).\n- The slot (opening on +X) must be no more than 4mm wide in the Y direction. The slot opens to the +X side and extends from the bore radially outward to the clip's outer surface.\n- The clip's outer diameter must be ≤ 26mm.\n- The clip's height (Z extent) must be 8–12mm.\n- Wall thickness everywhere ≥ 1.5mm.\n\nOutput the clip in the host frame: pipe axis +Z, pipe base at z=0, pipe top at z=30. Place the clip at z roughly 10..20 (mid-height of the pipe), centred on the pipe's axis in X/Y.",
+  "inputs": [
+    { "kind": "reference_image", "path": "assets/f3-clip-pipe-01/front.jpg", "agent_visible": true, "view": "front", "image_kind": "photo", "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 } },
+    { "kind": "reference_image", "path": "assets/f3-clip-pipe-01/side.jpg", "agent_visible": true, "view": "side", "image_kind": "photo", "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 } },
+    { "kind": "reference_image", "path": "assets/f3-clip-pipe-01/top.jpg", "agent_visible": true, "view": "top", "image_kind": "photo", "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 } },
+    { "kind": "host_geometry", "path": "assets/f3-clip-pipe-01/host.vcad", "agent_visible": false, "frame": { "origin": [0, 0, 0], "axis": [0, 0, 1] } },
+    { "kind": "known_dimensions", "agent_visible": true, "text": "The pipe is 16mm in diameter." }
+  ],
+  "checks": [
+    { "type": "valid_solid" },
+    { "type": "interference_volume", "host": "host_geometry", "max_mm3": 5.0 },
+    { "type": "contact_area", "host": "host_geometry", "epsilon_mm": 0.4, "min_mm2": 300 },
+    { "type": "envelope", "max_mm": [26.5, 26.5, 12.5] },
+    {
+      "type": "pull_retention_geometric",
+      "host": "host_geometry",
+      "direction": [-1, 0, 0],
+      "displacement_mm": 4.0,
+      "min_interference_gain_mm3": 30.0
+    },
+    {
+      "type": "pull_force",
+      "host": "host_geometry",
+      "force_n": 5.0,
+      "direction": [-1, 0, 0],
+      "duration_sec": 0.1,
+      "max_drift_mm": 50000.0
+    },
+    { "type": "dfm", "rules": ["min_wall_1.5mm", "no_undercut"] }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1,
+    "min_accessory_volume_mm3": 200.0
+  },
+  "limits": {
+    "max_tokens": 60000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 60
+  },
+  "pass_k": 5,
+  "tags": ["fit", "clip", "form-lock", "image-conditioned", "snap-fit"]
+}
