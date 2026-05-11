@@ -10,7 +10,7 @@ repository.workspace = true
 vcad-ir = { workspace = true }
 vcad-kernel = { workspace = true }
 vcad-kernel-tessellate = { workspace = true }
-phyz = { path = "../../../phyz/crates/phyz", version = "0.2" }
+phyz = { path = "../../../phyz/crates/phyz", version = "0.3" }
 serde = { workspace = true }
 thiserror = { workspace = true }
 stl_io = "0.8"
