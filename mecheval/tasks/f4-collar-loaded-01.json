@@ -1,0 +1,52 @@
+{
+  "id": "f4-collar-loaded-01",
+  "suite": "F",
+  "tier": "F4",
+  "title": "Load-bearing collar — 5kg payload on stepped shaft",
+  "prompt": "Reference images of a stepped shaft are attached. The shaft has two coaxial flanges separated by a 20mm-diameter, 30mm-tall waist. Design a tube collar that sits on the waist between the flanges AND supports a 5kg payload hanging downward through it: gravity acts -Z, plus an additional 49N (≈5kg × 9.81 m/s²) pull-force in -Z represents the payload. The bottom flange must arrest both the collar's own weight and the payload load.\n\nRequirements:\n- Single solid, single-root .vcad.\n- The collar's bore must clear the 20mm waist with 0.1–0.3mm radial clearance.\n- The collar's outer diameter must not exceed the flange OD (40mm).\n- The collar's length must be 25–30mm.\n- Wall thickness ≥ 2.5mm — heavier than F1/F2/F3 (1.5mm) because this is a load-bearing part.\n- Solid (not hollow) cross-section preferred to maximise load path area.\n\nOutput the collar in the host's coordinate frame: shaft axis +Z, bottom flange's bottom face at z = 0, waist runs z = 10 to z = 40. Place the collar centred over the waist resting on (or just above) the bottom flange.",
+  "inputs": [
+    { "kind": "reference_image", "path": "assets/f4-collar-loaded-01/front.jpg", "agent_visible": true, "view": "front", "image_kind": "photo", "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 } },
+    { "kind": "reference_image", "path": "assets/f4-collar-loaded-01/side.jpg", "agent_visible": true, "view": "side", "image_kind": "photo", "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 } },
+    { "kind": "reference_image", "path": "assets/f4-collar-loaded-01/top.jpg", "agent_visible": true, "view": "top", "image_kind": "photo", "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 } },
+    { "kind": "host_geometry", "path": "assets/f4-collar-loaded-01/host.vcad", "agent_visible": false, "frame": { "origin": [0, 0, 0], "axis": [0, 0, 1] } },
+    { "kind": "known_dimensions", "agent_visible": true, "text": "The bottom flange is 40mm in diameter. The payload represents 5kg pulling downward (49N along -Z)." }
+  ],
+  "checks": [
+    { "type": "valid_solid" },
+    { "type": "interference_volume", "host": "host_geometry", "max_mm3": 1.0 },
+    { "type": "contact_area", "host": "host_geometry", "epsilon_mm": 0.4, "min_mm2": 1500 },
+    { "type": "envelope", "max_mm": [40.5, 40.5, 30.5] },
+    { "type": "mate_clearance", "host": "host_geometry", "min_mm": 0.0, "max_mm": 0.6 },
+    {
+      "type": "gravity_hold",
+      "host": "host_geometry",
+      "host_mass_kg": 1.0,
+      "gravity_dir": [0, 0, -1],
+      "duration_sec": 0.5,
+      "max_drift_mm": 100.0
+    },
+    {
+      "type": "pull_force",
+      "host": "host_geometry",
+      "force_n": 49.0,
+      "direction": [0, 0, -1],
+      "duration_sec": 0.25,
+      "max_drift_mm": 100.0
+    },
+    {
+      "type": "dfm",
+      "rules": ["min_wall_2.5mm", "no_undercut"]
+    }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1,
+    "min_accessory_volume_mm3": 500.0
+  },
+  "limits": {
+    "max_tokens": 60000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 60
+  },
+  "pass_k": 5,
+  "tags": ["fit", "collar", "axisymmetric", "image-conditioned", "functional-load", "physics"]
+}
