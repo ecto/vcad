@@ -100,7 +100,7 @@
         -0.866
       ],
       "duration_sec": 0.5,
-      "max_drift_mm": 100000.0
+      "max_drift_mm": 2000.0
     },
     {
       "type": "dfm",
