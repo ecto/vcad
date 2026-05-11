@@ -108,9 +108,7 @@ pub fn enforce(task: &Task, snapshot: &EvalSnapshot, task_dir: &Path) -> AntiChe
     // ---- Fit-suite anti-cheese ----------------------------------------
 
     if let Some(min_v) = rules.min_accessory_volume_mm3 {
-        let v = snapshot
-            .aggregate_volume()
-            .unwrap_or(0.0);
+        let v = snapshot.aggregate_volume().unwrap_or(0.0);
         if v < min_v {
             report.violations.push(format!(
                 "min_accessory_volume_mm3: expected ≥{}, got {:.3}",
@@ -161,7 +159,8 @@ pub fn enforce(task: &Task, snapshot: &EvalSnapshot, task_dir: &Path) -> AntiChe
                 if let Some(must) = rules.must_enclose_host_centroid {
                     if let Some((c_lo, c_hi)) = snapshot.aggregate_bbox() {
                         let centroid = host.solid.center_of_mass();
-                        let inside = (0..3).all(|i| centroid[i] >= c_lo[i] && centroid[i] <= c_hi[i]);
+                        let inside =
+                            (0..3).all(|i| centroid[i] >= c_lo[i] && centroid[i] <= c_hi[i]);
                         if inside != must {
                             report.violations.push(format!(
                                 "must_enclose_host_centroid: expected {}, accessory bbox {} host centroid {:?}",

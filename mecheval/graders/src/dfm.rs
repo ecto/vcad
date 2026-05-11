@@ -113,15 +113,18 @@ pub fn check_dfm(
         .filter(|i| severity_rank(i.severity) >= threshold_rank)
         .collect();
 
-    let mut by_rule: std::collections::BTreeMap<String, u32> =
-        std::collections::BTreeMap::new();
+    let mut by_rule: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
     for i in &all_issues {
         *by_rule.entry(i.rule.clone()).or_insert(0) += 1;
     }
 
     let pass = failing.is_empty() && analysed > 0;
     (
-        if pass { CheckOutcome::Pass } else { CheckOutcome::Fail },
+        if pass {
+            CheckOutcome::Pass
+        } else {
+            CheckOutcome::Fail
+        },
         json!({
             "process": format!("{:?}", process).to_lowercase(),
             "max_severity": format!("{:?}", threshold).to_lowercase(),

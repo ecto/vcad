@@ -61,15 +61,20 @@ pub enum HostError {
 /// Load + evaluate the task's host geometry. Resolves `path` relative to
 /// `task_dir`. The placement frame defaults to origin / +Z if absent.
 pub fn load_host(task: &Task, task_dir: &Path) -> Result<HostGeometry, HostError> {
-    let input = task.private_input("host_geometry").ok_or(HostError::Missing)?;
+    let input = task
+        .private_input("host_geometry")
+        .ok_or(HostError::Missing)?;
     let rel = input.path.as_ref().ok_or(HostError::NoPath)?;
     let abs = task_dir.join(rel);
     let raw = std::fs::read_to_string(&abs).map_err(|e| HostError::Io(abs.clone(), e))?;
     let snap = evaluate_vcad(&raw);
-    let solid = aggregate_solid(&snap)
-        .ok_or_else(|| HostError::Empty(snap.fatal.clone().unwrap_or_else(|| "no solids".into())))?;
-    let mesh = catch_unwind(AssertUnwindSafe(|| solid.to_mesh(FIT_TESSELLATION_SEGMENTS)))
-        .map_err(|_| HostError::Empty("host tessellation panicked".into()))?;
+    let solid = aggregate_solid(&snap).ok_or_else(|| {
+        HostError::Empty(snap.fatal.clone().unwrap_or_else(|| "no solids".into()))
+    })?;
+    let mesh = catch_unwind(AssertUnwindSafe(|| {
+        solid.to_mesh(FIT_TESSELLATION_SEGMENTS)
+    }))
+    .map_err(|_| HostError::Empty("host tessellation panicked".into()))?;
     let frame = input.frame.clone().unwrap_or(InputFrame {
         origin: [0.0, 0.0, 0.0],
         axis: [0.0, 0.0, 1.0],
@@ -98,10 +103,7 @@ pub fn aggregate_candidate(snap: &EvalSnapshot) -> Option<Solid> {
 // ---------- envelope ----------------------------------------------------
 
 /// `envelope`: accessory bbox extents must not exceed `max_mm` per axis.
-pub fn check_envelope(
-    snap: &EvalSnapshot,
-    max_mm: [f64; 3],
-) -> (CheckOutcome, serde_json::Value) {
+pub fn check_envelope(snap: &EvalSnapshot, max_mm: [f64; 3]) -> (CheckOutcome, serde_json::Value) {
     let (lo, hi) = match snap.aggregate_bbox() {
         Some(b) => b,
         None => {
@@ -114,7 +116,11 @@ pub fn check_envelope(
     let extents = [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]];
     let pass = (0..3).all(|i| extents[i] <= max_mm[i]);
     (
-        if pass { CheckOutcome::Pass } else { CheckOutcome::Fail },
+        if pass {
+            CheckOutcome::Pass
+        } else {
+            CheckOutcome::Fail
+        },
         json!({
             "extents_mm": extents,
             "max_mm": max_mm,
@@ -145,7 +151,8 @@ pub fn check_interference_volume(
             }),
         );
     }
-    let intersection = match catch_unwind(AssertUnwindSafe(|| candidate.intersection(&host.solid))) {
+    let intersection = match catch_unwind(AssertUnwindSafe(|| candidate.intersection(&host.solid)))
+    {
         Ok(s) => s,
         Err(_) => {
             return (
@@ -158,7 +165,11 @@ pub fn check_interference_volume(
     let v = if v.is_finite() && v >= 0.0 { v } else { 0.0 };
     let pass = v <= max_mm3;
     (
-        if pass { CheckOutcome::Pass } else { CheckOutcome::Fail },
+        if pass {
+            CheckOutcome::Pass
+        } else {
+            CheckOutcome::Fail
+        },
         json!({
             "interference_mm3": v,
             "max_mm3": max_mm3,
@@ -341,7 +352,11 @@ pub fn check_contact_area(
 
     let pass = contact >= min_mm2;
     (
-        if pass { CheckOutcome::Pass } else { CheckOutcome::Fail },
+        if pass {
+            CheckOutcome::Pass
+        } else {
+            CheckOutcome::Fail
+        },
         json!({
             "contact_area_mm2": contact,
             "min_mm2": min_mm2,
@@ -369,10 +384,9 @@ pub fn check_pull_retention_geometric(
     displacement_mm: f64,
     min_interference_gain_mm3: f64,
 ) -> (CheckOutcome, serde_json::Value) {
-    let dir_mag = (direction[0] * direction[0]
-        + direction[1] * direction[1]
-        + direction[2] * direction[2])
-        .sqrt();
+    let dir_mag =
+        (direction[0] * direction[0] + direction[1] * direction[1] + direction[2] * direction[2])
+            .sqrt();
     if dir_mag < 1e-9 {
         return (
             CheckOutcome::Fail,
@@ -416,7 +430,11 @@ pub fn check_pull_retention_geometric(
     let gain = peak - baseline;
     let pass = gain >= min_interference_gain_mm3;
     (
-        if pass { CheckOutcome::Pass } else { CheckOutcome::Fail },
+        if pass {
+            CheckOutcome::Pass
+        } else {
+            CheckOutcome::Fail
+        },
         json!({
             "baseline_interference_mm3": baseline,
             "peak_interference_mm3": peak,
@@ -454,10 +472,7 @@ pub fn check_mate_clearance(
     };
     let host_tris = mesh_tris(&host.mesh);
     if host_tris.is_empty() {
-        return (
-            CheckOutcome::Fail,
-            json!({ "reason": "host mesh empty" }),
-        );
+        return (CheckOutcome::Fail, json!({ "reason": "host mesh empty" }));
     }
 
     let mut min_sq = f64::INFINITY;
@@ -474,7 +489,11 @@ pub fn check_mate_clearance(
     let actual = min_sq.sqrt();
     let pass = actual >= min_mm && actual <= max_mm;
     (
-        if pass { CheckOutcome::Pass } else { CheckOutcome::Fail },
+        if pass {
+            CheckOutcome::Pass
+        } else {
+            CheckOutcome::Fail
+        },
         json!({
             "min_separation_mm": actual,
             "min_mm": min_mm,
@@ -570,11 +589,7 @@ mod tests {
         let (out, details) = check_mate_clearance(&cand, &host, 4.5, 5.5);
         assert_eq!(out, CheckOutcome::Pass, "{:?}", details);
         let m = details["min_separation_mm"].as_f64().unwrap();
-        assert!(
-            (m - 5.0).abs() < 0.1,
-            "expected ~5mm clearance, got {}",
-            m
-        );
+        assert!((m - 5.0).abs() < 0.1, "expected ~5mm clearance, got {}", m);
     }
 
     #[test]
@@ -614,16 +629,17 @@ mod tests {
     /// entry from the f1-spacer-shaft-01 task.
     #[test]
     fn task_private_input_finds_host_geometry() {
-        let task = crate::task::load_task(std::path::Path::new(
-            "../tasks/f1-spacer-shaft-01.json",
-        ))
-        .expect("load task");
+        let task = crate::task::load_task(std::path::Path::new("../tasks/f1-spacer-shaft-01.json"))
+            .expect("load task");
         let host_input = task
             .private_input("host_geometry")
             .expect("task has host_geometry");
         assert!(matches!(
             host_input,
-            StructuredInput { agent_visible: false, .. }
+            StructuredInput {
+                agent_visible: false,
+                ..
+            }
         ));
         assert!(host_input.path.is_some());
         // Sanity: the agent_visible inputs (3 photos + 1 known dim) total 4.

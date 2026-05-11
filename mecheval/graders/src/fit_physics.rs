@@ -85,20 +85,18 @@ pub fn check_gravity_hold(
     max_drift_mm: f64,
 ) -> (CheckOutcome, serde_json::Value) {
     let result = catch_unwind(AssertUnwindSafe(|| {
-        simulate_drop(
-            candidate,
-            host,
-            gravity_dir,
-            duration_sec,
-            None,
-        )
+        simulate_drop(candidate, host, gravity_dir, duration_sec, None)
     }));
     match result {
         Ok(Ok(drift_m)) => {
             let drift_mm = drift_m * 1000.0;
             let pass = drift_mm <= max_drift_mm;
             (
-                if pass { CheckOutcome::Pass } else { CheckOutcome::Fail },
+                if pass {
+                    CheckOutcome::Pass
+                } else {
+                    CheckOutcome::Fail
+                },
                 json!({
                     "drift_mm": drift_mm,
                     "max_drift_mm": max_drift_mm,
@@ -133,10 +131,9 @@ pub fn check_pull_force(
     // load. Tasks that want a horizontal pull can specify gravity_dir
     // implicitly via the world frame.
     let gravity_dir = [0.0, 0.0, -1.0];
-    let dir_mag = (direction[0] * direction[0]
-        + direction[1] * direction[1]
-        + direction[2] * direction[2])
-        .sqrt();
+    let dir_mag =
+        (direction[0] * direction[0] + direction[1] * direction[1] + direction[2] * direction[2])
+            .sqrt();
     if dir_mag < 1e-9 {
         return (
             CheckOutcome::Fail,
@@ -158,7 +155,11 @@ pub fn check_pull_force(
             let drift_mm = drift_m * 1000.0;
             let pass = drift_mm <= max_drift_mm;
             (
-                if pass { CheckOutcome::Pass } else { CheckOutcome::Fail },
+                if pass {
+                    CheckOutcome::Pass
+                } else {
+                    CheckOutcome::Fail
+                },
                 json!({
                     "drift_mm": drift_mm,
                     "max_drift_mm": max_drift_mm,
@@ -269,9 +270,7 @@ fn simulate_drop(
     let initial_pos = state.body_xform[1].pos;
 
     let n_steps = ((duration_sec / SIM_DT).round() as usize).max(1);
-    let materials: Vec<ContactMaterial> = (0..model.bodies.len())
-        .map(|_| fit_material())
-        .collect();
+    let materials: Vec<ContactMaterial> = (0..model.bodies.len()).map(|_| fit_material()).collect();
 
     let pull = external_world_force_n.map(|f| Vec3::new(f[0], f[1], f[2]));
 
@@ -357,15 +356,17 @@ fn simulate_drop(
 fn to_collision_geometry(g: &Geometry) -> phyz::collision::Geometry {
     match g {
         Geometry::Sphere { radius } => phyz::collision::Geometry::Sphere { radius: *radius },
-        Geometry::Capsule { radius, length } => {
-            phyz::collision::Geometry::Capsule { radius: *radius, length: *length }
-        }
+        Geometry::Capsule { radius, length } => phyz::collision::Geometry::Capsule {
+            radius: *radius,
+            length: *length,
+        },
         Geometry::Box { half_extents } => phyz::collision::Geometry::Box {
             half_extents: *half_extents,
         },
-        Geometry::Cylinder { radius, height } => {
-            phyz::collision::Geometry::Cylinder { radius: *radius, height: *height }
-        }
+        Geometry::Cylinder { radius, height } => phyz::collision::Geometry::Cylinder {
+            radius: *radius,
+            height: *height,
+        },
         Geometry::Mesh { vertices, faces } => phyz::collision::Geometry::Mesh {
             vertices: vertices.clone(),
             faces: faces.clone(),
@@ -417,12 +418,11 @@ fn find_contacts_with_epa_depth(
             continue;
         }
         // Penetrating — get true depth + normal from EPA.
-        let (depth, mut normal) = match epa_penetration_rot(
-            &cgi, &cgj, &xi.pos, &xj.pos, &xi.rot, &xj.rot,
-        ) {
-            Some(r) => r,
-            None => continue,
-        };
+        let (depth, mut normal) =
+            match epa_penetration_rot(&cgi, &cgj, &xi.pos, &xj.pos, &xi.rot, &xj.rot) {
+                Some(r) => r,
+                None => continue,
+            };
         if !depth.is_finite() || depth <= 0.0 {
             continue;
         }
@@ -633,8 +633,7 @@ mod tests {
         let host = make_host(&plate_vcad(60.0, 60.0, 8.0, [-30.0, -30.0, 0.0]));
         let snap = evaluate_vcad(&cube_vcad(30.0, [-15.0, -15.0, 8.5]));
         let cand = aggregate_candidate(&snap).expect("cube solid");
-        let drift_m = simulate_drop(&cand, &host, [0.0, 0.0, -1.0], 0.5, None)
-            .expect("sim runs");
+        let drift_m = simulate_drop(&cand, &host, [0.0, 0.0, -1.0], 0.5, None).expect("sim runs");
         assert!(
             drift_m < 0.005,
             "expected < 5mm drift on plate, got {}m",
@@ -652,8 +651,7 @@ mod tests {
         let host = make_host(&plate_vcad(1.0, 1.0, 1.0, [500.0, 500.0, -500.0]));
         let snap = evaluate_vcad(&cube_vcad(30.0, [-15.0, -15.0, 100.0]));
         let cand = aggregate_candidate(&snap).expect("cube solid");
-        let drift_m = simulate_drop(&cand, &host, [0.0, 0.0, -1.0], 0.5, None)
-            .expect("sim runs");
+        let drift_m = simulate_drop(&cand, &host, [0.0, 0.0, -1.0], 0.5, None).expect("sim runs");
         // Expect ~1.226m. Allow a wide window to absorb numerical drift.
         assert!(
             drift_m > 0.8 && drift_m < 1.6,

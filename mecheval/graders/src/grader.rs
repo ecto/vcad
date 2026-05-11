@@ -118,8 +118,7 @@ pub fn grade(
     // by the harness, which has the trace data — that stays Vec::new()
     // here. Structural anti-cheese, on the other hand, is a function of
     // the candidate document only, so we run it.
-    let (anti_cheese_violated, _ac_violations) =
-        crate::anti_cheese::run(task, &snapshot, task_dir);
+    let (anti_cheese_violated, _ac_violations) = crate::anti_cheese::run(task, &snapshot, task_dir);
     let limits_exceeded: Vec<String> = Vec::new();
 
     let summary = Summary::from_records(&records, anti_cheese_violated, limits_exceeded);
@@ -231,12 +230,7 @@ fn run_check(
             rules,
             process,
             max_severity,
-        } => crate::dfm::check_dfm(
-            snapshot,
-            process.as_deref(),
-            max_severity.as_deref(),
-            rules,
-        ),
+        } => crate::dfm::check_dfm(snapshot, process.as_deref(), max_severity.as_deref(), rules),
 
         CheckSpec::DrcClean | CheckSpec::ErcClean | CheckSpec::RefactorInvariant { .. } => (
             CheckOutcome::NotImplemented,
