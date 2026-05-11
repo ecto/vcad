@@ -4,6 +4,7 @@
 
 use crate::check::CheckSpec;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 /// Top-level task definition. One JSON file per task; filename matches `id`.
@@ -19,9 +20,11 @@ pub struct Task {
     pub title: String,
     /// Natural-language spec given to the agent.
     pub prompt: String,
-    /// Optional starter files (paths relative to the task file).
+    /// Optional starter files. Each entry is either a bare path string
+    /// (legacy form) or a structured object describing kind / visibility /
+    /// view metadata. See `mecheval/tasks/SCHEMA.md` ("Structured inputs").
     #[serde(default)]
-    pub inputs: Vec<String>,
+    pub inputs: Vec<TaskInput>,
     /// Ordered list of grader checks. All must pass for the task to score.
     pub checks: Vec<CheckSpec>,
     /// Per-task structural constraints.
@@ -47,6 +50,63 @@ pub enum Suite {
     B,
     /// Mech (the headline).
     C,
+    /// Fit — accessory designed against a host (F1–F4).
+    F,
+}
+
+/// One entry in `Task.inputs`. Either a bare path (legacy starter-`.vcad`
+/// case) or a structured object with `kind` / `agent_visible` metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum TaskInput {
+    /// Bare path, relative to the task file's directory.
+    Path(String),
+    /// Structured input — kind-tagged, with explicit agent visibility.
+    Structured(StructuredInput),
+}
+
+/// A structured input. The grader only inspects `kind`, `agent_visible`,
+/// `path`, and `frame` (when present); everything else is preserved in
+/// `extra` so task authors can attach arbitrary metadata (view labels,
+/// fiducials, captions) without grader churn.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StructuredInput {
+    /// What this input represents. Conventional values: `reference_image`,
+    /// `host_geometry`, `known_dimensions`.
+    pub kind: String,
+    /// Whether the agent should see this input. `false` items are
+    /// stripped by the harness before invoking the solver.
+    pub agent_visible: bool,
+    /// Optional path, relative to the task file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// Optional placement frame (used by `host_geometry`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame: Option<InputFrame>,
+    /// All other fields preserved as-is.
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, serde_json::Value>,
+}
+
+/// Placement frame for an input (e.g. where the host sits in the assembly).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InputFrame {
+    /// World-space origin in mm.
+    pub origin: [f64; 3],
+    /// Declared "up/main" axis as a unit vector.
+    pub axis: [f64; 3],
+}
+
+impl Task {
+    /// Find the first input whose `kind` matches and is `agent_visible: false`.
+    /// Used by graders to locate non-agent-visible reference geometry
+    /// (host objects, golden parts).
+    pub fn private_input(&self, kind: &str) -> Option<&StructuredInput> {
+        self.inputs.iter().find_map(|i| match i {
+            TaskInput::Structured(s) if s.kind == kind && !s.agent_visible => Some(s),
+            _ => None,
+        })
+    }
 }
 
 /// Per-task structural anti-cheese rules. All optional; defaults are unset.
@@ -70,6 +130,18 @@ pub struct AntiCheese {
     /// Required link names (Suite C).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_links: Vec<String>,
+    /// Suite F: cap on accessory bbox ∩ host bbox as % of host bbox volume.
+    /// Stops "wrap the whole host" cheese.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_overlap_with_host_envelope_pct: Option<f64>,
+    /// Suite F: floor on accessory volume.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_accessory_volume_mm3: Option<f64>,
+    /// Suite F: whether the accessory bbox must contain the host centroid.
+    /// `Some(true)` for stand/cradle tasks; `Some(false)` for cap/clip
+    /// tasks. `None` means no constraint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub must_enclose_host_centroid: Option<bool>,
 }
 
 /// Cost ceilings per attempt.

@@ -9,6 +9,11 @@ use crate::blob::{CheckOutcome, CheckRecord, RunBlob, Summary, SCHEMA_VERSION};
 use crate::check::CheckSpec;
 use crate::eval::{evaluate_vcad, EvalSnapshot};
 use crate::fillets::find_non_z_cylinders;
+use crate::fit::{
+    aggregate_candidate, check_contact_area, check_envelope, check_interference_volume,
+    check_mate_clearance, check_pull_retention_geometric, load_host, HostError, HostGeometry,
+};
+use crate::fit_physics::{check_gravity_hold, check_pull_force};
 use crate::holes::find_z_holes;
 use crate::suite_c::{
     build_assembly_snapshot, check_body_valid, check_fk_reaches, check_task_success,
@@ -39,11 +44,13 @@ pub enum GraderError {
 /// `task_json_bytes` is the raw bytes of the task JSON the grader was loaded
 /// from — used to compute `task_sha256` for forensic traceability. (We hash
 /// the bytes the grader actually saw, not the file at re-read time, to
-/// avoid a TOCTOU window.)
+/// avoid a TOCTOU window.) `task_dir` is the directory the task file lives
+/// in; used to resolve `inputs[].path` (e.g. Suite F host geometry).
 pub fn grade(
     task: &Task,
     task_json_bytes: &[u8],
     candidate_vcad: &Path,
+    task_dir: &Path,
 ) -> Result<RunBlob, GraderError> {
     // Read + sanity-check the candidate.
     let candidate_raw = std::fs::read_to_string(candidate_vcad)?;
@@ -69,9 +76,35 @@ pub fn grade(
 
     let task_target = first_fk_target(task);
 
+    // Lazily build the host snapshot (Suite F) on first use; share across
+    // every fit check that references the same host.
+    let mut host_state = if task.checks.iter().any(CheckSpec::is_suite_f) {
+        match load_host(task, task_dir) {
+            Ok(h) => HostState::Loaded(Box::new(h)),
+            Err(e) => HostState::Error(e.to_string()),
+        }
+    } else {
+        HostState::NotNeeded
+    };
+    // Build the candidate solid once (used by every fit check that
+    // operates on it). Cheap if no F-suite checks present.
+    let candidate_solid = if task.checks.iter().any(CheckSpec::is_suite_f) {
+        aggregate_candidate(&snapshot)
+    } else {
+        None
+    };
+
     let mut records: Vec<CheckRecord> = Vec::with_capacity(task.checks.len());
     for (n, spec) in task.checks.iter().enumerate() {
-        let (outcome, details) = run_check(spec, &snapshot, &mut assembly, task, task_target);
+        let (outcome, details) = run_check(
+            spec,
+            &snapshot,
+            &mut assembly,
+            task,
+            task_target,
+            candidate_solid.as_ref(),
+            &mut host_state,
+        );
         records.push(CheckRecord {
             n,
             r#type: spec.kind().to_string(),
@@ -85,7 +118,7 @@ pub fn grade(
     // by the harness, which has the trace data — that stays Vec::new()
     // here. Structural anti-cheese, on the other hand, is a function of
     // the candidate document only, so we run it.
-    let (anti_cheese_violated, _ac_violations) = crate::anti_cheese::run(task, &snapshot);
+    let (anti_cheese_violated, _ac_violations) = crate::anti_cheese::run(task, &snapshot, task_dir);
     let limits_exceeded: Vec<String> = Vec::new();
 
     let summary = Summary::from_records(&records, anti_cheese_violated, limits_exceeded);
@@ -107,6 +140,20 @@ enum AssemblyState {
     BuildError(String),
 }
 
+/// State of the lazily-loaded Suite-F host geometry.
+enum HostState {
+    NotNeeded,
+    Loaded(Box<HostGeometry>),
+    Error(String),
+}
+
+#[allow(dead_code)]
+impl From<HostError> for HostState {
+    fn from(e: HostError) -> Self {
+        HostState::Error(e.to_string())
+    }
+}
+
 /// Pull the first `fk_reaches` check's target/tolerance out of the
 /// task — `torque_budget` and `task_success` reuse it as the IK goal.
 fn first_fk_target(task: &Task) -> Option<([f64; 3], f64)> {
@@ -124,12 +171,15 @@ fn first_fk_target(task: &Task) -> Option<([f64; 3], f64)> {
 
 /// Dispatch one check against the prebuilt evaluation snapshot. Checks
 /// that haven't been wired yet return [`CheckOutcome::NotImplemented`].
+#[allow(clippy::too_many_arguments)]
 fn run_check(
     spec: &CheckSpec,
     snapshot: &EvalSnapshot,
     assembly: &mut AssemblyState,
     task: &Task,
     task_target: Option<([f64; 3], f64)>,
+    candidate_solid: Option<&vcad_kernel::Solid>,
+    host_state: &mut HostState,
 ) -> (CheckOutcome, serde_json::Value) {
     let stub_reason = "skeleton — kernel wiring pending";
     match spec {
@@ -176,10 +226,13 @@ fn run_check(
             tolerance_mm,
         } => check_fillet_radius(snapshot, edge_class, *radius_mm, *tolerance_mm),
 
-        CheckSpec::DrcClean
-        | CheckSpec::ErcClean
-        | CheckSpec::Dfm { .. }
-        | CheckSpec::RefactorInvariant { .. } => (
+        CheckSpec::Dfm {
+            rules,
+            process,
+            max_severity,
+        } => crate::dfm::check_dfm(snapshot, process.as_deref(), max_severity.as_deref(), rules),
+
+        CheckSpec::DrcClean | CheckSpec::ErcClean | CheckSpec::RefactorInvariant { .. } => (
             CheckOutcome::NotImplemented,
             json!({ "reason": stub_reason }),
         ),
@@ -253,7 +306,112 @@ fn run_check(
             CheckOutcome::NotImplemented,
             json!({ "reason": "no current task uses stable_during_rollout" }),
         ),
+
+        CheckSpec::Envelope { max_mm } => check_envelope(snapshot, *max_mm),
+
+        CheckSpec::InterferenceVolume { host: _, max_mm3 } => {
+            dispatch_with_host(host_state, candidate_solid, |cand, host| {
+                check_interference_volume(cand, host, *max_mm3)
+            })
+        }
+        CheckSpec::ContactArea {
+            host: _,
+            epsilon_mm,
+            min_mm2,
+        } => dispatch_with_host(host_state, candidate_solid, |cand, host| {
+            check_contact_area(cand, host, *epsilon_mm, *min_mm2)
+        }),
+        CheckSpec::MateClearance {
+            host: _,
+            min_mm,
+            max_mm,
+        } => dispatch_with_host(host_state, candidate_solid, |cand, host| {
+            check_mate_clearance(cand, host, *min_mm, *max_mm)
+        }),
+        CheckSpec::GravityHold {
+            host: _,
+            host_mass_kg,
+            gravity_dir,
+            duration_sec,
+            max_drift_mm,
+        } => dispatch_with_host(host_state, candidate_solid, |cand, host| {
+            check_gravity_hold(
+                cand,
+                host,
+                *host_mass_kg,
+                *gravity_dir,
+                *duration_sec,
+                *max_drift_mm,
+            )
+        }),
+        CheckSpec::PullForce {
+            host: _,
+            force_n,
+            direction,
+            duration_sec,
+            max_drift_mm,
+        } => dispatch_with_host(host_state, candidate_solid, |cand, host| {
+            check_pull_force(
+                cand,
+                host,
+                *force_n,
+                *direction,
+                *duration_sec,
+                *max_drift_mm,
+            )
+        }),
+        CheckSpec::PullRetentionGeometric {
+            host: _,
+            direction,
+            displacement_mm,
+            min_interference_gain_mm3,
+        } => dispatch_with_host(host_state, candidate_solid, |cand, host| {
+            check_pull_retention_geometric(
+                cand,
+                host,
+                *direction,
+                *displacement_mm,
+                *min_interference_gain_mm3,
+            )
+        }),
     }
+}
+
+/// Helper: gate a fit check on (a) candidate evaluating to a solid and
+/// (b) host loading successfully. Closure runs the actual check.
+fn dispatch_with_host<F>(
+    host_state: &HostState,
+    candidate_solid: Option<&vcad_kernel::Solid>,
+    f: F,
+) -> (CheckOutcome, serde_json::Value)
+where
+    F: FnOnce(&vcad_kernel::Solid, &HostGeometry) -> (CheckOutcome, serde_json::Value),
+{
+    let cand = match candidate_solid {
+        Some(c) => c,
+        None => {
+            return (
+                CheckOutcome::Fail,
+                json!({ "reason": "candidate produced no valid solid" }),
+            );
+        }
+    };
+    let host = match host_state {
+        HostState::Loaded(h) => h,
+        HostState::Error(e) => {
+            return (
+                CheckOutcome::Fail,
+                json!({ "reason": "host geometry could not be loaded", "error": e }),
+            );
+        }
+        HostState::NotNeeded => {
+            return (
+                CheckOutcome::NotImplemented,
+                json!({ "reason": "internal: fit check dispatched without host" }),
+            );
+        }
+    };
+    f(cand, host)
 }
 
 /// `valid_solid`: candidate evaluates cleanly, has at least one root, and
@@ -986,7 +1144,7 @@ mod tests {
         // DRC is still unwired; this catches accidental dispatch leaks.
         let (task, task_bytes) = task_with(vec![CheckSpec::DrcClean]);
         let tmp = write_tmp_vcad("mecheval-unwired.vcad", &cube_vcad(10.0));
-        let blob = grade(&task, &task_bytes, &tmp).expect("grade");
+        let blob = grade(&task, &task_bytes, &tmp, std::path::Path::new(".")).expect("grade");
         assert_eq!(blob.checks.len(), 1);
         assert_eq!(blob.checks[0].result, CheckOutcome::NotImplemented);
     }
@@ -995,7 +1153,7 @@ mod tests {
     fn valid_solid_passes_for_a_real_cube() {
         let (task, task_bytes) = task_with(vec![CheckSpec::ValidSolid]);
         let tmp = write_tmp_vcad("mecheval-valid-cube.vcad", &cube_vcad(10.0));
-        let blob = grade(&task, &task_bytes, &tmp).expect("grade");
+        let blob = grade(&task, &task_bytes, &tmp, std::path::Path::new(".")).expect("grade");
         assert_eq!(blob.checks[0].result, CheckOutcome::Pass);
         assert!(blob.summary.passed);
     }
@@ -1007,7 +1165,7 @@ mod tests {
             "mecheval-empty-doc.vcad",
             r#"{"version":"0.1","nodes":{},"materials":{},"part_materials":{},"roots":[]}"#,
         );
-        let blob = grade(&task, &task_bytes, &tmp).expect("grade");
+        let blob = grade(&task, &task_bytes, &tmp, std::path::Path::new(".")).expect("grade");
         assert_eq!(blob.checks[0].result, CheckOutcome::Fail);
         assert!(!blob.summary.passed);
     }
@@ -1022,7 +1180,7 @@ mod tests {
             tolerance_mm: 0.05,
         }]);
         let tmp = write_tmp_vcad("mecheval-bbox-pass.vcad", &cube_vcad(10.0));
-        let blob = grade(&task, &task_bytes, &tmp).expect("grade");
+        let blob = grade(&task, &task_bytes, &tmp, std::path::Path::new(".")).expect("grade");
         assert_eq!(
             blob.checks[0].result,
             CheckOutcome::Pass,
@@ -1040,7 +1198,7 @@ mod tests {
             tolerance_mm: 0.1,
         }]);
         let tmp = write_tmp_vcad("mecheval-bbox-fail.vcad", &cube_vcad(10.0));
-        let blob = grade(&task, &task_bytes, &tmp).expect("grade");
+        let blob = grade(&task, &task_bytes, &tmp, std::path::Path::new(".")).expect("grade");
         assert_eq!(blob.checks[0].result, CheckOutcome::Fail);
         let dev = blob.checks[0].details["max_abs_deviation_mm"]
             .as_f64()
@@ -1058,7 +1216,7 @@ mod tests {
             tolerance_pct: 1.0,
         }]);
         let tmp = write_tmp_vcad("mecheval-mp-vol-pass.vcad", &cube_vcad(10.0));
-        let blob = grade(&task, &task_bytes, &tmp).expect("grade");
+        let blob = grade(&task, &task_bytes, &tmp, std::path::Path::new(".")).expect("grade");
         assert_eq!(
             blob.checks[0].result,
             CheckOutcome::Pass,
@@ -1076,7 +1234,7 @@ mod tests {
             tolerance_pct: 0.5,
         }]);
         let tmp = write_tmp_vcad("mecheval-mp-vol-fail.vcad", &cube_vcad(10.0));
-        let blob = grade(&task, &task_bytes, &tmp).expect("grade");
+        let blob = grade(&task, &task_bytes, &tmp, std::path::Path::new(".")).expect("grade");
         assert_eq!(blob.checks[0].result, CheckOutcome::Fail);
     }
 
@@ -1090,7 +1248,7 @@ mod tests {
             tolerance_pct: 0.5,
         }]);
         let tmp = write_tmp_vcad("mecheval-mp-com-pass.vcad", &cube_vcad(10.0));
-        let blob = grade(&task, &task_bytes, &tmp).expect("grade");
+        let blob = grade(&task, &task_bytes, &tmp, std::path::Path::new(".")).expect("grade");
         assert_eq!(
             blob.checks[0].result,
             CheckOutcome::Pass,
@@ -1109,7 +1267,7 @@ mod tests {
             tolerance_pct: 1.0,
         }]);
         let tmp = write_tmp_vcad("mecheval-mp-combo.vcad", &cube_vcad(10.0));
-        let blob = grade(&task, &task_bytes, &tmp).expect("grade");
+        let blob = grade(&task, &task_bytes, &tmp, std::path::Path::new(".")).expect("grade");
         assert_eq!(
             blob.checks[0].result,
             CheckOutcome::Pass,
@@ -1122,7 +1280,7 @@ mod tests {
     fn step_roundtrip_passes_for_a_cube() {
         let (task, task_bytes) = task_with(vec![CheckSpec::StepRoundtrip { tolerance_pct: 1.0 }]);
         let tmp = write_tmp_vcad("mecheval-step-cube.vcad", &cube_vcad(20.0));
-        let blob = grade(&task, &task_bytes, &tmp).expect("grade");
+        let blob = grade(&task, &task_bytes, &tmp, std::path::Path::new(".")).expect("grade");
         assert_eq!(
             blob.checks[0].result,
             CheckOutcome::Pass,
@@ -1135,7 +1293,7 @@ mod tests {
     fn task_sha256_has_64_hex_chars() {
         let (task, task_bytes) = task_with(vec![CheckSpec::ValidSolid]);
         let tmp = write_tmp_vcad("mecheval-hash-len.vcad", &cube_vcad(5.0));
-        let blob = grade(&task, &task_bytes, &tmp).expect("grade");
+        let blob = grade(&task, &task_bytes, &tmp, std::path::Path::new(".")).expect("grade");
         assert_eq!(blob.task_sha256.len(), 64);
     }
 
@@ -1242,7 +1400,7 @@ mod tests {
         };
         let task_bytes = serde_json::to_vec(&task).unwrap();
         let tmp = write_tmp_vcad("mecheval-suite-c-e2e.vcad", &raw);
-        let blob = grade(&task, &task_bytes, &tmp).expect("grade");
+        let blob = grade(&task, &task_bytes, &tmp, std::path::Path::new(".")).expect("grade");
 
         // Each check has a real outcome — never NotImplemented now.
         for r in &blob.checks {

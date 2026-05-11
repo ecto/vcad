@@ -1,0 +1,131 @@
+{
+  "id": "f2-shim-gap-tilted-01",
+  "suite": "F",
+  "tier": "F2",
+  "title": "Shim in C-channel, tilted gravity",
+  "prompt": "Reference images of a C-channel bracket are attached. The bracket consists of a bottom plate (50\u00d740\u00d76mm), a back wall (50\u00d78\u00d78mm), and a top plate (50\u00d740\u00d76mm); a horizontal gap runs between the two plates. Gravity is tilted: it has a -Y component (pushing the shim back against the back wall) and a -Z component (pushing it down onto the bottom plate). Design a rectangular shim that fills the 8mm vertical gap and stays put under the tilted gravity.\n\nRequirements:\n- Single solid, single-root .vcad.\n- Shim thickness in Z: 7.7\u20137.9mm (clearance 0.1\u20130.3mm).\n- Shim X extent \u2264 50mm; Y extent \u2264 32mm; clears the 8mm-thick back wall.\n- Wall thickness / minimum dimension \u2265 1.5mm.\n\nOutput the shim in the host's coordinate frame: bracket corner at origin, extending to (50, 40, 20). Place the shim at z \u2208 [6, 14] and y \u2265 8 so it begins in contact with bottom plate, back wall, and top plate.",
+  "inputs": [
+    {
+      "kind": "reference_image",
+      "path": "assets/f2-shim-gap-tilted-01/front.jpg",
+      "agent_visible": true,
+      "view": "front",
+      "image_kind": "photo",
+      "scale_fiducial": {
+        "type": "aruco_4x4_50mm",
+        "marker_id": 0
+      }
+    },
+    {
+      "kind": "reference_image",
+      "path": "assets/f2-shim-gap-tilted-01/side.jpg",
+      "agent_visible": true,
+      "view": "side",
+      "image_kind": "photo",
+      "scale_fiducial": {
+        "type": "aruco_4x4_50mm",
+        "marker_id": 0
+      }
+    },
+    {
+      "kind": "reference_image",
+      "path": "assets/f2-shim-gap-tilted-01/top.jpg",
+      "agent_visible": true,
+      "view": "top",
+      "image_kind": "photo",
+      "scale_fiducial": {
+        "type": "aruco_4x4_50mm",
+        "marker_id": 0
+      }
+    },
+    {
+      "kind": "host_geometry",
+      "path": "assets/f2-shim-gap-tilted-01/host.vcad",
+      "agent_visible": false,
+      "frame": {
+        "origin": [
+          0,
+          0,
+          0
+        ],
+        "axis": [
+          0,
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "kind": "known_dimensions",
+      "agent_visible": true,
+      "text": "The bracket is 50mm wide along X."
+    }
+  ],
+  "checks": [
+    {
+      "type": "valid_solid"
+    },
+    {
+      "type": "interference_volume",
+      "host": "host_geometry",
+      "max_mm3": 1.0
+    },
+    {
+      "type": "contact_area",
+      "host": "host_geometry",
+      "epsilon_mm": 0.4,
+      "min_mm2": 800
+    },
+    {
+      "type": "envelope",
+      "max_mm": [
+        50.5,
+        32.5,
+        8.0
+      ]
+    },
+    {
+      "type": "mate_clearance",
+      "host": "host_geometry",
+      "min_mm": 0.0,
+      "max_mm": 0.5
+    },
+    {
+      "type": "gravity_hold",
+      "host": "host_geometry",
+      "host_mass_kg": 0.5,
+      "gravity_dir": [
+        0,
+        -0.5,
+        -0.866
+      ],
+      "duration_sec": 0.5,
+      "max_drift_mm": 100000.0
+    },
+    {
+      "type": "dfm",
+      "rules": [
+        "min_wall_1.5mm",
+        "no_undercut"
+      ]
+    }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1,
+    "min_accessory_volume_mm3": 100.0
+  },
+  "limits": {
+    "max_tokens": 60000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 60
+  },
+  "pass_k": 5,
+  "tags": [
+    "fit",
+    "shim",
+    "rectangular",
+    "image-conditioned",
+    "gravity-hold",
+    "physics"
+  ]
+}

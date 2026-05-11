@@ -1,0 +1,83 @@
+{
+  "id": "f1-plug-port-01",
+  "suite": "F",
+  "tier": "F1",
+  "title": "Cylindrical plug in counterbored port",
+  "prompt": "Reference images of a rectangular block with a cylindrical recess in its top face are attached. Design a cylindrical plug that drops into the recess as a slip fit.\n\nRequirements:\n- Single solid, single-root .vcad.\n- The recess is 16mm in diameter and 10mm deep. The plug's outer diameter must clear the bore with 0.05–0.15mm radial clearance (so an OD of 15.7–15.9mm).\n- The plug's height must be 9.5–10mm so the top sits roughly flush with the block's top face.\n- Wall thickness / minimum dimension ≥ 1.5mm (printability).\n- No flange, head, or grip — a plain cylinder is sufficient.\n\nOutput the plug in the host's coordinate frame: the block corner sits at the origin, extending to (50, 50, 15); the recess is centered at (25, 25). Place the plug coaxial with the recess so its base sits at z ≈ 5 and its top at z ≈ 15.",
+  "inputs": [
+    {
+      "kind": "reference_image",
+      "path": "assets/f1-plug-port-01/front.jpg",
+      "agent_visible": true,
+      "view": "front",
+      "image_kind": "photo",
+      "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 }
+    },
+    {
+      "kind": "reference_image",
+      "path": "assets/f1-plug-port-01/side.jpg",
+      "agent_visible": true,
+      "view": "side",
+      "image_kind": "photo",
+      "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 }
+    },
+    {
+      "kind": "reference_image",
+      "path": "assets/f1-plug-port-01/top.jpg",
+      "agent_visible": true,
+      "view": "top",
+      "image_kind": "photo",
+      "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 }
+    },
+    {
+      "kind": "host_geometry",
+      "path": "assets/f1-plug-port-01/host.vcad",
+      "agent_visible": false,
+      "frame": { "origin": [0, 0, 0], "axis": [0, 0, 1] }
+    },
+    {
+      "kind": "known_dimensions",
+      "agent_visible": true,
+      "text": "The host block is 50mm × 50mm × 15mm tall."
+    }
+  ],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "interference_volume",
+      "host": "host_geometry",
+      "max_mm3": 1.0
+    },
+    {
+      "type": "contact_area",
+      "host": "host_geometry",
+      "epsilon_mm": 0.3,
+      "min_mm2": 350
+    },
+    {
+      "type": "envelope",
+      "max_mm": [16.5, 16.5, 10.5]
+    },
+    {
+      "type": "mate_clearance",
+      "host": "host_geometry",
+      "min_mm": 0.05,
+      "max_mm": 0.4
+    },
+    {
+      "type": "dfm",
+      "rules": ["min_wall_1.5mm", "no_undercut"]
+    }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1,
+    "min_accessory_volume_mm3": 100.0
+  },
+  "limits": {
+    "max_tokens": 60000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 60
+  },
+  "pass_k": 5,
+  "tags": ["fit", "plug", "axisymmetric", "image-conditioned", "static"]
+}

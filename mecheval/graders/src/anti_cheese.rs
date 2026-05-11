@@ -11,7 +11,9 @@
 //! it's consumed by the `torque_budget` check.
 
 use crate::eval::EvalSnapshot;
+use crate::fit::{aggregate_candidate, load_host};
 use crate::task::{AntiCheese, Task};
+use std::path::Path;
 use vcad_ir::{Document, JointKind};
 use vcad_kernel::vcad_kernel_tessellate::TriangleMesh;
 use vcad_kernel::Solid;
@@ -34,7 +36,10 @@ impl AntiCheeseReport {
 /// Check every rule on `task.anti_cheese` against the candidate. The
 /// document (when available) is preferred for assembly-shape checks; the
 /// snapshot's solids are used for Suite-A solid-count and mass.
-pub fn enforce(task: &Task, snapshot: &EvalSnapshot) -> AntiCheeseReport {
+///
+/// `task_dir` resolves Suite-F host geometry referenced by `inputs[]`.
+/// Pass `Path::new(".")` if the task has no Fit anti-cheese rules.
+pub fn enforce(task: &Task, snapshot: &EvalSnapshot, task_dir: &Path) -> AntiCheeseReport {
     let mut report = AntiCheeseReport::default();
     let rules = &task.anti_cheese;
     let doc = snapshot.doc.as_ref();
@@ -99,6 +104,82 @@ pub fn enforce(task: &Task, snapshot: &EvalSnapshot) -> AntiCheeseReport {
     }
 
     let _consumed_by_torque_budget = rules.joint_torque_ceiling_nm;
+
+    // ---- Fit-suite anti-cheese ----------------------------------------
+
+    if let Some(min_v) = rules.min_accessory_volume_mm3 {
+        let v = snapshot.aggregate_volume().unwrap_or(0.0);
+        if v < min_v {
+            report.violations.push(format!(
+                "min_accessory_volume_mm3: expected ≥{}, got {:.3}",
+                min_v, v
+            ));
+        }
+    }
+
+    let needs_host = rules.max_overlap_with_host_envelope_pct.is_some()
+        || rules.must_enclose_host_centroid.is_some();
+
+    if needs_host {
+        match load_host(task, task_dir) {
+            Ok(host) => {
+                if let Some(max_pct) = rules.max_overlap_with_host_envelope_pct {
+                    if let (Some(cand_solid), Some((c_lo, c_hi))) =
+                        (aggregate_candidate(snapshot), snapshot.aggregate_bbox())
+                    {
+                        let (h_lo, h_hi) = host.solid.bounding_box();
+                        let inter_lo = [
+                            c_lo[0].max(h_lo[0]),
+                            c_lo[1].max(h_lo[1]),
+                            c_lo[2].max(h_lo[2]),
+                        ];
+                        let inter_hi = [
+                            c_hi[0].min(h_hi[0]),
+                            c_hi[1].min(h_hi[1]),
+                            c_hi[2].min(h_hi[2]),
+                        ];
+                        let inter_vol = (0..3)
+                            .map(|i| (inter_hi[i] - inter_lo[i]).max(0.0))
+                            .product::<f64>();
+                        let host_vol = (0..3)
+                            .map(|i| (h_hi[i] - h_lo[i]).max(0.0))
+                            .product::<f64>();
+                        if host_vol > 0.0 {
+                            let pct = 100.0 * inter_vol / host_vol;
+                            if pct > max_pct {
+                                report.violations.push(format!(
+                                    "max_overlap_with_host_envelope_pct: expected ≤{:.2}, got {:.2}",
+                                    max_pct, pct
+                                ));
+                            }
+                        }
+                        let _ = cand_solid; // bbox already captured above
+                    }
+                }
+                if let Some(must) = rules.must_enclose_host_centroid {
+                    if let Some((c_lo, c_hi)) = snapshot.aggregate_bbox() {
+                        let centroid = host.solid.center_of_mass();
+                        let inside =
+                            (0..3).all(|i| centroid[i] >= c_lo[i] && centroid[i] <= c_hi[i]);
+                        if inside != must {
+                            report.violations.push(format!(
+                                "must_enclose_host_centroid: expected {}, accessory bbox {} host centroid {:?}",
+                                must,
+                                if inside { "encloses" } else { "does not enclose" },
+                                centroid
+                            ));
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                report.violations.push(format!(
+                    "host_geometry required by anti-cheese but could not load: {}",
+                    e
+                ));
+            }
+        }
+    }
 
     report
 }
@@ -199,11 +280,11 @@ fn missing_required_links(doc: Option<&Document>, required: &[String]) -> Vec<St
 }
 
 /// Convenience wrapper used by the grader: just the bool + message list.
-pub fn run(task: &Task, snapshot: &EvalSnapshot) -> (bool, Vec<String>) {
+pub fn run(task: &Task, snapshot: &EvalSnapshot, task_dir: &Path) -> (bool, Vec<String>) {
     if is_empty_rules(&task.anti_cheese) {
         return (false, Vec::new());
     }
-    let r = enforce(task, snapshot);
+    let r = enforce(task, snapshot, task_dir);
     (r.violated(), r.violations)
 }
 
@@ -214,6 +295,9 @@ fn is_empty_rules(rules: &AntiCheese) -> bool {
         && rules.max_total_mass_kg.is_none()
         && rules.joint_torque_ceiling_nm.is_none()
         && rules.required_links.is_empty()
+        && rules.max_overlap_with_host_envelope_pct.is_none()
+        && rules.min_accessory_volume_mm3.is_none()
+        && rules.must_enclose_host_centroid.is_none()
 }
 
 #[cfg(test)]
@@ -288,7 +372,7 @@ mod tests {
             ..Default::default()
         });
         let snap = evaluate_vcad(&reacher_vcad());
-        let (violated, vs) = run(&task, &snap);
+        let (violated, vs) = run(&task, &snap, std::path::Path::new("."));
         assert!(!violated, "violations: {:?}", vs);
     }
 
@@ -299,7 +383,7 @@ mod tests {
             ..Default::default()
         });
         let snap = evaluate_vcad(&reacher_vcad());
-        let (violated, vs) = run(&task, &snap);
+        let (violated, vs) = run(&task, &snap, std::path::Path::new("."));
         assert!(violated);
         assert!(vs.iter().any(|m| m.contains("min_rigid_bodies")));
     }
@@ -311,7 +395,7 @@ mod tests {
             ..Default::default()
         });
         let snap = evaluate_vcad(&reacher_vcad());
-        let (violated, vs) = run(&task, &snap);
+        let (violated, vs) = run(&task, &snap, std::path::Path::new("."));
         assert!(violated);
         assert!(vs.iter().any(|m| m.contains("min_actuated_joints")));
     }
@@ -323,7 +407,7 @@ mod tests {
             ..Default::default()
         });
         let snap = evaluate_vcad(&reacher_vcad());
-        let (violated, vs) = run(&task, &snap);
+        let (violated, vs) = run(&task, &snap, std::path::Path::new("."));
         assert!(violated);
         assert!(vs.iter().any(|m| m.contains("foot")));
         // 'tip' tag is present so it must NOT be reported as missing.
@@ -337,7 +421,7 @@ mod tests {
             ..Default::default()
         });
         let snap = evaluate_vcad(&reacher_vcad());
-        let (violated, vs) = run(&task, &snap);
+        let (violated, vs) = run(&task, &snap, std::path::Path::new("."));
         assert!(violated, "expected mass violation, got vs={:?}", vs);
         assert!(vs.iter().any(|m| m.contains("max_total_mass_kg")));
     }
@@ -346,7 +430,7 @@ mod tests {
     fn empty_rules_short_circuits() {
         let task = task_with(AntiCheese::default());
         let snap = evaluate_vcad(&reacher_vcad());
-        let (violated, vs) = run(&task, &snap);
+        let (violated, vs) = run(&task, &snap, std::path::Path::new("."));
         assert!(!violated);
         assert!(vs.is_empty());
     }

@@ -3,9 +3,10 @@
 
 import { readFile, writeFile, mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { loadTask, type Task } from "./task.js";
+import { resolveAgentInputs } from "./inputs.js";
 import { getSolver, type Solver } from "./solver.js";
 import {
   buildBlob,
@@ -49,10 +50,13 @@ export async function runOne(opts: RunOptions): Promise<{
 
   const task = await loadTask(opts.taskPath);
   const solver = getSolver(opts.solverId);
+  const taskDir = dirname(resolve(opts.taskPath));
 
-  // Render the prompt. v0.0: trivial pass-through; later the harness can
-  // template in attachments / reference images / starter .vcads. Seed is
-  // currently the task id — deterministic by construction.
+  // Resolve agent-visible inputs (read images from disk, base64-encode
+  // them, etc.). Anything `agent_visible: false` is held back. The full
+  // task.inputs list is still recorded in `prompt.attachments` for
+  // forensics — auditors can verify what was withheld vs. delivered.
+  const attachments = await resolveAgentInputs(task, taskDir);
   const prompt = {
     seed: task.id,
     rendered: task.prompt,
@@ -60,7 +64,7 @@ export async function runOne(opts: RunOptions): Promise<{
   };
 
   // Run the solver.
-  const solverOutput = await solver.solve(task, prompt.rendered);
+  const solverOutput = await solver.solve(task, prompt.rendered, attachments);
 
   // Persist the .vcad output to a per-run scratch dir so the grader can
   // read it from disk. We then keep a copy alongside the blob.

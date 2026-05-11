@@ -7,7 +7,7 @@
 // tool calls, no error correction, no inspection. Anything it scores
 // is a floor.
 
-import type { Solver, SolverOutput, ToolCall } from "../solver.js";
+import type { AgentAttachment, Solver, SolverOutput, ToolCall } from "../solver.js";
 import type { Task } from "../task.js";
 
 export interface ClaudeDirectConfig {
@@ -105,6 +105,46 @@ ${taskPrompt}
 Output the .vcad now.`;
 }
 
+/**
+ * Construct Anthropic-shaped user content blocks from agent attachments.
+ * Images become `image` blocks; known_dimensions text is appended as a
+ * `text` block. Other kinds are ignored — extending support for new
+ * kinds is a matter of adding cases here.
+ */
+export function buildAnthropicContent(
+  task: Task,
+  taskPrompt: string,
+  attachments: AgentAttachment[],
+): Array<
+  | { type: "text"; text: string }
+  | {
+      type: "image";
+      source: { type: "base64"; media_type: string; data: string };
+    }
+> {
+  const blocks: Array<
+    | { type: "text"; text: string }
+    | {
+        type: "image";
+        source: { type: "base64"; media_type: string; data: string };
+      }
+  > = [];
+  for (const a of attachments) {
+    if (a.kind === "reference_image") {
+      blocks.push({
+        type: "image",
+        source: { type: "base64", media_type: a.mime, data: a.base64 },
+      });
+      const view = (a.meta.view as string | undefined) ?? "view";
+      blocks.push({ type: "text", text: `↑ ${view} view (image_kind: ${a.meta.image_kind ?? "unspecified"})` });
+    } else if (a.kind === "known_dimensions") {
+      blocks.push({ type: "text", text: `Stated dimension: ${a.text}` });
+    }
+  }
+  blocks.push({ type: "text", text: buildUserPrompt(task, taskPrompt) });
+  return blocks;
+}
+
 /** Build a Solver bound to the given config. */
 export function makeClaudeDirectSolver(
   cfg: Partial<ClaudeDirectConfig> = {},
@@ -115,9 +155,11 @@ export function makeClaudeDirectSolver(
     name: `Claude (direct, ${config.model})`,
     provider: "anthropic",
     params: { mode: "direct", model: config.model, max_tokens: config.maxOutputTokens },
-    async solve(task, prompt): Promise<SolverOutput> {
+    async solve(task, prompt, attachments = []): Promise<SolverOutput> {
       const start = performance.now();
       const userPrompt = buildUserPrompt(task, prompt);
+      const content = buildAnthropicContent(task, prompt, attachments);
+      const imageCount = attachments.filter((a) => a.kind === "reference_image").length;
 
       let reply: string;
       let tokens = { input: 0, output: 0, total: 0 };
@@ -137,7 +179,9 @@ export function makeClaudeDirectSolver(
           model: config.model,
           max_tokens: config.maxOutputTokens,
           system: SYSTEM_PROMPT,
-          messages: [{ role: "user", content: userPrompt }],
+          // Cast: the SDK types vary across versions; the wire-format
+          // shape we build is stable.
+          messages: [{ role: "user", content: content as never }],
         });
         reply = resp.content
           .flatMap((b) => (b.type === "text" ? [b.text] : []))
@@ -159,6 +203,7 @@ export function makeClaudeDirectSolver(
           max_tokens: config.maxOutputTokens,
           system_chars: SYSTEM_PROMPT.length,
           user_chars: userPrompt.length,
+          image_attachments: imageCount,
         },
         result_kind: "ok",
         wallclock_ms: wallclockSec * 1000,

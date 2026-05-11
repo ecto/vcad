@@ -7,7 +7,7 @@
 // It's the project mascot villain: any submission worth its salt must beat
 // it.
 
-import type { Task } from "./task.js";
+import type { StructuredInput, Task } from "./task.js";
 
 export interface ToolCall {
   n: number;
@@ -16,6 +16,29 @@ export interface ToolCall {
   result_kind: "ok" | "err";
   wallclock_ms: number;
 }
+
+/**
+ * One agent-visible task input, resolved by the harness before invocation.
+ * `meta` carries the original task-input record (for forensics and so the
+ * solver can read view labels, fiducial info, etc.).
+ */
+export type AgentAttachment =
+  | {
+      kind: "reference_image";
+      meta: StructuredInput;
+      mime: string;
+      base64: string;
+    }
+  | {
+      kind: "known_dimensions";
+      meta: StructuredInput;
+      text: string;
+    }
+  | {
+      kind: "other";
+      meta: StructuredInput;
+      path?: string;
+    };
 
 export interface SolverOutput {
   vcadJson: string;
@@ -34,8 +57,16 @@ export interface Solver {
   readonly provider: string;
   /** Free-form sampling/config payload, copied into the run blob. */
   readonly params: Record<string, unknown>;
-  /** Run the solver on one task. */
-  solve(task: Task, prompt: string): Promise<SolverOutput>;
+  /**
+   * Run the solver on one task. `attachments` are the resolved agent-
+   * visible inputs (images, dimensions, etc.); solvers that don't
+   * understand multimodal inputs may ignore them.
+   */
+  solve(
+    task: Task,
+    prompt: string,
+    attachments?: AgentAttachment[],
+  ): Promise<SolverOutput>;
 }
 
 // ---- DEFAULT_CUBE — the villain stub ----------------------------------
@@ -46,7 +77,7 @@ export const defaultCubeSolver: Solver = {
   name: "DEFAULT_CUBE (baseline villain)",
   provider: "stub",
   params: { size_mm: 50 },
-  async solve(_task, _prompt): Promise<SolverOutput> {
+  async solve(_task, _prompt, _attachments?): Promise<SolverOutput> {
     const start = performance.now();
     const vcad = {
       version: "0.1",

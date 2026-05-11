@@ -61,8 +61,20 @@ pub enum CheckSpec {
     /// ECAD electrical-rule check passes clean.
     ErcClean,
 
-    /// DFM rule set passes (e.g. min_wall, draft, no_undercut).
-    Dfm { rules: Vec<String> },
+    /// DFM rule set passes for the named manufacturing process. The
+    /// optional `rules` field is informational (legacy hint about which
+    /// rules a task author cared about); the grader uses the process's
+    /// default rule pack from `vcad-kernel-dfm` and fails on any issue
+    /// at or above `max_severity` (default "error"). `process` defaults
+    /// to "fdm" — sensible for 3D-printed plastic F-suite accessories.
+    Dfm {
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        rules: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        process: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_severity: Option<String>,
+    },
 
     /// Refactor task: untouched parts have unchanged mass-props.
     RefactorInvariant {
@@ -88,6 +100,69 @@ pub enum CheckSpec {
         task: String,
         params: serde_json::Value,
     },
+
+    /// Suite F: minimum separation between the candidate accessory and the
+    /// host. `host` names a `kind` from `task.inputs` (typically `host_geometry`).
+    MateClearance {
+        host: String,
+        min_mm: f64,
+        max_mm: f64,
+    },
+
+    /// Suite F: volume of (accessory ∩ host). Should be near zero for slip
+    /// fits, small and positive for press fits.
+    InterferenceVolume { host: String, max_mm3: f64 },
+
+    /// Suite F: surface area of accessory within `epsilon_mm` of the host.
+    ContactArea {
+        host: String,
+        epsilon_mm: f64,
+        min_mm2: f64,
+    },
+
+    /// Suite F: cap on the accessory's overall bounding-box extents (mm).
+    Envelope { max_mm: [f64; 3] },
+
+    /// Suite F: assemble host + accessory, apply gravity for `duration_sec`,
+    /// pass if relative drift stays below `max_drift_mm`. Backed by phyz.
+    GravityHold {
+        host: String,
+        host_mass_kg: f64,
+        gravity_dir: [f64; 3],
+        duration_sec: f64,
+        max_drift_mm: f64,
+    },
+
+    /// Suite F: pull the accessory away from the host with `force_n`
+    /// (newtons) along `direction`; pass if drift stays under threshold.
+    /// Backed by phyz.
+    PullForce {
+        host: String,
+        force_n: f64,
+        direction: [f64; 3],
+        duration_sec: f64,
+        max_drift_mm: f64,
+    },
+
+    /// Suite F: geometric form-lock test. Translate the accessory by
+    /// `displacement_mm` along `direction` (sampled at intermediate
+    /// poses) and measure the peak interference volume with the host.
+    /// Pass if peak interference exceeds the baseline (as-designed
+    /// pose) by at least `min_interference_gain_mm3`.
+    ///
+    /// Intuition: a snap-fit cap or a C-clip, when pulled, would have
+    /// to push deeper into the host's retention feature before clearing
+    /// it — that's the form-lock signature. A freely-sliding part
+    /// (press fit, simple plug) shows no interference gain.
+    ///
+    /// This is the deterministic alternative to `pull_force` while
+    /// phyz's penalty-contact stability matures.
+    PullRetentionGeometric {
+        host: String,
+        direction: [f64; 3],
+        displacement_mm: f64,
+        min_interference_gain_mm3: f64,
+    },
 }
 
 impl CheckSpec {
@@ -110,6 +185,13 @@ impl CheckSpec {
             CheckSpec::TorqueBudget { .. } => "torque_budget",
             CheckSpec::StableDuringRollout { .. } => "stable_during_rollout",
             CheckSpec::TaskSuccess { .. } => "task_success",
+            CheckSpec::MateClearance { .. } => "mate_clearance",
+            CheckSpec::InterferenceVolume { .. } => "interference_volume",
+            CheckSpec::ContactArea { .. } => "contact_area",
+            CheckSpec::Envelope { .. } => "envelope",
+            CheckSpec::GravityHold { .. } => "gravity_hold",
+            CheckSpec::PullForce { .. } => "pull_force",
+            CheckSpec::PullRetentionGeometric { .. } => "pull_retention_geometric",
         }
     }
 
@@ -122,6 +204,19 @@ impl CheckSpec {
                 | CheckSpec::TorqueBudget { .. }
                 | CheckSpec::StableDuringRollout { .. }
                 | CheckSpec::TaskSuccess { .. }
+        )
+    }
+
+    /// True for checks that require a Suite F host geometry to be loaded.
+    pub fn is_suite_f(&self) -> bool {
+        matches!(
+            self,
+            CheckSpec::MateClearance { .. }
+                | CheckSpec::InterferenceVolume { .. }
+                | CheckSpec::ContactArea { .. }
+                | CheckSpec::GravityHold { .. }
+                | CheckSpec::PullForce { .. }
+                | CheckSpec::PullRetentionGeometric { .. }
         )
     }
 }

@@ -1,0 +1,12 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "block",       "op": { "type": "Cube", "size": { "x": 50.0, "y": 50.0, "z": 15.0 } } },
+    "2": { "id": 2, "name": "recess_raw",  "op": { "type": "Cylinder", "radius": 8.0, "height": 11.0, "segments": 64 } },
+    "3": { "id": 3, "name": "recess",      "op": { "type": "Translate", "child": 2, "offset": { "x": 25.0, "y": 25.0, "z": 5.0 } } },
+    "4": { "id": 4, "name": "host",        "op": { "type": "Difference", "left": 1, "right": 3 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 4, "material": "default" }]
+}

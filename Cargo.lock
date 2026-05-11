@@ -3118,12 +3118,14 @@ name = "mecheval-grader"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "phyz",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "vcad-eval",
  "vcad-ir",
  "vcad-kernel",
+ "vcad-kernel-dfm",
  "vcad-kernel-geom",
  "vcad-kernel-physics",
  "vcad-kernel-step",
