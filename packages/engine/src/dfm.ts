@@ -77,12 +77,6 @@ export interface DfmReport {
 }
 
 interface DfmKernelBindings {
-  run_dfm_on_brep_json: (
-    brep_json: string,
-    process: string,
-    rule_pack_toml: string,
-    root_node_id: number,
-  ) => string;
   get_default_dfm_pack: (process: string) => string;
   estimate_cost_for_process: (
     process: string,
@@ -95,14 +89,12 @@ interface DfmKernelBindings {
 }
 
 interface DfmSolidHandle {
-  toBrepJson: () => string | undefined;
   runDfm: (process: string, rule_pack_toml: string, root_node_id: number) => string;
 }
 
 async function bindings(): Promise<DfmKernelBindings> {
   const wasm = (await getKernelWasm()) as unknown as Record<string, unknown>;
   return {
-    run_dfm_on_brep_json: wasm.run_dfm_on_brep_json as DfmKernelBindings["run_dfm_on_brep_json"],
     get_default_dfm_pack: wasm.get_default_dfm_pack as DfmKernelBindings["get_default_dfm_pack"],
     estimate_cost_for_process: wasm.estimate_cost_for_process as DfmKernelBindings["estimate_cost_for_process"],
   };
@@ -122,10 +114,9 @@ export async function runDfm(
   doc: Document,
   opts: RunDfmOptions,
 ): Promise<DfmReport> {
-  const b = await bindings();
   // `evaluateDocumentTS` keeps the wasm Solid handles attached to each
-  // part — we route the BRep through `Solid.runDfm` so the kernel
-  // doesn't pay for a JSON round-trip on every check.
+  // part — we route DFM through `Solid.runDfm` directly so the kernel
+  // doesn't have to serialize the BRep through the WASM boundary.
   const wasm = await getKernelWasm();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const scene = evaluateDocumentTS(doc, wasm as any);
@@ -140,17 +131,11 @@ export async function runDfm(
   const visibleRoots = doc.roots.filter((entry) => entry.visible !== false);
   for (let i = 0; i < scene.parts.length; i++) {
     const part = scene.parts[i];
+    if (!part) continue;
     const rootNodeId = visibleRoots[i]?.root ?? 0;
     const solid = (part as unknown as { solid?: DfmSolidHandle }).solid;
-    let reportJson: string | undefined;
-    if (solid && typeof solid.runDfm === "function") {
-      reportJson = solid.runDfm(opts.process, pack, rootNodeId);
-    } else if (solid && typeof solid.toBrepJson === "function") {
-      const brepJson = solid.toBrepJson();
-      if (brepJson) {
-        reportJson = b.run_dfm_on_brep_json(brepJson, opts.process, pack, rootNodeId);
-      }
-    }
+    if (!solid || typeof solid.runDfm !== "function") continue;
+    const reportJson = solid.runDfm(opts.process, pack, rootNodeId);
     if (!reportJson) continue;
     const report = JSON.parse(reportJson) as DfmReport;
     packName = packName || report.rule_pack_name;

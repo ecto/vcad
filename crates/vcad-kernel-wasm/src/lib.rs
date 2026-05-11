@@ -118,47 +118,6 @@ pub fn get_default_dfm_pack(process: &str) -> Result<String, JsError> {
     Ok(vcad_kernel::vcad_kernel_dfm::DefaultPacks::source(p).to_string())
 }
 
-/// Run DFM on a JSON-encoded BRep and return the report as JSON.
-///
-/// `brep_json` is the same JSON shape the engine emits for any
-/// evaluated part (`vcad_kernel_primitives::BRepSolid`). `process` is
-/// one of the names recognised by [`get_default_dfm_pack`].
-/// `rule_pack_toml` is optional: pass an empty string to use the
-/// bundled default for that process. `root_node_id` (when > 0) is the
-/// IR node every face is attributed to — the v1 coarse provenance
-/// fallback that keeps `dfm_apply_fix` set_param patches working.
-#[wasm_bindgen]
-pub fn run_dfm_on_brep_json(
-    brep_json: &str,
-    process: &str,
-    rule_pack_toml: &str,
-    root_node_id: u64,
-) -> Result<String, JsError> {
-    let brep: vcad_kernel::vcad_kernel_primitives::BRepSolid = serde_json::from_str(brep_json)
-        .map_err(|e| JsError::new(&format!("brep parse: {}", e)))?;
-    let p = vcad_kernel::vcad_kernel_dfm::Process::from_str(process)
-        .ok_or_else(|| JsError::new(&format!("unknown process: {}", process)))?;
-    let pack = if rule_pack_toml.trim().is_empty() {
-        vcad_kernel::vcad_kernel_dfm::RulePack::default_for(p)
-    } else {
-        vcad_kernel::vcad_kernel_dfm::RulePack::from_toml(rule_pack_toml)
-            .map_err(|e| JsError::new(&format!("rule pack parse: {}", e)))?
-    };
-    let provenance = if root_node_id > 0 {
-        Some(
-            vcad_kernel::vcad_kernel_dfm::geom::provenance::ProvenanceMap::single_root(
-                &brep,
-                root_node_id,
-            ),
-        )
-    } else {
-        None
-    };
-    let report =
-        vcad_kernel::vcad_kernel_dfm::run_dfm(&brep, provenance.as_ref(), p, &pack);
-    serde_json::to_string(&report).map_err(|e| JsError::new(&e.to_string()))
-}
-
 /// Estimate manufacturing cost for the supplied process + material.
 ///
 /// `part_volume_mm3` is the exact part volume the caller has already
@@ -1041,25 +1000,11 @@ impl Solid {
         vec![min[0], min[1], min[2], max[0], max[1], max[2]]
     }
 
-    /// Serialize the underlying BRep to JSON.
+    /// Run DFM directly on this solid's BRep.
     ///
-    /// Returns `None` when the solid has been reduced to a triangle
-    /// mesh (e.g. after a boolean) — DFM analysis falls back gracefully
-    /// when the BRep is gone, so callers should `??` to an empty
-    /// report rather than throwing.
-    #[wasm_bindgen(js_name = toBrepJson)]
-    pub fn to_brep_json(&self) -> Option<String> {
-        self.inner
-            .as_brep()
-            .and_then(|brep| serde_json::to_string(brep).ok())
-    }
-
-    /// Convenience: run DFM directly on this solid's BRep.
-    ///
-    /// Equivalent to `Solid.toBrepJson()` + `run_dfm_on_brep_json` but
-    /// avoids the JSON round-trip on the kernel side. Returns the
-    /// report JSON; if the solid is mesh-only, the report has an empty
-    /// `issues` array and a note in `rule_pack_name`.
+    /// Returns the report JSON; if the solid is mesh-only (e.g. after
+    /// a boolean — see issue #186), the report has an empty `issues`
+    /// array and a note in `rule_pack_name`.
     ///
     /// `root_node_id` (when > 0) attributes every face in the BRep to
     /// that IR node — the v1 coarse provenance heuristic. Pass 0 to
