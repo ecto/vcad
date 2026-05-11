@@ -182,7 +182,7 @@ export interface EstimateCostOptions {
 
 /**
  * Quote-style estimate for a given process / material. This replaces
- * the old `output-store.calculatePrice` rate-table hack — the
+ * the old rate-table hack that used to live in output-store; the
  * QuotePanel will migrate to call this once the app integration lands.
  */
 export async function estimateCost(

@@ -8,11 +8,11 @@ import { cn } from "@/lib/utils";
 import { useNotificationStore } from "@/stores/notification-store";
 import {
   useOutputStore,
-  calculatePrice,
-  estimateVolumeCm3,
+  MATERIAL_MAPPINGS,
   type MaterialType,
 } from "@/stores/output-store";
 import { useEngineStore, useDocumentStore } from "@vcad/core";
+import { estimateCost } from "@vcad/engine";
 
 interface MaterialOption {
   id: MaterialType;
@@ -21,11 +21,48 @@ interface MaterialOption {
   days: number;
 }
 
-const MATERIALS: MaterialOption[] = [
-  { id: "pla", name: "PLA", method: "3D Print", days: 3 },
-  { id: "aluminum", name: "Aluminum", method: "CNC", days: 5 },
-  { id: "steel", name: "Steel", method: "CNC", days: 7 },
-];
+const MATERIALS: MaterialOption[] = (
+  Object.keys(MATERIAL_MAPPINGS) as MaterialType[]
+).map((id) => ({
+  id,
+  ...MATERIAL_MAPPINGS[id].display,
+}));
+
+/**
+ * Compute exact part volume (mm³) from the evaluated scene's meshes
+ * using the divergence-theorem integral over each triangle. This is
+ * the same formula `inspect_cad` uses on the MCP side, so the
+ * QuotePanel total now agrees with `inspect_cad` byte-for-byte.
+ */
+function exactVolumeMm3(scene: { parts: { mesh: { positions: Float32Array; indices: Uint32Array } }[] } | null): number {
+  if (!scene?.parts?.length) return 0;
+  let total = 0;
+  for (const part of scene.parts) {
+    const { positions, indices } = part.mesh;
+    let v = 0;
+    for (let t = 0; t < indices.length; t += 3) {
+      const i0 = indices[t] * 3;
+      const i1 = indices[t + 1] * 3;
+      const i2 = indices[t + 2] * 3;
+      const x1 = positions[i0],
+        y1 = positions[i0 + 1],
+        z1 = positions[i0 + 2];
+      const x2 = positions[i1],
+        y2 = positions[i1 + 1],
+        z2 = positions[i1 + 2];
+      const x3 = positions[i2],
+        y3 = positions[i2 + 1],
+        z3 = positions[i2 + 2];
+      v +=
+        (x1 * (y2 * z3 - y3 * z2) -
+          x2 * (y1 * z3 - y3 * z1) +
+          x3 * (y1 * z2 - y2 * z1)) /
+        6.0;
+    }
+    total += Math.abs(v);
+  }
+  return total;
+}
 
 function AnimatedPrice({ value, duration = 500 }: { value: number; duration?: number }) {
   const [displayValue, setDisplayValue] = useState(0);
@@ -75,18 +112,48 @@ export function QuotePanel() {
   const scene = useEngineStore((s) => s.scene);
   const parts = useDocumentStore((s) => s.parts);
 
-  // Calculate volume
-  const volumeCm3 = estimateVolumeCm3(scene);
+  // Exact volume from the divergence-theorem integral; same formula
+  // inspect_cad uses, so the panel and the MCP inspector agree.
+  const volumeMm3 = exactVolumeMm3(scene);
+  const volumeCm3 = volumeMm3 / 1000;
 
-  // Estimate weight (g) - rough density multipliers
-  const densities: Record<MaterialType, number> = {
-    pla: 1.25,      // g/cm³
-    aluminum: 2.7,
-    steel: 7.8,
-  };
-  const weightG = volumeCm3 * densities[selectedMaterial];
+  // Async price + per-material previews come from the shared
+  // estimateCost wrapper around vcad-kernel-cost. Results are cached
+  // in useOutputStore so tooltips and toolbars elsewhere can read
+  // the same number without re-fetching.
+  const cachedPrices = useOutputStore((s) => s.cachedPrices);
+  const setCachedPrices = useOutputStore((s) => s.setCachedPrices);
+  const [weightG, setWeightG] = useState(0);
 
-  const price = calculatePrice(volumeCm3, selectedMaterial);
+  useEffect(() => {
+    let cancelled = false;
+    if (volumeMm3 <= 0) {
+      setCachedPrices({});
+      setWeightG(0);
+      return;
+    }
+    (async () => {
+      const next: Partial<Record<MaterialType, number>> = {};
+      for (const m of MATERIALS) {
+        const mapping = MATERIAL_MAPPINGS[m.id];
+        const est = await estimateCost({
+          process: mapping.process,
+          material: mapping.catalogName,
+          partVolumeMm3: volumeMm3,
+        });
+        if (cancelled) return;
+        next[m.id] = est.total_usd;
+        if (m.id === selectedMaterial) setWeightG(est.weight_grams);
+      }
+      if (!cancelled) setCachedPrices(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [volumeMm3, selectedMaterial, setCachedPrices]);
+
+  const pricesByMaterial = cachedPrices;
+  const price = pricesByMaterial[selectedMaterial] ?? 0;
   const selectedMaterialInfo = MATERIALS.find((m) => m.id === selectedMaterial)!;
 
   async function handleSubmit(e: React.FormEvent) {
@@ -190,7 +257,7 @@ export function QuotePanel() {
           </div>
 
           {MATERIALS.map((material) => {
-            const materialPrice = calculatePrice(volumeCm3, material.id);
+            const materialPrice = pricesByMaterial[material.id] ?? 0;
             const isSelected = selectedMaterial === material.id;
 
             return (
