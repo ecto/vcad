@@ -119,7 +119,7 @@ export function DfmDrawer() {
             checked={enabled}
             onChange={(e) => setEnabled(e.target.checked)}
           />
-          Live check
+          Enabled
         </label>
 
         <Tooltip content="Close" side="top">
@@ -138,8 +138,8 @@ export function DfmDrawer() {
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
         {!enabled && (
           <div className="rounded border border-border/40 bg-surface p-3 text-xs text-text-muted">
-            Live check is off. Enable it to scan the model for
-            manufacturability issues against the selected process.
+            Manufacturability checks are disabled. Re-enable to scan the
+            model against the selected process.
           </div>
         )}
 

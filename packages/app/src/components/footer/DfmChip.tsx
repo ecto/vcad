@@ -36,7 +36,7 @@ export function DfmChip({ className }: { className?: string }) {
       side="top"
       content={
         !enabled
-          ? "Manufacturability — disabled"
+          ? "Manufacturability — disabled (click to open)"
           : running
             ? "Manufacturability — checking…"
             : total === 0

@@ -33,7 +33,8 @@ interface DfmStoreState {
   selectedIssueId: string | null;
   /** Severities currently visible — toggled from the panel. */
   visibleSeverities: Set<DfmSeverity>;
-  /** Master toggle; when off the annotations component renders nothing. */
+  /** Master toggle; when off the annotations component renders nothing
+   *  and `scheduleRun` is a no-op. Defaults to on. */
   enabled: boolean;
   /** Whether the bottom drawer is expanded. The footer chip is the
    *  primary entry point — clicking it toggles this. The chip itself
