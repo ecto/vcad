@@ -82,12 +82,14 @@ fn render_cube_produces_non_zero_pixels() {
         h,
     );
 
-    let pixels = pollster::block_on(pipeline.render(ctx, &scene, &camera, w, h))
-        .expect("render");
+    let pixels = pollster::block_on(pipeline.render(ctx, &scene, &camera, w, h)).expect("render");
 
     assert_eq!(pixels.len() as u32, w * h * 4, "pixel buffer wrong size");
 
-    let non_zero = pixels.chunks(4).filter(|p| p.iter().any(|&b| b != 0)).count();
+    let non_zero = pixels
+        .chunks(4)
+        .filter(|p| p.iter().any(|&b| b != 0))
+        .count();
     assert!(
         non_zero > 0,
         "render returned all-zero pixels — the pipeline ran but wrote nothing. \
