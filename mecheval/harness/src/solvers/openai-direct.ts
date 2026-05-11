@@ -4,9 +4,43 @@
 //
 // Provider tag: "openai". Solver IDs follow `openai-direct-<model>`.
 
-import type { Solver, SolverOutput, ToolCall } from "../solver.js";
+import type { AgentAttachment, Solver, SolverOutput, ToolCall } from "../solver.js";
 import type { Task } from "../task.js";
 import { SYSTEM_PROMPT, buildUserPrompt, extractVcadJson } from "./claude-direct.js";
+
+type OpenAiUserContent =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
+/**
+ * Convert agent attachments into OpenAI chat-completion user content.
+ * Images are inlined as data URLs (the chat-completions endpoint does
+ * not yet accept base64 image_url objects directly across all models).
+ */
+export function buildOpenAiContent(
+  task: Task,
+  taskPrompt: string,
+  attachments: AgentAttachment[],
+): OpenAiUserContent[] {
+  const blocks: OpenAiUserContent[] = [];
+  for (const a of attachments) {
+    if (a.kind === "reference_image") {
+      blocks.push({
+        type: "image_url",
+        image_url: { url: `data:${a.mime};base64,${a.base64}` },
+      });
+      const view = (a.meta.view as string | undefined) ?? "view";
+      blocks.push({
+        type: "text",
+        text: `↑ ${view} view (image_kind: ${a.meta.image_kind ?? "unspecified"})`,
+      });
+    } else if (a.kind === "known_dimensions") {
+      blocks.push({ type: "text", text: `Stated dimension: ${a.text}` });
+    }
+  }
+  blocks.push({ type: "text", text: buildUserPrompt(task, taskPrompt) });
+  return blocks;
+}
 
 export interface OpenAiDirectConfig {
   model: string;
@@ -30,9 +64,15 @@ export function makeOpenAiDirectSolver(
     name: `OpenAI (direct, ${config.model})`,
     provider: "openai",
     params: { mode: "direct", model: config.model, max_tokens: config.maxOutputTokens },
-    async solve(task: Task, prompt: string): Promise<SolverOutput> {
+    async solve(
+      task: Task,
+      prompt: string,
+      attachments: AgentAttachment[] = [],
+    ): Promise<SolverOutput> {
       const start = performance.now();
       const userPrompt = buildUserPrompt(task, prompt);
+      const content = buildOpenAiContent(task, prompt, attachments);
+      const imageCount = attachments.filter((a) => a.kind === "reference_image").length;
 
       let reply: string;
       let tokens = { input: 0, output: 0, total: 0 };
@@ -62,7 +102,9 @@ export function makeOpenAiDirectSolver(
           model: config.model,
           messages: [
             { role: "system", content: SYSTEM_PROMPT },
-            { role: "user", content: userPrompt },
+            // SDK type for `content` varies across versions; the wire
+            // shape we build matches the chat-completions multimodal spec.
+            { role: "user", content: content as never },
           ],
           ...tokenField,
         });
@@ -84,6 +126,7 @@ export function makeOpenAiDirectSolver(
           max_tokens: config.maxOutputTokens,
           system_chars: SYSTEM_PROMPT.length,
           user_chars: userPrompt.length,
+          image_attachments: imageCount,
         },
         result_kind: "ok",
         wallclock_ms: wallclockSec * 1000,

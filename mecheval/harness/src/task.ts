@@ -34,6 +34,11 @@ export interface StructuredInput {
   [k: string]: unknown;
 }
 
+/** Type guard: is this input a structured object? */
+export function isStructured(input: TaskInput): input is StructuredInput {
+  return typeof input === "object" && input !== null;
+}
+
 // We don't enumerate every check type in TS — the Rust grader is the
 // authoritative implementation. The harness just shuttles checks through
 // without inspecting them, so an opaque `unknown` payload is sufficient.
