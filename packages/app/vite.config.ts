@@ -371,6 +371,11 @@ export default defineConfig(({ mode }) => {
       plugins: () => [wasm(), topLevelAwait()],
     },
     build: {
+      // TEMPORARY: source maps in production so the minified React #185
+      // ("Maximum update depth exceeded") stack on vcad.io resolves to a
+      // real component. Revert this once we've identified and fixed the
+      // looping component — source maps add ~10 MB to the deploy.
+      sourcemap: true,
       rollupOptions: {
         output: {
           manualChunks: {
