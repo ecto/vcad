@@ -35,18 +35,14 @@ pub fn run(
                 )
                 .with_explanation(
                     "FDM walls thinner than ~2 line widths can't bond cleanly and \
-                     either fail to print or come out as loose strings."
-                        .into(),
+                     either fail to print or come out as loose strings.",
                 )
                 .with_faces(vec![sample.face_a, sample.face_b]);
                 if let Some(node) = provenance.and_then(|p| p.get(sample.face_a)) {
                     issue = issue.with_origin(node);
                 }
                 issue = issue.with_fix(DfmFix::Manual {
-                    description: format!(
-                        "Increase wall thickness to at least {:.2} mm.",
-                        min_wall
-                    ),
+                    description: format!("Increase wall thickness to at least {:.2} mm.", min_wall),
                 });
                 issues.push(issue);
             }
@@ -57,10 +53,7 @@ pub fn run(
         let max_overhang_deg = rule.num("max_overhang_deg", 135.0);
         for sample in geom::overhang::sample(brep, max_overhang_deg) {
             let support_note = if sample.support_column_mm > 0.0 {
-                format!(
-                    " (support column ≈ {:.1} mm)",
-                    sample.support_column_mm
-                )
+                format!(" (support column ≈ {:.1} mm)", sample.support_column_mm)
             } else {
                 String::new()
             };
@@ -79,8 +72,7 @@ pub fn run(
             )
             .with_explanation(
                 "Faces angled more than 45° below horizontal need support material \
-                 to print without sagging. Re-orient the part or accept the support cost."
-                    .into(),
+                 to print without sagging. Re-orient the part or accept the support cost.",
             )
             .with_faces(vec![sample.face]);
             if let Some(node) = provenance.and_then(|p| p.get(sample.face)) {
@@ -89,7 +81,7 @@ pub fn run(
             issue = issue.with_fix(DfmFix::Manual {
                 description: "Re-orient the part so this face is closer to vertical, \
                               or enable supports in the slicer."
-                    .into(),
+                    .to_string(),
             });
             issues.push(issue);
         }
@@ -118,8 +110,7 @@ pub fn run(
                 )
                 .with_explanation(
                     "Holes below ~2× nozzle width often close up from extrusion \
-                     spread. Enlarge or post-drill."
-                        .into(),
+                     spread. Enlarge or post-drill.",
                 )
                 .with_faces(vec![cyl.face]);
                 if let Some(node) = provenance.and_then(|p| p.get(cyl.face)) {

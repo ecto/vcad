@@ -77,8 +77,7 @@ pub struct DfmResult {
 pub fn check_printability(brep: &BRepSolid, params: &PrinterParams) -> DfmResult {
     let pack = build_pack_from_params(params);
     let report = run_dfm(brep, None, Process::Fdm, &pack);
-    let mut warnings: Vec<DfmWarning> =
-        report.issues.iter().map(issue_to_warning).collect();
+    let mut warnings: Vec<DfmWarning> = report.issues.iter().map(issue_to_warning).collect();
 
     // Build-volume check (not in vcad-kernel-dfm yet — printer-specific).
     let (lo, hi) = brep_bbox(brep);

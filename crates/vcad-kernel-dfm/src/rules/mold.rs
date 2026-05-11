@@ -48,8 +48,7 @@ pub fn run(
                 )
                 .with_explanation(
                     "Walls without draft scrape against the mold during ejection, \
-                     producing scratches or stuck parts. Add at least 1° of taper."
-                        .into(),
+                     producing scratches or stuck parts. Add at least 1° of taper.",
                 )
                 .with_faces(vec![sample.face])
                 .with_fix(DfmFix::Manual {
@@ -84,12 +83,13 @@ pub fn run(
                 )
                 .with_explanation(
                     "Undercut faces can't be ejected straight out of the mold. \
-                     They require a side-action, lifter, or part redesign."
-                        .into(),
+                     They require a side-action, lifter, or part redesign.",
                 )
                 .with_faces(vec![sample.face])
                 .with_fix(DfmFix::Manual {
-                    description: "Add a side-action / lifter, or redesign to eliminate the undercut.".into(),
+                    description:
+                        "Add a side-action / lifter, or redesign to eliminate the undercut."
+                            .to_string(),
                 });
                 if let Some(node) = provenance.and_then(|p| p.get(sample.face)) {
                     issue = issue.with_origin(node);
@@ -110,7 +110,10 @@ pub fn run(
                     "mold.wall_thickness_uniformity",
                     rule.severity_enum(),
                     process,
-                    format!("Wall thickness CV {:.2} > {:.2} — sink/warp risk", cv, max_cv),
+                    format!(
+                        "Wall thickness CV {:.2} > {:.2} — sink/warp risk",
+                        cv, max_cv
+                    ),
                     anchor,
                     cv,
                     max_cv,
@@ -118,11 +121,11 @@ pub fn run(
                 )
                 .with_explanation(
                     "Mixing thin and thick wall sections cools at different rates \
-                     and leaves sink marks or warp. Aim for uniform thickness ± 25%."
-                        .into(),
+                     and leaves sink marks or warp. Aim for uniform thickness ± 25%.",
                 )
                 .with_fix(DfmFix::Manual {
-                    description: "Even out wall thicknesses; consider coring out thick regions.".into(),
+                    description: "Even out wall thicknesses; consider coring out thick regions."
+                        .to_string(),
                 }),
             );
         }

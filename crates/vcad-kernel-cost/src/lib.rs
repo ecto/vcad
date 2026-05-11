@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum Process {
     /// 3-axis CNC milling.
+    #[serde(rename = "cnc_3axis", alias = "cnc")]
     Cnc3Axis,
     /// Fused-deposition-modelling 3D printing (filament).
     Fdm,
@@ -40,6 +41,7 @@ pub enum Process {
 
 impl Process {
     /// Parse a snake-case identifier.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "cnc_3axis" | "cnc" => Some(Self::Cnc3Axis),
@@ -381,8 +383,7 @@ pub fn estimate_cnc_from_removed_volume(
     let machine_time_min = removed_cm3 + (feature_count as f64) * 2.0;
     let machine_cost = machine_time_min * material.machine_rate_usd_per_min;
 
-    let total =
-        material_cost_usd + machine_cost + material.setup_cost_usd_default;
+    let total = material_cost_usd + machine_cost + material.setup_cost_usd_default;
 
     CostEstimate {
         process: Process::Cnc3Axis,
@@ -395,7 +396,10 @@ pub fn estimate_cnc_from_removed_volume(
         total_usd: total,
         is_estimate: true,
         assumptions: vec![
-            format!("{} stock at ${:.2}/kg", material.name, material.price_per_kg),
+            format!(
+                "{} stock at ${:.2}/kg",
+                material.name, material.price_per_kg
+            ),
             format!(
                 "{:.1} cm³ removed @ ~1 min/cm³ + {} features × 2 min",
                 removed_cm3, feature_count
@@ -411,11 +415,7 @@ pub fn estimate_cnc_from_removed_volume(
 /// Injection-molding estimate.
 ///
 /// Tooling cost amortizes over `qty` (default 1000 in the rule pack).
-pub fn estimate_injection(
-    part_volume_mm3: f64,
-    qty: u32,
-    material: &Material,
-) -> CostEstimate {
+pub fn estimate_injection(part_volume_mm3: f64, qty: u32, material: &Material) -> CostEstimate {
     let weight_g = (part_volume_mm3 / 1000.0) * material.density;
     let material_cost_usd = weight_g * material.price_per_kg / 1000.0;
     let tooling_per_part = material.tooling_cost_usd / (qty.max(1) as f64);
@@ -435,7 +435,10 @@ pub fn estimate_injection(
         total_usd: total,
         is_estimate: true,
         assumptions: vec![
-            format!("{} pellets at ${:.2}/kg", material.name, material.price_per_kg),
+            format!(
+                "{} pellets at ${:.2}/kg",
+                material.name, material.price_per_kg
+            ),
             format!("tooling ${:.0} / qty {}", material.tooling_cost_usd, qty),
         ],
     }
@@ -464,7 +467,10 @@ pub fn estimate_sheet_metal(
         total_usd: total,
         is_estimate: true,
         assumptions: vec![
-            format!("{} sheet at ${:.2}/kg", material.name, material.price_per_kg),
+            format!(
+                "{} sheet at ${:.2}/kg",
+                material.name, material.price_per_kg
+            ),
             format!(
                 "blank area {:.0} mm² × {:.2} mm thick, {} bend(s) @ ${:.2}",
                 blank_area_mm2, thickness_mm, bend_count, material.bend_cost_usd
@@ -487,17 +493,23 @@ pub fn estimate_casting(
     ));
     let weight_g = (part_volume_mm3 / 1000.0) * material.density;
     // Account for sprue/risers — empirical 1.3x for sand, 1.15x for investment.
-    let pour_multiplier = if process == Process::CastingSand { 1.3 } else { 1.15 };
+    let pour_multiplier = if process == Process::CastingSand {
+        1.3
+    } else {
+        1.15
+    };
     let poured_weight_g = weight_g * pour_multiplier;
     let material_cost_usd = poured_weight_g * material.price_per_kg / 1000.0;
-    let default_qty = if process == Process::CastingSand { 100u32 } else { 500u32 };
+    let default_qty = if process == Process::CastingSand {
+        100u32
+    } else {
+        500u32
+    };
     let effective_qty = if qty == 0 { default_qty } else { qty };
     let tooling_per_part = material.tooling_cost_usd / (effective_qty.max(1) as f64);
     let per_core_surcharge = (core_count as f64) * 5.0;
-    let total = material_cost_usd
-        + tooling_per_part
-        + per_core_surcharge
-        + material.setup_cost_usd_default;
+    let total =
+        material_cost_usd + tooling_per_part + per_core_surcharge + material.setup_cost_usd_default;
     CostEstimate {
         process,
         material: material.name.clone(),

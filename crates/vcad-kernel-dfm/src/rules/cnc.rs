@@ -39,15 +39,14 @@ pub fn run(
                 )
                 .with_explanation(
                     "Internal radii smaller than the cutter radius can't be machined. \
-                     Raise the fillet, switch to EDM, or accept a corner-relief slot."
-                        .into(),
+                     Raise the fillet, switch to EDM, or accept a corner-relief slot.",
                 )
                 .with_faces(vec![cyl.face]);
                 if let Some(node) = provenance.and_then(|p| p.get(cyl.face)) {
                     issue = issue.with_origin(node);
                     issue = issue.with_fix(DfmFix::SetParam {
                         node,
-                        path: "radius".into(),
+                        path: "radius".to_string(),
                         value: serde_json::json!(min_radius),
                     });
                 } else {
@@ -79,8 +78,7 @@ pub fn run(
                 )
                 .with_explanation(
                     "Thin walls chatter and deflect under cutter load. Thicken \
-                     the wall, switch to sheet metal, or accept the workholding cost."
-                        .into(),
+                     the wall, switch to sheet metal, or accept the workholding cost.",
                 )
                 .with_faces(vec![sample.face_a, sample.face_b])
                 .with_fix(DfmFix::Manual {
@@ -106,7 +104,7 @@ pub fn run(
                     "cnc.tool_inaccessibility",
                     rule.severity_enum(),
                     process,
-                    "Face is not reachable by a +Z tool axis (needs 3+2 or 5-axis)".into(),
+                    "Face is not reachable by a +Z tool axis (needs 3+2 or 5-axis)",
                     anchor,
                     sample.dot_with_axis,
                     threshold,
@@ -115,12 +113,11 @@ pub fn run(
                 .with_explanation(
                     "On a 3-axis mill the spindle only reaches features visible \
                      from +Z. Flip the part for a second setup, switch to 3+2, \
-                     or use a 5-axis machine."
-                        .into(),
+                     or use a 5-axis machine.",
                 )
                 .with_faces(vec![sample.face])
                 .with_fix(DfmFix::Manual {
-                    description: "Plan a second setup or switch to a 5-axis machine.".into(),
+                    description: "Plan a second setup or switch to a 5-axis machine.".to_string(),
                 });
                 if let Some(node) = provenance.and_then(|p| p.get(sample.face)) {
                     issue = issue.with_origin(node);

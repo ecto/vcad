@@ -37,6 +37,7 @@ pub struct ThicknessSample {
 pub fn sample_pairs(brep: &BRepSolid, cos_threshold: f64) -> Vec<ThicknessSample> {
     #[cfg(feature = "raytrace")]
     {
+        let _ = cos_threshold;
         sample_via_raycast(brep)
     }
     #[cfg(not(feature = "raytrace"))]
@@ -126,8 +127,7 @@ fn sample_via_raycast(brep: &BRepSolid) -> Vec<ThicknessSample> {
         // Step a tiny bit inward to avoid self-hit, then cast inward.
         let inward = -outward;
         let eps = 1e-4;
-        let origin =
-            midpoint + Vec3::new(inward.x * eps, inward.y * eps, inward.z * eps);
+        let origin = midpoint + Vec3::new(inward.x * eps, inward.y * eps, inward.z * eps);
         let ray = Ray::new(origin, inward);
         let hits = bvh.trace(&ray);
         // First hit that isn't this same face. (The eps step usually
@@ -141,7 +141,10 @@ fn sample_via_raycast(brep: &BRepSolid) -> Vec<ThicknessSample> {
                 && h.t > 1e-3
         });
         let Some(hit) = opposing else { continue };
-        let face_b = face_id_to_idx.get(&hit.face_id).copied().unwrap_or(usize::MAX);
+        let face_b = face_id_to_idx
+            .get(&hit.face_id)
+            .copied()
+            .unwrap_or(usize::MAX);
         samples.push(ThicknessSample {
             face_a: i,
             face_b,

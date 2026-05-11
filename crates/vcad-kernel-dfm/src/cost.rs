@@ -32,9 +32,7 @@ pub fn estimate_for_process(
     let bbox_vol = (hi[0] - lo[0]) * (hi[1] - lo[1]) * (hi[2] - lo[2]);
     let part_vol = geom::approximate_part_volume_mm3(brep);
     match process {
-        Process::Fdm | Process::Sla => {
-            estimate_fdm_from_volume(part_vol, 0.20, 3, 0.45, material)
-        }
+        Process::Fdm | Process::Sla => estimate_fdm_from_volume(part_vol, 0.20, 3, 0.45, material),
         Process::Cnc3Axis => {
             estimate_cnc_from_removed_volume(bbox_vol, part_vol, feature_count, material)
         }

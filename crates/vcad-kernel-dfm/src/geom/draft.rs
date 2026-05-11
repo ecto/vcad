@@ -34,10 +34,7 @@ pub fn sample(brep: &BRepSolid, pull_dir: Vec3) -> Vec<DraftSample> {
         let cos_n_pull = normal.dot(pull).clamp(-1.0, 1.0);
         let angle_to_pull_deg = cos_n_pull.acos().to_degrees();
         let draft_deg = 90.0 - angle_to_pull_deg;
-        out.push(DraftSample {
-            face: i,
-            draft_deg,
-        });
+        out.push(DraftSample { face: i, draft_deg });
     }
     out
 }

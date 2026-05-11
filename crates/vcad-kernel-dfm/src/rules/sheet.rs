@@ -47,12 +47,14 @@ pub fn run(
                 .with_explanation(
                     "Punched holes smaller than the sheet thickness deform the \
                      metal around them and shorten the punch life. Drilled holes \
-                     are safer but slower."
-                        .into(),
+                     are safer but slower.",
                 )
                 .with_faces(vec![cyl.face])
                 .with_fix(DfmFix::Manual {
-                    description: format!("Enlarge to Ø{:.2} mm or switch to drilled.", min_diameter),
+                    description: format!(
+                        "Enlarge to Ø{:.2} mm or switch to drilled.",
+                        min_diameter
+                    ),
                 });
                 if let Some(node) = provenance.and_then(|p| p.get(cyl.face)) {
                     issue = issue.with_origin(node);
@@ -85,8 +87,7 @@ pub fn run(
                 )
                 .with_explanation(
                     "Sheet metal thinner than the supplier's minimum stock won't \
-                     bend repeatably and tears at punched edges."
-                        .into(),
+                     bend repeatably and tears at punched edges.",
                 )
                 .with_faces(vec![min_sample.face_a, min_sample.face_b])
                 .with_fix(DfmFix::Manual {

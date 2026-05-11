@@ -91,6 +91,7 @@ pub struct DfmIssue {
 
 impl DfmIssue {
     /// Construct an issue with a stable id derived from the rule + anchor.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         rule: impl Into<String>,
         severity: DfmSeverity,

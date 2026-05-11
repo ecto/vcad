@@ -74,7 +74,9 @@ pub fn run_dfm(
     let mut issues = Vec::new();
     match process {
         Process::Cnc3Axis => rules::cnc::run(brep, provenance, pack, &mut issues),
-        Process::Fdm | Process::Sla => rules::fdm::run(brep, provenance, process, pack, &mut issues),
+        Process::Fdm | Process::Sla => {
+            rules::fdm::run(brep, provenance, process, pack, &mut issues)
+        }
         Process::Injection => rules::mold::run(brep, provenance, pack, &mut issues),
         Process::SheetMetal => rules::sheet::run(brep, provenance, pack, &mut issues),
         Process::CastingSand | Process::CastingInvestment => {

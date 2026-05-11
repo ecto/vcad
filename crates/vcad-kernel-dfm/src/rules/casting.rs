@@ -57,12 +57,14 @@ pub fn run(
                 )
                 .with_explanation(
                     "Sand and investment patterns need more draft than injection \
-                     because the moldwall is fragile. 2–3° is typical."
-                        .into(),
+                     because the moldwall is fragile. 2–3° is typical.",
                 )
                 .with_faces(vec![sample.face])
                 .with_fix(DfmFix::Manual {
-                    description: format!("Add at least {:.1}° draft along the pull axis.", min_draft),
+                    description: format!(
+                        "Add at least {:.1}° draft along the pull axis.",
+                        min_draft
+                    ),
                 });
                 if let Some(node) = provenance.and_then(|p| p.get(sample.face)) {
                     issue = issue.with_origin(node);
@@ -91,8 +93,7 @@ pub fn run(
                 )
                 .with_explanation(
                     "Thin sections freeze before the metal can fill them, leaving \
-                     misruns and cold shuts."
-                        .into(),
+                     misruns and cold shuts.",
                 )
                 .with_faces(vec![sample.face_a, sample.face_b])
                 .with_fix(DfmFix::Manual {
@@ -110,11 +111,8 @@ pub fn run(
         let max_ratio = rule.num("max_thickness_ratio", 2.0);
         let samples = geom::thickness::sample_pairs(brep, -0.95);
         if samples.len() >= 2 {
-            let nominal = samples
-                .iter()
-                .map(|s| s.thickness_mm)
-                .sum::<f64>()
-                / samples.len() as f64;
+            let nominal =
+                samples.iter().map(|s| s.thickness_mm).sum::<f64>() / samples.len() as f64;
             if let Some(thickest) = samples
                 .iter()
                 .max_by(|a, b| a.thickness_mm.partial_cmp(&b.thickness_mm).unwrap())
@@ -137,12 +135,12 @@ pub fn run(
                         )
                         .with_explanation(
                             "Isolated thick sections freeze last and shrink onto \
-                             themselves, leaving voids. Core them out or add a riser."
-                                .into(),
+                             themselves, leaving voids. Core them out or add a riser.",
                         )
                         .with_faces(vec![thickest.face_a, thickest.face_b])
                         .with_fix(DfmFix::Manual {
-                            description: "Core out the thick section, or add a riser/feeder.".into(),
+                            description: "Core out the thick section, or add a riser/feeder."
+                                .to_string(),
                         }),
                     );
                 }

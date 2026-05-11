@@ -86,16 +86,11 @@ fn sample_via_raycast(brep: &BRepSolid, axis: Vec3) -> Vec<AccessibilitySample> 
         // raycast back toward the face — closest hit should be this
         // face. If something else hits first, the face is occluded.
         let eps = 1e-3;
-        let above = midpoint
-            + Vec3::new(axis.x * 100.0, axis.y * 100.0, axis.z * 100.0);
+        let above = midpoint + Vec3::new(axis.x * 100.0, axis.y * 100.0, axis.z * 100.0);
         let direction = -axis;
-        let origin = above
-            + Vec3::new(direction.x * eps, direction.y * eps, direction.z * eps);
+        let origin = above + Vec3::new(direction.x * eps, direction.y * eps, direction.z * eps);
         let ray = Ray::new(origin, direction);
-        let first = bvh
-            .trace(&ray)
-            .into_iter()
-            .find(|h| h.t > eps);
+        let first = bvh.trace(&ray).into_iter().find(|h| h.t > eps);
         let occluded = match first {
             Some(hit) => face_id_to_idx
                 .get(&hit.face_id)

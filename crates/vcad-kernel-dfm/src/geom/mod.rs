@@ -18,7 +18,6 @@ pub mod provenance;
 pub mod radii;
 pub mod thickness;
 
-use vcad_kernel_geom::Surface;
 use vcad_kernel_math::{Point3, Vec3};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_topo::Orientation;

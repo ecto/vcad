@@ -55,6 +55,7 @@ pub fn sample(brep: &BRepSolid, max_overhang_deg: f64) -> Vec<OverhangSample> {
             continue;
         }
 
+        #[allow(unused_assignments, unused_mut)]
         let mut support = 0.0;
         #[cfg(feature = "raytrace")]
         {

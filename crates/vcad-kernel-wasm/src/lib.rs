@@ -147,8 +147,15 @@ pub fn estimate_cost_for_process(
         part_volume_mm3 * 2.0
     };
     let estimate = match p {
-        vcad_kernel::vcad_kernel_cost::Process::Fdm | vcad_kernel::vcad_kernel_cost::Process::Sla => {
-            vcad_kernel::vcad_kernel_cost::estimate_fdm_from_volume(part_volume_mm3, 0.20, 3, 0.45, &mat)
+        vcad_kernel::vcad_kernel_cost::Process::Fdm
+        | vcad_kernel::vcad_kernel_cost::Process::Sla => {
+            vcad_kernel::vcad_kernel_cost::estimate_fdm_from_volume(
+                part_volume_mm3,
+                0.20,
+                3,
+                0.45,
+                &mat,
+            )
         }
         vcad_kernel::vcad_kernel_cost::Process::Cnc3Axis => {
             vcad_kernel::vcad_kernel_cost::estimate_cnc_from_removed_volume(
@@ -1042,8 +1049,7 @@ impl Solid {
         } else {
             None
         };
-        let report =
-            vcad_kernel::vcad_kernel_dfm::run_dfm(brep, provenance.as_ref(), p, &pack);
+        let report = vcad_kernel::vcad_kernel_dfm::run_dfm(brep, provenance.as_ref(), p, &pack);
         serde_json::to_string(&report).map_err(|e| JsError::new(&e.to_string()))
     }
 

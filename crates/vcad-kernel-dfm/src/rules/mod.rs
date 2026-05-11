@@ -82,7 +82,9 @@ impl Rule {
 
     /// Look up an optional string parameter.
     pub fn string(&self, key: &str) -> Option<String> {
-        self.params.get(key).and_then(|v| v.as_str().map(String::from))
+        self.params
+            .get(key)
+            .and_then(|v| v.as_str().map(String::from))
     }
 
     /// Severity parsed into the strongly-typed enum.

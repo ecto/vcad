@@ -12,8 +12,7 @@
 
 pub use vcad_kernel_cost::{
     estimate_fdm_from_filament as estimate_cost_from_filament,
-    estimate_fdm_from_volume as _estimate_fdm_from_volume,
-    CostEstimate, Material, Process,
+    estimate_fdm_from_volume as _estimate_fdm_from_volume, CostEstimate, Material, Process,
 };
 
 /// Pre-slice FDM estimate from BRep volume.
