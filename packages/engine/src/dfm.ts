@@ -81,6 +81,7 @@ interface DfmKernelBindings {
     brep_json: string,
     process: string,
     rule_pack_toml: string,
+    root_node_id: number,
   ) => string;
   get_default_dfm_pack: (process: string) => string;
   estimate_cost_for_process: (
@@ -95,7 +96,7 @@ interface DfmKernelBindings {
 
 interface DfmSolidHandle {
   toBrepJson: () => string | undefined;
-  runDfm: (process: string, rule_pack_toml: string) => string;
+  runDfm: (process: string, rule_pack_toml: string, root_node_id: number) => string;
 }
 
 async function bindings(): Promise<DfmKernelBindings> {
@@ -133,15 +134,21 @@ export async function runDfm(
   const allIssues: DfmIssue[] = [];
   let packName = "";
   let packVersion = "1";
-  for (const part of scene.parts) {
+  // Visible roots line up with `scene.parts` (same filter as the
+  // evaluator) — so the i-th part attributes its faces to the i-th
+  // root NodeId. v1 coarse provenance: one NodeId per part.
+  const visibleRoots = doc.roots.filter((entry) => entry.visible !== false);
+  for (let i = 0; i < scene.parts.length; i++) {
+    const part = scene.parts[i];
+    const rootNodeId = visibleRoots[i]?.root ?? 0;
     const solid = (part as unknown as { solid?: DfmSolidHandle }).solid;
     let reportJson: string | undefined;
     if (solid && typeof solid.runDfm === "function") {
-      reportJson = solid.runDfm(opts.process, pack);
+      reportJson = solid.runDfm(opts.process, pack, rootNodeId);
     } else if (solid && typeof solid.toBrepJson === "function") {
       const brepJson = solid.toBrepJson();
       if (brepJson) {
-        reportJson = b.run_dfm_on_brep_json(brepJson, opts.process, pack);
+        reportJson = b.run_dfm_on_brep_json(brepJson, opts.process, pack, rootNodeId);
       }
     }
     if (!reportJson) continue;
