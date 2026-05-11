@@ -345,6 +345,18 @@ fn migrate_node(
             }
             Some(create(crdt, ctx, "imported-mesh", params))
         }
+        // MeshImport is a path reference (used by URDF imports before the
+        // browser inlines the actual mesh data). Carry the path + scale
+        // through so loaders that resolve meshes after migration still
+        // know what to fetch; render as a 10 mm placeholder cube until
+        // the data lands.
+        CsgOp::MeshImport { path, scale } => {
+            params.insert("path".to_string(), Value::String(path.clone()));
+            if let Some(s) = scale {
+                params.insert("scale".to_string(), Value::Vec3([s.x, s.y, s.z]));
+            }
+            Some(create(crdt, ctx, "mesh-import", params))
+        }
         // Ops we don't represent in the CRDT feature model — drop silently.
         _ => None,
     };

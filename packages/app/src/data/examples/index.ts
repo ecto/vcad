@@ -21,11 +21,19 @@ export interface ExampleFile {
  * time rather than inline, since the IR representation of e.g. a 23-DOF
  * humanoid is several hundred kB and the source URDF is more compact and
  * editable as text.
+ *
+ * `meshes` is an optional map from the URDF `<mesh filename>` value
+ * (verbatim, including any `meshes/` or `package://…/` prefix) to a Vite
+ * asset URL. When present, the example loader fetches each file, parses
+ * it with three.js (STL / DAE / GLB), and inlines the triangle data into
+ * the document via `inlineMeshImports` before handing the doc to the
+ * editor.
  */
 export interface UrdfExampleSource {
   urdfText: string;
   /** Display name for toasts/logs (e.g. file name). */
   name?: string;
+  meshes?: Record<string, string>;
 }
 
 export interface Example {
@@ -72,8 +80,6 @@ import { robotArmExample } from "./robot-arm.vcad";
 import { sheetMetalBracketExample } from "./sheet-metal-bracket.vcad";
 import { unitreeG1Example } from "./unitree-g1.urdf";
 import { unitreeGo2Example } from "./unitree-go2.urdf";
-import { unitreeG1OfficialExample } from "./unitree-g1-official.urdf";
-import { unitreeGo2OfficialExample } from "./unitree-go2-official.urdf";
 
 export const examples: Example[] = [
   plateExample,
@@ -89,6 +95,4 @@ export const examples: Example[] = [
   sheetMetalBracketExample,
   unitreeG1Example,
   unitreeGo2Example,
-  unitreeG1OfficialExample,
-  unitreeGo2OfficialExample,
 ];

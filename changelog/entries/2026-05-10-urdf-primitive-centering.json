@@ -1,0 +1,9 @@
+{
+  "id": "2026-05-10-urdf-primitive-centering",
+  "version": "0.9.4",
+  "date": "2026-05-10",
+  "category": "feat",
+  "title": "Unitree G1 + Go2 examples render with real meshes",
+  "summary": "Replace hand-authored primitive URDFs with the official Unitree G1 (STL) and Go2 (Collada/DAE) descriptors; vendor the meshes and inline them through three.js loaders so links render at full fidelity instead of placeholder cubes. Includes a URDF primitive-centering fix so cube/cylinder geometry sits on the link frame origin.",
+  "features": ["urdf", "robotics", "import", "humanoid", "quadruped"]
+}

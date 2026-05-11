@@ -511,7 +511,7 @@ impl<'a> UrdfReader<'a> {
 
         // Create geometry node
         let geom_node_id = self.alloc_node_id();
-        let geom_op = self.geometry_to_csg(geom)?;
+        let (geom_op, center_offset) = self.geometry_to_csg(geom)?;
         nodes.push((
             geom_node_id,
             Node {
@@ -520,6 +520,33 @@ impl<'a> UrdfReader<'a> {
                 op: geom_op,
             },
         ));
+
+        // URDF box/cylinder/cone primitives are centered on the link frame
+        // origin. vcad's Cube extends from the origin into the +X/+Y/+Z
+        // octant, and Cylinder/Cone sit on z=0 → z=height. Wrap each
+        // primitive in a Translate so the geometry lines up with the URDF
+        // convention before any visual <origin> rotation/translation is
+        // applied.
+        let centered_node_id = if center_offset.x.abs() > 1e-9
+            || center_offset.y.abs() > 1e-9
+            || center_offset.z.abs() > 1e-9
+        {
+            let id = self.alloc_node_id();
+            nodes.push((
+                id,
+                Node {
+                    id,
+                    name: Some(format!("{}_center", link.name)),
+                    op: CsgOp::Translate {
+                        child: geom_node_id,
+                        offset: center_offset,
+                    },
+                },
+            ));
+            id
+        } else {
+            geom_node_id
+        };
 
         // Apply origin transform if present
         let root_id = if let Some(origin) = origin {
@@ -547,7 +574,7 @@ impl<'a> UrdfReader<'a> {
                         id: rotate_id,
                         name: Some(format!("{}_rotate", link.name)),
                         op: CsgOp::Rotate {
-                            child: geom_node_id,
+                            child: centered_node_id,
                             angles: Vec3::new(rpy_deg[0], rpy_deg[1], rpy_deg[2]),
                         },
                     },
@@ -578,17 +605,17 @@ impl<'a> UrdfReader<'a> {
                         id: translate_id,
                         name: Some(format!("{}_translate", link.name)),
                         op: CsgOp::Translate {
-                            child: geom_node_id,
+                            child: centered_node_id,
                             offset: Vec3::new(xyz_mm[0], xyz_mm[1], xyz_mm[2]),
                         },
                     },
                 ));
                 translate_id
             } else {
-                geom_node_id
+                centered_node_id
             }
         } else {
-            geom_node_id
+            centered_node_id
         };
 
         let inertial = link.inertial.as_ref().map(|i| {
@@ -631,29 +658,48 @@ impl<'a> UrdfReader<'a> {
         ))
     }
 
-    fn geometry_to_csg(&self, geom: &Geometry) -> Result<CsgOp, UrdfError> {
+    /// Convert a URDF `<geometry>` to a vcad `CsgOp` and return the
+    /// translation needed to center it on the link frame origin.
+    ///
+    /// URDF primitives (box, cylinder, sphere) are defined centered at the
+    /// link frame. vcad's kernel primitives are anchored differently:
+    /// `Cube` puts its corner at the origin, `Cylinder`/`Cone` sit on the
+    /// XY plane. Returning the centering offset lets the caller wrap the
+    /// geometry node in a Translate so the URDF semantics survive.
+    fn geometry_to_csg(&self, geom: &Geometry) -> Result<(CsgOp, Vec3), UrdfError> {
         if let Some(box_geom) = &geom.box_geom {
             let size = box_geom.size_vec();
             // URDF uses meters, vcad uses mm
-            Ok(CsgOp::Cube {
-                size: Vec3::new(size[0] * 1000.0, size[1] * 1000.0, size[2] * 1000.0),
-            })
+            let sx = size[0] * 1000.0;
+            let sy = size[1] * 1000.0;
+            let sz = size[2] * 1000.0;
+            Ok((
+                CsgOp::Cube {
+                    size: Vec3::new(sx, sy, sz),
+                },
+                Vec3::new(-sx / 2.0, -sy / 2.0, -sz / 2.0),
+            ))
         } else if let Some(cyl) = &geom.cylinder {
-            // URDF cylinder is along Z axis, centered
-            Ok(CsgOp::Cylinder {
-                radius: cyl.radius * 1000.0,
-                height: cyl.length * 1000.0,
-                segments: 32,
-            })
+            // URDF cylinder is along Z axis, centered; vcad cylinder sits
+            // on the XY plane so shift it down by half its height.
+            let h = cyl.length * 1000.0;
+            Ok((
+                CsgOp::Cylinder {
+                    radius: cyl.radius * 1000.0,
+                    height: h,
+                    segments: 32,
+                },
+                Vec3::new(0.0, 0.0, -h / 2.0),
+            ))
         } else if let Some(sphere) = &geom.sphere {
-            Ok(CsgOp::Sphere {
-                radius: sphere.radius * 1000.0,
-                segments: 32,
-            })
+            Ok((
+                CsgOp::Sphere {
+                    radius: sphere.radius * 1000.0,
+                    segments: 32,
+                },
+                Vec3::new(0.0, 0.0, 0.0),
+            ))
         } else if let Some(mesh) = &geom.mesh {
-            // Resolve URDF filename → absolute path the physics layer can
-            // open. If resolution fails, fall back to a 1cm placeholder so
-            // physics still gets a non-empty body to attach inertials to.
             let scale = mesh
                 .scale
                 .as_ref()
@@ -669,32 +715,19 @@ impl<'a> UrdfReader<'a> {
                     }
                 })
                 .unwrap_or(None);
-            // Only STL is supported for actual loading today; DAE / OBJ /
-            // PLY references resolve to a 1cm placeholder so the
-            // kinematic + inertial tree still loads. Authored <inertial>
-            // tags carry the real mass and inertia; the placeholder just
-            // gives the convex-hull collider a non-empty mesh to chew on.
-            let is_supported_format = std::path::Path::new(&mesh.filename)
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| e.eq_ignore_ascii_case("stl"))
-                .unwrap_or(false);
-            if !is_supported_format {
-                return Ok(CsgOp::Cube {
-                    size: Vec3::new(10.0, 10.0, 10.0),
-                });
-            }
-            match self.opts.resolve_mesh(&mesh.filename) {
-                Some(abs) => Ok(CsgOp::MeshImport {
-                    path: abs.to_string_lossy().into_owned(),
-                    scale,
-                }),
-                None => Ok(CsgOp::Cube {
-                    // 1cm placeholder — physics will still have authored
-                    // mass/inertia from <inertial> if present.
-                    size: Vec3::new(10.0, 10.0, 10.0),
-                }),
-            }
+            // Try to resolve against filesystem (CLI path with urdf_dir
+            // set). If that succeeds, emit an absolute path so downstream
+            // physics / CSG eval can `open()` the file. Otherwise emit
+            // MeshImport with the original URDF filename verbatim — the
+            // browser entry point loads meshes JS-side and post-processes
+            // these nodes into `ImportedMesh`, and physics paths without a
+            // filesystem just skip them.
+            let path = self
+                .opts
+                .resolve_mesh(&mesh.filename)
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| mesh.filename.clone());
+            Ok((CsgOp::MeshImport { path, scale }, Vec3::new(0.0, 0.0, 0.0)))
         } else {
             Err(UrdfError::InvalidGeometry(
                 "No geometry type specified".to_string(),
