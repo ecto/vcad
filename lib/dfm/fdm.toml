@@ -1,0 +1,20 @@
+schema = "vcad.dfm/1"
+version = "1"
+process = "fdm"
+name = "Standard FDM 0.4 mm nozzle"
+notes = "Tuned for PLA on a 0.4 mm nozzle. Override min_wall_mm for fine-tip nozzles."
+
+[rules.thin_wall]
+severity = "error"
+min_wall_mm = 0.8
+fix = "thicken_wall"
+
+[rules.steep_overhang]
+severity = "warning"
+max_overhang_deg = 135.0
+fix = "manual"
+
+[rules.small_hole]
+severity = "warning"
+min_diameter_mm = 0.8
+fix = "manual"

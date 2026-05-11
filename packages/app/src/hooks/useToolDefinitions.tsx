@@ -68,7 +68,7 @@ import { useSlicerStore } from "@/stores/slicer-store";
 import { useCamStore } from "@/stores/cam-store";
 import { useElectronicsStore } from "@/stores/electronics-store";
 import { useEmbroideryStore } from "@/stores/embroidery-store";
-import { useOutputStore, estimatePrice } from "@/stores/output-store";
+import { useOutputStore } from "@/stores/output-store";
 import { useNotificationStore } from "@/stores/notification-store";
 import { useOnboardingStore, type GuidedFlowStep } from "@/stores/onboarding-store";
 import { analytics } from "@/lib/analytics";
@@ -225,7 +225,13 @@ export function useToolDefinitions(): {
   // Output
   const openQuotePanel = useOutputStore((s) => s.openQuotePanel);
   const selectedMaterial = useOutputStore((s) => s.selectedMaterial);
-  const estimatedPrice = estimatePrice(scene, selectedMaterial);
+  // Read the cached price the QuotePanel populates via estimateCost.
+  // The tooltip is a glance-target — null when the panel hasn't run
+  // yet for this scene; opening the panel populates the cache and the
+  // tooltip catches up on the next render.
+  const estimatedPrice = useOutputStore(
+    (s) => s.cachedPrices[selectedMaterial],
+  );
 
   // Derived selection state
   const hasSelection = selectedPartIds.size > 0;

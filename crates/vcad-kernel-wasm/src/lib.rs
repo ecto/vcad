@@ -108,6 +108,88 @@ pub fn build_chat_system_prompt(parts_json: &str, selection_json: &str) -> Strin
     vcad_chat::build_system_prompt(&parts, &selection)
 }
 
+// =============================================================================
+// DFM (Design for Manufacturing)
+// =============================================================================
+
+/// Return the bundled default rule pack (TOML) for a process name.
+///
+/// Process names: `"cnc_3axis"`, `"fdm"`, `"sla"`, `"injection"`,
+/// `"sheet_metal"`, `"casting_sand"`, `"casting_investment"`.
+#[wasm_bindgen]
+pub fn get_default_dfm_pack(process: &str) -> Result<String, JsError> {
+    let p = vcad_kernel::vcad_kernel_dfm::Process::from_str(process)
+        .ok_or_else(|| JsError::new(&format!("unknown process: {}", process)))?;
+    Ok(vcad_kernel::vcad_kernel_dfm::DefaultPacks::source(p).to_string())
+}
+
+/// Estimate manufacturing cost for the supplied process + material.
+///
+/// `part_volume_mm3` is the exact part volume the caller has already
+/// computed; `stock_volume_mm3` is only used for CNC (defaults to
+/// `part_volume_mm3 * 2` if non-positive). `qty` matters for
+/// mold/casting amortization; `feature_count` matters for CNC time.
+/// Material names match the catalog in `vcad_kernel::vcad_kernel_cost::Material`.
+#[wasm_bindgen]
+pub fn estimate_cost_for_process(
+    process: &str,
+    material_name: &str,
+    part_volume_mm3: f64,
+    stock_volume_mm3: f64,
+    qty: u32,
+    feature_count: u32,
+) -> Result<JsValue, JsError> {
+    use vcad_kernel::vcad_kernel_cost::Material;
+    let p = vcad_kernel::vcad_kernel_dfm::Process::from_str(process)
+        .ok_or_else(|| JsError::new(&format!("unknown process: {}", process)))?;
+    let mat = Material::catalog()
+        .into_iter()
+        .find(|m| m.name.eq_ignore_ascii_case(material_name))
+        .unwrap_or_else(Material::pla);
+    let stock_v = if stock_volume_mm3 > 0.0 {
+        stock_volume_mm3
+    } else {
+        part_volume_mm3 * 2.0
+    };
+    let estimate = match p {
+        vcad_kernel::vcad_kernel_cost::Process::Fdm
+        | vcad_kernel::vcad_kernel_cost::Process::Sla => {
+            vcad_kernel::vcad_kernel_cost::estimate_fdm_from_volume(
+                part_volume_mm3,
+                0.20,
+                3,
+                0.45,
+                &mat,
+            )
+        }
+        vcad_kernel::vcad_kernel_cost::Process::Cnc3Axis => {
+            vcad_kernel::vcad_kernel_cost::estimate_cnc_from_removed_volume(
+                stock_v,
+                part_volume_mm3,
+                feature_count,
+                &mat,
+            )
+        }
+        vcad_kernel::vcad_kernel_cost::Process::Injection => {
+            let q = if qty == 0 { 1000 } else { qty };
+            vcad_kernel::vcad_kernel_cost::estimate_injection(part_volume_mm3, q, &mat)
+        }
+        vcad_kernel::vcad_kernel_cost::Process::SheetMetal => {
+            // Caller supplies the bounding-box style approximation; v1
+            // treats stock_volume_mm3 as area * thickness via
+            // part_volume_mm3 + thickness fallback.
+            let thickness = (part_volume_mm3 / stock_v.max(1.0)).max(0.5);
+            let area = stock_v.max(1.0);
+            vcad_kernel::vcad_kernel_cost::estimate_sheet_metal(area, thickness, 0, &mat)
+        }
+        vcad_kernel::vcad_kernel_cost::Process::CastingSand
+        | vcad_kernel::vcad_kernel_cost::Process::CastingInvestment => {
+            vcad_kernel::vcad_kernel_cost::estimate_casting(p, part_volume_mm3, qty, 0, &mat)
+        }
+    };
+    serde_wasm_bindgen::to_value(&estimate).map_err(|e| JsError::new(&e.to_string()))
+}
+
 /// Initialize the WASM module (sets up panic hook for better error messages).
 #[wasm_bindgen(start)]
 pub fn init() {
@@ -928,6 +1010,52 @@ impl Solid {
     pub fn bounding_box(&self) -> Vec<f64> {
         let (min, max) = self.inner.bounding_box();
         vec![min[0], min[1], min[2], max[0], max[1], max[2]]
+    }
+
+    /// Run DFM directly on this solid's BRep.
+    ///
+    /// Returns the report JSON; if the solid is mesh-only (e.g. after
+    /// a boolean — see issue #186), the report has an empty `issues`
+    /// array and a note in `rule_pack_name`.
+    ///
+    /// `root_node_id` (when > 0) attributes every face in the BRep to
+    /// that IR node — the v1 coarse provenance heuristic. Pass 0 to
+    /// skip provenance entirely; emitted issues will then carry
+    /// `origin_op: null` and `dfm_apply_fix` will only be able to act
+    /// on rules whose fix kind is `manual`.
+    #[wasm_bindgen(js_name = runDfm)]
+    pub fn run_dfm(
+        &self,
+        process: &str,
+        rule_pack_toml: &str,
+        root_node_id: u64,
+    ) -> Result<String, JsError> {
+        let p = vcad_kernel::vcad_kernel_dfm::Process::from_str(process)
+            .ok_or_else(|| JsError::new(&format!("unknown process: {}", process)))?;
+        let pack = if rule_pack_toml.trim().is_empty() {
+            vcad_kernel::vcad_kernel_dfm::RulePack::default_for(p)
+        } else {
+            vcad_kernel::vcad_kernel_dfm::RulePack::from_toml(rule_pack_toml)
+                .map_err(|e| JsError::new(&format!("rule pack parse: {}", e)))?
+        };
+        let Some(brep) = self.inner.as_brep() else {
+            return Ok(format!(
+                r#"{{"process":"{}","rule_pack_name":"(mesh-only solid; DFM skipped)","rule_pack_version":"1","issues":[],"cost_estimate":null}}"#,
+                p.as_str()
+            ));
+        };
+        let provenance = if root_node_id > 0 {
+            Some(
+                vcad_kernel::vcad_kernel_dfm::geom::provenance::ProvenanceMap::single_root(
+                    brep,
+                    root_node_id,
+                ),
+            )
+        } else {
+            None
+        };
+        let report = vcad_kernel::vcad_kernel_dfm::run_dfm(brep, provenance.as_ref(), p, &pack);
+        serde_json::to_string(&report).map_err(|e| JsError::new(&e.to_string()))
     }
 
     /// Get the center of mass as [x, y, z].

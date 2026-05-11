@@ -1,0 +1,15 @@
+schema = "vcad.dfm/1"
+version = "1"
+process = "sheet_metal"
+name = "Standard sheet metal (0.5–3 mm stock)"
+notes = "Coarse v1 — bend-radius and hole-to-bend checks ship with the sheet feature pass."
+
+[rules.small_hole]
+severity = "warning"
+min_diameter_mm = 1.0
+fix = "manual"
+
+[rules.thin_blank]
+severity = "error"
+min_thickness_mm = 0.5
+fix = "manual"
