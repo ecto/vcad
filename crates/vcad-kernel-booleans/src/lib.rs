@@ -320,12 +320,10 @@ mod tests {
             .count()
     }
 
-    /// Extract BRepSolid from BooleanResult, panicking if it's mesh-only
+    /// Extract BRepSolid from BooleanResult.
     fn unwrap_brep(result: BooleanResult) -> BRepSolid {
-        match result {
-            BooleanResult::BRep(b) => *b,
-            BooleanResult::Mesh(_) => panic!("Expected BRep result, got Mesh"),
-        }
+        let BooleanResult::BRep(b) = result;
+        *b
     }
 
     #[test]
@@ -1724,10 +1722,8 @@ mod tests {
         let mut small_hole = make_cylinder(4.0, 20.0, 32);
         translate_brep(&mut small_hole, 20.0, 20.0, -5.0);
 
-        let step1_brep = match &step1 {
-            BooleanResult::BRep(brep) => brep.as_ref().clone(),
-            BooleanResult::Mesh(_) => panic!("Expected BRep result from step 1"),
-        };
+        let BooleanResult::BRep(ref step1_brep_box) = step1;
+        let step1_brep = step1_brep_box.as_ref().clone();
 
         let step2 = boolean_op(&step1_brep, &small_hole, BooleanOp::Difference, 32);
         let mesh2 = step2.to_mesh(32);

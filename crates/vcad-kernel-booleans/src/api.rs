@@ -20,39 +20,36 @@ pub enum BooleanOp {
 
 /// Result of a boolean operation.
 ///
-/// In Phase 1, this is a mesh-only result (no B-rep topology).
-/// In Phase 2, this will contain a full BRepSolid.
+/// Always a B-rep solid. Cases that previously fell back to a mesh-only
+/// result (e.g. the perpendicular equal-radius cylinder Steinmetz path) now
+/// reconstruct topology from the tessellated mesh so that downstream
+/// features that depend on B-rep (DFM, STEP export, direct ray tracing,
+/// fillets, drafting projections) continue to work.
 #[derive(Debug, Clone)]
 pub enum BooleanResult {
-    /// Mesh-only result (Phase 1 fallback).
-    Mesh(TriangleMesh),
-    /// Full B-rep result (Phase 2, not yet implemented).
+    /// B-rep result.
     BRep(Box<BRepSolid>),
 }
 
 impl BooleanResult {
-    /// Get the triangle mesh, tessellating if needed.
-    pub fn to_mesh(&self, _segments: u32) -> TriangleMesh {
+    /// Get the triangle mesh by tessellating the B-rep.
+    pub fn to_mesh(&self, segments: u32) -> TriangleMesh {
         match self {
-            BooleanResult::Mesh(m) => m.clone(),
-            BooleanResult::BRep(brep) => tessellate_brep(brep.as_ref(), _segments),
+            BooleanResult::BRep(brep) => tessellate_brep(brep.as_ref(), segments),
         }
     }
 
-    /// Get a reference to the BRep solid, if available.
+    /// Get a reference to the BRep solid.
     pub fn as_brep(&self) -> Option<&BRepSolid> {
         match self {
             BooleanResult::BRep(brep) => Some(brep.as_ref()),
-            BooleanResult::Mesh(_) => None,
         }
     }
 
     /// Convert to BRepSolid, consuming self.
-    /// Returns None if the result is mesh-only.
     pub fn into_brep(self) -> Option<BRepSolid> {
         match self {
             BooleanResult::BRep(brep) => Some(*brep),
-            BooleanResult::Mesh(_) => None,
         }
     }
 }

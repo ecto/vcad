@@ -215,15 +215,10 @@ impl Solid {
             (SolidRepr::BRep(a), SolidRepr::BRep(b)) => {
                 let segments = self.segments.max(other.segments);
                 let result = boolean_op(a.as_ref(), b.as_ref(), op, segments);
-                match result {
-                    BooleanResult::Mesh(m) => Solid {
-                        repr: SolidRepr::Mesh(m),
-                        segments,
-                    },
-                    BooleanResult::BRep(brep) => Solid {
-                        repr: SolidRepr::BRep(brep),
-                        segments,
-                    },
+                let BooleanResult::BRep(brep) = result;
+                Solid {
+                    repr: SolidRepr::BRep(brep),
+                    segments,
                 }
             }
             // For mesh-only solids, tessellate BRep first then combine meshes
@@ -1702,6 +1697,47 @@ mod tests {
         assert!(!union.is_empty());
         assert!(!diff.is_empty());
         assert!(!inter.is_empty());
+    }
+
+    /// Regression for issue #186: boolean operations must always produce a
+    /// B-rep result. Previously a `cube.difference(cylinder)` could fall
+    /// through to a mesh-only result, breaking STEP export, raytrace and
+    /// any downstream feature keyed off `Solid::as_brep()`.
+    #[test]
+    fn test_boolean_result_is_always_brep() {
+        // Common case: cube with a cylindrical hole.
+        let cube = Solid::cube(20.0, 20.0, 20.0);
+        let cyl = Solid::cylinder(5.0, 30.0, 32).translate(10.0, 10.0, -5.0);
+        let cube_minus_cyl = cube.difference(&cyl);
+        assert!(
+            cube_minus_cyl.as_brep().is_some(),
+            "cube.difference(cylinder) must be BRep-backed"
+        );
+        cube_minus_cyl
+            .to_step_buffer()
+            .expect("STEP export should succeed on BRep difference result");
+
+        // Empty intersection (non-overlapping) must also be BRep, not mesh.
+        let a = Solid::cube(10.0, 10.0, 10.0);
+        let b = Solid::cube(10.0, 10.0, 10.0).translate(50.0, 0.0, 0.0);
+        let empty = a.intersection(&b);
+        assert!(
+            empty.as_brep().is_some(),
+            "non-overlapping intersection must be BRep-backed"
+        );
+
+        // Perpendicular equal-radius cylinder Steinmetz fallback. The old
+        // `cyl_cyl` path emitted a mesh-only result; it now reconstructs a
+        // triangle-soup B-rep so the type contract holds.
+        let cyl1 = Solid::cylinder(5.0, 30.0, 32).translate(0.0, 0.0, -15.0);
+        let cyl2 = Solid::cylinder(5.0, 30.0, 32)
+            .rotate(90.0, 0.0, 0.0)
+            .translate(0.0, -15.0, 0.0);
+        let steinmetz = cyl1.union(&cyl2);
+        assert!(
+            steinmetz.as_brep().is_some(),
+            "perpendicular cylinder union must be BRep-backed"
+        );
     }
 
     /// Regression: cylinder minus bore should produce a closed solid with

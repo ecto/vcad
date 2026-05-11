@@ -32,6 +32,7 @@ use vcad_kernel_tessellate::TriangleMesh;
 use vcad_kernel_topo::FaceId;
 
 use crate::api::{BooleanOp, BooleanResult};
+use crate::mesh::mesh_to_brep;
 
 /// Detect a "simple cylinder" — exactly the topology produced by
 /// `make_cylinder` (one lateral cylindrical face + two planar caps).
@@ -174,7 +175,12 @@ pub fn cylinder_cylinder_mesh_boolean(
     }
 
     let _ = (r, va_int, vb_int);
-    Some(BooleanResult::Mesh(mesh))
+    // Wrap the watertight mesh back as a triangle-soup B-rep so downstream
+    // BRep-aware features (STEP export, raytrace, DFM) still see a non-None
+    // `as_brep()`. The true cylindrical surface topology is lost on this
+    // specialised path — fixing that requires generalising the SSI splitter
+    // to handle the Steinmetz figure-8 boundary on cylindrical faces.
+    Some(BooleanResult::BRep(Box::new(mesh_to_brep(&mesh))))
 }
 
 /// Append triangles for the part of `host`'s lateral wall that lies
