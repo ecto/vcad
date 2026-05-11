@@ -84,8 +84,21 @@ impl GpuContext {
             .await
             .ok_or(GpuError::NoAdapter)?;
 
+        // The raytrace bind group layout needs 10 storage buffers per
+        // compute stage; default wgpu limits only allow 8. Inherit the
+        // adapter's full limits so this and similar pipelines validate.
+        let required_limits = adapter.limits();
+
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default(), None)
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("vcad GPU device"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits,
+                    memory_hints: wgpu::MemoryHints::default(),
+                },
+                None,
+            )
             .await?;
 
         Ok(GpuContext { device, queue })
