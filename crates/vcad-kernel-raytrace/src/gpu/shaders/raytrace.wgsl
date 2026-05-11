@@ -1677,10 +1677,10 @@ fn detect_edge_sobel(pixel_coord: vec2<i32>) -> vec3<f32> {
 
 // Sample-count heatmap: t=0.0 → blue (1 sample/cold), t=1.0 → red (max samples/hot).
 fn heat_color(t: f32) -> vec3<f32> {
-    let t = clamp(t, 0.0, 1.0);
-    let r = clamp(t * 2.0 - 1.0, 0.0, 1.0);
-    let g = clamp(1.0 - abs(t * 2.0 - 1.0), 0.0, 1.0);
-    let b = clamp(1.0 - t * 2.0, 0.0, 1.0);
+    let tc = clamp(t, 0.0, 1.0);
+    let r = clamp(tc * 2.0 - 1.0, 0.0, 1.0);
+    let g = clamp(1.0 - abs(tc * 2.0 - 1.0), 0.0, 1.0);
+    let b = clamp(1.0 - tc * 2.0, 0.0, 1.0);
     return vec3<f32>(r, g, b);
 }
 
