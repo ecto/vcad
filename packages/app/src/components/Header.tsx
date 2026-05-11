@@ -34,6 +34,7 @@ import { examples } from "@/data/examples";
 import { SignInButton, UserMenu, triggerSync, useAuthStore } from "@vcad/auth";
 import { useChangelogStore } from "@/stores/changelog-store";
 import { useNotificationStore } from "@/stores/notification-store";
+import { useDfmStore } from "@/stores/dfm-store";
 import { useAppCommands } from "@/hooks/useAppCommands";
 import { COMMAND_ICONS } from "@/lib/command-icons";
 import { useCapabilities } from "@/lib/capabilities";
@@ -237,6 +238,23 @@ function CommandMenuItem({
       }}
     >
       {displayLabel}
+    </MenuItem>
+  );
+}
+
+/** Toggles the bottom Manufacturability drawer. The chip in the status
+ *  bar is the primary entry; this menu item is a discoverability hook. */
+function ManufacturabilityMenuItem() {
+  const drawerOpen = useDfmStore((s) => s.drawerOpen);
+  const toggleDrawer = useDfmStore((s) => s.toggleDrawer);
+  const Icon = COMMAND_ICONS["Wrench"];
+  return (
+    <MenuItem
+      icon={Icon}
+      iconClassName="text-amber-400"
+      onSelect={() => toggleDrawer()}
+    >
+      {drawerOpen ? "Hide manufacturability" : "Manufacturability…"}
     </MenuItem>
   );
 }
@@ -630,6 +648,8 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
                 <CommandMenuItem id="command-palette" commands={commands} />
                 <MenuSeparator />
                 <CommandMenuItem id="new-sketch" commands={commands} />
+                <MenuSeparator />
+                <ManufacturabilityMenuItem />
                 <MenuSeparator />
                 <CommandMenuItem id="open-slicer" commands={commands} />
                 <CommandMenuItem id="open-cam" commands={commands} />
