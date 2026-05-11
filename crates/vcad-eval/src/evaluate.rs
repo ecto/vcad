@@ -776,6 +776,14 @@ fn evaluate_op_timed(
             // surface nothing rather than crashing so the kernel can still partially evaluate.
             Ok(None)
         }
+
+        CsgOp::SheetMetalBaseFlangeRect { .. } | CsgOp::SheetMetalEdgeFlange { .. } => {
+            // Sheet-metal ops bypass the BRep Solid pipeline — the engine
+            // detects them at root level and routes the chain to the
+            // sheet-metal kernel. Returning `None` here is safe: it just
+            // means nothing combines as a sub-solid, which is what we want.
+            Ok(None)
+        }
     }
 }
 
@@ -1099,6 +1107,8 @@ fn op_name(op: &CsgOp) -> String {
         CsgOp::PcbBoard { .. } => "PcbBoard",
         CsgOp::EmbroideryPattern { .. } => "EmbroideryPattern",
         CsgOp::PartInstance { .. } => "PartInstance",
+        CsgOp::SheetMetalBaseFlangeRect { .. } => "SheetMetalBaseFlangeRect",
+        CsgOp::SheetMetalEdgeFlange { .. } => "SheetMetalEdgeFlange",
     }
     .to_string()
 }

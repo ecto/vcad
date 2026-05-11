@@ -864,6 +864,62 @@ pub enum CsgOp {
         /// Parameter name → JSON value map, passed to the part's build function.
         params: HashMap<String, serde_json::Value>,
     },
+
+    #[tool(hidden)]
+    /// Sheet-metal base flange (rectangular). Initialises a sheet-metal
+    /// model from an axis-aligned rectangle in the XY plane. Outside face
+    /// on +Z.
+    ///
+    /// Sheet-metal ops bypass the regular Solid pipeline — the engine
+    /// detects a sheet-metal root and routes the whole chain to
+    /// [`vcad_kernel_wasm::sheet_metal::evaluate_sheet_metal_chain`], which
+    /// builds a [`vcad_kernel_sheet::SheetMetalModel`] and returns a
+    /// tessellated mesh + flat pattern.
+    SheetMetalBaseFlangeRect {
+        /// Width (mm), extends in +X.
+        width: f64,
+        /// Depth (mm), extends in +Y.
+        depth: f64,
+        /// Material thickness (mm).
+        thickness: f64,
+        /// Material name for K-factor lookup (e.g. `"Al-soft"`).
+        material: String,
+    },
+
+    #[tool(hidden)]
+    /// Sheet-metal edge flange. Extends `parent` (which must evaluate to a
+    /// sheet-metal model) with a new flange off `edge_index` of the
+    /// referenced panel.
+    SheetMetalEdgeFlange {
+        /// Parent node (must produce a sheet-metal model).
+        parent: NodeId,
+        /// Panel id within the parent's model (0 = root).
+        panel_id: usize,
+        /// Edge index in that panel's outline (0 = outline[0]→outline[1]).
+        edge_index: usize,
+        /// Flange length perpendicular to the hinge edge (mm).
+        length: f64,
+        /// Bend angle (radians, 0 < angle ≤ π).
+        angle: f64,
+        /// Inside bend radius (mm).
+        radius: f64,
+        /// Bend direction (`Up` rises out of the outside face).
+        direction: SheetMetalDirection,
+        /// Optional K-factor override (skips bend-table lookup).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        manual_k: Option<f64>,
+    },
+}
+
+/// Direction tag for sheet-metal flanges. Wire-compatible with
+/// `vcad_kernel_sheet::BendDirection` — kept local to `vcad-ir` so the IR
+/// crate stays light on kernel deps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SheetMetalDirection {
+    /// Child rises out of the parent's outside face.
+    Up,
+    /// Child descends out of the parent's inside face.
+    Down,
 }
 
 /// A node in the IR graph.

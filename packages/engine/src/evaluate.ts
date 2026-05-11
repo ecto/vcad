@@ -23,6 +23,7 @@ import type {
 } from "./mesh.js";
 import type { Solid } from "@vcad/kernel-wasm";
 import { solveForwardKinematics } from "./kinematics.js";
+import { buildSheetMetalChain, evaluateSheetMetalChain } from "./sheet-metal.js";
 
 /** Debug flag - set to true to enable verbose console logging */
 const DEBUG_EVAL = false;
@@ -113,7 +114,8 @@ export function evaluateDocument(
       ) as WasmEvaluatedScene;
 
       // Post-process: generate TS-side meshes for types the Rust evaluator
-      // doesn't tessellate (e.g. EmbroideryPattern).
+      // doesn't tessellate (e.g. EmbroideryPattern), and route sheet-metal
+      // roots through the dedicated kernel binding.
       const visibleRoots = doc.roots.filter((e) => e.visible !== false);
       const parts = result.parts.map((p, i) => {
         // If the WASM evaluator returned an empty mesh, check if it's an
@@ -124,6 +126,25 @@ export function evaluateDocument(
             const baseMesh = embroideryPatternToMesh(emb.pattern);
             const mesh = transformMesh(baseMesh, emb.transform);
             return { mesh, material: p.material };
+          }
+          // Sheet-metal: the regular evaluator returns empty for these ops
+          // (kernel.evaluateDocument knows nothing about them). The kernel's
+          // `evaluateSheetMetalChain` does the actual work.
+          const chain = buildSheetMetalChain(visibleRoots[i].root, doc.nodes);
+          if (chain) {
+            try {
+              const { mesh, sheetMetal } = evaluateSheetMetalChain(
+                chain,
+                kernel as unknown as Parameters<typeof evaluateSheetMetalChain>[1],
+              );
+              return { mesh, material: p.material, sheetMetal };
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e);
+              console.warn(
+                `[ENGINE] sheet-metal eval failed at root[${i}] (node ${visibleRoots[i].root}): ${msg}`,
+              );
+              return { mesh: wasmMeshToTriangleMesh(p.mesh), material: p.material };
+            }
           }
         }
         return { mesh: wasmMeshToTriangleMesh(p.mesh), material: p.material };
@@ -477,6 +498,27 @@ export function evaluateDocumentTS(
       const mesh = transformMesh(baseMesh, imported.transform);
       solids.push(Solid.empty());
       return { mesh, material: entry.material };
+    }
+
+    // Sheet-metal — route the chain through the kernel binding.
+    const smChain = buildSheetMetalChain(entry.root, doc.nodes);
+    if (smChain) {
+      try {
+        const { mesh, sheetMetal } = evaluateSheetMetalChain(
+          smChain,
+          kernel as unknown as Parameters<typeof evaluateSheetMetalChain>[1],
+        );
+        solids.push(Solid.empty());
+        return { mesh, material: entry.material, sheetMetal };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        failures.push({ scope: `root[${idx}]`, node_id: entry.root, error: msg });
+        console.warn(
+          `[ENGINE] sheet-metal eval failed at root[${idx}] (node ${entry.root}): ${msg}`,
+        );
+        solids.push(Solid.empty());
+        return { mesh: emptyMesh(), material: entry.material };
+      }
     }
 
     try {
@@ -842,6 +884,15 @@ function evaluateOp(
       // `expandPartInstances`. If one slips through, treat as empty to
       // avoid crashing the evaluator — the warning has already been
       // logged during expansion.
+      return Solid.empty();
+
+    case "SheetMetalBaseFlangeRect":
+    case "SheetMetalEdgeFlange":
+      // Sheet-metal ops bypass the Solid pipeline — root-level detection
+      // in `evaluateDocument` routes the chain to the kernel's
+      // `evaluateSheetMetalChain` and attaches the result. Encountering
+      // one here means the op got composed with another body, which the
+      // foundation tier doesn't support yet.
       return Solid.empty();
   }
 }

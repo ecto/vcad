@@ -9,6 +9,7 @@
 
 pub mod document_engine;
 pub mod keybindings;
+pub mod sheet_metal;
 pub mod sketch_session;
 
 use serde::{Deserialize, Serialize};
@@ -3653,6 +3654,11 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
 
         vcad_ir::CsgOp::PartInstance { .. } => Err(JsError::new(
             "PartInstance must be expanded by the engine before VCode evaluation",
+        )),
+
+        vcad_ir::CsgOp::SheetMetalBaseFlangeRect { .. }
+        | vcad_ir::CsgOp::SheetMetalEdgeFlange { .. } => Err(JsError::new(
+            "Sheet-metal ops must be routed through evaluateSheetMetalChain, not the BRep solid pipeline",
         )),
     }
 }

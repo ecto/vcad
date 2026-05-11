@@ -74,7 +74,9 @@ fn validate_op(doc: &Document, node_id: NodeId, op: &CsgOp) -> Result<(), EvalEr
         | CsgOp::MeshImport { .. }
         | CsgOp::PcbBoard { .. }
         | CsgOp::EmbroideryPattern { .. }
-        | CsgOp::PartInstance { .. } => {}
+        | CsgOp::PartInstance { .. }
+        | CsgOp::SheetMetalBaseFlangeRect { .. }
+        | CsgOp::SheetMetalEdgeFlange { .. } => {}
     }
 
     Ok(())
@@ -125,6 +127,8 @@ fn csg_op_name(op: &CsgOp) -> &'static str {
         CsgOp::PcbBoard { .. } => "PcbBoard",
         CsgOp::EmbroideryPattern { .. } => "EmbroideryPattern",
         CsgOp::PartInstance { .. } => "PartInstance",
+        CsgOp::SheetMetalBaseFlangeRect { .. } => "SheetMetalBaseFlangeRect",
+        CsgOp::SheetMetalEdgeFlange { .. } => "SheetMetalEdgeFlange",
     }
 }
 

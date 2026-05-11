@@ -69,6 +69,7 @@ import { springExample } from "./spring.vcad";
 import { vaseExample } from "./vase.vcad";
 import { wineglassExample } from "./wineglass.vcad";
 import { robotArmExample } from "./robot-arm.vcad";
+import { sheetMetalBracketExample } from "./sheet-metal-bracket.vcad";
 import { unitreeG1Example } from "./unitree-g1.urdf";
 import { unitreeGo2Example } from "./unitree-go2.urdf";
 import { unitreeG1OfficialExample } from "./unitree-g1-official.urdf";
@@ -85,6 +86,7 @@ export const examples: Example[] = [
   vaseExample,
   wineglassExample,
   robotArmExample,
+  sheetMetalBracketExample,
   unitreeG1Example,
   unitreeGo2Example,
   unitreeG1OfficialExample,
