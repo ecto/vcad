@@ -56,18 +56,23 @@ pub fn run(
     if let Some(rule) = pack.rule("steep_overhang") {
         let max_overhang_deg = rule.num("max_overhang_deg", 135.0);
         for sample in geom::overhang::sample(brep, max_overhang_deg) {
-            let anchor = geom::face_midpoint_and_normal(brep, sample.face)
-                .map(|(p, _)| p)
-                .unwrap_or_else(|| Point3::new(0.0, 0.0, 0.0));
+            let support_note = if sample.support_column_mm > 0.0 {
+                format!(
+                    " (support column ≈ {:.1} mm)",
+                    sample.support_column_mm
+                )
+            } else {
+                String::new()
+            };
             let mut issue = DfmIssue::new(
                 "fdm.steep_overhang",
                 rule.severity_enum(),
                 process,
                 format!(
-                    "Face leans {:.0}° from +Z — supports required",
-                    sample.angle_from_up_deg
+                    "Face leans {:.0}° from +Z — supports required{}",
+                    sample.angle_from_up_deg, support_note
                 ),
-                anchor,
+                sample.anchor,
                 sample.angle_from_up_deg,
                 max_overhang_deg,
                 "deg",
