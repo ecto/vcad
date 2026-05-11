@@ -353,9 +353,6 @@ fn tessellate_model(model: &SheetMetalModel) -> MeshDto {
 
 fn flat_pattern_to_dto(flat: FlatPattern) -> FlatPatternDto {
     let bbox = flat.bbox();
-    let to_pair = |v: Vec<vcad_kernel::vcad_kernel_math::Point2>| -> Vec<[f64; 2]> {
-        v.into_iter().map(|p| [p.x, p.y]).collect()
-    };
     let panel_outlines_2d = flat
         .panel_outlines_2d
         .iter()
@@ -384,7 +381,6 @@ fn flat_pattern_to_dto(flat: FlatPattern) -> FlatPatternDto {
             bend_id: c.bend_id,
         })
         .collect();
-    let _ = to_pair; // silence unused (kept for future debugging)
     FlatPatternDto {
         thickness: flat.thickness,
         panel_outlines_2d,
@@ -439,7 +435,7 @@ mod tests {
         assert!(parsed["error"].is_null(), "got error: {parsed}");
         assert_eq!(parsed["model"]["panel_count"], 3);
         assert_eq!(parsed["model"]["bend_count"], 2);
-        assert!(parsed["mesh"]["positions"].as_array().unwrap().len() > 0);
+        assert!(!parsed["mesh"]["positions"].as_array().unwrap().is_empty());
         assert_eq!(
             parsed["flat_pattern"]["creases"].as_array().unwrap().len(),
             2
