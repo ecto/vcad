@@ -154,6 +154,22 @@ pub fn evaluate_document(
             let mut part_def_meshes: HashMap<String, EvaluatedMesh> = HashMap::new();
 
             for (id, part_def) in pd_map {
+                // ImportedMesh (e.g. browser-loaded STL/DAE for a URDF link)
+                // bypasses the CSG evaluator: the kernel can't turn a
+                // triangle soup back into a BRep solid, so we apply the
+                // accumulated transform chain to the raw vertex data and
+                // hand the result to the renderer directly. URDFs use this
+                // path for every link whose <visual> is a <mesh>.
+                if let Some(imported) = find_imported_mesh(part_def.root, &doc.nodes) {
+                    let mesh = transform_imported_mesh(&imported);
+                    part_def_meshes.insert(id.clone(), mesh.clone());
+                    eval_part_defs.push(EvaluatedPartDef {
+                        id: id.clone(),
+                        mesh,
+                    });
+                    continue;
+                }
+
                 let outcome =
                     catch_unwind(AssertUnwindSafe(|| -> Result<EvaluatedMesh, EvalError> {
                         match evaluate_node_timed(

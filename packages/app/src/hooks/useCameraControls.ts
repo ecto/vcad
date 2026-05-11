@@ -63,17 +63,49 @@ export function useCameraControls() {
     // Helper to get bounding box of all geometry in scene
     function getSceneBoundingBox(): THREE.Box3 | null {
       const scene = useEngineStore.getState().scene;
-      if (!scene || scene.parts.length === 0) return null;
+      if (!scene) return null;
 
       const box = new THREE.Box3();
-      for (const evalPart of scene.parts) {
-        const positions = evalPart.mesh.positions;
-        for (let i = 0; i < positions.length; i += 3) {
-          box.expandByPoint(
-            new THREE.Vector3(positions[i], positions[i + 1], positions[i + 2]),
-          );
+      const tmp = new THREE.Vector3();
+
+      // Assembly mode: instances carry their own world transform from FK,
+      // so the link-local mesh positions need to be transformed before
+      // they go into the bbox. Skip scene.parts in this mode — for URDF
+      // assemblies the importer populates both lists, but parts hold the
+      // un-articulated link-local geometry which would collapse the bbox
+      // around the origin and break auto-fit.
+      if (scene.instances && scene.instances.length > 0) {
+        for (const inst of scene.instances) {
+          const t = inst.transform;
+          const positions = inst.mesh.positions;
+          for (let i = 0; i < positions.length; i += 3) {
+            const px = positions[i]!;
+            const py = positions[i + 1]!;
+            const pz = positions[i + 2]!;
+            if (t) {
+              tmp.set(
+                px * t.scale.x + t.translation.x,
+                py * t.scale.y + t.translation.y,
+                pz * t.scale.z + t.translation.z,
+              );
+            } else {
+              tmp.set(px, py, pz);
+            }
+            box.expandByPoint(tmp);
+          }
+        }
+      } else {
+        if (scene.parts.length === 0) return null;
+        for (const evalPart of scene.parts) {
+          const positions = evalPart.mesh.positions;
+          for (let i = 0; i < positions.length; i += 3) {
+            box.expandByPoint(
+              new THREE.Vector3(positions[i], positions[i + 1], positions[i + 2]),
+            );
+          }
         }
       }
+
       return box.isEmpty() ? null : box;
     }
 

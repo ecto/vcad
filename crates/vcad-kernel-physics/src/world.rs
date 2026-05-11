@@ -624,9 +624,40 @@ impl PhysicsWorld {
             .ok_or_else(|| PhysicsError::Evaluation(format!("Node {} not found", node_id)))?;
 
         // STL meshes bypass the BRep solid path — load straight to a
-        // triangle mesh in the IR's millimetre frame.
+        // triangle mesh in the IR's millimetre frame. If the path can't
+        // be opened (e.g. browser-flow URDF imports keep the raw URDF
+        // filename and have no filesystem behind it), fall back to a 1 cm
+        // placeholder cube so authored inertials still anchor a body.
         if let vcad_ir::CsgOp::MeshImport { path, scale } = &node.op {
-            return crate::stl::load_stl(std::path::Path::new(path), *scale);
+            match crate::stl::load_stl(std::path::Path::new(path), *scale) {
+                Ok(mesh) => return Ok(mesh),
+                Err(_) => return Ok(vcad_kernel::Solid::cube(10.0, 10.0, 10.0).to_mesh(32)),
+            }
+        }
+        // Inline ImportedMesh (e.g. browser pre-parsed STL/DAE) ships its
+        // triangle data inside the IR node — pull positions / indices /
+        // optional normals straight across into the physics TriangleMesh
+        // (units stay millimetres).
+        if let vcad_ir::CsgOp::ImportedMesh {
+            positions,
+            indices,
+            normals,
+            ..
+        } = &node.op
+        {
+            use vcad_kernel_tessellate::TriangleMesh;
+            let n_verts = positions.len() / 3;
+            let vertices: Vec<f32> = positions.iter().map(|v| *v as f32).collect();
+            let normals_f32: Vec<f32> = normals
+                .as_ref()
+                .map(|n| n.iter().map(|v| *v as f32).collect())
+                .unwrap_or_else(|| vec![0.0; n_verts * 3]);
+            return Ok(TriangleMesh {
+                vertices,
+                indices: indices.clone(),
+                normals: normals_f32,
+                face_kinds: Vec::new(),
+            });
         }
 
         // Create a simple mesh based on the primitive type

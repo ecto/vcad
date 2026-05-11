@@ -840,6 +840,7 @@ export function App() {
             return;
           }
           const bytes = new TextEncoder().encode(detail.urdf.urdfText);
+          const meshUrls = detail.urdf.meshes;
           const documentJson = await runJob(
             { verb: `Loading ${detail.urdf.name ?? "robot"}` },
             () =>
@@ -853,6 +854,22 @@ export function App() {
               ),
           );
           const document = JSON.parse(documentJson) as Document;
+          if (meshUrls && Object.keys(meshUrls).length > 0) {
+            // Fetch every URDF-referenced mesh in parallel and swap each
+            // MeshImport node for an inline ImportedMesh. Done after the
+            // initial doc swap-out so the splash UI is gone — large STL
+            // sets (G1 is ~20 MB) take a noticeable beat to fetch+parse.
+            const { loadUrdfMeshes, inlineMeshImports } = await import(
+              "./lib/urdf-meshes"
+            );
+            await runJob(
+              { verb: `Loading ${detail.urdf.name ?? "robot"} meshes` },
+              async () => {
+                const meshes = await loadUrdfMeshes(meshUrls);
+                inlineMeshImports(document, meshes);
+              },
+            );
+          }
           const parts = deriveParts(document);
           const { nextNodeId, nextPartNum } = computeNextIds(document, parts);
           await flushPendingSave();
