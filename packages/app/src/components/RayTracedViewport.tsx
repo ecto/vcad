@@ -445,9 +445,18 @@ export function RayTracedViewportOverlay() {
             }
           }
           renderInProgressRef.current = false;
+          // Clear any previous error now that a render landed cleanly.
+          const errState = useUiStore.getState();
+          if (errState.raytraceError !== null) {
+            errState.setRaytraceError(null);
+          }
         })
         .catch((e: Error) => {
-          logger.debug("gpu", `Render failed: ${e}`);
+          const msg = e?.message ?? String(e);
+          logger.warn("gpu", `Render failed: ${msg}`);
+          // Surface to the user via the footer chip. Silent failures are
+          // what made the WGSL-shadowing bug in PR #185 so hard to find.
+          useUiStore.getState().setRaytraceError(msg);
           renderInProgressRef.current = false;
         });
     },

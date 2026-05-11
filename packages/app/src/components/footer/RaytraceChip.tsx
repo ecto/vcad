@@ -37,6 +37,7 @@ export function RaytraceChip({ className }: { className?: string }) {
   const renderMode = useUiStore((s) => s.renderMode);
   const raytraceAvailable = useUiStore((s) => s.raytraceAvailable);
   const raytraceQuality = useUiStore((s) => s.raytraceQuality);
+  const raytraceError = useUiStore((s) => s.raytraceError);
   const raytraceEdgesEnabled = useUiStore((s) => s.raytraceEdgesEnabled);
   const raytraceEdgeSilhouetteEnabled = useUiStore((s) => s.raytraceEdgeSilhouetteEnabled);
   const raytraceEdgeCreaseEnabled = useUiStore((s) => s.raytraceEdgeCreaseEnabled);
@@ -79,12 +80,19 @@ export function RaytraceChip({ className }: { className?: string }) {
   if (!raytraceAvailable) return null;
 
   const isOn = renderMode === "raytrace";
+  const isErrored = isOn && raytraceError !== null;
 
   return (
     <Popover.Root>
       <Tooltip
         side="top"
-        content={isOn ? "Ray-tracing — quality, edges, turn off" : "Ray-tracing — turn on, quality, edges"}
+        content={
+          isErrored
+            ? `Ray-tracing error: ${raytraceError}`
+            : isOn
+              ? "Ray-tracing — quality, edges, turn off"
+              : "Ray-tracing — turn on, quality, edges"
+        }
       >
         <Popover.Trigger asChild>
           <FooterChipButton
@@ -99,16 +107,24 @@ export function RaytraceChip({ className }: { className?: string }) {
               weight="fill"
               className={cn(
                 "shrink-0 transition-colors",
-                isOn ? "text-violet-400" : "text-text-muted/50",
+                isErrored
+                  ? "text-red-400"
+                  : isOn
+                    ? "text-violet-400"
+                    : "text-text-muted/50",
               )}
             />
             <span
               className={cn(
                 "uppercase tracking-wide tabular-nums transition-colors",
-                isOn ? "text-text-muted" : "text-text-muted/60",
+                isErrored
+                  ? "text-red-400"
+                  : isOn
+                    ? "text-text-muted"
+                    : "text-text-muted/60",
               )}
             >
-              {isOn ? QUALITY_SHORT[raytraceQuality] : "OFF"}
+              {isErrored ? "ERR" : isOn ? QUALITY_SHORT[raytraceQuality] : "OFF"}
             </span>
           </FooterChipButton>
         </Popover.Trigger>
@@ -127,6 +143,17 @@ export function RaytraceChip({ className }: { className?: string }) {
             "text-[11px]",
           )}
         >
+          {isErrored && (
+            <div className="mx-1 mt-1 mb-1 rounded-sm bg-red-500/15 px-2 py-1.5 text-[10px] leading-tight text-red-300">
+              <div className="uppercase tracking-wide text-[9px] text-red-400 mb-0.5">
+                Render error
+              </div>
+              <div className="break-words font-mono text-[9.5px] text-red-200/90 line-clamp-3">
+                {raytraceError}
+              </div>
+            </div>
+          )}
+
           <div className="px-2 pt-1 pb-1.5 text-text-muted/60 uppercase tracking-[0.15em] text-[9px]">
             Quality
           </div>
