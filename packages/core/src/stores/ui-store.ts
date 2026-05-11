@@ -107,6 +107,13 @@ export interface UiState {
   raytraceQuality: RaytraceQuality;
   raytraceDebugMode: RaytraceDebugMode;
   raytraceAvailable: boolean;
+  /**
+   * Most recent ray-trace render failure, or null when the last render
+   * succeeded. Cleared on a successful render. Used by the footer chip
+   * to surface silent GPU failures (e.g. WebGPU validation errors that
+   * would otherwise only land in the browser console).
+   */
+  raytraceError: string | null;
   raytraceEdgesEnabled: boolean;
   raytraceEdgeDepthThreshold: number;
   raytraceEdgeNormalThreshold: number;
@@ -190,6 +197,7 @@ export interface UiState {
   setRaytraceQuality: (quality: RaytraceQuality) => void;
   setRaytraceDebugMode: (mode: RaytraceDebugMode) => void;
   setRaytraceAvailable: (available: boolean) => void;
+  setRaytraceError: (error: string | null) => void;
   setRaytraceEdgesEnabled: (enabled: boolean) => void;
   setRaytraceEdgeDepthThreshold: (threshold: number) => void;
   setRaytraceEdgeNormalThreshold: (threshold: number) => void;
@@ -301,6 +309,7 @@ export const useUiStore = create<UiState>((set) => ({
   raytraceQuality: "draft",
   raytraceDebugMode: "off",
   raytraceAvailable: false,
+  raytraceError: null,
   raytraceEdgesEnabled: true,
   raytraceEdgeDepthThreshold: 0.1,
   raytraceEdgeNormalThreshold: 30.0,
@@ -477,6 +486,7 @@ export const useUiStore = create<UiState>((set) => ({
   setRaytraceDebugMode: (mode) => set({ raytraceDebugMode: mode }),
 
   setRaytraceAvailable: (available) => set({ raytraceAvailable: available }),
+  setRaytraceError: (error) => set({ raytraceError: error }),
 
   setRaytraceEdgesEnabled: (enabled) => set({ raytraceEdgesEnabled: enabled }),
 

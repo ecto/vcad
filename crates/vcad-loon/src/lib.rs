@@ -12,7 +12,7 @@ mod convert;
 pub use convert::value_to_document;
 
 /// The bundled vcad loon library source.
-pub const VCAD_LIB_SOURCE: &str = include_str!("../../../cad-lib/src/lib.loon");
+pub const VCAD_LIB_SOURCE: &str = include_str!("../../../lib/src/lib.loon");
 
 /// Evaluate a `.vcad` loon source string and produce a Document.
 ///

@@ -1083,6 +1083,45 @@ export class Solid {
         return Solid.__wrap(ret);
     }
     /**
+     * Run DFM directly on this solid's BRep.
+     *
+     * Returns the report JSON; if the solid is mesh-only (e.g. after
+     * a boolean — see issue #186), the report has an empty `issues`
+     * array and a note in `rule_pack_name`.
+     *
+     * `root_node_id` (when > 0) attributes every face in the BRep to
+     * that IR node — the v1 coarse provenance heuristic. Pass 0 to
+     * skip provenance entirely; emitted issues will then carry
+     * `origin_op: null` and `dfm_apply_fix` will only be able to act
+     * on rules whose fix kind is `manual`.
+     * @param {string} process
+     * @param {string} rule_pack_toml
+     * @param {bigint} root_node_id
+     * @returns {string}
+     */
+    runDfm(process, rule_pack_toml, root_node_id) {
+        let deferred4_0;
+        let deferred4_1;
+        try {
+            const ptr0 = passStringToWasm0(process, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(rule_pack_toml, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len1 = WASM_VECTOR_LEN;
+            const ret = wasm.solid_runDfm(this.__wbg_ptr, ptr0, len0, ptr1, len1, root_node_id);
+            var ptr3 = ret[0];
+            var len3 = ret[1];
+            if (ret[3]) {
+                ptr3 = 0; len3 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred4_0 = ptr3;
+            deferred4_1 = len3;
+            return getStringFromWasm0(ptr3, len3);
+        } finally {
+            wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+        }
+    }
+    /**
      * Scale the solid by (x, y, z).
      * @param {number} x
      * @param {number} y
@@ -3469,6 +3508,34 @@ export function estimatePrintCost(volume_mm3, infill_density, wall_count, line_w
 }
 
 /**
+ * Estimate manufacturing cost for the supplied process + material.
+ *
+ * `part_volume_mm3` is the exact part volume the caller has already
+ * computed; `stock_volume_mm3` is only used for CNC (defaults to
+ * `part_volume_mm3 * 2` if non-positive). `qty` matters for
+ * mold/casting amortization; `feature_count` matters for CNC time.
+ * Material names match the catalog in `vcad_kernel::vcad_kernel_cost::Material`.
+ * @param {string} process
+ * @param {string} material_name
+ * @param {number} part_volume_mm3
+ * @param {number} stock_volume_mm3
+ * @param {number} qty
+ * @param {number} feature_count
+ * @returns {any}
+ */
+export function estimate_cost_for_process(process, material_name, part_volume_mm3, stock_volume_mm3, qty, feature_count) {
+    const ptr0 = passStringToWasm0(process, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(material_name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.estimate_cost_for_process(ptr0, len0, ptr1, len1, part_volume_mm3, stock_volume_mm3, qty, feature_count);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Evaluate a loon source string and return a JSON-serialized vcad Document.
  *
  * The vcad library (types, constructors) is automatically prepended.
@@ -3746,9 +3813,38 @@ export function get_anthropic_tools_json() {
 }
 
 /**
+ * Return the bundled default rule pack (TOML) for a process name.
+ *
+ * Process names: `"cnc_3axis"`, `"fdm"`, `"sla"`, `"injection"`,
+ * `"sheet_metal"`, `"casting_sand"`, `"casting_investment"`.
+ * @param {string} process
+ * @returns {string}
+ */
+export function get_default_dfm_pack(process) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(process, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.get_default_dfm_pack(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Get the kernel version string.
  * Use this in browser console to verify the correct WASM build is loaded:
- * `kernelWasm.get_kernel_version()` should return "2025-02-21-step-facebound-fix"
+ * `kernelWasm.get_kernel_version()` returns `<crate-version>-<sha>[-dirty]`.
  * @returns {string}
  */
 export function get_kernel_version() {
@@ -6057,7 +6153,7 @@ function __wbg_get_imports() {
                     const a = state0.a;
                     state0.a = 0;
                     try {
-                        return wasm_bindgen__convert__closures_____invoke__h909ef70400a4aa92(a, state0.b, arg0, arg1);
+                        return wasm_bindgen__convert__closures_____invoke__h61f848611b9bfd22(a, state0.b, arg0, arg1);
                     } finally {
                         state0.a = a;
                     }
@@ -6642,13 +6738,13 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 1387, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1388, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h449c01a9b484b49e, wasm_bindgen__convert__closures_____invoke__h97f5d3065e41a070);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2156, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2157, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h29172bbcd065953b, wasm_bindgen__convert__closures_____invoke__h409646c44a6f7cf4);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2101, function: Function { arguments: [Externref], shim_idx: 2102, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h5fc04d9207857a4f, wasm_bindgen__convert__closures_____invoke__h93fa00cb00fe3f24);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2940, function: Function { arguments: [Externref], shim_idx: 2941, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h6ed7eb1128abde65, wasm_bindgen__convert__closures_____invoke__h53e1d5f5246c70f9);
             return ret;
         },
         __wbindgen_cast_0000000000000003: function(arg0) {
@@ -6736,16 +6832,16 @@ function __wbg_get_imports() {
     };
 }
 
-function wasm_bindgen__convert__closures_____invoke__h97f5d3065e41a070(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h97f5d3065e41a070(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h409646c44a6f7cf4(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h409646c44a6f7cf4(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h93fa00cb00fe3f24(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h93fa00cb00fe3f24(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h53e1d5f5246c70f9(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h53e1d5f5246c70f9(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h909ef70400a4aa92(arg0, arg1, arg2, arg3) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h909ef70400a4aa92(arg0, arg1, arg2, arg3);
+function wasm_bindgen__convert__closures_____invoke__h61f848611b9bfd22(arg0, arg1, arg2, arg3) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h61f848611b9bfd22(arg0, arg1, arg2, arg3);
 }
 
 

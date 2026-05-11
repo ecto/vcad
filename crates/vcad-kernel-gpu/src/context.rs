@@ -101,6 +101,21 @@ impl GpuContext {
             )
             .await?;
 
+        // Surface WebGPU validation / out-of-memory errors that don't sit
+        // inside an explicit error scope. Without this, a bad shader or
+        // bind-group layout leaves the pipeline silently invalid and the
+        // output texture stays at its initial zero — exactly the failure
+        // mode that hid the raytrace WGSL bug for too long. Route them to
+        // a place a human will see (browser console on wasm, eprintln
+        // otherwise).
+        device.on_uncaptured_error(Box::new(|err| {
+            let msg = format!("WebGPU uncaptured error: {err}");
+            #[cfg(target_arch = "wasm32")]
+            web_sys::console::error_1(&msg.into());
+            #[cfg(not(target_arch = "wasm32"))]
+            eprintln!("{msg}");
+        }));
+
         Ok(GpuContext { device, queue })
     }
 

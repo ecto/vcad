@@ -20,6 +20,7 @@ import { ToolDialogs } from "@/components/ToolDialogs";
 // three, @react-three/fiber, and @react-three/drei. Lazy-loading it lets the
 // splash render and WASM start fetching before we pay the parse cost.
 import { FeatureTree } from "@/components/FeatureTree";
+import { DfmPanel } from "@/components/DfmPanel";
 import { MobileShell } from "@/components/mobile/MobileShell";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useNativeWindowDrag } from "@/hooks/useNativeWindowDrag";
@@ -214,6 +215,16 @@ function FeatureTreeSlot({ sketchActive }: { sketchActive: boolean }) {
           )}
         </div>
       )}
+
+      {/* DFM (Design for Manufacturing) panel — collapsed by default,
+          expands when the user toggles "Live check" inside it. Sits in
+          the right sidebar so the issue list is adjacent to the
+          feature tree (the natural reading flow: feature → issue → fix). */}
+      <div className="border-t border-border/40">
+        <AsyncBoundary region="dfm-panel" fallback={null}>
+          <DfmPanel />
+        </AsyncBoundary>
+      </div>
     </div>
   );
 }

@@ -72,6 +72,16 @@ import {
   calcImpedanceSchema,
 } from "./tools/ecad.js";
 import { createCadLoon, createCadLoonSchema } from "./tools/loon.js";
+import {
+  dfmCheck,
+  dfmCheckSchema,
+  dfmExplain,
+  dfmExplainSchema,
+  dfmSuggestFix,
+  dfmSuggestFixSchema,
+  dfmApplyFix,
+  dfmApplyFixSchema,
+} from "./tools/dfm.js";
 import { appendGlbPreview } from "./tools/preview.js";
 import {
   getViewerHtml,
@@ -217,6 +227,31 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
         description:
           "Inspect an open session document to get aggregate geometry properties: volume, surface area, bounding box, center of mass, triangle count, and mass (if material density is known). For per-part inspection use the chat-surface `inspect_part` / `describe_scene` tools (deferred from this MCP surface in v1).",
         inputSchema: inspectCadSchema,
+      },
+      // ── DFM (Design for Manufacturing) ──────────────────────────
+      {
+        name: "dfm_check",
+        description:
+          "Run Design-for-Manufacturing checks against an open session document for a chosen process (cnc_3axis, fdm, sla, injection, sheet_metal, casting_sand, casting_investment). Returns a structured report with severities, measurements, face references, and suggested fixes. Each rule's threshold is sourced from a TOML pack at lib/dfm/<process>.toml — pass `rule_pack_toml` to override.",
+        inputSchema: dfmCheckSchema,
+      },
+      {
+        name: "dfm_explain",
+        description:
+          "Return the long-form explanation for a specific DFM issue from the most recent `dfm_check` run on this document.",
+        inputSchema: dfmExplainSchema,
+      },
+      {
+        name: "dfm_suggest_fix",
+        description:
+          "Return the suggested patch (set_param / wrap_op / replace_op / manual) for a DFM issue. Inspect the patch; only call `dfm_apply_fix` when you're ready to mutate the IR.",
+        inputSchema: dfmSuggestFixSchema,
+      },
+      {
+        name: "dfm_apply_fix",
+        description:
+          "Apply an approved DFM fix to the session document. v1 supports `set_param` patches (raise a fillet radius, thicken a wall) — other kinds throw and require manual edits. Re-run `dfm_check` afterwards to confirm the issue cleared.",
+        inputSchema: dfmApplyFixSchema,
       },
       {
         name: "import_step",
@@ -443,6 +478,22 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
 
         case "inspect_cad":
           result = inspectCad(args, engine);
+          break;
+
+        case "dfm_check":
+          result = await dfmCheck(args, engine);
+          break;
+
+        case "dfm_explain":
+          result = dfmExplain(args);
+          break;
+
+        case "dfm_suggest_fix":
+          result = dfmSuggestFix(args);
+          break;
+
+        case "dfm_apply_fix":
+          result = dfmApplyFix(args);
           break;
 
         case "import_step":

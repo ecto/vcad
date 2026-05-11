@@ -9,14 +9,29 @@ publish = false
 
 [features]
 default = ["analysis"]
-analysis = ["dep:vcad-kernel-topo", "dep:vcad-kernel-geom", "dep:vcad-kernel-primitives"]
+analysis = [
+    "dep:vcad-kernel-topo",
+    "dep:vcad-kernel-geom",
+    "dep:vcad-kernel-primitives",
+    "dep:vcad-kernel-dfm",
+    "dep:toml",
+]
 
 [dependencies]
 vcad-kernel-tessellate = { workspace = true }
 vcad-kernel-math = { workspace = true }
+vcad-kernel-cost = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 rayon = "1.10"
+
+[dependencies.vcad-kernel-dfm]
+workspace = true
+optional = true
+
+[dependencies.toml]
+workspace = true
+optional = true
 
 [dependencies.vcad-kernel-topo]
 workspace = true
