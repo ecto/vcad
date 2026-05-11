@@ -1,0 +1,23 @@
+[package]
+name = "vcad-kernel-dfm"
+description = "Design-for-Manufacturing analysis for the vcad kernel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+vcad-kernel-math = { workspace = true }
+vcad-kernel-topo = { workspace = true }
+vcad-kernel-geom = { workspace = true }
+vcad-kernel-primitives = { workspace = true }
+vcad-kernel-cost = { workspace = true }
+vcad-ir = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+vcad-kernel-primitives = { workspace = true }

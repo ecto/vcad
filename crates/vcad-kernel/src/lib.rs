@@ -28,6 +28,8 @@ pub use vcad_kernel_sketch;
 pub use vcad_kernel_step;
 pub use vcad_kernel_sweep;
 pub use vcad_kernel_tessellate;
+pub use vcad_kernel_cost;
+pub use vcad_kernel_dfm;
 pub use vcad_kernel_text;
 pub use vcad_kernel_topo;
 

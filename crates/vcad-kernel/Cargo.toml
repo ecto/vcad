@@ -20,6 +20,8 @@ vcad-kernel-shell = { workspace = true }
 vcad-kernel-step = { workspace = true }
 vcad-kernel-constraints = { workspace = true }
 vcad-kernel-text = { workspace = true }
+vcad-kernel-cost = { workspace = true }
+vcad-kernel-dfm = { workspace = true }
 
 [features]
 # Forwards the `no-builtin-font` flag from vcad-kernel-text so downstream

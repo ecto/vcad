@@ -1,0 +1,21 @@
+schema = "vcad.dfm/1"
+version = "1"
+process = "casting_sand"
+name = "Sand casting"
+notes = "Gravity-fed sand casting; defaults for aluminum and iron parts."
+
+[rules.insufficient_draft]
+severity = "warning"
+min_draft_deg = 3.0
+pull_dir = "+Z"
+fix = "manual"
+
+[rules.min_section_thickness]
+severity = "error"
+min_section_mm = 3.0
+fix = "manual"
+
+[rules.hot_spot]
+severity = "warning"
+max_thickness_ratio = 2.0
+fix = "manual"

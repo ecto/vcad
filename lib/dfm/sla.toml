@@ -1,0 +1,20 @@
+schema = "vcad.dfm/1"
+version = "1"
+process = "sla"
+name = "Standard SLA resin"
+notes = "Defaults work for most desktop resin printers."
+
+[rules.thin_wall]
+severity = "error"
+min_wall_mm = 0.6
+fix = "thicken_wall"
+
+[rules.steep_overhang]
+severity = "warning"
+max_overhang_deg = 135.0
+fix = "manual"
+
+[rules.small_hole]
+severity = "warning"
+min_diameter_mm = 0.5
+fix = "manual"

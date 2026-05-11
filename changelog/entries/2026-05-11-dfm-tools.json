@@ -1,0 +1,20 @@
+{
+  "id": "2026-05-11-dfm-tools",
+  "version": "0.9.4",
+  "date": "2026-05-11",
+  "category": "feat",
+  "title": "Design-for-Manufacturing analysis",
+  "summary": "Structured DFM checks across CNC, FDM/SLA, injection, sheet metal, and sand/investment casting, with agent-native MCP tools and a shared cost model.",
+  "details": "## What's New\n\n- **`vcad-kernel-dfm`** crate: per-process rule packs (TOML), structured `DfmIssue` payloads with face references and suggested fixes, and a `Process` enum covering CNC 3-axis, FDM, SLA, injection molding, sheet metal, sand casting, and investment casting.\n- **`vcad-kernel-cost`** crate: shared `Material` catalog + `CostEstimate` shape consumed by both the slicer and the DFM cost section, so QuotePanel / DFM / slicer numbers agree.\n- **4 new MCP tools**: `dfm_check`, `dfm_explain`, `dfm_suggest_fix`, `dfm_apply_fix` — close the agent loop (paste a part, get a manufacturable revision back). `dfm_apply_fix` v1 supports `set_param` patches (raise a fillet, thicken a wall).\n- **Forkable rule packs** at `lib/dfm/*.toml` so shops can tune thresholds for their tool library / supplier without recompiling.\n- **Two new WASM bindings**: `Solid.runDfm()` for in-place DFM on an evaluated part, and `estimate_cost_for_process()` for per-process cost.\n\n## Refactor\n\n- Renamed the top-level `cad-lib/` directory to `lib/` so it can host the loon stdlib alongside the DFM rule packs.",
+  "features": [
+    "dfm",
+    "manufacturing",
+    "cost"
+  ],
+  "mcpTools": [
+    "dfm_check",
+    "dfm_explain",
+    "dfm_suggest_fix",
+    "dfm_apply_fix"
+  ]
+}
