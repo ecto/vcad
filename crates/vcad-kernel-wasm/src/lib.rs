@@ -2571,12 +2571,7 @@ impl RayTracer {
     /// * `depth_threshold` - Depth discontinuity threshold (default: 0.1)
     /// * `normal_threshold` - Normal angle threshold in degrees (default: 30.0)
     #[wasm_bindgen(js_name = setEdgeDetection)]
-    pub fn set_edge_detection(
-        &self,
-        enabled: bool,
-        depth_threshold: f32,
-        normal_threshold: f32,
-    ) {
+    pub fn set_edge_detection(&self, enabled: bool, depth_threshold: f32, normal_threshold: f32) {
         {
             let mut inner = self.inner.borrow_mut();
             inner.enable_edges = enabled;
