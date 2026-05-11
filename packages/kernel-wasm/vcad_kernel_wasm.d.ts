@@ -1531,7 +1531,7 @@ export function get_anthropic_tools_json(): string;
 /**
  * Get the kernel version string.
  * Use this in browser console to verify the correct WASM build is loaded:
- * `kernelWasm.get_kernel_version()` should return "2025-02-21-step-facebound-fix"
+ * `kernelWasm.get_kernel_version()` returns `<crate-version>-<sha>[-dirty]`.
  */
 export function get_kernel_version(): string;
 

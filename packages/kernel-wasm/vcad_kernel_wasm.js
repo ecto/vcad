@@ -3723,7 +3723,7 @@ export function get_anthropic_tools_json() {
 /**
  * Get the kernel version string.
  * Use this in browser console to verify the correct WASM build is loaded:
- * `kernelWasm.get_kernel_version()` should return "2025-02-21-step-facebound-fix"
+ * `kernelWasm.get_kernel_version()` returns `<crate-version>-<sha>[-dirty]`.
  * @returns {string}
  */
 export function get_kernel_version() {
@@ -6617,12 +6617,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 1302, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1303, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 1305, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1306, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2089, function: Function { arguments: [Externref], shim_idx: 2090, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2091, function: Function { arguments: [Externref], shim_idx: 2092, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
             return ret;
         },
