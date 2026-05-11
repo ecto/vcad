@@ -16,7 +16,7 @@
       "headers": [
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://*.vercel-insights.com https://*.vercel-analytics.com https://us.i.posthog.com https://us-assets.i.posthog.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://yteuhwciuxcbjwmabawj.supabase.co wss://yteuhwciuxcbjwmabawj.supabase.co https://*.vercel-insights.com https://*.vercel-analytics.com https://us.i.posthog.com https://us-assets.i.posthog.com; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'"
+          "value": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob: https://*.vercel-insights.com https://*.vercel-analytics.com https://us.i.posthog.com https://us-assets.i.posthog.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://yteuhwciuxcbjwmabawj.supabase.co wss://yteuhwciuxcbjwmabawj.supabase.co https://db.vcad.io wss://db.vcad.io https://github.com https://*.githubusercontent.com https://*.vercel-insights.com https://*.vercel-analytics.com https://us.i.posthog.com https://us-assets.i.posthog.com; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'"
         },
         { "key": "X-Content-Type-Options", "value": "nosniff" },
         { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
