@@ -45,13 +45,13 @@ export function DfmAnnotations() {
   return (
     <group>
       {grouped.map((group, idx) => {
-        const lead = group[0];
+        const lead = group[0]!;
         // Account for vcad's Z-up → Three.js Y-up wrap (-90° X rotation
         // applied by the renderer wrapper).
         const position: [number, number, number] = [
-          lead.anchor[0],
-          lead.anchor[1],
-          lead.anchor[2],
+          lead.anchor[0]!,
+          lead.anchor[1]!,
+          lead.anchor[2]!,
         ];
         const isSelected = group.some((i) => i.id === selectedId);
         return (
@@ -82,7 +82,7 @@ interface DfmBadgeProps {
 
 function DfmBadge({ issues, selected, onSelect }: DfmBadgeProps) {
   const top = highestSeverity(issues);
-  const lead = issues.find((i) => i.severity === top) ?? issues[0];
+  const lead = (issues.find((i) => i.severity === top) ?? issues[0])!;
   const ringClass = SEVERITY_RING[top];
   const glyph = SEVERITY_GLYPH[top];
   const count = issues.length;

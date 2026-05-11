@@ -41,18 +41,18 @@ function exactVolumeMm3(scene: { parts: { mesh: { positions: Float32Array; indic
     const { positions, indices } = part.mesh;
     let v = 0;
     for (let t = 0; t < indices.length; t += 3) {
-      const i0 = indices[t] * 3;
-      const i1 = indices[t + 1] * 3;
-      const i2 = indices[t + 2] * 3;
-      const x1 = positions[i0],
-        y1 = positions[i0 + 1],
-        z1 = positions[i0 + 2];
-      const x2 = positions[i1],
-        y2 = positions[i1 + 1],
-        z2 = positions[i1 + 2];
-      const x3 = positions[i2],
-        y3 = positions[i2 + 1],
-        z3 = positions[i2 + 2];
+      const i0 = indices[t]! * 3;
+      const i1 = indices[t + 1]! * 3;
+      const i2 = indices[t + 2]! * 3;
+      const x1 = positions[i0]!,
+        y1 = positions[i0 + 1]!,
+        z1 = positions[i0 + 2]!;
+      const x2 = positions[i1]!,
+        y2 = positions[i1 + 1]!,
+        z2 = positions[i1 + 2]!;
+      const x3 = positions[i2]!,
+        y3 = positions[i2 + 1]!,
+        z3 = positions[i2 + 2]!;
       v +=
         (x1 * (y2 * z3 - y3 * z2) -
           x2 * (y1 * z3 - y3 * z1) +
