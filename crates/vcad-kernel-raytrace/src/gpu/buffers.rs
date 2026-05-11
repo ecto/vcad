@@ -600,6 +600,7 @@ impl GpuCamera {
 pub const MAX_INNER_LOOPS: usize = 8192;
 
 /// Scene data prepared for GPU upload.
+#[derive(Clone)]
 pub struct GpuScene {
     /// Surfaces.
     pub surfaces: Vec<GpuSurface>,

@@ -160,6 +160,17 @@ if (Symbol.dispose) PhysicsSim.prototype[Symbol.dispose] = PhysicsSim.prototype.
  *
  * This ray tracer renders BRep surfaces directly without tessellation,
  * achieving pixel-perfect silhouettes at any zoom level.
+ *
+ * All mutable state lives behind a `RefCell` so every wasm-bindgen entry point
+ * can be `&self`. The async `render` previously held `&mut self` across `.await`
+ * and tripped wasm-bindgen's "recursive use of an object detected" guard
+ * whenever a setter (theme/debug/edges/upload) fired while a render was in
+ * flight. Now setters take a brief mutable borrow on `inner`, the scene is
+ * stored as `Rc<GpuScene>` so a render can hold a stable handle across the
+ * await even if the scene gets swapped, and the accumulation buffers are
+ * taken out for the duration of the render and re-installed after — gated by
+ * an epoch counter so resets that happen mid-render correctly invalidate the
+ * returned buffers.
  */
 export class RayTracer {
     static __wrap(ptr) {
@@ -6153,7 +6164,7 @@ function __wbg_get_imports() {
                     const a = state0.a;
                     state0.a = 0;
                     try {
-                        return wasm_bindgen__convert__closures_____invoke__h61f848611b9bfd22(a, state0.b, arg0, arg1);
+                        return wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(a, state0.b, arg0, arg1);
                     } finally {
                         state0.a = a;
                     }
@@ -6739,12 +6750,12 @@ function __wbg_get_imports() {
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
             // Cast intrinsic for `Closure(Closure { dtor_idx: 2156, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2157, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h29172bbcd065953b, wasm_bindgen__convert__closures_____invoke__h409646c44a6f7cf4);
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
             // Cast intrinsic for `Closure(Closure { dtor_idx: 2940, function: Function { arguments: [Externref], shim_idx: 2941, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h6ed7eb1128abde65, wasm_bindgen__convert__closures_____invoke__h53e1d5f5246c70f9);
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
             return ret;
         },
         __wbindgen_cast_0000000000000003: function(arg0) {
@@ -6832,16 +6843,16 @@ function __wbg_get_imports() {
     };
 }
 
-function wasm_bindgen__convert__closures_____invoke__h409646c44a6f7cf4(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h409646c44a6f7cf4(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h53e1d5f5246c70f9(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h53e1d5f5246c70f9(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h61f848611b9bfd22(arg0, arg1, arg2, arg3) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h61f848611b9bfd22(arg0, arg1, arg2, arg3);
+function wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(arg0, arg1, arg2, arg3) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(arg0, arg1, arg2, arg3);
 }
 
 

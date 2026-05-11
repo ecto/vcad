@@ -15,33 +15,6 @@ type CameraState = {
   height: number;
 };
 
-/**
- * Serialize all calls into the WASM RayTracer.
- *
- * The async `render(&mut self)` holds the Rust borrow across every `.await`
- * inside it (mostly the GPU buffer-mapping wait). wasm-bindgen detects any
- * second `&mut self` call from JS while that borrow is held and throws
- * "recursive use of an object detected" — which surfaces as a hard React
- * error boundary "something went wrong" page.
- *
- * Concrete triggers we hit: a render in flight when the upload effect re-runs
- * (clearScene + uploadSolid mutate &mut self), when the theme changes
- * (setTheme), or when edges/debug-mode toggle. Rather than gate each call
- * site separately, every WASM call funnels through this FIFO queue.
- */
-let wasmTask: Promise<unknown> = Promise.resolve();
-function queueWasm<T>(fn: () => T | Promise<T>): Promise<T> {
-  const next = wasmTask.then(fn);
-  // Swallow errors only on the queue head so a failed call doesn't poison
-  // every subsequent one. The original promise still rejects so callers can
-  // observe the failure.
-  wasmTask = next.then(
-    () => undefined,
-    () => undefined,
-  );
-  return next;
-}
-
 let cameraStateCallback: ((state: CameraState) => void) | null = null;
 
 /**
@@ -113,8 +86,9 @@ export function RayTracedViewportSync() {
     // The WASM accumulates surfaces/faces/BVH across uploads under a unified
     // root, so multi-part documents render in a single ray-trace pass.
     //
-    // All calls go through queueWasm so they can't race with an in-flight
-    // render() and trip wasm-bindgen's recursive-use guard.
+    // Setters are safe to call while render() is awaiting — RayTracer keeps
+    // its mutable state behind a RefCell, so each call briefly borrows-and-
+    // drops without conflicting with an in-flight render.
     type SolidHandle = {
       scale: (x: number, y: number, z: number) => SolidHandle;
       rotate: (x_deg: number, y_deg: number, z_deg: number) => SolidHandle;
@@ -125,7 +99,7 @@ export function RayTracedViewportSync() {
       uploadSolid: (s: unknown) => void;
       setMaterial: (r: number, g: number, b: number, m: number, ro: number) => void;
     };
-    queueWasm(() => rt.clearScene?.());
+    rt.clearScene?.();
 
     let uploaded = false;
     let firstMaterialKey: string | undefined;
@@ -135,9 +109,11 @@ export function RayTracedViewportSync() {
       const solid = (p as { solid?: unknown }).solid;
       if (!solid) continue;
 
-      queueWasm(() => rt.uploadSolid(solid)).catch((e) => {
+      try {
+        rt.uploadSolid(solid);
+      } catch (e) {
         logger.debug("gpu", `uploadSolid failed: ${e}`);
-      });
+      }
       if (firstMaterialKey === undefined) firstMaterialKey = p.material;
       uploaded = true;
     }
@@ -165,9 +141,11 @@ export function RayTracedViewportSync() {
               .rotate(tf.rotation.x, tf.rotation.y, tf.rotation.z)
               .translate(tf.translation.x, tf.translation.y, tf.translation.z)
           : baseSolid;
-        queueWasm(() => rt.uploadSolid(placed)).catch((e) => {
+        try {
+          rt.uploadSolid(placed);
+        } catch (e) {
           logger.debug("gpu", `uploadSolid (instance) failed: ${e}`);
-        });
+        }
         if (firstMaterialKey === undefined) firstMaterialKey = inst.material;
         uploaded = true;
       }
@@ -181,11 +159,11 @@ export function RayTracedViewportSync() {
       const preset = docMat ? null : getMaterialByKey(firstMaterialKey);
       const mat = docMat ?? preset;
       if (mat) {
-        queueWasm(() =>
-          rt.setMaterial(mat.color[0], mat.color[1], mat.color[2], mat.metallic, mat.roughness),
-        ).catch((e) => {
+        try {
+          rt.setMaterial(mat.color[0], mat.color[1], mat.color[2], mat.metallic, mat.roughness);
+        } catch (e) {
           logger.debug("gpu", `Failed to set material: ${e}`);
-        });
+        }
       }
     }
 
@@ -461,21 +439,17 @@ export function RayTracedViewportOverlay() {
       const kernelPos: [number, number, number] = [px, -pz, py];
       const kernelTarget: [number, number, number] = [tx, -tz, ty];
 
-      // Route the render through the WASM queue so it always runs *after*
-      // any pending uploads/state mutations. Without this, a render and an
-      // upload can be in-flight simultaneously and trip wasm-bindgen's
-      // recursive-use guard.
-      queueWasm(
-        () =>
-          rayTracer.render(
-            kernelPos,
-            kernelTarget,
-            [0, 0, 1],
-            renderWidth,
-            renderHeight,
-            (state.fov * Math.PI) / 180,
-          ) as Promise<Uint8Array>,
-      )
+      // RayTracer.render takes `&self` and snapshots its mutable state under
+      // a brief borrow before awaiting GPU work — concurrent setter calls
+      // (theme/debug/edges/upload) coexist safely.
+      (rayTracer.render(
+        kernelPos,
+        kernelTarget,
+        [0, 0, 1],
+        renderWidth,
+        renderHeight,
+        (state.fov * Math.PI) / 180,
+      ) as Promise<Uint8Array>)
         .then((pixels: Uint8Array) => {
           const drawCanvas = canvasRef.current;
           if (drawCanvas) {
@@ -533,7 +507,7 @@ export function RayTracedViewportOverlay() {
 
       // Reset accumulation when the chain starts (new camera state).
       const rt = rayTracer as { resetAccumulation?: () => void };
-      queueWasm(() => rt.resetAccumulation?.());
+      rt.resetAccumulation?.();
 
       let stepIdx = 0;
       let frameIdx = 0;
@@ -547,7 +521,7 @@ export function RayTracedViewportOverlay() {
           stepIdx++;
           frameIdx = 0;
           if (stepIdx >= plan.length) return;
-          queueWasm(() => rt.resetAccumulation?.());
+          rt.resetAccumulation?.();
           refinementTimerRef.current = setTimeout(tick, plan[stepIdx]!.gap);
           return;
         }
@@ -603,12 +577,11 @@ export function RayTracedViewportOverlay() {
 
   // Push theme into the WASM ray tracer when it flips, then kick a fresh
   // render. `setTheme` resets accumulation internally so the new background
-  // palette appears cleanly without ghosting. Queued so it doesn't race
-  // with an in-flight render.
+  // palette appears cleanly without ghosting.
   useEffect(() => {
     if (!rayTracer) return;
     const rt = rayTracer as { setTheme?: (n: number) => void };
-    queueWasm(() => rt.setTheme?.(isDark ? 0 : 1));
+    rt.setTheme?.(isDark ? 0 : 1);
     if (lastCameraStateRef.current) {
       doRender(lastCameraStateRef.current);
     }
@@ -642,7 +615,7 @@ export function RayTracedViewportOverlay() {
       return;
     }
 
-    queueWasm(() => rt.setDebugMode!(modeNumber));
+    rt.setDebugMode!(modeNumber);
     console.log(`[DEBUG] Called setDebugMode(${modeNumber})`);
 
     // Re-render to see the change
@@ -696,30 +669,26 @@ export function RayTracedViewportOverlay() {
     };
 
     if (typeof rt.setEdgeDetection === "function") {
-      queueWasm(() =>
-        rt.setEdgeDetection!(
-          raytraceEdgesEnabled,
-          raytraceEdgeDepthThreshold,
-          raytraceEdgeNormalThreshold,
-        ),
+      rt.setEdgeDetection(
+        raytraceEdgesEnabled,
+        raytraceEdgeDepthThreshold,
+        raytraceEdgeNormalThreshold,
       );
     }
 
     if (typeof rt.setEdgeStyle === "function") {
       // Use Fusion-style default colors (near-black, slightly cool)
-      queueWasm(() =>
-        rt.setEdgeStyle!(
-          raytraceEdgeSilhouetteEnabled,
-          raytraceEdgeCreaseEnabled,
-          raytraceEdgeBoundaryEnabled,
-          0.08, 0.08, 0.10, 1.0,  // silhouette color
-          0.12, 0.12, 0.14, 1.0,  // crease color
-          0.06, 0.06, 0.08, 1.0,  // boundary color
-          raytraceEdgeSilhouetteWidth,
-          raytraceEdgeCreaseWidth,
-          raytraceEdgeBoundaryWidth,
-          raytraceEdgeSoftness,
-        ),
+      rt.setEdgeStyle(
+        raytraceEdgeSilhouetteEnabled,
+        raytraceEdgeCreaseEnabled,
+        raytraceEdgeBoundaryEnabled,
+        0.08, 0.08, 0.10, 1.0,  // silhouette color
+        0.12, 0.12, 0.14, 1.0,  // crease color
+        0.06, 0.06, 0.08, 1.0,  // boundary color
+        raytraceEdgeSilhouetteWidth,
+        raytraceEdgeCreaseWidth,
+        raytraceEdgeBoundaryWidth,
+        raytraceEdgeSoftness,
       );
     } else {
       logger.debug("gpu", "setEdgeStyle not available - WASM may need rebuild");
@@ -767,9 +736,7 @@ export function RayTracedViewportOverlay() {
     }
 
     const effectiveIntensity = raytraceAoEnabled ? raytraceAoIntensity : 0.0;
-    queueWasm(() =>
-      rt.setAO!(raytraceAoRadius, effectiveIntensity, raytraceAoBias, raytraceAoSampleCount),
-    );
+    rt.setAO(raytraceAoRadius, effectiveIntensity, raytraceAoBias, raytraceAoSampleCount);
 
     if (lastCameraStateRef.current) {
       doRender(lastCameraStateRef.current);
