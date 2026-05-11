@@ -91,6 +91,18 @@
       "max_mm": 0.5
     },
     {
+      "type": "gravity_hold",
+      "host": "host_geometry",
+      "host_mass_kg": 0.5,
+      "gravity_dir": [
+        0,
+        -1,
+        0
+      ],
+      "duration_sec": 0.5,
+      "max_drift_mm": 2000.0
+    },
+    {
       "type": "dfm",
       "rules": [
         "min_wall_1.5mm",

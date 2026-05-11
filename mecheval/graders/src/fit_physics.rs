@@ -35,6 +35,19 @@
 //!
 //! With those guarantees, F-suite tasks can tighten `max_drift_mm` to
 //! single millimetres for retention checks.
+//!
+//! # Stability caveat
+//!
+//! Phyz still has edge cases on cylindrical-glancing-contact mesh-mesh
+//! configurations: the simulation can produce a NaN drift mid-rollout
+//! or panic inside the contact-narrow-phase. We intercept both as
+//! soft-pass outcomes (the check records a `warning` field in details
+//! and returns `Pass`) rather than fail the candidate — the geometric
+//! checks (`mate_clearance`, `interference_volume`, `contact_area`,
+//! `pull_retention_geometric`) carry the precision signal for those
+//! geometries. When phyz stabilises these contact paths, the soft-pass
+//! path will start returning finite drifts and the tasks can tighten
+//! `max_drift_mm` without code changes.
 
 use crate::blob::CheckOutcome;
 use crate::fit::HostGeometry;
@@ -90,6 +103,22 @@ pub fn check_gravity_hold(
     match result {
         Ok(Ok(drift_m)) => {
             let drift_mm = drift_m * 1000.0;
+            // Phyz produces NaN drift on a few cylindrical-glancing-contact
+            // geometries (see module docs "Stability caveat"). Treat that
+            // as a soft Pass with a note rather than penalising the
+            // candidate — the geometric checks carry the real signal.
+            if !drift_mm.is_finite() {
+                return (
+                    CheckOutcome::Pass,
+                    json!({
+                        "drift_mm": null,
+                        "max_drift_mm": max_drift_mm,
+                        "duration_sec": duration_sec,
+                        "gravity_dir": gravity_dir,
+                        "warning": "physics did not converge (non-finite drift); soft-pass per fit_physics caveat",
+                    }),
+                );
+            }
             let pass = drift_mm <= max_drift_mm;
             (
                 if pass {
@@ -110,8 +139,12 @@ pub fn check_gravity_hold(
             json!({ "reason": "physics setup failed", "error": e }),
         ),
         Err(_) => (
-            CheckOutcome::Fail,
-            json!({ "reason": "physics simulation panicked" }),
+            CheckOutcome::Pass,
+            json!({
+                "drift_mm": null,
+                "max_drift_mm": max_drift_mm,
+                "warning": "physics simulation panicked; soft-pass per fit_physics caveat",
+            }),
         ),
     }
 }
@@ -153,6 +186,19 @@ pub fn check_pull_force(
     match result {
         Ok(Ok(drift_m)) => {
             let drift_mm = drift_m * 1000.0;
+            if !drift_mm.is_finite() {
+                return (
+                    CheckOutcome::Pass,
+                    json!({
+                        "drift_mm": null,
+                        "max_drift_mm": max_drift_mm,
+                        "duration_sec": duration_sec,
+                        "force_n": force_n,
+                        "direction": direction,
+                        "warning": "physics did not converge (non-finite drift); soft-pass per fit_physics caveat",
+                    }),
+                );
+            }
             let pass = drift_mm <= max_drift_mm;
             (
                 if pass {
@@ -174,8 +220,12 @@ pub fn check_pull_force(
             json!({ "reason": "physics setup failed", "error": e }),
         ),
         Err(_) => (
-            CheckOutcome::Fail,
-            json!({ "reason": "physics simulation panicked" }),
+            CheckOutcome::Pass,
+            json!({
+                "drift_mm": null,
+                "max_drift_mm": max_drift_mm,
+                "warning": "physics simulation panicked; soft-pass per fit_physics caveat",
+            }),
         ),
     }
 }

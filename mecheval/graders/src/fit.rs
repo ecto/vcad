@@ -61,9 +61,18 @@ pub enum HostError {
 /// Load + evaluate the task's host geometry. Resolves `path` relative to
 /// `task_dir`. The placement frame defaults to origin / +Z if absent.
 pub fn load_host(task: &Task, task_dir: &Path) -> Result<HostGeometry, HostError> {
-    let input = task
-        .private_input("host_geometry")
-        .ok_or(HostError::Missing)?;
+    load_private_solid(task, task_dir, "host_geometry")
+}
+
+/// Load + evaluate a private (agent-invisible) reference solid from
+/// `task.inputs` by its `kind`. Generalises `load_host` so Suite D can
+/// share the loader for `kind: "target_mesh"`.
+pub fn load_private_solid(
+    task: &Task,
+    task_dir: &Path,
+    kind: &str,
+) -> Result<HostGeometry, HostError> {
+    let input = task.private_input(kind).ok_or(HostError::Missing)?;
     let rel = input.path.as_ref().ok_or(HostError::NoPath)?;
     let abs = task_dir.join(rel);
     let raw = std::fs::read_to_string(&abs).map_err(|e| HostError::Io(abs.clone(), e))?;

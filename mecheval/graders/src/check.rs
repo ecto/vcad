@@ -163,6 +163,16 @@ pub enum CheckSpec {
         displacement_mm: f64,
         min_interference_gain_mm3: f64,
     },
+
+    /// Suite D: bidirectional Chamfer distance between the candidate
+    /// mesh and a target mesh, in millimetres. Pass if the symmetric
+    /// average is at most `max_chamfer_mm`. `target` names an
+    /// `inputs[]` entry by `kind` (typically `"target_mesh"`).
+    ///
+    /// Visual / shape-similarity grading is a deliberate philosophy
+    /// shift from Suites A/B/C/F's deterministic mass-property checks
+    /// — see Suite D's intro in SCHEMA.md.
+    ShapeSimilarityChamfer { target: String, max_chamfer_mm: f64 },
 }
 
 impl CheckSpec {
@@ -192,6 +202,7 @@ impl CheckSpec {
             CheckSpec::GravityHold { .. } => "gravity_hold",
             CheckSpec::PullForce { .. } => "pull_force",
             CheckSpec::PullRetentionGeometric { .. } => "pull_retention_geometric",
+            CheckSpec::ShapeSimilarityChamfer { .. } => "shape_similarity_chamfer",
         }
     }
 
@@ -218,5 +229,10 @@ impl CheckSpec {
                 | CheckSpec::PullForce { .. }
                 | CheckSpec::PullRetentionGeometric { .. }
         )
+    }
+
+    /// True for checks that require a Suite D target mesh to be loaded.
+    pub fn is_suite_d(&self) -> bool {
+        matches!(self, CheckSpec::ShapeSimilarityChamfer { .. })
     }
 }

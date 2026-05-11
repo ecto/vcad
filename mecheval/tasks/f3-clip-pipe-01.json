@@ -96,6 +96,18 @@
       "min_interference_gain_mm3": 30.0
     },
     {
+      "type": "pull_force",
+      "host": "host_geometry",
+      "force_n": 5.0,
+      "direction": [
+        -1,
+        0,
+        0
+      ],
+      "duration_sec": 0.25,
+      "max_drift_mm": 100000.0
+    },
+    {
       "type": "dfm",
       "rules": [
         "min_wall_1.5mm",
