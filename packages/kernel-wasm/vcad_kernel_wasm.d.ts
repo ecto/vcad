@@ -89,6 +89,17 @@ export class PhysicsSim {
  *
  * This ray tracer renders BRep surfaces directly without tessellation,
  * achieving pixel-perfect silhouettes at any zoom level.
+ *
+ * All mutable state lives behind a `RefCell` so every wasm-bindgen entry point
+ * can be `&self`. The async `render` previously held `&mut self` across `.await`
+ * and tripped wasm-bindgen's "recursive use of an object detected" guard
+ * whenever a setter (theme/debug/edges/upload) fired while a render was in
+ * flight. Now setters take a brief mutable borrow on `inner`, the scene is
+ * stored as `Rc<GpuScene>` so a render can hold a stable handle across the
+ * await even if the scene gets swapped, and the accumulation buffers are
+ * taken out for the duration of the render and re-installed after — gated by
+ * an epoch counter so resets that happen mid-render correctly invalidate the
+ * returned buffers.
  */
 export class RayTracer {
     private constructor();
@@ -2069,6 +2080,37 @@ export interface InitOutput {
     readonly solid_fillet: (a: number, b: number) => number;
     readonly solid_shell: (a: number, b: number) => number;
     readonly getCompiledModule: () => any;
+    readonly __wbg_wasmdocumentengine_free: (a: number, b: number) => void;
+    readonly wasmdocumentengine_add_feature: (a: number, b: number, c: number) => any;
+    readonly wasmdocumentengine_can_redo: (a: number) => number;
+    readonly wasmdocumentengine_can_undo: (a: number) => number;
+    readonly wasmdocumentengine_compute_position_between: (a: number, b: number, c: number, d: number, e: number) => [number, number];
+    readonly wasmdocumentengine_create_feature: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly wasmdocumentengine_delete_feature: (a: number, b: number, c: number) => any;
+    readonly wasmdocumentengine_delete_feature_by_id: (a: number, b: number, c: number) => any;
+    readonly wasmdocumentengine_from_v1_json: (a: number, b: number) => [number, number, number];
+    readonly wasmdocumentengine_get_document_json: (a: number) => [number, number];
+    readonly wasmdocumentengine_get_ops_since: (a: number, b: number, c: number) => [number, number];
+    readonly wasmdocumentengine_get_ordered_features_json: (a: number) => [number, number];
+    readonly wasmdocumentengine_get_parts_json: (a: number) => [number, number];
+    readonly wasmdocumentengine_get_sync_clock: (a: number) => [number, number];
+    readonly wasmdocumentengine_import_ir: (a: number, b: number, c: number) => any;
+    readonly wasmdocumentengine_load: (a: number, b: number) => [number, number, number];
+    readonly wasmdocumentengine_merge_remote: (a: number, b: number, c: number) => any;
+    readonly wasmdocumentengine_move_feature: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly wasmdocumentengine_new: () => number;
+    readonly wasmdocumentengine_redo: (a: number) => any;
+    readonly wasmdocumentengine_rename_feature: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly wasmdocumentengine_save: (a: number) => [number, number];
+    readonly wasmdocumentengine_set_joint_state: (a: number, b: number, c: number, d: number) => any;
+    readonly wasmdocumentengine_set_material: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly wasmdocumentengine_set_param: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+    readonly wasmdocumentengine_set_rotation: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+    readonly wasmdocumentengine_set_scale: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+    readonly wasmdocumentengine_set_translation: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+    readonly wasmdocumentengine_set_visible: (a: number, b: number, c: number, d: number) => any;
+    readonly wasmdocumentengine_undo: (a: number) => any;
+    readonly wasmdocumentengine_update_feature: (a: number, b: number, c: number, d: number, e: number) => any;
     readonly __wbg_get_slicersettings_first_layer_height: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_density: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_pattern: (a: number) => number;
@@ -2123,37 +2165,6 @@ export interface InitOutput {
     readonly slicersettings_fromJson: (a: number, b: number) => [number, number, number];
     readonly slicersettings_new: () => number;
     readonly isSlicerAvailable: () => number;
-    readonly __wbg_wasmdocumentengine_free: (a: number, b: number) => void;
-    readonly wasmdocumentengine_add_feature: (a: number, b: number, c: number) => any;
-    readonly wasmdocumentengine_can_redo: (a: number) => number;
-    readonly wasmdocumentengine_can_undo: (a: number) => number;
-    readonly wasmdocumentengine_compute_position_between: (a: number, b: number, c: number, d: number, e: number) => [number, number];
-    readonly wasmdocumentengine_create_feature: (a: number, b: number, c: number, d: number, e: number) => any;
-    readonly wasmdocumentengine_delete_feature: (a: number, b: number, c: number) => any;
-    readonly wasmdocumentengine_delete_feature_by_id: (a: number, b: number, c: number) => any;
-    readonly wasmdocumentengine_from_v1_json: (a: number, b: number) => [number, number, number];
-    readonly wasmdocumentengine_get_document_json: (a: number) => [number, number];
-    readonly wasmdocumentengine_get_ops_since: (a: number, b: number, c: number) => [number, number];
-    readonly wasmdocumentengine_get_ordered_features_json: (a: number) => [number, number];
-    readonly wasmdocumentengine_get_parts_json: (a: number) => [number, number];
-    readonly wasmdocumentengine_get_sync_clock: (a: number) => [number, number];
-    readonly wasmdocumentengine_import_ir: (a: number, b: number, c: number) => any;
-    readonly wasmdocumentengine_load: (a: number, b: number) => [number, number, number];
-    readonly wasmdocumentengine_merge_remote: (a: number, b: number, c: number) => any;
-    readonly wasmdocumentengine_move_feature: (a: number, b: number, c: number, d: number, e: number) => any;
-    readonly wasmdocumentengine_new: () => number;
-    readonly wasmdocumentengine_redo: (a: number) => any;
-    readonly wasmdocumentengine_rename_feature: (a: number, b: number, c: number, d: number, e: number) => any;
-    readonly wasmdocumentengine_save: (a: number) => [number, number];
-    readonly wasmdocumentengine_set_joint_state: (a: number, b: number, c: number, d: number) => any;
-    readonly wasmdocumentengine_set_material: (a: number, b: number, c: number, d: number, e: number) => any;
-    readonly wasmdocumentengine_set_param: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
-    readonly wasmdocumentengine_set_rotation: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
-    readonly wasmdocumentengine_set_scale: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
-    readonly wasmdocumentengine_set_translation: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
-    readonly wasmdocumentengine_set_visible: (a: number, b: number, c: number, d: number) => any;
-    readonly wasmdocumentengine_undo: (a: number) => any;
-    readonly wasmdocumentengine_update_feature: (a: number, b: number, c: number, d: number, e: number) => any;
     readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
     readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
     readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;

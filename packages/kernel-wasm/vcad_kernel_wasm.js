@@ -160,6 +160,17 @@ if (Symbol.dispose) PhysicsSim.prototype[Symbol.dispose] = PhysicsSim.prototype.
  *
  * This ray tracer renders BRep surfaces directly without tessellation,
  * achieving pixel-perfect silhouettes at any zoom level.
+ *
+ * All mutable state lives behind a `RefCell` so every wasm-bindgen entry point
+ * can be `&self`. The async `render` previously held `&mut self` across `.await`
+ * and tripped wasm-bindgen's "recursive use of an object detected" guard
+ * whenever a setter (theme/debug/edges/upload) fired while a render was in
+ * flight. Now setters take a brief mutable borrow on `inner`, the scene is
+ * stored as `Rc<GpuScene>` so a render can hold a stable handle across the
+ * await even if the scene gets swapped, and the accumulation buffers are
+ * taken out for the duration of the render and re-installed after — gated by
+ * an epoch counter so resets that happen mid-render correctly invalidate the
+ * returned buffers.
  */
 export class RayTracer {
     static __wrap(ptr) {
@@ -6617,12 +6628,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 1305, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1306, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 1307, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 1308, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2091, function: Function { arguments: [Externref], shim_idx: 2092, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2093, function: Function { arguments: [Externref], shim_idx: 2094, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
             return ret;
         },

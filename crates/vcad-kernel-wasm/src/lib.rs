@@ -2239,11 +2239,35 @@ pub async fn decimate_mesh_gpu(
 ///
 /// This ray tracer renders BRep surfaces directly without tessellation,
 /// achieving pixel-perfect silhouettes at any zoom level.
+///
+/// All mutable state lives behind a `RefCell` so every wasm-bindgen entry point
+/// can be `&self`. The async `render` previously held `&mut self` across `.await`
+/// and tripped wasm-bindgen's "recursive use of an object detected" guard
+/// whenever a setter (theme/debug/edges/upload) fired while a render was in
+/// flight. Now setters take a brief mutable borrow on `inner`, the scene is
+/// stored as `Rc<GpuScene>` so a render can hold a stable handle across the
+/// await even if the scene gets swapped, and the accumulation buffers are
+/// taken out for the duration of the render and re-installed after — gated by
+/// an epoch counter so resets that happen mid-render correctly invalidate the
+/// returned buffers.
 #[cfg(feature = "raytrace")]
 #[wasm_bindgen]
 pub struct RayTracer {
     pipeline: vcad_kernel_raytrace::gpu::RayTracePipeline,
-    scene: Option<vcad_kernel_raytrace::gpu::GpuScene>,
+    inner: std::cell::RefCell<RayTracerInner>,
+}
+
+#[cfg(feature = "raytrace")]
+struct RayTracerInner {
+    /// Uploaded scene, behind `Rc` so an async `render` can hold a stable
+    /// reference across `.await` even if the scene is swapped or mutated
+    /// mid-render (mutations clone via `Rc::make_mut`).
+    scene: Option<std::rc::Rc<vcad_kernel_raytrace::gpu::GpuScene>>,
+    /// Bumps every time accumulation buffers are invalidated (resets, setting
+    /// changes). A render snapshots this before `.await` and only writes its
+    /// buffers back if the epoch hasn't moved — otherwise a reset that landed
+    /// mid-render would be silently overwritten.
+    accum_epoch: u64,
     /// Current frame index for progressive rendering (1-based).
     frame_index: u32,
     /// Accumulation buffer for progressive anti-aliasing.
@@ -2290,6 +2314,16 @@ pub struct RayTracer {
 }
 
 #[cfg(feature = "raytrace")]
+impl RayTracerInner {
+    fn invalidate_accum(&mut self) {
+        self.frame_index = 0;
+        self.accum_buffer = None;
+        self.ao_buffer = None;
+        self.accum_epoch = self.accum_epoch.wrapping_add(1);
+    }
+}
+
+#[cfg(feature = "raytrace")]
 #[wasm_bindgen]
 impl RayTracer {
     /// Create a new ray tracer.
@@ -2309,33 +2343,36 @@ impl RayTracer {
 
         Ok(RayTracer {
             pipeline,
-            scene: None,
-            frame_index: 0,
-            accum_buffer: None,
-            ao_buffer: None,
-            last_camera_hash: 0,
-            last_width: 0,
-            last_height: 0,
-            debug_mode: 0,
-            enable_edges: true,
-            edge_depth_threshold: 0.1,
-            edge_normal_threshold: 30.0,
-            theme: 0,
-            ao_radius: 0.3,
-            ao_intensity: 1.0,
-            ao_bias: 0.001,
-            ao_sample_count: 16,
-            refine_sample_count: 0,
-            enable_silhouette: true,
-            enable_crease: true,
-            enable_boundary: true,
-            silhouette_color: [0.08, 0.08, 0.10, 1.0],
-            crease_color: [0.12, 0.12, 0.14, 1.0],
-            boundary_color: [0.06, 0.06, 0.08, 1.0],
-            silhouette_width: 1.0,
-            crease_width: 0.75,
-            boundary_width: 1.25,
-            edge_softness: 1.5,
+            inner: std::cell::RefCell::new(RayTracerInner {
+                scene: None,
+                accum_epoch: 0,
+                frame_index: 0,
+                accum_buffer: None,
+                ao_buffer: None,
+                last_camera_hash: 0,
+                last_width: 0,
+                last_height: 0,
+                debug_mode: 0,
+                enable_edges: true,
+                edge_depth_threshold: 0.1,
+                edge_normal_threshold: 30.0,
+                theme: 0,
+                ao_radius: 0.3,
+                ao_intensity: 1.0,
+                ao_bias: 0.001,
+                ao_sample_count: 16,
+                refine_sample_count: 0,
+                enable_silhouette: true,
+                enable_crease: true,
+                enable_boundary: true,
+                silhouette_color: [0.08, 0.08, 0.10, 1.0],
+                crease_color: [0.12, 0.12, 0.14, 1.0],
+                boundary_color: [0.06, 0.06, 0.08, 1.0],
+                silhouette_width: 1.0,
+                crease_width: 0.75,
+                boundary_width: 1.25,
+                edge_softness: 1.5,
+            }),
         })
     }
 
@@ -2343,11 +2380,10 @@ impl RayTracer {
     /// IBL panels and direct lighting stay constant across themes — this
     /// only swaps the atmospheric backdrop and ground tint.
     #[wasm_bindgen(js_name = setTheme)]
-    pub fn set_theme(&mut self, theme: u32) {
-        self.theme = theme;
-        self.frame_index = 0;
-        self.accum_buffer = None;
-        self.ao_buffer = None;
+    pub fn set_theme(&self, theme: u32) {
+        let mut inner = self.inner.borrow_mut();
+        inner.theme = theme;
+        inner.invalidate_accum();
     }
 
     /// Set the adaptive refinement sample count.
@@ -2356,30 +2392,28 @@ impl RayTracer {
     /// anti-aliasing. Set to 0 to disable (default), or 4/9/16 for typical quality.
     /// Mode 5 in setDebugMode shows a heatmap of rays per pixel for tuning.
     #[wasm_bindgen(js_name = setRefineSamples)]
-    pub fn set_refine_samples(&mut self, count: u32) {
-        self.refine_sample_count = count;
-        self.frame_index = 0;
-        self.accum_buffer = None;
+    pub fn set_refine_samples(&self, count: u32) {
+        let mut inner = self.inner.borrow_mut();
+        inner.refine_sample_count = count;
+        inner.invalidate_accum();
     }
 
     /// Get the current refinement sample count.
     #[wasm_bindgen(js_name = getRefineSamples)]
     pub fn get_refine_samples(&self) -> u32 {
-        self.refine_sample_count
+        self.inner.borrow().refine_sample_count
     }
 
     /// Reset the progressive accumulation (call when camera moves).
     #[wasm_bindgen(js_name = resetAccumulation)]
-    pub fn reset_accumulation(&mut self) {
-        self.frame_index = 0;
-        self.accum_buffer = None;
-        self.ao_buffer = None;
+    pub fn reset_accumulation(&self) {
+        self.inner.borrow_mut().invalidate_accum();
     }
 
     /// Get the current frame index for progressive rendering.
     #[wasm_bindgen(js_name = getFrameIndex)]
     pub fn get_frame_index(&self) -> u32 {
-        self.frame_index
+        self.inner.borrow().frame_index
     }
 
     /// Set the debug render mode.
@@ -2389,19 +2423,17 @@ impl RayTracer {
     ///
     /// Call resetAccumulation() after changing mode to see immediate effect.
     #[wasm_bindgen(js_name = setDebugMode)]
-    pub fn set_debug_mode(&mut self, mode: u32) {
-        self.debug_mode = mode;
-        // Reset accumulation when debug mode changes
-        self.frame_index = 0;
-        self.accum_buffer = None;
-        self.ao_buffer = None;
+    pub fn set_debug_mode(&self, mode: u32) {
+        let mut inner = self.inner.borrow_mut();
+        inner.debug_mode = mode;
+        inner.invalidate_accum();
         web_sys::console::log_1(&format!("[WASM] Debug mode set to {}", mode).into());
     }
 
     /// Get the current debug render mode.
     #[wasm_bindgen(js_name = getDebugMode)]
     pub fn get_debug_mode(&self) -> u32 {
-        self.debug_mode
+        self.inner.borrow().debug_mode
     }
 
     /// Set edge detection settings.
@@ -2412,18 +2444,18 @@ impl RayTracer {
     /// * `normal_threshold` - Normal angle threshold in degrees (default: 30.0)
     #[wasm_bindgen(js_name = setEdgeDetection)]
     pub fn set_edge_detection(
-        &mut self,
+        &self,
         enabled: bool,
         depth_threshold: f32,
         normal_threshold: f32,
     ) {
-        self.enable_edges = enabled;
-        self.edge_depth_threshold = depth_threshold;
-        self.edge_normal_threshold = normal_threshold;
-        // Reset accumulation when edge settings change
-        self.frame_index = 0;
-        self.accum_buffer = None;
-        self.ao_buffer = None;
+        {
+            let mut inner = self.inner.borrow_mut();
+            inner.enable_edges = enabled;
+            inner.edge_depth_threshold = depth_threshold;
+            inner.edge_normal_threshold = normal_threshold;
+            inner.invalidate_accum();
+        }
         web_sys::console::log_1(
             &format!(
                 "[WASM] Edge detection: enabled={}, depth={:.2}, normal={:.1}°",
@@ -2436,7 +2468,7 @@ impl RayTracer {
     /// Get whether edge detection is enabled.
     #[wasm_bindgen(js_name = getEdgeDetectionEnabled)]
     pub fn get_edge_detection_enabled(&self) -> bool {
-        self.enable_edges
+        self.inner.borrow().enable_edges
     }
 
     /// Set per-type edge style (colors, widths, softness, and individual toggles).
@@ -2446,7 +2478,7 @@ impl RayTracer {
     #[wasm_bindgen(js_name = setEdgeStyle)]
     #[allow(clippy::too_many_arguments)]
     pub fn set_edge_style(
-        &mut self,
+        &self,
         enable_silhouette: bool,
         enable_crease: bool,
         enable_boundary: bool,
@@ -2467,29 +2499,28 @@ impl RayTracer {
         boundary_width: f32,
         edge_softness: f32,
     ) {
-        self.enable_silhouette = enable_silhouette;
-        self.enable_crease = enable_crease;
-        self.enable_boundary = enable_boundary;
-        self.silhouette_color = [silhouette_r, silhouette_g, silhouette_b, silhouette_a];
-        self.crease_color = [crease_r, crease_g, crease_b, crease_a];
-        self.boundary_color = [boundary_r, boundary_g, boundary_b, boundary_a];
-        self.silhouette_width = silhouette_width;
-        self.crease_width = crease_width;
-        self.boundary_width = boundary_width;
-        self.edge_softness = edge_softness;
-        self.frame_index = 0;
-        self.accum_buffer = None;
+        let mut inner = self.inner.borrow_mut();
+        inner.enable_silhouette = enable_silhouette;
+        inner.enable_crease = enable_crease;
+        inner.enable_boundary = enable_boundary;
+        inner.silhouette_color = [silhouette_r, silhouette_g, silhouette_b, silhouette_a];
+        inner.crease_color = [crease_r, crease_g, crease_b, crease_a];
+        inner.boundary_color = [boundary_r, boundary_g, boundary_b, boundary_a];
+        inner.silhouette_width = silhouette_width;
+        inner.crease_width = crease_width;
+        inner.boundary_width = boundary_width;
+        inner.edge_softness = edge_softness;
+        inner.invalidate_accum();
     }
 
     /// Clear all uploaded geometry. Call before re-uploading a fresh
     /// scene; subsequent `upload_solid` calls will accumulate into a
     /// new merged scene.
     #[wasm_bindgen(js_name = clearScene)]
-    pub fn clear_scene(&mut self) {
-        self.scene = None;
-        self.frame_index = 0;
-        self.accum_buffer = None;
-        self.ao_buffer = None;
+    pub fn clear_scene(&self) {
+        let mut inner = self.inner.borrow_mut();
+        inner.scene = None;
+        inner.invalidate_accum();
     }
 
     /// Set SSAO (screen-space ambient occlusion) parameters.
@@ -2500,14 +2531,15 @@ impl RayTracer {
     /// * `bias` - Depth bias to prevent self-occlusion (default 0.001)
     /// * `sample_count` - Hemisphere samples per frame: 8, 16, or 32 (default 16)
     #[wasm_bindgen(js_name = setAO)]
-    pub fn set_ao(&mut self, radius: f32, intensity: f32, bias: f32, sample_count: u32) {
-        self.ao_radius = radius;
-        self.ao_intensity = intensity;
-        self.ao_bias = bias;
-        self.ao_sample_count = sample_count.clamp(1, 64);
-        self.frame_index = 0;
-        self.accum_buffer = None;
-        self.ao_buffer = None;
+    pub fn set_ao(&self, radius: f32, intensity: f32, bias: f32, sample_count: u32) {
+        {
+            let mut inner = self.inner.borrow_mut();
+            inner.ao_radius = radius;
+            inner.ao_intensity = intensity;
+            inner.ao_bias = bias;
+            inner.ao_sample_count = sample_count.clamp(1, 64);
+            inner.invalidate_accum();
+        }
         web_sys::console::log_1(
             &format!(
                 "[WASM] SSAO: radius={:.3}, intensity={:.2}, bias={:.4}, samples={}",
@@ -2524,7 +2556,7 @@ impl RayTracer {
     /// solid are unified under a fresh root, so multi-part scenes render
     /// in a single ray-trace pass.
     #[wasm_bindgen(js_name = uploadSolid)]
-    pub fn upload_solid(&mut self, solid: &Solid) -> Result<(), JsError> {
+    pub fn upload_solid(&self, solid: &Solid) -> Result<(), JsError> {
         use vcad_kernel_raytrace::gpu::GpuScene;
 
         // Get the BRep from the solid
@@ -2538,8 +2570,15 @@ impl RayTracer {
         let new_scene = GpuScene::from_brep(brep)
             .map_err(|e| JsError::new(&format!("Failed to build GPU scene: {}", e)))?;
 
-        let scene = match self.scene.take() {
-            Some(existing) => existing.merge(new_scene),
+        let mut inner = self.inner.borrow_mut();
+
+        // If a render is in flight it holds an extra Rc; `try_unwrap` falls
+        // back to cloning so the in-flight render keeps its stable scene.
+        let scene = match inner.scene.take() {
+            Some(rc) => {
+                let existing = std::rc::Rc::try_unwrap(rc).unwrap_or_else(|rc| (*rc).clone());
+                existing.merge(new_scene)
+            }
             None => new_scene,
         };
 
@@ -2590,7 +2629,9 @@ impl RayTracer {
             .into(),
         );
 
-        self.scene = Some(scene);
+        inner.scene = Some(std::rc::Rc::new(scene));
+        inner.invalidate_accum();
+        drop(inner);
 
         web_sys::console::log_1(
             &format!(
@@ -2611,23 +2652,26 @@ impl RayTracer {
     /// * `roughness` - Roughness factor (0 = smooth/mirror, 1 = rough/diffuse)
     #[wasm_bindgen(js_name = setMaterial)]
     pub fn set_material(
-        &mut self,
+        &self,
         r: f32,
         g: f32,
         b: f32,
         metallic: f32,
         roughness: f32,
     ) -> Result<(), JsError> {
-        let scene = self
-            .scene
-            .as_mut()
-            .ok_or_else(|| JsError::new("No solid uploaded. Call uploadSolid() first."))?;
+        {
+            let mut inner = self.inner.borrow_mut();
+            let scene_rc = inner
+                .scene
+                .as_mut()
+                .ok_or_else(|| JsError::new("No solid uploaded. Call uploadSolid() first."))?;
 
-        scene.set_material(r, g, b, metallic, roughness);
+            // `make_mut` clones the scene if a render is currently borrowing it
+            // (Rc count > 1), so the in-flight render's view is untouched.
+            std::rc::Rc::make_mut(scene_rc).set_material(r, g, b, metallic, roughness);
 
-        // Reset accumulation since material changed
-        self.frame_index = 0;
-        self.accum_buffer = None;
+            inner.invalidate_accum();
+        }
 
         web_sys::console::log_1(
             &format!(
@@ -2660,7 +2704,7 @@ impl RayTracer {
     /// This function is async to support WASM's single-threaded environment.
     /// In JavaScript, it returns a Promise<Uint8Array>.
     pub async fn render(
-        &mut self,
+        &self,
         camera: Vec<f64>,
         target: Vec<f64>,
         up: Vec<f64>,
@@ -2678,15 +2722,7 @@ impl RayTracer {
             ));
         }
 
-        let scene = self
-            .scene
-            .as_ref()
-            .ok_or_else(|| JsError::new("No solid uploaded. Call uploadSolid() first."))?;
-
-        // Compute camera hash to detect changes
-        // Round to 2 decimal places (~1cm) to avoid floating-point precision issues
-        // (e.g., 29.659999999 vs 29.660000001 should hash the same)
-        // The React side handles settling detection to avoid spurious renders during damping
+        // Compute camera hash up-front (cheap, no borrow needed).
         let mut hasher = DefaultHasher::new();
         for v in &camera {
             ((v * 100.0).round() as i64).hash(&mut hasher);
@@ -2697,34 +2733,82 @@ impl RayTracer {
         ((fov * 100.0).round() as i32).hash(&mut hasher);
         let camera_hash = hasher.finish();
 
-        // Reset accumulation if camera changed or dimensions changed
-        if camera_hash != self.last_camera_hash
-            || width != self.last_width
-            || height != self.last_height
-        {
-            self.frame_index = 0;
-            self.accum_buffer = None;
-            self.ao_buffer = None;
-            self.last_camera_hash = camera_hash;
-            self.last_width = width;
-            self.last_height = height;
-        }
+        // Snapshot everything we need under one short borrow, then drop it
+        // before any `.await`. Setters can run freely during the GPU wait.
+        let (scene, accum_buf, ao_buf, render_state, frame_index, accum_epoch) = {
+            let mut inner = self.inner.borrow_mut();
 
-        // Increment frame index (capped at 256 for convergence)
-        self.frame_index = (self.frame_index + 1).min(256);
+            let scene = inner
+                .scene
+                .as_ref()
+                .ok_or_else(|| JsError::new("No solid uploaded. Call uploadSolid() first."))?
+                .clone();
 
-        // Log progress occasionally
-        if self.frame_index == 1 || self.frame_index.is_multiple_of(16) {
-            web_sys::console::log_1(
-                &format!(
-                "[WASM] render() frame={} camera=[{:.2},{:.2},{:.2}] target=[{:.2},{:.2},{:.2}]",
-                self.frame_index,
-                camera[0], camera[1], camera[2],
-                target[0], target[1], target[2],
-            )
-                .into(),
+            // Reset accumulation if camera or dimensions changed.
+            if camera_hash != inner.last_camera_hash
+                || width != inner.last_width
+                || height != inner.last_height
+            {
+                inner.invalidate_accum();
+                inner.last_camera_hash = camera_hash;
+                inner.last_width = width;
+                inner.last_height = height;
+            }
+
+            // Increment frame index (capped at 256 for convergence).
+            inner.frame_index = (inner.frame_index + 1).min(256);
+
+            if inner.frame_index == 1 || inner.frame_index.is_multiple_of(16) {
+                web_sys::console::log_1(
+                    &format!(
+                    "[WASM] render() frame={} camera=[{:.2},{:.2},{:.2}] target=[{:.2},{:.2},{:.2}]",
+                    inner.frame_index,
+                    camera[0], camera[1], camera[2],
+                    target[0], target[1], target[2],
+                )
+                    .into(),
+                );
+            }
+
+            let (s, c, b) = if inner.enable_edges {
+                (
+                    inner.enable_silhouette,
+                    inner.enable_crease,
+                    inner.enable_boundary,
+                )
+            } else {
+                (false, false, false)
+            };
+            let mut rs = vcad_kernel_raytrace::gpu::GpuRenderState::new_styled(
+                inner.frame_index,
+                inner.debug_mode,
+                s,
+                c,
+                b,
+                inner.edge_depth_threshold,
+                inner.edge_normal_threshold,
+                inner.theme,
+                inner.silhouette_color,
+                inner.crease_color,
+                inner.boundary_color,
+                inner.silhouette_width,
+                inner.crease_width,
+                inner.boundary_width,
+                inner.edge_softness,
             );
-        }
+            rs.ao_radius = inner.ao_radius;
+            rs.ao_intensity = inner.ao_intensity;
+            rs.ao_bias = inner.ao_bias;
+            rs.ao_sample_count = inner.ao_sample_count;
+            rs.refine_sample_count = inner.refine_sample_count;
+
+            let accum_buf = inner.accum_buffer.take();
+            let ao_buf = inner.ao_buffer.take();
+            let frame_index = inner.frame_index;
+            let accum_epoch = inner.accum_epoch;
+            (scene, accum_buf, ao_buf, rs, frame_index, accum_epoch)
+        };
+        let _ = frame_index;
 
         let gpu_camera = GpuCamera::new(
             [camera[0] as f32, camera[1] as f32, camera[2] as f32],
@@ -2738,60 +2822,30 @@ impl RayTracer {
         let ctx =
             vcad_kernel_gpu::GpuContext::get().ok_or_else(|| JsError::new("GPU context lost"))?;
 
-        // Build per-type enable flags (bit 0 = silhouette, bit 1 = crease, bit 2 = boundary).
-        let render_state = {
-            let (s, c, b) = if self.enable_edges {
-                (
-                    self.enable_silhouette,
-                    self.enable_crease,
-                    self.enable_boundary,
-                )
-            } else {
-                (false, false, false)
-            };
-            let mut rs = vcad_kernel_raytrace::gpu::GpuRenderState::new_styled(
-                self.frame_index,
-                self.debug_mode,
-                s,
-                c,
-                b,
-                self.edge_depth_threshold,
-                self.edge_normal_threshold,
-                self.theme,
-                self.silhouette_color,
-                self.crease_color,
-                self.boundary_color,
-                self.silhouette_width,
-                self.crease_width,
-                self.boundary_width,
-                self.edge_softness,
-            );
-            rs.ao_radius = self.ao_radius;
-            rs.ao_intensity = self.ao_intensity;
-            rs.ao_bias = self.ao_bias;
-            rs.ao_sample_count = self.ao_sample_count;
-            rs.refine_sample_count = self.refine_sample_count;
-            rs
-        };
-
         let (pixels, new_accum, new_ao) = self
             .pipeline
             .render_with_render_state(
                 ctx,
-                scene,
+                &scene,
                 &gpu_camera,
                 width,
                 height,
-                self.accum_buffer.take(),
-                self.ao_buffer.take(),
+                accum_buf,
+                ao_buf,
                 render_state,
             )
             .await
             .map_err(|e| JsError::new(&format!("Render failed: {}", e)))?;
 
-        // Store accumulation and AO buffers for next frame
-        self.accum_buffer = Some(new_accum);
-        self.ao_buffer = Some(new_ao);
+        // Only stash the new accumulation buffers if no setter invalidated the
+        // accumulation while we were awaiting. Otherwise they're stale relative
+        // to the new state and would silently undo the reset.
+        let mut inner = self.inner.borrow_mut();
+        if inner.accum_epoch == accum_epoch {
+            inner.accum_buffer = Some(new_accum);
+            inner.ao_buffer = Some(new_ao);
+        }
+        drop(inner);
 
         Ok(pixels)
     }
@@ -2826,7 +2880,8 @@ impl RayTracer {
             ));
         }
 
-        let scene = self
+        let inner = self.inner.borrow();
+        let scene = inner
             .scene
             .as_ref()
             .ok_or_else(|| JsError::new("No solid uploaded. Call uploadSolid() first."))?;
@@ -2874,7 +2929,7 @@ impl RayTracer {
     /// Check if the ray tracer has a scene loaded.
     #[wasm_bindgen(js_name = hasScene)]
     pub fn has_scene(&self) -> bool {
-        self.scene.is_some()
+        self.inner.borrow().scene.is_some()
     }
 }
 
