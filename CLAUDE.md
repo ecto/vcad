@@ -100,7 +100,7 @@ vcad/
 │   ├── vcad-kernel-drafting/      # 2D drawings, projections, GD&T
 │   ├── vcad-kernel-gpu/           # wgpu compute shaders (normals, decimation)
 │   ├── vcad-kernel-raytrace/      # Direct BRep ray tracing
-│   ├── vcad-kernel-physics/       # Rapier3D physics simulation
+│   ├── vcad-kernel-physics/       # phyz physics simulation
 │   ├── vcad-kernel-urdf/          # URDF robot description import
 │   ├── vcad-kernel/               # Unified kernel API
 │   ├── vcad-kernel-wasm/          # WASM bindings for browser
@@ -122,8 +122,9 @@ vcad/
 │   └── docs/                      # Documentation site
 ├── supabase/                      # Database migrations and config
 │   └── migrations/                # SQL migrations (pushed via `supabase db push`)
-├── cad-lib/                       # Loon stdlib for vcad modeling (`.loon` source)
-│   └── src/lib.loon               # bundled into crates/vcad-loon via include_str!
+├── lib/                           # Stdlib for vcad: loon CAD library + DFM rule packs
+│   ├── src/lib.loon               # bundled into crates/vcad-loon via include_str!
+│   └── dfm/                       # DFM rule packs (.toml) bundled into vcad-kernel-dfm
 ```
 
 ## Key Concepts
@@ -169,7 +170,7 @@ Pixel-perfect rendering without tessellation via `vcad-kernel-raytrace`:
 
 ### Physics Simulation
 
-Rapier3D-based physics via `vcad-kernel-physics`:
+phyz-based articulated physics via `vcad-kernel-physics`:
 - BRep-to-physics conversion (rigid bodies, collision shapes)
 - Joint support: Revolute, Prismatic, Cylindrical, Ball, Fixed
 - Gym-style RL interface: `reset()`, `step(action)`, `observe()`
@@ -209,7 +210,7 @@ Rapier3D-based physics via `vcad-kernel-physics`:
 | Shell operation | ✅ |
 | Assembly with joints | ✅ |
 | Forward kinematics | ✅ |
-| Physics simulation (Rapier3D) | ✅ |
+| Physics simulation (phyz) | ✅ |
 | 2D drafting views | ✅ |
 | DXF export | ✅ |
 | STEP import (drag-drop, file picker) | ✅ |

@@ -1,13 +1,44 @@
 import { create } from "zustand";
-import type { EvaluatedScene } from "@vcad/core";
+import type { DfmProcess } from "@vcad/engine";
 
+/**
+ * Three top-level material picks for the marketing-facing QuotePanel.
+ * Each maps to a specific (`process`, `material name`) pair the kernel's
+ * shared cost model recognises in `vcad-kernel-cost::Material::catalog()`.
+ *
+ * The store no longer owns price/volume math — that lives in
+ * `engine.estimateCost()`, which calls the same Rust estimator the
+ * slicer and DFM cost section use. The QuotePanel calls it
+ * asynchronously and animates the result.
+ */
 export type MaterialType = "pla" | "aluminum" | "steel";
 
-export const PRICING = {
-  pla: { rate: 0.05, base: 2, method: "3D Print", days: 3 },
-  aluminum: { rate: 0.5, base: 5, method: "CNC", days: 5 },
-  steel: { rate: 0.8, base: 8, method: "CNC", days: 7 },
-} as const;
+export interface MaterialMapping {
+  /** Manufacturing process used for cost estimation. */
+  process: DfmProcess;
+  /** Material name from `vcad-kernel-cost`'s catalog. */
+  catalogName: string;
+  /** Display label / lead time / method shown in the panel. */
+  display: { name: string; method: string; days: number };
+}
+
+export const MATERIAL_MAPPINGS: Record<MaterialType, MaterialMapping> = {
+  pla: {
+    process: "fdm",
+    catalogName: "PLA",
+    display: { name: "PLA", method: "3D Print", days: 3 },
+  },
+  aluminum: {
+    process: "cnc_3axis",
+    catalogName: "Aluminum 6061",
+    display: { name: "Aluminum", method: "CNC", days: 5 },
+  },
+  steel: {
+    process: "cnc_3axis",
+    catalogName: "Steel 1018",
+    display: { name: "Steel", method: "CNC", days: 7 },
+  },
+};
 
 interface OutputStore {
   // Quote panel state
@@ -18,6 +49,12 @@ interface OutputStore {
   // Material selection
   selectedMaterial: MaterialType;
   setSelectedMaterial: (m: MaterialType) => void;
+
+  /** Last computed prices keyed by material. Populated by the
+   *  QuotePanel's async estimateCost loop; read by tooltips and
+   *  toolbars that need a cached number without re-fetching. */
+  cachedPrices: Partial<Record<MaterialType, number>>;
+  setCachedPrices: (prices: Partial<Record<MaterialType, number>>) => void;
 }
 
 export const useOutputStore = create<OutputStore>((set) => ({
@@ -29,52 +66,8 @@ export const useOutputStore = create<OutputStore>((set) => ({
   // Material
   selectedMaterial: "pla",
   setSelectedMaterial: (m) => set({ selectedMaterial: m }),
+
+  // Price cache
+  cachedPrices: {},
+  setCachedPrices: (cachedPrices) => set({ cachedPrices }),
 }));
-
-/**
- * Calculate price for a given volume and material
- * @param volumeCm3 Volume in cubic centimeters
- * @param material Material type
- * @returns Price in dollars
- */
-export function calculatePrice(volumeCm3: number, material: MaterialType): number {
-  const { rate, base } = PRICING[material];
-  return volumeCm3 * rate + base;
-}
-
-/**
- * Estimate total volume (cm³) for an evaluated scene.
- * Uses a rough bounding-box fill ratio to keep estimates cheap.
- */
-export function estimateVolumeCm3(scene: EvaluatedScene | null): number {
-  if (!scene?.parts?.length) return 0;
-  return scene.parts.reduce((sum, part) => {
-    const positions = part.mesh.positions;
-    if (!positions.length) return sum;
-    let minX = Infinity, maxX = -Infinity;
-    let minY = Infinity, maxY = -Infinity;
-    let minZ = Infinity, maxZ = -Infinity;
-    for (let i = 0; i < positions.length; i += 3) {
-      minX = Math.min(minX, positions[i]!);
-      maxX = Math.max(maxX, positions[i]!);
-      minY = Math.min(minY, positions[i + 1]!);
-      maxY = Math.max(maxY, positions[i + 1]!);
-      minZ = Math.min(minZ, positions[i + 2]!);
-      maxZ = Math.max(maxZ, positions[i + 2]!);
-    }
-    const bbox = (maxX - minX) * (maxY - minY) * (maxZ - minZ);
-    return sum + bbox * 0.3 / 1000;
-  }, 0);
-}
-
-/**
- * Estimate price for an evaluated scene and material.
- */
-export function estimatePrice(
-  scene: EvaluatedScene | null,
-  material: MaterialType
-): number | null {
-  if (!scene?.parts?.length) return null;
-  const volumeCm3 = estimateVolumeCm3(scene);
-  return calculatePrice(volumeCm3, material);
-}

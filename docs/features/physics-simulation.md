@@ -1,6 +1,6 @@
 # Physics Simulation & Gym
 
-Rapier-based rigid body physics for robotics simulation and RL policy training.
+phyz-based articulated rigid body physics for robotics simulation and RL policy training.
 
 ## Status
 
@@ -31,7 +31,7 @@ Robot designers make 50+ design iterations. Each iteration involving physics req
 Integrated physics simulation with gym-style interface for RL training, all within vcad:
 
 ```
-vcad Document → BRep → Collision Shapes → Rapier Simulation
+vcad Document → BRep → Collision Shapes → phyz Simulation
        ↑                                        ↓
     Parameters ←── MCP Tools ←── Policy Actions/Observations
 ```
@@ -39,9 +39,9 @@ vcad Document → BRep → Collision Shapes → Rapier Simulation
 ### Core Components
 
 **1. Physics Engine Integration**
-- Rapier3D for rigid body dynamics (contact, friction, joints)
+- phyz for articulated rigid body dynamics (Featherstone ABA, penalty contacts, joints)
 - Automatic collision shape generation from BRep geometry
-- Joint mapping from vcad assembly joints to Rapier joint constraints
+- Joint mapping from vcad assembly joints to phyz joint types
 
 **2. Collision Shapes from BRep**
 - **Convex hull** — Default for performance (VHACD decomposition for concave shapes)
@@ -132,9 +132,9 @@ for (let episode = 0; episode < 10000; episode++) {
 
 | File | Purpose |
 |------|---------|
-| `crates/vcad-kernel-physics/src/lib.rs` | Crate entry, Rapier integration |
+| `crates/vcad-kernel-physics/src/lib.rs` | Crate entry, phyz integration |
 | `crates/vcad-kernel-physics/src/collision.rs` | BRep → collision shape conversion |
-| `crates/vcad-kernel-physics/src/joints.rs` | vcad joint → Rapier joint mapping |
+| `crates/vcad-kernel-physics/src/joints.rs` | vcad joint → phyz joint mapping |
 | `crates/vcad-kernel-physics/src/gym.rs` | Observation/action types, step/reset |
 | `crates/vcad-kernel-physics/src/state.rs` | Simulation state management |
 | `crates/vcad-kernel-wasm/src/physics.rs` | WASM bindings for browser |
@@ -209,13 +209,13 @@ interface SimulationFrame {
 
 ### Joint Mapping
 
-| vcad Joint | Rapier Joint |
+| vcad Joint | phyz Joint |
 |------------|--------------|
-| `Revolute` | `RevoluteJoint` |
-| `Prismatic` | `PrismaticJoint` |
-| `Fixed` | `FixedJoint` |
-| `Ball` | `BallJoint` |
-| `Cylindrical` | `GenericJoint` (revolute + prismatic) |
+| `Revolute` | `JointType::Revolute` |
+| `Prismatic` | `JointType::Prismatic` |
+| `Fixed` | `JointType::Fixed` |
+| `Ball` | `JointType::Spherical` |
+| `Cylindrical` | Two stacked bodies: `JointType::Revolute` + `JointType::Prismatic` |
 
 ### BRep → Collision Shape Algorithm
 
@@ -231,18 +231,19 @@ interface SimulationFrame {
 
 | Crate | Purpose |
 |-------|---------|
-| `rapier3d` | Physics engine |
-| `parry3d` | Collision detection (Rapier dependency) |
+| `phyz` | Articulated multibody physics engine |
+| `phyz-collision` | GJK/EPA collision detection |
+| `phyz-contact` | Contact resolution and friction |
 | `vhacd` | Convex decomposition |
-| `nalgebra` | Linear algebra (shared with Rapier) |
+| `tang-la` | Linear algebra (shared with phyz) |
 
 ## Tasks
 
 ### Phase 1: Physics Engine Integration
 
-- [ ] Create `vcad-kernel-physics` crate with Rapier3D (`l`)
+- [ ] Create `vcad-kernel-physics` crate with phyz (`l`)
 - [ ] Implement `SimConfig` and basic world setup (`s`)
-- [ ] Map vcad joints to Rapier joint constraints (`m`)
+- [ ] Map vcad joints to phyz joint types (`m`)
 - [ ] Add `step()` and `reset()` methods (`s`)
 - [ ] Implement gravity and basic dynamics (`xs`)
 
@@ -288,7 +289,7 @@ interface SimulationFrame {
 ## Acceptance Criteria
 
 - [ ] Can create physics simulation from vcad document with joints
-- [ ] Rapier simulates rigid body dynamics with gravity
+- [ ] phyz simulates rigid body dynamics with gravity
 - [ ] Joint constraints map correctly (revolute, prismatic, fixed)
 - [ ] Collision shapes auto-generated from BRep geometry
 - [ ] Gym-style `step(action)` returns observations
@@ -301,7 +302,7 @@ interface SimulationFrame {
 
 ## Future Enhancements
 
-- [ ] GPU-accelerated physics via `rapier3d` SIMD features
+- [ ] GPU-accelerated physics via `phyz-gpu` batched WGPU kernels
 - [ ] Domain randomization for sim-to-real transfer
 - [ ] Parallel environment instances for faster training
 - [ ] Soft body simulation (cloth, deformables)

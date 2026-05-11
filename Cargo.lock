@@ -3909,7 +3909,7 @@ dependencies = [
 
 [[package]]
 name = "phyz"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "tang",
 ]
@@ -6921,6 +6921,8 @@ version = "0.9.4"
 dependencies = [
  "vcad-kernel-booleans",
  "vcad-kernel-constraints",
+ "vcad-kernel-cost",
+ "vcad-kernel-dfm",
  "vcad-kernel-fillet",
  "vcad-kernel-geom",
  "vcad-kernel-math",
@@ -6975,6 +6977,31 @@ dependencies = [
  "vcad-kernel-math",
  "vcad-kernel-sketch",
  "wgpu",
+]
+
+[[package]]
+name = "vcad-kernel-cost"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "vcad-kernel-dfm"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "toml 0.8.23",
+ "vcad-ir",
+ "vcad-kernel-cost",
+ "vcad-kernel-geom",
+ "vcad-kernel-math",
+ "vcad-kernel-primitives",
+ "vcad-kernel-raytrace",
+ "vcad-kernel-topo",
 ]
 
 [[package]]
@@ -7285,6 +7312,9 @@ dependencies = [
  "rayon",
  "serde",
  "thiserror 2.0.18",
+ "toml 0.8.23",
+ "vcad-kernel-cost",
+ "vcad-kernel-dfm",
  "vcad-kernel-geom",
  "vcad-kernel-math",
  "vcad-kernel-primitives",

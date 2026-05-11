@@ -1,0 +1,20 @@
+schema = "vcad.dfm/1"
+version = "1"
+process = "cnc_3axis"
+name = "Standard 3-axis aluminum"
+notes = "Defaults assume a 6 mm minimum end mill with 50 mm flute length."
+
+[rules.internal_radius_too_small]
+severity = "warning"
+min_internal_radius_mm = 3.0
+fix = "raise_fillet_radius"
+
+[rules.thin_wall]
+severity = "error"
+min_wall_mm = 1.0
+fix = "thicken_wall"
+
+[rules.tool_inaccessibility]
+severity = "error"
+min_dot = 0.0
+fix = "manual"

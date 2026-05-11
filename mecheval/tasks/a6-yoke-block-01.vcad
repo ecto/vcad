@@ -1,0 +1,164 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "base_raw",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 80,
+          "y": 40,
+          "z": 12
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "base",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -40,
+          "y": -20,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "tineL_raw",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 14,
+          "y": 40,
+          "z": 45
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "tineL",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": -40,
+          "y": -20,
+          "z": 12
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "tineR_raw",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 14,
+          "y": 40,
+          "z": 45
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "tineR",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": 26,
+          "y": -20,
+          "z": 12
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "body_1",
+      "op": {
+        "type": "Union",
+        "left": 2,
+        "right": 4
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "body_2",
+      "op": {
+        "type": "Union",
+        "left": 7,
+        "right": 6
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "cb_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 9,
+        "height": 80,
+        "segments": 64
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "cb_z0",
+      "op": {
+        "type": "Translate",
+        "child": 9,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": -40
+        }
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "cb_rot",
+      "op": {
+        "type": "Rotate",
+        "child": 10,
+        "angles": {
+          "x": 0,
+          "y": 90,
+          "z": 0
+        }
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "cross_bore",
+      "op": {
+        "type": "Translate",
+        "child": 11,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 44.5
+        }
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "part",
+      "op": {
+        "type": "Difference",
+        "left": 8,
+        "right": 12
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 13,
+      "material": "default"
+    }
+  ]
+}

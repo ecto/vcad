@@ -4,7 +4,7 @@
  * These tools provide a gym-like interface for simulating robot assemblies
  * with physics, enabling reinforcement learning training.
  *
- * Uses the Rapier3D physics engine via WASM bindings.
+ * Uses the phyz physics engine via WASM bindings.
  */
 
 import type { Document } from "@vcad/ir";

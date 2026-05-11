@@ -127,7 +127,7 @@ Optional G-code for routers and Gerber-style outputs for waterjets.
 ### 9. Welded sheet-metal assemblies
 
 A `Weldment` IR node that joins multiple flat parts along edges with weld type, leg size, and
-material. Distortion prediction (heuristic first, FEA-backed later via Rapier coupling). Generates
+material. Distortion prediction (heuristic first, FEA-backed later via phyz coupling). Generates
 the cutlist + weld map automatically.
 
 ### 10. AI-native MCP surface

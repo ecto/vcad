@@ -4,14 +4,14 @@
 
 ## Overview
 
-Compile vcad-kernel-physics (Rapier3d) to WASM, enabling browser-based physics simulation. This is the foundation for all browser simulation features including robot control, physics-always-on UX, and multiplayer physics synchronization.
+Compile vcad-kernel-physics (phyz) to WASM, enabling browser-based physics simulation. This is the foundation for all browser simulation features including robot control, physics-always-on UX, and multiplayer physics synchronization.
 
 ## Current State
 
 | Component | Status |
 |-----------|--------|
 | vcad-kernel-physics | ✅ Complete (~1000 LOC) |
-| Rapier3d 0.23 integration | ✅ Complete |
+| phyz 0.23 integration | ✅ Complete |
 | Joint types (5) | ✅ Revolute, Prismatic, Fixed, Spherical, Generic |
 | Gym-style RobotEnv | ✅ Complete |
 | WASM compilation | ❌ Not started |
@@ -33,21 +33,20 @@ physics = ["vcad-kernel-physics"]
 vcad-kernel-physics = { path = "../vcad-kernel-physics", optional = true }
 ```
 
-### 2. Rapier WASM Compatibility
+### 2. phyz WASM Compatibility
 
-Rapier3d supports WASM but requires configuration:
+phyz is pure Rust with no platform-specific dependencies, so it compiles to
+WASM without special configuration:
 
 ```toml
-[dependencies.rapier3d]
-version = "0.23"
-features = ["wasm-bindgen", "parallel"]  # parallel optional
-default-features = false
+[dependencies]
+phyz = { path = "../../../phyz/crates/phyz", version = "0.2" }
 ```
 
 Key considerations:
-- Disable SIMD by default for broad browser support
-- Enable `wasm-bindgen` feature for JS interop
-- Consider `parallel` feature with SharedArrayBuffer (requires COOP/COEP headers)
+- phyz uses `tang-la` for linear algebra, which is `no_std`-friendly
+- Featherstone ABA is single-threaded; phyz-gpu provides batched WGPU
+  kernels if browser parallelism is needed
 
 ### 3. WASM Bindings
 
@@ -171,7 +170,7 @@ physics.setJointPosition('joint_1', Math.PI / 4);
 
 ### SIMD Browser Support
 
-Rapier uses SIMD for performance. Mitigation:
+phyz uses SIMD for performance. Mitigation:
 - Build two WASM binaries: `physics.wasm` (SIMD) and `physics-fallback.wasm` (scalar)
 - Feature-detect at runtime: `WebAssembly.validate(simdTestBytes)`
 - Load appropriate binary
@@ -214,7 +213,7 @@ This feature enables:
 
 1. **Browser-based robot simulation** - Design and test robots entirely in the browser
 2. **Physics-always-on UX** - Real-time gravity, collisions, and constraints during modeling
-3. **MCP gym tools with real physics** - `gym_step`, `gym_reset`, `gym_observe` use actual Rapier
+3. **MCP gym tools with real physics** - `gym_step`, `gym_reset`, `gym_observe` use actual phyz
 4. **Multiplayer physics** - Shared deterministic state across clients
 5. **Training data generation** - Collect trajectories for ML in browser
 
@@ -232,7 +231,7 @@ This feature enables:
 
 ### Phase 1: Basic WASM Build (1-2 days)
 - Add physics feature flag
-- Configure Rapier for WASM target
+- Configure phyz for WASM target
 - Verify compilation succeeds
 
 ### Phase 2: Bindings (2-3 days)

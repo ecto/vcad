@@ -1,17 +1,28 @@
 //! Design for Manufacturing (DFM) printability checks.
 //!
-//! Analyzes a solid against a printer profile to find issues that will
-//! cause print failures or poor quality. Returns face/edge IDs so the
-//! UI can highlight problem areas in the viewport.
+//! As of v1 DFM, this module is a back-compat adapter over the
+//! generic [`vcad_kernel_dfm`] crate. New callers should use
+//! `vcad_kernel_dfm::run_dfm` directly — it covers FDM along with
+//! CNC, injection, sheet metal, and casting, and returns the richer
+//! [`DfmIssue`](vcad_kernel_dfm::DfmIssue) payload that the agent
+//! loop and the inline app annotations consume.
+//!
+//! The legacy `DfmResult` / `DfmWarning` shape kept here makes the
+//! existing `vcad-kernel-wasm::checkPrintability` JS binding work
+//! without churn — it converts a shared `DfmReport` into the older
+//! flat warning list, and adds the build-volume check the generic
+//! crate doesn't model.
 
 use serde::{Deserialize, Serialize};
-use vcad_kernel_geom::{CylinderSurface, SurfaceKind};
-use vcad_kernel_math::Point2;
+use vcad_kernel_dfm::{
+    run_dfm, DfmFix, DfmReport, DfmSeverity as KernelSeverity, Process, RulePack,
+};
 use vcad_kernel_primitives::BRepSolid;
 
 use crate::smart_defaults::PrinterParams;
 
-/// Severity of a DFM warning.
+/// Severity of a DFM warning (legacy shape; mirrors
+/// `vcad_kernel_dfm::DfmSeverity`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DfmSeverity {
     /// Will not print at all.
@@ -20,6 +31,16 @@ pub enum DfmSeverity {
     Warning,
     /// Informational suggestion.
     Info,
+}
+
+impl From<KernelSeverity> for DfmSeverity {
+    fn from(s: KernelSeverity) -> Self {
+        match s {
+            KernelSeverity::Error => Self::Error,
+            KernelSeverity::Warning => Self::Warning,
+            KernelSeverity::Info => Self::Info,
+        }
+    }
 }
 
 /// A DFM warning with face/edge references for highlighting.
@@ -47,19 +68,20 @@ pub struct DfmResult {
 }
 
 /// Check a solid for printability issues against a printer profile.
+///
+/// Internally builds an FDM [`RulePack`] from the printer params (so
+/// `nozzle_diameter` drives `min_wall_mm` and `min_diameter_mm`) then
+/// delegates to `vcad_kernel_dfm::run_dfm`. The build-volume check is
+/// the one rule the generic crate doesn't yet model — added here on
+/// top of the converted warning list.
 pub fn check_printability(brep: &BRepSolid, params: &PrinterParams) -> DfmResult {
-    let mut warnings = Vec::new();
-    let nozzle = params.nozzle_diameter;
-    let min_line_width = nozzle * 0.8;
+    let pack = build_pack_from_params(params);
+    let report = run_dfm(brep, None, Process::Fdm, &pack);
+    let mut warnings: Vec<DfmWarning> = report.issues.iter().map(issue_to_warning).collect();
 
-    // Check build volume
-    let (bbox_min, bbox_max) = compute_bbox(brep);
-    let size = [
-        bbox_max[0] - bbox_min[0],
-        bbox_max[1] - bbox_min[1],
-        bbox_max[2] - bbox_min[2],
-    ];
-
+    // Build-volume check (not in vcad-kernel-dfm yet — printer-specific).
+    let (lo, hi) = brep_bbox(brep);
+    let size = [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]];
     if size[0] > params.bed_x || size[1] > params.bed_y || size[2] > params.bed_z {
         warnings.push(DfmWarning {
             severity: DfmSeverity::Error,
@@ -73,164 +95,62 @@ pub fn check_printability(brep: &BRepSolid, params: &PrinterParams) -> DfmResult
         });
     }
 
-    // Analyze each face
-    let z_up = vcad_kernel_math::Vec3::new(0.0, 0.0, 1.0);
-    let mut thin_wall_faces = Vec::new();
-    let mut steep_overhang_faces = Vec::new();
-    let mut small_hole_faces = Vec::new();
-
-    let face_entries: Vec<_> = brep.topology.faces.iter().collect();
-
-    for (face_idx, (_face_id, face)) in face_entries.iter().enumerate() {
-        let surface = &brep.geometry.surfaces[face.surface_index];
-        let kind = surface.surface_type();
-
-        // Sample normal
-        let ((u_min, u_max), (v_min, v_max)) = surface.domain();
-        let normal_dir = surface.normal(Point2::new((u_min + u_max) / 2.0, (v_min + v_max) / 2.0));
-        let normal = vcad_kernel_math::Vec3::new(
-            normal_dir.as_ref().x,
-            normal_dir.as_ref().y,
-            normal_dir.as_ref().z,
-        );
-        let face_normal = if face.orientation == vcad_kernel_topo::Orientation::Reversed {
-            -normal
-        } else {
-            normal
-        };
-
-        // Steep overhang check (>60° from vertical is problematic even with support)
-        let dot = face_normal.dot(z_up);
-        let angle_from_up = dot.clamp(-1.0, 1.0).acos().to_degrees();
-        if angle_from_up > 150.0 {
-            // Nearly flat bottom face — needs support
-            steep_overhang_faces.push(face_idx);
-        }
-
-        // Small hole check
-        if kind == SurfaceKind::Cylinder {
-            if let Some(cyl) = surface.as_any().downcast_ref::<CylinderSurface>() {
-                let diameter = cyl.radius * 2.0;
-                if diameter < nozzle * 2.0 {
-                    small_hole_faces.push((face_idx, diameter));
-                }
-            }
-        }
+    DfmResult {
+        score: score_from(&report, &warnings),
+        warnings,
     }
-
-    // Wall thickness: check opposing parallel faces
-    for i in 0..face_entries.len() {
-        for j in (i + 1)..face_entries.len() {
-            let (_, fi) = face_entries[i];
-            let (_, fj) = face_entries[j];
-            let si = &brep.geometry.surfaces[fi.surface_index];
-            let sj = &brep.geometry.surfaces[fj.surface_index];
-
-            let ((ui_min, ui_max), (vi_min, vi_max)) = si.domain();
-            let ((uj_min, uj_max), (vj_min, vj_max)) = sj.domain();
-
-            let ni = si.normal(Point2::new(
-                (ui_min + ui_max) / 2.0,
-                (vi_min + vi_max) / 2.0,
-            ));
-            let nj = sj.normal(Point2::new(
-                (uj_min + uj_max) / 2.0,
-                (vj_min + vj_max) / 2.0,
-            ));
-
-            let ni_vec = vcad_kernel_math::Vec3::new(ni.as_ref().x, ni.as_ref().y, ni.as_ref().z);
-            let nj_vec = vcad_kernel_math::Vec3::new(nj.as_ref().x, nj.as_ref().y, nj.as_ref().z);
-
-            // Account for face orientation
-            let ni_oriented = if fi.orientation == vcad_kernel_topo::Orientation::Reversed {
-                -ni_vec
-            } else {
-                ni_vec
-            };
-            let nj_oriented = if fj.orientation == vcad_kernel_topo::Orientation::Reversed {
-                -nj_vec
-            } else {
-                nj_vec
-            };
-
-            if ni_oriented.dot(nj_oriented) < -0.95 {
-                let pi = si.evaluate(Point2::new(
-                    (ui_min + ui_max) / 2.0,
-                    (vi_min + vi_max) / 2.0,
-                ));
-                let pj = sj.evaluate(Point2::new(
-                    (uj_min + uj_max) / 2.0,
-                    (vj_min + vj_max) / 2.0,
-                ));
-                let dist =
-                    ((pi.x - pj.x).powi(2) + (pi.y - pj.y).powi(2) + (pi.z - pj.z).powi(2)).sqrt();
-
-                if dist > 0.01 && dist < min_line_width {
-                    thin_wall_faces.push(i);
-                    thin_wall_faces.push(j);
-                }
-            }
-        }
-    }
-
-    // Emit warnings
-    if !thin_wall_faces.is_empty() {
-        thin_wall_faces.sort();
-        thin_wall_faces.dedup();
-        warnings.push(DfmWarning {
-            severity: DfmSeverity::Error,
-            kind: "thin_wall".into(),
-            message: format!(
-                "Wall too thin to print ({} face(s) below {:.2}mm min)",
-                thin_wall_faces.len(),
-                min_line_width
-            ),
-            face_indices: thin_wall_faces,
-            suggestion: Some(format!(
-                "Increase wall thickness to at least {:.2}mm",
-                min_line_width
-            )),
-        });
-    }
-
-    if !steep_overhang_faces.is_empty() {
-        warnings.push(DfmWarning {
-            severity: DfmSeverity::Warning,
-            kind: "steep_overhang".into(),
-            message: format!(
-                "{} face(s) with steep overhang (>60°) — needs support",
-                steep_overhang_faces.len()
-            ),
-            face_indices: steep_overhang_faces,
-            suggestion: Some("Enable support structures or reorient part".into()),
-        });
-    }
-
-    for (face_idx, diameter) in &small_hole_faces {
-        warnings.push(DfmWarning {
-            severity: DfmSeverity::Warning,
-            kind: "small_hole".into(),
-            message: format!("Small hole ({:.2}mm) may close during printing", diameter),
-            face_indices: vec![*face_idx],
-            suggestion: Some(format!("Enlarge hole to at least {:.2}mm", nozzle * 2.0)),
-        });
-    }
-
-    // Compute score
-    let error_count = warnings
-        .iter()
-        .filter(|w| w.severity == DfmSeverity::Error)
-        .count();
-    let warning_count = warnings
-        .iter()
-        .filter(|w| w.severity == DfmSeverity::Warning)
-        .count();
-    let score = 100u32.saturating_sub((error_count * 30 + warning_count * 10) as u32);
-
-    DfmResult { warnings, score }
 }
 
-fn compute_bbox(brep: &BRepSolid) -> ([f64; 3], [f64; 3]) {
+fn build_pack_from_params(params: &PrinterParams) -> RulePack {
+    let mut pack = RulePack::default_for(Process::Fdm);
+    let nozzle = params.nozzle_diameter;
+    let min_line_width = nozzle * 0.8;
+    if let Some(rule) = pack.rules.get_mut("thin_wall") {
+        rule.params
+            .insert("min_wall_mm".into(), toml::Value::Float(min_line_width));
+    }
+    if let Some(rule) = pack.rules.get_mut("small_hole") {
+        rule.params
+            .insert("min_diameter_mm".into(), toml::Value::Float(nozzle * 2.0));
+    }
+    pack
+}
+
+fn issue_to_warning(issue: &vcad_kernel_dfm::DfmIssue) -> DfmWarning {
+    let kind = issue
+        .rule
+        .split_once('.')
+        .map(|(_, tail)| tail.to_string())
+        .unwrap_or_else(|| issue.rule.clone());
+    let suggestion = match &issue.suggested_fix {
+        Some(DfmFix::Manual { description }) => Some(description.clone()),
+        Some(DfmFix::SetParam { path, value, .. }) => Some(format!("Set {path} = {value}")),
+        Some(_) => Some("Apply suggested fix via dfm_apply_fix".into()),
+        None => None,
+    };
+    DfmWarning {
+        severity: issue.severity.into(),
+        kind,
+        message: issue.message.clone(),
+        face_indices: issue.face_indices.clone(),
+        suggestion,
+    }
+}
+
+fn score_from(report: &DfmReport, extra_warnings: &[DfmWarning]) -> u32 {
+    let mut errors = report.error_count();
+    let mut warns = report.warning_count();
+    for w in extra_warnings {
+        match w.severity {
+            DfmSeverity::Error => errors += 1,
+            DfmSeverity::Warning => warns += 1,
+            _ => {}
+        }
+    }
+    100u32.saturating_sub((errors * 30 + warns * 10) as u32)
+}
+
+fn brep_bbox(brep: &BRepSolid) -> ([f64; 3], [f64; 3]) {
     let mut min = [f64::MAX; 3];
     let mut max = [f64::MIN; 3];
     for (_id, v) in &brep.topology.vertices {
@@ -262,7 +182,6 @@ mod tests {
     fn test_cube_no_errors() {
         let brep = make_cube(20.0, 20.0, 10.0);
         let result = check_printability(&brep, &a1_mini_params());
-
         let errors: Vec<_> = result
             .warnings
             .iter()
@@ -276,7 +195,6 @@ mod tests {
     fn test_exceeds_build_volume() {
         let brep = make_cube(200.0, 200.0, 200.0);
         let result = check_printability(&brep, &a1_mini_params());
-
         let volume_errors: Vec<_> = result
             .warnings
             .iter()

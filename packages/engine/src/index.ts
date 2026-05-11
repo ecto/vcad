@@ -32,6 +32,22 @@ export {
 } from "./wasm-singleton.js";
 
 export {
+  runDfm,
+  estimateCost,
+  getDefaultDfmPack,
+} from "./dfm.js";
+export type {
+  DfmProcess,
+  DfmSeverity,
+  DfmFix,
+  DfmIssue,
+  DfmReport,
+  DfmCostEstimate,
+  RunDfmOptions,
+  EstimateCostOptions,
+} from "./dfm.js";
+
+export {
   initializeGpu,
   isGpuAvailable,
   processGeometryGpu,

@@ -26,6 +26,11 @@ export interface EvaluatedPart {
 export interface EvaluatedPartDef {
   id: string;
   mesh: TriangleMesh;
+  /** Optional BRep solid handle (only set on the main-thread TS evaluator
+   *  via `evaluateWithSolids` — used by direct-BRep ray tracing to upload
+   *  per-instance geometry). Worker-evaluated scenes don't carry handles. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  solid?: any;
 }
 
 /** An instance of a part definition with transform and material. */

@@ -23,7 +23,7 @@ Capabilities uniquely enabled by our Rust/WASM architecture that competitors can
 | 7 | **83** | [Browser-Native CAD](./browser-native.md) | `shipped` | Full CAD in browser, no install |
 | 8 | **82** | [Offline-First Privacy](./offline-first-privacy.md) | `shipped` | Geometry never leaves browser |
 | 9 | **81** | [Parallel WASM Workers](./parallel-wasm-workers.md) | `planned` | Background compute, responsive UI |
-| 10 | **80** | [WASM Physics Integration](./wasm-physics-integration.md) | `planned` | Rapier3d in browser — **P0** |
+| 10 | **80** | [WASM Physics Integration](./wasm-physics-integration.md) | `planned` | phyz in browser — **P0** |
 
 ### Physics-First CAD (The Paradigm Shift)
 
@@ -183,7 +183,7 @@ Robotics interoperability and physics simulation.
 | Feature | Status | Priority | Effort | Spec |
 |---------|--------|----------|--------|------|
 | [URDF Import/Export](./urdf-support.md) | `proposed` | p1 | s | Standard robotics format |
-| [Physics Simulation & Gym](./physics-simulation.md) | `planned` | p2 | l | Rapier physics, RL training |
+| [Physics Simulation & Gym](./physics-simulation.md) | `planned` | p2 | l | phyz physics, RL training |
 
 ---
 

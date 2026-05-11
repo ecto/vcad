@@ -174,8 +174,8 @@ Visualization: marching cubes to extract isosurface mesh.
 |---------|---------|-------------|
 | Clipper2 (`geo-clipper`) | 2D polygon offsetting | Direct Rust binding |
 | OpenCAMLib | Drop-cutter reference | Port algorithms (C++ → Rust) |
-| parry3d | Collision detection | Stock-tool intersection |
-| nalgebra | Linear algebra | Already in vcad |
+| phyz-collision | Collision detection (GJK/EPA) | Stock-tool intersection |
+| tang-la | Linear algebra | Already in vcad |
 
 ## Post-Processors
 
