@@ -3,23 +3,95 @@
   "suite": "F",
   "tier": "F3",
   "title": "Snap-fit cap over a retention bead",
-  "prompt": "Reference images of a bottle neck are attached. The neck has a retention bead — an annular bump (12mm OD over a 3mm height) — between a 10mm-OD lower neck and a 10mm-OD upper stub. Design a snap-fit cap that pushes down over the bead from above and is captured by it: in the as-installed pose, the cap's internal retention lip must sit just below the bead so that pulling the cap upward forces the lip to climb back over the bead.\n\nRequirements:\n- Single solid, single-root .vcad.\n- The cap's main internal bore must clear the 12mm bead with 0.1–0.4mm radial clearance (so a main bore diameter of 24.2–24.8mm).\n- At the open bottom of the cap (below the main bore, opposite the closed roof), the bore must narrow to an internal retention lip whose diameter is 0.3–0.7mm smaller than the bead diameter (so a lip inner diameter of 23.3–23.7mm). The lip should be 0.8–1.5mm tall.\n- The cap's outer diameter must be ≤ 28mm.\n- The cap's overall height (axial extent) must be ≤ 12mm.\n- The wall thickness everywhere must be ≥ 1.5mm.\n\nOutput the cap in the host frame: neck axis is +Z, lower-neck base at z=0, bead at z=20..23, stub at z=23..27. Place the cap so its open bottom is at z=19 and the retention lip captures the bead from below — i.e. the lip's narrow inner section sits at roughly z=19..20.5.",
+  "prompt": "Reference images of a bottle neck are attached. The neck has a retention bead \u2014 an annular bump (12mm OD over a 3mm height) \u2014 between a 10mm-OD lower neck and a 10mm-OD upper stub. Design a snap-fit cap that pushes down over the bead from above and is captured by it: in the as-installed pose, the cap's internal retention lip must sit just below the bead so that pulling the cap upward forces the lip to climb back over the bead.\n\nRequirements:\n- Single solid, single-root .vcad.\n- The cap's main internal bore must clear the 12mm bead with 0.1\u20130.4mm radial clearance (so a main bore diameter of 24.2\u201324.8mm).\n- At the open bottom of the cap (below the main bore, opposite the closed roof), the bore must narrow to an internal retention lip whose diameter is 0.3\u20130.7mm smaller than the bead diameter (so a lip inner diameter of 23.3\u201323.7mm). The lip should be 0.8\u20131.5mm tall.\n- The cap's outer diameter must be \u2264 28mm.\n- The cap's overall height (axial extent) must be \u2264 12mm.\n- The wall thickness everywhere must be \u2265 1.5mm.\n\nOutput the cap in the host frame: neck axis is +Z, lower-neck base at z=0, bead at z=20..23, stub at z=23..27. Place the cap so its open bottom is at z=19 and the retention lip captures the bead from below \u2014 i.e. the lip's narrow inner section sits at roughly z=19..20.5.",
   "inputs": [
-    { "kind": "reference_image", "path": "assets/f3-cap-snap-bottle-01/front.jpg", "agent_visible": true, "view": "front", "image_kind": "photo", "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 } },
-    { "kind": "reference_image", "path": "assets/f3-cap-snap-bottle-01/side.jpg", "agent_visible": true, "view": "side", "image_kind": "photo", "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 } },
-    { "kind": "reference_image", "path": "assets/f3-cap-snap-bottle-01/top.jpg", "agent_visible": true, "view": "top", "image_kind": "photo", "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 } },
-    { "kind": "host_geometry", "path": "assets/f3-cap-snap-bottle-01/host.vcad", "agent_visible": false, "frame": { "origin": [0, 0, 0], "axis": [0, 0, 1] } },
-    { "kind": "known_dimensions", "agent_visible": true, "text": "The lower neck is 20mm in diameter. The retention bead is 24mm in diameter and 3mm tall." }
+    {
+      "kind": "reference_image",
+      "path": "assets/f3-cap-snap-bottle-01/front.jpg",
+      "agent_visible": true,
+      "view": "front",
+      "image_kind": "photo",
+      "scale_fiducial": {
+        "type": "aruco_4x4_50mm",
+        "marker_id": 0
+      }
+    },
+    {
+      "kind": "reference_image",
+      "path": "assets/f3-cap-snap-bottle-01/side.jpg",
+      "agent_visible": true,
+      "view": "side",
+      "image_kind": "photo",
+      "scale_fiducial": {
+        "type": "aruco_4x4_50mm",
+        "marker_id": 0
+      }
+    },
+    {
+      "kind": "reference_image",
+      "path": "assets/f3-cap-snap-bottle-01/top.jpg",
+      "agent_visible": true,
+      "view": "top",
+      "image_kind": "photo",
+      "scale_fiducial": {
+        "type": "aruco_4x4_50mm",
+        "marker_id": 0
+      }
+    },
+    {
+      "kind": "host_geometry",
+      "path": "assets/f3-cap-snap-bottle-01/host.vcad",
+      "agent_visible": false,
+      "frame": {
+        "origin": [
+          0,
+          0,
+          0
+        ],
+        "axis": [
+          0,
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "kind": "known_dimensions",
+      "agent_visible": true,
+      "text": "The lower neck is 20mm in diameter. The retention bead is 24mm in diameter and 3mm tall."
+    }
   ],
   "checks": [
-    { "type": "valid_solid" },
-    { "type": "interference_volume", "host": "host_geometry", "max_mm3": 80.0 },
-    { "type": "contact_area", "host": "host_geometry", "epsilon_mm": 0.5, "min_mm2": 50 },
-    { "type": "envelope", "max_mm": [28.5, 28.5, 12.5] },
+    {
+      "type": "valid_solid"
+    },
+    {
+      "type": "interference_volume",
+      "host": "host_geometry",
+      "max_mm3": 80.0
+    },
+    {
+      "type": "contact_area",
+      "host": "host_geometry",
+      "epsilon_mm": 0.5,
+      "min_mm2": 50
+    },
+    {
+      "type": "envelope",
+      "max_mm": [
+        28.5,
+        28.5,
+        12.5
+      ]
+    },
     {
       "type": "pull_retention_geometric",
       "host": "host_geometry",
-      "direction": [0, 0, 1],
+      "direction": [
+        0,
+        0,
+        1
+      ],
       "displacement_mm": 3.0,
       "min_interference_gain_mm3": 15.0
     },
@@ -27,11 +99,21 @@
       "type": "pull_force",
       "host": "host_geometry",
       "force_n": 5.0,
-      "direction": [0, 0, 1],
-      "duration_sec": 0.1,
-      "max_drift_mm": 50000.0
+      "direction": [
+        0,
+        0,
+        1
+      ],
+      "duration_sec": 0.25,
+      "max_drift_mm": 100000.0
     },
-    { "type": "dfm", "rules": ["min_wall_1.5mm", "no_undercut"] }
+    {
+      "type": "dfm",
+      "rules": [
+        "min_wall_1.5mm",
+        "no_undercut"
+      ]
+    }
   ],
   "anti_cheese": {
     "max_solid_count": 1,
@@ -43,5 +125,12 @@
     "max_tool_calls": 60
   },
   "pass_k": 5,
-  "tags": ["fit", "cap", "snap-fit", "axisymmetric", "image-conditioned", "form-lock"]
+  "tags": [
+    "fit",
+    "cap",
+    "snap-fit",
+    "axisymmetric",
+    "image-conditioned",
+    "form-lock"
+  ]
 }

@@ -3125,6 +3125,7 @@ dependencies = [
  "vcad-eval",
  "vcad-ir",
  "vcad-kernel",
+ "vcad-kernel-dfm",
  "vcad-kernel-geom",
  "vcad-kernel-physics",
  "vcad-kernel-step",
@@ -7043,6 +7044,7 @@ dependencies = [
  "thiserror 2.0.18",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "web-sys",
  "wgpu",
 ]
 
@@ -7092,6 +7094,7 @@ version = "0.9.4"
 dependencies = [
  "bytemuck",
  "js-sys",
+ "pollster",
  "tang",
  "thiserror 2.0.18",
  "vcad-kernel-booleans",

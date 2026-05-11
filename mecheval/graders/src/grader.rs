@@ -227,10 +227,18 @@ fn run_check(
             tolerance_mm,
         } => check_fillet_radius(snapshot, edge_class, *radius_mm, *tolerance_mm),
 
-        CheckSpec::DrcClean
-        | CheckSpec::ErcClean
-        | CheckSpec::Dfm { .. }
-        | CheckSpec::RefactorInvariant { .. } => (
+        CheckSpec::Dfm {
+            rules,
+            process,
+            max_severity,
+        } => crate::dfm::check_dfm(
+            snapshot,
+            process.as_deref(),
+            max_severity.as_deref(),
+            rules,
+        ),
+
+        CheckSpec::DrcClean | CheckSpec::ErcClean | CheckSpec::RefactorInvariant { .. } => (
             CheckOutcome::NotImplemented,
             json!({ "reason": stub_reason }),
         ),

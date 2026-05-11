@@ -69,8 +69,8 @@
       "host": "host_geometry",
       "host_mass_kg": 1.0,
       "gravity_dir": [0, 0, -1],
-      "duration_sec": 0.25,
-      "max_drift_mm": 50000.0
+      "duration_sec": 0.5,
+      "max_drift_mm": 50.0
     },
     {
       "type": "dfm",

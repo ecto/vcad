@@ -16,6 +16,7 @@
 pub mod anti_cheese;
 pub mod blob;
 pub mod check;
+pub mod dfm;
 pub mod eval;
 pub mod fillets;
 pub mod fit;

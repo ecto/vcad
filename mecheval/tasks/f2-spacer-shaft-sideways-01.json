@@ -3,32 +3,117 @@
   "suite": "F",
   "tier": "F2",
   "title": "Spacer on shaft, sideways gravity",
-  "prompt": "Reference images of a stepped shaft are attached. The shaft has two coaxial flanges separated by a 20mm-diameter, 30mm-long waist. Design a tube spacer that fills the gap between flanges. Gravity acts sideways (along -Y, perpendicular to the shaft axis), pushing the spacer laterally; the waist must keep it from translating off the shaft.\n\nRequirements:\n- Single solid, single-root .vcad.\n- Bore clears the 20mm waist with 0.1–0.3mm radial clearance.\n- Outer diameter ≤ 40mm.\n- Length 29.5–30mm (fills the axial gap, with the flanges arresting any axial motion).\n- Wall thickness ≥ 1.5mm.\n\nOutput in host's frame: shaft axis +Z, bottom flange bottom face at z = 0, waist z = 10 to z = 40. Place spacer coaxial, z ∈ [10, 40].",
+  "prompt": "Reference images of a stepped shaft are attached. The shaft has two coaxial flanges separated by a 20mm-diameter, 30mm-long waist. Design a tube spacer that fills the gap between flanges. Gravity acts sideways (along -Y, perpendicular to the shaft axis), pushing the spacer laterally; the waist must keep it from translating off the shaft.\n\nRequirements:\n- Single solid, single-root .vcad.\n- Bore clears the 20mm waist with 0.1\u20130.3mm radial clearance.\n- Outer diameter \u2264 40mm.\n- Length 29.5\u201330mm (fills the axial gap, with the flanges arresting any axial motion).\n- Wall thickness \u2265 1.5mm.\n\nOutput in host's frame: shaft axis +Z, bottom flange bottom face at z = 0, waist z = 10 to z = 40. Place spacer coaxial, z \u2208 [10, 40].",
   "inputs": [
-    { "kind": "reference_image", "path": "assets/f2-spacer-shaft-sideways-01/front.jpg", "agent_visible": true, "view": "front", "image_kind": "photo", "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 } },
-    { "kind": "reference_image", "path": "assets/f2-spacer-shaft-sideways-01/side.jpg", "agent_visible": true, "view": "side", "image_kind": "photo", "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 } },
-    { "kind": "reference_image", "path": "assets/f2-spacer-shaft-sideways-01/top.jpg", "agent_visible": true, "view": "top", "image_kind": "photo", "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 } },
-    { "kind": "host_geometry", "path": "assets/f2-spacer-shaft-sideways-01/host.vcad", "agent_visible": false, "frame": { "origin": [0, 0, 0], "axis": [0, 0, 1] } },
-    { "kind": "known_dimensions", "agent_visible": true, "text": "The bottom flange is 40mm in diameter." }
+    {
+      "kind": "reference_image",
+      "path": "assets/f2-spacer-shaft-sideways-01/front.jpg",
+      "agent_visible": true,
+      "view": "front",
+      "image_kind": "photo",
+      "scale_fiducial": {
+        "type": "aruco_4x4_50mm",
+        "marker_id": 0
+      }
+    },
+    {
+      "kind": "reference_image",
+      "path": "assets/f2-spacer-shaft-sideways-01/side.jpg",
+      "agent_visible": true,
+      "view": "side",
+      "image_kind": "photo",
+      "scale_fiducial": {
+        "type": "aruco_4x4_50mm",
+        "marker_id": 0
+      }
+    },
+    {
+      "kind": "reference_image",
+      "path": "assets/f2-spacer-shaft-sideways-01/top.jpg",
+      "agent_visible": true,
+      "view": "top",
+      "image_kind": "photo",
+      "scale_fiducial": {
+        "type": "aruco_4x4_50mm",
+        "marker_id": 0
+      }
+    },
+    {
+      "kind": "host_geometry",
+      "path": "assets/f2-spacer-shaft-sideways-01/host.vcad",
+      "agent_visible": false,
+      "frame": {
+        "origin": [
+          0,
+          0,
+          0
+        ],
+        "axis": [
+          0,
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "kind": "known_dimensions",
+      "agent_visible": true,
+      "text": "The bottom flange is 40mm in diameter."
+    }
   ],
   "checks": [
-    { "type": "valid_solid" },
-    { "type": "interference_volume", "host": "host_geometry", "max_mm3": 1.0 },
-    { "type": "contact_area", "host": "host_geometry", "epsilon_mm": 0.3, "min_mm2": 1500 },
-    { "type": "envelope", "max_mm": [40.5, 40.5, 30.5] },
-    { "type": "mate_clearance", "host": "host_geometry", "min_mm": 0.0, "max_mm": 0.5 },
     {
-      "type": "gravity_hold",
-      "host": "host_geometry",
-      "host_mass_kg": 0.5,
-      "gravity_dir": [0, -1, 0],
-      "duration_sec": 0.05,
-      "max_drift_mm": 50000.0
+      "type": "valid_solid"
     },
-    { "type": "dfm", "rules": ["min_wall_1.5mm", "no_undercut"] }
+    {
+      "type": "interference_volume",
+      "host": "host_geometry",
+      "max_mm3": 1.0
+    },
+    {
+      "type": "contact_area",
+      "host": "host_geometry",
+      "epsilon_mm": 0.3,
+      "min_mm2": 1500
+    },
+    {
+      "type": "envelope",
+      "max_mm": [
+        40.5,
+        40.5,
+        30.5
+      ]
+    },
+    {
+      "type": "mate_clearance",
+      "host": "host_geometry",
+      "min_mm": 0.0,
+      "max_mm": 0.5
+    },
+    {
+      "type": "dfm",
+      "rules": [
+        "min_wall_1.5mm",
+        "no_undercut"
+      ]
+    }
   ],
-  "anti_cheese": { "max_solid_count": 1, "min_accessory_volume_mm3": 200.0 },
-  "limits": { "max_tokens": 60000, "max_wallclock_sec": 240, "max_tool_calls": 60 },
+  "anti_cheese": {
+    "max_solid_count": 1,
+    "min_accessory_volume_mm3": 200.0
+  },
+  "limits": {
+    "max_tokens": 60000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 60
+  },
   "pass_k": 5,
-  "tags": ["fit", "spacer", "axisymmetric", "image-conditioned", "gravity-hold", "physics"]
+  "tags": [
+    "fit",
+    "spacer",
+    "axisymmetric",
+    "image-conditioned",
+    "gravity-hold",
+    "physics"
+  ]
 }

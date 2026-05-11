@@ -23,30 +23,26 @@
 //! `vcad_kernel_physics::colliders` converts internally. All check
 //! tolerances on the grader side are in mm.
 //!
-//! # Stability caveat
+//! Backed by phyz ≥ 0.3, which ships:
 //!
-//! phyz's contacts are penalty-based with semi-implicit Euler integration.
-//! For low-mass accessories on flat-on-flat surfaces (the worst case),
-//! the penalty spring + explicit integrator combination can transiently
-//! launch the body before settling. We compensate by:
+//! - `contact_forces_implicit` — implicit-damping penalty contacts that
+//!   are unconditionally stable across dt, stiffness, and damping.
+//! - Correct body-pair force signs (force on body i is opposite the
+//!   normal; force on body j is along the normal).
+//! - Contact forces applied at the contact point with the torque
+//!   component (`τ = r × F`) so offset contacts produce rotation.
+//! - NaN-robust broad phase.
 //!
-//! 1. Using a strongly overdamped contact material (damping ≫ critical).
-//! 2. Running at dt = 1/2000 s for stability headroom.
-//! 3. Recommending task `max_drift_mm` tolerances in the 20–100mm range,
-//!    not sub-millimetre. The physics check exists to catch "wildly
-//!    insufficient support" (cradle that doesn't hold) and the geometric
-//!    checks (`interference_volume`, `contact_area`, `envelope`) carry
-//!    the precision signal.
-//!
-//! When phyz gains implicit contacts (or a constraint-based solver),
-//! revisit these tolerances.
+//! With those guarantees, F-suite tasks can tighten `max_drift_mm` to
+//! single millimetres for retention checks.
 
 use crate::blob::CheckOutcome;
 use crate::fit::HostGeometry;
+use phyz::collision::{epa_penetration_rot, gjk_distance_rot, sweep_and_prune, Collision, AABB};
+use phyz::contact::contact_forces_implicit;
 use phyz::math::{Mat3, SpatialInertia, SpatialTransform, SpatialVec, Vec3};
 use phyz::model::ModelBuilder;
-use phyz::contact::compute_contact_force;
-use phyz::{aba_with_external_forces, find_contacts, forward_kinematics};
+use phyz::{aba_with_external_forces, forward_kinematics};
 use phyz::{ContactMaterial, Geometry};
 use serde_json::json;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -68,27 +64,15 @@ const DEFAULT_HOST_MASS_KG: f64 = 100.0;
 /// so candidate/host mesh quality is consistent across all F-suite checks.
 const FIT_PHYS_SEGMENTS: u32 = 64;
 
-/// Fixed dt for the fit simulation. Smaller than `vcad-kernel-physics`'s
-/// default (1/240) because Suite-F accessories often have very low mass
-/// (tens of grams) and the default penalty stiffness would otherwise be
-/// stiff enough to require dt < ~1ms for explicit stability.
+/// Fixed dt for the fit simulation. phyz's implicit contact solve is
+/// stable at any dt; we pick 1/2000 to keep the trajectory smooth for
+/// short rollouts.
 const SIM_DT: f64 = 1.0 / 2000.0;
 
-/// Contact parameters tuned for low-mass plastic accessories.
-/// Significantly overdamped vs critical: penalty contacts with a
-/// single-particle accessory and explicit semi-implicit Euler tend to
-/// pump energy on the rebound otherwise. We err on the side of "settles
-/// boringly" — the F-suite check is about whether the accessory stays
-/// put, not whether it bounces realistically.
+/// Contact parameters. With `contact_forces_implicit` we can use the
+/// stock defaults — no over-damping workaround needed.
 fn fit_material() -> ContactMaterial {
-    ContactMaterial {
-        stiffness: 500.0,
-        damping: 500.0,
-        friction: 0.5,
-        bounce: 0.0,
-        soft_cfm: 0.0001,
-        soft_erp: 0.2,
-    }
+    ContactMaterial::default()
 }
 
 /// `gravity_hold`: simulate gravity for `duration_sec`, measure drift.
@@ -226,6 +210,12 @@ fn simulate_drop(
     let host_local = translate_mesh(&host.mesh, host_centroid_mm);
     let cand_local = translate_mesh(&cand_mesh, cand_centroid_mm);
 
+    // Use TriMesh colliders so non-convex hosts (a stepped shaft, a
+    // C-channel bracket, …) are represented faithfully rather than as
+    // one giant AABB. We pair this with our own EPA-based contact-depth
+    // pass below (see `find_contacts_with_epa_depth`) — phyz's stock
+    // `find_contacts` uses GJK's -1.0 penetrating-sentinel as the depth,
+    // which causes 0.02mm contacts to read as 1m and launch the body.
     let host_geom = mesh_to_collider(&host_local, ColliderStrategy::TriMesh, "fit_host")
         .map_err(|e| format!("host collider build failed: {}", e))?;
     let cand_geom = mesh_to_collider(&cand_local, ColliderStrategy::TriMesh, "fit_accessory")
@@ -285,54 +275,47 @@ fn simulate_drop(
 
     let pull = external_world_force_n.map(|f| Vec3::new(f[0], f[1], f[2]));
 
+    // Per-body effective contact mass. Host is fixed → INFINITY (phyz
+    // treats this as immovable in the implicit contact solve).
+    let masses = vec![f64::INFINITY, acc_mass];
+
     for _ in 0..n_steps {
         let geometries: Vec<Option<Geometry>> =
             model.bodies.iter().map(|b| b.geometry.clone()).collect();
-        let contacts = find_contacts(&model, &state, &geometries);
+        // phyz's `find_contacts` returns penetration_depth = -gjk_distance,
+        // and phyz's GJK uses -1.0 as a "penetrating" sentinel (depth
+        // refinement is supposed to come from EPA). We do that EPA pass
+        // ourselves so contact_forces_implicit sees true penetration
+        // depth — without it a 0.02mm contact reads as 1m of penetration
+        // and the cube launches at hundreds of m/s.
+        let contacts = find_contacts_with_epa_depth(&state, &geometries);
 
-        // We don't use `phyz::contact_forces` directly: it applies
-        // `forces[i] += force; forces[j] -= force;` where the contact
-        // `force` is `normal * magnitude` and `normal = (pos_j -
-        // pos_i).normalize()` — i.e. force points from i toward j. To
-        // separate the bodies we want body i pushed AWAY from j (opposite
-        // to the normal) and body j pushed AWAY from i (along the normal).
-        // The phyz convention works correctly for ground contacts (where
-        // body_j is the sentinel `usize::MAX` and only body_i receives a
-        // force) but flips the wrong way for true body-to-body contacts.
-        // We compute the per-contact force ourselves and apply with the
-        // physically correct signs.
-        let mut ext: Vec<SpatialVec> = (0..model.bodies.len())
-            .map(|_| SpatialVec::zero())
-            .collect();
-        let default_mat = ContactMaterial::default();
-        // Per-body world-frame linear velocities (host is fixed → zero;
-        // accessory is the Free body so its linear v is v[3..6]).
-        let host_lin_vel = Vec3::zeros();
-        let cand_lin_vel = if state.v.len() >= 6 {
-            Vec3::new(state.v[3], state.v[4], state.v[5])
+        // Per-body world-frame spatial velocities for the contact solve.
+        // Host has ndof=0 → zero. Accessory's free joint has v layout
+        // [wx, wy, wz, vx, vy, vz]; we need (angular, linear) SpatialVec.
+        let host_vel = SpatialVec::zero();
+        let cand_vel = if state.v.len() >= 6 {
+            SpatialVec::new(
+                Vec3::new(state.v[0], state.v[1], state.v[2]),
+                Vec3::new(state.v[3], state.v[4], state.v[5]),
+            )
         } else {
-            Vec3::zeros()
+            SpatialVec::zero()
         };
-        for c in &contacts {
-            let mat = if c.body_i < materials.len() {
-                &materials[c.body_i]
-            } else {
-                &default_mat
-            };
-            let vel_i = if c.body_i == 0 { &host_lin_vel } else { &cand_lin_vel };
-            let vel_j = if c.body_j == 0 { &host_lin_vel } else { &cand_lin_vel };
-            let force_sv = compute_contact_force(c, mat, vel_i, vel_j);
-            // `force_sv` has linear along the contact normal (i→j direction).
-            // Push body i opposite to normal, body j along normal.
-            ext[c.body_i] = ext[c.body_i] - force_sv;
-            if c.body_j != usize::MAX && c.body_j < ext.len() {
-                ext[c.body_j] = ext[c.body_j] + force_sv;
-            }
-        }
+        let body_vels = [host_vel, cand_vel];
+
+        let mut ext = contact_forces_implicit(
+            &contacts,
+            &state,
+            &materials,
+            Some(&body_vels),
+            &masses,
+            SIM_DT,
+        );
 
         if let Some(p) = pull {
-            // External force on the accessory body, expressed as a
-            // spatial-vector force (angular=0, linear=force).
+            // External force on the accessory body in world frame, applied
+            // at the body's frame origin (zero torque component).
             if ext.len() >= 2 {
                 ext[1] = ext[1] + SpatialVec::new(Vec3::zeros(), p);
             }
@@ -367,6 +350,105 @@ fn simulate_drop(
     let dy = final_pos.y - initial_pos.y;
     let dz = final_pos.z - initial_pos.z;
     Ok((dx * dx + dy * dy + dz * dz).sqrt())
+}
+
+/// Translate a [`phyz::Geometry`] (the `model::Geometry` re-export) into
+/// the parallel [`phyz::collision::Geometry`] type that GJK/EPA accept.
+fn to_collision_geometry(g: &Geometry) -> phyz::collision::Geometry {
+    match g {
+        Geometry::Sphere { radius } => phyz::collision::Geometry::Sphere { radius: *radius },
+        Geometry::Capsule { radius, length } => {
+            phyz::collision::Geometry::Capsule { radius: *radius, length: *length }
+        }
+        Geometry::Box { half_extents } => phyz::collision::Geometry::Box {
+            half_extents: *half_extents,
+        },
+        Geometry::Cylinder { radius, height } => {
+            phyz::collision::Geometry::Cylinder { radius: *radius, height: *height }
+        }
+        Geometry::Mesh { vertices, faces } => phyz::collision::Geometry::Mesh {
+            vertices: vertices.clone(),
+            faces: faces.clone(),
+        },
+        Geometry::Plane { normal } => phyz::collision::Geometry::Plane { normal: *normal },
+    }
+}
+
+/// Run broad-phase + GJK + EPA over the model's bodies, returning
+/// contacts with TRUE penetration depths. phyz's stock `find_contacts`
+/// uses `penetration_depth = -gjk_distance` where GJK returns a -1.0
+/// sentinel when penetrating, so its "depth" is unreliable.
+fn find_contacts_with_epa_depth(
+    state: &phyz::model::State,
+    geometries: &[Option<Geometry>],
+) -> Vec<Collision> {
+    let aabbs: Vec<AABB> = geometries
+        .iter()
+        .enumerate()
+        .map(|(i, g)| {
+            if let Some(geom) = g {
+                let cg = to_collision_geometry(geom);
+                let pos = state.body_xform[i].pos;
+                let rot = state.body_xform[i].rot;
+                if !pos.x.is_finite() || !pos.y.is_finite() || !pos.z.is_finite() {
+                    return AABB::new(Vec3::zeros(), Vec3::zeros());
+                }
+                AABB::from_geometry(&cg, &pos, &rot)
+            } else {
+                AABB::new(Vec3::zeros(), Vec3::zeros())
+            }
+        })
+        .collect();
+
+    let pairs = sweep_and_prune(&aabbs);
+    let mut contacts = Vec::with_capacity(pairs.len());
+
+    for (i, j) in pairs {
+        let (gi, gj) = match (&geometries[i], &geometries[j]) {
+            (Some(a), Some(b)) => (a, b),
+            _ => continue,
+        };
+        let cgi = to_collision_geometry(gi);
+        let cgj = to_collision_geometry(gj);
+        let xi = &state.body_xform[i];
+        let xj = &state.body_xform[j];
+        let dist = gjk_distance_rot(&cgi, &cgj, &xi.pos, &xj.pos, &xi.rot, &xj.rot);
+        if dist >= 0.0 {
+            continue;
+        }
+        // Penetrating — get true depth + normal from EPA.
+        let (depth, mut normal) = match epa_penetration_rot(
+            &cgi, &cgj, &xi.pos, &xj.pos, &xi.rot, &xj.rot,
+        ) {
+            Some(r) => r,
+            None => continue,
+        };
+        if !depth.is_finite() || depth <= 0.0 {
+            continue;
+        }
+        let n_norm = normal.norm();
+        if n_norm > 1e-9 {
+            normal *= 1.0 / n_norm;
+        } else {
+            // Fall back to centre-line direction if EPA degenerated.
+            let co = xj.pos - xi.pos;
+            let co_norm = co.norm();
+            normal = if co_norm > 1e-9 {
+                co * (1.0 / co_norm)
+            } else {
+                Vec3::z()
+            };
+        }
+        let contact_point = (xi.pos + xj.pos) * 0.5;
+        contacts.push(Collision {
+            body_i: i,
+            body_j: j,
+            contact_point,
+            contact_normal: normal,
+            penetration_depth: depth,
+        });
+    }
+    contacts
 }
 
 /// Bbox centre of a mesh in millimetres.
@@ -543,24 +625,19 @@ mod tests {
         }
     }
 
-    /// 30mm cube resting on a thick plate. Sanity check that the sim
-    /// runs to completion and doesn't NaN. See module-level "Stability
-    /// caveat" for why we don't assert tight settling: phyz's explicit
-    /// penalty contacts can transiently launch a flat-on-flat low-mass
-    /// body before damping catches up; the cube-on-plate worst case is
-    /// inherently bouncy with this scheme.
+    /// 30mm cube resting on a thick plate. With phyz ≥ 0.3's implicit
+    /// contact solve the cube settles within a few millimetres rather
+    /// than launching, so we assert real settling here.
     #[test]
-    fn cube_on_plate_simulation_runs() {
+    fn cube_on_plate_settles_under_gravity() {
         let host = make_host(&plate_vcad(60.0, 60.0, 8.0, [-30.0, -30.0, 0.0]));
         let snap = evaluate_vcad(&cube_vcad(30.0, [-15.0, -15.0, 8.5]));
         let cand = aggregate_candidate(&snap).expect("cube solid");
         let drift_m = simulate_drop(&cand, &host, [0.0, 0.0, -1.0], 0.5, None)
             .expect("sim runs");
-        // Drift should be finite and bounded — catches NaNs and runaway.
-        assert!(drift_m.is_finite(), "drift must be finite, got {}", drift_m);
         assert!(
-            drift_m < 100.0,
-            "drift must stay bounded, got {}m",
+            drift_m < 0.005,
+            "expected < 5mm drift on plate, got {}m",
             drift_m
         );
     }

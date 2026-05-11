@@ -61,8 +61,20 @@ pub enum CheckSpec {
     /// ECAD electrical-rule check passes clean.
     ErcClean,
 
-    /// DFM rule set passes (e.g. min_wall, draft, no_undercut).
-    Dfm { rules: Vec<String> },
+    /// DFM rule set passes for the named manufacturing process. The
+    /// optional `rules` field is informational (legacy hint about which
+    /// rules a task author cared about); the grader uses the process's
+    /// default rule pack from `vcad-kernel-dfm` and fails on any issue
+    /// at or above `max_severity` (default "error"). `process` defaults
+    /// to "fdm" — sensible for 3D-printed plastic F-suite accessories.
+    Dfm {
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        rules: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        process: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_severity: Option<String>,
+    },
 
     /// Refactor task: untouched parts have unchanged mass-props.
     RefactorInvariant {
