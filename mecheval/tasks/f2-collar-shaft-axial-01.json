@@ -3,7 +3,7 @@
   "suite": "F",
   "tier": "F2",
   "title": "Axial gravity hold on a flanged shaft",
-  "prompt": "Reference images of a stepped shaft are attached. The shaft has two coaxial flanges separated by a narrower middle waist. Gravity acts downward along -Z, pulling a tube collar that slides over the waist toward the bottom flange. Design the collar so it sits on the waist between the flanges; the bottom flange should arrest its slide.\n\nRequirements:\n- Single solid, single-root .vcad.\n- The collar's bore must clear the 20mm waist with 0.1–0.3mm radial clearance.\n- The collar's outer diameter must not exceed the flange OD (40mm).\n- The collar's length must be 25–30mm (it sits in the 30mm gap, gravity rests it on the bottom flange).\n- Wall thickness ≥ 1.5mm.\n\nOutput the collar in the host's coordinate frame: shaft axis +Z, bottom flange's bottom face at z = 0, waist runs z = 10 to z = 40. Place the collar centred over the waist so it starts in contact with (or just above) the bottom flange.",
+  "prompt": "Reference images of a stepped shaft are attached. The shaft has two coaxial flanges separated by a narrower middle waist. Gravity acts downward along -Z, pulling a tube collar that slides over the waist toward the bottom flange. Design the collar so it sits on the waist between the flanges; the bottom flange should arrest its slide.\n\nRequirements:\n- Single solid, single-root .vcad.\n- The collar's bore must clear the 20mm waist with 0.1\u20130.3mm radial clearance.\n- The collar's outer diameter must not exceed the flange OD (40mm).\n- The collar's length must be 25\u201330mm (it sits in the 30mm gap, gravity rests it on the bottom flange).\n- Wall thickness \u2265 1.5mm.\n\nOutput the collar in the host's coordinate frame: shaft axis +Z, bottom flange's bottom face at z = 0, waist runs z = 10 to z = 40. Place the collar centred over the waist so it starts in contact with (or just above) the bottom flange.",
   "inputs": [
     {
       "kind": "reference_image",
@@ -11,7 +11,10 @@
       "agent_visible": true,
       "view": "front",
       "image_kind": "photo",
-      "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 }
+      "scale_fiducial": {
+        "type": "aruco_4x4_50mm",
+        "marker_id": 0
+      }
     },
     {
       "kind": "reference_image",
@@ -19,7 +22,10 @@
       "agent_visible": true,
       "view": "side",
       "image_kind": "photo",
-      "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 }
+      "scale_fiducial": {
+        "type": "aruco_4x4_50mm",
+        "marker_id": 0
+      }
     },
     {
       "kind": "reference_image",
@@ -27,13 +33,27 @@
       "agent_visible": true,
       "view": "top",
       "image_kind": "photo",
-      "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 }
+      "scale_fiducial": {
+        "type": "aruco_4x4_50mm",
+        "marker_id": 0
+      }
     },
     {
       "kind": "host_geometry",
       "path": "assets/f2-collar-shaft-axial-01/host.vcad",
       "agent_visible": false,
-      "frame": { "origin": [0, 0, 0], "axis": [0, 0, 1] }
+      "frame": {
+        "origin": [
+          0,
+          0,
+          0
+        ],
+        "axis": [
+          0,
+          0,
+          1
+        ]
+      }
     },
     {
       "kind": "known_dimensions",
@@ -42,7 +62,9 @@
     }
   ],
   "checks": [
-    { "type": "valid_solid" },
+    {
+      "type": "valid_solid"
+    },
     {
       "type": "interference_volume",
       "host": "host_geometry",
@@ -56,7 +78,11 @@
     },
     {
       "type": "envelope",
-      "max_mm": [40.5, 40.5, 30.5]
+      "max_mm": [
+        40.5,
+        40.5,
+        30.5
+      ]
     },
     {
       "type": "mate_clearance",
@@ -68,13 +94,20 @@
       "type": "gravity_hold",
       "host": "host_geometry",
       "host_mass_kg": 1.0,
-      "gravity_dir": [0, 0, -1],
+      "gravity_dir": [
+        0,
+        0,
+        -1
+      ],
       "duration_sec": 0.5,
       "max_drift_mm": 50.0
     },
     {
       "type": "dfm",
-      "rules": ["min_wall_1.5mm", "no_undercut"]
+      "rules": [
+        "min_wall_1.5mm",
+        "no_undercut"
+      ]
     }
   ],
   "anti_cheese": {
@@ -87,5 +120,12 @@
     "max_tool_calls": 60
   },
   "pass_k": 5,
-  "tags": ["fit", "collar", "axisymmetric", "image-conditioned", "gravity-hold", "physics"]
+  "tags": [
+    "fit",
+    "collar",
+    "axisymmetric",
+    "image-conditioned",
+    "gravity-hold",
+    "physics"
+  ]
 }
