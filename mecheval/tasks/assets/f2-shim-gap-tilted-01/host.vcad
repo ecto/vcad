@@ -1,0 +1,15 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "bottom_plate",   "op": { "type": "Cube", "size": { "x": 50.0, "y": 40.0, "z": 6.0 } } },
+    "2": { "id": 2, "name": "back_wall_raw",  "op": { "type": "Cube", "size": { "x": 50.0, "y": 8.0,  "z": 8.0 } } },
+    "3": { "id": 3, "name": "back_wall",      "op": { "type": "Translate", "child": 2, "offset": { "x": 0.0, "y": 0.0, "z": 6.0 } } },
+    "4": { "id": 4, "name": "top_plate_raw",  "op": { "type": "Cube", "size": { "x": 50.0, "y": 40.0, "z": 6.0 } } },
+    "5": { "id": 5, "name": "top_plate",      "op": { "type": "Translate", "child": 4, "offset": { "x": 0.0, "y": 0.0, "z": 14.0 } } },
+    "6": { "id": 6, "name": "bottom_and_back","op": { "type": "Union", "left": 1, "right": 3 } },
+    "7": { "id": 7, "name": "bracket",        "op": { "type": "Union", "left": 6, "right": 5 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 7, "material": "default" }]
+}
