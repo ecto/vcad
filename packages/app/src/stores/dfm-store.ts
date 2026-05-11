@@ -13,7 +13,6 @@ import { create } from "zustand";
 import {
   runDfm,
   type DfmReport,
-  type DfmIssue,
   type DfmProcess,
   type DfmSeverity,
 } from "@vcad/engine";
@@ -91,14 +90,6 @@ export const useDfmStore = create<DfmStoreState>((set, get) => ({
     }, RUN_DEBOUNCE_MS);
   },
 }));
-
-/** Issues filtered by the visible-severity toggles. */
-export function visibleIssues(state: DfmStoreState): DfmIssue[] {
-  if (!state.report) return [];
-  return state.report.issues.filter((i) =>
-    state.visibleSeverities.has(i.severity),
-  );
-}
 
 /** Per-severity issue counts for the badge display. */
 export function severityCounts(report: DfmReport | null): {
