@@ -15,7 +15,7 @@ Open-source parametric CAD for the AI era.
 - **Modeling** — Primitives, booleans, fillets, chamfers, shell
 - **Sketching** — 2D constraints, extrude, revolve, sweep, loft
 - **Assembly** — Parts, instances, joints, forward kinematics
-- **Simulation** — Physics with Rapier3D, gym-style RL interface
+- **Simulation** — Physics with phyz, gym-style RL interface
 - **Import/Export** — STEP import, STL/GLB/STEP/DXF export
 - **Rendering** — Direct BRep ray tracing + tessellated mode
 - **Cloud** — Supabase sync with Google/GitHub auth

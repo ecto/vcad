@@ -84,7 +84,7 @@ Set `"ground"` to the instance ID of the fixed/base part. This anchors the kinem
 
 ## Physics Simulation Tools
 
-The gym-style tools simulate assembly dynamics using Rapier3D:
+The gym-style tools simulate assembly dynamics using phyz:
 
 | Tool | Purpose |
 |------|---------|

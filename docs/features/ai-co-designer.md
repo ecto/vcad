@@ -41,7 +41,7 @@ AI as co-designer with full context: geometry, joints, constraints, physics stat
 │                         vcad Document                           │
 │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────────────┐   │
 │  │ Geometry│  │ Joints  │  │Constraints│ │ Physics State  │   │
-│  │ (BRep)  │  │ (FK/IK) │  │ (Solver) │  │ (Rapier)       │   │
+│  │ (BRep)  │  │ (FK/IK) │  │ (Solver) │  │ (phyz)       │   │
 │  └────┬────┘  └────┬────┘  └────┬────┘  └───────┬─────────┘   │
 │       └───────────┴───────────┴─────────────────┘              │
 │                           │                                     │

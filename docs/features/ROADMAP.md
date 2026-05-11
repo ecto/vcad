@@ -41,7 +41,7 @@ This isn't incremental improvement. This is **category creation**.
 | 16 | Exact Predicates (Shewchuk) | ✅ |
 | 17 | GPU Acceleration (wgpu) | ⚠️ |
 | 18 | Direct BRep Ray Tracing | ✅ |
-| 19 | Physics Simulation (Rapier3D) | ✅ |
+| 19 | Physics Simulation (phyz) | ✅ |
 | 20 | URDF Import | ⚠️ |
 | 21 | Text-to-CAD Training Pipeline | ✅ |
 
@@ -68,7 +68,7 @@ This isn't incremental improvement. This is **category creation**.
 - Boolean operations (union, difference, intersection)
 - Assembly mode with instances, joints, and forward kinematics
 - 2D drawing mode with orthographic projections
-- Physics simulation with Rapier3D (play/pause/step, joint control)
+- Physics simulation with phyz (play/pause/step, joint control)
 - Direct BRep ray tracing (pixel-perfect rendering without tessellation)
 - STEP import via drag-drop or file picker
 
@@ -247,7 +247,7 @@ vcad-pcb/
 6. ✅ **GPU mesh processing** — Creased normals, mesh decimation via compute shaders
 
 ### Phase C: Physics & Robotics ✅ COMPLETE
-7. ✅ **Physics simulation** — Rapier3D integration with gym-style RL interface
+7. ✅ **Physics simulation** — phyz integration with gym-style RL interface
 8. ✅ **URDF import** — Robot description format support
 9. ✅ **MCP gym tools** — `create_robot_env`, `gym_step/reset/observe/close` for AI training
 
@@ -417,7 +417,7 @@ vcad already incorporates arXiv research:
 ### Phase 19: Physics Simulation ✅
 
 **Complete:**
-- `vcad-kernel-physics` crate with Rapier3D 0.23
+- `vcad-kernel-physics crate with phyz
 - BRep-to-physics conversion (rigid bodies, collision shapes, mass estimation)
 - Joint support: Revolute, Prismatic, Cylindrical, Ball, Fixed with limits and motors
 - `RobotEnv` gym-style interface: `reset()`, `step(action)`, `observe()`

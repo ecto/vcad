@@ -2,7 +2,7 @@
  * TypeScript wrapper for the WASM physics simulation.
  *
  * Provides a clean async API for initializing and running physics simulations
- * of robot assemblies with Rapier3D.
+ * of robot assemblies with phyz.
  */
 
 import type { Document } from "@vcad/ir";

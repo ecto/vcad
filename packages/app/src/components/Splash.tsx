@@ -16,7 +16,7 @@ const TIPS: readonly string[] = [
   "Ray-traced mode renders BRep directly — no tessellation artifacts.",
   "Every parameter is scrubbable. Click, drag, watch it rebuild.",
   "Export to STL, GLB, or STEP from the File menu.",
-  "Physics via Rapier3D. Build a robot, give it joints, watch it move.",
+  "Physics via phyz. Build a robot, give it joints, watch it move.",
   "Booleans run on exact BRep, not triangle-mesh hacks.",
   "Ask the AI chat to build geometry. It has real CAD tools.",
   "Shell hollows a solid to a given wall thickness.",
