@@ -464,6 +464,42 @@ export interface PartInstanceOp {
   params: Record<string, unknown>;
 }
 
+/** Direction tag for sheet-metal flanges. `Up` rises out of the parent's
+ *  outside face; `Down` descends out of the inside face. Mirrors
+ *  `vcad_ir::SheetMetalDirection`. */
+export type SheetMetalDirection = "Up" | "Down";
+
+/** Sheet-metal base flange (rectangular). Initialises a sheet-metal model
+ *  from an axis-aligned rectangle in the XY plane. Outside face on +Z.
+ *
+ *  Evaluated by routing the IR chain to
+ *  `kernelWasm.evaluateSheetMetalChain` — the Rust kernel builds the model
+ *  and returns the tessellated mesh + flat pattern. The TS engine never
+ *  reconstructs sheet-metal geometry itself. */
+export interface SheetMetalBaseFlangeRectOp {
+  type: "SheetMetalBaseFlangeRect";
+  width: number;
+  depth: number;
+  thickness: number;
+  /** Material name for K-factor lookup (e.g. `"Al-soft"`). */
+  material: string;
+}
+
+/** Sheet-metal edge flange. Extends `parent` (must produce a sheet-metal
+ *  model) with a new flange off `edge_index` of the referenced panel. */
+export interface SheetMetalEdgeFlangeOp {
+  type: "SheetMetalEdgeFlange";
+  parent: NodeId;
+  panel_id: number;
+  edge_index: number;
+  length: number;
+  angle: number;
+  radius: number;
+  direction: SheetMetalDirection;
+  /** Optional manual K-factor override (skips bend-table lookup). */
+  manual_k?: number;
+}
+
 /** CSG operation — the core building block of the IR DAG. */
 export type CsgOp =
   | CubeOp
@@ -491,7 +527,9 @@ export type CsgOp =
   | ImportedMeshOp
   | PcbBoardOp
   | EmbroideryPatternOp
-  | PartInstanceOp;
+  | PartInstanceOp
+  | SheetMetalBaseFlangeRectOp
+  | SheetMetalEdgeFlangeOp;
 
 /** A node in the IR graph. */
 export interface Node {

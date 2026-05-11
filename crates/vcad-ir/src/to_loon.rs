@@ -510,6 +510,15 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> OpResult {
                 path, version, params_str
             ))
         }
+
+        CsgOp::SheetMetalBaseFlangeRect { .. } => OpResult::Unsupported(
+            "SheetMetalBaseFlangeRect".to_string(),
+            "; SheetMetalBaseFlangeRect — not yet supported in loon".to_string(),
+        ),
+        CsgOp::SheetMetalEdgeFlange { .. } => OpResult::Unsupported(
+            "SheetMetalEdgeFlange".to_string(),
+            "; SheetMetalEdgeFlange — not yet supported in loon".to_string(),
+        ),
     }
 }
 

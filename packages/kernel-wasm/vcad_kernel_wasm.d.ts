@@ -480,6 +480,20 @@ export class Solid {
      */
     rotate(x_deg: number, y_deg: number, z_deg: number): Solid;
     /**
+     * Run DFM directly on this solid's BRep.
+     *
+     * Returns the report JSON; if the solid is mesh-only (e.g. after
+     * a boolean — see issue #186), the report has an empty `issues`
+     * array and a note in `rule_pack_name`.
+     *
+     * `root_node_id` (when > 0) attributes every face in the BRep to
+     * that IR node — the v1 coarse provenance heuristic. Pass 0 to
+     * skip provenance entirely; emitted issues will then carry
+     * `origin_op: null` and `dfm_apply_fix` will only be able to act
+     * on rules whose fix kind is `manual`.
+     */
+    runDfm(process: string, rule_pack_toml: string, root_node_id: bigint): string;
+    /**
      * Scale the solid by (x, y, z).
      */
     scale(x: number, y: number, z: number): Solid;
@@ -1425,6 +1439,17 @@ export function ecadSnapToGridOrPin(x: number, y: number, components_json: strin
 export function estimatePrintCost(volume_mm3: number, infill_density: number, wall_count: number, line_width: number, material_name: string): any;
 
 /**
+ * Estimate manufacturing cost for the supplied process + material.
+ *
+ * `part_volume_mm3` is the exact part volume the caller has already
+ * computed; `stock_volume_mm3` is only used for CNC (defaults to
+ * `part_volume_mm3 * 2` if non-positive). `qty` matters for
+ * mold/casting amortization; `feature_count` matters for CNC time.
+ * Material names match the catalog in `vcad_kernel::vcad_kernel_cost::Material`.
+ */
+export function estimate_cost_for_process(process: string, material_name: string, part_volume_mm3: number, stock_volume_mm3: number, qty: number, feature_count: number): any;
+
+/**
  * Evaluate a loon source string and return a JSON-serialized vcad Document.
  *
  * The vcad library (types, constructors) is automatically prepended.
@@ -1450,6 +1475,16 @@ export function evalVcadSource(source: string): any;
  * A JsValue containing the serialized EvaluatedScene.
  */
 export function evaluateDocument(doc_json: string, skip_clash_detection: boolean): any;
+
+/**
+ * Evaluate a chain of sheet-metal ops and return `(mesh, flat-pattern,
+ * model-summary)` as a JSON string. Caller is responsible for parsing.
+ *
+ * On error, returns a JSON object with a non-null `error` field; the other
+ * fields are zeroed. Never panics — every fallible kernel call is mapped
+ * to an error string.
+ */
+export function evaluateSheetMetalChain(chain_json: string): string;
 
 /**
  * Evaluate VCode and return a Solid for rendering.
@@ -1527,6 +1562,14 @@ export function getSlicerPrinterProfiles(): any;
  * truth lives in `vcad-chat::tools`.
  */
 export function get_anthropic_tools_json(): string;
+
+/**
+ * Return the bundled default rule pack (TOML) for a process name.
+ *
+ * Process names: `"cnc_3axis"`, `"fdm"`, `"sla"`, `"injection"`,
+ * `"sheet_metal"`, `"casting_sand"`, `"casting_investment"`.
+ */
+export function get_default_dfm_pack(process: string): string;
 
 /**
  * Get the kernel version string.
@@ -1958,12 +2001,14 @@ export interface InitOutput {
     readonly deriveParts: (a: number, b: number) => [number, number, number];
     readonly documentToLoon: (a: number, b: number) => [number, number, number, number];
     readonly documentToLoonChecked: (a: number, b: number) => [number, number, number];
+    readonly estimate_cost_for_process: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
     readonly evalVcadSource: (a: number, b: number) => [number, number, number];
     readonly evaluateDocument: (a: number, b: number, c: number) => [number, number, number];
     readonly evaluateVCode: (a: number, b: number) => [number, number, number];
     readonly exportProjectedViewToDxf: (a: number, b: number) => [number, number, number, number];
     readonly getPartsManifest: () => [number, number];
     readonly get_anthropic_tools_json: () => [number, number];
+    readonly get_default_dfm_pack: (a: number, b: number) => [number, number, number, number];
     readonly get_kernel_version: () => [number, number];
     readonly get_tool_schemas: () => [number, number];
     readonly importStepBuffer: (a: number, b: number) => [number, number, number];
@@ -2035,6 +2080,7 @@ export interface InitOutput {
     readonly solid_numTriangles: (a: number) => number;
     readonly solid_projectView: (a: number, b: number, c: number, d: number) => any;
     readonly solid_rotate: (a: number, b: number, c: number, d: number) => number;
+    readonly solid_runDfm: (a: number, b: number, c: number, d: number, e: number, f: bigint) => [number, number, number, number];
     readonly solid_scale: (a: number, b: number, c: number, d: number) => number;
     readonly solid_sectionView: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
     readonly solid_sphere: (a: number, b: number) => number;
@@ -2123,37 +2169,6 @@ export interface InitOutput {
     readonly slicersettings_fromJson: (a: number, b: number) => [number, number, number];
     readonly slicersettings_new: () => number;
     readonly isSlicerAvailable: () => number;
-    readonly __wbg_wasmdocumentengine_free: (a: number, b: number) => void;
-    readonly wasmdocumentengine_add_feature: (a: number, b: number, c: number) => any;
-    readonly wasmdocumentengine_can_redo: (a: number) => number;
-    readonly wasmdocumentengine_can_undo: (a: number) => number;
-    readonly wasmdocumentengine_compute_position_between: (a: number, b: number, c: number, d: number, e: number) => [number, number];
-    readonly wasmdocumentengine_create_feature: (a: number, b: number, c: number, d: number, e: number) => any;
-    readonly wasmdocumentengine_delete_feature: (a: number, b: number, c: number) => any;
-    readonly wasmdocumentengine_delete_feature_by_id: (a: number, b: number, c: number) => any;
-    readonly wasmdocumentengine_from_v1_json: (a: number, b: number) => [number, number, number];
-    readonly wasmdocumentengine_get_document_json: (a: number) => [number, number];
-    readonly wasmdocumentengine_get_ops_since: (a: number, b: number, c: number) => [number, number];
-    readonly wasmdocumentengine_get_ordered_features_json: (a: number) => [number, number];
-    readonly wasmdocumentengine_get_parts_json: (a: number) => [number, number];
-    readonly wasmdocumentengine_get_sync_clock: (a: number) => [number, number];
-    readonly wasmdocumentengine_import_ir: (a: number, b: number, c: number) => any;
-    readonly wasmdocumentengine_load: (a: number, b: number) => [number, number, number];
-    readonly wasmdocumentengine_merge_remote: (a: number, b: number, c: number) => any;
-    readonly wasmdocumentengine_move_feature: (a: number, b: number, c: number, d: number, e: number) => any;
-    readonly wasmdocumentengine_new: () => number;
-    readonly wasmdocumentengine_redo: (a: number) => any;
-    readonly wasmdocumentengine_rename_feature: (a: number, b: number, c: number, d: number, e: number) => any;
-    readonly wasmdocumentengine_save: (a: number) => [number, number];
-    readonly wasmdocumentengine_set_joint_state: (a: number, b: number, c: number, d: number) => any;
-    readonly wasmdocumentengine_set_material: (a: number, b: number, c: number, d: number, e: number) => any;
-    readonly wasmdocumentengine_set_param: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
-    readonly wasmdocumentengine_set_rotation: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
-    readonly wasmdocumentengine_set_scale: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
-    readonly wasmdocumentengine_set_translation: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
-    readonly wasmdocumentengine_set_visible: (a: number, b: number, c: number, d: number) => any;
-    readonly wasmdocumentengine_undo: (a: number) => any;
-    readonly wasmdocumentengine_update_feature: (a: number, b: number, c: number, d: number, e: number) => any;
     readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
     readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
     readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;
@@ -2230,11 +2245,43 @@ export interface InitOutput {
     readonly wasmsketchsession_solve: (a: number) => number;
     readonly wasmsketchsession_toggleSelection: (a: number, b: number) => void;
     readonly wasmsketchsession_undo: (a: number) => number;
-    readonly wasm_bindgen__closure__destroy__h30743bca3150d93c: (a: number, b: number) => void;
-    readonly wasm_bindgen__closure__destroy__hfdadf281ff0f1c56: (a: number, b: number) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e: (a: number, b: number, c: any, d: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590: (a: number, b: number, c: any) => void;
+    readonly __wbg_wasmdocumentengine_free: (a: number, b: number) => void;
+    readonly evaluateSheetMetalChain: (a: number, b: number) => [number, number];
+    readonly wasmdocumentengine_add_feature: (a: number, b: number, c: number) => any;
+    readonly wasmdocumentengine_can_redo: (a: number) => number;
+    readonly wasmdocumentengine_can_undo: (a: number) => number;
+    readonly wasmdocumentengine_compute_position_between: (a: number, b: number, c: number, d: number, e: number) => [number, number];
+    readonly wasmdocumentengine_create_feature: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly wasmdocumentengine_delete_feature: (a: number, b: number, c: number) => any;
+    readonly wasmdocumentengine_delete_feature_by_id: (a: number, b: number, c: number) => any;
+    readonly wasmdocumentengine_from_v1_json: (a: number, b: number) => [number, number, number];
+    readonly wasmdocumentengine_get_document_json: (a: number) => [number, number];
+    readonly wasmdocumentengine_get_ops_since: (a: number, b: number, c: number) => [number, number];
+    readonly wasmdocumentengine_get_ordered_features_json: (a: number) => [number, number];
+    readonly wasmdocumentengine_get_parts_json: (a: number) => [number, number];
+    readonly wasmdocumentengine_get_sync_clock: (a: number) => [number, number];
+    readonly wasmdocumentengine_import_ir: (a: number, b: number, c: number) => any;
+    readonly wasmdocumentengine_load: (a: number, b: number) => [number, number, number];
+    readonly wasmdocumentengine_merge_remote: (a: number, b: number, c: number) => any;
+    readonly wasmdocumentengine_move_feature: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly wasmdocumentengine_new: () => number;
+    readonly wasmdocumentengine_redo: (a: number) => any;
+    readonly wasmdocumentengine_rename_feature: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly wasmdocumentengine_save: (a: number) => [number, number];
+    readonly wasmdocumentengine_set_joint_state: (a: number, b: number, c: number, d: number) => any;
+    readonly wasmdocumentengine_set_material: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly wasmdocumentengine_set_param: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+    readonly wasmdocumentengine_set_rotation: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+    readonly wasmdocumentengine_set_scale: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+    readonly wasmdocumentengine_set_translation: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+    readonly wasmdocumentengine_set_visible: (a: number, b: number, c: number, d: number) => any;
+    readonly wasmdocumentengine_undo: (a: number) => any;
+    readonly wasmdocumentengine_update_feature: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly wasm_bindgen__closure__destroy__h29172bbcd065953b: (a: number, b: number) => void;
+    readonly wasm_bindgen__closure__destroy__h6ed7eb1128abde65: (a: number, b: number) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h61f848611b9bfd22: (a: number, b: number, c: any, d: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h409646c44a6f7cf4: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h53e1d5f5246c70f9: (a: number, b: number, c: any) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;

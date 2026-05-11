@@ -81,7 +81,7 @@ pub struct Panel {
 /// `Up` means the child panel rises out of the parent's outside face;
 /// `Down` means it descends out of the inside face. This corresponds to the
 /// red / blue convention used in flat-pattern DXF layers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum BendDirection {
     /// Child rises out of the parent's outside face.
     Up,

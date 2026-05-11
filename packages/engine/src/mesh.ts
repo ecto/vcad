@@ -20,6 +20,12 @@ export interface EvaluatedPart {
   /** Optional BRep solid for ray tracing (only available for primitives, not boolean results). */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   solid?: any;
+  /** Optional sheet-metal data — set when the root resolved to a sheet-metal
+   *  op chain. The kernel populates this; the UI reads it for the flat
+   *  pattern view + property panel. Typed as `unknown` here to avoid a
+   *  circular import; the app casts to `SheetMetalRendered` at the read
+   *  site (exported from `@vcad/engine`). */
+  sheetMetal?: unknown;
 }
 
 /** A part definition in an assembly (reusable geometry). */

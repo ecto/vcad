@@ -7042,6 +7042,7 @@ dependencies = [
  "thiserror 2.0.18",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "web-sys",
  "wgpu",
 ]
 
@@ -7091,6 +7092,7 @@ version = "0.9.4"
 dependencies = [
  "bytemuck",
  "js-sys",
+ "pollster",
  "tang",
  "thiserror 2.0.18",
  "vcad-kernel-booleans",
@@ -7109,6 +7111,7 @@ dependencies = [
 name = "vcad-kernel-sheet"
 version = "0.9.4"
 dependencies = [
+ "serde",
  "vcad-kernel-math",
 ]
 
@@ -7246,6 +7249,7 @@ dependencies = [
  "vcad-kernel-math",
  "vcad-kernel-physics",
  "vcad-kernel-raytrace",
+ "vcad-kernel-sheet",
  "vcad-kernel-tessellate",
  "vcad-kernel-topo",
  "vcad-kernel-urdf",

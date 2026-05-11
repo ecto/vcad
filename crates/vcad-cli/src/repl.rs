@@ -585,6 +585,8 @@ fn op_type_name(op: &CsgOp) -> &'static str {
         CsgOp::PcbBoard { .. } => "pcb board",
         CsgOp::EmbroideryPattern { .. } => "embroidery pattern",
         CsgOp::PartInstance { .. } => "part instance",
+        CsgOp::SheetMetalBaseFlangeRect { .. } => "sheet-metal base flange",
+        CsgOp::SheetMetalEdgeFlange { .. } => "sheet-metal edge flange",
     }
 }
 
