@@ -35,9 +35,15 @@ interface DfmStoreState {
   visibleSeverities: Set<DfmSeverity>;
   /** Master toggle; when off the annotations component renders nothing. */
   enabled: boolean;
+  /** Whether the bottom drawer is expanded. The footer chip is the
+   *  primary entry point — clicking it toggles this. The chip itself
+   *  stays visible regardless. */
+  drawerOpen: boolean;
 
   setProcess: (p: DfmProcess) => void;
   setEnabled: (v: boolean) => void;
+  setDrawerOpen: (v: boolean) => void;
+  toggleDrawer: () => void;
   toggleSeverity: (s: DfmSeverity) => void;
   selectIssue: (id: string | null) => void;
   /** Trigger an immediate run. Debounced internally — safe to call on
@@ -55,13 +61,16 @@ export const useDfmStore = create<DfmStoreState>((set, get) => ({
   error: null,
   selectedIssueId: null,
   visibleSeverities: new Set<DfmSeverity>(["error", "warning", "info"]),
-  enabled: false,
+  enabled: true,
+  drawerOpen: false,
 
   setProcess: (p) => {
     set({ process: p });
     if (pendingDoc) get().scheduleRun(pendingDoc);
   },
   setEnabled: (v) => set({ enabled: v }),
+  setDrawerOpen: (v) => set({ drawerOpen: v }),
+  toggleDrawer: () => set({ drawerOpen: !get().drawerOpen }),
   toggleSeverity: (s) => {
     const next = new Set(get().visibleSeverities);
     next.has(s) ? next.delete(s) : next.add(s);
