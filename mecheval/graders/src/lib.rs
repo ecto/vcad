@@ -19,6 +19,7 @@ pub mod check;
 pub mod eval;
 pub mod fillets;
 pub mod fit;
+pub mod fit_physics;
 pub mod grader;
 pub mod holes;
 pub mod suite_c;

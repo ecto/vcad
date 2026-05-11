@@ -13,6 +13,7 @@ use crate::fit::{
     aggregate_candidate, check_contact_area, check_envelope, check_interference_volume,
     check_mate_clearance, load_host, HostError, HostGeometry,
 };
+use crate::fit_physics::{check_gravity_hold, check_pull_force};
 use crate::holes::find_z_holes;
 use crate::suite_c::{
     build_assembly_snapshot, check_body_valid, check_fk_reaches, check_task_success,
@@ -325,10 +326,38 @@ fn run_check(
         } => dispatch_with_host(host_state, candidate_solid, |cand, host| {
             check_mate_clearance(cand, host, *min_mm, *max_mm)
         }),
-        CheckSpec::GravityHold { .. } | CheckSpec::PullForce { .. } => (
-            CheckOutcome::NotImplemented,
-            json!({ "reason": "physics fit checks await phyz integration" }),
-        ),
+        CheckSpec::GravityHold {
+            host: _,
+            host_mass_kg,
+            gravity_dir,
+            duration_sec,
+            max_drift_mm,
+        } => dispatch_with_host(host_state, candidate_solid, |cand, host| {
+            check_gravity_hold(
+                cand,
+                host,
+                *host_mass_kg,
+                *gravity_dir,
+                *duration_sec,
+                *max_drift_mm,
+            )
+        }),
+        CheckSpec::PullForce {
+            host: _,
+            force_n,
+            direction,
+            duration_sec,
+            max_drift_mm,
+        } => dispatch_with_host(host_state, candidate_solid, |cand, host| {
+            check_pull_force(
+                cand,
+                host,
+                *force_n,
+                *direction,
+                *duration_sec,
+                *max_drift_mm,
+            )
+        }),
     }
 }
 
