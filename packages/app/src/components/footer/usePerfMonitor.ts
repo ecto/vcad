@@ -57,6 +57,11 @@ export function usePerfMonitor(): PerfSnapshot {
     let smoothedFps = 60;
     let smoothedMs = 16.67;
     let longTasks = 0;
+    // After the tab is hidden, rAF pauses and the queue can flush several
+    // callbacks back-to-back on return, producing dt ≈ 0 and an FPS spike
+    // into the millions. Skip the delta on the first frame after visibility
+    // resumes so smoothing isn't poisoned.
+    let resetTiming = false;
     const fpsSamples: number[] = [];
     const frameMsSamples: number[] = [];
     const heapSamples: number[] = [];
@@ -78,6 +83,13 @@ export function usePerfMonitor(): PerfSnapshot {
 
     const step = (now: number) => {
       if (cancelled) return;
+      if (resetTiming) {
+        resetTiming = false;
+        lastFrame = now;
+        lastEmit = now;
+        raf = requestAnimationFrame(step);
+        return;
+      }
       const dt = Math.max(0.001, now - lastFrame);
       lastFrame = now;
       const instFps = 1000 / dt;
@@ -116,11 +128,17 @@ export function usePerfMonitor(): PerfSnapshot {
       raf = requestAnimationFrame(step);
     };
 
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") resetTiming = true;
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
     raf = requestAnimationFrame(step);
     return () => {
       cancelled = true;
       cancelAnimationFrame(raf);
       observer?.disconnect();
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, []);
 
