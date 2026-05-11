@@ -1,6 +1,4 @@
-import type React from "react";
-import { useContext, useRef, useEffect, useMemo, useState, useCallback, Suspense } from "react";
-import type { Mesh as ThreeMesh, Group as ThreeGroup, Object3D } from "three";
+import { useRef, useEffect, useMemo, useState, useCallback, Suspense } from "react";
 import { Spherical, Vector3, Box3, Plane, Raycaster, Vector2, Quaternion, Matrix4, Color, TOUCH, PerspectiveCamera, WebGLRenderTarget, SRGBColorSpace, ACESFilmicToneMapping } from "three";
 
 const isCoarsePointer =
@@ -24,10 +22,7 @@ import {
 import {
   EffectComposer,
   N8AO,
-  Outline,
-  Selection,
   Vignette,
-  selectionContext,
 } from "@react-three/postprocessing";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { GridPlane } from "./GridPlane";
@@ -294,99 +289,6 @@ function DebugTriangleInspector() {
 
   if (!inspectEnabled) return null;
   return <InspectedTriangleMarker />;
-}
-
-/**
- * Drop-in replacement for `<Select>` from `@react-three/postprocessing` that
- * doesn't loop.
- *
- * The upstream component ([`Select` in `node_modules/@react-three/postprocessing/dist/index.js`])
- * registers descendant meshes into the surrounding `<Selection>` store via a
- * `useEffect` whose deps are `[enabled, children, ctx]`. Three things go
- * wrong together:
- *
- *   1. `children` changes identity on every parent render — the effect re-runs
- *      whenever ViewportContent re-renders.
- *   2. Inside the effect, `traverse` walks the wrapping group itself, which is
- *      never in `ctx.selected`, so `needsUpdate` is true even when the mesh
- *      set is unchanged. The effect then calls `ctx.select([...prev, ...meshes])`.
- *   3. `ctx.select` mutates the Selection store; the Selection provider
- *      rebuilds its context value (memoized on `selected`), which means `ctx`
- *      itself becomes a new reference — re-firing this effect, whose cleanup
- *      removes the meshes and whose body adds them back. Infinite loop →
- *      React "Maximum update depth exceeded".
- *
- * This implementation runs after every commit (no deps array) but bails out
- * when the traversed mesh set is referentially identical to the previous one.
- * That gives us a stable contract: scene mounted → meshes registered once;
- * later renders → no-op; new meshes appear → registered once and only once.
- * Cleanup on unmount drops everything.
- */
-function SilhouetteTarget({
-  enabled,
-  children,
-  ...rest
-}: {
-  enabled: boolean;
-  children: React.ReactNode;
-} & React.ComponentProps<"group">) {
-  const groupRef = useRef<ThreeGroup>(null);
-  const ctx = useContext(selectionContext);
-  const registeredRef = useRef<ThreeMesh[]>([]);
-
-  // Mirror `ctx` into a ref so the unmount cleanup below can call `select`
-  // without listing `ctx` as a dep. Listing it would fire the cleanup on
-  // every context change — and `ctx` gets a new identity every time we call
-  // `select` (the Selection provider re-memoizes its value on `selected`) —
-  // which is exactly the same setState-feedback loop we're trying to dodge.
-  const ctxRef = useRef(ctx);
-  ctxRef.current = ctx;
-
-  // No deps — runs after every commit, short-circuits when the mesh set is
-  // unchanged so we don't feed the Selection state-update cycle.
-  useEffect(() => {
-    const prev = registeredRef.current;
-    if (!ctx || !enabled || !groupRef.current) {
-      if (prev.length > 0 && ctx) {
-        ctx.select((arr) => arr.filter((m) => !prev.includes(m as ThreeMesh)));
-        registeredRef.current = [];
-      }
-      return;
-    }
-    const current: ThreeMesh[] = [];
-    groupRef.current.traverse((obj: Object3D) => {
-      if ((obj as ThreeMesh).isMesh) current.push(obj as ThreeMesh);
-    });
-    if (
-      current.length === prev.length &&
-      current.every((m, i) => m === prev[i])
-    ) {
-      return;
-    }
-    registeredRef.current = current;
-    ctx.select((arr) => {
-      const next = arr.filter((m) => !prev.includes(m as ThreeMesh));
-      for (const m of current) if (!next.includes(m)) next.push(m);
-      return next;
-    });
-  });
-
-  // Drop our meshes on real unmount. Deps must be empty — see ctxRef above.
-  useEffect(() => {
-    return () => {
-      const old = registeredRef.current;
-      const c = ctxRef.current;
-      if (old.length > 0 && c) {
-        c.select((arr) => arr.filter((m) => !old.includes(m as ThreeMesh)));
-      }
-    };
-  }, []);
-
-  return (
-    <group ref={groupRef} {...rest}>
-      {children}
-    </group>
-  );
 }
 
 export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
@@ -1533,14 +1435,17 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
     return env.intensity ?? 1.0;
   }, [sceneSettings.environment]);
 
-  // Silhouette outline. Default on so the viewport gets the subtle dark
-  // contour around each part that polished CAD viewers all use; users can
-  // turn it off through SceneSettings.
-  const silhouetteSettings = sceneSettings.postProcessing.silhouette;
-  const silhouetteEnabled = silhouetteSettings?.enabled !== false;
 
   return (
-    <Selection enabled={silhouetteEnabled}>
+    // KILL-SWITCH: `<Selection>` from @react-three/postprocessing wrapped
+    // this subtree to feed the `<Outline>` post-effect's silhouette pass.
+    // Even with the bail-out in `<SilhouetteTarget>` (see PR #204), a
+    // residual React #185 ("Maximum update depth exceeded") still fires
+    // on every load — so we drop the whole Selection/SilhouetteTarget/
+    // Outline path until the looping consumer of `selectionContext` is
+    // identified. AO + Vignette stay live; only the silhouette outline
+    // is missing.
+    <>
       {/* Engine-independent content - renders immediately */}
       {/* Scene lights from document settings */}
       {sceneSettings.lights.map((light) => {
@@ -1796,13 +1701,10 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
             {/* Plane gizmo at origin - inside rotation group so kernel planes display correctly */}
             <PlaneGizmo />
 
-            {/* Wrap rendered parts in <SilhouetteTarget> so the Outline
-                post-effect picks them up via the Selection context. Outline
-                runs regardless of vcad's own selection state — this just tells
-                the post-process which Object3Ds to find silhouettes for.
-                See SilhouetteTarget above for why we don't use the upstream
-                `<Select>` directly. */}
-            <SilhouetteTarget enabled={silhouetteEnabled}>
+            {/* KILL-SWITCH: was `<SilhouetteTarget enabled={silhouetteEnabled}>`
+                feeding the Outline post-effect via Selection context. Bypassing
+                the whole subtree until React #185 root cause is found. */}
+            <>
               {/* Scene meshes - Assembly mode (instances) */}
               {scene?.instances?.map((inst: EvaluatedInstance) => {
                 const instanceSelectionId = getInstanceSelectionId(inst);
@@ -1855,7 +1757,7 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
                     />
                   );
                 })}
-            </SilhouetteTarget>
+            </>
 
               {/* Debug: mesh boundary edges (holes in tessellation).
                   Toggle with Ctrl+Shift+B or
@@ -1917,7 +1819,7 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
       {engineReady && !xrPresenting && (() => {
         const aoEnabled = sceneSettings.postProcessing.ambientOcclusion?.enabled !== false;
         const vignetteEnabled = sceneSettings.postProcessing.vignette?.enabled !== false;
-        if (!aoEnabled && !vignetteEnabled && !silhouetteEnabled) return null;
+        if (!aoEnabled && !vignetteEnabled) return null;
         // EffectComposer's children type is strict (`JSX.Element | JSX.Element[]`),
         // so we build the array up-front rather than inlining `cond && <Effect/>`
         // expressions, which would resolve to `false` when disabled.
@@ -1933,18 +1835,8 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
             />,
           );
         }
-        if (silhouetteEnabled) {
-          effects.push(
-            <Outline
-              key="outline"
-              edgeStrength={silhouetteSettings?.edgeStrength ?? 2.0}
-              visibleEdgeColor={silhouetteSettings?.visibleEdgeColor ?? (isDark ? 0x0a0a0a : 0x111111)}
-              hiddenEdgeColor={silhouetteSettings?.hiddenEdgeColor ?? (isDark ? 0x0a0a0a : 0x111111)}
-              blur={false}
-              xRay={false}
-            />,
-          );
-        }
+        // KILL-SWITCH: `<Outline>` requires the `<Selection>` provider, which
+        // we removed above. Skip it.
         if (vignetteEnabled) {
           effects.push(
             <Vignette
@@ -1957,6 +1849,6 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
         }
         return <EffectComposer>{effects}</EffectComposer>;
       })()}
-    </Selection>
+    </>
   );
 }
