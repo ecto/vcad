@@ -122,8 +122,9 @@ vcad/
 │   └── docs/                      # Documentation site
 ├── supabase/                      # Database migrations and config
 │   └── migrations/                # SQL migrations (pushed via `supabase db push`)
-├── cad-lib/                       # Loon stdlib for vcad modeling (`.loon` source)
-│   └── src/lib.loon               # bundled into crates/vcad-loon via include_str!
+├── lib/                           # Stdlib for vcad: loon CAD library + DFM rule packs
+│   ├── src/lib.loon               # bundled into crates/vcad-loon via include_str!
+│   └── dfm/                       # DFM rule packs (.toml) bundled into vcad-kernel-dfm
 ```
 
 ## Key Concepts

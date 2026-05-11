@@ -440,7 +440,7 @@ to RLS (drafts invisible, published public).
 - Loon capability audit, extensions as needed
 - `PartInstance` IR variant (Rust + TS mirror)
 - Evaluator support in `packages/engine/src/evaluate.ts`
-- `cad-lib/parts/` directory with 8 starter parts, each with golden test
+- `lib/parts/` directory with 8 starter parts, each with golden test
 - `parts-manifest.json` build step
 - Palette "Parts" tab
 - Cmd+K integration
