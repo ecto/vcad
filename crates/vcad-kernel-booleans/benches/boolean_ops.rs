@@ -377,11 +377,9 @@ fn bench_multi_hole_count(c: &mut Criterion) {
                                 -5.0,
                                 10.0 + (i as f64) * spacing,
                             );
-                            if let vcad_kernel_booleans::BooleanResult::BRep(brep) =
-                                boolean_op(&result, &hole, BooleanOp::Difference, 32)
-                            {
-                                result = *brep;
-                            }
+                            let vcad_kernel_booleans::BooleanResult::BRep(brep) =
+                                boolean_op(&result, &hole, BooleanOp::Difference, 32);
+                            result = *brep;
                         }
                     }
                     black_box(result)

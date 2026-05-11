@@ -5,10 +5,11 @@ use std::collections::HashMap;
 use rayon::prelude::*;
 use vcad_kernel_math::Point3;
 use vcad_kernel_primitives::BRepSolid;
-use vcad_kernel_tessellate::{tessellate_brep, TriangleMesh};
+use vcad_kernel_tessellate::tessellate_brep;
 use vcad_kernel_topo::FaceId;
 
 use crate::api::{BooleanOp, BooleanResult};
+use crate::mesh::empty_brep;
 use crate::{bbox, classify, sew, split, ssi, trim};
 
 /// Per-face split data: intersection curve with entry/exit points.
@@ -55,13 +56,8 @@ pub(crate) fn non_overlapping_boolean(
             BooleanResult::BRep(Box::new(result))
         }
         BooleanOp::Intersection => {
-            // Intersection of non-overlapping = empty
-            BooleanResult::Mesh(TriangleMesh {
-                vertices: Vec::new(),
-                indices: Vec::new(),
-                normals: Vec::new(),
-                face_kinds: Vec::new(),
-            })
+            // Intersection of non-overlapping = empty B-rep.
+            BooleanResult::BRep(Box::new(empty_brep()))
         }
     }
 }
