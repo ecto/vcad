@@ -86,9 +86,20 @@ pub fn grade(
     } else {
         HostState::NotNeeded
     };
-    // Build the candidate solid once (used by every fit check that
-    // operates on it). Cheap if no F-suite checks present.
-    let candidate_solid = if task.checks.iter().any(CheckSpec::is_suite_f) {
+    // Lazily build the target snapshot (Suite D); shared across visual checks.
+    let mut target_state = if task.checks.iter().any(CheckSpec::is_suite_d) {
+        match crate::fit::load_private_solid(task, task_dir, "target_mesh") {
+            Ok(h) => HostState::Loaded(Box::new(h)),
+            Err(e) => HostState::Error(e.to_string()),
+        }
+    } else {
+        HostState::NotNeeded
+    };
+    // Build the candidate solid once (used by every fit/visual check that
+    // operates on it). Cheap if no F or D checks present.
+    let needs_candidate = task.checks.iter().any(CheckSpec::is_suite_f)
+        || task.checks.iter().any(CheckSpec::is_suite_d);
+    let candidate_solid = if needs_candidate {
         aggregate_candidate(&snapshot)
     } else {
         None
@@ -104,6 +115,7 @@ pub fn grade(
             task_target,
             candidate_solid.as_ref(),
             &mut host_state,
+            &mut target_state,
         );
         records.push(CheckRecord {
             n,
@@ -180,6 +192,7 @@ fn run_check(
     task_target: Option<([f64; 3], f64)>,
     candidate_solid: Option<&vcad_kernel::Solid>,
     host_state: &mut HostState,
+    target_state: &mut HostState,
 ) -> (CheckOutcome, serde_json::Value) {
     let stub_reason = "skeleton — kernel wiring pending";
     match spec {
@@ -373,6 +386,12 @@ fn run_check(
                 *displacement_mm,
                 *min_interference_gain_mm3,
             )
+        }),
+        CheckSpec::ShapeSimilarityChamfer {
+            target: _,
+            max_chamfer_mm,
+        } => dispatch_with_host(target_state, candidate_solid, |cand, target| {
+            crate::visual::check_shape_similarity_chamfer(cand, target, *max_chamfer_mm)
         }),
     }
 }

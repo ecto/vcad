@@ -25,6 +25,7 @@ pub mod grader;
 pub mod holes;
 pub mod suite_c;
 pub mod task;
+pub mod visual;
 
 pub use blob::{CheckOutcome, CheckRecord, RunBlob, Summary};
 pub use check::CheckSpec;

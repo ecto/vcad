@@ -25,8 +25,8 @@ One JSON file per task. Filename must match the `id` field. Files in this direct
 | Field | Type | Notes |
 |---|---|---|
 | `id` | string | Unique. Matches filename. Convention: `<tier>-<short-name>-<NN>`. Lowercase, hyphenated. |
-| `suite` | `"A" \| "B" \| "C" \| "F"` | Which suite. |
-| `tier` | string | `A1`–`A6`, `B-boolean` / `B-step` / `B-fillet` / `B-solver` / `B-tessellate` / `B-dynamics`, `C-reacher` / `C-picker` / etc., or `F1`–`F4` (Fit suite). |
+| `suite` | `"A" \| "B" \| "C" \| "D" \| "F"` | Which suite. |
+| `tier` | string | `A1`–`A6`, `B-boolean` / `B-step` / `B-fillet` / `B-solver` / `B-tessellate` / `B-dynamics`, `C-reacher` / `C-picker` / etc., `F1`–`F4` (Fit), or `D1`–`D…` (Visual). |
 | `title` | string | Short human label. |
 | `prompt` | string | The natural-language spec given to the agent. |
 | `checks` | array | One or more grader checks (see below). All must pass for the task to score. |
@@ -188,6 +188,24 @@ before evaluating these checks.
   "direction": [0, 0, 1],
   "displacement_mm": 3.0,
   "min_interference_gain_mm3": 20.0 }
+```
+
+### Suite D (Visual) checks
+
+Visual grading is a deliberate philosophy shift from the deterministic
+suites: the candidate is graded by how close its mesh comes to a
+target shape, not by exact dimensional checks. Use for organic /
+artistic forms (figurines, sculpted shapes) that don't admit
+closed-form mass-property targets.
+
+```jsonc
+// Bidirectional Chamfer distance between candidate and target meshes,
+// in millimetres (symmetric average). `target` names an `inputs[]`
+// entry by `kind` (typically `"target_mesh"`); the host loader is
+// reused, so the same .vcad-as-private-input convention applies.
+{ "type": "shape_similarity_chamfer",
+  "target": "target_mesh",
+  "max_chamfer_mm": 1.0 }
 ```
 
 ## Structured inputs

@@ -52,6 +52,13 @@ pub enum Suite {
     C,
     /// Fit — accessory designed against a host (F1–F4).
     F,
+    /// Visual — shape-similarity grading on its own non-deterministic
+    /// leaderboard. Deliberate philosophy shift from the deterministic
+    /// suites: the candidate is graded by how close its mesh comes to
+    /// a target shape, not by exact dimensional checks. Use for
+    /// organic / artistic forms (figurines, sculpted shapes) that don't
+    /// admit closed-form mass-property targets.
+    D,
 }
 
 /// One entry in `Task.inputs`. Either a bare path (legacy starter-`.vcad`
