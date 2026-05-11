@@ -1,0 +1,83 @@
+{
+  "id": "f1-shim-gap-01",
+  "suite": "F",
+  "tier": "F1",
+  "title": "Rectangular shim in C-channel gap",
+  "prompt": "Reference images of a C-channel bracket are attached. The bracket consists of a bottom plate, a back wall, and a top plate; a horizontal gap runs between the two plates and is open along the +Y, +X, and -X faces. Design a rectangular shim that slides into this gap from the +Y side and fills it vertically.\n\nRequirements:\n- Single solid, single-root .vcad.\n- The shim's thickness (Z extent) must fit the 8mm gap with 0.1–0.3mm clearance, so a shim 7.7–7.9mm thick.\n- The shim must not overlap the back wall: when slid in from +Y, the shim begins at y ≥ 8mm.\n- The shim must not exceed the bracket's outer width: X extent ≤ 50mm.\n- The shim's depth (Y extent) must be ≤ 32mm so it clears the back wall.\n- Wall thickness / minimum dimension ≥ 1.5mm (printability).\n\nOutput the shim in the host's coordinate frame: the bracket sits with its corner at the origin, extending to (50, 40, 20). Place the shim so it occupies the gap at z ∈ [6, 14] and y ≥ 8.",
+  "inputs": [
+    {
+      "kind": "reference_image",
+      "path": "assets/f1-shim-gap-01/front.jpg",
+      "agent_visible": true,
+      "view": "front",
+      "image_kind": "photo",
+      "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 }
+    },
+    {
+      "kind": "reference_image",
+      "path": "assets/f1-shim-gap-01/side.jpg",
+      "agent_visible": true,
+      "view": "side",
+      "image_kind": "photo",
+      "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 }
+    },
+    {
+      "kind": "reference_image",
+      "path": "assets/f1-shim-gap-01/top.jpg",
+      "agent_visible": true,
+      "view": "top",
+      "image_kind": "photo",
+      "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 }
+    },
+    {
+      "kind": "host_geometry",
+      "path": "assets/f1-shim-gap-01/host.vcad",
+      "agent_visible": false,
+      "frame": { "origin": [0, 0, 0], "axis": [0, 0, 1] }
+    },
+    {
+      "kind": "known_dimensions",
+      "agent_visible": true,
+      "text": "The bracket is 50mm wide along the X axis."
+    }
+  ],
+  "checks": [
+    { "type": "valid_solid" },
+    {
+      "type": "interference_volume",
+      "host": "host_geometry",
+      "max_mm3": 1.0
+    },
+    {
+      "type": "contact_area",
+      "host": "host_geometry",
+      "epsilon_mm": 0.3,
+      "min_mm2": 800
+    },
+    {
+      "type": "envelope",
+      "max_mm": [50.5, 32.5, 8.0]
+    },
+    {
+      "type": "mate_clearance",
+      "host": "host_geometry",
+      "min_mm": 0.05,
+      "max_mm": 0.5
+    },
+    {
+      "type": "dfm",
+      "rules": ["min_wall_1.5mm", "no_undercut"]
+    }
+  ],
+  "anti_cheese": {
+    "max_solid_count": 1,
+    "min_accessory_volume_mm3": 100.0
+  },
+  "limits": {
+    "max_tokens": 60000,
+    "max_wallclock_sec": 240,
+    "max_tool_calls": 60
+  },
+  "pass_k": 5,
+  "tags": ["fit", "shim", "rectangular", "image-conditioned", "static"]
+}
