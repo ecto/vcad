@@ -3,7 +3,7 @@ import { ColladaLoader } from "three/examples/jsm/loaders/ColladaLoader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { BufferGeometry } from "three";
 import { Mesh, Matrix4 } from "three";
-import type { CsgOp, Document, Node, NodeId } from "@vcad/ir";
+import type { Document, Node, NodeId } from "@vcad/ir";
 
 export interface LoadedMesh {
   positions: number[];
@@ -254,21 +254,25 @@ export function inlineMeshImports(doc: Document, meshes: UrdfMeshMap): void {
   let unresolved = 0;
   for (const key of Object.keys(doc.nodes)) {
     const node = doc.nodes[key] as Node;
-    const op = node.op as CsgOp & { type: string; path?: string; scale?: unknown };
     // The IR's `MeshImport` variant serializes as `"type": "mesh_import"`
-    // (the only CsgOp that uses a serde rename). Match the wire form
-    // rather than the Rust variant name.
-    if (op.type !== "mesh_import" && op.type !== "MeshImport") continue;
-    const path = op.path ?? "";
+    // (the only CsgOp that uses a serde rename). The TS `CsgOp` union
+    // doesn't include this variant since it's only ever produced by the
+    // URDF importer en route to being swapped to `ImportedMesh`, so we
+    // sidestep the discriminator narrowing by casting to a structural
+    // shape.
+    const opLoose = node.op as unknown as {
+      type: string;
+      path?: string;
+      scale?: { x: number; y: number; z: number } | null;
+    };
+    if (opLoose.type !== "mesh_import" && opLoose.type !== "MeshImport") continue;
+    const path = opLoose.path ?? "";
     const mesh = lookupMesh(meshes, path);
     if (!mesh) {
       unresolved++;
       continue;
     }
-    const scale = op.scale as
-      | { x: number; y: number; z: number }
-      | null
-      | undefined;
+    const scale = opLoose.scale;
     const positions = mesh.positions;
     const scaled =
       scale && (scale.x !== 1 || scale.y !== 1 || scale.z !== 1)
