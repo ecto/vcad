@@ -8,6 +8,23 @@ use tauri::Manager;
 
 use commands::{bambu, context_menu, local_ai};
 
+/// Closes the native splashscreen window and reveals the main window.
+///
+/// Called by the frontend once React has mounted, so the user transitions
+/// from the static splash HTML directly into the in-app `<Splash>` (which
+/// owns the rest of bootstrap progress).
+#[tauri::command]
+fn close_splashscreen(app: tauri::AppHandle) {
+    if let Some(splash) = app.get_webview_window("splashscreen") {
+        let _ = splash.close();
+    }
+    if let Some(main) = app.get_webview_window("main") {
+        platform::apply_window_effects(&main);
+        let _ = main.show();
+        let _ = main.set_focus();
+    }
+}
+
 fn main() {
     vcad_i18n::init(&vcad_i18n::Locale::from_env());
     tauri::Builder::default()
@@ -31,11 +48,10 @@ fn main() {
             // closures — Tauri's popup is fire-and-forget and the OS keeps
             // a weak ref to the menu object.
             app.manage(context_menu::ContextMenuState::<tauri::Wry>::new());
-            if let Some(window) = app.get_webview_window("main") {
-                platform::apply_window_effects(&window);
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            // Main window stays hidden until the frontend invokes
+            // `close_splashscreen` (after React mounts). The splashscreen
+            // window declared in tauri.conf.json is the only thing visible
+            // during the cold-start gap.
             Ok(())
         })
         .on_menu_event(|app, event| {
@@ -49,6 +65,7 @@ fn main() {
             context_menu::handle_event(app, id);
         })
         .invoke_handler(tauri::generate_handler![
+            close_splashscreen,
             bambu::bambu_discover,
             bambu::bambu_connect,
             bambu::bambu_status,

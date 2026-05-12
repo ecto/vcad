@@ -132,6 +132,21 @@ createRoot(document.getElementById("root")!).render(
   </StrictMode>,
 );
 
+// Tauri desktop: close the native splashscreen window and reveal the main
+// window once the React tree has painted. The in-app <Splash> takes over
+// from here for the rest of bootstrap.
+requestAnimationFrame(() => {
+  void (async () => {
+    try {
+      const { isTauri, invoke } = await import("@/lib/tauri");
+      if (isTauri()) await invoke("close_splashscreen");
+    } catch {
+      // Splash close is best-effort — if it fails the user just sees both
+      // windows briefly. Never block startup on it.
+    }
+  })();
+});
+
 // Vercel Analytics + Speed Insights — prod only, silently skip if blocked
 if (import.meta.env.PROD) {
   import("@vercel/analytics").then(({ inject }) => inject()).catch(() => {});

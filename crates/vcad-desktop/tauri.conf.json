@@ -20,16 +20,31 @@
     "macOSPrivateApi": true,
     "windows": [
       {
+        "label": "main",
         "title": "vcad",
         "width": 1400,
         "height": 900,
         "resizable": true,
         "fullscreen": false,
-        "visible": true,
+        "visible": false,
         "focus": true,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "transparent": true
+      },
+      {
+        "label": "splashscreen",
+        "url": "splashscreen.html",
+        "title": "vcad",
+        "width": 468,
+        "height": 328,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "center": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": true
       }
     ],
     "security": {
