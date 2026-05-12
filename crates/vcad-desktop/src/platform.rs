@@ -12,7 +12,7 @@
 use tauri::{AppHandle, Manager, Runtime, WebviewWindow};
 
 /// Apply any platform-specific window effects (vibrancy, etc.) to `window`.
-pub fn apply_window_effects(window: &WebviewWindow) {
+pub fn apply_window_effects<R: Runtime>(window: &WebviewWindow<R>) {
     #[cfg(target_os = "macos")]
     mac::apply_vibrancy(window);
 
@@ -52,7 +52,7 @@ mod mac {
     use cocoa::appkit::NSWindow;
     use cocoa::base::{id, nil, BOOL, NO, YES};
     use cocoa::foundation::NSString;
-    use tauri::WebviewWindow;
+    use tauri::{Runtime, WebviewWindow};
     use window_vibrancy::{apply_vibrancy as apply_v, NSVisualEffectMaterial, NSVisualEffectState};
 
     /// Sidebar material — the strong, lively blur used for the leftmost
@@ -60,7 +60,7 @@ mod mac {
     /// whole window: chrome panels paint translucent over it, the 3D
     /// viewport canvas paints opaque. "Active" state keeps the blur lit
     /// even when the window loses focus, matching system apps.
-    pub fn apply_vibrancy(window: &WebviewWindow) {
+    pub fn apply_vibrancy<R: Runtime>(window: &WebviewWindow<R>) {
         if let Err(err) = apply_v(
             window,
             NSVisualEffectMaterial::Sidebar,
@@ -73,7 +73,7 @@ mod mac {
 
     /// `[[NSWindow setDocumentEdited:]]` — the dot inside the close traffic
     /// light. Cheapest possible "this is a real Mac app" signal.
-    pub fn set_document_edited(window: &WebviewWindow, edited: bool) {
+    pub fn set_document_edited<R: Runtime>(window: &WebviewWindow<R>, edited: bool) {
         if let Ok(ptr) = window.ns_window() {
             unsafe {
                 let ns_window = ptr as id;
@@ -86,7 +86,7 @@ mod mac {
     /// `[[NSWindow setRepresentedFilename:]]` — surfaces the proxy icon and
     /// path popover when the title is visible, and unlocks Window menu's
     /// "Recent Documents" automatically. Empty string clears it.
-    pub fn set_represented_filename(window: &WebviewWindow, path: &str) {
+    pub fn set_represented_filename<R: Runtime>(window: &WebviewWindow<R>, path: &str) {
         if let Ok(ptr) = window.ns_window() {
             unsafe {
                 let ns_window = ptr as id;

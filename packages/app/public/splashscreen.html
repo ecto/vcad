@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>vcad</title>
+    <style>
+      :root {
+        --bg: #1c1c1c;
+        --border: rgba(255, 255, 255, 0.10);
+        --text: #f8f8f2;
+        --text-muted: #75715e;
+        --brand: #f92672;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        background: transparent;
+        font-family:
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
+        color: var(--text);
+        overflow: hidden;
+        -webkit-user-select: none;
+        user-select: none;
+        cursor: default;
+      }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .panel {
+        /* Inset margin keeps the window's rectangular bounds clear of the
+           panel, so the splash floats with no visible rectangle outline. */
+        margin: 24px;
+        width: calc(100% - 48px);
+        height: calc(100% - 48px);
+        padding: 28px 32px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 20px;
+        background-color: var(--bg);
+        border-radius: 18px;
+        text-align: center;
+        -webkit-app-region: drag;
+      }
+      .wordmark {
+        font-size: 56px;
+        font-weight: 700;
+        letter-spacing: -0.04em;
+        line-height: 1;
+      }
+      .wordmark .dot {
+        color: var(--brand);
+      }
+      .tagline {
+        margin-top: 6px;
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+      .progress {
+        width: 260px;
+        max-width: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .bar {
+        position: relative;
+        height: 3px;
+        width: 100%;
+        border-radius: 999px;
+        overflow: hidden;
+        background: var(--border);
+      }
+      .bar::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: -33%;
+        width: 33%;
+        border-radius: 999px;
+        background: var(--brand);
+        animation: slide 1.2s ease-in-out infinite;
+      }
+      @keyframes slide {
+        0% {
+          left: -33%;
+        }
+        50% {
+          left: 50%;
+        }
+        100% {
+          left: 100%;
+        }
+      }
+      .status {
+        display: flex;
+        justify-content: space-between;
+        width: 100%;
+        font-size: 11px;
+        color: var(--text-muted);
+        font-variant-numeric: tabular-nums;
+      }
+      .status .version {
+        opacity: 0.6;
+      }
+      .tip {
+        font-size: 10px;
+        color: var(--text-muted);
+        opacity: 0.6;
+        font-style: italic;
+        min-height: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="panel">
+      <div>
+        <div class="wordmark">vcad<span class="dot">.</span></div>
+        <div class="tagline">Free parametric CAD for everyone</div>
+      </div>
+      <div class="progress">
+        <div class="bar" aria-label="Loading"></div>
+        <div class="status">
+          <span>Starting…</span>
+          <span class="version">v0.9.4</span>
+        </div>
+      </div>
+      <div class="tip" id="tip"></div>
+    </div>
+    <script>
+      // Mirrors the tip list in src/components/Splash.tsx so the native
+      // splash and the in-app splash share the same vocabulary.
+      const TIPS = [
+        "Press ⌘K anywhere for the command palette.",
+        "Drag a .step file into the viewport to import it.",
+        "Sketches support parallel, tangent, and equal-length constraints.",
+        "Ray-traced mode renders BRep directly — no tessellation artifacts.",
+        "Every parameter is scrubbable. Click, drag, watch it rebuild.",
+        "Export to STL, GLB, or STEP from the File menu.",
+        "Physics via phyz. Build a robot, give it joints, watch it move.",
+        "Booleans run on exact BRep, not triangle-mesh hacks.",
+        "Ask the AI chat to build geometry. It has real CAD tools.",
+        "Shell hollows a solid to a given wall thickness.",
+        "Undo and redo — experiment freely.",
+        "Patterns stay linked to their source. Edit once, update everywhere.",
+        "Joints: revolute, prismatic, cylindrical, ball, fixed.",
+        "Drafting views project your parts to 2D orthographic drawings.",
+        "Rust compiled to WebAssembly, running in your browser.",
+        "Z is up. CAD convention, not Three.js.",
+        "Shewchuk's exact predicates power the boolean face classifier.",
+        "Every .vcad file is plain JSON — inspect it in any text editor.",
+        "Sign in with Google or GitHub to sync across devices.",
+        "Half-edge topology. Full-edge respect.",
+        "Built by hand. Rendered by math.",
+        "Open source. Free for everyone. Always.",
+      ];
+      document.getElementById("tip").textContent =
+        TIPS[Math.floor(Math.random() * TIPS.length)];
+    </script>
+  </body>
+</html>

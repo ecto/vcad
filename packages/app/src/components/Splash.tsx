@@ -79,15 +79,10 @@ export function Splash() {
       className={`fixed inset-0 z-[100] flex items-center justify-center bg-bg transition-opacity duration-300 ${
         fadingOut ? "opacity-0" : "opacity-100"
       }`}
-      style={{
-        backgroundImage:
-          "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='56' height='48' viewBox='0 0 56 48'><path d='M14 0l14 8v16l-14 8L0 24V8zM42 0l14 8v16l-14 8-14-8V8zM28 24l14 8v16l-14 8-14-8V32z' fill='none' stroke='%23ffffff' stroke-opacity='0.04' stroke-width='1'/></svg>\")",
-        backgroundRepeat: "repeat",
-      }}
       aria-busy={phase !== "ready"}
       aria-live="polite"
     >
-      <div className="flex w-[420px] max-w-[92vw] flex-col items-center gap-5 rounded-2xl border border-border bg-surface/80 px-8 py-9 text-center shadow-2xl backdrop-blur-sm">
+      <div className="flex w-[260px] max-w-[92vw] flex-col items-center gap-5 text-center">
         <div className="flex flex-col items-center gap-2">
           <div className="text-6xl font-bold tracking-tighter text-text select-none leading-none">
             vcad<span className="text-brand">.</span>

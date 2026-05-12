@@ -18,7 +18,7 @@ vcad-kernel-geom = { workspace = true }
 vcad-kernel-topo = { workspace = true }
 vcad-kernel-physics = { workspace = true }
 vcad-kernel-dfm = { workspace = true }
-phyz = { path = "../../../phyz/crates/phyz", version = "0.3.1" }
+phyz = { path = "../../../phyz/crates/phyz", version = "0.3" }
 
 [[bin]]
 name = "mecheval-grade"
