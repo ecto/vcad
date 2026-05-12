@@ -17,6 +17,7 @@ import { KernelPulseChip } from "@/components/footer/KernelPulseChip";
 import { JobsChip } from "@/components/footer/JobsChip";
 import { KoanChip } from "@/components/footer/KoanChip";
 import { RaytraceChip } from "@/components/footer/RaytraceChip";
+import { DfmChip } from "@/components/footer/DfmChip";
 import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useCapabilities } from "@/lib/capabilities";
@@ -264,6 +265,8 @@ export function StatusBar() {
       <JobsChip />
 
       <RaytraceChip />
+
+      <DfmChip />
 
       <FooterChip className="gap-3">
         <span className="tabular-nums">
