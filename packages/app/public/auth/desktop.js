@@ -13,6 +13,8 @@
   var target = "vcad://auth/callback" + search + hash;
 
   var status = document.getElementById("status");
+  var progress = document.getElementById("progress");
+  var actions = document.getElementById("actions");
   var retryBtn = document.getElementById("retry");
   var webLink = document.getElementById("web");
 
@@ -28,6 +30,8 @@
         "If vcad didn't open automatically, click below to try again. " +
         "If you don't have vcad installed, you can sign in on the web.";
     }
+    if (progress) progress.classList.add("hide");
+    if (actions) actions.classList.remove("hide");
     if (retryBtn) {
       retryBtn.classList.remove("hide");
       retryBtn.addEventListener("click", go);
