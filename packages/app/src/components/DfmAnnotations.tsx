@@ -68,8 +68,13 @@ export function DfmAnnotations() {
             key={`dfm-${idx}`}
             position={position}
             center
-            zIndexRange={[100, 0]}
-            style={{ pointerEvents: "auto" }}
+            // Lift the selected group so its popover paints above sibling
+            // badges that would otherwise overlap it.
+            zIndexRange={isSelected ? [1000, 900] : [100, 0]}
+            // Let wheel/drag events fall through to the canvas behind us so
+            // the user can still orbit/zoom while pointing at a badge cluster.
+            // Only the badge button opts back in to pointer-events.
+            style={{ pointerEvents: "none" }}
           >
             <DfmBadge
               issues={group}
@@ -106,7 +111,9 @@ function DfmBadge({ issues, selected, onSelect }: DfmBadgeProps) {
           onSelect(lead.id);
         }}
         className={cn(
-          "relative flex h-6 w-6 items-center justify-center rounded-full font-bold text-xs ring-2 shadow-md transition-transform",
+          // pointer-events-auto reopens hits on the button itself; the parent
+          // Html wrapper is pointer-events-none so wheel/drag fall through.
+          "pointer-events-auto relative flex h-6 w-6 items-center justify-center rounded-full font-bold text-xs ring-2 shadow-md transition-transform",
           ringClass,
           selected ? "scale-125" : "hover:scale-110",
         )}
@@ -127,13 +134,11 @@ function DfmBadge({ issues, selected, onSelect }: DfmBadgeProps) {
 function DfmPopover({ issue, extras }: { issue: DfmIssue; extras: number }) {
   return (
     <div className="w-72 rounded-md border border-border bg-surface/95 backdrop-blur-sm p-3 shadow-lg text-text text-xs space-y-2">
-      <div className="flex items-center justify-between">
-        <span className="font-semibold uppercase tracking-wide text-[10px] opacity-70">
-          {issue.process} · {issue.rule}
-        </span>
+      <div className="flex items-center justify-between gap-2">
+        <p className="font-medium leading-snug">{issue.message}</p>
         <span
           className={cn(
-            "rounded px-1.5 py-0.5 text-[10px] font-semibold",
+            "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold capitalize",
             issue.severity === "error"
               ? "bg-red-500/20 text-red-300"
               : issue.severity === "warning"
@@ -144,7 +149,6 @@ function DfmPopover({ issue, extras }: { issue: DfmIssue; extras: number }) {
           {issue.severity}
         </span>
       </div>
-      <p className="font-medium leading-snug">{issue.message}</p>
       {issue.explanation && (
         <p className="leading-relaxed text-text-muted">{issue.explanation}</p>
       )}

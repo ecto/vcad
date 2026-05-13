@@ -16,6 +16,7 @@ import {
 import { useTheme } from "@/hooks/useTheme";
 import { useDrawingStore } from "@/stores/drawing-store";
 import { useElectronicsStore } from "@/stores/electronics-store";
+import { useDfmStore } from "@/stores/dfm-store";
 import { useElectronicsSync } from "@/hooks/useElectronicsSync";
 import {
   viewportPointerDown,
@@ -220,6 +221,7 @@ function BoxSelectHandler({
 export function Viewport() {
   const containerRef = useRef<HTMLDivElement>(null);
   const clearSelection = useUiStore((s) => s.clearSelection);
+  const clearDfmSelection = useDfmStore((s) => s.selectIssue);
   const renderMode = useUiStore((s) => s.renderMode);
   const raytraceAvailable = useUiStore((s) => s.raytraceAvailable);
   const { isDark } = useTheme();
@@ -292,6 +294,7 @@ export function Viewport() {
           // Ignore the click that follows a drag/rotate gesture.
           if (viewportWasDrag()) return;
           if (!electronicsActive) clearSelection();
+          clearDfmSelection(null);
         }}
         onCreated={() => performance.mark("canvas-ready")}
         shadows
