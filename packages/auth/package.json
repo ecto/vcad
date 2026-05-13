@@ -18,7 +18,7 @@
     "@phosphor-icons/react": "^2.1.7",
     "@radix-ui/react-dialog": "^1.1.4",
     "@supabase/supabase-js": "^2.45.0",
-    "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-opener": "^2.5.4",
     "zustand": "^5.0.0"
   },
   "peerDependencies": {
