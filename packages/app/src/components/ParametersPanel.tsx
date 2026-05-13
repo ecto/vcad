@@ -133,7 +133,7 @@ function ParameterRow({
             }
           }}
           spellCheck={false}
-          className="flex-1 min-w-0 bg-card border border-border text-text text-xs font-mono outline-none px-2 py-1 focus:border-brand"
+          className="flex-1 min-w-0 rounded-md bg-card border border-border text-text text-xs font-mono outline-none px-2 py-1 focus:border-brand focus:ring-2 focus:ring-brand/30 transition-colors"
           aria-label="Parameter name"
         />
         <button
@@ -174,8 +174,8 @@ function ParameterRow({
           }}
           spellCheck={false}
           className={cn(
-            "flex-1 min-w-0 bg-card border text-text text-xs font-mono outline-none px-2 py-1 focus:border-brand",
-            error ? "border-red-500" : "border-border",
+            "flex-1 min-w-0 rounded-md bg-card border text-text text-xs font-mono outline-none px-2 py-1 focus:ring-2 focus:ring-brand/30 transition-colors",
+            error ? "border-red-500" : "border-border focus:border-brand",
           )}
           aria-label={`${name} value`}
         />

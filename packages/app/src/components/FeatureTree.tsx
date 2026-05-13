@@ -223,14 +223,14 @@ function SketchTreeSection() {
                 confirmExit();
                 addToast(t("tree.sketch.discarded"), "info");
               }}
-              className="flex-1 px-2 py-1 text-xs bg-red-600 hover:bg-red-700 text-white"
+              className="flex-1 rounded-md px-2 py-1.5 text-xs font-medium bg-red-600 hover:bg-red-700 text-white transition-colors"
             >
               {t("tree.sketch.discard")}
             </button>
             <button
               type="button"
               onClick={cancelExit}
-              className="flex-1 px-2 py-1 text-xs hover:bg-hover/60"
+              className="flex-1 rounded-md px-2 py-1.5 text-xs font-medium hover:bg-hover transition-colors"
             >
               {t("tree.sketch.keep_editing")}
             </button>
@@ -365,7 +365,7 @@ function FeatureTreeEmptyState() {
           <button
             key={kind}
             onClick={() => addPrimitive(kind)}
-            className="flex flex-col items-center justify-center gap-1 aspect-square border border-border bg-card hover:bg-hover hover:border-brand/50 transition-colors"
+            className="flex flex-col items-center justify-center gap-1 aspect-square rounded-md border border-border bg-card hover:bg-hover hover:border-text-muted transition-colors"
             title={`Add ${label}`}
           >
             <Icon size={20} className="text-text-muted" />
@@ -407,7 +407,7 @@ function getPartIcon(part: PartInfo): typeof Cube {
 function DragPreview({ part }: { part: PartInfo }) {
   const Icon = getPartIcon(part);
   return (
-    <div className="flex items-center gap-1.5 px-2 py-1 bg-surface border border-brand rounded shadow-lg text-xs text-text">
+    <div className="flex items-center gap-1.5 px-2 py-1 bg-surface border border-border rounded-md shadow-md text-xs text-text">
       <Icon size={12} className="shrink-0 text-text-muted" />
       <span className="truncate max-w-32">{part.name}</span>
     </div>
@@ -450,7 +450,7 @@ function InlineRenameInput({
         if (e.key === "Enter") commit();
         if (e.key === "Escape") onDone();
       }}
-      className="flex-1 border border-brand bg-surface px-1 py-0.5 text-xs text-text outline-none w-0"
+      className="flex-1 rounded-md border border-border bg-surface px-1.5 py-0.5 text-xs text-text outline-none w-0 focus:border-brand focus:ring-2 focus:ring-brand/30"
       autoFocus
     />
   );

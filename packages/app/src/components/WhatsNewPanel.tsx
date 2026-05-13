@@ -73,7 +73,7 @@ export function WhatsNewPanel() {
           className={cn(
             "fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2",
             "w-full max-w-md max-h-[70vh]",
-            "bg-surface shadow-2xl flex flex-col select-none",
+            "rounded-xl border border-border bg-surface shadow-xl flex flex-col select-none overflow-hidden",
             "focus:outline-none",
           )}
         >

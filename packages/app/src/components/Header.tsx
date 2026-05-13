@@ -79,10 +79,10 @@ const TRIGGER_CLASS = cn(
 );
 
 const CONTENT_CLASS =
-  "z-50 min-w-[200px] border border-border/80 bg-surface py-1 shadow-md";
+  "z-50 min-w-[200px] rounded-lg border border-border/80 bg-surface p-1 shadow-md";
 
 const ITEM_CLASS = cn(
-  "flex w-full items-center gap-2 px-2.5 py-1 text-[11px] text-text outline-none cursor-default select-none",
+  "flex w-full items-center gap-2 rounded-sm px-2.5 py-1.5 text-[12px] text-text outline-none cursor-default select-none",
   "data-[highlighted]:bg-hover data-[disabled]:opacity-40 data-[disabled]:cursor-not-allowed",
 );
 
@@ -141,7 +141,7 @@ function MenuItem({
 }
 
 function MenuSeparator() {
-  return <Menubar.Separator className="my-1 border-t border-border/30" />;
+  return <Menubar.Separator className="my-1 mx-1.5 h-px bg-border-soft" />;
 }
 
 /** A submenu that opens on hover/right-arrow. Menubar.Sub handles all the
@@ -176,7 +176,7 @@ function Submenu({
           sideOffset={0}
           alignOffset={-5}
           className={cn(
-            "z-50 min-w-[180px] border border-border/80 bg-surface py-1 shadow-md",
+            "z-50 min-w-[180px] rounded-lg border border-border/80 bg-surface p-1 shadow-md",
             contentClassName,
           )}
         >

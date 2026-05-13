@@ -102,7 +102,7 @@ export function ProductModal({
           data-tauri-drag-region=""
           className={cn(
             "fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2",
-            "bg-surface shadow-2xl select-none",
+            "rounded-xl border border-border bg-surface shadow-xl select-none",
             "focus:outline-none",
             "max-h-[90vh] overflow-y-auto scrollbar-thin",
           )}

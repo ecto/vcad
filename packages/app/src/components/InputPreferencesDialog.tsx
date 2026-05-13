@@ -39,7 +39,7 @@ export function InputPreferencesDialog({
           className={cn(
             "fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2",
             "w-[640px] max-w-[92vw] h-[560px] max-h-[88vh]",
-            "flex flex-col bg-surface shadow-2xl border border-border select-none",
+            "flex flex-col rounded-xl bg-surface shadow-xl border border-border select-none overflow-hidden",
             "focus:outline-none",
           )}
         >

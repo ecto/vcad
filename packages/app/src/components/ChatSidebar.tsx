@@ -309,7 +309,7 @@ function VcadMessage({ msg, userName }: { msg: ChatMessage; userName: string }) 
             {msg.context.map((ctx) => (
               <span
                 key={ctx.partId}
-                className="inline-flex items-center gap-1 rounded border border-brand/30 bg-brand/10 px-1.5 py-0.5 text-[9px] text-brand"
+                className="inline-flex items-center gap-1 rounded-sm border border-border bg-fill px-1.5 py-0.5 text-[10px] font-mono text-text-muted"
               >
                 {ctx.partName}
               </span>
@@ -848,12 +848,12 @@ export function ChatSidebar() {
                     {selectionContext.map((ctx) => (
                       <span
                         key={ctx.partId}
-                        className="inline-flex items-center gap-1 rounded-full border border-brand/30 bg-brand/10 py-0.5 pl-2 pr-1 text-[9px] text-brand"
+                        className="inline-flex items-center gap-1 rounded-full border border-border bg-fill py-0.5 pl-2 pr-1 text-[10px] font-mono text-text-muted"
                       >
                         {ctx.partName}
                         <button
                           onClick={() => removeContextPart(ctx.partId)}
-                          className="flex h-3 w-3 items-center justify-center rounded-full hover:bg-brand/20 hover:text-brand/80 transition-colors"
+                          className="flex h-3 w-3 items-center justify-center rounded-full hover:bg-hover hover:text-text transition-colors"
                           aria-label={`Remove ${ctx.partName}`}
                         >
                           <X size={8} />

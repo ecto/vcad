@@ -185,7 +185,7 @@ export function ScrubInput({
         <button
           type="button"
           onClick={() => bump(-1)}
-          className="flex h-9 w-9 shrink-0 items-center justify-center border border-border bg-card text-text-muted active:bg-hover"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-card text-text-muted active:bg-hover"
           aria-label={`Decrease ${label}`}
         >
           <Minus size={14} />
@@ -215,7 +215,7 @@ export function ScrubInput({
         onDoubleClick={handleDoubleClick}
         readOnly={!isEditing && !isCoarsePointer}
         className={cn(
-          "flex-1 min-w-0 bg-card border border-border text-text outline-none transition-colors text-center",
+          "flex-1 min-w-0 rounded-md bg-card border border-border text-text outline-none transition-colors text-center",
           "hover:border-text-muted focus:border-brand",
           !isEditing && !isCoarsePointer && "cursor-ew-resize select-none",
           isScrubbing && "cursor-ew-resize",
@@ -227,7 +227,7 @@ export function ScrubInput({
         <button
           type="button"
           onClick={() => bump(1)}
-          className="flex h-9 w-9 shrink-0 items-center justify-center border border-border bg-card text-text-muted active:bg-hover"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-card text-text-muted active:bg-hover"
           aria-label={`Increase ${label}`}
         >
           <Plus size={14} />
