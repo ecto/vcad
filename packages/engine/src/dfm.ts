@@ -89,7 +89,9 @@ interface DfmKernelBindings {
 }
 
 interface DfmSolidHandle {
-  runDfm: (process: string, rule_pack_toml: string, root_node_id: number) => string;
+  // `root_node_id` is a Rust `u64` — wasm-bindgen marshals it as a JS
+  // BigInt, so callers must convert their Number-based NodeIds.
+  runDfm: (process: string, rule_pack_toml: string, root_node_id: bigint) => string;
 }
 
 async function bindings(): Promise<DfmKernelBindings> {
@@ -135,7 +137,7 @@ export async function runDfm(
     const rootNodeId = visibleRoots[i]?.root ?? 0;
     const solid = (part as unknown as { solid?: DfmSolidHandle }).solid;
     if (!solid || typeof solid.runDfm !== "function") continue;
-    const reportJson = solid.runDfm(opts.process, pack, rootNodeId);
+    const reportJson = solid.runDfm(opts.process, pack, BigInt(rootNodeId));
     if (!reportJson) continue;
     const report = JSON.parse(reportJson) as DfmReport;
     packName = packName || report.rule_pack_name;
