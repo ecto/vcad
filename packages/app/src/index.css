@@ -39,9 +39,14 @@
 }
 
 @theme {
-  --font-mono: "Berkeley Mono", ui-monospace, monospace;
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "Berkeley Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  /* v3: SF Pro Display / SF Pro Text first on Apple platforms, Inter as the
+     designed-identity fallback elsewhere. Body chrome uses --font-sans, large
+     display / wordmark uses --font-display. */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter",
+    system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter",
+    system-ui, sans-serif;
 
   /* These get overridden by .light class below */
   --color-bg: var(--bg);
@@ -52,10 +57,9 @@
   --color-text-muted: var(--text-muted);
   --color-hover: var(--hover);
 
-  /* vcad brand color (Monokai Soda pink). This is the "loud" action color used
-     for primary buttons, focus rings, brand chips, etc. Renamed from the
-     historical `accent` namespace so the `accent` slot can carry shadcn's
-     subtler hover semantic without fighting it. */
+  /* vcad brand color (Monokai Soda pink). v3: still the single "loud" action
+     color — wordmark `.`, primary actions, focus rings, selection rail, the
+     footer heartbeat. Used sparingly so it earns its weight. */
   --color-brand: #F92672;
   --color-brand-hover: #d91e63;
   --color-danger: #F92672;
@@ -115,28 +119,59 @@
   --safe-right: env(safe-area-inset-right, 0px);
 }
 
-/* Dark mode (default) - Monokai Soda from tmTheme */
+/* v3 — Dark mode (default, no class). Tuned-warm Apple neutrals; never pure
+   black. One unified surface for chrome (#1A1A1D) lifted above the viewport
+   stage (#0E0E10) with a visible border doing the elevation work. */
 :root {
   color-scheme: dark;
-  --bg: #222222;
-  --surface: #2a2a2a;
-  --card: #333333;
-  --border: #444444;
-  --text: #F8F8F2;
-  --text-muted: #75715E;
-  --hover: rgba(255, 255, 255, 0.1);
+  --bg: #0E0E10;          /* viewport stage */
+  --surface: #1A1A1D;     /* chrome (header / footer / sidebars) */
+  --card: #1A1A1D;        /* raised content matches chrome — single material */
+  --border: #3A3A40;      /* visible above the grid */
+  --border-soft: #2F2F34;
+  --text: #F5F5F5;
+  --text-2: #D4D4D4;
+  --text-muted: #9C9CA3;
+  --text-tert: #6A6A70;
+  --hover: #26262B;
+  --fill: #232327;
+  --fill-strong: #2F2F34;
+  --selection-bg: rgba(249, 38, 114, 0.18);
+  --selection-fg: #FF5E9C;
 }
 
-/* Light mode - macOS-style neutral grey chrome */
+/* v3 — Light mode (Vercel-clean). Pure white chrome and stage on one sheet,
+   with #D4D4D4 hairlines doing all the structural work. Brand pink reserved
+   for wordmark dot, primary actions, focus rings, and selection. */
 :root.light {
   color-scheme: light;
-  --bg: #e8eaec;          /* macOS window grey */
-  --surface: #dde0e3;     /* recessed panels */
-  --card: #f4f5f7;        /* raised cards, lighter than bg */
-  --border: #c4c8cc;      /* neutral grey border */
-  --text: #1d1f23;        /* near-black text */
-  --text-muted: #6e7278;  /* mid-grey muted */
-  --hover: rgba(0, 0, 0, 0.05);
+  --bg: #FFFFFF;          /* viewport stage */
+  --surface: #FFFFFF;     /* chrome (header / footer / sidebars) */
+  --card: #FFFFFF;        /* raised content matches chrome — single material */
+  --border: #D4D4D4;      /* visible above the grid */
+  --border-soft: #D4D4D4;
+  --text: #000000;
+  --text-2: #171717;
+  --text-muted: #666666;
+  --text-tert: #999999;
+  --hover: #F4F4F5;
+  --fill: #F4F4F5;
+  --fill-strong: #E5E5E5;
+  --selection-bg: rgba(249, 38, 114, 0.08);
+  --selection-fg: #C0185A;
+}
+
+/* v3 — Geometry, motion, hairline. AppKit spring used in `appkit-spring`. */
+:root {
+  --hairline: 0.5px;
+  --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
+
+  --radius-xs: 3px;
+  --radius-sm: 6px;     /* buttons, inputs, kbd */
+  --radius-md: 10px;    /* popovers, menus, small cards */
+  --radius-lg: 14px;    /* cards, panels */
+  --radius-xl: 20px;    /* sheets, hero callouts */
+  --radius-pill: 999px;
 }
 
 /* Body typography. Two deliberate calls here, in order of importance:
@@ -460,19 +495,21 @@ body {
  *  - border          → softer to match macOS hairlines
  * ──────────────────────────────────────────────────────────────────────── */
 body.tauri-mac {
-  /* Dark theme — UnderWindowBackground reads as charcoal at ~0.7-0.8 alpha.
-     We tune surfaces just dark enough to keep text contrast >= 7:1. */
-  --bg: rgba(28, 28, 28, 0.0);
-  --surface: rgba(38, 38, 38, 0.62);
-  --card: rgba(48, 48, 48, 0.72);
+  /* Dark — let AppKit's UnderWindow vibrancy carry the wash. Surfaces sit
+     just above it so chrome reads as material, not a hole. Tuned to keep
+     ≥7:1 contrast against the v3 dark text. */
+  --bg: rgba(14, 14, 16, 0.0);
+  --surface: rgba(26, 26, 29, 0.72);
+  --card: rgba(26, 26, 29, 0.82);
   --border: rgba(255, 255, 255, 0.10);
   --hover: rgba(255, 255, 255, 0.06);
 }
 body.tauri-mac:has(:root.light) {
-  /* Light theme — Sidebar material reads as ~#e8e8e8 with subtle blur. */
-  --bg: rgba(0, 0, 0, 0.0);
-  --surface: rgba(245, 245, 247, 0.55);
-  --card: rgba(255, 255, 255, 0.72);
+  /* Light — Sidebar material reads as near-white with subtle blur. Chrome
+     stays effectively pure white so the v3 Vercel-clean read survives. */
+  --bg: rgba(255, 255, 255, 0.0);
+  --surface: rgba(255, 255, 255, 0.78);
+  --card: rgba(255, 255, 255, 0.92);
   --border: rgba(0, 0, 0, 0.08);
   --hover: rgba(0, 0, 0, 0.04);
 }

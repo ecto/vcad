@@ -45,9 +45,12 @@ const PcbGettingStarted = lazy(() =>
   })),
 );
 
-// Monokai Soda from tmTheme
-export const BG_DARK = "#222222";
-export const BG_LIGHT = "#e8eaec";
+// v3 design system: the 3D viewport is transparent — chrome / page bg shows
+// through, leaving only the grid, part, and lighting visible. These constants
+// are retained for legacy consumers; current renderers should pass
+// `transparent` instead.
+export const BG_DARK = "transparent";
+export const BG_LIGHT = "transparent";
 const MIN_DRAG_THRESHOLD = 5;
 
 function BoxSelectHandler({
@@ -273,10 +276,8 @@ export function Viewport() {
     );
   }
 
-  // Render 3D Canvas (shared for CAD and PCB modes)
-  const canvasBg = electronicsActive
-    ? (isDark ? "#0a0a0a" : "#f5f5f5")
-    : (isDark ? BG_DARK : BG_LIGHT);
+  // v3: viewport canvas is transparent; the chrome / page bg (var(--bg))
+  // shows through, leaving only the grid, part, and lighting visible.
 
   return (
     <div
@@ -296,6 +297,7 @@ export function Viewport() {
         onCreated={() => performance.mark("canvas-ready")}
         shadows
         gl={{
+          alpha: true,
           antialias: true,
           logarithmicDepthBuffer: true,
           toneMapping: THREE.ACESFilmicToneMapping,
@@ -307,7 +309,7 @@ export function Viewport() {
           outputColorSpace: THREE.SRGBColorSpace,
           preserveDrawingBuffer: true,
         }}
-        style={{ background: canvasBg }}
+        style={{ background: "transparent" }}
       >
         <XR store={xrStore}>
           <ViewportContent mode={electronicsActive ? "pcb" : "3d"} />

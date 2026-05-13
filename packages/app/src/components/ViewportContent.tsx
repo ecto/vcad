@@ -71,7 +71,6 @@ import type {
 } from "@vcad/ir";
 import { PcbScene } from "./electronics/pcb3d/PcbScene";
 import { usePcbCamera } from "./electronics/pcb3d/usePcbCamera";
-import { BG_DARK, BG_LIGHT } from "./Viewport";
 import { useXRPresenting } from "@/stores/xr-store";
 import { XRSceneTransform } from "./xr/XRSceneTransform";
 import { XRGestures } from "./xr/XRGestures";
@@ -1659,17 +1658,14 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
         </Environment>
       )}
 
-      {/* Background: match UI chrome so the viewport blends with the app.
+      {/* v3: the canvas is alpha:true and the page bg shows through, so the
+          default is no scene background — only the grid, part, and lighting
+          paint. A doc-defined Solid background still wins; Transparent is a
+          no-op (leave scene.background null so the alpha clear takes over).
           The <Environment> above still produces IBL via scene.environment,
           so metallic reflections keep their studio highlights. */}
-      {!isPcbMode && !docScene?.background && (
-        <color attach="background" args={[isDark ? BG_DARK : BG_LIGHT]} />
-      )}
       {!isPcbMode && docScene?.background?.type === "Solid" && (
         <color attach="background" args={[docScene.background.color[0], docScene.background.color[1], docScene.background.color[2]]} />
-      )}
-      {!isPcbMode && docScene?.background?.type === "Transparent" && (
-        <color attach="background" args={[0, 0, 0]} />
       )}
 
       {/* ═══════════════════════════════════════════════════════════════════
