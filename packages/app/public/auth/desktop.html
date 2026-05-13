@@ -8,50 +8,56 @@
     <link rel="icon" href="/favicon.ico" />
     <style>
       @font-face {
-        font-family: "Berkeley Mono";
-        font-weight: 400;
+        font-family: "Inter";
+        font-style: normal;
+        font-weight: 100 900;
         font-display: swap;
-        src: url("/fonts/BerkeleyMono-Regular.otf") format("opentype");
-      }
-      @font-face {
-        font-family: "Berkeley Mono";
-        font-weight: 700;
-        font-display: swap;
-        src: url("/fonts/BerkeleyMono-Bold.otf") format("opentype");
+        src: url("/fonts/InterVariable.woff2") format("woff2-variations");
       }
 
-      /* Monokai Soda dark theme — matches packages/app/src/index.css. */
       :root {
         color-scheme: dark;
-        --bg: #222222;
-        --surface: #2a2a2a;
-        --border: #444444;
-        --text: #F8F8F2;
-        --text-muted: #75715E;
-        --hover: rgba(255, 255, 255, 0.1);
-        --brand: #F92672;
+        --bg: #0e0e10;
+        --surface: #1a1a1d;
+        --border: #3a3a40;
+        --text: #f5f5f5;
+        --text-muted: #9c9ca3;
+        --hover: #26262b;
+        --brand: #f92672;
+        --brand-hover: #d91e63;
       }
       @media (prefers-color-scheme: light) {
         :root {
           color-scheme: light;
-          --bg: #e8eaec;
-          --surface: #dde0e3;
-          --border: #c4c8cc;
-          --text: #1d1f23;
-          --text-muted: #6e7278;
-          --hover: rgba(0, 0, 0, 0.05);
-          --brand: #F92672;
+          --bg: #ffffff;
+          --surface: #ffffff;
+          --border: #d4d4d4;
+          --text: #000000;
+          --text-muted: #666666;
+          --hover: rgba(0, 0, 0, 0.04);
+          --brand: #f92672;
+          --brand-hover: #d91e63;
         }
       }
 
-      html, body {
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
         margin: 0;
         height: 100%;
-        font: 12px/1.5 "Berkeley Mono", ui-monospace, monospace;
+        font: 14px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text",
+          "Inter", system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+          sans-serif;
         background: var(--bg);
         color: var(--text);
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
+        font-optical-sizing: auto;
       }
 
       main {
@@ -60,81 +66,131 @@
         align-items: center;
         justify-content: center;
         padding: 1.5rem;
-        box-sizing: border-box;
       }
 
       .card {
         width: 100%;
-        max-width: 28rem;
-        border: 1px solid var(--border);
-        background: var(--surface);
-        padding: 1.5rem;
+        max-width: 19rem;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1.25rem;
+        text-align: center;
       }
 
-      .header {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        margin-bottom: 1rem;
-      }
-      .logo {
-        font-size: 14px;
+      .wordmark {
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display",
+          "Inter", system-ui, sans-serif;
+        font-size: 3.5rem;
         font-weight: 700;
         letter-spacing: -0.05em;
+        line-height: 1;
         color: var(--text);
+        user-select: none;
       }
-      .logo .dot { color: var(--brand); }
-      .label { font-size: 12px; color: var(--text-muted); }
+      .wordmark .dot {
+        color: var(--brand);
+      }
 
-      p { margin: 0 0 0.75rem; font-size: 12px; color: var(--text); }
-      p.muted { color: var(--text-muted); }
+      .status {
+        font-size: 13px;
+        color: var(--text-muted);
+        margin: 0;
+      }
+
+      .progress {
+        position: relative;
+        width: 100%;
+        height: 3px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: var(--border);
+      }
+      .progress .bar {
+        position: absolute;
+        inset: 0 auto 0 -33%;
+        width: 33%;
+        border-radius: 999px;
+        background: var(--brand);
+        animation: slide 1.2s ease-in-out infinite;
+      }
+      @keyframes slide {
+        0% {
+          left: -33%;
+        }
+        50% {
+          left: 50%;
+        }
+        100% {
+          left: 100%;
+        }
+      }
 
       .actions {
-        margin-top: 1rem;
+        width: 100%;
         display: flex;
         flex-direction: column;
         gap: 0.5rem;
       }
 
-      button, .btn {
-        height: 2rem;
-        padding: 0 0.75rem;
+      .btn {
+        height: 2.25rem;
+        padding: 0 0.875rem;
         border: 1px solid var(--border);
-        background: var(--bg);
+        background: transparent;
         color: var(--text);
         font: inherit;
-        font-size: 12px;
+        font-size: 13px;
+        font-weight: 500;
+        border-radius: 6px;
         cursor: pointer;
         text-decoration: none;
         display: inline-flex;
         align-items: center;
         justify-content: center;
         width: 100%;
-        box-sizing: border-box;
+        transition: background 0.12s ease, border-color 0.12s ease;
       }
-      button:hover, .btn:hover { background: var(--hover); }
-      button:focus-visible, .btn:focus-visible {
+      .btn:hover {
+        background: var(--hover);
+      }
+      .btn.primary {
+        background: var(--brand);
+        border-color: var(--brand);
+        color: #ffffff;
+      }
+      .btn.primary:hover {
+        background: var(--brand-hover);
+        border-color: var(--brand-hover);
+      }
+      .btn:focus-visible {
         outline: 2px solid var(--brand);
-        outline-offset: -2px;
+        outline-offset: 2px;
       }
 
-      .hide { display: none; }
+      .hide {
+        display: none;
+      }
     </style>
   </head>
   <body>
     <main>
       <div class="card">
-        <div class="header">
-          <span class="logo">vcad<span class="dot">.</span></span>
-          <span class="label">Desktop sign-in</span>
+        <div class="wordmark">vcad<span class="dot">.</span></div>
+        <p id="status" class="status">Opening the desktop app…</p>
+        <div id="progress" class="progress" aria-hidden="true">
+          <div class="bar"></div>
         </div>
-        <p id="status" class="muted">Opening the desktop app…</p>
-        <div class="actions">
-          <button id="retry" class="hide" type="button">Open vcad</button>
-          <a id="web" class="btn hide" href="https://vcad.io/">Continue in browser</a>
+        <div id="actions" class="actions hide">
+          <button id="retry" class="btn primary hide" type="button">
+            Open vcad
+          </button>
+          <a id="web" class="btn hide" href="https://vcad.io/"
+            >Continue in browser</a
+          >
         </div>
         <noscript>
-          <p class="muted">
+          <p class="status">
             Enable JavaScript to complete sign-in, or open this link on the
             device where vcad is installed.
           </p>
