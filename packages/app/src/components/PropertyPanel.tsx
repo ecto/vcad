@@ -476,7 +476,7 @@ function ReadOnlyParam({ label, value, tooltip }: { label: string; value: string
   const content = (
     <div className="flex items-center gap-1.5 text-xs">
       <span className="shrink-0 text-[10px] w-4 text-text-muted font-medium">{label}</span>
-      <span className="flex-1 min-w-0 bg-card border border-border px-2 py-1 text-xs text-text-muted truncate opacity-60 cursor-not-allowed">
+      <span className="flex-1 min-w-0 rounded-md bg-card border border-border px-2 py-1 text-xs text-text-muted truncate opacity-60 cursor-not-allowed">
         {value}
       </span>
     </div>
@@ -1717,9 +1717,9 @@ export function PropertyPanel() {
             <button
               type="button"
               onClick={() => useElectronicsStore.getState().enter()}
-              className="w-full mt-2 px-3 py-2 text-xs font-medium rounded
-                bg-brand/10 text-brand border border-brand/30
-                hover:bg-brand/20 transition-colors"
+              className="w-full mt-2 px-3 py-2 text-xs font-medium rounded-md
+                bg-fill text-text border border-border
+                hover:bg-fill-strong hover:border-text-muted transition-colors"
             >
               {t("panel.edit_circuit")}
             </button>
@@ -1733,9 +1733,9 @@ export function PropertyPanel() {
             <button
               type="button"
               onClick={() => useEmbroideryStore.getState().openPanel()}
-              className="w-full mt-2 px-3 py-2 text-xs font-medium rounded
-                bg-brand/10 text-brand border border-brand/30
-                hover:bg-brand/20 transition-colors"
+              className="w-full mt-2 px-3 py-2 text-xs font-medium rounded-md
+                bg-fill text-text border border-border
+                hover:bg-fill-strong hover:border-text-muted transition-colors"
             >
               {t("panel.open_embroidery")}
             </button>

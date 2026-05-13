@@ -90,7 +90,7 @@ export function DrawingToolbar() {
           isOrbiting && "opacity-0 pointer-events-none"
         )}
       >
-        <div className="relative flex items-center gap-1 border border-border bg-card px-2 py-1.5 shadow-2xl">
+        <div className="relative flex items-center gap-1 rounded-full border border-border bg-card px-2 py-1.5 shadow-md">
           {/* View direction dropdown */}
           <div className="relative">
             <select

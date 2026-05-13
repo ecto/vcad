@@ -53,9 +53,14 @@
   --color-surface: var(--surface);
   --color-card: var(--card);
   --color-border: var(--border);
+  --color-border-soft: var(--border-soft);
   --color-text: var(--text);
+  --color-text-2: var(--text-2);
   --color-text-muted: var(--text-muted);
+  --color-text-tert: var(--text-tert);
   --color-hover: var(--hover);
+  --color-fill: var(--fill);
+  --color-fill-strong: var(--fill-strong);
 
   /* vcad brand color (Monokai Soda pink). v3: still the single "loud" action
      color — wordmark `.`, primary actions, focus rings, selection rail, the
@@ -296,7 +301,7 @@ body {
   }
 }
 .vcad-footer > * {
-  animation: vcad-chip-in 0.35s ease-out backwards;
+  animation: vcad-chip-in 0.4s var(--ease-spring) backwards;
 }
 .vcad-footer > *:nth-child(1) { animation-delay: 0.05s; }
 .vcad-footer > *:nth-child(2) { animation-delay: 0.10s; }
@@ -311,11 +316,12 @@ body {
 .changelog-tooltip {
   background: var(--surface);
   border: 1px solid var(--border);
+  border-radius: var(--radius-md);
   color: var(--text);
   padding: 0.5rem 0.75rem;
   font-size: 0.75rem;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  animation: changelog-tooltip-in 0.2s ease-out;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  animation: changelog-tooltip-in 220ms var(--ease-spring);
   white-space: nowrap;
 }
 
@@ -377,7 +383,7 @@ body {
   animation: upgrade-overlay-out 140ms ease-in;
 }
 .upgrade-content[data-state="open"] {
-  animation: upgrade-content-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: upgrade-content-in 220ms var(--ease-spring);
 }
 .upgrade-content[data-state="closed"] {
   animation: upgrade-content-out 140ms ease-in;
@@ -425,7 +431,7 @@ body {
   animation: upgrade-overlay-out 140ms ease-in;
 }
 .auth-content[data-state="open"] {
-  animation: upgrade-content-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: upgrade-content-in 220ms var(--ease-spring);
 }
 .auth-content[data-state="closed"] {
   animation: upgrade-content-out 140ms ease-in;
@@ -455,7 +461,7 @@ body {
   }
 }
 .auth-success-in {
-  animation: vcad-success-in 360ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: vcad-success-in 360ms var(--ease-spring);
 }
 
 /* Bottom toolbar: remove focus outlines in the bar and its menus */
@@ -624,10 +630,11 @@ body.tauri-mac {
 .path-popover {
   background: var(--card);
   border: 1px solid var(--border);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
   backdrop-filter: blur(16px) saturate(140%);
   -webkit-backdrop-filter: blur(16px) saturate(140%);
-  animation: path-popover-in 220ms cubic-bezier(0.32, 0.72, 0, 1);
+  animation: path-popover-in 220ms var(--ease-spring);
 }
 @keyframes path-popover-in {
   from { opacity: 0; transform: translate(-50%, -4px) scale(0.98); }

@@ -212,7 +212,7 @@ export function QuotePanel() {
       <div
         ref={panelRef}
         className={cn(
-          "fixed z-50 bg-surface border border-border shadow-2xl",
+          "fixed z-50 rounded-xl bg-surface border border-border shadow-xl overflow-hidden",
           "animate-in fade-in-0",
           // Desktop: side panel
           "sm:top-14 sm:right-3 sm:w-80 sm:slide-in-from-right-4",

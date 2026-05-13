@@ -138,7 +138,7 @@ export function AppShell({
   return (
     <div className="flex h-[100dvh] w-screen flex-col overflow-hidden bg-bg">
       {header && (
-        <div className="shrink-0 border-b border-border/40">
+        <div className="shrink-0 border-b border-border">
           {header}
         </div>
       )}
@@ -157,7 +157,7 @@ export function AppShell({
         )}
         {rightSidebar && (
           <div
-            className="relative shrink-0 min-h-0 overflow-visible border-l border-border/40 bg-surface"
+            className="relative shrink-0 min-h-0 overflow-visible border-l border-border bg-surface"
             style={{ width: `${rightWidth}px` }}
           >
             <ResizeHandle side="right" width={rightWidth} onResize={setRightWidth} />

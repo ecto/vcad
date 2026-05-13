@@ -133,7 +133,7 @@ export function UsernamePickerModal({
           data-tauri-drag-region=""
           className={cn(
             "fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2",
-            "bg-surface p-6 shadow-2xl select-none",
+            "rounded-xl border border-border bg-surface p-6 shadow-xl select-none",
             "focus:outline-none",
           )}
         >

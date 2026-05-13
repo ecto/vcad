@@ -41,7 +41,7 @@ function InlineRenameInput({
         if (e.key === "Enter") commit();
         if (e.key === "Escape") onDone();
       }}
-      className="w-full  border border-brand bg-surface px-1.5 py-0.5 text-xs text-text outline-none"
+      className="w-full rounded-md border border-border bg-surface px-1.5 py-0.5 text-xs text-text outline-none focus:border-brand focus:ring-2 focus:ring-brand/30"
       autoFocus
     />
   );

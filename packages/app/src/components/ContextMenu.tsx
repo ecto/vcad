@@ -38,7 +38,7 @@ function MenuItem({
 }) {
   return (
     <RadixContextMenu.Item
-      className="group flex items-center gap-2  px-2 py-1.5 text-xs text-text outline-none cursor-pointer data-[disabled]:opacity-40 data-[disabled]:cursor-default data-[highlighted]:bg-brand/20 data-[highlighted]:text-brand"
+      className="group flex items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-text outline-none cursor-pointer data-[disabled]:opacity-40 data-[disabled]:cursor-default data-[highlighted]:bg-hover"
       disabled={disabled}
       onClick={onClick}
     >
@@ -209,7 +209,7 @@ export function ContextMenu({ children }: { children: ReactNode }) {
     <RadixContextMenu.Root>
       <RadixContextMenu.Trigger asChild>{children}</RadixContextMenu.Trigger>
       <RadixContextMenu.Portal>
-        <RadixContextMenu.Content className="z-50 min-w-[180px]  border border-border bg-card p-1 shadow-xl">
+        <RadixContextMenu.Content className="z-50 min-w-[180px] rounded-lg border border-border bg-card p-1 shadow-md">
           <MenuItem
             icon={Copy}
             label="Duplicate"
@@ -236,7 +236,7 @@ export function ContextMenu({ children }: { children: ReactNode }) {
           <RadixContextMenu.Separator className="my-1 h-px bg-border" />
 
           <RadixContextMenu.Sub>
-            <RadixContextMenu.SubTrigger className="group flex items-center gap-2  px-2 py-1.5 text-xs text-text outline-none cursor-pointer data-[highlighted]:bg-brand/20 data-[highlighted]:text-brand data-[state=open]:bg-brand/20 data-[state=open]:text-brand">
+            <RadixContextMenu.SubTrigger className="group flex items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-text outline-none cursor-pointer data-[highlighted]:bg-hover data-[state=open]:bg-hover">
               <CrosshairSimple size={14} className="shrink-0" />
               <span className="flex-1">Selection priority</span>
               <span className="ml-4 text-[10px] text-text-muted uppercase tracking-wide">
@@ -245,7 +245,7 @@ export function ContextMenu({ children }: { children: ReactNode }) {
             </RadixContextMenu.SubTrigger>
             <RadixContextMenu.Portal>
               <RadixContextMenu.SubContent
-                className="z-50 min-w-[200px] border border-border bg-card p-1 shadow-xl"
+                className="z-50 min-w-[200px] rounded-lg border border-border bg-card p-1 shadow-md"
                 sideOffset={2}
                 alignOffset={-4}
               >
@@ -254,7 +254,7 @@ export function ContextMenu({ children }: { children: ReactNode }) {
                   return (
                     <RadixContextMenu.Item
                       key={value}
-                      className="group flex items-center gap-2 px-2 py-1.5 text-xs text-text outline-none cursor-pointer data-[highlighted]:bg-brand/20 data-[highlighted]:text-brand"
+                      className="group flex items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-text outline-none cursor-pointer data-[highlighted]:bg-hover"
                       onClick={() => setSelectionFilter(value)}
                     >
                       {active ? (

@@ -442,7 +442,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/30" />
         <Dialog.Content
-          className="fixed left-1/2 top-[20%] z-50 w-full max-w-md -translate-x-1/2  border border-border bg-surface shadow-2xl"
+          className="fixed left-1/2 top-[20%] z-50 w-full max-w-md -translate-x-1/2 rounded-xl border border-border bg-surface shadow-xl overflow-hidden"
           onKeyDown={handleKeyDown}
           aria-describedby={undefined}
         >
@@ -460,7 +460,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
               className="flex-1 bg-transparent text-sm text-text outline-none placeholder:text-text-muted"
               autoFocus
             />
-            <kbd className=" bg-border/50 px-1.5 py-0.5 text-[10px] text-text-muted">esc</kbd>
+            <kbd className="rounded-sm bg-fill px-1.5 py-0.5 text-[10px] font-mono text-text-muted">esc</kbd>
           </div>
           {/* Hidden file input */}
           <input
@@ -521,7 +521,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
                 >
                   <FolderOpen size={16} className="shrink-0 text-text-muted" />
                   <span className="flex-1">{t("palette.action.open_file")}</span>
-                  <kbd className="bg-border/50 px-1.5 py-0.5 text-[10px] text-text-muted">⌘O</kbd>
+                  <kbd className="rounded-sm bg-fill px-1.5 py-0.5 text-[10px] font-mono text-text-muted">⌘O</kbd>
                 </button>
 
                 {/* Examples */}
@@ -586,7 +586,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
                       <Icon size={16} className="shrink-0 text-text-muted" />
                       <span className="flex-1">{highlightMatch(cmd.label, query)}</span>
                       {cmd.shortcut && (
-                        <kbd className="bg-border/50 px-1.5 py-0.5 text-[10px] text-text-muted">
+                        <kbd className="rounded-sm bg-fill px-1.5 py-0.5 text-[10px] font-mono text-text-muted">
                           {cmd.shortcut}
                         </kbd>
                       )}
@@ -623,7 +623,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
                     <span className="flex-1">
                       {t("palette.generate_label")} <span className="text-brand">{aiPrompt}</span>
                     </span>
-                    <kbd className="bg-border/50 px-1.5 py-0.5 text-[10px] text-text-muted">
+                    <kbd className="rounded-sm bg-fill px-1.5 py-0.5 text-[10px] font-mono text-text-muted">
                       {t("palette.kbd_server")}
                     </kbd>
                   </button>

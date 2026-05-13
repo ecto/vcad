@@ -207,13 +207,13 @@ export function ExpressionInput({
         }}
         title={parseErr ?? `${boundFormula ?? "(unbound)"} ${previewText}`}
         className={cn(
-          "flex-1 min-w-0 bg-card border text-text outline-none transition-colors font-mono",
+          "flex-1 min-w-0 rounded-md bg-card border text-text outline-none transition-colors font-mono",
           parseErr
             ? "border-red-500"
             : isBound
               ? "border-brand focus:border-brand"
               : "border-border focus:border-brand",
-          compact ? "px-1 py-0.5 text-[10px]" : "px-2 py-1 text-xs",
+          compact ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-1 text-xs",
         )}
       />
       <span
