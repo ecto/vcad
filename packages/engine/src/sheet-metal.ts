@@ -61,12 +61,15 @@ export interface SheetMetalFlatPattern {
 export interface SheetMetalRendered {
   flatPattern: SheetMetalFlatPattern;
   model: SheetMetalModelSummary;
+  /** Layered DXF (CUT / BEND_UP / BEND_DOWN) of the flat pattern. */
+  dxf: string;
 }
 
 interface RawResult {
   mesh: { positions: number[]; indices: number[]; normals: number[] };
   flat_pattern: SheetMetalFlatPattern;
   model: SheetMetalModelSummary;
+  dxf: string;
   error: string | null;
 }
 
@@ -182,6 +185,7 @@ export function evaluateSheetMetalChain(
     sheetMetal: {
       flatPattern: parsed.flat_pattern,
       model: parsed.model,
+      dxf: parsed.dxf,
     },
   };
 }

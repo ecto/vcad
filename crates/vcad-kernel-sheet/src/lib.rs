@@ -19,18 +19,21 @@
 //! - [`edge_flange::add_edge_flange`] — add a flange off an existing panel edge
 //! - [`unfold::unfold`] / [`unfold::refold`] — lossless 2D ↔ 3D round-trip
 //! - [`bend_table::BendTable`] — `BA = θ·(R + K·t)` with provenance
+//! - [`dxf::flat_pattern_to_dxf`] — layered DXF (CUT / BEND_UP / BEND_DOWN)
 //!
 //! Later tiers add hems, jogs, miters, lofted flanges, manufacturability
-//! checks, costing, and DXF export. See `docs/design/sheet-metal.md`.
+//! checks, and costing. See `docs/design/sheet-metal.md`.
 
 pub mod base_flange;
 pub mod bend_table;
+pub mod dxf;
 pub mod edge_flange;
 pub mod model;
 pub mod unfold;
 
 pub use base_flange::{base_flange_rect, BaseFlangeError};
 pub use bend_table::{BendAllowance, BendTable, KFactorSource};
+pub use dxf::flat_pattern_to_dxf;
 pub use edge_flange::{add_edge_flange, EdgeFlangeError, FlangePosition};
 pub use model::{Bend, BendDirection, BendId, Frame, Panel, PanelId, SheetMetalModel};
 pub use unfold::{refold, unfold, FlatPattern, UnfoldError};

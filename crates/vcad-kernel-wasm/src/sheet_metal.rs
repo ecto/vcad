@@ -29,7 +29,7 @@ use vcad_kernel_sheet::{
     add_edge_flange, base_flange_rect,
     bend_table::{self, BendTable},
     edge_flange::EdgeFlangeParams,
-    BendDirection, FlangePosition, FlatPattern, SheetMetalModel,
+    flat_pattern_to_dxf, BendDirection, FlangePosition, FlatPattern, SheetMetalModel,
 };
 use wasm_bindgen::prelude::*;
 
@@ -66,6 +66,9 @@ struct SheetMetalEvalResult {
     mesh: MeshDto,
     flat_pattern: FlatPatternDto,
     model: ModelSummaryDto,
+    /// Layered DXF (CUT / BEND_UP / BEND_DOWN) of the flat pattern, ready to
+    /// hand to a laser bureau. Empty string on error.
+    dxf: String,
     error: Option<String>,
 }
 
@@ -156,12 +159,14 @@ fn build_result(chain_json: &str) -> Result<SheetMetalEvalResult, String> {
 
     let mesh = tessellate_model(&model);
     let flat = FlatPattern::from_model(&model);
+    let dxf = flat_pattern_to_dxf(&flat);
     let flat_dto = flat_pattern_to_dto(flat);
     let summary = summarise_model(&model);
     Ok(SheetMetalEvalResult {
         mesh,
         flat_pattern: flat_dto,
         model: summary,
+        dxf,
         error: None,
     })
 }
@@ -440,6 +445,10 @@ mod tests {
             parsed["flat_pattern"]["creases"].as_array().unwrap().len(),
             2
         );
+        let dxf = parsed["dxf"].as_str().unwrap();
+        assert!(dxf.contains("0\nLAYER\n2\nCUT\n"));
+        assert!(dxf.contains("0\nLINE\n8\nBEND_UP"));
+        assert!(dxf.trim_end().ends_with("0\nEOF"));
     }
 
     #[test]

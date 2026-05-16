@@ -21,6 +21,7 @@ import type {
   SheetMetalRendered,
 } from "@vcad/engine";
 import { useMemo } from "react";
+import { downloadBlob } from "@/lib/download";
 
 export function SheetMetalView() {
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
@@ -37,13 +38,26 @@ export function SheetMetalView() {
   }, [scene, selectedPartIds]);
 
   if (!rendered) return null;
-  const { model, flatPattern } = rendered;
+  const { model, flatPattern, dxf } = rendered;
+
+  function handleDownloadDxf() {
+    const blob = new Blob([dxf], { type: "application/dxf" });
+    downloadBlob(blob, "flat-pattern.dxf");
+  }
 
   return (
     <div className="flex w-full flex-col gap-3 border-t border-border/40 bg-surface p-3 text-[11px]">
       <Header model={model} flat={flatPattern} />
       <BendList model={model} />
       <FlatPatternSvg flat={flatPattern} />
+      <button
+        type="button"
+        onClick={handleDownloadDxf}
+        className="rounded bg-hover/40 px-2 py-1 text-text-muted transition-colors hover:bg-hover hover:text-text"
+        title="Layered DXF — CUT / BEND_UP / BEND_DOWN, millimetres"
+      >
+        Download DXF
+      </button>
     </div>
   );
 }
