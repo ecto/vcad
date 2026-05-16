@@ -1,0 +1,14 @@
+{
+  "id": "2026-05-16-sheet-metal-manufacturability",
+  "version": "0.9.4",
+  "date": "2026-05-16",
+  "category": "feat",
+  "title": "Sheet-metal manufacturability checks",
+  "summary": "Typed DFM query over the sheet-metal model against a shop profile — surfaced live in the sheet-metal panel as a Problems-style inspector.",
+  "details": "## What's New\n\n- **`check_manufacturability(model, shop)`** in `vcad-kernel-sheet`: a pure function returning structured `Violation`s — `BendRadiusBelowMinimum`, `BendExceedsBrakeCapacity`, `FlangeBelowMinHeight`, `HoleTooCloseToBend`, `BendsTooClose` — each with the ids and measured-vs-required numbers a fix needs.\n- **`ShopProfile`** type with a sensible `generic()` default (3 m brake, R/t ≥ 1, 5 mm min flange, hole/bend clearances) so the inspector is useful before a shop is configured.\n- Threaded through the WASM binding and engine glue alongside the flat pattern.\n- **DFM inspector** in the sheet-metal panel: a `0 errors · 1 warning` chip that reads \"Shop-ready\" when clean, with severity-dotted rows.\n\nThis is the first leg of the spec's DFM-as-typed-query — the same data will back the `sheet_metal.check` MCP tool.",
+  "features": [
+    "sheet-metal",
+    "manufacturing",
+    "dfm"
+  ]
+}

@@ -57,12 +57,26 @@ export interface SheetMetalFlatPattern {
   bbox: [number, number, number, number];
 }
 
+/** A manufacturability finding. Mirrors `ViolationDto`. */
+export interface SheetMetalViolation {
+  /** Stable rule id, e.g. `"sheet.bend_radius"`. */
+  rule: string;
+  /** `"Error"` or `"Warning"`. */
+  severity: "Error" | "Warning";
+  /** One-line human-readable summary. */
+  message: string;
+  /** Kind-tagged structured detail (for camera-fly / fix actions). */
+  detail: { kind: string } & Record<string, unknown>;
+}
+
 /** Everything the engine attaches to an `EvaluatedPart.sheetMetal`. */
 export interface SheetMetalRendered {
   flatPattern: SheetMetalFlatPattern;
   model: SheetMetalModelSummary;
   /** Layered DXF (CUT / BEND_UP / BEND_DOWN) of the flat pattern. */
   dxf: string;
+  /** DFM findings vs. the generic shop profile; empty when shop-ready. */
+  violations: SheetMetalViolation[];
 }
 
 interface RawResult {
@@ -70,6 +84,7 @@ interface RawResult {
   flat_pattern: SheetMetalFlatPattern;
   model: SheetMetalModelSummary;
   dxf: string;
+  violations: SheetMetalViolation[];
   error: string | null;
 }
 
@@ -186,6 +201,7 @@ export function evaluateSheetMetalChain(
       flatPattern: parsed.flat_pattern,
       model: parsed.model,
       dxf: parsed.dxf,
+      violations: parsed.violations,
     },
   };
 }

@@ -76,6 +76,7 @@ export type {
   SheetMetalFlatCrease,
   SheetMetalFlatPattern,
   SheetMetalRendered,
+  SheetMetalViolation,
 } from "./sheet-metal.js";
 
 // Parametric expressions

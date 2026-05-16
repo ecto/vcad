@@ -28,8 +28,10 @@ use serde::{Deserialize, Serialize};
 use vcad_kernel_sheet::{
     add_edge_flange, base_flange_rect,
     bend_table::{self, BendTable},
+    check_manufacturability,
     edge_flange::EdgeFlangeParams,
-    flat_pattern_to_dxf, BendDirection, FlangePosition, FlatPattern, SheetMetalModel,
+    flat_pattern_to_dxf, BendDirection, FlangePosition, FlatPattern, SheetMetalModel, ShopProfile,
+    Violation,
 };
 use wasm_bindgen::prelude::*;
 
@@ -69,7 +71,20 @@ struct SheetMetalEvalResult {
     /// Layered DXF (CUT / BEND_UP / BEND_DOWN) of the flat pattern, ready to
     /// hand to a laser bureau. Empty string on error.
     dxf: String,
+    /// Manufacturability findings against the generic shop profile. Empty
+    /// when the part is shop-ready.
+    violations: Vec<ViolationDto>,
     error: Option<String>,
+}
+
+/// UI-facing projection of a [`Violation`]: pre-rendered severity + message
+/// plus the structured detail (kind-tagged) for camera-fly / fix actions.
+#[derive(Debug, Clone, Serialize)]
+struct ViolationDto {
+    rule: &'static str,
+    severity: String,
+    message: String,
+    detail: Violation,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -160,6 +175,15 @@ fn build_result(chain_json: &str) -> Result<SheetMetalEvalResult, String> {
     let mesh = tessellate_model(&model);
     let flat = FlatPattern::from_model(&model);
     let dxf = flat_pattern_to_dxf(&flat);
+    let violations = check_manufacturability(&model, &ShopProfile::generic())
+        .into_iter()
+        .map(|v| ViolationDto {
+            rule: v.rule(),
+            severity: format!("{:?}", v.severity()),
+            message: v.message(),
+            detail: v,
+        })
+        .collect();
     let flat_dto = flat_pattern_to_dto(flat);
     let summary = summarise_model(&model);
     Ok(SheetMetalEvalResult {
@@ -167,6 +191,7 @@ fn build_result(chain_json: &str) -> Result<SheetMetalEvalResult, String> {
         flat_pattern: flat_dto,
         model: summary,
         dxf,
+        violations,
         error: None,
     })
 }
@@ -449,6 +474,29 @@ mod tests {
         assert!(dxf.contains("0\nLAYER\n2\nCUT\n"));
         assert!(dxf.contains("0\nLINE\n8\nBEND_UP"));
         assert!(dxf.trim_end().ends_with("0\nEOF"));
+        // 100x50 base with two 25 mm flanges is shop-ready.
+        assert_eq!(
+            parsed["violations"].as_array().unwrap().len(),
+            0,
+            "expected shop-ready, got {}",
+            parsed["violations"]
+        );
+    }
+
+    #[test]
+    fn surfaces_manufacturability_violations() {
+        // 2 mm flange off a 1 mm sheet is below the 5 mm minimum.
+        let chain = r#"[
+            {"type":"BaseFlangeRect","width":100,"depth":50,"thickness":1.0,"material":"Al-soft"},
+            {"type":"EdgeFlange","panelId":0,"edgeIndex":0,"length":2,"angle":1.5707963267948966,"radius":1.0,"direction":"Up","manualK":0.42}
+        ]"#;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&evaluate_sheet_metal_chain(chain)).unwrap();
+        let viols = parsed["violations"].as_array().unwrap();
+        assert!(!viols.is_empty());
+        assert_eq!(viols[0]["severity"], "Error");
+        assert_eq!(viols[0]["rule"], "sheet.flange_height");
+        assert_eq!(viols[0]["detail"]["kind"], "FlangeBelowMinHeight");
     }
 
     #[test]

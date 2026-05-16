@@ -19,6 +19,7 @@ import type {
   SheetMetalFlatPattern,
   SheetMetalModelSummary,
   SheetMetalRendered,
+  SheetMetalViolation,
 } from "@vcad/engine";
 import { useMemo } from "react";
 import { downloadBlob } from "@/lib/download";
@@ -38,7 +39,7 @@ export function SheetMetalView() {
   }, [scene, selectedPartIds]);
 
   if (!rendered) return null;
-  const { model, flatPattern, dxf } = rendered;
+  const { model, flatPattern, dxf, violations } = rendered;
 
   function handleDownloadDxf() {
     const blob = new Blob([dxf], { type: "application/dxf" });
@@ -49,6 +50,7 @@ export function SheetMetalView() {
     <div className="flex w-full flex-col gap-3 border-t border-border/40 bg-surface p-3 text-[11px]">
       <Header model={model} flat={flatPattern} />
       <BendList model={model} />
+      <DfmInspector violations={violations} />
       <FlatPatternSvg flat={flatPattern} />
       <button
         type="button"
@@ -136,6 +138,48 @@ function provenanceDot(source: string | null): string {
   if (source.startsWith("measured")) return "#a855f7"; // purple
   if (source === "manual") return "#f59e0b"; // amber
   return "#888888";
+}
+
+function DfmInspector({ violations }: { violations: SheetMetalViolation[] }) {
+  const errors = violations.filter((v) => v.severity === "Error").length;
+  const warnings = violations.length - errors;
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center justify-between">
+        <span className="text-text-muted">Manufacturability</span>
+        {violations.length === 0 ? (
+          <span className="text-[10px] font-medium text-[#22c55e]">
+            Shop-ready
+          </span>
+        ) : (
+          <span className="text-[10px] text-text-muted">
+            {errors} {errors === 1 ? "error" : "errors"} · {warnings}{" "}
+            {warnings === 1 ? "warning" : "warnings"}
+          </span>
+        )}
+      </div>
+      {violations.length > 0 && (
+        <div className="flex flex-col gap-1">
+          {violations.map((v, i) => (
+            <div
+              key={i}
+              className="flex items-start gap-2 rounded bg-hover/30 px-2 py-1"
+              title={v.rule}
+            >
+              <span
+                className="mt-[3px] inline-block h-2 w-2 shrink-0 rounded-full"
+                style={{
+                  backgroundColor:
+                    v.severity === "Error" ? "#ef4444" : "#f59e0b",
+                }}
+              />
+              <span className="min-w-0 text-text">{v.message}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function FlatPatternSvg({ flat }: { flat: SheetMetalFlatPattern }) {
