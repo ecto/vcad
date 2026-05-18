@@ -2993,6 +2993,39 @@ export function checkPrintability(solid, printer_profile) {
 }
 
 /**
+ * Re-run manufacturability against a *caller-supplied* shop profile.
+ *
+ * Separate from [`evaluate_sheet_metal_chain`] on purpose: the spec treats
+ * manufacturability as a **typed query against the model**, not a
+ * by-product of mesh evaluation. The app's DFM inspector and the
+ * `sheet_metal.check` MCP tool both call this so a shop's real
+ * capabilities — not the generic defaults — drive the result.
+ *
+ * `shop_json` is field-tolerant (see [`ShopProfile`]); pass `""` for the
+ * generic shop. On any error the `error` field is set and `violations` is
+ * empty.
+ * @param {string} chain_json
+ * @param {string} shop_json
+ * @returns {string}
+ */
+export function checkSheetMetal(chain_json, shop_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(chain_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(shop_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.checkSheetMetal(ptr0, len0, ptr1, len1);
+        deferred3_0 = ret[0];
+        deferred3_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Compute creased normals using GPU acceleration.
  *
  * # Arguments
@@ -6749,12 +6782,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2218, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2219, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2219, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2220, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h449c01a9b484b49e, wasm_bindgen__convert__closures_____invoke__h97f5d3065e41a070);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2931, function: Function { arguments: [Externref], shim_idx: 2932, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2932, function: Function { arguments: [Externref], shim_idx: 2933, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h5fc04d9207857a4f, wasm_bindgen__convert__closures_____invoke__h93fa00cb00fe3f24);
             return ret;
         },

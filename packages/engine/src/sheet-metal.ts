@@ -69,6 +69,50 @@ export interface SheetMetalViolation {
   detail: { kind: string } & Record<string, unknown>;
 }
 
+/**
+ * A shop's manufacturing capabilities. Mirrors the Rust `ShopProfile`;
+ * drives every DFM rule. Deserialization on the kernel side is
+ * field-tolerant, so a partial object still loads (missing keys fall back
+ * to {@link DEFAULT_SHOP_PROFILE}).
+ */
+export interface SheetMetalShopProfile {
+  /** Human-readable name (e.g. `"Acme Machining"`). */
+  name: string;
+  /** Maximum bend length the press brake can form (mm). */
+  max_bend_length_mm: number;
+  /** Minimum inside-radius / thickness ratio `(R/t)_min`. */
+  min_bend_radius_ratio: number;
+  /** Minimum formable flange height (mm). */
+  min_flange_height_mm: number;
+  /** Minimum punched-hole-to-bend-line distance (mm). */
+  min_hole_to_bend_mm: number;
+  /** Minimum flat between two parallel bends on a panel (mm). */
+  min_distance_between_bends_mm: number;
+}
+
+/** The kernel's `ShopProfile::generic()` — keep in sync with Rust. */
+export const DEFAULT_SHOP_PROFILE: SheetMetalShopProfile = {
+  name: "Generic shop",
+  max_bend_length_mm: 3000,
+  min_bend_radius_ratio: 1,
+  min_flange_height_mm: 5,
+  min_hole_to_bend_mm: 3,
+  min_distance_between_bends_mm: 6,
+};
+
+/** Result of {@link checkSheetMetalManufacturability}. */
+export interface SheetMetalCheckResult {
+  violations: SheetMetalViolation[];
+  /** Profile the kernel actually checked against (post field-merge). */
+  shop: SheetMetalShopProfile;
+}
+
+interface RawCheckResult {
+  violations: SheetMetalViolation[];
+  shop: SheetMetalShopProfile | null;
+  error: string | null;
+}
+
 /** Everything the engine attaches to an `EvaluatedPart.sheetMetal`. */
 export interface SheetMetalRendered {
   flatPattern: SheetMetalFlatPattern;
@@ -163,9 +207,10 @@ export function buildSheetMetalChain(
   return tipToBase.reverse();
 }
 
-/** Kernel binding signature — just the function we need. */
+/** Kernel binding signature — just the functions we need. */
 interface SheetMetalKernel {
   evaluateSheetMetalChain?(chainJson: string): string;
+  checkSheetMetal?(chainJson: string, shopJson: string): string;
 }
 
 /**
@@ -203,5 +248,40 @@ export function evaluateSheetMetalChain(
       dxf: parsed.dxf,
       violations: parsed.violations,
     },
+  };
+}
+
+/**
+ * Re-run manufacturability for a chain against a specific shop profile.
+ *
+ * This is the tunable counterpart to the generic-shop violations that ride
+ * on {@link SheetMetalRendered}: the DFM inspector calls it with the user's
+ * saved shop so the findings reflect their real brake / die / grain rules.
+ * Pure query — no mesh, no document re-eval.
+ *
+ * Pass `shop` omitted/undefined for the generic shop. Throws on kernel
+ * error.
+ */
+export function checkSheetMetalManufacturability(
+  chain: ChainOp[],
+  kernel: SheetMetalKernel,
+  shop?: SheetMetalShopProfile,
+): SheetMetalCheckResult {
+  if (!kernel.checkSheetMetal) {
+    throw new Error(
+      "kernel.checkSheetMetal not available — rebuild @vcad/kernel-wasm",
+    );
+  }
+  const json = kernel.checkSheetMetal(
+    JSON.stringify(chain),
+    shop ? JSON.stringify(shop) : "",
+  );
+  const parsed = JSON.parse(json) as RawCheckResult;
+  if (parsed.error) {
+    throw new Error(`sheet-metal check: ${parsed.error}`);
+  }
+  return {
+    violations: parsed.violations,
+    shop: parsed.shop ?? DEFAULT_SHOP_PROFILE,
   };
 }

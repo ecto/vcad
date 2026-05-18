@@ -7114,6 +7114,7 @@ name = "vcad-kernel-sheet"
 version = "0.9.4"
 dependencies = [
  "serde",
+ "serde_json",
  "vcad-kernel-math",
 ]
 

@@ -9,6 +9,14 @@ import type { Solid, WasmAnnotationLayer } from "@vcad/kernel-wasm";
 import { SolidCache } from "./solid-cache.js";
 import { MeshCache } from "./mesh-cache.js";
 import { DependencyGraph } from "./dependency-graph.js";
+import {
+  buildSheetMetalChain,
+  checkSheetMetalManufacturability,
+} from "./sheet-metal.js";
+import type {
+  SheetMetalShopProfile,
+  SheetMetalCheckResult,
+} from "./sheet-metal.js";
 
 export type {
   TriangleMesh,
@@ -77,7 +85,10 @@ export type {
   SheetMetalFlatPattern,
   SheetMetalRendered,
   SheetMetalViolation,
+  SheetMetalShopProfile,
+  SheetMetalCheckResult,
 } from "./sheet-metal.js";
+export { DEFAULT_SHOP_PROFILE } from "./sheet-metal.js";
 
 // Parametric expressions
 export {
@@ -642,6 +653,34 @@ export class Engine {
   exportDrawingToDxf(view: ProjectedView): Uint8Array {
     const json = JSON.stringify(view);
     return this.kernel.exportProjectedViewToDxf(json);
+  }
+
+  /**
+   * Run sheet-metal manufacturability against a shop profile.
+   *
+   * Finds the first sheet-metal root in `doc`, rebuilds its op chain, and
+   * asks the kernel for structured violations vs. `shop` (or the generic
+   * shop when omitted). Returns `null` if the document has no sheet-metal
+   * part. Pure query — does not evaluate meshes or touch the scene cache.
+   */
+  checkSheetMetal(
+    doc: Document,
+    shop?: SheetMetalShopProfile,
+  ): SheetMetalCheckResult | null {
+    for (const entry of doc.roots) {
+      if (entry.visible === false) continue;
+      const chain = buildSheetMetalChain(entry.root, doc.nodes);
+      if (chain) {
+        return checkSheetMetalManufacturability(
+          chain,
+          this.kernel as unknown as Parameters<
+            typeof checkSheetMetalManufacturability
+          >[1],
+          shop,
+        );
+      }
+    }
+    return null;
   }
 
   /** Create a detail view (magnified region) from a projected view.

@@ -24,14 +24,20 @@
 //! operations that produce them land.
 
 use crate::model::{BendId, PanelId, SheetMetalModel};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use vcad_kernel_math::Point2;
 
 /// A shop's manufacturing capabilities. Drives every rule in
-/// [`check_manufacturability`]. Saved per-user and (later) exportable as a
-/// JSON profile; [`ShopProfile::generic`] gives sensible numbers so the
+/// [`check_manufacturability`]. Saved per-user and exportable as a JSON
+/// profile; [`ShopProfile::generic`] gives sensible numbers so the
 /// inspector shows real results from the first part.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+///
+/// Deserialization is field-tolerant: any key the caller omits falls back
+/// to the [`ShopProfile::generic`] value (via `#[serde(default)]` +
+/// [`Default`]), so an older saved profile still loads when new
+/// capabilities are added.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ShopProfile {
     /// Human-readable name (e.g. `"Generic shop"`, `"Acme Machining"`).
     pub name: String,
@@ -64,6 +70,14 @@ impl ShopProfile {
             min_hole_to_bend_mm: 3.0,
             min_distance_between_bends_mm: 6.0,
         }
+    }
+}
+
+impl Default for ShopProfile {
+    /// Same as [`ShopProfile::generic`] — also the per-field fallback for
+    /// tolerant deserialization.
+    fn default() -> Self {
+        Self::generic()
     }
 }
 
@@ -456,6 +470,22 @@ mod tests {
         if let Violation::BendsTooClose { actual_mm, .. } = c {
             assert!((actual_mm - 4.0).abs() < 1e-6, "got {actual_mm}");
         }
+    }
+
+    #[test]
+    fn shop_profile_deserialize_is_field_tolerant() {
+        // Only one field present — the rest fall back to generic().
+        let p: ShopProfile = serde_json::from_str(r#"{"min_bend_radius_ratio": 2.5}"#).unwrap();
+        assert_eq!(p.min_bend_radius_ratio, 2.5);
+        assert_eq!(
+            p.max_bend_length_mm,
+            ShopProfile::generic().max_bend_length_mm
+        );
+        assert_eq!(p.name, "Generic shop");
+        // Round-trips.
+        let json = serde_json::to_string(&p).unwrap();
+        let q: ShopProfile = serde_json::from_str(&json).unwrap();
+        assert_eq!(p, q);
     }
 
     #[test]

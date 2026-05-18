@@ -196,6 +196,69 @@ fn build_result(chain_json: &str) -> Result<SheetMetalEvalResult, String> {
     })
 }
 
+/// Result of [`check_sheet_metal`].
+#[derive(Debug, Clone, Serialize, Default)]
+struct CheckResult {
+    /// Findings against the supplied shop profile. Empty = shop-ready.
+    violations: Vec<ViolationDto>,
+    /// The profile actually used (after field-tolerant merge onto the
+    /// generic defaults) — so the UI can show what it checked against.
+    shop: Option<ShopProfile>,
+    error: Option<String>,
+}
+
+/// Re-run manufacturability against a *caller-supplied* shop profile.
+///
+/// Separate from [`evaluate_sheet_metal_chain`] on purpose: the spec treats
+/// manufacturability as a **typed query against the model**, not a
+/// by-product of mesh evaluation. The app's DFM inspector and the
+/// `sheet_metal.check` MCP tool both call this so a shop's real
+/// capabilities — not the generic defaults — drive the result.
+///
+/// `shop_json` is field-tolerant (see [`ShopProfile`]); pass `""` for the
+/// generic shop. On any error the `error` field is set and `violations` is
+/// empty.
+#[wasm_bindgen(js_name = checkSheetMetal)]
+pub fn check_sheet_metal(chain_json: &str, shop_json: &str) -> String {
+    let result = match check_impl(chain_json, shop_json) {
+        Ok(r) => r,
+        Err(msg) => CheckResult {
+            error: Some(msg),
+            ..Default::default()
+        },
+    };
+    serde_json::to_string(&result).unwrap_or_else(|_| r#"{"error":"serialize failed"}"#.to_string())
+}
+
+fn check_impl(chain_json: &str, shop_json: &str) -> Result<CheckResult, String> {
+    let chain: Vec<ChainOp> =
+        serde_json::from_str(chain_json).map_err(|e| format!("chain JSON: {e}"))?;
+    if chain.is_empty() {
+        return Err("empty op chain".to_string());
+    }
+    let shop = if shop_json.trim().is_empty() {
+        ShopProfile::generic()
+    } else {
+        serde_json::from_str::<ShopProfile>(shop_json).map_err(|e| format!("shop JSON: {e}"))?
+    };
+    let table = BendTable::builtin();
+    let model = build_model(&chain, &table)?;
+    let violations = check_manufacturability(&model, &shop)
+        .into_iter()
+        .map(|v| ViolationDto {
+            rule: v.rule(),
+            severity: format!("{:?}", v.severity()),
+            message: v.message(),
+            detail: v,
+        })
+        .collect();
+    Ok(CheckResult {
+        violations,
+        shop: Some(shop),
+        error: None,
+    })
+}
+
 fn build_model(chain: &[ChainOp], table: &BendTable) -> Result<SheetMetalModel, String> {
     let mut iter = chain.iter();
     let base = iter
@@ -512,5 +575,42 @@ mod tests {
         let parsed: serde_json::Value =
             serde_json::from_str(&evaluate_sheet_metal_chain(chain)).unwrap();
         assert!(parsed["error"].as_str().unwrap().contains("base flange"));
+    }
+
+    const CLEAN_CHAIN: &str = r#"[
+        {"type":"BaseFlangeRect","width":100,"depth":50,"thickness":1.0,"material":"Al-soft"},
+        {"type":"EdgeFlange","panelId":0,"edgeIndex":0,"length":25,"angle":1.5707963267948966,"radius":1.0,"direction":"Up","manualK":0.42}
+    ]"#;
+
+    #[test]
+    fn check_sheet_metal_generic_shop_is_clean() {
+        let parsed: serde_json::Value =
+            serde_json::from_str(&check_sheet_metal(CLEAN_CHAIN, "")).unwrap();
+        assert!(parsed["error"].is_null(), "got {parsed}");
+        assert_eq!(parsed["violations"].as_array().unwrap().len(), 0);
+        assert_eq!(parsed["shop"]["name"], "Generic shop");
+    }
+
+    #[test]
+    fn check_sheet_metal_custom_shop_flags_radius() {
+        // Stricter shop: R/t ≥ 4 → the 1 mm radius on 1 mm stock fails.
+        let shop = r#"{"name":"Strict Inc","min_bend_radius_ratio":4.0}"#;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&check_sheet_metal(CLEAN_CHAIN, shop)).unwrap();
+        assert!(parsed["error"].is_null(), "got {parsed}");
+        let viols = parsed["violations"].as_array().unwrap();
+        assert!(viols
+            .iter()
+            .any(|v| v["detail"]["kind"] == "BendRadiusBelowMinimum"));
+        // Field-tolerant merge kept the generic brake length.
+        assert_eq!(parsed["shop"]["name"], "Strict Inc");
+        assert_eq!(parsed["shop"]["max_bend_length_mm"], 3000.0);
+    }
+
+    #[test]
+    fn check_sheet_metal_reports_bad_shop_json() {
+        let parsed: serde_json::Value =
+            serde_json::from_str(&check_sheet_metal(CLEAN_CHAIN, "{not json")).unwrap();
+        assert!(parsed["error"].as_str().unwrap().contains("shop JSON"));
     }
 }
