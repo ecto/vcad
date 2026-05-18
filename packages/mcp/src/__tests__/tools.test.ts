@@ -5,6 +5,11 @@ import { commandRegistry } from "@vcad/core";
 import { exportCad } from "../tools/export.js";
 import { inspectCad } from "../tools/inspect.js";
 import {
+  sheetMetalCreate,
+  sheetMetalUnfold,
+  sheetMetalCheck,
+} from "../tools/sheet-metal.js";
+import {
   openDocument,
   getDocumentTool,
   closeDocument,
@@ -350,5 +355,76 @@ describe("gym tools", () => {
     const closeAgain = gymClose({ env_id: envId });
     const errorInfo = JSON.parse(closeAgain.content[0].text);
     expect(errorInfo.error).toBeDefined();
+  });
+});
+
+describe("sheet-metal tools", () => {
+  let engine: Engine;
+
+  beforeAll(async () => {
+    engine = await Engine.init();
+  });
+
+  it("create → unfold → check closes the loop", () => {
+    // 100×50 base with one 25 mm flange off edge 0.
+    const created = JSON.parse(
+      sheetMetalCreate(
+        {
+          width: 100,
+          depth: 50,
+          thickness: 1,
+          material: "Al-soft",
+          flanges: [{ edge_index: 0, length: 25 }],
+        },
+        engine,
+      ).content[0].text,
+    );
+    expect(created.document_id).toBeDefined();
+    expect(created.model.panel_count).toBe(2);
+    expect(created.model.bend_count).toBe(1);
+    expect(created.violations).toHaveLength(0); // shop-ready vs. generic
+
+    const unfolded = JSON.parse(
+      sheetMetalUnfold(
+        { document_id: created.document_id },
+        engine,
+      ).content[0].text,
+    );
+    expect(unfolded.flat_pattern.panel_outlines_2d).toHaveLength(2);
+    expect(unfolded.dxf).toContain("0\nLAYER\n2\nCUT\n");
+    expect(unfolded.dxf.trimEnd().endsWith("0\nEOF")).toBe(true);
+
+    // Generic shop: clean. Strict shop (R/t ≥ 4): the 1 mm radius fails.
+    const lenient = JSON.parse(
+      sheetMetalCheck(
+        { document_id: created.document_id },
+        engine,
+      ).content[0].text,
+    );
+    expect(lenient.shop_ready).toBe(true);
+
+    const strict = JSON.parse(
+      sheetMetalCheck(
+        {
+          document_id: created.document_id,
+          shop_profile: { name: "Strict Inc", min_bend_radius_ratio: 4 },
+        },
+        engine,
+      ).content[0].text,
+    );
+    expect(strict.shop_ready).toBe(false);
+    expect(strict.shop.name).toBe("Strict Inc");
+    expect(
+      strict.violations.some(
+        (v: { detail: { kind: string } }) =>
+          v.detail.kind === "BendRadiusBelowMinimum",
+      ),
+    ).toBe(true);
+  });
+
+  it("unfold on an unknown document id throws", () => {
+    expect(() =>
+      sheetMetalUnfold({ document_id: "nope" }, engine),
+    ).toThrow(/Unknown document_id/);
   });
 });

@@ -82,6 +82,14 @@ import {
   dfmApplyFix,
   dfmApplyFixSchema,
 } from "./tools/dfm.js";
+import {
+  sheetMetalCreate,
+  sheetMetalCreateSchema,
+  sheetMetalUnfold,
+  sheetMetalUnfoldSchema,
+  sheetMetalCheck,
+  sheetMetalCheckSchema,
+} from "./tools/sheet-metal.js";
 import { appendGlbPreview } from "./tools/preview.js";
 import {
   getViewerHtml,
@@ -252,6 +260,25 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
         description:
           "Apply an approved DFM fix to the session document. v1 supports `set_param` patches (raise a fillet radius, thicken a wall) — other kinds throw and require manual edits. Re-run `dfm_check` afterwards to confirm the issue cleared.",
         inputSchema: dfmApplyFixSchema,
+      },
+      // ── Sheet metal (AI-native manufacturability surface) ───────
+      {
+        name: "sheet_metal_create",
+        description:
+          "Create a sheet-metal part: a rectangular base flange plus an ordered chain of edge flanges. Returns a `document_id` (usable with sheet_metal_unfold/check, inspect_cad, export_cad, open_in_browser), the panel/bend model summary, flat bbox + area, and DFM violations vs. the generic shop.",
+        inputSchema: sheetMetalCreateSchema,
+      },
+      {
+        name: "sheet_metal_unfold",
+        description:
+          "Return the flat pattern (panel outlines, holes, creases, area, bbox) for a sheet-metal session document, plus a layered DXF (CUT / BEND_UP / BEND_DOWN, millimetres) ready to send to a laser bureau.",
+        inputSchema: sheetMetalUnfoldSchema,
+      },
+      {
+        name: "sheet_metal_check",
+        description:
+          "Run sheet-metal manufacturability for a session document against a shop profile (brake length, min R/t, flange height, hole→bend, bend→bend). Field-tolerant: omit keys to use generic defaults. Returns structured violations the agent can use to adjust the part and re-check.",
+        inputSchema: sheetMetalCheckSchema,
       },
       {
         name: "import_step",
@@ -494,6 +521,18 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
 
         case "dfm_apply_fix":
           result = dfmApplyFix(args);
+          break;
+
+        case "sheet_metal_create":
+          result = sheetMetalCreate(args, engine);
+          break;
+
+        case "sheet_metal_unfold":
+          result = sheetMetalUnfold(args, engine);
+          break;
+
+        case "sheet_metal_check":
+          result = sheetMetalCheck(args, engine);
           break;
 
         case "import_step":

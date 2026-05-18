@@ -1,0 +1,20 @@
+{
+  "id": "2026-05-18-sheet-metal-mcp-tools",
+  "version": "0.9.4",
+  "date": "2026-05-18",
+  "category": "feat",
+  "title": "Sheet-metal MCP tools",
+  "summary": "AI agents can now create sheet-metal parts, unfold them to a layered DXF, and check manufacturability against a shop profile — closing the create→check→fix loop.",
+  "details": "## What's New\n\n- **`sheet_metal_create`** — build a rectangular base flange plus an ordered chain of edge flanges; returns a session `document_id` (reusable with inspect_cad / export_cad / open_in_browser), the panel/bend model, flat bbox + area, and generic-shop DFM.\n- **`sheet_metal_unfold`** — flat pattern (outlines, holes, creases, area, bbox) plus the layered DXF (CUT / BEND_UP / BEND_DOWN, mm).\n- **`sheet_metal_check`** — manufacturability vs. a field-tolerant shop profile; structured violations an agent can act on, then re-check.\n\nThis is the AI-native leg of the sheet-metal bet: an LLM can iterate to a manufacturable part without a human in the loop. `cost` and `suggest_fix` are deferred until the process-cost model and IR-edit primitives land.",
+  "features": [
+    "sheet-metal",
+    "manufacturing",
+    "mcp",
+    "ai"
+  ],
+  "mcpTools": [
+    "sheet_metal_create",
+    "sheet_metal_unfold",
+    "sheet_metal_check"
+  ]
+}
