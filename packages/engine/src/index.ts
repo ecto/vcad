@@ -225,6 +225,10 @@ export interface KernelModule {
   getPartsManifest?: () => string;
   /** Build a stdlib part's sub-document given path and params JSON. */
   buildPart?: (path: string, paramsJson: string) => string;
+  /** Evaluate a sheet-metal op chain → mesh + flat pattern + summary JSON. */
+  evaluateSheetMetalChain?: (chainJson: string) => string;
+  /** Run sheet-metal manufacturability vs. a shop profile → JSON. */
+  checkSheetMetal?: (chainJson: string, shopJson: string) => string;
 }
 
 /** Rendered dimension types from the annotation layer */
@@ -419,6 +423,8 @@ export class Engine {
       evalVcadSource: (wasmModule as Record<string, unknown>).evalVcadSource as KernelModule["evalVcadSource"],
       getPartsManifest: (wasmModule as Record<string, unknown>).getPartsManifest as KernelModule["getPartsManifest"],
       buildPart: (wasmModule as Record<string, unknown>).buildPart as KernelModule["buildPart"],
+      evaluateSheetMetalChain: (wasmModule as Record<string, unknown>).evaluateSheetMetalChain as KernelModule["evaluateSheetMetalChain"],
+      checkSheetMetal: (wasmModule as Record<string, unknown>).checkSheetMetal as KernelModule["checkSheetMetal"],
     }, compiledWasmModule);
   }
 

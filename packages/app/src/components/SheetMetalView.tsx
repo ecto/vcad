@@ -14,19 +14,26 @@
  *   bend-down — matches the DXF layer convention).
  */
 
-import { useEngineStore, useUiStore } from "@vcad/core";
+import { useDocumentStore, useEngineStore, useUiStore } from "@vcad/core";
 import type {
   SheetMetalFlatPattern,
   SheetMetalModelSummary,
   SheetMetalRendered,
   SheetMetalViolation,
 } from "@vcad/engine";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { downloadBlob } from "@/lib/download";
+import {
+  useShopProfileStore,
+  type ShopProfileNumberField,
+} from "@/stores/shop-profile-store";
 
 export function SheetMetalView() {
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
   const scene = useEngineStore((s) => s.scene);
+  const engine = useEngineStore((s) => s.engine);
+  const document = useDocumentStore((s) => s.document);
+  const profile = useShopProfileStore((s) => s.profile);
 
   const rendered = useMemo<SheetMetalRendered | null>(() => {
     if (!scene || selectedPartIds.size !== 1) return null;
@@ -38,8 +45,23 @@ export function SheetMetalView() {
     return null;
   }, [scene, selectedPartIds]);
 
+  // Re-run manufacturability against the user's saved shop. Falls back to
+  // the ambient generic-shop result (from the eval pipeline) if the kernel
+  // query is unavailable — e.g. an older WASM build without the binding.
+  const checked = useMemo(() => {
+    if (!engine || !rendered) return null;
+    try {
+      return engine.checkSheetMetal(document, profile);
+    } catch (e) {
+      console.warn("[sheet-metal] shop-profile check failed:", e);
+      return null;
+    }
+  }, [engine, document, profile, rendered]);
+
   if (!rendered) return null;
-  const { model, flatPattern, dxf, violations } = rendered;
+  const { model, flatPattern, dxf } = rendered;
+  const violations = checked?.violations ?? rendered.violations;
+  const shopName = checked?.shop.name ?? profile.name;
 
   function handleDownloadDxf() {
     const blob = new Blob([dxf], { type: "application/dxf" });
@@ -50,7 +72,8 @@ export function SheetMetalView() {
     <div className="flex w-full flex-col gap-3 border-t border-border/40 bg-surface p-3 text-[11px]">
       <Header model={model} flat={flatPattern} />
       <BendList model={model} />
-      <DfmInspector violations={violations} />
+      <DfmInspector violations={violations} shopName={shopName} />
+      <ShopProfileEditor />
       <FlatPatternSvg flat={flatPattern} />
       <button
         type="button"
@@ -140,13 +163,22 @@ function provenanceDot(source: string | null): string {
   return "#888888";
 }
 
-function DfmInspector({ violations }: { violations: SheetMetalViolation[] }) {
+function DfmInspector({
+  violations,
+  shopName,
+}: {
+  violations: SheetMetalViolation[];
+  shopName: string;
+}) {
   const errors = violations.filter((v) => v.severity === "Error").length;
   const warnings = violations.length - errors;
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center justify-between">
-        <span className="text-text-muted">Manufacturability</span>
+        <span className="text-text-muted" title={`Checked against: ${shopName}`}>
+          Manufacturability{" "}
+          <span className="text-text-muted/60">· {shopName}</span>
+        </span>
         {violations.length === 0 ? (
           <span className="text-[10px] font-medium text-[#22c55e]">
             Shop-ready
@@ -176,6 +208,94 @@ function DfmInspector({ violations }: { violations: SheetMetalViolation[] }) {
               <span className="min-w-0 text-text">{v.message}</span>
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const SHOP_FIELDS: {
+  key: ShopProfileNumberField;
+  label: string;
+  unit: string;
+  step: number;
+}[] = [
+  { key: "max_bend_length_mm", label: "Max bend length", unit: "mm", step: 50 },
+  {
+    key: "min_bend_radius_ratio",
+    label: "Min bend radius",
+    unit: "×t",
+    step: 0.1,
+  },
+  { key: "min_flange_height_mm", label: "Min flange height", unit: "mm", step: 0.5 },
+  { key: "min_hole_to_bend_mm", label: "Min hole→bend", unit: "mm", step: 0.5 },
+  {
+    key: "min_distance_between_bends_mm",
+    label: "Min bend→bend",
+    unit: "mm",
+    step: 0.5,
+  },
+];
+
+function ShopProfileEditor() {
+  const profile = useShopProfileStore((s) => s.profile);
+  const setName = useShopProfileStore((s) => s.setName);
+  const setField = useShopProfileStore((s) => s.setField);
+  const resetToGeneric = useShopProfileStore((s) => s.resetToGeneric);
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="flex flex-col gap-1">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center justify-between text-left text-text-muted transition-colors hover:text-text"
+      >
+        <span>Shop profile</span>
+        <span className="text-[10px] text-text-muted/60">
+          {open ? "Hide" : "Edit"}
+        </span>
+      </button>
+      {open && (
+        <div className="flex flex-col gap-1 rounded bg-hover/20 p-2">
+          <label className="flex items-center justify-between gap-2">
+            <span className="text-text-muted">Name</span>
+            <input
+              type="text"
+              value={profile.name}
+              onChange={(e) => setName(e.target.value)}
+              className="w-32 rounded bg-surface px-1 py-0.5 text-right text-text outline-none focus:ring-1 focus:ring-accent"
+            />
+          </label>
+          {SHOP_FIELDS.map((f) => (
+            <label
+              key={f.key}
+              className="flex items-center justify-between gap-2"
+            >
+              <span className="text-text-muted">{f.label}</span>
+              <span className="flex items-center gap-1">
+                <input
+                  type="number"
+                  step={f.step}
+                  min={0}
+                  value={profile[f.key]}
+                  onChange={(e) => {
+                    const v = Number.parseFloat(e.target.value);
+                    if (Number.isFinite(v) && v >= 0) setField(f.key, v);
+                  }}
+                  className="w-20 rounded bg-surface px-1 py-0.5 text-right text-text outline-none focus:ring-1 focus:ring-accent"
+                />
+                <span className="w-6 text-text-muted/60">{f.unit}</span>
+              </span>
+            </label>
+          ))}
+          <button
+            type="button"
+            onClick={resetToGeneric}
+            className="mt-1 self-start rounded bg-hover/40 px-2 py-0.5 text-[10px] text-text-muted transition-colors hover:bg-hover hover:text-text"
+          >
+            Reset to generic
+          </button>
         </div>
       )}
     </div>
