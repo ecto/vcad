@@ -1,0 +1,13 @@
+{
+  "id": "2026-06-01-webgl-context-loss",
+  "version": "0.9.4",
+  "date": "2026-06-01",
+  "category": "fix",
+  "title": "Recover from WebGL context loss",
+  "summary": "Fixed a viewport crash when the browser dropped the WebGL context (common on Safari); post-processing now tears down and the scene repaints on restore.",
+  "features": [
+    "viewport",
+    "rendering",
+    "safari"
+  ]
+}

@@ -50,6 +50,7 @@ import {
 } from "@vcad/core";
 import type { PartInfo, CameraGoal } from "@vcad/core";
 import { useCameraControls } from "@/hooks/useCameraControls";
+import { useWebGLContextLost } from "@/hooks/useWebGLContextLost";
 import { useTheme } from "@/hooks/useTheme";
 import { useInputDeviceDetection } from "@/hooks/useInputDeviceDetection";
 import { usePhysicsSimulation } from "@/hooks/usePhysicsSimulation";
@@ -1235,6 +1236,18 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
   const gl = useThree((s) => s.gl);
   const r3fScene = useThree((s) => s.scene);
   const viewportSize = useThree((s) => s.size);
+  // When the browser drops the WebGL context (Safari under GPU pressure, tab
+  // restore, too many live contexts) the postprocessing EffectComposer crashes
+  // reading `renderer.getContext().getContextAttributes().alpha` off the dead
+  // context. Tear post-processing down while the context is lost and let it
+  // remount once the browser restores it.
+  const contextLost = useWebGLContextLost();
+  // The viewport runs on a "demand" frameloop, so nudge a repaint once the
+  // context comes back — otherwise the restored scene sits blank until the
+  // next user interaction.
+  useEffect(() => {
+    if (!contextLost) invalidate();
+  }, [contextLost, invalidate]);
   useEffect(() => {
     const capture = (goal: CameraGoal): HTMLCanvasElement | null => {
       const w = Math.max(1, viewportSize.width);
@@ -1812,7 +1825,7 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
           framebuffer, so in VR/AR the scene would go black and only
           objects rendered directly by WebXRManager (hands, controllers)
           would show. */}
-      {engineReady && !xrPresenting && (() => {
+      {engineReady && !xrPresenting && !contextLost && (() => {
         const aoEnabled = sceneSettings.postProcessing.ambientOcclusion?.enabled !== false;
         const vignetteEnabled = sceneSettings.postProcessing.vignette?.enabled !== false;
         if (!aoEnabled && !vignetteEnabled) return null;
