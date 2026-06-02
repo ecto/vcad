@@ -516,6 +516,34 @@ describe("sheet-metal tools", () => {
     expect(cheap.rates.currency).toBe("USD");
   });
 
+  it("hem: closed hem creates an extra panel + 180° crease", () => {
+    const out = JSON.parse(
+      sheetMetalCreate(
+        {
+          width: 100,
+          depth: 50,
+          thickness: 1,
+          material: "al-soft",
+          hems: [{ edge_index: 0, length: 6 }],
+        },
+        engine,
+      ).content[0].text,
+    );
+    expect(out.model.panel_count).toBe(2);
+    expect(out.model.bend_count).toBe(1);
+    // 180° fold ≈ π radians.
+    expect(out.model.bends[0].angle_rad).toBeCloseTo(Math.PI, 5);
+    // Provenance carries the hem tag.
+    expect(out.model.bends[0].k_factor_source).toContain(";hem:closed");
+
+    const unfolded = JSON.parse(
+      sheetMetalUnfold({ document_id: out.document_id }, engine).content[0]
+        .text,
+    );
+    expect(unfolded.flat_pattern.creases).toHaveLength(1);
+    expect(unfolded.dxf).toContain("0\nLINE\n8\nBEND_UP");
+  });
+
   it("material-aware check: al-hard flags R/t=1 that al-soft passes", () => {
     // R=1 mm on 1 mm stock: R/t = 1.
     // al-soft min R/t = 0 → shop-ready; al-hard min R/t = 1.5 → flagged.

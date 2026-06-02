@@ -8,7 +8,13 @@
  * a thin transport: walk the IR, call WASM, hand the result to the UI.
  */
 
-import type { CsgOp, Node, NodeId, SheetMetalDirection } from "@vcad/ir";
+import type {
+  CsgOp,
+  Node,
+  NodeId,
+  SheetMetalDirection,
+  SheetMetalHemKind,
+} from "@vcad/ir";
 import type { TriangleMesh } from "./mesh.js";
 
 /** Per-bend summary the property panel reads. Mirrors `BendSummaryDto`. */
@@ -232,7 +238,17 @@ interface ChainOpEdge {
   manualK?: number;
 }
 
-type ChainOp = ChainOpBase | ChainOpEdge;
+interface ChainOpHem {
+  type: "Hem";
+  panelId: number;
+  edgeIndex: number;
+  kind: SheetMetalHemKind;
+  length: number;
+  gap: number;
+  direction: SheetMetalDirection;
+}
+
+type ChainOp = ChainOpBase | ChainOpEdge | ChainOpHem;
 
 /**
  * Walk back from `rootId` through any chain of sheet-metal ops, returning
@@ -247,7 +263,8 @@ export function buildSheetMetalChain(
   if (!root) return null;
   if (
     root.op.type !== "SheetMetalBaseFlangeRect" &&
-    root.op.type !== "SheetMetalEdgeFlange"
+    root.op.type !== "SheetMetalEdgeFlange" &&
+    root.op.type !== "SheetMetalHem"
   ) {
     return null;
   }
@@ -278,6 +295,17 @@ export function buildSheetMetalChain(
         radius: op.radius,
         direction: op.direction,
         manualK: op.manual_k,
+      });
+      cursor = nodes[String(op.parent)];
+    } else if (op.type === "SheetMetalHem") {
+      tipToBase.push({
+        type: "Hem",
+        panelId: op.panel_id,
+        edgeIndex: op.edge_index,
+        kind: op.kind ?? "Closed",
+        length: op.length,
+        gap: op.gap ?? 0,
+        direction: op.direction,
       });
       cursor = nodes[String(op.parent)];
     } else {

@@ -500,6 +500,21 @@ export interface SheetMetalEdgeFlangeOp {
   manual_k?: number;
 }
 
+/** Hem kind. Wire-compatible with `vcad_ir::SheetMetalHemKind`. */
+export type SheetMetalHemKind = "Closed" | "Open";
+
+/** Sheet-metal hem — a 180° fold at the edge of a flange. */
+export interface SheetMetalHemOp {
+  type: "SheetMetalHem";
+  parent: NodeId;
+  panel_id: number;
+  edge_index: number;
+  kind?: SheetMetalHemKind;
+  length: number;
+  gap?: number;
+  direction: SheetMetalDirection;
+}
+
 /** CSG operation — the core building block of the IR DAG. */
 export type CsgOp =
   | CubeOp
@@ -529,7 +544,8 @@ export type CsgOp =
   | EmbroideryPatternOp
   | PartInstanceOp
   | SheetMetalBaseFlangeRectOp
-  | SheetMetalEdgeFlangeOp;
+  | SheetMetalEdgeFlangeOp
+  | SheetMetalHemOp;
 
 /** A node in the IR graph. */
 export interface Node {

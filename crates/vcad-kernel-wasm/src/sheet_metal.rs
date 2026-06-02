@@ -26,13 +26,14 @@
 
 use serde::{Deserialize, Serialize};
 use vcad_kernel_sheet::{
-    add_edge_flange, base_flange_rect,
+    add_edge_flange, add_hem, base_flange_rect,
     bend_table::{self, BendTable},
     check_manufacturability,
     cost::{estimate_cost, CostBreakdown, CostRates},
     edge_flange::EdgeFlangeParams,
-    flat_pattern_to_dxf, BendDirection, FlangePosition, FlatPattern, SheetMetalModel, ShopProfile,
-    Violation,
+    flat_pattern_to_dxf,
+    hem::{HemKind, HemParams},
+    BendDirection, FlangePosition, FlatPattern, SheetMetalModel, ShopProfile, Violation,
 };
 use wasm_bindgen::prelude::*;
 
@@ -59,6 +60,16 @@ enum ChainOp {
         direction: BendDirection,
         /// Optional manual K-factor override (skips bend-table lookup).
         manual_k: Option<f64>,
+    },
+    /// Add a hem (180° fold) off `edge_index` of `panel_id`.
+    Hem {
+        panel_id: usize,
+        edge_index: usize,
+        kind: HemKind,
+        length: f64,
+        #[serde(default)]
+        gap: f64,
+        direction: BendDirection,
     },
 }
 
@@ -364,7 +375,7 @@ fn build_model(chain: &[ChainOp], table: &BendTable) -> Result<SheetMetalModel, 
             m.material = material.clone();
             m
         }
-        ChainOp::EdgeFlange { .. } => {
+        ChainOp::EdgeFlange { .. } | ChainOp::Hem { .. } => {
             return Err("first chain op must be a base flange".to_string());
         }
     };
@@ -402,6 +413,24 @@ fn build_model(chain: &[ChainOp], table: &BendTable) -> Result<SheetMetalModel, 
                 };
                 add_edge_flange(&mut model, table, params)
                     .map_err(|e| format!("edge flange #{}: {e}", i + 1))?;
+            }
+            ChainOp::Hem {
+                panel_id,
+                edge_index,
+                kind,
+                length,
+                gap,
+                direction,
+            } => {
+                let params = HemParams {
+                    panel: *panel_id,
+                    edge_index: *edge_index,
+                    kind: *kind,
+                    length: *length,
+                    gap: *gap,
+                    direction: *direction,
+                };
+                add_hem(&mut model, table, params).map_err(|e| format!("hem #{}: {e}", i + 1))?;
             }
         }
     }

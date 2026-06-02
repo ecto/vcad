@@ -888,6 +888,7 @@ function evaluateOp(
 
     case "SheetMetalBaseFlangeRect":
     case "SheetMetalEdgeFlange":
+    case "SheetMetalHem":
       // Sheet-metal ops bypass the Solid pipeline — root-level detection
       // in `evaluateDocument` routes the chain to the kernel's
       // `evaluateSheetMetalChain` and attaches the result. Encountering

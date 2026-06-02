@@ -349,7 +349,8 @@ impl<'a> UrdfWriter<'a> {
             | CsgOp::EmbroideryPattern { .. }
             | CsgOp::PartInstance { .. }
             | CsgOp::SheetMetalBaseFlangeRect { .. }
-            | CsgOp::SheetMetalEdgeFlange { .. } => {
+            | CsgOp::SheetMetalEdgeFlange { .. }
+            | CsgOp::SheetMetalHem { .. } => {
                 // Sketch-based / imported / PCB / embroidery / library parts / sheet-metal
                 // cannot export to URDF directly
                 Err(UrdfError::Conversion(

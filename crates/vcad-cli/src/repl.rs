@@ -587,6 +587,7 @@ fn op_type_name(op: &CsgOp) -> &'static str {
         CsgOp::PartInstance { .. } => "part instance",
         CsgOp::SheetMetalBaseFlangeRect { .. } => "sheet-metal base flange",
         CsgOp::SheetMetalEdgeFlange { .. } => "sheet-metal edge flange",
+        CsgOp::SheetMetalHem { .. } => "sheet-metal hem",
     }
 }
 

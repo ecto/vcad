@@ -26,7 +26,12 @@ import type {
   SheetMetalShopProfile,
 } from "@vcad/engine";
 import { createDocument } from "@vcad/ir";
-import type { Document, Node, SheetMetalDirection } from "@vcad/ir";
+import type {
+  Document,
+  Node,
+  SheetMetalDirection,
+  SheetMetalHemKind,
+} from "@vcad/ir";
 import { getSession, registerSession } from "./session.js";
 
 interface FlangeSpec {
@@ -39,11 +44,21 @@ interface FlangeSpec {
   manual_k?: number;
 }
 
-/** Build a sheet-metal IR document: base flange node + a chain of edge
- *  flange nodes, each parented to the previous. */
+interface HemSpec {
+  edge_index: number;
+  length: number;
+  kind?: SheetMetalHemKind;
+  gap?: number;
+  direction?: SheetMetalDirection;
+  panel_id?: number;
+}
+
+/** Build a sheet-metal IR document: base flange node + ordered edge
+ *  flanges and hems, each parented to the previous. */
 function buildSheetMetalDoc(
   base: { width: number; depth: number; thickness: number; material: string },
   flanges: FlangeSpec[],
+  hems: HemSpec[],
 ): Document {
   const doc = createDocument();
   const nodes: Record<string, Node> = {};
@@ -59,8 +74,9 @@ function buildSheetMetalDoc(
     },
   };
   let parent = 0;
-  flanges.forEach((f, i) => {
-    const id = i + 1;
+  let nextId = 1;
+  flanges.forEach((f) => {
+    const id = nextId++;
     nodes[String(id)] = {
       id,
       name: `Edge flange ${id}`,
@@ -74,6 +90,24 @@ function buildSheetMetalDoc(
         radius: f.radius ?? base.thickness,
         direction: f.direction ?? "Up",
         ...(f.manual_k !== undefined ? { manual_k: f.manual_k } : {}),
+      },
+    };
+    parent = id;
+  });
+  hems.forEach((h) => {
+    const id = nextId++;
+    nodes[String(id)] = {
+      id,
+      name: `Hem ${id}`,
+      op: {
+        type: "SheetMetalHem",
+        parent,
+        panel_id: h.panel_id ?? 0,
+        edge_index: h.edge_index,
+        kind: h.kind ?? "Closed",
+        length: h.length,
+        gap: h.gap ?? 0,
+        direction: h.direction ?? "Up",
       },
     };
     parent = id;
@@ -164,6 +198,46 @@ export const sheetMetalCreateSchema = {
         required: ["edge_index", "length"],
       },
     },
+    hems: {
+      type: "array" as const,
+      description:
+        "Optional hems (180° folds) applied after all flanges. Use for edge stiffening / burr removal.",
+      items: {
+        type: "object" as const,
+        properties: {
+          edge_index: {
+            type: "number" as const,
+            description: "Which edge of the panel to hem.",
+          },
+          length: {
+            type: "number" as const,
+            description:
+              "Back-flange length (mm) — how far the hem extends past the fold.",
+          },
+          kind: {
+            type: "string" as const,
+            enum: ["Closed", "Open"],
+            description:
+              "Closed = faces touch; Open = gap between parent and back-flange. Default Closed.",
+          },
+          gap: {
+            type: "number" as const,
+            description:
+              "Gap (mm) between parent and back-flange. Required for Open hems; ignored for Closed.",
+          },
+          direction: {
+            type: "string" as const,
+            enum: ["Up", "Down"],
+            description: "Fold direction. Default Up.",
+          },
+          panel_id: {
+            type: "number" as const,
+            description: "Panel to hem from. Default 0 (base).",
+          },
+        },
+        required: ["edge_index", "length"],
+      },
+    },
   },
   required: ["width", "depth", "thickness"],
 };
@@ -182,7 +256,8 @@ export function sheetMetalCreate(
   const flanges = Array.isArray(a.flanges)
     ? (a.flanges as FlangeSpec[])
     : [];
-  const doc = buildSheetMetalDoc(base, flanges);
+  const hems = Array.isArray(a.hems) ? (a.hems as HemSpec[]) : [];
+  const doc = buildSheetMetalDoc(base, flanges, hems);
   const rendered = renderedOf(engine, doc);
   const documentId = registerSession(doc);
   const errors = rendered.violations.filter(

@@ -1,0 +1,14 @@
+{
+  "id": "2026-05-18-sheet-metal-hem",
+  "version": "0.9.4",
+  "date": "2026-05-18",
+  "category": "feat",
+  "title": "Sheet-metal hem operation",
+  "summary": "First-class hem support — 180° folds at the edge of a flange for stiffening and burr removal — wired all the way through IR, kernel, engine, and MCP.",
+  "details": "## What's New\n\n- **`SheetMetalHem` IR op** (Rust + TS) with `kind` (Closed | Open), `length`, `gap`, `direction`. A hem is a half-turn around a tight radius producing a small back-flange parallel to the parent — the most common sheet-metal feature after edge flanges.\n- **`add_hem` kernel function** in `vcad-kernel-sheet::hem`: closed hems pack tight (R = t/2); open hems honour the user-specified gap (R = gap/2). Same lossless unfold, DXF, DFM, and cost machinery picks it up for free — every hem is a regular bend with `angle = π` plus a `;hem:closed|open` provenance tag.\n- **`sheet_metal_create` MCP tool** gained a `hems` array alongside `flanges` so an agent can author a hemmed bracket in one call.\n- Engine's `buildSheetMetalChain` walks SheetMetalHem nodes; worker + sync paths both render hems.",
+  "features": [
+    "sheet-metal",
+    "hem",
+    "manufacturing"
+  ]
+}

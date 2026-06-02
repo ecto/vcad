@@ -76,7 +76,8 @@ fn validate_op(doc: &Document, node_id: NodeId, op: &CsgOp) -> Result<(), EvalEr
         | CsgOp::EmbroideryPattern { .. }
         | CsgOp::PartInstance { .. }
         | CsgOp::SheetMetalBaseFlangeRect { .. }
-        | CsgOp::SheetMetalEdgeFlange { .. } => {}
+        | CsgOp::SheetMetalEdgeFlange { .. }
+        | CsgOp::SheetMetalHem { .. } => {}
     }
 
     Ok(())
@@ -129,6 +130,7 @@ fn csg_op_name(op: &CsgOp) -> &'static str {
         CsgOp::PartInstance { .. } => "PartInstance",
         CsgOp::SheetMetalBaseFlangeRect { .. } => "SheetMetalBaseFlangeRect",
         CsgOp::SheetMetalEdgeFlange { .. } => "SheetMetalEdgeFlange",
+        CsgOp::SheetMetalHem { .. } => "SheetMetalHem",
     }
 }
 

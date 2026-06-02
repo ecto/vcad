@@ -2497,7 +2497,9 @@ fn format_op(
             message: "PartInstance not supported in VCode format".to_string(),
         }),
 
-        CsgOp::SheetMetalBaseFlangeRect { .. } | CsgOp::SheetMetalEdgeFlange { .. } => {
+        CsgOp::SheetMetalBaseFlangeRect { .. }
+        | CsgOp::SheetMetalEdgeFlange { .. }
+        | CsgOp::SheetMetalHem { .. } => {
             Err(VCodeParseError {
                 line: 0,
                 message: "Sheet-metal ops not yet supported in VCode format".to_string(),

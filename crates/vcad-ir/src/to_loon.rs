@@ -519,6 +519,10 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> OpResult {
             "SheetMetalEdgeFlange".to_string(),
             "; SheetMetalEdgeFlange — not yet supported in loon".to_string(),
         ),
+        CsgOp::SheetMetalHem { .. } => OpResult::Unsupported(
+            "SheetMetalHem".to_string(),
+            "; SheetMetalHem — not yet supported in loon".to_string(),
+        ),
     }
 }
 
