@@ -1,0 +1,15 @@
+{
+  "id": "2026-05-16-sheet-metal-dxf-export",
+  "version": "0.9.4",
+  "date": "2026-05-16",
+  "category": "feat",
+  "title": "Sheet-metal flat-pattern DXF export",
+  "summary": "Export a sheet-metal part's flat pattern as a layered DXF (CUT / BEND_UP / BEND_DOWN, in millimetres) ready to send to a laser bureau.",
+  "details": "## What's New\n\n- **`flat_pattern_to_dxf`** in `vcad-kernel-sheet`: serialises a `FlatPattern` to DXF R12 with the manufacturing layer convention from the design spec — `CUT` (red) for panel outlines + holes, `BEND_UP` (blue) and `BEND_DOWN` (cyan) for creases. Units are millimetres so geometry imports true-scale.\n- Threaded through the WASM binding and engine glue: the DXF rides along with the flat pattern in a single boundary call (no extra round-trip).\n- **Download DXF** button in the sheet-metal panel.\n\nThis closes the last gap in the sheet-metal foundation tier.",
+  "features": [
+    "sheet-metal",
+    "manufacturing",
+    "dxf",
+    "export"
+  ]
+}

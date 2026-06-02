@@ -1,0 +1,15 @@
+{
+  "id": "2026-05-18-sheet-metal-nested-dxf",
+  "version": "0.9.4",
+  "date": "2026-05-18",
+  "category": "feat",
+  "title": "Multi-part DXF from nested sheet-metal parts",
+  "summary": "Layered DXF, one per stock sheet, with every nested part placed and oriented — closes the loop from nesting to shop-ready manufacturing artifact.",
+  "details": "## What's New\n\n- **`nested_dxf(placements)`** in `vcad-kernel-sheet::dxf`: takes a slice of `NestedPlacement { flat, sheet, dx_mm, dy_mm, rotated }` and emits one DXF string per stock sheet. Same `CUT` / `BEND_UP` / `BEND_DOWN` layer convention as the single-part exporter so shop post-processors don't have to learn a new dialect.\n- **`nestedSheetMetalDxf` WASM binding** accepting `[{chain, sheet, dx_mm, dy_mm, rotated}]` JSON — each part's chain is independently evaluated, translated, optionally rotated 90°, and written into its sheet's DXF.\n\nWith `sheet_metal_nest` returning placements and this binding turning them into per-sheet DXF, a nested job is one tool call away from a quote-able artifact.",
+  "features": [
+    "sheet-metal",
+    "nesting",
+    "dxf",
+    "manufacturing"
+  ]
+}

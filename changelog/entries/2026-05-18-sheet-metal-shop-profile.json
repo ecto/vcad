@@ -1,0 +1,15 @@
+{
+  "id": "2026-05-18-sheet-metal-shop-profile",
+  "version": "0.9.4",
+  "date": "2026-05-18",
+  "category": "feat",
+  "title": "Tunable sheet-metal shop profile",
+  "summary": "The DFM inspector now checks against your own brake/die/grain limits via an editable, persisted shop profile instead of fixed generic defaults.",
+  "details": "## What's New\n\n- **Shop Profile editor** in the sheet-metal panel: max bend length, min bend radius (R/t), min flange height, hole→bend, and bend→bend clearances, plus a shop name. Persisted to localStorage and shared across documents.\n- The Manufacturability inspector re-runs against the active profile (kernel `checkSheetMetal` query) and shows which shop it checked against; \"Reset to generic\" restores defaults.\n- Saved profiles are field-tolerant — a profile stored before a capability existed still loads, falling back to the generic value for missing keys.\n\n## Fixes\n\n- Wired the sheet-metal kernel bindings onto the engine kernel object and added worker-path post-processing, so sheet-metal parts (flat pattern, bend list, DFM) actually render via the default async eval path — previously they only appeared on the synchronous fallback.",
+  "features": [
+    "sheet-metal",
+    "manufacturing",
+    "dfm",
+    "shop-profile"
+  ]
+}

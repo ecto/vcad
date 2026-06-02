@@ -500,6 +500,45 @@ export interface SheetMetalEdgeFlangeOp {
   manual_k?: number;
 }
 
+/** Sheet-metal base flange from an arbitrary CCW polygon outline. */
+export interface SheetMetalBaseFlangePolygonOp {
+  type: "SheetMetalBaseFlangePolygon";
+  /** CCW outer boundary (`{x, y}` points, mm). */
+  outline: { x: number; y: number }[];
+  /** Optional CW hole loops. */
+  holes?: { x: number; y: number }[][];
+  thickness: number;
+  /** Material name for K-factor / cost / DFM lookup. */
+  material: string;
+}
+
+/** Sheet-metal jog — a Z-shaped offset (two opposite 90° bends). */
+export interface SheetMetalJogOp {
+  type: "SheetMetalJog";
+  parent: NodeId;
+  panel_id: number;
+  edge_index: number;
+  offset: number;
+  length: number;
+  radius: number;
+  direction: SheetMetalDirection;
+}
+
+/** Hem kind. Wire-compatible with `vcad_ir::SheetMetalHemKind`. */
+export type SheetMetalHemKind = "Closed" | "Open";
+
+/** Sheet-metal hem — a 180° fold at the edge of a flange. */
+export interface SheetMetalHemOp {
+  type: "SheetMetalHem";
+  parent: NodeId;
+  panel_id: number;
+  edge_index: number;
+  kind?: SheetMetalHemKind;
+  length: number;
+  gap?: number;
+  direction: SheetMetalDirection;
+}
+
 /** CSG operation — the core building block of the IR DAG. */
 export type CsgOp =
   | CubeOp
@@ -529,7 +568,10 @@ export type CsgOp =
   | EmbroideryPatternOp
   | PartInstanceOp
   | SheetMetalBaseFlangeRectOp
-  | SheetMetalEdgeFlangeOp;
+  | SheetMetalBaseFlangePolygonOp
+  | SheetMetalEdgeFlangeOp
+  | SheetMetalHemOp
+  | SheetMetalJogOp;
 
 /** A node in the IR graph. */
 export interface Node {

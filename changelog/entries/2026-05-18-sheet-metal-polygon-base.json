@@ -1,0 +1,13 @@
+{
+  "id": "2026-05-18-sheet-metal-polygon-base",
+  "version": "0.9.4",
+  "date": "2026-05-18",
+  "category": "feat",
+  "title": "Sheet-metal base flange from arbitrary polygons",
+  "summary": "Base flanges are no longer rectangle-only — pass any CCW outline (with optional CW hole loops) and the rest of the pipeline (unfold, DXF, DFM, cost, hems, jogs) just works.",
+  "details": "## What's New\n\n- **`SheetMetalBaseFlangePolygon` IR op** (Rust + TS): outline + holes + thickness + material.\n- **`base_flange_polygon_with_holes` kernel function** exported from `vcad-kernel-sheet`; the existing `base_flange_rect` is now a thin wrapper.\n- **`sheet_metal_create` MCP tool** accepts `outline` (array of `{x,y}` or `[x,y]` points) and `holes`; takes precedence over `width`/`depth`. Holes appear in the flat pattern and on the CUT layer of the layered DXF.\n- Flanges, hems, jogs, DFM, cost, and the AI self-heal loop all keep working because every downstream system reads the panel outline/holes directly.",
+  "features": [
+    "sheet-metal",
+    "manufacturing"
+  ]
+}

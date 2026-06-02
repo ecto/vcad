@@ -1,0 +1,17 @@
+{
+  "id": "2026-05-18-sheet-metal-bend-sequence",
+  "version": "0.9.4",
+  "date": "2026-05-18",
+  "category": "feat",
+  "title": "Sheet-metal bend sequence optimization",
+  "summary": "Return a feasible press-brake bend order — outermost first, springback-compensated, with a one-line rationale per step.",
+  "details": "## What's New\n\n- **`vcad-kernel-sheet::sequence::bend_sequence`** kernel function: outside-in BFS over the bend tree, ties broken by id for determinism. Each step carries angle, radius, hinge length, the brake-compensated angle (target + springback) and a one-line rationale (hem first, jog members together, root-adjacent last).\n- **`sheetMetalSequence` WASM binding** + engine helper + `Engine.sheetMetalSequence(doc)` method.\n- **`sheet_metal_sequence` MCP tool**: agents and shop UIs get the form order directly.",
+  "features": [
+    "sheet-metal",
+    "manufacturing",
+    "mcp"
+  ],
+  "mcpTools": [
+    "sheet_metal_sequence"
+  ]
+}

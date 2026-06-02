@@ -1545,7 +1545,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get feed_rate() {
-        const ret = wasm.__wbg_get_wasmcamsettings_feed_rate(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_slicersettings_nozzle_diameter(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1553,7 +1553,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get plunge_rate() {
-        const ret = wasm.__wbg_get_wasmcamsettings_plunge_rate(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_slicersettings_line_width(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1569,7 +1569,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get safe_z() {
-        const ret = wasm.__wbg_get_wasmcamsettings_safe_z(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_slicersettings_support_angle(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1577,7 +1577,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get spindle_rpm() {
-        const ret = wasm.__wbg_get_wasmcamsettings_spindle_rpm(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_slicersettings_infill_density(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1585,7 +1585,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get stepdown() {
-        const ret = wasm.__wbg_get_wasmcamsettings_stepdown(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_slicersettings_first_layer_height(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1593,7 +1593,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get stepover() {
-        const ret = wasm.__wbg_get_wasmcamsettings_stepover(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_slicersettings_layer_height(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1601,14 +1601,14 @@ export class WasmCamSettings {
      * @param {number} arg0
      */
     set feed_rate(arg0) {
-        wasm.__wbg_set_wasmcamsettings_feed_rate(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_slicersettings_nozzle_diameter(this.__wbg_ptr, arg0);
     }
     /**
      * Plunge rate (mm/min).
      * @param {number} arg0
      */
     set plunge_rate(arg0) {
-        wasm.__wbg_set_wasmcamsettings_plunge_rate(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_slicersettings_line_width(this.__wbg_ptr, arg0);
     }
     /**
      * Retract Z height (mm).
@@ -1622,28 +1622,28 @@ export class WasmCamSettings {
      * @param {number} arg0
      */
     set safe_z(arg0) {
-        wasm.__wbg_set_wasmcamsettings_safe_z(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_slicersettings_support_angle(this.__wbg_ptr, arg0);
     }
     /**
      * Spindle RPM.
      * @param {number} arg0
      */
     set spindle_rpm(arg0) {
-        wasm.__wbg_set_wasmcamsettings_spindle_rpm(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_slicersettings_infill_density(this.__wbg_ptr, arg0);
     }
     /**
      * Stepdown distance (mm).
      * @param {number} arg0
      */
     set stepdown(arg0) {
-        wasm.__wbg_set_wasmcamsettings_stepdown(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_slicersettings_first_layer_height(this.__wbg_ptr, arg0);
     }
     /**
      * Stepover distance (mm).
      * @param {number} arg0
      */
     set stepover(arg0) {
-        wasm.__wbg_set_wasmcamsettings_stepover(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_slicersettings_layer_height(this.__wbg_ptr, arg0);
     }
     /**
      * Create from JSON.
@@ -2993,6 +2993,39 @@ export function checkPrintability(solid, printer_profile) {
 }
 
 /**
+ * Re-run manufacturability against a *caller-supplied* shop profile.
+ *
+ * Separate from [`evaluate_sheet_metal_chain`] on purpose: the spec treats
+ * manufacturability as a **typed query against the model**, not a
+ * by-product of mesh evaluation. The app's DFM inspector and the
+ * `sheet_metal.check` MCP tool both call this so a shop's real
+ * capabilities — not the generic defaults — drive the result.
+ *
+ * `shop_json` is field-tolerant (see [`ShopProfile`]); pass `""` for the
+ * generic shop. On any error the `error` field is set and `violations` is
+ * empty.
+ * @param {string} chain_json
+ * @param {string} shop_json
+ * @returns {string}
+ */
+export function checkSheetMetal(chain_json, shop_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(chain_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(shop_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.checkSheetMetal(ptr0, len0, ptr1, len1);
+        deferred3_0 = ret[0];
+        deferred3_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Compute creased normals using GPU acceleration.
  *
  * # Arguments
@@ -3032,6 +3065,33 @@ export function computeMeshVolume(positions, indices) {
     const len1 = WASM_VECTOR_LEN;
     const ret = wasm.computeMeshVolume(ptr0, len0, ptr1, len1);
     return ret;
+}
+
+/**
+ * Estimate the manufacturing cost of a sheet-metal chain.
+ *
+ * `rates_json` is field-tolerant (omit keys to use the generic shop
+ * rates); pass `""` for full defaults. `quantity` is clamped to `>= 1`.
+ * @param {string} chain_json
+ * @param {string} rates_json
+ * @param {number} quantity
+ * @returns {string}
+ */
+export function costSheetMetal(chain_json, rates_json, quantity) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(chain_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(rates_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.costSheetMetal(ptr0, len0, ptr1, len1, quantity);
+        deferred3_0 = ret[0];
+        deferred3_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
 }
 
 /**
@@ -3789,6 +3849,47 @@ export function getPartsManifest() {
 }
 
 /**
+ * Return the built-in bend-table rows as JSON.
+ *
+ * Exposes the curated `(material, t, R) → K` lookup so a shop / agent can
+ * audit what K-factor an upcoming bend will use without having to model
+ * the part first.
+ * @returns {string}
+ */
+export function getSheetMetalBendTable() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.getSheetMetalBendTable();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
+ * Return the built-in sheet-metal materials registry as JSON.
+ *
+ * Lets the UI populate a material picker and the MCP tools advertise
+ * what alloys are available — without each consumer hard-coding the list.
+ * @returns {string}
+ */
+export function getSheetMetalMaterials() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.getSheetMetalMaterials();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
  * Get available printer profiles.
  * @returns {any}
  */
@@ -3997,7 +4098,7 @@ export function isEcadAvailable() {
  * @returns {boolean}
  */
 export function isEmbroideryAvailable() {
-    const ret = wasm.isCamAvailable();
+    const ret = wasm.isEmbroideryAvailable();
     return ret !== 0;
 }
 
@@ -4024,8 +4125,61 @@ export function isPhysicsAvailable() {
  * @returns {boolean}
  */
 export function isSlicerAvailable() {
-    const ret = wasm.isEcadAvailable();
+    const ret = wasm.isCamAvailable();
     return ret !== 0;
+}
+
+/**
+ * Rectangular nesting of multiple parts on stock sheets.
+ *
+ * `parts_json` is a JSON array of `PartFootprint` objects (each with
+ * `name`, `width_mm`, `height_mm`, `quantity`); `params_json` is a
+ * `NestingParams` object (pass `""` for the generic 4'×8' default).
+ * @param {string} parts_json
+ * @param {string} params_json
+ * @returns {string}
+ */
+export function nestSheetMetalParts(parts_json, params_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(parts_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.nestSheetMetalParts(ptr0, len0, ptr1, len1);
+        deferred3_0 = ret[0];
+        deferred3_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Produce one layered DXF per stock sheet for a set of nested parts.
+ *
+ * `placements_json` is an array of [`NestedPlacementDto`]; each chain
+ * is independently evaluated into a flat pattern, then translated /
+ * rotated according to its placement before being written to the
+ * sheet's DXF. Layers are the same `CUT` / `BEND_UP` / `BEND_DOWN`
+ * triple a shop's post-processor already knows.
+ * @param {string} placements_json
+ * @returns {string}
+ */
+export function nestedSheetMetalDxf(placements_json) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(placements_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.nestedSheetMetalDxf(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
 }
 
 /**
@@ -4493,6 +4647,27 @@ export function sectionMesh(mesh_js, plane_json, hatch_json) {
     var len1 = WASM_VECTOR_LEN;
     const ret = wasm.sectionMesh(mesh_js, ptr0, len0, ptr1, len1);
     return ret;
+}
+
+/**
+ * Return a feasible bend sequence for the chain. Outermost-first
+ * heuristic; pure query, no mesh evaluation.
+ * @param {string} chain_json
+ * @returns {string}
+ */
+export function sheetMetalSequence(chain_json) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(chain_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sheetMetalSequence(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
 }
 
 /**
@@ -6164,7 +6339,7 @@ function __wbg_get_imports() {
                     const a = state0.a;
                     state0.a = 0;
                     try {
-                        return wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(a, state0.b, arg0, arg1);
+                        return wasm_bindgen__convert__closures_____invoke__h909ef70400a4aa92(a, state0.b, arg0, arg1);
                     } finally {
                         state0.a = a;
                     }
@@ -6749,13 +6924,13 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2156, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2157, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2252, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2253, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h449c01a9b484b49e, wasm_bindgen__convert__closures_____invoke__h97f5d3065e41a070);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2940, function: Function { arguments: [Externref], shim_idx: 2941, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2965, function: Function { arguments: [Externref], shim_idx: 2966, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h5fc04d9207857a4f, wasm_bindgen__convert__closures_____invoke__h93fa00cb00fe3f24);
             return ret;
         },
         __wbindgen_cast_0000000000000003: function(arg0) {
@@ -6843,16 +7018,16 @@ function __wbg_get_imports() {
     };
 }
 
-function wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h97f5d3065e41a070(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h97f5d3065e41a070(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h93fa00cb00fe3f24(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h93fa00cb00fe3f24(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(arg0, arg1, arg2, arg3) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(arg0, arg1, arg2, arg3);
+function wasm_bindgen__convert__closures_____invoke__h909ef70400a4aa92(arg0, arg1, arg2, arg3) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h909ef70400a4aa92(arg0, arg1, arg2, arg3);
 }
 
 

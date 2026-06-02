@@ -5,6 +5,17 @@ import { commandRegistry } from "@vcad/core";
 import { exportCad } from "../tools/export.js";
 import { inspectCad } from "../tools/inspect.js";
 import {
+  sheetMetalCreate,
+  sheetMetalUnfold,
+  sheetMetalCheck,
+  sheetMetalMaterials,
+  sheetMetalBendTable,
+  sheetMetalCost,
+  sheetMetalSuggestFix,
+  sheetMetalSequence,
+  sheetMetalNest,
+} from "../tools/sheet-metal.js";
+import {
   openDocument,
   getDocumentTool,
   closeDocument,
@@ -350,5 +361,459 @@ describe("gym tools", () => {
     const closeAgain = gymClose({ env_id: envId });
     const errorInfo = JSON.parse(closeAgain.content[0].text);
     expect(errorInfo.error).toBeDefined();
+  });
+});
+
+describe("sheet-metal tools", () => {
+  let engine: Engine;
+
+  beforeAll(async () => {
+    engine = await Engine.init();
+  });
+
+  it("create → unfold → check closes the loop", () => {
+    // 100×50 base with one 25 mm flange off edge 0.
+    const created = JSON.parse(
+      sheetMetalCreate(
+        {
+          width: 100,
+          depth: 50,
+          thickness: 1,
+          material: "Al-soft",
+          flanges: [{ edge_index: 0, length: 25 }],
+        },
+        engine,
+      ).content[0].text,
+    );
+    expect(created.document_id).toBeDefined();
+    expect(created.model.panel_count).toBe(2);
+    expect(created.model.bend_count).toBe(1);
+    expect(created.violations).toHaveLength(0); // shop-ready vs. generic
+
+    const unfolded = JSON.parse(
+      sheetMetalUnfold(
+        { document_id: created.document_id },
+        engine,
+      ).content[0].text,
+    );
+    expect(unfolded.flat_pattern.panel_outlines_2d).toHaveLength(2);
+    expect(unfolded.dxf).toContain("0\nLAYER\n2\nCUT\n");
+    expect(unfolded.dxf.trimEnd().endsWith("0\nEOF")).toBe(true);
+
+    // Generic shop: clean. Strict shop (R/t ≥ 4): the 1 mm radius fails.
+    const lenient = JSON.parse(
+      sheetMetalCheck(
+        { document_id: created.document_id },
+        engine,
+      ).content[0].text,
+    );
+    expect(lenient.shop_ready).toBe(true);
+
+    const strict = JSON.parse(
+      sheetMetalCheck(
+        {
+          document_id: created.document_id,
+          shop_profile: { name: "Strict Inc", min_bend_radius_ratio: 4 },
+        },
+        engine,
+      ).content[0].text,
+    );
+    expect(strict.shop_ready).toBe(false);
+    expect(strict.shop.name).toBe("Strict Inc");
+    expect(
+      strict.violations.some(
+        (v: { detail: { kind: string } }) =>
+          v.detail.kind === "BendRadiusBelowMinimum",
+      ),
+    ).toBe(true);
+  });
+
+  it("unfold on an unknown document id throws", () => {
+    expect(() =>
+      sheetMetalUnfold({ document_id: "nope" }, engine),
+    ).toThrow(/Unknown document_id/);
+  });
+
+  it("materials registry includes the six shop basics", () => {
+    const out = JSON.parse(
+      sheetMetalMaterials({}, engine).content[0].text,
+    );
+    const names: string[] = out.materials.map(
+      (m: { name: string }) => m.name,
+    );
+    for (const expected of [
+      "al-soft",
+      "al-hard",
+      "steel-mild",
+      "ss-304",
+      "brass",
+      "copper",
+    ]) {
+      expect(names).toContain(expected);
+    }
+  });
+
+  it("bend table returns curated rows", () => {
+    const out = JSON.parse(
+      sheetMetalBendTable({}, engine).content[0].text,
+    );
+    expect(out.table.id).toBe("builtin");
+    expect(out.table.rows.length).toBeGreaterThan(10);
+  });
+
+  it("cost: breakdown drops per-unit setup at higher quantity", () => {
+    const { document_id } = JSON.parse(
+      sheetMetalCreate(
+        {
+          width: 200,
+          depth: 100,
+          thickness: 1.5,
+          material: "steel-mild",
+          flanges: [{ edge_index: 0, length: 30 }],
+        },
+        engine,
+      ).content[0].text,
+    );
+    const one = JSON.parse(
+      sheetMetalCost({ document_id, quantity: 1 }, engine).content[0].text,
+    );
+    const hundred = JSON.parse(
+      sheetMetalCost({ document_id, quantity: 100 }, engine).content[0].text,
+    );
+    expect(one.breakdown.total_each).toBeGreaterThan(0);
+    expect(one.breakdown.currency).toBe("USD");
+    // Setup amortizes — per-part total drops with volume.
+    expect(hundred.breakdown.total_each).toBeLessThan(one.breakdown.total_each);
+    // Materials change cost: density of steel-mild routes through registry.
+    expect(one.breakdown.mass_kg_each).toBeGreaterThan(0.1);
+  });
+
+  it("cost: custom rates override defaults", () => {
+    const { document_id } = JSON.parse(
+      sheetMetalCreate(
+        {
+          width: 100,
+          depth: 50,
+          thickness: 1,
+          material: "al-soft",
+          flanges: [{ edge_index: 0, length: 20 }],
+        },
+        engine,
+      ).content[0].text,
+    );
+    const cheap = JSON.parse(
+      sheetMetalCost(
+        { document_id, rates: { markup_pct: 0 } },
+        engine,
+      ).content[0].text,
+    );
+    const dear = JSON.parse(
+      sheetMetalCost(
+        { document_id, rates: { markup_pct: 200 } },
+        engine,
+      ).content[0].text,
+    );
+    expect(dear.breakdown.total_each).toBeGreaterThan(cheap.breakdown.total_each);
+    expect(cheap.rates.markup_pct).toBe(0);
+    // Field-tolerance: other rates fell back to generic.
+    expect(cheap.rates.currency).toBe("USD");
+  });
+
+  it("hem: closed hem creates an extra panel + 180° crease", () => {
+    const out = JSON.parse(
+      sheetMetalCreate(
+        {
+          width: 100,
+          depth: 50,
+          thickness: 1,
+          material: "al-soft",
+          hems: [{ edge_index: 0, length: 6 }],
+        },
+        engine,
+      ).content[0].text,
+    );
+    expect(out.model.panel_count).toBe(2);
+    expect(out.model.bend_count).toBe(1);
+    // 180° fold ≈ π radians.
+    expect(out.model.bends[0].angle_rad).toBeCloseTo(Math.PI, 5);
+    // Provenance carries the hem tag.
+    expect(out.model.bends[0].k_factor_source).toContain(";hem:closed");
+
+    const unfolded = JSON.parse(
+      sheetMetalUnfold({ document_id: out.document_id }, engine).content[0]
+        .text,
+    );
+    expect(unfolded.flat_pattern.creases).toHaveLength(1);
+    expect(unfolded.dxf).toContain("0\nLINE\n8\nBEND_UP");
+  });
+
+  it("material-aware check: al-hard flags R/t=1 that al-soft passes", () => {
+    // R=1 mm on 1 mm stock: R/t = 1.
+    // al-soft min R/t = 0 → shop-ready; al-hard min R/t = 1.5 → flagged.
+    const soft = JSON.parse(
+      sheetMetalCreate(
+        {
+          width: 100,
+          depth: 50,
+          thickness: 1,
+          material: "al-soft",
+          flanges: [{ edge_index: 0, length: 25, radius: 1 }],
+        },
+        engine,
+      ).content[0].text,
+    );
+    const softCheck = JSON.parse(
+      sheetMetalCheck({ document_id: soft.document_id }, engine).content[0]
+        .text,
+    );
+    expect(softCheck.shop_ready).toBe(true);
+
+    const hard = JSON.parse(
+      sheetMetalCreate(
+        {
+          width: 100,
+          depth: 50,
+          thickness: 1,
+          material: "al-hard",
+          flanges: [{ edge_index: 0, length: 25, radius: 1 }],
+        },
+        engine,
+      ).content[0].text,
+    );
+    const hardCheck = JSON.parse(
+      sheetMetalCheck({ document_id: hard.document_id }, engine).content[0]
+        .text,
+    );
+    expect(hardCheck.shop_ready).toBe(false);
+    const radiusViol = hardCheck.violations.find(
+      (v: { detail: { kind: string; source?: string } }) =>
+        v.detail.kind === "BendRadiusBelowMinimum",
+    );
+    expect(radiusViol).toBeDefined();
+    expect(radiusViol.detail.source).toBe("Material");
+    expect(radiusViol.detail.material).toBe("al-hard");
+  });
+
+  it("nesting: explicit footprints pack onto stock sheets", () => {
+    const out = JSON.parse(
+      sheetMetalNest(
+        {
+          parts: [
+            { name: "A", width_mm: 100, height_mm: 50, quantity: 4 },
+            { name: "B", width_mm: 80, height_mm: 80, quantity: 2 },
+          ],
+          params: {
+            stock_width_mm: 1000,
+            stock_height_mm: 500,
+            spacing_mm: 5,
+            edge_margin_mm: 10,
+            allow_rotation: true,
+          },
+        },
+        engine,
+      ).content[0].text,
+    );
+    expect(out.result.placements).toHaveLength(6);
+    expect(out.result.sheets_used).toBe(1);
+    expect(out.result.unplaceable).toEqual([]);
+    expect(out.result.utilization_pct).toBeGreaterThan(0);
+  });
+
+  it("nesting: footprint from session document_id", () => {
+    const { document_id } = JSON.parse(
+      sheetMetalCreate(
+        {
+          width: 200,
+          depth: 100,
+          thickness: 1,
+          material: "al-soft",
+        },
+        engine,
+      ).content[0].text,
+    );
+    const out = JSON.parse(
+      sheetMetalNest(
+        {
+          parts: [{ document_id, quantity: 3 }],
+        },
+        engine,
+      ).content[0].text,
+    );
+    expect(out.result.placements).toHaveLength(3);
+    expect(out.parts[0].width_mm).toBeCloseTo(200, 1);
+    expect(out.parts[0].height_mm).toBeCloseTo(100, 1);
+  });
+
+  it("bend sequence: outermost bends form first", () => {
+    // U-channel with a hem on one of the sides. Hem (depth 2) should
+    // sort ahead of the parent flanges (depth 1).
+    const { document_id } = JSON.parse(
+      sheetMetalCreate(
+        {
+          width: 80,
+          depth: 40,
+          thickness: 1,
+          material: "al-soft",
+          flanges: [
+            { edge_index: 0, length: 20 },
+            { edge_index: 2, length: 20 },
+          ],
+          hems: [{ edge_index: 2, length: 5, panel_id: 1 }],
+        },
+        engine,
+      ).content[0].text,
+    );
+    const out = JSON.parse(
+      sheetMetalSequence({ document_id }, engine).content[0].text,
+    );
+    expect(out.count).toBe(3);
+    expect(out.steps[0].depth).toBeGreaterThanOrEqual(out.steps[1].depth);
+    expect(out.steps[1].depth).toBeGreaterThanOrEqual(out.steps[2].depth);
+  });
+
+  it("base flange from arbitrary outline: L-bracket polygon", () => {
+    // L-shaped base flange.
+    const out = JSON.parse(
+      sheetMetalCreate(
+        {
+          outline: [
+            [0, 0],
+            [50, 0],
+            [50, 15],
+            [20, 15],
+            [20, 50],
+            [0, 50],
+          ],
+          thickness: 1,
+          material: "al-soft",
+        },
+        engine,
+      ).content[0].text,
+    );
+    expect(out.model.panel_count).toBe(1);
+    expect(out.model.bend_count).toBe(0);
+    // Flat area equals the L-shape area: 50×15 + 20×35 = 1450 mm².
+    expect(out.flat.area_mm2).toBeCloseTo(1450, 0);
+  });
+
+  it("base flange polygon: holes propagate to the flat pattern", () => {
+    const create = JSON.parse(
+      sheetMetalCreate(
+        {
+          outline: [
+            { x: 0, y: 0 },
+            { x: 40, y: 0 },
+            { x: 40, y: 20 },
+            { x: 0, y: 20 },
+          ],
+          holes: [
+            [
+              [10, 5],
+              [10, 15],
+              [15, 15],
+              [15, 5],
+            ],
+          ],
+          thickness: 1,
+          material: "al-soft",
+        },
+        engine,
+      ).content[0].text,
+    );
+    const unfolded = JSON.parse(
+      sheetMetalUnfold(
+        { document_id: create.document_id },
+        engine,
+      ).content[0].text,
+    );
+    expect(unfolded.flat_pattern.panel_holes_2d[0]).toHaveLength(1);
+    expect(unfolded.dxf).toContain("0\nLAYER\n2\nCUT\n");
+    // Two LWPOLYLINE entries on CUT: 1 outline + 1 hole.
+    expect(unfolded.dxf.match(/0\nLWPOLYLINE\n8\nCUT/g)?.length).toBe(2);
+  });
+
+  it("jog: creates a Z-shaped offset with two opposite 90° bends", () => {
+    const out = JSON.parse(
+      sheetMetalCreate(
+        {
+          width: 120,
+          depth: 60,
+          thickness: 1,
+          material: "al-soft",
+          jogs: [{ edge_index: 0, offset: 5, length: 25 }],
+        },
+        engine,
+      ).content[0].text,
+    );
+    expect(out.model.panel_count).toBe(3);
+    expect(out.model.bend_count).toBe(2);
+    expect(out.model.bends[0].angle_rad).toBeCloseTo(Math.PI / 2, 5);
+    expect(out.model.bends[1].angle_rad).toBeCloseTo(Math.PI / 2, 5);
+    expect(out.model.bends[0].direction).not.toBe(out.model.bends[1].direction);
+    expect(out.model.bends[0].k_factor_source).toContain(";jog:a");
+    expect(out.model.bends[1].k_factor_source).toContain(";jog:b");
+  });
+
+  it("springback: bend summary includes compensated angle per material", () => {
+    // Al-hard has higher springback than al-soft.
+    const soft = JSON.parse(
+      sheetMetalCreate(
+        {
+          width: 80,
+          depth: 40,
+          thickness: 1,
+          material: "al-soft",
+          flanges: [{ edge_index: 0, length: 15, radius: 2 }],
+        },
+        engine,
+      ).content[0].text,
+    );
+    const hard = JSON.parse(
+      sheetMetalCreate(
+        {
+          width: 80,
+          depth: 40,
+          thickness: 1,
+          material: "al-hard",
+          flanges: [{ edge_index: 0, length: 15, radius: 2 }],
+        },
+        engine,
+      ).content[0].text,
+    );
+    const softBend = soft.model.bends[0];
+    const hardBend = hard.model.bends[0];
+    expect(softBend.springback_rad).toBeGreaterThan(0);
+    expect(hardBend.springback_rad).toBeGreaterThan(softBend.springback_rad);
+    expect(softBend.compensated_angle_rad).toBeCloseTo(
+      softBend.angle_rad + softBend.springback_rad,
+      6,
+    );
+  });
+
+  it("suggest_fix: maps violations to actionable parameter changes", () => {
+    // Short flange flags FlangeBelowMinHeight → suggest increasing length.
+    const { document_id } = JSON.parse(
+      sheetMetalCreate(
+        {
+          width: 100,
+          depth: 50,
+          thickness: 1,
+          material: "al-soft",
+          flanges: [{ edge_index: 0, length: 2 }],
+        },
+        engine,
+      ).content[0].text,
+    );
+    const out = JSON.parse(
+      sheetMetalSuggestFix({ document_id }, engine).content[0].text,
+    );
+    expect(out.count).toBeGreaterThan(0);
+    const flangeFix = out.suggestions.find(
+      (s: { fix: { action: string } }) =>
+        s.fix.action === "increase_flange_length",
+    );
+    expect(flangeFix).toBeDefined();
+    expect(flangeFix.fix.new_length_mm).toBeGreaterThanOrEqual(5);
+    expect(flangeFix.fix.description.toLowerCase()).toContain("flange");
   });
 });

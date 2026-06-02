@@ -14,6 +14,7 @@
  */
 
 import { evaluateDocument as evaluateDocumentTS, type EvaluateOptions, embroideryPatternToMesh, findEmbroideryPattern, transformMesh } from "./evaluate.js";
+import { buildSheetMetalChain, evaluateSheetMetalChain } from "./sheet-metal.js";
 import type { EvaluatedScene, EvalTimingData, TriangleMesh } from "./mesh.js";
 import type { Document } from "@vcad/ir";
 
@@ -123,6 +124,38 @@ function postProcessEmbroidery(scene: EvaluatedScene, doc: Document): EvaluatedS
   return changed ? { ...scene, parts } : scene;
 }
 
+/** Post-process WASM result: route sheet-metal roots (which the Rust
+ *  document evaluator leaves empty) through the dedicated kernel binding,
+ *  mirroring {@link postProcessEmbroidery}. Without this the worker path —
+ *  which the app uses by default — never attaches `part.sheetMetal`, so
+ *  the sheet-metal panel/DFM inspector never appears. */
+function postProcessSheetMetal(
+  scene: EvaluatedScene,
+  doc: Document,
+): EvaluatedScene {
+  const visibleRoots = doc.roots.filter((e) => e.visible !== false);
+  let changed = false;
+  const parts = scene.parts.map((p, i) => {
+    if (p.mesh.positions.length === 0 && i < visibleRoots.length) {
+      const chain = buildSheetMetalChain(visibleRoots[i]!.root, doc.nodes);
+      if (chain) {
+        try {
+          const { mesh, sheetMetal } = evaluateSheetMetalChain(
+            chain,
+            kernelModule,
+          );
+          changed = true;
+          return { mesh, material: p.material, sheetMetal };
+        } catch (e) {
+          console.warn(`[worker] sheet-metal eval failed at root[${i}]:`, e);
+        }
+      }
+    }
+    return p;
+  });
+  return changed ? { ...scene, parts } : scene;
+}
+
 /** Run evaluation using whichever path is available. */
 function evaluate(docJson: string, skipClashDetection: boolean): EvaluatedScene {
   // Fast path: native WASM evaluator (with fallback to TS on failure)
@@ -131,7 +164,7 @@ function evaluate(docJson: string, skipClashDetection: boolean): EvaluatedScene 
       const result = wasmEvaluateDocument(docJson, skipClashDetection);
       const scene = wasmResultToScene(result);
       const doc: Document = JSON.parse(docJson);
-      return postProcessEmbroidery(scene, doc);
+      return postProcessSheetMetal(postProcessEmbroidery(scene, doc), doc);
     } catch {
       // WASM evaluator failed — fall through to TS evaluator
     }
@@ -162,6 +195,10 @@ self.onmessage = async (e: MessageEvent) => {
       kernelModule = {
         Solid: wasm.Solid,
         evaluateDocument: (wasm as Record<string, unknown>).evaluateDocument,
+        evaluateSheetMetalChain: (wasm as Record<string, unknown>)
+          .evaluateSheetMetalChain,
+        checkSheetMetal: (wasm as Record<string, unknown>).checkSheetMetal,
+        costSheetMetal: (wasm as Record<string, unknown>).costSheetMetal,
       };
 
       // Check if native WASM evaluator is available

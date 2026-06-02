@@ -3657,7 +3657,10 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
         )),
 
         vcad_ir::CsgOp::SheetMetalBaseFlangeRect { .. }
-        | vcad_ir::CsgOp::SheetMetalEdgeFlange { .. } => Err(JsError::new(
+        | vcad_ir::CsgOp::SheetMetalBaseFlangePolygon { .. }
+        | vcad_ir::CsgOp::SheetMetalEdgeFlange { .. }
+        | vcad_ir::CsgOp::SheetMetalHem { .. }
+        | vcad_ir::CsgOp::SheetMetalJog { .. } => Err(JsError::new(
             "Sheet-metal ops must be routed through evaluateSheetMetalChain, not the BRep solid pipeline",
         )),
     }

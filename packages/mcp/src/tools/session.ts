@@ -21,6 +21,16 @@ function nextSessionId(): string {
   return `doc_${Date.now()}_${nextId++}`;
 }
 
+/** Register a freshly-built document as a session and return its id.
+ *  Lets other tools (e.g. `sheet_metal_create`) hand back a
+ *  `document_id` that `inspect_cad` / `export_cad` / `open_in_browser`
+ *  can then operate on, without duplicating the id scheme. */
+export function registerSession(doc: Document): string {
+  const id = nextSessionId();
+  documents.set(id, doc);
+  return id;
+}
+
 /** Get a session document by id, or throw a helpful error. */
 export function getSession(documentId: string): Document {
   const doc = documents.get(documentId);

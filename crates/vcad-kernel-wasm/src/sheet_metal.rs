@@ -25,11 +25,22 @@
 //! the foundation tier exposed to the web app.
 
 use serde::{Deserialize, Serialize};
+use vcad_kernel_math::Point2;
 use vcad_kernel_sheet::{
-    add_edge_flange, base_flange_rect,
+    add_edge_flange, add_hem, add_jog, base_flange_polygon_with_holes, base_flange_rect,
+    bend_sequence,
     bend_table::{self, BendTable},
+    check_manufacturability,
+    cost::{estimate_cost, CostBreakdown, CostRates},
     edge_flange::EdgeFlangeParams,
-    BendDirection, FlangePosition, FlatPattern, SheetMetalModel,
+    flat_pattern_to_dxf,
+    hem::{HemKind, HemParams},
+    jog::JogParams,
+    nest_rectangles, nested_dxf,
+    nesting::{NestingParams, NestingResult, PartFootprint},
+    sequence::BendStep,
+    BendDirection, FlangePosition, FlatPattern, NestedPlacement, SheetMetalModel, ShopProfile,
+    Violation,
 };
 use wasm_bindgen::prelude::*;
 
@@ -46,6 +57,17 @@ enum ChainOp {
         /// Material name for K-factor lookup (e.g. `"Al-soft"`).
         material: String,
     },
+    /// Initialise the model from an arbitrary CCW polygon (with optional
+    /// CW hole loops) in the XY plane.
+    BaseFlangePolygon {
+        /// CCW outline points as `[x, y]` pairs (mm).
+        outline: Vec<[f64; 2]>,
+        /// Optional CW hole loops.
+        #[serde(default)]
+        holes: Vec<Vec<[f64; 2]>>,
+        thickness: f64,
+        material: String,
+    },
     /// Add a flange off `edge_index` of `panel_id`.
     EdgeFlange {
         panel_id: usize,
@@ -57,6 +79,25 @@ enum ChainOp {
         /// Optional manual K-factor override (skips bend-table lookup).
         manual_k: Option<f64>,
     },
+    /// Add a hem (180° fold) off `edge_index` of `panel_id`.
+    Hem {
+        panel_id: usize,
+        edge_index: usize,
+        kind: HemKind,
+        length: f64,
+        #[serde(default)]
+        gap: f64,
+        direction: BendDirection,
+    },
+    /// Add a jog (Z-shaped offset) off `edge_index` of `panel_id`.
+    Jog {
+        panel_id: usize,
+        edge_index: usize,
+        offset: f64,
+        length: f64,
+        radius: f64,
+        direction: BendDirection,
+    },
 }
 
 /// What the binding returns to the web app. `mesh` is empty on error;
@@ -66,7 +107,23 @@ struct SheetMetalEvalResult {
     mesh: MeshDto,
     flat_pattern: FlatPatternDto,
     model: ModelSummaryDto,
+    /// Layered DXF (CUT / BEND_UP / BEND_DOWN) of the flat pattern, ready to
+    /// hand to a laser bureau. Empty string on error.
+    dxf: String,
+    /// Manufacturability findings against the generic shop profile. Empty
+    /// when the part is shop-ready.
+    violations: Vec<ViolationDto>,
     error: Option<String>,
+}
+
+/// UI-facing projection of a [`Violation`]: pre-rendered severity + message
+/// plus the structured detail (kind-tagged) for camera-fly / fix actions.
+#[derive(Debug, Clone, Serialize)]
+struct ViolationDto {
+    rule: &'static str,
+    severity: String,
+    message: String,
+    detail: Violation,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -105,6 +162,9 @@ struct FlatCreaseDto {
 #[derive(Debug, Clone, Serialize, Default)]
 struct ModelSummaryDto {
     thickness: f64,
+    /// Material key from the model (e.g. `"al-soft"`). Empty when the
+    /// chain didn't specify one.
+    material: String,
     panel_count: usize,
     bend_count: usize,
     bends: Vec<BendSummaryDto>,
@@ -121,6 +181,13 @@ struct BendSummaryDto {
     k_factor_source: Option<String>,
     /// `θ · (R + K · t)`.
     allowance_mm: f64,
+    /// Estimated springback (radians). Computed from the part's material
+    /// via `material.springback_per_radian * angle`; zero when the
+    /// material is unknown.
+    springback_rad: f64,
+    /// The angle to actually form on the brake to hit the modelled
+    /// (target) angle once springback releases: `angle + springback`.
+    compensated_angle_rad: f64,
 }
 
 /// Evaluate a chain of sheet-metal ops and return `(mesh, flat-pattern,
@@ -156,14 +223,319 @@ fn build_result(chain_json: &str) -> Result<SheetMetalEvalResult, String> {
 
     let mesh = tessellate_model(&model);
     let flat = FlatPattern::from_model(&model);
+    let dxf = flat_pattern_to_dxf(&flat);
+    let violations = check_manufacturability(&model, &ShopProfile::generic())
+        .into_iter()
+        .map(|v| ViolationDto {
+            rule: v.rule(),
+            severity: format!("{:?}", v.severity()),
+            message: v.message(),
+            detail: v,
+        })
+        .collect();
     let flat_dto = flat_pattern_to_dto(flat);
     let summary = summarise_model(&model);
     Ok(SheetMetalEvalResult {
         mesh,
         flat_pattern: flat_dto,
         model: summary,
+        dxf,
+        violations,
         error: None,
     })
+}
+
+/// Result of [`check_sheet_metal`].
+#[derive(Debug, Clone, Serialize, Default)]
+struct CheckResult {
+    /// Findings against the supplied shop profile. Empty = shop-ready.
+    violations: Vec<ViolationDto>,
+    /// The profile actually used (after field-tolerant merge onto the
+    /// generic defaults) — so the UI can show what it checked against.
+    shop: Option<ShopProfile>,
+    error: Option<String>,
+}
+
+/// Re-run manufacturability against a *caller-supplied* shop profile.
+///
+/// Separate from [`evaluate_sheet_metal_chain`] on purpose: the spec treats
+/// manufacturability as a **typed query against the model**, not a
+/// by-product of mesh evaluation. The app's DFM inspector and the
+/// `sheet_metal.check` MCP tool both call this so a shop's real
+/// capabilities — not the generic defaults — drive the result.
+///
+/// `shop_json` is field-tolerant (see [`ShopProfile`]); pass `""` for the
+/// generic shop. On any error the `error` field is set and `violations` is
+/// empty.
+#[wasm_bindgen(js_name = checkSheetMetal)]
+pub fn check_sheet_metal(chain_json: &str, shop_json: &str) -> String {
+    let result = match check_impl(chain_json, shop_json) {
+        Ok(r) => r,
+        Err(msg) => CheckResult {
+            error: Some(msg),
+            ..Default::default()
+        },
+    };
+    serde_json::to_string(&result).unwrap_or_else(|_| r#"{"error":"serialize failed"}"#.to_string())
+}
+
+fn check_impl(chain_json: &str, shop_json: &str) -> Result<CheckResult, String> {
+    let chain: Vec<ChainOp> =
+        serde_json::from_str(chain_json).map_err(|e| format!("chain JSON: {e}"))?;
+    if chain.is_empty() {
+        return Err("empty op chain".to_string());
+    }
+    let shop = if shop_json.trim().is_empty() {
+        ShopProfile::generic()
+    } else {
+        serde_json::from_str::<ShopProfile>(shop_json).map_err(|e| format!("shop JSON: {e}"))?
+    };
+    let table = BendTable::builtin();
+    let model = build_model(&chain, &table)?;
+    let violations = check_manufacturability(&model, &shop)
+        .into_iter()
+        .map(|v| ViolationDto {
+            rule: v.rule(),
+            severity: format!("{:?}", v.severity()),
+            message: v.message(),
+            detail: v,
+        })
+        .collect();
+    Ok(CheckResult {
+        violations,
+        shop: Some(shop),
+        error: None,
+    })
+}
+
+/// Result of [`cost_sheet_metal`].
+#[derive(Debug, Clone, Serialize, Default)]
+struct CostResult {
+    breakdown: Option<CostBreakdown>,
+    rates: Option<CostRates>,
+    error: Option<String>,
+}
+
+/// Estimate the manufacturing cost of a sheet-metal chain.
+///
+/// `rates_json` is field-tolerant (omit keys to use the generic shop
+/// rates); pass `""` for full defaults. `quantity` is clamped to `>= 1`.
+#[wasm_bindgen(js_name = costSheetMetal)]
+pub fn cost_sheet_metal(chain_json: &str, rates_json: &str, quantity: u32) -> String {
+    let result = match cost_impl(chain_json, rates_json, quantity) {
+        Ok(r) => r,
+        Err(msg) => CostResult {
+            error: Some(msg),
+            ..Default::default()
+        },
+    };
+    serde_json::to_string(&result).unwrap_or_else(|_| r#"{"error":"serialize failed"}"#.to_string())
+}
+
+fn cost_impl(chain_json: &str, rates_json: &str, quantity: u32) -> Result<CostResult, String> {
+    let chain: Vec<ChainOp> =
+        serde_json::from_str(chain_json).map_err(|e| format!("chain JSON: {e}"))?;
+    if chain.is_empty() {
+        return Err("empty op chain".to_string());
+    }
+    let rates = if rates_json.trim().is_empty() {
+        CostRates::generic()
+    } else {
+        serde_json::from_str::<CostRates>(rates_json).map_err(|e| format!("rates JSON: {e}"))?
+    };
+    let table = BendTable::builtin();
+    let mut model = build_model(&chain, &table)?;
+    vcad_kernel_sheet::unfold(&mut model).map_err(|e| format!("unfold: {e:?}"))?;
+    let flat = FlatPattern::from_model(&model);
+    let breakdown = estimate_cost(&model, &flat, quantity, &rates);
+    Ok(CostResult {
+        breakdown: Some(breakdown),
+        rates: Some(rates),
+        error: None,
+    })
+}
+
+/// Result of [`sheet_metal_sequence`].
+#[derive(Debug, Clone, Serialize, Default)]
+struct SequenceResult {
+    steps: Vec<BendStep>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+struct NestingDto {
+    result: Option<NestingResult>,
+    error: Option<String>,
+}
+
+/// Rectangular nesting of multiple parts on stock sheets.
+///
+/// `parts_json` is a JSON array of `PartFootprint` objects (each with
+/// `name`, `width_mm`, `height_mm`, `quantity`); `params_json` is a
+/// `NestingParams` object (pass `""` for the generic 4'×8' default).
+#[wasm_bindgen(js_name = nestSheetMetalParts)]
+pub fn nest_sheet_metal_parts(parts_json: &str, params_json: &str) -> String {
+    let dto = match nest_impl(parts_json, params_json) {
+        Ok(r) => NestingDto {
+            result: Some(r),
+            error: None,
+        },
+        Err(msg) => NestingDto {
+            result: None,
+            error: Some(msg),
+        },
+    };
+    serde_json::to_string(&dto).unwrap_or_else(|_| r#"{"error":"serialize failed"}"#.to_string())
+}
+
+/// Placement spec for [`nested_sheet_metal_dxf`]: each entry pairs a
+/// sheet-metal op chain with the (sheet, dx, dy, rotated) location it
+/// occupies on a stock sheet.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NestedPlacementDto {
+    chain: Vec<ChainOp>,
+    sheet: usize,
+    #[serde(default)]
+    dx_mm: f64,
+    #[serde(default)]
+    dy_mm: f64,
+    #[serde(default)]
+    rotated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+struct NestedDxfResult {
+    /// One DXF string per sheet (index 0 = sheet 0).
+    sheets: Vec<String>,
+    error: Option<String>,
+}
+
+/// Produce one layered DXF per stock sheet for a set of nested parts.
+///
+/// `placements_json` is an array of [`NestedPlacementDto`]; each chain
+/// is independently evaluated into a flat pattern, then translated /
+/// rotated according to its placement before being written to the
+/// sheet's DXF. Layers are the same `CUT` / `BEND_UP` / `BEND_DOWN`
+/// triple a shop's post-processor already knows.
+#[wasm_bindgen(js_name = nestedSheetMetalDxf)]
+pub fn nested_sheet_metal_dxf(placements_json: &str) -> String {
+    let result = match nested_dxf_impl(placements_json) {
+        Ok(sheets) => NestedDxfResult {
+            sheets,
+            error: None,
+        },
+        Err(msg) => NestedDxfResult {
+            sheets: Vec::new(),
+            error: Some(msg),
+        },
+    };
+    serde_json::to_string(&result).unwrap_or_else(|_| r#"{"error":"serialize failed"}"#.to_string())
+}
+
+fn nested_dxf_impl(placements_json: &str) -> Result<Vec<String>, String> {
+    let placements: Vec<NestedPlacementDto> =
+        serde_json::from_str(placements_json).map_err(|e| format!("placements JSON: {e}"))?;
+    let table = BendTable::builtin();
+    // Build a flat pattern per placement (own it so the slice of refs is
+    // stable across the call).
+    let mut flats: Vec<FlatPattern> = Vec::with_capacity(placements.len());
+    for (i, p) in placements.iter().enumerate() {
+        let mut model =
+            build_model(&p.chain, &table).map_err(|e| format!("placement #{i}: {e}"))?;
+        vcad_kernel_sheet::unfold(&mut model)
+            .map_err(|e| format!("placement #{i} unfold: {e:?}"))?;
+        flats.push(FlatPattern::from_model(&model));
+    }
+    let placements_ref: Vec<NestedPlacement<'_>> = placements
+        .iter()
+        .zip(flats.iter())
+        .map(|(p, f)| NestedPlacement {
+            flat: f,
+            sheet: p.sheet,
+            dx_mm: p.dx_mm,
+            dy_mm: p.dy_mm,
+            rotated: p.rotated,
+        })
+        .collect();
+    Ok(nested_dxf(&placements_ref))
+}
+
+fn nest_impl(parts_json: &str, params_json: &str) -> Result<NestingResult, String> {
+    let parts: Vec<PartFootprint> =
+        serde_json::from_str(parts_json).map_err(|e| format!("parts JSON: {e}"))?;
+    let params = if params_json.trim().is_empty() {
+        NestingParams::generic()
+    } else {
+        serde_json::from_str::<NestingParams>(params_json)
+            .map_err(|e| format!("nesting params JSON: {e}"))?
+    };
+    Ok(nest_rectangles(&parts, &params))
+}
+
+/// Return a feasible bend sequence for the chain. Outermost-first
+/// heuristic; pure query, no mesh evaluation.
+#[wasm_bindgen(js_name = sheetMetalSequence)]
+pub fn sheet_metal_sequence(chain_json: &str) -> String {
+    let result = match sequence_impl(chain_json) {
+        Ok(r) => r,
+        Err(msg) => SequenceResult {
+            error: Some(msg),
+            ..Default::default()
+        },
+    };
+    serde_json::to_string(&result).unwrap_or_else(|_| r#"{"error":"serialize failed"}"#.to_string())
+}
+
+fn sequence_impl(chain_json: &str) -> Result<SequenceResult, String> {
+    let chain: Vec<ChainOp> =
+        serde_json::from_str(chain_json).map_err(|e| format!("chain JSON: {e}"))?;
+    if chain.is_empty() {
+        return Err("empty op chain".to_string());
+    }
+    let table = BendTable::builtin();
+    let model = build_model(&chain, &table)?;
+    Ok(SequenceResult {
+        steps: bend_sequence(&model),
+        error: None,
+    })
+}
+
+/// Return the built-in sheet-metal materials registry as JSON.
+///
+/// Lets the UI populate a material picker and the MCP tools advertise
+/// what alloys are available — without each consumer hard-coding the list.
+#[wasm_bindgen(js_name = getSheetMetalMaterials)]
+pub fn get_sheet_metal_materials() -> String {
+    let mats = vcad_kernel_sheet::builtin_materials();
+    serde_json::to_string(&mats).unwrap_or_else(|_| "[]".to_string())
+}
+
+/// Return the built-in bend-table rows as JSON.
+///
+/// Exposes the curated `(material, t, R) → K` lookup so a shop / agent can
+/// audit what K-factor an upcoming bend will use without having to model
+/// the part first.
+#[wasm_bindgen(js_name = getSheetMetalBendTable)]
+pub fn get_sheet_metal_bend_table() -> String {
+    let table = BendTable::builtin();
+    let rows: Vec<_> = table
+        .rows
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "material": r.material,
+                "thickness_mm": r.thickness,
+                "radius_mm": r.radius,
+                "k_factor": r.k_factor,
+            })
+        })
+        .collect();
+    serde_json::to_string(&serde_json::json!({
+        "id": table.id,
+        "rows": rows,
+    }))
+    .unwrap_or_else(|_| "{}".to_string())
 }
 
 fn build_model(chain: &[ChainOp], table: &BendTable) -> Result<SheetMetalModel, String> {
@@ -176,17 +548,36 @@ fn build_model(chain: &[ChainOp], table: &BendTable) -> Result<SheetMetalModel, 
             width,
             depth,
             thickness,
-            ..
+            material,
         } => {
-            base_flange_rect(*width, *depth, *thickness).map_err(|e| format!("base flange: {e}"))?
+            let mut m = base_flange_rect(*width, *depth, *thickness)
+                .map_err(|e| format!("base flange: {e}"))?;
+            m.material = material.clone();
+            m
         }
-        ChainOp::EdgeFlange { .. } => {
+        ChainOp::BaseFlangePolygon {
+            outline,
+            holes,
+            thickness,
+            material,
+        } => {
+            let to_pts = |loop_pts: &[[f64; 2]]| -> Vec<Point2> {
+                loop_pts.iter().map(|p| Point2::new(p[0], p[1])).collect()
+            };
+            let outline_pts = to_pts(outline);
+            let hole_loops: Vec<Vec<Point2>> = holes.iter().map(|h| to_pts(h)).collect();
+            let mut m = base_flange_polygon_with_holes(outline_pts, hole_loops, *thickness)
+                .map_err(|e| format!("base flange (polygon): {e}"))?;
+            m.material = material.clone();
+            m
+        }
+        ChainOp::EdgeFlange { .. } | ChainOp::Hem { .. } | ChainOp::Jog { .. } => {
             return Err("first chain op must be a base flange".to_string());
         }
     };
     for (i, op) in iter.enumerate() {
         match op {
-            ChainOp::BaseFlangeRect { .. } => {
+            ChainOp::BaseFlangeRect { .. } | ChainOp::BaseFlangePolygon { .. } => {
                 return Err(format!(
                     "chain op #{} is a base flange (only one allowed)",
                     i + 1
@@ -202,7 +593,8 @@ fn build_model(chain: &[ChainOp], table: &BendTable) -> Result<SheetMetalModel, 
                 manual_k,
             } => {
                 let material = match base {
-                    ChainOp::BaseFlangeRect { material, .. } => material.clone(),
+                    ChainOp::BaseFlangeRect { material, .. }
+                    | ChainOp::BaseFlangePolygon { material, .. } => material.clone(),
                     _ => String::new(),
                 };
                 let params = EdgeFlangeParams {
@@ -218,6 +610,42 @@ fn build_model(chain: &[ChainOp], table: &BendTable) -> Result<SheetMetalModel, 
                 };
                 add_edge_flange(&mut model, table, params)
                     .map_err(|e| format!("edge flange #{}: {e}", i + 1))?;
+            }
+            ChainOp::Hem {
+                panel_id,
+                edge_index,
+                kind,
+                length,
+                gap,
+                direction,
+            } => {
+                let params = HemParams {
+                    panel: *panel_id,
+                    edge_index: *edge_index,
+                    kind: *kind,
+                    length: *length,
+                    gap: *gap,
+                    direction: *direction,
+                };
+                add_hem(&mut model, table, params).map_err(|e| format!("hem #{}: {e}", i + 1))?;
+            }
+            ChainOp::Jog {
+                panel_id,
+                edge_index,
+                offset,
+                length,
+                radius,
+                direction,
+            } => {
+                let params = JogParams {
+                    panel: *panel_id,
+                    edge_index: *edge_index,
+                    offset: *offset,
+                    length: *length,
+                    bend_radius: *radius,
+                    direction: *direction,
+                };
+                add_jog(&mut model, table, params).map_err(|e| format!("jog #{}: {e}", i + 1))?;
             }
         }
     }
@@ -392,27 +820,36 @@ fn flat_pattern_to_dto(flat: FlatPattern) -> FlatPatternDto {
 }
 
 fn summarise_model(model: &SheetMetalModel) -> ModelSummaryDto {
+    // Material-driven; zero for an unspecified material so the
+    // compensated angle equals the design angle.
+    let springback_factor = model.springback_per_radian();
     let bends = model
         .bends
         .iter()
-        .map(|b| BendSummaryDto {
-            parent: b.parent,
-            child: b.child,
-            angle_rad: b.angle,
-            radius: b.radius,
-            direction: b.direction,
-            k_factor: b.k_factor,
-            k_factor_source: b.k_factor_source.clone(),
-            allowance_mm: bend_table::bend_allowance(
-                b.angle,
-                b.radius,
-                b.k_factor,
-                model.thickness,
-            ),
+        .map(|b| {
+            let springback_rad = springback_factor * b.angle;
+            BendSummaryDto {
+                parent: b.parent,
+                child: b.child,
+                angle_rad: b.angle,
+                radius: b.radius,
+                direction: b.direction,
+                k_factor: b.k_factor,
+                k_factor_source: b.k_factor_source.clone(),
+                allowance_mm: bend_table::bend_allowance(
+                    b.angle,
+                    b.radius,
+                    b.k_factor,
+                    model.thickness,
+                ),
+                springback_rad,
+                compensated_angle_rad: b.angle + springback_rad,
+            }
         })
         .collect();
     ModelSummaryDto {
         thickness: model.thickness,
+        material: model.material.clone(),
         panel_count: model.panels.len(),
         bend_count: model.bends.len(),
         bends,
@@ -440,6 +877,33 @@ mod tests {
             parsed["flat_pattern"]["creases"].as_array().unwrap().len(),
             2
         );
+        let dxf = parsed["dxf"].as_str().unwrap();
+        assert!(dxf.contains("0\nLAYER\n2\nCUT\n"));
+        assert!(dxf.contains("0\nLINE\n8\nBEND_UP"));
+        assert!(dxf.trim_end().ends_with("0\nEOF"));
+        // 100x50 base with two 25 mm flanges is shop-ready.
+        assert_eq!(
+            parsed["violations"].as_array().unwrap().len(),
+            0,
+            "expected shop-ready, got {}",
+            parsed["violations"]
+        );
+    }
+
+    #[test]
+    fn surfaces_manufacturability_violations() {
+        // 2 mm flange off a 1 mm sheet is below the 5 mm minimum.
+        let chain = r#"[
+            {"type":"BaseFlangeRect","width":100,"depth":50,"thickness":1.0,"material":"Al-soft"},
+            {"type":"EdgeFlange","panelId":0,"edgeIndex":0,"length":2,"angle":1.5707963267948966,"radius":1.0,"direction":"Up","manualK":0.42}
+        ]"#;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&evaluate_sheet_metal_chain(chain)).unwrap();
+        let viols = parsed["violations"].as_array().unwrap();
+        assert!(!viols.is_empty());
+        assert_eq!(viols[0]["severity"], "Error");
+        assert_eq!(viols[0]["rule"], "sheet.flange_height");
+        assert_eq!(viols[0]["detail"]["kind"], "FlangeBelowMinHeight");
     }
 
     #[test]
@@ -455,5 +919,42 @@ mod tests {
         let parsed: serde_json::Value =
             serde_json::from_str(&evaluate_sheet_metal_chain(chain)).unwrap();
         assert!(parsed["error"].as_str().unwrap().contains("base flange"));
+    }
+
+    const CLEAN_CHAIN: &str = r#"[
+        {"type":"BaseFlangeRect","width":100,"depth":50,"thickness":1.0,"material":"Al-soft"},
+        {"type":"EdgeFlange","panelId":0,"edgeIndex":0,"length":25,"angle":1.5707963267948966,"radius":1.0,"direction":"Up","manualK":0.42}
+    ]"#;
+
+    #[test]
+    fn check_sheet_metal_generic_shop_is_clean() {
+        let parsed: serde_json::Value =
+            serde_json::from_str(&check_sheet_metal(CLEAN_CHAIN, "")).unwrap();
+        assert!(parsed["error"].is_null(), "got {parsed}");
+        assert_eq!(parsed["violations"].as_array().unwrap().len(), 0);
+        assert_eq!(parsed["shop"]["name"], "Generic shop");
+    }
+
+    #[test]
+    fn check_sheet_metal_custom_shop_flags_radius() {
+        // Stricter shop: R/t ≥ 4 → the 1 mm radius on 1 mm stock fails.
+        let shop = r#"{"name":"Strict Inc","min_bend_radius_ratio":4.0}"#;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&check_sheet_metal(CLEAN_CHAIN, shop)).unwrap();
+        assert!(parsed["error"].is_null(), "got {parsed}");
+        let viols = parsed["violations"].as_array().unwrap();
+        assert!(viols
+            .iter()
+            .any(|v| v["detail"]["kind"] == "BendRadiusBelowMinimum"));
+        // Field-tolerant merge kept the generic brake length.
+        assert_eq!(parsed["shop"]["name"], "Strict Inc");
+        assert_eq!(parsed["shop"]["max_bend_length_mm"], 3000.0);
+    }
+
+    #[test]
+    fn check_sheet_metal_reports_bad_shop_json() {
+        let parsed: serde_json::Value =
+            serde_json::from_str(&check_sheet_metal(CLEAN_CHAIN, "{not json")).unwrap();
+        assert!(parsed["error"].as_str().unwrap().contains("shop JSON"));
     }
 }

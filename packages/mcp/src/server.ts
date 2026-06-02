@@ -82,6 +82,26 @@ import {
   dfmApplyFix,
   dfmApplyFixSchema,
 } from "./tools/dfm.js";
+import {
+  sheetMetalCreate,
+  sheetMetalCreateSchema,
+  sheetMetalUnfold,
+  sheetMetalUnfoldSchema,
+  sheetMetalCheck,
+  sheetMetalCheckSchema,
+  sheetMetalMaterials,
+  sheetMetalMaterialsSchema,
+  sheetMetalBendTable,
+  sheetMetalBendTableSchema,
+  sheetMetalCost,
+  sheetMetalCostSchema,
+  sheetMetalSuggestFix,
+  sheetMetalSuggestFixSchema,
+  sheetMetalSequence,
+  sheetMetalSequenceSchema,
+  sheetMetalNest,
+  sheetMetalNestSchema,
+} from "./tools/sheet-metal.js";
 import { appendGlbPreview } from "./tools/preview.js";
 import {
   getViewerHtml,
@@ -252,6 +272,61 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
         description:
           "Apply an approved DFM fix to the session document. v1 supports `set_param` patches (raise a fillet radius, thicken a wall) — other kinds throw and require manual edits. Re-run `dfm_check` afterwards to confirm the issue cleared.",
         inputSchema: dfmApplyFixSchema,
+      },
+      // ── Sheet metal (AI-native manufacturability surface) ───────
+      {
+        name: "sheet_metal_create",
+        description:
+          "Create a sheet-metal part: a rectangular base flange plus an ordered chain of edge flanges. Returns a `document_id` (usable with sheet_metal_unfold/check, inspect_cad, export_cad, open_in_browser), the panel/bend model summary, flat bbox + area, and DFM violations vs. the generic shop.",
+        inputSchema: sheetMetalCreateSchema,
+      },
+      {
+        name: "sheet_metal_unfold",
+        description:
+          "Return the flat pattern (panel outlines, holes, creases, area, bbox) for a sheet-metal session document, plus a layered DXF (CUT / BEND_UP / BEND_DOWN, millimetres) ready to send to a laser bureau.",
+        inputSchema: sheetMetalUnfoldSchema,
+      },
+      {
+        name: "sheet_metal_check",
+        description:
+          "Run sheet-metal manufacturability for a session document against a shop profile (brake length, min R/t, flange height, hole→bend, bend→bend). Field-tolerant: omit keys to use generic defaults. Returns structured violations the agent can use to adjust the part and re-check.",
+        inputSchema: sheetMetalCheckSchema,
+      },
+      {
+        name: "sheet_metal_materials",
+        description:
+          "List the built-in sheet-metal materials registry (aluminum soft/hard, mild + stainless steel, brass, copper) with min R/t, yield, modulus, density, and a coarse springback estimate. Use to pick a `material` for sheet_metal_create.",
+        inputSchema: sheetMetalMaterialsSchema,
+      },
+      {
+        name: "sheet_metal_bend_table",
+        description:
+          "Read the kernel's curated bend table — `(material, thickness, radius) → K-factor` rows used to compute bend allowance. Inspect this to know what K a planned bend will use without modelling the part first.",
+        inputSchema: sheetMetalBendTableSchema,
+      },
+      {
+        name: "sheet_metal_cost",
+        description:
+          "Estimate the manufacturing cost of a sheet-metal session document: material (mass × $/kg), cut (length × $/m), pierces, bends, amortized setup, plus shop markup. Returns a line-itemed breakdown so the agent can see which line dominates and which design changes would lower it. `rates` is field-tolerant; omit it to use generic low-volume laser defaults.",
+        inputSchema: sheetMetalCostSchema,
+      },
+      {
+        name: "sheet_metal_suggest_fix",
+        description:
+          "Translate the structured violations from sheet_metal_check into concrete parameter changes the agent can apply (radius up, flange longer, bends spread, etc.). Pass `violation_index` to target one, omit it to get a suggestion for every open violation. Closes the create → check → fix → re-check self-heal loop.",
+        inputSchema: sheetMetalSuggestFixSchema,
+      },
+      {
+        name: "sheet_metal_sequence",
+        description:
+          "Return a feasible press-brake bend sequence for a sheet-metal part — outermost bends first so the remaining flat stays small and earlier bends don't collide with later ones. Each step includes the springback-compensated brake angle and a one-line rationale.",
+        inputSchema: sheetMetalSequenceSchema,
+      },
+      {
+        name: "sheet_metal_nest",
+        description:
+          "Pack multiple sheet-metal parts on stock sheets using bottom-left fill decreasing. Each part is either a session `document_id` (footprint inferred from the flat pattern) or an explicit `{width_mm, height_mm}`. Returns per-instance placements, sheets used, and utilization — enough to drive a multi-part DXF and a real quote.",
+        inputSchema: sheetMetalNestSchema,
       },
       {
         name: "import_step",
@@ -494,6 +569,42 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
 
         case "dfm_apply_fix":
           result = dfmApplyFix(args);
+          break;
+
+        case "sheet_metal_create":
+          result = sheetMetalCreate(args, engine);
+          break;
+
+        case "sheet_metal_unfold":
+          result = sheetMetalUnfold(args, engine);
+          break;
+
+        case "sheet_metal_check":
+          result = sheetMetalCheck(args, engine);
+          break;
+
+        case "sheet_metal_materials":
+          result = sheetMetalMaterials(args, engine);
+          break;
+
+        case "sheet_metal_bend_table":
+          result = sheetMetalBendTable(args, engine);
+          break;
+
+        case "sheet_metal_cost":
+          result = sheetMetalCost(args, engine);
+          break;
+
+        case "sheet_metal_suggest_fix":
+          result = sheetMetalSuggestFix(args, engine);
+          break;
+
+        case "sheet_metal_sequence":
+          result = sheetMetalSequence(args, engine);
+          break;
+
+        case "sheet_metal_nest":
+          result = sheetMetalNest(args, engine);
           break;
 
         case "import_step":

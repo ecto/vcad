@@ -1,0 +1,18 @@
+{
+  "id": "2026-05-18-sheet-metal-suggest-fix",
+  "version": "0.9.4",
+  "date": "2026-05-18",
+  "category": "feat",
+  "title": "Sheet-metal self-heal: sheet_metal_suggest_fix",
+  "summary": "Closes the AI self-heal loop — for each manufacturability violation, return the concrete parameter change that resolves it (radius up, flange longer, bends spread, hole moved).",
+  "details": "## What's New\n\n- **`sheet_metal_suggest_fix` MCP tool**: takes a session document (and optional shop profile), runs the check, and translates each structured `Violation` into a typed `Fix` an agent can act on — `increase_radius`, `increase_flange_length`, `shorten_or_split_bend`, `move_hole_or_clearance`, `separate_bends`. Each carries the new numeric target plus a human-readable description.\n- Pass `violation_index` to target one, or omit to get a fix for every open violation.\n\nWith create → check → suggest_fix → re-create → re-check, an LLM agent can iterate to a manufacturable part with no human in the loop — the spec's headline AI bet.",
+  "features": [
+    "sheet-metal",
+    "dfm",
+    "mcp",
+    "ai"
+  ],
+  "mcpTools": [
+    "sheet_metal_suggest_fix"
+  ]
+}

@@ -178,7 +178,10 @@ fn evaluate_node(doc: &Document, node_id: NodeId) -> Result<Option<Solid>> {
         | CsgOp::EmbroideryPattern { .. }
         | CsgOp::PartInstance { .. }
         | CsgOp::SheetMetalBaseFlangeRect { .. }
-        | CsgOp::SheetMetalEdgeFlange { .. } => None,
+        | CsgOp::SheetMetalBaseFlangePolygon { .. }
+        | CsgOp::SheetMetalEdgeFlange { .. }
+        | CsgOp::SheetMetalHem { .. }
+        | CsgOp::SheetMetalJog { .. } => None,
     };
 
     Ok(solid)

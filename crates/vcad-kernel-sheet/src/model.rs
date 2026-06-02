@@ -139,6 +139,20 @@ impl Bend {
     pub fn allowance(&self, thickness: f64) -> f64 {
         self.angle * (self.radius + self.k_factor * thickness)
     }
+
+    /// Append a tag to the K-factor source label.
+    ///
+    /// Operations layered on top of [`crate::add_edge_flange`] (hems,
+    /// jogs) use this to mark their bends so the UI / DXF / agent can
+    /// label them as `hem`, `jog`, etc. rather than as generic flanges.
+    /// A bend with no prior source is treated as `"manual"`.
+    pub fn append_source_tag(&mut self, suffix: &str) {
+        let base = self
+            .k_factor_source
+            .clone()
+            .unwrap_or_else(|| "manual".to_string());
+        self.k_factor_source = Some(format!("{base}{suffix}"));
+    }
 }
 
 /// A complete sheet-metal model.
@@ -151,6 +165,10 @@ impl Bend {
 pub struct SheetMetalModel {
     /// Material thickness (mm). Constant across the part.
     pub thickness: f64,
+    /// Material name (key into [`crate::materials`] registry, e.g.
+    /// `"al-soft"`, `"steel-mild"`). Empty string means "unspecified" —
+    /// callers should treat that as an unknown alloy.
+    pub material: String,
     /// All panels in the model. Index by [`PanelId`].
     pub panels: Vec<Panel>,
     /// All bends in the model. Index by [`BendId`].
@@ -166,10 +184,32 @@ impl SheetMetalModel {
     pub fn new(thickness: f64) -> Self {
         Self {
             thickness,
+            material: String::new(),
             panels: Vec::new(),
             bends: Vec::new(),
             root: 0,
         }
+    }
+
+    /// Material properties for this model's alloy, looked up via
+    /// [`crate::materials::lookup_or_unknown`]. `None` when the model
+    /// was created without specifying a material — callers should treat
+    /// that as "defer to the shop / fall back to neutral defaults"
+    /// rather than picking an arbitrary alloy.
+    pub fn material_properties(&self) -> Option<crate::materials::MaterialProperties> {
+        if self.material.is_empty() {
+            None
+        } else {
+            Some(crate::materials::lookup_or_unknown(&self.material))
+        }
+    }
+
+    /// Estimated springback per radian for this model's material. Zero
+    /// when no material is set, so callers can multiply by an angle
+    /// without branching.
+    pub fn springback_per_radian(&self) -> f64 {
+        self.material_properties()
+            .map_or(0.0, |m| m.springback_per_radian)
     }
 
     /// Append a panel and return its [`PanelId`].

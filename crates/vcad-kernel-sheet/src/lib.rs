@@ -19,18 +19,41 @@
 //! - [`edge_flange::add_edge_flange`] — add a flange off an existing panel edge
 //! - [`unfold::unfold`] / [`unfold::refold`] — lossless 2D ↔ 3D round-trip
 //! - [`bend_table::BendTable`] — `BA = θ·(R + K·t)` with provenance
+//! - [`dxf::flat_pattern_to_dxf`] — layered DXF (CUT / BEND_UP / BEND_DOWN)
+//! - [`manufacturability::check_manufacturability`] — typed DFM query
 //!
-//! Later tiers add hems, jogs, miters, lofted flanges, manufacturability
-//! checks, costing, and DXF export. See `docs/design/sheet-metal.md`.
+//! Later tiers add hems, jogs, miters, lofted flanges, and costing. See
+//! `docs/design/sheet-metal.md`.
 
 pub mod base_flange;
 pub mod bend_table;
+pub mod cost;
+pub mod dxf;
 pub mod edge_flange;
+pub mod hem;
+pub mod jog;
+pub mod manufacturability;
+pub mod materials;
 pub mod model;
+pub mod nesting;
+pub mod sequence;
 pub mod unfold;
 
-pub use base_flange::{base_flange_rect, BaseFlangeError};
+pub use base_flange::{
+    base_flange_polygon, base_flange_polygon_with_holes, base_flange_rect, BaseFlangeError,
+};
 pub use bend_table::{BendAllowance, BendTable, KFactorSource};
+pub use cost::{estimate_cost, CostBreakdown, CostRates};
+pub use dxf::{flat_pattern_to_dxf, nested_dxf, NestedPlacement};
 pub use edge_flange::{add_edge_flange, EdgeFlangeError, FlangePosition};
+pub use hem::{add_hem, HemKind, HemParams};
+pub use jog::{add_jog, JogParams, JogResult};
+pub use manufacturability::{check_manufacturability, Severity, ShopProfile, Violation};
+pub use materials::{
+    builtin_materials, lookup as lookup_material, lookup_or_unknown as lookup_material_or_unknown,
+    MaterialProperties,
+};
 pub use model::{Bend, BendDirection, BendId, Frame, Panel, PanelId, SheetMetalModel};
+pub use nesting::{nest_rectangles, NestingParams, NestingResult, PartFootprint, Placement};
+pub use sequence::{bend_sequence, BendStep};
 pub use unfold::{refold, unfold, FlatPattern, UnfoldError};

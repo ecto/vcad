@@ -887,6 +887,22 @@ pub enum CsgOp {
     },
 
     #[tool(hidden)]
+    /// Sheet-metal base flange from an arbitrary closed polygon. The
+    /// outline must be CCW; holes (if any) must be CW. Lies in the XY
+    /// plane; outside face is +Z.
+    SheetMetalBaseFlangePolygon {
+        /// CCW outer boundary (mm, in the XY plane).
+        outline: Vec<Vec2>,
+        /// CW hole loops.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        holes: Vec<Vec<Vec2>>,
+        /// Material thickness (mm).
+        thickness: f64,
+        /// Material name for K-factor / cost / DFM lookup.
+        material: String,
+    },
+
+    #[tool(hidden)]
     /// Sheet-metal edge flange. Extends `parent` (which must evaluate to a
     /// sheet-metal model) with a new flange off `edge_index` of the
     /// referenced panel.
@@ -909,6 +925,62 @@ pub enum CsgOp {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         manual_k: Option<f64>,
     },
+
+    #[tool(hidden)]
+    /// Sheet-metal jog — a Z-shaped offset produced by two equal-and-
+    /// opposite 90° bends. The tail panel ends up parallel to the parent
+    /// but `offset` mm above (or below, depending on `direction`).
+    SheetMetalJog {
+        /// Parent node (must produce a sheet-metal model).
+        parent: NodeId,
+        /// Panel id within the parent's model.
+        panel_id: usize,
+        /// Edge index in that panel's outline.
+        edge_index: usize,
+        /// Vertical offset (mm) between parent and tail planes.
+        offset: f64,
+        /// Tail panel length (mm).
+        length: f64,
+        /// Inside bend radius for both bends (mm).
+        radius: f64,
+        /// Direction of the first fold.
+        direction: SheetMetalDirection,
+    },
+
+    #[tool(hidden)]
+    /// Sheet-metal hem — a 180° fold at the edge of a flange, used to
+    /// stiffen and to remove sharp edges. Geometrically a half-turn bend
+    /// producing a short back-flange that lies parallel to the parent.
+    SheetMetalHem {
+        /// Parent node (must produce a sheet-metal model).
+        parent: NodeId,
+        /// Panel id within the parent's model.
+        panel_id: usize,
+        /// Edge index in that panel's outline.
+        edge_index: usize,
+        /// Hem kind (closed/open). Default Closed.
+        #[serde(default)]
+        kind: SheetMetalHemKind,
+        /// Hem length perpendicular to the hinge (mm).
+        length: f64,
+        /// Gap between the parent and back-flange (mm). Ignored for
+        /// Closed hems (effectively zero); required for Open.
+        #[serde(default)]
+        gap: f64,
+        /// Fold direction (`Up` folds toward the outside face).
+        direction: SheetMetalDirection,
+    },
+}
+
+/// Kind of hem fold. `Closed` brings the faces together; `Open` leaves a
+/// gap (rolled / teardrop variants land alongside the springback tier).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum SheetMetalHemKind {
+    /// Fully folded, faces touch.
+    #[default]
+    Closed,
+    /// Small gap between the parent and the back-flange.
+    Open,
 }
 
 /// Direction tag for sheet-metal flanges. Wire-compatible with

@@ -9,6 +9,27 @@ import type { Solid, WasmAnnotationLayer } from "@vcad/kernel-wasm";
 import { SolidCache } from "./solid-cache.js";
 import { MeshCache } from "./mesh-cache.js";
 import { DependencyGraph } from "./dependency-graph.js";
+import {
+  buildSheetMetalChain,
+  checkSheetMetalManufacturability,
+  costSheetMetalChain,
+  sheetMetalSequence as runSheetMetalSequence,
+  nestSheetMetalParts as runNestSheetMetalParts,
+  getSheetMetalMaterials as readSheetMetalMaterials,
+  getSheetMetalBendTable as readSheetMetalBendTable,
+} from "./sheet-metal.js";
+import type {
+  SheetMetalShopProfile,
+  SheetMetalCheckResult,
+  SheetMetalMaterial,
+  SheetMetalBendTable,
+  SheetMetalCostRates,
+  SheetMetalCostResult,
+  SheetMetalBendStep,
+  SheetMetalPartFootprint,
+  SheetMetalNestingParams,
+  SheetMetalNestingResult,
+} from "./sheet-metal.js";
 
 export type {
   TriangleMesh,
@@ -76,6 +97,25 @@ export type {
   SheetMetalFlatCrease,
   SheetMetalFlatPattern,
   SheetMetalRendered,
+  SheetMetalViolation,
+  SheetMetalShopProfile,
+  SheetMetalCheckResult,
+  SheetMetalMaterial,
+  SheetMetalBendTable,
+  SheetMetalBendTableRow,
+  SheetMetalCostRates,
+  SheetMetalCostBreakdown,
+  SheetMetalCostResult,
+  SheetMetalBendStep,
+  SheetMetalPartFootprint,
+  SheetMetalNestingParams,
+  SheetMetalNestingResult,
+  SheetMetalPlacement,
+} from "./sheet-metal.js";
+export {
+  DEFAULT_SHOP_PROFILE,
+  DEFAULT_COST_RATES,
+  DEFAULT_NESTING_PARAMS,
 } from "./sheet-metal.js";
 
 // Parametric expressions
@@ -213,6 +253,20 @@ export interface KernelModule {
   getPartsManifest?: () => string;
   /** Build a stdlib part's sub-document given path and params JSON. */
   buildPart?: (path: string, paramsJson: string) => string;
+  /** Evaluate a sheet-metal op chain → mesh + flat pattern + summary JSON. */
+  evaluateSheetMetalChain?: (chainJson: string) => string;
+  /** Run sheet-metal manufacturability vs. a shop profile → JSON. */
+  checkSheetMetal?: (chainJson: string, shopJson: string) => string;
+  /** Estimate sheet-metal cost for a chain → JSON. */
+  costSheetMetal?: (chainJson: string, ratesJson: string, quantity: number) => string;
+  /** Compute a bend sequence for a chain → JSON. */
+  sheetMetalSequence?: (chainJson: string) => string;
+  /** Nest multiple part footprints on stock sheets → JSON. */
+  nestSheetMetalParts?: (partsJson: string, paramsJson: string) => string;
+  /** Built-in materials registry → JSON array. */
+  getSheetMetalMaterials?: () => string;
+  /** Built-in bend table → JSON `{id, rows}`. */
+  getSheetMetalBendTable?: () => string;
 }
 
 /** Rendered dimension types from the annotation layer */
@@ -407,6 +461,13 @@ export class Engine {
       evalVcadSource: (wasmModule as Record<string, unknown>).evalVcadSource as KernelModule["evalVcadSource"],
       getPartsManifest: (wasmModule as Record<string, unknown>).getPartsManifest as KernelModule["getPartsManifest"],
       buildPart: (wasmModule as Record<string, unknown>).buildPart as KernelModule["buildPart"],
+      evaluateSheetMetalChain: (wasmModule as Record<string, unknown>).evaluateSheetMetalChain as KernelModule["evaluateSheetMetalChain"],
+      checkSheetMetal: (wasmModule as Record<string, unknown>).checkSheetMetal as KernelModule["checkSheetMetal"],
+      costSheetMetal: (wasmModule as Record<string, unknown>).costSheetMetal as KernelModule["costSheetMetal"],
+      sheetMetalSequence: (wasmModule as Record<string, unknown>).sheetMetalSequence as KernelModule["sheetMetalSequence"],
+      nestSheetMetalParts: (wasmModule as Record<string, unknown>).nestSheetMetalParts as KernelModule["nestSheetMetalParts"],
+      getSheetMetalMaterials: (wasmModule as Record<string, unknown>).getSheetMetalMaterials as KernelModule["getSheetMetalMaterials"],
+      getSheetMetalBendTable: (wasmModule as Record<string, unknown>).getSheetMetalBendTable as KernelModule["getSheetMetalBendTable"],
     }, compiledWasmModule);
   }
 
@@ -641,6 +702,105 @@ export class Engine {
   exportDrawingToDxf(view: ProjectedView): Uint8Array {
     const json = JSON.stringify(view);
     return this.kernel.exportProjectedViewToDxf(json);
+  }
+
+  /**
+   * Estimate the manufacturing cost of the sheet-metal part in `doc`.
+   *
+   * Finds the first sheet-metal root, rebuilds its op chain, and asks the
+   * kernel for a line-itemed breakdown using `rates` (or
+   * {@link DEFAULT_COST_RATES} when omitted). Returns `null` if the document
+   * has no sheet-metal part. Pure query — does not evaluate meshes.
+   */
+  costSheetMetal(
+    doc: Document,
+    rates?: SheetMetalCostRates,
+    quantity = 1,
+  ): SheetMetalCostResult | null {
+    for (const entry of doc.roots) {
+      if (entry.visible === false) continue;
+      const chain = buildSheetMetalChain(entry.root, doc.nodes);
+      if (chain) {
+        return costSheetMetalChain(
+          chain,
+          this.kernel as unknown as Parameters<typeof costSheetMetalChain>[1],
+          rates,
+          quantity,
+        );
+      }
+    }
+    return null;
+  }
+
+  /** Nest part footprints on stock sheets (bottom-left fill
+   *  decreasing). Returns placements + per-sheet utilization. */
+  nestSheetMetalParts(
+    parts: SheetMetalPartFootprint[],
+    params?: SheetMetalNestingParams,
+  ): SheetMetalNestingResult {
+    return runNestSheetMetalParts(
+      parts,
+      this.kernel as unknown as Parameters<typeof runNestSheetMetalParts>[1],
+      params,
+    );
+  }
+
+  /** Compute a feasible bend sequence (outermost-first) for the
+   *  sheet-metal part in `doc`. Returns `null` if there is none. */
+  sheetMetalSequence(doc: Document): SheetMetalBendStep[] | null {
+    for (const entry of doc.roots) {
+      if (entry.visible === false) continue;
+      const chain = buildSheetMetalChain(entry.root, doc.nodes);
+      if (chain) {
+        return runSheetMetalSequence(
+          chain,
+          this.kernel as unknown as Parameters<typeof runSheetMetalSequence>[1],
+        );
+      }
+    }
+    return null;
+  }
+
+  /** Return the kernel's curated sheet-metal materials registry. */
+  getSheetMetalMaterials(): SheetMetalMaterial[] {
+    return readSheetMetalMaterials(
+      this.kernel as unknown as Parameters<typeof readSheetMetalMaterials>[0],
+    );
+  }
+
+  /** Return the kernel's curated bend table. */
+  getSheetMetalBendTable(): SheetMetalBendTable {
+    return readSheetMetalBendTable(
+      this.kernel as unknown as Parameters<typeof readSheetMetalBendTable>[0],
+    );
+  }
+
+  /**
+   * Run sheet-metal manufacturability against a shop profile.
+   *
+   * Finds the first sheet-metal root in `doc`, rebuilds its op chain, and
+   * asks the kernel for structured violations vs. `shop` (or the generic
+   * shop when omitted). Returns `null` if the document has no sheet-metal
+   * part. Pure query — does not evaluate meshes or touch the scene cache.
+   */
+  checkSheetMetal(
+    doc: Document,
+    shop?: SheetMetalShopProfile,
+  ): SheetMetalCheckResult | null {
+    for (const entry of doc.roots) {
+      if (entry.visible === false) continue;
+      const chain = buildSheetMetalChain(entry.root, doc.nodes);
+      if (chain) {
+        return checkSheetMetalManufacturability(
+          chain,
+          this.kernel as unknown as Parameters<
+            typeof checkSheetMetalManufacturability
+          >[1],
+          shop,
+        );
+      }
+    }
+    return null;
   }
 
   /** Create a detail view (magnified region) from a projected view.
