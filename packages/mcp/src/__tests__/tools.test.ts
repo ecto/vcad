@@ -11,6 +11,7 @@ import {
   sheetMetalMaterials,
   sheetMetalBendTable,
   sheetMetalCost,
+  sheetMetalSuggestFix,
 } from "../tools/sheet-metal.js";
 import {
   openDocument,
@@ -589,5 +590,32 @@ describe("sheet-metal tools", () => {
     expect(radiusViol).toBeDefined();
     expect(radiusViol.detail.source).toBe("Material");
     expect(radiusViol.detail.material).toBe("al-hard");
+  });
+
+  it("suggest_fix: maps violations to actionable parameter changes", () => {
+    // Short flange flags FlangeBelowMinHeight → suggest increasing length.
+    const { document_id } = JSON.parse(
+      sheetMetalCreate(
+        {
+          width: 100,
+          depth: 50,
+          thickness: 1,
+          material: "al-soft",
+          flanges: [{ edge_index: 0, length: 2 }],
+        },
+        engine,
+      ).content[0].text,
+    );
+    const out = JSON.parse(
+      sheetMetalSuggestFix({ document_id }, engine).content[0].text,
+    );
+    expect(out.count).toBeGreaterThan(0);
+    const flangeFix = out.suggestions.find(
+      (s: { fix: { action: string } }) =>
+        s.fix.action === "increase_flange_length",
+    );
+    expect(flangeFix).toBeDefined();
+    expect(flangeFix.fix.new_length_mm).toBeGreaterThanOrEqual(5);
+    expect(flangeFix.fix.description.toLowerCase()).toContain("flange");
   });
 });

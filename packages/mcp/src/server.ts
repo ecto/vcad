@@ -95,6 +95,8 @@ import {
   sheetMetalBendTableSchema,
   sheetMetalCost,
   sheetMetalCostSchema,
+  sheetMetalSuggestFix,
+  sheetMetalSuggestFixSchema,
 } from "./tools/sheet-metal.js";
 import { appendGlbPreview } from "./tools/preview.js";
 import {
@@ -303,6 +305,12 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
         description:
           "Estimate the manufacturing cost of a sheet-metal session document: material (mass × $/kg), cut (length × $/m), pierces, bends, amortized setup, plus shop markup. Returns a line-itemed breakdown so the agent can see which line dominates and which design changes would lower it. `rates` is field-tolerant; omit it to use generic low-volume laser defaults.",
         inputSchema: sheetMetalCostSchema,
+      },
+      {
+        name: "sheet_metal_suggest_fix",
+        description:
+          "Translate the structured violations from sheet_metal_check into concrete parameter changes the agent can apply (radius up, flange longer, bends spread, etc.). Pass `violation_index` to target one, omit it to get a suggestion for every open violation. Closes the create → check → fix → re-check self-heal loop.",
+        inputSchema: sheetMetalSuggestFixSchema,
       },
       {
         name: "import_step",
@@ -569,6 +577,10 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
 
         case "sheet_metal_cost":
           result = sheetMetalCost(args, engine);
+          break;
+
+        case "sheet_metal_suggest_fix":
+          result = sheetMetalSuggestFix(args, engine);
           break;
 
         case "import_step":

@@ -390,6 +390,159 @@ export function sheetMetalCheck(
   });
 }
 
+// ─── sheet_metal_suggest_fix ──────────────────────────────────────────────
+
+export const sheetMetalSuggestFixSchema = {
+  type: "object" as const,
+  properties: {
+    document_id: {
+      type: "string" as const,
+      description: "Session id from sheet_metal_create.",
+    },
+    shop_profile: {
+      type: "object" as const,
+      description:
+        "Optional shop profile (same shape as sheet_metal_check). Defaults to generic.",
+    },
+    violation_index: {
+      type: "number" as const,
+      description:
+        "Index into the violations array (from sheet_metal_check). Omit to get suggestions for every violation.",
+    },
+  },
+  required: ["document_id"],
+};
+
+/**
+ * Translate a structured violation into a concrete fix the agent can act
+ * on. Closes the spec's AI self-heal loop: sheet_metal_check finds
+ * problems; sheet_metal_suggest_fix names the parameter change that
+ * resolves each one. The agent then re-runs sheet_metal_create with the
+ * adjusted spec and re-checks.
+ */
+export function sheetMetalSuggestFix(
+  input: unknown,
+  engine: Engine,
+): { content: Array<{ type: "text"; text: string }> } {
+  const a = (input ?? {}) as Record<string, unknown>;
+  const doc = getSession(String(a.document_id ?? ""));
+  const shop =
+    a.shop_profile && typeof a.shop_profile === "object"
+      ? (a.shop_profile as Partial<SheetMetalShopProfile>)
+      : undefined;
+  const result = engine.checkSheetMetal(
+    doc,
+    shop as SheetMetalShopProfile | undefined,
+  );
+  if (!result) {
+    throw new Error("document has no sheet-metal part");
+  }
+  const idxRaw = a.violation_index;
+  const violations =
+    typeof idxRaw === "number"
+      ? [result.violations[Math.floor(idxRaw)]].filter(
+          (v): v is (typeof result.violations)[number] => Boolean(v),
+        )
+      : result.violations;
+  const suggestions = violations.map((v, i) => ({
+    index: typeof idxRaw === "number" ? Math.floor(idxRaw) : i,
+    violation: v,
+    fix: suggestFix(v),
+  }));
+  return textResult({
+    shop: result.shop,
+    count: suggestions.length,
+    suggestions,
+    note: "Apply by re-issuing sheet_metal_create with the adjusted spec (parameters indicated by each `fix.action` + `fix.value`). Then call sheet_metal_check to verify.",
+  });
+}
+
+type FixAction =
+  | "increase_radius"
+  | "increase_flange_length"
+  | "shorten_or_split_bend"
+  | "move_hole_or_clearance"
+  | "separate_bends"
+  | "manual";
+
+interface Fix {
+  action: FixAction;
+  description: string;
+  /** Structured fields the agent reads to translate to a chain edit. */
+  [field: string]: unknown;
+}
+
+function suggestFix(v: SheetMetalViolationLike): Fix {
+  const d = v.detail as Record<string, unknown>;
+  switch (d.kind) {
+    case "BendRadiusBelowMinimum": {
+      const required = Number(d.required_mm);
+      const source = String(d.source ?? "Material");
+      const material = String(d.material ?? "");
+      const reason =
+        source === "Material" && material
+          ? `${material} cracks below this`
+          : source === "Material"
+            ? "material cracks below this"
+            : "shop tooling can't form tighter";
+      return {
+        action: "increase_radius",
+        bend_id: d.bend_id,
+        new_radius_mm: required,
+        description: `Increase bend #${d.bend_id} inside radius to at least ${required.toFixed(2)} mm (${reason}).`,
+      };
+    }
+    case "FlangeBelowMinHeight": {
+      const required = Number(d.required_mm);
+      return {
+        action: "increase_flange_length",
+        bend_id: d.bend_id,
+        panel_id: d.panel_id,
+        new_length_mm: required,
+        description: `Lengthen the flange off bend #${d.bend_id} to at least ${required.toFixed(2)} mm so the brake can grip it.`,
+      };
+    }
+    case "BendExceedsBrakeCapacity": {
+      const max = Number(d.required_mm);
+      return {
+        action: "shorten_or_split_bend",
+        bend_id: d.bend_id,
+        max_length_mm: max,
+        description: `Bend #${d.bend_id} is ${Number(d.actual_mm).toFixed(0)} mm — over the ${max.toFixed(0)} mm brake. Reduce the part width, split into two bends with relief, or move to a longer brake.`,
+      };
+    }
+    case "HoleTooCloseToBend": {
+      const required = Number(d.required_mm);
+      return {
+        action: "move_hole_or_clearance",
+        bend_id: d.bend_id,
+        hole_index: d.hole_index,
+        required_clearance_mm: required,
+        description: `Move hole #${d.hole_index} at least ${required.toFixed(2)} mm from bend #${d.bend_id} (currently ${Number(d.actual_mm).toFixed(2)} mm). Otherwise the hole deforms into a slot.`,
+      };
+    }
+    case "BendsTooClose": {
+      const required = Number(d.required_mm);
+      return {
+        action: "separate_bends",
+        bend_id_a: d.bend_id_a,
+        bend_id_b: d.bend_id_b,
+        required_distance_mm: required,
+        description: `Move bends #${d.bend_id_a} and #${d.bend_id_b} to at least ${required.toFixed(2)} mm apart (currently ${Number(d.actual_mm).toFixed(2)} mm) so the back-gauge can register.`,
+      };
+    }
+    default:
+      return {
+        action: "manual",
+        description: `No structured fix for ${String(d.kind)} — manual review.`,
+      };
+  }
+}
+
+interface SheetMetalViolationLike {
+  detail: Record<string, unknown> & { kind: string };
+}
+
 // ─── sheet_metal_cost ─────────────────────────────────────────────────────
 
 export const sheetMetalCostSchema = {
