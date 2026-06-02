@@ -31,6 +31,10 @@ export interface SheetMetalBendSummary {
   k_factor_source: string | null;
   /** `θ · (R + K · t)` (mm). */
   allowance_mm: number;
+  /** Estimated springback (radians) — `material.springback_per_radian × angle`. */
+  springback_rad: number;
+  /** Brake angle to form (radians) so the part springs back to `angle_rad`. */
+  compensated_angle_rad: number;
 }
 
 export interface SheetMetalModelSummary {

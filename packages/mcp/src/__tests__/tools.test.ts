@@ -592,6 +592,42 @@ describe("sheet-metal tools", () => {
     expect(radiusViol.detail.material).toBe("al-hard");
   });
 
+  it("springback: bend summary includes compensated angle per material", () => {
+    // Al-hard has higher springback than al-soft.
+    const soft = JSON.parse(
+      sheetMetalCreate(
+        {
+          width: 80,
+          depth: 40,
+          thickness: 1,
+          material: "al-soft",
+          flanges: [{ edge_index: 0, length: 15, radius: 2 }],
+        },
+        engine,
+      ).content[0].text,
+    );
+    const hard = JSON.parse(
+      sheetMetalCreate(
+        {
+          width: 80,
+          depth: 40,
+          thickness: 1,
+          material: "al-hard",
+          flanges: [{ edge_index: 0, length: 15, radius: 2 }],
+        },
+        engine,
+      ).content[0].text,
+    );
+    const softBend = soft.model.bends[0];
+    const hardBend = hard.model.bends[0];
+    expect(softBend.springback_rad).toBeGreaterThan(0);
+    expect(hardBend.springback_rad).toBeGreaterThan(softBend.springback_rad);
+    expect(softBend.compensated_angle_rad).toBeCloseTo(
+      softBend.angle_rad + softBend.springback_rad,
+      6,
+    );
+  });
+
   it("suggest_fix: maps violations to actionable parameter changes", () => {
     // Short flange flags FlangeBelowMinHeight → suggest increasing length.
     const { document_id } = JSON.parse(

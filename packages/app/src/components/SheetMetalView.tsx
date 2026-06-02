@@ -142,27 +142,47 @@ function BendList({ model }: { model: SheetMetalModelSummary }) {
       <div className="flex flex-col gap-1">
         {model.bends.map((bend, i) => {
           const color = provenanceDot(bend.k_factor_source);
+          const target_deg = (bend.angle_rad * 180) / Math.PI;
+          const comp_deg = (bend.compensated_angle_rad * 180) / Math.PI;
+          const springback_deg = (bend.springback_rad * 180) / Math.PI;
+          const showSpringback = Math.abs(springback_deg) > 0.05;
+          const isHem = bend.k_factor_source?.includes(";hem:");
+          const label = isHem
+            ? bend.k_factor_source?.includes(";hem:open")
+              ? "Hem open"
+              : "Hem closed"
+            : `${target_deg.toFixed(0)}°`;
           return (
             <div
               key={i}
-              className="flex items-center justify-between gap-2 rounded bg-hover/30 px-2 py-1"
+              className="flex flex-col gap-0.5 rounded bg-hover/30 px-2 py-1"
             >
-              <div className="flex min-w-0 items-center gap-2">
-                <span
-                  title={bend.k_factor_source ?? "no provenance"}
-                  className="inline-block h-2 w-2 shrink-0 rounded-full"
-                  style={{ backgroundColor: color }}
-                />
-                <span className="text-text">
-                  #{i} {bend.direction}{" "}
-                  {((bend.angle_rad * 180) / Math.PI).toFixed(0)}°
-                </span>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span
+                    title={bend.k_factor_source ?? "no provenance"}
+                    className="inline-block h-2 w-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: color }}
+                  />
+                  <span className="text-text">
+                    #{i} {bend.direction} {label}
+                  </span>
+                </div>
+                <div className="flex shrink-0 items-center gap-2 text-text-muted">
+                  <span>R {bend.radius.toFixed(2)}</span>
+                  <span>K {bend.k_factor.toFixed(3)}</span>
+                  <span>BA {bend.allowance_mm.toFixed(2)}</span>
+                </div>
               </div>
-              <div className="flex shrink-0 items-center gap-2 text-text-muted">
-                <span>R {bend.radius.toFixed(2)}</span>
-                <span>K {bend.k_factor.toFixed(3)}</span>
-                <span>BA {bend.allowance_mm.toFixed(2)}</span>
-              </div>
+              {showSpringback && (
+                <div
+                  className="pl-4 text-[10px] text-text-muted/80"
+                  title="Brake angle to form so the part springs back to the design angle"
+                >
+                  Form to {comp_deg.toFixed(1)}° (+{springback_deg.toFixed(1)}°
+                  springback)
+                </div>
+              )}
             </div>
           );
         })}

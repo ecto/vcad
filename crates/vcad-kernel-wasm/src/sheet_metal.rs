@@ -154,6 +154,13 @@ struct BendSummaryDto {
     k_factor_source: Option<String>,
     /// `θ · (R + K · t)`.
     allowance_mm: f64,
+    /// Estimated springback (radians). Computed from the part's material
+    /// via `material.springback_per_radian * angle`; zero when the
+    /// material is unknown.
+    springback_rad: f64,
+    /// The angle to actually form on the brake to hit the modelled
+    /// (target) angle once springback releases: `angle + springback`.
+    compensated_angle_rad: f64,
 }
 
 /// Evaluate a chain of sheet-metal ops and return `(mesh, flat-pattern,
@@ -605,23 +612,36 @@ fn flat_pattern_to_dto(flat: FlatPattern) -> FlatPatternDto {
 }
 
 fn summarise_model(model: &SheetMetalModel) -> ModelSummaryDto {
+    // Springback factor — material-driven, zero for an unspecified
+    // material so the comp angle equals the design angle.
+    let springback_factor = if model.material.is_empty() {
+        0.0
+    } else {
+        vcad_kernel_sheet::lookup_material_or_unknown(&model.material)
+            .springback_per_radian
+    };
     let bends = model
         .bends
         .iter()
-        .map(|b| BendSummaryDto {
-            parent: b.parent,
-            child: b.child,
-            angle_rad: b.angle,
-            radius: b.radius,
-            direction: b.direction,
-            k_factor: b.k_factor,
-            k_factor_source: b.k_factor_source.clone(),
-            allowance_mm: bend_table::bend_allowance(
-                b.angle,
-                b.radius,
-                b.k_factor,
-                model.thickness,
-            ),
+        .map(|b| {
+            let springback_rad = springback_factor * b.angle;
+            BendSummaryDto {
+                parent: b.parent,
+                child: b.child,
+                angle_rad: b.angle,
+                radius: b.radius,
+                direction: b.direction,
+                k_factor: b.k_factor,
+                k_factor_source: b.k_factor_source.clone(),
+                allowance_mm: bend_table::bend_allowance(
+                    b.angle,
+                    b.radius,
+                    b.k_factor,
+                    model.thickness,
+                ),
+                springback_rad,
+                compensated_angle_rad: b.angle + springback_rad,
+            }
         })
         .collect();
     ModelSummaryDto {
