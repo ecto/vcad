@@ -97,6 +97,8 @@ import {
   sheetMetalCostSchema,
   sheetMetalSuggestFix,
   sheetMetalSuggestFixSchema,
+  sheetMetalSequence,
+  sheetMetalSequenceSchema,
 } from "./tools/sheet-metal.js";
 import { appendGlbPreview } from "./tools/preview.js";
 import {
@@ -311,6 +313,12 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
         description:
           "Translate the structured violations from sheet_metal_check into concrete parameter changes the agent can apply (radius up, flange longer, bends spread, etc.). Pass `violation_index` to target one, omit it to get a suggestion for every open violation. Closes the create → check → fix → re-check self-heal loop.",
         inputSchema: sheetMetalSuggestFixSchema,
+      },
+      {
+        name: "sheet_metal_sequence",
+        description:
+          "Return a feasible press-brake bend sequence for a sheet-metal part — outermost bends first so the remaining flat stays small and earlier bends don't collide with later ones. Each step includes the springback-compensated brake angle and a one-line rationale.",
+        inputSchema: sheetMetalSequenceSchema,
       },
       {
         name: "import_step",
@@ -581,6 +589,10 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
 
         case "sheet_metal_suggest_fix":
           result = sheetMetalSuggestFix(args, engine);
+          break;
+
+        case "sheet_metal_sequence":
+          result = sheetMetalSequence(args, engine);
           break;
 
         case "import_step":

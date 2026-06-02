@@ -516,6 +516,36 @@ export function sheetMetalCheck(
   });
 }
 
+// ─── sheet_metal_sequence ─────────────────────────────────────────────────
+
+export const sheetMetalSequenceSchema = {
+  type: "object" as const,
+  properties: {
+    document_id: {
+      type: "string" as const,
+      description: "Session id from sheet_metal_create.",
+    },
+  },
+  required: ["document_id"],
+};
+
+export function sheetMetalSequence(
+  input: unknown,
+  engine: Engine,
+): { content: Array<{ type: "text"; text: string }> } {
+  const a = (input ?? {}) as Record<string, unknown>;
+  const doc = getSession(String(a.document_id ?? ""));
+  const steps = engine.sheetMetalSequence(doc);
+  if (!steps) {
+    throw new Error("document has no sheet-metal part");
+  }
+  return textResult({
+    count: steps.length,
+    steps,
+    note: "Form each bend in order. compensated_angle_rad is the angle to dial in on the brake — springs back to angle_rad once released.",
+  });
+}
+
 // ─── sheet_metal_suggest_fix ──────────────────────────────────────────────
 
 export const sheetMetalSuggestFixSchema = {

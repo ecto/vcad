@@ -371,6 +371,7 @@ interface SheetMetalKernel {
   evaluateSheetMetalChain?(chainJson: string): string;
   checkSheetMetal?(chainJson: string, shopJson: string): string;
   costSheetMetal?(chainJson: string, ratesJson: string, quantity: number): string;
+  sheetMetalSequence?(chainJson: string): string;
   getSheetMetalMaterials?(): string;
   getSheetMetalBendTable?(): string;
 }
@@ -458,6 +459,43 @@ export function getSheetMetalMaterials(
   } catch {
     return [];
   }
+}
+
+/** One step in a bend sequence. */
+export interface SheetMetalBendStep {
+  step: number;
+  bend_id: number;
+  parent_panel: number;
+  child_panel: number;
+  depth: number;
+  angle_rad: number;
+  radius_mm: number;
+  compensated_angle_rad: number;
+  hinge_length_mm: number;
+  rationale: string;
+}
+
+interface RawSequenceResult {
+  steps: SheetMetalBendStep[];
+  error: string | null;
+}
+
+/** Compute a feasible bend sequence (outermost-first) for the chain. */
+export function sheetMetalSequence(
+  chain: ChainOp[],
+  kernel: SheetMetalKernel,
+): SheetMetalBendStep[] {
+  if (!kernel.sheetMetalSequence) {
+    throw new Error(
+      "kernel.sheetMetalSequence not available — rebuild @vcad/kernel-wasm",
+    );
+  }
+  const json = kernel.sheetMetalSequence(JSON.stringify(chain));
+  const parsed = JSON.parse(json) as RawSequenceResult;
+  if (parsed.error) {
+    throw new Error(`sheet-metal sequence: ${parsed.error}`);
+  }
+  return parsed.steps;
 }
 
 /** Read the kernel's built-in bend table. */

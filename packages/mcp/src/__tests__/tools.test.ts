@@ -12,6 +12,7 @@ import {
   sheetMetalBendTable,
   sheetMetalCost,
   sheetMetalSuggestFix,
+  sheetMetalSequence,
 } from "../tools/sheet-metal.js";
 import {
   openDocument,
@@ -590,6 +591,33 @@ describe("sheet-metal tools", () => {
     expect(radiusViol).toBeDefined();
     expect(radiusViol.detail.source).toBe("Material");
     expect(radiusViol.detail.material).toBe("al-hard");
+  });
+
+  it("bend sequence: outermost bends form first", () => {
+    // U-channel with a hem on one of the sides. Hem (depth 2) should
+    // sort ahead of the parent flanges (depth 1).
+    const { document_id } = JSON.parse(
+      sheetMetalCreate(
+        {
+          width: 80,
+          depth: 40,
+          thickness: 1,
+          material: "al-soft",
+          flanges: [
+            { edge_index: 0, length: 20 },
+            { edge_index: 2, length: 20 },
+          ],
+          hems: [{ edge_index: 2, length: 5, panel_id: 1 }],
+        },
+        engine,
+      ).content[0].text,
+    );
+    const out = JSON.parse(
+      sheetMetalSequence({ document_id }, engine).content[0].text,
+    );
+    expect(out.count).toBe(3);
+    expect(out.steps[0].depth).toBeGreaterThanOrEqual(out.steps[1].depth);
+    expect(out.steps[1].depth).toBeGreaterThanOrEqual(out.steps[2].depth);
   });
 
   it("base flange from arbitrary outline: L-bracket polygon", () => {

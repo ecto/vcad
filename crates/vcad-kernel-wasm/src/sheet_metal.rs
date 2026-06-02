@@ -28,6 +28,7 @@ use serde::{Deserialize, Serialize};
 use vcad_kernel_math::Point2;
 use vcad_kernel_sheet::{
     add_edge_flange, add_hem, add_jog, base_flange_polygon_with_holes, base_flange_rect,
+    bend_sequence,
     bend_table::{self, BendTable},
     check_manufacturability,
     cost::{estimate_cost, CostBreakdown, CostRates},
@@ -35,6 +36,7 @@ use vcad_kernel_sheet::{
     flat_pattern_to_dxf,
     hem::{HemKind, HemParams},
     jog::JogParams,
+    sequence::BendStep,
     BendDirection, FlangePosition, FlatPattern, SheetMetalModel, ShopProfile, Violation,
 };
 use wasm_bindgen::prelude::*;
@@ -346,6 +348,41 @@ fn cost_impl(chain_json: &str, rates_json: &str, quantity: u32) -> Result<CostRe
     Ok(CostResult {
         breakdown: Some(breakdown),
         rates: Some(rates),
+        error: None,
+    })
+}
+
+/// Result of [`sheet_metal_sequence`].
+#[derive(Debug, Clone, Serialize, Default)]
+struct SequenceResult {
+    steps: Vec<BendStep>,
+    error: Option<String>,
+}
+
+/// Return a feasible bend sequence for the chain. Outermost-first
+/// heuristic; pure query, no mesh evaluation.
+#[wasm_bindgen(js_name = sheetMetalSequence)]
+pub fn sheet_metal_sequence(chain_json: &str) -> String {
+    let result = match sequence_impl(chain_json) {
+        Ok(r) => r,
+        Err(msg) => SequenceResult {
+            error: Some(msg),
+            ..Default::default()
+        },
+    };
+    serde_json::to_string(&result).unwrap_or_else(|_| r#"{"error":"serialize failed"}"#.to_string())
+}
+
+fn sequence_impl(chain_json: &str) -> Result<SequenceResult, String> {
+    let chain: Vec<ChainOp> =
+        serde_json::from_str(chain_json).map_err(|e| format!("chain JSON: {e}"))?;
+    if chain.is_empty() {
+        return Err("empty op chain".to_string());
+    }
+    let table = BendTable::builtin();
+    let model = build_model(&chain, &table)?;
+    Ok(SequenceResult {
+        steps: bend_sequence(&model),
         error: None,
     })
 }

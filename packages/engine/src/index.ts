@@ -13,6 +13,7 @@ import {
   buildSheetMetalChain,
   checkSheetMetalManufacturability,
   costSheetMetalChain,
+  sheetMetalSequence as runSheetMetalSequence,
   getSheetMetalMaterials as readSheetMetalMaterials,
   getSheetMetalBendTable as readSheetMetalBendTable,
 } from "./sheet-metal.js";
@@ -23,6 +24,7 @@ import type {
   SheetMetalBendTable,
   SheetMetalCostRates,
   SheetMetalCostResult,
+  SheetMetalBendStep,
 } from "./sheet-metal.js";
 
 export type {
@@ -100,6 +102,7 @@ export type {
   SheetMetalCostRates,
   SheetMetalCostBreakdown,
   SheetMetalCostResult,
+  SheetMetalBendStep,
 } from "./sheet-metal.js";
 export { DEFAULT_SHOP_PROFILE, DEFAULT_COST_RATES } from "./sheet-metal.js";
 
@@ -244,6 +247,8 @@ export interface KernelModule {
   checkSheetMetal?: (chainJson: string, shopJson: string) => string;
   /** Estimate sheet-metal cost for a chain → JSON. */
   costSheetMetal?: (chainJson: string, ratesJson: string, quantity: number) => string;
+  /** Compute a bend sequence for a chain → JSON. */
+  sheetMetalSequence?: (chainJson: string) => string;
   /** Built-in materials registry → JSON array. */
   getSheetMetalMaterials?: () => string;
   /** Built-in bend table → JSON `{id, rows}`. */
@@ -445,6 +450,7 @@ export class Engine {
       evaluateSheetMetalChain: (wasmModule as Record<string, unknown>).evaluateSheetMetalChain as KernelModule["evaluateSheetMetalChain"],
       checkSheetMetal: (wasmModule as Record<string, unknown>).checkSheetMetal as KernelModule["checkSheetMetal"],
       costSheetMetal: (wasmModule as Record<string, unknown>).costSheetMetal as KernelModule["costSheetMetal"],
+      sheetMetalSequence: (wasmModule as Record<string, unknown>).sheetMetalSequence as KernelModule["sheetMetalSequence"],
       getSheetMetalMaterials: (wasmModule as Record<string, unknown>).getSheetMetalMaterials as KernelModule["getSheetMetalMaterials"],
       getSheetMetalBendTable: (wasmModule as Record<string, unknown>).getSheetMetalBendTable as KernelModule["getSheetMetalBendTable"],
     }, compiledWasmModule);
@@ -705,6 +711,22 @@ export class Engine {
           this.kernel as unknown as Parameters<typeof costSheetMetalChain>[1],
           rates,
           quantity,
+        );
+      }
+    }
+    return null;
+  }
+
+  /** Compute a feasible bend sequence (outermost-first) for the
+   *  sheet-metal part in `doc`. Returns `null` if there is none. */
+  sheetMetalSequence(doc: Document): SheetMetalBendStep[] | null {
+    for (const entry of doc.roots) {
+      if (entry.visible === false) continue;
+      const chain = buildSheetMetalChain(entry.root, doc.nodes);
+      if (chain) {
+        return runSheetMetalSequence(
+          chain,
+          this.kernel as unknown as Parameters<typeof runSheetMetalSequence>[1],
         );
       }
     }

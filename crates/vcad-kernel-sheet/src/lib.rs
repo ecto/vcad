@@ -35,6 +35,7 @@ pub mod jog;
 pub mod manufacturability;
 pub mod materials;
 pub mod model;
+pub mod sequence;
 pub mod unfold;
 
 pub use base_flange::{
@@ -52,4 +53,5 @@ pub use materials::{
     MaterialProperties,
 };
 pub use model::{Bend, BendDirection, BendId, Frame, Panel, PanelId, SheetMetalModel};
+pub use sequence::{bend_sequence, BendStep};
 pub use unfold::{refold, unfold, FlatPattern, UnfoldError};
