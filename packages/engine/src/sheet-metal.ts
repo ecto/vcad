@@ -252,7 +252,17 @@ interface ChainOpHem {
   direction: SheetMetalDirection;
 }
 
-type ChainOp = ChainOpBase | ChainOpEdge | ChainOpHem;
+interface ChainOpJog {
+  type: "Jog";
+  panelId: number;
+  edgeIndex: number;
+  offset: number;
+  length: number;
+  radius: number;
+  direction: SheetMetalDirection;
+}
+
+type ChainOp = ChainOpBase | ChainOpEdge | ChainOpHem | ChainOpJog;
 
 /**
  * Walk back from `rootId` through any chain of sheet-metal ops, returning
@@ -268,7 +278,8 @@ export function buildSheetMetalChain(
   if (
     root.op.type !== "SheetMetalBaseFlangeRect" &&
     root.op.type !== "SheetMetalEdgeFlange" &&
-    root.op.type !== "SheetMetalHem"
+    root.op.type !== "SheetMetalHem" &&
+    root.op.type !== "SheetMetalJog"
   ) {
     return null;
   }
@@ -309,6 +320,17 @@ export function buildSheetMetalChain(
         kind: op.kind ?? "Closed",
         length: op.length,
         gap: op.gap ?? 0,
+        direction: op.direction,
+      });
+      cursor = nodes[String(op.parent)];
+    } else if (op.type === "SheetMetalJog") {
+      tipToBase.push({
+        type: "Jog",
+        panelId: op.panel_id,
+        edgeIndex: op.edge_index,
+        offset: op.offset,
+        length: op.length,
+        radius: op.radius,
         direction: op.direction,
       });
       cursor = nodes[String(op.parent)];

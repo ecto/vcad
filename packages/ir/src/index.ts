@@ -500,6 +500,18 @@ export interface SheetMetalEdgeFlangeOp {
   manual_k?: number;
 }
 
+/** Sheet-metal jog — a Z-shaped offset (two opposite 90° bends). */
+export interface SheetMetalJogOp {
+  type: "SheetMetalJog";
+  parent: NodeId;
+  panel_id: number;
+  edge_index: number;
+  offset: number;
+  length: number;
+  radius: number;
+  direction: SheetMetalDirection;
+}
+
 /** Hem kind. Wire-compatible with `vcad_ir::SheetMetalHemKind`. */
 export type SheetMetalHemKind = "Closed" | "Open";
 
@@ -545,7 +557,8 @@ export type CsgOp =
   | PartInstanceOp
   | SheetMetalBaseFlangeRectOp
   | SheetMetalEdgeFlangeOp
-  | SheetMetalHemOp;
+  | SheetMetalHemOp
+  | SheetMetalJogOp;
 
 /** A node in the IR graph. */
 export interface Node {

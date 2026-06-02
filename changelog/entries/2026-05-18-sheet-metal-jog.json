@@ -1,0 +1,14 @@
+{
+  "id": "2026-05-18-sheet-metal-jog",
+  "version": "0.9.4",
+  "date": "2026-05-18",
+  "category": "feat",
+  "title": "Sheet-metal jog operation",
+  "summary": "Z-shaped offsets are now a first-class sheet-metal feature, plumbed all the way from IR through kernel, engine, and MCP.",
+  "details": "## What's New\n\n- **`SheetMetalJog` IR op** (Rust + TS): offset, length, radius, direction.\n- **`add_jog` kernel function** in `vcad-kernel-sheet::jog`: two equal-and-opposite 90° bends. Tail panel ends up parallel to the parent and `offset` mm above. Bends are tagged `;jog:a` / `;jog:b` so the UI labels them as jog members rather than generic flanges.\n- **`sheet_metal_create` MCP tool** gained a `jogs` array alongside `flanges` and `hems` — the three core sheet-metal moves now compose in one call.\n- Reuses every downstream system: lossless unfold, layered DXF, DFM check, cost, springback, suggest_fix — jogs flow through unchanged.",
+  "features": [
+    "sheet-metal",
+    "jog",
+    "manufacturing"
+  ]
+}

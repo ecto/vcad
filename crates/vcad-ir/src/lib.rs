@@ -911,6 +911,27 @@ pub enum CsgOp {
     },
 
     #[tool(hidden)]
+    /// Sheet-metal jog — a Z-shaped offset produced by two equal-and-
+    /// opposite 90° bends. The tail panel ends up parallel to the parent
+    /// but `offset` mm above (or below, depending on `direction`).
+    SheetMetalJog {
+        /// Parent node (must produce a sheet-metal model).
+        parent: NodeId,
+        /// Panel id within the parent's model.
+        panel_id: usize,
+        /// Edge index in that panel's outline.
+        edge_index: usize,
+        /// Vertical offset (mm) between parent and tail planes.
+        offset: f64,
+        /// Tail panel length (mm).
+        length: f64,
+        /// Inside bend radius for both bends (mm).
+        radius: f64,
+        /// Direction of the first fold.
+        direction: SheetMetalDirection,
+    },
+
+    #[tool(hidden)]
     /// Sheet-metal hem — a 180° fold at the edge of a flange, used to
     /// stiffen and to remove sharp edges. Geometrically a half-turn bend
     /// producing a short back-flange that lies parallel to the parent.

@@ -53,12 +53,22 @@ interface HemSpec {
   panel_id?: number;
 }
 
+interface JogSpec {
+  edge_index: number;
+  offset: number;
+  length: number;
+  radius?: number;
+  direction?: SheetMetalDirection;
+  panel_id?: number;
+}
+
 /** Build a sheet-metal IR document: base flange node + ordered edge
  *  flanges and hems, each parented to the previous. */
 function buildSheetMetalDoc(
   base: { width: number; depth: number; thickness: number; material: string },
   flanges: FlangeSpec[],
   hems: HemSpec[],
+  jogs: JogSpec[],
 ): Document {
   const doc = createDocument();
   const nodes: Record<string, Node> = {};
@@ -108,6 +118,24 @@ function buildSheetMetalDoc(
         length: h.length,
         gap: h.gap ?? 0,
         direction: h.direction ?? "Up",
+      },
+    };
+    parent = id;
+  });
+  jogs.forEach((j) => {
+    const id = nextId++;
+    nodes[String(id)] = {
+      id,
+      name: `Jog ${id}`,
+      op: {
+        type: "SheetMetalJog",
+        parent,
+        panel_id: j.panel_id ?? 0,
+        edge_index: j.edge_index,
+        offset: j.offset,
+        length: j.length,
+        radius: j.radius ?? base.thickness,
+        direction: j.direction ?? "Up",
       },
     };
     parent = id;
@@ -198,6 +226,42 @@ export const sheetMetalCreateSchema = {
         required: ["edge_index", "length"],
       },
     },
+    jogs: {
+      type: "array" as const,
+      description:
+        "Optional jogs (Z-shaped offsets) applied after all flanges and hems. Two 90° bends in series.",
+      items: {
+        type: "object" as const,
+        properties: {
+          edge_index: {
+            type: "number" as const,
+            description: "Which edge of the panel to jog from.",
+          },
+          offset: {
+            type: "number" as const,
+            description: "Vertical offset (mm) between parent and tail planes.",
+          },
+          length: {
+            type: "number" as const,
+            description: "Tail panel length (mm) past the second bend.",
+          },
+          radius: {
+            type: "number" as const,
+            description: "Inside bend radius for both bends. Default = thickness.",
+          },
+          direction: {
+            type: "string" as const,
+            enum: ["Up", "Down"],
+            description: "Direction of the first fold. Default Up.",
+          },
+          panel_id: {
+            type: "number" as const,
+            description: "Panel to jog from. Default 0.",
+          },
+        },
+        required: ["edge_index", "offset", "length"],
+      },
+    },
     hems: {
       type: "array" as const,
       description:
@@ -257,7 +321,8 @@ export function sheetMetalCreate(
     ? (a.flanges as FlangeSpec[])
     : [];
   const hems = Array.isArray(a.hems) ? (a.hems as HemSpec[]) : [];
-  const doc = buildSheetMetalDoc(base, flanges, hems);
+  const jogs = Array.isArray(a.jogs) ? (a.jogs as JogSpec[]) : [];
+  const doc = buildSheetMetalDoc(base, flanges, hems, jogs);
   const rendered = renderedOf(engine, doc);
   const documentId = registerSession(doc);
   const errors = rendered.violations.filter(

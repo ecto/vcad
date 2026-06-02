@@ -179,7 +179,8 @@ fn evaluate_node(doc: &Document, node_id: NodeId) -> Result<Option<Solid>> {
         | CsgOp::PartInstance { .. }
         | CsgOp::SheetMetalBaseFlangeRect { .. }
         | CsgOp::SheetMetalEdgeFlange { .. }
-        | CsgOp::SheetMetalHem { .. } => None,
+        | CsgOp::SheetMetalHem { .. }
+        | CsgOp::SheetMetalJog { .. } => None,
     };
 
     Ok(solid)

@@ -2166,11 +2166,6 @@ export interface InitOutput {
     readonly solid_shell: (a: number, b: number) => number;
     readonly solid_circularPattern: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
     readonly solid_revolve: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number];
-    readonly checkSheetMetal: (a: number, b: number, c: number, d: number) => [number, number];
-    readonly costSheetMetal: (a: number, b: number, c: number, d: number, e: number) => [number, number];
-    readonly evaluateSheetMetalChain: (a: number, b: number) => [number, number];
-    readonly getSheetMetalBendTable: () => [number, number];
-    readonly getSheetMetalMaterials: () => [number, number];
     readonly __wbg_wasmdocumentengine_free: (a: number, b: number) => void;
     readonly ecadBuiltinSymbols: () => [number, number, number];
     readonly ecadCheckDrc: (a: number, b: number) => [number, number, number];
@@ -2254,6 +2249,11 @@ export interface InitOutput {
     readonly wasmsketchsession_solve: (a: number) => number;
     readonly wasmsketchsession_toggleSelection: (a: number, b: number) => void;
     readonly wasmsketchsession_undo: (a: number) => number;
+    readonly checkSheetMetal: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly costSheetMetal: (a: number, b: number, c: number, d: number, e: number) => [number, number];
+    readonly evaluateSheetMetalChain: (a: number, b: number) => [number, number];
+    readonly getSheetMetalBendTable: () => [number, number];
+    readonly getSheetMetalMaterials: () => [number, number];
     readonly __wbg_get_slicersettings_first_layer_height: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_density: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_pattern: (a: number) => number;

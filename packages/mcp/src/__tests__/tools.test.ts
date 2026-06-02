@@ -592,6 +592,28 @@ describe("sheet-metal tools", () => {
     expect(radiusViol.detail.material).toBe("al-hard");
   });
 
+  it("jog: creates a Z-shaped offset with two opposite 90° bends", () => {
+    const out = JSON.parse(
+      sheetMetalCreate(
+        {
+          width: 120,
+          depth: 60,
+          thickness: 1,
+          material: "al-soft",
+          jogs: [{ edge_index: 0, offset: 5, length: 25 }],
+        },
+        engine,
+      ).content[0].text,
+    );
+    expect(out.model.panel_count).toBe(3);
+    expect(out.model.bend_count).toBe(2);
+    expect(out.model.bends[0].angle_rad).toBeCloseTo(Math.PI / 2, 5);
+    expect(out.model.bends[1].angle_rad).toBeCloseTo(Math.PI / 2, 5);
+    expect(out.model.bends[0].direction).not.toBe(out.model.bends[1].direction);
+    expect(out.model.bends[0].k_factor_source).toContain(";jog:a");
+    expect(out.model.bends[1].k_factor_source).toContain(";jog:b");
+  });
+
   it("springback: bend summary includes compensated angle per material", () => {
     // Al-hard has higher springback than al-soft.
     const soft = JSON.parse(

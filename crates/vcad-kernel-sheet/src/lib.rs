@@ -31,6 +31,7 @@ pub mod cost;
 pub mod dxf;
 pub mod edge_flange;
 pub mod hem;
+pub mod jog;
 pub mod manufacturability;
 pub mod materials;
 pub mod model;
@@ -42,6 +43,7 @@ pub use cost::{estimate_cost, CostBreakdown, CostRates};
 pub use dxf::flat_pattern_to_dxf;
 pub use edge_flange::{add_edge_flange, EdgeFlangeError, FlangePosition};
 pub use hem::{add_hem, HemKind, HemParams};
+pub use jog::{add_jog, JogParams, JogResult};
 pub use manufacturability::{check_manufacturability, Severity, ShopProfile, Violation};
 pub use materials::{
     builtin_materials, lookup as lookup_material, lookup_or_unknown as lookup_material_or_unknown,

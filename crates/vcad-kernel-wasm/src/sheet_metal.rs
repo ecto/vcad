@@ -26,13 +26,14 @@
 
 use serde::{Deserialize, Serialize};
 use vcad_kernel_sheet::{
-    add_edge_flange, add_hem, base_flange_rect,
+    add_edge_flange, add_hem, add_jog, base_flange_rect,
     bend_table::{self, BendTable},
     check_manufacturability,
     cost::{estimate_cost, CostBreakdown, CostRates},
     edge_flange::EdgeFlangeParams,
     flat_pattern_to_dxf,
     hem::{HemKind, HemParams},
+    jog::JogParams,
     BendDirection, FlangePosition, FlatPattern, SheetMetalModel, ShopProfile, Violation,
 };
 use wasm_bindgen::prelude::*;
@@ -69,6 +70,15 @@ enum ChainOp {
         length: f64,
         #[serde(default)]
         gap: f64,
+        direction: BendDirection,
+    },
+    /// Add a jog (Z-shaped offset) off `edge_index` of `panel_id`.
+    Jog {
+        panel_id: usize,
+        edge_index: usize,
+        offset: f64,
+        length: f64,
+        radius: f64,
         direction: BendDirection,
     },
 }
@@ -382,7 +392,7 @@ fn build_model(chain: &[ChainOp], table: &BendTable) -> Result<SheetMetalModel, 
             m.material = material.clone();
             m
         }
-        ChainOp::EdgeFlange { .. } | ChainOp::Hem { .. } => {
+        ChainOp::EdgeFlange { .. } | ChainOp::Hem { .. } | ChainOp::Jog { .. } => {
             return Err("first chain op must be a base flange".to_string());
         }
     };
@@ -438,6 +448,24 @@ fn build_model(chain: &[ChainOp], table: &BendTable) -> Result<SheetMetalModel, 
                     direction: *direction,
                 };
                 add_hem(&mut model, table, params).map_err(|e| format!("hem #{}: {e}", i + 1))?;
+            }
+            ChainOp::Jog {
+                panel_id,
+                edge_index,
+                offset,
+                length,
+                radius,
+                direction,
+            } => {
+                let params = JogParams {
+                    panel: *panel_id,
+                    edge_index: *edge_index,
+                    offset: *offset,
+                    length: *length,
+                    bend_radius: *radius,
+                    direction: *direction,
+                };
+                add_jog(&mut model, table, params).map_err(|e| format!("jog #{}: {e}", i + 1))?;
             }
         }
     }
@@ -617,8 +645,7 @@ fn summarise_model(model: &SheetMetalModel) -> ModelSummaryDto {
     let springback_factor = if model.material.is_empty() {
         0.0
     } else {
-        vcad_kernel_sheet::lookup_material_or_unknown(&model.material)
-            .springback_per_radian
+        vcad_kernel_sheet::lookup_material_or_unknown(&model.material).springback_per_radian
     };
     let bends = model
         .bends
