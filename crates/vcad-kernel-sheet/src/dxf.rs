@@ -116,6 +116,98 @@ fn write_line(s: &mut String, a: Point2, b: Point2, layer: &str) {
     let _ = writeln!(s, "11\n{:.6}\n21\n{:.6}", b.x, b.y);
 }
 
+/// One nested instance with the flat pattern that occupies it.
+///
+/// `dx_mm` / `dy_mm` translate the flat pattern's coordinates onto its
+/// stock sheet; `rotated` rotates 90° (counter-clockwise around the
+/// flat pattern's bbox-lower-left corner) before translation.
+#[derive(Debug, Clone)]
+pub struct NestedPlacement<'a> {
+    /// Flat pattern for this part.
+    pub flat: &'a FlatPattern,
+    /// Sheet index (0-based). Each unique sheet gets its own DXF.
+    pub sheet: usize,
+    /// Translation in mm from the flat pattern's local origin.
+    pub dx_mm: f64,
+    /// Translation in mm from the flat pattern's local origin.
+    pub dy_mm: f64,
+    /// True for the 90° rotated orientation.
+    pub rotated: bool,
+}
+
+/// Serialise a set of nested placements to one DXF per sheet.
+///
+/// Returns one DXF string per sheet (index 0 = sheet 0). Useful as the
+/// shop-facing artifact for a nested job: each sheet's DXF carries every
+/// part placed on it, on the same `CUT` / `BEND_UP` / `BEND_DOWN` layers
+/// as the single-part exporter so shop post-processors don't have to
+/// learn a new dialect.
+pub fn nested_dxf(placements: &[NestedPlacement<'_>]) -> Vec<String> {
+    let mut max_sheet = 0usize;
+    for p in placements {
+        if p.sheet > max_sheet {
+            max_sheet = p.sheet;
+        }
+    }
+    let num_sheets = if placements.is_empty() {
+        0
+    } else {
+        max_sheet + 1
+    };
+    (0..num_sheets)
+        .map(|sheet| build_sheet_dxf(sheet, placements))
+        .collect()
+}
+
+fn build_sheet_dxf(sheet: usize, placements: &[NestedPlacement<'_>]) -> String {
+    let mut s = String::new();
+    write_header(&mut s);
+    write_tables(&mut s);
+    let _ = writeln!(s, "0\nSECTION\n2\nENTITIES");
+    for p in placements.iter().filter(|p| p.sheet == sheet) {
+        // Translate the flat pattern. The flat coordinates are referenced
+        // to the FlatPattern's own bbox; we want each placement's bbox
+        // lower-left to land at (dx, dy).
+        let ((min_x, min_y), _) = p.flat.bbox();
+        let xform = |pt: Point2| -> Point2 {
+            let local = Point2::new(pt.x - min_x, pt.y - min_y);
+            let rotated = if p.rotated {
+                // 90° CCW about local origin: (x, y) → (-y, x). Then
+                // shift back into +x, +y by adding the rotated bbox
+                // dimensions.
+                let (_, (max_x, max_y)) = p.flat.bbox();
+                let (w, h) = (max_x - min_x, max_y - min_y);
+                let _ = w; // height becomes the new x extent
+                let _ = h;
+                Point2::new(-local.y + (max_y - min_y), local.x)
+            } else {
+                local
+            };
+            Point2::new(rotated.x + p.dx_mm, rotated.y + p.dy_mm)
+        };
+        for outline in &p.flat.panel_outlines_2d {
+            let pts: Vec<Point2> = outline.iter().map(|&q| xform(q)).collect();
+            write_polyline(&mut s, &pts, LAYER_CUT);
+        }
+        for panel_holes in &p.flat.panel_holes_2d {
+            for hole in panel_holes {
+                let pts: Vec<Point2> = hole.iter().map(|&q| xform(q)).collect();
+                write_polyline(&mut s, &pts, LAYER_CUT);
+            }
+        }
+        for crease in &p.flat.creases {
+            let layer = match crease.direction {
+                crate::model::BendDirection::Up => LAYER_BEND_UP,
+                crate::model::BendDirection::Down => LAYER_BEND_DOWN,
+            };
+            write_line(&mut s, xform(crease.line.0), xform(crease.line.1), layer);
+        }
+    }
+    let _ = writeln!(s, "0\nENDSEC");
+    let _ = writeln!(s, "0\nEOF");
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,6 +288,70 @@ mod tests {
         let dxf = flat_pattern_to_dxf(&FlatPattern::from_model(&m));
         assert!(dxf.contains("0\nLINE\n8\nBEND_DOWN"));
         assert!(!dxf.contains("0\nLINE\n8\nBEND_UP"));
+    }
+
+    #[test]
+    fn nested_dxf_emits_one_per_sheet_with_translated_geometry() {
+        let flat_a = l_bracket_flat();
+        let flat_b = l_bracket_flat();
+        let placements = vec![
+            NestedPlacement {
+                flat: &flat_a,
+                sheet: 0,
+                dx_mm: 100.0,
+                dy_mm: 0.0,
+                rotated: false,
+            },
+            NestedPlacement {
+                flat: &flat_b,
+                sheet: 0,
+                dx_mm: 0.0,
+                dy_mm: 200.0,
+                rotated: true,
+            },
+        ];
+        let dxfs = nested_dxf(&placements);
+        assert_eq!(dxfs.len(), 1);
+        // Both parts contribute outlines on CUT.
+        let cut_count = dxfs[0].matches("0\nLWPOLYLINE\n8\nCUT").count();
+        assert!(cut_count >= 4, "expected ≥4 outlines, got {cut_count}");
+        // Some coordinate has been translated into the placement space.
+        assert!(dxfs[0].contains("\n200.0"));
+        assert!(dxfs[0].trim_end().ends_with("0\nEOF"));
+    }
+
+    #[test]
+    fn nested_dxf_one_per_sheet() {
+        let flat = l_bracket_flat();
+        let placements = vec![
+            NestedPlacement {
+                flat: &flat,
+                sheet: 0,
+                dx_mm: 0.0,
+                dy_mm: 0.0,
+                rotated: false,
+            },
+            NestedPlacement {
+                flat: &flat,
+                sheet: 1,
+                dx_mm: 0.0,
+                dy_mm: 0.0,
+                rotated: false,
+            },
+            NestedPlacement {
+                flat: &flat,
+                sheet: 1,
+                dx_mm: 200.0,
+                dy_mm: 0.0,
+                rotated: false,
+            },
+        ];
+        let dxfs = nested_dxf(&placements);
+        assert_eq!(dxfs.len(), 2);
+        // Sheet 1 has 2 instances → ~4 outlines, sheet 0 has ~2.
+        let s1 = dxfs[1].matches("0\nLWPOLYLINE\n8\nCUT").count();
+        let s0 = dxfs[0].matches("0\nLWPOLYLINE\n8\nCUT").count();
+        assert!(s1 >= 2 * s0, "sheet 1 should have ≥2× the cuts of sheet 0");
     }
 
     #[test]

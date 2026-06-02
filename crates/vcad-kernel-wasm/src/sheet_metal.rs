@@ -36,10 +36,11 @@ use vcad_kernel_sheet::{
     flat_pattern_to_dxf,
     hem::{HemKind, HemParams},
     jog::JogParams,
-    nest_rectangles,
+    nest_rectangles, nested_dxf,
     nesting::{NestingParams, NestingResult, PartFootprint},
     sequence::BendStep,
-    BendDirection, FlangePosition, FlatPattern, SheetMetalModel, ShopProfile, Violation,
+    BendDirection, FlangePosition, FlatPattern, NestedPlacement, SheetMetalModel, ShopProfile,
+    Violation,
 };
 use wasm_bindgen::prelude::*;
 
@@ -385,6 +386,79 @@ pub fn nest_sheet_metal_parts(parts_json: &str, params_json: &str) -> String {
         },
     };
     serde_json::to_string(&dto).unwrap_or_else(|_| r#"{"error":"serialize failed"}"#.to_string())
+}
+
+/// Placement spec for [`nested_sheet_metal_dxf`]: each entry pairs a
+/// sheet-metal op chain with the (sheet, dx, dy, rotated) location it
+/// occupies on a stock sheet.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NestedPlacementDto {
+    chain: Vec<ChainOp>,
+    sheet: usize,
+    #[serde(default)]
+    dx_mm: f64,
+    #[serde(default)]
+    dy_mm: f64,
+    #[serde(default)]
+    rotated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+struct NestedDxfResult {
+    /// One DXF string per sheet (index 0 = sheet 0).
+    sheets: Vec<String>,
+    error: Option<String>,
+}
+
+/// Produce one layered DXF per stock sheet for a set of nested parts.
+///
+/// `placements_json` is an array of [`NestedPlacementDto`]; each chain
+/// is independently evaluated into a flat pattern, then translated /
+/// rotated according to its placement before being written to the
+/// sheet's DXF. Layers are the same `CUT` / `BEND_UP` / `BEND_DOWN`
+/// triple a shop's post-processor already knows.
+#[wasm_bindgen(js_name = nestedSheetMetalDxf)]
+pub fn nested_sheet_metal_dxf(placements_json: &str) -> String {
+    let result = match nested_dxf_impl(placements_json) {
+        Ok(sheets) => NestedDxfResult {
+            sheets,
+            error: None,
+        },
+        Err(msg) => NestedDxfResult {
+            sheets: Vec::new(),
+            error: Some(msg),
+        },
+    };
+    serde_json::to_string(&result).unwrap_or_else(|_| r#"{"error":"serialize failed"}"#.to_string())
+}
+
+fn nested_dxf_impl(placements_json: &str) -> Result<Vec<String>, String> {
+    let placements: Vec<NestedPlacementDto> =
+        serde_json::from_str(placements_json).map_err(|e| format!("placements JSON: {e}"))?;
+    let table = BendTable::builtin();
+    // Build a flat pattern per placement (own it so the slice of refs is
+    // stable across the call).
+    let mut flats: Vec<FlatPattern> = Vec::with_capacity(placements.len());
+    for (i, p) in placements.iter().enumerate() {
+        let mut model =
+            build_model(&p.chain, &table).map_err(|e| format!("placement #{i}: {e}"))?;
+        vcad_kernel_sheet::unfold(&mut model)
+            .map_err(|e| format!("placement #{i} unfold: {e:?}"))?;
+        flats.push(FlatPattern::from_model(&model));
+    }
+    let placements_ref: Vec<NestedPlacement<'_>> = placements
+        .iter()
+        .zip(flats.iter())
+        .map(|(p, f)| NestedPlacement {
+            flat: f,
+            sheet: p.sheet,
+            dx_mm: p.dx_mm,
+            dy_mm: p.dy_mm,
+            rotated: p.rotated,
+        })
+        .collect();
+    Ok(nested_dxf(&placements_ref))
 }
 
 fn nest_impl(parts_json: &str, params_json: &str) -> Result<NestingResult, String> {

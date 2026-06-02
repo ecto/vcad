@@ -44,7 +44,7 @@ pub use base_flange::{
 };
 pub use bend_table::{BendAllowance, BendTable, KFactorSource};
 pub use cost::{estimate_cost, CostBreakdown, CostRates};
-pub use dxf::flat_pattern_to_dxf;
+pub use dxf::{flat_pattern_to_dxf, nested_dxf, NestedPlacement};
 pub use edge_flange::{add_edge_flange, EdgeFlangeError, FlangePosition};
 pub use hem::{add_hem, HemKind, HemParams};
 pub use jog::{add_jog, JogParams, JogResult};
