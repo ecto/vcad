@@ -89,6 +89,10 @@ import {
   sheetMetalUnfoldSchema,
   sheetMetalCheck,
   sheetMetalCheckSchema,
+  sheetMetalMaterials,
+  sheetMetalMaterialsSchema,
+  sheetMetalBendTable,
+  sheetMetalBendTableSchema,
 } from "./tools/sheet-metal.js";
 import { appendGlbPreview } from "./tools/preview.js";
 import {
@@ -279,6 +283,18 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
         description:
           "Run sheet-metal manufacturability for a session document against a shop profile (brake length, min R/t, flange height, hole→bend, bend→bend). Field-tolerant: omit keys to use generic defaults. Returns structured violations the agent can use to adjust the part and re-check.",
         inputSchema: sheetMetalCheckSchema,
+      },
+      {
+        name: "sheet_metal_materials",
+        description:
+          "List the built-in sheet-metal materials registry (aluminum soft/hard, mild + stainless steel, brass, copper) with min R/t, yield, modulus, density, and a coarse springback estimate. Use to pick a `material` for sheet_metal_create.",
+        inputSchema: sheetMetalMaterialsSchema,
+      },
+      {
+        name: "sheet_metal_bend_table",
+        description:
+          "Read the kernel's curated bend table — `(material, thickness, radius) → K-factor` rows used to compute bend allowance. Inspect this to know what K a planned bend will use without modelling the part first.",
+        inputSchema: sheetMetalBendTableSchema,
       },
       {
         name: "import_step",
@@ -533,6 +549,14 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
 
         case "sheet_metal_check":
           result = sheetMetalCheck(args, engine);
+          break;
+
+        case "sheet_metal_materials":
+          result = sheetMetalMaterials(args, engine);
+          break;
+
+        case "sheet_metal_bend_table":
+          result = sheetMetalBendTable(args, engine);
           break;
 
         case "import_step":

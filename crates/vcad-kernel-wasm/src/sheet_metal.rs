@@ -123,6 +123,9 @@ struct FlatCreaseDto {
 #[derive(Debug, Clone, Serialize, Default)]
 struct ModelSummaryDto {
     thickness: f64,
+    /// Material key from the model (e.g. `"al-soft"`). Empty when the
+    /// chain didn't specify one.
+    material: String,
     panel_count: usize,
     bend_count: usize,
     bends: Vec<BendSummaryDto>,
@@ -259,6 +262,43 @@ fn check_impl(chain_json: &str, shop_json: &str) -> Result<CheckResult, String> 
     })
 }
 
+/// Return the built-in sheet-metal materials registry as JSON.
+///
+/// Lets the UI populate a material picker and the MCP tools advertise
+/// what alloys are available — without each consumer hard-coding the list.
+#[wasm_bindgen(js_name = getSheetMetalMaterials)]
+pub fn get_sheet_metal_materials() -> String {
+    let mats = vcad_kernel_sheet::builtin_materials();
+    serde_json::to_string(&mats).unwrap_or_else(|_| "[]".to_string())
+}
+
+/// Return the built-in bend-table rows as JSON.
+///
+/// Exposes the curated `(material, t, R) → K` lookup so a shop / agent can
+/// audit what K-factor an upcoming bend will use without having to model
+/// the part first.
+#[wasm_bindgen(js_name = getSheetMetalBendTable)]
+pub fn get_sheet_metal_bend_table() -> String {
+    let table = BendTable::builtin();
+    let rows: Vec<_> = table
+        .rows
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "material": r.material,
+                "thickness_mm": r.thickness,
+                "radius_mm": r.radius,
+                "k_factor": r.k_factor,
+            })
+        })
+        .collect();
+    serde_json::to_string(&serde_json::json!({
+        "id": table.id,
+        "rows": rows,
+    }))
+    .unwrap_or_else(|_| "{}".to_string())
+}
+
 fn build_model(chain: &[ChainOp], table: &BendTable) -> Result<SheetMetalModel, String> {
     let mut iter = chain.iter();
     let base = iter
@@ -269,9 +309,12 @@ fn build_model(chain: &[ChainOp], table: &BendTable) -> Result<SheetMetalModel, 
             width,
             depth,
             thickness,
-            ..
+            material,
         } => {
-            base_flange_rect(*width, *depth, *thickness).map_err(|e| format!("base flange: {e}"))?
+            let mut m = base_flange_rect(*width, *depth, *thickness)
+                .map_err(|e| format!("base flange: {e}"))?;
+            m.material = material.clone();
+            m
         }
         ChainOp::EdgeFlange { .. } => {
             return Err("first chain op must be a base flange".to_string());
@@ -506,6 +549,7 @@ fn summarise_model(model: &SheetMetalModel) -> ModelSummaryDto {
         .collect();
     ModelSummaryDto {
         thickness: model.thickness,
+        material: model.material.clone(),
         panel_count: model.panels.len(),
         bend_count: model.bends.len(),
         bends,

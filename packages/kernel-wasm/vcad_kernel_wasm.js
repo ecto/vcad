@@ -3822,6 +3822,47 @@ export function getPartsManifest() {
 }
 
 /**
+ * Return the built-in bend-table rows as JSON.
+ *
+ * Exposes the curated `(material, t, R) → K` lookup so a shop / agent can
+ * audit what K-factor an upcoming bend will use without having to model
+ * the part first.
+ * @returns {string}
+ */
+export function getSheetMetalBendTable() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.getSheetMetalBendTable();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
+ * Return the built-in sheet-metal materials registry as JSON.
+ *
+ * Lets the UI populate a material picker and the MCP tools advertise
+ * what alloys are available — without each consumer hard-coding the list.
+ * @returns {string}
+ */
+export function getSheetMetalMaterials() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.getSheetMetalMaterials();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
  * Get available printer profiles.
  * @returns {any}
  */
@@ -6782,12 +6823,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2219, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2220, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2224, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2225, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h449c01a9b484b49e, wasm_bindgen__convert__closures_____invoke__h97f5d3065e41a070);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2932, function: Function { arguments: [Externref], shim_idx: 2933, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2937, function: Function { arguments: [Externref], shim_idx: 2938, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h5fc04d9207857a4f, wasm_bindgen__convert__closures_____invoke__h93fa00cb00fe3f24);
             return ret;
         },

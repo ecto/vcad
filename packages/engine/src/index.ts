@@ -12,10 +12,14 @@ import { DependencyGraph } from "./dependency-graph.js";
 import {
   buildSheetMetalChain,
   checkSheetMetalManufacturability,
+  getSheetMetalMaterials as readSheetMetalMaterials,
+  getSheetMetalBendTable as readSheetMetalBendTable,
 } from "./sheet-metal.js";
 import type {
   SheetMetalShopProfile,
   SheetMetalCheckResult,
+  SheetMetalMaterial,
+  SheetMetalBendTable,
 } from "./sheet-metal.js";
 
 export type {
@@ -87,6 +91,9 @@ export type {
   SheetMetalViolation,
   SheetMetalShopProfile,
   SheetMetalCheckResult,
+  SheetMetalMaterial,
+  SheetMetalBendTable,
+  SheetMetalBendTableRow,
 } from "./sheet-metal.js";
 export { DEFAULT_SHOP_PROFILE } from "./sheet-metal.js";
 
@@ -229,6 +236,10 @@ export interface KernelModule {
   evaluateSheetMetalChain?: (chainJson: string) => string;
   /** Run sheet-metal manufacturability vs. a shop profile → JSON. */
   checkSheetMetal?: (chainJson: string, shopJson: string) => string;
+  /** Built-in materials registry → JSON array. */
+  getSheetMetalMaterials?: () => string;
+  /** Built-in bend table → JSON `{id, rows}`. */
+  getSheetMetalBendTable?: () => string;
 }
 
 /** Rendered dimension types from the annotation layer */
@@ -425,6 +436,8 @@ export class Engine {
       buildPart: (wasmModule as Record<string, unknown>).buildPart as KernelModule["buildPart"],
       evaluateSheetMetalChain: (wasmModule as Record<string, unknown>).evaluateSheetMetalChain as KernelModule["evaluateSheetMetalChain"],
       checkSheetMetal: (wasmModule as Record<string, unknown>).checkSheetMetal as KernelModule["checkSheetMetal"],
+      getSheetMetalMaterials: (wasmModule as Record<string, unknown>).getSheetMetalMaterials as KernelModule["getSheetMetalMaterials"],
+      getSheetMetalBendTable: (wasmModule as Record<string, unknown>).getSheetMetalBendTable as KernelModule["getSheetMetalBendTable"],
     }, compiledWasmModule);
   }
 
@@ -659,6 +672,20 @@ export class Engine {
   exportDrawingToDxf(view: ProjectedView): Uint8Array {
     const json = JSON.stringify(view);
     return this.kernel.exportProjectedViewToDxf(json);
+  }
+
+  /** Return the kernel's curated sheet-metal materials registry. */
+  getSheetMetalMaterials(): SheetMetalMaterial[] {
+    return readSheetMetalMaterials(
+      this.kernel as unknown as Parameters<typeof readSheetMetalMaterials>[0],
+    );
+  }
+
+  /** Return the kernel's curated bend table. */
+  getSheetMetalBendTable(): SheetMetalBendTable {
+    return readSheetMetalBendTable(
+      this.kernel as unknown as Parameters<typeof readSheetMetalBendTable>[0],
+    );
   }
 
   /**

@@ -231,6 +231,42 @@ export function sheetMetalUnfold(
   });
 }
 
+// ─── sheet_metal_materials ────────────────────────────────────────────────
+
+export const sheetMetalMaterialsSchema = {
+  type: "object" as const,
+  properties: {},
+};
+
+export function sheetMetalMaterials(
+  _input: unknown,
+  engine: Engine,
+): { content: Array<{ type: "text"; text: string }> } {
+  const materials = engine.getSheetMetalMaterials();
+  return textResult({
+    materials,
+    note: "Pass any `name` (e.g. `\"al-soft\"`, `\"steel-mild\"`) as the `material` field of `sheet_metal_create`. Aliases like `\"aluminum\"`, `\"stainless\"`, `\"6061-T6\"` also resolve.",
+  });
+}
+
+// ─── sheet_metal_bend_table ───────────────────────────────────────────────
+
+export const sheetMetalBendTableSchema = {
+  type: "object" as const,
+  properties: {},
+};
+
+export function sheetMetalBendTable(
+  _input: unknown,
+  engine: Engine,
+): { content: Array<{ type: "text"; text: string }> } {
+  const table = engine.getSheetMetalBendTable();
+  return textResult({
+    table,
+    note: "K-factors are interpolated by closest R/t for the chosen material. To override K for a specific bend, pass `manual_k` on that flange in sheet_metal_create.",
+  });
+}
+
 // ─── sheet_metal_check ────────────────────────────────────────────────────
 
 export const sheetMetalCheckSchema = {

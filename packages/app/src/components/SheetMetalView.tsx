@@ -100,6 +100,8 @@ function Header({
     <div className="flex flex-col gap-1">
       <div className="font-medium text-text">Sheet metal</div>
       <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-text-muted">
+        <span>Material</span>
+        <span className="text-text">{model.material || "—"}</span>
         <span>Thickness</span>
         <span className="text-text">{model.thickness.toFixed(2)} mm</span>
         <span>Panels</span>

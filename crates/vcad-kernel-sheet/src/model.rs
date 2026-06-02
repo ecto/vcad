@@ -151,6 +151,10 @@ impl Bend {
 pub struct SheetMetalModel {
     /// Material thickness (mm). Constant across the part.
     pub thickness: f64,
+    /// Material name (key into [`crate::materials`] registry, e.g.
+    /// `"al-soft"`, `"steel-mild"`). Empty string means "unspecified" —
+    /// callers should treat that as an unknown alloy.
+    pub material: String,
     /// All panels in the model. Index by [`PanelId`].
     pub panels: Vec<Panel>,
     /// All bends in the model. Index by [`BendId`].
@@ -166,6 +170,7 @@ impl SheetMetalModel {
     pub fn new(thickness: f64) -> Self {
         Self {
             thickness,
+            material: String::new(),
             panels: Vec::new(),
             bends: Vec::new(),
             root: 0,

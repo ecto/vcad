@@ -8,6 +8,8 @@ import {
   sheetMetalCreate,
   sheetMetalUnfold,
   sheetMetalCheck,
+  sheetMetalMaterials,
+  sheetMetalBendTable,
 } from "../tools/sheet-metal.js";
 import {
   openDocument,
@@ -426,5 +428,79 @@ describe("sheet-metal tools", () => {
     expect(() =>
       sheetMetalUnfold({ document_id: "nope" }, engine),
     ).toThrow(/Unknown document_id/);
+  });
+
+  it("materials registry includes the six shop basics", () => {
+    const out = JSON.parse(
+      sheetMetalMaterials({}, engine).content[0].text,
+    );
+    const names: string[] = out.materials.map(
+      (m: { name: string }) => m.name,
+    );
+    for (const expected of [
+      "al-soft",
+      "al-hard",
+      "steel-mild",
+      "ss-304",
+      "brass",
+      "copper",
+    ]) {
+      expect(names).toContain(expected);
+    }
+  });
+
+  it("bend table returns curated rows", () => {
+    const out = JSON.parse(
+      sheetMetalBendTable({}, engine).content[0].text,
+    );
+    expect(out.table.id).toBe("builtin");
+    expect(out.table.rows.length).toBeGreaterThan(10);
+  });
+
+  it("material-aware check: al-hard flags R/t=1 that al-soft passes", () => {
+    // R=1 mm on 1 mm stock: R/t = 1.
+    // al-soft min R/t = 0 → shop-ready; al-hard min R/t = 1.5 → flagged.
+    const soft = JSON.parse(
+      sheetMetalCreate(
+        {
+          width: 100,
+          depth: 50,
+          thickness: 1,
+          material: "al-soft",
+          flanges: [{ edge_index: 0, length: 25, radius: 1 }],
+        },
+        engine,
+      ).content[0].text,
+    );
+    const softCheck = JSON.parse(
+      sheetMetalCheck({ document_id: soft.document_id }, engine).content[0]
+        .text,
+    );
+    expect(softCheck.shop_ready).toBe(true);
+
+    const hard = JSON.parse(
+      sheetMetalCreate(
+        {
+          width: 100,
+          depth: 50,
+          thickness: 1,
+          material: "al-hard",
+          flanges: [{ edge_index: 0, length: 25, radius: 1 }],
+        },
+        engine,
+      ).content[0].text,
+    );
+    const hardCheck = JSON.parse(
+      sheetMetalCheck({ document_id: hard.document_id }, engine).content[0]
+        .text,
+    );
+    expect(hardCheck.shop_ready).toBe(false);
+    const radiusViol = hardCheck.violations.find(
+      (v: { detail: { kind: string; source?: string } }) =>
+        v.detail.kind === "BendRadiusBelowMinimum",
+    );
+    expect(radiusViol).toBeDefined();
+    expect(radiusViol.detail.source).toBe("Material");
+    expect(radiusViol.detail.material).toBe("al-hard");
   });
 });

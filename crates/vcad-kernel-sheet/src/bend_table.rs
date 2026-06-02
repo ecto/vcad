@@ -100,30 +100,37 @@ impl BendTable {
     pub fn builtin() -> Self {
         // Material × thickness × radius → K. K varies primarily with R/t and
         // material hardness; we encode a tractable cross-section.
+        // Canonical keys match the materials registry: lowercase + hyphens.
         let rows = vec![
             // Aluminum (soft, e.g. 1100, 3003)
-            row("Al-soft", 1.0, 0.5, 0.33),
-            row("Al-soft", 1.0, 1.0, 0.35),
-            row("Al-soft", 1.0, 2.0, 0.37),
-            row("Al-soft", 1.0, 3.0, 0.38),
-            row("Al-soft", 1.5, 1.5, 0.35),
-            row("Al-soft", 2.0, 2.0, 0.36),
+            row("al-soft", 1.0, 0.5, 0.33),
+            row("al-soft", 1.0, 1.0, 0.35),
+            row("al-soft", 1.0, 2.0, 0.37),
+            row("al-soft", 1.0, 3.0, 0.38),
+            row("al-soft", 1.5, 1.5, 0.35),
+            row("al-soft", 2.0, 2.0, 0.36),
             // Aluminum (hard, e.g. 6061-T6)
-            row("Al-hard", 1.0, 1.0, 0.40),
-            row("Al-hard", 1.0, 2.0, 0.42),
-            row("Al-hard", 1.5, 1.5, 0.41),
-            row("Al-hard", 2.0, 3.0, 0.44),
+            row("al-hard", 1.0, 1.0, 0.40),
+            row("al-hard", 1.0, 2.0, 0.42),
+            row("al-hard", 1.5, 1.5, 0.41),
+            row("al-hard", 2.0, 3.0, 0.44),
             // Mild steel (CRS, A36)
-            row("Steel-mild", 1.0, 1.0, 0.40),
-            row("Steel-mild", 1.0, 2.0, 0.43),
-            row("Steel-mild", 1.5, 1.5, 0.42),
-            row("Steel-mild", 2.0, 2.0, 0.44),
-            row("Steel-mild", 3.0, 3.0, 0.45),
+            row("steel-mild", 1.0, 1.0, 0.40),
+            row("steel-mild", 1.0, 2.0, 0.43),
+            row("steel-mild", 1.5, 1.5, 0.42),
+            row("steel-mild", 2.0, 2.0, 0.44),
+            row("steel-mild", 3.0, 3.0, 0.45),
             // Stainless 304
-            row("SS-304", 1.0, 1.0, 0.44),
-            row("SS-304", 1.0, 2.0, 0.47),
-            row("SS-304", 1.5, 1.5, 0.45),
-            row("SS-304", 2.0, 2.0, 0.47),
+            row("ss-304", 1.0, 1.0, 0.44),
+            row("ss-304", 1.0, 2.0, 0.47),
+            row("ss-304", 1.5, 1.5, 0.45),
+            row("ss-304", 2.0, 2.0, 0.47),
+            // Brass C260
+            row("brass", 1.0, 1.0, 0.35),
+            row("brass", 1.5, 1.5, 0.36),
+            // Copper C110 (soft)
+            row("copper", 1.0, 1.0, 0.36),
+            row("copper", 1.5, 1.5, 0.37),
         ];
         Self {
             id: "builtin".to_string(),
@@ -145,9 +152,12 @@ impl BendTable {
         radius: f64,
     ) -> Option<(f64, KFactorSource)> {
         let target_rt = radius / thickness;
+        // Case-insensitive material match so shop-supplied tables and
+        // user-typed alloy names ("Al-Soft", "AL-SOFT", …) all hit.
+        let key = material.to_ascii_lowercase();
         let mut best: Option<(&BendTableRow, f64)> = None;
         for row in &self.rows {
-            if row.material != material {
+            if row.material.to_ascii_lowercase() != key {
                 continue;
             }
             let dist = (row.r_over_t() - target_rt).abs() + (row.thickness - thickness).abs() * 0.1;
@@ -223,7 +233,7 @@ mod tests {
     #[test]
     fn builtin_table_has_expected_materials() {
         let t = BendTable::builtin();
-        for mat in ["Al-soft", "Al-hard", "Steel-mild", "SS-304"] {
+        for mat in ["al-soft", "al-hard", "steel-mild", "ss-304"] {
             assert!(t.rows.iter().any(|r| r.material == mat), "missing {mat}");
         }
     }
@@ -235,10 +245,21 @@ mod tests {
         assert!((k - 0.35).abs() < 1e-12);
         match src {
             KFactorSource::Builtin { key } => {
-                assert!(key.starts_with("Al-soft/"), "got key {key}");
+                // Canonical (lowercase) key, regardless of caller casing.
+                assert!(key.starts_with("al-soft/"), "got key {key}");
             }
             other => panic!("expected Builtin, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn lookup_is_case_insensitive() {
+        let t = BendTable::builtin();
+        let a = t.lookup("Al-soft", 1.0, 1.0).expect("mixed-case hits");
+        let b = t.lookup("AL-SOFT", 1.0, 1.0).expect("upper-case hits");
+        let c = t.lookup("al-soft", 1.0, 1.0).expect("lower-case hits");
+        assert_eq!(a.0, b.0);
+        assert_eq!(b.0, c.0);
     }
 
     #[test]

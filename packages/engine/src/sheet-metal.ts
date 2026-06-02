@@ -29,9 +29,35 @@ export interface SheetMetalBendSummary {
 
 export interface SheetMetalModelSummary {
   thickness: number;
+  /** Material key (e.g. `"al-soft"`); empty when unspecified. */
+  material: string;
   panel_count: number;
   bend_count: number;
   bends: SheetMetalBendSummary[];
+}
+
+/** Sheet-metal material from the kernel's built-in registry. */
+export interface SheetMetalMaterial {
+  name: string;
+  display_name: string;
+  min_r_over_t: number;
+  yield_mpa: number;
+  modulus_gpa: number;
+  density_kg_m3: number;
+  springback_per_radian: number;
+}
+
+/** One row of the kernel's built-in bend table. */
+export interface SheetMetalBendTableRow {
+  material: string;
+  thickness_mm: number;
+  radius_mm: number;
+  k_factor: number;
+}
+
+export interface SheetMetalBendTable {
+  id: string;
+  rows: SheetMetalBendTableRow[];
 }
 
 export interface SheetMetalFlatCrease {
@@ -211,6 +237,8 @@ export function buildSheetMetalChain(
 interface SheetMetalKernel {
   evaluateSheetMetalChain?(chainJson: string): string;
   checkSheetMetal?(chainJson: string, shopJson: string): string;
+  getSheetMetalMaterials?(): string;
+  getSheetMetalBendTable?(): string;
 }
 
 /**
@@ -284,4 +312,28 @@ export function checkSheetMetalManufacturability(
     violations: parsed.violations,
     shop: parsed.shop ?? DEFAULT_SHOP_PROFILE,
   };
+}
+
+/** Read the kernel's built-in materials registry. */
+export function getSheetMetalMaterials(
+  kernel: SheetMetalKernel,
+): SheetMetalMaterial[] {
+  if (!kernel.getSheetMetalMaterials) return [];
+  try {
+    return JSON.parse(kernel.getSheetMetalMaterials()) as SheetMetalMaterial[];
+  } catch {
+    return [];
+  }
+}
+
+/** Read the kernel's built-in bend table. */
+export function getSheetMetalBendTable(
+  kernel: SheetMetalKernel,
+): SheetMetalBendTable {
+  if (!kernel.getSheetMetalBendTable) return { id: "", rows: [] };
+  try {
+    return JSON.parse(kernel.getSheetMetalBendTable()) as SheetMetalBendTable;
+  } catch {
+    return { id: "", rows: [] };
+  }
 }

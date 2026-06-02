@@ -23,6 +23,7 @@
 //! Hems, jogs, back-gauge collision and grain rules join this list as the
 //! operations that produce them land.
 
+use crate::materials::lookup_or_unknown as lookup_material;
 use crate::model::{BendId, PanelId, SheetMetalModel};
 use serde::{Deserialize, Serialize};
 use vcad_kernel_math::Point2;
@@ -43,8 +44,11 @@ pub struct ShopProfile {
     pub name: String,
     /// Maximum bend length the press brake can form (mm).
     pub max_bend_length_mm: f64,
-    /// Minimum inside-bend-radius to thickness ratio `(R/t)_min`. A bend
-    /// tighter than `ratio · t` cracks the outer fibre.
+    /// Minimum inside-bend-radius to thickness ratio `(R/t)_min` the
+    /// **shop's tooling** can form. Independent of material: a shop with a
+    /// big die set may still struggle to form tight bends regardless of
+    /// alloy. The effective minimum used by [`check_manufacturability`] is
+    /// `max(material.min_r_over_t, this)`.
     pub min_bend_radius_ratio: f64,
     /// Minimum formable flange height (mm) — shorter flanges can't be
     /// gripped between the punch and die.
@@ -81,6 +85,15 @@ impl Default for ShopProfile {
     }
 }
 
+/// Which constraint produced the bend-radius minimum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum BendRadiusSource {
+    /// The material would crack at a tighter radius.
+    Material,
+    /// The shop's tooling can't form a tighter radius.
+    Shop,
+}
+
 /// How bad a [`Violation`] is. `Error` means the part cannot be built as
 /// drawn; `Warning` means it will probably build but with quality risk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -103,8 +116,14 @@ pub enum Violation {
         bend_id: BendId,
         /// Modelled inside radius (mm).
         actual_mm: f64,
-        /// Minimum allowed radius for this thickness (mm).
+        /// Minimum allowed radius for this thickness (mm). Equal to
+        /// `max(material_min, shop_min) · t`.
         required_mm: f64,
+        /// Material the minimum was computed against.
+        material: String,
+        /// Whether the strictest constraint came from the **material**
+        /// (cracking fibre) or the **shop** floor override.
+        source: BendRadiusSource,
     },
     /// Bend line is longer than the press brake can form in one hit.
     BendExceedsBrakeCapacity {
@@ -184,9 +203,20 @@ impl Violation {
                 bend_id,
                 actual_mm,
                 required_mm,
-            } => format!(
-                "Bend #{bend_id} radius {actual_mm:.2} mm below minimum {required_mm:.2} mm"
-            ),
+                material,
+                source,
+            } => {
+                let reason = match source {
+                    BendRadiusSource::Material if !material.is_empty() => {
+                        format!("{material} cracks below this")
+                    }
+                    BendRadiusSource::Material => "material cracks below this".to_string(),
+                    BendRadiusSource::Shop => "shop tooling can't form tighter".to_string(),
+                };
+                format!(
+                    "Bend #{bend_id} radius {actual_mm:.2} mm below minimum {required_mm:.2} mm — {reason}"
+                )
+            }
             Violation::BendExceedsBrakeCapacity {
                 bend_id,
                 actual_mm,
@@ -230,15 +260,38 @@ impl Violation {
 pub fn check_manufacturability(model: &SheetMetalModel, shop: &ShopProfile) -> Vec<Violation> {
     let mut out = Vec::new();
     let t = model.thickness;
-    let min_radius = shop.min_bend_radius_ratio * t;
+
+    // Material drives the *physical* min R/t (cracking fibre); the shop is
+    // a tooling-side floor. The strictest of the two wins, and we record
+    // which one so the UI can explain. An empty `model.material` means the
+    // user hasn't specified — defer to the shop alone rather than picking
+    // an arbitrary fallback.
+    let material = if model.material.is_empty() {
+        None
+    } else {
+        Some(lookup_material(&model.material))
+    };
+    let (min_ratio, radius_source) = match &material {
+        Some(m) if m.min_r_over_t >= shop.min_bend_radius_ratio => {
+            (m.min_r_over_t, BendRadiusSource::Material)
+        }
+        _ => (shop.min_bend_radius_ratio, BendRadiusSource::Shop),
+    };
+    let min_radius = min_ratio * t;
+    let material_name = material
+        .as_ref()
+        .map(|m| m.name.clone())
+        .unwrap_or_default();
 
     for (bend_id, bend) in model.bends.iter().enumerate() {
-        // Bend radius vs material minimum.
+        // Bend radius vs (material ∨ shop) minimum.
         if bend.radius + 1e-9 < min_radius {
             out.push(Violation::BendRadiusBelowMinimum {
                 bend_id,
                 actual_mm: bend.radius,
                 required_mm: min_radius,
+                material: material_name.clone(),
+                source: radius_source,
             });
         }
 
@@ -486,6 +539,48 @@ mod tests {
         let json = serde_json::to_string(&p).unwrap();
         let q: ShopProfile = serde_json::from_str(&json).unwrap();
         assert_eq!(p, q);
+    }
+
+    #[test]
+    fn material_aware_radius_flags_al_hard_at_r_over_t_1() {
+        // Al-hard requires R/t >= 1.5; generic shop allows 1.0. With
+        // material set to al-hard the strictest constraint flips to the
+        // material and a 1 mm radius on 1 mm stock fails.
+        let mut m = base_flange_rect(100.0, 50.0, 1.0).unwrap();
+        m.material = "al-hard".to_string();
+        let table = BendTable::builtin();
+        add_edge_flange(&mut m, &table, flange(0, 0, 25.0, 1.0)).unwrap();
+        let v = check_manufacturability(&m, &ShopProfile::generic());
+        let r = v
+            .iter()
+            .find(|x| matches!(x, Violation::BendRadiusBelowMinimum { .. }))
+            .expect("expected a material-driven radius violation");
+        if let Violation::BendRadiusBelowMinimum {
+            source, material, ..
+        } = r
+        {
+            assert_eq!(*source, BendRadiusSource::Material);
+            assert_eq!(material, "al-hard");
+        }
+    }
+
+    #[test]
+    fn soft_aluminum_with_shop_floor_only() {
+        // Al-soft has min R/t = 0; only the shop's 1.0 ratio applies.
+        // R = 0.5 mm on 1 mm stock fails — but tagged as a *shop* limit,
+        // not a material one.
+        let mut m = base_flange_rect(100.0, 50.0, 1.0).unwrap();
+        m.material = "al-soft".to_string();
+        let table = BendTable::builtin();
+        add_edge_flange(&mut m, &table, flange(0, 0, 25.0, 0.5)).unwrap();
+        let v = check_manufacturability(&m, &ShopProfile::generic());
+        let r = v
+            .iter()
+            .find(|x| matches!(x, Violation::BendRadiusBelowMinimum { .. }))
+            .expect("R below shop floor");
+        if let Violation::BendRadiusBelowMinimum { source, .. } = r {
+            assert_eq!(*source, BendRadiusSource::Shop);
+        }
     }
 
     #[test]
