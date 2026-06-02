@@ -93,6 +93,8 @@ import {
   sheetMetalMaterialsSchema,
   sheetMetalBendTable,
   sheetMetalBendTableSchema,
+  sheetMetalCost,
+  sheetMetalCostSchema,
 } from "./tools/sheet-metal.js";
 import { appendGlbPreview } from "./tools/preview.js";
 import {
@@ -295,6 +297,12 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
         description:
           "Read the kernel's curated bend table — `(material, thickness, radius) → K-factor` rows used to compute bend allowance. Inspect this to know what K a planned bend will use without modelling the part first.",
         inputSchema: sheetMetalBendTableSchema,
+      },
+      {
+        name: "sheet_metal_cost",
+        description:
+          "Estimate the manufacturing cost of a sheet-metal session document: material (mass × $/kg), cut (length × $/m), pierces, bends, amortized setup, plus shop markup. Returns a line-itemed breakdown so the agent can see which line dominates and which design changes would lower it. `rates` is field-tolerant; omit it to use generic low-volume laser defaults.",
+        inputSchema: sheetMetalCostSchema,
       },
       {
         name: "import_step",
@@ -557,6 +565,10 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
 
         case "sheet_metal_bend_table":
           result = sheetMetalBendTable(args, engine);
+          break;
+
+        case "sheet_metal_cost":
+          result = sheetMetalCost(args, engine);
           break;
 
         case "import_step":

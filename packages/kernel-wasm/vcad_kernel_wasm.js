@@ -3068,6 +3068,33 @@ export function computeMeshVolume(positions, indices) {
 }
 
 /**
+ * Estimate the manufacturing cost of a sheet-metal chain.
+ *
+ * `rates_json` is field-tolerant (omit keys to use the generic shop
+ * rates); pass `""` for full defaults. `quantity` is clamped to `>= 1`.
+ * @param {string} chain_json
+ * @param {string} rates_json
+ * @param {number} quantity
+ * @returns {string}
+ */
+export function costSheetMetal(chain_json, rates_json, quantity) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(chain_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(rates_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.costSheetMetal(ptr0, len0, ptr1, len1, quantity);
+        deferred3_0 = ret[0];
+        deferred3_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Create a detail view from a projected view.
  *
  * A detail view is a magnified region of a parent view, useful for showing
@@ -6823,12 +6850,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2224, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2225, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2221, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2222, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h449c01a9b484b49e, wasm_bindgen__convert__closures_____invoke__h97f5d3065e41a070);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2937, function: Function { arguments: [Externref], shim_idx: 2938, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2934, function: Function { arguments: [Externref], shim_idx: 2935, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h5fc04d9207857a4f, wasm_bindgen__convert__closures_____invoke__h93fa00cb00fe3f24);
             return ret;
         },

@@ -10,6 +10,7 @@ import {
   sheetMetalCheck,
   sheetMetalMaterials,
   sheetMetalBendTable,
+  sheetMetalCost,
 } from "../tools/sheet-metal.js";
 import {
   openDocument,
@@ -455,6 +456,64 @@ describe("sheet-metal tools", () => {
     );
     expect(out.table.id).toBe("builtin");
     expect(out.table.rows.length).toBeGreaterThan(10);
+  });
+
+  it("cost: breakdown drops per-unit setup at higher quantity", () => {
+    const { document_id } = JSON.parse(
+      sheetMetalCreate(
+        {
+          width: 200,
+          depth: 100,
+          thickness: 1.5,
+          material: "steel-mild",
+          flanges: [{ edge_index: 0, length: 30 }],
+        },
+        engine,
+      ).content[0].text,
+    );
+    const one = JSON.parse(
+      sheetMetalCost({ document_id, quantity: 1 }, engine).content[0].text,
+    );
+    const hundred = JSON.parse(
+      sheetMetalCost({ document_id, quantity: 100 }, engine).content[0].text,
+    );
+    expect(one.breakdown.total_each).toBeGreaterThan(0);
+    expect(one.breakdown.currency).toBe("USD");
+    // Setup amortizes — per-part total drops with volume.
+    expect(hundred.breakdown.total_each).toBeLessThan(one.breakdown.total_each);
+    // Materials change cost: density of steel-mild routes through registry.
+    expect(one.breakdown.mass_kg_each).toBeGreaterThan(0.1);
+  });
+
+  it("cost: custom rates override defaults", () => {
+    const { document_id } = JSON.parse(
+      sheetMetalCreate(
+        {
+          width: 100,
+          depth: 50,
+          thickness: 1,
+          material: "al-soft",
+          flanges: [{ edge_index: 0, length: 20 }],
+        },
+        engine,
+      ).content[0].text,
+    );
+    const cheap = JSON.parse(
+      sheetMetalCost(
+        { document_id, rates: { markup_pct: 0 } },
+        engine,
+      ).content[0].text,
+    );
+    const dear = JSON.parse(
+      sheetMetalCost(
+        { document_id, rates: { markup_pct: 200 } },
+        engine,
+      ).content[0].text,
+    );
+    expect(dear.breakdown.total_each).toBeGreaterThan(cheap.breakdown.total_each);
+    expect(cheap.rates.markup_pct).toBe(0);
+    // Field-tolerance: other rates fell back to generic.
+    expect(cheap.rates.currency).toBe("USD");
   });
 
   it("material-aware check: al-hard flags R/t=1 that al-soft passes", () => {

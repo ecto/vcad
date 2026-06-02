@@ -27,6 +27,7 @@
 
 pub mod base_flange;
 pub mod bend_table;
+pub mod cost;
 pub mod dxf;
 pub mod edge_flange;
 pub mod manufacturability;
@@ -36,6 +37,7 @@ pub mod unfold;
 
 pub use base_flange::{base_flange_rect, BaseFlangeError};
 pub use bend_table::{BendAllowance, BendTable, KFactorSource};
+pub use cost::{estimate_cost, CostBreakdown, CostRates};
 pub use dxf::flat_pattern_to_dxf;
 pub use edge_flange::{add_edge_flange, EdgeFlangeError, FlangePosition};
 pub use manufacturability::{check_manufacturability, Severity, ShopProfile, Violation};

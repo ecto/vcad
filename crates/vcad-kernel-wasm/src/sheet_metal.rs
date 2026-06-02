@@ -29,6 +29,7 @@ use vcad_kernel_sheet::{
     add_edge_flange, base_flange_rect,
     bend_table::{self, BendTable},
     check_manufacturability,
+    cost::{estimate_cost, CostBreakdown, CostRates},
     edge_flange::EdgeFlangeParams,
     flat_pattern_to_dxf, BendDirection, FlangePosition, FlatPattern, SheetMetalModel, ShopProfile,
     Violation,
@@ -258,6 +259,53 @@ fn check_impl(chain_json: &str, shop_json: &str) -> Result<CheckResult, String> 
     Ok(CheckResult {
         violations,
         shop: Some(shop),
+        error: None,
+    })
+}
+
+/// Result of [`cost_sheet_metal`].
+#[derive(Debug, Clone, Serialize, Default)]
+struct CostResult {
+    breakdown: Option<CostBreakdown>,
+    rates: Option<CostRates>,
+    error: Option<String>,
+}
+
+/// Estimate the manufacturing cost of a sheet-metal chain.
+///
+/// `rates_json` is field-tolerant (omit keys to use the generic shop
+/// rates); pass `""` for full defaults. `quantity` is clamped to `>= 1`.
+#[wasm_bindgen(js_name = costSheetMetal)]
+pub fn cost_sheet_metal(chain_json: &str, rates_json: &str, quantity: u32) -> String {
+    let result = match cost_impl(chain_json, rates_json, quantity) {
+        Ok(r) => r,
+        Err(msg) => CostResult {
+            error: Some(msg),
+            ..Default::default()
+        },
+    };
+    serde_json::to_string(&result).unwrap_or_else(|_| r#"{"error":"serialize failed"}"#.to_string())
+}
+
+fn cost_impl(chain_json: &str, rates_json: &str, quantity: u32) -> Result<CostResult, String> {
+    let chain: Vec<ChainOp> =
+        serde_json::from_str(chain_json).map_err(|e| format!("chain JSON: {e}"))?;
+    if chain.is_empty() {
+        return Err("empty op chain".to_string());
+    }
+    let rates = if rates_json.trim().is_empty() {
+        CostRates::generic()
+    } else {
+        serde_json::from_str::<CostRates>(rates_json).map_err(|e| format!("rates JSON: {e}"))?
+    };
+    let table = BendTable::builtin();
+    let mut model = build_model(&chain, &table)?;
+    vcad_kernel_sheet::unfold(&mut model).map_err(|e| format!("unfold: {e:?}"))?;
+    let flat = FlatPattern::from_model(&model);
+    let breakdown = estimate_cost(&model, &flat, quantity, &rates);
+    Ok(CostResult {
+        breakdown: Some(breakdown),
+        rates: Some(rates),
         error: None,
     })
 }

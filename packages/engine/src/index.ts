@@ -12,6 +12,7 @@ import { DependencyGraph } from "./dependency-graph.js";
 import {
   buildSheetMetalChain,
   checkSheetMetalManufacturability,
+  costSheetMetalChain,
   getSheetMetalMaterials as readSheetMetalMaterials,
   getSheetMetalBendTable as readSheetMetalBendTable,
 } from "./sheet-metal.js";
@@ -20,6 +21,8 @@ import type {
   SheetMetalCheckResult,
   SheetMetalMaterial,
   SheetMetalBendTable,
+  SheetMetalCostRates,
+  SheetMetalCostResult,
 } from "./sheet-metal.js";
 
 export type {
@@ -94,8 +97,11 @@ export type {
   SheetMetalMaterial,
   SheetMetalBendTable,
   SheetMetalBendTableRow,
+  SheetMetalCostRates,
+  SheetMetalCostBreakdown,
+  SheetMetalCostResult,
 } from "./sheet-metal.js";
-export { DEFAULT_SHOP_PROFILE } from "./sheet-metal.js";
+export { DEFAULT_SHOP_PROFILE, DEFAULT_COST_RATES } from "./sheet-metal.js";
 
 // Parametric expressions
 export {
@@ -236,6 +242,8 @@ export interface KernelModule {
   evaluateSheetMetalChain?: (chainJson: string) => string;
   /** Run sheet-metal manufacturability vs. a shop profile → JSON. */
   checkSheetMetal?: (chainJson: string, shopJson: string) => string;
+  /** Estimate sheet-metal cost for a chain → JSON. */
+  costSheetMetal?: (chainJson: string, ratesJson: string, quantity: number) => string;
   /** Built-in materials registry → JSON array. */
   getSheetMetalMaterials?: () => string;
   /** Built-in bend table → JSON `{id, rows}`. */
@@ -436,6 +444,7 @@ export class Engine {
       buildPart: (wasmModule as Record<string, unknown>).buildPart as KernelModule["buildPart"],
       evaluateSheetMetalChain: (wasmModule as Record<string, unknown>).evaluateSheetMetalChain as KernelModule["evaluateSheetMetalChain"],
       checkSheetMetal: (wasmModule as Record<string, unknown>).checkSheetMetal as KernelModule["checkSheetMetal"],
+      costSheetMetal: (wasmModule as Record<string, unknown>).costSheetMetal as KernelModule["costSheetMetal"],
       getSheetMetalMaterials: (wasmModule as Record<string, unknown>).getSheetMetalMaterials as KernelModule["getSheetMetalMaterials"],
       getSheetMetalBendTable: (wasmModule as Record<string, unknown>).getSheetMetalBendTable as KernelModule["getSheetMetalBendTable"],
     }, compiledWasmModule);
@@ -672,6 +681,34 @@ export class Engine {
   exportDrawingToDxf(view: ProjectedView): Uint8Array {
     const json = JSON.stringify(view);
     return this.kernel.exportProjectedViewToDxf(json);
+  }
+
+  /**
+   * Estimate the manufacturing cost of the sheet-metal part in `doc`.
+   *
+   * Finds the first sheet-metal root, rebuilds its op chain, and asks the
+   * kernel for a line-itemed breakdown using `rates` (or
+   * {@link DEFAULT_COST_RATES} when omitted). Returns `null` if the document
+   * has no sheet-metal part. Pure query — does not evaluate meshes.
+   */
+  costSheetMetal(
+    doc: Document,
+    rates?: SheetMetalCostRates,
+    quantity = 1,
+  ): SheetMetalCostResult | null {
+    for (const entry of doc.roots) {
+      if (entry.visible === false) continue;
+      const chain = buildSheetMetalChain(entry.root, doc.nodes);
+      if (chain) {
+        return costSheetMetalChain(
+          chain,
+          this.kernel as unknown as Parameters<typeof costSheetMetalChain>[1],
+          rates,
+          quantity,
+        );
+      }
+    }
+    return null;
   }
 
   /** Return the kernel's curated sheet-metal materials registry. */

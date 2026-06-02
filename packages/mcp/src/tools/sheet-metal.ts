@@ -21,6 +21,7 @@
 
 import type {
   Engine,
+  SheetMetalCostRates,
   SheetMetalRendered,
   SheetMetalShopProfile,
 } from "@vcad/engine";
@@ -311,5 +312,54 @@ export function sheetMetalCheck(
     shop_ready: result.violations.length === 0,
     error_count: errors,
     warning_count: result.violations.length - errors,
+  });
+}
+
+// ─── sheet_metal_cost ─────────────────────────────────────────────────────
+
+export const sheetMetalCostSchema = {
+  type: "object" as const,
+  properties: {
+    document_id: {
+      type: "string" as const,
+      description: "Session id from sheet_metal_create.",
+    },
+    quantity: {
+      type: "number" as const,
+      description:
+        "Job quantity for amortizing setup. Default 1. Clamped to >= 1.",
+    },
+    rates: {
+      type: "object" as const,
+      description:
+        "Optional shop pricing — field-tolerant (omit keys to use generic). Keys: currency, material_usd_per_kg, cut_usd_per_m, pierce_usd_each, bend_usd_each, setup_usd, markup_pct.",
+    },
+  },
+  required: ["document_id"],
+};
+
+export function sheetMetalCost(
+  input: unknown,
+  engine: Engine,
+): { content: Array<{ type: "text"; text: string }> } {
+  const a = (input ?? {}) as Record<string, unknown>;
+  const doc = getSession(String(a.document_id ?? ""));
+  const qty = Math.max(1, Math.floor(Number(a.quantity ?? 1)));
+  const rates =
+    a.rates && typeof a.rates === "object"
+      ? (a.rates as Partial<SheetMetalCostRates>)
+      : undefined;
+  const result = engine.costSheetMetal(
+    doc,
+    rates as SheetMetalCostRates | undefined,
+    qty,
+  );
+  if (!result) {
+    throw new Error("document has no sheet-metal part");
+  }
+  return textResult({
+    breakdown: result.breakdown,
+    rates: result.rates,
+    summary: `${result.breakdown.currency} ${result.breakdown.total_each.toFixed(2)} each @ qty ${result.breakdown.quantity} (mass ${result.breakdown.mass_kg_each.toFixed(3)} kg, ${result.breakdown.cut_length_m.toFixed(2)} m cut, ${result.breakdown.bends} bend(s)).`,
   });
 }

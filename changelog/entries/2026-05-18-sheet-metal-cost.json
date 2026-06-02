@@ -1,0 +1,18 @@
+{
+  "id": "2026-05-18-sheet-metal-cost",
+  "version": "0.9.4",
+  "date": "2026-05-18",
+  "category": "feat",
+  "title": "Sheet-metal cost as a derivative of the model",
+  "summary": "Live, line-itemed manufacturing cost for sheet-metal parts — material/cut/pierce/bend/setup with shop markup, in the panel and as an MCP tool. No more send-to-shop-wait-three-days for a quote.",
+  "details": "## What's New\n\n- **Cost badge** in the sheet-metal panel: per-unit total + expandable breakdown (material kg, cut length, pierces, bends, setup, markup) that recomputes live on every edit. Editable quantity for setup amortization.\n- **`sheet_metal_cost` MCP tool**: agents see which line dominates and which design changes lower the price.\n- Kernel `vcad-kernel-sheet::cost`: pure function of `(model, flat, qty, rates)`. Mass comes from the flat area × thickness × material density (lookups via the materials registry, so swapping alloy updates cost). Generic low-volume laser-cut defaults work out of the box; rates are field-tolerant for shop overrides.",
+  "features": [
+    "sheet-metal",
+    "cost",
+    "manufacturing",
+    "mcp"
+  ],
+  "mcpTools": [
+    "sheet_metal_cost"
+  ]
+}

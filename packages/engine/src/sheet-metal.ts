@@ -127,6 +127,61 @@ export const DEFAULT_SHOP_PROFILE: SheetMetalShopProfile = {
 };
 
 /** Result of {@link checkSheetMetalManufacturability}. */
+/** Shop pricing rates for sheet-metal cost estimation. Mirrors the Rust
+ *  `CostRates`. Field-tolerant deserialization on the kernel side: omitted
+ *  keys fall back to {@link DEFAULT_COST_RATES}. */
+export interface SheetMetalCostRates {
+  currency: string;
+  material_usd_per_kg: number;
+  cut_usd_per_m: number;
+  pierce_usd_each: number;
+  bend_usd_each: number;
+  setup_usd: number;
+  markup_pct: number;
+}
+
+/** The kernel's `CostRates::generic()` — keep in sync with Rust. */
+export const DEFAULT_COST_RATES: SheetMetalCostRates = {
+  currency: "USD",
+  material_usd_per_kg: 5.0,
+  cut_usd_per_m: 1.2,
+  pierce_usd_each: 0.1,
+  bend_usd_each: 0.75,
+  setup_usd: 25,
+  markup_pct: 30,
+};
+
+/** A transparent line-itemed cost estimate. Mirrors `CostBreakdown`. */
+export interface SheetMetalCostBreakdown {
+  currency: string;
+  quantity: number;
+  material_each: number;
+  cut_each: number;
+  pierce_each: number;
+  bend_each: number;
+  setup_each: number;
+  subtotal_each: number;
+  markup_each: number;
+  total_each: number;
+  total_run: number;
+  mass_kg_each: number;
+  cut_length_m: number;
+  pierces: number;
+  bends: number;
+}
+
+/** Result of {@link costSheetMetalChain}. */
+export interface SheetMetalCostResult {
+  breakdown: SheetMetalCostBreakdown;
+  rates: SheetMetalCostRates;
+}
+
+interface RawCostResult {
+  breakdown: SheetMetalCostBreakdown | null;
+  rates: SheetMetalCostRates | null;
+  error: string | null;
+}
+
 export interface SheetMetalCheckResult {
   violations: SheetMetalViolation[];
   /** Profile the kernel actually checked against (post field-merge). */
@@ -237,6 +292,7 @@ export function buildSheetMetalChain(
 interface SheetMetalKernel {
   evaluateSheetMetalChain?(chainJson: string): string;
   checkSheetMetal?(chainJson: string, shopJson: string): string;
+  costSheetMetal?(chainJson: string, ratesJson: string, quantity: number): string;
   getSheetMetalMaterials?(): string;
   getSheetMetalBendTable?(): string;
 }
@@ -336,4 +392,38 @@ export function getSheetMetalBendTable(
   } catch {
     return { id: "", rows: [] };
   }
+}
+
+/**
+ * Compute a transparent cost estimate for a sheet-metal chain.
+ *
+ * Pure query — no mesh evaluation. The kernel rebuilds the model and flat
+ * pattern internally. `rates` is merged onto {@link DEFAULT_COST_RATES}
+ * field-by-field, so a partial object is fine. `quantity` is clamped to
+ * `>= 1`. Throws on kernel error.
+ */
+export function costSheetMetalChain(
+  chain: ChainOp[],
+  kernel: SheetMetalKernel,
+  rates?: SheetMetalCostRates,
+  quantity = 1,
+): SheetMetalCostResult {
+  if (!kernel.costSheetMetal) {
+    throw new Error(
+      "kernel.costSheetMetal not available — rebuild @vcad/kernel-wasm",
+    );
+  }
+  const json = kernel.costSheetMetal(
+    JSON.stringify(chain),
+    rates ? JSON.stringify(rates) : "",
+    Math.max(1, Math.floor(quantity)),
+  );
+  const parsed = JSON.parse(json) as RawCostResult;
+  if (parsed.error) {
+    throw new Error(`sheet-metal cost: ${parsed.error}`);
+  }
+  if (!parsed.breakdown || !parsed.rates) {
+    throw new Error("sheet-metal cost: kernel returned empty breakdown");
+  }
+  return { breakdown: parsed.breakdown, rates: parsed.rates };
 }

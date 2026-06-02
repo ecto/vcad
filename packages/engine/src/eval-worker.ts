@@ -198,6 +198,7 @@ self.onmessage = async (e: MessageEvent) => {
         evaluateSheetMetalChain: (wasm as Record<string, unknown>)
           .evaluateSheetMetalChain,
         checkSheetMetal: (wasm as Record<string, unknown>).checkSheetMetal,
+        costSheetMetal: (wasm as Record<string, unknown>).costSheetMetal,
       };
 
       // Check if native WASM evaluator is available

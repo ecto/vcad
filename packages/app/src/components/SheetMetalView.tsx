@@ -16,6 +16,7 @@
 
 import { useDocumentStore, useEngineStore, useUiStore } from "@vcad/core";
 import type {
+  SheetMetalCostResult,
   SheetMetalFlatPattern,
   SheetMetalModelSummary,
   SheetMetalRendered,
@@ -58,6 +59,19 @@ export function SheetMetalView() {
     }
   }, [engine, document, profile, rendered]);
 
+  // Cost estimate — pure query, recomputes on any model edit. Generic
+  // rates for now; later tier wires this to a persisted rate sheet.
+  const [costQty, setCostQty] = useState(1);
+  const cost = useMemo(() => {
+    if (!engine || !rendered) return null;
+    try {
+      return engine.costSheetMetal(document, undefined, costQty);
+    } catch (e) {
+      console.warn("[sheet-metal] cost estimate failed:", e);
+      return null;
+    }
+  }, [engine, document, rendered, costQty]);
+
   if (!rendered) return null;
   const { model, flatPattern, dxf } = rendered;
   const violations = checked?.violations ?? rendered.violations;
@@ -74,6 +88,7 @@ export function SheetMetalView() {
       <BendList model={model} />
       <DfmInspector violations={violations} shopName={shopName} />
       <ShopProfileEditor />
+      <CostBadge cost={cost} qty={costQty} setQty={setCostQty} />
       <FlatPatternSvg flat={flatPattern} />
       <button
         type="button"
@@ -298,6 +313,84 @@ function ShopProfileEditor() {
           >
             Reset to generic
           </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CostBadge({
+  cost,
+  qty,
+  setQty,
+}: {
+  cost: SheetMetalCostResult | null;
+  qty: number;
+  setQty: (n: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  if (!cost) return null;
+  const b = cost.breakdown;
+  const fmt = (v: number) =>
+    `${b.currency} ${v.toFixed(v < 1 ? 3 : 2)}`;
+  return (
+    <div className="flex flex-col gap-1">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center justify-between rounded bg-hover/30 px-2 py-1 text-left transition-colors hover:bg-hover"
+        title="Click for breakdown"
+      >
+        <span className="text-text-muted">Cost</span>
+        <span className="flex items-center gap-2">
+          <span className="font-medium text-text">{fmt(b.total_each)}</span>
+          <span className="text-[10px] text-text-muted">
+            each · qty {b.quantity}
+          </span>
+        </span>
+      </button>
+      {open && (
+        <div className="flex flex-col gap-1 rounded bg-hover/20 p-2">
+          <label className="flex items-center justify-between gap-2">
+            <span className="text-text-muted">Quantity</span>
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={qty}
+              onChange={(e) => {
+                const v = Number.parseInt(e.target.value, 10);
+                if (Number.isFinite(v) && v >= 1) setQty(v);
+              }}
+              className="w-20 rounded bg-surface px-1 py-0.5 text-right text-text outline-none focus:ring-1 focus:ring-accent"
+            />
+          </label>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-text-muted">
+            <span>Material ({b.mass_kg_each.toFixed(3)} kg)</span>
+            <span className="text-right text-text">{fmt(b.material_each)}</span>
+            <span>Cut ({b.cut_length_m.toFixed(2)} m)</span>
+            <span className="text-right text-text">{fmt(b.cut_each)}</span>
+            {b.pierces > 0 && (
+              <>
+                <span>Pierce ({b.pierces})</span>
+                <span className="text-right text-text">
+                  {fmt(b.pierce_each)}
+                </span>
+              </>
+            )}
+            <span>Bend ({b.bends})</span>
+            <span className="text-right text-text">{fmt(b.bend_each)}</span>
+            <span>Setup (amortized)</span>
+            <span className="text-right text-text">{fmt(b.setup_each)}</span>
+            <span>Markup</span>
+            <span className="text-right text-text">{fmt(b.markup_each)}</span>
+            <span className="font-medium text-text">Total each</span>
+            <span className="text-right font-medium text-text">
+              {fmt(b.total_each)}
+            </span>
+            <span>Total run</span>
+            <span className="text-right text-text">{fmt(b.total_run)}</span>
+          </div>
         </div>
       )}
     </div>
