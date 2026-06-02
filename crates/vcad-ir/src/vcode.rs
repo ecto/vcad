@@ -2501,12 +2501,10 @@ fn format_op(
         | CsgOp::SheetMetalBaseFlangePolygon { .. }
         | CsgOp::SheetMetalEdgeFlange { .. }
         | CsgOp::SheetMetalHem { .. }
-        | CsgOp::SheetMetalJog { .. } => {
-            Err(VCodeParseError {
-                line: 0,
-                message: "Sheet-metal ops not yet supported in VCode format".to_string(),
-            })
-        }
+        | CsgOp::SheetMetalJog { .. } => Err(VCodeParseError {
+            line: 0,
+            message: "Sheet-metal ops not yet supported in VCode format".to_string(),
+        }),
     }
 }
 
