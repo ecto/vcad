@@ -96,11 +96,7 @@ pub fn add_hem(
     // Tag the bend's provenance so the UI / DXF / agent can label it
     // as a hem rather than a generic 180° fold.
     if let Some(bend) = model.bends.get_mut(bend_id) {
-        let base = bend
-            .k_factor_source
-            .clone()
-            .unwrap_or_else(|| "manual".to_string());
-        bend.k_factor_source = Some(format!("{base}{suffix}"));
+        bend.append_source_tag(suffix);
     }
     Ok((panel_id, bend_id))
 }

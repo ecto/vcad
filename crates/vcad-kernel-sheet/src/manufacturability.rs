@@ -23,7 +23,6 @@
 //! Hems, jogs, back-gauge collision and grain rules join this list as the
 //! operations that produce them land.
 
-use crate::materials::lookup_or_unknown as lookup_material;
 use crate::model::{BendId, PanelId, SheetMetalModel};
 use serde::{Deserialize, Serialize};
 use vcad_kernel_math::Point2;
@@ -266,11 +265,7 @@ pub fn check_manufacturability(model: &SheetMetalModel, shop: &ShopProfile) -> V
     // which one so the UI can explain. An empty `model.material` means the
     // user hasn't specified — defer to the shop alone rather than picking
     // an arbitrary fallback.
-    let material = if model.material.is_empty() {
-        None
-    } else {
-        Some(lookup_material(&model.material))
-    };
+    let material = model.material_properties();
     let (min_ratio, radius_source) = match &material {
         Some(m) if m.min_r_over_t >= shop.min_bend_radius_ratio => {
             (m.min_r_over_t, BendRadiusSource::Material)

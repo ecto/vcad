@@ -12,11 +12,9 @@
 //! this heuristic produces correct-by-construction orderings on the
 //! tree-shaped models the kernel currently supports.
 
-use crate::materials::lookup_or_unknown as lookup_material;
 use crate::model::{Bend, BendId, PanelId, SheetMetalModel};
 use serde::Serialize;
 use std::collections::HashSet;
-use vcad_kernel_math::Point2;
 
 /// One step in a bend sequence.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -48,11 +46,7 @@ pub struct BendStep {
 /// Returns one [`BendStep`] per bend, in form-first order.
 pub fn bend_sequence(model: &SheetMetalModel) -> Vec<BendStep> {
     let depths = bend_depths(model);
-    let springback_factor = if model.material.is_empty() {
-        0.0
-    } else {
-        lookup_material(&model.material).springback_per_radian
-    };
+    let springback_factor = model.springback_per_radian();
     let mut ordered: Vec<BendId> = (0..model.bends.len()).collect();
     // Deeper first; tie-break by bend id ascending.
     ordered.sort_by(|a, b| depths[*b].cmp(&depths[*a]).then_with(|| a.cmp(b)));
@@ -140,10 +134,6 @@ fn rationale_for(bend: &Bend, depth: usize) -> String {
         format!("Depth {depth}: bent before its parent so the brake sees the smaller piece first.")
     }
 }
-
-// Silence dead-code warning until a downstream caller needs the helper.
-#[allow(dead_code)]
-fn _point2_witness(_: Point2) {}
 
 #[cfg(test)]
 mod tests {

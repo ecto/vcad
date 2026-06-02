@@ -172,14 +172,12 @@ fn build_sheet_dxf(sheet: usize, placements: &[NestedPlacement<'_>]) -> String {
         let xform = |pt: Point2| -> Point2 {
             let local = Point2::new(pt.x - min_x, pt.y - min_y);
             let rotated = if p.rotated {
-                // 90° CCW about local origin: (x, y) → (-y, x). Then
-                // shift back into +x, +y by adding the rotated bbox
-                // dimensions.
-                let (_, (max_x, max_y)) = p.flat.bbox();
-                let (w, h) = (max_x - min_x, max_y - min_y);
-                let _ = w; // height becomes the new x extent
-                let _ = h;
-                Point2::new(-local.y + (max_y - min_y), local.x)
+                // 90° CCW about local origin: (x, y) → (-y, x). Shift
+                // back into +x by adding the original height so the
+                // rotated bbox sits at (0, 0).
+                let (_, (_, max_y)) = p.flat.bbox();
+                let height = max_y - min_y;
+                Point2::new(-local.y + height, local.x)
             } else {
                 local
             };

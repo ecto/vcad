@@ -820,13 +820,9 @@ fn flat_pattern_to_dto(flat: FlatPattern) -> FlatPatternDto {
 }
 
 fn summarise_model(model: &SheetMetalModel) -> ModelSummaryDto {
-    // Springback factor — material-driven, zero for an unspecified
-    // material so the comp angle equals the design angle.
-    let springback_factor = if model.material.is_empty() {
-        0.0
-    } else {
-        vcad_kernel_sheet::lookup_material_or_unknown(&model.material).springback_per_radian
-    };
+    // Material-driven; zero for an unspecified material so the
+    // compensated angle equals the design angle.
+    let springback_factor = model.springback_per_radian();
     let bends = model
         .bends
         .iter()

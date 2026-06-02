@@ -98,21 +98,18 @@ pub fn add_jog(
         },
     )?;
     // Tag the bends as jog members.
-    tag(model, bend_first, ";jog:a");
-    tag(model, bend_second, ";jog:b");
+    if let Some(b) = model.bends.get_mut(bend_first) {
+        b.append_source_tag(";jog:a");
+    }
+    if let Some(b) = model.bends.get_mut(bend_second) {
+        b.append_source_tag(";jog:b");
+    }
     Ok(JogResult {
         riser_panel,
         tail_panel,
         bend_first,
         bend_second,
     })
-}
-
-fn tag(model: &mut SheetMetalModel, bend_id: BendId, suffix: &str) {
-    if let Some(b) = model.bends.get_mut(bend_id) {
-        let base = b.k_factor_source.clone().unwrap_or_else(|| "manual".into());
-        b.k_factor_source = Some(format!("{base}{suffix}"));
-    }
 }
 
 #[cfg(test)]
