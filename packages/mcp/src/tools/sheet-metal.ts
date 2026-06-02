@@ -22,6 +22,8 @@
 import type {
   Engine,
   SheetMetalCostRates,
+  SheetMetalNestingParams,
+  SheetMetalPartFootprint,
   SheetMetalRendered,
   SheetMetalShopProfile,
 } from "@vcad/engine";
@@ -513,6 +515,93 @@ export function sheetMetalCheck(
     shop_ready: result.violations.length === 0,
     error_count: errors,
     warning_count: result.violations.length - errors,
+  });
+}
+
+// ─── sheet_metal_nest ─────────────────────────────────────────────────────
+
+interface NestPartInput {
+  document_id?: string;
+  name?: string;
+  width_mm?: number;
+  height_mm?: number;
+  quantity?: number;
+}
+
+export const sheetMetalNestSchema = {
+  type: "object" as const,
+  properties: {
+    parts: {
+      type: "array" as const,
+      description:
+        "Parts to nest. Each entry is either `{document_id, quantity?}` (footprint is read from the session's flat pattern) or `{name?, width_mm, height_mm, quantity?}` (explicit footprint).",
+      items: { type: "object" as const },
+    },
+    params: {
+      type: "object" as const,
+      description:
+        "Stock + spacing. Keys: stock_width_mm, stock_height_mm, spacing_mm, edge_margin_mm, allow_rotation. Field-tolerant — defaults to a 4'×8' sheet with 3 mm spacing.",
+    },
+  },
+  required: ["parts"],
+};
+
+export function sheetMetalNest(
+  input: unknown,
+  engine: Engine,
+): { content: Array<{ type: "text"; text: string }> } {
+  const a = (input ?? {}) as Record<string, unknown>;
+  const partsIn = Array.isArray(a.parts) ? (a.parts as NestPartInput[]) : [];
+  // Resolve footprints — document_id rides on through engine.evaluate
+  // to read the flat bbox.
+  const footprints: SheetMetalPartFootprint[] = partsIn.map((p, i) => {
+    const qty = Math.max(1, Math.floor(Number(p.quantity ?? 1)));
+    if (p.document_id) {
+      const doc = getSession(String(p.document_id));
+      const scene = engine.evaluate(doc);
+      let footprint: SheetMetalPartFootprint | null = null;
+      for (const part of scene.parts) {
+        if (part.sheetMetal) {
+          const r = part.sheetMetal as SheetMetalRendered;
+          const [minX, minY, maxX, maxY] = r.flatPattern.bbox;
+          footprint = {
+            name: p.name ?? p.document_id,
+            width_mm: Math.abs(maxX - minX),
+            height_mm: Math.abs(maxY - minY),
+            quantity: qty,
+          };
+          break;
+        }
+      }
+      if (!footprint) {
+        throw new Error(`parts[${i}]: document_id "${p.document_id}" has no sheet-metal part`);
+      }
+      return footprint;
+    }
+    if (typeof p.width_mm !== "number" || typeof p.height_mm !== "number") {
+      throw new Error(
+        `parts[${i}]: must supply either document_id or {width_mm, height_mm}`,
+      );
+    }
+    return {
+      name: p.name ?? `part-${i}`,
+      width_mm: p.width_mm,
+      height_mm: p.height_mm,
+      quantity: qty,
+    };
+  });
+  const params =
+    a.params && typeof a.params === "object"
+      ? (a.params as Partial<SheetMetalNestingParams>)
+      : undefined;
+  const result = engine.nestSheetMetalParts(
+    footprints,
+    params as SheetMetalNestingParams | undefined,
+  );
+  return textResult({
+    parts: footprints,
+    result,
+    summary: `${result.placements.length} placements across ${result.sheets_used} sheet(s); ${result.utilization_pct.toFixed(1)}% utilization${result.unplaceable.length > 0 ? `; ${result.unplaceable.length} unplaceable (oversize)` : ""}.`,
   });
 }
 

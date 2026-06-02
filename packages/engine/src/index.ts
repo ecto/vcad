@@ -14,6 +14,7 @@ import {
   checkSheetMetalManufacturability,
   costSheetMetalChain,
   sheetMetalSequence as runSheetMetalSequence,
+  nestSheetMetalParts as runNestSheetMetalParts,
   getSheetMetalMaterials as readSheetMetalMaterials,
   getSheetMetalBendTable as readSheetMetalBendTable,
 } from "./sheet-metal.js";
@@ -25,6 +26,9 @@ import type {
   SheetMetalCostRates,
   SheetMetalCostResult,
   SheetMetalBendStep,
+  SheetMetalPartFootprint,
+  SheetMetalNestingParams,
+  SheetMetalNestingResult,
 } from "./sheet-metal.js";
 
 export type {
@@ -103,8 +107,16 @@ export type {
   SheetMetalCostBreakdown,
   SheetMetalCostResult,
   SheetMetalBendStep,
+  SheetMetalPartFootprint,
+  SheetMetalNestingParams,
+  SheetMetalNestingResult,
+  SheetMetalPlacement,
 } from "./sheet-metal.js";
-export { DEFAULT_SHOP_PROFILE, DEFAULT_COST_RATES } from "./sheet-metal.js";
+export {
+  DEFAULT_SHOP_PROFILE,
+  DEFAULT_COST_RATES,
+  DEFAULT_NESTING_PARAMS,
+} from "./sheet-metal.js";
 
 // Parametric expressions
 export {
@@ -249,6 +261,8 @@ export interface KernelModule {
   costSheetMetal?: (chainJson: string, ratesJson: string, quantity: number) => string;
   /** Compute a bend sequence for a chain → JSON. */
   sheetMetalSequence?: (chainJson: string) => string;
+  /** Nest multiple part footprints on stock sheets → JSON. */
+  nestSheetMetalParts?: (partsJson: string, paramsJson: string) => string;
   /** Built-in materials registry → JSON array. */
   getSheetMetalMaterials?: () => string;
   /** Built-in bend table → JSON `{id, rows}`. */
@@ -451,6 +465,7 @@ export class Engine {
       checkSheetMetal: (wasmModule as Record<string, unknown>).checkSheetMetal as KernelModule["checkSheetMetal"],
       costSheetMetal: (wasmModule as Record<string, unknown>).costSheetMetal as KernelModule["costSheetMetal"],
       sheetMetalSequence: (wasmModule as Record<string, unknown>).sheetMetalSequence as KernelModule["sheetMetalSequence"],
+      nestSheetMetalParts: (wasmModule as Record<string, unknown>).nestSheetMetalParts as KernelModule["nestSheetMetalParts"],
       getSheetMetalMaterials: (wasmModule as Record<string, unknown>).getSheetMetalMaterials as KernelModule["getSheetMetalMaterials"],
       getSheetMetalBendTable: (wasmModule as Record<string, unknown>).getSheetMetalBendTable as KernelModule["getSheetMetalBendTable"],
     }, compiledWasmModule);
@@ -715,6 +730,19 @@ export class Engine {
       }
     }
     return null;
+  }
+
+  /** Nest part footprints on stock sheets (bottom-left fill
+   *  decreasing). Returns placements + per-sheet utilization. */
+  nestSheetMetalParts(
+    parts: SheetMetalPartFootprint[],
+    params?: SheetMetalNestingParams,
+  ): SheetMetalNestingResult {
+    return runNestSheetMetalParts(
+      parts,
+      this.kernel as unknown as Parameters<typeof runNestSheetMetalParts>[1],
+      params,
+    );
   }
 
   /** Compute a feasible bend sequence (outermost-first) for the

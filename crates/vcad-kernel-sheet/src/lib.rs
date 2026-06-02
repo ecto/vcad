@@ -35,6 +35,7 @@ pub mod jog;
 pub mod manufacturability;
 pub mod materials;
 pub mod model;
+pub mod nesting;
 pub mod sequence;
 pub mod unfold;
 
@@ -53,5 +54,6 @@ pub use materials::{
     MaterialProperties,
 };
 pub use model::{Bend, BendDirection, BendId, Frame, Panel, PanelId, SheetMetalModel};
+pub use nesting::{nest_rectangles, NestingParams, NestingResult, PartFootprint, Placement};
 pub use sequence::{bend_sequence, BendStep};
 pub use unfold::{refold, unfold, FlatPattern, UnfoldError};

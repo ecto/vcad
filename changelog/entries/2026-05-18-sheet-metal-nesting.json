@@ -1,0 +1,18 @@
+{
+  "id": "2026-05-18-sheet-metal-nesting",
+  "version": "0.9.4",
+  "date": "2026-05-18",
+  "category": "feat",
+  "title": "Sheet-metal multi-part nesting",
+  "summary": "Pack multiple sheet-metal parts on stock sheets with bottom-left-fill decreasing — driver for multi-part DXF and real quote-able sheet counts.",
+  "details": "## What's New\n\n- **`vcad-kernel-sheet::nesting::nest_rectangles`**: BLFD packer with configurable stock size, spacing, edge margin, and 0°/90° rotation. Sorts instances by max-dim descending, places each at the lowest-then-leftmost feasible position, starts a new sheet when none fits. Reports per-sheet utilization and flags oversize parts as unplaceable.\n- **`nestSheetMetalParts` WASM binding** + engine helper + `Engine.nestSheetMetalParts(parts, params?)` method.\n- **`sheet_metal_nest` MCP tool**: each part is either an explicit footprint or a session `document_id` (footprint inferred from the flat bbox). Returns placements + sheets used + utilization + summary line.\n\nThis is the spec's Tier-7 nesting capability arriving early. NFP-based true-shape nesting lands in a later tier; rectangular BLFD covers the bulk of laser-cut parts today.",
+  "features": [
+    "sheet-metal",
+    "nesting",
+    "manufacturing",
+    "mcp"
+  ],
+  "mcpTools": [
+    "sheet_metal_nest"
+  ]
+}

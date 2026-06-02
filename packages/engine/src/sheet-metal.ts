@@ -372,6 +372,7 @@ interface SheetMetalKernel {
   checkSheetMetal?(chainJson: string, shopJson: string): string;
   costSheetMetal?(chainJson: string, ratesJson: string, quantity: number): string;
   sheetMetalSequence?(chainJson: string): string;
+  nestSheetMetalParts?(partsJson: string, paramsJson: string): string;
   getSheetMetalMaterials?(): string;
   getSheetMetalBendTable?(): string;
 }
@@ -459,6 +460,82 @@ export function getSheetMetalMaterials(
   } catch {
     return [];
   }
+}
+
+/** One footprint to nest. */
+export interface SheetMetalPartFootprint {
+  name?: string;
+  width_mm: number;
+  height_mm: number;
+  quantity: number;
+}
+
+/** Nesting parameters. */
+export interface SheetMetalNestingParams {
+  stock_width_mm: number;
+  stock_height_mm: number;
+  spacing_mm: number;
+  edge_margin_mm: number;
+  allow_rotation: boolean;
+}
+
+export const DEFAULT_NESTING_PARAMS: SheetMetalNestingParams = {
+  stock_width_mm: 2438,
+  stock_height_mm: 1219,
+  spacing_mm: 3,
+  edge_margin_mm: 5,
+  allow_rotation: true,
+};
+
+/** A single placement returned by nesting. */
+export interface SheetMetalPlacement {
+  part_index: number;
+  copy: number;
+  sheet: number;
+  x_mm: number;
+  y_mm: number;
+  width_mm: number;
+  height_mm: number;
+  rotated: boolean;
+  name: string;
+}
+
+/** Result of {@link nestSheetMetalParts}. */
+export interface SheetMetalNestingResult {
+  placements: SheetMetalPlacement[];
+  sheets_used: number;
+  utilization_pct: number;
+  used_area_mm2: number;
+  stock_area_mm2: number;
+  per_sheet_pct: number[];
+  unplaceable: number[];
+}
+
+interface RawNestingResult {
+  result: SheetMetalNestingResult | null;
+  error: string | null;
+}
+
+/** Nest part footprints on stock sheets. */
+export function nestSheetMetalParts(
+  parts: SheetMetalPartFootprint[],
+  kernel: SheetMetalKernel,
+  params?: SheetMetalNestingParams,
+): SheetMetalNestingResult {
+  if (!kernel.nestSheetMetalParts) {
+    throw new Error(
+      "kernel.nestSheetMetalParts not available — rebuild @vcad/kernel-wasm",
+    );
+  }
+  const json = kernel.nestSheetMetalParts(
+    JSON.stringify(parts),
+    params ? JSON.stringify(params) : "",
+  );
+  const parsed = JSON.parse(json) as RawNestingResult;
+  if (parsed.error || !parsed.result) {
+    throw new Error(`sheet-metal nest: ${parsed.error ?? "empty result"}`);
+  }
+  return parsed.result;
 }
 
 /** One step in a bend sequence. */

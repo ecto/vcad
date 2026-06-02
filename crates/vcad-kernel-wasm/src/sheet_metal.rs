@@ -36,6 +36,8 @@ use vcad_kernel_sheet::{
     flat_pattern_to_dxf,
     hem::{HemKind, HemParams},
     jog::JogParams,
+    nest_rectangles,
+    nesting::{NestingParams, NestingResult, PartFootprint},
     sequence::BendStep,
     BendDirection, FlangePosition, FlatPattern, SheetMetalModel, ShopProfile, Violation,
 };
@@ -357,6 +359,44 @@ fn cost_impl(chain_json: &str, rates_json: &str, quantity: u32) -> Result<CostRe
 struct SequenceResult {
     steps: Vec<BendStep>,
     error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+struct NestingDto {
+    result: Option<NestingResult>,
+    error: Option<String>,
+}
+
+/// Rectangular nesting of multiple parts on stock sheets.
+///
+/// `parts_json` is a JSON array of `PartFootprint` objects (each with
+/// `name`, `width_mm`, `height_mm`, `quantity`); `params_json` is a
+/// `NestingParams` object (pass `""` for the generic 4'×8' default).
+#[wasm_bindgen(js_name = nestSheetMetalParts)]
+pub fn nest_sheet_metal_parts(parts_json: &str, params_json: &str) -> String {
+    let dto = match nest_impl(parts_json, params_json) {
+        Ok(r) => NestingDto {
+            result: Some(r),
+            error: None,
+        },
+        Err(msg) => NestingDto {
+            result: None,
+            error: Some(msg),
+        },
+    };
+    serde_json::to_string(&dto).unwrap_or_else(|_| r#"{"error":"serialize failed"}"#.to_string())
+}
+
+fn nest_impl(parts_json: &str, params_json: &str) -> Result<NestingResult, String> {
+    let parts: Vec<PartFootprint> =
+        serde_json::from_str(parts_json).map_err(|e| format!("parts JSON: {e}"))?;
+    let params = if params_json.trim().is_empty() {
+        NestingParams::generic()
+    } else {
+        serde_json::from_str::<NestingParams>(params_json)
+            .map_err(|e| format!("nesting params JSON: {e}"))?
+    };
+    Ok(nest_rectangles(&parts, &params))
 }
 
 /// Return a feasible bend sequence for the chain. Outermost-first

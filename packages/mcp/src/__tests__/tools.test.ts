@@ -13,6 +13,7 @@ import {
   sheetMetalCost,
   sheetMetalSuggestFix,
   sheetMetalSequence,
+  sheetMetalNest,
 } from "../tools/sheet-metal.js";
 import {
   openDocument,
@@ -591,6 +592,56 @@ describe("sheet-metal tools", () => {
     expect(radiusViol).toBeDefined();
     expect(radiusViol.detail.source).toBe("Material");
     expect(radiusViol.detail.material).toBe("al-hard");
+  });
+
+  it("nesting: explicit footprints pack onto stock sheets", () => {
+    const out = JSON.parse(
+      sheetMetalNest(
+        {
+          parts: [
+            { name: "A", width_mm: 100, height_mm: 50, quantity: 4 },
+            { name: "B", width_mm: 80, height_mm: 80, quantity: 2 },
+          ],
+          params: {
+            stock_width_mm: 1000,
+            stock_height_mm: 500,
+            spacing_mm: 5,
+            edge_margin_mm: 10,
+            allow_rotation: true,
+          },
+        },
+        engine,
+      ).content[0].text,
+    );
+    expect(out.result.placements).toHaveLength(6);
+    expect(out.result.sheets_used).toBe(1);
+    expect(out.result.unplaceable).toEqual([]);
+    expect(out.result.utilization_pct).toBeGreaterThan(0);
+  });
+
+  it("nesting: footprint from session document_id", () => {
+    const { document_id } = JSON.parse(
+      sheetMetalCreate(
+        {
+          width: 200,
+          depth: 100,
+          thickness: 1,
+          material: "al-soft",
+        },
+        engine,
+      ).content[0].text,
+    );
+    const out = JSON.parse(
+      sheetMetalNest(
+        {
+          parts: [{ document_id, quantity: 3 }],
+        },
+        engine,
+      ).content[0].text,
+    );
+    expect(out.result.placements).toHaveLength(3);
+    expect(out.parts[0].width_mm).toBeCloseTo(200, 1);
+    expect(out.parts[0].height_mm).toBeCloseTo(100, 1);
   });
 
   it("bend sequence: outermost bends form first", () => {

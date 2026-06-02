@@ -99,6 +99,8 @@ import {
   sheetMetalSuggestFixSchema,
   sheetMetalSequence,
   sheetMetalSequenceSchema,
+  sheetMetalNest,
+  sheetMetalNestSchema,
 } from "./tools/sheet-metal.js";
 import { appendGlbPreview } from "./tools/preview.js";
 import {
@@ -319,6 +321,12 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
         description:
           "Return a feasible press-brake bend sequence for a sheet-metal part — outermost bends first so the remaining flat stays small and earlier bends don't collide with later ones. Each step includes the springback-compensated brake angle and a one-line rationale.",
         inputSchema: sheetMetalSequenceSchema,
+      },
+      {
+        name: "sheet_metal_nest",
+        description:
+          "Pack multiple sheet-metal parts on stock sheets using bottom-left fill decreasing. Each part is either a session `document_id` (footprint inferred from the flat pattern) or an explicit `{width_mm, height_mm}`. Returns per-instance placements, sheets used, and utilization — enough to drive a multi-part DXF and a real quote.",
+        inputSchema: sheetMetalNestSchema,
       },
       {
         name: "import_step",
@@ -593,6 +601,10 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
 
         case "sheet_metal_sequence":
           result = sheetMetalSequence(args, engine);
+          break;
+
+        case "sheet_metal_nest":
+          result = sheetMetalNest(args, engine);
           break;
 
         case "import_step":

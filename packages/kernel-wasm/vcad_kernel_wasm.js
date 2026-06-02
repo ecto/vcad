@@ -4130,6 +4130,33 @@ export function isSlicerAvailable() {
 }
 
 /**
+ * Rectangular nesting of multiple parts on stock sheets.
+ *
+ * `parts_json` is a JSON array of `PartFootprint` objects (each with
+ * `name`, `width_mm`, `height_mm`, `quantity`); `params_json` is a
+ * `NestingParams` object (pass `""` for the generic 4'×8' default).
+ * @param {string} parts_json
+ * @param {string} params_json
+ * @returns {string}
+ */
+export function nestSheetMetalParts(parts_json, params_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(parts_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.nestSheetMetalParts(ptr0, len0, ptr1, len1);
+        deferred3_0 = ret[0];
+        deferred3_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Chamfer all edges of a solid by the given distance.
  *
  * This is a standalone wrapper for lazy loading via wasmosis.
@@ -6871,12 +6898,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2248, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2249, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2250, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2251, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h449c01a9b484b49e, wasm_bindgen__convert__closures_____invoke__h97f5d3065e41a070);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2961, function: Function { arguments: [Externref], shim_idx: 2962, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2963, function: Function { arguments: [Externref], shim_idx: 2964, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h5fc04d9207857a4f, wasm_bindgen__convert__closures_____invoke__h93fa00cb00fe3f24);
             return ret;
         },
