@@ -231,6 +231,14 @@ interface ChainOpBase {
   material: string;
 }
 
+interface ChainOpBasePolygon {
+  type: "BaseFlangePolygon";
+  outline: [number, number][];
+  holes?: [number, number][][];
+  thickness: number;
+  material: string;
+}
+
 interface ChainOpEdge {
   type: "EdgeFlange";
   panelId: number;
@@ -262,7 +270,12 @@ interface ChainOpJog {
   direction: SheetMetalDirection;
 }
 
-type ChainOp = ChainOpBase | ChainOpEdge | ChainOpHem | ChainOpJog;
+type ChainOp =
+  | ChainOpBase
+  | ChainOpBasePolygon
+  | ChainOpEdge
+  | ChainOpHem
+  | ChainOpJog;
 
 /**
  * Walk back from `rootId` through any chain of sheet-metal ops, returning
@@ -277,6 +290,7 @@ export function buildSheetMetalChain(
   if (!root) return null;
   if (
     root.op.type !== "SheetMetalBaseFlangeRect" &&
+    root.op.type !== "SheetMetalBaseFlangePolygon" &&
     root.op.type !== "SheetMetalEdgeFlange" &&
     root.op.type !== "SheetMetalHem" &&
     root.op.type !== "SheetMetalJog"
@@ -295,6 +309,16 @@ export function buildSheetMetalChain(
         type: "BaseFlangeRect",
         width: op.width,
         depth: op.depth,
+        thickness: op.thickness,
+        material: op.material,
+      });
+      material = op.material;
+      break;
+    } else if (op.type === "SheetMetalBaseFlangePolygon") {
+      tipToBase.push({
+        type: "BaseFlangePolygon",
+        outline: op.outline.map((p) => [p.x, p.y]),
+        holes: op.holes?.map((h) => h.map((p) => [p.x, p.y])),
         thickness: op.thickness,
         material: op.material,
       });

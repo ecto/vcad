@@ -589,6 +589,7 @@ fn op_type_name(op: &CsgOp) -> &'static str {
         CsgOp::SheetMetalEdgeFlange { .. } => "sheet-metal edge flange",
         CsgOp::SheetMetalHem { .. } => "sheet-metal hem",
         CsgOp::SheetMetalJog { .. } => "sheet-metal jog",
+        CsgOp::SheetMetalBaseFlangePolygon { .. } => "sheet-metal base flange (polygon)",
     }
 }
 

@@ -65,24 +65,45 @@ interface JogSpec {
 /** Build a sheet-metal IR document: base flange node + ordered edge
  *  flanges and hems, each parented to the previous. */
 function buildSheetMetalDoc(
-  base: { width: number; depth: number; thickness: number; material: string },
+  base: {
+    width?: number;
+    depth?: number;
+    thickness: number;
+    material: string;
+    outline?: { x: number; y: number }[];
+    holes?: { x: number; y: number }[][];
+  },
   flanges: FlangeSpec[],
   hems: HemSpec[],
   jogs: JogSpec[],
 ): Document {
   const doc = createDocument();
   const nodes: Record<string, Node> = {};
-  nodes["0"] = {
-    id: 0,
-    name: "Base flange",
-    op: {
-      type: "SheetMetalBaseFlangeRect",
-      width: base.width,
-      depth: base.depth,
-      thickness: base.thickness,
-      material: base.material,
-    },
-  };
+  const baseNode: Node =
+    base.outline !== undefined
+      ? {
+          id: 0,
+          name: "Base flange (polygon)",
+          op: {
+            type: "SheetMetalBaseFlangePolygon",
+            outline: base.outline,
+            holes: base.holes,
+            thickness: base.thickness,
+            material: base.material,
+          },
+        }
+      : {
+          id: 0,
+          name: "Base flange",
+          op: {
+            type: "SheetMetalBaseFlangeRect",
+            width: base.width ?? 0,
+            depth: base.depth ?? 0,
+            thickness: base.thickness,
+            material: base.material,
+          },
+        };
+  nodes["0"] = baseNode;
   let parent = 0;
   let nextId = 1;
   flanges.forEach((f) => {
@@ -170,11 +191,25 @@ export const sheetMetalCreateSchema = {
   properties: {
     width: {
       type: "number" as const,
-      description: "Base-flange width (mm), along +X.",
+      description:
+        "Base-flange width (mm), along +X. Ignored when `outline` is provided.",
     },
     depth: {
       type: "number" as const,
-      description: "Base-flange depth (mm), along +Y.",
+      description:
+        "Base-flange depth (mm), along +Y. Ignored when `outline` is provided.",
+    },
+    outline: {
+      type: "array" as const,
+      description:
+        "Optional CCW polygon outline for an arbitrary-shape base flange. Each point is `{x, y}` or `[x, y]` in mm. Takes precedence over width/depth.",
+      items: { type: "object" as const },
+    },
+    holes: {
+      type: "array" as const,
+      description:
+        "Optional CW hole loops cut out of the base flange. Same point format as `outline`.",
+      items: { type: "array" as const },
     },
     thickness: {
       type: "number" as const,
@@ -311,11 +346,37 @@ export function sheetMetalCreate(
   engine: Engine,
 ): { content: Array<{ type: "text"; text: string }> } {
   const a = (input ?? {}) as Record<string, unknown>;
+  // Outline takes precedence over width/depth: the spec's "base flange
+  // from sketch" path. Each outline point can come in as `{x, y}` or
+  // as a `[x, y]` pair — accept both for agent ergonomics.
+  const normalisePoint = (
+    p: unknown,
+  ): { x: number; y: number } | null => {
+    if (Array.isArray(p) && p.length >= 2)
+      return { x: Number(p[0]), y: Number(p[1]) };
+    if (p && typeof p === "object" && "x" in p && "y" in p) {
+      const o = p as { x: unknown; y: unknown };
+      return { x: Number(o.x), y: Number(o.y) };
+    }
+    return null;
+  };
+  const normaliseLoop = (loop: unknown): { x: number; y: number }[] => {
+    if (!Array.isArray(loop)) return [];
+    return loop
+      .map(normalisePoint)
+      .filter((p): p is { x: number; y: number } => p !== null);
+  };
+  const outline = Array.isArray(a.outline) ? normaliseLoop(a.outline) : undefined;
+  const holes = Array.isArray(a.holes)
+    ? (a.holes as unknown[]).map(normaliseLoop)
+    : undefined;
   const base = {
     width: Number(a.width),
     depth: Number(a.depth),
     thickness: Number(a.thickness),
-    material: typeof a.material === "string" ? a.material : "Al-soft",
+    material: typeof a.material === "string" ? a.material : "al-soft",
+    outline,
+    holes,
   };
   const flanges = Array.isArray(a.flanges)
     ? (a.flanges as FlangeSpec[])

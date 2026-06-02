@@ -36,10 +36,24 @@ impl std::error::Error for BaseFlangeError {}
 
 /// Build a sheet-metal model from a closed polygon outline.
 ///
-/// The outline lies in the XY plane; the panel's outside face is on +Z and
-/// inside face on -Z, with the panel's inside surface at z=0.
+/// The outline lies in the XY plane (CCW); the panel's outside face is on
+/// +Z and inside face on -Z. No holes — use
+/// [`base_flange_polygon_with_holes`] when you need pierces.
 pub fn base_flange_polygon(
     outline: Vec<Point2>,
+    thickness: f64,
+) -> Result<SheetMetalModel, BaseFlangeError> {
+    base_flange_polygon_with_holes(outline, Vec::new(), thickness)
+}
+
+/// Build a sheet-metal model from an outline plus interior hole loops.
+///
+/// Hole loops must be CW (opposite of the outline) to match the
+/// half-edge convention used downstream by unfold / DXF / cost. The
+/// kernel doesn't enforce that here — pass them in correctly.
+pub fn base_flange_polygon_with_holes(
+    outline: Vec<Point2>,
+    holes: Vec<Vec<Point2>>,
     thickness: f64,
 ) -> Result<SheetMetalModel, BaseFlangeError> {
     if thickness <= 0.0 || thickness.is_nan() {
@@ -48,10 +62,15 @@ pub fn base_flange_polygon(
     if outline.len() < 3 {
         return Err(BaseFlangeError::OutlineTooSmall(outline.len()));
     }
+    for hole in &holes {
+        if hole.len() < 3 {
+            return Err(BaseFlangeError::OutlineTooSmall(hole.len()));
+        }
+    }
     let mut model = SheetMetalModel::new(thickness);
     let panel = Panel {
         outline,
-        holes: Vec::new(),
+        holes,
         frame_bent: Frame::identity(),
         frame_flat: Frame::identity(),
         incident_bends: Vec::new(),
@@ -126,6 +145,41 @@ mod tests {
             base_flange_polygon(vec![Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)], 1.0),
             Err(BaseFlangeError::OutlineTooSmall(2))
         ));
+    }
+
+    #[test]
+    fn polygon_with_holes_keeps_them() {
+        let outline = vec![
+            Point2::new(0.0, 0.0),
+            Point2::new(20.0, 0.0),
+            Point2::new(20.0, 10.0),
+            Point2::new(0.0, 10.0),
+        ];
+        // CW hole inside the panel.
+        let hole = vec![
+            Point2::new(5.0, 3.0),
+            Point2::new(5.0, 7.0),
+            Point2::new(8.0, 7.0),
+            Point2::new(8.0, 3.0),
+        ];
+        let m = base_flange_polygon_with_holes(outline, vec![hole], 1.0).unwrap();
+        assert_eq!(m.panels[0].holes.len(), 1);
+        assert_eq!(m.panels[0].holes[0].len(), 4);
+    }
+
+    #[test]
+    fn polygon_supports_l_shape() {
+        // L-bracket outline.
+        let outline = vec![
+            Point2::new(0.0, 0.0),
+            Point2::new(40.0, 0.0),
+            Point2::new(40.0, 10.0),
+            Point2::new(10.0, 10.0),
+            Point2::new(10.0, 40.0),
+            Point2::new(0.0, 40.0),
+        ];
+        let m = base_flange_polygon(outline, 1.0).unwrap();
+        assert_eq!(m.panels[0].outline.len(), 6);
     }
 
     #[test]

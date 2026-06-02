@@ -887,6 +887,22 @@ pub enum CsgOp {
     },
 
     #[tool(hidden)]
+    /// Sheet-metal base flange from an arbitrary closed polygon. The
+    /// outline must be CCW; holes (if any) must be CW. Lies in the XY
+    /// plane; outside face is +Z.
+    SheetMetalBaseFlangePolygon {
+        /// CCW outer boundary (mm, in the XY plane).
+        outline: Vec<Vec2>,
+        /// CW hole loops.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        holes: Vec<Vec<Vec2>>,
+        /// Material thickness (mm).
+        thickness: f64,
+        /// Material name for K-factor / cost / DFM lookup.
+        material: String,
+    },
+
+    #[tool(hidden)]
     /// Sheet-metal edge flange. Extends `parent` (which must evaluate to a
     /// sheet-metal model) with a new flange off `edge_index` of the
     /// referenced panel.

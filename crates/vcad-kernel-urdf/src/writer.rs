@@ -349,6 +349,7 @@ impl<'a> UrdfWriter<'a> {
             | CsgOp::EmbroideryPattern { .. }
             | CsgOp::PartInstance { .. }
             | CsgOp::SheetMetalBaseFlangeRect { .. }
+            | CsgOp::SheetMetalBaseFlangePolygon { .. }
             | CsgOp::SheetMetalEdgeFlange { .. }
             | CsgOp::SheetMetalHem { .. }
             | CsgOp::SheetMetalJog { .. } => {

@@ -794,6 +794,7 @@ fn evaluate_op_timed(
         }
 
         CsgOp::SheetMetalBaseFlangeRect { .. }
+        | CsgOp::SheetMetalBaseFlangePolygon { .. }
         | CsgOp::SheetMetalEdgeFlange { .. }
         | CsgOp::SheetMetalHem { .. }
         | CsgOp::SheetMetalJog { .. } => {
@@ -1130,6 +1131,7 @@ fn op_name(op: &CsgOp) -> String {
         CsgOp::SheetMetalEdgeFlange { .. } => "SheetMetalEdgeFlange",
         CsgOp::SheetMetalHem { .. } => "SheetMetalHem",
         CsgOp::SheetMetalJog { .. } => "SheetMetalJog",
+        CsgOp::SheetMetalBaseFlangePolygon { .. } => "SheetMetalBaseFlangePolygon",
     }
     .to_string()
 }

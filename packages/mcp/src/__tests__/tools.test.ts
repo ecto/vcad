@@ -592,6 +592,67 @@ describe("sheet-metal tools", () => {
     expect(radiusViol.detail.material).toBe("al-hard");
   });
 
+  it("base flange from arbitrary outline: L-bracket polygon", () => {
+    // L-shaped base flange.
+    const out = JSON.parse(
+      sheetMetalCreate(
+        {
+          outline: [
+            [0, 0],
+            [50, 0],
+            [50, 15],
+            [20, 15],
+            [20, 50],
+            [0, 50],
+          ],
+          thickness: 1,
+          material: "al-soft",
+        },
+        engine,
+      ).content[0].text,
+    );
+    expect(out.model.panel_count).toBe(1);
+    expect(out.model.bend_count).toBe(0);
+    // Flat area equals the L-shape area: 50×15 + 20×35 = 1450 mm².
+    expect(out.flat.area_mm2).toBeCloseTo(1450, 0);
+  });
+
+  it("base flange polygon: holes propagate to the flat pattern", () => {
+    const create = JSON.parse(
+      sheetMetalCreate(
+        {
+          outline: [
+            { x: 0, y: 0 },
+            { x: 40, y: 0 },
+            { x: 40, y: 20 },
+            { x: 0, y: 20 },
+          ],
+          holes: [
+            [
+              [10, 5],
+              [10, 15],
+              [15, 15],
+              [15, 5],
+            ],
+          ],
+          thickness: 1,
+          material: "al-soft",
+        },
+        engine,
+      ).content[0].text,
+    );
+    const unfolded = JSON.parse(
+      sheetMetalUnfold(
+        { document_id: create.document_id },
+        engine,
+      ).content[0].text,
+    );
+    expect(unfolded.flat_pattern.panel_holes_2d[0]).toHaveLength(1);
+    expect(unfolded.dxf).toContain("0\nLAYER\n2\nCUT\n");
+    // Two LWPOLYLINE entries on CUT: 1 outline + 1 hole.
+    expect(unfolded.dxf.match(/0\nLWPOLYLINE\n8\nCUT/g)?.length).toBe(2);
+  });
+
   it("jog: creates a Z-shaped offset with two opposite 90° bends", () => {
     const out = JSON.parse(
       sheetMetalCreate(

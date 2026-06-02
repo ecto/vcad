@@ -25,8 +25,9 @@
 //! the foundation tier exposed to the web app.
 
 use serde::{Deserialize, Serialize};
+use vcad_kernel_math::Point2;
 use vcad_kernel_sheet::{
-    add_edge_flange, add_hem, add_jog, base_flange_rect,
+    add_edge_flange, add_hem, add_jog, base_flange_polygon_with_holes, base_flange_rect,
     bend_table::{self, BendTable},
     check_manufacturability,
     cost::{estimate_cost, CostBreakdown, CostRates},
@@ -49,6 +50,17 @@ enum ChainOp {
         depth: f64,
         thickness: f64,
         /// Material name for K-factor lookup (e.g. `"Al-soft"`).
+        material: String,
+    },
+    /// Initialise the model from an arbitrary CCW polygon (with optional
+    /// CW hole loops) in the XY plane.
+    BaseFlangePolygon {
+        /// CCW outline points as `[x, y]` pairs (mm).
+        outline: Vec<[f64; 2]>,
+        /// Optional CW hole loops.
+        #[serde(default)]
+        holes: Vec<Vec<[f64; 2]>>,
+        thickness: f64,
         material: String,
     },
     /// Add a flange off `edge_index` of `panel_id`.
@@ -392,13 +404,29 @@ fn build_model(chain: &[ChainOp], table: &BendTable) -> Result<SheetMetalModel, 
             m.material = material.clone();
             m
         }
+        ChainOp::BaseFlangePolygon {
+            outline,
+            holes,
+            thickness,
+            material,
+        } => {
+            let to_pts = |loop_pts: &[[f64; 2]]| -> Vec<Point2> {
+                loop_pts.iter().map(|p| Point2::new(p[0], p[1])).collect()
+            };
+            let outline_pts = to_pts(outline);
+            let hole_loops: Vec<Vec<Point2>> = holes.iter().map(|h| to_pts(h)).collect();
+            let mut m = base_flange_polygon_with_holes(outline_pts, hole_loops, *thickness)
+                .map_err(|e| format!("base flange (polygon): {e}"))?;
+            m.material = material.clone();
+            m
+        }
         ChainOp::EdgeFlange { .. } | ChainOp::Hem { .. } | ChainOp::Jog { .. } => {
             return Err("first chain op must be a base flange".to_string());
         }
     };
     for (i, op) in iter.enumerate() {
         match op {
-            ChainOp::BaseFlangeRect { .. } => {
+            ChainOp::BaseFlangeRect { .. } | ChainOp::BaseFlangePolygon { .. } => {
                 return Err(format!(
                     "chain op #{} is a base flange (only one allowed)",
                     i + 1
@@ -414,7 +442,8 @@ fn build_model(chain: &[ChainOp], table: &BendTable) -> Result<SheetMetalModel, 
                 manual_k,
             } => {
                 let material = match base {
-                    ChainOp::BaseFlangeRect { material, .. } => material.clone(),
+                    ChainOp::BaseFlangeRect { material, .. }
+                    | ChainOp::BaseFlangePolygon { material, .. } => material.clone(),
                     _ => String::new(),
                 };
                 let params = EdgeFlangeParams {

@@ -887,6 +887,7 @@ function evaluateOp(
       return Solid.empty();
 
     case "SheetMetalBaseFlangeRect":
+    case "SheetMetalBaseFlangePolygon":
     case "SheetMetalEdgeFlange":
     case "SheetMetalHem":
     case "SheetMetalJog":

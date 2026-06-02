@@ -2498,6 +2498,7 @@ fn format_op(
         }),
 
         CsgOp::SheetMetalBaseFlangeRect { .. }
+        | CsgOp::SheetMetalBaseFlangePolygon { .. }
         | CsgOp::SheetMetalEdgeFlange { .. }
         | CsgOp::SheetMetalHem { .. }
         | CsgOp::SheetMetalJog { .. } => {

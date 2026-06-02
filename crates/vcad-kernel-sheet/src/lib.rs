@@ -37,7 +37,9 @@ pub mod materials;
 pub mod model;
 pub mod unfold;
 
-pub use base_flange::{base_flange_rect, BaseFlangeError};
+pub use base_flange::{
+    base_flange_polygon, base_flange_polygon_with_holes, base_flange_rect, BaseFlangeError,
+};
 pub use bend_table::{BendAllowance, BendTable, KFactorSource};
 pub use cost::{estimate_cost, CostBreakdown, CostRates};
 pub use dxf::flat_pattern_to_dxf;

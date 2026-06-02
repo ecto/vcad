@@ -500,6 +500,18 @@ export interface SheetMetalEdgeFlangeOp {
   manual_k?: number;
 }
 
+/** Sheet-metal base flange from an arbitrary CCW polygon outline. */
+export interface SheetMetalBaseFlangePolygonOp {
+  type: "SheetMetalBaseFlangePolygon";
+  /** CCW outer boundary (`{x, y}` points, mm). */
+  outline: { x: number; y: number }[];
+  /** Optional CW hole loops. */
+  holes?: { x: number; y: number }[][];
+  thickness: number;
+  /** Material name for K-factor / cost / DFM lookup. */
+  material: string;
+}
+
 /** Sheet-metal jog — a Z-shaped offset (two opposite 90° bends). */
 export interface SheetMetalJogOp {
   type: "SheetMetalJog";
@@ -556,6 +568,7 @@ export type CsgOp =
   | EmbroideryPatternOp
   | PartInstanceOp
   | SheetMetalBaseFlangeRectOp
+  | SheetMetalBaseFlangePolygonOp
   | SheetMetalEdgeFlangeOp
   | SheetMetalHemOp
   | SheetMetalJogOp;
