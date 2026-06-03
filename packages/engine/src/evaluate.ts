@@ -873,8 +873,27 @@ function evaluateOp(
     case "Text2D":
       return Solid.empty();
 
-    case "PcbBoard":
-      return Solid.empty();
+    case "PcbBoard": {
+      // Extrude the board outline into a real FR4 slab so the board is a
+      // genuine body — visible as a part, exportable to STEP, ray-traceable —
+      // rather than an empty placeholder. Centered on z=0 to match the
+      // rendered slab (PcbBoardMesh positions its extrude at -thickness/2).
+      const outline = op.board.outline;
+      const verts = outline?.vertices ?? [];
+      if (verts.length < 3) return Solid.empty();
+      const t = outline.thickness;
+      const segments = verts.map((v, i) => {
+        const next = verts[(i + 1) % verts.length]!;
+        return { type: "Line" as const, start: [v.x, v.y], end: [next.x, next.y] };
+      });
+      const profile = {
+        origin: [0, 0, -t / 2],
+        x_dir: [1, 0, 0],
+        y_dir: [0, 1, 0],
+        segments,
+      };
+      return Solid.extrude(JSON.stringify(profile), new Float64Array([0, 0, t]));
+    }
 
     case "EmbroideryPattern":
       return Solid.empty();

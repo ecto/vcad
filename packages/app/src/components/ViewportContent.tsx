@@ -48,6 +48,7 @@ import {
   useParticipantStore,
   kernelToDisplay,
   isPcbBoardPart,
+  useCoreElectronicsStore,
 } from "@vcad/core";
 import type { PartInfo, CameraGoal } from "@vcad/core";
 import { useCameraControls } from "@/hooks/useCameraControls";
@@ -72,6 +73,7 @@ import type {
   Light as IrLight,
 } from "@vcad/ir";
 import { PcbScene } from "./electronics/pcb3d/PcbScene";
+import { PcbBoardBodies } from "./electronics/pcb3d/PcbBoardBodies";
 import { useXRPresenting } from "@/stores/xr-store";
 import { XRSceneTransform } from "./xr/XRSceneTransform";
 import { XRGestures } from "./xr/XRGestures";
@@ -325,6 +327,9 @@ export function ViewportContent({
   const renderMode = useUiStore((s) => s.renderMode);
   const raytraceAvailable = useUiStore((s) => s.raytraceAvailable);
   const sketchActive = useSketchStore((s) => s.active);
+  // Board with edit focus (null when not editing). Used to skip the focused
+  // board in PcbBoardBodies — PcbScene already draws that one.
+  const activeBoardNodeId = useCoreElectronicsStore((s) => s.activeBoardNodeId);
   const xrPresenting = useXRPresenting();
   const orbitRef = useRef<OrbitControlsImpl>(null);
   const { camera, invalidate } = useThree();
@@ -1719,6 +1724,10 @@ export function ViewportContent({
           <group rotation={[-Math.PI / 2, 0, 0]}>
             {/* Plane gizmo at origin - inside rotation group so kernel planes display correctly */}
             <PlaneGizmo />
+
+            {/* PCB board slabs — visible as bodies even when not being edited
+                (the focused board is drawn by PcbScene instead). */}
+            <PcbBoardBodies excludeNodeId={activeBoardNodeId} />
 
             {/* KILL-SWITCH: was `<SilhouetteTarget enabled={silhouetteEnabled}>`
                 feeding the Outline post-effect via Selection context. Bypassing
