@@ -26,6 +26,7 @@ import { PcbDrcMarkers3D } from "./PcbDrcMarkers3D";
 export function PcbScene({ showBoard = true }: { showBoard?: boolean } = {}) {
   const { invalidate } = useThree();
   const planeRef = useRef<THREE.Mesh>(null);
+  const groupRef = useRef<THREE.Group>(null);
 
   const activeBoardNodeId = useCoreElectronicsStore((s) => s.activeBoardNodeId);
   const document = useDocumentStore((s) => s.document);
@@ -79,7 +80,12 @@ export function PcbScene({ showBoard = true }: { showBoard?: boolean } = {}) {
       if (!pcb || e.button !== 0) return;
       e.stopPropagation();
 
-      const point = e.point as THREE.Vector3;
+      // Convert the world-space ray/plane intersection into the board's local
+      // (kernel) frame so picking is correct from ANY camera angle — the
+      // interaction plane is coplanar with the board, so the ray lands where
+      // the geometry actually is.
+      const world = e.point as THREE.Vector3;
+      const point = groupRef.current ? groupRef.current.worldToLocal(world.clone()) : world;
       const pcbPos = worldToPcb(point, pcbGridSize, pcbSnapToGrid);
 
       // Move tool: start footprint drag
@@ -213,7 +219,8 @@ export function PcbScene({ showBoard = true }: { showBoard?: boolean } = {}) {
   const onPlanePointerMove = useCallback(
     (e: ThreeEvent<PointerEvent>) => {
       if (!pcb) return;
-      const point = e.point as THREE.Vector3;
+      const world = e.point as THREE.Vector3;
+      const point = groupRef.current ? groupRef.current.worldToLocal(world.clone()) : world;
       const pcbPos = worldToPcb(point, pcbGridSize, pcbSnapToGrid);
 
       // Footprint drag
@@ -241,12 +248,24 @@ export function PcbScene({ showBoard = true }: { showBoard?: boolean } = {}) {
   if (!pcb) return null;
 
   const boardThickness = pcb.outline.thickness;
+  // Board outline center — anchors the interaction plane + grid on the board
+  // (was previously hardcoded to a 50x30 board's center).
+  let bMinX = Infinity, bMaxX = -Infinity, bMinY = Infinity, bMaxY = -Infinity;
+  for (const v of pcb.outline.vertices) {
+    if (v.x < bMinX) bMinX = v.x;
+    if (v.x > bMaxX) bMaxX = v.x;
+    if (v.y < bMinY) bMinY = v.y;
+    if (v.y > bMaxY) bMaxY = v.y;
+  }
+  const boardCx = isFinite(bMinX) ? (bMinX + bMaxX) / 2 : 0;
+  const boardCy = isFinite(bMinY) ? (bMinY + bMaxY) / 2 : 0;
+  const surfaceZ = layerZ("FCu", boardThickness);
 
   return (
-    <group>
+    <group ref={groupRef}>
       {/* Grid (infinite fading dots) */}
       <Grid
-        position={[25, layerZ("FCu", boardThickness) - 0.05, -15]}
+        position={[boardCx, boardCy, surfaceZ - 0.05]}
         rotation={[Math.PI / 2, 0, 0]}
         args={[200, 200]}
         cellSize={pcbGridSize}
@@ -257,12 +276,14 @@ export function PcbScene({ showBoard = true }: { showBoard?: boolean } = {}) {
         infiniteGrid
       />
 
-      {/* Invisible interaction plane at board surface */}
+      {/* Invisible interaction plane, coplanar with the board surface (kernel
+          XY at z=surfaceZ, normal +Z) so cursor raycasts map to the right
+          board coords from any camera angle. PlaneGeometry already lies in
+          local XY, so no rotation. */}
       <Plane
         ref={planeRef}
         args={[500, 500]}
-        position={[25, layerZ("FCu", boardThickness), -15]}
-        rotation={[Math.PI / 2, 0, 0]}
+        position={[boardCx, boardCy, surfaceZ]}
         visible={false}
         onPointerDown={onPlanePointerDown}
         onPointerMove={onPlanePointerMove}

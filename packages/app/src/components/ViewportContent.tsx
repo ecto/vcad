@@ -1689,14 +1689,14 @@ export function ViewportContent({
       )}
 
       {/* ═══════════════════════════════════════════════════════════════════
-          PCB EDIT FOCUS: render the board's copper/footprints/ratsnest in the
-          main scene, alongside (not instead of) the mechanical assembly. The
-          FR4 slab is suppressed (showBoard=false) because the board's kernel
-          body already renders as a normal part via SceneMesh below.
+          PCB EDIT FOCUS: render the board (FR4 slab + copper/footprints/
+          ratsnest) in the main scene, alongside (not instead of) the
+          mechanical assembly. PcbScene draws the slab itself — the PcbBoard
+          kernel op evaluates to Solid.empty(), so there is no duplicate body.
           ═══════════════════════════════════════════════════════════════════ */}
       {pcbEditFocus && (
         <group rotation={[-Math.PI / 2, 0, 0]}>
-          <PcbScene showBoard={false} />
+          <PcbScene />
         </group>
       )}
 

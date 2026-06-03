@@ -63,11 +63,13 @@ export function interferingRefs(
   margin = 0,
 ): string[] {
   if (mechanical.length === 0) return [];
-  const out: string[] = [];
+  const out = new Set<string>();
   for (const c of components) {
     const cb = aabbOfPositions(c.positions);
     if (!cb) continue;
-    if (mechanical.some((m) => aabbsOverlap(cb, m, margin))) out.push(c.footprint_ref);
+    if (mechanical.some((m) => aabbsOverlap(cb, m, margin))) out.add(c.footprint_ref);
   }
-  return out;
+  // A footprint can yield several component sub-meshes (body + caps); collapse
+  // to unique refs so callers get each interfering footprint once.
+  return [...out];
 }
