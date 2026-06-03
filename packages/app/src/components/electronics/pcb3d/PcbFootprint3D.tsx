@@ -17,6 +17,8 @@ interface Props {
   boardThickness: number;
   highlight: boolean;
   explosion: number;
+  /** Component body clashes with a mechanical part — render in red. */
+  interfering?: boolean;
 }
 
 function graphicToLines(
@@ -72,7 +74,7 @@ function graphicToLines(
   }
 }
 
-export function PcbFootprint3D({ footprint, layers, boardThickness, highlight, explosion }: Props) {
+export function PcbFootprint3D({ footprint, layers, boardThickness, highlight, explosion, interfering }: Props) {
   const fpRot = (footprint.rotation ?? 0) * Math.PI / 180;
 
   const lineSegments = useMemo(() => {
@@ -96,7 +98,7 @@ export function PcbFootprint3D({ footprint, layers, boardThickness, highlight, e
             />
           </bufferGeometry>
           <lineBasicMaterial
-            color={highlight ? "#3b82f6" : getLayerColor(layers, seg.layer)}
+            color={interfering ? "#ef4444" : highlight ? "#3b82f6" : getLayerColor(layers, seg.layer)}
             linewidth={1}
           />
         </line>
@@ -107,7 +109,7 @@ export function PcbFootprint3D({ footprint, layers, boardThickness, highlight, e
         position={[footprint.position.x, footprint.position.y, refZ + 0.05]}
         rotation={[0, 0, fpRot]}
         fontSize={0.8}
-        color={highlight ? "#3b82f6" : "#FFEB3B"}
+        color={interfering ? "#ef4444" : highlight ? "#3b82f6" : "#FFEB3B"}
         anchorX="center"
         anchorY="middle"
         outlineWidth={0.05}

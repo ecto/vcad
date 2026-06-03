@@ -107,6 +107,10 @@ export interface ElectronicsState {
   drcViolations: DrcViolationResult[];
   ercViolations: ErcViolationResult[];
 
+  // Route-vs-enclosure: footprint refs whose 3D body intersects a mechanical
+  // part (Phase 3 — live MCAD/ECAD interference).
+  interferingFootprints: string[];
+
   // PCB 3D view state (Phase 2: tilt-to-3D + exploded stackup)
   tiltAngle: number; // degrees, 0 = top-down, >5 = tilted 3D
   stackupExplosion: number; // 0 = flat, 1 = fully exploded
@@ -144,6 +148,7 @@ export interface ElectronicsState {
   setLayerOpacity: (layer: PcbLayer, opacity: number) => void;
   setDrcViolations: (v: DrcViolationResult[]) => void;
   setErcViolations: (v: ErcViolationResult[]) => void;
+  setInterferingFootprints: (refs: string[]) => void;
   setNetlist: (n: NetlistResult) => void;
   setOrphanFootprints: (refs: string[]) => void;
   setUnplacedComponents: (refs: string[]) => void;
@@ -218,6 +223,7 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
 
   drcViolations: [],
   ercViolations: [],
+  interferingFootprints: [],
 
   tiltAngle: 0,
   stackupExplosion: 0,
@@ -336,6 +342,7 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
 
   setDrcViolations: (drcViolations) => set({ drcViolations }),
   setErcViolations: (ercViolations) => set({ ercViolations }),
+  setInterferingFootprints: (interferingFootprints) => set({ interferingFootprints }),
   setNetlist: (netlist) => set({ netlist }),
   setOrphanFootprints: (orphanFootprints) => set({ orphanFootprints }),
   setUnplacedComponents: (unplacedComponents) => set({ unplacedComponents }),

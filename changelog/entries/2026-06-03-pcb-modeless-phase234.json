@@ -1,0 +1,9 @@
+{
+  "id": "2026-06-03-pcb-modeless-phase234",
+  "version": "0.9.4",
+  "date": "2026-06-03",
+  "category": "feat",
+  "title": "PCB: live interference, auto-route, draggable traces",
+  "summary": "On-canvas PCB editing now flags components that clash with the enclosure in red, rubber-bands connected traces when you drag a footprint, adds one-click ratsnest auto-route, and a schematic overlay toggle.",
+  "features": ["pcb", "ecad", "electronics", "routing", "interference"]
+}

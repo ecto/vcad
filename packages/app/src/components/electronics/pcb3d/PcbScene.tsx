@@ -45,6 +45,7 @@ export function PcbScene({ showBoard = true }: { showBoard?: boolean } = {}) {
   const pcbTool = useElectronicsStore((s) => s.pcbTool);
   const pcbDragging = useElectronicsStore((s) => s.pcbDragging);
   const stackupExplosion = useElectronicsStore((s) => s.stackupExplosion);
+  const interferingFootprints = useElectronicsStore((s) => s.interferingFootprints);
 
   const select = useElectronicsStore((s) => s.select);
   const setHoveredNet = useElectronicsStore((s) => s.setHoveredNet);
@@ -307,6 +308,7 @@ export function PcbScene({ showBoard = true }: { showBoard?: boolean } = {}) {
           layers={pcbLayers}
           boardThickness={boardThickness}
           highlight={activeFootprintRef === fp.ref}
+          interfering={interferingFootprints.includes(fp.ref)}
           explosion={stackupExplosion}
         />
       ))}

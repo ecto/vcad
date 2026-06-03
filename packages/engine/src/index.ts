@@ -143,6 +143,8 @@ export {
   fillZones,
   parseKicadPcb,
   builtinSymbols,
+  computeRatsnest,
+  componentMeshes,
 } from "./ecad.js";
 export type {
   DrcViolationResult,
@@ -152,6 +154,8 @@ export type {
   NetConnection,
   RouteResult,
   FilledZoneResult,
+  RatsnestLine,
+  ComponentMesh,
 } from "./ecad.js";
 
 // Parts library
