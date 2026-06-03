@@ -3644,9 +3644,42 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
             "ImportedMesh not supported in VCode evaluation - use evaluateDocument",
         )),
 
-        vcad_ir::CsgOp::PcbBoard { .. } => Err(JsError::new(
-            "PcbBoard not supported in VCode evaluation - use evaluateDocument",
-        )),
+        vcad_ir::CsgOp::PcbBoard { board } => {
+            // Extrude the board outline into a real FR4 slab, then center it on
+            // z=0 so the top surface lands at +thickness/2 — where PcbScene
+            // draws the copper (layerZ = thickness/2 + …) and where the legacy
+            // PcbBoardMesh sat. The kernel extrudes from z=0 along +z, so we
+            // shift down by thickness/2. Cutouts (`outline.cutouts`) are a TODO:
+            // the slab uses the outer outline only, matching the TS path.
+            let outline = &board.outline;
+            let verts = &outline.vertices;
+            if verts.len() < 3 {
+                return Ok(Solid::empty());
+            }
+            let t = outline.thickness;
+            let segments: Vec<WasmSketchSegment> = verts
+                .iter()
+                .enumerate()
+                .map(|(i, v)| {
+                    let next = &verts[(i + 1) % verts.len()];
+                    WasmSketchSegment::Line {
+                        start: [v.x, v.y],
+                        end: [next.x, next.y],
+                    }
+                })
+                .collect();
+            let profile = WasmSketchProfile {
+                origin: [0.0, 0.0, 0.0],
+                x_dir: [1.0, 0.0, 0.0],
+                y_dir: [0.0, 1.0, 0.0],
+                segments,
+            };
+            let profile_json = serde_json::to_string(&profile).map_err(|e| {
+                JsError::new(&format!("Board profile serialization failed: {}", e))
+            })?;
+            let slab = Solid::extrude(profile_json, vec![0.0, 0.0, t])?;
+            Ok(slab.translate(0.0, 0.0, -t / 2.0))
+        }
 
         vcad_ir::CsgOp::EmbroideryPattern { .. } => Err(JsError::new(
             "EmbroideryPattern not supported in VCode evaluation - use evaluateDocument",

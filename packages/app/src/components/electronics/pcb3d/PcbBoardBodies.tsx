@@ -1,38 +1,30 @@
 /**
- * Renders the FR4 slab for every PcbBoard in the document so a board is
- * visible as a body in the main scene even when it is NOT being edited.
+ * Legacy fallback for rendering a board's FR4 slab in the main scene.
  *
- * The board's geometry comes straight from its PCB data (via the proven
- * PcbBoardMesh), independent of the kernel evaluator — the app's live WASM
- * evaluator still returns an empty solid for PcbBoard, so without this a board
- * would be invisible outside edit focus.
+ * Normal boards are real `PcbBoard` nodes whose kernel op now evaluates to a
+ * genuine extruded slab (see crates/vcad-kernel-wasm `evaluate_node` +
+ * vcad-app `materializer`). Those render as ordinary parts via `SceneMesh`, so
+ * they are deliberately NOT drawn here — doing so would z-fight / double the
+ * body.
  *
- * The board with edit focus is skipped: PcbScene already draws its slab.
+ * The only case left for this component is the legacy CRDT dual-path: a board
+ * that lives solely in `doc.pcb` with no `PcbBoard` node id, so the kernel has
+ * nothing to extrude. The focused board is drawn by `PcbScene`, so we only show
+ * the slab here when nothing has edit focus.
  */
 
-import { useDocumentStore, getPcbNodeIds, getNodePcb } from "@vcad/core";
+import { useDocumentStore, getPcbNodeIds } from "@vcad/core";
 import type { NodeId } from "@vcad/ir";
 import { PcbBoardMesh } from "./PcbBoardMesh";
 
 export function PcbBoardBodies({ excludeNodeId }: { excludeNodeId: NodeId | null }) {
   const doc = useDocumentStore((s) => s.document);
-  const boardIds = getPcbNodeIds(doc);
 
-  if (boardIds.length === 0) {
-    // CRDT dual-path: the board lives in doc.pcb with no PcbBoard node id.
-    // When a board has edit focus (excludeNodeId set) PcbScene draws it.
-    return doc.pcb && excludeNodeId == null ? (
-      <PcbBoardMesh pcb={doc.pcb} explosion={0} />
-    ) : null;
-  }
+  // Real PcbBoard nodes are extruded by the kernel and rendered as parts.
+  if (getPcbNodeIds(doc).length > 0) return null;
 
-  return (
-    <>
-      {boardIds.map((id) => {
-        if (id === excludeNodeId) return null;
-        const pcb = getNodePcb(doc, id);
-        return pcb ? <PcbBoardMesh key={String(id)} pcb={pcb} explosion={0} /> : null;
-      })}
-    </>
-  );
+  // Legacy dual-path: board only in doc.pcb with no node.
+  return doc.pcb && excludeNodeId == null ? (
+    <PcbBoardMesh pcb={doc.pcb} explosion={0} />
+  ) : null;
 }

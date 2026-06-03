@@ -1545,7 +1545,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get feed_rate() {
-        const ret = wasm.__wbg_get_slicersettings_nozzle_diameter(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_wasmcamsettings_feed_rate(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1553,7 +1553,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get plunge_rate() {
-        const ret = wasm.__wbg_get_slicersettings_line_width(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_wasmcamsettings_plunge_rate(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1569,7 +1569,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get safe_z() {
-        const ret = wasm.__wbg_get_slicersettings_support_angle(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_wasmcamsettings_safe_z(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1577,7 +1577,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get spindle_rpm() {
-        const ret = wasm.__wbg_get_slicersettings_infill_density(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_wasmcamsettings_spindle_rpm(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1585,7 +1585,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get stepdown() {
-        const ret = wasm.__wbg_get_slicersettings_first_layer_height(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_wasmcamsettings_stepdown(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1593,7 +1593,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get stepover() {
-        const ret = wasm.__wbg_get_slicersettings_layer_height(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_wasmcamsettings_stepover(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1601,14 +1601,14 @@ export class WasmCamSettings {
      * @param {number} arg0
      */
     set feed_rate(arg0) {
-        wasm.__wbg_set_slicersettings_nozzle_diameter(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_wasmcamsettings_feed_rate(this.__wbg_ptr, arg0);
     }
     /**
      * Plunge rate (mm/min).
      * @param {number} arg0
      */
     set plunge_rate(arg0) {
-        wasm.__wbg_set_slicersettings_line_width(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_wasmcamsettings_plunge_rate(this.__wbg_ptr, arg0);
     }
     /**
      * Retract Z height (mm).
@@ -1622,28 +1622,28 @@ export class WasmCamSettings {
      * @param {number} arg0
      */
     set safe_z(arg0) {
-        wasm.__wbg_set_slicersettings_support_angle(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_wasmcamsettings_safe_z(this.__wbg_ptr, arg0);
     }
     /**
      * Spindle RPM.
      * @param {number} arg0
      */
     set spindle_rpm(arg0) {
-        wasm.__wbg_set_slicersettings_infill_density(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_wasmcamsettings_spindle_rpm(this.__wbg_ptr, arg0);
     }
     /**
      * Stepdown distance (mm).
      * @param {number} arg0
      */
     set stepdown(arg0) {
-        wasm.__wbg_set_slicersettings_first_layer_height(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_wasmcamsettings_stepdown(this.__wbg_ptr, arg0);
     }
     /**
      * Stepover distance (mm).
      * @param {number} arg0
      */
     set stepover(arg0) {
-        wasm.__wbg_set_slicersettings_layer_height(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_wasmcamsettings_stepover(this.__wbg_ptr, arg0);
     }
     /**
      * Create from JSON.
@@ -4098,7 +4098,7 @@ export function isEcadAvailable() {
  * @returns {boolean}
  */
 export function isEmbroideryAvailable() {
-    const ret = wasm.isEmbroideryAvailable();
+    const ret = wasm.isCamAvailable();
     return ret !== 0;
 }
 
@@ -4125,7 +4125,7 @@ export function isPhysicsAvailable() {
  * @returns {boolean}
  */
 export function isSlicerAvailable() {
-    const ret = wasm.isCamAvailable();
+    const ret = wasm.isEcadAvailable();
     return ret !== 0;
 }
 
@@ -6339,7 +6339,7 @@ function __wbg_get_imports() {
                     const a = state0.a;
                     state0.a = 0;
                     try {
-                        return wasm_bindgen__convert__closures_____invoke__h909ef70400a4aa92(a, state0.b, arg0, arg1);
+                        return wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(a, state0.b, arg0, arg1);
                     } finally {
                         state0.a = a;
                     }
@@ -6924,13 +6924,13 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2252, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2253, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h449c01a9b484b49e, wasm_bindgen__convert__closures_____invoke__h97f5d3065e41a070);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2201, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2202, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2965, function: Function { arguments: [Externref], shim_idx: 2966, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h5fc04d9207857a4f, wasm_bindgen__convert__closures_____invoke__h93fa00cb00fe3f24);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2985, function: Function { arguments: [Externref], shim_idx: 2986, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
             return ret;
         },
         __wbindgen_cast_0000000000000003: function(arg0) {
@@ -7018,16 +7018,16 @@ function __wbg_get_imports() {
     };
 }
 
-function wasm_bindgen__convert__closures_____invoke__h97f5d3065e41a070(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h97f5d3065e41a070(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h93fa00cb00fe3f24(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h93fa00cb00fe3f24(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h909ef70400a4aa92(arg0, arg1, arg2, arg3) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h909ef70400a4aa92(arg0, arg1, arg2, arg3);
+function wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(arg0, arg1, arg2, arg3) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(arg0, arg1, arg2, arg3);
 }
 
 

@@ -405,6 +405,90 @@ mod tests {
     }
 
     #[test]
+    fn evaluate_pcb_board_is_centered_solid() {
+        use vcad_ir::ecad::{BoardOutline, DesignRules, LayerStackup, NetClassRules, Pcb};
+
+        let thickness = 1.6;
+        let pcb = Pcb {
+            outline: BoardOutline {
+                vertices: vec![
+                    Vec2::new(0.0, 0.0),
+                    Vec2::new(50.0, 0.0),
+                    Vec2::new(50.0, 30.0),
+                    Vec2::new(0.0, 30.0),
+                ],
+                cutouts: vec![],
+                thickness,
+            },
+            stackup: LayerStackup { layers: vec![] },
+            nets: vec![],
+            rules: DesignRules {
+                default_rules: NetClassRules {
+                    name: "Default".to_string(),
+                    trace_width: 0.25,
+                    clearance: 0.2,
+                    via_diameter: 0.8,
+                    via_drill: 0.4,
+                    diff_pair_gap: None,
+                    diff_pair_width: None,
+                },
+                class_rules: vec![],
+                net_class_assignments: std::collections::HashMap::new(),
+                edge_clearance: 0.5,
+                hole_to_hole: 0.5,
+                min_annular_ring: 0.15,
+                min_drill: 0.2,
+            },
+            footprints: vec![],
+            traces: vec![],
+            trace_arcs: vec![],
+            vias: vec![],
+            zones: vec![],
+            keepouts: vec![],
+        };
+
+        let mut doc = Document::new();
+        doc.nodes.insert(
+            1,
+            Node {
+                id: 1,
+                name: Some("board".to_string()),
+                op: CsgOp::PcbBoard {
+                    board: Box::new(pcb),
+                },
+            },
+        );
+        doc.roots.push(SceneEntry {
+            root: 1,
+            material: "default".to_string(),
+            visible: None,
+        });
+
+        let scene = evaluate_document(&doc, &EvalOptions::default()).unwrap();
+        assert_eq!(scene.parts.len(), 1);
+        let pos = &scene.parts[0].mesh.positions;
+        assert!(!pos.is_empty(), "PcbBoard should evaluate to a real solid");
+
+        // The slab is centered on z=0 so its top surface lands at +thickness/2,
+        // where PcbScene draws the copper (layerZ = thickness/2 + …).
+        let (mut min_z, mut max_z) = (f32::INFINITY, f32::NEG_INFINITY);
+        for i in (2..pos.len()).step_by(3) {
+            min_z = min_z.min(pos[i]);
+            max_z = max_z.max(pos[i]);
+        }
+        let half = (thickness / 2.0) as f32;
+        assert!(
+            (min_z + half).abs() < 1e-4,
+            "board bottom should be at -thickness/2 ({}), got {min_z}",
+            -half
+        );
+        assert!(
+            (max_z - half).abs() < 1e-4,
+            "board top should be at +thickness/2 ({half}), got {max_z}"
+        );
+    }
+
+    #[test]
     fn evaluate_sketch_revolve() {
         let mut doc = Document::new();
         // L-shaped profile for revolve

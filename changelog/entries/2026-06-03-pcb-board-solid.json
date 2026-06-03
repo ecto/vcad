@@ -1,0 +1,9 @@
+{
+  "id": "2026-06-03-pcb-board-solid",
+  "version": "0.9.4",
+  "date": "2026-06-03",
+  "category": "feat",
+  "title": "PCB boards are real FR4 solids",
+  "summary": "A PCB board now evaluates to a genuine FR4 slab in the live app — a green body visible outside edit focus, STEP-exportable and ray-traceable — instead of a data-only placeholder.",
+  "features": ["pcb", "ecad", "electronics", "kernel"]
+}
