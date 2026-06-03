@@ -47,6 +47,7 @@ import {
   useSketchStore,
   useParticipantStore,
   kernelToDisplay,
+  isPcbBoardPart,
 } from "@vcad/core";
 import type { PartInfo, CameraGoal } from "@vcad/core";
 import { useCameraControls } from "@/hooks/useCameraControls";
@@ -71,7 +72,6 @@ import type {
   Light as IrLight,
 } from "@vcad/ir";
 import { PcbScene } from "./electronics/pcb3d/PcbScene";
-import { usePcbCamera } from "./electronics/pcb3d/usePcbCamera";
 import { useXRPresenting } from "@/stores/xr-store";
 import { XRSceneTransform } from "./xr/XRSceneTransform";
 import { XRGestures } from "./xr/XRGestures";
@@ -291,7 +291,15 @@ function DebugTriangleInspector() {
   return <InspectedTriangleMarker />;
 }
 
-export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
+export function ViewportContent({
+  mode = "3d",
+  pcbEditFocus = false,
+}: {
+  mode?: "3d" | "pcb";
+  /** When true, a PcbBoard has edit focus: render its copper/footprints/
+   *  ratsnest in the main scene and ghost the rest of the assembly. */
+  pcbEditFocus?: boolean;
+}) {
   useCameraControls();
   useInputDeviceDetection();
   usePhysicsSimulation();
@@ -319,7 +327,6 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
   const sketchActive = useSketchStore((s) => s.active);
   const xrPresenting = useXRPresenting();
   const orbitRef = useRef<OrbitControlsImpl>(null);
-  usePcbCamera(orbitRef, isPcbMode);
   const { camera, invalidate } = useThree();
   const { isDark } = useTheme();
 
@@ -1682,11 +1689,14 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
       )}
 
       {/* ═══════════════════════════════════════════════════════════════════
-          PCB MODE: Render PcbScene inside the rotation group
+          PCB EDIT FOCUS: render the board's copper/footprints/ratsnest in the
+          main scene, alongside (not instead of) the mechanical assembly. The
+          FR4 slab is suppressed (showBoard=false) because the board's kernel
+          body already renders as a normal part via SceneMesh below.
           ═══════════════════════════════════════════════════════════════════ */}
-      {isPcbMode && (
+      {pcbEditFocus && (
         <group rotation={[-Math.PI / 2, 0, 0]}>
-          <PcbScene />
+          <PcbScene showBoard={false} />
         </group>
       )}
 
@@ -1735,6 +1745,7 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
                     materialKey={inst.material}
                     selected={selectedPartIds.has(instanceSelectionId)}
                     transform={inst.transform}
+                    ghosted={pcbEditFocus}
                   />
                 );
               })}
@@ -1763,6 +1774,7 @@ export function ViewportContent({ mode = "3d" }: { mode?: "3d" | "pcb" }) {
                       mesh={evalPart.mesh}
                       materialKey={evalPart.material}
                       selected={isPartSelected(partInfo.id, idx)}
+                      ghosted={pcbEditFocus && !isPcbBoardPart(partInfo)}
                     />
                   );
                 })}

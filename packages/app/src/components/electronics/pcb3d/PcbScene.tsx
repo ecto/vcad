@@ -23,7 +23,7 @@ import { PcbRatsnest3D } from "./PcbRatsnest3D";
 import { PcbRoutePreview3D } from "./PcbRoutePreview3D";
 import { PcbDrcMarkers3D } from "./PcbDrcMarkers3D";
 
-export function PcbScene() {
+export function PcbScene({ showBoard = true }: { showBoard?: boolean } = {}) {
   const { invalidate } = useThree();
   const planeRef = useRef<THREE.Mesh>(null);
 
@@ -268,8 +268,10 @@ export function PcbScene() {
         onPointerUp={onPlanePointerUp}
       />
 
-      {/* Board outline */}
-      <PcbBoardMesh pcb={pcb} explosion={stackupExplosion} />
+      {/* Board outline — suppressed (showBoard=false) when the board's kernel
+          body already renders as a part in the main scene during modeless
+          edit focus, to avoid a duplicate / z-fighting FR4 slab. */}
+      {showBoard && <PcbBoardMesh pcb={pcb} explosion={stackupExplosion} />}
 
       {/* Traces */}
       <PcbTraceMesh
