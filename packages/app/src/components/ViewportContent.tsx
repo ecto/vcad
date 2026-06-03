@@ -74,6 +74,7 @@ import type {
 } from "@vcad/ir";
 import { PcbScene } from "./electronics/pcb3d/PcbScene";
 import { PcbBoardBodies } from "./electronics/pcb3d/PcbBoardBodies";
+import { PostProcessingBoundary } from "./PostProcessingBoundary";
 import { useXRPresenting } from "@/stores/xr-store";
 import { XRSceneTransform } from "./xr/XRSceneTransform";
 import { XRGestures } from "./xr/XRGestures";
@@ -1850,6 +1851,15 @@ export function ViewportContent({
         const aoEnabled = sceneSettings.postProcessing.ambientOcclusion?.enabled !== false;
         const vignetteEnabled = sceneSettings.postProcessing.vignette?.enabled !== false;
         if (!aoEnabled && !vignetteEnabled) return null;
+        // Skip post-processing when the WebGL context can't report attributes
+        // (lost / degraded / "too many live contexts"): EffectComposer reads
+        // getContextAttributes().alpha and would crash on a null result. The
+        // PostProcessingBoundary below catches any residual composer error so a
+        // failure degrades to "no effects" instead of white-screening.
+        const glCtx = gl.getContext?.();
+        if (!glCtx || typeof glCtx.getContextAttributes !== "function" || !glCtx.getContextAttributes()) {
+          return null;
+        }
         // EffectComposer's children type is strict (`JSX.Element | JSX.Element[]`),
         // so we build the array up-front rather than inlining `cond && <Effect/>`
         // expressions, which would resolve to `false` when disabled.
@@ -1877,7 +1887,11 @@ export function ViewportContent({
             />,
           );
         }
-        return <EffectComposer>{effects}</EffectComposer>;
+        return (
+          <PostProcessingBoundary>
+            <EffectComposer>{effects}</EffectComposer>
+          </PostProcessingBoundary>
+        );
       })()}
     </>
   );
