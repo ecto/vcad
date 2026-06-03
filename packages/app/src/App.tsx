@@ -95,6 +95,7 @@ import { useChatHandler } from "@/hooks/useChatHandler";
 import { useChatHydration } from "@/hooks/useChatHydration";
 import { useUrlSync } from "@/hooks/useUrlSync";
 import { useSketchAutoFit } from "@/hooks/useSketchAutoFit";
+import { usePcbAutoFit } from "@/hooks/usePcbAutoFit";
 import { saveDocument } from "@/lib/save-load";
 import { openLocalDocumentById } from "@/lib/open-document";
 import { bootstrap } from "@/lib/bootstrap";
@@ -231,6 +232,7 @@ export function App() {
   useUrlSync();
   useOperationPreview();
   useSketchAutoFit();
+  usePcbAutoFit();
 
   const [aboutOpen, setAboutOpen] = useState(false);
   const [productOpen, setProductOpen] = useState(false);
@@ -1131,7 +1133,7 @@ export function App() {
             </MobileShell>
           ) : (
           <AppShell
-            header={!electronicsActive && (
+            header={(
               <Header
                 onAboutOpen={() => setAboutOpen(true)}
                 onProductOpen={() => setProductOpen(true)}
@@ -1143,20 +1145,20 @@ export function App() {
                 <ToolPalette />
               </Header>
             )}
-            leftSidebar={!electronicsActive && !showOnboarding && featureTreeOpen && (
+            leftSidebar={!showOnboarding && featureTreeOpen && (
               <FeatureTreeSlot sketchActive={sketchActive} />
             )}
-            rightSidebar={!electronicsActive && !showOnboarding && chatOpen && (
+            rightSidebar={!showOnboarding && chatOpen && (
               <AsyncBoundary region="chat-sidebar" fallback={null}>
                 <ChatSidebar />
               </AsyncBoundary>
             )}
-            bottomDock={!electronicsActive && (
+            bottomDock={(
               <AsyncBoundary region="log-viewer" fallback={null}>
                 <LogViewer />
               </AsyncBoundary>
             )}
-            footer={!electronicsActive && statusBarVisible && <StatusBar />}
+            footer={statusBarVisible && <StatusBar />}
           >
           {viewportStack}
           {dragOverlay}

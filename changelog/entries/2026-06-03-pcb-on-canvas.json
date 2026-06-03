@@ -1,0 +1,9 @@
+{
+  "id": "2026-06-03-pcb-on-canvas",
+  "version": "0.9.4",
+  "date": "2026-06-03",
+  "category": "feat",
+  "title": "Edit PCBs in the main 3D scene",
+  "summary": "PCB editing now happens in the main canvas alongside the mechanical assembly (ghosted), instead of a separate full-screen electronics mode that hid the rest of the app.",
+  "features": ["pcb", "ecad", "electronics", "viewport"]
+}

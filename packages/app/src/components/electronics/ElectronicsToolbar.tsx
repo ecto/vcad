@@ -23,6 +23,7 @@ import { MagnetStraight } from "@phosphor-icons/react/dist/ssr/MagnetStraight";
 import { Package } from "@phosphor-icons/react/dist/ssr/Package";
 import { Ruler } from "@phosphor-icons/react/dist/ssr/Ruler";
 import { ArrowSquareDown } from "@phosphor-icons/react/dist/ssr/ArrowSquareDown";
+import { Lightning } from "@phosphor-icons/react/dist/ssr/Lightning";
 import { TabDropdown, ToolbarButton } from "@/components/ui/toolbar";
 import {
   ELECTRONICS_TAB_COLORS,
@@ -35,6 +36,7 @@ import { useUiStore } from "@vcad/core";
 import type { PcbLayer } from "@vcad/ir";
 
 import { SYMBOL_LIBRARY } from "./symbol-library";
+import { autorouteRatsnest } from "@/lib/pcb-autoroute";
 
 // ---------------------------------------------------------------------------
 // Tab definitions
@@ -171,6 +173,8 @@ export function ElectronicsToolbar() {
   const setLayerVisible = useElectronicsStore((s) => s.setLayerVisible);
   const setSchLabelName = useElectronicsStore((s) => s.setSchLabelName);
   const exit = useElectronicsStore((s) => s.exit);
+  const schematicDocked = useElectronicsStore((s) => s.schematicDocked);
+  const setSchematicDocked = useElectronicsStore((s) => s.setSchematicDocked);
 
   const unplacedComponents = useElectronicsStore((s) => s.unplacedComponents);
   const syncSchematicToPcb = useDocumentStore((s) => s.syncSchematicToPcb);
@@ -474,6 +478,15 @@ export function ElectronicsToolbar() {
       >
         <Trash size={20} />
       </ToolbarButton>
+      <ToolbarButton
+        tooltip="Auto-route ratsnest"
+        onClick={() => {
+          void autorouteRatsnest();
+        }}
+        iconColor={ELECTRONICS_TAB_COLORS.pcb}
+      >
+        <Lightning size={20} />
+      </ToolbarButton>
       {unplacedComponents.length > 0 && (
         <ToolbarButton
           tooltip={`Place ${unplacedComponents.length} unplaced component(s)`}
@@ -519,6 +532,22 @@ export function ElectronicsToolbar() {
         expanded
       >
         <Square size={20} />
+      </ToolbarButton>
+
+      <div className="w-px h-5 bg-border mx-0.5" />
+
+      {/* Toggle the dockable schematic overlay on the 3D canvas */}
+      <ToolbarButton
+        tooltip={schematicDocked === "hidden" ? "Show schematic" : "Hide schematic"}
+        active={schematicDocked !== "hidden"}
+        onClick={() =>
+          setSchematicDocked(schematicDocked === "hidden" ? "left" : "hidden")
+        }
+        iconColor={ELECTRONICS_TAB_COLORS.view}
+        label="Sch"
+        expanded
+      >
+        <PencilSimple size={20} />
       </ToolbarButton>
 
       <div className="w-px h-5 bg-border mx-0.5" />

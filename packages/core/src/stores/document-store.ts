@@ -2049,7 +2049,37 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const state = get();
     if (!state.document.pcb) return;
     const pcb = structuredClone(state.document.pcb);
-    if (pcb.footprints[idx]) pcb.footprints[idx]!.position = { x: position.x, y: position.y };
+    const fp = pcb.footprints[idx];
+    if (!fp) return;
+    const dx = position.x - fp.position.x;
+    const dy = position.y - fp.position.y;
+    // Direct manipulation: drag connected trace endpoints along with the
+    // footprint so routed copper stays attached to its pads. Pad world
+    // positions are computed with the (unchanged) footprint rotation; any
+    // trace endpoint coincident with a pad shifts by the same delta.
+    if (dx !== 0 || dy !== 0) {
+      const TOL = 0.08; // mm
+      const ang = ((fp.rotation ?? 0) * Math.PI) / 180;
+      const cos = Math.cos(ang);
+      const sin = Math.sin(ang);
+      const padWorld = fp.pads.map((p) => ({
+        x: fp.position.x + (p.position.x * cos - p.position.y * sin),
+        y: fp.position.y + (p.position.x * sin + p.position.y * cos),
+      }));
+      for (const tr of pcb.traces) {
+        for (const end of [tr.start, tr.end]) {
+          if (
+            padWorld.some(
+              (pw) => Math.abs(end.x - pw.x) < TOL && Math.abs(end.y - pw.y) < TOL,
+            )
+          ) {
+            end.x += dx;
+            end.y += dy;
+          }
+        }
+      }
+    }
+    fp.position = { x: position.x, y: position.y };
     set({ ...setCrdtPcb(state, pcb), isDirty: true });
   },
 

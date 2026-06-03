@@ -40,6 +40,10 @@ interface PbrMaterialProps {
   attenuationColor?: [number, number, number];
   clearcoat?: number;
   clearcoatRoughness?: number;
+  /** Ghosting overrides (used when another part has edit focus). */
+  transparent?: boolean;
+  opacity?: number;
+  depthWrite?: boolean;
 }
 
 /**
@@ -64,6 +68,9 @@ function PbrMaterial({
   attenuationColor,
   clearcoat,
   clearcoatRoughness,
+  transparent,
+  opacity,
+  depthWrite,
 }: PbrMaterialProps) {
   const usePhysical =
     (transmission !== undefined && transmission > 0) ||
@@ -93,7 +100,9 @@ function PbrMaterial({
         attenuationColor={attColor}
         clearcoat={clearcoat ?? 0}
         clearcoatRoughness={clearcoatRoughness ?? 0}
-        transparent={(transmission ?? 0) > 0}
+        transparent={transparent || (transmission ?? 0) > 0}
+        opacity={opacity ?? 1}
+        depthWrite={depthWrite ?? true}
       />
     );
   }
@@ -109,6 +118,9 @@ function PbrMaterial({
       envMapIntensity={envMapIntensity}
       flatShading={false}
       side={side}
+      transparent={transparent}
+      opacity={opacity ?? 1}
+      depthWrite={depthWrite ?? true}
     />
   );
 }
@@ -223,6 +235,10 @@ interface SceneMeshProps {
   transform?: Transform3D;
   /** Override ID used for selection (e.g., instance ID instead of part ID) */
   selectionId?: string;
+  /** Dim + make non-interactive while another part (e.g. a focused PCB) is
+   *  being edited, so the user can see and route against this geometry as
+   *  context without selecting it. */
+  ghosted?: boolean;
 }
 
 /** Compute face info from a raycast hit.
@@ -474,6 +490,7 @@ export const SceneMesh = memo(function SceneMesh({
   selected,
   transform,
   selectionId,
+  ghosted = false,
 }: SceneMeshProps) {
   const geoRef = useRef<THREE.BufferGeometry>(null);
   const meshRef = useRef<THREE.Mesh>(null);
@@ -912,14 +929,15 @@ export const SceneMesh = memo(function SceneMesh({
       originalRaycastRef.current = m.raycast.bind(m);
     }
 
-    if (isOrbiting) {
-      // Disable raycasting during orbit
+    if (isOrbiting || ghosted) {
+      // Disable raycasting during orbit, or while ghosted so pointer events
+      // pass through to the focused PCB's interaction plane.
       m.raycast = () => {};
     } else {
       // Restore original raycast
       m.raycast = originalRaycastRef.current;
     }
-  }, [isOrbiting]);
+  }, [isOrbiting, ghosted]);
 
   return (
     <mesh
@@ -950,6 +968,9 @@ export const SceneMesh = memo(function SceneMesh({
           attenuationColor={materialDef?.attenuationColor}
           clearcoat={materialDef?.clearcoat}
           clearcoatRoughness={materialDef?.clearcoatRoughness}
+          transparent={ghosted || undefined}
+          opacity={ghosted ? 0.16 : undefined}
+          depthWrite={ghosted ? false : undefined}
         />
       )}
       {showWireframe && geoReady && <Edges threshold={15} color="#666" />}

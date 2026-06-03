@@ -23,9 +23,10 @@ import { PcbRatsnest3D } from "./PcbRatsnest3D";
 import { PcbRoutePreview3D } from "./PcbRoutePreview3D";
 import { PcbDrcMarkers3D } from "./PcbDrcMarkers3D";
 
-export function PcbScene() {
+export function PcbScene({ showBoard = true }: { showBoard?: boolean } = {}) {
   const { invalidate } = useThree();
   const planeRef = useRef<THREE.Mesh>(null);
+  const groupRef = useRef<THREE.Group>(null);
 
   const activeBoardNodeId = useCoreElectronicsStore((s) => s.activeBoardNodeId);
   const document = useDocumentStore((s) => s.document);
@@ -45,6 +46,7 @@ export function PcbScene() {
   const pcbTool = useElectronicsStore((s) => s.pcbTool);
   const pcbDragging = useElectronicsStore((s) => s.pcbDragging);
   const stackupExplosion = useElectronicsStore((s) => s.stackupExplosion);
+  const interferingFootprints = useElectronicsStore((s) => s.interferingFootprints);
 
   const select = useElectronicsStore((s) => s.select);
   const setHoveredNet = useElectronicsStore((s) => s.setHoveredNet);
@@ -78,7 +80,12 @@ export function PcbScene() {
       if (!pcb || e.button !== 0) return;
       e.stopPropagation();
 
-      const point = e.point as THREE.Vector3;
+      // Convert the world-space ray/plane intersection into the board's local
+      // (kernel) frame so picking is correct from ANY camera angle — the
+      // interaction plane is coplanar with the board, so the ray lands where
+      // the geometry actually is.
+      const world = e.point as THREE.Vector3;
+      const point = groupRef.current ? groupRef.current.worldToLocal(world.clone()) : world;
       const pcbPos = worldToPcb(point, pcbGridSize, pcbSnapToGrid);
 
       // Move tool: start footprint drag
@@ -212,7 +219,8 @@ export function PcbScene() {
   const onPlanePointerMove = useCallback(
     (e: ThreeEvent<PointerEvent>) => {
       if (!pcb) return;
-      const point = e.point as THREE.Vector3;
+      const world = e.point as THREE.Vector3;
+      const point = groupRef.current ? groupRef.current.worldToLocal(world.clone()) : world;
       const pcbPos = worldToPcb(point, pcbGridSize, pcbSnapToGrid);
 
       // Footprint drag
@@ -240,12 +248,24 @@ export function PcbScene() {
   if (!pcb) return null;
 
   const boardThickness = pcb.outline.thickness;
+  // Board outline center — anchors the interaction plane + grid on the board
+  // (was previously hardcoded to a 50x30 board's center).
+  let bMinX = Infinity, bMaxX = -Infinity, bMinY = Infinity, bMaxY = -Infinity;
+  for (const v of pcb.outline.vertices) {
+    if (v.x < bMinX) bMinX = v.x;
+    if (v.x > bMaxX) bMaxX = v.x;
+    if (v.y < bMinY) bMinY = v.y;
+    if (v.y > bMaxY) bMaxY = v.y;
+  }
+  const boardCx = isFinite(bMinX) ? (bMinX + bMaxX) / 2 : 0;
+  const boardCy = isFinite(bMinY) ? (bMinY + bMaxY) / 2 : 0;
+  const surfaceZ = layerZ("FCu", boardThickness);
 
   return (
-    <group>
+    <group ref={groupRef}>
       {/* Grid (infinite fading dots) */}
       <Grid
-        position={[25, layerZ("FCu", boardThickness) - 0.05, -15]}
+        position={[boardCx, boardCy, surfaceZ - 0.05]}
         rotation={[Math.PI / 2, 0, 0]}
         args={[200, 200]}
         cellSize={pcbGridSize}
@@ -256,20 +276,24 @@ export function PcbScene() {
         infiniteGrid
       />
 
-      {/* Invisible interaction plane at board surface */}
+      {/* Invisible interaction plane, coplanar with the board surface (kernel
+          XY at z=surfaceZ, normal +Z) so cursor raycasts map to the right
+          board coords from any camera angle. PlaneGeometry already lies in
+          local XY, so no rotation. */}
       <Plane
         ref={planeRef}
         args={[500, 500]}
-        position={[25, layerZ("FCu", boardThickness), -15]}
-        rotation={[Math.PI / 2, 0, 0]}
+        position={[boardCx, boardCy, surfaceZ]}
         visible={false}
         onPointerDown={onPlanePointerDown}
         onPointerMove={onPlanePointerMove}
         onPointerUp={onPlanePointerUp}
       />
 
-      {/* Board outline */}
-      <PcbBoardMesh pcb={pcb} explosion={stackupExplosion} />
+      {/* Board outline — suppressed (showBoard=false) when the board's kernel
+          body already renders as a part in the main scene during modeless
+          edit focus, to avoid a duplicate / z-fighting FR4 slab. */}
+      {showBoard && <PcbBoardMesh pcb={pcb} explosion={stackupExplosion} />}
 
       {/* Traces */}
       <PcbTraceMesh
@@ -305,6 +329,7 @@ export function PcbScene() {
           layers={pcbLayers}
           boardThickness={boardThickness}
           highlight={activeFootprintRef === fp.ref}
+          interfering={interferingFootprints.includes(fp.ref)}
           explosion={stackupExplosion}
         />
       ))}

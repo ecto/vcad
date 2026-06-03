@@ -924,3 +924,52 @@ describe("Assembly evaluation", () => {
     expect(scene.clashes[0].positions.length).toBeGreaterThan(0);
   });
 });
+
+describe("PcbBoard", () => {
+  it("evaluates a PCB board outline to a real FR4 slab solid", () => {
+    const board = {
+      outline: {
+        vertices: [
+          { x: 0, y: 0 },
+          { x: 50, y: 0 },
+          { x: 50, y: 30 },
+          { x: 0, y: 30 },
+        ],
+        thickness: 1.6,
+      },
+      stackup: { layers: [] },
+      nets: [],
+      rules: {},
+      footprints: [],
+      traces: [],
+      vias: [],
+      zones: [],
+    } as unknown as import("@vcad/ir").Pcb;
+    const doc = singlePartDoc(
+      [{ id: 1, name: "pcb", op: { type: "PcbBoard", board } }],
+      1,
+    );
+    // evaluateWithSolids routes through the TS evaluator (the path used for
+    // STEP export / ray tracing). The WASM evaluator still returns empty for
+    // PcbBoard until the kernel is rebuilt — tracked as a follow-up.
+    const scene = engine.evaluateWithSolids(doc);
+    expect(scene.parts).toHaveLength(1);
+    const pos = scene.parts[0].mesh.positions;
+    expect(pos.length).toBeGreaterThan(0);
+    expect(scene.parts[0].mesh.indices.length).toBeGreaterThan(0);
+
+    // Bounding box ≈ 50 × 30 × 1.6, centered on z=0 (matches the rendered slab).
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
+    let minZ = Infinity, maxZ = -Infinity;
+    for (let i = 0; i + 2 < pos.length; i += 3) {
+      minX = Math.min(minX, pos[i]!); maxX = Math.max(maxX, pos[i]!);
+      minY = Math.min(minY, pos[i + 1]!); maxY = Math.max(maxY, pos[i + 1]!);
+      minZ = Math.min(minZ, pos[i + 2]!); maxZ = Math.max(maxZ, pos[i + 2]!);
+    }
+    expect(maxX - minX).toBeCloseTo(50, 1);
+    expect(maxY - minY).toBeCloseTo(30, 1);
+    expect(maxZ - minZ).toBeCloseTo(1.6, 1);
+    expect((minZ + maxZ) / 2).toBeCloseTo(0, 1);
+  });
+});

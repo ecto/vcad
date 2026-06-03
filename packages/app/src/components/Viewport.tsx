@@ -12,6 +12,7 @@ import {
   useUiStore,
   useDocumentStore,
   useEngineStore,
+  useCoreElectronicsStore,
 } from "@vcad/core";
 import { useTheme } from "@/hooks/useTheme";
 import { useDrawingStore } from "@/stores/drawing-store";
@@ -230,6 +231,10 @@ export function Viewport() {
   const { isDark } = useTheme();
   const viewMode = useDrawingStore((s) => s.viewMode);
   const electronicsActive = useElectronicsStore((s) => s.active);
+  // A board has edit focus when the core store points at a PcbBoard node.
+  // Drives in-canvas PCB rendering; rendered alongside the rest of the scene
+  // rather than swapping into a separate PCB-only viewport.
+  const pcbEditFocus = useCoreElectronicsStore((s) => s.activeBoardNodeId) != null;
   const xrPresenting = useXRPresenting();
 
   // Run electronics sync when in electronics mode
@@ -315,7 +320,7 @@ export function Viewport() {
         style={{ background: "transparent" }}
       >
         <XR store={xrStore}>
-          <ViewportContent mode={electronicsActive ? "pcb" : "3d"} />
+          <ViewportContent mode="3d" pcbEditFocus={pcbEditFocus} />
           {!electronicsActive && <BoxSelectHandler containerRef={containerRef} />}
         </XR>
       </Canvas>
