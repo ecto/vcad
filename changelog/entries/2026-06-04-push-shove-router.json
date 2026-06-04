@@ -1,0 +1,9 @@
+{
+  "id": "2026-06-04-push-shove-router",
+  "version": "0.9.4",
+  "date": "2026-06-04",
+  "category": "feat",
+  "title": "Push-and-shove autorouting",
+  "summary": "Autoroute now uses the continuous-space push-and-shove router, detouring around existing copper for cleaner paths, with a grid-router fallback.",
+  "features": ["electronics", "pcb", "routing"]
+}

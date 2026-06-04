@@ -1454,6 +1454,16 @@ export function ecadNetForWire(wire_json: string, netlist_json: string, componen
 export function ecadRouteNet(pcb_json: string, net: string, start_x: number, start_y: number, end_x: number, end_y: number, width: number): any;
 
 /**
+ * Route a net with the push-and-shove router.
+ *
+ * Unlike [`Self::ecad_route_net`] (grid/wave BFS), this routes in
+ * continuous coordinate space and detours around existing copper on other
+ * nets, yielding cleaner diagonal paths. Coordinates are board-space mm in
+ * and out — no grid origin offset. Returns `{ net, segments, vias, success }`.
+ */
+export function ecadRouteNetShove(pcb_json: string, net: string, start_x: number, start_y: number, end_x: number, end_y: number, width: number): any;
+
+/**
  * Snap a position to the nearest component pin or grid point.
  *
  * # Arguments
@@ -2262,60 +2272,6 @@ export interface InitOutput {
     readonly wasmsketchsession_solve: (a: number) => number;
     readonly wasmsketchsession_toggleSelection: (a: number, b: number) => void;
     readonly wasmsketchsession_undo: (a: number) => number;
-    readonly __wbg_get_slicersettings_first_layer_height: (a: number) => number;
-    readonly __wbg_get_slicersettings_infill_density: (a: number) => number;
-    readonly __wbg_get_slicersettings_infill_pattern: (a: number) => number;
-    readonly __wbg_get_slicersettings_layer_height: (a: number) => number;
-    readonly __wbg_get_slicersettings_line_width: (a: number) => number;
-    readonly __wbg_get_slicersettings_nozzle_diameter: (a: number) => number;
-    readonly __wbg_get_slicersettings_support_angle: (a: number) => number;
-    readonly __wbg_get_slicersettings_support_enabled: (a: number) => number;
-    readonly __wbg_get_slicersettings_wall_count: (a: number) => number;
-    readonly __wbg_set_slicersettings_first_layer_height: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_infill_density: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_infill_pattern: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_layer_height: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_line_width: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_nozzle_diameter: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_support_angle: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_support_enabled: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_wall_count: (a: number, b: number) => void;
-    readonly __wbg_sliceresult_free: (a: number, b: number) => void;
-    readonly __wbg_slicersettings_free: (a: number, b: number) => void;
-    readonly analyzeForPrinting: (a: number) => [number, number, number];
-    readonly checkPrintability: (a: number, b: number, c: number) => [number, number, number];
-    readonly ecadBuiltinSymbols: () => [number, number, number];
-    readonly ecadCheckDrc: (a: number, b: number) => [number, number, number];
-    readonly ecadCheckErc: (a: number, b: number) => [number, number, number];
-    readonly ecadComponentMeshes: (a: number, b: number) => [number, number, number];
-    readonly ecadComputeRatsnest: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly ecadFillZones: (a: number, b: number) => [number, number, number];
-    readonly ecadGenerateNetlist: (a: number, b: number) => [number, number, number];
-    readonly ecadGetSymbol: (a: number, b: number) => [number, number, number];
-    readonly ecadLayerZ: (a: number, b: number, c: number, d: number) => number;
-    readonly ecadNetForWire: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly ecadRouteNet: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
-    readonly ecadSnapToGridOrPin: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly estimatePrintCost: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly generate3mf: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly generate3mfWithGcode: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
-    readonly generateGcode: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
-    readonly getSlicerPrinterProfiles: () => [number, number, number];
-    readonly isEcadAvailable: () => number;
-    readonly parseKicadPcb: (a: number, b: number) => [number, number, number];
-    readonly recommendPrintSettings: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly sliceMesh: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
-    readonly sliceMeshWithProgress: (a: number, b: number, c: number, d: number, e: number, f: any) => [number, number, number];
-    readonly sliceSolid: (a: number, b: number, c: number) => [number, number, number];
-    readonly sliceresult_filamentGrams: (a: number) => number;
-    readonly sliceresult_filamentMm: (a: number) => number;
-    readonly sliceresult_getLayerPreview: (a: number, b: number) => [number, number, number];
-    readonly sliceresult_layerCount: (a: number) => number;
-    readonly sliceresult_printTimeSeconds: (a: number) => number;
-    readonly sliceresult_statsJson: (a: number) => [number, number, number, number];
-    readonly slicersettings_fromJson: (a: number, b: number) => [number, number, number];
-    readonly slicersettings_new: () => number;
-    readonly isSlicerAvailable: () => number;
     readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
     readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
     readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;
@@ -2361,6 +2317,61 @@ export interface InitOutput {
     readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
     readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
     readonly isEmbroideryAvailable: () => number;
+    readonly __wbg_get_slicersettings_first_layer_height: (a: number) => number;
+    readonly __wbg_get_slicersettings_infill_density: (a: number) => number;
+    readonly __wbg_get_slicersettings_infill_pattern: (a: number) => number;
+    readonly __wbg_get_slicersettings_layer_height: (a: number) => number;
+    readonly __wbg_get_slicersettings_line_width: (a: number) => number;
+    readonly __wbg_get_slicersettings_nozzle_diameter: (a: number) => number;
+    readonly __wbg_get_slicersettings_support_angle: (a: number) => number;
+    readonly __wbg_get_slicersettings_support_enabled: (a: number) => number;
+    readonly __wbg_get_slicersettings_wall_count: (a: number) => number;
+    readonly __wbg_set_slicersettings_first_layer_height: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_infill_density: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_infill_pattern: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_layer_height: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_line_width: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_nozzle_diameter: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_support_angle: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_support_enabled: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_wall_count: (a: number, b: number) => void;
+    readonly __wbg_sliceresult_free: (a: number, b: number) => void;
+    readonly __wbg_slicersettings_free: (a: number, b: number) => void;
+    readonly analyzeForPrinting: (a: number) => [number, number, number];
+    readonly checkPrintability: (a: number, b: number, c: number) => [number, number, number];
+    readonly ecadBuiltinSymbols: () => [number, number, number];
+    readonly ecadCheckDrc: (a: number, b: number) => [number, number, number];
+    readonly ecadCheckErc: (a: number, b: number) => [number, number, number];
+    readonly ecadComponentMeshes: (a: number, b: number) => [number, number, number];
+    readonly ecadComputeRatsnest: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly ecadFillZones: (a: number, b: number) => [number, number, number];
+    readonly ecadGenerateNetlist: (a: number, b: number) => [number, number, number];
+    readonly ecadGetSymbol: (a: number, b: number) => [number, number, number];
+    readonly ecadLayerZ: (a: number, b: number, c: number, d: number) => number;
+    readonly ecadNetForWire: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly ecadRouteNet: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
+    readonly ecadRouteNetShove: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
+    readonly ecadSnapToGridOrPin: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly estimatePrintCost: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly generate3mf: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly generate3mfWithGcode: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
+    readonly generateGcode: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly getSlicerPrinterProfiles: () => [number, number, number];
+    readonly isEcadAvailable: () => number;
+    readonly parseKicadPcb: (a: number, b: number) => [number, number, number];
+    readonly recommendPrintSettings: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly sliceMesh: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
+    readonly sliceMeshWithProgress: (a: number, b: number, c: number, d: number, e: number, f: any) => [number, number, number];
+    readonly sliceSolid: (a: number, b: number, c: number) => [number, number, number];
+    readonly sliceresult_filamentGrams: (a: number) => number;
+    readonly sliceresult_filamentMm: (a: number) => number;
+    readonly sliceresult_getLayerPreview: (a: number, b: number) => [number, number, number];
+    readonly sliceresult_layerCount: (a: number) => number;
+    readonly sliceresult_printTimeSeconds: (a: number) => number;
+    readonly sliceresult_statsJson: (a: number) => [number, number, number, number];
+    readonly slicersettings_fromJson: (a: number, b: number) => [number, number, number];
+    readonly slicersettings_new: () => number;
+    readonly isSlicerAvailable: () => number;
     readonly wasm_bindgen__closure__destroy__h30743bca3150d93c: (a: number, b: number) => void;
     readonly wasm_bindgen__closure__destroy__hfdadf281ff0f1c56: (a: number, b: number) => void;
     readonly wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e: (a: number, b: number, c: any, d: any) => void;

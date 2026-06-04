@@ -140,6 +140,7 @@ export {
   runErc,
   generateNetlist,
   routeNet,
+  routeNetShove,
   fillZones,
   parseKicadPcb,
   builtinSymbols,
