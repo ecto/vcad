@@ -98,6 +98,31 @@ pub(crate) fn points_coincident(a: &Vec2, b: &Vec2) -> bool {
     (dx * dx + dy * dy) < POSITION_TOLERANCE * POSITION_TOLERANCE
 }
 
+/// Whether point `p` lies on the segment `a`--`b` (within tolerance), including
+/// its interior — i.e. a T-tap or a pin/junction sitting on a wire. This is
+/// deliberately a point-vs-segment test, never segment-vs-segment: two wires
+/// that merely *cross* (each through the other's interior, with no endpoint,
+/// pin, or junction at the crossing) are NOT connected.
+pub(crate) fn point_on_segment(p: &Vec2, a: &Vec2, b: &Vec2) -> bool {
+    let abx = b.x - a.x;
+    let aby = b.y - a.y;
+    let len2 = abx * abx + aby * aby;
+    if len2 < POSITION_TOLERANCE * POSITION_TOLERANCE {
+        // Degenerate (zero-length) wire: fall back to coincidence.
+        return points_coincident(p, a);
+    }
+    // Project p onto the segment, clamped to [0, 1].
+    let t = ((p.x - a.x) * abx + (p.y - a.y) * aby) / len2;
+    if !(0.0..=1.0).contains(&t) {
+        return false;
+    }
+    let cx = a.x + t * abx;
+    let cy = a.y + t * aby;
+    let dx = p.x - cx;
+    let dy = p.y - cy;
+    (dx * dx + dy * dy) < POSITION_TOLERANCE * POSITION_TOLERANCE
+}
+
 /// Compute the absolute position of a pin given the parent component's
 /// position, rotation (degrees), and mirror state.
 pub fn pin_world_position(comp: &SchematicComponent, pin: &SchematicPin) -> Vec2 {
@@ -229,6 +254,25 @@ pub fn generate_netlist(sheet: &SchematicSheet) -> Netlist {
         for j in (i + 1)..n {
             if points_coincident(&points[i].pos, &points[j].pos) {
                 uf.union(points[i].uf_index, points[j].uf_index);
+            }
+        }
+    }
+
+    // Connect points that lie on a wire's interior (T-taps): a wire endpoint,
+    // pin, junction, or label sitting on another wire joins that wire's net.
+    // This is what makes bus-style wiring work — route one wire through a row
+    // of pins and they all connect. Crucially it is point-on-segment only, so
+    // two wires that merely cross (no point at the intersection) stay on
+    // separate nets; a real connection there needs an explicit junction dot.
+    for (k, wire) in sheet.wires.iter().enumerate() {
+        let wire_root_idx = wire_pairs[k].0;
+        for p in &points {
+            // Skip this wire's own endpoints (already unioned start<->end).
+            if p.uf_index == wire_pairs[k].0 || p.uf_index == wire_pairs[k].1 {
+                continue;
+            }
+            if point_on_segment(&p.pos, &wire.start, &wire.end) {
+                uf.union(p.uf_index, wire_root_idx);
             }
         }
     }
@@ -379,6 +423,88 @@ mod tests {
             .any(|c| c.component_ref == "R2" && c.pin_number == "1");
         assert!(has_r1_p2);
         assert!(has_r2_p1);
+    }
+
+    #[test]
+    fn tap_onto_wire_interior_connects() {
+        // A vertical bus rises from R1 pin 1; R2 pin 1 sits on the bus interior
+        // and should join the same net (T-tap), not form its own.
+        let sheet = SchematicSheet {
+            title: None,
+            components: vec![
+                make_resistor("R1", Vec2::new(10.0, 0.0)), // pins world (5,0),(15,0)
+                make_resistor("R2", Vec2::new(10.0, 20.0)), // pins world (5,20),(15,20)
+            ],
+            wires: vec![SchematicWire {
+                start: Vec2::new(5.0, 0.0), // R1 pin 1
+                end: Vec2::new(5.0, 40.0),  // vertical bus, passes through (5,20) = R2 pin 1
+            }],
+            junctions: vec![],
+            labels: vec![],
+        };
+
+        let netlist = generate_netlist(&sheet);
+        let net = netlist
+            .nets
+            .iter()
+            .find(|n| {
+                n.connections
+                    .iter()
+                    .any(|c| c.component_ref == "R1" && c.pin_number == "1")
+            })
+            .expect("R1 pin 1 net");
+        assert!(
+            net.connections
+                .iter()
+                .any(|c| c.component_ref == "R2" && c.pin_number == "1"),
+            "R2 pin 1 should tap onto the bus and share R1 pin 1's net, got {:?}",
+            net.connections,
+        );
+    }
+
+    #[test]
+    fn crossing_wires_stay_separate() {
+        // A horizontal wire and a vertical wire cross at (20,0) with no pin or
+        // junction there. They must NOT merge: R1 (on the horizontal) and R2
+        // (on the vertical) stay on different nets.
+        let sheet = SchematicSheet {
+            title: None,
+            components: vec![
+                make_resistor("R1", Vec2::new(5.0, 0.0)), // pins (0,0),(10,0) on the horizontal
+                make_resistor("R2", Vec2::new(15.0, -10.0)), // pin 2 (20,-10) on the vertical
+            ],
+            wires: vec![
+                SchematicWire {
+                    start: Vec2::new(0.0, 0.0),
+                    end: Vec2::new(40.0, 0.0),
+                },
+                SchematicWire {
+                    start: Vec2::new(20.0, -10.0),
+                    end: Vec2::new(20.0, 10.0),
+                },
+            ],
+            junctions: vec![],
+            labels: vec![],
+        };
+
+        let netlist = generate_netlist(&sheet);
+        let r1_net = netlist
+            .nets
+            .iter()
+            .find(|n| {
+                n.connections
+                    .iter()
+                    .any(|c| c.component_ref == "R1" && c.pin_number == "1")
+            })
+            .expect("R1 pin 1 net");
+        assert!(
+            !r1_net
+                .connections
+                .iter()
+                .any(|c| c.component_ref == "R2"),
+            "crossing wires must not connect; R1 net = {:?}",
+            r1_net.connections,
+        );
     }
 
     #[test]

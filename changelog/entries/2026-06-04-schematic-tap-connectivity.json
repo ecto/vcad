@@ -1,0 +1,9 @@
+{
+  "id": "2026-06-04-schematic-tap-connectivity",
+  "version": "0.9.4",
+  "date": "2026-06-04",
+  "category": "fix",
+  "title": "Schematic nets connect via T-taps, not just exact endpoints",
+  "summary": "Net inference now connects a pin, junction, or wire-end that lands on another wire's interior (bus taps), while wires that merely cross with no shared point stay on separate nets.",
+  "features": ["electronics"]
+}
