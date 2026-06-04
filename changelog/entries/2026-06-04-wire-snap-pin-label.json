@@ -1,0 +1,9 @@
+{
+  "id": "2026-06-04-wire-snap-pin-label",
+  "version": "0.9.4",
+  "date": "2026-06-04",
+  "category": "feat",
+  "title": "Wire snap shows the pin name and net",
+  "summary": "While drawing a wire, the snap target now labels the pin you're about to connect (e.g. Q1.C) and the net it's already on, so you don't accidentally grab the wrong pin.",
+  "features": ["electronics", "pcb"]
+}
