@@ -1,0 +1,9 @@
+{
+  "id": "2026-06-04-symbol-palette-reactive",
+  "version": "0.9.4",
+  "date": "2026-06-04",
+  "category": "fix",
+  "title": "Component palette lists all symbols + accessible labels",
+  "summary": "The schematic component palette now shows every kernel symbol (MCU, transistors, regulators, headers…) instead of only the 4 fallbacks, and toolbar icon buttons expose their tooltip as an accessible name.",
+  "features": ["electronics", "accessibility"]
+}
