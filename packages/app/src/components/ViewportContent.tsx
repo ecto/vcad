@@ -1695,14 +1695,15 @@ export function ViewportContent({
       )}
 
       {/* ═══════════════════════════════════════════════════════════════════
-          PCB EDIT FOCUS: render the board (FR4 slab + copper/footprints/
-          ratsnest) in the main scene, alongside (not instead of) the
-          mechanical assembly. PcbScene draws the slab itself — the PcbBoard
-          kernel op evaluates to Solid.empty(), so there is no duplicate body.
+          PCB EDIT FOCUS: render the focused board's copper/footprints/ratsnest
+          in the main scene, alongside (not instead of) the mechanical assembly.
+          The FR4 slab is suppressed here (showBoard={false}) because the
+          PcbBoard kernel op now evaluates to a real extruded slab that renders
+          as an ordinary part via SceneMesh — drawing it again would z-fight.
           ═══════════════════════════════════════════════════════════════════ */}
       {pcbEditFocus && (
         <group rotation={[-Math.PI / 2, 0, 0]}>
-          <PcbScene />
+          <PcbScene showBoard={false} />
         </group>
       )}
 
@@ -1726,8 +1727,9 @@ export function ViewportContent({
             {/* Plane gizmo at origin - inside rotation group so kernel planes display correctly */}
             <PlaneGizmo />
 
-            {/* PCB board slabs — visible as bodies even when not being edited
-                (the focused board is drawn by PcbScene instead). */}
+            {/* Legacy fallback only: real PcbBoard nodes now extrude a kernel
+                slab that renders as a part. This covers the doc.pcb-only path
+                where there is no PcbBoard node for the kernel to evaluate. */}
             <PcbBoardBodies excludeNodeId={activeBoardNodeId} />
 
             {/* KILL-SWITCH: was `<SilhouetteTarget enabled={silhouetteEnabled}>`

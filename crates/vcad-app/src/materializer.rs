@@ -990,11 +990,25 @@ fn materialize_feature(
             let rotate_id = ctx.alloc();
             let translate_id = ctx.alloc();
 
-            if let Some(json) = &board {
-                doc.pcb = serde_json::from_str(json).ok();
-            }
+            // Parse the board JSON into a real `PcbBoard` op so the kernel
+            // evaluator extrudes a genuine FR4 slab (a board is then a true
+            // body — visible outside edit focus, STEP-exportable, ray-traceable)
+            // instead of an empty placeholder. Also mirror it into the legacy
+            // `doc.pcb` field, which `getNodePcb`'s CRDT fallback still reads.
+            let board_op = match board
+                .as_ref()
+                .and_then(|json| serde_json::from_str::<vcad_ir::ecad::Pcb>(json).ok())
+            {
+                Some(pcb) => {
+                    doc.pcb = Some(pcb.clone());
+                    CsgOp::PcbBoard {
+                        board: Box::new(pcb),
+                    }
+                }
+                None => CsgOp::Empty,
+            };
 
-            insert_node(doc, board_id, &name, CsgOp::Empty);
+            insert_node(doc, board_id, &name, board_op);
             insert_transform_chain(
                 doc,
                 ctx,

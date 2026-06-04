@@ -887,12 +887,18 @@ function evaluateOp(
         return { type: "Line" as const, start: [v.x, v.y], end: [next.x, next.y] };
       });
       const profile = {
-        origin: [0, 0, -t / 2],
+        origin: [0, 0, 0],
         x_dir: [1, 0, 0],
         y_dir: [0, 1, 0],
         segments,
       };
-      return Solid.extrude(JSON.stringify(profile), new Float64Array([0, 0, t]));
+      // The kernel extrudes from z=0; shift down by t/2 to center the slab on
+      // z=0 so its top surface lands at +t/2, where the copper (layerZ) sits.
+      return Solid.extrude(JSON.stringify(profile), new Float64Array([0, 0, t])).translate(
+        0,
+        0,
+        -t / 2,
+      );
     }
 
     case "EmbroideryPattern":

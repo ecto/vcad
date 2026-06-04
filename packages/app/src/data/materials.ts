@@ -405,8 +405,27 @@ export function getMaterialsByCategory(category: MaterialCategory): MaterialPres
   return MATERIAL_PRESETS.filter((m) => m.category === category);
 }
 
+/**
+ * Internal material key for a PCB's FR4 substrate. Assigned to PcbBoard parts
+ * in the document store; resolved here (not in MATERIAL_PRESETS) so the FR4
+ * green renders on the board solid without exposing it in the material picker.
+ */
+export const FR4_MATERIAL_KEY = "__pcb_fr4__";
+
+const FR4_PRESET: MaterialPreset = {
+  key: FR4_MATERIAL_KEY,
+  name: "FR4",
+  category: "composite",
+  // PcbBoardMesh's FR4 green (#0d5a2d).
+  color: [0.051, 0.353, 0.176],
+  metallic: 0,
+  roughness: 0.8,
+  density: 1850,
+};
+
 /** Find a material by key */
 export function getMaterialByKey(key: string): MaterialPreset | undefined {
+  if (key === FR4_MATERIAL_KEY) return FR4_PRESET;
   return MATERIAL_PRESETS.find((m) => m.key === key);
 }
 

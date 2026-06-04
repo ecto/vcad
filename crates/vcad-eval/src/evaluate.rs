@@ -778,6 +778,17 @@ fn evaluate_op_timed(
                 board_solid = Solid::from_mesh(merged);
             }
 
+            // Center the board on z=0 so its top surface lands at +thickness/2,
+            // where PcbScene draws the copper (layerZ = thickness/2 + …) and
+            // where the legacy PcbBoardMesh sat. The outline is extruded from
+            // z=0, so shift the whole board (slab + components + copper) down by
+            // thickness/2.
+            let board_solid = board_solid.apply_transform(&Transform::translation(
+                0.0,
+                0.0,
+                -board.outline.thickness / 2.0,
+            ));
+
             Ok(Some(board_solid))
         }
 
