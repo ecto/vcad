@@ -490,6 +490,52 @@ export function getNodePcb(doc: Document, nodeId: NodeId): Pcb | null {
   return null;
 }
 
+/** A PCB board's world placement, read from its transform wrapper nodes. */
+export interface PcbBoardTransform {
+  /** Translation offset (kernel mm, Z-up). */
+  position: Vec3;
+  /** Euler angles in DEGREES, X→Y→Z order — matches the kernel evaluator. */
+  rotationDeg: Vec3;
+  /** Per-axis scale factor. */
+  scale: Vec3;
+}
+
+/**
+ * The world transform of a PcbBoard part, read from its scale/rotate/translate
+ * wrapper nodes. Mirrors the kernel evaluator's compose order
+ * (translate ∘ rotate ∘ scale, baked into the board solid), so PcbScene's
+ * copper / interaction plane and the camera framing can track a board that has
+ * been moved or rotated as a part. Falls back to identity for any missing or
+ * non-transform node.
+ */
+export function getPcbBoardTransform(
+  doc: Document,
+  part: PcbBoardPartInfo,
+): PcbBoardTransform {
+  const op = (id: NodeId) => doc.nodes[String(id)]?.op;
+  const t = op(part.translateNodeId);
+  const r = op(part.rotateNodeId);
+  const s = op(part.scaleNodeId);
+  return {
+    position: t?.type === "Translate" ? t.offset : { x: 0, y: 0, z: 0 },
+    rotationDeg: r?.type === "Rotate" ? r.angles : { x: 0, y: 0, z: 0 },
+    scale: s?.type === "Scale" ? s.factor : { x: 1, y: 1, z: 1 },
+  };
+}
+
+/** Find the PcbBoard part whose board node matches `boardNodeId`, if any. */
+export function findPcbBoardPart(
+  parts: PartInfo[],
+  boardNodeId: NodeId,
+): PcbBoardPartInfo | null {
+  for (const p of parts) {
+    if (p.kind === "pcb-board" && p.boardNodeId === boardNodeId) {
+      return p as PcbBoardPartInfo;
+    }
+  }
+  return null;
+}
+
 /** Get an EmbroideryPattern node's design data by node ID. */
 export function getNodeEmbroideryDesign(doc: Document, nodeId: NodeId): EmbroideryDesign | null {
   const node = doc.nodes[String(nodeId)];

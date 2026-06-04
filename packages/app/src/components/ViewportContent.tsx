@@ -49,6 +49,8 @@ import {
   kernelToDisplay,
   isPcbBoardPart,
   useCoreElectronicsStore,
+  findPcbBoardPart,
+  getPcbBoardTransform,
 } from "@vcad/core";
 import type { PartInfo, CameraGoal } from "@vcad/core";
 import { useCameraControls } from "@/hooks/useCameraControls";
@@ -331,6 +333,17 @@ export function ViewportContent({
   // Board with edit focus (null when not editing). Used to skip the focused
   // board in PcbBoardBodies — PcbScene already draws that one.
   const activeBoardNodeId = useCoreElectronicsStore((s) => s.activeBoardNodeId);
+  // World transform of the focused board (kernel space), so PcbScene's copper /
+  // interaction plane track a board moved or rotated as a part. The slab itself
+  // is the kernel part, which already bakes this transform. Recomputed when the
+  // parts (re)derive — i.e. whenever the board's transform nodes change.
+  const boardTransform = useMemo(() => {
+    if (!pcbEditFocus || activeBoardNodeId == null) return null;
+    const part = findPcbBoardPart(parts, activeBoardNodeId);
+    return part
+      ? getPcbBoardTransform(useDocumentStore.getState().document, part)
+      : null;
+  }, [pcbEditFocus, activeBoardNodeId, parts]);
   const xrPresenting = useXRPresenting();
   const orbitRef = useRef<OrbitControlsImpl>(null);
   const { camera, invalidate } = useThree();
@@ -1703,7 +1716,25 @@ export function ViewportContent({
           ═══════════════════════════════════════════════════════════════════ */}
       {pcbEditFocus && (
         <group rotation={[-Math.PI / 2, 0, 0]}>
-          <PcbScene showBoard={false} />
+          <group
+            position={[
+              boardTransform?.position.x ?? 0,
+              boardTransform?.position.y ?? 0,
+              boardTransform?.position.z ?? 0,
+            ]}
+            rotation={[
+              ((boardTransform?.rotationDeg.x ?? 0) * Math.PI) / 180,
+              ((boardTransform?.rotationDeg.y ?? 0) * Math.PI) / 180,
+              ((boardTransform?.rotationDeg.z ?? 0) * Math.PI) / 180,
+            ]}
+            scale={[
+              boardTransform?.scale.x ?? 1,
+              boardTransform?.scale.y ?? 1,
+              boardTransform?.scale.z ?? 1,
+            ]}
+          >
+            <PcbScene showBoard={false} />
+          </group>
         </group>
       )}
 
