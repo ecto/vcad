@@ -277,6 +277,43 @@ pub fn generate_netlist(sheet: &SchematicSheet) -> Netlist {
         }
     }
 
+    // Global nets: merge points that share a net name. A name comes from a
+    // label, or from a power port — a one-pin power symbol like VCC/GND whose
+    // `value` names a global rail. This makes same-named labels and every
+    // VCC/GND symbol join a single net across the whole sheet without an
+    // explicit wire (the standard "global label / power port" behaviour), which
+    // is what keeps power rails sane on a dense board.
+    let mut named_anchors: Vec<(String, usize)> = label_indices.clone();
+    for comp in &sheet.components {
+        let is_power_port = comp.pins.len() == 1
+            && matches!(
+                comp.pins[0].pin_type,
+                PinType::PowerInput | PinType::PowerOutput
+            );
+        if !is_power_port {
+            continue;
+        }
+        let name = comp.value.trim();
+        if name.is_empty() {
+            continue;
+        }
+        if let Some(&(_, _, idx)) = pin_indices
+            .iter()
+            .find(|(r, p, _)| r == &comp.reference && p == &comp.pins[0].number)
+        {
+            named_anchors.push((name.to_string(), idx));
+        }
+    }
+    let mut first_by_name: HashMap<String, usize> = HashMap::new();
+    for (name, idx) in &named_anchors {
+        match first_by_name.get(name) {
+            Some(&first) => uf.union(first, *idx),
+            None => {
+                first_by_name.insert(name.clone(), *idx);
+            }
+        }
+    }
+
     // Phase 3: Group into nets.
     // Map root -> set of pin connections and labels.
     let mut net_pins: HashMap<usize, Vec<NetConnection>> = HashMap::new();
@@ -290,8 +327,8 @@ pub fn generate_netlist(sheet: &SchematicSheet) -> Netlist {
         });
     }
 
-    for &(ref name, idx) in &label_indices {
-        let root = uf.find(idx);
+    for (name, idx) in &named_anchors {
+        let root = uf.find(*idx);
         net_labels.entry(root).or_default().insert(name.clone());
     }
 
@@ -504,6 +541,101 @@ mod tests {
                 .any(|c| c.component_ref == "R2"),
             "crossing wires must not connect; R1 net = {:?}",
             r1_net.connections,
+        );
+    }
+
+    /// A one-pin power port (e.g. VCC/GND) at `position`, pin at the origin.
+    fn make_power(reference: &str, value: &str, position: Vec2, pin_type: PinType) -> SchematicComponent {
+        SchematicComponent {
+            reference: reference.to_string(),
+            value: value.to_string(),
+            footprint_id: String::new(),
+            position,
+            rotation: 0.0,
+            mirror: false,
+            pins: vec![SchematicPin {
+                number: "1".to_string(),
+                name: "1".to_string(),
+                pin_type,
+                position: Vec2::new(0.0, 0.0),
+            }],
+            properties: std::collections::HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn power_ports_merge_by_value() {
+        // Two separate VCC symbols (no wire between them) tie their attached
+        // pins into one global "VCC" net.
+        let sheet = SchematicSheet {
+            title: None,
+            components: vec![
+                make_resistor("R1", Vec2::new(10.0, 0.0)), // pins (5,0),(15,0)
+                make_resistor("R2", Vec2::new(40.0, 0.0)), // pins (35,0),(45,0)
+                make_power("PWR1", "VCC", Vec2::new(5.0, 0.0), PinType::PowerOutput), // on R1 pin1
+                make_power("PWR2", "VCC", Vec2::new(35.0, 0.0), PinType::PowerOutput), // on R2 pin1
+            ],
+            wires: vec![],
+            junctions: vec![],
+            labels: vec![],
+        };
+
+        let netlist = generate_netlist(&sheet);
+        let vcc = netlist
+            .nets
+            .iter()
+            .find(|n| n.name == "VCC")
+            .expect("a net named VCC");
+        let has = |r: &str, p: &str| {
+            vcc.connections
+                .iter()
+                .any(|c| c.component_ref == r && c.pin_number == p)
+        };
+        assert!(
+            has("R1", "1") && has("R2", "1"),
+            "both VCC ports should merge their pins into one net, got {:?}",
+            vcc.connections,
+        );
+    }
+
+    #[test]
+    fn same_name_labels_merge() {
+        // Two "BUS" labels on unconnected pins join one net by name.
+        let sheet = SchematicSheet {
+            title: None,
+            components: vec![
+                make_resistor("R1", Vec2::new(10.0, 0.0)),
+                make_resistor("R2", Vec2::new(40.0, 0.0)),
+            ],
+            wires: vec![],
+            junctions: vec![],
+            labels: vec![
+                SchematicLabel {
+                    name: "BUS".to_string(),
+                    position: Vec2::new(5.0, 0.0), // R1 pin 1
+                    rotation: 0.0,
+                    scope: LabelScope::Local,
+                },
+                SchematicLabel {
+                    name: "BUS".to_string(),
+                    position: Vec2::new(35.0, 0.0), // R2 pin 1
+                    rotation: 0.0,
+                    scope: LabelScope::Local,
+                },
+            ],
+        };
+
+        let netlist = generate_netlist(&sheet);
+        let bus = netlist
+            .nets
+            .iter()
+            .find(|n| n.name == "BUS")
+            .expect("a net named BUS");
+        assert_eq!(
+            bus.connections.len(),
+            2,
+            "same-named labels should merge, got {:?}",
+            bus.connections,
         );
     }
 
