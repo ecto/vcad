@@ -4845,6 +4845,39 @@ mod ecad_wasm {
         serde_wasm_bindgen::to_value(&result).map_err(|e| JsError::new(&e.to_string()))
     }
 
+    /// Route a net with the push-and-shove router.
+    ///
+    /// Unlike [`Self::ecad_route_net`] (grid/wave BFS), this routes in
+    /// continuous coordinate space and detours around existing copper on other
+    /// nets, yielding cleaner diagonal paths. Coordinates are board-space mm in
+    /// and out — no grid origin offset. Returns `{ net, segments, vias, success }`.
+    #[wasm_bindgen(js_name = ecadRouteNetShove)]
+    pub fn ecad_route_net_shove(
+        pcb_json: &str,
+        net: &str,
+        start_x: f64,
+        start_y: f64,
+        end_x: f64,
+        end_y: f64,
+        width: f64,
+    ) -> Result<JsValue, JsError> {
+        let pcb: Pcb = serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let result = vcad_ecad_pcb::router::route_net_push_shove(
+            &pcb,
+            net,
+            vcad_ir::Vec2 {
+                x: start_x,
+                y: start_y,
+            },
+            vcad_ir::Vec2 {
+                x: end_x,
+                y: end_y,
+            },
+            width,
+        );
+        serde_wasm_bindgen::to_value(&result).map_err(|e| JsError::new(&e.to_string()))
+    }
+
     /// Fill copper pour zones on the PCB.
     ///
     /// # Arguments

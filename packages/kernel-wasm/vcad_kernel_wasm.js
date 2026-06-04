@@ -3532,6 +3532,34 @@ export function ecadRouteNet(pcb_json, net, start_x, start_y, end_x, end_y, widt
 }
 
 /**
+ * Route a net with the push-and-shove router.
+ *
+ * Unlike [`Self::ecad_route_net`] (grid/wave BFS), this routes in
+ * continuous coordinate space and detours around existing copper on other
+ * nets, yielding cleaner diagonal paths. Coordinates are board-space mm in
+ * and out — no grid origin offset. Returns `{ net, segments, vias, success }`.
+ * @param {string} pcb_json
+ * @param {string} net
+ * @param {number} start_x
+ * @param {number} start_y
+ * @param {number} end_x
+ * @param {number} end_y
+ * @param {number} width
+ * @returns {any}
+ */
+export function ecadRouteNetShove(pcb_json, net, start_x, start_y, end_x, end_y, width) {
+    const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(net, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadRouteNetShove(ptr0, len0, ptr1, len1, start_x, start_y, end_x, end_y, width);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Snap a position to the nearest component pin or grid point.
  *
  * # Arguments

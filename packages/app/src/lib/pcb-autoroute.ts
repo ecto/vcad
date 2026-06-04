@@ -1,7 +1,9 @@
 /**
  * Best-effort autoroute of unrouted ratsnest connections on the focused board
- * (Phase 2/3). Routes each ratsnest line with the grid router (engine
- * `routeNet`) and commits successful routes as FCu traces.
+ * (Phase 2/3). Routes each ratsnest line with the push-and-shove router (engine
+ * `routeNetShove`) — continuous-space, detouring around copper already on the
+ * board — and falls back to the grid router (`routeNet`) when push-shove can't
+ * find a path. Successful routes are committed as FCu traces.
  *
  * This is the in-app twin of the `route_nets` MCP tool the AI calls — same
  * engine, same live focused board — so "route the power nets" from chat and
@@ -9,7 +11,7 @@
  */
 
 import { useDocumentStore, useCoreElectronicsStore, getNodePcb } from "@vcad/core";
-import { computeRatsnest, routeNet } from "@vcad/engine";
+import { computeRatsnest, routeNet, routeNetShove } from "@vcad/engine";
 import { useElectronicsStore } from "@/stores/electronics-store";
 
 export async function autorouteRatsnest(): Promise<{ routed: number; failed: number }> {
@@ -29,7 +31,12 @@ export async function autorouteRatsnest(): Promise<{ routed: number; failed: num
     // obstacles by the router (avoids stacking routes on top of each other).
     pcb = getNodePcb(useDocumentStore.getState().document, boardNodeId);
     if (!pcb) break;
-    const res = await routeNet(pcb, line.net, line.from, line.to, width);
+    // Prefer push-and-shove (continuous-space, routes around existing copper);
+    // fall back to the grid router if it can't find a path.
+    let res = await routeNetShove(pcb, line.net, line.from, line.to, width);
+    if (!res.success || res.segments.length === 0) {
+      res = await routeNet(pcb, line.net, line.from, line.to, width);
+    }
     if (res.success && res.segments.length > 0) {
       for (const [start, end] of res.segments) {
         useDocumentStore.getState().addTrace(boardNodeId, {

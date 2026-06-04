@@ -168,6 +168,40 @@ export async function routeNet(
   }
 }
 
+/**
+ * Route a net with the push-and-shove router.
+ *
+ * Continuous-space counterpart to {@link routeNet}: it detours around existing
+ * copper on *other* nets, producing cleaner diagonal paths than the grid/wave
+ * router. Same result shape; returns a failed result if the kernel is
+ * unavailable.
+ */
+export async function routeNetShove(
+  pcb: Pcb,
+  net: string,
+  start: Vec2,
+  end: Vec2,
+  width: number,
+): Promise<RouteResult> {
+  const wasm = await loadEcadWasm();
+  const fail: RouteResult = { net, segments: [], vias: [], success: false };
+  if (!wasm) return fail;
+  try {
+    return wasm.ecadRouteNetShove(
+      JSON.stringify(pcb),
+      net,
+      start.x,
+      start.y,
+      end.x,
+      end.y,
+      width,
+    ) as RouteResult;
+  } catch (e) {
+    console.warn("[ECAD] Push-shove routing failed:", e);
+    return fail;
+  }
+}
+
 /** Parse a KiCad .kicad_pcb file into a Pcb struct. */
 export async function parseKicadPcb(content: string): Promise<Pcb | null> {
   const wasm = await loadEcadWasm();
