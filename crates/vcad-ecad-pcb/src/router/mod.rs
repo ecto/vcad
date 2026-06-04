@@ -68,7 +68,13 @@ impl Default for RouteConfig {
 ///
 /// `width` is the new trace's width; clearance is taken from the board's
 /// default net-class rules.
-pub fn route_net_push_shove(pcb: &Pcb, net: &str, start: Vec2, end: Vec2, width: f64) -> RouteResult {
+pub fn route_net_push_shove(
+    pcb: &Pcb,
+    net: &str,
+    start: Vec2,
+    end: Vec2,
+    width: f64,
+) -> RouteResult {
     let clearance = pcb.rules.default_rules.clearance;
     let mut router = PushShoveRouter::new(width, clearance);
 

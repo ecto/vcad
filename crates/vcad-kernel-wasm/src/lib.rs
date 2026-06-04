@@ -4869,10 +4869,7 @@ mod ecad_wasm {
                 x: start_x,
                 y: start_y,
             },
-            vcad_ir::Vec2 {
-                x: end_x,
-                y: end_y,
-            },
+            vcad_ir::Vec2 { x: end_x, y: end_y },
             width,
         );
         serde_wasm_bindgen::to_value(&result).map_err(|e| JsError::new(&e.to_string()))
