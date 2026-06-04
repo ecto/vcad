@@ -9,16 +9,24 @@
  */
 
 import { useEffect } from "react";
+import * as THREE from "three";
 import {
   useDocumentStore,
   useCoreElectronicsStore,
   useEngineStore,
   getNodePcb,
   isPcbBoardPart,
+  findPcbBoardPart,
+  getPcbBoardTransform,
 } from "@vcad/core";
 import { generateNetlist, runDrc, runErc, componentMeshes } from "@vcad/engine";
 import { useElectronicsStore } from "@/stores/electronics-store";
-import { aabbOfPositions, interferingRefs, type Aabb } from "@/lib/pcb-interference";
+import {
+  aabbOfPositions,
+  interferingRefs,
+  type Aabb,
+  type PointTransform,
+} from "@/lib/pcb-interference";
 
 export function useElectronicsSync() {
   const active = useElectronicsStore((s) => s.active);
@@ -83,9 +91,40 @@ export function useElectronicsSync() {
         const bb = aabbOfPositions(ep.mesh?.positions);
         if (bb) mech.push(bb);
       });
+
+      // Component bodies are board-local; the mechanical AABBs are world. Map
+      // the components into world via the focused board's transform so a board
+      // moved/rotated as a part still clashes correctly.
+      const boardPart =
+        activeBoardNodeId != null ? findPcbBoardPart(parts, activeBoardNodeId) : null;
+      let boardToWorld: PointTransform | undefined;
+      if (boardPart) {
+        const xf = getPcbBoardTransform(document, boardPart);
+        const mat = new THREE.Matrix4().compose(
+          new THREE.Vector3(xf.position.x, xf.position.y, xf.position.z),
+          new THREE.Quaternion().setFromEuler(
+            new THREE.Euler(
+              (xf.rotationDeg.x * Math.PI) / 180,
+              (xf.rotationDeg.y * Math.PI) / 180,
+              (xf.rotationDeg.z * Math.PI) / 180,
+              "XYZ",
+            ),
+          ),
+          new THREE.Vector3(xf.scale.x, xf.scale.y, xf.scale.z),
+        );
+        const isIdentity = mat.equals(new THREE.Matrix4());
+        if (!isIdentity) {
+          const v = new THREE.Vector3();
+          boardToWorld = (x, y, z) => {
+            v.set(x, y, z).applyMatrix4(mat);
+            return [v.x, v.y, v.z];
+          };
+        }
+      }
+
       useElectronicsStore
         .getState()
-        .setInterferingFootprints(interferingRefs(comps, mech));
+        .setInterferingFootprints(interferingRefs(comps, mech, 0, boardToWorld));
     }, 400);
     return () => clearTimeout(timer);
   }, [pcb, active, scene, parts]);

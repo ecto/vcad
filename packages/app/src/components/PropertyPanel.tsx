@@ -23,6 +23,7 @@ import { Vector3 } from "three";
 import { findCoplanarTriangles, getEdgeEndpoints, getVertex } from "@/lib/sub-feature-geometry";
 import { useLocaleStore } from "@/stores/locale-store";
 import { useElectronicsStore } from "@/stores/electronics-store";
+import { EcadFeatureInspector } from "@/components/electronics/EcadFeatureInspector";
 import { useEmbroideryStore } from "@/stores/embroidery-store";
 import type { PartInfo, PrimitivePartInfo, BooleanPartInfo, BooleanType, SweepPartInfo, ExtrudePartInfo, RevolvePartInfo, FilletPartInfo, ChamferPartInfo, ShellPartInfo, LinearPatternPartInfo, CircularPatternPartInfo, LoftPartInfo, TextPartInfo, MirrorPartInfo } from "@vcad/core";
 import type { Vec3, PartInstance, Joint, JointKind } from "@vcad/ir";
@@ -1460,21 +1461,33 @@ export function PropertyPanel() {
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
   const selection = useUiStore((s) => s.selection);
   const clearSelection = useUiStore((s) => s.clearSelection);
+  const ecadSelection = useElectronicsStore((s) => s.selection);
   const parts = useDocumentStore((s) => s.parts);
   const document = useDocumentStore((s) => s.document);
   const panelRef = useRef<HTMLDivElement>(null);
   useLocaleStore((s) => s.locale);
 
-  // Close panel on Escape
+  const hasEcadSelection = ecadSelection.type !== "none";
+
+  // Close panel on Escape — clears whichever selection is active (mechanical
+  // sub-feature/part selection and/or the ECAD selection that drives the
+  // adaptive inspector below).
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape" && selection.length > 0) {
-        clearSelection();
+      if (e.key !== "Escape") return;
+      if (selection.length > 0) clearSelection();
+      if (useElectronicsStore.getState().selection.type !== "none") {
+        useElectronicsStore.getState().select({ type: "none" });
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [selection.length, clearSelection]);
+
+  // Adaptive ECAD inspector: an electronics selection (footprint / net /
+  // trace / via / pad) drives the same contextual panel as a part, so PCB
+  // editing reuses the unified inspector instead of a separate surface.
+  if (hasEcadSelection) return <EcadFeatureInspector />;
 
   if (selection.length === 0) return null;
 

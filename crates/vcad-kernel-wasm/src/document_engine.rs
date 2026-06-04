@@ -117,16 +117,10 @@ impl WasmDocumentEngine {
     /// Returns `{ document, parts, createdFeatureId }` as a JsValue.
     pub fn create_feature(&mut self, kind: &str, params_json: &str) -> JsValue {
         let params: HashMap<String, Value> = serde_json::from_str(params_json).unwrap_or_default();
-
-        let ordered = self.api.crdt().ordered_features();
-        let position = if let Some(last) = ordered.last() {
-            FractionalIndex::between(Some(&last.1.position), None)
-        } else {
-            FractionalIndex::between(None, None)
-        };
-
-        let (fid, _cs) = self.api.crdt_mut().create_feature(kind, position, params);
-        self.build_result(Some(fid))
+        // Route through DocumentApi so the new feature gets a registered stable
+        // id and is therefore movable / updatable (e.g. a PCB board).
+        let result = self.api.create_feature_raw(kind, params);
+        self.serialize_api_result(&result)
     }
 
     /// Delete a feature by ID (JSON string).

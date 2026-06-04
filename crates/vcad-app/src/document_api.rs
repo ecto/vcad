@@ -131,6 +131,26 @@ impl DocumentApi {
         self.build_result(Some(stable_id))
     }
 
+    /// Create a feature from a raw kind + params map, for features that have no
+    /// typed [`FeatureInput`] constructor (e.g. `pcb-board`, which carries a
+    /// large serialized `board` param). Mirrors [`add_feature`](Self::add_feature)
+    /// — crucially it registers a stable id, so the feature can later be
+    /// transformed (`set_translation`/`set_rotation`/`set_scale`), updated, or
+    /// deleted by id. Without this a board would be unmovable.
+    pub fn create_feature_raw(&mut self, kind: &str, params: HashMap<String, Value>) -> ApiResult {
+        let ordered = self.crdt.ordered_features();
+        let position = if let Some(last) = ordered.last() {
+            FractionalIndex::between(Some(&last.1.position), None)
+        } else {
+            FractionalIndex::between(None, None)
+        };
+
+        let (fid, _cs) = self.crdt.create_feature(kind, position, params);
+        let stable_id = self.stable_ids.insert(fid);
+        self.dirty = true;
+        self.build_result(Some(stable_id))
+    }
+
     /// Update all params on an existing feature by replacing with new input.
     pub fn update_feature(&mut self, stable_id: &str, input: FeatureInput) -> ApiResult {
         if let Some(fid) = self.stable_ids.resolve(stable_id) {
@@ -522,6 +542,28 @@ mod tests {
                 assert_eq!(offset.z, 15.0);
             }
             _ => panic!("expected Translate"),
+        }
+    }
+
+    #[test]
+    fn create_feature_raw_is_movable() {
+        // A feature created via the raw path (e.g. a PCB board) must register a
+        // stable id so it can be transformed like any other part. Regression
+        // for boards being unmovable.
+        let mut api = test_api();
+        let r = api.create_feature_raw("pcb-board", HashMap::new());
+        let id = r
+            .created_feature_id
+            .expect("create_feature_raw should return a registered stable id");
+
+        let result = api.set_translation(&id, [5.0, 10.0, 15.0]);
+        assert_eq!(result.parts.len(), 1);
+        let translate_id = result.parts[0].root_node_id();
+        match &result.document.nodes.get(&translate_id).unwrap().op {
+            vcad_ir::CsgOp::Translate { offset, .. } => {
+                assert_eq!((offset.x, offset.y, offset.z), (5.0, 10.0, 15.0));
+            }
+            other => panic!("expected Translate, got {other:?}"),
         }
     }
 
