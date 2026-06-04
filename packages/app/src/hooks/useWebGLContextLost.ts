@@ -23,6 +23,7 @@ import { useThree } from "@react-three/fiber";
  */
 export function useWebGLContextLost(): boolean {
   const gl = useThree((state) => state.gl);
+  const invalidate = useThree((state) => state.invalidate);
   const [lost, setLost] = useState(false);
 
   useEffect(() => {
@@ -58,6 +59,20 @@ export function useWebGLContextLost(): boolean {
       canvas.removeEventListener("webglcontextrestored", handleRestored, false);
     };
   }, [gl]);
+
+  // Repaint once the context is back. The viewport runs `frameloop="demand"`
+  // with a transparent canvas, so a restored context that nobody invalidates
+  // leaves the canvas unpainted — the page background shows through as a
+  // "white screen" until the next user interaction. Scheduling a frame here
+  // (now and on the next rAF, after fragile GPU subtrees have remounted) makes
+  // the scene reappear on its own. Also covers the case where the context was
+  // already lost at mount and later restored.
+  useEffect(() => {
+    if (lost) return;
+    invalidate();
+    const raf = requestAnimationFrame(() => invalidate());
+    return () => cancelAnimationFrame(raf);
+  }, [lost, invalidate]);
 
   return lost;
 }

@@ -1,0 +1,9 @@
+{
+  "id": "2026-06-04-fix-white-screen-context-restore",
+  "version": "0.9.4",
+  "date": "2026-06-04",
+  "category": "fix",
+  "title": "Fix occasional white viewport after WebGL context loss",
+  "summary": "The on-demand viewport now repaints when the WebGL context is restored (e.g. after a backgrounded tab), instead of leaving a blank white canvas until the next interaction.",
+  "features": ["viewport"]
+}
