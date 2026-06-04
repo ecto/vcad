@@ -1,0 +1,9 @@
+{
+  "id": "2026-06-04-unified-ecad-inspector",
+  "version": "0.9.4",
+  "date": "2026-06-04",
+  "category": "feat",
+  "title": "Unified ECAD inspector in the property panel",
+  "summary": "Selecting a footprint, net, trace, via, or pad now opens its inspector in the main contextual panel, with the floating overlay reduced to an always-on board summary.",
+  "features": ["electronics", "pcb", "property-panel"]
+}
