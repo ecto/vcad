@@ -12,7 +12,8 @@ import type { PcbBoardPartInfo } from "@vcad/core";
 // Types
 // ---------------------------------------------------------------------------
 
-export type ElectronicsLayout = "split" | "schematic-only" | "pcb-only";
+/** The electronics workspace shows one view at a time; the toolbar toggles. */
+export type ElectronicsLayout = "schematic" | "board";
 export type PcbTool = "select" | "move" | "route" | "length-tune" | "delete";
 export type SchTool = "select" | "move" | "place" | "wire" | "label" | "delete";
 
@@ -56,17 +57,11 @@ const DEFAULT_LAYERS: LayerConfig[] = [
 // Store
 // ---------------------------------------------------------------------------
 
-export type SchematicDocked = "left" | "right" | "hidden";
-
 export interface ElectronicsState {
   // Workspace
   active: boolean;
   layout: ElectronicsLayout;
-  splitRatio: number;
   focusedPane: "schematic" | "pcb";
-
-  // Schematic overlay docking (new 3D canvas mode)
-  schematicDocked: SchematicDocked;
 
   // Net-centric selection (Principle 2)
   selection: ElectronicsSelection;
@@ -129,6 +124,8 @@ export interface ElectronicsState {
   enter: () => void;
   exit: () => void;
   setLayout: (l: ElectronicsLayout) => void;
+  /** Flip between the schematic and board views. */
+  toggleLayout: () => void;
   setFocusedPane: (p: "schematic" | "pcb") => void;
   select: (sel: ElectronicsSelection) => void;
   setHoveredNet: (netId: string | null) => void;
@@ -168,7 +165,6 @@ export interface ElectronicsState {
   nextRef: (prefix: string) => string;
 
   // Schematic overlay actions
-  setSchematicDocked: (docked: SchematicDocked) => void;
 
   // PCB 3D view actions
   setTiltAngle: (angle: number) => void;
@@ -187,10 +183,8 @@ export interface ElectronicsState {
 
 export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
   active: false,
-  layout: "split",
-  splitRatio: 0.5,
+  layout: "schematic",
   focusedPane: "schematic",
-  schematicDocked: "left",
 
   selection: { type: "none" },
   hoveredNet: null,
@@ -256,7 +250,7 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
     if (boardNodeId != null) {
       useCoreElectronicsStore.getState().enter(boardNodeId);
     }
-    set({ active: true, schematicDocked: "left" });
+    set({ active: true, layout: "schematic" });
   },
   exit: () => {
     useCoreElectronicsStore.getState().exit();
@@ -270,7 +264,15 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
     });
   },
 
-  setLayout: (layout) => set({ layout }),
+  // The focused pane (which tool shortcuts apply) always tracks the visible
+  // view, since only one view shows at a time.
+  setLayout: (layout) =>
+    set({ layout, focusedPane: layout === "schematic" ? "schematic" : "pcb" }),
+  toggleLayout: () =>
+    set((s) => {
+      const layout = s.layout === "schematic" ? "board" : "schematic";
+      return { layout, focusedPane: layout === "schematic" ? "schematic" : "pcb" };
+    }),
   setFocusedPane: (focusedPane) => set({ focusedPane }),
 
   select: (selection) => set({ selection }),
@@ -436,9 +438,6 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
       lengthTuneNet: null,
       pcbTool: "select",
     }),
-
-  // Schematic overlay
-  setSchematicDocked: (schematicDocked) => set({ schematicDocked }),
 
   // PCB 3D view
   setTiltAngle: (tiltAngle) => set({ tiltAngle: Math.max(0, Math.min(75, tiltAngle)) }),

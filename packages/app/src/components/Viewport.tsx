@@ -26,9 +26,14 @@ import {
   viewportWasDrag,
 } from "@/lib/viewport-drag";
 
-const SchematicOverlayPanel = lazy(() =>
-  import("./electronics/SchematicOverlayPanel").then((m) => ({
-    default: m.SchematicOverlayPanel,
+const SchematicView = lazy(() =>
+  import("./electronics/SchematicView").then((m) => ({
+    default: m.SchematicView,
+  })),
+);
+const ElectronicsViewToggle = lazy(() =>
+  import("./electronics/ElectronicsViewToggle").then((m) => ({
+    default: m.ElectronicsViewToggle,
   })),
 );
 const ElectronicsPropertyPanel = lazy(() =>
@@ -231,6 +236,9 @@ export function Viewport() {
   const { isDark } = useTheme();
   const viewMode = useDrawingStore((s) => s.viewMode);
   const electronicsActive = useElectronicsStore((s) => s.active);
+  // One electronics view shows at a time: the full-canvas schematic, or the
+  // 3D board (this Canvas). Default is "schematic"; the toolbar / Tab toggles.
+  const electronicsLayout = useElectronicsStore((s) => s.layout);
   // A board has edit focus when the core store points at a PcbBoard node.
   // Drives in-canvas PCB rendering; rendered alongside the rest of the scene
   // rather than swapping into a separate PCB-only viewport.
@@ -325,12 +333,18 @@ export function Viewport() {
         </XR>
       </Canvas>
 
-      {/* Electronics overlay panels (outside Canvas, on top) */}
+      {/* Electronics overlay panels (outside Canvas, on top). One view shows
+          at a time: in "schematic" layout the full-canvas SchematicView (z-20)
+          covers the 3D board behind it; in "board" layout it's hidden and the
+          board + its HUD show through. The place-palette and view toggle sit
+          above either (z-30). */}
       {electronicsActive && (
         <>
-          <Suspense fallback={null}>
-            <SchematicOverlayPanel />
-          </Suspense>
+          {electronicsLayout === "schematic" && (
+            <Suspense fallback={null}>
+              <SchematicView />
+            </Suspense>
+          )}
           <Suspense fallback={null}>
             <ElectronicsPropertyPanel />
           </Suspense>
@@ -339,6 +353,9 @@ export function Viewport() {
           </Suspense>
           <Suspense fallback={null}>
             <PcbGettingStarted />
+          </Suspense>
+          <Suspense fallback={null}>
+            <ElectronicsViewToggle />
           </Suspense>
         </>
       )}
