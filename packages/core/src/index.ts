@@ -65,7 +65,8 @@ export {
 } from "./types.js";
 
 // Stores
-export { useDocumentStore, getNodePcb, getPcbNodeIds, getNodeEmbroideryDesign } from "./stores/document-store.js";
+export { useDocumentStore, getNodePcb, getPcbNodeIds, getNodeEmbroideryDesign, getPcbBoardTransform, findPcbBoardPart } from "./stores/document-store.js";
+export type { PcbBoardTransform } from "./stores/document-store.js";
 export type { VcadFile, DocumentState, PcbCreateOptions } from "./stores/document-store.js";
 
 export type { FeatureInput } from "./stores/feature-input.js";

@@ -1,0 +1,9 @@
+{
+  "id": "2026-06-03-pcb-board-transform",
+  "version": "0.9.4",
+  "date": "2026-06-03",
+  "category": "feat",
+  "title": "Move and rotate PCB boards",
+  "summary": "PCB boards can now be moved, rotated, and scaled as parts, and in-canvas editing (copper, footprints, picking, and the camera) tracks the board's actual placement instead of assuming the origin.",
+  "features": ["pcb", "ecad", "electronics", "viewport"]
+}
