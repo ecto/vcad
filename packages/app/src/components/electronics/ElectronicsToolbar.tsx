@@ -17,8 +17,6 @@ import { Tag } from "@phosphor-icons/react/dist/ssr/Tag";
 import { Path } from "@phosphor-icons/react/dist/ssr/Path";
 import { Eye } from "@phosphor-icons/react/dist/ssr/Eye";
 import { X } from "@phosphor-icons/react/dist/ssr/X";
-import { Columns } from "@phosphor-icons/react/dist/ssr/Columns";
-import { Square } from "@phosphor-icons/react/dist/ssr/Square";
 import { MagnetStraight } from "@phosphor-icons/react/dist/ssr/MagnetStraight";
 import { Package } from "@phosphor-icons/react/dist/ssr/Package";
 import { Ruler } from "@phosphor-icons/react/dist/ssr/Ruler";
@@ -173,8 +171,7 @@ export function ElectronicsToolbar() {
   const setLayerVisible = useElectronicsStore((s) => s.setLayerVisible);
   const setSchLabelName = useElectronicsStore((s) => s.setSchLabelName);
   const exit = useElectronicsStore((s) => s.exit);
-  const schematicDocked = useElectronicsStore((s) => s.schematicDocked);
-  const setSchematicDocked = useElectronicsStore((s) => s.setSchematicDocked);
+  const toggleLayout = useElectronicsStore((s) => s.toggleLayout);
 
   const unplacedComponents = useElectronicsStore((s) => s.unplacedComponents);
   const syncSchematicToPcb = useDocumentStore((s) => s.syncSchematicToPcb);
@@ -212,15 +209,10 @@ export function ElectronicsToolbar() {
       const key = e.key;
 
       switch (key) {
-        // Layout
-        case "1":
-          setLayout("split");
-          break;
-        case "2":
-          setLayout("schematic-only");
-          break;
-        case "3":
-          setLayout("pcb-only");
+        // Layout: Tab flips between the schematic and board views
+        case "Tab":
+          e.preventDefault();
+          toggleLayout();
           break;
 
         // Escape: cascading cancel
@@ -504,51 +496,30 @@ export function ElectronicsToolbar() {
 
   const renderViewContent = () => (
     <>
-      {/* Layout toggles */}
+      {/* View switch: schematic vs board (also Tab, and the top-center
+          segmented control). One view shows at a time. */}
       <ToolbarButton
-        tooltip="Split view (1)"
-        active={layout === "split"}
-        onClick={() => setLayout("split")}
+        tooltip="Schematic view (Tab)"
+        active={layout === "schematic"}
+        onClick={() => setLayout("schematic")}
         iconColor={ELECTRONICS_TAB_COLORS.view}
-      >
-        <Columns size={20} />
-      </ToolbarButton>
-      <ToolbarButton
-        tooltip="Schematic only (2)"
-        active={layout === "schematic-only"}
-        onClick={() => setLayout("schematic-only")}
-        iconColor={ELECTRONICS_TAB_COLORS.view}
-        label="Sch"
-        expanded
-      >
-        <Square size={20} />
-      </ToolbarButton>
-      <ToolbarButton
-        tooltip="PCB only (3)"
-        active={layout === "pcb-only"}
-        onClick={() => setLayout("pcb-only")}
-        iconColor={ELECTRONICS_TAB_COLORS.view}
-        label="PCB"
-        expanded
-      >
-        <Square size={20} />
-      </ToolbarButton>
-
-      <div className="w-px h-5 bg-border mx-0.5" />
-
-      {/* Toggle the dockable schematic overlay on the 3D canvas */}
-      <ToolbarButton
-        tooltip={schematicDocked === "hidden" ? "Show schematic" : "Hide schematic"}
-        active={schematicDocked !== "hidden"}
-        onClick={() =>
-          setSchematicDocked(schematicDocked === "hidden" ? "left" : "hidden")
-        }
-        iconColor={ELECTRONICS_TAB_COLORS.view}
-        label="Sch"
+        label="Schematic"
         expanded
       >
         <PencilSimple size={20} />
       </ToolbarButton>
+      <ToolbarButton
+        tooltip="Board view (Tab)"
+        active={layout === "board"}
+        onClick={() => setLayout("board")}
+        iconColor={ELECTRONICS_TAB_COLORS.view}
+        label="Board"
+        expanded
+      >
+        <Cpu size={20} />
+      </ToolbarButton>
+
+      <div className="w-px h-5 bg-border mx-0.5" />
 
       <div className="w-px h-5 bg-border mx-0.5" />
 

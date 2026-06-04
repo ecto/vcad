@@ -1,0 +1,9 @@
+{
+  "id": "2026-06-04-electronics-view-toggle",
+  "version": "0.9.4",
+  "date": "2026-06-04",
+  "category": "feat",
+  "title": "Single-view Schematic/Board toggle for PCBs",
+  "summary": "The electronics workspace now shows one view at a time — a full-canvas schematic or the 3D board — with a prominent toggle (and Tab), replacing the floating overlay layered over the 3D scene.",
+  "features": ["electronics", "pcb"]
+}

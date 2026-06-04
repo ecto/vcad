@@ -7,21 +7,25 @@ import {
   findPcbBoardPart,
   getPcbBoardTransform,
 } from "@vcad/core";
+import { useElectronicsStore } from "@/stores/electronics-store";
 
 /**
- * Auto-fit the viewport camera to the focused PCB board the first time a
- * board gains edit focus. Fires `vcad:face-selected` (kernel Z-up) — the
- * handler in ViewportContent swings the camera perpendicular to the board
- * and then re-enables OrbitControls, so this is a one-off framing, not a
- * camera lock. Skips when a share URL supplied a `?at=` viewer-state hint,
- * since that hint owns the camera.
+ * Auto-fit the viewport camera to the focused PCB board the first time the
+ * board (3D) view is shown for a focus session. Fires `vcad:face-selected`
+ * (kernel Z-up) — the handler in ViewportContent swings the camera
+ * perpendicular to the board and then re-enables OrbitControls, so this is a
+ * one-off framing, not a camera lock. Skips when a share URL supplied a `?at=`
+ * viewer-state hint, since that hint owns the camera.
  *
- * Mirrors `useSketchAutoFit`: fires once per focus session. Leaving and
- * re-entering a board re-frames it; editing within a session does not yank
- * the camera away from wherever the user orbited to.
+ * The electronics workspace opens in the schematic view, so framing waits for
+ * the user's first switch to the board view (`layout === "board"`) — otherwise
+ * the camera would frame an unseen board and the board view's first appearance
+ * would look empty. Mirrors `useSketchAutoFit`: fires once per focus session;
+ * editing within a session does not yank the camera away from the user's orbit.
  */
 export function usePcbAutoFit(): void {
   const boardNodeId = useCoreElectronicsStore((s) => s.activeBoardNodeId);
+  const layout = useElectronicsStore((s) => s.layout);
   const firedRef = useRef(false);
 
   // Reset the one-shot guard when edit focus clears.
@@ -30,7 +34,8 @@ export function usePcbAutoFit(): void {
   }, [boardNodeId]);
 
   useEffect(() => {
-    if (boardNodeId == null || firedRef.current) return;
+    // Only frame once the board view is actually visible.
+    if (boardNodeId == null || firedRef.current || layout !== "board") return;
 
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
@@ -92,5 +97,5 @@ export function usePcbAutoFit(): void {
         detail: { normal: { x: n.x, y: n.y, z: n.z }, centroid, vertices },
       }),
     );
-  }, [boardNodeId]);
+  }, [boardNodeId, layout]);
 }
