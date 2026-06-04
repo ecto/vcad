@@ -166,10 +166,13 @@ function FeatureTreeSlot({ sketchActive }: { sketchActive: boolean }) {
   const sidebarPane = useUiStore((s) => s.sidebarPane);
   const inspectorTarget = useUiStore((s) => s.inspectorTarget);
   const selectionLen = useUiStore((s) => s.selection.length);
+  // An ECAD selection (footprint / net / trace / via / pad) feeds the same
+  // contextual inspector as a part, so it must open the inspector pane too.
+  const ecadSelected = useElectronicsStore((s) => s.selection.type !== "none");
 
   const showParameters = !sketchActive && sidebarPane === "parameters";
   const hasInspectorContent =
-    inspectorTarget?.kind === "scene" || selectionLen > 0;
+    inspectorTarget?.kind === "scene" || selectionLen > 0 || ecadSelected;
   const showInspector = !sketchActive && !showParameters && hasInspectorContent;
 
   return (
@@ -332,15 +335,16 @@ export function App() {
   // the full selection length so sub-feature picks (face / edge / vertex)
   // open the inspector too.
   const selectionLen = useUiStore((s) => s.selection.length);
+  const ecadSelected = useElectronicsStore((s) => s.selection.type !== "none");
   useEffect(() => {
     const { setSidebarPane, setInspectorTarget } = useUiStore.getState();
-    if (selectionLen >= 1) {
+    if (selectionLen >= 1 || ecadSelected) {
       setInspectorTarget(null);
       setSidebarPane("inspector");
     } else if (useUiStore.getState().inspectorTarget == null) {
       setSidebarPane("tree");
     }
-  }, [selectionLen]);
+  }, [selectionLen, ecadSelected]);
 
   const handleSave = useCallback(() => {
     const state = useDocumentStore.getState();
