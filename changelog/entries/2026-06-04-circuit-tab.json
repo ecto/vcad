@@ -1,0 +1,9 @@
+{
+  "id": "2026-06-04-circuit-tab",
+  "version": "0.9.4",
+  "date": "2026-06-04",
+  "category": "feat",
+  "title": "Circuit tab in the top toolbar",
+  "summary": "Electronics is now a first-class Circuit tab (between Assembly and Simulate) instead of a PCB button buried under Create, making the schematic/PCB workspace discoverable.",
+  "features": ["electronics", "pcb"]
+}

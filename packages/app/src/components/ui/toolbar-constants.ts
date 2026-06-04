@@ -13,6 +13,7 @@ export const TAB_COLORS: Record<ToolbarTab, string> = {
   simulate: "text-cyan-400",
   build: "text-slate-400",
   sketch: "text-amber-400",
+  circuit: "text-indigo-400",
 };
 
 // Per-tab style theme. All class names are spelled out as literal strings so
@@ -88,11 +89,18 @@ export const TAB_THEMES: Record<ToolbarTab, TabTheme> = {
     hoverBg: "hover:bg-amber-400/5",
     accent: "bg-amber-400",
   },
+  circuit: {
+    text: "text-indigo-400",
+    groupHoverText: "group-hover:text-indigo-400",
+    bg: "bg-indigo-400/10",
+    hoverBg: "hover:bg-indigo-400/5",
+    accent: "bg-indigo-400",
+  },
 };
 
 // One-line descriptions surfaced inside the rich tab tooltips.
 export const TAB_DESCRIPTIONS: Record<ToolbarTab, string> = {
-  create: "Add primitives, sketches, text, and PCB boards.",
+  create: "Add primitives, sketches, and text.",
   sketch: "Draw 2D profiles and convert to 3D with extrude, revolve, sweep, or loft.",
   transform: "Move, rotate, and scale the selected parts.",
   combine: "Boolean union, difference, and intersection of two parts.",
@@ -100,6 +108,7 @@ export const TAB_DESCRIPTIONS: Record<ToolbarTab, string> = {
   assembly: "Define parts, place instances, and connect them with joints.",
   simulate: "Run physics on jointed assemblies — play, pause, step.",
   build: "Switch views, export STL/GLB/STEP, print, route, and quote.",
+  circuit: "Design circuits: add a PCB, draw the schematic, place and route the board.",
 };
 
 // Electronics toolbar tab types
