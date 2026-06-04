@@ -7,9 +7,10 @@
  * connector that pokes through the enclosure lights up live while you place
  * and route.
  *
- * First cut: AABB-vs-AABB in the kernel frame, which is exact enough to catch
- * real clashes (and assumes the board sits at the origin — see the modeless
- * Phase 1 constraint). Mesh-accurate clash + assembly-instance obstacles are
+ * AABB-vs-AABB in the world kernel frame: mechanical meshes already carry their
+ * world transform, and component bodies (board-local) are mapped into the world
+ * via the focused board's transform, so a board moved or rotated as a part
+ * still clashes correctly. Mesh-accurate clash + assembly-instance obstacles are
  * follow-ups.
  */
 
@@ -17,8 +18,17 @@ import type { ComponentMesh } from "@vcad/engine";
 
 export type Aabb = { min: [number, number, number]; max: [number, number, number] };
 
-/** Compute an AABB from a flat [x,y,z,...] position buffer. */
-export function aabbOfPositions(positions: ArrayLike<number> | undefined): Aabb | null {
+/** Maps a point into another frame (e.g. board-local → world). */
+export type PointTransform = (x: number, y: number, z: number) => [number, number, number];
+
+/**
+ * Compute an AABB from a flat [x,y,z,...] position buffer, optionally mapping
+ * each point through `transform` first (e.g. a board-local → world transform).
+ */
+export function aabbOfPositions(
+  positions: ArrayLike<number> | undefined,
+  transform?: PointTransform,
+): Aabb | null {
   if (!positions || positions.length < 3) return null;
   let minX = Infinity,
     minY = Infinity,
@@ -27,9 +37,10 @@ export function aabbOfPositions(positions: ArrayLike<number> | undefined): Aabb 
     maxY = -Infinity,
     maxZ = -Infinity;
   for (let i = 0; i + 2 < positions.length; i += 3) {
-    const x = positions[i]!;
-    const y = positions[i + 1]!;
-    const z = positions[i + 2]!;
+    let x = positions[i]!;
+    let y = positions[i + 1]!;
+    let z = positions[i + 2]!;
+    if (transform) [x, y, z] = transform(x, y, z);
     if (x < minX) minX = x;
     if (x > maxX) maxX = x;
     if (y < minY) minY = y;
@@ -55,17 +66,21 @@ export function aabbsOverlap(a: Aabb, b: Aabb, margin = 0): boolean {
 
 /**
  * Footprint refs whose component body intersects any mechanical AABB.
- * `margin` adds a clearance band so near-misses also flag.
+ * `margin` adds a clearance band so near-misses also flag. `boardToWorld`
+ * maps the board-local component bodies into the world frame the mechanical
+ * AABBs live in (so a moved/rotated board clashes correctly); omit for a board
+ * at the origin.
  */
 export function interferingRefs(
   components: ComponentMesh[],
   mechanical: Aabb[],
   margin = 0,
+  boardToWorld?: PointTransform,
 ): string[] {
   if (mechanical.length === 0) return [];
   const out = new Set<string>();
   for (const c of components) {
-    const cb = aabbOfPositions(c.positions);
+    const cb = aabbOfPositions(c.positions, boardToWorld);
     if (!cb) continue;
     if (mechanical.some((m) => aabbsOverlap(cb, m, margin))) out.add(c.footprint_ref);
   }

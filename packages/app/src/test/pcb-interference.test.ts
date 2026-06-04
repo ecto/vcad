@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import type { ComponentMesh } from "@vcad/engine";
-import { aabbOfPositions, aabbsOverlap, interferingRefs } from "@/lib/pcb-interference";
+import {
+  aabbOfPositions,
+  aabbsOverlap,
+  interferingRefs,
+  type PointTransform,
+} from "@/lib/pcb-interference";
 
 /** Unit cube [0,0,0]..[s,s,s] translated by (tx,ty,tz) as a flat position buffer. */
 function boxPositions(s: number, tx = 0, ty = 0, tz = 0): number[] {
@@ -57,5 +62,14 @@ describe("pcb-interference", () => {
       comp("R1", boxPositions(1, 3, 3, 3)),
     ];
     expect(interferingRefs(parts, mech)).toEqual(["R1"]);
+  });
+
+  it("maps board-local bodies into world via boardToWorld", () => {
+    const mech = [aabbOfPositions(boxPositions(10))!]; // world [0,10]^3
+    const c = comp("R1", boxPositions(2, 55, 1, 1)); // local x∈[55,57] → no clash
+    expect(interferingRefs([c], mech)).toEqual([]);
+    // A board placed at x=-50 maps the body to x∈[5,7] → clashes.
+    const shift: PointTransform = (x, y, z) => [x - 50, y, z];
+    expect(interferingRefs([c], mech, 0, shift)).toEqual(["R1"]);
   });
 });
