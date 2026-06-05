@@ -19,6 +19,7 @@ import { useDrawingStore } from "@/stores/drawing-store";
 import { useElectronicsStore } from "@/stores/electronics-store";
 import { useDfmStore } from "@/stores/dfm-store";
 import { useElectronicsSync } from "@/hooks/useElectronicsSync";
+import { useCircuitSim } from "@/hooks/useCircuitSim";
 import {
   viewportPointerDown,
   viewportPointerMove,
@@ -302,6 +303,8 @@ export function Viewport() {
 
   // Run electronics sync when in electronics mode
   useElectronicsSync();
+  // Drive the live circuit simulation ("come alive") when enabled
+  useCircuitSim();
 
   // Track drag distance on the viewport so click handlers can ignore the
   // click that follows a camera rotation / pan gesture. Without this, on

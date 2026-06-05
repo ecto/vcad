@@ -146,6 +146,12 @@ function getNetForWire(
 // Symbol graphics renderer
 // ---------------------------------------------------------------------------
 
+/** Map a node voltage to a colour: blue (low) → green → red (high rail). */
+function voltageColor(v: number, vmax = 5): string {
+  const t = Math.max(0, Math.min(1, Math.abs(v) / vmax));
+  return `hsl(${240 * (1 - t)}, 90%, 58%)`;
+}
+
 function renderSymbolGraphics(
   graphics: SymbolGraphic[],
   stroke: string,
@@ -219,6 +225,25 @@ export function SchematicCanvas() {
   const selection = useElectronicsStore((s) => s.selection);
   const hoveredNet = useElectronicsStore((s) => s.hoveredNet);
   const netlist = useElectronicsStore((s) => s.netlist);
+  // Live circuit simulation state ("come alive")
+  const simulating = useElectronicsStore((s) => s.simulating);
+  const simNodeVoltages = useElectronicsStore((s) => s.simNodeVoltages);
+  const simDeviceCurrents = useElectronicsStore((s) => s.simDeviceCurrents);
+  const simNetToNode = useElectronicsStore((s) => s.simNetToNode);
+  const simRefToDevice = useElectronicsStore((s) => s.simRefToDevice);
+  const simOn = simulating && simNodeVoltages != null;
+  /** Voltage of a net under simulation (null when not simulating / unknown). */
+  const netVoltage = (net: string | null): number | null => {
+    if (!simOn || !net || !simNetToNode || !simNodeVoltages) return null;
+    const node = simNetToNode[net];
+    return node == null ? null : (simNodeVoltages[node] ?? null);
+  };
+  /** Current through a component under simulation (A), or null. */
+  const compCurrent = (ref: string): number | null => {
+    if (!simOn || !simRefToDevice || !simDeviceCurrents) return null;
+    const id = simRefToDevice[ref];
+    return id == null ? null : (simDeviceCurrents[id] ?? null);
+  };
   const zoom = useElectronicsStore((s) => s.schZoom);
   const pan = useElectronicsStore((s) => s.schPan);
   const schTool = useElectronicsStore((s) => s.schTool);
@@ -728,6 +753,8 @@ export function SchematicCanvas() {
           const overrides = wireOverrides.get(i);
           const s = overrides?.start ?? wire.start;
           const en = overrides?.end ?? wire.end;
+          const v = netVoltage(net);
+          const simStroke = v != null ? voltageColor(v) : null;
           return (
             <line
               key={`w-${i}`}
@@ -735,10 +762,16 @@ export function SchematicCanvas() {
               y1={s.y}
               x2={en.x}
               y2={en.y}
-              stroke={highlight ? colors.accent : colors.wire}
-              strokeWidth={highlight ? 2 : 1.5}
+              stroke={simStroke ?? (highlight ? colors.accent : colors.wire)}
+              strokeWidth={simStroke != null ? 2.5 : highlight ? 2 : 1.5}
               strokeLinecap="round"
-              style={highlight ? { filter: `drop-shadow(0 0 4px ${colors.accentGlow})` } : undefined}
+              style={
+                simStroke != null
+                  ? { filter: `drop-shadow(0 0 3px ${simStroke})` }
+                  : highlight
+                    ? { filter: `drop-shadow(0 0 4px ${colors.accentGlow})` }
+                    : undefined
+              }
               className="cursor-pointer"
               onClick={(e) => onWireClick(e, i, net)}
               onPointerEnter={() => net && setHoveredNet(net)}
@@ -821,6 +854,23 @@ export function SchematicCanvas() {
                 onPointerLeave={() => setHoveredNet(null)}
                 opacity={moveDrag?.compIdx === i ? 0.6 : 1}
               >
+                {/* LED glow — brightness ∝ current (the circuit "comes alive") */}
+                {simOn &&
+                  comp.properties?.symbolId === "led" &&
+                  (() => {
+                    const b = Math.max(0, Math.min(1, Math.abs(compCurrent(comp.ref) ?? 0) / 0.01));
+                    if (b <= 0.03) return null;
+                    return (
+                      <circle
+                        cx={20}
+                        cy={15}
+                        r={9 + 13 * b}
+                        fill="#ff5a36"
+                        opacity={0.55 * b}
+                        style={{ filter: `blur(${4 + 6 * b}px)` }}
+                      />
+                    );
+                  })()}
                 {renderSymbolGraphics(
                   sym.graphics,
                   highlighted ? colors.accent : colors.bodyStroke,

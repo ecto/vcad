@@ -73,6 +73,13 @@ export interface ElectronicsState {
   orphanFootprints: string[];
   unplacedComponents: string[];
 
+  // Live circuit simulation ("come alive")
+  simulating: boolean;
+  simNodeVoltages: number[] | null;
+  simDeviceCurrents: number[] | null;
+  simNetToNode: Record<string, number> | null;
+  simRefToDevice: Record<string, number> | null;
+
   // PCB view state
   pcbZoom: number;
   pcbPan: Vec2;
@@ -160,6 +167,13 @@ export interface ElectronicsState {
   setNetlist: (n: NetlistResult) => void;
   setOrphanFootprints: (refs: string[]) => void;
   setUnplacedComponents: (refs: string[]) => void;
+  setSimulating: (b: boolean) => void;
+  setSimMaps: (
+    netToNode: Record<string, number>,
+    refToDevice: Record<string, number>,
+  ) => void;
+  setSimObservation: (nodeVoltages: number[], deviceCurrents: number[]) => void;
+  clearSim: () => void;
   startRouteFromRatsnest: (fpRef: string, padNum: string, net: string) => void;
   startRoute: (fpRef: string, padNum: string, net: string) => void;
   updateRoutePreview: (points: Vec2[]) => void;
@@ -203,6 +217,12 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
   netlist: null,
   orphanFootprints: [],
   unplacedComponents: [],
+
+  simulating: false,
+  simNodeVoltages: null,
+  simDeviceCurrents: null,
+  simNetToNode: null,
+  simRefToDevice: null,
 
   pcbZoom: 1,
   pcbPan: { x: 0, y: 0 },
@@ -369,6 +389,28 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
   setComponentBodies: (componentBodies) => set({ componentBodies }),
   toggleComponentBodies: () => set((s) => ({ showComponentBodies: !s.showComponentBodies })),
   setNetlist: (netlist) => set({ netlist }),
+  setSimulating: (simulating) =>
+    set(
+      simulating
+        ? { simulating }
+        : {
+            simulating: false,
+            simNodeVoltages: null,
+            simDeviceCurrents: null,
+            simNetToNode: null,
+            simRefToDevice: null,
+          },
+    ),
+  setSimMaps: (simNetToNode, simRefToDevice) => set({ simNetToNode, simRefToDevice }),
+  setSimObservation: (simNodeVoltages, simDeviceCurrents) =>
+    set({ simNodeVoltages, simDeviceCurrents }),
+  clearSim: () =>
+    set({
+      simNodeVoltages: null,
+      simDeviceCurrents: null,
+      simNetToNode: null,
+      simRefToDevice: null,
+    }),
   setOrphanFootprints: (orphanFootprints) => set({ orphanFootprints }),
   setUnplacedComponents: (unplacedComponents) => set({ unplacedComponents }),
 

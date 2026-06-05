@@ -422,3 +422,46 @@ export async function netForWire(
     return null;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Circuit simulation (lumped-element transient solver)
+// ---------------------------------------------------------------------------
+
+/** A snapshot from the circuit simulator. */
+export interface CircuitObservation {
+  time: number;
+  nodeVoltages: number[];
+  deviceCurrents: number[];
+}
+
+/** A live circuit simulation handle (a WASM `CircuitSim` instance). */
+export interface CircuitSimHandle {
+  /** Advance `n` timesteps and return the final observation. */
+  step(n: number): CircuitObservation;
+  /** Current state without advancing. */
+  observe(): CircuitObservation;
+  /** Reset to the power-on state. */
+  reset(): void;
+  /** Mutate a device's primary scalar (drive a switch / scrubbed value). */
+  setValue(deviceId: number, value: number): void;
+  /** Configured timestep (s). */
+  dt(): number;
+  /** Release the WASM-side instance. */
+  free(): void;
+}
+
+/**
+ * Build a live circuit simulation from a spec JSON
+ * (`{ dt, devices: [{ kind, p, n, value }] }`). Returns null if the ECAD WASM
+ * isn't available or the spec is invalid.
+ */
+export async function createCircuitSim(specJson: string): Promise<CircuitSimHandle | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm || typeof wasm.CircuitSim !== "function") return null;
+  try {
+    return new wasm.CircuitSim(specJson) as CircuitSimHandle;
+  } catch (e) {
+    console.warn("[circuit-sim] build failed:", e);
+    return null;
+  }
+}

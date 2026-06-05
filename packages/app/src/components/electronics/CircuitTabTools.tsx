@@ -51,7 +51,9 @@ export function CircuitTabTools() {
   const toggleComponentBodies = useElectronicsStore((s) => s.toggleComponentBodies);
   const pcbLayers = useElectronicsStore((s) => s.pcbLayers);
   const unplacedComponents = useElectronicsStore((s) => s.unplacedComponents);
+  const simulating = useElectronicsStore((s) => s.simulating);
 
+  const setSimulating = useElectronicsStore((s) => s.setSimulating);
   const setSchTool = useElectronicsStore((s) => s.setSchTool);
   const setPcbTool = useElectronicsStore((s) => s.setPcbTool);
   const setSchLabelName = useElectronicsStore((s) => s.setSchLabelName);
@@ -101,6 +103,14 @@ export function CircuitTabTools() {
   if (layout === "schematic") {
     return (
       <>
+        <ToolbarButton
+          tooltip={simulating ? "Stop simulation" : "Simulate — bring the circuit alive"}
+          active={simulating}
+          onClick={() => setSimulating(!simulating)}
+          iconColor={simulating ? "#ff5a36" : ELECTRONICS_TAB_COLORS.schematic}
+        >
+          <Lightning size={20} weight={simulating ? "fill" : "regular"} />
+        </ToolbarButton>
         <ToolbarButton
           tooltip="Select (V)"
           active={schTool === "select"}
