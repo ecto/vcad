@@ -46,14 +46,23 @@ function snapToGrid(v: number, grid: number): number {
 }
 
 /** Snap to nearest component pin if within threshold, otherwise grid-snap. */
+interface SnapResult {
+  x: number;
+  y: number;
+  isPin: boolean;
+  /** When `isPin`, the component ref and pin number snapped to. */
+  ref?: string;
+  pin?: string;
+}
+
 function snapToGridOrPin(
   pos: { x: number; y: number },
   components: SchematicComponent[],
   grid: number,
   threshold: number = 12,
-): { x: number; y: number; isPin: boolean } {
+): SnapResult {
   let bestDist = threshold;
-  let bestPos = { x: snapToGrid(pos.x, grid), y: snapToGrid(pos.y, grid), isPin: false };
+  let bestPos: SnapResult = { x: snapToGrid(pos.x, grid), y: snapToGrid(pos.y, grid), isPin: false };
   for (const comp of components) {
     for (const pin of comp.pins) {
       const px = comp.position.x + pin.position.x;
@@ -61,7 +70,7 @@ function snapToGridOrPin(
       const d = Math.hypot(pos.x - px, pos.y - py);
       if (d < bestDist) {
         bestDist = d;
-        bestPos = { x: px, y: py, isPin: true };
+        bestPos = { x: px, y: py, isPin: true, ref: comp.ref, pin: pin.number };
       }
     }
   }
@@ -251,7 +260,7 @@ export function SchematicCanvas() {
   const [ghostPos, setGhostPos] = useState<{ x: number; y: number } | null>(null);
   const [moveDrag, setMoveDrag] = useState<{ compIdx: number; offset: { x: number; y: number } } | null>(null);
   const [moveConnections, setMoveConnections] = useState<{ wireIdx: number; endpoint: "start" | "end"; pinOffset: { x: number; y: number } }[]>([]);
-  const [snapTarget, setSnapTarget] = useState<{ x: number; y: number; isPin: boolean } | null>(null);
+  const [snapTarget, setSnapTarget] = useState<SnapResult | null>(null);
   const dragStart = useRef<{ x: number; y: number } | null>(null);
 
   // Active net from selection
@@ -408,7 +417,7 @@ export function SchematicCanvas() {
 
       // Update snap target indicator for wire mode
       if (schTool === "wire") {
-        setSnapTarget(snapped as { x: number; y: number; isPin: boolean });
+        setSnapTarget(snapped as SnapResult);
       } else {
         setSnapTarget(null);
       }
@@ -1024,12 +1033,32 @@ export function SchematicCanvas() {
         {/* Snap target indicator */}
         {schTool === "wire" && snapTarget && (
           <g pointerEvents="none">
-            {snapTarget.isPin ? (
-              <>
-                <circle cx={snapTarget.x} cy={snapTarget.y} r={8} fill="none" stroke={colors.accent} strokeWidth={1.5} className="sch-pin-glow" />
-                <circle cx={snapTarget.x} cy={snapTarget.y} r={4} fill={colors.accent} opacity={0.6} />
-              </>
-            ) : (
+            {snapTarget.isPin ? (() => {
+              const net = snapTarget.ref
+                ? getNetForPin(snapTarget.ref, snapTarget.pin ?? "", netlist)
+                : undefined;
+              return (
+                <>
+                  <circle cx={snapTarget.x} cy={snapTarget.y} r={8} fill="none" stroke={colors.accent} strokeWidth={1.5} className="sch-pin-glow" />
+                  <circle cx={snapTarget.x} cy={snapTarget.y} r={4} fill={colors.accent} opacity={0.6} />
+                  {snapTarget.ref && (
+                    <text
+                      x={snapTarget.x + 7}
+                      y={snapTarget.y - 5}
+                      fontSize={7}
+                      fontWeight="bold"
+                      fill={colors.accent}
+                      stroke={isDark ? "#000" : "#fff"}
+                      strokeWidth={1.5}
+                      paintOrder="stroke"
+                    >
+                      {snapTarget.ref}.{snapTarget.pin}
+                      {net ? ` · ${net}` : ""}
+                    </text>
+                  )}
+                </>
+              );
+            })() : (
               <circle cx={snapTarget.x} cy={snapTarget.y} r={2.5} fill="none" stroke={colors.accent} strokeWidth={1} opacity={0.4} />
             )}
           </g>

@@ -1,0 +1,9 @@
+{
+  "id": "2026-06-04-global-power-label-nets",
+  "version": "0.9.4",
+  "date": "2026-06-04",
+  "category": "feat",
+  "title": "Global power ports and net labels",
+  "summary": "Same-named labels and one-pin power symbols (VCC/GND/...) now merge into one net across the sheet without a wire, so power rails no longer need hand-wiring through every pin.",
+  "features": ["electronics", "pcb"]
+}

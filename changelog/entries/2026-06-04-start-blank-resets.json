@@ -1,0 +1,9 @@
+{
+  "id": "2026-06-04-start-blank-resets",
+  "version": "0.9.4",
+  "date": "2026-06-04",
+  "category": "fix",
+  "title": "\"Start blank\" gives a truly empty document",
+  "summary": "The welcome screen's Start blank now resets to a fresh empty document instead of dropping a cube onto (and never clearing) whatever was already open.",
+  "features": ["onboarding"]
+}

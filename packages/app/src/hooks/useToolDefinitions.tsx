@@ -112,6 +112,7 @@ export function getAllTabs(): ToolTabMeta[] {
     { id: "combine", label: t("toolbar.tab.combine"), icon: Unite },
     { id: "modify", label: t("toolbar.tab.modify"), icon: Circle },
     { id: "assembly", label: t("toolbar.tab.assembly"), icon: Package },
+    { id: "circuit", label: "Circuit", icon: Circuitry },
     { id: "simulate", label: t("toolbar.tab.simulate"), icon: Play },
     { id: "build", label: t("toolbar.tab.export"), icon: Export },
   ];
@@ -343,14 +344,17 @@ export function useToolDefinitions(): {
         iconColor: color("create"),
         onClick: () => dispatch("vcad:open-text-dialog"),
       },
+    ];
+
+    const circuit: ToolDef[] = [
       {
-        id: "create-pcb",
-        tab: "create",
-        label: "PCB",
-        tooltip: "Add PCB Board",
+        id: "circuit-pcb",
+        tab: "circuit",
+        label: "PCB Board",
+        tooltip: "Add a PCB board and open the circuit editor",
         icon: Circuitry,
         enabled: !sketchActive,
-        iconColor: color("create"),
+        iconColor: color("circuit"),
         onClick: () => dispatch("vcad:open-pcb-dialog"),
       },
     ];
@@ -993,6 +997,7 @@ export function useToolDefinitions(): {
       simulate,
       build,
       sketch,
+      circuit,
     };
   }, [
     addPrimitive,
