@@ -66,7 +66,7 @@ const OfflineIndicator = lazyWithRetry(() => import("@/components/OfflineIndicat
 const UpdateNotification = lazyWithRetry(() => import("@/components/UpdateNotification").then(m => ({ default: m.UpdateNotification })), "UpdateNotification");
 const WhatsNewPanel = lazyWithRetry(() => import("@/components/WhatsNewPanel").then(m => ({ default: m.WhatsNewPanel })), "WhatsNewPanel");
 const ElectronicsToolbar = lazyWithRetry(() => import("@/components/electronics/ElectronicsToolbar").then(m => ({ default: m.ElectronicsToolbar })), "ElectronicsToolbar");
-const ElectronicsStatusPanel = lazyWithRetry(() => import("@/components/electronics/ElectronicsStatusPanel").then(m => ({ default: m.ElectronicsStatusPanel })), "ElectronicsStatusPanel");
+const ElectronicsPanelHeader = lazyWithRetry(() => import("@/components/electronics/ElectronicsPanelHeader").then(m => ({ default: m.ElectronicsPanelHeader })), "ElectronicsPanelHeader");
 const EmbroideryPanel = lazyWithRetry(() => import("@/components/embroidery").then(m => ({ default: m.EmbroideryPanel })), "EmbroideryPanel");
 const Viewport = lazyWithRetry(() => import("@/components/Viewport").then(m => ({ default: m.Viewport })), "Viewport");
 
@@ -169,10 +169,13 @@ function FeatureTreeSlot({ sketchActive }: { sketchActive: boolean }) {
   // An ECAD selection (footprint / net / trace / via / pad) feeds the same
   // contextual inspector as a part, so it must open the inspector pane too.
   const ecadSelected = useElectronicsStore((s) => s.selection.type !== "none");
+  // While editing a circuit the panel must stay open even with nothing
+  // selected — it hosts the persistent status/overview header.
+  const electronicsActive = useElectronicsStore((s) => s.active);
 
   const showParameters = !sketchActive && sidebarPane === "parameters";
   const hasInspectorContent =
-    inspectorTarget?.kind === "scene" || selectionLen > 0 || ecadSelected;
+    inspectorTarget?.kind === "scene" || selectionLen > 0 || ecadSelected || electronicsActive;
   const showInspector = !sketchActive && !showParameters && hasInspectorContent;
 
   return (
@@ -206,6 +209,13 @@ function FeatureTreeSlot({ sketchActive }: { sketchActive: boolean }) {
           ) : (
             <AsyncBoundary region="property-panel" fallback={null}>
               <div className="flex h-full flex-col overflow-hidden">
+                {/* Persistent status + board-overview header while editing a
+                    circuit (replaces the old floating HUDs). */}
+                {electronicsActive && (
+                  <AsyncBoundary region="electronics-panel-header" fallback={null}>
+                    <ElectronicsPanelHeader />
+                  </AsyncBoundary>
+                )}
                 <div className="min-h-0 flex-1 overflow-auto">
                   <PropertyPanel />
                 </div>
@@ -1051,11 +1061,12 @@ export function App() {
         <FaceSelectionOverlay />
       </Suspense>
 
-      {/* Electronics toolbar + status (self-gate via electronicsActive) */}
+      {/* Electronics toolbar (self-gate via electronicsActive). The status +
+          board-overview readouts now live in the property-panel header
+          (ElectronicsPanelHeader), not a floating overlay. */}
       {electronicsActive && (
         <Suspense fallback={null}>
           <ElectronicsToolbar />
-          <ElectronicsStatusPanel />
         </Suspense>
       )}
 
