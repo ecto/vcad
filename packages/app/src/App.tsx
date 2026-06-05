@@ -65,7 +65,6 @@ const DocumentPicker = lazyWithRetry(() => import("@/components/DocumentPicker")
 const OfflineIndicator = lazyWithRetry(() => import("@/components/OfflineIndicator").then(m => ({ default: m.OfflineIndicator })), "OfflineIndicator");
 const UpdateNotification = lazyWithRetry(() => import("@/components/UpdateNotification").then(m => ({ default: m.UpdateNotification })), "UpdateNotification");
 const WhatsNewPanel = lazyWithRetry(() => import("@/components/WhatsNewPanel").then(m => ({ default: m.WhatsNewPanel })), "WhatsNewPanel");
-const ElectronicsToolbar = lazyWithRetry(() => import("@/components/electronics/ElectronicsToolbar").then(m => ({ default: m.ElectronicsToolbar })), "ElectronicsToolbar");
 const ElectronicsPanelHeader = lazyWithRetry(() => import("@/components/electronics/ElectronicsPanelHeader").then(m => ({ default: m.ElectronicsPanelHeader })), "ElectronicsPanelHeader");
 const EmbroideryPanel = lazyWithRetry(() => import("@/components/embroidery").then(m => ({ default: m.EmbroideryPanel })), "EmbroideryPanel");
 const Viewport = lazyWithRetry(() => import("@/components/Viewport").then(m => ({ default: m.Viewport })), "Viewport");
@@ -312,7 +311,6 @@ export function App() {
   const engineReady = useEngineStore((s) => s.engineReady);
   const error = useEngineStore((s) => s.error);
   const sketchActive = useSketchStore((s) => s.active);
-  const electronicsActive = useElectronicsStore((s) => s.active);
 
   const guidedFlowActive = useOnboardingStore((s) => s.guidedFlowActive);
   const guidedFlowStep = useOnboardingStore((s) => s.guidedFlowStep);
@@ -1060,15 +1058,6 @@ export function App() {
         <DrawingToolbar />
         <FaceSelectionOverlay />
       </Suspense>
-
-      {/* Electronics toolbar (self-gate via electronicsActive). The status +
-          board-overview readouts now live in the property-panel header
-          (ElectronicsPanelHeader), not a floating overlay. */}
-      {electronicsActive && (
-        <Suspense fallback={null}>
-          <ElectronicsToolbar />
-        </Suspense>
-      )}
 
       {/* Onboarding overlays */}
       <Suspense fallback={null}>
