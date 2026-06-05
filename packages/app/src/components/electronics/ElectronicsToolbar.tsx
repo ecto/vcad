@@ -484,7 +484,12 @@ export function ElectronicsToolbar() {
           tooltip={`Place ${unplacedComponents.length} unplaced component(s)`}
           onClick={() => {
             const boardNodeId = useCoreElectronicsStore.getState().activeBoardNodeId;
-            if (boardNodeId != null) syncSchematicToPcb(boardNodeId);
+            if (boardNodeId != null) {
+              // Pass the live netlist so the sync also maps schematic nets onto
+              // the board (assigns pad.net + populates pcb.nets), not just
+              // placing footprints.
+              syncSchematicToPcb(boardNodeId, useElectronicsStore.getState().netlist ?? undefined);
+            }
           }}
           iconColor={ELECTRONICS_TAB_COLORS.pcb}
         >

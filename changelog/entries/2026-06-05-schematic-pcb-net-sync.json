@@ -1,0 +1,9 @@
+{
+  "id": "2026-06-05-schematic-pcb-net-sync",
+  "version": "0.9.4",
+  "date": "2026-06-05",
+  "category": "feat",
+  "title": "Update PCB from schematic maps nets onto pads",
+  "summary": "Placing unplaced components from the schematic now assigns each pad's net from the netlist and registers the nets on the board, and parts without a footprint template get pin-derived pads so they're routable.",
+  "features": ["electronics", "pcb", "schematic"]
+}

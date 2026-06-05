@@ -53,6 +53,7 @@ import {
 } from "../types.js";
 import { useUiStore } from "./ui-store.js";
 import { useParametersStore } from "./parameters-store.js";
+import { syncSchematicToPcbData } from "./ecad-sync.js";
 
 // ---------------------------------------------------------------------------
 // CRDT bridge types
@@ -427,7 +428,12 @@ export interface DocumentState {
   initSchematic: (title?: string) => void;
   initPcb: (options?: PcbCreateOptions) => NodeId;
   importPcb: (pcb: Pcb, name?: string) => NodeId;
-  syncSchematicToPcb: (boardNodeId: NodeId) => void;
+  syncSchematicToPcb: (
+    boardNodeId: NodeId,
+    netlist?: {
+      nets: { name: string; connections: { component_ref: string; pin_number: string }[] }[];
+    },
+  ) => void;
   moveSchematicComponent: (idx: number, position: Vec3) => void;
   moveSchematicComponentWithWires: (idx: number, position: Vec3, wireUpdates: { wireIdx: number; endpoint: "start" | "end"; pos: { x: number; y: number } }[]) => void;
   moveFootprint: (nodeId: NodeId, idx: number, position: Vec3) => void;
@@ -2025,39 +2031,14 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     return addPcbToDocument(get, set, pcb, name ?? "Imported PCB");
   },
 
-  syncSchematicToPcb: (boardNodeId) => {
+  syncSchematicToPcb: (boardNodeId, netlist) => {
     const state = get();
-    const engine = state._crdtEngine!;
-
-    const pcb = state.document.pcb ? structuredClone(state.document.pcb) : null;
+    const pcb = state.document.pcb;
     const schematic = state.document.schematic;
     if (!pcb || !schematic) return;
-
-    const existingRefs = new Set(pcb.footprints.map((fp) => fp.ref));
-    let added = 0;
-    for (const comp of schematic.components) {
-      if (existingRefs.has(comp.ref)) continue;
-      let pads: Footprint["pads"] = [];
-      let graphics: Footprint["graphics"] = [];
-      if (comp.properties?.footprintTemplate) {
-        try {
-          const template = JSON.parse(comp.properties.footprintTemplate);
-          pads = template.pads ?? [];
-          graphics = template.graphics ?? [];
-        } catch { /* skip */ }
-      }
-      const fpCount = pcb.footprints.length;
-      const staggerX = 10 + ((fpCount + added) % 5) * 10;
-      const staggerY = 10 + Math.floor((fpCount + added) / 5) * 10;
-      pcb.footprints.push({
-        ref: comp.ref, value: comp.value,
-        footprintName: comp.footprintId ?? comp.ref,
-        position: { x: staggerX, y: staggerY }, pads, graphics,
-      });
-      added++;
-    }
-    if (added === 0) return;
-    const patch = setCrdtPcb(state, pcb);
+    const { pcb: nextPcb, changed } = syncSchematicToPcbData(pcb, schematic, netlist);
+    if (!changed) return;
+    const patch = setCrdtPcb(state, nextPcb);
     set({ ...patch, isDirty: true });
   },
 
