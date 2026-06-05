@@ -1,0 +1,9 @@
+{
+  "id": "2026-06-04-searchable-parts-palette",
+  "version": "0.9.4",
+  "date": "2026-06-04",
+  "category": "feat",
+  "title": "Searchable, labeled component palette",
+  "summary": "The schematic component palette is now a labeled, searchable list (icon + part name, filtered by name/prefix/value) instead of a row of unlabeled icons.",
+  "features": ["electronics", "pcb"]
+}

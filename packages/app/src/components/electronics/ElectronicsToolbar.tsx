@@ -6,7 +6,7 @@
  * Tabs: Schematic | Components | PCB | View | Finish
  */
 
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useState } from "react";
 import { Cursor } from "@phosphor-icons/react/dist/ssr/Cursor";
 import { ArrowsOutCardinal } from "@phosphor-icons/react/dist/ssr/ArrowsOutCardinal";
 import { Plugs } from "@phosphor-icons/react/dist/ssr/Plugs";
@@ -173,6 +173,7 @@ export function ElectronicsToolbar() {
   const exit = useElectronicsStore((s) => s.exit);
   const toggleLayout = useElectronicsStore((s) => s.toggleLayout);
   const symbols = useSymbolLibrary();
+  const [componentSearch, setComponentSearch] = useState("");
 
   const unplacedComponents = useElectronicsStore((s) => s.unplacedComponents);
   const syncSchematicToPcb = useDocumentStore((s) => s.syncSchematicToPcb);
@@ -413,21 +414,54 @@ export function ElectronicsToolbar() {
     </>
   );
 
-  const renderComponentsContent = () => (
-    <>
-      {symbols.map((sym) => (
-        <ToolbarButton
-          key={sym.id}
-          tooltip={`${sym.name} (${sym.defaultValue})`}
-          active={placingSymbol === sym.id}
-          onClick={() => placeComponent(sym.id)}
-          iconColor={ELECTRONICS_TAB_COLORS.components}
-        >
-          <SymbolIcon id={sym.id} />
-        </ToolbarButton>
-      ))}
-    </>
-  );
+  const renderComponentsContent = () => {
+    const q = componentSearch.trim().toLowerCase();
+    const filtered = q
+      ? symbols.filter(
+          (s) =>
+            s.name.toLowerCase().includes(q) ||
+            s.id.toLowerCase().includes(q) ||
+            s.prefix.toLowerCase().includes(q) ||
+            s.defaultValue.toLowerCase().includes(q),
+        )
+      : symbols;
+    return (
+      <div
+        className="flex w-56 flex-col gap-1 p-1"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <input
+          type="text"
+          value={componentSearch}
+          onChange={(e) => setComponentSearch(e.target.value)}
+          placeholder="Search parts…"
+          aria-label="Search parts"
+          className="w-full rounded border border-border bg-transparent px-2 py-1 text-[11px] text-text placeholder:text-text-muted"
+        />
+        <div className="flex max-h-[50vh] flex-col gap-0.5 overflow-y-auto">
+          {filtered.map((sym) => (
+            <ToolbarButton
+              key={sym.id}
+              tooltip={`${sym.name} (${sym.defaultValue})`}
+              active={placingSymbol === sym.id}
+              onClick={() => placeComponent(sym.id)}
+              iconColor={ELECTRONICS_TAB_COLORS.components}
+              label={sym.name}
+              expanded
+              className="!justify-start gap-2 px-2"
+            >
+              <SymbolIcon id={sym.id} />
+            </ToolbarButton>
+          ))}
+          {filtered.length === 0 && (
+            <div className="px-2 py-1 text-[10px] text-text-muted">
+              No parts match “{componentSearch}”.
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   const renderPcbContent = () => (
     <>

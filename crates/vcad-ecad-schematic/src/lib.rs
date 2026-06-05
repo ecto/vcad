@@ -98,6 +98,31 @@ pub(crate) fn points_coincident(a: &Vec2, b: &Vec2) -> bool {
     (dx * dx + dy * dy) < POSITION_TOLERANCE * POSITION_TOLERANCE
 }
 
+/// Whether point `p` lies on the segment `a`--`b` (within tolerance), including
+/// its interior — i.e. a T-tap or a pin/junction sitting on a wire. This is
+/// deliberately a point-vs-segment test, never segment-vs-segment: two wires
+/// that merely *cross* (each through the other's interior, with no endpoint,
+/// pin, or junction at the crossing) are NOT connected.
+pub(crate) fn point_on_segment(p: &Vec2, a: &Vec2, b: &Vec2) -> bool {
+    let abx = b.x - a.x;
+    let aby = b.y - a.y;
+    let len2 = abx * abx + aby * aby;
+    if len2 < POSITION_TOLERANCE * POSITION_TOLERANCE {
+        // Degenerate (zero-length) wire: fall back to coincidence.
+        return points_coincident(p, a);
+    }
+    // Project p onto the segment, clamped to [0, 1].
+    let t = ((p.x - a.x) * abx + (p.y - a.y) * aby) / len2;
+    if !(0.0..=1.0).contains(&t) {
+        return false;
+    }
+    let cx = a.x + t * abx;
+    let cy = a.y + t * aby;
+    let dx = p.x - cx;
+    let dy = p.y - cy;
+    (dx * dx + dy * dy) < POSITION_TOLERANCE * POSITION_TOLERANCE
+}
+
 /// Compute the absolute position of a pin given the parent component's
 /// position, rotation (degrees), and mirror state.
 pub fn pin_world_position(comp: &SchematicComponent, pin: &SchematicPin) -> Vec2 {
@@ -233,6 +258,62 @@ pub fn generate_netlist(sheet: &SchematicSheet) -> Netlist {
         }
     }
 
+    // Connect points that lie on a wire's interior (T-taps): a wire endpoint,
+    // pin, junction, or label sitting on another wire joins that wire's net.
+    // This is what makes bus-style wiring work — route one wire through a row
+    // of pins and they all connect. Crucially it is point-on-segment only, so
+    // two wires that merely cross (no point at the intersection) stay on
+    // separate nets; a real connection there needs an explicit junction dot.
+    for (k, wire) in sheet.wires.iter().enumerate() {
+        let wire_root_idx = wire_pairs[k].0;
+        for p in &points {
+            // Skip this wire's own endpoints (already unioned start<->end).
+            if p.uf_index == wire_pairs[k].0 || p.uf_index == wire_pairs[k].1 {
+                continue;
+            }
+            if point_on_segment(&p.pos, &wire.start, &wire.end) {
+                uf.union(p.uf_index, wire_root_idx);
+            }
+        }
+    }
+
+    // Global nets: merge points that share a net name. A name comes from a
+    // label, or from a power port — a one-pin power symbol like VCC/GND whose
+    // `value` names a global rail. This makes same-named labels and every
+    // VCC/GND symbol join a single net across the whole sheet without an
+    // explicit wire (the standard "global label / power port" behaviour), which
+    // is what keeps power rails sane on a dense board.
+    let mut named_anchors: Vec<(String, usize)> = label_indices.clone();
+    for comp in &sheet.components {
+        let is_power_port = comp.pins.len() == 1
+            && matches!(
+                comp.pins[0].pin_type,
+                PinType::PowerInput | PinType::PowerOutput
+            );
+        if !is_power_port {
+            continue;
+        }
+        let name = comp.value.trim();
+        if name.is_empty() {
+            continue;
+        }
+        if let Some(&(_, _, idx)) = pin_indices
+            .iter()
+            .find(|(r, p, _)| r == &comp.reference && p == &comp.pins[0].number)
+        {
+            named_anchors.push((name.to_string(), idx));
+        }
+    }
+    let mut first_by_name: HashMap<String, usize> = HashMap::new();
+    for (name, idx) in &named_anchors {
+        match first_by_name.get(name) {
+            Some(&first) => uf.union(first, *idx),
+            None => {
+                first_by_name.insert(name.clone(), *idx);
+            }
+        }
+    }
+
     // Phase 3: Group into nets.
     // Map root -> set of pin connections and labels.
     let mut net_pins: HashMap<usize, Vec<NetConnection>> = HashMap::new();
@@ -246,8 +327,8 @@ pub fn generate_netlist(sheet: &SchematicSheet) -> Netlist {
         });
     }
 
-    for &(ref name, idx) in &label_indices {
-        let root = uf.find(idx);
+    for (name, idx) in &named_anchors {
+        let root = uf.find(*idx);
         net_labels.entry(root).or_default().insert(name.clone());
     }
 
@@ -379,6 +460,185 @@ mod tests {
             .any(|c| c.component_ref == "R2" && c.pin_number == "1");
         assert!(has_r1_p2);
         assert!(has_r2_p1);
+    }
+
+    #[test]
+    fn tap_onto_wire_interior_connects() {
+        // A vertical bus rises from R1 pin 1; R2 pin 1 sits on the bus interior
+        // and should join the same net (T-tap), not form its own.
+        let sheet = SchematicSheet {
+            title: None,
+            components: vec![
+                make_resistor("R1", Vec2::new(10.0, 0.0)), // pins world (5,0),(15,0)
+                make_resistor("R2", Vec2::new(10.0, 20.0)), // pins world (5,20),(15,20)
+            ],
+            wires: vec![SchematicWire {
+                start: Vec2::new(5.0, 0.0), // R1 pin 1
+                end: Vec2::new(5.0, 40.0),  // vertical bus, passes through (5,20) = R2 pin 1
+            }],
+            junctions: vec![],
+            labels: vec![],
+        };
+
+        let netlist = generate_netlist(&sheet);
+        let net = netlist
+            .nets
+            .iter()
+            .find(|n| {
+                n.connections
+                    .iter()
+                    .any(|c| c.component_ref == "R1" && c.pin_number == "1")
+            })
+            .expect("R1 pin 1 net");
+        assert!(
+            net.connections
+                .iter()
+                .any(|c| c.component_ref == "R2" && c.pin_number == "1"),
+            "R2 pin 1 should tap onto the bus and share R1 pin 1's net, got {:?}",
+            net.connections,
+        );
+    }
+
+    #[test]
+    fn crossing_wires_stay_separate() {
+        // A horizontal wire and a vertical wire cross at (20,0) with no pin or
+        // junction there. They must NOT merge: R1 (on the horizontal) and R2
+        // (on the vertical) stay on different nets.
+        let sheet = SchematicSheet {
+            title: None,
+            components: vec![
+                make_resistor("R1", Vec2::new(5.0, 0.0)), // pins (0,0),(10,0) on the horizontal
+                make_resistor("R2", Vec2::new(15.0, -10.0)), // pin 2 (20,-10) on the vertical
+            ],
+            wires: vec![
+                SchematicWire {
+                    start: Vec2::new(0.0, 0.0),
+                    end: Vec2::new(40.0, 0.0),
+                },
+                SchematicWire {
+                    start: Vec2::new(20.0, -10.0),
+                    end: Vec2::new(20.0, 10.0),
+                },
+            ],
+            junctions: vec![],
+            labels: vec![],
+        };
+
+        let netlist = generate_netlist(&sheet);
+        let r1_net = netlist
+            .nets
+            .iter()
+            .find(|n| {
+                n.connections
+                    .iter()
+                    .any(|c| c.component_ref == "R1" && c.pin_number == "1")
+            })
+            .expect("R1 pin 1 net");
+        assert!(
+            !r1_net.connections.iter().any(|c| c.component_ref == "R2"),
+            "crossing wires must not connect; R1 net = {:?}",
+            r1_net.connections,
+        );
+    }
+
+    /// A one-pin power port (e.g. VCC/GND) at `position`, pin at the origin.
+    fn make_power(
+        reference: &str,
+        value: &str,
+        position: Vec2,
+        pin_type: PinType,
+    ) -> SchematicComponent {
+        SchematicComponent {
+            reference: reference.to_string(),
+            value: value.to_string(),
+            footprint_id: String::new(),
+            position,
+            rotation: 0.0,
+            mirror: false,
+            pins: vec![SchematicPin {
+                number: "1".to_string(),
+                name: "1".to_string(),
+                pin_type,
+                position: Vec2::new(0.0, 0.0),
+            }],
+            properties: std::collections::HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn power_ports_merge_by_value() {
+        // Two separate VCC symbols (no wire between them) tie their attached
+        // pins into one global "VCC" net.
+        let sheet = SchematicSheet {
+            title: None,
+            components: vec![
+                make_resistor("R1", Vec2::new(10.0, 0.0)), // pins (5,0),(15,0)
+                make_resistor("R2", Vec2::new(40.0, 0.0)), // pins (35,0),(45,0)
+                make_power("PWR1", "VCC", Vec2::new(5.0, 0.0), PinType::PowerOutput), // on R1 pin1
+                make_power("PWR2", "VCC", Vec2::new(35.0, 0.0), PinType::PowerOutput), // on R2 pin1
+            ],
+            wires: vec![],
+            junctions: vec![],
+            labels: vec![],
+        };
+
+        let netlist = generate_netlist(&sheet);
+        let vcc = netlist
+            .nets
+            .iter()
+            .find(|n| n.name == "VCC")
+            .expect("a net named VCC");
+        let has = |r: &str, p: &str| {
+            vcc.connections
+                .iter()
+                .any(|c| c.component_ref == r && c.pin_number == p)
+        };
+        assert!(
+            has("R1", "1") && has("R2", "1"),
+            "both VCC ports should merge their pins into one net, got {:?}",
+            vcc.connections,
+        );
+    }
+
+    #[test]
+    fn same_name_labels_merge() {
+        // Two "BUS" labels on unconnected pins join one net by name.
+        let sheet = SchematicSheet {
+            title: None,
+            components: vec![
+                make_resistor("R1", Vec2::new(10.0, 0.0)),
+                make_resistor("R2", Vec2::new(40.0, 0.0)),
+            ],
+            wires: vec![],
+            junctions: vec![],
+            labels: vec![
+                SchematicLabel {
+                    name: "BUS".to_string(),
+                    position: Vec2::new(5.0, 0.0), // R1 pin 1
+                    rotation: 0.0,
+                    scope: LabelScope::Local,
+                },
+                SchematicLabel {
+                    name: "BUS".to_string(),
+                    position: Vec2::new(35.0, 0.0), // R2 pin 1
+                    rotation: 0.0,
+                    scope: LabelScope::Local,
+                },
+            ],
+        };
+
+        let netlist = generate_netlist(&sheet);
+        let bus = netlist
+            .nets
+            .iter()
+            .find(|n| n.name == "BUS")
+            .expect("a net named BUS");
+        assert_eq!(
+            bus.connections.len(),
+            2,
+            "same-named labels should merge, got {:?}",
+            bus.connections,
+        );
     }
 
     #[test]

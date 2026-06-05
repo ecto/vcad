@@ -15,7 +15,8 @@ import { Waveform } from "@phosphor-icons/react/dist/ssr/Waveform";
 import { Star } from "@phosphor-icons/react/dist/ssr/Star";
 import type { Icon } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
-import { useDocumentStore, useUiStore, useChatStore, parseVcadFile } from "@vcad/core";
+import { useDocumentStore, useChatStore, parseVcadFile } from "@vcad/core";
+import { newDocId } from "@/lib/doc-id";
 import { useAuth, isAuthEnabled, AuthModal } from "@vcad/auth";
 import { useOnboardingStore } from "@/stores/onboarding-store";
 import { examples, exampleToVcadFile } from "@/data/examples";
@@ -51,9 +52,7 @@ export function InlineOnboarding({ visible }: InlineOnboardingProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadDocument = useDocumentStore((s) => s.loadDocument);
-  const addPrimitive = useDocumentStore((s) => s.addPrimitive);
-  const select = useUiStore((s) => s.select);
-  const setTransformMode = useUiStore((s) => s.setTransformMode);
+  const newDocument = useDocumentStore((s) => s.newDocument);
   const setChatOpen = useChatStore((s) => s.setOpen);
   const incrementProjectsCreated = useOnboardingStore(
     (s) => s.incrementProjectsCreated,
@@ -96,9 +95,10 @@ export function InlineOnboarding({ visible }: InlineOnboardingProps) {
 
   function handleStartBlank() {
     incrementProjectsCreated();
-    const partId = addPrimitive("cube");
-    select(partId);
-    setTransformMode("translate");
+    // A blank canvas should actually be blank: reset to a fresh empty
+    // document (clearing any autosaved one) rather than dropping a cube onto
+    // whatever happened to be open.
+    newDocument(newDocId(), "Untitled");
     hide();
   }
 
