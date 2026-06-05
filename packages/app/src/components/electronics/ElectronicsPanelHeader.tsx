@@ -72,11 +72,24 @@ function BoardSizeControl({ pcb }: { pcb: Pcb }) {
   const scene = useEngineStore((s) => s.scene);
   const resizeBoard = useDocumentStore((s) => s.resizeBoard);
   const setTranslation = useDocumentStore((s) => s.setTranslation);
+  const setBoardOutline = useDocumentStore((s) => s.setBoardOutline);
+  const addBoardMountingHoles = useDocumentStore((s) => s.addBoardMountingHoles);
   const addToast = useNotificationStore((s) => s.addToast);
 
   const [editing, setEditing] = useState<{ w: string; h: string } | null>(null);
 
   const { w, h } = outlineWH(pcb);
+  const hasHoles = (pcb.outline.cutouts?.length ?? 0) > 0;
+
+  const toggleHoles = () => {
+    if (hasHoles) {
+      setBoardOutline({ ...pcb.outline, cutouts: [] });
+      addToast("Mounting holes removed", "info");
+    } else {
+      addBoardMountingHoles();
+      addToast("Added 4 corner mounting holes (M3)", "success");
+    }
+  };
 
   // Count non-board mechanical parts that actually carry a mesh, so "Fit" only
   // shows once there's geometry to fit to (gating on part identity alone races
@@ -196,6 +209,18 @@ function BoardSizeControl({ pcb }: { pcb: Pcb }) {
           Fit
         </button>
       )}
+      <button
+        onClick={toggleHoles}
+        aria-pressed={hasHoles}
+        className={`px-1 py-0.5 rounded border ${
+          hasHoles
+            ? "border-accent/60 text-text"
+            : "border-border text-text-muted hover:text-text hover:border-accent/60"
+        }`}
+        title={hasHoles ? "Remove mounting holes" : "Add 4 corner mounting holes (M3)"}
+      >
+        Holes
+      </button>
     </span>
   );
 }

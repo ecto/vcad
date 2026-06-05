@@ -476,6 +476,12 @@ export interface DocumentState {
   setBoardOutline: (outline: BoardOutline) => void;
   /** Resize the board to a W×H rectangle (origin corner at [0,0]), preserving thickness + cutouts. */
   resizeBoard: (width: number, height: number) => void;
+  /** Add 4 corner mounting holes (as outline cutouts) inset from the board edges. */
+  addBoardMountingHoles: (opts?: {
+    diameter?: number;
+    edgeInset?: number;
+    segments?: number;
+  }) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -2332,6 +2338,42 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         { x: w, y: 0 },
         { x: w, y: h },
         { x: 0, y: h },
+      ],
+    };
+    set({ ...setCrdtPcb(state, pcb), isDirty: true });
+  },
+
+  addBoardMountingHoles: (opts) => {
+    const state = get();
+    if (!state.document.pcb) return;
+    const diameter = opts?.diameter ?? 3.2; // M3 clearance
+    const edgeInset = opts?.edgeInset ?? 4;
+    const segments = Math.max(8, opts?.segments ?? 16);
+    const r = diameter / 2;
+    const pcb = structuredClone(state.document.pcb);
+    const verts = pcb.outline.vertices;
+    if (verts.length < 3) return;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const v of verts) {
+      if (v.x < minX) minX = v.x;
+      if (v.x > maxX) maxX = v.x;
+      if (v.y < minY) minY = v.y;
+      if (v.y > maxY) maxY = v.y;
+    }
+    // Board must be large enough to inset the holes from both edges.
+    if (maxX - minX < 2 * edgeInset || maxY - minY < 2 * edgeInset) return;
+    const circle = (cx: number, cy: number) =>
+      Array.from({ length: segments }, (_unused, i) => {
+        const a = (i / segments) * Math.PI * 2;
+        return { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) };
+      });
+    pcb.outline = {
+      ...pcb.outline,
+      cutouts: [
+        circle(minX + edgeInset, minY + edgeInset),
+        circle(maxX - edgeInset, minY + edgeInset),
+        circle(maxX - edgeInset, maxY - edgeInset),
+        circle(minX + edgeInset, maxY - edgeInset),
       ],
     };
     set({ ...setCrdtPcb(state, pcb), isDirty: true });
