@@ -4,6 +4,7 @@ import {
   aabbOfPositions,
   aabbsOverlap,
   interferingRefs,
+  mergeAabbs,
   type PointTransform,
 } from "@/lib/pcb-interference";
 
@@ -62,6 +63,14 @@ describe("pcb-interference", () => {
       comp("R1", boxPositions(1, 3, 3, 3)),
     ];
     expect(interferingRefs(parts, mech)).toEqual(["R1"]);
+  });
+
+  it("merges AABBs into the enclosing box (the 'fit to enclosure' bound)", () => {
+    expect(mergeAabbs([])).toBeNull();
+    const a = aabbOfPositions(boxPositions(10, 0, 0, 0))!; // [0,10]^3
+    const b = aabbOfPositions(boxPositions(5, 20, 2, -3))!; // [20,25]×[2,7]×[-3,2]
+    expect(mergeAabbs([a])).toEqual(a);
+    expect(mergeAabbs([a, b])).toEqual({ min: [0, 0, -3], max: [25, 10, 10] });
   });
 
   it("maps board-local bodies into world via boardToWorld", () => {
