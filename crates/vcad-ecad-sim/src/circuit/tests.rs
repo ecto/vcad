@@ -1,7 +1,7 @@
 //! Golden tests for the transient solver (linear + nonlinear), validated against
 //! the analytic behaviour of textbook circuits.
 
-use super::{Circuit, CircuitEnv, Device, DiodeModel};
+use super::{Circuit, CircuitEnv, Device, DiodeModel, MotorParams};
 
 #[test]
 fn resistive_voltage_divider() {
@@ -283,4 +283,87 @@ fn diode_blocks_reverse() {
         "i = {}",
         obs.device_currents[d]
     );
+}
+
+#[test]
+fn motor_spins_up_to_no_load_speed() {
+    // 5 V across a small DC motor → rotor accelerates to the analytic no-load
+    // speed ω = V / (Ke + R·b/Kt).
+    let mp = MotorParams::small_dc();
+    let v = 5.0;
+    let expected = v / (mp.ke + mp.r * mp.b / mp.kt);
+
+    let mut c = Circuit::new();
+    let a = c.node();
+    c.add(Device::VSource { p: a, n: 0, v });
+    let motor = c.add(Device::Motor {
+        p: a,
+        n: 0,
+        params: mp,
+    });
+
+    let mut env = CircuitEnv::new(c, 1e-5);
+    env.reset();
+    // ~1 s of sim time (mechanical τ ≈ 0.2 s) → well past spin-up.
+    for _ in 0..100_000 {
+        env.step();
+    }
+    let obs = env.observe();
+    let omega = obs.rotor_speeds[motor];
+    let theta = obs.rotor_angles[motor];
+    assert!(
+        (omega - expected).abs() < 0.03 * expected,
+        "ω = {omega}, expected ≈ {expected}"
+    );
+    assert!(theta > 0.0, "rotor should have turned: θ = {theta}");
+    // Armature current at no load balances friction: I = b·ω / Kt (small).
+    let i = obs.device_currents[motor].abs();
+    assert!(i > 0.0 && i < 0.2, "no-load current = {i}");
+}
+
+#[test]
+fn motor_slows_under_load() {
+    let mut mp = MotorParams::small_dc();
+    mp.load = 5e-3; // 5 mN·m opposing torque
+    let v = 5.0;
+
+    let mut c = Circuit::new();
+    let a = c.node();
+    c.add(Device::VSource { p: a, n: 0, v });
+    let motor = c.add(Device::Motor {
+        p: a,
+        n: 0,
+        params: mp,
+    });
+
+    let mut env = CircuitEnv::new(c, 1e-5);
+    env.reset();
+    for _ in 0..100_000 {
+        env.step();
+    }
+    let loaded = env.observe().rotor_speeds[motor];
+
+    // Same motor, no load → must spin faster.
+    let mut mp0 = MotorParams::small_dc();
+    mp0.load = 0.0;
+    let mut c2 = Circuit::new();
+    let a2 = c2.node();
+    c2.add(Device::VSource { p: a2, n: 0, v });
+    let m2 = c2.add(Device::Motor {
+        p: a2,
+        n: 0,
+        params: mp0,
+    });
+    let mut env2 = CircuitEnv::new(c2, 1e-5);
+    env2.reset();
+    for _ in 0..100_000 {
+        env2.step();
+    }
+    let unloaded = env2.observe().rotor_speeds[m2];
+
+    assert!(
+        loaded < unloaded,
+        "loaded {loaded} should be < unloaded {unloaded}"
+    );
+    assert!(loaded > 0.0, "motor should still turn under load: {loaded}");
 }

@@ -30,7 +30,7 @@ mod linalg;
 pub use linalg::solve_dense;
 
 mod devices;
-pub use devices::{Device, DiodeModel};
+pub use devices::{Device, DiodeModel, MotorParams};
 
 /// A lumped-element circuit: a set of [`Device`]s connecting numbered nodes.
 ///
@@ -82,6 +82,10 @@ pub struct Observation {
     /// Current through each device (A), indexed by device id. Positive flows
     /// from the device's `p` terminal to its `n` terminal.
     pub device_currents: Vec<f64>,
+    /// Rotor angle (rad) per device id; 0 for non-motors. Drives 3D spin.
+    pub rotor_angles: Vec<f64>,
+    /// Rotor angular velocity (rad/s) per device id; 0 for non-motors.
+    pub rotor_speeds: Vec<f64>,
 }
 
 /// A steppable circuit simulation. Mirrors the physics engine's env: `reset`,
@@ -98,6 +102,10 @@ pub struct CircuitEnv {
     /// Per-device nonlinear junction voltage (device id → V), warm-started across
     /// steps and limited across Newton iterations.
     nl_state: Vec<f64>,
+    /// Per-device rotor angular velocity (device id → rad/s) for motors.
+    mech_omega: Vec<f64>,
+    /// Per-device rotor angle (device id → rad) for motors.
+    mech_theta: Vec<f64>,
     /// Latest node voltages (length `num_nodes`, index 0 = ground = 0).
     node_v: Vec<f64>,
     /// Latest device currents (length `devices.len()`).
@@ -118,6 +126,8 @@ impl CircuitEnv {
             cap_v: vec![0.0; nd],
             ind_i: vec![0.0; nd],
             nl_state: vec![0.0; nd],
+            mech_omega: vec![0.0; nd],
+            mech_theta: vec![0.0; nd],
             node_v: vec![0.0; nn],
             dev_i: vec![0.0; nd],
             max_newton: 50,
@@ -135,6 +145,12 @@ impl CircuitEnv {
             *i = 0.0;
         }
         for v in &mut self.nl_state {
+            *v = 0.0;
+        }
+        for v in &mut self.mech_omega {
+            *v = 0.0;
+        }
+        for v in &mut self.mech_theta {
             *v = 0.0;
         }
         for v in &mut self.node_v {
@@ -197,6 +213,7 @@ impl CircuitEnv {
                     self.cap_v[id],
                     self.ind_i[id],
                     self.nl_state[id],
+                    self.mech_omega[id],
                     &guess,
                 ) {
                     self.nl_state[id] = vd;
@@ -251,6 +268,18 @@ impl CircuitEnv {
                     self.dev_i[id] = i_new;
                     self.ind_i[id] = i_new;
                 }
+                Device::Motor { params, .. } => {
+                    // Armature current solved as the branch current (already in
+                    // dev_i via the branch stash). Advance the rotor (semi-implicit
+                    // Euler) and the inductor-history current.
+                    let i_m = self.dev_i[id];
+                    let omega_prev = self.mech_omega[id];
+                    let torque = params.kt * i_m - params.b * omega_prev - params.load;
+                    let omega_new = omega_prev + (self.dt / params.j) * torque;
+                    self.mech_theta[id] += self.dt * omega_new;
+                    self.mech_omega[id] = omega_new;
+                    self.ind_i[id] = i_m;
+                }
                 _ => {
                     if !dev.needs_branch() {
                         self.dev_i[id] = dev.current(&self.node_v);
@@ -269,6 +298,8 @@ impl CircuitEnv {
             time: self.time,
             node_voltages: self.node_v.clone(),
             device_currents: self.dev_i.clone(),
+            rotor_angles: self.mech_theta.clone(),
+            rotor_speeds: self.mech_omega.clone(),
         }
     }
 }

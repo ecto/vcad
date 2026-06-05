@@ -39,6 +39,42 @@ impl DiodeModel {
     }
 }
 
+/// A brushed DC motor / gyrator: couples an electrical winding to a mechanical
+/// rotor. The winding (R + L) carries the armature current; the back-EMF is
+/// `Ke·ω` and the torque is `Kt·i`. SI units throughout.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MotorParams {
+    /// Winding resistance (Ω).
+    pub r: f64,
+    /// Winding inductance (H).
+    pub l: f64,
+    /// Back-EMF constant Ke (V·s/rad).
+    pub ke: f64,
+    /// Torque constant Kt (N·m/A).
+    pub kt: f64,
+    /// Rotor moment of inertia J (kg·m²).
+    pub j: f64,
+    /// Viscous friction b (N·m·s/rad).
+    pub b: f64,
+    /// External load torque opposing rotation (N·m).
+    pub load: f64,
+}
+
+impl MotorParams {
+    /// A small hobby DC motor (~5 V, no-load ≈ 4700 RPM, stall ≈ 2.5 A at 5 V).
+    pub fn small_dc() -> Self {
+        MotorParams {
+            r: 2.0,
+            l: 0.5e-3,
+            ke: 0.01,
+            kt: 0.01,
+            j: 1e-5,
+            b: 1e-6,
+            load: 0.0,
+        }
+    }
+}
+
 /// A circuit device connecting two nodes. In every variant `p`/`n` are the
 /// positive/negative terminal node ids.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -59,6 +95,13 @@ pub enum Device {
         p: usize,
         n: usize,
         model: DiodeModel,
+    },
+    /// Brushed DC motor (electromechanical gyrator). Needs a branch current and
+    /// carries rotor state (updated post-solve).
+    Motor {
+        p: usize,
+        n: usize,
+        params: MotorParams,
     },
 }
 
@@ -110,7 +153,7 @@ fn pnjlim(vnew: f64, vold: f64, vte: f64, vcrit: f64) -> f64 {
 impl Device {
     /// Whether this device needs its own MNA branch-current unknown.
     pub fn needs_branch(&self) -> bool {
-        matches!(self, Device::VSource { .. })
+        matches!(self, Device::VSource { .. } | Device::Motor { .. })
     }
 
     /// Stamp this device's contribution into the MNA matrix `a` and RHS `rhs`.
@@ -135,6 +178,7 @@ impl Device {
         cap_v: f64,
         ind_i: f64,
         nl_prev: f64,
+        omega: f64,
         guess: &[f64],
     ) -> Option<f64> {
         match *self {
@@ -172,6 +216,26 @@ impl Device {
             }
             Device::ISource { p, n, i } => {
                 inject(rhs, p, n, i);
+                None
+            }
+            Device::Motor { p, n, params } => {
+                // Electrically a branch: v(p) − v(n) = i·Z + E, with winding
+                // impedance Z = R + L/dt and EMF E = Ke·ω_prev − (L/dt)·i_prev
+                // (back-EMF from the previous rotor speed + inductor history).
+                let z = params.r + params.l / dt;
+                let e = params.ke * omega - (params.l / dt) * ind_i;
+                let br = (nn - 1) + *branch;
+                *branch += 1;
+                if p != 0 {
+                    a[(p - 1) * m + br] += 1.0;
+                    a[br * m + (p - 1)] += 1.0;
+                }
+                if n != 0 {
+                    a[(n - 1) * m + br] -= 1.0;
+                    a[br * m + (n - 1)] -= 1.0;
+                }
+                a[br * m + br] -= z;
+                rhs[br] += e;
                 None
             }
             Device::Diode { p, n, model } => {
@@ -212,6 +276,7 @@ impl Device {
             Device::VSource { v, .. } => v,
             Device::ISource { i, .. } => i,
             Device::Diode { .. } => 0.0,
+            Device::Motor { params, .. } => params.load,
         }
     }
 
@@ -224,6 +289,7 @@ impl Device {
             Device::VSource { v, .. } => *v = value,
             Device::ISource { i, .. } => *i = value,
             Device::Diode { .. } => {}
+            Device::Motor { params, .. } => params.load = value,
         }
     }
 }
