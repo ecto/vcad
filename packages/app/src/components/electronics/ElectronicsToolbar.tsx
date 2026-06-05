@@ -33,7 +33,7 @@ import { useDocumentStore, useCoreElectronicsStore, getNodePcb } from "@vcad/cor
 import { useUiStore } from "@vcad/core";
 import type { PcbLayer } from "@vcad/ir";
 
-import { SYMBOL_LIBRARY } from "./symbol-library";
+import { useSymbolLibrary } from "./symbol-library";
 import { autorouteRatsnest } from "@/lib/pcb-autoroute";
 
 // ---------------------------------------------------------------------------
@@ -172,6 +172,7 @@ export function ElectronicsToolbar() {
   const setSchLabelName = useElectronicsStore((s) => s.setSchLabelName);
   const exit = useElectronicsStore((s) => s.exit);
   const toggleLayout = useElectronicsStore((s) => s.toggleLayout);
+  const symbols = useSymbolLibrary();
 
   const unplacedComponents = useElectronicsStore((s) => s.unplacedComponents);
   const syncSchematicToPcb = useDocumentStore((s) => s.syncSchematicToPcb);
@@ -414,7 +415,7 @@ export function ElectronicsToolbar() {
 
   const renderComponentsContent = () => (
     <>
-      {SYMBOL_LIBRARY.map((sym) => (
+      {symbols.map((sym) => (
         <ToolbarButton
           key={sym.id}
           tooltip={`${sym.name} (${sym.defaultValue})`}
