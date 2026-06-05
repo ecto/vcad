@@ -433,6 +433,7 @@ export interface DocumentState {
     netlist?: {
       nets: { name: string; connections: { component_ref: string; pin_number: string }[] }[];
     },
+    opts?: { placeUnplaced?: boolean },
   ) => void;
   moveSchematicComponent: (idx: number, position: Vec3) => void;
   moveSchematicComponentWithWires: (idx: number, position: Vec3, wireUpdates: { wireIdx: number; endpoint: "start" | "end"; pos: { x: number; y: number } }[]) => void;
@@ -2031,12 +2032,12 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     return addPcbToDocument(get, set, pcb, name ?? "Imported PCB");
   },
 
-  syncSchematicToPcb: (boardNodeId, netlist) => {
+  syncSchematicToPcb: (boardNodeId, netlist, opts) => {
     const state = get();
     const pcb = state.document.pcb;
     const schematic = state.document.schematic;
     if (!pcb || !schematic) return;
-    const { pcb: nextPcb, changed } = syncSchematicToPcbData(pcb, schematic, netlist);
+    const { pcb: nextPcb, changed } = syncSchematicToPcbData(pcb, schematic, netlist, opts);
     if (!changed) return;
     const patch = setCrdtPcb(state, nextPcb);
     set({ ...patch, isDirty: true });

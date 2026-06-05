@@ -52,14 +52,19 @@ export function syncSchematicToPcbData(
   pcb: Pcb,
   schematic: SchematicSheet,
   netlist?: SyncNetlist,
+  opts?: { placeUnplaced?: boolean },
 ): { pcb: Pcb; changed: boolean } {
+  // Placement is opt-out so the continuous sync can keep nets current without
+  // ever yanking a not-yet-placed component onto the board (only the explicit
+  // "place unplaced" action should do that).
+  const placeUnplaced = opts?.placeUnplaced ?? true;
   const next = structuredClone(pcb);
   let changed = false;
 
   // 1. Place missing footprints.
   const existingRefs = new Set(next.footprints.map((fp) => fp.ref));
   let added = 0;
-  for (const comp of schematic.components) {
+  for (const comp of placeUnplaced ? schematic.components : []) {
     if (existingRefs.has(comp.ref)) continue;
     let pads: Footprint["pads"] = [];
     let graphics: Footprint["graphics"] = [];

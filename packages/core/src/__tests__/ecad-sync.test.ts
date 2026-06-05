@@ -135,3 +135,45 @@ describe("syncSchematicToPcbData — net mapping", () => {
     expect(next.nets.map((n) => n.name).sort()).toEqual(["GND", "NET-001", "VBAT"]);
   });
 });
+
+describe("syncSchematicToPcbData — net-only mode (continuous sync)", () => {
+  const netlist: SyncNetlist = {
+    nets: [
+      { name: "NET-001", connections: [{ component_ref: "R1", pin_number: "2" }, { component_ref: "R2", pin_number: "1" }] },
+    ],
+  };
+
+  it("does not place unplaced footprints when placeUnplaced is false", () => {
+    const sch = sheet([comp("R1", [{ number: "1", name: "A" }, { number: "2", name: "B" }])]);
+    const { pcb: next } = syncSchematicToPcbData(makePcb(), sch, netlist, { placeUnplaced: false });
+    expect(next.footprints).toHaveLength(0);
+  });
+
+  it("still registers net names even with no footprints to touch", () => {
+    const sch = sheet([comp("R1", [{ number: "1", name: "A" }])]);
+    const { pcb: next, changed } = syncSchematicToPcbData(makePcb(), sch, netlist, { placeUnplaced: false });
+    expect(changed).toBe(true);
+    expect(next.nets.map((n) => n.name)).toEqual(["NET-001"]);
+  });
+
+  it("assigns pad.net to footprints created earlier (the auto-place flow)", () => {
+    // Mirrors the real app: components auto-place footprints (net-less), then
+    // the continuous sync must net-map them WITHOUT re-placing anything.
+    const sch = sheet([
+      comp("R1", [{ number: "1", name: "A" }, { number: "2", name: "B" }]),
+      comp("R2", [{ number: "1", name: "A" }, { number: "2", name: "B" }]),
+    ]);
+    const placed = syncSchematicToPcbData(makePcb(), sch); // footprints, no nets
+    expect(placed.pcb.footprints).toHaveLength(2);
+    expect(placed.pcb.footprints.every((f) => f.pads.every((p) => p.net === undefined))).toBe(true);
+
+    const netted = syncSchematicToPcbData(placed.pcb, sch, netlist, { placeUnplaced: false });
+    expect(netted.changed).toBe(true);
+    expect(netted.pcb.footprints).toHaveLength(2); // no new footprints
+    const r1 = netted.pcb.footprints.find((f) => f.ref === "R1")!;
+    const r2 = netted.pcb.footprints.find((f) => f.ref === "R2")!;
+    expect(r1.pads.find((p) => p.number === "2")!.net).toBe("NET-001");
+    expect(r2.pads.find((p) => p.number === "1")!.net).toBe("NET-001");
+    expect(netted.pcb.nets.map((n) => n.name)).toEqual(["NET-001"]);
+  });
+});

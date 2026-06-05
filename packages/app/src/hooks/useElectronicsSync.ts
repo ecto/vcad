@@ -50,9 +50,21 @@ export function useElectronicsSync() {
       const pcbRefs = new Set((pcb?.footprints ?? []).map((f) => f.ref));
       store.setOrphanFootprints([...pcbRefs].filter((r) => !schRefs.has(r)));
       store.setUnplacedComponents([...schRefs].filter((r) => !pcbRefs.has(r)));
+
+      // Keep the board's nets in sync with the schematic continuously: assign
+      // each pad's net from the netlist and register the net names on the PCB.
+      // `placeUnplaced: false` means this never auto-drops footprints (only the
+      // explicit "place unplaced" action does that); it's idempotent, so it
+      // no-ops once pad.net + pcb.nets already match. Without it, footprints
+      // auto-created on component-add stay net-less and routing/DRC are blind.
+      if (activeBoardNodeId != null) {
+        useDocumentStore
+          .getState()
+          .syncSchematicToPcb(activeBoardNodeId, netlist, { placeUnplaced: false });
+      }
     }, 200);
     return () => clearTimeout(timer);
-  }, [schematic, pcb, active]);
+  }, [schematic, pcb, active, activeBoardNodeId]);
 
   // Principle 3: Real-time DRC
   useEffect(() => {
