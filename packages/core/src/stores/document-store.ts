@@ -24,6 +24,7 @@ import type {
   SchematicJunction,
   Footprint,
   Pcb,
+  BoardOutline,
   EmbroideryDesign,
   FillParams,
 } from "@vcad/ir";
@@ -471,6 +472,10 @@ export interface DocumentState {
   // PCB editing mutations
   addFootprint: (nodeId: NodeId, fp: Footprint) => void;
   removeFootprint: (nodeId: NodeId, idx: number) => void;
+  /** Replace the board outline (vertices, cutouts, thickness). Re-extrudes the slab. */
+  setBoardOutline: (outline: BoardOutline) => void;
+  /** Resize the board to a W×H rectangle (origin corner at [0,0]), preserving thickness + cutouts. */
+  resizeBoard: (width: number, height: number) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -2301,6 +2306,34 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (!state.document.pcb) return;
     const pcb = structuredClone(state.document.pcb);
     pcb.footprints.splice(idx, 1);
+    set({ ...setCrdtPcb(state, pcb), isDirty: true });
+  },
+
+  setBoardOutline: (outline) => {
+    const state = get();
+    if (!state.document.pcb) return;
+    const pcb = structuredClone(state.document.pcb);
+    pcb.outline = structuredClone(outline);
+    set({ ...setCrdtPcb(state, pcb), isDirty: true });
+  },
+
+  resizeBoard: (width, height) => {
+    const state = get();
+    if (!state.document.pcb) return;
+    const w = Math.max(1, width);
+    const h = Math.max(1, height);
+    const pcb = structuredClone(state.document.pcb);
+    // Rectangular resize: origin corner at [0,0] (matches initPcb), keep
+    // thickness + cutouts. Custom (non-rect) outlines are rectangularized.
+    pcb.outline = {
+      ...pcb.outline,
+      vertices: [
+        { x: 0, y: 0 },
+        { x: w, y: 0 },
+        { x: w, y: h },
+        { x: 0, y: h },
+      ],
+    };
     set({ ...setCrdtPcb(state, pcb), isDirty: true });
   },
 }));

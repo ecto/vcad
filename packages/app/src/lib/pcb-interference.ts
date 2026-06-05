@@ -52,6 +52,20 @@ export function aabbOfPositions(
   return { min: [minX, minY, minZ], max: [maxX, maxY, maxZ] };
 }
 
+/** Union a list of AABBs into one enclosing box. null if the list is empty. */
+export function mergeAabbs(boxes: Aabb[]): Aabb | null {
+  if (boxes.length === 0) return null;
+  const min: [number, number, number] = [Infinity, Infinity, Infinity];
+  const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+  for (const b of boxes) {
+    for (let i = 0; i < 3; i++) {
+      if (b.min[i]! < min[i]!) min[i] = b.min[i]!;
+      if (b.max[i]! > max[i]!) max[i] = b.max[i]!;
+    }
+  }
+  return { min, max };
+}
+
 /** True when two AABBs overlap (optionally expanded by a clearance margin). */
 export function aabbsOverlap(a: Aabb, b: Aabb, margin = 0): boolean {
   return (
