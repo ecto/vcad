@@ -1,7 +1,7 @@
-//! Golden tests for the M0 linear transient solver, validated against the
-//! analytic behaviour of textbook circuits.
+//! Golden tests for the transient solver (linear + nonlinear), validated against
+//! the analytic behaviour of textbook circuits.
 
-use super::{Circuit, CircuitEnv, Device};
+use super::{Circuit, CircuitEnv, Device, DiodeModel};
 
 #[test]
 fn resistive_voltage_divider() {
@@ -172,4 +172,115 @@ fn reset_returns_to_power_on_state() {
     let obs = env.observe();
     assert_eq!(obs.time, 0.0);
     assert!(obs.node_voltages[mid].abs() < 1e-12);
+}
+
+#[test]
+fn silicon_diode_forward_drop() {
+    // 5 V through 1 kΩ into a forward diode → ~0.65 V drop, ~4.3 mA.
+    let mut c = Circuit::new();
+    let vin = c.node();
+    let a = c.node();
+    c.add(Device::VSource {
+        p: vin,
+        n: 0,
+        v: 5.0,
+    });
+    c.add(Device::Resistor {
+        p: vin,
+        n: a,
+        r: 1_000.0,
+    });
+    let d = c.add(Device::Diode {
+        p: a,
+        n: 0,
+        model: DiodeModel::silicon(),
+    });
+
+    let mut env = CircuitEnv::new(c, 1e-6);
+    env.reset();
+    for _ in 0..30 {
+        env.step();
+    }
+    let obs = env.observe();
+    let vf = obs.node_voltages[a];
+    let i = obs.device_currents[d];
+    assert!((0.55..0.75).contains(&vf), "Vf = {vf}");
+    assert!((3e-3..5e-3).contains(&i), "i = {i}");
+}
+
+#[test]
+fn led_forward_lights_at_expected_current() {
+    // 5 V through 330 Ω into a red LED → Vf ≈ 1.8 V, ~9–10 mA (LED "on").
+    let mut c = Circuit::new();
+    let vin = c.node();
+    let a = c.node();
+    c.add(Device::VSource {
+        p: vin,
+        n: 0,
+        v: 5.0,
+    });
+    c.add(Device::Resistor {
+        p: vin,
+        n: a,
+        r: 330.0,
+    });
+    let led = c.add(Device::Diode {
+        p: a,
+        n: 0,
+        model: DiodeModel::led(),
+    });
+
+    let mut env = CircuitEnv::new(c, 1e-6);
+    env.reset();
+    for _ in 0..40 {
+        env.step();
+    }
+    let obs = env.observe();
+    let vf = obs.node_voltages[a];
+    let i = obs.device_currents[led];
+    assert!((1.5..2.1).contains(&vf), "LED Vf = {vf}");
+    assert!((7e-3..12e-3).contains(&i), "LED current = {i}");
+    // Kirchhoff: LED current ≈ resistor current.
+    assert!((i - (5.0 - vf) / 330.0).abs() < 1e-4);
+}
+
+#[test]
+fn diode_blocks_reverse() {
+    // Reverse-biased diode passes ~no current; node sits near the rail.
+    let mut c = Circuit::new();
+    let vin = c.node();
+    let a = c.node();
+    c.add(Device::VSource {
+        p: vin,
+        n: 0,
+        v: 5.0,
+    });
+    c.add(Device::Resistor {
+        p: vin,
+        n: a,
+        r: 1_000.0,
+    });
+    // anode at ground, cathode at `a` → reverse biased by the +5 V rail.
+    let d = c.add(Device::Diode {
+        p: 0,
+        n: a,
+        model: DiodeModel::silicon(),
+    });
+
+    let mut env = CircuitEnv::new(c, 1e-6);
+    env.reset();
+    for _ in 0..30 {
+        env.step();
+    }
+    let obs = env.observe();
+    assert!(
+        obs.node_voltages[a] > 4.9,
+        "v(a) = {}",
+        obs.node_voltages[a]
+    );
+    assert!(
+        obs.device_currents[d].abs() < 1e-6,
+        "i = {}",
+        obs.device_currents[d]
+    );
 }

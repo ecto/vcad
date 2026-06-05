@@ -30,7 +30,7 @@ mod linalg;
 pub use linalg::solve_dense;
 
 mod devices;
-pub use devices::Device;
+pub use devices::{Device, DiodeModel};
 
 /// A lumped-element circuit: a set of [`Device`]s connecting numbered nodes.
 ///
@@ -95,6 +95,9 @@ pub struct CircuitEnv {
     cap_v: Vec<f64>,
     /// Per-device companion history: previous inductor current (device id → A).
     ind_i: Vec<f64>,
+    /// Per-device nonlinear junction voltage (device id → V), warm-started across
+    /// steps and limited across Newton iterations.
+    nl_state: Vec<f64>,
     /// Latest node voltages (length `num_nodes`, index 0 = ground = 0).
     node_v: Vec<f64>,
     /// Latest device currents (length `devices.len()`).
@@ -114,6 +117,7 @@ impl CircuitEnv {
             time: 0.0,
             cap_v: vec![0.0; nd],
             ind_i: vec![0.0; nd],
+            nl_state: vec![0.0; nd],
             node_v: vec![0.0; nn],
             dev_i: vec![0.0; nd],
             max_newton: 50,
@@ -129,6 +133,9 @@ impl CircuitEnv {
         }
         for i in &mut self.ind_i {
             *i = 0.0;
+        }
+        for v in &mut self.nl_state {
+            *v = 0.0;
         }
         for v in &mut self.node_v {
             *v = 0.0;
@@ -176,8 +183,11 @@ impl CircuitEnv {
             let mut rhs = vec![0.0f64; m];
             let mut branch = 0usize;
 
-            for (id, dev) in self.circuit.devices.iter().enumerate() {
-                dev.stamp(
+            // Device is Copy, so reading it out releases the borrow on `circuit`
+            // and lets us update `nl_state[id]` in the same pass.
+            for id in 0..self.circuit.devices.len() {
+                let dev = self.circuit.devices[id];
+                if let Some(vd) = dev.stamp(
                     &mut a,
                     &mut rhs,
                     m,
@@ -186,8 +196,11 @@ impl CircuitEnv {
                     self.dt,
                     self.cap_v[id],
                     self.ind_i[id],
+                    self.nl_state[id],
                     &guess,
-                );
+                ) {
+                    self.nl_state[id] = vd;
+                }
             }
 
             let solution = match solve_dense(&mut a, &mut rhs, m) {
