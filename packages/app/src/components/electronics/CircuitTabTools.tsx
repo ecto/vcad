@@ -61,7 +61,8 @@ export function CircuitTabTools() {
   const setLayerVisible = useElectronicsStore((s) => s.setLayerVisible);
 
   const syncSchematicToPcb = useDocumentStore((s) => s.syncSchematicToPcb);
-  const hasBoard = useDocumentStore((s) => s.document.pcb != null);
+  const pcb = useDocumentStore((s) => s.document.pcb);
+  const hasBoard = pcb != null;
 
   const placeComponent = useCallback((symbolId: string) => {
     useElectronicsStore.setState({
@@ -172,7 +173,15 @@ export function CircuitTabTools() {
   }
 
   // --- Board tools -----------------------------------------------------------
-  const copperLayers = pcbLayers.filter((l) => l.layer.endsWith("Cu"));
+  // Only the board's actual copper layers. The store's pcbLayers lists all 6
+  // possible copper layers, so an unfiltered list renders phantom (faint,
+  // opacity-30) inner-layer toggles on a 2-layer board — the "blank icons".
+  const boardCopper = new Set(
+    (pcb?.stackup.layers ?? []).map((l) => l.layer).filter((n) => n.endsWith("Cu")),
+  );
+  const copperLayers = pcbLayers.filter(
+    (l) => l.layer.endsWith("Cu") && (boardCopper.size === 0 || boardCopper.has(l.layer)),
+  );
   return (
     <>
       <ToolbarButton
