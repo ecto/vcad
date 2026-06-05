@@ -13,6 +13,8 @@ import { useOnboardingStore } from "@/stores/onboarding-store";
 import { cn } from "@/lib/utils";
 import { useToolDefinitions, getAllTabs, type ToolDef } from "@/hooks/useToolDefinitions";
 import { useLocaleStore } from "@/stores/locale-store";
+import { useElectronicsStore } from "@/stores/electronics-store";
+import { CircuitTabTools } from "@/components/electronics/CircuitTabTools";
 
 // Responsive breakpoints and widths
 const TAB_WIDTH_DESKTOP = 95;
@@ -29,6 +31,9 @@ export function ToolPalette() {
 
   const { byTab, renderSimulateExtras } = useToolDefinitions();
   const ALL_TABS = getAllTabs();
+  // The Circuit tab is the home for the electronics workspace: being on it ⟺
+  // editing a circuit (see handleTabClick + autoSwitchTab below).
+  const electronicsActive = useElectronicsStore((s) => s.active);
 
   // Responsive toolbar — track how many tabs fit
   const [visibleTabCount, setVisibleTabCount] = useState(ALL_TABS.length);
@@ -66,6 +71,18 @@ export function ToolPalette() {
 
   const handleTabClick = useCallback(
     (tab: ToolbarTab) => {
+      // Circuit tab ⟺ electronics workspace: entering the tab opens the circuit
+      // (or the New-PCB entry when none exists); leaving it for any other tab
+      // exits back to the mechanical workspace.
+      const elx = useElectronicsStore.getState();
+      if (tab === "circuit" && !elx.active) {
+        // Instant start: enters the circuit, scaffolding a default board +
+        // schematic first if the document has none, so you land in a working
+        // schematic instead of an empty "no data" screen.
+        elx.startCircuit();
+      } else if (tab !== "circuit" && elx.active) {
+        elx.exit();
+      }
       manualOverrideRef.current = true;
       if (manualOverrideTimeout.current) {
         clearTimeout(manualOverrideTimeout.current);
@@ -114,6 +131,12 @@ export function ToolPalette() {
 
   const autoSwitchTab = useCallback(() => {
     if (guidedFlowActive || manualOverrideRef.current) return;
+    // Editing a circuit pins the toolbar to the Circuit tab (highest priority,
+    // like sketch) so the electronics tools are always the ones showing.
+    if (electronicsActive) {
+      setToolbarTab("circuit");
+      return;
+    }
     // Sketch wins over selection-driven defaults — once sketch is open we
     // pin the toolbar to the sketch tab regardless of what's selected.
     if (sketchActive) {
@@ -141,12 +164,14 @@ export function ToolPalette() {
       !hasSelection &&
       toolbarTab !== "modify" &&
       toolbarTab !== "simulate" &&
-      toolbarTab !== "build"
+      toolbarTab !== "build" &&
+      toolbarTab !== "circuit"
     ) {
       setToolbarTab("create");
     }
   }, [
     guidedFlowActive,
+    electronicsActive,
     sketchActive,
     viewMode,
     hasInstanceSelected,
@@ -164,6 +189,9 @@ export function ToolPalette() {
   // Render tab content — ToolDefs first, then any tab-specific extras
   const renderTabContent = (tab?: ToolbarTab) => {
     const targetTab = tab ?? displayedTab;
+    // The Circuit tab's tools are electronics-specific and context-aware
+    // (schematic vs board), rendered by CircuitTabTools rather than ToolDefs.
+    if (targetTab === "circuit") return <CircuitTabTools />;
     const defs = byTab[targetTab];
     return (
       <>

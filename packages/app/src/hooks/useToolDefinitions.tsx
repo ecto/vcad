@@ -114,6 +114,7 @@ export function getAllTabs(): ToolTabMeta[] {
     { id: "assembly", label: t("toolbar.tab.assembly"), icon: Package },
     { id: "simulate", label: t("toolbar.tab.simulate"), icon: Play },
     { id: "build", label: t("toolbar.tab.export"), icon: Export },
+    { id: "circuit", label: "Circuit", icon: Circuitry },
   ];
 }
 
@@ -993,6 +994,9 @@ export function useToolDefinitions(): {
       simulate,
       build,
       sketch,
+      // Circuit tab tools are rendered specially by ToolPalette
+      // (CircuitTabTools), not via ToolDefs — see renderTabContent.
+      circuit: [],
     };
   }, [
     addPrimitive,

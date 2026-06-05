@@ -6,6 +6,7 @@
  * Callers that render SYMBOL_LIBRARY should re-render when ECAD features init.
  */
 
+import { useSyncExternalStore } from "react";
 import type { SchematicPin, Pad, FootprintGraphic, PcbLayer } from "@vcad/ir";
 import { builtinSymbols as wasmBuiltinSymbols } from "@vcad/engine";
 
@@ -52,16 +53,36 @@ export interface SymbolDef {
 let _cachedLibrary: SymbolDef[] | null = null;
 let _initPromise: Promise<void> | null = null;
 
-/** Initialize the symbol library from WASM. Call early in app startup. */
+// React subscribers (via useSymbolLibrary) so palettes re-render once the full
+// WASM symbol set replaces the hardcoded fallback.
+const _listeners = new Set<() => void>();
+function _notify(): void {
+  for (const l of _listeners) l();
+}
+
+/** Initialize the symbol library from WASM. Call early in app startup.
+ *
+ * Retries: this runs at module import, before the kernel WASM has finished
+ * instantiating, so the first call(s) come back empty. Poll until the WASM is
+ * ready (or give up after a few seconds and keep the hardcoded fallback), then
+ * notify React subscribers so the palettes swap to the full builtin set. */
 export function initSymbolLibrary(): Promise<void> {
   if (!_initPromise) {
-    _initPromise = wasmBuiltinSymbols().then((symbols) => {
-      if (symbols.length > 0) {
-        _cachedLibrary = symbols as unknown as SymbolDef[];
+    _initPromise = (async () => {
+      for (let attempt = 0; attempt < 40; attempt++) {
+        try {
+          const symbols = await wasmBuiltinSymbols();
+          if (symbols.length > 0) {
+            _cachedLibrary = symbols as unknown as SymbolDef[];
+            _notify();
+            return;
+          }
+        } catch {
+          // WASM not ready / unavailable — retry below.
+        }
+        await new Promise((r) => setTimeout(r, 200));
       }
-    }).catch(() => {
-      // WASM not available — SYMBOL_LIBRARY stays as hardcoded fallback
-    });
+    })();
   }
   return _initPromise!;
 }
@@ -157,4 +178,22 @@ export const SYMBOL_LIBRARY: SymbolDef[] = new Proxy(FALLBACK_LIBRARY, {
 export function getSymbol(id: string): SymbolDef | undefined {
   const source = _cachedLibrary ?? FALLBACK_LIBRARY;
   return source.find((s) => s.id === id);
+}
+
+/**
+ * Reactive symbol library for React components. Re-renders when the full WASM
+ * symbol set finishes loading (the static `SYMBOL_LIBRARY` proxy can't trigger
+ * a re-render, so palettes that read it directly are stuck on the 4-symbol
+ * fallback). The snapshot is referentially stable, so it's safe with
+ * useSyncExternalStore.
+ */
+export function useSymbolLibrary(): SymbolDef[] {
+  return useSyncExternalStore(
+    (cb) => {
+      _listeners.add(cb);
+      return () => _listeners.delete(cb);
+    },
+    () => _cachedLibrary ?? FALLBACK_LIBRARY,
+    () => _cachedLibrary ?? FALLBACK_LIBRARY,
+  );
 }

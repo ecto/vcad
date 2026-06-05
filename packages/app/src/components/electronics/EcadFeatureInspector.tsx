@@ -4,11 +4,12 @@
  * Task 3 (modeless PCB editing): ECAD selections — component / footprint /
  * net / trace / via / pad — flow into the SAME contextual inspector as
  * mechanical parts instead of a separate floating panel. This component is
- * the shared body; `ElectronicsPropertyPanel` keeps the board-overview HUD.
+ * the shared body; `ElectronicsPanelHeader` sits above it with the persistent
+ * status + board-overview readouts.
  *
  * Reads the current selection from the electronics store and adapts. Returns
- * `null` for the `none` selection (the board HUD owns that state), so callers
- * can mount it unconditionally.
+ * `null` for the `none` selection (the panel header owns that state), so
+ * callers can mount it unconditionally.
  */
 
 import { useState } from "react";

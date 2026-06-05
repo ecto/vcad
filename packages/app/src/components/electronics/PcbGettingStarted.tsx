@@ -10,7 +10,7 @@ import { useDocumentStore, useCoreElectronicsStore, getNodePcb } from "@vcad/cor
 import { useElectronicsStore } from "@/stores/electronics-store";
 import { useNotificationStore } from "@/stores/notification-store";
 import { useTheme } from "@/hooks/useTheme";
-import { SYMBOL_LIBRARY } from "./symbol-library";
+import { useSymbolLibrary } from "./symbol-library";
 import type { Pcb } from "@vcad/ir";
 
 function boardSummary(pcb: Pcb): string {
@@ -40,11 +40,17 @@ export function PcbGettingStarted() {
   const { isDark } = useTheme();
   const addToast = useNotificationStore((s) => s.addToast);
 
+  const symbols = useSymbolLibrary();
   const activeBoardNodeId = useCoreElectronicsStore((s) => s.activeBoardNodeId);
   const doc = useDocumentStore((s) => s.document);
   const pcb = activeBoardNodeId != null ? getNodePcb(doc, activeBoardNodeId) : null;
 
-  const hasComponents = pcb ? pcb.footprints.length > 0 : false;
+  // The circuit isn't empty if there are schematic components OR placed
+  // footprints. Checking only footprints wrongly showed the getting-started
+  // panel over a full schematic whose parts hadn't been placed on the board yet.
+  const hasComponents =
+    (doc.schematic?.components.length ?? 0) > 0 ||
+    (pcb?.footprints.length ?? 0) > 0;
 
   const placeComponent = useCallback((symbolId: string) => {
     useElectronicsStore.setState({
@@ -128,7 +134,7 @@ export function PcbGettingStarted() {
             Add a component
           </span>
           <div className="grid grid-cols-4 gap-1.5 mt-1.5">
-            {SYMBOL_LIBRARY.map((sym) => (
+            {symbols.map((sym) => (
               <button
                 key={sym.id}
                 onClick={() => placeComponent(sym.id)}

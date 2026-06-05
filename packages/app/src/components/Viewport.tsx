@@ -36,11 +36,6 @@ const ElectronicsViewToggle = lazy(() =>
     default: m.ElectronicsViewToggle,
   })),
 );
-const ElectronicsPropertyPanel = lazy(() =>
-  import("./electronics/ElectronicsPropertyPanel").then((m) => ({
-    default: m.ElectronicsPropertyPanel,
-  })),
-);
 const LengthTunePanel = lazy(() =>
   import("./electronics/LengthTunePanel").then((m) => ({
     default: m.LengthTunePanel,
@@ -406,9 +401,6 @@ export function Viewport() {
               <SchematicView />
             </Suspense>
           )}
-          <Suspense fallback={null}>
-            <ElectronicsPropertyPanel />
-          </Suspense>
           <Suspense fallback={null}>
             <LengthTunePanel />
           </Suspense>

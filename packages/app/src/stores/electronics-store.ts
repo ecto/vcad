@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { PcbLayer, Vec2, MeanderStyle, LengthTuneParams } from "@vcad/ir";
 import type {
+  ComponentMesh,
   DrcViolationResult,
   ErcViolationResult,
   NetlistResult,
@@ -106,6 +107,11 @@ export interface ElectronicsState {
   // part (Phase 3 — live MCAD/ECAD interference).
   interferingFootprints: string[];
 
+  // Component 3D bodies (height-aware extrusions per footprint), recomputed by
+  // the sync hook and rendered on the board. Whether to show them.
+  componentBodies: ComponentMesh[];
+  showComponentBodies: boolean;
+
   // PCB 3D view state (Phase 2: tilt-to-3D + exploded stackup)
   tiltAngle: number; // degrees, 0 = top-down, >5 = tilted 3D
   stackupExplosion: number; // 0 = flat, 1 = fully exploded
@@ -122,6 +128,9 @@ export interface ElectronicsState {
 
   // Actions
   enter: () => void;
+  /** Instant-start: scaffold a default board + empty schematic if the document
+   *  has none, then enter the circuit (lands in the schematic). */
+  startCircuit: () => void;
   exit: () => void;
   setLayout: (l: ElectronicsLayout) => void;
   /** Flip between the schematic and board views. */
@@ -146,6 +155,8 @@ export interface ElectronicsState {
   setDrcViolations: (v: DrcViolationResult[]) => void;
   setErcViolations: (v: ErcViolationResult[]) => void;
   setInterferingFootprints: (refs: string[]) => void;
+  setComponentBodies: (bodies: ComponentMesh[]) => void;
+  toggleComponentBodies: () => void;
   setNetlist: (n: NetlistResult) => void;
   setOrphanFootprints: (refs: string[]) => void;
   setUnplacedComponents: (refs: string[]) => void;
@@ -218,6 +229,8 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
   drcViolations: [],
   ercViolations: [],
   interferingFootprints: [],
+  componentBodies: [],
+  showComponentBodies: true,
 
   tiltAngle: 0,
   stackupExplosion: 0,
@@ -251,6 +264,14 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
       useCoreElectronicsStore.getState().enter(boardNodeId);
     }
     set({ active: true, layout: "schematic" });
+  },
+  startCircuit: () => {
+    const docStore = useDocumentStore.getState();
+    if (!docStore.document.schematic) docStore.initSchematic();
+    if (useDocumentStore.getState().document.pcb == null) {
+      useDocumentStore.getState().initPcb();
+    }
+    get().enter();
   },
   exit: () => {
     useCoreElectronicsStore.getState().exit();
@@ -345,6 +366,8 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
   setDrcViolations: (drcViolations) => set({ drcViolations }),
   setErcViolations: (ercViolations) => set({ ercViolations }),
   setInterferingFootprints: (interferingFootprints) => set({ interferingFootprints }),
+  setComponentBodies: (componentBodies) => set({ componentBodies }),
+  toggleComponentBodies: () => set((s) => ({ showComponentBodies: !s.showComponentBodies })),
   setNetlist: (netlist) => set({ netlist }),
   setOrphanFootprints: (orphanFootprints) => set({ orphanFootprints }),
   setUnplacedComponents: (unplacedComponents) => set({ unplacedComponents }),

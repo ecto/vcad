@@ -31,7 +31,7 @@ export type RenderMode = "standard" | "raytrace";
 export type RaytraceQuality = "draft" | "standard" | "high";
 export type RaytraceDebugMode = "off" | "normals" | "face-id" | "lighting" | "orientation";
 
-export type ToolbarTab = "create" | "transform" | "combine" | "modify" | "assembly" | "simulate" | "build" | "sketch";
+export type ToolbarTab = "create" | "transform" | "combine" | "modify" | "assembly" | "simulate" | "build" | "sketch" | "circuit";
 
 export type SidebarPane = "tree" | "inspector" | "parameters";
 
