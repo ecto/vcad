@@ -22,6 +22,7 @@ import type { Pcb } from "@vcad/ir";
 import { useElectronicsStore } from "@/stores/electronics-store";
 import { useNotificationStore } from "@/stores/notification-store";
 import { aabbOfPositions, mergeAabbs, type Aabb } from "@/lib/pcb-interference";
+import { computeBoardFit } from "@/lib/pcb-fit";
 
 /** Clearance (mm) inset between the board edge and the enclosure walls on a fit. */
 const ENCLOSURE_CLEARANCE = 2;
@@ -111,34 +112,24 @@ function BoardSizeControl({ pcb }: { pcb: Pcb }) {
       addToast("No surrounding parts to fit the board to", "info");
       return;
     }
-    const clr = ENCLOSURE_CLEARANCE;
-    const targetW = enc.max[0] - enc.min[0] - 2 * clr;
-    const targetH = enc.max[1] - enc.min[1] - 2 * clr;
-    if (targetW < 1 || targetH < 1) {
+
+    // Size + place through the board's full transform so a board that's been
+    // moved, scaled, or rotated in the assembly still fits correctly.
+    const boardPart =
+      activeBoardNodeId != null ? findPcbBoardPart(parts, activeBoardNodeId) : null;
+    const xf = boardPart
+      ? getPcbBoardTransform(document, boardPart)
+      : { position: { x: 0, y: 0, z: 0 }, rotationDeg: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 } };
+    const fit = computeBoardFit(enc, xf, ENCLOSURE_CLEARANCE);
+    if (!fit) {
       addToast("Surrounding parts are too small to fit a board", "info");
       return;
     }
 
-    // Outline is board-local; divide out the board's scale so the *world*
-    // footprint matches the enclosure (rotation is assumed axis-aligned).
-    const boardPart =
-      activeBoardNodeId != null ? findPcbBoardPart(parts, activeBoardNodeId) : null;
-    const xf = boardPart ? getPcbBoardTransform(document, boardPart) : null;
-    const sx = xf && xf.scale.x !== 0 ? xf.scale.x : 1;
-    const sy = xf && xf.scale.y !== 0 ? xf.scale.y : 1;
-    resizeBoard(targetW / sx, targetH / sy);
-
-    // Position the board's local origin at the enclosure's min corner + clearance,
-    // preserving its current Z so vertical placement is untouched.
-    if (boardPart) {
-      setTranslation(boardPart.id, {
-        x: enc.min[0] + clr,
-        y: enc.min[1] + clr,
-        z: xf?.position.z ?? 0,
-      });
-    }
+    resizeBoard(fit.width, fit.height);
+    if (boardPart) setTranslation(boardPart.id, fit.position);
     addToast(
-      `Board fit to enclosure · ${Math.round(targetW)}×${Math.round(targetH)}mm`,
+      `Board fit to enclosure · ${Math.round(fit.width)}×${Math.round(fit.height)}mm`,
       "success",
     );
   };
