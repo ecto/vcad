@@ -76,7 +76,10 @@ export function ToolPalette() {
       // exits back to the mechanical workspace.
       const elx = useElectronicsStore.getState();
       if (tab === "circuit" && !elx.active) {
-        elx.enter();
+        // Instant start: enters the circuit, scaffolding a default board +
+        // schematic first if the document has none, so you land in a working
+        // schematic instead of an empty "no data" screen.
+        elx.startCircuit();
       } else if (tab !== "circuit" && elx.active) {
         elx.exit();
       }

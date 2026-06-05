@@ -82,10 +82,10 @@ export function CircuitTabTools() {
       </ToolbarButton>
     ) : (
       <ToolbarButton
-        tooltip="Add a PCB board"
-        onClick={() => window.dispatchEvent(new CustomEvent("vcad:open-pcb-dialog"))}
+        tooltip="Start a new circuit"
+        onClick={() => useElectronicsStore.getState().startCircuit()}
         iconColor={ELECTRONICS_TAB_COLORS.pcb}
-        label="New PCB Board"
+        label="New Circuit"
         expanded
       >
         <Cpu size={20} />
