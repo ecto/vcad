@@ -44,7 +44,12 @@ export function PcbGettingStarted() {
   const doc = useDocumentStore((s) => s.document);
   const pcb = activeBoardNodeId != null ? getNodePcb(doc, activeBoardNodeId) : null;
 
-  const hasComponents = pcb ? pcb.footprints.length > 0 : false;
+  // The circuit isn't empty if there are schematic components OR placed
+  // footprints. Checking only footprints wrongly showed the getting-started
+  // panel over a full schematic whose parts hadn't been placed on the board yet.
+  const hasComponents =
+    (doc.schematic?.components.length ?? 0) > 0 ||
+    (pcb?.footprints.length ?? 0) > 0;
 
   const placeComponent = useCallback((symbolId: string) => {
     useElectronicsStore.setState({
