@@ -10,7 +10,7 @@ import { useDocumentStore, useCoreElectronicsStore, getNodePcb } from "@vcad/cor
 import { useElectronicsStore } from "@/stores/electronics-store";
 import { useNotificationStore } from "@/stores/notification-store";
 import { useTheme } from "@/hooks/useTheme";
-import { SYMBOL_LIBRARY } from "./symbol-library";
+import { useSymbolLibrary } from "./symbol-library";
 import type { Pcb } from "@vcad/ir";
 
 function boardSummary(pcb: Pcb): string {
@@ -40,6 +40,7 @@ export function PcbGettingStarted() {
   const { isDark } = useTheme();
   const addToast = useNotificationStore((s) => s.addToast);
 
+  const symbols = useSymbolLibrary();
   const activeBoardNodeId = useCoreElectronicsStore((s) => s.activeBoardNodeId);
   const doc = useDocumentStore((s) => s.document);
   const pcb = activeBoardNodeId != null ? getNodePcb(doc, activeBoardNodeId) : null;
@@ -133,7 +134,7 @@ export function PcbGettingStarted() {
             Add a component
           </span>
           <div className="grid grid-cols-4 gap-1.5 mt-1.5">
-            {SYMBOL_LIBRARY.map((sym) => (
+            {symbols.map((sym) => (
               <button
                 key={sym.id}
                 onClick={() => placeComponent(sym.id)}
