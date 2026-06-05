@@ -720,7 +720,14 @@ mod tests {
     #[test]
     fn builtin_symbols_count() {
         let symbols = builtin_symbols();
-        assert_eq!(symbols.len(), 16);
+        assert_eq!(symbols.len(), 17); // + Motor
+    }
+
+    #[test]
+    fn motor_symbol_present() {
+        let m = get_symbol("motor").expect("motor symbol");
+        assert_eq!(m.prefix, "M");
+        assert_eq!(m.pins.len(), 2);
     }
 
     #[test]
