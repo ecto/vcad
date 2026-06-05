@@ -535,17 +535,19 @@ mod tests {
             })
             .expect("R1 pin 1 net");
         assert!(
-            !r1_net
-                .connections
-                .iter()
-                .any(|c| c.component_ref == "R2"),
+            !r1_net.connections.iter().any(|c| c.component_ref == "R2"),
             "crossing wires must not connect; R1 net = {:?}",
             r1_net.connections,
         );
     }
 
     /// A one-pin power port (e.g. VCC/GND) at `position`, pin at the origin.
-    fn make_power(reference: &str, value: &str, position: Vec2, pin_type: PinType) -> SchematicComponent {
+    fn make_power(
+        reference: &str,
+        value: &str,
+        position: Vec2,
+        pin_type: PinType,
+    ) -> SchematicComponent {
         SchematicComponent {
             reference: reference.to_string(),
             value: value.to_string(),
