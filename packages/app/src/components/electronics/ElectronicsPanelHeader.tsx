@@ -45,6 +45,20 @@ export function ElectronicsPanelHeader() {
 
   const currentTool = focusedPane === "pcb" ? pcbTool : schTool;
   const toolLabel = currentTool.charAt(0).toUpperCase() + currentTool.slice(1);
+
+  // Compact board-size readout (W×H from the outline bbox), shown by the title.
+  let boardDims: string | null = null;
+  const verts = pcb?.outline.vertices;
+  if (verts && verts.length >= 3) {
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const v of verts) {
+      if (v.x < minX) minX = v.x;
+      if (v.x > maxX) maxX = v.x;
+      if (v.y < minY) minY = v.y;
+      if (v.y > maxY) maxY = v.y;
+    }
+    boardDims = `${Math.round(maxX - minX)}×${Math.round(maxY - minY)}mm`;
+  }
   const drcErrors = drcViolations.filter((v) => v.severity === "Error").length;
   const drcWarnings = drcViolations.length - drcErrors;
   const ercCount = ercViolations.length;
@@ -54,7 +68,10 @@ export function ElectronicsPanelHeader() {
     <div className="shrink-0 border-b border-border/40 bg-surface/60 px-3 py-2 text-[11px]">
       {/* Title + health */}
       <div className="flex items-center justify-between gap-2">
-        <span className="font-medium text-text">Circuit</span>
+        <span className="flex items-baseline gap-1.5 min-w-0">
+          <span className="font-medium text-text">Circuit</span>
+          {boardDims && <span className="truncate text-text-muted">{boardDims}</span>}
+        </span>
         <div className="flex items-center gap-2 shrink-0">
           <span className="inline-flex items-center gap-1" title="DRC errors / warnings">
             <span className="text-text-muted">DRC</span>

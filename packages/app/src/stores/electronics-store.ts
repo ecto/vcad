@@ -122,6 +122,9 @@ export interface ElectronicsState {
 
   // Actions
   enter: () => void;
+  /** Instant-start: scaffold a default board + empty schematic if the document
+   *  has none, then enter the circuit (lands in the schematic). */
+  startCircuit: () => void;
   exit: () => void;
   setLayout: (l: ElectronicsLayout) => void;
   /** Flip between the schematic and board views. */
@@ -251,6 +254,14 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
       useCoreElectronicsStore.getState().enter(boardNodeId);
     }
     set({ active: true, layout: "schematic" });
+  },
+  startCircuit: () => {
+    const docStore = useDocumentStore.getState();
+    if (!docStore.document.schematic) docStore.initSchematic();
+    if (useDocumentStore.getState().document.pcb == null) {
+      useDocumentStore.getState().initPcb();
+    }
+    get().enter();
   },
   exit: () => {
     useCoreElectronicsStore.getState().exit();
