@@ -432,6 +432,10 @@ export interface CircuitObservation {
   time: number;
   nodeVoltages: number[];
   deviceCurrents: number[];
+  /** Rotor angle (rad) per device id; 0 for non-motors. */
+  rotorAngles: number[];
+  /** Rotor angular velocity (rad/s) per device id; 0 for non-motors. */
+  rotorSpeeds: number[];
 }
 
 /** A live circuit simulation handle (a WASM `CircuitSim` instance). */

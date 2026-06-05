@@ -11,7 +11,7 @@
 //! ```
 
 use serde::{Deserialize, Serialize};
-use vcad_ecad_sim::circuit::{Circuit, CircuitEnv, Device, DiodeModel};
+use vcad_ecad_sim::circuit::{Circuit, CircuitEnv, Device, DiodeModel, MotorParams};
 use wasm_bindgen::prelude::*;
 
 /// One device in a [`CircuitSpec`]. `p`/`n` are node ids (0 = ground).
@@ -25,6 +25,7 @@ enum DeviceSpec {
     Isource { p: usize, n: usize, value: f64 },
     Diode { p: usize, n: usize },
     Led { p: usize, n: usize },
+    Motor { p: usize, n: usize },
 }
 
 impl DeviceSpec {
@@ -36,7 +37,8 @@ impl DeviceSpec {
             | DeviceSpec::Vsource { p, n, .. }
             | DeviceSpec::Isource { p, n, .. }
             | DeviceSpec::Diode { p, n }
-            | DeviceSpec::Led { p, n } => p.max(n),
+            | DeviceSpec::Led { p, n }
+            | DeviceSpec::Motor { p, n } => p.max(n),
         }
     }
 
@@ -57,6 +59,11 @@ impl DeviceSpec {
                 n,
                 model: DiodeModel::led(),
             },
+            DeviceSpec::Motor { p, n } => Device::Motor {
+                p,
+                n,
+                params: MotorParams::small_dc(),
+            },
         }
     }
 }
@@ -75,6 +82,20 @@ struct WasmObservation {
     time: f64,
     node_voltages: Vec<f64>,
     device_currents: Vec<f64>,
+    rotor_angles: Vec<f64>,
+    rotor_speeds: Vec<f64>,
+}
+
+impl From<vcad_ecad_sim::circuit::Observation> for WasmObservation {
+    fn from(o: vcad_ecad_sim::circuit::Observation) -> Self {
+        WasmObservation {
+            time: o.time,
+            node_voltages: o.node_voltages,
+            device_currents: o.device_currents,
+            rotor_angles: o.rotor_angles,
+            rotor_speeds: o.rotor_speeds,
+        }
+    }
 }
 
 /// A live circuit simulation. Build from a [`CircuitSpec`] JSON, then `step`.
@@ -113,23 +134,14 @@ impl CircuitSim {
         for _ in 0..n.max(1) {
             obs = self.env.step();
         }
-        let out = WasmObservation {
-            time: obs.time,
-            node_voltages: obs.node_voltages,
-            device_currents: obs.device_currents,
-        };
+        let out = WasmObservation::from(obs);
         serde_wasm_bindgen::to_value(&out).map_err(|e| JsError::new(&e.to_string()))
     }
 
     /// Current state without advancing time.
     #[wasm_bindgen(js_name = observe)]
     pub fn observe(&self) -> Result<JsValue, JsError> {
-        let obs = self.env.observe();
-        let out = WasmObservation {
-            time: obs.time,
-            node_voltages: obs.node_voltages,
-            device_currents: obs.device_currents,
-        };
+        let out = WasmObservation::from(self.env.observe());
         serde_wasm_bindgen::to_value(&out).map_err(|e| JsError::new(&e.to_string()))
     }
 

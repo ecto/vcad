@@ -63,7 +63,9 @@ export function useCircuitSim() {
         if (cancelled || !simRef.current) return;
         try {
           const obs = simRef.current.step(STEPS_PER_FRAME);
-          useElectronicsStore.getState().setSimObservation(obs.nodeVoltages, obs.deviceCurrents);
+          useElectronicsStore
+            .getState()
+            .setSimObservation(obs.nodeVoltages, obs.deviceCurrents, obs.rotorAngles);
         } catch (e) {
           console.warn("[circuit-sim] step failed", e);
           return;

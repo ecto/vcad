@@ -13,7 +13,7 @@ import type { NetlistResult } from "@vcad/engine";
 
 /** One device in a {@link CircuitSpec}; `p`/`n` are node ids (0 = ground). */
 export interface CircuitDeviceSpec {
-  kind: "resistor" | "capacitor" | "inductor" | "vsource" | "isource" | "diode" | "led";
+  kind: "resistor" | "capacitor" | "inductor" | "vsource" | "isource" | "diode" | "led" | "motor";
   p: number;
   n: number;
   value?: number;
@@ -132,11 +132,24 @@ export function buildCircuitSpec(
     }
   }
 
-  // Components → two-terminal devices (pin "1" = p, pin "2" = n).
+  // Resolve a two-terminal device's p/n nodes by the component's own pin
+  // numbers (in order), with common conventions as fallbacks ("1"/"2",
+  // anode/cathode, +/-) so the mapping is robust to symbol pin naming.
+  const resolve = (comp: SchematicComponent, idx: number, fallbacks: string[]): number | null => {
+    const own = comp.pins[idx]?.number;
+    const cands = [own, ...fallbacks].filter((x): x is string => !!x);
+    for (const cnd of cands) {
+      const nd = nodeOf(comp.ref, cnd);
+      if (nd !== null) return nd;
+    }
+    return null;
+  };
+
+  // Components → two-terminal devices (first pin = p, second = n).
   for (const comp of components) {
     const sym = (comp.properties?.symbolId ?? "").toLowerCase();
-    const p = nodeOf(comp.ref, "1");
-    const n = nodeOf(comp.ref, "2");
+    const p = resolve(comp, 0, ["1", "A", "+"]);
+    const n = resolve(comp, 1, ["2", "K", "-"]);
     const add = (kind: CircuitDeviceSpec["kind"], value?: number) => {
       if (p === null || n === null) return; // unconnected pin → skip
       refToDevice.set(comp.ref, devices.length);
@@ -157,6 +170,9 @@ export function buildCircuitSpec(
         break;
       case "diode":
         add("diode");
+        break;
+      case "motor":
+        add("motor");
         break;
       default:
         break; // vcc/gnd symbols define nets, not devices

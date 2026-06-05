@@ -77,6 +77,7 @@ export interface ElectronicsState {
   simulating: boolean;
   simNodeVoltages: number[] | null;
   simDeviceCurrents: number[] | null;
+  simRotorAngles: number[] | null;
   simNetToNode: Record<string, number> | null;
   simRefToDevice: Record<string, number> | null;
 
@@ -172,7 +173,11 @@ export interface ElectronicsState {
     netToNode: Record<string, number>,
     refToDevice: Record<string, number>,
   ) => void;
-  setSimObservation: (nodeVoltages: number[], deviceCurrents: number[]) => void;
+  setSimObservation: (
+    nodeVoltages: number[],
+    deviceCurrents: number[],
+    rotorAngles: number[],
+  ) => void;
   clearSim: () => void;
   startRouteFromRatsnest: (fpRef: string, padNum: string, net: string) => void;
   startRoute: (fpRef: string, padNum: string, net: string) => void;
@@ -221,6 +226,7 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
   simulating: false,
   simNodeVoltages: null,
   simDeviceCurrents: null,
+  simRotorAngles: null,
   simNetToNode: null,
   simRefToDevice: null,
 
@@ -397,17 +403,19 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
             simulating: false,
             simNodeVoltages: null,
             simDeviceCurrents: null,
+            simRotorAngles: null,
             simNetToNode: null,
             simRefToDevice: null,
           },
     ),
   setSimMaps: (simNetToNode, simRefToDevice) => set({ simNetToNode, simRefToDevice }),
-  setSimObservation: (simNodeVoltages, simDeviceCurrents) =>
-    set({ simNodeVoltages, simDeviceCurrents }),
+  setSimObservation: (simNodeVoltages, simDeviceCurrents, simRotorAngles) =>
+    set({ simNodeVoltages, simDeviceCurrents, simRotorAngles }),
   clearSim: () =>
     set({
       simNodeVoltages: null,
       simDeviceCurrents: null,
+      simRotorAngles: null,
       simNetToNode: null,
       simRefToDevice: null,
     }),

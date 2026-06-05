@@ -229,6 +229,7 @@ export function SchematicCanvas() {
   const simulating = useElectronicsStore((s) => s.simulating);
   const simNodeVoltages = useElectronicsStore((s) => s.simNodeVoltages);
   const simDeviceCurrents = useElectronicsStore((s) => s.simDeviceCurrents);
+  const simRotorAngles = useElectronicsStore((s) => s.simRotorAngles);
   const simNetToNode = useElectronicsStore((s) => s.simNetToNode);
   const simRefToDevice = useElectronicsStore((s) => s.simRefToDevice);
   const simOn = simulating && simNodeVoltages != null;
@@ -243,6 +244,12 @@ export function SchematicCanvas() {
     if (!simOn || !simRefToDevice || !simDeviceCurrents) return null;
     const id = simRefToDevice[ref];
     return id == null ? null : (simDeviceCurrents[id] ?? null);
+  };
+  /** Rotor angle (rad) of a motor component under simulation, else 0. */
+  const motorAngle = (ref: string): number => {
+    if (!simOn || !simRefToDevice || !simRotorAngles) return 0;
+    const id = simRefToDevice[ref];
+    return id == null ? 0 : (simRotorAngles[id] ?? 0);
   };
   const zoom = useElectronicsStore((s) => s.schZoom);
   const pan = useElectronicsStore((s) => s.schPan);
@@ -869,6 +876,27 @@ export function SchematicCanvas() {
                         opacity={0.55 * b}
                         style={{ filter: `blur(${4 + 6 * b}px)` }}
                       />
+                    );
+                  })()}
+                {/* Motor rotor — a spoke that spins at the rotor angle. */}
+                {simOn &&
+                  comp.properties?.symbolId === "motor" &&
+                  (() => {
+                    const deg = ((motorAngle(comp.ref) * 180) / Math.PI) % 360;
+                    const spinning = Math.abs(motorAngle(comp.ref)) > 0.01;
+                    return (
+                      <g transform={`rotate(${deg} 20 15)`}>
+                        <line
+                          x1={20}
+                          y1={3}
+                          x2={20}
+                          y2={27}
+                          stroke={spinning ? "#4ade80" : colors.bodyStroke}
+                          strokeWidth={2.5}
+                          strokeLinecap="round"
+                        />
+                        <circle cx={20} cy={3} r={2.5} fill="#4ade80" opacity={spinning ? 1 : 0.3} />
+                      </g>
                     );
                   })()}
                 {renderSymbolGraphics(
