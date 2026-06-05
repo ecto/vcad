@@ -96,6 +96,9 @@ export function useElectronicsSync() {
     }
     const timer = setTimeout(async () => {
       const comps = await componentMeshes(pcb);
+      // Also feed the 3D bodies to the store so they can be rendered on the
+      // board (same WASM call serves both interference + rendering).
+      useElectronicsStore.getState().setComponentBodies(comps);
       const mech: Aabb[] = [];
       scene?.parts.forEach((ep, idx) => {
         const pi = parts[idx];

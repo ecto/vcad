@@ -21,6 +21,7 @@ import { PencilSimple } from "@phosphor-icons/react/dist/ssr/PencilSimple";
 import { Tag } from "@phosphor-icons/react/dist/ssr/Tag";
 import { Path } from "@phosphor-icons/react/dist/ssr/Path";
 import { MagnetStraight } from "@phosphor-icons/react/dist/ssr/MagnetStraight";
+import { Cube } from "@phosphor-icons/react/dist/ssr/Cube";
 import { Ruler } from "@phosphor-icons/react/dist/ssr/Ruler";
 import { ArrowSquareDown } from "@phosphor-icons/react/dist/ssr/ArrowSquareDown";
 import { Lightning } from "@phosphor-icons/react/dist/ssr/Lightning";
@@ -29,7 +30,7 @@ import { ELECTRONICS_TAB_COLORS } from "@/components/ui/toolbar-constants";
 import { useElectronicsStore } from "@/stores/electronics-store";
 import { useDocumentStore, useCoreElectronicsStore } from "@vcad/core";
 import type { PcbLayer } from "@vcad/ir";
-import { SYMBOL_LIBRARY } from "./symbol-library";
+import { useSymbolLibrary } from "./symbol-library";
 import { SymbolIcon } from "./symbol-icons";
 import { autorouteRatsnest } from "@/lib/pcb-autoroute";
 
@@ -38,6 +39,7 @@ const Divider = () => <div className="mx-1 h-5 w-px bg-border shrink-0" />;
 export function CircuitTabTools() {
   const active = useElectronicsStore((s) => s.active);
   const layout = useElectronicsStore((s) => s.layout);
+  const symbols = useSymbolLibrary();
   const schTool = useElectronicsStore((s) => s.schTool);
   const pcbTool = useElectronicsStore((s) => s.pcbTool);
   const placingSymbol = useElectronicsStore((s) => s.schPlacingSymbol);
@@ -45,6 +47,8 @@ export function CircuitTabTools() {
   const pcbActiveLayer = useElectronicsStore((s) => s.pcbActiveLayer);
   const pcbGridSize = useElectronicsStore((s) => s.pcbGridSize);
   const pcbSnapToGrid = useElectronicsStore((s) => s.pcbSnapToGrid);
+  const showComponentBodies = useElectronicsStore((s) => s.showComponentBodies);
+  const toggleComponentBodies = useElectronicsStore((s) => s.toggleComponentBodies);
   const pcbLayers = useElectronicsStore((s) => s.pcbLayers);
   const unplacedComponents = useElectronicsStore((s) => s.unplacedComponents);
 
@@ -152,7 +156,7 @@ export function CircuitTabTools() {
         <Divider />
 
         {/* Place components */}
-        {SYMBOL_LIBRARY.map((sym) => (
+        {symbols.map((sym) => (
           <ToolbarButton
             key={sym.id}
             tooltip={`${sym.name} (${sym.defaultValue})`}
@@ -296,6 +300,14 @@ export function CircuitTabTools() {
         iconColor={pcbSnapToGrid ? "text-green-400" : undefined}
       >
         <MagnetStraight size={18} />
+      </ToolbarButton>
+      <ToolbarButton
+        tooltip={showComponentBodies ? "Hide 3D component bodies" : "Show 3D component bodies"}
+        active={showComponentBodies}
+        onClick={toggleComponentBodies}
+        iconColor={ELECTRONICS_TAB_COLORS.pcb}
+      >
+        <Cube size={18} />
       </ToolbarButton>
     </>
   );

@@ -19,6 +19,7 @@ import { PcbTraceMesh } from "./PcbTraceMesh";
 import { PcbPadMesh } from "./PcbPadMesh";
 import { PcbViaMesh } from "./PcbViaMesh";
 import { PcbFootprint3D } from "./PcbFootprint3D";
+import { PcbComponentBodies3D } from "./PcbComponentBodies3D";
 import { PcbRatsnest3D } from "./PcbRatsnest3D";
 import { PcbRoutePreview3D } from "./PcbRoutePreview3D";
 import { PcbDrcMarkers3D } from "./PcbDrcMarkers3D";
@@ -333,6 +334,10 @@ export function PcbScene({ showBoard = true }: { showBoard?: boolean } = {}) {
           explosion={stackupExplosion}
         />
       ))}
+
+      {/* Height-aware 3D component bodies (populated-board view). Clashing
+          components (vs the surrounding enclosure) render in a warning tint. */}
+      <PcbComponentBodies3D />
 
       {/* Ratsnest */}
       <PcbRatsnest3D
