@@ -21,7 +21,7 @@ import {
 import type { Pcb } from "@vcad/ir";
 import { useElectronicsStore } from "@/stores/electronics-store";
 import { useNotificationStore } from "@/stores/notification-store";
-import { aabbOfPositions, mergeAabbs, type Aabb } from "@/lib/pcb-interference";
+import { aabbOfPositions, cavityBounds, mergeAabbs, type Aabb } from "@/lib/pcb-interference";
 import { computeBoardFit } from "@/lib/pcb-fit";
 
 /** Clearance (mm) inset between the board edge and the enclosure walls on a fit. */
@@ -98,20 +98,26 @@ function BoardSizeControl({ pcb }: { pcb: Pcb }) {
   };
 
   const fitToEnclosure = () => {
-    // Gather world-space AABBs of every non-board part, union into the
-    // enclosure box, then size + place the board to fill its XY footprint.
-    const mech: Aabb[] = [];
+    // Gather world-space geometry of every non-board part.
+    const mechParts: { positions: ArrayLike<number>; bb: Aabb }[] = [];
     scene?.parts.forEach((ep, idx) => {
       const pi = parts[idx];
       if (pi && isPcbBoardPart(pi)) return;
-      const bb = aabbOfPositions(ep.mesh?.positions);
-      if (bb) mech.push(bb);
+      const positions = ep.mesh?.positions;
+      const bb = aabbOfPositions(positions);
+      if (positions && bb) mechParts.push({ positions, bb });
     });
-    const enc = mergeAabbs(mech);
-    if (!enc) {
+    if (mechParts.length === 0) {
       addToast("No surrounding parts to fit the board to", "info");
       return;
     }
+
+    // Prefer the dominant part's *internal cavity* (a hollow enclosure) over its
+    // solid bounding box; fall back to the union AABB of all parts.
+    const xyArea = (b: Aabb) => (b.max[0] - b.min[0]) * (b.max[1] - b.min[1]);
+    const dominant = mechParts.reduce((a, b) => (xyArea(b.bb) > xyArea(a.bb) ? b : a));
+    const cavity = cavityBounds(dominant.positions);
+    const enc = cavity ?? mergeAabbs(mechParts.map((m) => m.bb))!;
 
     // Size + place through the board's full transform so a board that's been
     // moved, scaled, or rotated in the assembly still fits correctly.

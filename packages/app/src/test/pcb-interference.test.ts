@@ -3,10 +3,18 @@ import type { ComponentMesh } from "@vcad/engine";
 import {
   aabbOfPositions,
   aabbsOverlap,
+  cavityBounds,
   interferingRefs,
   mergeAabbs,
   type PointTransform,
 } from "@/lib/pcb-interference";
+
+/** 8 corner vertices of the box [x0,x1]×[y0,y1]×[z0,z1] as a flat buffer. */
+function corners(x0: number, x1: number, y0: number, y1: number, z0: number, z1: number): number[] {
+  const out: number[] = [];
+  for (const x of [x0, x1]) for (const y of [y0, y1]) for (const z of [z0, z1]) out.push(x, y, z);
+  return out;
+}
 
 /** Unit cube [0,0,0]..[s,s,s] translated by (tx,ty,tz) as a flat position buffer. */
 function boxPositions(s: number, tx = 0, ty = 0, tz = 0): number[] {
@@ -71,6 +79,24 @@ describe("pcb-interference", () => {
     const b = aabbOfPositions(boxPositions(5, 20, 2, -3))!; // [20,25]×[2,7]×[-3,2]
     expect(mergeAabbs([a])).toEqual(a);
     expect(mergeAabbs([a, b])).toEqual({ min: [0, 0, -3], max: [25, 10, 10] });
+  });
+
+  it("detects a shell enclosure's inner cavity, ignores a solid box", () => {
+    // Solid box → no cavity (only 2 coordinate clusters per axis).
+    expect(cavityBounds(corners(0, 40, 0, 30, 0, 10))).toBeNull();
+    // Shell: outer box + inner cavity walls inset by 2mm (open top).
+    const shell = [...corners(0, 40, 0, 30, 0, 10), ...corners(2, 38, 2, 28, 2, 10)];
+    expect(cavityBounds(shell)).toEqual({ min: [2, 2, 0], max: [38, 28, 10] });
+  });
+
+  it("cavity detection is robust to fillet/feature vertices near the walls", () => {
+    const shell = [
+      ...corners(0, 40, 0, 30, 0, 10),
+      ...corners(2, 38, 2, 28, 2, 10),
+      // stray fillet-ish vertices just inside the outer walls
+      1, 1, 5, 39, 29, 5,
+    ];
+    expect(cavityBounds(shell)).toEqual({ min: [2, 2, 0], max: [38, 28, 10] });
   });
 
   it("maps board-local bodies into world via boardToWorld", () => {

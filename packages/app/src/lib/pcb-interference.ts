@@ -52,6 +52,56 @@ export function aabbOfPositions(
   return { min: [minX, minY, minZ], max: [maxX, maxY, maxZ] };
 }
 
+/**
+ * Per-axis inner-cavity span of a shell-like (hollow) mesh: clusters the
+ * coordinates and returns the largest interior gap that has material (clusters)
+ * on *both* sides — i.e. the empty region between the two inner walls. Returns
+ * null for a solid body (the largest gap is the body itself, with no material
+ * beyond it). Robust to fillets and coarse tessellation since the cavity gap
+ * dominates the small wall/feature gaps.
+ */
+function innerSpan(coords: number[], tol = 0.3, minCavity = 1): [number, number] | null {
+  if (coords.length < 6) return null;
+  const sorted = [...coords].sort((a, b) => a - b);
+  const clusters: number[] = [];
+  for (const c of sorted) {
+    if (clusters.length === 0 || c - clusters[clusters.length - 1]! > tol) clusters.push(c);
+  }
+  if (clusters.length < 4) return null; // need outer+inner wall on each side
+  let best = -1, lo = 0, hi = 0;
+  for (let i = 1; i < clusters.length - 2; i++) {
+    // gap [clusters[i], clusters[i+1]] has clusters[0..i-1] left and the rest right
+    const gap = clusters[i + 1]! - clusters[i]!;
+    if (gap > best) { best = gap; lo = clusters[i]!; hi = clusters[i + 1]!; }
+  }
+  if (best < minCavity) return null;
+  return [lo, hi];
+}
+
+/**
+ * Estimate the internal cavity of a shell enclosure from its world-space mesh
+ * vertices. Returns the inner box when both the X and Y axes show a clear
+ * wall→cavity→wall structure; null otherwise (caller falls back to the AABB).
+ * The Z span is the full vertical extent (cavities are usually open-topped).
+ */
+export function cavityBounds(positions: ArrayLike<number> | undefined): Aabb | null {
+  if (!positions || positions.length < 24) return null; // need at least a box's worth
+  // (a solid box yields only 2 coordinate clusters per axis → innerSpan returns
+  // null regardless of vertex count; the real shell test lives there.)
+  const xs: number[] = [], ys: number[] = [], zs: number[] = [];
+  for (let i = 0; i + 2 < positions.length; i += 3) {
+    xs.push(positions[i]!);
+    ys.push(positions[i + 1]!);
+    zs.push(positions[i + 2]!);
+  }
+  const ix = innerSpan(xs);
+  const iy = innerSpan(ys);
+  if (!ix || !iy) return null;
+  let zmin = Infinity, zmax = -Infinity;
+  for (const z of zs) { if (z < zmin) zmin = z; if (z > zmax) zmax = z; }
+  return { min: [ix[0], iy[0], zmin], max: [ix[1], iy[1], zmax] };
+}
+
 /** Union a list of AABBs into one enclosing box. null if the list is empty. */
 export function mergeAabbs(boxes: Aabb[]): Aabb | null {
   if (boxes.length === 0) return null;
