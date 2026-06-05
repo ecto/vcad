@@ -132,6 +132,7 @@ export function PcbGettingStarted() {
               <button
                 key={sym.id}
                 onClick={() => placeComponent(sym.id)}
+                aria-label={`Add ${sym.name}`}
                 className="flex flex-col items-center gap-1 p-2 rounded border transition-colors"
                 style={{ backgroundColor: cardBg, borderColor: border }}
                 onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = cardHover; }}

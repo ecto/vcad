@@ -74,6 +74,8 @@ export function ToolbarButton({
         )}
         disabled={disabled}
         onClick={onClick}
+        aria-label={tooltip}
+        aria-pressed={active}
       >
         <span
           className={cn(
