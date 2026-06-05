@@ -15,7 +15,7 @@ import { Waveform } from "@phosphor-icons/react/dist/ssr/Waveform";
 import { Star } from "@phosphor-icons/react/dist/ssr/Star";
 import type { Icon } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
-import { useDocumentStore, useUiStore, useChatStore, parseVcadFile } from "@vcad/core";
+import { useDocumentStore, useChatStore, parseVcadFile } from "@vcad/core";
 import { useAuth, isAuthEnabled, AuthModal } from "@vcad/auth";
 import { useOnboardingStore } from "@/stores/onboarding-store";
 import { examples, exampleToVcadFile } from "@/data/examples";
@@ -51,9 +51,6 @@ export function InlineOnboarding({ visible }: InlineOnboardingProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadDocument = useDocumentStore((s) => s.loadDocument);
-  const addPrimitive = useDocumentStore((s) => s.addPrimitive);
-  const select = useUiStore((s) => s.select);
-  const setTransformMode = useUiStore((s) => s.setTransformMode);
   const setChatOpen = useChatStore((s) => s.setOpen);
   const incrementProjectsCreated = useOnboardingStore(
     (s) => s.incrementProjectsCreated,
@@ -95,10 +92,8 @@ export function InlineOnboarding({ visible }: InlineOnboardingProps) {
   }
 
   function handleStartBlank() {
+    // "empty canvas" — start with a truly blank scene (no stray primitive).
     incrementProjectsCreated();
-    const partId = addPrimitive("cube");
-    select(partId);
-    setTransformMode("translate");
     hide();
   }
 
