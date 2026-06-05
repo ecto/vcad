@@ -498,10 +498,7 @@ mod tests {
             })
             .expect("R1 pin 1 net");
         assert!(
-            !r1_net
-                .connections
-                .iter()
-                .any(|c| c.component_ref == "R2"),
+            !r1_net.connections.iter().any(|c| c.component_ref == "R2"),
             "crossing wires must not connect; R1 net = {:?}",
             r1_net.connections,
         );
