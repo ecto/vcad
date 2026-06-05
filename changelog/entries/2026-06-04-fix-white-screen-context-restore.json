@@ -3,7 +3,7 @@
   "version": "0.9.4",
   "date": "2026-06-04",
   "category": "fix",
-  "title": "Fix occasional white viewport after WebGL context loss",
-  "summary": "The on-demand viewport now repaints when the WebGL context is restored (e.g. after a backgrounded tab), instead of leaving a blank white canvas until the next interaction.",
+  "title": "Fix intermittent white viewport",
+  "summary": "The on-demand viewport now reliably paints the current scene on load, after edits, and on tab refocus, and recovers a lost or failed WebGL context by remounting — instead of leaving a blank white canvas until the next interaction.",
   "features": ["viewport"]
 }
