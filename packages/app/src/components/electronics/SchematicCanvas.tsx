@@ -605,6 +605,10 @@ export function SchematicCanvas() {
 
   const onComponentClick = useCallback(
     (e: React.MouseEvent, idx: number, ref: string) => {
+      // Wire tool: let the click fall through to the canvas handler so it snaps
+      // to this component's pin — clicking a pin should start/finish a wire, not
+      // select the part. (Without this, stopPropagation swallows the wire click.)
+      if (schTool === "wire") return;
       e.stopPropagation();
       if (schTool === "delete") {
         removeSchematicComponent(idx);
