@@ -126,3 +126,44 @@ describe("No unconditional invalidation loops", () => {
     expect(block).toContain("invalidate()");
   });
 });
+
+// ---------------------------------------------------------------------------
+// 6. White-screen guards: imperative geometry builds + initial paint
+// ---------------------------------------------------------------------------
+// Under frameloop="demand", meshes that populate their geometry buffers in an
+// effect (geo.setAttribute(...)) mutate the scene in a way R3F's reconciler
+// never sees, so no frame is scheduled and the viewport sits blank until an
+// unrelated event (orbit/resize) happens to kick one. These assert the explicit
+// invalidate() kicks that keep the scene from white-screening on load/update.
+describe("White-screen guards", () => {
+  it("SceneMesh invalidates after building geometry imperatively", () => {
+    const src = readSrc("components/SceneMesh.tsx");
+    // Must pull invalidate off the R3F store...
+    expect(src).toMatch(/invalidate\s*=\s*useThree/);
+    // ...and the geometry-build effect (keyed on the incoming mesh) must list
+    // invalidate as a dep, proving the kick lives in that effect.
+    expect(src).toMatch(/\[\s*mesh\s*,\s*partInfo\.name\s*,\s*invalidate\s*\]/);
+    // The imported-mesh path builds geometry imperatively too.
+    expect(src).toMatch(/\[\s*mesh\s*,\s*invalidate\s*\]/);
+  });
+
+  it("ViewportContent kicks an initial-paint burst on mount", () => {
+    const src = readSrc("components/ViewportContent.tsx");
+    // A self-terminating rAF pump that invalidates across the first frames so
+    // whichever frame the async scene/composer becomes drawable in gets painted.
+    expect(src).toContain("const pump");
+    expect(src).toMatch(/requestAnimationFrame\(pump\)/);
+    // And a reactive kick when the evaluated engine scene swaps.
+    expect(src).toMatch(/\[\s*invalidate\s*,\s*scene\s*,\s*previewMesh\s*,\s*engineReady\s*\]/);
+  });
+
+  it("Viewport remounts the Canvas to recover a dead WebGL context", () => {
+    const src = readSrc("components/Viewport.tsx");
+    // The Canvas key is driven by a remount epoch...
+    expect(src).toMatch(/key=\{glEpoch\}/);
+    // ...bumped both on a stuck runtime loss and a failed init (onCreated never
+    // firing). Recovery must be capped so it can't spin forever.
+    expect(src).toContain("vcad:gl-stuck-lost");
+    expect(src).toMatch(/glRemountsRef\.current\s*>=\s*3/);
+  });
+});

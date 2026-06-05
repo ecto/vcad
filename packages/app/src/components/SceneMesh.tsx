@@ -349,6 +349,7 @@ export function ImportedMesh({ mesh, materialKey }: ImportedMeshProps) {
   const [geoReady, setGeoReady] = useState(false);
   const showWireframe = useUiStore((s) => s.showWireframe);
   const isOrbiting = useUiStore((s) => s.isOrbiting);
+  const invalidate = useThree((s) => s.invalidate);
   const materials = useDocumentStore((s) => s.document.materials);
 
   // Resolve material from document, falling back to the preset library.
@@ -438,13 +439,16 @@ export function ImportedMesh({ mesh, materialKey }: ImportedMeshProps) {
       geo.computeBoundingSphere();
       geo.computeBoundingBox();
       setGeoReady(true);
+      // Imperative buffer write under demand frameloop — kick a frame so the
+      // imported mesh actually paints (see SceneMesh for the full rationale).
+      invalidate();
     })();
 
     return () => {
       disposed = true;
       geo.dispose();
     };
-  }, [mesh]);
+  }, [mesh, invalidate]);
 
   // Disable raycasting during orbit for performance
   const originalRaycastRef = useRef<THREE.Mesh["raycast"] | null>(null);
@@ -506,6 +510,7 @@ export const SceneMesh = memo(function SceneMesh({
   const setHoveredPartId = useUiStore((s) => s.setHoveredPartId);
   const camera = useThree((s) => s.camera);
   const viewportSize = useThree((s) => s.size);
+  const invalidate = useThree((s) => s.invalidate);
   const materials = useDocumentStore((s) => s.document.materials);
   const renamePart = useDocumentStore((s) => s.renamePart);
 
@@ -713,10 +718,17 @@ export const SceneMesh = memo(function SceneMesh({
     geo.computeBoundingBox();
     setGeoReady(true);
 
+    // The geometry buffers were just populated imperatively — R3F's
+    // `frameloop="demand"` doesn't observe this mutation, so without an
+    // explicit kick the freshly-built mesh never paints until some unrelated
+    // event (orbit, resize, hover) happens to schedule a frame. That gap is
+    // the intermittent "white screen": geometry present, no frame drawn.
+    invalidate();
+
     return () => {
       geo.dispose();
     };
-  }, [mesh, partInfo.name]);
+  }, [mesh, partInfo.name, invalidate]);
 
   // Apply Transform3D to mesh (for assembly instances)
   useEffect(() => {
@@ -743,7 +755,9 @@ export const SceneMesh = memo(function SceneMesh({
       m.quaternion.identity();
       m.scale.set(1, 1, 1);
     }
-  }, [transform]);
+    // Imperative transform write — kick a demand frame so it's drawn.
+    invalidate();
+  }, [transform, invalidate]);
 
   // Compute name tag position above the part
   const labelPosition = useMemo(() => {

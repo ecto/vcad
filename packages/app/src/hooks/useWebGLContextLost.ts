@@ -30,8 +30,24 @@ export function useWebGLContextLost(): boolean {
     const canvas = gl.domElement;
     if (!canvas) return;
 
+    // If the browser doesn't restore within this window after a loss, the
+    // context is most likely gone for good (GPU resource exhaustion / too many
+    // live contexts). Rather than leave a dead, white viewport, ask the app to
+    // remount the <Canvas> for a fresh context (Viewport listens for this).
+    let stuckTimer: ReturnType<typeof setTimeout> | undefined;
+    const scheduleRecovery = () => {
+      clearTimeout(stuckTimer);
+      stuckTimer = setTimeout(() => {
+        window.dispatchEvent(new CustomEvent("vcad:gl-stuck-lost"));
+      }, 1500);
+    };
+
     // Seed the initial state in case the context was already lost before we
-    // attached listeners (e.g. created on a backgrounded tab).
+    // attached listeners (e.g. created on a backgrounded tab). We deliberately
+    // do NOT schedule a remount here: a freshly-created context can read as
+    // momentarily lost during a heavy load while the GPU is under pressure, and
+    // remounting on that transient would churn the canvas. Only a real runtime
+    // `webglcontextlost` that fails to restore triggers recovery (below).
     try {
       const ctx = gl.getContext();
       if (ctx && typeof ctx.isContextLost === "function" && ctx.isContextLost()) {
@@ -46,8 +62,10 @@ export function useWebGLContextLost(): boolean {
       // Signal intent to recover so the browser fires webglcontextrestored.
       event.preventDefault();
       setLost(true);
+      scheduleRecovery();
     };
     const handleRestored = () => {
+      clearTimeout(stuckTimer);
       setLost(false);
     };
 
@@ -55,6 +73,7 @@ export function useWebGLContextLost(): boolean {
     canvas.addEventListener("webglcontextrestored", handleRestored, false);
 
     return () => {
+      clearTimeout(stuckTimer);
       canvas.removeEventListener("webglcontextlost", handleLost as EventListener, false);
       canvas.removeEventListener("webglcontextrestored", handleRestored, false);
     };

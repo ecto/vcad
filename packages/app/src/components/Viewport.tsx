@@ -1,4 +1,4 @@
-import { useRef, useEffect, Suspense, lazy } from "react";
+import { useRef, useState, useEffect, useCallback, Suspense, lazy } from "react";
 import * as THREE from "three";
 import { Canvas, useThree } from "@react-three/fiber";
 import { XR } from "@react-three/xr";
@@ -237,6 +237,66 @@ export function Viewport() {
   const pcbEditFocus = useCoreElectronicsStore((s) => s.activeBoardNodeId) != null;
   const xrPresenting = useXRPresenting();
 
+  // Recover from a dead/missing WebGL context that would otherwise leave the
+  // viewport a blank rectangle. Two distinct failure modes, both fixed by
+  // remounting the <Canvas> via a changing key (R3F then builds a brand-new
+  // renderer + context):
+  //
+  //   1. Runtime stuck loss — `useWebGLContextLost` (inside the Canvas)
+  //      dispatches `vcad:gl-stuck-lost` when the browser drops the context and
+  //      doesn't fire `webglcontextrestored` within ~1.5s (GPU pressure, too
+  //      many live contexts, tab restore).
+  //   2. Failed initialization — context creation returns null at mount under
+  //      GPU exhaustion, so three never builds a renderer and `onCreated` never
+  //      fires. No `webglcontextlost` event happens (there was never a context
+  //      to lose), so mode 1 can't see it; we detect it as `onCreated` not
+  //      firing within a short window.
+  //
+  // Remounts are capped so a context that genuinely cannot be created can't
+  // spin forever; the budget is forgiven once an epoch survives a healthy
+  // stretch, so an unrelated failure later in the session can still recover.
+  const [glEpoch, setGlEpoch] = useState(0);
+  const glRemountsRef = useRef(0);
+  const glCreatedRef = useRef(false);
+  const requestGlRemount = useCallback(() => {
+    if (glRemountsRef.current >= 3) return;
+    glRemountsRef.current += 1;
+    // Clear the "created" flag for the epoch we're about to mount so the
+    // watchdog re-arms. Done here (not in the per-epoch effect) because that
+    // effect is passive and runs *after* the next Canvas's layout-phase
+    // `onCreated` — resetting it there would clobber a healthy init and force a
+    // spurious remount on every load.
+    glCreatedRef.current = false;
+    setGlEpoch((e) => e + 1);
+  }, []);
+  const handleGlCreated = useCallback(() => {
+    glCreatedRef.current = true;
+    performance.mark("canvas-ready");
+  }, []);
+  // Mode 1: runtime stuck-loss listener.
+  useEffect(() => {
+    window.addEventListener("vcad:gl-stuck-lost", requestGlRemount);
+    return () => window.removeEventListener("vcad:gl-stuck-lost", requestGlRemount);
+  }, [requestGlRemount]);
+  // Mode 2: failed-init watchdog, re-armed on every (re)mount via glEpoch. If
+  // `onCreated` hasn't fired by the deadline the renderer failed to initialize,
+  // so remount for a fresh attempt. Also forgives the remount budget once an
+  // epoch survives a healthy stretch (a real remount changes glEpoch and
+  // restarts this, so a tight create→lose flap never reaches the forgive timer
+  // and correctly hits the cap instead).
+  useEffect(() => {
+    const initWatch = setTimeout(() => {
+      if (!glCreatedRef.current) requestGlRemount();
+    }, 2500);
+    const forgive = setTimeout(() => {
+      glRemountsRef.current = 0;
+    }, 12000);
+    return () => {
+      clearTimeout(initWatch);
+      clearTimeout(forgive);
+    };
+  }, [glEpoch, requestGlRemount]);
+
   // Run electronics sync when in electronics mode
   useElectronicsSync();
 
@@ -294,6 +354,7 @@ export function Viewport() {
       style={{ touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
     >
       <Canvas
+        key={glEpoch}
         frameloop={xrPresenting ? "always" : "demand"}
         camera={{ position: [50, 50, 50], fov: 50, near: 0.1, far: 10000 }}
         onPointerMissed={() => {
@@ -302,7 +363,7 @@ export function Viewport() {
           if (!electronicsActive) clearSelection();
           clearDfmSelection(null);
         }}
-        onCreated={() => performance.mark("canvas-ready")}
+        onCreated={handleGlCreated}
         shadows
         gl={{
           alpha: true,
