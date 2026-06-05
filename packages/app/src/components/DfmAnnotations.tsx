@@ -15,6 +15,7 @@
 import { useMemo } from "react";
 import { Html } from "@react-three/drei";
 import { useDfmStore } from "@/stores/dfm-store";
+import { useElectronicsStore } from "@/stores/electronics-store";
 import type { DfmIssue, DfmSeverity } from "@vcad/engine";
 import { cn } from "@/lib/utils";
 
@@ -36,6 +37,9 @@ export function DfmAnnotations() {
   const visibleSeverities = useDfmStore((s) => s.visibleSeverities);
   const selectedId = useDfmStore((s) => s.selectedIssueId);
   const selectIssue = useDfmStore((s) => s.selectIssue);
+  // DFM checks the mechanical model — its badges are meaningless (and visually
+  // bleed through, via drei's portalled <Html>) while editing a circuit.
+  const electronicsActive = useElectronicsStore((s) => s.active);
 
   // Filter + group issues at the same anchor so we don't stack a dozen
   // badges on one face. Quantize anchors to 0.5 mm. Filtering is done
@@ -48,7 +52,7 @@ export function DfmAnnotations() {
     return groupByAnchor(issues);
   }, [report, visibleSeverities]);
 
-  if (!enabled || grouped.length === 0) return null;
+  if (!enabled || grouped.length === 0 || electronicsActive) return null;
 
   return (
     <group>
