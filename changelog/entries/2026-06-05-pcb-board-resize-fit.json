@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-05-pcb-board-resize-fit",
+  "version": "0.9.4",
+  "date": "2026-06-05",
+  "category": "feat",
+  "title": "Editable PCB board size + fit to enclosure",
+  "summary": "Resize the board inline from the Circuit panel, or fit it to the surrounding mechanical parts with one click.",
+  "features": ["pcb", "ecad", "co-design"],
+  "mcpTools": []
+}

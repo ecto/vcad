@@ -8,8 +8,37 @@
  * transform when nothing is selected). Shown whenever electronics is active.
  */
 
-import { useDocumentStore, useCoreElectronicsStore, getNodePcb } from "@vcad/core";
+import { useState } from "react";
+import {
+  useDocumentStore,
+  useCoreElectronicsStore,
+  useEngineStore,
+  getNodePcb,
+  isPcbBoardPart,
+  findPcbBoardPart,
+  getPcbBoardTransform,
+} from "@vcad/core";
+import type { Pcb } from "@vcad/ir";
 import { useElectronicsStore } from "@/stores/electronics-store";
+import { useNotificationStore } from "@/stores/notification-store";
+import { aabbOfPositions, mergeAabbs, type Aabb } from "@/lib/pcb-interference";
+
+/** Clearance (mm) inset between the board edge and the enclosure walls on a fit. */
+const ENCLOSURE_CLEARANCE = 2;
+
+/** W×H (mm) of a board outline's bounding box. */
+function outlineWH(pcb: Pcb): { w: number; h: number } {
+  const verts = pcb.outline.vertices;
+  if (verts.length < 3) return { w: 0, h: 0 };
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const v of verts) {
+    if (v.x < minX) minX = v.x;
+    if (v.x > maxX) maxX = v.x;
+    if (v.y < minY) minY = v.y;
+    if (v.y > maxY) maxY = v.y;
+  }
+  return { w: maxX - minX, h: maxY - minY };
+}
 
 function Stat({
   label,
@@ -30,6 +59,150 @@ function Stat({
   );
 }
 
+/**
+ * Editable board-size chip: shows W×H, click to edit, plus a "Fit" button that
+ * sizes + positions the board to the surrounding mechanical parts (the ECAD↔MCAD
+ * co-design link). Resizing re-extrudes the FR4 slab via the kernel.
+ */
+function BoardSizeControl({ pcb }: { pcb: Pcb }) {
+  const activeBoardNodeId = useCoreElectronicsStore((s) => s.activeBoardNodeId);
+  const document = useDocumentStore((s) => s.document);
+  const parts = useDocumentStore((s) => s.parts);
+  const scene = useEngineStore((s) => s.scene);
+  const resizeBoard = useDocumentStore((s) => s.resizeBoard);
+  const setTranslation = useDocumentStore((s) => s.setTranslation);
+  const addToast = useNotificationStore((s) => s.addToast);
+
+  const [editing, setEditing] = useState<{ w: string; h: string } | null>(null);
+
+  const { w, h } = outlineWH(pcb);
+
+  // Count non-board mechanical parts that actually carry a mesh, so "Fit" only
+  // shows once there's geometry to fit to (gating on part identity alone races
+  // the mesh eval — the button would appear a frame before fitting can work).
+  let mechCount = 0;
+  scene?.parts.forEach((ep, idx) => {
+    const pi = parts[idx];
+    if (pi && !isPcbBoardPart(pi) && (ep.mesh?.positions?.length ?? 0) > 0) mechCount++;
+  });
+
+  const commit = () => {
+    if (!editing) return;
+    const nw = parseFloat(editing.w);
+    const nh = parseFloat(editing.h);
+    if (isFinite(nw) && isFinite(nh) && nw > 0 && nh > 0) {
+      resizeBoard(nw, nh);
+    }
+    setEditing(null);
+  };
+
+  const fitToEnclosure = () => {
+    // Gather world-space AABBs of every non-board part, union into the
+    // enclosure box, then size + place the board to fill its XY footprint.
+    const mech: Aabb[] = [];
+    scene?.parts.forEach((ep, idx) => {
+      const pi = parts[idx];
+      if (pi && isPcbBoardPart(pi)) return;
+      const bb = aabbOfPositions(ep.mesh?.positions);
+      if (bb) mech.push(bb);
+    });
+    const enc = mergeAabbs(mech);
+    if (!enc) {
+      addToast("No surrounding parts to fit the board to", "info");
+      return;
+    }
+    const clr = ENCLOSURE_CLEARANCE;
+    const targetW = enc.max[0] - enc.min[0] - 2 * clr;
+    const targetH = enc.max[1] - enc.min[1] - 2 * clr;
+    if (targetW < 1 || targetH < 1) {
+      addToast("Surrounding parts are too small to fit a board", "info");
+      return;
+    }
+
+    // Outline is board-local; divide out the board's scale so the *world*
+    // footprint matches the enclosure (rotation is assumed axis-aligned).
+    const boardPart =
+      activeBoardNodeId != null ? findPcbBoardPart(parts, activeBoardNodeId) : null;
+    const xf = boardPart ? getPcbBoardTransform(document, boardPart) : null;
+    const sx = xf && xf.scale.x !== 0 ? xf.scale.x : 1;
+    const sy = xf && xf.scale.y !== 0 ? xf.scale.y : 1;
+    resizeBoard(targetW / sx, targetH / sy);
+
+    // Position the board's local origin at the enclosure's min corner + clearance,
+    // preserving its current Z so vertical placement is untouched.
+    if (boardPart) {
+      setTranslation(boardPart.id, {
+        x: enc.min[0] + clr,
+        y: enc.min[1] + clr,
+        z: xf?.position.z ?? 0,
+      });
+    }
+    addToast(
+      `Board fit to enclosure · ${Math.round(targetW)}×${Math.round(targetH)}mm`,
+      "success",
+    );
+  };
+
+  if (editing) {
+    return (
+      <span className="inline-flex items-center gap-0.5">
+        <input
+          aria-label="Board width (mm)"
+          type="number"
+          autoFocus
+          value={editing.w}
+          onChange={(e) => setEditing({ ...editing, w: e.target.value })}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commit();
+            if (e.key === "Escape") setEditing(null);
+          }}
+          className="w-10 bg-surface border border-border rounded px-1 py-0.5 text-text text-[11px] tabular-nums"
+        />
+        <span className="text-text-muted">×</span>
+        <input
+          aria-label="Board height (mm)"
+          type="number"
+          value={editing.h}
+          onChange={(e) => setEditing({ ...editing, h: e.target.value })}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commit();
+            if (e.key === "Escape") setEditing(null);
+          }}
+          className="w-10 bg-surface border border-border rounded px-1 py-0.5 text-text text-[11px] tabular-nums"
+        />
+        <button
+          onClick={commit}
+          className="ml-0.5 px-1 py-0.5 rounded text-accent hover:bg-accent/10"
+          title="Apply board size"
+        >
+          ✓
+        </button>
+      </span>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1">
+      <button
+        onClick={() => setEditing({ w: String(Math.round(w)), h: String(Math.round(h)) })}
+        className="text-text-muted hover:text-text underline decoration-dotted underline-offset-2"
+        title="Edit board size"
+      >
+        {Math.round(w)}×{Math.round(h)}mm
+      </button>
+      {mechCount > 0 && (
+        <button
+          onClick={fitToEnclosure}
+          className="px-1 py-0.5 rounded border border-border text-text-muted hover:text-text hover:border-accent/60"
+          title="Resize + position the board to fit the surrounding parts"
+        >
+          Fit
+        </button>
+      )}
+    </span>
+  );
+}
+
 export function ElectronicsPanelHeader() {
   const focusedPane = useElectronicsStore((s) => s.focusedPane);
   const schTool = useElectronicsStore((s) => s.schTool);
@@ -46,19 +219,6 @@ export function ElectronicsPanelHeader() {
   const currentTool = focusedPane === "pcb" ? pcbTool : schTool;
   const toolLabel = currentTool.charAt(0).toUpperCase() + currentTool.slice(1);
 
-  // Compact board-size readout (W×H from the outline bbox), shown by the title.
-  let boardDims: string | null = null;
-  const verts = pcb?.outline.vertices;
-  if (verts && verts.length >= 3) {
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (const v of verts) {
-      if (v.x < minX) minX = v.x;
-      if (v.x > maxX) maxX = v.x;
-      if (v.y < minY) minY = v.y;
-      if (v.y > maxY) maxY = v.y;
-    }
-    boardDims = `${Math.round(maxX - minX)}×${Math.round(maxY - minY)}mm`;
-  }
   const drcErrors = drcViolations.filter((v) => v.severity === "Error").length;
   const drcWarnings = drcViolations.length - drcErrors;
   const ercCount = ercViolations.length;
@@ -68,9 +228,9 @@ export function ElectronicsPanelHeader() {
     <div className="shrink-0 border-b border-border/40 bg-surface/60 px-3 py-2 text-[11px]">
       {/* Title + health */}
       <div className="flex items-center justify-between gap-2">
-        <span className="flex items-baseline gap-1.5 min-w-0">
+        <span className="flex items-center gap-1.5 min-w-0">
           <span className="font-medium text-text">Circuit</span>
-          {boardDims && <span className="truncate text-text-muted">{boardDims}</span>}
+          {pcb && <BoardSizeControl pcb={pcb} />}
         </span>
         <div className="flex items-center gap-2 shrink-0">
           <span className="inline-flex items-center gap-1" title="DRC errors / warnings">
