@@ -666,6 +666,60 @@ export function ViewportContent({
     };
   }, [invalidate]);
 
+  // Initial-paint burst for `frameloop="demand"`. The first meaningful frame
+  // depends on several pieces that settle across the first few hundred ms of a
+  // mount/reload, none of which reliably schedules a demand frame on its own:
+  //   - the async engine `scene` arriving from the worker,
+  //   - the EffectComposer (mounts only once `engineReady`) taking over the
+  //     render path,
+  //   - canvas/camera sizing landing via the ResizeObserver,
+  //   - child meshes populating geometry buffers imperatively (invisible to
+  //     R3F's reconciler).
+  // When the last of these lands without a frame queued, the viewport sits
+  // populated-but-unpainted — the intermittent "white screen" that only a
+  // stray orbit/resize would clear. Rather than guess which signal is last,
+  // pump invalidate() across the first ~600ms so whichever frame the scene
+  // becomes drawable in actually paints. A single well-timed kick persists, so
+  // this converges; it's self-terminating and costs nothing after load.
+  useEffect(() => {
+    let raf = 0;
+    let n = 0;
+    const pump = () => {
+      invalidate();
+      if (++n < 36) raf = requestAnimationFrame(pump);
+    };
+    pump();
+    return () => cancelAnimationFrame(raf);
+  }, [invalidate]);
+
+  // Repaint whenever the rendered scene swaps (later edits / re-evaluations) —
+  // the imperative geometry build in child meshes wouldn't otherwise schedule a
+  // frame. Cheap: engine re-evaluations are user-paced.
+  useEffect(() => {
+    invalidate();
+  }, [invalidate, scene, previewMesh, engineReady]);
+
+  // Repaint on visibility/focus transitions that R3F can't see: returning from
+  // a backgrounded tab, or switching back from a full-screen overlay (the
+  // schematic) to the 3D viewport. Also covers any document edit that mutates
+  // the scene imperatively without going through the engine scene swap above.
+  useEffect(() => {
+    const kick = () => invalidate();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") invalidate();
+    };
+    const unsubDoc = useDocumentStore.subscribe(kick);
+    window.addEventListener("focus", kick);
+    window.addEventListener("pageshow", kick);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      unsubDoc();
+      window.removeEventListener("focus", kick);
+      window.removeEventListener("pageshow", kick);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [invalidate]);
+
   // Per-frame participant-camera sync (Follow + Lock).
   //
   //  - Lock   : hard-copy the followed participant's camera every frame
