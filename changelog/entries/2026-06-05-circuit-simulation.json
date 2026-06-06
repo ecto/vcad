@@ -1,0 +1,9 @@
+{
+  "id": "2026-06-05-circuit-simulation",
+  "version": "0.9.4",
+  "date": "2026-06-05",
+  "category": "feat",
+  "title": "Live circuit simulation — circuits come alive",
+  "summary": "Hit Simulate and the schematic comes alive: wires colour by voltage, LEDs glow, and a DC motor's rotor spins — a transient MNA solver stepping every frame.",
+  "features": ["electronics", "simulation", "circuit"]
+}

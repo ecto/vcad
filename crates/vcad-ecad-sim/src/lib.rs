@@ -9,10 +9,12 @@
 //!
 //! # Modules
 //!
+//! - [`circuit`] — Lumped-element transient circuit simulation (MNA network solver)
 //! - [`impedance`] — Characteristic impedance for microstrip and stripline geometries
 //! - [`signal_integrity`] — Propagation delay, crosstalk estimation, length matching
 //! - [`thermal`] — Component junction temperature and via thermal resistance
 
+pub mod circuit;
 pub mod impedance;
 pub mod signal_integrity;
 pub mod thermal;

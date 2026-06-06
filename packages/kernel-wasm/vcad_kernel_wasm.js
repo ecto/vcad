@@ -1,6 +1,83 @@
 /* @ts-self-types="./vcad_kernel_wasm.d.ts" */
 
 /**
+ * A live circuit simulation. Build from a [`CircuitSpec`] JSON, then `step`.
+ */
+export class CircuitSim {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        CircuitSimFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_circuitsim_free(ptr, 0);
+    }
+    /**
+     * The configured timestep (s).
+     * @returns {number}
+     */
+    dt() {
+        const ret = wasm.circuitsim_dt(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * Build a simulation from a JSON `{ dt, devices: [...] }` spec.
+     * @param {string} spec_json
+     */
+    constructor(spec_json) {
+        const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.circuitsim_new(ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0] >>> 0;
+        CircuitSimFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * Current state without advancing time.
+     * @returns {any}
+     */
+    observe() {
+        const ret = wasm.circuitsim_observe(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * Reset to the power-on state (caps discharged, inductors zero, t = 0).
+     */
+    reset() {
+        wasm.circuitsim_reset(this.__wbg_ptr);
+    }
+    /**
+     * Mutate a device's primary scalar (drive a switch / PWM / scrubbed value).
+     * @param {number} device_id
+     * @param {number} value
+     */
+    setValue(device_id, value) {
+        wasm.circuitsim_setValue(this.__wbg_ptr, device_id, value);
+    }
+    /**
+     * Advance the simulation by `n` timesteps; returns the final observation.
+     * @param {number} n
+     * @returns {any}
+     */
+    step(n) {
+        const ret = wasm.circuitsim_step(this.__wbg_ptr, n);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+}
+if (Symbol.dispose) CircuitSim.prototype[Symbol.dispose] = CircuitSim.prototype.free;
+
+/**
  * Physics simulation environment for robotics and RL.
  *
  * This provides a gym-style interface for simulating robot assemblies
@@ -1545,7 +1622,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get feed_rate() {
-        const ret = wasm.__wbg_get_wasmcamsettings_feed_rate(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_slicersettings_nozzle_diameter(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1553,7 +1630,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get plunge_rate() {
-        const ret = wasm.__wbg_get_wasmcamsettings_plunge_rate(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_slicersettings_line_width(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1569,7 +1646,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get safe_z() {
-        const ret = wasm.__wbg_get_wasmcamsettings_safe_z(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_slicersettings_support_angle(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1577,7 +1654,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get spindle_rpm() {
-        const ret = wasm.__wbg_get_wasmcamsettings_spindle_rpm(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_slicersettings_infill_density(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1585,7 +1662,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get stepdown() {
-        const ret = wasm.__wbg_get_wasmcamsettings_stepdown(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_slicersettings_first_layer_height(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1593,7 +1670,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get stepover() {
-        const ret = wasm.__wbg_get_wasmcamsettings_stepover(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_slicersettings_layer_height(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1601,14 +1678,14 @@ export class WasmCamSettings {
      * @param {number} arg0
      */
     set feed_rate(arg0) {
-        wasm.__wbg_set_wasmcamsettings_feed_rate(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_slicersettings_nozzle_diameter(this.__wbg_ptr, arg0);
     }
     /**
      * Plunge rate (mm/min).
      * @param {number} arg0
      */
     set plunge_rate(arg0) {
-        wasm.__wbg_set_wasmcamsettings_plunge_rate(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_slicersettings_line_width(this.__wbg_ptr, arg0);
     }
     /**
      * Retract Z height (mm).
@@ -1622,28 +1699,28 @@ export class WasmCamSettings {
      * @param {number} arg0
      */
     set safe_z(arg0) {
-        wasm.__wbg_set_wasmcamsettings_safe_z(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_slicersettings_support_angle(this.__wbg_ptr, arg0);
     }
     /**
      * Spindle RPM.
      * @param {number} arg0
      */
     set spindle_rpm(arg0) {
-        wasm.__wbg_set_wasmcamsettings_spindle_rpm(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_slicersettings_infill_density(this.__wbg_ptr, arg0);
     }
     /**
      * Stepdown distance (mm).
      * @param {number} arg0
      */
     set stepdown(arg0) {
-        wasm.__wbg_set_wasmcamsettings_stepdown(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_slicersettings_first_layer_height(this.__wbg_ptr, arg0);
     }
     /**
      * Stepover distance (mm).
      * @param {number} arg0
      */
     set stepover(arg0) {
-        wasm.__wbg_set_wasmcamsettings_stepover(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_slicersettings_layer_height(this.__wbg_ptr, arg0);
     }
     /**
      * Create from JSON.
@@ -4126,7 +4203,7 @@ export function isEcadAvailable() {
  * @returns {boolean}
  */
 export function isEmbroideryAvailable() {
-    const ret = wasm.isCamAvailable();
+    const ret = wasm.isEcadAvailable();
     return ret !== 0;
 }
 
@@ -4153,7 +4230,7 @@ export function isPhysicsAvailable() {
  * @returns {boolean}
  */
 export function isSlicerAvailable() {
-    const ret = wasm.isEcadAvailable();
+    const ret = wasm.isCamAvailable();
     return ret !== 0;
 }
 
@@ -6952,12 +7029,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2199, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2200, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2208, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2209, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2983, function: Function { arguments: [Externref], shim_idx: 2984, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2992, function: Function { arguments: [Externref], shim_idx: 2993, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
             return ret;
         },
@@ -7072,6 +7149,9 @@ const __wbindgen_enum_GpuIndexFormat = ["uint16", "uint32"];
 
 
 const __wbindgen_enum_GpuTextureFormat = ["r8unorm", "r8snorm", "r8uint", "r8sint", "r16uint", "r16sint", "r16float", "rg8unorm", "rg8snorm", "rg8uint", "rg8sint", "r32uint", "r32sint", "r32float", "rg16uint", "rg16sint", "rg16float", "rgba8unorm", "rgba8unorm-srgb", "rgba8snorm", "rgba8uint", "rgba8sint", "bgra8unorm", "bgra8unorm-srgb", "rgb9e5ufloat", "rgb10a2uint", "rgb10a2unorm", "rg11b10ufloat", "rg32uint", "rg32sint", "rg32float", "rgba16uint", "rgba16sint", "rgba16float", "rgba32uint", "rgba32sint", "rgba32float", "stencil8", "depth16unorm", "depth24plus", "depth24plus-stencil8", "depth32float", "depth32float-stencil8", "bc1-rgba-unorm", "bc1-rgba-unorm-srgb", "bc2-rgba-unorm", "bc2-rgba-unorm-srgb", "bc3-rgba-unorm", "bc3-rgba-unorm-srgb", "bc4-r-unorm", "bc4-r-snorm", "bc5-rg-unorm", "bc5-rg-snorm", "bc6h-rgb-ufloat", "bc6h-rgb-float", "bc7-rgba-unorm", "bc7-rgba-unorm-srgb", "etc2-rgb8unorm", "etc2-rgb8unorm-srgb", "etc2-rgb8a1unorm", "etc2-rgb8a1unorm-srgb", "etc2-rgba8unorm", "etc2-rgba8unorm-srgb", "eac-r11unorm", "eac-r11snorm", "eac-rg11unorm", "eac-rg11snorm", "astc-4x4-unorm", "astc-4x4-unorm-srgb", "astc-5x4-unorm", "astc-5x4-unorm-srgb", "astc-5x5-unorm", "astc-5x5-unorm-srgb", "astc-6x5-unorm", "astc-6x5-unorm-srgb", "astc-6x6-unorm", "astc-6x6-unorm-srgb", "astc-8x5-unorm", "astc-8x5-unorm-srgb", "astc-8x6-unorm", "astc-8x6-unorm-srgb", "astc-8x8-unorm", "astc-8x8-unorm-srgb", "astc-10x5-unorm", "astc-10x5-unorm-srgb", "astc-10x6-unorm", "astc-10x6-unorm-srgb", "astc-10x8-unorm", "astc-10x8-unorm-srgb", "astc-10x10-unorm", "astc-10x10-unorm-srgb", "astc-12x10-unorm", "astc-12x10-unorm-srgb", "astc-12x12-unorm", "astc-12x12-unorm-srgb"];
+const CircuitSimFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_circuitsim_free(ptr >>> 0, 1));
 const PhysicsSimFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_physicssim_free(ptr >>> 0, 1));

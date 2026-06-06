@@ -7,6 +7,8 @@
 //! When compiled with the `ts-rs` feature, this crate exports TypeScript type definitions
 //! for all serializable types. Run `cargo test --features ts-rs` to generate types.
 
+#[cfg(feature = "ecad")]
+pub mod circuit_sim;
 pub mod document_engine;
 pub mod keybindings;
 pub mod sheet_metal;

@@ -2,6 +2,38 @@
 /* eslint-disable */
 
 /**
+ * A live circuit simulation. Build from a [`CircuitSpec`] JSON, then `step`.
+ */
+export class CircuitSim {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * The configured timestep (s).
+     */
+    dt(): number;
+    /**
+     * Build a simulation from a JSON `{ dt, devices: [...] }` spec.
+     */
+    constructor(spec_json: string);
+    /**
+     * Current state without advancing time.
+     */
+    observe(): any;
+    /**
+     * Reset to the power-on state (caps discharged, inductors zero, t = 0).
+     */
+    reset(): void;
+    /**
+     * Mutate a device's primary scalar (drive a switch / PWM / scrubbed value).
+     */
+    setValue(device_id: number, value: number): void;
+    /**
+     * Advance the simulation by `n` timesteps; returns the final observation.
+     */
+    step(n: number): any;
+}
+
+/**
  * Physics simulation environment for robotics and RL.
  *
  * This provides a gym-style interface for simulating robot assemblies
@@ -2202,6 +2234,16 @@ export interface InitOutput {
     readonly solid_fillet: (a: number, b: number) => number;
     readonly solid_shell: (a: number, b: number) => number;
     readonly getCompiledModule: () => any;
+    readonly __wbg_wasmkeybindings_free: (a: number, b: number) => void;
+    readonly wasmkeybindings_chordFor: (a: number, b: number, c: number) => [number, number];
+    readonly wasmkeybindings_commandsJson: (a: number) => [number, number];
+    readonly wasmkeybindings_conflictsJson: (a: number, b: number, c: number) => [number, number];
+    readonly wasmkeybindings_loadOverrides: (a: number, b: number, c: number) => number;
+    readonly wasmkeybindings_new: () => number;
+    readonly wasmkeybindings_resetAll: (a: number) => void;
+    readonly wasmkeybindings_resolve: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
+    readonly wasmkeybindings_saveOverrides: (a: number) => [number, number];
+    readonly wasmkeybindings_setBinding: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly checkSheetMetal: (a: number, b: number, c: number, d: number) => [number, number];
     readonly costSheetMetal: (a: number, b: number, c: number, d: number, e: number) => [number, number];
     readonly evaluateSheetMetalChain: (a: number, b: number) => [number, number];
@@ -2210,7 +2252,94 @@ export interface InitOutput {
     readonly nestSheetMetalParts: (a: number, b: number, c: number, d: number) => [number, number];
     readonly nestedSheetMetalDxf: (a: number, b: number) => [number, number];
     readonly sheetMetalSequence: (a: number, b: number) => [number, number];
+    readonly __wbg_get_slicersettings_first_layer_height: (a: number) => number;
+    readonly __wbg_get_slicersettings_infill_density: (a: number) => number;
+    readonly __wbg_get_slicersettings_infill_pattern: (a: number) => number;
+    readonly __wbg_get_slicersettings_layer_height: (a: number) => number;
+    readonly __wbg_get_slicersettings_line_width: (a: number) => number;
+    readonly __wbg_get_slicersettings_nozzle_diameter: (a: number) => number;
+    readonly __wbg_get_slicersettings_support_angle: (a: number) => number;
+    readonly __wbg_get_slicersettings_support_enabled: (a: number) => number;
+    readonly __wbg_get_slicersettings_wall_count: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;
+    readonly __wbg_set_slicersettings_first_layer_height: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_infill_density: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_infill_pattern: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_layer_height: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_line_width: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_nozzle_diameter: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_support_angle: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_support_enabled: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_wall_count: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_retract_z: (a: number, b: number) => void;
+    readonly __wbg_sliceresult_free: (a: number, b: number) => void;
+    readonly __wbg_slicersettings_free: (a: number, b: number) => void;
+    readonly __wbg_wasmcamsettings_free: (a: number, b: number) => void;
+    readonly analyzeForPrinting: (a: number) => [number, number, number];
+    readonly camDropCutter: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
+    readonly camExportGcode: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+    readonly camExportLinuxCnc: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly camGenerateCircularPocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+    readonly camGenerateContour: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number, number, number];
+    readonly camGenerateFace: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly camGeneratePocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly camGenerateRoughing3d: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
+    readonly camGetDefaultTools: () => [number, number, number, number];
+    readonly camToolpathStats: (a: number, b: number) => [number, number, number];
+    readonly checkPrintability: (a: number, b: number, c: number) => [number, number, number];
+    readonly estimatePrintCost: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly generate3mf: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly generate3mfWithGcode: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
+    readonly generateGcode: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly getSlicerPrinterProfiles: () => [number, number, number];
+    readonly isCamAvailable: () => number;
+    readonly recommendPrintSettings: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly sliceMesh: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
+    readonly sliceMeshWithProgress: (a: number, b: number, c: number, d: number, e: number, f: any) => [number, number, number];
+    readonly sliceSolid: (a: number, b: number, c: number) => [number, number, number];
+    readonly sliceresult_filamentGrams: (a: number) => number;
+    readonly sliceresult_filamentMm: (a: number) => number;
+    readonly sliceresult_getLayerPreview: (a: number, b: number) => [number, number, number];
+    readonly sliceresult_layerCount: (a: number) => number;
+    readonly sliceresult_printTimeSeconds: (a: number) => number;
+    readonly sliceresult_statsJson: (a: number) => [number, number, number, number];
+    readonly slicersettings_fromJson: (a: number, b: number) => [number, number, number];
+    readonly slicersettings_new: () => number;
+    readonly wasmcamsettings_fromJson: (a: number, b: number) => [number, number, number];
+    readonly wasmcamsettings_new: () => number;
+    readonly isSlicerAvailable: () => number;
+    readonly __wbg_set_wasmcamsettings_feed_rate: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_plunge_rate: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_safe_z: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_spindle_rpm: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_stepdown: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_stepover: (a: number, b: number) => void;
+    readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_safe_z: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_spindle_rpm: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_stepdown: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_stepover: (a: number) => number;
     readonly __wbg_wasmdocumentengine_free: (a: number, b: number) => void;
+    readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly ecadBuiltinSymbols: () => [number, number, number];
+    readonly ecadCheckDrc: (a: number, b: number) => [number, number, number];
+    readonly ecadCheckErc: (a: number, b: number) => [number, number, number];
+    readonly ecadComponentMeshes: (a: number, b: number) => [number, number, number];
+    readonly ecadComputeRatsnest: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly ecadFillZones: (a: number, b: number) => [number, number, number];
+    readonly ecadGenerateNetlist: (a: number, b: number) => [number, number, number];
+    readonly ecadGetSymbol: (a: number, b: number) => [number, number, number];
+    readonly ecadLayerZ: (a: number, b: number, c: number, d: number) => number;
+    readonly ecadNetForWire: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly ecadRouteNet: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
+    readonly ecadRouteNetShove: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
+    readonly ecadSnapToGridOrPin: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly isEcadAvailable: () => number;
+    readonly parseKicadPcb: (a: number, b: number) => [number, number, number];
+    readonly readEmbroideryDst: (a: number, b: number) => [number, number, number, number];
+    readonly readEmbroideryPes: (a: number, b: number) => [number, number, number, number];
     readonly wasmdocumentengine_add_feature: (a: number, b: number, c: number) => any;
     readonly wasmdocumentengine_can_redo: (a: number) => number;
     readonly wasmdocumentengine_can_undo: (a: number) => number;
@@ -2241,6 +2370,9 @@ export interface InitOutput {
     readonly wasmdocumentengine_set_visible: (a: number, b: number, c: number, d: number) => any;
     readonly wasmdocumentengine_undo: (a: number) => any;
     readonly wasmdocumentengine_update_feature: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
+    readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
+    readonly isEmbroideryAvailable: () => number;
     readonly __wbg_wasmsketchsession_free: (a: number, b: number) => void;
     readonly sketchCircleSegments: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly sketchHitTest: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
@@ -2272,106 +2404,13 @@ export interface InitOutput {
     readonly wasmsketchsession_solve: (a: number) => number;
     readonly wasmsketchsession_toggleSelection: (a: number, b: number) => void;
     readonly wasmsketchsession_undo: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_safe_z: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_spindle_rpm: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_stepdown: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_stepover: (a: number) => number;
-    readonly __wbg_set_wasmcamsettings_feed_rate: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_plunge_rate: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_retract_z: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_safe_z: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_spindle_rpm: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_stepdown: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_stepover: (a: number, b: number) => void;
-    readonly __wbg_wasmcamsettings_free: (a: number, b: number) => void;
-    readonly __wbg_wasmkeybindings_free: (a: number, b: number) => void;
-    readonly camDropCutter: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
-    readonly camExportGcode: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
-    readonly camExportLinuxCnc: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly camGenerateCircularPocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
-    readonly camGenerateContour: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number, number, number];
-    readonly camGenerateFace: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly camGeneratePocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly camGenerateRoughing3d: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
-    readonly camGetDefaultTools: () => [number, number, number, number];
-    readonly camToolpathStats: (a: number, b: number) => [number, number, number];
-    readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
-    readonly isCamAvailable: () => number;
-    readonly readEmbroideryDst: (a: number, b: number) => [number, number, number, number];
-    readonly readEmbroideryPes: (a: number, b: number) => [number, number, number, number];
-    readonly wasmcamsettings_fromJson: (a: number, b: number) => [number, number, number];
-    readonly wasmcamsettings_new: () => number;
-    readonly wasmkeybindings_chordFor: (a: number, b: number, c: number) => [number, number];
-    readonly wasmkeybindings_commandsJson: (a: number) => [number, number];
-    readonly wasmkeybindings_conflictsJson: (a: number, b: number, c: number) => [number, number];
-    readonly wasmkeybindings_loadOverrides: (a: number, b: number, c: number) => number;
-    readonly wasmkeybindings_new: () => number;
-    readonly wasmkeybindings_resetAll: (a: number) => void;
-    readonly wasmkeybindings_resolve: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
-    readonly wasmkeybindings_saveOverrides: (a: number) => [number, number];
-    readonly wasmkeybindings_setBinding: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
-    readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
-    readonly isEmbroideryAvailable: () => number;
-    readonly __wbg_get_slicersettings_first_layer_height: (a: number) => number;
-    readonly __wbg_get_slicersettings_infill_density: (a: number) => number;
-    readonly __wbg_get_slicersettings_infill_pattern: (a: number) => number;
-    readonly __wbg_get_slicersettings_layer_height: (a: number) => number;
-    readonly __wbg_get_slicersettings_line_width: (a: number) => number;
-    readonly __wbg_get_slicersettings_nozzle_diameter: (a: number) => number;
-    readonly __wbg_get_slicersettings_support_angle: (a: number) => number;
-    readonly __wbg_get_slicersettings_support_enabled: (a: number) => number;
-    readonly __wbg_get_slicersettings_wall_count: (a: number) => number;
-    readonly __wbg_set_slicersettings_first_layer_height: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_infill_density: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_infill_pattern: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_layer_height: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_line_width: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_nozzle_diameter: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_support_angle: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_support_enabled: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_wall_count: (a: number, b: number) => void;
-    readonly __wbg_sliceresult_free: (a: number, b: number) => void;
-    readonly __wbg_slicersettings_free: (a: number, b: number) => void;
-    readonly analyzeForPrinting: (a: number) => [number, number, number];
-    readonly checkPrintability: (a: number, b: number, c: number) => [number, number, number];
-    readonly ecadBuiltinSymbols: () => [number, number, number];
-    readonly ecadCheckDrc: (a: number, b: number) => [number, number, number];
-    readonly ecadCheckErc: (a: number, b: number) => [number, number, number];
-    readonly ecadComponentMeshes: (a: number, b: number) => [number, number, number];
-    readonly ecadComputeRatsnest: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly ecadFillZones: (a: number, b: number) => [number, number, number];
-    readonly ecadGenerateNetlist: (a: number, b: number) => [number, number, number];
-    readonly ecadGetSymbol: (a: number, b: number) => [number, number, number];
-    readonly ecadLayerZ: (a: number, b: number, c: number, d: number) => number;
-    readonly ecadNetForWire: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly ecadRouteNet: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
-    readonly ecadRouteNetShove: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
-    readonly ecadSnapToGridOrPin: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly estimatePrintCost: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly generate3mf: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly generate3mfWithGcode: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
-    readonly generateGcode: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
-    readonly getSlicerPrinterProfiles: () => [number, number, number];
-    readonly isEcadAvailable: () => number;
-    readonly parseKicadPcb: (a: number, b: number) => [number, number, number];
-    readonly recommendPrintSettings: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly sliceMesh: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
-    readonly sliceMeshWithProgress: (a: number, b: number, c: number, d: number, e: number, f: any) => [number, number, number];
-    readonly sliceSolid: (a: number, b: number, c: number) => [number, number, number];
-    readonly sliceresult_filamentGrams: (a: number) => number;
-    readonly sliceresult_filamentMm: (a: number) => number;
-    readonly sliceresult_getLayerPreview: (a: number, b: number) => [number, number, number];
-    readonly sliceresult_layerCount: (a: number) => number;
-    readonly sliceresult_printTimeSeconds: (a: number) => number;
-    readonly sliceresult_statsJson: (a: number) => [number, number, number, number];
-    readonly slicersettings_fromJson: (a: number, b: number) => [number, number, number];
-    readonly slicersettings_new: () => number;
-    readonly isSlicerAvailable: () => number;
+    readonly __wbg_circuitsim_free: (a: number, b: number) => void;
+    readonly circuitsim_dt: (a: number) => number;
+    readonly circuitsim_new: (a: number, b: number) => [number, number, number];
+    readonly circuitsim_observe: (a: number) => [number, number, number];
+    readonly circuitsim_reset: (a: number) => void;
+    readonly circuitsim_setValue: (a: number, b: number, c: number) => void;
+    readonly circuitsim_step: (a: number, b: number) => [number, number, number];
     readonly wasm_bindgen__closure__destroy__h30743bca3150d93c: (a: number, b: number) => void;
     readonly wasm_bindgen__closure__destroy__hfdadf281ff0f1c56: (a: number, b: number) => void;
     readonly wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e: (a: number, b: number, c: any, d: any) => void;

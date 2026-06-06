@@ -146,6 +146,7 @@ export {
   builtinSymbols,
   computeRatsnest,
   componentMeshes,
+  createCircuitSim,
 } from "./ecad.js";
 export type {
   DrcViolationResult,
@@ -157,6 +158,8 @@ export type {
   FilledZoneResult,
   RatsnestLine,
   ComponentMesh,
+  CircuitObservation,
+  CircuitSimHandle,
 } from "./ecad.js";
 
 // Parts library

@@ -429,6 +429,28 @@ pub fn builtin_symbols() -> Vec<SymbolDef> {
                 ],
             }),
         },
+        // DC Motor (electromechanical — spins under simulation)
+        SymbolDef {
+            id: "motor".into(),
+            name: "Motor".into(),
+            prefix: "M".into(),
+            default_value: "DC".into(),
+            pins: vec![
+                pin("1", "+", PinType::Passive, -8.0, 15.0),
+                pin("2", "-", PinType::Passive, 48.0, 15.0),
+            ],
+            graphics: vec![
+                sym_circle(20.0, 15.0, 14.0),
+                sym_line(-8.0, 15.0, 6.0, 15.0),
+                sym_line(34.0, 15.0, 48.0, 15.0),
+                // an "M" inside the circle
+                sym_line(14.0, 22.0, 14.0, 8.0),
+                sym_line(14.0, 8.0, 20.0, 15.0),
+                sym_line(20.0, 15.0, 26.0, 8.0),
+                sym_line(26.0, 8.0, 26.0, 22.0),
+            ],
+            footprint_template: None,
+        },
         // NPN Transistor
         SymbolDef {
             id: "npn".into(),
@@ -698,7 +720,14 @@ mod tests {
     #[test]
     fn builtin_symbols_count() {
         let symbols = builtin_symbols();
-        assert_eq!(symbols.len(), 16);
+        assert_eq!(symbols.len(), 17); // + Motor
+    }
+
+    #[test]
+    fn motor_symbol_present() {
+        let m = get_symbol("motor").expect("motor symbol");
+        assert_eq!(m.prefix, "M");
+        assert_eq!(m.pins.len(), 2);
     }
 
     #[test]
