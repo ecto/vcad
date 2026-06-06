@@ -6,7 +6,7 @@
  * Supports place, wire, label, delete, and move tools.
  */
 
-import { useRef, useCallback, useState, useMemo } from "react";
+import { useRef, useCallback, useState, useMemo, useEffect } from "react";
 import { useDocumentStore, getPcbNodeIds } from "@vcad/core";
 import type { SchematicComponent, SchematicWire } from "@vcad/ir";
 import { useElectronicsStore } from "@/stores/electronics-store";
@@ -261,6 +261,18 @@ export function SchematicCanvas() {
 
   const select = useElectronicsStore((s) => s.select);
   const setHoveredNet = useElectronicsStore((s) => s.setHoveredNet);
+
+  // Escape cancels an in-progress wire (the universal EDA reflex; complements
+  // the right-click cancel and double-click finish).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && schTool === "wire") {
+        useElectronicsStore.getState().cancelSchWire();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [schTool]);
   const zoomAt = useElectronicsStore((s) => s.zoomSchAt);
   const adjustPan = useElectronicsStore((s) => s.adjustSchPan);
   const startSchWire = useElectronicsStore((s) => s.startSchWire);
