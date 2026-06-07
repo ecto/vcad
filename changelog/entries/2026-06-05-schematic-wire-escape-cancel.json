@@ -1,0 +1,9 @@
+{
+  "id": "2026-06-05-schematic-wire-escape-cancel",
+  "version": "0.9.4",
+  "date": "2026-06-05",
+  "category": "fix",
+  "title": "Press Escape to cancel an in-progress schematic wire",
+  "summary": "Drawing a wire and want out? Escape now drops it — the universal EDA reflex, complementing right-click cancel and double-click finish.",
+  "features": ["electronics", "schematic", "ux"]
+}
