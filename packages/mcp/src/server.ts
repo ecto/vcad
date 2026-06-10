@@ -660,7 +660,7 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
           break;
 
         case "route_nets":
-          result = routeNets(args);
+          result = await routeNets(args);
           break;
 
         case "run_drc":

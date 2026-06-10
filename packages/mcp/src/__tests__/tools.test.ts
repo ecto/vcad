@@ -876,12 +876,12 @@ describe("ecad place_components → route_nets pipeline", () => {
     expect(padNets).toEqual(["VCC", "OUT", "OUT", "GND"]);
 
     const routedOut = JSON.parse(
-      routeNets({ document: placedDoc }).content[0].text,
+      (await routeNets({ document: placedDoc })).content[0].text,
     );
     expect(routedOut.success).toBe(true);
     // Only OUT has 2+ pads — VCC and GND are single-pad nets.
     expect(routedOut.nets_routed).toBe(1);
-    expect(routedOut.traces_added).toBe(1);
+    expect(routedOut.traces_added).toBeGreaterThanOrEqual(1);
   });
 
   it("derives pad nets from wire connectivity, not pin names", async () => {
@@ -949,6 +949,112 @@ describe("ecad place_components → route_nets pipeline", () => {
     expect(padNet("R2", "1")).toBe("MID");
     expect(padNet("R1", "1")).toBeUndefined();
     expect(padNet("R2", "2")).toBeUndefined();
+  });
+
+  it("routes nets without same-layer crossings between different nets", async () => {
+    // LED indicator: J1(VCC,GND) → R1(VCC,N1) → D1(N1,GND). Naive
+    // point-to-point routing makes N1 cross the GND trace.
+    const schematicOut = JSON.parse(
+      createSchematic({
+        components: [
+          {
+            ref: "J1",
+            value: "Conn",
+            footprint: "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical",
+            x: 0,
+            y: 0,
+            pins: [
+              { number: "1", name: "VCC", type: "Passive" },
+              { number: "2", name: "GND", type: "Passive" },
+            ],
+          },
+          {
+            ref: "R1",
+            value: "330",
+            footprint: "Resistor_SMD:R_0805_2012Metric",
+            x: 20,
+            y: 0,
+            pins: [
+              { number: "1", name: "VCC", type: "Passive" },
+              { number: "2", name: "N1", type: "Passive" },
+            ],
+          },
+          {
+            ref: "D1",
+            value: "LED",
+            footprint: "LED_SMD:LED_0805_2012Metric",
+            x: 40,
+            y: 0,
+            pins: [
+              { number: "1", name: "N1", type: "Passive" },
+              { number: "2", name: "GND", type: "Passive" },
+            ],
+          },
+        ],
+      }).content[0].text,
+    );
+
+    const placedOut = JSON.parse(
+      (
+        await placeComponents({
+          document: schematicOut.document,
+          board_width: 30,
+          board_height: 30,
+        })
+      ).content[0].text,
+    );
+    const routedOut = JSON.parse(
+      (await routeNets({ document: placedOut.document })).content[0].text,
+    );
+    expect(routedOut.success).toBe(true);
+    expect(routedOut.nets_routed).toBe(3);
+    expect(routedOut.fallback_nets).toBeUndefined();
+
+    const pcbNode = Object.values(routedOut.document.nodes).find(
+      (n) => ((n as { op: { type: string } }).op).type === "PcbBoard",
+    ) as {
+      op: {
+        board: {
+          traces: Array<{
+            start: { x: number; y: number };
+            end: { x: number; y: number };
+            layer: string;
+            net: string;
+          }>;
+        };
+      };
+    };
+    const traces = pcbNode.op.board.traces;
+    expect(traces.length).toBeGreaterThan(0);
+
+    // Proper segment intersection (excluding shared endpoints).
+    const cross = (o: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }) =>
+      (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+    const properlyIntersects = (
+      p1: { x: number; y: number },
+      p2: { x: number; y: number },
+      q1: { x: number; y: number },
+      q2: { x: number; y: number },
+    ) => {
+      const d1 = cross(q1, q2, p1);
+      const d2 = cross(q1, q2, p2);
+      const d3 = cross(p1, p2, q1);
+      const d4 = cross(p1, p2, q2);
+      return ((d1 > 1e-9 && d2 < -1e-9) || (d1 < -1e-9 && d2 > 1e-9)) &&
+        ((d3 > 1e-9 && d4 < -1e-9) || (d3 < -1e-9 && d4 > 1e-9));
+    };
+
+    for (let i = 0; i < traces.length; i++) {
+      for (let j = i + 1; j < traces.length; j++) {
+        const a = traces[i];
+        const b = traces[j];
+        if (a.net === b.net || a.layer !== b.layer) continue;
+        expect(
+          properlyIntersects(a.start, a.end, b.start, b.end),
+          `trace ${a.net} crosses ${b.net}`,
+        ).toBe(false);
+      }
+    }
   });
 
   it("generates real multi-pin footprint geometry (SOIC-8)", async () => {

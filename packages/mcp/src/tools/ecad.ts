@@ -32,7 +32,15 @@ import type {
 } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
 import { getNodePcb, getPcbNodeIds } from "@vcad/core";
-import { exportFabFiles, footprintForName, generateNetlist } from "@vcad/engine";
+import {
+  computeRatsnest,
+  exportFabFiles,
+  footprintForName,
+  generateNetlist,
+  routeNet,
+  routeNetShove,
+} from "@vcad/engine";
+import type { NetlistResult } from "@vcad/engine";
 
 /** Get PCB data from a document — checks PcbBoard nodes first, falls back to legacy doc.pcb */
 function getDocPcb(doc: Document): Pcb | null {
@@ -591,10 +599,11 @@ export async function placeComponents(args: Record<string, unknown>) {
   };
 }
 
-/** Route nets on a PCB (simple direct routing). */
-export function routeNets(args: Record<string, unknown>) {
+/** Route nets on a PCB with the kernel autorouter (obstacle-avoiding). */
+export async function routeNets(args: Record<string, unknown>) {
   const doc = args.document as Document;
   const traceWidth = (args.trace_width as number) || undefined;
+  const netsFilter = (args.nets as string[]) || [];
 
   const pcb = getDocPcb(doc);
   if (!pcb) {
@@ -606,41 +615,102 @@ export function routeNets(args: Record<string, unknown>) {
 
   const width = traceWidth || pcb.rules.defaultRules.traceWidth;
 
-  // Build net → pad positions map
-  const netPads = new Map<string, Array<{ x: number; y: number }>>();
+  // Synthesize a netlist from pad assignments so the kernel ratsnest can
+  // compute the unrouted connections (MST per net).
+  const netConnections = new Map<string, Array<{ component_ref: string; pin_number: string }>>();
   for (const fp of pcb.footprints) {
     for (const pad of fp.pads) {
-      if (pad.net) {
-        const positions = netPads.get(pad.net) || [];
-        positions.push({
-          x: fp.position.x + pad.position.x,
-          y: fp.position.y + pad.position.y,
-        });
-        netPads.set(pad.net, positions);
-      }
+      if (!pad.net) continue;
+      const conns = netConnections.get(pad.net) || [];
+      conns.push({ component_ref: fp.ref, pin_number: pad.number });
+      netConnections.set(pad.net, conns);
     }
   }
+  const netlist: NetlistResult = {
+    nets: [...netConnections.entries()].map(([name, connections]) => ({ name, connections })),
+  };
 
-  // Simple direct routing: connect pads sequentially within each net
-  const newTraces: Trace[] = [];
-  let routedNets = 0;
+  const rats = await computeRatsnest(pcb, netlist);
 
-  for (const [netId, positions] of netPads) {
-    if (positions.length < 2) continue;
+  const routedNets = new Set<string>();
+  const fallbackNets = new Set<string>();
+  let tracesAdded = 0;
 
-    for (let i = 0; i < positions.length - 1; i++) {
-      newTraces.push({
-        start: { x: positions[i].x, y: positions[i].y },
-        end: { x: positions[i + 1].x, y: positions[i + 1].y },
+  for (const line of rats) {
+    if (netsFilter.length > 0 && !netsFilter.includes(line.net)) continue;
+
+    // Push-and-shove first (continuous-space, detours around copper), grid
+    // router as fallback. Each committed route becomes an obstacle for the
+    // next because we append to pcb.traces between calls.
+    let res = await routeNetShove(pcb, line.net, line.from, line.to, width);
+    if (!res.success || res.segments.length === 0) {
+      res = await routeNet(pcb, line.net, line.from, line.to, width);
+    }
+
+    if (res.success && res.segments.length > 0) {
+      for (const [start, end] of res.segments) {
+        pcb.traces.push({
+          start: { x: start.x, y: start.y },
+          end: { x: end.x, y: end.y },
+          width,
+          layer: "FCu",
+          net: line.net,
+        });
+        tracesAdded++;
+      }
+      for (const via of res.vias) {
+        pcb.vias.push({
+          position: { x: via.x, y: via.y },
+          diameter: pcb.rules.defaultRules.viaDiameter,
+          drill: pcb.rules.defaultRules.viaDrill,
+          startLayer: "FCu",
+          endLayer: "BCu",
+          net: line.net,
+        });
+      }
+      routedNets.add(line.net);
+    } else {
+      // Last resort (kernel unavailable or no path found): direct segment.
+      // Flagged so callers know this connection may cross other copper.
+      pcb.traces.push({
+        start: { x: line.from.x, y: line.from.y },
+        end: { x: line.to.x, y: line.to.y },
         width,
         layer: "FCu",
-        net: netId,
+        net: line.net,
       });
+      tracesAdded++;
+      routedNets.add(line.net);
+      fallbackNets.add(line.net);
     }
-    routedNets++;
   }
 
-  pcb.traces = [...pcb.traces, ...newTraces];
+  // No kernel at all: computeRatsnest returns [] — chain pads directly so
+  // the tool still produces connectivity (legacy behavior).
+  if (rats.length === 0) {
+    for (const [netId, conns] of netConnections) {
+      if (conns.length < 2) continue;
+      if (netsFilter.length > 0 && !netsFilter.includes(netId)) continue;
+      if (routedNets.has(netId)) continue;
+      const positions = conns.map((c) => {
+        const fp = pcb.footprints.find((f) => f.ref === c.component_ref)!;
+        const pad = fp.pads.find((p) => p.number === c.pin_number)!;
+        return { x: fp.position.x + pad.position.x, y: fp.position.y + pad.position.y };
+      });
+      for (let i = 0; i < positions.length - 1; i++) {
+        pcb.traces.push({
+          start: positions[i],
+          end: positions[i + 1],
+          width,
+          layer: "FCu",
+          net: netId,
+        });
+        tracesAdded++;
+      }
+      routedNets.add(netId);
+      fallbackNets.add(netId);
+    }
+  }
 
   return {
     content: [
@@ -648,8 +718,16 @@ export function routeNets(args: Record<string, unknown>) {
         type: "text" as const,
         text: JSON.stringify({
           success: true,
-          nets_routed: routedNets,
-          traces_added: newTraces.length,
+          nets_routed: routedNets.size,
+          traces_added: tracesAdded,
+          ...(fallbackNets.size > 0
+            ? {
+                fallback_nets: [...fallbackNets],
+                warnings: [
+                  `${fallbackNets.size} net(s) used direct fallback segments that may cross other copper — run run_drc to verify`,
+                ],
+              }
+            : {}),
           document: doc,
         }),
       },
