@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-10-gerber-export",
+  "version": "0.9.4",
+  "date": "2026-06-10",
+  "category": "feat",
+  "title": "Gerber fabrication export",
+  "summary": "Export Gerber RS-274X layers, Excellon drill, pick-and-place, and BOM from the Export tab as a zip, and for real via the export_gerber MCP tool.",
+  "features": ["ecad", "pcb", "export", "gerber"],
+  "mcpTools": ["export_gerber"]
+}

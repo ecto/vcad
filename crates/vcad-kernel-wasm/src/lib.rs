@@ -4891,6 +4891,68 @@ mod ecad_wasm {
         serde_wasm_bindgen::to_value(&filled).map_err(|e| JsError::new(&e.to_string()))
     }
 
+    /// A single generated fabrication output file.
+    #[derive(serde::Serialize)]
+    struct FabFile {
+        /// Output filename (e.g. `F_Cu.gbr`, `drill.drl`).
+        name: String,
+        /// Complete file content.
+        content: String,
+    }
+
+    /// Generate all fabrication outputs for a PCB: Gerber RS-274X layer
+    /// files, an Excellon drill file (when the board has any holes), a
+    /// pick-and-place CSV, and a BOM CSV.
+    ///
+    /// # Arguments
+    /// * `pcb_json` - JSON-serialized `Pcb` struct
+    ///
+    /// # Returns
+    /// Array of `{ name, content }` objects as JsValue.
+    #[wasm_bindgen(js_name = ecadExportFab)]
+    pub fn ecad_export_fab(pcb_json: &str) -> Result<JsValue, JsError> {
+        let pcb: Pcb = serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+
+        let mut files: Vec<FabFile> = vcad_ecad_export::generate_gerbers(&pcb)
+            .map_err(|e| JsError::new(&e.to_string()))?
+            .into_iter()
+            .map(|(name, content)| FabFile { name, content })
+            .collect();
+        files.sort_by(|a, b| a.name.cmp(&b.name));
+
+        let has_holes = !pcb.vias.is_empty()
+            || pcb
+                .footprints
+                .iter()
+                .any(|fp| fp.pads.iter().any(|p| p.drill.is_some()));
+        if has_holes {
+            let mut buf = Vec::new();
+            vcad_ecad_export::write_excellon(&mut buf, &pcb)
+                .map_err(|e| JsError::new(&e.to_string()))?;
+            files.push(FabFile {
+                name: "drill.drl".into(),
+                content: String::from_utf8_lossy(&buf).into_owned(),
+            });
+        }
+
+        let mut buf = Vec::new();
+        vcad_ecad_export::write_pick_place(&mut buf, &pcb)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        files.push(FabFile {
+            name: "pick_place.csv".into(),
+            content: String::from_utf8_lossy(&buf).into_owned(),
+        });
+
+        let mut buf = Vec::new();
+        vcad_ecad_export::write_bom(&mut buf, &pcb).map_err(|e| JsError::new(&e.to_string()))?;
+        files.push(FabFile {
+            name: "bom.csv".into(),
+            content: String::from_utf8_lossy(&buf).into_owned(),
+        });
+
+        serde_wasm_bindgen::to_value(&files).map_err(|e| JsError::new(&e.to_string()))
+    }
+
     /// Parse a KiCad `.kicad_pcb` file content into a JSON-serialized `Pcb`.
     ///
     /// # Arguments

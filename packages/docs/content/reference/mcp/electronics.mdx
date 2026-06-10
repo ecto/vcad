@@ -168,19 +168,20 @@ Exports Gerber RS-274X fabrication files, drill files, BOM, and pick-and-place d
 IR document with PCB data.
 </Param>
 
-<Param name="output_dir" type="string" required={true}>
-Directory path where fabrication files will be written.
+<Param name="output_dir" type="string" required={false}>
+Directory where fabrication files will be written (created if missing). When omitted, the file contents are returned inline in the response instead.
 </Param>
 
 ### Output Files
 
 | File | Format | Description |
 |------|--------|-------------|
-| `FCu.gbr` | Gerber RS-274X | Front copper layer |
-| `BCu.gbr` | Gerber RS-274X | Back copper layer |
-| `FMask.gbr` | Gerber RS-274X | Front solder mask |
-| `FPaste.gbr` | Gerber RS-274X | Front solder paste |
-| `drill.drl` | Excellon | Drill file for vias and through-hole pads |
+| `F_Cu.gbr` | Gerber RS-274X | Front copper layer |
+| `B_Cu.gbr` | Gerber RS-274X | Back copper layer |
+| `F_Mask.gbr` | Gerber RS-274X | Front solder mask |
+| `F_Paste.gbr` | Gerber RS-274X | Front solder paste |
+| `Edge_Cuts.gbr` | Gerber RS-274X | Board outline |
+| `drill.drl` | Excellon | Drill file for vias and through-hole pads (only when the board has holes) |
 | `pick_place.csv` | CSV | Component placement data for assembly |
 | `bom.csv` | CSV | Bill of materials |
 
