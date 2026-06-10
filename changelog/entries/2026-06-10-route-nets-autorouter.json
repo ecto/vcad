@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-10-route-nets-autorouter",
+  "version": "0.9.4",
+  "date": "2026-06-10",
+  "category": "fix",
+  "title": "route_nets uses the obstacle-avoiding kernel router",
+  "summary": "route_nets now routes ratsnest connections with the push-and-shove router (grid router fallback) instead of drawing straight pad-to-pad lines through other copper.",
+  "features": ["pcb", "ecad"],
+  "mcpTools": ["route_nets"]
+}

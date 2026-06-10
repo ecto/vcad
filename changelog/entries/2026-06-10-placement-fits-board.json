@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-10-placement-fits-board",
+  "version": "0.9.4",
+  "date": "2026-06-10",
+  "category": "fix",
+  "title": "place_components fits the board and honors strategy",
+  "summary": "Grid placement now sizes cells to the board outline so footprints never land off-board, and the force_directed strategy actually runs a net-attraction refinement pass.",
+  "features": ["pcb", "ecad"],
+  "mcpTools": ["place_components"]
+}

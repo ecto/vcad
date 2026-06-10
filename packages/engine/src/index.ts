@@ -145,6 +145,7 @@ export {
   exportFabFiles,
   parseKicadPcb,
   builtinSymbols,
+  footprintForName,
   computeRatsnest,
   componentMeshes,
   createCircuitSim,
@@ -162,6 +163,7 @@ export type {
   ComponentMesh,
   CircuitObservation,
   CircuitSimHandle,
+  FootprintTemplate,
 } from "./ecad.js";
 
 // Parts library

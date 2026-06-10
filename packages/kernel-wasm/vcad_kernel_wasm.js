@@ -3509,6 +3509,30 @@ export function ecadFillZones(pcb_json) {
 }
 
 /**
+ * Resolve a KiCad-style footprint name to a parametric footprint
+ * template (SOIC, DIP, QFP, SOT-23/223, pin headers, chip sizes).
+ *
+ * # Arguments
+ * * `name` - Footprint name (e.g. "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm")
+ * * `pin_count` - Pin count used for fallback footprints
+ *
+ * # Returns
+ * `FootprintTemplate` as JsValue, or null if unresolvable.
+ * @param {string} name
+ * @param {number} pin_count
+ * @returns {any}
+ */
+export function ecadFootprintForName(name, pin_count) {
+    const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadFootprintForName(ptr0, len0, pin_count);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Generate a netlist from a schematic sheet.
  *
  * # Arguments
@@ -7052,12 +7076,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2224, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2225, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2223, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2224, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3008, function: Function { arguments: [Externref], shim_idx: 3009, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3007, function: Function { arguments: [Externref], shim_idx: 3008, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
             return ret;
         },

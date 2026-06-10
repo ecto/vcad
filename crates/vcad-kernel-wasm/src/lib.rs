@@ -4990,6 +4990,21 @@ mod ecad_wasm {
         serde_wasm_bindgen::to_value(&symbol).map_err(|e| JsError::new(&e.to_string()))
     }
 
+    /// Resolve a KiCad-style footprint name to a parametric footprint
+    /// template (SOIC, DIP, QFP, SOT-23/223, pin headers, chip sizes).
+    ///
+    /// # Arguments
+    /// * `name` - Footprint name (e.g. "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm")
+    /// * `pin_count` - Pin count used for fallback footprints
+    ///
+    /// # Returns
+    /// `FootprintTemplate` as JsValue, or null if unresolvable.
+    #[wasm_bindgen(js_name = ecadFootprintForName)]
+    pub fn ecad_footprint_for_name(name: &str, pin_count: u32) -> Result<JsValue, JsError> {
+        let template = vcad_ecad_symbols::builtin::footprint_for_name(name, pin_count);
+        serde_wasm_bindgen::to_value(&template).map_err(|e| JsError::new(&e.to_string()))
+    }
+
     /// Compute ratsnest lines for unrouted net connections.
     ///
     /// # Arguments

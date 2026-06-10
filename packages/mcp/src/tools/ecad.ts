@@ -32,7 +32,17 @@ import type {
 } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
 import { getNodePcb, getPcbNodeIds } from "@vcad/core";
-import { exportFabFiles } from "@vcad/engine";
+import {
+  computeRatsnest,
+  exportFabFiles,
+  footprintForName,
+  generateNetlist,
+  isEcadAvailable,
+  routeNet,
+  routeNetShove,
+  runDrc as kernelRunDrc,
+} from "@vcad/engine";
+import type { NetlistResult } from "@vcad/engine";
 
 /** Get PCB data from a document — checks PcbBoard nodes first, falls back to legacy doc.pcb */
 function getDocPcb(doc: Document): Pcb | null {
@@ -201,7 +211,9 @@ export const exportGerberSchema = {
       type: "string" as const,
       description:
         "Directory to write the fabrication files to (created if missing). " +
-        "When omitted, file contents are returned inline instead.",
+        "Resolved on the MCP server's filesystem — on hosted/sandboxed servers " +
+        "the write may fail, in which case file contents are returned inline " +
+        "instead. When omitted, file contents are always returned inline.",
     },
   },
   required: ["document"],
@@ -302,8 +314,83 @@ export function createSchematic(args: Record<string, unknown>) {
   };
 }
 
+/**
+ * Refine grid positions with a deterministic force-directed pass:
+ * components sharing a net attract, overlapping components repel, and
+ * everything stays clamped inside the board margins.
+ */
+function forceDirectedRefine(
+  components: SchematicComponent[],
+  positions: Vec2[],
+  netByPin: Map<string, string>,
+  useConnectivity: boolean,
+  bounds: { minX: number; minY: number; maxX: number; maxY: number; minSep: number },
+): void {
+  // net id → component indices on that net
+  const netMembers = new Map<string, number[]>();
+  components.forEach((comp, i) => {
+    const seen = new Set<string>();
+    for (const pin of comp.pins) {
+      const netId = useConnectivity
+        ? netByPin.get(`${comp.ref}\u0000${pin.number}`)
+        : pin.name && pin.name !== "~"
+          ? pin.name
+          : undefined;
+      if (!netId || seen.has(netId)) continue;
+      seen.add(netId);
+      const members = netMembers.get(netId) || [];
+      members.push(i);
+      netMembers.set(netId, members);
+    }
+  });
+
+  const iterations = 120;
+  const attract = 0.04;
+  const minSep = bounds.minSep;
+
+  for (let it = 0; it < iterations; it++) {
+    const forces: Vec2[] = positions.map(() => ({ x: 0, y: 0 }));
+
+    // Attraction between components sharing a net.
+    for (const members of netMembers.values()) {
+      for (let a = 0; a < members.length; a++) {
+        for (let b = a + 1; b < members.length; b++) {
+          const i = members[a];
+          const j = members[b];
+          const dx = positions[j].x - positions[i].x;
+          const dy = positions[j].y - positions[i].y;
+          forces[i].x += attract * dx;
+          forces[i].y += attract * dy;
+          forces[j].x -= attract * dx;
+          forces[j].y -= attract * dy;
+        }
+      }
+    }
+
+    // Repulsion when components get closer than the minimum separation.
+    for (let i = 0; i < positions.length; i++) {
+      for (let j = i + 1; j < positions.length; j++) {
+        const dx = positions[j].x - positions[i].x;
+        const dy = positions[j].y - positions[i].y;
+        const dist = Math.max(Math.hypot(dx, dy), 0.1);
+        if (dist >= minSep) continue;
+        const push = (0.5 * (minSep - dist)) / dist;
+        forces[i].x -= push * dx;
+        forces[i].y -= push * dy;
+        forces[j].x += push * dx;
+        forces[j].y += push * dy;
+      }
+    }
+
+    for (let i = 0; i < positions.length; i++) {
+      positions[i].x = Math.min(bounds.maxX, Math.max(bounds.minX, positions[i].x + forces[i].x));
+      positions[i].y = Math.min(bounds.maxY, Math.max(bounds.minY, positions[i].y + forces[i].y));
+    }
+  }
+}
+
 /** Place components on a PCB from schematic data. */
-export function placeComponents(args: Record<string, unknown>) {
+export async function placeComponents(args: Record<string, unknown>) {
   const doc = args.document as Document;
   const boardWidth = args.board_width as number;
   const boardHeight = args.board_height as number;
@@ -315,6 +402,22 @@ export function placeComponents(args: Record<string, unknown>) {
       isError: true,
     };
   }
+
+  // Derive pad nets from schematic connectivity (wires + junctions + labels)
+  // using the kernel netlist extractor. Pin names only serve as net ids as a
+  // fallback when the schematic has no wires or the kernel is unavailable.
+  const netByPin = new Map<string, string>();
+  if (doc.schematic.wires.length > 0) {
+    const netlist = await generateNetlist(doc.schematic);
+    for (const net of netlist.nets) {
+      // Single-connection groups are unconnected pins, not real nets.
+      if (net.connections.length < 2) continue;
+      for (const conn of net.connections) {
+        netByPin.set(`${conn.component_ref}\u0000${conn.pin_number}`, net.name);
+      }
+    }
+  }
+  const useConnectivity = netByPin.size > 0;
 
   // Create PCB structure
   const outline: BoardOutline = {
@@ -350,44 +453,98 @@ export function placeComponents(args: Record<string, unknown>) {
     minDrill: 0.2,
   };
 
-  // Simple grid placement: place components in a grid pattern
+  // Grid placement sized to the board: split the usable area into cells so
+  // every component lands inside the outline regardless of board size.
   const components = doc.schematic.components;
-  const margin = 5;
-  const spacing = Math.max(10, Math.min(
-    (boardWidth - 2 * margin) / Math.ceil(Math.sqrt(components.length)),
-    (boardHeight - 2 * margin) / Math.ceil(Math.sqrt(components.length))
-  ));
+  const strategy = (args.strategy as string) || "grid";
+  const margin = Math.min(5, boardWidth / 8, boardHeight / 8);
+  const usableW = boardWidth - 2 * margin;
+  const usableH = boardHeight - 2 * margin;
+  if (usableW <= 0 || usableH <= 0) {
+    return {
+      content: [{ type: "text" as const, text: "Error: Board too small for placement" }],
+      isError: true,
+    };
+  }
 
-  const cols = Math.max(1, Math.floor((boardWidth - 2 * margin) / spacing));
+  const n = components.length;
+  const cols = Math.max(1, Math.round(Math.sqrt((n * usableW) / usableH)));
+  const rows = Math.max(1, Math.ceil(n / cols));
+  const cellW = usableW / cols;
+  const cellH = usableH / Math.max(rows, 1);
+
+  const warnings: string[] = [];
+  if (n > 1 && Math.min(cellW, cellH) < 4) {
+    warnings.push(
+      `Placement cells are ${Math.min(cellW, cellH).toFixed(1)}mm — components may overlap; consider a larger board`,
+    );
+  }
+
+  const positions: Vec2[] = components.map((_, i) => ({
+    x: margin + ((i % cols) + 0.5) * cellW,
+    y: margin + (Math.floor(i / cols) + 0.5) * cellH,
+  }));
+
+  if (strategy === "force_directed") {
+    forceDirectedRefine(components, positions, netByPin, useConnectivity, {
+      minX: margin,
+      minY: margin,
+      maxX: boardWidth - margin,
+      maxY: boardHeight - margin,
+      minSep: Math.min(cellW, cellH),
+    });
+  }
+
   const nets: Net[] = [];
   const netSet = new Set<string>();
 
+  const netIdForPin = (comp: SchematicComponent, pin: SchematicPin): string | undefined => {
+    // Net from schematic connectivity; pin-name fallback for wireless docs.
+    const netId = useConnectivity
+      ? netByPin.get(`${comp.ref}\u0000${pin.number}`)
+      : pin.name && pin.name !== "~"
+        ? pin.name
+        : undefined;
+    if (netId && !netSet.has(netId)) {
+      netSet.add(netId);
+      nets.push({ id: netId, name: netId });
+    }
+    return netId;
+  };
+
+  // Resolve real pad geometry from the kernel footprint library (SOIC, DIP,
+  // QFP, headers, chip sizes, ...). Null only when the kernel is unavailable.
+  const templates = await Promise.all(
+    components.map((c) => footprintForName(c.footprintId, c.pins.length)),
+  );
+
   const footprints: Footprint[] = components.map((comp, i) => {
-    const col = i % cols;
-    const row = Math.floor(i / cols);
-    const x = margin + col * spacing + spacing / 2;
-    const y = margin + row * spacing + spacing / 2;
+    const x = Math.round(positions[i].x * 100) / 100;
+    const y = Math.round(positions[i].y * 100) / 100;
+    const template = templates[i];
 
-    // Create pads from schematic pins
-    const pads: Pad[] = comp.pins.map((pin, pi) => {
-      const padX = pi === 0 ? -1.0 : 1.0;
-
-      // Track nets; pin name doubles as the net id
-      const netId = pin.name && pin.name !== "~" ? pin.name : undefined;
-      if (netId && !netSet.has(netId)) {
-        netSet.add(netId);
-        nets.push({ id: netId, name: netId });
-      }
-
-      return {
+    let pads: Pad[];
+    if (template) {
+      pads = template.pads.map((pad) => {
+        const pin = comp.pins.find((p) => p.number === pad.number);
+        const netId = pin ? netIdForPin(comp, pin) : undefined;
+        const layers: PcbLayer[] =
+          pad.padType === "THT"
+            ? ["FCu", "BCu", "FMask", "BMask"]
+            : ["FCu", "FPaste", "FMask"];
+        return { ...pad, net: netId, layers };
+      });
+    } else {
+      // No kernel: spread generic SMD pads in a row so they never stack.
+      pads = comp.pins.map((pin, pi) => ({
         number: pin.number,
         padType: "SMD" as PadType,
         shape: { type: "Rect" as const, width: 1.0, height: 1.2 },
-        position: { x: padX, y: 0 },
-        net: netId,
-        layers: ["FCu" as PcbLayer, "FPaste" as PcbLayer, "FMask" as PcbLayer],
-      };
-    });
+        position: { x: (pi - (comp.pins.length - 1) / 2) * 2.54, y: 0 },
+        net: netIdForPin(comp, pin),
+        layers: ["FCu", "FPaste", "FMask"] as PcbLayer[],
+      }));
+    }
 
     return {
       ref: comp.ref,
@@ -397,6 +554,7 @@ export function placeComponents(args: Record<string, unknown>) {
       rotation: 0,
       front: true,
       pads,
+      ...(template && template.graphics.length > 0 ? { graphics: template.graphics } : {}),
     };
   });
 
@@ -422,10 +580,11 @@ export function placeComponents(args: Record<string, unknown>) {
   doc.roots.push({ root: nid, material: "__pcb_fr4__" });
   if (!doc.materials["__pcb_fr4__"]) {
     doc.materials["__pcb_fr4__"] = {
+      name: "__pcb_fr4__",
       color: [0.05, 0.35, 0.15],
       roughness: 0.6,
       metallic: 0.0,
-    } as any;
+    };
   }
 
   return {
@@ -435,6 +594,8 @@ export function placeComponents(args: Record<string, unknown>) {
         text: JSON.stringify({
           success: true,
           footprints_placed: footprints.length,
+          strategy,
+          ...(warnings.length > 0 ? { warnings } : {}),
           board: { width: boardWidth, height: boardHeight, thickness: boardThickness },
           document: doc,
         }),
@@ -443,10 +604,11 @@ export function placeComponents(args: Record<string, unknown>) {
   };
 }
 
-/** Route nets on a PCB (simple direct routing). */
-export function routeNets(args: Record<string, unknown>) {
+/** Route nets on a PCB with the kernel autorouter (obstacle-avoiding). */
+export async function routeNets(args: Record<string, unknown>) {
   const doc = args.document as Document;
   const traceWidth = (args.trace_width as number) || undefined;
+  const netsFilter = (args.nets as string[]) || [];
 
   const pcb = getDocPcb(doc);
   if (!pcb) {
@@ -458,41 +620,102 @@ export function routeNets(args: Record<string, unknown>) {
 
   const width = traceWidth || pcb.rules.defaultRules.traceWidth;
 
-  // Build net → pad positions map
-  const netPads = new Map<string, Array<{ x: number; y: number }>>();
+  // Synthesize a netlist from pad assignments so the kernel ratsnest can
+  // compute the unrouted connections (MST per net).
+  const netConnections = new Map<string, Array<{ component_ref: string; pin_number: string }>>();
   for (const fp of pcb.footprints) {
     for (const pad of fp.pads) {
-      if (pad.net) {
-        const positions = netPads.get(pad.net) || [];
-        positions.push({
-          x: fp.position.x + pad.position.x,
-          y: fp.position.y + pad.position.y,
-        });
-        netPads.set(pad.net, positions);
-      }
+      if (!pad.net) continue;
+      const conns = netConnections.get(pad.net) || [];
+      conns.push({ component_ref: fp.ref, pin_number: pad.number });
+      netConnections.set(pad.net, conns);
     }
   }
+  const netlist: NetlistResult = {
+    nets: [...netConnections.entries()].map(([name, connections]) => ({ name, connections })),
+  };
 
-  // Simple direct routing: connect pads sequentially within each net
-  const newTraces: Trace[] = [];
-  let routedNets = 0;
+  const rats = await computeRatsnest(pcb, netlist);
 
-  for (const [netId, positions] of netPads) {
-    if (positions.length < 2) continue;
+  const routedNets = new Set<string>();
+  const fallbackNets = new Set<string>();
+  let tracesAdded = 0;
 
-    for (let i = 0; i < positions.length - 1; i++) {
-      newTraces.push({
-        start: { x: positions[i].x, y: positions[i].y },
-        end: { x: positions[i + 1].x, y: positions[i + 1].y },
+  for (const line of rats) {
+    if (netsFilter.length > 0 && !netsFilter.includes(line.net)) continue;
+
+    // Push-and-shove first (continuous-space, detours around copper), grid
+    // router as fallback. Each committed route becomes an obstacle for the
+    // next because we append to pcb.traces between calls.
+    let res = await routeNetShove(pcb, line.net, line.from, line.to, width);
+    if (!res.success || res.segments.length === 0) {
+      res = await routeNet(pcb, line.net, line.from, line.to, width);
+    }
+
+    if (res.success && res.segments.length > 0) {
+      for (const [start, end] of res.segments) {
+        pcb.traces.push({
+          start: { x: start.x, y: start.y },
+          end: { x: end.x, y: end.y },
+          width,
+          layer: "FCu",
+          net: line.net,
+        });
+        tracesAdded++;
+      }
+      for (const via of res.vias) {
+        pcb.vias.push({
+          position: { x: via.x, y: via.y },
+          diameter: pcb.rules.defaultRules.viaDiameter,
+          drill: pcb.rules.defaultRules.viaDrill,
+          startLayer: "FCu",
+          endLayer: "BCu",
+          net: line.net,
+        });
+      }
+      routedNets.add(line.net);
+    } else {
+      // Last resort (kernel unavailable or no path found): direct segment.
+      // Flagged so callers know this connection may cross other copper.
+      pcb.traces.push({
+        start: { x: line.from.x, y: line.from.y },
+        end: { x: line.to.x, y: line.to.y },
         width,
         layer: "FCu",
-        net: netId,
+        net: line.net,
       });
+      tracesAdded++;
+      routedNets.add(line.net);
+      fallbackNets.add(line.net);
     }
-    routedNets++;
   }
 
-  pcb.traces = [...pcb.traces, ...newTraces];
+  // No kernel at all: computeRatsnest returns [] — chain pads directly so
+  // the tool still produces connectivity (legacy behavior).
+  if (rats.length === 0) {
+    for (const [netId, conns] of netConnections) {
+      if (conns.length < 2) continue;
+      if (netsFilter.length > 0 && !netsFilter.includes(netId)) continue;
+      if (routedNets.has(netId)) continue;
+      const positions = conns.map((c) => {
+        const fp = pcb.footprints.find((f) => f.ref === c.component_ref)!;
+        const pad = fp.pads.find((p) => p.number === c.pin_number)!;
+        return { x: fp.position.x + pad.position.x, y: fp.position.y + pad.position.y };
+      });
+      for (let i = 0; i < positions.length - 1; i++) {
+        pcb.traces.push({
+          start: positions[i],
+          end: positions[i + 1],
+          width,
+          layer: "FCu",
+          net: netId,
+        });
+        tracesAdded++;
+      }
+      routedNets.add(netId);
+      fallbackNets.add(netId);
+    }
+  }
 
   return {
     content: [
@@ -500,8 +723,16 @@ export function routeNets(args: Record<string, unknown>) {
         type: "text" as const,
         text: JSON.stringify({
           success: true,
-          nets_routed: routedNets,
-          traces_added: newTraces.length,
+          nets_routed: routedNets.size,
+          traces_added: tracesAdded,
+          ...(fallbackNets.size > 0
+            ? {
+                fallback_nets: [...fallbackNets],
+                warnings: [
+                  `${fallbackNets.size} net(s) used direct fallback segments that may cross other copper — run run_drc to verify`,
+                ],
+              }
+            : {}),
           document: doc,
         }),
       },
@@ -510,7 +741,7 @@ export function routeNets(args: Record<string, unknown>) {
 }
 
 /** Run DRC checks on a PCB. */
-export function runDrc(args: Record<string, unknown>) {
+export async function runDrc(args: Record<string, unknown>) {
   const doc = args.document as Document;
   const pcb = getDocPcb(doc);
 
@@ -520,6 +751,28 @@ export function runDrc(args: Record<string, unknown>) {
       isError: true,
     };
   }
+
+  // Kernel DRC: copper clearance (trace↔copper and pad↔pad shorts), trace
+  // width, drill, annular ring, edge clearance, hole-to-hole.
+  if (await isEcadAvailable()) {
+    const kernelViolations = await kernelRunDrc(pcb);
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({
+            success: true,
+            violations: kernelViolations.length,
+            errors: kernelViolations.filter((v) => v.severity === "Error").length,
+            warnings: kernelViolations.filter((v) => v.severity === "Warning").length,
+            details: kernelViolations,
+          }),
+        },
+      ],
+    };
+  }
+
+  // Fallback when the kernel WASM is unavailable: basic scalar checks only.
   const violations: Array<{
     rule: string;
     severity: string;
@@ -701,25 +954,43 @@ export async function exportGerber(args: Record<string, unknown>) {
   if (outputDir) {
     // Node-only path: write the files to disk. Imported dynamically so this
     // module stays loadable in browser bundles (e.g. the HTTP MCP frontend).
-    const fs = await import("node:fs/promises");
-    const path = await import("node:path");
-    await fs.mkdir(outputDir, { recursive: true });
-    for (const f of files) {
-      await fs.writeFile(path.join(outputDir, f.name), f.content, "utf8");
+    try {
+      const fs = await import("node:fs/promises");
+      const path = await import("node:path");
+      await fs.mkdir(outputDir, { recursive: true });
+      for (const f of files) {
+        await fs.writeFile(path.join(outputDir, f.name), f.content, "utf8");
+      }
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({
+              success: true,
+              message: `Wrote ${files.length} fabrication files`,
+              output_dir: outputDir,
+              files: files.map((f) => ({ name: f.name, bytes: f.content.length })),
+            }),
+          },
+        ],
+      };
+    } catch (e) {
+      // Sandboxed/hosted servers can't write arbitrary paths — fall back to
+      // inline content so the caller still gets the files.
+      const reason = e instanceof Error ? e.message : String(e);
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({
+              success: true,
+              message: `Generated ${files.length} fabrication files (could not write to '${outputDir}': ${reason}; returning contents inline)`,
+              files,
+            }),
+          },
+        ],
+      };
     }
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: JSON.stringify({
-            success: true,
-            message: `Wrote ${files.length} fabrication files`,
-            output_dir: outputDir,
-            files: files.map((f) => ({ name: f.name, bytes: f.content.length })),
-          }),
-        },
-      ],
-    };
   }
 
   return {

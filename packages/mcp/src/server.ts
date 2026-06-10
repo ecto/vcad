@@ -706,15 +706,15 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
           break;
 
         case "place_components":
-          result = placeComponents(args);
+          result = await placeComponents(args);
           break;
 
         case "route_nets":
-          result = routeNets(args);
+          result = await routeNets(args);
           break;
 
         case "run_drc":
-          result = runDrc(args);
+          result = await runDrc(args);
           break;
 
         case "run_erc":

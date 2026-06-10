@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-10-share-pcb-docs",
+  "version": "0.9.4",
+  "date": "2026-06-10",
+  "category": "fix",
+  "title": "open_in_browser works for PCB documents",
+  "summary": "open_in_browser no longer crashes on PCB documents: it falls back to compressed JSON when VCode can't represent the document, and place_components writes a valid board material.",
+  "features": ["pcb", "ecad", "sharing"],
+  "mcpTools": ["open_in_browser", "place_components"]
+}

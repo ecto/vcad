@@ -37,7 +37,10 @@ import {
   createSchematic,
   placeComponents,
   routeNets,
+  runDrc,
+  exportGerber,
 } from "../tools/ecad.js";
+import { openInBrowser } from "../tools/share.js";
 import { existsSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -824,7 +827,7 @@ describe("sheet-metal tools", () => {
 });
 
 describe("ecad place_components → route_nets pipeline", () => {
-  it("assigns pad nets during placement so routing produces traces", () => {
+  it("assigns pad nets during placement so routing produces traces", async () => {
     const schematicOut = JSON.parse(
       createSchematic({
         components: [
@@ -855,11 +858,13 @@ describe("ecad place_components → route_nets pipeline", () => {
     );
 
     const placedOut = JSON.parse(
-      placeComponents({
-        document: schematicOut.document,
-        board_width: 50,
-        board_height: 50,
-      }).content[0].text,
+      (
+        await placeComponents({
+          document: schematicOut.document,
+          board_width: 50,
+          board_height: 50,
+        })
+      ).content[0].text,
     );
     expect(placedOut.success).toBe(true);
     expect(placedOut.footprints_placed).toBe(2);
@@ -874,11 +879,403 @@ describe("ecad place_components → route_nets pipeline", () => {
     expect(padNets).toEqual(["VCC", "OUT", "OUT", "GND"]);
 
     const routedOut = JSON.parse(
-      routeNets({ document: placedDoc }).content[0].text,
+      (await routeNets({ document: placedDoc })).content[0].text,
     );
     expect(routedOut.success).toBe(true);
     // Only OUT has 2+ pads — VCC and GND are single-pad nets.
     expect(routedOut.nets_routed).toBe(1);
-    expect(routedOut.traces_added).toBe(1);
+    expect(routedOut.traces_added).toBeGreaterThanOrEqual(1);
+  });
+
+  it("derives pad nets from wire connectivity, not pin names", async () => {
+    // Two resistors with anonymous ("~") pins — connectivity must come from
+    // the wires. R1 pin2 (5,0) — wire — R2 pin1 (15,0), labeled "MID".
+    const schematicOut = JSON.parse(
+      createSchematic({
+        components: [
+          {
+            ref: "R1",
+            value: "10k",
+            footprint: "Resistor_SMD:R_0805",
+            x: 0,
+            y: 0,
+            pins: [
+              { number: "1", name: "~", type: "Passive", x: -5, y: 0 },
+              { number: "2", name: "~", type: "Passive", x: 5, y: 0 },
+            ],
+          },
+          {
+            ref: "R2",
+            value: "4k7",
+            footprint: "Resistor_SMD:R_0805",
+            x: 20,
+            y: 0,
+            pins: [
+              { number: "1", name: "~", type: "Passive", x: -5, y: 0 },
+              { number: "2", name: "~", type: "Passive", x: 5, y: 0 },
+            ],
+          },
+        ],
+        wires: [{ x1: 5, y1: 0, x2: 15, y2: 0 }],
+        labels: [{ name: "MID", x: 5, y: 0 }],
+      }).content[0].text,
+    );
+
+    const placedOut = JSON.parse(
+      (
+        await placeComponents({
+          document: schematicOut.document,
+          board_width: 50,
+          board_height: 50,
+        })
+      ).content[0].text,
+    );
+    expect(placedOut.success).toBe(true);
+
+    const placedDoc = placedOut.document as Document;
+    const pcbNode = Object.values(placedDoc.nodes).find(
+      (n) => (n.op as { type: string }).type === "PcbBoard",
+    );
+    const board = (
+      pcbNode!.op as unknown as {
+        board: { footprints: Array<{ ref: string; pads: Array<{ number: string; net?: string }> }> };
+      }
+    ).board;
+
+    const padNet = (ref: string, num: string) =>
+      board.footprints
+        .find((fp) => fp.ref === ref)!
+        .pads.find((p) => p.number === num)!.net;
+
+    // Wired pins share the labeled net; unwired pins get no net.
+    expect(padNet("R1", "2")).toBe("MID");
+    expect(padNet("R2", "1")).toBe("MID");
+    expect(padNet("R1", "1")).toBeUndefined();
+    expect(padNet("R2", "2")).toBeUndefined();
+  });
+
+  it("routes nets without same-layer crossings between different nets", async () => {
+    // LED indicator: J1(VCC,GND) → R1(VCC,N1) → D1(N1,GND). Naive
+    // point-to-point routing makes N1 cross the GND trace.
+    const schematicOut = JSON.parse(
+      createSchematic({
+        components: [
+          {
+            ref: "J1",
+            value: "Conn",
+            footprint: "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical",
+            x: 0,
+            y: 0,
+            pins: [
+              { number: "1", name: "VCC", type: "Passive" },
+              { number: "2", name: "GND", type: "Passive" },
+            ],
+          },
+          {
+            ref: "R1",
+            value: "330",
+            footprint: "Resistor_SMD:R_0805_2012Metric",
+            x: 20,
+            y: 0,
+            pins: [
+              { number: "1", name: "VCC", type: "Passive" },
+              { number: "2", name: "N1", type: "Passive" },
+            ],
+          },
+          {
+            ref: "D1",
+            value: "LED",
+            footprint: "LED_SMD:LED_0805_2012Metric",
+            x: 40,
+            y: 0,
+            pins: [
+              { number: "1", name: "N1", type: "Passive" },
+              { number: "2", name: "GND", type: "Passive" },
+            ],
+          },
+        ],
+      }).content[0].text,
+    );
+
+    const placedOut = JSON.parse(
+      (
+        await placeComponents({
+          document: schematicOut.document,
+          board_width: 30,
+          board_height: 30,
+        })
+      ).content[0].text,
+    );
+    const routedOut = JSON.parse(
+      (await routeNets({ document: placedOut.document })).content[0].text,
+    );
+    expect(routedOut.success).toBe(true);
+    expect(routedOut.nets_routed).toBe(3);
+    expect(routedOut.fallback_nets).toBeUndefined();
+
+    const pcbNode = Object.values(routedOut.document.nodes).find(
+      (n) => ((n as { op: { type: string } }).op).type === "PcbBoard",
+    ) as {
+      op: {
+        board: {
+          traces: Array<{
+            start: { x: number; y: number };
+            end: { x: number; y: number };
+            layer: string;
+            net: string;
+          }>;
+        };
+      };
+    };
+    const traces = pcbNode.op.board.traces;
+    expect(traces.length).toBeGreaterThan(0);
+
+    // Proper segment intersection (excluding shared endpoints).
+    const cross = (o: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }) =>
+      (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+    const properlyIntersects = (
+      p1: { x: number; y: number },
+      p2: { x: number; y: number },
+      q1: { x: number; y: number },
+      q2: { x: number; y: number },
+    ) => {
+      const d1 = cross(q1, q2, p1);
+      const d2 = cross(q1, q2, p2);
+      const d3 = cross(p1, p2, q1);
+      const d4 = cross(p1, p2, q2);
+      return ((d1 > 1e-9 && d2 < -1e-9) || (d1 < -1e-9 && d2 > 1e-9)) &&
+        ((d3 > 1e-9 && d4 < -1e-9) || (d3 < -1e-9 && d4 > 1e-9));
+    };
+
+    for (let i = 0; i < traces.length; i++) {
+      for (let j = i + 1; j < traces.length; j++) {
+        const a = traces[i];
+        const b = traces[j];
+        if (a.net === b.net || a.layer !== b.layer) continue;
+        expect(
+          properlyIntersects(a.start, a.end, b.start, b.end),
+          `trace ${a.net} crosses ${b.net}`,
+        ).toBe(false);
+      }
+    }
+  });
+
+  it("DRC flags same-layer copper shorts between different nets", async () => {
+    const schematicOut = JSON.parse(
+      createSchematic({
+        components: [
+          {
+            ref: "R1",
+            value: "1k",
+            footprint: "Resistor_SMD:R_0805",
+            x: 0,
+            y: 0,
+            pins: [
+              { number: "1", name: "A", type: "Passive" },
+              { number: "2", name: "B", type: "Passive" },
+            ],
+          },
+          {
+            ref: "R2",
+            value: "1k",
+            footprint: "Resistor_SMD:R_0805",
+            x: 20,
+            y: 0,
+            pins: [
+              { number: "1", name: "A", type: "Passive" },
+              { number: "2", name: "B", type: "Passive" },
+            ],
+          },
+        ],
+      }).content[0].text,
+    );
+    const placedOut = JSON.parse(
+      (
+        await placeComponents({
+          document: schematicOut.document,
+          board_width: 40,
+          board_height: 40,
+        })
+      ).content[0].text,
+    );
+
+    // Inject two crossing traces on different nets — a hard short.
+    const doc = placedOut.document;
+    const pcbNode = Object.values(doc.nodes).find(
+      (n) => ((n as { op: { type: string } }).op).type === "PcbBoard",
+    ) as { op: { board: { traces: unknown[] } } };
+    pcbNode.op.board.traces.push(
+      { start: { x: 10, y: 10 }, end: { x: 30, y: 30 }, width: 0.25, layer: "FCu", net: "A" },
+      { start: { x: 10, y: 30 }, end: { x: 30, y: 10 }, width: 0.25, layer: "FCu", net: "B" },
+    );
+
+    const drcOut = JSON.parse((await runDrc({ document: doc })).content[0].text);
+    expect(drcOut.success).toBe(true);
+    const clearanceErrors = (drcOut.details as Array<{ rule: string }>).filter(
+      (v) => v.rule === "Clearance",
+    );
+    expect(clearanceErrors.length).toBeGreaterThan(0);
+  });
+
+  it("generates real multi-pin footprint geometry (SOIC-8)", async () => {
+    const schematicOut = JSON.parse(
+      createSchematic({
+        components: [
+          {
+            ref: "U1",
+            value: "NE555",
+            footprint: "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm",
+            x: 0,
+            y: 0,
+            pins: Array.from({ length: 8 }, (_, i) => ({
+              number: `${i + 1}`,
+              name: `P${i + 1}`,
+              type: "Passive",
+            })),
+          },
+        ],
+      }).content[0].text,
+    );
+
+    const placedOut = JSON.parse(
+      (
+        await placeComponents({
+          document: schematicOut.document,
+          board_width: 30,
+          board_height: 30,
+        })
+      ).content[0].text,
+    );
+    expect(placedOut.success).toBe(true);
+
+    const pcbNode = Object.values(placedOut.document.nodes).find(
+      (n) => ((n as { op: { type: string } }).op).type === "PcbBoard",
+    ) as { op: { board: { footprints: Array<{ pads: Array<{ position: { x: number; y: number } }> }> } } };
+    const pads = pcbNode.op.board.footprints[0].pads;
+    expect(pads.length).toBe(8);
+    // All pad positions distinct — no stacked pads.
+    const unique = new Set(pads.map((p) => `${p.position.x},${p.position.y}`));
+    expect(unique.size).toBe(8);
+  });
+
+  it("export_gerber falls back to inline files when output_dir is unwritable", async () => {
+    const schematicOut = JSON.parse(
+      createSchematic({
+        components: [
+          {
+            ref: "R1",
+            value: "1k",
+            footprint: "Resistor_SMD:R_0805",
+            x: 0,
+            y: 0,
+            pins: [
+              { number: "1", name: "A", type: "Passive" },
+              { number: "2", name: "B", type: "Passive" },
+            ],
+          },
+        ],
+      }).content[0].text,
+    );
+    const placedOut = JSON.parse(
+      (
+        await placeComponents({
+          document: schematicOut.document,
+          board_width: 30,
+          board_height: 30,
+        })
+      ).content[0].text,
+    );
+
+    const out = JSON.parse(
+      (
+        await exportGerber({
+          document: placedOut.document,
+          // /dev/null can't be a directory — mkdir fails on every platform.
+          output_dir: "/dev/null/nope",
+        })
+      ).content[0].text,
+    );
+    expect(out.success).toBe(true);
+    expect(out.message).toContain("returning contents inline");
+    expect(out.files.length).toBeGreaterThan(0);
+    expect(out.files[0].content).toBeTruthy();
+  });
+
+  it("open_in_browser produces a URL for PCB documents", async () => {
+    const schematicOut = JSON.parse(
+      createSchematic({
+        components: [
+          {
+            ref: "R1",
+            value: "1k",
+            footprint: "Resistor_SMD:R_0805",
+            x: 0,
+            y: 0,
+            pins: [
+              { number: "1", name: "A", type: "Passive" },
+              { number: "2", name: "B", type: "Passive" },
+            ],
+          },
+        ],
+      }).content[0].text,
+    );
+    const placedOut = JSON.parse(
+      (
+        await placeComponents({
+          document: schematicOut.document,
+          board_width: 30,
+          board_height: 30,
+        })
+      ).content[0].text,
+    );
+
+    const out = openInBrowser({
+      document: JSON.stringify(placedOut.document),
+      name: "pcb-test",
+    });
+    expect(out.content[0].text).toContain("https://vcad.io/#/new?doc=");
+    expect(out.content[0].text).toContain("Payload (json)");
+  });
+
+  it("keeps all footprints inside the board outline", async () => {
+    const comps = Array.from({ length: 5 }, (_, i) => ({
+      ref: `R${i + 1}`,
+      value: "1k",
+      footprint: "Resistor_SMD:R_0805",
+      x: i * 10,
+      y: 0,
+      pins: [
+        { number: "1", name: "A", type: "Passive" },
+        { number: "2", name: "B", type: "Passive" },
+      ],
+    }));
+    const schematicOut = JSON.parse(
+      createSchematic({ components: comps }).content[0].text,
+    );
+
+    for (const strategy of ["grid", "force_directed"]) {
+      const placedOut = JSON.parse(
+        (
+          await placeComponents({
+            document: structuredClone(schematicOut.document),
+            board_width: 25,
+            board_height: 15,
+            strategy,
+          })
+        ).content[0].text,
+      );
+      expect(placedOut.success).toBe(true);
+      expect(placedOut.strategy).toBe(strategy);
+
+      const pcbNode = Object.values(placedOut.document.nodes).find(
+        (n) => ((n as { op: { type: string } }).op).type === "PcbBoard",
+      ) as { op: { board: { footprints: Array<{ position: { x: number; y: number } }> } } };
+      for (const fp of pcbNode.op.board.footprints) {
+        expect(fp.position.x).toBeGreaterThan(0);
+        expect(fp.position.x).toBeLessThan(25);
+        expect(fp.position.y).toBeGreaterThan(0);
+        expect(fp.position.y).toBeLessThan(15);
+      }
+    }
   });
 });
