@@ -2,13 +2,12 @@
  * Vercel serverless function entry point for the vcad MCP server.
  *
  * Solves the WASM path problem: after esbuild bundles everything into a
- * single file, Engine.init()'s relative path to the .wasm file breaks
- * (it resolves to /kernel-wasm/... outside the function sandbox).
- *
- * We bypass Engine.init() entirely and construct the Engine directly:
- * 1. Read the .wasm file from next to this bundle
- * 2. Call initSync() to initialize the WASM module
- * 3. Construct Engine with the bindings from the initialized module
+ * single file, the wasm-singleton's source-relative path to the .wasm file
+ * breaks (it resolves to /kernel-wasm/... outside the function sandbox).
+ * We read the .wasm co-located with the bundle and prime it into
+ * Engine.init(), so the engine AND every other consumer of the shared
+ * wasm-singleton (e.g. the commandRegistry bootstrap behind the registry
+ * CRUD tools) use the same initialized module.
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -28,29 +27,7 @@ let _engine: Engine | undefined;
 
 async function getEngine(): Promise<Engine> {
   if (_engine) return _engine;
-
-  // Initialize WASM from the co-located .wasm file.
-  // We bypass Engine.init() because it calculates the WASM path relative
-  // to the original source location, which breaks after esbuild bundling.
-  const wasmModule = await import("@vcad/kernel-wasm");
-  const wasmBuffer = readFileSync(WASM_PATH);
-  wasmModule.initSync({ module: wasmBuffer });
-
-  // Extract the compiled module for potential worker sharing
-  const getCompiledModule = (wasmModule as Record<string, unknown>)
-    .getCompiledModule as (() => WebAssembly.Module | undefined) | undefined;
-  const compiledWasmModule = getCompiledModule?.();
-
-  // Construct Engine directly, passing the whole initialized module as the
-  // kernel. Hand-picking bindings here once broke sheet metal: the list
-  // drifted from Engine.init()'s as new kernel exports landed. The module
-  // namespace is a superset of KernelModule, so every current and future
-  // export rides along automatically.
-  _engine = new Engine(
-    wasmModule as unknown as ConstructorParameters<typeof Engine>[0],
-    compiledWasmModule,
-  );
-
+  _engine = await Engine.init({ wasmInput: readFileSync(WASM_PATH) });
   return _engine;
 }
 

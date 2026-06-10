@@ -63,20 +63,32 @@ async function loadAndInit(): Promise<WasmModule> {
     process.versions.node != null;
 
   if (isNode) {
-    // Dynamic imports keep these out of browser bundles.
-    const fs = await import("node:fs");
-    const url = await import("node:url");
-    const path = await import("node:path");
+    // A primed buffer takes precedence — bundlers (esbuild) relocate this
+    // module, breaking the source-relative path below. Serverless entries
+    // read the .wasm co-located with their bundle and prime it instead.
+    const hint = wasmInputHint;
+    wasmInputHint = undefined;
+    const isBuffer = (v: BufferSource | Response): v is BufferSource =>
+      typeof Response === "undefined" || !(v instanceof Response);
+    let wasmBuffer: BufferSource;
+    if (hint && isBuffer(hint)) {
+      wasmBuffer = hint;
+    } else {
+      // Dynamic imports keep these out of browser bundles.
+      const fs = await import("node:fs");
+      const url = await import("node:url");
+      const path = await import("node:path");
 
-    const here = url.fileURLToPath(import.meta.url);
-    const wasmPath = path.join(
-      path.dirname(here),
-      "..",
-      "..",
-      "kernel-wasm",
-      "vcad_kernel_wasm_bg.wasm",
-    );
-    const wasmBuffer = fs.readFileSync(wasmPath);
+      const here = url.fileURLToPath(import.meta.url);
+      const wasmPath = path.join(
+        path.dirname(here),
+        "..",
+        "..",
+        "kernel-wasm",
+        "vcad_kernel_wasm_bg.wasm",
+      );
+      wasmBuffer = fs.readFileSync(wasmPath);
+    }
     bindgenStarted = true;
     mod.initSync({ module: wasmBuffer });
   } else {
