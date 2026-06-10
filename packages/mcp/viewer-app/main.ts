@@ -173,6 +173,20 @@ function findInlineGlb(result: ToolResultLike): string | null {
   return null;
 }
 
+/** Find a session document_id in any JSON text block of the result. */
+function findDocumentId(result: ToolResultLike): string | null {
+  for (const block of result.content ?? []) {
+    if (block?.type !== "text" || !block.text) continue;
+    try {
+      const parsed = JSON.parse(block.text) as { document_id?: string };
+      if (typeof parsed.document_id === "string") return parsed.document_id;
+    } catch {
+      // Not JSON — skip
+    }
+  }
+  return null;
+}
+
 /** Capture VCode IR text for the "Open in vcad.io" button. */
 function captureVcode(result: ToolResultLike): void {
   for (const block of result.content ?? []) {
@@ -230,8 +244,11 @@ async function handleToolResult(result: ToolResultLike): Promise<void> {
     return;
   }
 
-  // Current path: fetch the GLB via the app-only preview tool
-  const docId = result.structuredContent?.document_id;
+  // Current path: fetch the GLB via the app-only preview tool. The id
+  // comes from structuredContent, falling back to a document_id found in
+  // any JSON text block — Cursor has known gaps forwarding
+  // structuredContent to widgets.
+  const docId = result.structuredContent?.document_id ?? findDocumentId(result);
   if (typeof docId !== "string") {
     setStatus("no geometry to preview");
     return;

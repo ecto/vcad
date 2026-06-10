@@ -564,7 +564,7 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
       if (dispatchableTools.has(name)) {
         result = dispatchRegistryTool(name, args);
         const docId = resolvePreviewDocumentId(name, result, args, engine);
-        if (docId) result.structuredContent = { document_id: docId };
+        if (docId) attachPreviewHandle(result, docId);
         return result;
       }
 
@@ -741,12 +741,7 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
       // `get_preview_glb` tool, so results stay lean for the model.
       if (uiTools.has(name) && result.content.length > 0 && !result.isError) {
         const docId = resolvePreviewDocumentId(name, result, args, engine);
-        if (docId) {
-          result.structuredContent = {
-            ...result.structuredContent,
-            document_id: docId,
-          };
-        }
+        if (docId) attachPreviewHandle(result, docId);
       }
 
       return result;
@@ -760,6 +755,35 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
   });
 
   return server;
+}
+
+/**
+ * Attach the preview document id to a tool result: in structuredContent
+ * (the spec path) and, when the result text doesn't already mention the
+ * id, as a small JSON text block too. Cursor has known gaps forwarding
+ * structuredContent to widgets, and the id is useful to agents anyway
+ * (it opens the result up for follow-up mutations).
+ */
+function attachPreviewHandle(
+  result: {
+    content: Array<{ type: string; text: string; annotations?: unknown }>;
+    structuredContent?: Record<string, unknown>;
+  },
+  docId: string,
+): void {
+  result.structuredContent = {
+    ...result.structuredContent,
+    document_id: docId,
+  };
+  const mentioned = result.content.some(
+    (c) => c.type === "text" && c.text.includes(docId),
+  );
+  if (!mentioned) {
+    result.content.push({
+      type: "text",
+      text: JSON.stringify({ document_id: docId }),
+    });
+  }
 }
 
 /**
