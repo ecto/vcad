@@ -33,6 +33,11 @@ import {
   gymObserve,
   gymClose,
 } from "../tools/gym.js";
+import {
+  createSchematic,
+  placeComponents,
+  routeNets,
+} from "../tools/ecad.js";
 import { existsSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -815,5 +820,65 @@ describe("sheet-metal tools", () => {
     expect(flangeFix).toBeDefined();
     expect(flangeFix.fix.new_length_mm).toBeGreaterThanOrEqual(5);
     expect(flangeFix.fix.description.toLowerCase()).toContain("flange");
+  });
+});
+
+describe("ecad place_components → route_nets pipeline", () => {
+  it("assigns pad nets during placement so routing produces traces", () => {
+    const schematicOut = JSON.parse(
+      createSchematic({
+        components: [
+          {
+            ref: "R1",
+            value: "10k",
+            footprint: "Resistor_SMD:R_0805",
+            x: 0,
+            y: 0,
+            pins: [
+              { number: "1", name: "VCC", type: "Passive" },
+              { number: "2", name: "OUT", type: "Passive" },
+            ],
+          },
+          {
+            ref: "R2",
+            value: "4k7",
+            footprint: "Resistor_SMD:R_0805",
+            x: 20,
+            y: 0,
+            pins: [
+              { number: "1", name: "OUT", type: "Passive" },
+              { number: "2", name: "GND", type: "Passive" },
+            ],
+          },
+        ],
+      }).content[0].text,
+    );
+
+    const placedOut = JSON.parse(
+      placeComponents({
+        document: schematicOut.document,
+        board_width: 50,
+        board_height: 50,
+      }).content[0].text,
+    );
+    expect(placedOut.success).toBe(true);
+    expect(placedOut.footprints_placed).toBe(2);
+
+    const placedDoc = placedOut.document as Document;
+    const pcbNode = Object.values(placedDoc.nodes).find(
+      (n) => (n.op as { type: string }).type === "PcbBoard",
+    );
+    expect(pcbNode).toBeDefined();
+    const board = (pcbNode!.op as unknown as { board: { footprints: Array<{ pads: Array<{ net?: string }> }> } }).board;
+    const padNets = board.footprints.flatMap((fp) => fp.pads.map((p) => p.net));
+    expect(padNets).toEqual(["VCC", "OUT", "OUT", "GND"]);
+
+    const routedOut = JSON.parse(
+      routeNets({ document: placedDoc }).content[0].text,
+    );
+    expect(routedOut.success).toBe(true);
+    // Only OUT has 2+ pads — VCC and GND are single-pad nets.
+    expect(routedOut.nets_routed).toBe(1);
+    expect(routedOut.traces_added).toBe(1);
   });
 });
