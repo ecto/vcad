@@ -1439,6 +1439,19 @@ export function ecadExportFab(pcb_json: string): any;
 export function ecadFillZones(pcb_json: string): any;
 
 /**
+ * Resolve a KiCad-style footprint name to a parametric footprint
+ * template (SOIC, DIP, QFP, SOT-23/223, pin headers, chip sizes).
+ *
+ * # Arguments
+ * * `name` - Footprint name (e.g. "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm")
+ * * `pin_count` - Pin count used for fallback footprints
+ *
+ * # Returns
+ * `FootprintTemplate` as JsValue, or null if unresolvable.
+ */
+export function ecadFootprintForName(name: string, pin_count: number): any;
+
+/**
  * Generate a netlist from a schematic sheet.
  *
  * # Arguments
@@ -2310,50 +2323,6 @@ export interface InitOutput {
     readonly nestSheetMetalParts: (a: number, b: number, c: number, d: number) => [number, number];
     readonly nestedSheetMetalDxf: (a: number, b: number) => [number, number];
     readonly sheetMetalSequence: (a: number, b: number) => [number, number];
-    readonly ecadBuiltinSymbols: () => [number, number, number];
-    readonly ecadCheckDrc: (a: number, b: number) => [number, number, number];
-    readonly ecadCheckErc: (a: number, b: number) => [number, number, number];
-    readonly ecadComponentMeshes: (a: number, b: number) => [number, number, number];
-    readonly ecadComputeRatsnest: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly ecadExportFab: (a: number, b: number) => [number, number, number];
-    readonly ecadFillZones: (a: number, b: number) => [number, number, number];
-    readonly ecadGenerateNetlist: (a: number, b: number) => [number, number, number];
-    readonly ecadGetSymbol: (a: number, b: number) => [number, number, number];
-    readonly ecadLayerZ: (a: number, b: number, c: number, d: number) => number;
-    readonly ecadNetForWire: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly ecadRouteNet: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
-    readonly ecadRouteNetShove: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
-    readonly ecadSnapToGridOrPin: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly isEcadAvailable: () => number;
-    readonly parseKicadPcb: (a: number, b: number) => [number, number, number];
-    readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_safe_z: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_spindle_rpm: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_stepdown: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_stepover: (a: number) => number;
-    readonly __wbg_set_wasmcamsettings_feed_rate: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_plunge_rate: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_retract_z: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_safe_z: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_spindle_rpm: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_stepdown: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_stepover: (a: number, b: number) => void;
-    readonly __wbg_wasmcamsettings_free: (a: number, b: number) => void;
-    readonly camDropCutter: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
-    readonly camExportGcode: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
-    readonly camExportLinuxCnc: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly camGenerateCircularPocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
-    readonly camGenerateContour: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number, number, number];
-    readonly camGenerateFace: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly camGeneratePocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly camGenerateRoughing3d: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
-    readonly camGetDefaultTools: () => [number, number, number, number];
-    readonly camToolpathStats: (a: number, b: number) => [number, number, number];
-    readonly isCamAvailable: () => number;
-    readonly wasmcamsettings_fromJson: (a: number, b: number) => [number, number, number];
-    readonly wasmcamsettings_new: () => number;
     readonly __wbg_get_slicersettings_first_layer_height: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_density: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_pattern: (a: number) => number;
@@ -2425,6 +2394,51 @@ export interface InitOutput {
     readonly wasmdocumentengine_set_visible: (a: number, b: number, c: number, d: number) => any;
     readonly wasmdocumentengine_undo: (a: number) => any;
     readonly wasmdocumentengine_update_feature: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly ecadBuiltinSymbols: () => [number, number, number];
+    readonly ecadCheckDrc: (a: number, b: number) => [number, number, number];
+    readonly ecadCheckErc: (a: number, b: number) => [number, number, number];
+    readonly ecadComponentMeshes: (a: number, b: number) => [number, number, number];
+    readonly ecadComputeRatsnest: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly ecadExportFab: (a: number, b: number) => [number, number, number];
+    readonly ecadFillZones: (a: number, b: number) => [number, number, number];
+    readonly ecadFootprintForName: (a: number, b: number, c: number) => [number, number, number];
+    readonly ecadGenerateNetlist: (a: number, b: number) => [number, number, number];
+    readonly ecadGetSymbol: (a: number, b: number) => [number, number, number];
+    readonly ecadLayerZ: (a: number, b: number, c: number, d: number) => number;
+    readonly ecadNetForWire: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly ecadRouteNet: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
+    readonly ecadRouteNetShove: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
+    readonly ecadSnapToGridOrPin: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly isEcadAvailable: () => number;
+    readonly parseKicadPcb: (a: number, b: number) => [number, number, number];
+    readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_safe_z: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_spindle_rpm: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_stepdown: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_stepover: (a: number) => number;
+    readonly __wbg_set_wasmcamsettings_feed_rate: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_plunge_rate: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_retract_z: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_safe_z: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_spindle_rpm: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_stepdown: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_stepover: (a: number, b: number) => void;
+    readonly __wbg_wasmcamsettings_free: (a: number, b: number) => void;
+    readonly camDropCutter: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
+    readonly camExportGcode: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+    readonly camExportLinuxCnc: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly camGenerateCircularPocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+    readonly camGenerateContour: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number, number, number];
+    readonly camGenerateFace: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly camGeneratePocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly camGenerateRoughing3d: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
+    readonly camGetDefaultTools: () => [number, number, number, number];
+    readonly camToolpathStats: (a: number, b: number) => [number, number, number];
+    readonly isCamAvailable: () => number;
+    readonly wasmcamsettings_fromJson: (a: number, b: number) => [number, number, number];
+    readonly wasmcamsettings_new: () => number;
     readonly wasm_bindgen__closure__destroy__h30743bca3150d93c: (a: number, b: number) => void;
     readonly wasm_bindgen__closure__destroy__hfdadf281ff0f1c56: (a: number, b: number) => void;
     readonly wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e: (a: number, b: number, c: any, d: any) => void;

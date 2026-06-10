@@ -307,6 +307,133 @@ pub fn fp_pin_header(rows: u32, cols: u32) -> FootprintTemplate {
 }
 
 // ============================================================================
+// Footprint name resolution
+// ============================================================================
+
+/// Parse the first unsigned integer that follows `marker` in `s`.
+fn parse_num_after(s: &str, marker: &str) -> Option<u32> {
+    let idx = s.find(marker)? + marker.len();
+    let digits: String = s[idx..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    digits.parse().ok()
+}
+
+/// Parse the first decimal number that follows `marker` in `s` (e.g.
+/// pitch from "_P1.27mm").
+fn parse_float_after(s: &str, marker: &str) -> Option<f64> {
+    let idx = s.find(marker)? + marker.len();
+    let num: String = s[idx..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    num.parse().ok()
+}
+
+/// Parse a "RxC" pattern with integer digits on both sides of the 'x' and
+/// an underscore (or string boundary) delimiting the digit runs, e.g. the
+/// "1x02" in "PinHeader_1x02_P2.54mm_Vertical".
+fn parse_rows_cols(s: &str) -> Option<(u32, u32)> {
+    let bytes = s.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        if b != b'x' {
+            continue;
+        }
+        let run_start = s[..i]
+            .rfind(|c: char| !c.is_ascii_digit())
+            .map(|p| p + 1)
+            .unwrap_or(0);
+        let run_end = i
+            + 1
+            + s[i + 1..]
+                .find(|c: char| !c.is_ascii_digit())
+                .unwrap_or(s.len() - i - 1);
+        if run_start == i || run_end == i + 1 {
+            continue; // no digits on one side
+        }
+        let before_ok = run_start == 0 || bytes[run_start - 1] == b'_';
+        let after_ok = run_end == s.len() || bytes[run_end] == b'_';
+        if !before_ok || !after_ok {
+            continue; // part of a float like "3.9x4.9mm"
+        }
+        let rows: u32 = s[run_start..i].parse().ok()?;
+        let cols: u32 = s[i + 1..run_end].parse().ok()?;
+        return Some((rows, cols));
+    }
+    None
+}
+
+/// Resolve a KiCad-style footprint name to a parametric footprint template.
+///
+/// Recognizes SOIC/TSSOP/SSOP, DIP, QFP (with pitch), SOT-23/SOT-223,
+/// pin headers/sockets ("RxC"), and chip sizes (0402/0603/0805/1206), e.g.
+/// "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm" or "Resistor_SMD:R_0805_2012Metric".
+/// Unrecognized names fall back to a chip footprint for 2-pin parts and a
+/// single-row pin header otherwise, so callers always get non-overlapping
+/// pads. Returns `None` only when the name is unrecognized and `pin_count`
+/// is zero.
+pub fn footprint_for_name(name: &str, pin_count: u32) -> Option<FootprintTemplate> {
+    // Strip the library prefix ("Package_SO:SOIC-8..." → "SOIC-8...").
+    let base = name.rsplit(':').next().unwrap_or(name);
+
+    // SOT-223 before SOT-23 (substring overlap).
+    if base.contains("SOT-223") {
+        return Some(fp_sot223());
+    }
+    if base.contains("SOT-23") {
+        return Some(fp_sot23());
+    }
+
+    for marker in ["SOIC-", "TSSOP-", "SSOP-", "SOP-", "SO-"] {
+        if let Some(pins) = parse_num_after(base, marker) {
+            if pins >= 4 && pins.is_multiple_of(2) {
+                return Some(fp_soic(pins));
+            }
+        }
+    }
+
+    if let Some(pins) = parse_num_after(base, "DIP-") {
+        if pins >= 4 && pins.is_multiple_of(2) {
+            return Some(fp_dip(pins));
+        }
+    }
+
+    if let Some(pins) = parse_num_after(base, "QFP-") {
+        if pins >= 8 && pins.is_multiple_of(4) {
+            let pitch = parse_float_after(base, "_P").unwrap_or(0.8);
+            return Some(fp_qfp(pins, pitch));
+        }
+    }
+
+    if base.contains("PinHeader") || base.contains("PinSocket") {
+        if let Some((rows, cols)) = parse_rows_cols(base) {
+            if rows >= 1 && cols >= 1 {
+                return Some(fp_pin_header(rows, cols));
+            }
+        }
+    }
+
+    for (token, size) in [
+        ("_0402", ChipSize::C0402),
+        ("_0603", ChipSize::C0603),
+        ("_0805", ChipSize::C0805),
+        ("_1206", ChipSize::C1206),
+    ] {
+        if base.contains(token) {
+            return Some(fp_chip(size));
+        }
+    }
+
+    // Fallbacks keyed off pin count so pads never stack on one spot.
+    match pin_count {
+        0 => None,
+        1 | 2 => Some(fp_chip(ChipSize::C0805)),
+        n => Some(fp_pin_header(1, n)),
+    }
+}
+
+// ============================================================================
 // Symbol definitions
 // ============================================================================
 
@@ -797,5 +924,61 @@ mod tests {
         assert!(vcc.footprint_template.is_none());
         let gnd = get_symbol("gnd").unwrap();
         assert!(gnd.footprint_template.is_none());
+    }
+
+    #[test]
+    fn footprint_for_name_resolves_kicad_names() {
+        let soic = footprint_for_name("Package_SO:SOIC-8_3.9x4.9mm_P1.27mm", 8).unwrap();
+        assert_eq!(soic.name, "SOIC-8");
+        assert_eq!(soic.pads.len(), 8);
+        // Pads must not stack: all positions unique.
+        let mut positions: Vec<(i64, i64)> = soic
+            .pads
+            .iter()
+            .map(|p| {
+                (
+                    (p.position.x * 1000.0) as i64,
+                    (p.position.y * 1000.0) as i64,
+                )
+            })
+            .collect();
+        positions.sort();
+        positions.dedup();
+        assert_eq!(positions.len(), 8);
+
+        let chip = footprint_for_name("Resistor_SMD:R_0805_2012Metric", 2).unwrap();
+        assert_eq!(chip.name, "0805");
+
+        let hdr = footprint_for_name(
+            "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical",
+            2,
+        )
+        .unwrap();
+        assert_eq!(hdr.name, "PinHeader_1x2");
+        assert_eq!(hdr.pads.len(), 2);
+
+        let dip = footprint_for_name("Package_DIP:DIP-14_W7.62mm", 14).unwrap();
+        assert_eq!(dip.name, "DIP-14");
+
+        let qfp = footprint_for_name("Package_QFP:LQFP-32_7x7mm_P0.8mm", 32).unwrap();
+        assert_eq!(qfp.name, "QFP-32");
+
+        let sot = footprint_for_name("Package_TO_SOT_SMD:SOT-23", 3).unwrap();
+        assert_eq!(sot.name, "SOT-23");
+
+        let sot223 = footprint_for_name("Package_TO_SOT_SMD:SOT-223-3_TabPin2", 4).unwrap();
+        assert_eq!(sot223.name, "SOT-223");
+    }
+
+    #[test]
+    fn footprint_for_name_fallbacks_spread_pads() {
+        // Unknown 2-pin part → chip.
+        let two = footprint_for_name("Mystery:Part", 2).unwrap();
+        assert_eq!(two.pads.len(), 2);
+        // Unknown 5-pin part → single-row header, one pad per pin.
+        let five = footprint_for_name("Mystery:Part5", 5).unwrap();
+        assert_eq!(five.pads.len(), 5);
+        // Nothing to go on.
+        assert!(footprint_for_name("Mystery:Unknowable", 0).is_none());
     }
 }

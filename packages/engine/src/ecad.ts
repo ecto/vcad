@@ -309,6 +309,25 @@ export async function getSymbol(id: string): Promise<SymbolDef | null> {
   }
 }
 
+/**
+ * Resolve a KiCad-style footprint name (e.g.
+ * "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm") to a parametric footprint template.
+ * `pinCount` drives the fallback when the name isn't recognized.
+ */
+export async function footprintForName(
+  name: string,
+  pinCount: number,
+): Promise<FootprintTemplate | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm || typeof wasm.ecadFootprintForName !== "function") return null;
+  try {
+    return (wasm.ecadFootprintForName(name, pinCount) as FootprintTemplate) ?? null;
+  } catch (e) {
+    console.warn("[ECAD] footprintForName failed:", e);
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Ratsnest + PCB geometry
 // ---------------------------------------------------------------------------

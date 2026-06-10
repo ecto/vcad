@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-10-parametric-footprints",
+  "version": "0.9.4",
+  "date": "2026-06-10",
+  "category": "fix",
+  "title": "place_components generates real multi-pin footprints",
+  "summary": "Footprint names now resolve to parametric kernel footprints (SOIC, DIP, QFP, SOT-23/223, pin headers, chip sizes) instead of stacking every pad past pin 2 on one spot.",
+  "features": ["pcb", "ecad"],
+  "mcpTools": ["place_components"]
+}

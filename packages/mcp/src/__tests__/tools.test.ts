@@ -951,6 +951,47 @@ describe("ecad place_components → route_nets pipeline", () => {
     expect(padNet("R2", "2")).toBeUndefined();
   });
 
+  it("generates real multi-pin footprint geometry (SOIC-8)", async () => {
+    const schematicOut = JSON.parse(
+      createSchematic({
+        components: [
+          {
+            ref: "U1",
+            value: "NE555",
+            footprint: "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm",
+            x: 0,
+            y: 0,
+            pins: Array.from({ length: 8 }, (_, i) => ({
+              number: `${i + 1}`,
+              name: `P${i + 1}`,
+              type: "Passive",
+            })),
+          },
+        ],
+      }).content[0].text,
+    );
+
+    const placedOut = JSON.parse(
+      (
+        await placeComponents({
+          document: schematicOut.document,
+          board_width: 30,
+          board_height: 30,
+        })
+      ).content[0].text,
+    );
+    expect(placedOut.success).toBe(true);
+
+    const pcbNode = Object.values(placedOut.document.nodes).find(
+      (n) => ((n as { op: { type: string } }).op).type === "PcbBoard",
+    ) as { op: { board: { footprints: Array<{ pads: Array<{ position: { x: number; y: number } }> }> } } };
+    const pads = pcbNode.op.board.footprints[0].pads;
+    expect(pads.length).toBe(8);
+    // All pad positions distinct — no stacked pads.
+    const unique = new Set(pads.map((p) => `${p.position.x},${p.position.y}`));
+    expect(unique.size).toBe(8);
+  });
+
   it("keeps all footprints inside the board outline", async () => {
     const comps = Array.from({ length: 5 }, (_, i) => ({
       ref: `R${i + 1}`,

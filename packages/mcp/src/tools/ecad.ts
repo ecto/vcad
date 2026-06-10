@@ -32,7 +32,7 @@ import type {
 } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
 import { getNodePcb, getPcbNodeIds } from "@vcad/core";
-import { exportFabFiles, generateNetlist } from "@vcad/engine";
+import { exportFabFiles, footprintForName, generateNetlist } from "@vcad/engine";
 
 /** Get PCB data from a document — checks PcbBoard nodes first, falls back to legacy doc.pcb */
 function getDocPcb(doc: Document): Pcb | null {
@@ -486,34 +486,53 @@ export async function placeComponents(args: Record<string, unknown>) {
   const nets: Net[] = [];
   const netSet = new Set<string>();
 
+  const netIdForPin = (comp: SchematicComponent, pin: SchematicPin): string | undefined => {
+    // Net from schematic connectivity; pin-name fallback for wireless docs.
+    const netId = useConnectivity
+      ? netByPin.get(`${comp.ref}\u0000${pin.number}`)
+      : pin.name && pin.name !== "~"
+        ? pin.name
+        : undefined;
+    if (netId && !netSet.has(netId)) {
+      netSet.add(netId);
+      nets.push({ id: netId, name: netId });
+    }
+    return netId;
+  };
+
+  // Resolve real pad geometry from the kernel footprint library (SOIC, DIP,
+  // QFP, headers, chip sizes, ...). Null only when the kernel is unavailable.
+  const templates = await Promise.all(
+    components.map((c) => footprintForName(c.footprintId, c.pins.length)),
+  );
+
   const footprints: Footprint[] = components.map((comp, i) => {
     const x = Math.round(positions[i].x * 100) / 100;
     const y = Math.round(positions[i].y * 100) / 100;
+    const template = templates[i];
 
-    // Create pads from schematic pins
-    const pads: Pad[] = comp.pins.map((pin, pi) => {
-      const padX = pi === 0 ? -1.0 : 1.0;
-
-      // Net from schematic connectivity; pin-name fallback for wireless docs.
-      const netId = useConnectivity
-        ? netByPin.get(`${comp.ref}\u0000${pin.number}`)
-        : pin.name && pin.name !== "~"
-          ? pin.name
-          : undefined;
-      if (netId && !netSet.has(netId)) {
-        netSet.add(netId);
-        nets.push({ id: netId, name: netId });
-      }
-
-      return {
+    let pads: Pad[];
+    if (template) {
+      pads = template.pads.map((pad) => {
+        const pin = comp.pins.find((p) => p.number === pad.number);
+        const netId = pin ? netIdForPin(comp, pin) : undefined;
+        const layers: PcbLayer[] =
+          pad.padType === "THT"
+            ? ["FCu", "BCu", "FMask", "BMask"]
+            : ["FCu", "FPaste", "FMask"];
+        return { ...pad, net: netId, layers };
+      });
+    } else {
+      // No kernel: spread generic SMD pads in a row so they never stack.
+      pads = comp.pins.map((pin, pi) => ({
         number: pin.number,
         padType: "SMD" as PadType,
         shape: { type: "Rect" as const, width: 1.0, height: 1.2 },
-        position: { x: padX, y: 0 },
-        net: netId,
-        layers: ["FCu" as PcbLayer, "FPaste" as PcbLayer, "FMask" as PcbLayer],
-      };
-    });
+        position: { x: (pi - (comp.pins.length - 1) / 2) * 2.54, y: 0 },
+        net: netIdForPin(comp, pin),
+        layers: ["FCu", "FPaste", "FMask"] as PcbLayer[],
+      }));
+    }
 
     return {
       ref: comp.ref,
@@ -523,6 +542,7 @@ export async function placeComponents(args: Record<string, unknown>) {
       rotation: 0,
       front: true,
       pads,
+      ...(template && template.graphics.length > 0 ? { graphics: template.graphics } : {}),
     };
   });
 
