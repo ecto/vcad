@@ -564,7 +564,10 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
       if (dispatchableTools.has(name)) {
         result = dispatchRegistryTool(name, args);
         const docId = resolvePreviewDocumentId(name, result, args, engine);
-        if (docId) attachPreviewHandle(result, docId);
+        if (docId) {
+          attachPreviewHandle(result, docId);
+          slimPreviewForInlineUi(result, docId, name);
+        }
         return result;
       }
 
@@ -741,7 +744,10 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
       // `get_preview_glb` tool, so results stay lean for the model.
       if (uiTools.has(name) && result.content.length > 0 && !result.isError) {
         const docId = resolvePreviewDocumentId(name, result, args, engine);
-        if (docId) attachPreviewHandle(result, docId);
+        if (docId) {
+          attachPreviewHandle(result, docId);
+          slimPreviewForInlineUi(result, docId, name);
+        }
       }
 
       return result;
@@ -764,6 +770,32 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
  * structuredContent to widgets, and the id is useful to agents anyway
  * (it opens the result up for follow-up mutations).
  */
+/**
+ * Replace bulky tool-result text (full VCode, large JSON IR, …) with a short
+ * summary. Cursor suppresses inline MCP App UI when tool results are huge —
+ * the same spill behavior we hit with inlined GLB payloads.
+ */
+function slimPreviewForInlineUi(
+  result: { content: Array<{ type: string; text: string }> },
+  docId: string,
+  toolName: string,
+): void {
+  const alwaysSlim = toolName === "create_cad_loon";
+  const totalChars = result.content.reduce(
+    (n, c) => n + (c.type === "text" ? c.text.length : 0),
+    0,
+  );
+  if (!alwaysSlim && totalChars <= 8192) return;
+
+  const summary =
+    `CAD document ready (${docId}). Geometry is available in the inline 3D viewer. ` +
+    "Use get_document for the full IR, inspect_cad for metrics, or export_cad to export.";
+  result.content = [
+    { type: "text", text: summary },
+    { type: "text", text: JSON.stringify({ document_id: docId }) },
+  ];
+}
+
 function attachPreviewHandle(
   result: {
     content: Array<{ type: string; text: string; annotations?: unknown }>;

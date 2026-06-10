@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-10-mcp-cursor-inline-viewer-fix",
+  "version": "0.9.4",
+  "date": "2026-06-10",
+  "category": "fix",
+  "title": "MCP inline viewer works in Cursor",
+  "summary": "Cursor MCP Apps now render the 3D viewer: CSP allows blob URLs for Three.js GLB loading, and geometry tool results stay small so hosts do not suppress the inline UI.",
+  "features": ["mcp", "viewer"],
+  "mcpTools": ["create_cad_loon", "get_preview_glb"]
+}

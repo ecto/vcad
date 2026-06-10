@@ -253,6 +253,7 @@ async function handleToolResult(result: ToolResultLike): Promise<void> {
     setStatus("no geometry to preview");
     return;
   }
+  lastDocumentId = docId;
   setStatus("fetching geometry…");
   try {
     const previewResult = (await app.callServerTool({
@@ -274,10 +275,24 @@ async function handleToolResult(result: ToolResultLike): Promise<void> {
 
 // ── "Open in vcad.io" deep link ──────────────────────────────
 let vcodeDoc: string | null = null;
+let lastDocumentId: string | null = null;
 
-openBtn.addEventListener("click", () => {
-  if (!vcodeDoc) return;
-  const encoded = btoa(unescape(encodeURIComponent(vcodeDoc)))
+openBtn.addEventListener("click", async () => {
+  let doc = vcodeDoc;
+  if (!doc && lastDocumentId) {
+    try {
+      const fetched = (await app.callServerTool({
+        name: "get_document",
+        arguments: { document_id: lastDocumentId },
+      })) as ToolResultLike;
+      const text = fetched.content?.find((c) => c.type === "text")?.text;
+      if (text) doc = text;
+    } catch (e) {
+      console.warn("[vcad-viewer] get_document for open link failed:", e);
+    }
+  }
+  if (!doc) return;
+  const encoded = btoa(unescape(encodeURIComponent(doc)))
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/, "");
