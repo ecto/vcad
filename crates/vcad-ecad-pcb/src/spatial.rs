@@ -162,7 +162,7 @@ impl Default for SpatialIndex {
 }
 
 /// Get the half-width and half-height of a pad for bounding box computation.
-fn pad_half_extents(pad: &vcad_ir::ecad::Pad) -> (f64, f64) {
+pub(crate) fn pad_half_extents(pad: &vcad_ir::ecad::Pad) -> (f64, f64) {
     match &pad.shape {
         PadShape::Circle { diameter } => {
             let r = diameter / 2.0;

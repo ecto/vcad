@@ -37,6 +37,7 @@ import {
   createSchematic,
   placeComponents,
   routeNets,
+  runDrc,
 } from "../tools/ecad.js";
 import { existsSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
@@ -1055,6 +1056,63 @@ describe("ecad place_components → route_nets pipeline", () => {
         ).toBe(false);
       }
     }
+  });
+
+  it("DRC flags same-layer copper shorts between different nets", async () => {
+    const schematicOut = JSON.parse(
+      createSchematic({
+        components: [
+          {
+            ref: "R1",
+            value: "1k",
+            footprint: "Resistor_SMD:R_0805",
+            x: 0,
+            y: 0,
+            pins: [
+              { number: "1", name: "A", type: "Passive" },
+              { number: "2", name: "B", type: "Passive" },
+            ],
+          },
+          {
+            ref: "R2",
+            value: "1k",
+            footprint: "Resistor_SMD:R_0805",
+            x: 20,
+            y: 0,
+            pins: [
+              { number: "1", name: "A", type: "Passive" },
+              { number: "2", name: "B", type: "Passive" },
+            ],
+          },
+        ],
+      }).content[0].text,
+    );
+    const placedOut = JSON.parse(
+      (
+        await placeComponents({
+          document: schematicOut.document,
+          board_width: 40,
+          board_height: 40,
+        })
+      ).content[0].text,
+    );
+
+    // Inject two crossing traces on different nets — a hard short.
+    const doc = placedOut.document;
+    const pcbNode = Object.values(doc.nodes).find(
+      (n) => ((n as { op: { type: string } }).op).type === "PcbBoard",
+    ) as { op: { board: { traces: unknown[] } } };
+    pcbNode.op.board.traces.push(
+      { start: { x: 10, y: 10 }, end: { x: 30, y: 30 }, width: 0.25, layer: "FCu", net: "A" },
+      { start: { x: 10, y: 30 }, end: { x: 30, y: 10 }, width: 0.25, layer: "FCu", net: "B" },
+    );
+
+    const drcOut = JSON.parse((await runDrc({ document: doc })).content[0].text);
+    expect(drcOut.success).toBe(true);
+    const clearanceErrors = (drcOut.details as Array<{ rule: string }>).filter(
+      (v) => v.rule === "Clearance",
+    );
+    expect(clearanceErrors.length).toBeGreaterThan(0);
   });
 
   it("generates real multi-pin footprint geometry (SOIC-8)", async () => {

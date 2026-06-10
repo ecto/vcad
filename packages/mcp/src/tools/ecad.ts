@@ -37,8 +37,10 @@ import {
   exportFabFiles,
   footprintForName,
   generateNetlist,
+  isEcadAvailable,
   routeNet,
   routeNetShove,
+  runDrc as kernelRunDrc,
 } from "@vcad/engine";
 import type { NetlistResult } from "@vcad/engine";
 
@@ -736,7 +738,7 @@ export async function routeNets(args: Record<string, unknown>) {
 }
 
 /** Run DRC checks on a PCB. */
-export function runDrc(args: Record<string, unknown>) {
+export async function runDrc(args: Record<string, unknown>) {
   const doc = args.document as Document;
   const pcb = getDocPcb(doc);
 
@@ -746,6 +748,28 @@ export function runDrc(args: Record<string, unknown>) {
       isError: true,
     };
   }
+
+  // Kernel DRC: copper clearance (trace↔copper and pad↔pad shorts), trace
+  // width, drill, annular ring, edge clearance, hole-to-hole.
+  if (await isEcadAvailable()) {
+    const kernelViolations = await kernelRunDrc(pcb);
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({
+            success: true,
+            violations: kernelViolations.length,
+            errors: kernelViolations.filter((v) => v.severity === "Error").length,
+            warnings: kernelViolations.filter((v) => v.severity === "Warning").length,
+            details: kernelViolations,
+          }),
+        },
+      ],
+    };
+  }
+
+  // Fallback when the kernel WASM is unavailable: basic scalar checks only.
   const violations: Array<{
     rule: string;
     severity: string;

@@ -664,7 +664,7 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
           break;
 
         case "run_drc":
-          result = runDrc(args);
+          result = await runDrc(args);
           break;
 
         case "run_erc":

@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use vcad_ir::ecad::{Pad, PadShape, PadType, Pcb};
 use vcad_ir::Vec2;
 
-use crate::spatial::SpatialIndex;
+use crate::spatial::{pad_half_extents, SpatialIndex};
 
 /// DRC rule type.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -75,6 +75,7 @@ pub fn check_drc(pcb: &Pcb) -> Vec<DrcViolation> {
     let index = SpatialIndex::from_pcb(pcb);
 
     check_clearance(pcb, &index, &mut violations);
+    check_pad_clearance(pcb, &mut violations);
     check_min_trace_width(pcb, &mut violations);
     check_min_drill(pcb, &mut violations);
     check_edge_clearance(pcb, &mut violations);
@@ -135,6 +136,84 @@ fn check_clearance(pcb: &Pcb, index: &SpatialIndex, violations: &mut Vec<DrcViol
                     message: format!(
                         "Clearance violation: trace net '{}' to net '{}': {:.3}mm < {:.3}mm",
                         trace.net, elem.net, dist, clearance
+                    ),
+                    actual: dist,
+                    required: clearance,
+                });
+            }
+        }
+    }
+}
+
+/// Check copper clearance between pads of different nets.
+///
+/// The trace pass covers trace↔copper pairs; this covers pad↔pad shorts
+/// (overlapping footprints or stacked pads), which that pass never sees.
+fn check_pad_clearance(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
+    let default_clearance = pcb.rules.default_rules.clearance;
+    let net_clearance = build_net_clearance_map(pcb);
+
+    struct PadBox<'a> {
+        bbox: [f64; 4],
+        net: &'a str,
+        layers: &'a [vcad_ir::ecad::PcbLayer],
+        fp_ref: &'a str,
+        number: &'a str,
+    }
+
+    let mut boxes: Vec<PadBox> = Vec::new();
+    for fp in &pcb.footprints {
+        for pad in &fp.pads {
+            // Pads without a net can't short two nets together.
+            let Some(net) = pad.net.as_deref() else {
+                continue;
+            };
+            let (hw, hh) = pad_half_extents(pad);
+            let x = fp.position.x + pad.position.x;
+            let y = fp.position.y + pad.position.y;
+            boxes.push(PadBox {
+                bbox: [x - hw, y - hh, x + hw, y + hh],
+                net,
+                layers: &pad.layers,
+                fp_ref: &fp.reference,
+                number: &pad.number,
+            });
+        }
+    }
+
+    for i in 0..boxes.len() {
+        for j in (i + 1)..boxes.len() {
+            let (a, b) = (&boxes[i], &boxes[j]);
+            if a.net == b.net {
+                continue;
+            }
+            let share_copper = a
+                .layers
+                .iter()
+                .any(|la| la.is_copper() && b.layers.contains(la));
+            if !share_copper {
+                continue;
+            }
+
+            let clearance = net_clearance
+                .get(a.net)
+                .copied()
+                .unwrap_or(default_clearance)
+                .max(net_clearance.get(b.net).copied().unwrap_or(default_clearance));
+
+            let dist = bbox_distance(a.bbox, b.bbox);
+            if dist < clearance {
+                let pos = Vec2::new(
+                    (a.bbox[0] + a.bbox[2] + b.bbox[0] + b.bbox[2]) / 4.0,
+                    (a.bbox[1] + a.bbox[3] + b.bbox[1] + b.bbox[3]) / 4.0,
+                );
+                violations.push(DrcViolation {
+                    rule: DrcRuleType::Clearance,
+                    severity: DrcSeverity::Error,
+                    position: pos,
+                    message: format!(
+                        "Clearance violation: pad {}.{} net '{}' to pad {}.{} net '{}': {:.3}mm < {:.3}mm",
+                        a.fp_ref, a.number, a.net, b.fp_ref, b.number, b.net, dist, clearance
                     ),
                     actual: dist,
                     required: clearance,
@@ -608,6 +687,48 @@ mod tests {
         );
         assert!((trace_violations[0].actual - 0.1).abs() < 1e-6);
         assert!((trace_violations[0].required - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn detect_pad_to_pad_short() {
+        let mut pcb = clean_pcb();
+        let pad = |num: &str, x: f64, net: &str| Pad {
+            number: num.to_string(),
+            pad_type: PadType::SMD,
+            shape: PadShape::Rect {
+                width: 1.0,
+                height: 1.2,
+            },
+            position: Vec2::new(x, 0.0),
+            rotation: 0.0,
+            drill: None,
+            net: Some(net.to_string()),
+            layers: vec![PcbLayer::FCu],
+        };
+        // Two stacked pads on different nets — a hard short.
+        pcb.footprints.push(Footprint {
+            reference: "U1".to_string(),
+            value: "IC".to_string(),
+            footprint_name: "broken".to_string(),
+            position: Vec2::new(60.0, 60.0),
+            rotation: 0.0,
+            front: true,
+            pads: vec![pad("1", 0.0, "1"), pad("2", 0.0, "2")],
+            graphics: vec![],
+            model_3d: None,
+            properties: std::collections::HashMap::new(),
+        });
+
+        let violations = check_drc(&pcb);
+        let pad_violations: Vec<_> = violations
+            .iter()
+            .filter(|v| v.rule == DrcRuleType::Clearance && v.message.contains("pad"))
+            .collect();
+        assert!(
+            !pad_violations.is_empty(),
+            "should detect pad-to-pad short, got: {:?}",
+            violations
+        );
     }
 
     #[test]

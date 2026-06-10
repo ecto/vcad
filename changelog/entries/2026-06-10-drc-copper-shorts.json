@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-10-drc-copper-shorts",
+  "version": "0.9.4",
+  "date": "2026-06-10",
+  "category": "fix",
+  "title": "run_drc detects copper shorts",
+  "summary": "run_drc now runs the kernel DRC (copper clearance, pad-to-pad shorts, hole-to-hole) instead of scalar-only checks that missed crossing traces and overlapping pads.",
+  "features": ["pcb", "ecad"],
+  "mcpTools": ["run_drc"]
+}
