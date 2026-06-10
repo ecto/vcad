@@ -24,6 +24,8 @@ import {
   closeDocument,
   closeDocumentSchema,
   documents,
+  registerSession,
+  getSession,
 } from "./tools/session.js";
 import {
   registryToolDescriptors,
@@ -102,7 +104,7 @@ import {
   sheetMetalNest,
   sheetMetalNestSchema,
 } from "./tools/sheet-metal.js";
-import { appendGlbPreview } from "./tools/preview.js";
+import { getPreviewGlb, getPreviewGlbSchema } from "./tools/preview.js";
 import {
   getViewerHtml,
   VIEWER_RESOURCE_URI,
@@ -238,6 +240,23 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
       // tools/registry-dispatch.ts. All of them mutate a session document,
       // so they all get the inline 3D viewer.
       ...registryToolDescriptors().map((t) => ({ ...t, _meta: UI_META })),
+      // ── MCP Apps: app-only preview fetch ───────────────────────
+      // visibility: ["app"] — spec-compliant hosts hide this from the
+      // agent's tool list; only the viewer iframe calls it (via
+      // app.callServerTool). Keeps multi-hundred-KB GLB payloads out of
+      // model-visible tool results.
+      {
+        name: "get_preview_glb",
+        description:
+          "Return a base64 GLB preview of an open session document. Internal to the inline 3D viewer — agents should use `export_cad` for geometry exports.",
+        inputSchema: getPreviewGlbSchema,
+        _meta: {
+          ui: {
+            resourceUri: VIEWER_RESOURCE_URI,
+            visibility: ["app"],
+          },
+        },
+      },
       // ── Loon DSL one-shot ──────────────────────────────────────
       {
         name: "create_cad_loon",
@@ -531,17 +550,21 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
     const { name, arguments: args = {} } = request.params;
 
     try {
-      let result: { content: Array<{ type: string; text: string; annotations?: unknown }>; isError?: boolean };
+      let result: {
+        content: Array<{ type: string; text: string; annotations?: unknown }>;
+        structuredContent?: Record<string, unknown>;
+        isError?: boolean;
+      };
 
       // Registry-driven dispatch: any kernel tool from
       // `commandRegistry.toAnthropicTools()` (minus the browser-only and
       // deferred sets in tools/registry-dispatch.ts) routes through the
-      // shared planner + applyToolOutcome path. Falls through to the GLB
+      // shared planner + applyToolOutcome path. Falls through to the
       // preview block below so these mutations render in the inline viewer.
       if (dispatchableTools.has(name)) {
         result = dispatchRegistryTool(name, args);
-        const irDoc = extractIrDocument(name, result, args, engine);
-        if (irDoc) appendGlbPreview(result, irDoc, engine);
+        const docId = resolvePreviewDocumentId(name, result, args, engine);
+        if (docId) attachPreviewHandle(result, docId);
         return result;
       }
 
@@ -564,6 +587,10 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
 
         case "place_part":
           result = placePartTool(args, engine);
+          break;
+
+        case "get_preview_glb":
+          result = getPreviewGlb(getSession(String(args.document_id ?? "")), engine);
           break;
 
         case "create_cad_loon":
@@ -709,12 +736,12 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
           };
       }
 
-      // ── MCP Apps: Append GLB preview for geometry tools ──────
+      // ── MCP Apps: attach preview handle for geometry tools ──────
+      // The viewer fetches the actual GLB via the app-only
+      // `get_preview_glb` tool, so results stay lean for the model.
       if (uiTools.has(name) && result.content.length > 0 && !result.isError) {
-        const irDoc = extractIrDocument(name, result, args, engine);
-        if (irDoc) {
-          appendGlbPreview(result, irDoc, engine);
-        }
+        const docId = resolvePreviewDocumentId(name, result, args, engine);
+        if (docId) attachPreviewHandle(result, docId);
       }
 
       return result;
@@ -731,65 +758,95 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
 }
 
 /**
- * Extract an IR Document from a tool result for GLB preview generation.
+ * Attach the preview document id to a tool result: in structuredContent
+ * (the spec path) and, when the result text doesn't already mention the
+ * id, as a small JSON text block too. Cursor has known gaps forwarding
+ * structuredContent to widgets, and the id is useful to agents anyway
+ * (it opens the result up for follow-up mutations).
+ */
+function attachPreviewHandle(
+  result: {
+    content: Array<{ type: string; text: string; annotations?: unknown }>;
+    structuredContent?: Record<string, unknown>;
+  },
+  docId: string,
+): void {
+  result.structuredContent = {
+    ...result.structuredContent,
+    document_id: docId,
+  };
+  const mentioned = result.content.some(
+    (c) => c.type === "text" && c.text.includes(docId),
+  );
+  if (!mentioned) {
+    result.content.push({
+      type: "text",
+      text: JSON.stringify({ document_id: docId }),
+    });
+  }
+}
+
+/**
+ * Resolve the session document id a geometry tool result should be
+ * previewed from. The viewer iframe later passes this id to the app-only
+ * `get_preview_glb` tool.
  *
  * Strategy per tool:
  * - session-backed tools (registry CRUD, place_part, dfm_apply_fix,
- *   sheet_metal_create, …): resolve the live session doc by `document_id`
- *   from the args or the result payload
- * - create_cad_loon: re-evaluate loon source via engine
- * - import_step: parse JSON result to extract the document field
+ *   sheet_metal_create, …): the existing `document_id` from args or the
+ *   result payload
+ * - import_step: register the parsed document as a fresh session
+ * - create_cad_loon: re-evaluate loon source and register a fresh session
  */
-function extractIrDocument(
+function resolvePreviewDocumentId(
   toolName: string,
   result: { content: Array<{ type: string; text: string }> },
   args: Record<string, unknown>,
   engine: Engine,
-): Document | null {
+): string | null {
   try {
+    // Session-backed args (registry CRUD tools, place_part, dfm_apply_fix)
+    if (typeof args.document_id === "string" && documents.has(args.document_id)) {
+      return args.document_id;
+    }
+
     const text = result.content[0]?.text;
     if (!text) return null;
 
-    // Try parsing the text as JSON first (works for JSON format & import_step)
+    let doc: Document | null = null;
     try {
       const parsed = JSON.parse(text);
 
+      // Session-backed result (e.g. sheet_metal_create, open_document)
+      if (
+        typeof parsed.document_id === "string" &&
+        documents.has(parsed.document_id)
+      ) {
+        return parsed.document_id;
+      }
+
       // import_step wraps the document in { document, summary }
       if (parsed.document && parsed.document.version) {
-        return parsed.document as Document;
-      }
-
-      // Direct IR document (JSON format output)
-      if (parsed.version && parsed.nodes) {
-        return parsed as Document;
-      }
-
-      // Session-backed result (e.g. sheet_metal_create, open_document)
-      if (typeof parsed.document_id === "string") {
-        const doc = documents.get(parsed.document_id);
-        if (doc) return doc;
+        doc = parsed.document as Document;
+      } else if (parsed.version && parsed.nodes) {
+        // Direct IR document (JSON format output)
+        doc = parsed as Document;
       }
     } catch {
       // Not JSON — likely VCode format, handle below
     }
 
-    // Session-backed args (registry CRUD tools, place_part, dfm_apply_fix)
-    if (typeof args.document_id === "string") {
-      const doc = documents.get(args.document_id);
-      if (doc) return doc;
-    }
-
     // For create_cad_loon with VCode output, re-evaluate with JSON format
-    if (toolName === "create_cad_loon" && args.source) {
+    if (!doc && toolName === "create_cad_loon" && args.source) {
       const jsonResult = createCadLoon({ ...args, format: "json" }, engine);
       const jsonText = jsonResult.content[0]?.text;
       if (jsonText) {
-        const doc = JSON.parse(jsonText);
-        if (doc.version && doc.nodes) return doc as Document;
+        const parsed = JSON.parse(jsonText);
+        if (parsed.version && parsed.nodes) doc = parsed as Document;
       }
     }
 
-    return null;
+    return doc ? registerSession(doc) : null;
   } catch {
     return null;
   }
