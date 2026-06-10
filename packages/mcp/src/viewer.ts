@@ -11,9 +11,14 @@
 
 import { VIEWER_HTML } from "./viewer-html.generated.js";
 
-/** CSP for the viewer. Everything is inlined, so no external domains. */
+/**
+ * CSP for the viewer. Everything is inlined, so no external domains.
+ * `blob:` is allowed because GLTFLoader uses createObjectURL for embedded
+ * textures; hosts like Cursor enforce the declared CSP strictly (tldraw's
+ * working app whitelists blob: for the same reason).
+ */
 export const VIEWER_CSP: { resourceDomains: string[] } = {
-  resourceDomains: [],
+  resourceDomains: ["blob:"],
 };
 
 /** The ui:// URI for the viewer resource. */
