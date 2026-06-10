@@ -302,6 +302,81 @@ export function createSchematic(args: Record<string, unknown>) {
   };
 }
 
+/**
+ * Refine grid positions with a deterministic force-directed pass:
+ * components sharing a net attract, overlapping components repel, and
+ * everything stays clamped inside the board margins.
+ */
+function forceDirectedRefine(
+  components: SchematicComponent[],
+  positions: Vec2[],
+  netByPin: Map<string, string>,
+  useConnectivity: boolean,
+  bounds: { minX: number; minY: number; maxX: number; maxY: number; minSep: number },
+): void {
+  // net id → component indices on that net
+  const netMembers = new Map<string, number[]>();
+  components.forEach((comp, i) => {
+    const seen = new Set<string>();
+    for (const pin of comp.pins) {
+      const netId = useConnectivity
+        ? netByPin.get(`${comp.ref}\u0000${pin.number}`)
+        : pin.name && pin.name !== "~"
+          ? pin.name
+          : undefined;
+      if (!netId || seen.has(netId)) continue;
+      seen.add(netId);
+      const members = netMembers.get(netId) || [];
+      members.push(i);
+      netMembers.set(netId, members);
+    }
+  });
+
+  const iterations = 120;
+  const attract = 0.04;
+  const minSep = bounds.minSep;
+
+  for (let it = 0; it < iterations; it++) {
+    const forces: Vec2[] = positions.map(() => ({ x: 0, y: 0 }));
+
+    // Attraction between components sharing a net.
+    for (const members of netMembers.values()) {
+      for (let a = 0; a < members.length; a++) {
+        for (let b = a + 1; b < members.length; b++) {
+          const i = members[a];
+          const j = members[b];
+          const dx = positions[j].x - positions[i].x;
+          const dy = positions[j].y - positions[i].y;
+          forces[i].x += attract * dx;
+          forces[i].y += attract * dy;
+          forces[j].x -= attract * dx;
+          forces[j].y -= attract * dy;
+        }
+      }
+    }
+
+    // Repulsion when components get closer than the minimum separation.
+    for (let i = 0; i < positions.length; i++) {
+      for (let j = i + 1; j < positions.length; j++) {
+        const dx = positions[j].x - positions[i].x;
+        const dy = positions[j].y - positions[i].y;
+        const dist = Math.max(Math.hypot(dx, dy), 0.1);
+        if (dist >= minSep) continue;
+        const push = (0.5 * (minSep - dist)) / dist;
+        forces[i].x -= push * dx;
+        forces[i].y -= push * dy;
+        forces[j].x += push * dx;
+        forces[j].y += push * dy;
+      }
+    }
+
+    for (let i = 0; i < positions.length; i++) {
+      positions[i].x = Math.min(bounds.maxX, Math.max(bounds.minX, positions[i].x + forces[i].x));
+      positions[i].y = Math.min(bounds.maxY, Math.max(bounds.minY, positions[i].y + forces[i].y));
+    }
+  }
+}
+
 /** Place components on a PCB from schematic data. */
 export async function placeComponents(args: Record<string, unknown>) {
   const doc = args.document as Document;
@@ -366,23 +441,54 @@ export async function placeComponents(args: Record<string, unknown>) {
     minDrill: 0.2,
   };
 
-  // Simple grid placement: place components in a grid pattern
+  // Grid placement sized to the board: split the usable area into cells so
+  // every component lands inside the outline regardless of board size.
   const components = doc.schematic.components;
-  const margin = 5;
-  const spacing = Math.max(10, Math.min(
-    (boardWidth - 2 * margin) / Math.ceil(Math.sqrt(components.length)),
-    (boardHeight - 2 * margin) / Math.ceil(Math.sqrt(components.length))
-  ));
+  const strategy = (args.strategy as string) || "grid";
+  const margin = Math.min(5, boardWidth / 8, boardHeight / 8);
+  const usableW = boardWidth - 2 * margin;
+  const usableH = boardHeight - 2 * margin;
+  if (usableW <= 0 || usableH <= 0) {
+    return {
+      content: [{ type: "text" as const, text: "Error: Board too small for placement" }],
+      isError: true,
+    };
+  }
 
-  const cols = Math.max(1, Math.floor((boardWidth - 2 * margin) / spacing));
+  const n = components.length;
+  const cols = Math.max(1, Math.round(Math.sqrt((n * usableW) / usableH)));
+  const rows = Math.max(1, Math.ceil(n / cols));
+  const cellW = usableW / cols;
+  const cellH = usableH / Math.max(rows, 1);
+
+  const warnings: string[] = [];
+  if (n > 1 && Math.min(cellW, cellH) < 4) {
+    warnings.push(
+      `Placement cells are ${Math.min(cellW, cellH).toFixed(1)}mm — components may overlap; consider a larger board`,
+    );
+  }
+
+  const positions: Vec2[] = components.map((_, i) => ({
+    x: margin + ((i % cols) + 0.5) * cellW,
+    y: margin + (Math.floor(i / cols) + 0.5) * cellH,
+  }));
+
+  if (strategy === "force_directed") {
+    forceDirectedRefine(components, positions, netByPin, useConnectivity, {
+      minX: margin,
+      minY: margin,
+      maxX: boardWidth - margin,
+      maxY: boardHeight - margin,
+      minSep: Math.min(cellW, cellH),
+    });
+  }
+
   const nets: Net[] = [];
   const netSet = new Set<string>();
 
   const footprints: Footprint[] = components.map((comp, i) => {
-    const col = i % cols;
-    const row = Math.floor(i / cols);
-    const x = margin + col * spacing + spacing / 2;
-    const y = margin + row * spacing + spacing / 2;
+    const x = Math.round(positions[i].x * 100) / 100;
+    const y = Math.round(positions[i].y * 100) / 100;
 
     // Create pads from schematic pins
     const pads: Pad[] = comp.pins.map((pin, pi) => {
@@ -455,6 +561,8 @@ export async function placeComponents(args: Record<string, unknown>) {
         text: JSON.stringify({
           success: true,
           footprints_placed: footprints.length,
+          strategy,
+          ...(warnings.length > 0 ? { warnings } : {}),
           board: { width: boardWidth, height: boardHeight, thickness: boardThickness },
           document: doc,
         }),

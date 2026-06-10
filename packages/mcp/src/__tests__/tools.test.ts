@@ -950,4 +950,46 @@ describe("ecad place_components → route_nets pipeline", () => {
     expect(padNet("R1", "1")).toBeUndefined();
     expect(padNet("R2", "2")).toBeUndefined();
   });
+
+  it("keeps all footprints inside the board outline", async () => {
+    const comps = Array.from({ length: 5 }, (_, i) => ({
+      ref: `R${i + 1}`,
+      value: "1k",
+      footprint: "Resistor_SMD:R_0805",
+      x: i * 10,
+      y: 0,
+      pins: [
+        { number: "1", name: "A", type: "Passive" },
+        { number: "2", name: "B", type: "Passive" },
+      ],
+    }));
+    const schematicOut = JSON.parse(
+      createSchematic({ components: comps }).content[0].text,
+    );
+
+    for (const strategy of ["grid", "force_directed"]) {
+      const placedOut = JSON.parse(
+        (
+          await placeComponents({
+            document: structuredClone(schematicOut.document),
+            board_width: 25,
+            board_height: 15,
+            strategy,
+          })
+        ).content[0].text,
+      );
+      expect(placedOut.success).toBe(true);
+      expect(placedOut.strategy).toBe(strategy);
+
+      const pcbNode = Object.values(placedOut.document.nodes).find(
+        (n) => ((n as { op: { type: string } }).op).type === "PcbBoard",
+      ) as { op: { board: { footprints: Array<{ position: { x: number; y: number } }> } } };
+      for (const fp of pcbNode.op.board.footprints) {
+        expect(fp.position.x).toBeGreaterThan(0);
+        expect(fp.position.x).toBeLessThan(25);
+        expect(fp.position.y).toBeGreaterThan(0);
+        expect(fp.position.y).toBeLessThan(15);
+      }
+    }
+  });
 });
