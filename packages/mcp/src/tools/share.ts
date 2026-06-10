@@ -89,12 +89,22 @@ export function openInBrowser(
 ): { content: Array<{ type: "text"; text: string }> } {
   const { document: docInput, name } = input as ShareInput;
 
-  // Parse and convert to compact (smallest representation)
+  // Parse and convert to compact (smallest representation). Documents that
+  // VCode can't represent yet (e.g. PCB boards) ship as raw JSON — the
+  // app's parseVcadFile loader accepts both formats.
   const doc = parseDocument(docInput);
-  const vcode = toVCode(doc);
+  let payload: string;
+  let format: "vcode" | "json";
+  try {
+    payload = toVCode(doc);
+    format = "vcode";
+  } catch {
+    payload = JSON.stringify(doc);
+    format = "json";
+  }
 
   // Compress for URL
-  const encoded = compressForUrl(vcode);
+  const encoded = compressForUrl(payload);
 
   // Build URL. VCAD_APP_URL is host-controlled (operator env var), but
   // we still sanitize so a bad value produces a clear error rather than
@@ -118,7 +128,7 @@ export function openInBrowser(
     content: [
       {
         type: "text",
-        text: `Open in vcad.io:\n${url}${warning}\n\nVCode size: ${vcode.length} bytes\nCompressed URL param: ${encoded.length} bytes`,
+        text: `Open in vcad.io:\n${url}${warning}\n\nPayload (${format}): ${payload.length} bytes\nCompressed URL param: ${encoded.length} bytes`,
       },
     ],
   };

@@ -578,10 +578,11 @@ export async function placeComponents(args: Record<string, unknown>) {
   doc.roots.push({ root: nid, material: "__pcb_fr4__" });
   if (!doc.materials["__pcb_fr4__"]) {
     doc.materials["__pcb_fr4__"] = {
+      name: "__pcb_fr4__",
       color: [0.05, 0.35, 0.15],
       roughness: 0.6,
       metallic: 0.0,
-    } as any;
+    };
   }
 
   return {

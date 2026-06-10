@@ -39,6 +39,7 @@ import {
   routeNets,
   runDrc,
 } from "../tools/ecad.js";
+import { openInBrowser } from "../tools/share.js";
 import { existsSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -1154,6 +1155,42 @@ describe("ecad place_components → route_nets pipeline", () => {
     // All pad positions distinct — no stacked pads.
     const unique = new Set(pads.map((p) => `${p.position.x},${p.position.y}`));
     expect(unique.size).toBe(8);
+  });
+
+  it("open_in_browser produces a URL for PCB documents", async () => {
+    const schematicOut = JSON.parse(
+      createSchematic({
+        components: [
+          {
+            ref: "R1",
+            value: "1k",
+            footprint: "Resistor_SMD:R_0805",
+            x: 0,
+            y: 0,
+            pins: [
+              { number: "1", name: "A", type: "Passive" },
+              { number: "2", name: "B", type: "Passive" },
+            ],
+          },
+        ],
+      }).content[0].text,
+    );
+    const placedOut = JSON.parse(
+      (
+        await placeComponents({
+          document: schematicOut.document,
+          board_width: 30,
+          board_height: 30,
+        })
+      ).content[0].text,
+    );
+
+    const out = openInBrowser({
+      document: JSON.stringify(placedOut.document),
+      name: "pcb-test",
+    });
+    expect(out.content[0].text).toContain("https://vcad.io/#/new?doc=");
+    expect(out.content[0].text).toContain("Payload (json)");
   });
 
   it("keeps all footprints inside the board outline", async () => {
