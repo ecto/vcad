@@ -202,6 +202,29 @@ export async function routeNetShove(
   }
 }
 
+/** A single generated fabrication output file. */
+export interface FabFile {
+  name: string;
+  content: string;
+}
+
+/**
+ * Generate all fabrication outputs for a PCB: Gerber layer files, an
+ * Excellon drill file (when the board has holes), pick-and-place CSV, and
+ * BOM CSV. Returns null if the ECAD WASM is unavailable so callers can
+ * distinguish "no kernel" from "export failed".
+ */
+export async function exportFabFiles(pcb: Pcb): Promise<FabFile[] | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) return null;
+  try {
+    return wasm.ecadExportFab(JSON.stringify(pcb)) as FabFile[];
+  } catch (e) {
+    console.warn("[ECAD] Fab export failed:", e);
+    return null;
+  }
+}
+
 /** Parse a KiCad .kicad_pcb file into a Pcb struct. */
 export async function parseKicadPcb(content: string): Promise<Pcb | null> {
   const wasm = await loadEcadWasm();

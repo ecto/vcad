@@ -54,6 +54,7 @@ import {
   exportStepBlob,
   isStitchEligible,
   getPcbNodeIds,
+  getNodePcb,
   defaultPendingOperation,
   t,
   type ToolbarTab,
@@ -61,6 +62,8 @@ import {
   type BooleanType,
   type PendingOperation,
 } from "@vcad/core";
+import { exportFabFiles } from "@vcad/engine";
+import { zipSync, strToU8 } from "fflate";
 import { useLocaleStore } from "@/stores/locale-store";
 import { TAB_COLORS } from "@/components/ui/toolbar-constants";
 import { useDrawingStore } from "@/stores/drawing-store";
@@ -207,6 +210,7 @@ export function useToolDefinitions(): {
   // Engine
   const scene = useEngineStore((s) => s.scene);
   const hasSceneParts = Boolean(scene?.parts?.length);
+  const hasPcb = getPcbNodeIds(document).length > 0;
 
   // Simulation
   const simMode = useSimulationStore((s) => s.mode);
@@ -662,6 +666,40 @@ export function useToolDefinitions(): {
         },
       },
       {
+        id: "build-gerber",
+        tab: "build",
+        label: "Gerbers",
+        tooltip: hasPcb
+          ? "Export Gerber fabrication files (.zip)"
+          : "Export Gerbers (add a PCB board first)",
+        icon: Download,
+        enabled: hasPcb,
+        iconColor: color("build"),
+        onClick: () => {
+          void (async () => {
+            const doc = useDocumentStore.getState().document;
+            const boardIds = getPcbNodeIds(doc);
+            const pcb = boardIds.length > 0 ? getNodePcb(doc, boardIds[0]!) : null;
+            if (!pcb) return;
+            const files = await exportFabFiles(pcb);
+            if (!files || files.length === 0) {
+              useNotificationStore
+                .getState()
+                .addToast("Gerber export failed", "error");
+              return;
+            }
+            const entries: Record<string, Uint8Array> = {};
+            for (const f of files) entries[f.name] = strToU8(f.content);
+            const blob = new Blob([zipSync(entries)], { type: "application/zip" });
+            downloadBlob(blob, "gerbers.zip");
+            analytics.documentExported("gerber");
+            useNotificationStore
+              .getState()
+              .addToast(`Exported gerbers.zip (${files.length} files)`, "success");
+          })();
+        },
+      },
+      {
         id: "build-print",
         tab: "build",
         label: "Print",
@@ -1012,6 +1050,7 @@ export function useToolDefinitions(): {
     hasJoints,
     hasOnePartSelected,
     hasPartDefs,
+    hasPcb,
     hasSceneParts,
     hasSelection,
     hasTwoInstancesSelected,

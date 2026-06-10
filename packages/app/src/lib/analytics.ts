@@ -10,7 +10,7 @@ export const analytics = {
     ph?.capture("document_opened", { source }),
   documentSaved: (method: "manual" | "auto" | "cloud") =>
     ph?.capture("document_saved", { method }),
-  documentExported: (format: "stl" | "glb" | "step" | "dxf") =>
+  documentExported: (format: "stl" | "glb" | "step" | "dxf" | "gerber") =>
     ph?.capture("document_exported", { format }),
 
   // Feature usage

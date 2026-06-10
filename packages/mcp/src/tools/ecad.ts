@@ -32,6 +32,7 @@ import type {
 } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
 import { getNodePcb, getPcbNodeIds } from "@vcad/core";
+import { exportFabFiles } from "@vcad/engine";
 
 /** Get PCB data from a document — checks PcbBoard nodes first, falls back to legacy doc.pcb */
 function getDocPcb(doc: Document): Pcb | null {
@@ -198,10 +199,12 @@ export const exportGerberSchema = {
     },
     output_dir: {
       type: "string" as const,
-      description: "Output directory path for Gerber files",
+      description:
+        "Directory to write the fabrication files to (created if missing). " +
+        "When omitted, file contents are returned inline instead.",
     },
   },
-  required: ["document", "output_dir"],
+  required: ["document"],
 };
 
 /** JSON Schema for calc_impedance tool. */
@@ -670,9 +673,9 @@ export function runErc(args: Record<string, unknown>) {
 }
 
 /** Export Gerber files for a PCB. */
-export function exportGerber(args: Record<string, unknown>) {
+export async function exportGerber(args: Record<string, unknown>) {
   const doc = args.document as Document;
-  const outputDir = args.output_dir as string;
+  const outputDir = args.output_dir as string | undefined;
   const pcb = getDocPcb(doc);
 
   if (!pcb) {
@@ -682,25 +685,42 @@ export function exportGerber(args: Record<string, unknown>) {
     };
   }
 
-  // Note: Actual Gerber file generation happens in the Rust vcad-ecad-export crate.
-  // This MCP tool wraps it for AI agent access.
-  // For now, return file listing that would be generated.
-  const layers = new Set<string>();
+  const files = await exportFabFiles(pcb);
+  if (files === null) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: "Error: ECAD export unavailable (kernel WASM not loaded)",
+        },
+      ],
+      isError: true,
+    };
+  }
 
-  for (const trace of pcb.traces) layers.add(trace.layer);
-  for (const fp of pcb.footprints) {
-    for (const pad of fp.pads) {
-      for (const l of pad.layers) layers.add(l);
+  if (outputDir) {
+    // Node-only path: write the files to disk. Imported dynamically so this
+    // module stays loadable in browser bundles (e.g. the HTTP MCP frontend).
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    await fs.mkdir(outputDir, { recursive: true });
+    for (const f of files) {
+      await fs.writeFile(path.join(outputDir, f.name), f.content, "utf8");
     }
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({
+            success: true,
+            message: `Wrote ${files.length} fabrication files`,
+            output_dir: outputDir,
+            files: files.map((f) => ({ name: f.name, bytes: f.content.length })),
+          }),
+        },
+      ],
+    };
   }
-  for (const zone of pcb.zones) layers.add(zone.layer);
-
-  const files = Array.from(layers).map(layer => `${outputDir}/${layer}.gbr`);
-  if (pcb.vias.length > 0 || pcb.footprints.some(fp => fp.pads.some(p => p.drill))) {
-    files.push(`${outputDir}/drill.drl`);
-  }
-  files.push(`${outputDir}/pick_place.csv`);
-  files.push(`${outputDir}/bom.csv`);
 
   return {
     content: [
@@ -708,10 +728,8 @@ export function exportGerber(args: Record<string, unknown>) {
         type: "text" as const,
         text: JSON.stringify({
           success: true,
-          message: "Gerber export prepared",
-          output_dir: outputDir,
+          message: `Generated ${files.length} fabrication files`,
           files,
-          layers: Array.from(layers),
         }),
       },
     ],

@@ -1622,7 +1622,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get feed_rate() {
-        const ret = wasm.__wbg_get_slicersettings_nozzle_diameter(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_wasmcamsettings_feed_rate(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1630,7 +1630,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get plunge_rate() {
-        const ret = wasm.__wbg_get_slicersettings_line_width(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_wasmcamsettings_plunge_rate(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1646,7 +1646,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get safe_z() {
-        const ret = wasm.__wbg_get_slicersettings_support_angle(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_wasmcamsettings_safe_z(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1654,7 +1654,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get spindle_rpm() {
-        const ret = wasm.__wbg_get_slicersettings_infill_density(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_wasmcamsettings_spindle_rpm(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1662,7 +1662,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get stepdown() {
-        const ret = wasm.__wbg_get_slicersettings_first_layer_height(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_wasmcamsettings_stepdown(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1670,7 +1670,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get stepover() {
-        const ret = wasm.__wbg_get_slicersettings_layer_height(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_wasmcamsettings_stepover(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1678,14 +1678,14 @@ export class WasmCamSettings {
      * @param {number} arg0
      */
     set feed_rate(arg0) {
-        wasm.__wbg_set_slicersettings_nozzle_diameter(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_wasmcamsettings_feed_rate(this.__wbg_ptr, arg0);
     }
     /**
      * Plunge rate (mm/min).
      * @param {number} arg0
      */
     set plunge_rate(arg0) {
-        wasm.__wbg_set_slicersettings_line_width(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_wasmcamsettings_plunge_rate(this.__wbg_ptr, arg0);
     }
     /**
      * Retract Z height (mm).
@@ -1699,28 +1699,28 @@ export class WasmCamSettings {
      * @param {number} arg0
      */
     set safe_z(arg0) {
-        wasm.__wbg_set_slicersettings_support_angle(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_wasmcamsettings_safe_z(this.__wbg_ptr, arg0);
     }
     /**
      * Spindle RPM.
      * @param {number} arg0
      */
     set spindle_rpm(arg0) {
-        wasm.__wbg_set_slicersettings_infill_density(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_wasmcamsettings_spindle_rpm(this.__wbg_ptr, arg0);
     }
     /**
      * Stepdown distance (mm).
      * @param {number} arg0
      */
     set stepdown(arg0) {
-        wasm.__wbg_set_slicersettings_first_layer_height(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_wasmcamsettings_stepdown(this.__wbg_ptr, arg0);
     }
     /**
      * Stepover distance (mm).
      * @param {number} arg0
      */
     set stepover(arg0) {
-        wasm.__wbg_set_slicersettings_layer_height(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_wasmcamsettings_stepover(this.__wbg_ptr, arg0);
     }
     /**
      * Create from JSON.
@@ -3465,6 +3465,29 @@ export function ecadComputeRatsnest(pcb_json, netlist_json) {
 }
 
 /**
+ * Generate all fabrication outputs for a PCB: Gerber RS-274X layer
+ * files, an Excellon drill file (when the board has any holes), a
+ * pick-and-place CSV, and a BOM CSV.
+ *
+ * # Arguments
+ * * `pcb_json` - JSON-serialized `Pcb` struct
+ *
+ * # Returns
+ * Array of `{ name, content }` objects as JsValue.
+ * @param {string} pcb_json
+ * @returns {any}
+ */
+export function ecadExportFab(pcb_json) {
+    const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadExportFab(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Fill copper pour zones on the PCB.
  *
  * # Arguments
@@ -4203,7 +4226,7 @@ export function isEcadAvailable() {
  * @returns {boolean}
  */
 export function isEmbroideryAvailable() {
-    const ret = wasm.isEcadAvailable();
+    const ret = wasm.isEmbroideryAvailable();
     return ret !== 0;
 }
 
@@ -4230,7 +4253,7 @@ export function isPhysicsAvailable() {
  * @returns {boolean}
  */
 export function isSlicerAvailable() {
-    const ret = wasm.isCamAvailable();
+    const ret = wasm.isSlicerAvailable();
     return ret !== 0;
 }
 
@@ -7029,12 +7052,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2208, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2209, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2224, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2225, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2992, function: Function { arguments: [Externref], shim_idx: 2993, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3008, function: Function { arguments: [Externref], shim_idx: 3009, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
             return ret;
         },

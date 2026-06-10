@@ -672,7 +672,7 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
           break;
 
         case "export_gerber":
-          result = exportGerber(args);
+          result = await exportGerber(args);
           break;
 
         case "calc_impedance":
