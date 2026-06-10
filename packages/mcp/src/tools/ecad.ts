@@ -32,7 +32,7 @@ import type {
 } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
 import { getNodePcb, getPcbNodeIds } from "@vcad/core";
-import { exportFabFiles } from "@vcad/engine";
+import { exportFabFiles, generateNetlist } from "@vcad/engine";
 
 /** Get PCB data from a document — checks PcbBoard nodes first, falls back to legacy doc.pcb */
 function getDocPcb(doc: Document): Pcb | null {
@@ -303,7 +303,7 @@ export function createSchematic(args: Record<string, unknown>) {
 }
 
 /** Place components on a PCB from schematic data. */
-export function placeComponents(args: Record<string, unknown>) {
+export async function placeComponents(args: Record<string, unknown>) {
   const doc = args.document as Document;
   const boardWidth = args.board_width as number;
   const boardHeight = args.board_height as number;
@@ -315,6 +315,22 @@ export function placeComponents(args: Record<string, unknown>) {
       isError: true,
     };
   }
+
+  // Derive pad nets from schematic connectivity (wires + junctions + labels)
+  // using the kernel netlist extractor. Pin names only serve as net ids as a
+  // fallback when the schematic has no wires or the kernel is unavailable.
+  const netByPin = new Map<string, string>();
+  if (doc.schematic.wires.length > 0) {
+    const netlist = await generateNetlist(doc.schematic);
+    for (const net of netlist.nets) {
+      // Single-connection groups are unconnected pins, not real nets.
+      if (net.connections.length < 2) continue;
+      for (const conn of net.connections) {
+        netByPin.set(`${conn.component_ref}\u0000${conn.pin_number}`, net.name);
+      }
+    }
+  }
+  const useConnectivity = netByPin.size > 0;
 
   // Create PCB structure
   const outline: BoardOutline = {
@@ -372,8 +388,12 @@ export function placeComponents(args: Record<string, unknown>) {
     const pads: Pad[] = comp.pins.map((pin, pi) => {
       const padX = pi === 0 ? -1.0 : 1.0;
 
-      // Track nets; pin name doubles as the net id
-      const netId = pin.name && pin.name !== "~" ? pin.name : undefined;
+      // Net from schematic connectivity; pin-name fallback for wireless docs.
+      const netId = useConnectivity
+        ? netByPin.get(`${comp.ref}\u0000${pin.number}`)
+        : pin.name && pin.name !== "~"
+          ? pin.name
+          : undefined;
       if (netId && !netSet.has(netId)) {
         netSet.add(netId);
         nets.push({ id: netId, name: netId });

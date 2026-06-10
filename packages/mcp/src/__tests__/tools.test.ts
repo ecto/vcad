@@ -824,7 +824,7 @@ describe("sheet-metal tools", () => {
 });
 
 describe("ecad place_components → route_nets pipeline", () => {
-  it("assigns pad nets during placement so routing produces traces", () => {
+  it("assigns pad nets during placement so routing produces traces", async () => {
     const schematicOut = JSON.parse(
       createSchematic({
         components: [
@@ -855,11 +855,13 @@ describe("ecad place_components → route_nets pipeline", () => {
     );
 
     const placedOut = JSON.parse(
-      placeComponents({
-        document: schematicOut.document,
-        board_width: 50,
-        board_height: 50,
-      }).content[0].text,
+      (
+        await placeComponents({
+          document: schematicOut.document,
+          board_width: 50,
+          board_height: 50,
+        })
+      ).content[0].text,
     );
     expect(placedOut.success).toBe(true);
     expect(placedOut.footprints_placed).toBe(2);
@@ -880,5 +882,72 @@ describe("ecad place_components → route_nets pipeline", () => {
     // Only OUT has 2+ pads — VCC and GND are single-pad nets.
     expect(routedOut.nets_routed).toBe(1);
     expect(routedOut.traces_added).toBe(1);
+  });
+
+  it("derives pad nets from wire connectivity, not pin names", async () => {
+    // Two resistors with anonymous ("~") pins — connectivity must come from
+    // the wires. R1 pin2 (5,0) — wire — R2 pin1 (15,0), labeled "MID".
+    const schematicOut = JSON.parse(
+      createSchematic({
+        components: [
+          {
+            ref: "R1",
+            value: "10k",
+            footprint: "Resistor_SMD:R_0805",
+            x: 0,
+            y: 0,
+            pins: [
+              { number: "1", name: "~", type: "Passive", x: -5, y: 0 },
+              { number: "2", name: "~", type: "Passive", x: 5, y: 0 },
+            ],
+          },
+          {
+            ref: "R2",
+            value: "4k7",
+            footprint: "Resistor_SMD:R_0805",
+            x: 20,
+            y: 0,
+            pins: [
+              { number: "1", name: "~", type: "Passive", x: -5, y: 0 },
+              { number: "2", name: "~", type: "Passive", x: 5, y: 0 },
+            ],
+          },
+        ],
+        wires: [{ x1: 5, y1: 0, x2: 15, y2: 0 }],
+        labels: [{ name: "MID", x: 5, y: 0 }],
+      }).content[0].text,
+    );
+
+    const placedOut = JSON.parse(
+      (
+        await placeComponents({
+          document: schematicOut.document,
+          board_width: 50,
+          board_height: 50,
+        })
+      ).content[0].text,
+    );
+    expect(placedOut.success).toBe(true);
+
+    const placedDoc = placedOut.document as Document;
+    const pcbNode = Object.values(placedDoc.nodes).find(
+      (n) => (n.op as { type: string }).type === "PcbBoard",
+    );
+    const board = (
+      pcbNode!.op as unknown as {
+        board: { footprints: Array<{ ref: string; pads: Array<{ number: string; net?: string }> }> };
+      }
+    ).board;
+
+    const padNet = (ref: string, num: string) =>
+      board.footprints
+        .find((fp) => fp.ref === ref)!
+        .pads.find((p) => p.number === num)!.net;
+
+    // Wired pins share the labeled net; unwired pins get no net.
+    expect(padNet("R1", "2")).toBe("MID");
+    expect(padNet("R2", "1")).toBe("MID");
+    expect(padNet("R1", "1")).toBeUndefined();
+    expect(padNet("R2", "2")).toBeUndefined();
   });
 });

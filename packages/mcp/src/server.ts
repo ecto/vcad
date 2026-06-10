@@ -656,7 +656,7 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
           break;
 
         case "place_components":
-          result = placeComponents(args);
+          result = await placeComponents(args);
           break;
 
         case "route_nets":

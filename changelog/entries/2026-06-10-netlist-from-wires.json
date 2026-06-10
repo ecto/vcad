@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-10-netlist-from-wires",
+  "version": "0.9.4",
+  "date": "2026-06-10",
+  "category": "fix",
+  "title": "place_components derives nets from wire connectivity",
+  "summary": "MCP place_components now runs the kernel netlist extractor (wires, junctions, labels) instead of treating pin names as nets; pin names remain a fallback for wireless schematics.",
+  "features": ["pcb", "ecad"],
+  "mcpTools": ["place_components"]
+}
