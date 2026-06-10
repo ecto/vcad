@@ -211,7 +211,9 @@ export const exportGerberSchema = {
       type: "string" as const,
       description:
         "Directory to write the fabrication files to (created if missing). " +
-        "When omitted, file contents are returned inline instead.",
+        "Resolved on the MCP server's filesystem — on hosted/sandboxed servers " +
+        "the write may fail, in which case file contents are returned inline " +
+        "instead. When omitted, file contents are always returned inline.",
     },
   },
   required: ["document"],
@@ -952,25 +954,43 @@ export async function exportGerber(args: Record<string, unknown>) {
   if (outputDir) {
     // Node-only path: write the files to disk. Imported dynamically so this
     // module stays loadable in browser bundles (e.g. the HTTP MCP frontend).
-    const fs = await import("node:fs/promises");
-    const path = await import("node:path");
-    await fs.mkdir(outputDir, { recursive: true });
-    for (const f of files) {
-      await fs.writeFile(path.join(outputDir, f.name), f.content, "utf8");
+    try {
+      const fs = await import("node:fs/promises");
+      const path = await import("node:path");
+      await fs.mkdir(outputDir, { recursive: true });
+      for (const f of files) {
+        await fs.writeFile(path.join(outputDir, f.name), f.content, "utf8");
+      }
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({
+              success: true,
+              message: `Wrote ${files.length} fabrication files`,
+              output_dir: outputDir,
+              files: files.map((f) => ({ name: f.name, bytes: f.content.length })),
+            }),
+          },
+        ],
+      };
+    } catch (e) {
+      // Sandboxed/hosted servers can't write arbitrary paths — fall back to
+      // inline content so the caller still gets the files.
+      const reason = e instanceof Error ? e.message : String(e);
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({
+              success: true,
+              message: `Generated ${files.length} fabrication files (could not write to '${outputDir}': ${reason}; returning contents inline)`,
+              files,
+            }),
+          },
+        ],
+      };
     }
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: JSON.stringify({
-            success: true,
-            message: `Wrote ${files.length} fabrication files`,
-            output_dir: outputDir,
-            files: files.map((f) => ({ name: f.name, bytes: f.content.length })),
-          }),
-        },
-      ],
-    };
   }
 
   return {

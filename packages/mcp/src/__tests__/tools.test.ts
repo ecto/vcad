@@ -38,6 +38,7 @@ import {
   placeComponents,
   routeNets,
   runDrc,
+  exportGerber,
 } from "../tools/ecad.js";
 import { openInBrowser } from "../tools/share.js";
 import { existsSync, unlinkSync } from "node:fs";
@@ -1155,6 +1156,49 @@ describe("ecad place_components → route_nets pipeline", () => {
     // All pad positions distinct — no stacked pads.
     const unique = new Set(pads.map((p) => `${p.position.x},${p.position.y}`));
     expect(unique.size).toBe(8);
+  });
+
+  it("export_gerber falls back to inline files when output_dir is unwritable", async () => {
+    const schematicOut = JSON.parse(
+      createSchematic({
+        components: [
+          {
+            ref: "R1",
+            value: "1k",
+            footprint: "Resistor_SMD:R_0805",
+            x: 0,
+            y: 0,
+            pins: [
+              { number: "1", name: "A", type: "Passive" },
+              { number: "2", name: "B", type: "Passive" },
+            ],
+          },
+        ],
+      }).content[0].text,
+    );
+    const placedOut = JSON.parse(
+      (
+        await placeComponents({
+          document: schematicOut.document,
+          board_width: 30,
+          board_height: 30,
+        })
+      ).content[0].text,
+    );
+
+    const out = JSON.parse(
+      (
+        await exportGerber({
+          document: placedOut.document,
+          // /dev/null can't be a directory — mkdir fails on every platform.
+          output_dir: "/dev/null/nope",
+        })
+      ).content[0].text,
+    );
+    expect(out.success).toBe(true);
+    expect(out.message).toContain("returning contents inline");
+    expect(out.files.length).toBeGreaterThan(0);
+    expect(out.files[0].content).toBeTruthy();
   });
 
   it("open_in_browser produces a URL for PCB documents", async () => {

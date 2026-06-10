@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-10-gerber-inline-fallback",
+  "version": "0.9.4",
+  "date": "2026-06-10",
+  "category": "fix",
+  "title": "export_gerber falls back to inline files",
+  "summary": "When output_dir can't be written (hosted/sandboxed MCP servers), export_gerber now returns file contents inline instead of failing, and the schema documents that paths resolve server-side.",
+  "features": ["pcb", "ecad", "export"],
+  "mcpTools": ["export_gerber"]
+}

@@ -199,7 +199,12 @@ fn check_pad_clearance(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
                 .get(a.net)
                 .copied()
                 .unwrap_or(default_clearance)
-                .max(net_clearance.get(b.net).copied().unwrap_or(default_clearance));
+                .max(
+                    net_clearance
+                        .get(b.net)
+                        .copied()
+                        .unwrap_or(default_clearance),
+                );
 
             let dist = bbox_distance(a.bbox, b.bbox);
             if dist < clearance {
