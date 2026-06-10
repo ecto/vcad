@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-10-hosted-mcp-sheet-metal-fix",
+  "version": "0.9.4",
+  "date": "2026-06-10",
+  "category": "fix",
+  "title": "Hosted MCP: sheet metal and parts tools work again",
+  "summary": "The mcp.vcad.io entry point now passes the full kernel module to the Engine, restoring sheet_metal_*, search_parts, place_part, and URDF import on the hosted server.",
+  "features": ["sheet-metal", "mcp"],
+  "mcpTools": ["sheet_metal_create", "sheet_metal_unfold", "sheet_metal_check", "sheet_metal_materials", "search_parts", "place_part"]
+}

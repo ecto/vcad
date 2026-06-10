@@ -41,21 +41,13 @@ async function getEngine(): Promise<Engine> {
     .getCompiledModule as (() => WebAssembly.Module | undefined) | undefined;
   const compiledWasmModule = getCompiledModule?.();
 
-  // Construct Engine directly with WASM bindings — same as Engine.init()
-  // does at packages/engine/src/index.ts:320-329
+  // Construct Engine directly, passing the whole initialized module as the
+  // kernel. Hand-picking bindings here once broke sheet metal: the list
+  // drifted from Engine.init()'s as new kernel exports landed. The module
+  // namespace is a superset of KernelModule, so every current and future
+  // export rides along automatically.
   _engine = new Engine(
-    {
-      Solid: wasmModule.Solid,
-      WasmAnnotationLayer: wasmModule.WasmAnnotationLayer,
-      projectMesh: wasmModule.projectMesh,
-      importStepBuffer: wasmModule.importStepBuffer,
-      exportProjectedViewToDxf: wasmModule.exportProjectedViewToDxf,
-      createDetailView: wasmModule.createDetailView,
-      evaluateDocument: (wasmModule as Record<string, unknown>)
-        .evaluateDocument as Parameters<typeof Engine.prototype.evaluate>[1],
-      evalVcadSource: (wasmModule as Record<string, unknown>)
-        .evalVcadSource as Parameters<typeof Engine.prototype.evaluate>[1],
-    } as ConstructorParameters<typeof Engine>[0],
+    wasmModule as unknown as ConstructorParameters<typeof Engine>[0],
     compiledWasmModule,
   );
 
