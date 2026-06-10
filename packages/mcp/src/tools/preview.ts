@@ -43,26 +43,35 @@ function uint8ArrayToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+/** Schema for the app-only `get_preview_glb` tool. */
+export const getPreviewGlbSchema = {
+  type: "object" as const,
+  properties: {
+    document_id: {
+      type: "string" as const,
+      description: "Session id of the document to preview.",
+    },
+  },
+  required: ["document_id"],
+};
+
 /**
- * Append a GLB preview content block to a tool result.
+ * Tool handler for `get_preview_glb`: returns the base64 GLB of a session
+ * document wrapped in a `_vcad_glb` JSON envelope the viewer detects.
  *
- * The preview is added as a text content block with a JSON wrapper
- * containing `_vcad_glb` that the viewer iframe can detect.
- * The block has `audience: ["user"]` so it is not sent to the model,
- * reducing token usage.
+ * This tool exists for the MCP Apps viewer (`visibility: ["app"]`) — it
+ * keeps multi-hundred-KB geometry payloads out of model-visible tool
+ * results. Agents wanting geometry should use `export_cad` instead.
  */
-export function appendGlbPreview(
-  result: { content: Array<{ type: string; text: string; annotations?: unknown }> },
+export function getPreviewGlb(
   doc: Document,
   engine: Engine,
-): void {
+): { content: Array<{ type: "text"; text: string }> } {
   const glbBase64 = generateGlbPreview(doc, engine);
-  if (!glbBase64) return;
-
-  // Add as content block with GLB data for the MCP Apps viewer
-  result.content.push({
-    type: "text",
-    text: JSON.stringify({ _vcad_glb: glbBase64 }),
-    annotations: { audience: ["user"] },
-  });
+  if (!glbBase64) {
+    throw new Error("document produced no previewable geometry");
+  }
+  return {
+    content: [{ type: "text", text: JSON.stringify({ _vcad_glb: glbBase64 }) }],
+  };
 }

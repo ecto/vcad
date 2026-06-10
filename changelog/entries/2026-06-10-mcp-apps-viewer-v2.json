@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-10-mcp-apps-viewer-v2",
+  "version": "0.9.4",
+  "date": "2026-06-10",
+  "category": "perf",
+  "title": "Self-contained MCP viewer, lean geometry results",
+  "summary": "Geometry tool results shrink from ~200 KB to under 1 KB: the inline viewer now fetches GLB previews on demand via an app-only tool, is bundled offline-capable, and follows the host theme.",
+  "features": ["mcp", "viewer"],
+  "mcpTools": ["get_preview_glb"]
+}

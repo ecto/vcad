@@ -3,6 +3,8 @@
 *.dxf
 node_modules/
 packages/*/dist/
+packages/mcp/dist-viewer/
+packages/mcp/src/viewer-html.generated.ts
 .next/
 out/
 .env

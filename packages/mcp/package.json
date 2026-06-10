@@ -17,7 +17,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc --noCheck",
+    "build:viewer": "vite build --config vite.viewer.config.ts && node scripts/wrap-viewer.mjs",
+    "build": "npm run build:viewer && tsc --noCheck",
     "test": "vitest run"
   },
   "dependencies": {
@@ -27,8 +28,13 @@
     "@vcad/ir": "*"
   },
   "devDependencies": {
+    "@modelcontextprotocol/ext-apps": "^1.7.4",
     "@types/node": "^22",
+    "@types/three": "^0.184.1",
+    "three": "^0.184.0",
     "typescript": "^5.7",
+    "vite": "^8.0.16",
+    "vite-plugin-singlefile": "^2.3.3",
     "vitest": "^3.0"
   }
 }

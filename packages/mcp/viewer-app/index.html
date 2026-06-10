@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>vcad 3D Viewer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%; min-height: 380px; overflow: hidden;
+    background: var(--color-background-secondary, #1a1a2e);
+    color: var(--color-text-primary, #ccccdd);
+    font-family: var(--font-sans, system-ui, sans-serif);
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+  #loading {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: var(--font-text-md-size, 15px);
+    flex-direction: column; gap: 8px;
+  }
+  #loading.hidden { display: none; }
+  #error { color: #ff6666; font-size: 12px; white-space: pre-wrap; max-width: 80%; }
+  .corner-btn {
+    position: absolute; bottom: 12px;
+    background: color-mix(in srgb, var(--color-background-primary, #ffffff) 12%, transparent);
+    color: var(--color-text-secondary, #ddd);
+    border: 1px solid var(--color-border-primary, rgba(128,128,128,0.35));
+    border-radius: var(--border-radius-md, 6px);
+    padding: 6px 14px; font: 13px var(--font-sans, system-ui, sans-serif);
+    cursor: pointer; display: none; backdrop-filter: blur(4px);
+    transition: background 0.15s;
+  }
+  .corner-btn:hover {
+    background: color-mix(in srgb, var(--color-background-primary, #ffffff) 22%, transparent);
+    color: var(--color-text-primary, #fff);
+  }
+  #open-btn { right: 12px; }
+  #fullscreen-btn { left: 12px; }
+</style>
+</head>
+<body>
+<div id="loading">
+  <div id="status">vcad 3D Viewer — connecting...</div>
+  <div id="error"></div>
+</div>
+<button id="open-btn" class="corner-btn">Open in vcad.io</button>
+<button id="fullscreen-btn" class="corner-btn">Fullscreen</button>
+<script type="module" src="./main.ts"></script>
+</body>
+</html>
