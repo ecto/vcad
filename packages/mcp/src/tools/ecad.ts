@@ -372,12 +372,11 @@ export function placeComponents(args: Record<string, unknown>) {
     const pads: Pad[] = comp.pins.map((pin, pi) => {
       const padX = pi === 0 ? -1.0 : 1.0;
 
-      // Track nets
-      if (pin.name && pin.name !== "~") {
-        if (!netSet.has(pin.name)) {
-          netSet.add(pin.name);
-          nets.push({ id: pin.name, name: pin.name });
-        }
+      // Track nets; pin name doubles as the net id
+      const netId = pin.name && pin.name !== "~" ? pin.name : undefined;
+      if (netId && !netSet.has(netId)) {
+        netSet.add(netId);
+        nets.push({ id: netId, name: netId });
       }
 
       return {
@@ -385,6 +384,7 @@ export function placeComponents(args: Record<string, unknown>) {
         padType: "SMD" as PadType,
         shape: { type: "Rect" as const, width: 1.0, height: 1.2 },
         position: { x: padX, y: 0 },
+        net: netId,
         layers: ["FCu" as PcbLayer, "FPaste" as PcbLayer, "FMask" as PcbLayer],
       };
     });
